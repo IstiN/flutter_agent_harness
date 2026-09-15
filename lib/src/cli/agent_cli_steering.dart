@@ -82,7 +82,7 @@ extension AgentCliSteering on AgentCli {
       );
       if (wedged) {
         io.writeln(
-          _style.yellow(
+          tuiWarning(
             '⚠ agent not responding — steering saved to session, '
             'will deliver if the run wakes',
           ),
@@ -286,7 +286,7 @@ extension AgentCliSteering on AgentCli {
         entry.panel.state = DeferredPanelState.dead;
         io.writeln(_style.dim(deferredPanelTransitionLine(entry.panel)));
         io.writeln(
-          _style.yellow(
+          tuiWarning(
             '⚠ agent not responding — steering saved to session, '
             'will deliver if the run wakes',
           ),

@@ -23,6 +23,19 @@ extension AgentCliPersist on AgentCli {
     }
     final session = _session;
     if (session == null) return;
+    // Issue #437: a steered message merged at the step boundary carries
+    // the SAME object the steering FIFO queued at accept — consume its
+    // entry here (panel delivered + consumed marker), even if the append
+    // below is skipped as already-counted.
+    if (message is UserMessage && _pendingSteering.isNotEmpty) {
+      final index = _pendingSteering.indexWhere(
+        (entry) => identical(entry.message, message),
+      );
+      if (index >= 0) {
+        final entry = _pendingSteering.removeAt(index);
+        await _steeringDelivered(message, entry.recordId, entry.panel);
+      }
+    }
     final messages = _agent.state.messages;
     if (_persistedCount >= messages.length) return;
     await session.appendMessage(message);

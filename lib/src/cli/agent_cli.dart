@@ -2575,42 +2575,6 @@ class AgentCli {
         _assistantMessageIsEmpty(lastMessage);
   }
 
-  /// Persists a single message as soon as the agent adds it to the transcript.
-  /// Keeps [_persistedCount] aligned so [_afterRun] only writes anything the
-  /// listener may have missed (e.g. a crash between the append and the await).
-  Future<void> _persistIncremental(AgentEvent event) async {
-    if (event is! MessageEndEvent) return;
-    final message = event.message;
-    // Aborted assistant streams are incomplete; TTSR's discard mode prunes
-    // them from memory and they should not survive in the session either.
-    // EXCEPT backend agent mode (issue #155): a graceful SIGTERM cancel
-    // must leave a resumable partial transcript on disk.
-    if (message is AssistantMessage &&
-        message.stopReason == StopReason.aborted &&
-        !config.persistAbortedPartials) {
-      return;
-    }
-    final session = _session;
-    if (session == null) return;
-    // #437: a steered message merged at the step boundary carries the
-    // SAME object the FIFO queued at accept — consume its entry here
-    // (panel delivered + consumed marker), even if the append below is
-    // skipped as already-counted.
-    if (message is UserMessage && _pendingSteering.isNotEmpty) {
-      final index = _pendingSteering.indexWhere(
-        (entry) => identical(entry.message, message),
-      );
-      if (index >= 0) {
-        final entry = _pendingSteering.removeAt(index);
-        await _steeringDelivered(message, entry.recordId, entry.panel);
-      }
-    }
-    final messages = _agent.state.messages;
-    if (_persistedCount >= messages.length) return;
-    await session.appendMessage(message);
-    _persistedCount++;
-  }
-
   /// Handles a CodeMie auth-session expiry if [message] matches one. Returns
   /// `true` when the expiry was handled and the turn is finished.
   Future<bool> _maybeHandleCodeMieError(String message) async {
