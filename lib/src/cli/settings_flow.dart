@@ -1225,11 +1225,12 @@ extension SettingsFlow on AgentCli {
     io.writeln('model: ${model.id}');
     io.writeln('approval: ${_approval.mode.label}');
     io.writeln('mode: ${_currentMode.name}');
-    io.writeln('ctx cap: ${_contextCapStatusLabel()}');
+    io.writeln('cube: ${_cubeStatusLabel()}');
     io.writeln('dap: ${_dapHubStatusLabel()}');
     io.writeln('tools: ${_toolsStatusLabel()}');
     io.writeln('compaction: ${_compactionStatusLabel()}');
     io.writeln('redact: ${_redactionStatusLabel()}');
+    io.writeln('ctx cap: ${_contextCapStatusLabel()}');
     io.writeln(
       'change via /provider, /model, /approval, /mode, /key, /mcp, /cube, '
       '/tools (agent models: the /settings hub)',
