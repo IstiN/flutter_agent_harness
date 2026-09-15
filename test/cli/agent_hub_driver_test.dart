@@ -57,6 +57,10 @@ final class _FakeJob implements ShellJob {
   @override
   String? get stopReason => null;
   @override
+  Stream<String> get output => const Stream.empty();
+  @override
+  bool writeStdin(String data) => false;
+  @override
   Future<void> stop() async {}
 }
 

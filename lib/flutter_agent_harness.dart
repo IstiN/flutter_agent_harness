@@ -155,6 +155,7 @@ export 'src/tools/builtin_tools.dart';
 export 'src/tools/checkpoint_tool.dart';
 export 'src/tools/dynamic_message_tool.dart';
 export 'src/tools/inspect_image.dart';
+export 'src/tools/password_prompt.dart';
 export 'src/tools/read_selector.dart';
 export 'src/tools/request_secret_tool.dart';
 export 'src/tools/shell_jobs.dart';

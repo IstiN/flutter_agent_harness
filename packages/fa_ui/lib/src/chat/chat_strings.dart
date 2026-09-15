@@ -97,6 +97,9 @@ abstract class FaChatStrings {
   String get secretRequestInvalidName;
   String get secretRequestSave;
   String get secretRequestNotNow;
+  String get passwordPromptLabel;
+  String get passwordPromptSubmit;
+  String get passwordPromptCancel;
   String get mediaPlayTooltip;
   String get mediaPauseTooltip;
   String get mediaMuteTooltip;
@@ -253,6 +256,12 @@ class FaChatStringsEn extends FaChatStrings {
   String get secretRequestSave => 'Save';
   @override
   String get secretRequestNotNow => 'Not now';
+  @override
+  String get passwordPromptLabel => 'Password';
+  @override
+  String get passwordPromptSubmit => 'Submit';
+  @override
+  String get passwordPromptCancel => 'Cancel';
   @override
   String get mediaPlayTooltip => 'Play';
   @override
@@ -419,6 +428,12 @@ class FaChatStringsRu extends FaChatStrings {
   String get secretRequestSave => 'Сохранить';
   @override
   String get secretRequestNotNow => 'Не сейчас';
+  @override
+  String get passwordPromptLabel => 'Пароль';
+  @override
+  String get passwordPromptSubmit => 'Отправить';
+  @override
+  String get passwordPromptCancel => 'Отмена';
   @override
   String get mediaPlayTooltip => 'Воспроизвести';
   @override
