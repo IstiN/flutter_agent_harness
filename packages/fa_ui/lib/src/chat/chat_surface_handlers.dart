@@ -9,12 +9,14 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart'
         ApprovalRequest,
         AskAnswer,
         AskQuestion,
+        PasswordPromptCallback,
         RequestSecretResult;
 
 import 'approval_ui.dart';
 import 'ask_ui.dart';
 import 'fa_chat_service.dart';
-import 'secret_request_sheet.dart';
+import 'secret_request_sheet.dart'
+    show PasswordPromptSheet, showPasswordPromptSheet, showSecretRequestSheet;
 
 /// Installs the interactive handler trio — approval dialog, ask sheet,
 /// secret-request sheet — on a chat service for as long as a chat
@@ -47,6 +49,7 @@ final class FaChatSurfaceHandlers {
     service.approvalPromptHandler ??= _handleApprovalPrompt;
     service.askHandler ??= _handleAsk;
     service.secretRequestHandler ??= _handleSecretRequest;
+    service.passwordPromptHandler ??= _handlePasswordPrompt;
   }
 
   /// Clears the trio from the bound service — only slots this binder
@@ -63,6 +66,9 @@ final class FaChatSurfaceHandlers {
     }
     if (service.secretRequestHandler == _handleSecretRequest) {
       service.secretRequestHandler = null;
+    }
+    if (service.passwordPromptHandler == _handlePasswordPrompt) {
+      service.passwordPromptHandler = null;
     }
   }
 
@@ -86,6 +92,11 @@ final class FaChatSurfaceHandlers {
   ) {
     if (!_mounted) return Future.value(null);
     return showSecretRequestSheet(_context, name, reason);
+  }
+
+  Future<String?> _handlePasswordPrompt(String prompt) {
+    if (!_mounted) return Future.value(null);
+    return showPasswordPromptSheet(_context, prompt);
   }
 
   bool get _mounted => _context.mounted;

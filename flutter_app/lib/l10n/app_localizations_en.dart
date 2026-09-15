@@ -1895,6 +1895,16 @@ class AppLocalizationsEn extends AppLocalizations {
   String get dynamicTileRetry => 'Retry';
 
   @override
+  String get dynamicTileMenu => 'More actions';
+
+  @override
+  String get dynamicTileOpenAsApp => 'Open as app (without saving)';
+
+  @override
+  String get dynamicTileOpenUnavailable =>
+      'Widget can\'t start — boot failed. Retry it in the chat first.';
+
+  @override
   String get themeConsentTitle => 'Apply theme pack?';
 
   @override

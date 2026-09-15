@@ -358,6 +358,23 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  /// The ✦ chip ephemeral open (issue #379): mirrors the tile menu's
+  /// 'Open as app without saving'. Returning false — unknown or broken
+  /// widget id — lets fa_ui fall back to scroll-to-widget.
+  Future<bool> _openWidgetAsApp(fa_ui.FaChatMessage message) async {
+    final id = message.data?.toString();
+    final definition = id == null
+        ? null
+        : widget.service.dynamicMessages.byId(id);
+    if (definition == null || !mounted) return false;
+    await pushEphemeralDynamicApp(
+      context,
+      widget.service.dynamicMessages,
+      definition,
+    );
+    return true;
+  }
+
   @override
   Widget build(BuildContext context) {
     final service = widget.service;
@@ -365,6 +382,7 @@ class _ChatScreenState extends State<ChatScreen> {
       service: service,
       title: context.l10n.appTitle,
       dynamicWidgetTileBuilder: _buildDynamicTile,
+      onOpenWidgetAsApp: _openWidgetAsApp,
       // Issue #207: "High-quality image previews" — the scope notifies on
       // toggle, so the open transcript re-decodes live. Null = full
       // resolution; the default keeps the downscaled 600px previews.

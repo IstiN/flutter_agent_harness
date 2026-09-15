@@ -454,6 +454,26 @@ no-op. A failed assertion is a warning, never a crash.
 CLI equivalent: `/power` (level + hold + held state). Applies at next
 boot.
 
+## Subagents heartbeat
+
+User file section (issue #383). While a background subagent runs, the
+parent receives a periodic status digest through the steering channel —
+age, provider requests/tokens, last activity, and a
+`healthy | stalled | no-progress-since-spawn` classification per running
+child. A child with no provider activity for `stallMinutes` (or that
+never issued a request at all) gets a loud `⚠ STALLED` flag with the
+suggested `task_status → task_cancel → respawn` action; the flag
+escalates to `⚠⚠` at twice the threshold:
+
+```yaml
+subagents:
+  heartbeatMinutes: 10 # digests cadence; 0 disables the heartbeat
+  stallMinutes: 20 # quiet window before a stall flag; 0 disables flags
+```
+
+Zero running children → no digest; completion notices are unchanged.
+Config changes apply at the next digest tick — no restart required.
+
 ## Mode
 
 <!-- parity: /mode /code /architect /review -->

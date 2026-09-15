@@ -103,6 +103,30 @@ void main() {
       });
     });
 
+    test(
+      'the vars merge carries stdinData and the live stdin channel '
+      '(issue #367)',
+      () async {
+        final shell = _FakeShell();
+        final env = SessionVarsExecutionEnv(
+          MemoryExecutionEnv(cwd: '/work', shell: shell),
+          () => const {sessionIdEnvVar: 'sess-1'},
+        );
+        final channel = LiveStdinChannel();
+
+        await env.exec(
+          'echo hi',
+          options: ShellExecOptions(
+            stdinData: 'seed\n',
+            liveStdin: channel,
+          ),
+        );
+
+        expect(shell.lastOptions?.stdinData, 'seed\n');
+        expect(shell.lastOptions?.liveStdin, same(channel));
+      },
+    );
+
     test('composes with SecretsExecutionEnv without leaking secrets', () async {
       final shell = _FakeShell();
       const secretValue = 'super-secret-api-key';
