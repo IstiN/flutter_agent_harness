@@ -1129,13 +1129,12 @@ extension SettingsFlow on AgentCli {
     'model-edit': () => _handleModelEdit(''),
     'media': startMediaSlotFlow,
     'agent-models': startAgentModelFlow,
-    'approval': () async => _openApprovalPicker(),
-    'mode': () async => _openModePicker(),
+    'tools': _toolsSettingsFlow,
+    'compaction': startCompactionEngineFlow,
+    'ttsr': startTtsrRulesFlow,
     'keys': () => _handleKeyCommand(''),
     'cube': startCubeSandboxFlow,
     'dap': startDapHubFlow,
-    'tools': _toolsSettingsFlow,
-    'ttsr': startTtsrRulesFlow,
     'memory': startMemoryStoresFlow,
   };
 
