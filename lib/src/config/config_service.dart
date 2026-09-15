@@ -404,7 +404,7 @@ final class ConfigService {
     // A JSON array/object value renders as a yaml block (list-valued keys
     // — `customProviders`, the `roles:` chains, `redact:` lists); any
     // other value is the single scalar line `upsertYamlPath` always wrote.
-    final leafLines = _leafLines(value, depth: segments.length - 1);
+    final leafLines = configLeafLines(value, depth: segments.length - 1);
     final edited = upsertYamlPath(text, segments, leafLines);
     // New or previously newline-less files still end with a newline.
     final normalized = edited.isEmpty || edited.endsWith('\n')
@@ -832,11 +832,12 @@ int _blockEnd(List<String> lines, int keyLine, int depth) {
   return end;
 }
 
-/// The leaf value lines for a `config set` value: a JSON array/object
-/// renders as a yaml block under the key (list-valued keys —
-/// `customProviders`, the `roles:` chains, `redact:` lists); anything
-/// else stays the single scalar line `renderYamlScalar` always wrote.
-List<String> _leafLines(String value, {required int depth}) {
+/// The leaf value lines for a config value: a JSON array/object renders
+/// as a yaml block under the key (list-valued keys — `customProviders`,
+/// the `roles:` chains, `redact:` lists); anything else stays the single
+/// scalar line `renderYamlScalar` always wrote. Shared by `config set`
+/// and the settings flows' surgical upsert.
+List<String> configLeafLines(String value, {required int depth}) {
   final raw = value.trim();
   if (!raw.startsWith('[') && !raw.startsWith('{')) {
     return [renderYamlScalar(value)];
@@ -952,6 +953,23 @@ String applicationNote(String section) => switch (section) {
   _ => 'applies at next boot',
 };
 
+/// The strict `redact:` section validator, shared by `check`, `set` and
+/// the settings flow (issue #391). [RedactionConfig.fromYaml] is tolerant
+/// for booleans and numbers, but an invalid allowlist regex throws a bare
+/// FormatException mid-parse — wrapped here so every caller surfaces the
+/// parser's verbatim message as a [ConfigException] instead of crashing
+/// (a `config set redact.allowlist` used to escape the diagnostics pass
+/// uncaught).
+void validateRedactSection(Object? value) {
+  try {
+    RedactionConfig.fromYaml(value is Map<dynamic, dynamic> ? value : null);
+  } on ConfigException {
+    rethrow;
+  } on Object catch (error) {
+    throw ConfigException(error.toString());
+  }
+}
+
 /// Collects diagnostics for one config file: syntax errors, unknown keys
 /// (warnings), strict-section schema errors and bad scalars (errors).
 ///
@@ -1055,9 +1073,9 @@ bool _validateTopLevelEntry(
 final _sectionValidators = <String, void Function(dynamic value, String label)>{
   'memory': (value, _) => MemoryConfig.fromYaml(value),
   'cube': (value, _) => CubeSettings.fromYaml(value),
-  'tools': (value, _) => ToolsConfig.fromYaml(value),
   'mcp': (value, _) => McpConfig.fromYaml(value),
-  'redact': (value, _) => RedactionConfig.fromYaml(value),
+  'redact': (value, _) => validateRedactSection(value),
+  'tools': (value, _) => ToolsConfig.fromYaml(value),
   'compaction': (value, label) =>
       CompactionEngine.fromSection(value, label: label),
   'models': (value, _) => ModelsConfig.fromYaml(value),

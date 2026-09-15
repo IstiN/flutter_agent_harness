@@ -424,18 +424,18 @@ extension SettingsFlow on AgentCli {
   /// The engine menu of [_pickCompactionEngine]: one row per engine, the
   /// effective one marked `(current)` by the picker. Pure builder.
   List<FlowOption> _compactionEngineOptions() => [
-        for (final engine in const [
-          CompactionEngine.classic,
-          CompactionEngine.structured,
-        ])
-          (
-            engine.value,
-            engine == CompactionEngine.classic ? 'Classic' : 'Structured',
-            engine == CompactionEngine.classic
-                ? 'lossy prefix summary'
-                : 'judge-hide + checkpoint passes',
-          ),
-      ];
+    for (final engine in const [
+      CompactionEngine.classic,
+      CompactionEngine.structured,
+    ])
+      (
+        engine.value,
+        engine == CompactionEngine.classic ? 'Classic' : 'Structured',
+        engine == CompactionEngine.classic
+            ? 'lossy prefix summary'
+            : 'judge-hide + checkpoint passes',
+      ),
+  ];
 
   /// Step 1 of [startCompactionEngineFlow]: pick the engine (the current
   /// effective one preselected); null on cancel.
@@ -452,14 +452,12 @@ extension SettingsFlow on AgentCli {
 
   /// Step 2 of [startCompactionEngineFlow]: pick the scope the engine
   /// applies in (session = live only); null on cancel.
-  Future<String?> _pickCompactionScope() => _pickOption(
-        'compaction engine — scope',
-        [
-          ('session', 'Session', 'this session only (no file change)'),
-          ('project', 'Project', '${_env.cwd}/.fah/config.yaml'),
-          ('global', 'Global', _userConfigPath() ?? 'unavailable on this host'),
-        ],
-      );
+  Future<String?> _pickCompactionScope() =>
+      _pickOption('compaction engine — scope', [
+        ('session', 'Session', 'this session only (no file change)'),
+        ('project', 'Project', '${_env.cwd}/.fah/config.yaml'),
+        ('global', 'Global', _userConfigPath() ?? 'unavailable on this host'),
+      ]);
 
   /// Step 3 of [startCompactionEngineFlow]: apply [engine] in [scope] —
   /// `session` flips the live override only; `project`/`global` persist
@@ -493,14 +491,13 @@ extension SettingsFlow on AgentCli {
   Future<bool> _writeCompactionEngineYaml(
     CompactionEngine engine, {
     required bool projectScope,
-  }) =>
-      _upsertConfigYaml(
-        const ['compaction', 'engine'],
-        engine.value,
-        projectScope: projectScope,
-        validate: (node) =>
-            CompactionEngine.fromSection(node, label: 'settings flow'),
-      );
+  }) => _upsertConfigYaml(
+    const ['compaction', 'engine'],
+    engine.value,
+    projectScope: projectScope,
+    validate: (node) =>
+        CompactionEngine.fromSection(node, label: 'settings flow'),
+  );
 
   /// The engine the next compaction pass will use (live override wins;
   /// structured is the resolved default since #287/#295).
@@ -559,15 +556,268 @@ extension SettingsFlow on AgentCli {
     return section?.resolveUserPath(home) ?? '$home/.fah/memory';
   }
 
-  /// Upserts [segments] → scalar [value] in the project or user config
-  /// file, validating the edited section with [validate] (the real
-  /// parser) BEFORE the write. Returns true when written; failures print
-  /// and leave the file untouched.
+  /// The settings-hub row and `/settings` summary label for redaction
+  /// (issue #391): the live pipeline state, or plain `off` when the boot
+  /// config disabled redaction (no pipeline exists).
+  String _redactionStatusLabel() {
+    final pipeline = config.redactionPipeline;
+    if (pipeline == null) return 'off';
+    final cfg = pipeline.config;
+    return '${cfg.enabled ? 'on' : 'off'}, '
+        'block ${cfg.blockMode ? 'on' : 'off'}, '
+        '${pipeline.stats.total} match(es) this session';
+  }
+
+  /// The pipeline's effective config, or the parser defaults when no
+  /// pipeline is running.
+  RedactionConfig get _redactionConfig =>
+      config.redactionPipeline?.config ?? const RedactionConfig();
+
+  /// Settings → Redaction: the `redact:` yaml section as an interactive
+  /// flow (issue #391) — quick toggles, the entropy knobs, the allowlist
+  /// and per-tool policy lists, per-layer toggles and a stats reset.
+  /// Writes go through the surgical validated-yaml upsert into the USER
+  /// config (the machine-level file `fa config set redact…` also uses);
+  /// with a live pipeline the saved section is reloaded from disk and
+  /// installed on the spot, without one the note honestly defers to the
+  /// next boot. Loops until the pick is cancelled or `done`.
+  Future<void> startRedactionFlow() async {
+    for (;;) {
+      final picked = await _pickOption('redaction', _redactionMenuOptions());
+      if (picked == null || picked == 'done') return;
+      await _applyRedactionPick(picked);
+    }
+  }
+
+  /// Dispatches one [startRedactionFlow] menu pick; the caller re-renders
+  /// the menu afterwards. Split out to keep each function's complexity
+  /// under the repo's CRAP gate.
+  Future<void> _applyRedactionPick(String picked) async {
+    switch (picked) {
+      case 'enabled':
+        await _writeRedactionKey(const [
+          'redact',
+          'enabled',
+        ], '${!_redactionConfig.enabled}');
+      case 'blockMode':
+        await _writeRedactionKey(const [
+          'redact',
+          'blockMode',
+        ], '${!_redactionConfig.blockMode}');
+      case 'minEntropy':
+        await _askRedactionScalar(const [
+          'redact',
+          'minEntropy',
+        ], 'min entropy in bits/char');
+      case 'minLength':
+        await _askRedactionScalar(const [
+          'redact',
+          'minLength',
+        ], 'min token length');
+      case 'allowlist':
+        await _askRedactionList(const [
+          'redact',
+          'allowlist',
+        ], 'allowlist regex(es)');
+      case 'toolAllow':
+        await _askRedactionList(const [
+          'redact',
+          'toolAllow',
+        ], 'tool allow (only these)');
+      case 'toolDeny':
+        await _askRedactionList(const [
+          'redact',
+          'toolDeny',
+        ], 'tool deny (never redacted)');
+      case 'layers':
+        await _redactionLayersFlow();
+      case 'reset':
+        _resetRedactionStats();
+    }
+  }
+
+  /// The main menu of [startRedactionFlow]: one row per editable field of
+  /// the section plus the quick actions. Pure builder.
+  List<FlowOption> _redactionMenuOptions() {
+    final cfg = _redactionConfig;
+    final layers = RedactionLayer.values;
+    return [
+      ('enabled', 'Toggle redaction', cfg.enabled ? 'on → off' : 'off → on'),
+      (
+        'blockMode',
+        'Toggle block mode',
+        cfg.blockMode ? 'on → off' : 'off → on',
+      ),
+      ('minEntropy', 'Entropy threshold', '${cfg.minEntropy} bits/char'),
+      ('minLength', 'Entropy min length', '${cfg.minLength} chars'),
+      (
+        'allowlist',
+        'Allowlist regexes',
+        '${cfg.allowlistRegexes.length} pattern(s)',
+      ),
+      (
+        'toolAllow',
+        'Tool allow list',
+        cfg.toolAllow.isEmpty ? '(all tools)' : cfg.toolAllow.join(', '),
+      ),
+      (
+        'toolDeny',
+        'Tool deny list',
+        cfg.toolDeny.isEmpty ? '(none)' : cfg.toolDeny.join(', '),
+      ),
+      (
+        'layers',
+        'Layer toggles',
+        '${layers.where(cfg.isLayerEnabled).length}/${layers.length} on',
+      ),
+      (
+        'reset',
+        'Reset stats',
+        '${config.redactionPipeline?.stats.total ?? 0} match(es)',
+      ),
+      ('done', 'Done', ''),
+    ];
+  }
+
+  /// The shared write path: a USER-file upsert of [segments] → [value]
+  /// with the whole `redact:` section validated by the real parser first
+  /// (AC4: the parser's verbatim error, nothing written), then the
+  /// reload-after-write that installs the saved section on the live
+  /// pipeline (AC3/E3).
+  Future<void> _writeRedactionKey(List<String> segments, String value) async {
+    if (_userConfigPath() == null) {
+      io.writeln('redaction: no user config on this host — not saved');
+      return;
+    }
+    final wrote = await _upsertConfigYaml(
+      segments,
+      value,
+      projectScope: false,
+      validate: validateRedactSection,
+      note: _redactionNote(),
+    );
+    if (wrote) await _reloadRedactionPipeline();
+  }
+
+  /// The honest liveness note (AC3): the flow installs the saved section
+  /// into the running pipeline whenever one exists; only the pipeline-less
+  /// boot (`redact.enabled: false`) must wait for the next start.
+  String _redactionNote() => config.redactionPipeline == null
+      ? applicationNote('redact')
+      : 'applies live — the running pipeline reloads the saved section';
+
+  /// Reload-after-write (E3): what's live is what's on disk — the saved
+  /// file is re-parsed and installed on the pipeline, so a concurrent
+  /// editor's values survive and the menu re-renders the fresh state.
+  Future<void> _reloadRedactionPipeline() async {
+    final pipeline = config.redactionPipeline;
+    final path = _userConfigPath();
+    if (pipeline == null || path == null) return;
+    switch (await _env.readTextFile(path)) {
+      case Ok(:final value):
+        final doc = loadYaml(value);
+        pipeline.config = RedactionConfig.fromYaml(
+          doc is YamlMap ? doc['redact'] as Map<dynamic, dynamic>? : null,
+        );
+      case Err():
+        // The write just succeeded; a read race keeps the current live
+        // config — the next write re-syncs.
+        break;
+    }
+  }
+
+  /// The scalar-field branch (entropy knobs): an empty answer keeps the
+  /// current value; a non-number is refused before any write (the boot
+  /// parser would silently fall back to the default, breaking the
+  /// round-trip AC).
+  Future<void> _askRedactionScalar(List<String> segments, String label) async {
+    final current = segments.last == 'minEntropy'
+        ? _redactionConfig.minEntropy
+        : _redactionConfig.minLength;
+    final answer = await _askLine("$label (empty keeps '$current'): ");
+    if (answer == null) return;
+    final value = answer.trim();
+    if (value.isEmpty) return;
+    final parsed = segments.last == 'minLength'
+        ? int.tryParse(value)
+        : double.tryParse(value);
+    if (parsed == null) {
+      io.writeln('not saved: ${segments.last} must be a number (got "$value")');
+      return;
+    }
+    await _writeRedactionKey(segments, value);
+  }
+
+  /// The list-field branch (allowlist, toolAllow, toolDeny): a
+  /// comma-separated answer renders as a yaml block list, `-` clears, an
+  /// empty answer keeps the current value.
+  Future<void> _askRedactionList(List<String> segments, String label) async {
+    final current = switch (segments.last) {
+      'allowlist' => _redactionConfig.allowlistRegexes.length,
+      'toolAllow' => _redactionConfig.toolAllow.length,
+      _ => _redactionConfig.toolDeny.length,
+    };
+    final answer = await _askLine(
+      "$label, comma-separated ('-' clears; empty keeps the current "
+      "$current): ",
+    );
+    if (answer == null) return;
+    final value = answer.trim();
+    if (value.isEmpty) return;
+    final entries = value == '-'
+        ? const <String>[]
+        : [
+            for (final entry in value.split(','))
+              if (entry.trim().isNotEmpty) entry.trim(),
+          ];
+    await _writeRedactionKey(segments, jsonEncode(entries));
+  }
+
+  /// The per-layer toggle submenu: one row per [RedactionLayer], each
+  /// flip persisted as `redact.layers.<name>`. Loops until cancelled or
+  /// `done`.
+  Future<void> _redactionLayersFlow() async {
+    for (;;) {
+      final cfg = _redactionConfig;
+      final picked = await _pickOption('redaction layers', [
+        for (final layer in RedactionLayer.values)
+          (layer.name, layer.name, cfg.isLayerEnabled(layer) ? 'on' : 'off'),
+        ('done', 'Done', ''),
+      ]);
+      if (picked == null || picked == 'done') return;
+      await _writeRedactionKey([
+        'redact',
+        'layers',
+        picked,
+      ], '${!cfg.isLayerEnabled(RedactionLayer.values.byName(picked))}');
+    }
+  }
+
+  /// The stats-reset action: zeroes the pipeline counters (the same
+  /// counters `/redact stats` prints).
+  void _resetRedactionStats() {
+    final pipeline = config.redactionPipeline;
+    if (pipeline == null) {
+      io.writeln('redaction: pipeline not running on this host');
+      return;
+    }
+    pipeline.stats.reset();
+    io.writeln('redaction stats reset');
+  }
+
+  /// Upserts [segments] → [value] in the project or user config file,
+  /// validating the edited section with [validate] (the real parser)
+  /// BEFORE the write. A JSON array/object value renders as a yaml block
+  /// (list-valued keys — see [configLeafLines]); anything else is the
+  /// single scalar line. [note] overrides the liveness note printed on
+  /// success (default: [applicationNote] for the section). Returns true
+  /// when written; failures print and leave the file untouched.
   Future<bool> _upsertConfigYaml(
     List<String> segments,
     String value, {
     required bool projectScope,
     required void Function(Object? node) validate,
+    String? note,
   }) async {
     final path = projectScope
         ? '${_env.cwd}/.fah/config.yaml'
@@ -583,7 +833,11 @@ extension SettingsFlow on AgentCli {
         io.writeln('cannot read $path: $error — not saved');
         return false;
     }
-    final edited = upsertYamlPath(source, segments, [renderYamlScalar(value)]);
+    final edited = upsertYamlPath(
+      source,
+      segments,
+      configLeafLines(value, depth: segments.length - 1),
+    );
     // Never persist a file the next boot would reject.
     final doc = loadYaml(edited);
     final section = doc is YamlMap ? doc[segments.first] : null;
@@ -599,7 +853,7 @@ extension SettingsFlow on AgentCli {
     }
     io.writeln(
       '${segments.join('.')} = $value → $path '
-      '(${applicationNote(segments.first)})',
+      '(${note ?? applicationNote(segments.first)})',
     );
     return true;
   }
@@ -723,11 +977,13 @@ extension SettingsFlow on AgentCli {
     }
   }
 
-  /// The settings hub picker: one entry per configurable area, each
-  /// launching the same interactive flow its dedicated slash command would.
-  void _openSettingsPicker() {
+  /// The settings-hub rows: one entry per configurable area, each
+  /// launching the same interactive flow its dedicated slash command
+  /// would. Pure builder so tests can assert the hub carries every area
+  /// without a TUI controller.
+  List<MenuItem> settingsHubItems() {
     final model = _agent.state.model;
-    final items = [
+    return [
       MenuItem(key: 'provider', label: 'Provider', description: model.provider),
       MenuItem(key: 'model', label: 'Chat model', description: model.id),
       const MenuItem(
@@ -781,13 +1037,22 @@ extension SettingsFlow on AgentCli {
         label: 'Memory',
         description: _memoryPathLabel(project: true),
       ),
+      MenuItem(
+        key: 'redact',
+        label: 'Redaction',
+        description: _redactionStatusLabel(),
+      ),
       const MenuItem(
         key: 'mcp',
         label: 'MCP servers',
         description: 'status and config reload',
       ),
     ];
-    _tuiController?.openPicker('settings', 'Settings', items);
+  }
+
+  /// The settings hub picker: opens the [settingsHubItems] list.
+  void _openSettingsPicker() {
+    _tuiController?.openPicker('settings', 'Settings', settingsHubItems());
   }
 
   /// A settings-hub selection launches the same flow its dedicated slash
@@ -811,6 +1076,7 @@ extension SettingsFlow on AgentCli {
     'tools': _toolsSettingsFlow,
     'compaction': startCompactionEngineFlow,
     'memory': startMemoryStoresFlow,
+    'redact': startRedactionFlow,
   };
 
   /// The line-mode `/settings` summary (the TUI opens the hub instead).
@@ -824,6 +1090,7 @@ extension SettingsFlow on AgentCli {
     io.writeln('dap: ${_dapHubStatusLabel()}');
     io.writeln('tools: ${_toolsStatusLabel()}');
     io.writeln('compaction: ${_compactionStatusLabel()}');
+    io.writeln('redact: ${_redactionStatusLabel()}');
     io.writeln(
       'change via /provider, /model, /approval, /mode, /key, /mcp, /cube, '
       '/tools (agent models: the /settings hub)',
