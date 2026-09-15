@@ -345,6 +345,16 @@ final class AgentLoopTurnUpdate {
 typedef PrepareNextTurnHook =
     FutureOr<AgentLoopTurnUpdate?> Function(NextTurnContext context);
 
+/// Emergency over-window relief (issue #387): called by the loop's
+/// over-window guard when a request is about to be refused (gross mid-turn
+/// overflow). The host runs ONE synchronous compaction and returns the
+/// relieved transcript to retry with — or `null` when nothing hideable
+/// remains (the loop then surfaces the verbatim guard error). The argument
+/// is the loop's live transcript; the returned list REPLACES it for the
+/// rest of the run.
+typedef OverWindowRelief =
+    Future<List<Message>?> Function(List<Message> overWindowMessages);
+
 /// Rewrites the message list sent to the provider before each call (pi's
 /// `transformContext`). The transcript itself is never modified.
 ///
@@ -376,6 +386,7 @@ final class AgentLoopConfig {
     this.afterToolCall,
     this.transformContext,
     this.prepareNextTurn,
+    this.overWindowRelief,
     this.getSteeringMessages,
     this.getFollowUpMessages,
     this.steeringNotifications,
@@ -404,6 +415,11 @@ final class AgentLoopConfig {
 
   /// Adjusts context/model between turns.
   final PrepareNextTurnHook? prepareNextTurn;
+
+  /// Emergency relief for the over-window guard (issue #387). Called at
+  /// most once per response before the guard's refusal surfaces; see
+  /// [OverWindowRelief]. `null` = the guard keeps today's behavior.
+  final OverWindowRelief? overWindowRelief;
 
   /// Steering messages to inject at the next turn boundary.
   final QueuedMessagesSource? getSteeringMessages;
@@ -463,6 +479,7 @@ final class AgentLoopConfig {
       afterToolCall: afterToolCall,
       transformContext: transformContext,
       prepareNextTurn: prepareNextTurn,
+      overWindowRelief: overWindowRelief,
       getSteeringMessages: getSteeringMessages,
       getFollowUpMessages: getFollowUpMessages,
       steeringNotifications: steeringNotifications,
@@ -887,15 +904,15 @@ Future<List<Message>> _runAgentLoop({
         newMessages,
       );
       pendingMessages = const [];
-
-      var message = await _streamAssistantResponse(
+      AssistantMessage message;
+      (message, currentContext) = await _streamAssistantResponse(
         currentContext,
         currentConfig,
         emit,
         streamFunction,
         cancelToken,
       );
-      message = await _retryDegenerateEmpty(
+      (message, currentContext) = await _retryDegenerateEmpty(
         message,
         currentContext,
         currentConfig,
@@ -1136,8 +1153,7 @@ bool _isDegenerateEmpty(AssistantMessage message) {
 /// Retries a degenerate-empty completion with the same context (bounded by
 /// `config.maxEmptyRetries`; a blank answer never ends a run on the first
 /// try). The retried messages stay in the transcript (truthful record) and
-/// the eventual real answer follows them.
-Future<AssistantMessage> _retryDegenerateEmpty(
+Future<(AssistantMessage, Context)> _retryDegenerateEmpty(
   AssistantMessage message,
   Context context,
   AgentLoopConfig config,
@@ -1147,11 +1163,12 @@ Future<AssistantMessage> _retryDegenerateEmpty(
 ) async {
   var retries = 0;
   var current = message;
+  var out = context;
   while (_isDegenerateEmpty(current) &&
       retries < config.maxEmptyRetries &&
       !(cancelToken?.isCancelled ?? false)) {
     retries++;
-    current = await _streamAssistantResponse(
+    (current, out) = await _streamAssistantResponse(
       context,
       config,
       emit,
@@ -1159,27 +1176,25 @@ Future<AssistantMessage> _retryDegenerateEmpty(
       cancelToken,
     );
   }
-  return current;
+  return (current, out);
 }
 
 /// Streams one assistant response from the provider, emitting message
 /// lifecycle events and keeping the partial message in [context.messages]
 /// up to date (partial-first). Port of pi's `streamAssistantResponse`.
-Future<AssistantMessage> _streamAssistantResponse(
+Future<(AssistantMessage, Context)> _streamAssistantResponse(
   Context context,
   AgentLoopConfig config,
   AgentEventSink emit,
   StreamFunction streamFunction,
   CancelToken? cancelToken,
 ) async {
+  var reliefUsed = false;
+  var pairingHealed = false;
   // Hardening over pi: short-circuit an already-cancelled token instead of
   // relying on the provider to surface the abort as an error event.
-  if (cancelToken != null && cancelToken.isCancelled) {
-    return _finishWithoutStream(
-      context,
-      emit,
-      _terminalMessage(config.model, StopReason.aborted, 'Operation aborted'),
-    );
+  if (_isCancelRequested(cancelToken)) {
+    return await _abortedTurn(context, config, emit);
   }
   for (var attempt = 0; ; attempt++) {
     final (requestContext, repairReport) = await _buildRequestContext(
@@ -1207,20 +1222,45 @@ Future<AssistantMessage> _streamAssistantResponse(
       config.model.contextWindow,
       config.contextWindowCap,
     );
-    if (window > 0) {
-      // The same accounting basis as the host's ctx meter and the
-      // compaction threshold: transcript estimate PLUS the system-prompt /
-      // tool-schema overhead when no provider-usage anchor prices them in
-      // (an unanchored estimate otherwise undercounts every request by
-      // that overhead — the "meter said 64% but the request was
-      // over-window" mismatch).
-      final tokens = estimateRequestTokens(
-        requestContext.messages,
-        systemPrompt: requestContext.systemPrompt,
-        tools: requestContext.tools ?? const [],
-      );
-      if (tokens > window) {
-        return _finishWithoutStream(
+    // The same accounting basis as the host's ctx meter and the
+    // compaction threshold: transcript estimate PLUS the system-prompt /
+    // tool-schema overhead when no provider-usage anchor prices them in
+    // (an unanchored estimate otherwise undercounts every request by
+    // that overhead — the "meter said 64% but the request was
+    // over-window" mismatch).
+    final tokens = estimateRequestTokens(
+      requestContext.messages,
+      systemPrompt: requestContext.systemPrompt,
+      tools: requestContext.tools ?? const [],
+    );
+    if (window > 0 && tokens > window) {
+      // Issue #387 emergency relief: offer the host ONE synchronous
+      // compaction over the live transcript before giving up. A non-null
+      // result replaces the loop context and the request is retried;
+      // null, a throw, or a still-over result keeps the verbatim error
+      // below. Bounded to one attempt — a tool result bigger than the
+      // window fails fast here instead of looping.
+      if (_reliefAvailable(reliefUsed, config)) {
+        reliefUsed = true;
+        try {
+          final relieved = await config.overWindowRelief!(context.messages);
+          if (relieved != null) {
+            // The relieved transcript becomes the loop's live context:
+            // the retried request is built from it and every later turn
+            // rides it (the tuple return hands it back to the host).
+            context = Context(
+              systemPrompt: context.systemPrompt,
+              messages: relieved,
+              tools: context.tools,
+            );
+            continue;
+          }
+        } catch (_) {
+          // A failed relief = no relief; the error below is the answer.
+        }
+      }
+      return (
+        await _finishWithoutStream(
           context,
           emit,
           _terminalMessage(
@@ -1232,8 +1272,9 @@ Future<AssistantMessage> _streamAssistantResponse(
             'was not sent. Auto-compaction runs next; if it keeps failing, '
             'run /compact or start a fresh session.',
           ),
-        );
-      }
+        ),
+        context,
+      );
     }
 
     AssistantMessageEventStream response;
@@ -1246,11 +1287,7 @@ Future<AssistantMessage> _streamAssistantResponse(
         cancelToken: cancelToken,
       );
     } catch (error) {
-      return _finishWithoutStream(
-        context,
-        emit,
-        _terminalMessage(config.model, StopReason.error, '$error'),
-      );
+      return await _providerErrorTurn(context, config, emit, error);
     }
 
     final streamed = await _consumeResponseStream(response, context, emit);
@@ -1261,29 +1298,80 @@ Future<AssistantMessage> _streamAssistantResponse(
       // detection, re-run the repair over the rebuilt request, retry ONCE —
       // a wedged session recovers here instead of never. A second failure
       // surfaces normally (no infinite loop).
-      if (attempt == 0 &&
-          finished.stopReason == StopReason.error &&
-          isToolPairingProviderError(finished.errorMessage)) {
+      if (_needsPairingHeal(pairingHealed, finished)) {
         await emit(
           ToolPairingRepairEvent(
             report: const ToolPairingRepairReport(),
             providerError: finished.errorMessage,
           ),
         );
+        pairingHealed = true;
         continue;
       }
-      return finished;
+      return (finished, context);
     }
 
     // The provider stream closed without a terminal event (provider bug).
-    return _finishWithoutStream(
+    return (
+      await _finishWithoutStream(
+        context,
+        emit,
+        _streamEndedWithoutTerminal(config, streamed.partial),
+        replaceLast: streamed.addedPartial,
+      ),
       context,
-      emit,
-      _streamEndedWithoutTerminal(config, streamed.partial),
-      replaceLast: streamed.addedPartial,
     );
   }
 }
+
+/// Whether the host's one-shot over-window relief is still on the table.
+bool _reliefAvailable(bool reliefUsed, AgentLoopConfig config) =>
+    !reliefUsed && config.overWindowRelief != null;
+
+/// Whether the run was cancelled before its request went out.
+bool _isCancelRequested(CancelToken? cancelToken) =>
+    cancelToken != null && cancelToken.isCancelled;
+
+/// The already-cancelled turn: no request leaves the loop.
+Future<(AssistantMessage, Context)> _abortedTurn(
+  Context context,
+  AgentLoopConfig config,
+  AgentEventSink emit,
+) async {
+  return (
+    await _finishWithoutStream(
+      context,
+      emit,
+      _terminalMessage(config.model, StopReason.aborted, 'Operation aborted'),
+    ),
+    context,
+  );
+}
+
+/// A provider/runtime error thrown by the stream call itself becomes an
+/// error turn, not a crash.
+Future<(AssistantMessage, Context)> _providerErrorTurn(
+  Context context,
+  AgentLoopConfig config,
+  AgentEventSink emit,
+  Object error,
+) async {
+  return (
+    await _finishWithoutStream(
+      context,
+      emit,
+      _terminalMessage(config.model, StopReason.error, '$error'),
+    ),
+    context,
+  );
+}
+
+/// Whether a finished turn needs the one-shot pairing self-heal (issue
+/// #85): a provider pairing 400 on an error stop, before it was used.
+bool _needsPairingHeal(bool pairingHealed, AssistantMessage finished) =>
+    !pairingHealed &&
+    finished.stopReason == StopReason.error &&
+    isToolPairingProviderError(finished.errorMessage);
 
 /// Builds the synthetic error turn for a provider stream that closed
 /// without any terminal event (provider bug): keep the streamed partial
