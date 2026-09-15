@@ -38,15 +38,20 @@ const int wireDumpMaxChars = 2 * 1024 * 1024;
 const String wireDumpTruncationMarker =
     '\n…[wire dump truncated at $wireDumpMaxChars chars]';
 
-/// Stable content hash of [text]: FNV-1a 64-bit over the UTF-8 bytes,
-/// hex-encoded. Not a security primitive — a dedup key for blob tables.
+/// Stable content hash of [text]: two independent 32-bit FNV-1a lanes
+/// (different basis/primes) over the UTF-8 bytes, hex-encoded as 16
+/// characters. Not a security primitive — a dedup key for blob tables.
+/// Two lanes instead of one 64-bit hash because 64-bit literals cannot be
+/// represented exactly under dart2js (web builds).
 String trajectoryContentHash(String text) {
-  var hash = 0xcbf29ce484222325;
+  var hi = 0x811c9dc5;
+  var lo = 0x811c9dc5;
   for (final byte in utf8.encode(text)) {
-    hash ^= byte;
-    hash = (hash * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF;
+    hi = ((hi ^ byte) * 0x01000193) & 0xFFFFFFFF;
+    lo = ((lo ^ byte) * 0x01935619) & 0xFFFFFFFF;
   }
-  return hash.toRadixString(16).padLeft(16, '0');
+  return hi.toRadixString(16).padLeft(8, '0') +
+      lo.toRadixString(16).padLeft(8, '0');
 }
 
 /// One full system-prompt version (F1). The text is stored whole — no cap

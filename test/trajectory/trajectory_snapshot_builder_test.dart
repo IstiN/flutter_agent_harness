@@ -991,7 +991,7 @@ void main() {
     );
     final builder = TrajectorySnapshotBuilder();
     builder.append(_userRecord('u1'));
-    final snapshot = builder.append(summary);
+    builder.append(summary);
     final assistant = builder.append(_assistantRecord('a1', parentId: 'u1'));
     expect(
       (assistant.records[1] as TrajectoryAssistantRecord)
