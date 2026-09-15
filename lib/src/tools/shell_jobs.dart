@@ -36,11 +36,20 @@ String newShellJobId(int n) {
 
 /// One registered background shell job.
 final class ShellJobEntry {
-  ShellJobEntry._(this.job);
+  ShellJobEntry._(this.job, {this.cwd}) : startedAt = DateTime.now();
 
   /// The backend handle.
   final ShellJob job;
 
+  /// When the job registered (drives the terminal card's elapsed).
+  final DateTime startedAt;
+
+  /// The working directory the job was started from (the dim detail's cwd
+  /// tail, issue #429 AC2).
+  final String? cwd;
+
+  /// Whether the registry's settle notification should still fire (a
+  /// foreground consumer that took the result inline suppresses it).
   bool _notifyOnSettle = true;
 
   String get id => job.id;
@@ -167,9 +176,8 @@ final class ShellJobRegistry {
     if (started.isErr) {
       throw StateError(started.errorOrNull!.message);
     }
-    final entry = ShellJobEntry._(started.valueOrNull!);
+    final entry = ShellJobEntry._(started.valueOrNull!, cwd: options?.cwd);
     _jobs.add(entry);
-    onStart?.call(entry);
     unawaited(
       entry.settled.then((_) async {
         // An inline consumer (foreground bash that awaited this same settle)
@@ -180,6 +188,7 @@ final class ShellJobRegistry {
         if (entry._notifyOnSettle) onSettled?.call(entry);
       }),
     );
+    onStart?.call(entry);
     return entry;
   }
 

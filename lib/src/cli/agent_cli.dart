@@ -50,6 +50,7 @@ import '../a2a/a2a_manager.dart';
 import '../task/task.dart';
 import 'agent_tree.dart';
 import 'agent_hub_panel.dart';
+import 'shell_job_board.dart';
 import 'agent_hub_projection.dart';
 import 'agent_hub_tui.dart';
 import 'agent_hub_view.dart';
@@ -68,6 +69,7 @@ import '../approval/approval.dart';
 import '../approval/approval_hook.dart';
 import '../cancel_token.dart';
 import '../compaction/compaction.dart';
+import '../compaction/structured/continuation_notice.dart';
 import '../compaction/token_estimation.dart';
 import '../context.dart';
 import '../cube/cube.dart';
@@ -606,10 +608,7 @@ class AgentCli {
     }
     // Busy-row honesty: name the executing tool ('Running bash…') instead
     // of leaving a stale 'Compacting context…' label over long tool calls.
-    attachToolPhaseLabels(
-      _agent,
-      (phase) => _tuiController?.setBusyPhase(phase),
-    );
+    attachToolPhaseLabels(_agent, (phase) => _pushBusyPhase(phase));
     _checkpoints = CheckpointRewindController(
       agent: _agent,
       sink: CheckpointSessionSink(
@@ -1025,6 +1024,11 @@ class AgentCli {
   // session that never opens the hub still gets task-block rendering.
   final AgentHubProjection _hubProjection = AgentHubProjection();
   final DeferredPanelLog _hubPanels = DeferredPanelLog();
+
+  /// Issue #429: the per-session background-job board — truthful phases,
+  /// per-turn collapse, records for reload. Replaced wholesale on session
+  /// resume by rehydration.
+  ShellJobBoard _jobBoard = ShellJobBoard();
   final DateTime _hubMainStartedAt = DateTime.now();
   String? _hubTranscriptId;
   Timer? _hubFollowTimer;
@@ -1609,8 +1613,11 @@ class AgentCli {
 
     // Warm the model cache in the background so the first /models picker is
     // fast; failures are silent and the cache falls back to the hardcoded list.
-    unawaited(_refreshModelCache());
-
+    _printThirdPartySkillsDisabledHint();
+    await _replayRestoredSession();
+    // Issue #429: rebuild the background-job board from the session's
+    // shell_job_registry records; live-at-restart jobs announce as lost.
+    await _rehydrateJobBoard();
     // One-time consent question for third-party skill roots: a TUI picker
     // over the first frame (Esc = "Not now", asked again next launch).
     unawaited(_maybePromptSkillsAccess());
@@ -2078,6 +2085,7 @@ class AgentCli {
       return 1;
     } finally {
       _headlessMode = false;
+      _autoFoldCount = 0;
       turnSub();
       await releasePowerAssertions();
       await _cubeCacheSaveQuietly();
@@ -2277,6 +2285,9 @@ class AgentCli {
     // before the first streamed byte, and isBusy readers (inbox watcher,
     // shell-job settle, steer-vs-start) must not start a parallel run here.
     _runStarting = true;
+    // Issue #429: a new agent turn opens a fresh board bucket — jobs from
+    // this turn collapse/count together and older buckets age out.
+    _jobBoard.newTurn();
     // Per-run sleep prevention (#326): the default hold acquires with the
     // run going in flight — fire-and-forget, never a reason to delay the
     // turn.
@@ -2331,10 +2342,45 @@ class AgentCli {
       'reads (offset/limit or :A-B selectors) instead.\n'
       '</system-notice>';
 
+  /// The continuation prompt for an over-window resume, naming what the
+  /// compaction hid — record kinds + turn spans — and how to recover it
+  /// via `compact_expand` (issue #438 AC4). Nothing hidden (classic
+  /// compaction) keeps the fixed notice.
+  Future<String> _overWindowContinuationPrompt() async {
+    final session = _session;
+    final recoverables = session == null
+        ? ''
+        : hiddenRecoverablesSummary(await session.getEntries());
+    if (recoverables.isEmpty) return _overWindowContinuationNotice;
+    return _overWindowContinuationNotice.replaceFirst(
+      '</system-notice>',
+      '$recoverables\n</system-notice>',
+    );
+  }
+
   /// Whether the over-window guard's one-shot auto-continuation was used
   /// for the current user prompt (reset at every non-auto-continue
   /// [_runPrompt] entry).
   bool _overWindowAutoResumed = false;
+
+  /// Auto-compaction folds this run (issue #438 AC3): the status badge
+  /// «[auto-compacted · continuing]» shows while the run continues after
+  /// a mid-run fold and clears when the turn settles.
+  int _autoFoldCount = 0;
+
+  /// Pushes a busy-row phase, carrying the fold badge: mid-run the busy
+  /// row is the surface that actually repaints (the idle status row only
+  /// redraws on state changes), so the «[auto-compacted · continuing]»
+  /// badge rides every busy label until the turn settles (issue #438
+  /// AC3). Multiple folds in one run count (E2).
+  void _pushBusyPhase(String phase) {
+    _tuiController?.setBusyPhase(
+      _autoFoldCount == 0
+          ? phase
+          : '$phase [auto-compacted'
+                '${_autoFoldCount > 1 ? ' ×$_autoFoldCount' : ''} · continuing]',
+    );
+  }
 
   /// Whether this CLI instance is inside a headless (`fa "prompt"`, `-p`)
   /// run — guards the REPL-only recovery flows (browser SSO re-auth) from
@@ -2410,6 +2456,9 @@ class AgentCli {
     }
     if (isAutoContinue) return;
     _overWindowAutoResumed = false;
+    // A fresh user text clears the over-window badge: the new run starts
+    // clean, and only THIS run's folds may badge it (issue #438 E1).
+    _autoFoldCount = 0;
     // Pre-flight context guard: when the LIVE context already exceeds the
     // compaction threshold, compact BEFORE sending the request — a failed
     // post-run compaction (quota-limited smol role, provider outage) used to
@@ -2481,7 +2530,10 @@ class AgentCli {
         '[context overflowed — auto-compacted; continuing the turn]',
       ),
     );
-    await _runPrompt(_overWindowContinuationNotice, isAutoContinue: true);
+    await _runPrompt(
+      await _overWindowContinuationPrompt(),
+      isAutoContinue: true,
+    );
     return true;
   }
 
@@ -2635,6 +2687,9 @@ class AgentCli {
     _hubCompletePanels();
     await _persistMessages();
     await _maybeAutoCompact();
+    // Settle clears the badge: the fold is over, the transcript is final
+    // (issue #438 AC3 — «until the turn settles»).
+    _autoFoldCount = 0;
   }
 
   /// Idle-wake guard: one inbox-triggered run at a time.
