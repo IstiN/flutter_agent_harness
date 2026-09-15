@@ -3374,6 +3374,24 @@ abstract class AppLocalizations {
   /// **'Retry'**
   String get dynamicTileRetry;
 
+  /// Overflow (⋮) menu on the dynamic-message tile title bar (issue #378)
+  ///
+  /// In en, this message translates to:
+  /// **'More actions'**
+  String get dynamicTileMenu;
+
+  /// Ephemeral full-screen launch of a dynamic message; nothing is installed (issue #378)
+  ///
+  /// In en, this message translates to:
+  /// **'Open as app (without saving)'**
+  String get dynamicTileOpenAsApp;
+
+  /// Reason shown when the ephemeral open action is disabled for a failed widget (issue #378 E1)
+  ///
+  /// In en, this message translates to:
+  /// **'Widget can\'t start — boot failed. Retry it in the chat first.'**
+  String get dynamicTileOpenUnavailable;
+
   /// No description provided for @themeConsentTitle.
   ///
   /// In en, this message translates to:
