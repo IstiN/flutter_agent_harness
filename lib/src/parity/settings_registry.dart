@@ -92,6 +92,12 @@ enum SharedSetting {
   /// issue #391).
   redactionPolicy,
 
+  /// The session image registry's `images:` section — the registry kill
+  /// switch (`registry: false` reproduces the legacy request shape
+  /// byte-for-byte) and the per-request unique-image cap
+  /// (`maxPerRequest`, default 20), issue #395.
+  imageRegistry,
+
   /// The owner-side context cap (`agent.contextWindowCap`, issue #273)
   /// clamping the EFFECTIVE window for the compaction thresholds, the ctx
   /// meter and the loop's over-window guard (issue #394).
@@ -141,6 +147,11 @@ const cliOnlySettings = <SharedSetting>{
   // keeps consuming the section read-only per #288's umbrella).
   SharedSetting.redactionPolicy,
 
+  // The image registry is process-wide state inside the CLI host's agent
+  // loop (the request-build rewrite reads a global published at boot);
+  // the app composes its own requests and consumes the section read-only
+  // per #288's umbrella (issue #395 is the CLI half).
+  SharedSetting.imageRegistry,
   // The context cap feeds the CLI's compaction math, ctx meter and the
   // loop's over-window guard — all running in the CLI host process; the
   // app has no agent loop to re-cap live (issue #394 is the CLI half —
@@ -199,6 +210,11 @@ const cliOnlyJustifications = <SharedSetting, String>{
       'The redaction pipeline runs inside the CLI host process with its '
       'registered secrets in memory; the app reads the section but has no '
       'pipeline to re-toggle live. Configure it in the CLI (issue #391).',
+  SharedSetting.imageRegistry:
+      'The image registry is process-wide state inside the CLI host agent '
+      'loop (the request-build rewrite reads a global published at boot); '
+      'the app composes its own requests and consumes the section '
+      'read-only. Configure it in the CLI (issue #395).',
   SharedSetting.contextWindowCap:
       'The context cap feeds the CLI agent loop and compaction math '
       'running in the CLI host process; the app has no agent loop to '
@@ -230,11 +246,6 @@ const fileOnlyConfigKeys = <String, String>{
   'providerTimeouts':
       'Provider transport watchdog tuning (connect/idle timeouts) — '
       'rarely-changed knobs, tuned in the file.',
-
-  // Image-tool runtime tuning (registry on/off, per-request cap).
-  'images':
-      'Image-tool runtime tuning (registry on/off, per-request cap) — '
-      'operational knobs, tuned in the file.',
 
   // Trajectory capture tuning (opt-in raw wire dumps, issue #385): a
   // deliberate, size/pII-sensitive escape hatch — file-only by design so
@@ -462,6 +473,16 @@ const settingSurfaces = <SharedSetting, SettingSurfaces>{
         'The redaction pipeline lives in the CLI host process (registered '
         'secrets in memory); no app surface has a pipeline to reconfigure.',
   ),
+  SharedSetting.imageRegistry: SettingSurfaces(
+    macos: false,
+    ios: false,
+    web: false,
+    extensionPanel: false,
+    gapWhy:
+        'The image registry is process-wide state in the CLI host agent '
+        'loop (the request-build rewrite); the app composes its own '
+        'requests and reads the section read-only.',
+  ),
   SharedSetting.contextWindowCap: SettingSurfaces(
     macos: false,
     ios: false,
@@ -598,6 +619,12 @@ const sharedSettingMetadata = <SharedSetting, _SettingMeta>{
     appRef: null, // exempted — pipeline lives in the CLI host (see above).
     yamlKeys: ['redact'],
     description: 'Redaction pipeline policy (issue #391).',
+  ),
+  SharedSetting.imageRegistry: _SettingMeta(
+    cliRef: 'startImagesFlow',
+    appRef: null, // exempted — request-build global lives in the CLI host.
+    yamlKeys: ['images'],
+    description: 'Image registry kill switch + per-request cap (issue #395).',
   ),
   SharedSetting.contextWindowCap: _SettingMeta(
     cliRef: 'startContextCapFlow',

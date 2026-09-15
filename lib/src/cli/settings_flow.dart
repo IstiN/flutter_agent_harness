@@ -1150,6 +1150,66 @@ extension SettingsFlow on AgentCli {
     io.writeln('redaction stats reset');
   }
 
+  /// The settings-hub row and `/settings` summary label for the image
+  /// registry (issue #395): the kill-switch state (what `registry: false`
+  /// means — byte-identical legacy requests) and the per-request cap.
+  String _imagesStatusLabel() {
+    final cfg = imageRegistryConfig;
+    return '${cfg.enabled ? 'on' : 'off · legacy request shape'} · '
+        'cap ${cfg.maxPerRequest}';
+  }
+
+  /// Settings → Images: the `images:` config section (issue #395) — the
+  /// registry kill switch (`images.registry: false` reproduces today's
+  /// request shape byte-for-byte) and the per-request unique-image cap.
+  /// Writes go through the surgical validated-yaml upsert into the USER
+  /// config (the file `bin/fah.dart` boots the registry from), and every
+  /// successful write re-publishes the process-wide [imageRegistryConfig]
+  /// from the saved file — the request build consults that global, so the
+  /// change lands on the next request build without a restart (AC3/E3:
+  /// what's live is what's on disk). Loops until cancelled or `done`.
+  Future<void> startImagesFlow() async {
+    for (;;) {
+      final picked = await _pickOption('images', _imagesMenuOptions());
+      if (picked == null || picked == 'done') return;
+      await _applyImagesPick(picked);
+    }
+  }
+
+  /// Dispatches one [startImagesFlow] menu pick; the caller re-renders
+  /// the menu afterwards. Split out to keep each function's complexity
+  /// under the repo's CRAP gate.
+  Future<void> _applyImagesPick(String picked) async {
+    switch (picked) {
+      case 'registry':
+        await _writeImagesKey(const [
+          'images',
+          'registry',
+        ], '${!imageRegistryConfig.enabled}');
+      case 'maxPerRequest':
+        await _askImagesCap();
+    }
+  }
+
+  /// The main menu of [startImagesFlow]: one row per editable field of
+  /// the section. Pure builder.
+  List<FlowOption> _imagesMenuOptions() {
+    final cfg = imageRegistryConfig;
+    return [
+      (
+        'registry',
+        'Toggle registry (kill switch)',
+        cfg.enabled ? 'on → off (byte-identical legacy requests)' : 'off → on',
+      ),
+      (
+        'maxPerRequest',
+        'Per-request cap',
+        '${cfg.maxPerRequest} unique image(s) per request',
+      ),
+      ('done', 'Done', ''),
+    ];
+  }
+
   /// The settings-hub row and `/settings` summary label for the owner cap
   /// (issue #394): the model's raw window vs the effective cap.
   String _contextCapStatusLabel() {
@@ -1197,6 +1257,56 @@ extension SettingsFlow on AgentCli {
       ),
       ('done', 'Done', ''),
     ];
+  }
+
+  /// The cap branch: an empty answer keeps the current value; anything
+  /// else rides verbatim into the yaml upsert — the strict boot parser
+  /// ([parseImagesSection]) validates the edited section BEFORE the
+  /// write, so a bad value prints the parser's own message and nothing
+  /// is written (AC4).
+  Future<void> _askImagesCap() async {
+    final current = imageRegistryConfig.maxPerRequest;
+    final answer = await _askLine("per-request cap (empty keeps '$current'): ");
+    if (answer == null) return;
+    final value = answer.trim();
+    if (value.isEmpty) return;
+    await _writeImagesKey(const ['images', 'maxPerRequest'], value);
+  }
+
+  /// The shared write path: a USER-file upsert of [segments] → [value]
+  /// validated with the real boot parser first, then reload-after-write
+  /// republishes the global the request build consults.
+  Future<void> _writeImagesKey(List<String> segments, String value) async {
+    if (_userConfigPath() == null) {
+      io.writeln('images: no user config on this host — not saved');
+      return;
+    }
+    final wrote = await _upsertConfigYaml(
+      segments,
+      value,
+      projectScope: false,
+      validate: parseImagesSection,
+    );
+    if (wrote) await _reloadImageRegistry();
+  }
+
+  /// Reload-after-write (E3): the process-wide registry settings are
+  /// re-parsed from the saved file, so the next request build applies
+  /// exactly what's on disk and a concurrent editor's values survive.
+  Future<void> _reloadImageRegistry() async {
+    final path = _userConfigPath();
+    if (path == null) return;
+    switch (await _env.readTextFile(path)) {
+      case Ok(:final value):
+        final doc = loadYaml(value);
+        imageRegistryConfig =
+            parseImagesSection(doc is YamlMap ? doc['images'] : null) ??
+            const ImageRegistryConfig();
+      case Err():
+        // The write just succeeded; a read race keeps the current live
+        // config — the next write re-syncs.
+        break;
+    }
   }
 
   /// The set branch: a positive integer at or above the compaction
@@ -1535,6 +1645,11 @@ extension SettingsFlow on AgentCli {
         label: 'Context cap',
         description: _contextCapStatusLabel(),
       ),
+      MenuItem(
+        key: 'images',
+        label: 'Images',
+        description: _imagesStatusLabel(),
+      ),
       const MenuItem(
         key: 'mcp',
         label: 'MCP servers',
@@ -1579,6 +1694,7 @@ extension SettingsFlow on AgentCli {
     'redact': startRedactionFlow,
     'context-cap': startContextCapFlow,
     'memory': startMemoryStoresFlow,
+    'images': startImagesFlow,
   };
 
   /// The line-mode `/settings` summary (the TUI opens the hub instead).
@@ -1595,6 +1711,7 @@ extension SettingsFlow on AgentCli {
     io.writeln('ttsr: ${_ttsrStatusLabel()}');
     io.writeln('redact: ${_redactionStatusLabel()}');
     io.writeln('ctx cap: ${_contextCapStatusLabel()}');
+    io.writeln('images: ${_imagesStatusLabel()}');
     io.writeln(
       'change via /provider, /model, /approval, /mode, /key, /mcp, /cube, '
       '/tools (agent models: the /settings hub)',
