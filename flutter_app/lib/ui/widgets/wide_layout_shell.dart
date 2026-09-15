@@ -34,7 +34,7 @@ import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    show ExecutionEnv, SessionMetadata;
+    show ExecutionEnv, SessionMetadata, leaseOwnerLabel;
 
 /// The wide-screen adaptive shell: a 3-pane layout with a collapsible
 /// sidebar (sessions list + Settings/Files nav) on the left, the active
@@ -745,6 +745,21 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
         SnackBar(
           content: Text(
             context.l10n.sessionTooLargeTitle(sizeMb.toStringAsFixed(0)),
+          ),
+        ),
+      );
+    } on SessionDrivenElsewhereException catch (error) {
+      // Live lease (#428): never a second writer. The wide shell has no
+      // attach surface — say so instead of silently doing nothing.
+      debugPrint('[fah][shell] ${metadata.id} driven elsewhere: $error');
+      if (!mounted) return;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(
+          content: Text(
+            context.l10n.sessionDrivenElsewhere(
+              leaseOwnerLabel(error.lease.host),
+              error.lease.pid,
+            ),
           ),
         ),
       );

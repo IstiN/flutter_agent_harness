@@ -48,7 +48,11 @@ abstract interface class FsSnapshotExporter {
 /// relative paths are resolved against [cwd]. Writes and appends create
 /// parent directories automatically, matching the `dart:io` implementation.
 final class MemoryFileSystem
-    implements FileSystem, RangedReadFileSystem, FsSnapshotExporter {
+    implements
+        FileSystem,
+        RangedReadFileSystem,
+        FsSnapshotExporter,
+        RenamableFileSystem {
   /// Creates a [MemoryFileSystem] rooted at [cwd] (default `/`).
   MemoryFileSystem({this.cwd = '/'}) {
     _dirs.add('/');
@@ -368,6 +372,25 @@ final class MemoryFileSystem
       return const Ok(null);
     }
     return _removeDir(resolved, recursive: recursive);
+  }
+
+  @override
+  Future<Result<void, FileError>> renamePath(String from, String to) async {
+    final resolvedFrom = _normalize(from);
+    final resolvedTo = _normalize(to);
+    final file = _files[resolvedFrom];
+    if (file == null) {
+      return Err(
+        FileError(
+          FileErrorCode.notFound,
+          'No such file or directory',
+          path: resolvedFrom,
+        ),
+      );
+    }
+    _files.remove(resolvedFrom);
+    _files[resolvedTo] = file;
+    return const Ok(null);
   }
 
   Result<void, FileError> _removeDir(

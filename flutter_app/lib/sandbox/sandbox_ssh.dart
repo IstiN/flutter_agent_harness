@@ -668,35 +668,59 @@ final class SandboxSshBuiltins {
   }) async {
     final multiple = localSources.length > 1;
     if (multiple) {
-      final targetStat = await _ftpStatSafe(ftp, remoteTarget);
-      if (targetStat == null || !targetStat.isDirectory) {
-        return _error('scp: $remoteTarget: not a directory\n', 1);
-      }
+      final error = await _ensureRemoteDir(ftp, remoteTarget);
+      if (error != null) return error;
     }
     for (final source in localSources) {
-      final kind = await localKind(source);
-      if (kind == null) {
-        return _error('scp: $source: No such file or directory\n', 1);
-      }
-      if (kind == SandboxSshEntryKind.directory) {
-        if (!recursive) {
-          return _error('scp: $source: not a regular file\n', 1);
-        }
-        // cp -r semantics: an existing directory target receives the source
-        // inside it; otherwise the target IS the new directory.
-        final targetStat = await _ftpStatSafe(ftp, remoteTarget);
-        final destDir =
-            multiple || (targetStat != null && targetStat.isDirectory)
-            ? _remoteJoin(remoteTarget, _baseName(source))
-            : remoteTarget;
-        final error = await _uploadDir(ftp, source, destDir);
-        if (error != null) return error;
-        continue;
-      }
-      final error = await _uploadFile(ftp, source, remoteTarget, multiple);
+      final error = await _uploadSource(
+        ftp,
+        source,
+        remoteTarget,
+        multiple: multiple,
+        recursive: recursive,
+      );
       if (error != null) return error;
     }
     return _ok(const []);
+  }
+
+  /// scp refuses a multi-source upload unless the target is a remote
+  /// directory.
+  Future<SandboxBuiltinResult?> _ensureRemoteDir(
+    SandboxSshFtp ftp,
+    String remoteTarget,
+  ) async {
+    final targetStat = await _ftpStatSafe(ftp, remoteTarget);
+    if (targetStat == null || !targetStat.isDirectory) {
+      return _error('scp: $remoteTarget: not a directory\n', 1);
+    }
+    return null;
+  }
+
+  Future<SandboxBuiltinResult?> _uploadSource(
+    SandboxSshFtp ftp,
+    String source,
+    String remoteTarget, {
+    required bool multiple,
+    required bool recursive,
+  }) async {
+    final kind = await localKind(source);
+    if (kind == null) {
+      return _error('scp: $source: No such file or directory\n', 1);
+    }
+    if (kind == SandboxSshEntryKind.directory) {
+      if (!recursive) {
+        return _error('scp: $source: not a regular file\n', 1);
+      }
+      // cp -r semantics: an existing directory target receives the source
+      // inside it; otherwise the target IS the new directory.
+      final targetStat = await _ftpStatSafe(ftp, remoteTarget);
+      final destDir = multiple || (targetStat != null && targetStat.isDirectory)
+          ? _remoteJoin(remoteTarget, _baseName(source))
+          : remoteTarget;
+      return _uploadDir(ftp, source, destDir);
+    }
+    return _uploadFile(ftp, source, remoteTarget, multiple);
   }
 
   Future<SandboxBuiltinResult?> _uploadFile(
@@ -775,40 +799,62 @@ final class SandboxSshBuiltins {
   }) async {
     final multiple = remoteSources.length > 1;
     if (multiple) {
-      final kind = await localKind(localTarget);
-      if (kind != SandboxSshEntryKind.directory) {
-        return _error('scp: $localTarget: not a directory\n', 1);
-      }
+      final error = await _ensureLocalDir(localTarget);
+      if (error != null) return error;
     }
     for (final source in remoteSources) {
-      final stat = await _ftpStatSafe(ftp, source);
-      if (stat == null) {
-        return _error('scp: $source: No such file or directory\n', 1);
-      }
-      if (stat.isDirectory) {
-        if (!recursive) {
-          return _error('scp: $source: not a regular file\n', 1);
-        }
-        // cp -r semantics: an existing directory target receives the source
-        // inside it; otherwise the target IS the new directory.
-        final destDir =
-            multiple ||
-                await localKind(localTarget) == SandboxSshEntryKind.directory
-            ? _localJoin(localTarget, _baseName(source))
-            : localTarget;
-        final error = await _downloadDir(ftp, source, destDir);
-        if (error != null) return error;
-        continue;
-      }
-      var dest = localTarget;
-      if (multiple ||
-          await localKind(localTarget) == SandboxSshEntryKind.directory) {
-        dest = _localJoin(localTarget, _baseName(source));
-      }
-      final error = await _downloadFile(ftp, source, dest);
+      final error = await _downloadSource(
+        ftp,
+        source,
+        localTarget,
+        multiple: multiple,
+        recursive: recursive,
+      );
       if (error != null) return error;
     }
     return _ok(const []);
+  }
+
+  /// scp refuses a multi-source download unless the target is a local
+  /// directory.
+  Future<SandboxBuiltinResult?> _ensureLocalDir(String localTarget) async {
+    final kind = await localKind(localTarget);
+    if (kind != SandboxSshEntryKind.directory) {
+      return _error('scp: $localTarget: not a directory\n', 1);
+    }
+    return null;
+  }
+
+  Future<SandboxBuiltinResult?> _downloadSource(
+    SandboxSshFtp ftp,
+    String source,
+    String localTarget, {
+    required bool multiple,
+    required bool recursive,
+  }) async {
+    final stat = await _ftpStatSafe(ftp, source);
+    if (stat == null) {
+      return _error('scp: $source: No such file or directory\n', 1);
+    }
+    if (stat.isDirectory) {
+      if (!recursive) {
+        return _error('scp: $source: not a regular file\n', 1);
+      }
+      // cp -r semantics: an existing directory target receives the source
+      // inside it; otherwise the target IS the new directory.
+      final destDir =
+          multiple ||
+              await localKind(localTarget) == SandboxSshEntryKind.directory
+          ? _localJoin(localTarget, _baseName(source))
+          : localTarget;
+      return _downloadDir(ftp, source, destDir);
+    }
+    var dest = localTarget;
+    if (multiple ||
+        await localKind(localTarget) == SandboxSshEntryKind.directory) {
+      dest = _localJoin(localTarget, _baseName(source));
+    }
+    return _downloadFile(ftp, source, dest);
   }
 
   Future<SandboxBuiltinResult?> _downloadFile(
