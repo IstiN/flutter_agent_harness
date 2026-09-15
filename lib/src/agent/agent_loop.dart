@@ -1212,7 +1212,7 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
       // null, a throw, or a still-over result keeps the verbatim error
       // below. Bounded to one attempt — a tool result bigger than the
       // window fails fast here instead of looping.
-      if (!reliefUsed && config.overWindowRelief != null) {
+      if (_reliefAvailable(reliefUsed, config)) {
         reliefUsed = true;
         try {
           final relieved = await config.overWindowRelief!(context.messages);
@@ -1295,6 +1295,10 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
     );
   }
 }
+
+/// Whether the host's one-shot over-window relief is still on the table.
+bool _reliefAvailable(bool reliefUsed, AgentLoopConfig config) =>
+    !reliefUsed && config.overWindowRelief != null;
 
 /// Whether the run was cancelled before its request went out.
 bool _isCancelRequested(CancelToken? cancelToken) =>
