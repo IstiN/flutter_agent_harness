@@ -207,10 +207,16 @@ final class TrajectoryBlobPersister {
   final Set<String> _seenPrompts = {};
   final Set<String> _seenManifests = {};
 
+  /// The last request-context version the host turned into a
+  /// `model_change` record (issue #440): the (prompt, manifest) hash
+  /// pair. Records are structural, so equality is the content address.
+  (String?, String?)? _lastModelChangePair;
+
   /// Drops the seen-hash state (new session).
   void reset() {
     _seenPrompts.clear();
     _seenManifests.clear();
+    _lastModelChangePair = null;
   }
 
   /// The records for one request, in chain order.
@@ -241,6 +247,22 @@ final class TrajectoryBlobPersister {
     }
     records.add((customType: 'model_request_summary', data: summary));
     return records;
+  }
+
+  /// Whether [detail] opens a new request-context version (issue #440):
+  /// the host appends a `model_change` record — the trajectory's System
+  /// row, which the request summary that follows on the chain stamps
+  /// with the blob pointers (F7a) — whenever the effective system-prompt
+  /// or tool-manifest hash changed. Content-addressed like the blob
+  /// dedup: once per version run, never per request. A fully uncaptured
+  /// request (both hashes null, E6) is not a version and never lands a
+  /// row.
+  bool shouldAppendModelChange(TrajectoryRequestDetail detail) {
+    final pair = (detail.systemPromptHash, detail.toolManifestHash);
+    if (pair.$1 == null && pair.$2 == null) return false;
+    if (_lastModelChangePair == pair) return false;
+    _lastModelChangePair = pair;
+    return true;
   }
 }
 
