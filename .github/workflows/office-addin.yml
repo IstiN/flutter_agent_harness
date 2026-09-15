@@ -29,9 +29,13 @@ on:
       - '.github/workflows/office-addin.yml'
   workflow_dispatch:
 
-# Cancel superseded runs of the same ref (issue #177).
+# Cancel superseded runs of the same ref (issue #177) — but a
+# workflow_dispatch run (the daily-publish addin leg) gets its OWN group:
+# a push landing mid-daily used to cancel the leg's run, failing the leg
+# as "higher priority waiting request exists" and self-filing a false
+# release issue (issue #423).
 concurrency:
-  group: Office add-in-${{ github.ref }}
+  group: Office add-in-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.run_id) || github.ref }}
   cancel-in-progress: true
 
 jobs:

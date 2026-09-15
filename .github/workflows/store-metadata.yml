@@ -43,9 +43,11 @@ on:
 permissions:
   contents: read
 
-# Cancel superseded runs of the same ref (issue #177).
+# Cancel superseded runs of the same ref (issue #177) — a workflow_dispatch
+# run (daily-publish leg) gets its OWN group: a push landing mid-run
+# cancels the leg as "higher priority waiting request exists" (issue #423).
 concurrency:
-  group: Store Metadata & Screenshots-${{ github.ref }}
+  group: Store Metadata & Screenshots-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.run_id) || github.ref }}
   cancel-in-progress: true
 
 jobs:
