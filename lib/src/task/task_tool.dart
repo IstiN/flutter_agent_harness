@@ -28,6 +28,7 @@ import 'dart:async';
 import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
+import '../compaction/compaction_engine.dart';
 import '../a2a/a2a_manager.dart';
 import '../cancel_token.dart';
 import '../model.dart';
@@ -170,6 +171,7 @@ final class TaskToolConfig {
     this.childSessionFactory,
     this.childSessionOpener,
     this.a2aManager,
+    this.compactionEngine,
   }) : semaphore = Semaphore(normalizeConcurrencyLimit(maxConcurrent)),
        outputs = outputs ?? AgentOutputStore(),
        jobManager = jobManager ?? TaskJobManager();
@@ -238,6 +240,10 @@ final class TaskToolConfig {
   /// type `a2a:<name>` runs items against the configured remote agent.
   final A2aManager? a2aManager;
 
+  /// Compaction engine for proactive child compaction (issue #439): the
+  /// host's config choice rides to children — null resolves to structured.
+  final CompactionEngine? compactionEngine;
+
   /// The session-shared executor (issue #222): the `task` tool runs
   /// through it, and hosts pass [TaskExecutor.resumeChild] to
   /// `subagentMonitoringTools` so `task_resume`/`task_send` continue
@@ -255,6 +261,7 @@ final class TaskToolConfig {
     a2aManager: a2aManager,
     childSessionFactory: childSessionFactory,
     childSessionOpener: childSessionOpener,
+    compactionEngine: compactionEngine,
   );
 }
 

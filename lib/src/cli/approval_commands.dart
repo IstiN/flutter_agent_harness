@@ -841,10 +841,17 @@ extension ApprovalCommands on AgentCli {
         for (final handle in handles)
           if (handle.supersedes != null) handle.id: handle.supersedes!,
       };
+      // Issue #439: the child's context pressure rides the row.
+      final pressureNotes = <String, String>{
+        for (final handle in handles)
+          if (handle.contextPressureText != null)
+            handle.id: handle.contextPressureText!,
+      };
       for (final line in taskJobLines(
         jobs,
         dim: _style.dim,
         supersedesOf: supersedesOf,
+        pressureNotes: pressureNotes,
       )) {
         io.writeln(line);
       }

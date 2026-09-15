@@ -1,6 +1,18 @@
 # Changelog
 
 ## Unreleased
+- fix(439): subagents no longer die at the context wall — the main loop's
+  compaction discipline (#387/#388) now applies to children: every child
+  turn boundary checks the estimate (transcript + system prompt + tools,
+  plus any incoming steering) against the CHILD's effective window and
+  compacts through the same AutoCompactor pipeline before the next
+  request; `task_send` to an at-wall child compacts first, then delivers
+  (the over-window guard stays the last resort for a single record
+  larger than the window and still fails honestly); `task_status` and
+  `/tasks` rows expose the child's pressure (estimated tokens / window %
+  / last-compaction info), so the parent sees the wall approaching and
+  pre-empts instead of losing its worker to a hard-failed steer.
+
 - fix(427): transient-ENOENT resilience for the JSONL session store —
   session-file opens, creations and appends (full and windowed storage,
   the task-resume child reopen included) retry a not-found-shaped
