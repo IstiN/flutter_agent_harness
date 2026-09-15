@@ -198,6 +198,7 @@ class Agent {
     this.runIdleTimeout = defaultRunIdleTimeout,
     this.onRunIdleTimeout,
     this.contextWindowCap,
+    this.wireDump = false,
   }) : toolExecutor =
            toolExecutor ?? toolRegistry?.executor ?? _missingToolExecutor(),
        _state = AgentState(
@@ -235,6 +236,12 @@ class Agent {
   /// Reports every run-idle watchdog fire (after [runIdleTimeout] of event
   /// silence); hosts log it for post-mortem "who held the busy row".
   final void Function(Object error)? onRunIdleTimeout;
+
+  /// Opt-in raw wire dumps (issue #385 F5, default off): when on, every
+  /// [ModelRequestEvent] carries the raw serialized outbound payload for
+  /// the host to redact, cap, and persist. OFF by default — payloads can
+  /// carry secrets and bloat the session file.
+  final bool wireDump;
 
   /// Provider adapter used for every model call. See [StreamFunction].
   StreamFunction streamFunction;
@@ -495,6 +502,7 @@ class Agent {
           ? null
           : () => externalSteeringProbe!(),
       maxEmptyRetries: maxEmptyRetries,
+      wireDump: wireDump,
     );
   }
 

@@ -1,10 +1,7 @@
 import 'dart:convert';
 import 'dart:collection';
 
-import 'package:flutter_agent_harness/src/trajectory/trajectory_export.dart';
-import 'package:flutter_agent_harness/src/trajectory/trajectory_record.dart';
-import 'package:flutter_agent_harness/src/trajectory/trajectory_snapshot.dart';
-import 'package:flutter_agent_harness/src/types.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
 final _base = DateTime.utc(2026, 1, 1, 12);
@@ -258,6 +255,50 @@ void main() {
       expect(markdown, contains('text with ```code``` inside'));
       // No unbalanced fence: every opening 4-fence has its 4-fence closer.
       expect('````'.allMatches(markdown).length.isEven, isTrue);
+    });
+  });
+
+  group('markdown blob appendix (issue #385 F1/F2/F5)', () {
+    test('prompt, manifest, and wire-dump sections render hash-labeled', () {
+      final snapshot = _snapshot();
+      final prompt = TrajectoryPromptBlob.of('You are a test agent.');
+      final manifest = TrajectoryToolManifestBlob.of(const [
+        Tool(name: 'bash', description: 'run it', parameters: {}),
+      ]);
+      const dump = TrajectoryWireDump(
+        hash: 'wh1',
+        payload: '{"systemPrompt":"x"}',
+        truncated: true,
+      );
+      final withBlobs = TrajectorySnapshot(
+        records: snapshot.records,
+        requests: snapshot.requests,
+        callSchemas: snapshot.callSchemas,
+        partial: snapshot.partial,
+        runningCalls: snapshot.runningCalls,
+        recordLocations: snapshot.recordLocations,
+        revision: snapshot.revision,
+        blobs: TrajectoryBlobTable()
+            .withPromptBlob(prompt)
+            .withManifestBlob(manifest)
+            .withWireDump(dump),
+      );
+      final markdown = exportTrajectoryMarkdown(withBlobs);
+      expect(markdown, contains('## System prompt versions'));
+      expect(markdown, contains('### prompt ${prompt.hash}'));
+      expect(markdown, contains('You are a test agent.'));
+      expect(markdown, contains('## Tool manifest versions'));
+      expect(markdown, contains('### manifest ${manifest.hash}'));
+      expect(markdown, contains('**bash** — run it'));
+      expect(markdown, contains('## Wire dumps (opt-in)'));
+      expect(markdown, contains('### wire wh1'));
+    });
+
+    test('a blob-free snapshot omits the appendix entirely', () {
+      expect(
+        exportTrajectoryMarkdown(_snapshot()),
+        isNot(contains('System prompt versions')),
+      );
     });
   });
 }

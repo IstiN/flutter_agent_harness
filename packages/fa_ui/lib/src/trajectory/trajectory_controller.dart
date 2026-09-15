@@ -10,6 +10,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show
         ThrottledTrajectorySearchIndex,
         TrajectoryAssistantRecord,
+        TrajectoryHiddenRecordPreview,
         TrajectoryCellKind,
         TrajectoryCompactedRecord,
         TrajectoryGroupModel,
@@ -51,6 +52,14 @@ class TrajectoryController extends ChangeNotifier {
 
   /// Minimum gap between incremental search index rebuilds.
   final Duration searchThrottle;
+
+  /// Hidden-range drill-in (issue #385 F4): the host assigns a resolver
+  /// that reads the covered records out of the session file; the details
+  /// surfaces show a drill-in tab on compacted rows when it is set.
+  Future<List<TrajectoryHiddenRecordPreview>> Function(
+    TrajectoryCompactedRecord record,
+  )?
+  resolveHiddenRecords;
 
   /// Late initializer so it can bind the instance flush hook.
   late final ThrottledTrajectorySearchIndex _throttledIndex =

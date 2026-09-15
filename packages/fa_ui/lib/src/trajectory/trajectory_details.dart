@@ -27,13 +27,22 @@ Future<void> showTrajectoryDetails(
   required TrajectoryRecord record,
   TrajectorySnapshot? snapshot,
   VoidCallback? onJumpToChat,
+  Future<List<TrajectoryHiddenRecordPreview>> Function(
+    TrajectoryCompactedRecord record,
+  )?
+  resolveHiddenRecords,
 }) {
   final strings = TrajectoryStrings.of(context);
   return _showTabbedSheet(
     context,
     historyKey: record.recordId,
     title: strings.detailsEvent,
-    tabs: trajectoryDetailTabs(record, snapshot, strings),
+    tabs: trajectoryDetailTabs(
+      record,
+      snapshot,
+      strings,
+      resolveHiddenRecords: resolveHiddenRecords,
+    ),
     actionLabel: onJumpToChat == null ? null : strings.detailsJumpToChat,
     onAction: onJumpToChat == null
         ? null
