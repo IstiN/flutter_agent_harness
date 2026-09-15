@@ -844,9 +844,16 @@ final class _StructuredHooksAdapter implements StructuredCompactorHooks {
         pass: pass.pass,
         tokensBefore: pass.tokensBefore,
         tokensAfter: pass.tokensAfter,
-        fallback: 'smol',
+        // Name the engine + pass kind: a host watching the report can
+        // tell a structured fold from a classic summary (issue #438).
+        fallback: pass.kind == 'checkpoint'
+            ? 'structured·ckpt'
+            : 'structured·hide',
         ok: pass.ok,
         error: pass.error,
+        hiddenRecords: pass.hiddenCount,
+        summarizedMessages: pass.summarizedCount,
+        summary: pass.summary,
       ),
     );
   }
