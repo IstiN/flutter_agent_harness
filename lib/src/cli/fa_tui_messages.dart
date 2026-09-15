@@ -83,6 +83,16 @@ final class ScheduledStatusMsg extends Msg {
   final int? nextDueMs;
 }
 
+/// Host push of the background-job board's live region (issue #429): the
+/// summary lines and live rows for the transient area above the busy row.
+/// Plain strings — the model clips per frame at the live width.
+final class JobBoardMsg extends Msg {
+  const JobBoardMsg(this.lines);
+
+  /// Pre-rendered live lines (possibly empty — hides the region).
+  final List<String> lines;
+}
+
 /// One-shot minute-boundary tick keeping the scheduled-follow-ups
 /// indicator's "next in Nm" countdown live while the TUI is idle (issue
 /// #213): the row recomputes from the clock at render time, so the tick

@@ -445,7 +445,7 @@ void main() {
   });
 
   group('task blocks', () {
-    test('render header with state and elapsed plus the label', () {
+    test('headline header + label + dim detail, id out of the header', () {
       final lines = taskBlockLines(
         const TaskBlock(
           kind: 'bash',
@@ -453,15 +453,76 @@ void main() {
           state: TaskBlockState.done,
           label: 'echo hi',
           elapsed: 65,
-          detail: '/tmp/log',
+          detail: 'sh-1 · tmp · exit 0 · log: /tmp/log',
         ),
         width: 60,
       );
-      expect(lines.first, contains('bash sh-1'));
-      expect(lines.first, contains('done'));
-      expect(lines.join('\n'), contains('1m05s'));
+      expect(lines.first, contains('bash task completed in background'));
+      expect(lines.first, contains('1m05s'));
+      expect(lines.first, isNot(contains('sh-1')));
       expect(lines.join('\n'), contains('echo hi'));
-      expect(lines.join('\n'), contains('/tmp/log'));
+      expect(lines.join('\n'), contains('sh-1 · tmp · exit 0 · log: /tmp/log'));
+    });
+
+    test('failed headline carries the exit code', () {
+      final lines = taskBlockLines(
+        const TaskBlock(
+          kind: 'bash',
+          id: 'sh-2',
+          state: TaskBlockState.failed,
+          exitCode: 3,
+          label: 'false',
+        ),
+        width: 60,
+      );
+      expect(lines.first, contains('bash task failed (exit 3)'));
+    });
+
+    test('content clips to the requested width — every line fits', () {
+      for (final width in const [80, 120, 200]) {
+        final lines = taskBlockLines(
+          TaskBlock(
+            kind: 'bash',
+            id: 'sh-3',
+            state: TaskBlockState.done,
+            label: 'echo ${'x' * 300}',
+            elapsed: 2,
+            detail: 'sh-3 · exit 0',
+          ),
+          width: width,
+        );
+        for (final line in lines) {
+          expect(line.length, lessThanOrEqualTo(width), reason: 'w=$width');
+        }
+      }
+    });
+
+    test('summary card renders terminal counts with the hint line', () {
+      final lines = shellJobSummaryCardLines(
+        total: 17,
+        running: 0,
+        done: 16,
+        lost: 1,
+        width: 80,
+      );
+      expect(lines.first, contains('Background jobs (17)'));
+      expect(lines.first, contains('0 running'));
+      expect(lines.first, contains('16 done'));
+      expect(lines.first, contains('1 lost'));
+      expect(lines.join('\n'), contains('bash_job status'));
+    });
+
+    test('live summary line keeps every segment present', () {
+      final line = shellJobLiveSummaryLine(
+        total: 17,
+        running: 2,
+        done: 15,
+        lost: 0,
+      );
+      expect(line, contains('⟳ Background jobs (17)'));
+      expect(line, contains('2 running'));
+      expect(line, contains('15 done'));
+      expect(line, contains('0 lost'));
     });
   });
 

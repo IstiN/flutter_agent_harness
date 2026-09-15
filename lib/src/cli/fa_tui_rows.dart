@@ -79,7 +79,8 @@ extension _TuiRowRenderers on FaTuiModel {
   /// True while the models picker (or its two-step provider page) is open —
   /// the only pickers that carry the footer hint row.
   bool get _modelPickerFamilyOpen =>
-      menuOpen && menuModelMode &&
+      menuOpen &&
+      menuModelMode &&
       (pickerId == 'models' || pickerId == 'modelProvider');
 
   /// One menu row (label + dim description, truncated to the width).
@@ -150,6 +151,15 @@ extension _TuiRowRenderers on FaTuiModel {
     var row = baseRow;
     if (scheduledCount > 0) {
       b.writeln(_scheduledRowLine());
+      row++;
+    }
+    // The background-job board's live region (issue #429): dim summary +
+    // live rows, clipped per frame at the live width (resize-safe).
+    for (final line in jobBoardLines) {
+      final clipped = line.length > termWidth - 2
+          ? '${line.substring(0, termWidth - 3)}…'
+          : line;
+      b.writeln(_dim(clipped));
       row++;
     }
     if (busy) {
