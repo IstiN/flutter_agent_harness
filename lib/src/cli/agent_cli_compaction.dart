@@ -388,3 +388,43 @@ extension AgentCliCompactionRun on AgentCli {
     return hooks.reportedPass;
   }
 }
+
+/// Issue #387: emergency relief for the loop's over-window guard — an
+/// extension so agent_cli.dart stays under the 2800-line size gate.
+extension OverWindowGuardRelief on AgentCli {
+  /// ONE synchronous compaction pass over the live transcript, run when
+  /// the loop's guard is about to refuse an over-window request. Returns
+  /// the relieved message list to retry with, or `null` when nothing
+  /// hideable remains (or the pass failed to shrink anything) — the loop
+  /// then surfaces its verbatim guard error. The loop re-measures the
+  /// returned list on the same basis ([_liveRequestTokens]), so a list
+  /// that is still over the window is refused there too (E1 fail-fast,
+  /// never a loop).
+  Future<List<Message>?> _relieveOverWindow(List<Message> overWindow) async {
+    if (_session == null) return null;
+    _logDiagnostic(
+      'over-window relief start sid=$_logSid '
+      'messages=${_agent.state.messages.length}',
+    );
+    final beforeTokens = estimateRequestTokens(
+      overWindow,
+      systemPrompt: _agent.state.systemPrompt,
+      tools: _agent.state.tools,
+    );
+    await _runAutoCompact('[auto-compacted]');
+    // Hand the busy row back to the run: a stale 'Compacting context…'
+    // over the streamed turn reads as a compaction hang.
+    _tuiController?.setBusyPhase('');
+    final after = _agent.state.messages.toList();
+    final afterTokens = _liveRequestTokens();
+    if (afterTokens >= beforeTokens) {
+      _logDiagnostic('over-window relief no-op sid=$_logSid');
+      return null;
+    }
+    _logDiagnostic(
+      'over-window relief done sid=$_logSid tokens=$afterTokens '
+      '(was $beforeTokens, ${after.length} messages)',
+    );
+    return after;
+  }
+}
