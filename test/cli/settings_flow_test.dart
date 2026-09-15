@@ -2095,6 +2095,7 @@ memory:
       expect(fake.calls, 0);
     });
   });
+
   group('context cap flow (issue #394)', () {
     /// Seeds the USER config (the machine-level file the agent: section
     /// belongs in, mirroring `fa config set agent…` global scope) and
@@ -2440,7 +2441,6 @@ memory:
       expect(fake.calls, 0);
     });
   });
-
   group('images settings flow (issue #395)', () {
     // The registry settings are process-wide globals (bin/fah.dart boots
     // them from the section); every test starts from a fresh boot state.
