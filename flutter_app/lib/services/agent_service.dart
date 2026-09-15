@@ -130,7 +130,8 @@ class AgentService extends ChangeNotifier
 
   /// The agent's opt-in hub membership (issue #402) — surfaces read the
   /// live state and toggle the join from here.
-  AgentNetworkController get agentNetwork => _agentNetwork;
+  AgentNetworkController get agentNetwork =>
+      _agentNetwork ?? (throw StateError('agentNetwork before initialize()'));
 
   /// The sleep-prevention guard (issue #325): acquired on `initialize`,
   /// released on `dispose`. Null (tests, web, `off` config) runs the
@@ -570,12 +571,13 @@ class AgentService extends ChangeNotifier
     // The app agent's opt-in hub membership (issue #402 AC3): the
     // controller owns the settings store and swaps the hub-primary
     // composite over the file fabric when enabled.
-    _agentNetwork = AgentNetworkController(
+    final network = AgentNetworkController(
       env: env,
       fileLayer: fileFabricRepo,
       fileFabric: fabricRepo,
     );
-    unawaited(_agentNetwork.start());
+    _agentNetwork = network;
+    unawaited(network.start());
     // Real JSONL child sessions at completion (fast register keeps the
     // steering race away; transcript lands when the child finishes).
     Future<Session> childSessionFactory(String parentId, String childId) async {
@@ -652,8 +654,7 @@ class AgentService extends ChangeNotifier
         toolEnv,
         webSearch: isOnDevice ? null : webSearchConfig,
         shellJobs: _shellJobs,
-        onPasswordPrompt:
-            (prompt) async => passwordPromptHandler?.call(prompt),
+        onPasswordPrompt: (prompt) async => passwordPromptHandler?.call(prompt),
         // Self-configuration on every host (issue #29 S5/AC10/AC11): the
         // same core the `fa config` CLI verbs wrap, over THIS host's env —
         // desktop container, browser storage, or mobile sandbox. Hosts
@@ -1076,8 +1077,10 @@ class AgentService extends ChangeNotifier
   SubagentManager? _subagentManager;
 
   /// The app agent's opt-in hub membership (issue #402); owns its own
-  /// settings store and lifecycle, disposed with the service.
-  late final AgentNetworkController _agentNetwork;
+  /// settings store and lifecycle, disposed with the service. Null until
+  /// [initialize] builds it — a service disposed without initializing
+  /// (tests) has nothing to tear down.
+  AgentNetworkController? _agentNetwork;
 
   /// The session's retained-subagent registry (null before the agent is
   /// built). The settings Agents section renders the live tree from it.
@@ -2568,7 +2571,7 @@ class AgentService extends ChangeNotifier
     // watchdog would otherwise outlive the host by minutes (and wedge
     // widget tests' fake_async invariants on a pending timer).
     _agent.abort();
-    _agentNetwork.dispose();
+    _agentNetwork?.dispose();
     _compactExpand?.dispose();
     if (_subagentManager != null) _scheduledMessages.dispose();
     _inboxWatchTimer?.cancel();

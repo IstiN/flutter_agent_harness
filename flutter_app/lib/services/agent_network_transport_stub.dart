@@ -7,8 +7,7 @@
 library;
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    show HubIdentity;
-import 'package:flutter_agent_harness/io.dart' show HubTransport;
+    show HubIdentity, HubTransport;
 
 /// Whether this platform can host the agent's hub membership.
 const bool agentNetworkSupported = false;

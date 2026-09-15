@@ -124,9 +124,7 @@ Future<void> saveHubIdentity(String path, HubIdentity identity) async {
   final signingSeed = await identity.signingKeyPair.extractPrivateKeyBytes();
   final dhPriv = await identity.dhKeyPair.extractPrivateKeyBytes();
   await File(path).parent.create(recursive: true);
-  await File(
-    path,
-  ).writeAsString(
+  await File(path).writeAsString(
     'ed25519:${base64Encode(signingSeed)}\n'
     'x25519:${base64Encode(dhPriv)}\n',
     flush: true,
