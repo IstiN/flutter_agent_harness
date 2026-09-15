@@ -39,6 +39,7 @@ void main() {
     String? homeDir,
     TtsrConfig? ttsr,
     RedactionPipeline? redactionPipeline,
+    int? contextWindowCap,
   }) {
     return AgentCli(
       config: AgentCliConfig(
@@ -58,6 +59,7 @@ void main() {
         modelsHttpClient: modelsHttpClient,
         modelRolesResolver: modelRolesResolver,
         memoryConfig: memoryConfig,
+        contextWindowCap: contextWindowCap,
         dapHubState: dapHubState,
         onDapHubConfigChanged: onDapHubConfigChanged,
         providerKind: 'openai-completions',
@@ -2093,6 +2095,352 @@ memory:
       expect(fake.calls, 0);
     });
   });
+  group('context cap flow (issue #394)', () {
+    /// Seeds the USER config (the machine-level file the agent: section
+    /// belongs in, mirroring `fa config set agent…` global scope) and
+    /// returns the cli over it.
+    Future<AgentCli> seededCli(
+      FakeStreamFunction fake, {
+      String yaml = 'provider: openrouter\nmodel: m1\n',
+      int? contextWindowCap,
+    }) async {
+      await env.writeFile('/home/u/.fah/config.yaml', yaml);
+      return cliFor(
+        fake.call,
+        homeDir: '/home/u',
+        contextWindowCap: contextWindowCap,
+      );
+    }
+
+    test(
+      'AC1: the hub picker and the /settings summary carry the cap',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(fake.call, contextWindowCap: 64000);
+        final run = cli.run();
+
+        io.sendLine('/settings');
+        await waitForIt(() => io.out.toString().contains('ctx cap:'));
+        io.sendLine('/exit');
+        await run;
+
+        // The hub row exists with the raw window vs the effective cap.
+        final row = cli.settingsHubItems().firstWhere(
+          (item) => item.key == 'context-cap',
+        );
+        expect(row.label, 'Context cap');
+        expect(row.description, '100000 → 64000');
+        expect(io.out.toString(), contains('ctx cap: 100000 → 64000'));
+        expect(fake.calls, 0);
+      },
+    );
+
+    test('AC1: the summary reads off when no cap is set', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call); // uncapped boot
+      final run = cli.run();
+
+      io.sendLine('/settings');
+      await waitForIt(() => io.out.toString().contains('ctx cap: off'));
+      io.sendLine('/exit');
+      await run;
+
+      final row = cli.settingsHubItems().firstWhere(
+        (item) => item.key == 'context-cap',
+      );
+      expect(row.description, 'off (window 100000)');
+      expect(fake.calls, 0);
+    });
+
+    test('every hub row has a dispatch target (Enter never no-ops)', () {
+      final cli = cliFor(FakeStreamFunction([textTurn('ok')]).call);
+      final keys = cli.settingsHubItems().map((item) => item.key).toSet()
+        ..remove('mcp'); // pre-existing main gap — `/mcp` has no picker yet
+      expect(
+        keys.difference(cli.settingsPickerHandlerKeysForTest()),
+        isEmpty,
+        reason: 'a hub row without a handler closes silently on Enter',
+      );
+    });
+
+    test('AC2: setting the cap round-trips through the yaml file', () async {
+      const seed = '# owner knobs\nprovider: openrouter\n';
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = await seededCli(fake, yaml: seed);
+      final run = cli.run();
+
+      final flow = cli.startContextCapFlow();
+      await waitForIt(() => io.out.toString().contains('context cap'));
+      io.sendLine('1'); // set
+      await waitForIt(
+        () => io.out.toString().contains('context cap in tokens'),
+      );
+      io.sendLine('32768');
+      await waitForIt(
+        () => io.out.toString().contains('agent.contextWindowCap = 32768'),
+      );
+      io.sendLine('3'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      // The real boot parser re-reads the file.
+      final written = (await env.readTextFile(
+        '/home/u/.fah/config.yaml',
+      )).valueOrNull;
+      expect(written, isNotNull);
+      final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
+      expect(parsed.contextWindowCap, 32768);
+      // Surgical write: the other sections survive byte-for-byte.
+      expect(written, contains('# owner knobs\nprovider: openrouter\n'));
+      expect(fake.calls, 0);
+    });
+
+    test('AC2: clearing the cap removes the whole agent block', () async {
+      const seed = 'provider: openrouter\nagent:\n  contextWindowCap: 32768\n';
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = await seededCli(fake, yaml: seed, contextWindowCap: 32768);
+      final run = cli.run();
+
+      final flow = cli.startContextCapFlow();
+      await waitForIt(() => io.out.toString().contains('context cap'));
+      io.sendLine('2'); // clear
+      await waitForIt(
+        () => io.out.toString().contains('agent.contextWindowCap removed'),
+      );
+      io.sendLine('3'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      final written = (await env.readTextFile(
+        '/home/u/.fah/config.yaml',
+      )).valueOrNull;
+      expect(written, isNotNull);
+      // The bare `agent:` would fail the strict diagnostics validator —
+      // the whole one-key block is gone.
+      expect(written, isNot(contains('agent:')));
+      final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
+      expect(parsed.contextWindowCap, isNull);
+      expect(written, contains('provider: openrouter'));
+      expect(fake.calls, 0);
+    });
+
+    test('AC3: the flow states the change waits for the next boot', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = await seededCli(fake);
+      final run = cli.run();
+
+      final flow = cli.startContextCapFlow();
+      await waitForIt(() => io.out.toString().contains('context cap'));
+      io.sendLine('1'); // set
+      await waitForIt(
+        () => io.out.toString().contains('context cap in tokens'),
+      );
+      io.sendLine('16384');
+      await waitForIt(
+        () => io.out.toString().contains('(applies at next boot'),
+      );
+      io.sendLine('3'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+      expect(fake.calls, 0);
+    });
+
+    test(
+      'AC4: below the floor shows the parser error, writes nothing',
+      () async {
+        const seed =
+            'provider: openrouter\nagent:\n  contextWindowCap: 32768\n';
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = await seededCli(fake, yaml: seed);
+        final run = cli.run();
+
+        final flow = cli.startContextCapFlow();
+        await waitForIt(() => io.out.toString().contains('context cap'));
+        io.sendLine('1'); // set
+        await waitForIt(
+          () => io.out.toString().contains('context cap in tokens'),
+        );
+        io.sendLine('16383'); // one below the compaction reserve
+        await waitForIt(
+          () => io.out.toString().contains('must be at least 16384'),
+        );
+        io.sendLine('3'); // done
+        await flow;
+        io.sendLine('/exit');
+        await run;
+
+        expect(io.out.toString(), contains('not saved:'));
+        // Byte-identical: nothing was written.
+        final written = (await env.readTextFile(
+          '/home/u/.fah/config.yaml',
+        )).valueOrNull;
+        expect(written, seed);
+        expect(fake.calls, 0);
+      },
+    );
+
+    test('AC4: a non-integer shows the parser error, writes nothing', () async {
+      const seed = 'provider: openrouter\n';
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = await seededCli(fake, yaml: seed);
+      final run = cli.run();
+
+      final flow = cli.startContextCapFlow();
+      await waitForIt(() => io.out.toString().contains('context cap'));
+      io.sendLine('1'); // set
+      await waitForIt(
+        () => io.out.toString().contains('context cap in tokens'),
+      );
+      io.sendLine('big');
+      await waitForIt(
+        () => io.out.toString().contains('must be a positive integer (tokens)'),
+      );
+      io.sendLine('3'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      expect(io.out.toString(), contains('not saved:'));
+      final written = (await env.readTextFile(
+        '/home/u/.fah/config.yaml',
+      )).valueOrNull;
+      expect(written, seed);
+      expect(fake.calls, 0);
+    });
+
+    test(
+      'a cap at or above the model window warns it clamps nothing',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = await seededCli(fake); // testModel window: 100000
+        final run = cli.run();
+
+        final flow = cli.startContextCapFlow();
+        await waitForIt(() => io.out.toString().contains('context cap'));
+        io.sendLine('1'); // set
+        await waitForIt(
+          () => io.out.toString().contains('context cap in tokens'),
+        );
+        io.sendLine('200000');
+        await waitForIt(
+          () => io.out.toString().contains('the cap clamps nothing'),
+        );
+        io.sendLine('3'); // done
+        await flow;
+        io.sendLine('/exit');
+        await run;
+        expect(fake.calls, 0);
+      },
+    );
+
+    test('E1: absent section — the flow writes a fresh block', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, homeDir: '/home/u'); // no file at all
+      final run = cli.run();
+
+      final flow = cli.startContextCapFlow();
+      await waitForIt(() => io.out.toString().contains('context cap'));
+      io.sendLine('1'); // set
+      await waitForIt(
+        () => io.out.toString().contains('context cap in tokens'),
+      );
+      io.sendLine('16384');
+      await waitForIt(
+        () => io.out.toString().contains('agent.contextWindowCap = 16384'),
+      );
+      io.sendLine('3'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      final written = (await env.readTextFile(
+        '/home/u/.fah/config.yaml',
+      )).valueOrNull;
+      final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
+      expect(parsed.contextWindowCap, 16384);
+      expect(fake.calls, 0);
+    });
+
+    test('E2: unreadable config — clear error, nothing written', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(
+        fake.call,
+        homeDir: '/home/u',
+        contextWindowCap: 32768,
+      );
+      final run = cli.run();
+      // A directory where the user config should be.
+      await env.createDir('/home/u');
+      await env.createDir('/home/u/.fah');
+      await env.createDir('/home/u/.fah/config.yaml');
+
+      final flow = cli.startContextCapFlow();
+      await waitForIt(() => io.out.toString().contains('context cap'));
+      io.sendLine('1'); // set
+      await waitForIt(
+        () => io.out.toString().contains('context cap in tokens'),
+      );
+      io.sendLine('16384');
+      await waitForIt(
+        () =>
+            io.out.toString().contains('cannot read /home/u/.fah/config.yaml'),
+      );
+      io.sendLine('2'); // clear — the same read error on the clear branch
+      await waitForIt(
+        () => 'cannot read'.allMatches(io.out.toString()).length == 2,
+      );
+      io.sendLine('3'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+      expect(fake.calls, 0);
+    });
+
+    test('clearing with no cap set is a no-op', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, homeDir: '/home/u'); // uncapped
+      final run = cli.run();
+
+      final flow = cli.startContextCapFlow();
+      await waitForIt(() => io.out.toString().contains('context cap'));
+      io.sendLine('2'); // clear
+      // The handler output, not the menu row's `already off` description.
+      await waitForIt(() => io.out.toString().contains('nothing to clear'));
+      io.sendLine('3'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      final written = (await env.readTextFile(
+        '/home/u/.fah/config.yaml',
+      )).valueOrNull;
+      expect(written, isNull);
+      expect(fake.calls, 0);
+    });
+
+    test('cancelled at the menu writes nothing', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, homeDir: '/home/u');
+      final run = cli.run();
+
+      final flow = cli.startContextCapFlow();
+      await waitForIt(() => io.out.toString().contains('context cap'));
+      io.interrupt();
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      final written = (await env.readTextFile(
+        '/home/u/.fah/config.yaml',
+      )).valueOrNull;
+      expect(written, isNull);
+      expect(fake.calls, 0);
+    });
+  });
+
   group('images settings flow (issue #395)', () {
     // The registry settings are process-wide globals (bin/fah.dart boots
     // them from the section); every test starts from a fresh boot state.
