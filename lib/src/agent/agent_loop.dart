@@ -1194,61 +1194,59 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
       config.model.contextWindow,
       config.contextWindowCap,
     );
-    if (window > 0) {
-      // The same accounting basis as the host's ctx meter and the
-      // compaction threshold: transcript estimate PLUS the system-prompt /
-      // tool-schema overhead when no provider-usage anchor prices them in
-      // (an unanchored estimate otherwise undercounts every request by
-      // that overhead — the "meter said 64% but the request was
-      // over-window" mismatch).
-      final tokens = estimateRequestTokens(
-        requestContext.messages,
-        systemPrompt: requestContext.systemPrompt,
-        tools: requestContext.tools ?? const [],
-      );
-      if (tokens > window) {
-        // Issue #387 emergency relief: offer the host ONE synchronous
-        // compaction over the live transcript before giving up. A non-null
-        // result replaces the loop context and the request is retried;
-        // null, a throw, or a still-over result keeps the verbatim error
-        // below. Bounded to one attempt — a tool result bigger than the
-        // window fails fast here instead of looping.
-        if (!reliefUsed && config.overWindowRelief != null) {
-          reliefUsed = true;
-          try {
-            final relieved = await config.overWindowRelief!(context.messages);
-            if (relieved != null) {
-              // The relieved transcript becomes the loop's live context:
-              // the retried request is built from it and every later turn
-              // rides it (the tuple return hands it back to the host).
-              context = Context(
-                systemPrompt: context.systemPrompt,
-                messages: relieved,
-                tools: context.tools,
-              );
-              continue;
-            }
-          } catch (_) {
-            // A failed relief = no relief; the error below is the answer.
+    // The same accounting basis as the host's ctx meter and the
+    // compaction threshold: transcript estimate PLUS the system-prompt /
+    // tool-schema overhead when no provider-usage anchor prices them in
+    // (an unanchored estimate otherwise undercounts every request by
+    // that overhead — the "meter said 64% but the request was
+    // over-window" mismatch).
+    final tokens = estimateRequestTokens(
+      requestContext.messages,
+      systemPrompt: requestContext.systemPrompt,
+      tools: requestContext.tools ?? const [],
+    );
+    if (window > 0 && tokens > window) {
+      // Issue #387 emergency relief: offer the host ONE synchronous
+      // compaction over the live transcript before giving up. A non-null
+      // result replaces the loop context and the request is retried;
+      // null, a throw, or a still-over result keeps the verbatim error
+      // below. Bounded to one attempt — a tool result bigger than the
+      // window fails fast here instead of looping.
+      if (!reliefUsed && config.overWindowRelief != null) {
+        reliefUsed = true;
+        try {
+          final relieved = await config.overWindowRelief!(context.messages);
+          if (relieved != null) {
+            // The relieved transcript becomes the loop's live context:
+            // the retried request is built from it and every later turn
+            // rides it (the tuple return hands it back to the host).
+            context = Context(
+              systemPrompt: context.systemPrompt,
+              messages: relieved,
+              tools: context.tools,
+            );
+            continue;
           }
+        } catch (_) {
+          // A failed relief = no relief; the error below is the answer.
         }
-        return (
-          await _finishWithoutStream(
-            context,
-            emit,
-            _terminalMessage(
-              config.model,
-              StopReason.error,
-              '$contextWindowExhaustedMarker: the outgoing context is '
-              '~$tokens tokens, '
-              'the ${config.model.id} effective window is $window. The request '
-              'was not sent. Auto-compaction runs next; if it keeps failing, '
-              'run /compact or start a fresh session.',
-            ),
-          ),
-          context,
-        );
       }
+      return (
+        await _finishWithoutStream(
+          context,
+          emit,
+          _terminalMessage(
+            config.model,
+            StopReason.error,
+            '$contextWindowExhaustedMarker: the outgoing context is '
+            '~$tokens tokens, '
+            'the ${config.model.id} effective window is $window. The request '
+            'was not sent. Auto-compaction runs next; if it keeps failing, '
+            'run /compact or start a fresh session.',
+          ),
+        ),
+        context,
+      );
     }
 
     await emit(ModelRequestEvent(detail: _summarizeRequest(requestContext)));
@@ -1272,9 +1270,7 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
       // detection, re-run the repair over the rebuilt request, retry ONCE —
       // a wedged session recovers here instead of never. A second failure
       // surfaces normally (no infinite loop).
-      if (!pairingHealed &&
-          finished.stopReason == StopReason.error &&
-          isToolPairingProviderError(finished.errorMessage)) {
+      if (_needsPairingHeal(pairingHealed, finished)) {
         await emit(
           ToolPairingRepairEvent(
             report: const ToolPairingRepairReport(),
@@ -1333,6 +1329,13 @@ Future<(AssistantMessage, Context)> _providerErrorTurn(
     context,
   );
 }
+
+/// Whether a finished turn needs the one-shot pairing self-heal (issue
+/// #85): a provider pairing 400 on an error stop, before it was used.
+bool _needsPairingHeal(bool pairingHealed, AssistantMessage finished) =>
+    !pairingHealed &&
+    finished.stopReason == StopReason.error &&
+    isToolPairingProviderError(finished.errorMessage);
 
 /// Builds the synthetic error turn for a provider stream that closed
 /// without any terminal event (provider bug): keep the streamed partial
