@@ -183,11 +183,18 @@ String? _toolNameOf(Object content) {
 /// session's `main` mailbox. The CLI's inbox watcher wakes and delivers
 /// it as a user turn.
 final class FileSessionInputChannel implements SessionInputChannel {
-  /// Creates the channel over the fabric at [messagingRoot].
-  FileSessionInputChannel({required FileMessagingRepository repository})
-    : _repository = repository;
+  /// Creates the channel over the fabric at [messagingRoot]. [fromId] is
+  /// the attribution the owner's transcript renders (`[from $fromId] …`)
+  /// — the app sends as `Fa.app user`, a viewer CLI as `fa CLI user`.
+  FileSessionInputChannel({
+    required FileMessagingRepository repository,
+    this.fromId = 'Fa.app user',
+  }) : _repository = repository;
 
   final FileMessagingRepository _repository;
+
+  /// The sender attribution carried on every sent envelope.
+  final String fromId;
 
   @override
   Future<void> send(String sessionId, String text) async {
@@ -195,7 +202,7 @@ final class FileSessionInputChannel implements SessionInputChannel {
     await _repository.send(
       AgentMessage(
         id: newMessageId(),
-        fromId: 'app',
+        fromId: fromId,
         toId: '$sessionId/main',
         text: text,
         sentAt: DateTime.now().toUtc().toIso8601String(),

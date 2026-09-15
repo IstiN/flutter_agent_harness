@@ -20,7 +20,11 @@ const projectMountSegment = '/project';
 /// directory pass through unchanged, so values the env itself hands out
 /// ([absolutePath]/[joinPath] results, [FileInfo.path]) stay valid input.
 final class ProjectMountEnv
-    implements ExecutionEnv, BackgroundShell, RangedReadFileSystem {
+    implements
+        ExecutionEnv,
+        BackgroundShell,
+        RangedReadFileSystem,
+        RenamableFileSystem {
   /// Creates an env over [delegate] with no active mount.
   ProjectMountEnv(this._delegate);
 
@@ -162,6 +166,23 @@ final class ProjectMountEnv
           FileErrorCode.notSupported,
           'readRange not supported by $delegate',
           path: path,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Future<Result<void, FileError>> renamePath(String from, String to) {
+    final delegate = _delegate;
+    if (delegate case final RenamableFileSystem renamable) {
+      return renamable.renamePath(_map(from), _map(to));
+    }
+    return Future.value(
+      Err(
+        FileError(
+          FileErrorCode.notSupported,
+          'renamePath not supported by $delegate',
+          path: from,
         ),
       ),
     );

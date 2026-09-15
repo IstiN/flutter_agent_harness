@@ -71,7 +71,8 @@ FileError _fromFileSystemException(FileSystemException error, String path) {
 ///
 /// Relative paths resolve against [cwd] (default: the process working
 /// directory). All operations uphold the [FileSystem] never-throw invariant.
-final class LocalFileSystem implements FileSystem, RangedReadFileSystem {
+final class LocalFileSystem
+    implements FileSystem, RangedReadFileSystem, RenamableFileSystem {
   /// Creates a [LocalFileSystem] rooted at [cwd].
   LocalFileSystem({String? cwd}) : cwd = cwd ?? Directory.current.path;
 
@@ -347,6 +348,18 @@ final class LocalFileSystem implements FileSystem, RangedReadFileSystem {
         );
       }
       return Err(_toFileError(error, resolved));
+    }
+  }
+
+  @override
+  Future<Result<void, FileError>> renamePath(String from, String to) async {
+    final resolvedFrom = _resolve(from);
+    final resolvedTo = _resolve(to);
+    try {
+      await File(resolvedFrom).rename(resolvedTo);
+      return const Ok(null);
+    } on Object catch (error) {
+      return Err(_toFileError(error, resolvedTo));
     }
   }
 }

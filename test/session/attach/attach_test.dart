@@ -180,7 +180,7 @@ void main() {
         expect(delivered, hasLength(1));
         expect(delivered.single.kind, AgentMessageKind.user);
         expect(delivered.single.text, 'typed in the app');
-        expect(delivered.single.fromId, 'app');
+        expect(delivered.single.fromId, 'Fa.app user');
         // Draining (what the CLI's steering poll does) consumes it.
         final drained = await fabric.drain('sess-a/main');
         expect(drained, hasLength(1));

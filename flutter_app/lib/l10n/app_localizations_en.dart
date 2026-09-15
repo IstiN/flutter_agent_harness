@@ -1888,6 +1888,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get githubBrowserCodeHint => 'One-time code from fa1.dev';
 
   @override
+  String sessionDrivenElsewhere(String host, int pid) {
+    return 'Driven by $host (pid $pid) — you are viewing. Your messages are delivered to the live agent.';
+  }
+
+  @override
   String sessionTooLargeTitle(String size) {
     return 'Session ($size MB) is over the instant-open budget and couldn\'t be opened safely.';
   }

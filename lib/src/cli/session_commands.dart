@@ -61,6 +61,11 @@ extension on AgentCli {
     _ttsr?.reset();
     _session = await _createSession(name: trimmed);
     _syncMailboxPrefix();
+    // Re-claim ownership for the new session (#428): free → drive,
+    // live lease → viewer (no takeover ever).
+    await _releaseSessionLease();
+    await _claimSessionLease();
+    await _printViewerBannerIfAny();
     _persistedCount = 0;
     io.writeln("created session '$trimmed'");
   }
@@ -92,6 +97,11 @@ extension on AgentCli {
     await _loadAgentContext();
     _session = await _loadSession(metadata);
     _syncMailboxPrefix();
+    // Re-claim ownership for the new session (#428): free → drive,
+    // live lease → viewer (no takeover ever).
+    await _releaseSessionLease();
+    await _claimSessionLease();
+    await _printViewerBannerIfAny();
     // Now that `_session` is assigned, the registry source can read the
     // resumed session's `subagent_registry` records. Awaited (issue #332):
     // zombie rows settle before the next prompt can spawn children, and no
@@ -205,6 +215,11 @@ extension on AgentCli {
     _ttsr?.reset();
     _session = await _createSession(name: trimmed);
     _syncMailboxPrefix();
+    // Re-claim ownership for the new session (#428): free → drive,
+    // live lease → viewer (no takeover ever).
+    await _releaseSessionLease();
+    await _claimSessionLease();
+    await _printViewerBannerIfAny();
     _persistedCount = 0;
     io.writeln("created session '$trimmed'");
   }
