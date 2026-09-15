@@ -953,6 +953,12 @@ String applicationNote(String section) => switch (section) {
   // Issue #395: the flow republishes the process-wide registry global on
   // every write, so the request build picks the change up immediately.
   'images' => 'applies to the next request build',
+  // Issue #397: the flow re-arms the session's sleep-prevention
+  // assertion from the saved section on every write (hosts with a power
+  // runner; without one there is no assertion to re-arm at all).
+  'power' =>
+    'applies live — the session re-arms its sleep-prevention assertion '
+        'from the saved file',
   // Issue #279: the session theme switches live on write (`/theme` runs
   // the same persist + switch flow); a hand-edit applies at next boot.
   'tui' => 'applies live via /theme, otherwise at next boot',

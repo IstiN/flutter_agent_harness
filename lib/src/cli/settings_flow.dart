@@ -1210,6 +1210,154 @@ extension SettingsFlow on AgentCli {
     ];
   }
 
+  /// The settings-hub row and `/settings` summary label for the power
+  /// section (issue #397): the effective sleep-prevention level and hold
+  /// lifecycle, plus whether an assertion is held right now. Without a
+  /// runner (tests, web) the boot config fields still say what a capable
+  /// host would apply.
+  String _powerStatusLabel() {
+    final status = _powerAssertions?.status();
+    if (status == null) {
+      return '${config.powerSleepPrevention.value} · '
+          '${config.powerSleepPreventionHold.value} · '
+          'no runner on this host';
+    }
+    return '${status.level.value} · ${status.hold.value} · '
+        '${status.held ? 'assertion held' : 'not held'}';
+  }
+
+  /// Settings → Power: the `power:` config section (sleep prevention,
+  /// issues #325/#326) — the `sleepPrevention` level and the `hold`
+  /// lifecycle. Writes go through the surgical validated-yaml upsert
+  /// into the USER config, and every successful write re-arms the
+  /// session's assertion from the saved file ([_reloadPowerAssertions]
+  /// — what's live is what's on disk). Loops until cancelled or `done`.
+  Future<void> startPowerFlow() async {
+    for (;;) {
+      final picked = await _pickOption('power', _powerMenuOptions());
+      if (picked == null || picked == 'done') return;
+      await _applyPowerPick(picked);
+    }
+  }
+
+  /// Dispatches one [startPowerFlow] menu pick; the caller re-renders
+  /// the menu afterwards. Split out to keep each function's complexity
+  /// under the repo's CRAP gate.
+  Future<void> _applyPowerPick(String picked) async {
+    switch (picked) {
+      case 'sleepPrevention':
+        await _askPowerLevel();
+      case 'hold':
+        await _togglePowerHold();
+    }
+  }
+
+  /// The main menu of [startPowerFlow]: one row per editable field of
+  /// the section. Pure builder.
+  List<FlowOption> _powerMenuOptions() {
+    final level = _powerAssertions?.level ?? config.powerSleepPrevention;
+    final hold = _powerAssertions?.hold ?? config.powerSleepPreventionHold;
+    return [
+      (
+        'sleepPrevention',
+        'Sleep prevention level',
+        "off|idle|display|system — now '${level.value}'",
+      ),
+      (
+        'hold',
+        'Toggle hold lifecycle',
+        '${hold.value} → '
+            '${hold == PowerAssertionHold.perRun ? 'session' : 'per-run'}',
+      ),
+      ('done', 'Done', ''),
+    ];
+  }
+
+  /// The level branch: an empty answer keeps the current value; anything
+  /// else rides verbatim into the yaml upsert — the strict boot parser
+  /// ([parsePowerSection]) validates the edited section BEFORE the
+  /// write, so a bad value prints the parser's own message and nothing
+  /// is written (AC4).
+  Future<void> _askPowerLevel() async {
+    final current =
+        (_powerAssertions?.level ?? config.powerSleepPrevention).value;
+    final answer = await _askLine(
+      "sleepPrevention off|idle|display|system (empty keeps '$current'): ",
+    );
+    if (answer == null) return;
+    final value = answer.trim();
+    if (value.isEmpty) return;
+    await _writePowerKey(const ['power', 'sleepPrevention'], value);
+  }
+
+  /// The hold toggle: per-run ↔ session, one keypress. The current value
+  /// is the live controller's (it tracks the writes), so the toggle
+  /// always offers the other lifecycle.
+  Future<void> _togglePowerHold() async {
+    final current = _powerAssertions?.hold ?? config.powerSleepPreventionHold;
+    final next = current == PowerAssertionHold.perRun
+        ? PowerAssertionHold.session
+        : PowerAssertionHold.perRun;
+    await _writePowerKey(const ['power', 'hold'], next.value);
+  }
+
+  /// The shared write path: a USER-file upsert of [segments] → [value]
+  /// validated with the real boot parser first, then reload-after-write
+  /// re-arms the session's assertion from the saved file.
+  Future<void> _writePowerKey(List<String> segments, String value) async {
+    if (_userConfigPath() == null) {
+      io.writeln('power: no user config on this host — not saved');
+      return;
+    }
+    final wrote = await _upsertConfigYaml(
+      segments,
+      value,
+      projectScope: false,
+      validate: parsePowerSection,
+    );
+    if (wrote) await _reloadPowerAssertions();
+  }
+
+  /// Reload-after-write (AC3/E3): the boot-built controller keeps its
+  /// construction-time level/hold, so the saved section re-arms the
+  /// session's assertion — the old assertion releases, a session-held
+  /// level re-acquires immediately and per-run waits for the next run
+  /// start. Without a runner on this host there is no assertion
+  /// lifecycle to re-arm (the change lands at next boot where one
+  /// exists); a read race after the successful write keeps the current
+  /// live controller — the next write re-syncs.
+  Future<void> _reloadPowerAssertions() async {
+    final path = _userConfigPath();
+    if (path == null) return;
+    switch (await _env.readTextFile(path)) {
+      case Ok(:final value):
+        final doc = loadYaml(value);
+        await _rearmPowerAssertions(
+          parsePowerSection(doc is YamlMap ? doc['power'] : null),
+        );
+      case Err():
+        break;
+    }
+  }
+
+  /// Swaps the session's sleep-prevention controller for one built from
+  /// [section] (issues #325/#326 wiring): release, rebuild, and a
+  /// session-held level re-acquires at once. The boot construction in
+  /// `agent_cli.dart` applies the same defaults.
+  Future<void> _rearmPowerAssertions(PowerSection section) async {
+    final runner = config.powerRunner;
+    if (runner == null) return;
+    await _powerAssertions?.onSessionClosed();
+    final controller = PowerAssertionController(
+      runner: runner,
+      level: section.sleepPrevention ?? PowerAssertionLevel.idle,
+      hold: section.hold ?? PowerAssertionHold.perRun,
+      onWarn: io.writeln,
+    );
+    _powerAssertions = controller;
+    await controller.onSessionOpened();
+  }
+
   /// The settings-hub row and `/settings` summary label for the owner cap
   /// (issue #394): the model's raw window vs the effective cap.
   String _contextCapStatusLabel() {
@@ -1650,6 +1798,7 @@ extension SettingsFlow on AgentCli {
         label: 'Images',
         description: _imagesStatusLabel(),
       ),
+      MenuItem(key: 'power', label: 'Power', description: _powerStatusLabel()),
       const MenuItem(
         key: 'mcp',
         label: 'MCP servers',
@@ -1695,6 +1844,7 @@ extension SettingsFlow on AgentCli {
     'context-cap': startContextCapFlow,
     'memory': startMemoryStoresFlow,
     'images': startImagesFlow,
+    'power': startPowerFlow,
   };
 
   /// The line-mode `/settings` summary (the TUI opens the hub instead).
@@ -1712,6 +1862,7 @@ extension SettingsFlow on AgentCli {
     io.writeln('redact: ${_redactionStatusLabel()}');
     io.writeln('ctx cap: ${_contextCapStatusLabel()}');
     io.writeln('images: ${_imagesStatusLabel()}');
+    io.writeln('power: ${_powerStatusLabel()}');
     io.writeln(
       'change via /provider, /model, /approval, /mode, /key, /mcp, /cube, '
       '/tools (agent models: the /settings hub)',
