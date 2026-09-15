@@ -100,7 +100,11 @@ bool get isWebPlatform => false;
 /// the latter; both readings stay inside the sandbox, so the sandbox
 /// boundary is preserved either way.
 final class SandboxedExecutionEnv
-    implements ExecutionEnv, BackgroundShell, RangedReadFileSystem {
+    implements
+        ExecutionEnv,
+        BackgroundShell,
+        RangedReadFileSystem,
+        RenamableFileSystem {
   /// Creates an env mapping sandbox-absolute paths onto [_sandboxRoot],
   /// delegating everything else (relative paths, [exec]) to [_delegate].
   SandboxedExecutionEnv(this._delegate, this._sandboxRoot);
@@ -195,6 +199,23 @@ final class SandboxedExecutionEnv
           FileErrorCode.notSupported,
           'readRange not supported by $delegate',
           path: path,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Future<Result<void, FileError>> renamePath(String from, String to) {
+    final delegate = _delegate;
+    if (delegate case final RenamableFileSystem renamable) {
+      return renamable.renamePath(_map(from), _map(to));
+    }
+    return Future.value(
+      Err(
+        FileError(
+          FileErrorCode.notSupported,
+          'renamePath not supported by $delegate',
+          path: from,
         ),
       ),
     );

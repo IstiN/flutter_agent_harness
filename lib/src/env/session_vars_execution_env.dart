@@ -35,7 +35,11 @@ const modelEnvVar = 'FAH_MODEL';
 /// An [ExecutionEnv] that injects session-correlation env vars into every
 /// [exec]. See the library doc for the contract.
 final class SessionVarsExecutionEnv
-    implements ExecutionEnv, BackgroundShell, RangedReadFileSystem {
+    implements
+        ExecutionEnv,
+        BackgroundShell,
+        RangedReadFileSystem,
+        RenamableFileSystem {
   /// Creates a decorator over [delegate] injecting the vars returned by
   /// [vars] (consulted live on every [exec]).
   SessionVarsExecutionEnv(this._delegate, this._vars);
@@ -155,6 +159,23 @@ final class SessionVarsExecutionEnv
           FileErrorCode.notSupported,
           'readRange not supported by $_delegate',
           path: path,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Future<Result<void, FileError>> renamePath(String from, String to) {
+    final delegate = _delegate;
+    if (delegate case final RenamableFileSystem renamable) {
+      return renamable.renamePath(from, to);
+    }
+    return Future.value(
+      Err(
+        FileError(
+          FileErrorCode.notSupported,
+          'renamePath not supported by $_delegate',
+          path: from,
         ),
       ),
     );

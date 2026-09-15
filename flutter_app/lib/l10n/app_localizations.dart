@@ -3386,6 +3386,12 @@ abstract class AppLocalizations {
   /// **'One-time code from fa1.dev'**
   String get githubBrowserCodeHint;
 
+  /// Viewer notice when a live ownership lease blocks opening a session for drive (#428)
+  ///
+  /// In en, this message translates to:
+  /// **'Driven by {host} (pid {pid}) — you are viewing. Your messages are delivered to the live agent.'**
+  String sessionDrivenElsewhere(String host, int pid);
+
   /// Fallback when an over-budget session cannot open windowed — the full open is refused (issue #381)
   ///
   /// In en, this message translates to:
