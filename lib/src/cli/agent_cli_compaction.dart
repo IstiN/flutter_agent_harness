@@ -65,7 +65,7 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
       return;
     }
     _lastDeltaPhase = now;
-    cli._tuiController?.setBusyPhase('Compacting context… $_compactionTail');
+    cli._pushBusyPhase('Compacting context… $_compactionTail');
   }
 
   @override
@@ -113,14 +113,27 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
       );
       return;
     }
-    if (pass.tokensAfter == pass.tokensBefore) {
+    if (pass.tokensAfter == pass.tokensBefore &&
+        pass.hiddenRecords == 0 &&
+        pass.summarizedMessages == 0) {
       // No-op pass (already compacted at the leaf): nothing changed —
       // stay quiet instead of printing a fake "N tokens summarized".
+      // Honest zeros print only when nothing happened; a pass that hid
+      // or summarized records prints even on a flat token estimate
+      // (issue #438 E3).
       cli._logDiagnostic('auto-compact pass ${pass.pass} no-op');
       return;
     }
     cli._printCompactionReport(pass, auto: auto);
     reportedPass = true;
+    // The over-window badge: a real fold freed (or reshaped) the window
+    // mid-run — the run is alive and continuing (issue #438 AC3). The
+    // badge rides the busy row (the surface that repaints mid-run) until
+    // the turn settles.
+    if (auto) {
+      cli._autoFoldCount++;
+      cli._pushBusyPhase('Compacting context…');
+    }
     cli._logDiagnostic(
       'auto-compact pass ${pass.pass} '
       'fallback=${pass.fallback ?? '-'} '
@@ -264,12 +277,12 @@ extension AgentCliCompactionRun on AgentCli {
     )) {
       return false;
     }
-    _tuiController?.setBusyPhase('Compacting context…');
+    _pushBusyPhase('Compacting context…');
     _logDiagnostic('auto-compact start sid=$_logSid tokens=$tokens');
     await _runAutoCompact('[auto-compacted]');
     // Hand the busy row back to the run: a stale 'Compacting context…'
     // over the streamed turn reads as a compaction hang.
-    _tuiController?.setBusyPhase('');
+    _pushBusyPhase('');
     // [_runAutoCompact] reports '[auto-compacted]' only on success; treat
     // the transcript size as the source of truth for the caller.
     final after = _liveRequestTokens();
@@ -295,7 +308,7 @@ extension AgentCliCompactionRun on AgentCli {
       io.writeln('nothing to compact');
       return;
     }
-    _tuiController?.setBusyPhase('Compacting context…');
+    _pushBusyPhase('Compacting context…');
     final before = _liveRequestTokens();
     final reported = await _runAutoCompact('[compacted]');
     if (!reported && _liveRequestTokens() >= before) {
@@ -379,7 +392,7 @@ extension AgentCliCompactionRun on AgentCli {
           );
         } finally {
           deadline.cancel();
-          tui?.setBusyPhase('Compacting context…');
+          _pushBusyPhase('Compacting context…');
         }
       },
       force: label == '[compacted]',
