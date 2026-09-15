@@ -442,6 +442,45 @@ void main() {
       expect(lines[13], contains('… 18 more'));
       expect(lines.join('\n'), isNot(contains('row 13')));
     });
+    test('steering panels carry the delivery lifecycle states', () {
+      final panel = DeferredPanel(
+        id: 'btw-9',
+        kind: DeferredPanelKind.steering,
+        from: 'you',
+        body: 'hold on',
+        createdAt: DateTime(2026, 1, 1),
+        state: DeferredPanelState.pending,
+      );
+      final lines = deferredPanelLines(panel, width: 40);
+      expect(lines.first, contains('steering from you · pending'));
+      expect(deferredPanelStateIcon(DeferredPanelState.pending), '⏳');
+      expect(deferredPanelStateIcon(DeferredPanelState.delivered), '✅');
+      expect(deferredPanelStateIcon(DeferredPanelState.dead), '⚠');
+      expect(
+        deferredPanelTransitionLine(
+          panel..state = DeferredPanelState.delivered,
+        ),
+        '[btw] steering from you → delivered',
+      );
+      expect(
+        deferredPanelTransitionLine(panel..state = DeferredPanelState.dead),
+        '[btw] steering from you → dead',
+      );
+    });
+
+    test('run settle completes ride-along panels but never steering', () {
+      final log = DeferredPanelLog();
+      final mail = log.add(kind: DeferredPanelKind.mail, from: 'a1', body: 'm');
+      final steering = log.add(
+        kind: DeferredPanelKind.steering,
+        from: 'you',
+        body: 's',
+        state: DeferredPanelState.pending,
+      );
+      final moved = log.transitionRunning(DeferredPanelState.complete);
+      expect(moved, [mail.id], reason: 'steering follows delivery, not runs');
+      expect(log[steering.id]!.state, DeferredPanelState.pending);
+    });
   });
 
   group('task blocks', () {
