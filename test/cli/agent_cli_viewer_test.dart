@@ -83,10 +83,13 @@ void main() {
     () async {
       final meta = await namedSession('proj');
       await seedLiveLease(meta.path);
-      // A real transcript row so the viewer's pre-open backlog is
-      // non-empty and its dimmed render is deterministic.
+      // Real transcript rows so the viewer's pre-open backlog is
+      // non-empty (7 rows > cap 5): the dimmed caption names the hidden
+      // remainder and only the last five rows render.
       final owned = await repo.open(meta);
-      await owned.appendMessage(UserMessage.text('earlier note'));
+      for (var i = 1; i <= 7; i++) {
+        await owned.appendMessage(UserMessage.text('note $i'));
+      }
       final bytesBefore = (await env.readTextFile(meta.path)).valueOrNull;
 
       final cli = cliFor(FakeStreamFunction([]).call, sessionName: 'proj');
@@ -99,8 +102,17 @@ void main() {
         reason: 'the exact viewer banner',
       );
       await waitForIt(
-        () => out().contains('user: earlier note'),
-        reason: 'the dimmed backlog row renders on watch',
+        () => out().contains('2 earlier rows not shown'),
+        reason: 'the backlog cap caption',
+      );
+      await waitForIt(
+        () => out().contains('user: note 7'),
+        reason: 'the last backlog row renders',
+      );
+      expect(
+        out().contains('user: note 1'),
+        isFalse,
+        reason: 'rows beyond the cap stay hidden',
       );
       // A viewer registers no presence: the app must not think THIS
       // process drives the session.
