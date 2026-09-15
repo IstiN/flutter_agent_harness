@@ -408,10 +408,13 @@ void main() {
         reason: 'the first run settles',
       );
       // Queue a steer AFTER the run settled — the exact "typed while the
-      // model streamed its last bytes" race — then settle it by hand (the
-      // same resolution the CLI runs on every settle; racing the real
-      // window from a test would be flaky).
-      cli.steerForTest('late steer');
+      // model streamed its last bytes" race (the message missed every
+      // drain point and sits in the agent queue) — then settle it by
+      // hand (the same resolution the CLI runs on every settle; racing
+      // the real window from a test would be flaky). An IDLE steer goes
+      // through the wake path instead (issue #437 AC4), so the race is
+      // injected at the queue level.
+      cli.agent.steer(UserMessage.text('late steer'));
       cli.settleLeftoverSteeringForTest();
       await waitForIt(
         () => contexts.length == 2 && !cli.isBusy,

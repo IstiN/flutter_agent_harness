@@ -24,6 +24,7 @@ class _GatedStream {
     Context context, {
     CancelToken? cancelToken,
   }) {
+    contexts.add(context);
     final stream = AssistantMessageEventStream();
     void emit(List<AssistantMessageEvent> events) {
       for (final event in events) {
@@ -42,6 +43,10 @@ class _GatedStream {
           );
         }),
       );
+    } else if (turns.isEmpty) {
+      // Steering mode is one-at-a-time: later boundaries in the same run
+      // can outlive the scripted turns — end quietly so the run settles.
+      stream.end();
     } else {
       emit(turns.removeAt(0));
     }
@@ -94,20 +99,23 @@ Future<void> waitForSessions(MemoryExecutionEnv env) async {
   fail('timed out waiting: session persisted');
 }
 
-/// The steering custom_message records of the first session, in file order.
-Future<List<CustomMessageRecord>> steeringRecords(
-  MemoryExecutionEnv env,
-) async {
+/// The persisted steering records of the first session, in file order.
+/// One [CustomRecord] per accepted steer: `data['text']` is the
+/// attributed message, the record id is what consumed markers reference.
+Future<List<CustomRecord>> steeringRecords(MemoryExecutionEnv env) async {
   final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
   final sessions = await repo.list(cwd: '/work');
   final session = await repo.open(sessions.first);
   final records = await session.getEntries();
   return [
     for (final record in records)
-      if (record is CustomMessageRecord && record.customType == 'steering')
-        record,
+      if (record is CustomRecord && record.customType == 'steering') record,
   ];
 }
+
+/// The persisted steering text of a steering record.
+String steeringText(CustomRecord record) =>
+    (record.data as Map)['text'] as String;
 
 /// The steering-consumed custom records of the first session.
 Future<List<CustomRecord>> consumedMarkers(MemoryExecutionEnv env) async {
@@ -196,8 +204,10 @@ void main() {
         reason: 'the steering record persists at accept time',
       );
       final record = (await steeringRecords(env)).single;
-      expect(record.content, contains('[steering from user]'));
-      expect(record.content, contains('hold this thought'));
+      expect(
+        steeringText(record),
+        contains('[steering from user] hold this thought'),
+      );
       expect(cli.isBusy, isTrue, reason: 'nothing delivered yet');
 
       // The panel shows the honest pending state while undelivered.
@@ -247,7 +257,7 @@ void main() {
         reason: 'three records, one per steer',
       );
       final contents = [
-        for (final record in await steeringRecords(env)) record.content,
+        for (final record in await steeringRecords(env)) steeringText(record),
       ].join('|');
       expect(contents, contains('[steering from user] one'));
       expect(contents, contains('[steering from user] two'));
@@ -256,11 +266,13 @@ void main() {
       expect(contents.indexOf('one') < contents.indexOf('three'), isTrue);
 
       stream.gate.complete();
-      await waitForIt(() => stream.calls >= 2);
+      // Steering drains one-at-a-time: each boundary merges exactly one
+      // steer into the run's accumulated prompt — order preserved.
+      await waitForIt(() => stream.calls >= 4);
       await waitForIt(() => !cli.isBusy);
 
       final steered = [
-        for (final message in stream.contexts[1].messages)
+        for (final message in stream.contexts.last.messages)
           if (message is UserMessage) _messageText(message),
       ];
       final ordered = [
@@ -335,6 +347,95 @@ void main() {
   );
 
   test(
+    'E4: a pending panel stays pending while the run streams events, '
+    'and escalates to dead only past the stale-heartbeat threshold',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      final stream = _GatedStream([
+        textTurn('first answer'),
+        textTurn('steered answer'),
+      ], gateOnCall: 1);
+      final cli = buildCli(
+        stream,
+        steeringStaleAfter: const Duration(milliseconds: 80),
+      );
+      final run = cli.run();
+      await waitForSessions(env);
+
+      io.sendLine('start');
+      await waitForIt(() => stream.calls >= 1 && cli.isBusy);
+      // Events are flowing: the watchdog must NOT touch the panel
+      // (a long legitimate turn is honest work, not a wedge).
+      cli.steerForTest('still with me?');
+      cli.checkPendingSteeringHealthForTest();
+      expect(io.out.toString(), contains('steering from you · pending'));
+      expect(io.out.toString(), isNot(contains('· dead')));
+
+      // The stream falls silent past the threshold: the watchdog
+      // escalates pending -> dead, loudly, record intact.
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      cli.checkPendingSteeringHealthForTest();
+      expect(io.out.toString(), contains('[btw] steering from you → dead'));
+      expect(io.out.toString(), contains('agent not responding'));
+      await waitForItAsync(
+        () async => (await steeringRecords(env)).length == 1,
+        reason: 'escalation never touches the persisted record',
+      );
+
+      // The wedge clears: late delivery from dead still happens.
+      stream.gate.complete();
+      await waitForIt(() => stream.calls >= 2);
+      await waitForIt(() => !cli.isBusy);
+      expect(
+        io.out.toString(),
+        contains('[btw] steering from you → delivered'),
+      );
+
+      io.sendLine('/exit');
+      await run;
+    },
+  );
+
+  test(
+    'AC4: steering while IDLE wakes the agent — the steer starts the '
+    'turn itself, delivered at once, record persisted',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      final stream = _GatedStream([textTurn('wake answer')], gateOnCall: -1);
+      final cli = buildCli(stream);
+      final run = cli.run();
+      await waitForSessions(env);
+      expect(cli.isBusy, isFalse);
+
+      cli.steerForTest('wake up');
+      await waitForIt(
+        () => stream.calls >= 1,
+        reason: 'the idle steer starts a run on its own',
+      );
+      await waitForIt(() => !cli.isBusy, reason: 'wake run settles');
+      expect(
+        [
+          for (final message in stream.contexts.first.messages)
+            if (message is UserMessage) _messageText(message),
+        ].join('\n'),
+        contains('[steering from user] wake up'),
+      );
+      expect(
+        io.out.toString(),
+        contains('[btw] steering from you → delivered'),
+      );
+      await waitForItAsync(
+        () async => (await steeringRecords(env)).length == 1,
+        reason: 'idle steering is persisted too',
+      );
+      expect(await consumedMarkers(env), hasLength(1));
+
+      io.sendLine('/exit');
+      await run;
+    },
+  );
+
+  test(
     'AC5+E1: a persisted-but-unconsumed steering record is recovered at '
     'session load, wakes the agent, and is consumed exactly once',
     timeout: const Timeout(Duration(seconds: 180)),
@@ -353,10 +454,9 @@ void main() {
       final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
       final sessions = await repo.list(cwd: '/work');
       final persisted = await repo.open(sessions.first);
-      await persisted.appendCustomMessageEntry(
+      await persisted.appendCustomEntry(
         customType: 'steering',
-        content: '[steering from user] recovered-please-ack',
-        display: true,
+        data: {'text': '[steering from user] recovered-please-ack'},
       );
 
       // Restart 1: the record is unconsumed — recovery must surface it,
@@ -405,7 +505,9 @@ void main() {
       final cli3 = buildCli(stream3, sessionName: 'steer-recover');
       final run3 = cli3.run();
       await Future<void>.delayed(const Duration(seconds: 3));
-      expect(io.out.toString(), isNot(contains('recovered')));
+      // Restored history legitimately mentions the old wake; the WAKE
+      // ITSELF must not run again.
+      expect(io.out.toString(), isNot(contains('[btw] recovered')));
       expect(stream3.calls, 0, reason: 'no wake without unconsumed steering');
       io.sendLine('/exit');
       await run3;
