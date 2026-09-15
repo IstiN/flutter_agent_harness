@@ -556,6 +556,351 @@ extension SettingsFlow on AgentCli {
     return section?.resolveUserPath(home) ?? '$home/.fah/memory';
   }
 
+  /// Settings → Stream rules (TTSR): list the `ttsr:` section's rules
+  /// (pattern, scope, enabled?) with per-rule enable/disable and delete,
+  /// plus an add-rule prompt (name, pattern, body, scope). The section is
+  /// read fresh for every action (a concurrent edit survives — E3) and
+  /// written back surgically into `~/.fah/config.yaml` — the boot-real
+  /// home of the section (project `.fah/rules.yaml` is a separate file; a
+  /// `ttsr:` block in the project config is never read for TTSR). Every
+  /// write is validated with the real [TtsrConfig] parser first (AC4).
+  /// When the session booted a live rule engine, the same rule diff is
+  /// applied to the running manager (rules are consulted per stream — no
+  /// restart); otherwise the flow says the change lands at next boot
+  /// (AC3). Loops until cancelled or done.
+  Future<void> startTtsrRulesFlow() async {
+    final path = _userConfigPath();
+    if (path == null) {
+      io.writeln('ttsr: no user config on this host — not saved');
+      return;
+    }
+    for (;;) {
+      final current = await _readTtsrSection(path);
+      if (current == null) return; // malformed/unreadable — reported
+      final picked = await _pickOption('stream rules (ttsr) — $path', [
+        for (final rule in current.rules)
+          ('rule:${rule.name}', rule.name, _ttsrRuleDescription(rule)),
+        ('add', 'Add a rule', 'name, pattern, body, scope'),
+        ('done', 'Done', ''),
+      ]);
+      if (picked == null || picked == 'done') return;
+      if (picked == 'add') {
+        await _ttsrAddAction(path);
+        continue;
+      }
+      await _ttsrRuleAction(path, picked.substring('rule:'.length));
+    }
+  }
+
+  /// The add branch: prompt for the rule, then reload-before-write so a
+  /// concurrent edit that landed while the menus sat open survives (E3).
+  Future<void> _ttsrAddAction(String path) async {
+    final rule = await _promptTtsrRule();
+    if (rule == null) return;
+    final fresh = await _readTtsrSection(path);
+    if (fresh == null) return;
+    await _writeTtsrSection(
+      path,
+      TtsrConfig(settings: fresh.settings, rules: [...fresh.rules, rule]),
+      before: fresh.rules,
+    );
+  }
+
+  /// The per-rule branch (toggle/delete) for the rule named [name]:
+  /// pick the action, reload, and write the same diff.
+  Future<void> _ttsrRuleAction(String path, String name) async {
+    final current = await _readTtsrSection(path);
+    final rule = _ttsrFindRule(current?.rules, name);
+    if (rule == null) return;
+    final action = await _pickOption('rule ${rule.name}', [
+      (
+        'toggle',
+        rule.enabled ? 'Disable' : 'Enable',
+        'persists and applies ${ttsr == null ? 'at next boot' : 'live'}',
+      ),
+      ('delete', 'Delete', 'remove from the section'),
+      ('back', 'Back', ''),
+    ]);
+    if (action != 'toggle' && action != 'delete') return;
+    final fresh = await _readTtsrSection(path);
+    if (fresh == null) return;
+    final target = _ttsrFindRule(fresh.rules, name);
+    if (target == null) {
+      io.writeln('ttsr: rule "$name" is gone from $path — not saved');
+      return;
+    }
+    if (action == 'toggle') {
+      await _ttsrToggleRule(path, fresh, target);
+    } else {
+      await _ttsrDeleteRule(path, fresh, name);
+    }
+  }
+
+  /// Persists the rule with its `enabled` flag flipped.
+  Future<void> _ttsrToggleRule(
+    String path,
+    TtsrConfig fresh,
+    TtsrRule target,
+  ) async {
+    final flipped = TtsrRule(
+      name: target.name,
+      patterns: target.patterns,
+      body: target.body,
+      path: target.path,
+      enabled: !target.enabled,
+      scope: target.scope,
+    );
+    final flippedName = flipped.name;
+    await _writeTtsrSection(
+      path,
+      TtsrConfig(
+        settings: fresh.settings,
+        rules: [
+          for (final existing in fresh.rules)
+            existing.name == flippedName ? flipped : existing,
+        ],
+      ),
+      before: fresh.rules,
+    );
+  }
+
+  /// Persists the removal of the rule named [name].
+  Future<void> _ttsrDeleteRule(
+    String path,
+    TtsrConfig fresh,
+    String name,
+  ) async {
+    await _writeTtsrSection(
+      path,
+      TtsrConfig(
+        settings: fresh.settings,
+        rules: [
+          for (final existing in fresh.rules)
+            if (existing.name != name) existing,
+        ],
+      ),
+      before: fresh.rules,
+    );
+  }
+
+  /// The rule named [name] in [rules] (last wins, matching registration
+  /// dedupe); null when the list is null or the rule is gone.
+  TtsrRule? _ttsrFindRule(List<TtsrRule>? rules, String name) {
+    if (rules == null) return null;
+    TtsrRule? found;
+    for (final candidate in rules) {
+      if (candidate.name == name) found = candidate;
+    }
+    return found;
+  }
+
+  /// Reads and parses the `ttsr:` section of [path]. An absent section
+  /// (or file) parses as defaults (E1); a malformed one reports the
+  /// parser's verbatim message and returns null — the flow never edits
+  /// from a half-parsed section and never writes over one (AC4).
+  Future<TtsrConfig?> _readTtsrSection(String path) async {
+    final String source;
+    switch (await _env.readTextFile(path)) {
+      case Ok(:final value):
+        source = value;
+      case Err(:final error) when error.code == FileErrorCode.notFound:
+        return const TtsrConfig();
+      case Err(:final error):
+        io.writeln('ttsr: cannot read $path: $error — not saved');
+        return null;
+    }
+    if (source.trim().isEmpty) return const TtsrConfig();
+    try {
+      final doc = loadYaml(source);
+      final node = doc is YamlMap ? doc['ttsr'] : null;
+      return node == null
+          ? const TtsrConfig()
+          : TtsrConfig.fromYaml(node, sourcePath: path);
+    } on Object catch (error) {
+      io.writeln('ttsr: not saved: $error');
+      return null;
+    }
+  }
+
+  /// The add-rule prompts: name, regex pattern, body, and the scope guard
+  /// (empty answer = the default text+tool scope). Cancelling any prompt
+  /// aborts the add.
+  Future<TtsrRule?> _promptTtsrRule() async {
+    final name = (await _askLine('rule name: '))?.trim() ?? '';
+    if (name.isEmpty) return null;
+    final pattern = (await _askLine('pattern (regex): '))?.trim() ?? '';
+    if (pattern.isEmpty) return null;
+    final body = (await _askLine('body: '))?.trim() ?? '';
+    if (body.isEmpty) return null;
+    final scopeAnswer =
+        (await _askLine('scope (empty = text + tool): '))?.trim() ?? '';
+    final warnings = <String>[];
+    final scope = TtsrScope.parse(
+      scopeAnswer.isEmpty ? null : scopeAnswer.split(','),
+      ruleName: name,
+      warnings: warnings,
+    );
+    for (final warning in warnings) {
+      io.writeln('[ttsr] $warning');
+    }
+    return TtsrRule(name: name, patterns: [pattern], body: body, scope: scope);
+  }
+
+  /// The surgical `ttsr:` write shared by every action: block replace in
+  /// [path] (absent block appends), validated with the real parser BEFORE
+  /// the write, then the same diff applied to the live rule engine when
+  /// one is running. Returns true when written.
+  Future<bool> _writeTtsrSection(
+    String path,
+    TtsrConfig next, {
+    required List<TtsrRule> before,
+  }) async {
+    // Implied provenance (rule.path == this file) stays implicit so a
+    // pure toggle doesn't grow the block with `path:` lines.
+    final section = TtsrConfig(
+      settings: next.settings,
+      rules: [
+        for (final rule in next.rules)
+          rule.path == path ? _withoutImpliedTtsrPath(rule) : rule,
+      ],
+    );
+    final String source;
+    switch (await _env.readTextFile(path)) {
+      case Ok(:final value):
+        source = value;
+      case Err(:final error) when error.code == FileErrorCode.notFound:
+        source = '';
+      case Err(:final error):
+        io.writeln('ttsr: cannot read $path: $error — not saved');
+        return false;
+    }
+    final edited = _replaceTopLevelYamlBlock(source, 'ttsr', section.toYaml());
+    // Never persist a file the next boot would reject.
+    final doc = loadYaml(edited);
+    final node = doc is YamlMap ? doc['ttsr'] : null;
+    try {
+      TtsrConfig.fromYaml(node, sourcePath: path);
+    } on Object catch (error) {
+      io.writeln('ttsr: not saved: $error');
+      return false;
+    }
+    if (await _env.writeFile(path, edited) is Err) {
+      io.writeln('ttsr: could not write $path');
+      return false;
+    }
+    final live = _syncLiveTtsrRules(before, section);
+    io.writeln(
+      'ttsr saved → $path '
+      '${live ? '(rule edits apply live — rules are consulted per stream)' : '(applies at next boot — no live rule engine this session)'}',
+    );
+    return true;
+  }
+
+  /// [rule] with the file-implied provenance dropped (the section already
+  /// names the file; boot re-derives it).
+  TtsrRule _withoutImpliedTtsrPath(TtsrRule rule) => TtsrRule(
+    name: rule.name,
+    patterns: rule.patterns,
+    body: rule.body,
+    enabled: rule.enabled,
+    scope: rule.scope,
+  );
+
+  /// Applies the section rule diff to the live rule engine ([ttsr]):
+  /// every rule that was added, removed, or changed re-registers by name
+  /// (the registry is name-keyed, first wins — a same-named rule from
+  /// `.fah/rules.yaml` is replaced by the variant the user just edited).
+  /// Returns false when no engine runs this session (the change then
+  /// lands at next boot).
+  bool _syncLiveTtsrRules(List<TtsrRule> before, TtsrConfig after) {
+    final controller = ttsr;
+    if (controller == null) return false;
+    final manager = controller.manager;
+    final beforeByName = {for (final rule in before) rule.name: rule};
+    final afterByName = {for (final rule in after.rules) rule.name: rule};
+    final touched = <String>{
+      for (final entry in beforeByName.entries)
+        if (_ttsrRuleChanged(entry.value, afterByName[entry.key])) entry.key,
+      for (final name in afterByName.keys)
+        if (!beforeByName.containsKey(name)) name,
+    };
+    for (final name in touched) {
+      manager.removeRule(name);
+    }
+    for (final rule in after.rules) {
+      if (!rule.enabled || !touched.contains(rule.name)) continue;
+      final warningsBefore = manager.warnings.length;
+      final added = manager.addRule(rule);
+      for (final warning in manager.warnings.sublist(warningsBefore)) {
+        io.writeln('[ttsr] $warning');
+      }
+      if (!added && manager.warnings.length == warningsBefore) {
+        io.writeln(
+          'ttsr: rule "${rule.name}" is not active this session '
+          '(duplicate name?) — applies at next boot',
+        );
+      }
+    }
+    return true;
+  }
+
+  /// Whether [next] differs from [rule] in any field the manager
+  /// compiles (a null [next] means the rule is gone).
+  bool _ttsrRuleChanged(TtsrRule rule, TtsrRule? next) =>
+      next == null ||
+      next.enabled != rule.enabled ||
+      next.body != rule.body ||
+      next.patterns.join(' ') != rule.patterns.join(' ') ||
+      !_sameTtsrScope(next.scope, rule.scope);
+
+  bool _sameTtsrScope(TtsrScope a, TtsrScope b) =>
+      a.allowText == b.allowText &&
+      a.allowThinking == b.allowThinking &&
+      a.allowAnyTool == b.allowAnyTool &&
+      a.toolNames.join(' ') == b.toolNames.join(' ');
+
+  /// The rule-row description: enabled state, the pattern(s), the scope.
+  String _ttsrRuleDescription(TtsrRule rule) {
+    final pattern = rule.patterns.first;
+    final more = rule.patterns.length > 1
+        ? ' (+${rule.patterns.length - 1})'
+        : '';
+    return '${rule.enabled ? '' : 'off · '}$pattern$more · '
+        'scope: ${_ttsrScopeLabel(rule.scope)}';
+  }
+
+  /// The comma-separated stream list a scope watches (the default scope
+  /// renders as `text, tool`).
+  String _ttsrScopeLabel(TtsrScope scope) {
+    if (scope.allowText &&
+        !scope.allowThinking &&
+        scope.allowAnyTool &&
+        scope.toolNames.isEmpty) {
+      return 'text, tool';
+    }
+    return [
+      if (scope.allowText) 'text',
+      if (scope.allowThinking) 'thinking',
+      if (scope.allowAnyTool) 'tool',
+      for (final name in scope.toolNames) 'tool:$name',
+    ].join(', ');
+  }
+
+  /// The settings-hub row and `/settings` summary label for TTSR: the
+  /// live rule count when the engine runs this session, otherwise an
+  /// honest inactive/not-configured state.
+  String _ttsrStatusLabel() {
+    final controller = ttsr;
+    if (controller != null) {
+      final count = controller.manager.rules.length;
+      return '$count rule${count == 1 ? '' : 's'} · live';
+    }
+    final section = config.ttsr;
+    if (section == null) return 'not configured';
+    if (!section.settings.enabled) return 'disabled';
+    return 'inactive this session';
+  }
+
   /// The settings-hub row and `/settings` summary label for redaction
   /// (issue #391): the live pipeline state, or plain `off` when the boot
   /// config disabled redaction (no pipeline exists).
@@ -1171,6 +1516,16 @@ extension SettingsFlow on AgentCli {
         description: 'engine: ${_compactionStatusLabel()}',
       ),
       MenuItem(
+        key: 'ttsr',
+        label: 'Stream rules (TTSR)',
+        description: _ttsrStatusLabel(),
+      ),
+      MenuItem(
+        key: 'memory',
+        label: 'Memory',
+        description: _memoryPathLabel(project: true),
+      ),
+      MenuItem(
         key: 'redact',
         label: 'Redaction',
         description: _redactionStatusLabel(),
@@ -1193,6 +1548,13 @@ extension SettingsFlow on AgentCli {
     _tuiController?.openPicker('settings', 'Settings', settingsHubItems());
   }
 
+  @visibleForTesting
+  List<MenuItem> settingsHubItemsForTest() => settingsHubItems();
+
+  @visibleForTesting
+  Set<String> settingsPickerHandlerKeysForTest() =>
+      _settingsPickerHandlers.keys.toSet();
+
   /// A settings-hub selection launches the same flow its dedicated slash
   /// command would open.
   Future<void> _tuiPickSetting(String key) async {
@@ -1203,18 +1565,19 @@ extension SettingsFlow on AgentCli {
   Map<String, Future<void> Function()> get _settingsPickerHandlers => {
     'provider': () async => _openProviderPicker(),
     'model': startChatModelFlow,
+    'approval': () async => _openApprovalPicker(),
+    'mode': () async => _openModePicker(),
     'model-edit': () => _handleModelEdit(''),
     'media': startMediaSlotFlow,
     'agent-models': startAgentModelFlow,
-    'approval': () async => _openApprovalPicker(),
-    'mode': () async => _openModePicker(),
+    'tools': _toolsSettingsFlow,
+    'compaction': startCompactionEngineFlow,
+    'ttsr': startTtsrRulesFlow,
     'keys': () => _handleKeyCommand(''),
     'dap': startDapHubFlow,
     'cube': startCubeSandboxFlow,
     'redact': startRedactionFlow,
     'context-cap': startContextCapFlow,
-    'tools': _toolsSettingsFlow,
-    'compaction': startCompactionEngineFlow,
     'memory': startMemoryStoresFlow,
   };
 
@@ -1229,6 +1592,7 @@ extension SettingsFlow on AgentCli {
     io.writeln('dap: ${_dapHubStatusLabel()}');
     io.writeln('tools: ${_toolsStatusLabel()}');
     io.writeln('compaction: ${_compactionStatusLabel()}');
+    io.writeln('ttsr: ${_ttsrStatusLabel()}');
     io.writeln('redact: ${_redactionStatusLabel()}');
     io.writeln('ctx cap: ${_contextCapStatusLabel()}');
     io.writeln(

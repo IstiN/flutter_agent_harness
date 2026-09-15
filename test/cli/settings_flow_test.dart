@@ -37,6 +37,7 @@ void main() {
     ModelRolesResolver? modelRolesResolver,
     MemoryConfig? memoryConfig,
     String? homeDir,
+    TtsrConfig? ttsr,
     RedactionPipeline? redactionPipeline,
     int? contextWindowCap,
   }) {
@@ -46,6 +47,8 @@ void main() {
         apiKey: 'test-key',
         env: env,
         homeDir: homeDir,
+        ttsr: ttsr,
+        redactionPipeline: redactionPipeline,
         sessionRoot: '/sessions',
         modelsConfig: modelsConfig,
         onModelsConfigChanged: onModelsConfigChanged,
@@ -56,7 +59,6 @@ void main() {
         modelsHttpClient: modelsHttpClient,
         modelRolesResolver: modelRolesResolver,
         memoryConfig: memoryConfig,
-        redactionPipeline: redactionPipeline,
         contextWindowCap: contextWindowCap,
         dapHubState: dapHubState,
         onDapHubConfigChanged: onDapHubConfigChanged,
@@ -1286,6 +1288,439 @@ void main() {
         expect(fake.calls, 0);
       },
     );
+  });
+
+  group('ttsr rules flow (issue #392)', () {
+    const seedConfig = '''
+model: test-model
+ttsr:
+  enabled: true
+  contextMode: keep
+  repeatMode: after-gap
+  repeatGap: 4
+  maxInjectionsPerTurn: 2
+  retryDelayMs: 25
+  rules:
+    - name: no-secrets
+      pattern: 'sk-[a-zA-Z0-9]{8}'
+      body: Never echo secrets.
+      enabled: false
+      scope: ['text', 'thinking']
+    - name: no-french
+      pattern: 'faux pas'
+      body: Speak English only.
+memory:
+  projectPath: ./mem
+''';
+
+    Future<String> seed(String text) =>
+        env.writeFile('/home/u/.fah/config.yaml', text).then((_) => text);
+
+    // The flow loops, so its menu text repeats in the accumulated buffer —
+    // sequence steps by picker renders (`type a number:` prints once per
+    // render), never by re-matching earlier text.
+    Future<void> render(int n) => waitForIt(
+      () => 'type a number:'.allMatches(io.out.toString()).length >= n,
+    );
+
+    test(
+      'AC1: hub picker row and line-mode summary carry the ttsr value',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(
+          fake.call,
+          homeDir: '/home/u',
+          ttsr: const TtsrConfig(
+            rules: [
+              TtsrRule(name: 'live-one', patterns: ['boom'], body: 'b'),
+            ],
+          ),
+        );
+        expect(cli.ttsr, isNotNull, reason: 'boot wires a live engine');
+
+        final run = cli.run();
+        io.sendLine('/settings');
+        await waitForIt(() => io.out.toString().contains('ttsr:'));
+        io.sendLine('/exit');
+        await run;
+
+        final output = io.out.toString();
+        expect(output, contains('ttsr: 1 rule · live'));
+        final rows = cli.settingsHubItemsForTest();
+        final ttsrRow = rows.where((item) => item.key == 'ttsr').toList();
+        expect(ttsrRow, hasLength(1));
+        expect(ttsrRow.single.label, 'Stream rules (TTSR)');
+        expect(ttsrRow.single.description, contains('1 rule'));
+        expect(
+          cli.settingsPickerHandlerKeysForTest(),
+          contains('ttsr'),
+          reason: 'a hub row without a handler is a dead menu entry',
+        );
+        expect(fake.calls, 0);
+      },
+    );
+
+    test('AC1: summary reports the not-configured state', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, homeDir: '/home/u');
+      final run = cli.run();
+      io.sendLine('/settings');
+      await waitForIt(() => io.out.toString().contains('ttsr:'));
+      io.sendLine('/exit');
+      await run;
+      expect(io.out.toString(), contains('ttsr: not configured'));
+      expect(fake.calls, 0);
+    });
+
+    test(
+      'AC2: toggle round-trips every field and keeps other sections',
+      () async {
+        await seed(seedConfig);
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(fake.call, homeDir: '/home/u');
+        final run = cli.run();
+
+        final flow = cli.startTtsrRulesFlow();
+        await render(1); // main menu
+        await waitForIt(
+          () => io.out.toString().contains('off · sk-[a-zA-Z0-9]{8}'),
+        );
+        io.sendLine('1'); // no-secrets (disabled first)
+        await render(2); // the rule submenu
+        io.sendLine('1'); // toggle → enable
+        await waitForIt(
+          () => io.out.toString().contains(
+            'ttsr saved → /home/u/.fah/config.yaml',
+          ),
+        );
+        await render(3); // the submenu exited; the main menu re-rendered
+        io.sendLine('4'); // done (1=no-secrets, 2=no-french, 3=add, 4=done)
+        await flow;
+        io.sendLine('/exit');
+        await run;
+
+        final written = (await env.readTextFile(
+          '/home/u/.fah/config.yaml',
+        )).valueOrNull;
+        expect(written, isNotNull);
+        // Surgical: everything outside the ttsr block is byte-identical.
+        expect(written!, startsWith('model: test-model\nttsr:'));
+        expect(written, endsWith('memory:\n  projectPath: ./mem\n'));
+        // The real boot parser re-reads the file.
+        final parsed = CliConfig.fromYaml(loadYaml(written) as YamlMap);
+        final ttsr = parsed.ttsr!;
+        // Settings round-trip untouched.
+        expect(ttsr.settings.enabled, isTrue);
+        expect(ttsr.settings.contextMode, TtsrContextMode.keep);
+        expect(ttsr.settings.repeatMode, TtsrRepeatMode.afterGap);
+        expect(ttsr.settings.repeatGap, 4);
+        expect(ttsr.settings.maxInjectionsPerTurn, 2);
+        expect(ttsr.settings.retryDelay, const Duration(milliseconds: 25));
+        // Rules round-trip field by field.
+        expect(ttsr.rules, hasLength(2));
+        final noSecrets = ttsr.rules.singleWhere((r) => r.name == 'no-secrets');
+        expect(noSecrets.patterns, ['sk-[a-zA-Z0-9]{8}']);
+        expect(noSecrets.body, 'Never echo secrets.');
+        expect(noSecrets.enabled, isTrue, reason: 'the toggle flipped it');
+        expect(noSecrets.scope.allowText, isTrue);
+        expect(noSecrets.scope.allowThinking, isTrue);
+        expect(noSecrets.scope.allowAnyTool, isFalse);
+        final noFrench = ttsr.rules.singleWhere((r) => r.name == 'no-french');
+        expect(noFrench.enabled, isTrue);
+        expect(noFrench.scope.allowText, isTrue);
+        expect(noFrench.scope.allowAnyTool, isTrue);
+        expect(fake.calls, 0);
+      },
+    );
+
+    test(
+      'AC2: add persists a new rule with guards through the real parser',
+      () async {
+        await seed('memory:\n  projectPath: ./mem\n');
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(fake.call, homeDir: '/home/u');
+        final run = cli.run();
+
+        final flow = cli.startTtsrRulesFlow();
+        await render(1); // main menu (no rules yet)
+        io.sendLine('1'); // add (no rules yet → first option)
+        await waitForIt(() => io.out.toString().contains('rule name:'));
+        io.sendLine('no-doom');
+        await waitForIt(() => io.out.toString().contains('pattern (regex):'));
+        io.sendLine('doomsday clock');
+        await waitForIt(() => io.out.toString().contains('body:'));
+        io.sendLine('Stop summoning doomsday.');
+        await waitForIt(() => io.out.toString().contains('scope'));
+        io.sendLine('thinking');
+        await waitForIt(
+          () => io.out.toString().contains(
+            'ttsr saved → /home/u/.fah/config.yaml',
+          ),
+        );
+        await render(2); // the main menu re-rendered with the new rule
+        io.sendLine('3'); // done (1=no-doom, 2=add, 3=done)
+        await flow;
+        io.sendLine('/exit');
+        await run;
+
+        final written = (await env.readTextFile(
+          '/home/u/.fah/config.yaml',
+        )).valueOrNull;
+        expect(written, isNotNull);
+        expect(written!, contains('ttsr:'));
+        // The absent block appends: memory stays first, ttsr lands last.
+        expect(written, startsWith('memory:\n  projectPath: ./mem\n'));
+        final parsed = CliConfig.fromYaml(loadYaml(written) as YamlMap);
+        final rule = parsed.ttsr!.rules.single;
+        expect(rule.name, 'no-doom');
+        expect(rule.patterns, ['doomsday clock']);
+        expect(rule.body, 'Stop summoning doomsday.');
+        expect(rule.enabled, isTrue);
+        expect(rule.scope.allowThinking, isTrue);
+        expect(rule.scope.allowText, isFalse);
+        expect(fake.calls, 0);
+      },
+    );
+
+    test('AC2: delete removes only the picked rule', () async {
+      await seed(seedConfig);
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, homeDir: '/home/u');
+      final run = cli.run();
+
+      final flow = cli.startTtsrRulesFlow();
+      await render(1); // main menu
+      io.sendLine('2'); // no-french
+      await render(2); // the rule submenu
+      io.sendLine('2'); // delete
+      await waitForIt(
+        () =>
+            io.out.toString().contains('ttsr saved → /home/u/.fah/config.yaml'),
+      );
+      await render(3); // the submenu exited; the main menu re-rendered
+      io.sendLine('3'); // done (1=no-secrets, 2=add, 3=done)
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      final written = (await env.readTextFile(
+        '/home/u/.fah/config.yaml',
+      )).valueOrNull;
+      final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
+      expect(parsed.ttsr!.rules.map((r) => r.name), ['no-secrets']);
+      expect(written, endsWith('memory:\n  projectPath: ./mem\n'));
+      expect(fake.calls, 0);
+    });
+
+    test('AC3: a live engine applies the same diff and says so', () async {
+      await seed(seedConfig);
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(
+        fake.call,
+        homeDir: '/home/u',
+        ttsr: const TtsrConfig(
+          rules: [
+            TtsrRule(name: 'boot-rule', patterns: ['alpha'], body: 'b1'),
+            // Matches the on-disk seed: disabled at boot, so only
+            // boot-rule registers until the flow's toggle flips it.
+            TtsrRule(
+              name: 'no-secrets',
+              patterns: ['sk-x'],
+              body: 'b2',
+              enabled: false,
+            ),
+          ],
+        ),
+      );
+      expect(cli.ttsr, isNotNull);
+      final run = cli.run();
+
+      final flow = cli.startTtsrRulesFlow();
+      await render(1); // main menu
+      // The live engine booted with the section's rules: no-secrets is
+      // disabled on disk, so only boot-rule registered.
+      expect(cli.ttsr!.manager.rules.map((r) => r.name), ['boot-rule']);
+      io.sendLine('1'); // no-secrets (disabled, first in the list)
+      await render(2); // the rule submenu
+      io.sendLine('1'); // toggle → enable + register live
+      await waitForIt(
+        () => io.out.toString().contains('rule edits apply live'),
+      );
+      await render(3); // the submenu exited; the main menu re-rendered
+      io.sendLine('4'); // done (1=no-secrets, 2=no-french, 3=add, 4=done)
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      expect(
+        cli.ttsr!.manager.rules.map((r) => r.name),
+        containsAll(['boot-rule', 'no-secrets']),
+      );
+      final written = (await env.readTextFile(
+        '/home/u/.fah/config.yaml',
+      )).valueOrNull;
+      final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
+      expect(
+        parsed.ttsr!.rules.singleWhere((r) => r.name == 'no-secrets').enabled,
+        isTrue,
+      );
+      expect(fake.calls, 0);
+    });
+
+    test('AC3: without a live engine the flow names the next boot', () async {
+      await seed(
+        'ttsr:\n  rules:\n    - name: a\n      pattern: x\n      body: b\n',
+      );
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, homeDir: '/home/u');
+      expect(cli.ttsr, isNull, reason: 'no ttsr config at boot');
+      final run = cli.run();
+
+      final flow = cli.startTtsrRulesFlow();
+      await render(1); // main menu
+      io.sendLine('1'); // rule a
+      await render(2); // the rule submenu
+      io.sendLine('1'); // toggle off
+      await waitForIt(() => io.out.toString().contains('applies at next boot'));
+      await render(3); // the submenu exited; the main menu re-rendered
+      io.sendLine('3'); // done (1=rule a, 2=add, 3=done)
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      final written = (await env.readTextFile(
+        '/home/u/.fah/config.yaml',
+      )).valueOrNull;
+      final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
+      expect(parsed.ttsr!.rules.single.enabled, isFalse);
+      expect(fake.calls, 0);
+    });
+
+    test(
+      'AC4: a malformed section shows the verbatim error, writes nothing',
+      () async {
+        final text = await seed('model: kept\nttsr: 42\nmemory: kept-too\n');
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(fake.call, homeDir: '/home/u');
+        final run = cli.run();
+
+        await cli.startTtsrRulesFlow();
+        await waitForIt(
+          () => io.out.toString().contains('"ttsr" must be a map'),
+        );
+        io.sendLine('/exit');
+        await run;
+
+        expect(io.out.toString(), isNot(contains('Add a rule')));
+        expect(
+          (await env.readTextFile('/home/u/.fah/config.yaml')).valueOrNull,
+          text,
+          reason: 'nothing may be written',
+        );
+        expect(fake.calls, 0);
+      },
+    );
+
+    test(
+      'E1: absent section offers defaults and writes a fresh block',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(fake.call, homeDir: '/home/u');
+        final run = cli.run();
+
+        final flow = cli.startTtsrRulesFlow();
+        await render(1); // main menu (no rules → add is the first option)
+        io.sendLine('1'); // add
+        await waitForIt(() => io.out.toString().contains('rule name:'));
+        io.sendLine('first');
+        await waitForIt(() => io.out.toString().contains('pattern (regex):'));
+        io.sendLine('boom');
+        await waitForIt(() => io.out.toString().contains('body:'));
+        io.sendLine('Watch out.');
+        await waitForIt(() => io.out.toString().contains('scope (empty'));
+        io.sendLine(''); // default scope
+        await waitForIt(
+          () => io.out.toString().contains(
+            'ttsr saved → /home/u/.fah/config.yaml',
+          ),
+        );
+        await render(2); // the main menu re-rendered with the new rule
+        io.sendLine('3'); // done (1=first, 2=add, 3=done)
+        await flow;
+        io.sendLine('/exit');
+        await run;
+
+        final written = (await env.readTextFile(
+          '/home/u/.fah/config.yaml',
+        )).valueOrNull;
+        final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
+        expect(parsed.ttsr!.rules.single.name, 'first');
+        expect(parsed.ttsr!.settings.enabled, isTrue);
+        expect(fake.calls, 0);
+      },
+    );
+
+    test('E2: an unwritable config file refuses with a clear error', () async {
+      await env.createDir('/home/u/.fah/config.yaml');
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, homeDir: '/home/u');
+      final run = cli.run();
+
+      await cli.startTtsrRulesFlow();
+      await waitForIt(
+        () =>
+            io.out.toString().contains('cannot read /home/u/.fah/config.yaml'),
+      );
+      io.sendLine('/exit');
+      await run;
+      expect(fake.calls, 0);
+    });
+
+    test('E3: every action re-reads — a concurrent edit survives', () async {
+      await seed(
+        'ttsr:\n  rules:\n    - name: a\n      pattern: x\n      body: b\n',
+      );
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, homeDir: '/home/u');
+      final run = cli.run();
+
+      final flow = cli.startTtsrRulesFlow();
+      await render(1); // main menu
+      io.sendLine('1'); // rule a
+      await render(2); // the rule submenu
+      // A concurrent edit lands while the flow sits in the submenu.
+      await env.writeFile(
+        '/home/u/.fah/config.yaml',
+        'ttsr:\n  rules:\n    - name: a\n      pattern: x\n      body: b\n'
+            '    - name: concurrent\n      pattern: y\n      body: c\n',
+      );
+      io.sendLine('1'); // toggle a off
+      await waitForIt(
+        () =>
+            io.out.toString().contains('ttsr saved → /home/u/.fah/config.yaml'),
+      );
+      await render(3); // the submenu exited; the main menu re-rendered
+      await waitForIt(() => io.out.toString().contains('concurrent'));
+      io.sendLine('4'); // done (1=a, 2=concurrent, 3=add, 4=done)
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      final written = (await env.readTextFile(
+        '/home/u/.fah/config.yaml',
+      )).valueOrNull;
+      final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
+      expect(
+        parsed.ttsr!.rules.map((r) => r.name),
+        contains('concurrent'),
+        reason: 'reload-before-write',
+      );
+      expect(
+        parsed.ttsr!.rules.singleWhere((r) => r.name == 'a').enabled,
+        isFalse,
+      );
+      expect(fake.calls, 0);
+    });
   });
   group('redaction flow (issue #391)', () {
     /// A pipeline wired like the host startup builds one (defaults, no

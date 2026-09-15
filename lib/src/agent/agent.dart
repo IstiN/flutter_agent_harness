@@ -199,6 +199,7 @@ class Agent {
     this.onRunIdleTimeout,
     this.contextWindowCap,
     this.wireDump = false,
+    this.overWindowRelief,
   }) : toolExecutor =
            toolExecutor ?? toolRegistry?.executor ?? _missingToolExecutor(),
        _state = AgentState(
@@ -268,6 +269,11 @@ class Agent {
   /// loop's over-window guard trips at the capped window. `null` = the raw
   /// model window.
   final int? contextWindowCap;
+
+  /// Emergency relief for the loop's over-window guard (issue #387),
+  /// threaded into every [AgentLoopConfig]. `null` = the guard keeps
+  /// today's behavior (verbatim error, no mid-turn compaction).
+  final OverWindowRelief? overWindowRelief;
 
   /// External messages merged into the steering poll at every turn boundary
   /// (before the first turn and after each one) — e.g. the agent's inbox in
@@ -477,6 +483,7 @@ class Agent {
     return AgentLoopConfig(
       model: _state.model,
       contextWindowCap: contextWindowCap,
+      overWindowRelief: overWindowRelief,
       toolExecution: toolExecution,
       beforeToolCall: beforeToolCall,
       afterToolCall: afterToolCall,
