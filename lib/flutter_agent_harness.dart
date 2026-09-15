@@ -145,6 +145,7 @@ export 'src/sse_decoder.dart';
 export 'src/task/task.dart';
 export 'src/task/subagent.dart';
 export 'src/task/subagent_manager.dart';
+export 'src/task/subagent_heartbeat.dart';
 export 'src/task/subagent_tools.dart';
 export 'src/tools/ask_tool.dart';
 export 'src/tools/availability.dart';
