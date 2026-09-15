@@ -340,7 +340,7 @@ extension on AgentCli {
     if (codeMieCookieExpired(cookie)) {
       final orgUrl = codeMieOrgUrl(entry.baseUrl);
       io.writeln(
-        _style.yellow(
+        tuiWarning(
           'CodeMie session expired — opening browser to re-authorize $orgUrl...',
         ),
       );

@@ -841,10 +841,17 @@ extension ApprovalCommands on AgentCli {
         for (final handle in handles)
           if (handle.supersedes != null) handle.id: handle.supersedes!,
       };
+      // Issue #439: the child's context pressure rides the row.
+      final pressureNotes = <String, String>{
+        for (final handle in handles)
+          if (handle.contextPressureText != null)
+            handle.id: handle.contextPressureText!,
+      };
       for (final line in taskJobLines(
         jobs,
         dim: _style.dim,
         supersedesOf: supersedesOf,
+        pressureNotes: pressureNotes,
       )) {
         io.writeln(line);
       }
@@ -865,17 +872,27 @@ extension ApprovalCommands on AgentCli {
         ? entry.id
         : '${entry.id} exited(${entry.exitCode ?? '?'})';
     final log = briefPath(entry.logPath, cwd: _env.cwd, home: config.homeDir);
-    return '  ${layoutToolRow(ToolRowSegments(glyph: _shellJobGlyph(entry), label: 'bash', detail: entry.command, elapsed: '$trailer (log: $log)'), _rowWidth).style(glyph: _shellJobGlyphPaint(entry), label: tuiAccent2, dim: tuiDim)}';
+    final row = layoutToolRow(
+      ToolRowSegments(
+        glyph: _shellJobGlyph(entry),
+        label: 'bash',
+        detail: entry.command,
+        elapsed: '$trailer (log: $log)',
+      ),
+      _rowWidth - 2,
+    );
+    return '  ${tuiToolRow(row, _shellJobState(entry))}';
   }
+
+  /// The job lifecycle → row state (issue #444): running accent rail,
+  /// clean exit the settled muted rail, non-zero the failed error tint.
+  ToolRowState _shellJobState(ShellJobEntry entry) => entry.isRunning
+      ? ToolRowState.running
+      : (entry.exitCode == 0 ? ToolRowState.settled : ToolRowState.failed);
 
   /// Running `●`, clean `✓`, failed `✗`.
   String _shellJobGlyph(ShellJobEntry entry) =>
       entry.isRunning ? '●' : (entry.exitCode == 0 ? '✓' : '✗');
-
-  String Function(String) _shellJobGlyphPaint(ShellJobEntry entry) =>
-      entry.isRunning
-      ? tuiAccent2Soft
-      : (entry.exitCode == 0 ? tuiAccentSoft : tuiError);
 
   /// `/tasks cancel <id>`: aborts the job's child run / stops the process.
   void _cancelTaskJob(List<String> parts) {
@@ -997,10 +1014,13 @@ extension ApprovalCommands on AgentCli {
     );
     _toolStarts[toolCallId] = (DateTime.now(), detail);
     io.writeln(
-      layoutToolRow(
-        ToolRowSegments(glyph: '•', label: toolName, detail: detail),
-        _rowWidth,
-      ).style(glyph: tuiAccent2Soft, label: tuiAccent2, dim: tuiDim),
+      tuiToolRow(
+        layoutToolRow(
+          ToolRowSegments(glyph: '•', label: toolName, detail: detail),
+          _rowWidth - 2,
+        ),
+        ToolRowState.running,
+      ),
     );
   }
 
@@ -1058,7 +1078,7 @@ extension ApprovalCommands on AgentCli {
         // compaction succeeds).
         if (isContextWindowExhaustedError(message.errorMessage)) {
           io.writeln(
-            _style.yellow(
+            tuiWarning(
               'note: Context window exhausted — the request was not sent; '
               'auto-compacting…',
             ),
@@ -1123,13 +1143,10 @@ extension ApprovalCommands on AgentCli {
     final elapsed = started == null
         ? ''
         : '${DateTime.now().difference(started).inSeconds}s';
-    String detail = startDetail;
-    String Function(String) glyphPaint = tuiAccentSoft;
-    String Function(String) detailPaint = tuiDim;
+    var detail = startDetail;
+    final state = isError ? ToolRowState.failed : ToolRowState.done;
     if (isError) {
-      glyphPaint = tuiError;
       // The failure text is the news: keep it bright, not muted.
-      detailPaint = (s) => s;
       final text = result.content
           .whereType<TextContent>()
           .map((block) => block.text)
@@ -1137,15 +1154,18 @@ extension ApprovalCommands on AgentCli {
       detail = text.split('\n').first;
     }
     io.writeln(
-      layoutToolRow(
-        ToolRowSegments(
-          glyph: isError ? '✗' : '✓',
-          label: toolName,
-          detail: detail,
-          elapsed: elapsed,
+      tuiToolRow(
+        layoutToolRow(
+          ToolRowSegments(
+            glyph: isError ? '✗' : '✓',
+            label: toolName,
+            detail: detail,
+            elapsed: elapsed,
+          ),
+          _rowWidth - 2,
         ),
-        _rowWidth,
-      ).style(glyph: glyphPaint, label: tuiAccent2, dim: detailPaint),
+        state,
+      ),
     );
   }
 
@@ -1154,7 +1174,7 @@ extension ApprovalCommands on AgentCli {
   /// headless response must remain the bare assistant text).
   void _writeAssistantPrefix() {
     if (!_useTui || _assistantPrefixPrinted) return;
-    io.write('${_style.bold(_style.teal('>_'))}${_style.bold('Fa')} ');
+    io.write(tuiFaMark());
     _assistantPrefixPrinted = true;
   }
 }

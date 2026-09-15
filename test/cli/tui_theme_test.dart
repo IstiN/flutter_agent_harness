@@ -12,6 +12,7 @@ import 'dart:io' as io;
 
 import 'package:dart_tui/style.dart' show ColorProfile, RgbColor, Theme;
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
+import 'package:flutter_agent_harness/src/cli/tool_rows.dart';
 import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:test/test.dart';
 
@@ -396,24 +397,45 @@ void main() {
       'pi',
     ];
 
-    /// The same screen under every palette: title, tool line, markdown
-    /// answer, user echo, status line, picker row.
+    /// The same screen under every palette: title + mark, the three
+    /// bordered tool-row states (issue #444), markdown answer, user
+    /// band, warning/error line, status line.
     List<String> sampleScreen() {
       final markdown = AnsiMarkdown(width: 60).formatAll(const [
-          '# Deployment finished',
-          '- 12 tests **passed**, 0 failed',
-          '- artifact: `build/app.apk`',
-          '```',
-          'fa deploy --verify',
-          '```',
-        ]);
+        '# Deployment finished',
+        '- 12 tests **passed**, 0 failed',
+        '- artifact: `build/app.apk`',
+        '```',
+        'fa deploy --verify',
+        '```',
+      ]);
+      LaidOutToolRow row(
+        String glyph,
+        String detail, {
+        String elapsed = '',
+      }) =>
+          layoutToolRow(
+            ToolRowSegments(
+              glyph: glyph,
+              label: 'bash',
+              detail: detail,
+              elapsed: elapsed,
+            ),
+            78,
+          );
       return [
-        '${tuiAccent('fa')}${tuiDim(' · flutter_agent_harness — ready')}',
-        '${tuiAccent2('● bash')}${tuiDim(' deploy --verify · 3.2s')}',
-        ...markdown,
-        FaThemeController.instance.userMessageBg(
-          ' switch the theme to ohmypi ',
+        '${tuiFaMark()}${tuiDim('fa · flutter_agent_harness — ready')}',
+        tuiToolRow(row('•', 'deploy --verify'), ToolRowState.running),
+        tuiToolRow(
+          row('✓', 'deploy --verify', elapsed: '3.2s'),
+          ToolRowState.done,
         ),
+        tuiToolRow(
+          row('✗', 'command not found', elapsed: '0s'),
+          ToolRowState.failed,
+        ),
+        ...markdown,
+        tuiUserMessageLine(' switch the theme to ohmypi '),
         '${tuiWarning('retrying in 2s')} ${tuiError('denied: write outside workspace')}',
         themeTableLines(current: FaThemeController.instance.currentName).first,
       ];
