@@ -19,6 +19,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 
+import '../agent/auto_compactor.dart';
 import '../agent/agent.dart';
 import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
@@ -27,6 +28,8 @@ import '../agent/tool_registry.dart';
 import '../a2a/a2a_client.dart';
 import '../a2a/a2a_manager.dart';
 import '../cancel_token.dart';
+import '../compaction/compaction.dart';
+import '../compaction/token_estimation.dart';
 import '../context.dart';
 import '../json_parse.dart';
 import '../model.dart';
@@ -79,6 +82,7 @@ final class TaskExecutor {
     this.a2aManager,
     this.childSessionFactory,
     this.childSessionOpener,
+    this.compactionEngine,
   });
 
   /// The parent tool pool (already minus any host-hidden tools).
@@ -125,6 +129,10 @@ final class TaskExecutor {
   /// clone. Null disables resume (the tools advertise the missing
   /// `child-resume` capability up front).
   final ChildSessionOpener? childSessionOpener;
+
+  /// Compaction engine for proactive child compaction (issue #439); null
+  /// resolves to the AutoCompactor default (structured).
+  final CompactionEngine? compactionEngine;
 
   /// Runs one batch item to completion. Never throws: cancellation and
   /// failure are reported as [TaskSingleResult] error entries.
@@ -310,6 +318,19 @@ final class TaskExecutor {
       // the stale previous run's live snapshot resets to zero up front.
       manager.touch(id, tokens: 0, requests: 0);
       _attachLivenessTouch(id, child, manager, from: prior.length);
+      // Issue #439 compact-then-deliver: a resume is how the parent steers
+      // an idle/at-wall child. When prior + incoming crosses the threshold,
+      // compact BEFORE the first request so the guard never hard-fails a
+      // deliverable message; then ride every boundary like a fresh spawn.
+      await _compactChildIfNeeded(
+        id,
+        child,
+        wiring: wiring,
+        incomingTokens: estimateRequestTokens([UserMessage.text(message)]),
+      );
+      final agent = child;
+      agent.prepareNextTurn = (nextTurn) =>
+          _compactChildAtBoundary(id, agent, wiring, nextTurn);
       await child.prompt(message);
       resumeCancel.token.throwIfCancelled();
       // The agent loop surfaces provider failures as an error-tagged final
@@ -350,6 +371,95 @@ final class TaskExecutor {
       _currentSubagentIds.remove(id);
       _inFlightCancels.remove(id);
     }
+  }
+
+  /// Issue #439: proactive child compaction at the turn boundary. Returns
+  /// the update that swaps the loop onto the compacted projection, or null
+  /// when nothing compacted (the loop keeps its own context).
+  Future<AgentLoopTurnUpdate?> _compactChildAtBoundary(
+    String id,
+    Agent child,
+    ({Model model, StreamFunction stream}) wiring,
+    NextTurnContext nextTurn,
+  ) async {
+    final compacted = await _compactChildIfNeeded(id, child, wiring: wiring);
+    if (!compacted) return null;
+    return AgentLoopTurnUpdate(
+      context: Context(
+        systemPrompt: nextTurn.context.systemPrompt,
+        // The copy matters: the loop appends to its context list.
+        messages: List.of(child.state.messages),
+        tools: nextTurn.context.tools,
+      ),
+    );
+  }
+
+  /// The shared compaction core (issue #439): stamps the child's context
+  /// pressure on its handle, and when the estimate (plus [incomingTokens])
+  /// crosses the threshold, flushes the transcript and runs ONE
+  /// [AutoCompactor] pipeline — the same engine the main loop uses.
+  /// Best-effort by contract: a failed pass changes nothing and the
+  /// over-window guard stays the last resort.
+  Future<bool> _compactChildIfNeeded(
+    String id,
+    Agent child, {
+    required ({Model model, StreamFunction stream}) wiring,
+    int incomingTokens = 0,
+  }) async {
+    final manager = subagentManager;
+    if (manager == null || childSessionFactory == null) return false;
+    final window = effectiveContextWindow(wiring.model.contextWindow, null);
+    if (window <= 0) return false;
+    final settings = CompactionSettings.forWindow(window);
+    final est =
+        estimateRequestTokens(
+          child.state.messages,
+          systemPrompt: child.state.systemPrompt,
+          tools: child.state.tools,
+        ) +
+        incomingTokens;
+    // Pressure stamp: the transcript-only estimate, what task_status shows.
+    manager.notePressure(
+      id,
+      estTokens: est - incomingTokens,
+      windowTokens: window,
+    );
+    if (!shouldCompact(est, window, settings)) return false;
+
+    await _flushChildTranscript(id, child);
+    final session = _childSessions[id];
+    if (session == null) return false;
+    final before = est - incomingTokens;
+    try {
+      final smol = rolesResolver?.resolveRole(smolModelRole);
+      await AutoCompactorFactory(
+        session: session,
+        state: child.state,
+        window: window,
+        settings: settings,
+        sources: AutoCompactorSources(
+          smolStream: smol?.stream,
+          smolModel: smol?.model,
+          mainStream: wiring.stream,
+          mainModel: wiring.model,
+        ),
+        hooks: _SilentCompactionHooks(),
+        engine: compactionEngine ?? CompactionEngine.structured,
+      ).run();
+    } on Object {
+      return false; // The guard remains the last resort.
+    }
+    // Post-compaction invariant (#387): the flush cursor restarts at the
+    // projected length so later flushes append only new messages.
+    _childSessionWrites[id] = child.state.messages.length;
+    final after = estimateRequestTokens(
+      child.state.messages,
+      systemPrompt: child.state.systemPrompt,
+      tools: child.state.tools,
+    );
+    if (after >= before) return false;
+    manager.recordCompaction(id, freedTokens: before - after);
+    return true;
   }
 
   /// Resume guards (E4 + a2a): everything resumable must be a local,
@@ -476,6 +586,15 @@ final class TaskExecutor {
     // response touches the handle, so the parent's digest sees fresh
     // last-activity and live request/token counts while the child runs.
     _attachLivenessTouch(id, child, subagentManager);
+    // Issue #439: threshold-based proactive compaction at every child turn
+    // boundary — the main loop's discipline (#387/#388) applied to
+    // children, so the over-window guard stays the last resort. The loop
+    // runs the hook BEFORE the steering poll, so a queued `task_send` is
+    // delivered on the compacted context, in-order (E1/E2).
+    if (subagentManager != null) {
+      child.prepareNextTurn = (nextTurn) =>
+          _compactChildAtBoundary(id, child, wiring, nextTurn);
+    }
     if (cancelToken != null) {
       unawaited(cancelToken.onCancel.then((_) => child.abort()));
     }
@@ -1200,4 +1319,23 @@ final class TaskExecutor {
       await subagentManager!.update(id, status: status, error: error);
     }
   }
+}
+
+/// Silent compaction hooks: a child has no TUI — the handle's compaction
+/// receipt ([SubagentManager.recordCompaction]) is the observability
+/// surface (issue #439).
+final class _SilentCompactionHooks extends AutoCompactorHooks {
+  _SilentCompactionHooks();
+
+  @override
+  void onPass(AutoCompactorPass pass) {}
+
+  @override
+  void onRetry(int attempt, int maxAttempts, Duration backoff, Object error) {}
+
+  @override
+  void onDone(int passes, int tokens) {}
+
+  @override
+  void onBothRolesFailed(Object lastError) {}
 }
