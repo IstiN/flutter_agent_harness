@@ -267,50 +267,106 @@ final class _WaitingCoordinator {
       }
       // Sleep until the nearest wake source: a job settle, a timer due,
       // the heartbeat cadence, or the ceiling — whichever lands first.
-      var delay = deadline.difference(now);
-      final jobWakes = [
-        for (final job in _jobs.jobs)
-          if (job.isRunning) job.settled,
-      ];
-      for (final timer in snap.timers) {
-        final due = Duration(
-          milliseconds: timer.dueMs - now.millisecondsSinceEpoch,
-        );
-        if (due < delay) delay = due;
-      }
-      if (hbMin > 0) {
-        final nextBeat =
-            lastHeartbeat.difference(now) + Duration(minutes: hbMin);
-        if (nextBeat < delay) delay = nextBeat;
-      }
-      if (delay > Duration.zero) {
-        await Future.any([_cli._waitingSleep(delay), ...jobWakes]);
-      }
-      // Due timers: deliver, then wake the idle run through the inbox
-      // path (the headless run has no inbox watcher of its own).
-      await _timers.deliverDue();
-      await _cli._wakeOnInboxMail();
-      // A job settle (or timer delivery) starts its run via the normal
-      // handlers — let it finish before re-snapshotting.
-      if (_cli.isBusy) {
-        try {
-          await _cli._settled;
-        } on Object {
-          // A failed wake turn must not kill the wait loop.
-        }
-      }
-      if (hbMin > 0 &&
-          !_clock().isBefore(lastHeartbeat.add(Duration(minutes: hbMin)))) {
-        lastHeartbeat = _clock();
-        final beatSnap = await snapshot();
-        if (!beatSnap.isEmpty) {
-          _cli.io.writeln('⏳ still waiting: ${describe(beatSnap)}');
-        }
-      }
+      await _sleepUntilWake(now, deadline, snap, lastHeartbeat, hbMin);
+      await _pumpWakeTurns();
+      lastHeartbeat = await _beatIfDue(lastHeartbeat, hbMin);
       snap = await snapshot();
     }
     _cli.io.writeln('⏳ waiters resolved — ${_summaryLine(snap)}');
   }
+
+  /// Deliver due timers and let any wake turn (job-settle or timer
+  /// delivery) finish before the loop re-snapshots. A failed wake turn
+  /// must not kill the wait loop.
+  Future<void> _pumpWakeTurns() async {
+    await _timers.deliverDue();
+    await _cli._wakeOnInboxMail();
+    if (_cli.isBusy) {
+      try {
+        await _cli._settled;
+      } on Object {
+        // Swallowed: the next snapshot reports the real state.
+      }
+    }
+  }
+
+  /// Emit the periodic `still waiting` beat when [heartbeatMin] has
+  /// elapsed since [lastHeartbeat]; returns the (possibly new) beat time.
+  Future<DateTime> _beatIfDue(DateTime lastHeartbeat, int heartbeatMin) async {
+    if (!waitingBeatDue(
+      now: _clock(),
+      lastHeartbeat: lastHeartbeat,
+      heartbeatMin: heartbeatMin,
+    )) {
+      return lastHeartbeat;
+    }
+    final beatSnap = await snapshot();
+    if (beatSnap.isEmpty) return _clock();
+    _cli.io.writeln('⏳ still waiting: ${describe(beatSnap)}');
+    return _clock();
+  }
+
+  /// Sleep until the nearest wake source: a job settle, a timer due, the
+  /// heartbeat cadence, or the ceiling — whichever lands first.
+  Future<void> _sleepUntilWake(
+    DateTime now,
+    DateTime deadline,
+    WaiterSnapshot snap,
+    DateTime lastHeartbeat,
+    int hbMin,
+  ) async {
+    final delay = nextWakeDelay(
+      now: now,
+      deadline: deadline,
+      heartbeatMin: hbMin,
+      lastHeartbeat: lastHeartbeat,
+      timerDueMs: snap.timers.map((t) => t.dueMs),
+    );
+    if (delay <= Duration.zero) return;
+    await Future.any([_cli._waitingSleep(delay), ..._runningJobWakes()]);
+  }
+
+  /// The settled-futures of every running shell job — each resolves as
+  /// soon as its job settles and wakes the wait early.
+  List<Future<void>> _runningJobWakes() => [
+    for (final job in _jobs.jobs)
+      if (job.isRunning) job.settled,
+  ];
+}
+
+/// Whether a `still waiting` heartbeat beat is due now (issue #450):
+/// cadence must be enabled and [lastHeartbeat] plus [heartbeatMin] must
+/// have passed. Pure — unit-tested directly.
+bool waitingBeatDue({
+  required DateTime now,
+  required DateTime lastHeartbeat,
+  required int heartbeatMin,
+}) {
+  if (heartbeatMin <= 0) return false;
+  return !now.isBefore(lastHeartbeat.add(Duration(minutes: heartbeatMin)));
+}
+
+/// Nearest wake delay for the `--wait-for-jobs` loop (issue #450): the
+/// minimum of the ceiling deadline, each armed timer's due moment, and the
+/// heartbeat cadence. Pure — unit-tested directly.
+Duration nextWakeDelay({
+  required DateTime now,
+  required DateTime deadline,
+  required int heartbeatMin,
+  required DateTime lastHeartbeat,
+  required Iterable<int> timerDueMs,
+}) {
+  var delay = deadline.difference(now);
+  for (final due in timerDueMs) {
+    final d = Duration(milliseconds: due - now.millisecondsSinceEpoch);
+    if (d < delay) delay = d;
+  }
+  if (heartbeatMin > 0) {
+    final beat =
+        lastHeartbeat.difference(now) + Duration(minutes: heartbeatMin);
+    if (beat < delay) delay = beat;
+  }
+  return delay;
 }
 
 /// Test seams for the visible-waiting layer (issue #450).

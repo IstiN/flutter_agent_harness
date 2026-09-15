@@ -226,53 +226,17 @@ extension _TuiRowRenderers on FaTuiModel {
     return _dim('⏰ $scheduledCount scheduled$eta');
   }
 
-  /// The visible-waiting rows (issue #450): one headline row (`⏳ waiting
-  /// · <purpose> · next wake in 4m (timer)`) plus, when more than one
-  /// waiter of a kind exists, up to two capped detail rows and the
-  /// restart-honesty note. Empty while busy or with no waiters — an empty
-  /// list renders nothing and claims no viewport height.
-  List<String> _waitingRowLines() {
-    if (busy) return const [];
-    if (waitingJobs.isEmpty && waitingTimers.isEmpty) return const [];
-    final now = nowFn().millisecondsSinceEpoch;
-    String etaOf(int dueMs) => dueMs <= now
-        ? 'due now'
-        : ScheduledMessageQueue.formatDelay(Duration(milliseconds: dueMs - now));
-    final head = StringBuffer('⏳ waiting');
-    if (waitingJobs.length == 1) {
-      head.write(' · ${waitingJobs.single}');
-    } else if (waitingJobs.length > 1) {
-      head.write(' · ${waitingJobs.length} jobs');
-    }
-    if (waitingTimers.isNotEmpty) {
-      final nearest = waitingTimers
-          .map((t) => t.dueMs)
-          .reduce((a, b) => a < b ? a : b);
-      final eta = etaOf(nearest);
-      head.write(
-        waitingTimers.length == 1
-            ? ' · next wake in $eta (timer)'
-            : ' · ${waitingTimers.length} timers · next wake in $eta',
-      );
-    }
-    final lines = <String>[_dim(head.toString())];
-    // Detail rows exist only when a count hides something (>1 of a kind);
-    // the job board above already lists every job live.
-    final details = <String>[
-      if (waitingJobs.length > 1) ...waitingJobs,
-      if (waitingTimers.length > 1)
-        ...waitingTimers.map((t) => '${t.preview} · due in ${etaOf(t.dueMs)}'),
-    ];
-    for (final detail in details.take(2)) {
-      lines.add(_dim('  $detail'));
-    }
-    if (waitingLostJobs > 0) {
-      final noun = 'background job${waitingLostJobs == 1 ? '' : 's'}';
-      final verb = waitingLostJobs == 1 ? 'was' : 'were';
-      lines.add(_dim('$waitingLostJobs $noun from the previous run $verb lost'));
-    }
-    return lines;
-  }
+  /// The visible-waiting rows (issue #450): headline row (`⏳ waiting ·
+  /// purpose · next wake in 4m (timer)`) plus capped detail rows and the
+  /// restart-honesty note; empty while busy or with no waiters. The pure
+  /// builder `waitingRowLines` holds the logic.
+  List<String> _waitingRowLines() => waitingRowLines(
+    busy: busy,
+    waitingJobs: waitingJobs,
+    waitingTimers: waitingTimers,
+    waitingLostJobs: waitingLostJobs,
+    nowMs: nowFn().millisecondsSinceEpoch,
+  );
 
   /// The visible-waiting push (issue #450): replaces the waiter aggregate;
   /// while a timer countdown is on screen, arms the shared minute-boundary
@@ -291,4 +255,76 @@ extension _TuiRowRenderers on FaTuiModel {
     }
     return (next, null);
   }
+}
+
+/// Pure row builder for the visible-waiting block (issue #450) — top-level
+/// so tests hit it directly and sibling lanes (#446 row builders) can share
+/// the one implementation. Split into per-piece helpers to keep each CRAP
+/// score under the repo's ≤12 gate.
+List<String> waitingRowLines({
+  required bool busy,
+  required List<String> waitingJobs,
+  required List<({int dueMs, String preview})> waitingTimers,
+  required int waitingLostJobs,
+  required int nowMs,
+}) {
+  if (busy) return const [];
+  if (waitingJobs.isEmpty && waitingTimers.isEmpty) return const [];
+  String etaOf(int dueMs) => dueMs <= nowMs
+      ? 'due now'
+      : ScheduledMessageQueue.formatDelay(
+          Duration(milliseconds: dueMs - nowMs),
+        );
+  final lines = <String>[
+    _waitingHeadLine(waitingJobs, waitingTimers, etaOf),
+    ..._waitingDetailLines(waitingJobs, waitingTimers, etaOf),
+    if (waitingLostJobs > 0) _waitingLostLine(waitingLostJobs),
+  ];
+  return lines;
+}
+
+/// The `⏳ waiting` headline: job purpose and/or the nearest timer wake.
+String _waitingHeadLine(
+  List<String> jobs,
+  List<({int dueMs, String preview})> timers,
+  String Function(int) etaOf,
+) {
+  final head = StringBuffer('⏳ waiting');
+  if (jobs.length == 1) {
+    head.write(' · ${jobs.single}');
+  } else if (jobs.length > 1) {
+    head.write(' · ${jobs.length} jobs');
+  }
+  if (timers.isNotEmpty) {
+    final nearest = timers.map((t) => t.dueMs).reduce((a, b) => a < b ? a : b);
+    final eta = etaOf(nearest);
+    head.write(
+      timers.length == 1
+          ? ' · next wake in $eta (timer)'
+          : ' · ${timers.length} timers · next wake in $eta',
+    );
+  }
+  return _dim(head.toString());
+}
+
+/// Detail rows exist only when a count hides something (>1 of a kind);
+/// the job board above already lists every job live. Capped at two rows.
+List<String> _waitingDetailLines(
+  List<String> jobs,
+  List<({int dueMs, String preview})> timers,
+  String Function(int) etaOf,
+) {
+  final details = <String>[
+    if (jobs.length > 1) ...jobs,
+    if (timers.length > 1)
+      ...timers.map((t) => '${t.preview} · due in ${etaOf(t.dueMs)}'),
+  ];
+  return [for (final detail in details.take(2)) _dim('  $detail')];
+}
+
+/// The restart-honesty note: waiters lost to the previous run's exit.
+String _waitingLostLine(int lost) {
+  final noun = 'background job${lost == 1 ? '' : 's'}';
+  final verb = lost == 1 ? 'was' : 'were';
+  return _dim('$lost $noun from the previous run $verb lost');
 }

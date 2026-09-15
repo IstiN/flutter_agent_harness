@@ -6,6 +6,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter_agent_harness/src/cli/waiting_heartbeat.dart';
+import 'package:flutter_agent_harness/src/cli/agent_cli.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -36,10 +37,7 @@ void main() {
         () => WaitingConfig.fromYaml({'waitHeartbeatMinutes': -1}),
         throwsA(anything),
       );
-      expect(
-        () => WaitingConfig.fromYaml({'bogus': 1}),
-        throwsA(anything),
-      );
+      expect(() => WaitingConfig.fromYaml({'bogus': 1}), throwsA(anything));
     });
   });
 
@@ -56,10 +54,7 @@ void main() {
 
     test('zero cadence disables arming (kill switch)', () {
       var beats = 0;
-      final hb = WaitingHeartbeat(
-        onBeat: () => beats++,
-        minutes: () => 0,
-      );
+      final hb = WaitingHeartbeat(onBeat: () => beats++, minutes: () => 0);
       hb.start();
       hb.tick();
       expect(beats, 0);
@@ -81,10 +76,7 @@ void main() {
 
     test('the real timer fires the beat after the cadence', () async {
       var beats = 0;
-      final hb = WaitingHeartbeat(
-        onBeat: () => beats++,
-        minutes: () => 1,
-      );
+      final hb = WaitingHeartbeat(onBeat: () => beats++, minutes: () => 1);
       hb.start();
       // One-shot chain, minute granularity — shrink the wait by ticking
       // through the public seam instead of sleeping a minute.
@@ -92,6 +84,82 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       expect(beats, 1);
       hb.stop();
+    });
+  });
+  group('wait-loop pure helpers', () {
+    final now = DateTime.utc(2026, 1, 1, 12);
+    final deadline = now.add(const Duration(minutes: 30));
+    test('heartbeat cadence beats a farther ceiling', () {
+      expect(
+        nextWakeDelay(
+          now: now,
+          deadline: deadline,
+          heartbeatMin: 20,
+          lastHeartbeat: now,
+          timerDueMs: const [],
+        ),
+        const Duration(minutes: 20),
+      );
+    });
+    test('the nearest timer wins', () {
+      expect(
+        nextWakeDelay(
+          now: now,
+          deadline: deadline,
+          heartbeatMin: 20,
+          lastHeartbeat: now,
+          timerDueMs: [
+            now.millisecondsSinceEpoch + 60_000,
+            now.millisecondsSinceEpoch + 240_000,
+          ],
+        ),
+        const Duration(minutes: 1), // the nearer timer
+      );
+    });
+    test('heartbeat cadence can be the nearest wake', () {
+      final lastBeat = now.subtract(const Duration(minutes: 15));
+      expect(
+        nextWakeDelay(
+          now: now,
+          deadline: deadline,
+          heartbeatMin: 20,
+          lastHeartbeat: lastBeat,
+          timerDueMs: const [],
+        ),
+        const Duration(minutes: 5),
+      );
+    });
+    test('disabled heartbeat never wakes', () {
+      final lastBeat = now.subtract(const Duration(minutes: 90));
+      expect(
+        nextWakeDelay(
+          now: now,
+          deadline: deadline,
+          heartbeatMin: 0,
+          lastHeartbeat: lastBeat,
+          timerDueMs: const [],
+        ),
+        const Duration(minutes: 30),
+      );
+    });
+    test('waitingBeatDue gates on cadence and elapsed time', () {
+      final lastBeat = now.subtract(const Duration(minutes: 21));
+      expect(
+        waitingBeatDue(now: now, lastHeartbeat: lastBeat, heartbeatMin: 20),
+        isTrue,
+      );
+      expect(
+        waitingBeatDue(
+          now: now,
+          lastHeartbeat: now.subtract(const Duration(minutes: 19)),
+          heartbeatMin: 20,
+        ),
+        isFalse,
+      );
+      expect(
+        waitingBeatDue(now: now, lastHeartbeat: lastBeat, heartbeatMin: 0),
+        isFalse,
+      );
     });
   });
 }
