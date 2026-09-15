@@ -151,7 +151,8 @@ const builtinSlashCommands = <String, String>{
   '/a2a': 'show A2A remote agent servers status',
   '/skills': 'list discovered skills (invoke with /skill:<name>)',
   '/ext': '[list|enable|disable|audit|remove|update|reload] — JS extensions',
-  '/agents': '[types|<id>|open <id>] — agents hub: fleet tree, transcript, '
+  '/agents':
+      '[types|<id>|open <id>] — agents hub: fleet tree, transcript, '
       'observe, open session',
   '/mail': '[<id>] — deferred messages (btw panels) and their state',
   '/reply': '<id|agent|mailbox> <text> — answer a panel or agent',
@@ -161,7 +162,7 @@ const builtinSlashCommands = <String, String>{
       '[contextWindow|maxTokens <n>] — show or override token limits',
   '/provider':
       '[name] [baseUrl] [token] | add | custom — switch or add provider',
-  '/providers': 'alias for /provider',
+  '/providers': 'provider queue editor (issue #418)',
   // /provider-edit removed — edit/delete is now inline in /provider picker.
   '/mode': '[name] — show or switch the active mode',
   '/theme': '[name|reset] — switch TUI theme (bare opens picker)',

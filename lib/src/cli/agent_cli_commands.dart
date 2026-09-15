@@ -281,7 +281,6 @@ extension SlashCommandDispatch on AgentCli {
       case '/model-edit':
         await _handleModelEdit(rest);
       case '/provider':
-      case '/providers':
         await _providerSlash(rest);
       case '/key':
         await _handleKeyCommand(rest);
@@ -508,21 +507,12 @@ extension ProviderQueueEditor on AgentCli {
       );
       return;
     }
-    final state = runtime.state;
-    final now = DateTime.now();
-    for (var index = 0; index < runtime.entries.length; index++) {
-      final entry = runtime.entries[index];
-      final badge = index == state.currentIndex
-          ? 'current'
-          : switch (state.cooldownRemaining(index, now)) {
-              null => state.lastError(index) == null ? 'healthy' : 'recovering',
-              final left => 'cooldown ${_queueEta(left)}',
-            };
-      final error = state.lastError(index);
-      io.writeln(
-        '$index. ${entry.label} [$badge]'
-        '${error == null ? '' : ' — ${state.lastErrorKind(index)?.label}: $error'}',
-      );
+    for (final row in renderProviderQueueRows(
+      entries: runtime.entries,
+      state: runtime.state,
+      now: DateTime.now(),
+    )) {
+      io.writeln(row);
     }
   }
 
@@ -574,9 +564,17 @@ extension ProviderQueueEditor on AgentCli {
     final body = const JsonEncoder.withIndent(
       '  ',
     ).convert([for (final entry in next) entry.toJson()]);
-    final path = '${config.env.cwd}/.fah/config.yaml';
-    final read = await config.env.readTextFile(path);
-    final source = switch (read) {
+    // The edit persists to the winning scope's own file: editing a
+    // project-defined queue never silently creates a shadowing user
+    // file, and vice versa (env wins are refused above).
+    final path = switch (scope.scope) {
+      ProviderQueueScope.project => '${config.env.cwd}/.fah/config.yaml',
+      ProviderQueueScope.user =>
+        '${config.homeDir ?? config.env.cwd}/.fah/config.yaml',
+      // Refused above; exhaustiveness keeps the switch total.
+      ProviderQueueScope.env => throw StateError('env scope unreachable'),
+    };
+    final source = switch (await config.env.readTextFile(path)) {
       Ok(:final value) => value,
       Err(:final error) when error.code == FileErrorCode.notFound => '',
       Err(:final error) => _queueEditFail('cannot read $path: $error'),
@@ -675,6 +673,15 @@ extension ProviderQueueEditor on AgentCli {
     }
   }
 
-  String _queueEta(Duration left) =>
-      left.inMinutes >= 1 ? '${left.inMinutes}m' : '${left.inSeconds}s';
+  /// The settings-hub row description for the provider queue: a compact
+  /// summary of what the next turn resolves through.
+  String _providersQueueStatusLabel() {
+    final runtime = config.providersQueueRuntime;
+    final entries = runtime?.entries;
+    if (entries == null || entries.isEmpty) return 'not set';
+    final current = runtime!.state.currentIndex;
+    return '${entries.length} '
+        '${entries.length == 1 ? 'entry' : 'entries'}, '
+        'current: ${entries[current].model}';
+  }
 }

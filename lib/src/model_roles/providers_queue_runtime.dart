@@ -257,3 +257,35 @@ final class ProviderQueueRuntime {
   /// The queue-driven stream function — the default role's stream.
   final FallbackStreamFunction streamFunction;
 }
+
+/// The queue editor's per-entry health rows — pure so tests pin the byte
+/// layout across the four health states (current / healthy / recovering /
+/// cooldown) and any terminal width (issue #418, GOLDEN-tui-rows).
+///
+/// Secrets never appear: the row names the key's ENV indirection
+/// (`key:$NAME`), never a value (AC9).
+List<String> renderProviderQueueRows({
+  required List<ProviderQueueEntry> entries,
+  required ProviderQueueState state,
+  required DateTime now,
+}) {
+  final rows = <String>[];
+  for (var index = 0; index < entries.length; index++) {
+    final entry = entries[index];
+    final badge = index == state.currentIndex
+        ? 'current'
+        : switch (state.cooldownRemaining(index, now)) {
+            null => state.lastError(index) == null ? 'healthy' : 'recovering',
+            final left =>
+              'cooldown ${left.inMinutes >= 1 ? '${left.inMinutes}m' : '${left.inSeconds}s'}',
+          };
+    final error = state.lastError(index);
+    rows.add(
+      '$index. ${entry.label} [$badge]'
+      '${entry.apiKeyEnv == null ? '' : ' key:\$${entry.apiKeyEnv}'}'
+      '${entry.baseUrl == null ? '' : ' ${entry.baseUrl}'}'
+      '${error == null ? '' : ' — ${state.lastErrorKind(index)?.label}: $error'}',
+    );
+  }
+  return rows;
+}
