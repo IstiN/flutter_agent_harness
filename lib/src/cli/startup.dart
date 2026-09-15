@@ -406,7 +406,9 @@ ProviderQueueResolution resolveProviderQueueAtBoot({
     ProviderQueueScopeInput(
       scope: ProviderQueueScope.env,
       isPresent: envText != null && envText.trim().isNotEmpty,
-      parse: envText == null ? null : parseProviderQueueEnv(envText),
+      parse: envText == null || envText.trim().isEmpty
+          ? null
+          : parseProviderQueueEnv(envText),
     ),
     ...[
       for (final (scope, path) in [

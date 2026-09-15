@@ -369,7 +369,8 @@ ParsedProviderQueue parseProviderQueueJsonText(
     final offset = error.offset;
     final position = offset == null || offset < 0 || offset > clean.length
         ? ''
-        : ' at line ${_lineOf(clean, offset)}, column ${_columnOf(clean, offset)}';
+        : ' at line ${_lineOf(clean, offset)}, '
+              'column ${_columnOf(clean, offset)}';
     final hint = !clean.contains('"') || clean.startsWith("'")
         ? ' — if this came from a shell single-quoted string, the single '
               'quotes are not JSON: wrap the value in single quotes and use '
@@ -631,6 +632,7 @@ int _lineOf(String text, int offset) =>
     text.substring(0, offset).split('\n').length;
 
 int _columnOf(String text, int offset) {
+  if (offset <= 0) return 1;
   final lineStart = text.lastIndexOf('\n', offset - 1) + 1;
   return offset - lineStart + 1;
 }

@@ -139,6 +139,12 @@ extension SlashCommandDispatch on AgentCli {
   Future<void> runPowerAssertionsSettled() async =>
       await _powerAssertions?.onRunSettled();
 
+  /// Dispatches one input line through the normal pipeline. Editor-flow
+  /// unit tests drive slash commands through this instead of spawning a
+  /// full [AgentCli.run] loop.
+  @visibleForTesting
+  Future<void> handleLineForTest(String line) => _handleLine(line);
+
   /// `/power`: the configured `power.sleepPrevention` level, the
   /// `power.hold` lifecycle, and whether the assertion is held right
   /// now.
@@ -523,12 +529,18 @@ extension ProviderQueueEditor on AgentCli {
     String? apiKeyEnv,
     String? baseUrl,
   ) async {
-    final entry = ProviderQueueEntry(
-      providerType: kind,
-      model: model,
-      apiKeyEnv: apiKeyEnv,
-      baseUrl: baseUrl,
-    );
+    final ProviderQueueEntry entry;
+    try {
+      entry = ProviderQueueEntry(
+        providerType: kind,
+        model: model,
+        apiKeyEnv: apiKeyEnv,
+        baseUrl: baseUrl,
+      );
+    } on ArgumentError catch (error) {
+      io.writeln('/providers queue add refused: ${error.message}');
+      return;
+    }
     await _providerQueueEdit((entries) => providerQueueAdd(entries, entry));
   }
 
@@ -617,14 +629,29 @@ extension ProviderQueueEditor on AgentCli {
           ? null
           : ProviderQueueRuntime.build(
               queue,
-              secrets: collectQueueSecrets(
-                queue.entries,
-                config.secureKeys ?? _secureKeysMissing,
-              ),
+              secrets: _queueSecrets(queue.entries),
             );
     } on ConfigException catch (error) {
       io.writeln('queue reload failed: ${error.message}');
     }
+  }
+
+  /// Secrets for [entries]: the injected env lookup first (tests, embedders),
+  /// then the process environment, then the secure-key cache.
+  Map<String, String> _queueSecrets(List<ProviderQueueEntry> entries) {
+    final lookup = config.envVarValue;
+    final env = lookup == null
+        ? null
+        : {
+            for (final entry in entries)
+              if (entry.apiKeyEnv != null)
+                entry.apiKeyEnv!: lookup(entry.apiKeyEnv!) ?? '',
+          };
+    return collectQueueSecrets(
+      entries,
+      config.secureKeys ?? _secureKeysMissing,
+      env: env,
+    );
   }
 
   /// No secure store on this host: the env is the only key source (the
@@ -641,9 +668,7 @@ extension ProviderQueueEditor on AgentCli {
       return;
     }
     final entry = runtime.entries[index];
-    final secrets = collectQueueSecrets([
-      entry,
-    ], config.secureKeys ?? _secureKeysMissing);
+    final secrets = _queueSecrets([entry]);
     try {
       final chain = buildProviderQueueChain([entry], secrets: secrets);
       final probe = chain.single;

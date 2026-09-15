@@ -2055,6 +2055,9 @@ extension SettingsFlow on AgentCli {
   Set<String> settingsPickerHandlerKeysForTest() =>
       _settingsPickerHandlers.keys.toSet();
 
+  @visibleForTesting
+  Future<void> pickSettingForTest(String key) => _tuiPickSetting(key);
+
   /// A settings-hub selection launches the same flow its dedicated slash
   /// command would open.
   Future<void> _tuiPickSetting(String key) async {
