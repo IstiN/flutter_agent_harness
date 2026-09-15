@@ -228,6 +228,26 @@ extension ApprovalCommands on AgentCli {
     return RequestSecretResult(name: name, value: value, persisted: false);
   }
 
+  /// Answers a mid-run password ask (issue #367: `sudo`/`ssh` prompting on
+  /// the live process stdin): the TUI reuses the masked secret-mode input
+  /// (`TextPromptSpec.secret`), line mode mirrors the secret line flow.
+  /// `null` = declined; the bash tool then fails the command with the ask
+  /// surfaced, never hanging and never echoing the value.
+  Future<String?> _answerPasswordPrompt(String promptLine) async {
+    final tui = _tuiController;
+    if (_useTui && tui != null) {
+      final result = await tui.openPrompt(
+        TextPromptSpec(header: 'Password', question: promptLine, secret: true),
+      );
+      return result is TextPromptAnswer ? result.value : null;
+    }
+    io.writeln('[password] $promptLine');
+    io.write('[password] Enter password (empty = decline): ');
+    final line = await _nextAskLine();
+    final value = line?.trim();
+    return value == null || value.isEmpty ? null : value;
+  }
+
   /// env vars so `$NAME` works in bash tool executions.
 
   /// Renders one question as a numbered menu (+ "(Recommended)" marker) and

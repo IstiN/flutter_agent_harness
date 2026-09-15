@@ -38,6 +38,7 @@ void main() {
     MemoryConfig? memoryConfig,
     String? homeDir,
     TtsrConfig? ttsr,
+    RedactionPipeline? redactionPipeline,
   }) {
     return AgentCli(
       config: AgentCliConfig(
@@ -46,6 +47,7 @@ void main() {
         env: env,
         homeDir: homeDir,
         ttsr: ttsr,
+        redactionPipeline: redactionPipeline,
         sessionRoot: '/sessions',
         modelsConfig: modelsConfig,
         onModelsConfigChanged: onModelsConfigChanged,
@@ -1715,6 +1717,379 @@ memory:
         parsed.ttsr!.rules.singleWhere((r) => r.name == 'a').enabled,
         isFalse,
       );
+      expect(fake.calls, 0);
+    });
+  });
+  group('redaction flow (issue #391)', () {
+    /// A pipeline wired like the host startup builds one (defaults, no
+    /// secrets) so the flow's live-install paths have a real pipeline.
+    RedactionPipeline pipeline() =>
+        RedactionPipeline(registeredSecrets: const []);
+
+    /// Seeds the USER config (the machine-level file the redact: section
+    /// belongs in, mirroring `fa config set redact…` global scope) and
+    /// returns the cli over it.
+    Future<AgentCli> seededCli(
+      FakeStreamFunction fake, {
+      RedactionPipeline? redactionPipeline,
+      String yaml = 'provider: openrouter\nmodel: m1\n',
+    }) async {
+      await env.writeFile('/home/u/.fah/config.yaml', yaml);
+      return cliFor(
+        fake.call,
+        homeDir: '/home/u',
+        redactionPipeline: redactionPipeline,
+      );
+    }
+
+    test(
+      'AC1: the hub picker and the /settings summary carry redaction',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(fake.call, redactionPipeline: pipeline());
+        final run = cli.run();
+
+        io.sendLine('/settings');
+        await waitForIt(() => io.out.toString().contains('redact: on, block'));
+        io.sendLine('/exit');
+        await run;
+
+        // The hub row exists with the current effective pipeline state.
+        final row = cli.settingsHubItems().firstWhere(
+          (item) => item.key == 'redact',
+        );
+        expect(row.label, 'Redaction');
+        expect(row.description, contains('on, block off'));
+        expect(io.out.toString(), contains('redact: on, block off'));
+        expect(fake.calls, 0);
+      },
+    );
+
+    test('AC1: summary reads off when the boot disabled redaction', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call); // no pipeline — enabled: false boot
+      final run = cli.run();
+
+      io.sendLine('/settings');
+      await waitForIt(() => io.out.toString().contains('redact: off'));
+      io.sendLine('/exit');
+      await run;
+
+      final row = cli.settingsHubItems().firstWhere(
+        (item) => item.key == 'redact',
+      );
+      expect(row.description, 'off');
+      expect(fake.calls, 0);
+    });
+
+    test('every hub row has a dispatch target (Enter never no-ops)', () {
+      final cli = cliFor(FakeStreamFunction([textTurn('ok')]).call);
+      final keys = cli.settingsHubItems().map((item) => item.key).toSet()
+        ..remove('mcp'); // pre-existing main gap — `/mcp` has no picker yet
+      expect(
+        keys.difference(cli.settingsPickerHandlerKeysForTest()),
+        isEmpty,
+        reason: 'a hub row without a handler closes silently on Enter',
+      );
+    });
+
+    test(
+      'AC2: every section field round-trips through the yaml file',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = await seededCli(
+          fake,
+          redactionPipeline: pipeline(),
+          yaml:
+              '# machine policy\nprovider: openrouter\nredact:\n'
+              '  enabled: true\n',
+        );
+        final run = cli.run();
+
+        final flow = cli.startRedactionFlow();
+        await waitForIt(() => io.out.toString().contains('redaction'));
+        // allowlist: two comma-separated regexes → a yaml block list.
+        io.sendLine('5');
+        await waitForIt(() => io.out.toString().contains('Allowlist regexes'));
+        io.sendLine(r'sha-[0-9a-f]{40}, \b[0-9a-f-]{36}\b');
+        await waitForIt(() => io.out.toString().contains('redact.allowlist'));
+        // minEntropy + minLength scalars.
+        io.sendLine('3');
+        await waitForIt(() => io.out.toString().contains('min entropy'));
+        io.sendLine('3.2');
+        await waitForIt(
+          () => io.out.toString().contains('redact.minEntropy = 3.2'),
+        );
+        io.sendLine('4');
+        await waitForIt(() => io.out.toString().contains('min token length'));
+        io.sendLine('40');
+        await waitForIt(
+          () => io.out.toString().contains('redact.minLength = 40'),
+        );
+        // toolDeny list.
+        io.sendLine('7');
+        await waitForIt(() => io.out.toString().contains('tool deny'));
+        io.sendLine('bash, read_file');
+        await waitForIt(() => io.out.toString().contains('redact.toolDeny'));
+        // Layer toggle: pii (index 9 → picker row 10) off → on, then out.
+        io.sendLine('8');
+        await waitForIt(() => io.out.toString().contains('redaction layers'));
+        await waitForIt(() => io.out.toString().contains('10) pii'));
+        io.sendLine('10');
+        await waitForIt(
+          () => io.out.toString().contains('redact.layers.pii = true'),
+        );
+        io.sendLine('12'); // done — out of the layers submenu
+        // blockMode quick toggle off → on.
+        io.sendLine('2');
+        await waitForIt(
+          () => io.out.toString().contains('redact.blockMode = true'),
+        );
+        io.sendLine('10'); // done — out of the redaction menu
+        await flow;
+        io.sendLine('/exit');
+        await run;
+
+        // The real boot parser re-reads the file.
+        final written = (await env.readTextFile(
+          '/home/u/.fah/config.yaml',
+        )).valueOrNull;
+        expect(written, isNotNull);
+        final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
+        final redact = parsed.redact!;
+        expect(redact.enabled, isTrue);
+        expect(redact.blockMode, isTrue);
+        expect(redact.minEntropy, 3.2);
+        expect(redact.minLength, 40);
+        expect(redact.allowlistRegexes.map((r) => r.pattern), [
+          'sha-[0-9a-f]{40}',
+          r'\b[0-9a-f-]{36}\b',
+        ]);
+        expect(redact.toolDeny, {'bash', 'read_file'});
+        expect(redact.isLayerEnabled(RedactionLayer.pii), isTrue);
+        // Surgical write: the other sections survive byte-for-byte.
+        expect(written, contains('# machine policy\nprovider: openrouter\n'));
+        // The live pipeline reloaded the saved section from disk.
+        final live = cli.config.redactionPipeline!.config;
+        expect(live.blockMode, isTrue);
+        expect(live.minEntropy, 3.2);
+        expect(live.minLength, 40);
+        expect(live.allowlistRegexes, hasLength(2));
+        expect(live.toolDeny, {'bash', 'read_file'});
+        expect(live.isLayerEnabled(RedactionLayer.pii), isTrue);
+        expect(fake.calls, 0);
+      },
+    );
+
+    test(
+      'AC3: with a pipeline the write applies live; without, next boot',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = await seededCli(fake, redactionPipeline: pipeline());
+        final run = cli.run();
+
+        final flow = cli.startRedactionFlow();
+        await waitForIt(() => io.out.toString().contains('redaction'));
+        io.sendLine('2'); // blockMode toggle
+        await waitForIt(() => io.out.toString().contains('(applies live'));
+        io.sendLine('10'); // done
+        await flow;
+        io.sendLine('/exit');
+        await run;
+        expect(fake.calls, 0);
+      },
+    );
+
+    test(
+      'AC3: a pipeline-less boot states the change waits for next boot',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = await seededCli(fake); // no pipeline
+        final run = cli.run();
+
+        final flow = cli.startRedactionFlow();
+        await waitForIt(() => io.out.toString().contains('redaction'));
+        io.sendLine('2'); // blockMode toggle
+        await waitForIt(
+          () => io.out.toString().contains('(applies at next boot)'),
+        );
+        io.sendLine('10'); // done
+        await flow;
+        io.sendLine('/exit');
+        await run;
+        expect(fake.calls, 0);
+      },
+    );
+
+    test(
+      'AC4: an invalid allowlist regex shows the parser error, no write',
+      () async {
+        const seed = 'provider: openrouter\nredact:\n  enabled: true\n';
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = await seededCli(
+          fake,
+          redactionPipeline: pipeline(),
+          yaml: seed,
+        );
+        final run = cli.run();
+
+        final flow = cli.startRedactionFlow();
+        await waitForIt(() => io.out.toString().contains('redaction'));
+        io.sendLine('5'); // allowlist
+        await waitForIt(() => io.out.toString().contains('Allowlist regexes'));
+        io.sendLine('[unclosed');
+        await waitForIt(
+          () => io.out.toString().contains('Unterminated character class'),
+        );
+        io.sendLine('10'); // done
+        await flow;
+        io.sendLine('/exit');
+        await run;
+
+        expect(io.out.toString(), contains('not saved:'));
+        // Byte-identical: nothing was written.
+        final written = (await env.readTextFile(
+          '/home/u/.fah/config.yaml',
+        )).valueOrNull;
+        expect(written, seed);
+        // And the live pipeline keeps its previous config.
+        expect(cli.config.redactionPipeline!.config.allowlistRegexes, isEmpty);
+        expect(fake.calls, 0);
+      },
+    );
+
+    test('E1: absent section — the flow writes a fresh block', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, homeDir: '/home/u'); // no file, no pipeline
+      final run = cli.run();
+
+      final flow = cli.startRedactionFlow();
+      await waitForIt(() => io.out.toString().contains('redaction'));
+      io.sendLine('2'); // blockMode toggle
+      await waitForIt(
+        () => io.out.toString().contains('redact.blockMode = true'),
+      );
+      io.sendLine('10'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      final written = (await env.readTextFile(
+        '/home/u/.fah/config.yaml',
+      )).valueOrNull;
+      final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
+      expect(parsed.redact!.blockMode, isTrue);
+      expect(fake.calls, 0);
+    });
+
+    test('E2: unreadable config — clear error, pipeline untouched', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(
+        fake.call,
+        homeDir: '/home/u',
+        redactionPipeline: pipeline(),
+      );
+      final run = cli.run();
+      // A directory where the user config should be.
+      await env.createDir('/home/u');
+      await env.createDir('/home/u/.fah');
+      await env.createDir('/home/u/.fah/config.yaml');
+
+      final flow = cli.startRedactionFlow();
+      await waitForIt(() => io.out.toString().contains('redaction'));
+      io.sendLine('1'); // toggle enabled
+      await waitForIt(
+        () =>
+            io.out.toString().contains('cannot read /home/u/.fah/config.yaml'),
+      );
+      io.sendLine('10'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      expect(cli.config.redactionPipeline!.config.enabled, isTrue);
+      expect(fake.calls, 0);
+    });
+
+    test('E3: reload-after-write picks up a concurrent hand edit', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = await seededCli(
+        fake,
+        redactionPipeline: pipeline(),
+        yaml: 'redact:\n  minEntropy: 4.5\n',
+      );
+      final run = cli.run();
+
+      final flow = cli.startRedactionFlow();
+      await waitForIt(() => io.out.toString().contains('redaction'));
+      // A concurrent editor (the agent's own config save) lands between
+      // the menu render and the flow's write.
+      await env.writeFile(
+        '/home/u/.fah/config.yaml',
+        'redact:\n  minEntropy: 2.0\n',
+      );
+      io.sendLine('2'); // blockMode toggle
+      await waitForIt(
+        () => io.out.toString().contains('redact.blockMode = true'),
+      );
+      io.sendLine('10'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      // The reload installed what the file now holds: BOTH the concurrent
+      // edit and the flow's own write.
+      final live = cli.config.redactionPipeline!.config;
+      expect(live.minEntropy, 2.0);
+      expect(live.blockMode, isTrue);
+      expect(fake.calls, 0);
+    });
+
+    test('reset stats zeroes the pipeline counters', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final redaction = pipeline()
+        ..registerSecret('supersecrettoken1')
+        ..redact('leak: supersecrettoken1 done');
+      expect(redaction.stats.total, greaterThan(0));
+      final cli = await seededCli(fake, redactionPipeline: redaction);
+      final run = cli.run();
+
+      final flow = cli.startRedactionFlow();
+      await waitForIt(() => io.out.toString().contains('redaction'));
+      io.sendLine('9'); // reset stats
+      await waitForIt(
+        () => io.out.toString().contains('redaction stats reset'),
+      );
+      io.sendLine('10'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      expect(redaction.stats.total, 0);
+      expect(redaction.stats.byLayer, isEmpty);
+      expect(fake.calls, 0);
+    });
+
+    test('cancelled at the menu writes nothing', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(
+        fake.call,
+        homeDir: '/home/u',
+        redactionPipeline: pipeline(),
+      );
+      final run = cli.run();
+
+      final flow = cli.startRedactionFlow();
+      await waitForIt(() => io.out.toString().contains('redaction'));
+      io.interrupt();
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      final written = (await env.readTextFile(
+        '/home/u/.fah/config.yaml',
+      )).valueOrNull;
+      expect(written, isNull);
       expect(fake.calls, 0);
     });
   });
