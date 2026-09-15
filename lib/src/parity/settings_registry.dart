@@ -98,6 +98,12 @@ enum SharedSetting {
   /// (`maxPerRequest`, default 20), issue #395.
   imageRegistry,
 
+  /// The host machine's sleep-prevention (`power:` section — the
+  /// `sleepPrevention` level and the `hold` lifecycle, issues
+  /// #325/#326): the assertion the long run holds so the machine does
+  /// not sleep under it, issue #397.
+  sleepPrevention,
+
   /// The owner-side context cap (`agent.contextWindowCap`, issue #273)
   /// clamping the EFFECTIVE window for the compaction thresholds, the ctx
   /// meter and the loop's over-window guard (issue #394).
@@ -152,6 +158,12 @@ const cliOnlySettings = <SharedSetting>{
   // the app composes its own requests and consumes the section read-only
   // per #288's umbrella (issue #395 is the CLI half).
   SharedSetting.imageRegistry,
+
+  // The sleep-prevention assertion lifecycle (run-start/settle and
+  // session-open/close hooks) lives in the CLI host process; the app's
+  // power_guard only loads the section read-only and has no controller
+  // to re-arm live (issue #397 is the CLI half — per #288's umbrella).
+  SharedSetting.sleepPrevention,
   // The context cap feeds the CLI's compaction math, ctx meter and the
   // loop's over-window guard — all running in the CLI host process; the
   // app has no agent loop to re-cap live (issue #394 is the CLI half —
@@ -215,6 +227,11 @@ const cliOnlyJustifications = <SharedSetting, String>{
       'loop (the request-build rewrite reads a global published at boot); '
       'the app composes its own requests and consumes the section '
       'read-only. Configure it in the CLI (issue #395).',
+  SharedSetting.sleepPrevention:
+      'The sleep-prevention assertion lifecycle (run-start/settle and '
+      'session-open/close hooks) runs inside the CLI host process; the '
+      'app\'s power_guard reads the section but has no controller to '
+      're-arm live. Configure it in the CLI (issue #397).',
   SharedSetting.contextWindowCap:
       'The context cap feeds the CLI agent loop and compaction math '
       'running in the CLI host process; the app has no agent loop to '
@@ -284,18 +301,6 @@ const fileOnlyConfigKeys = <String, String>{
       'Roles-group member (per-path role pinning), superseded for '
       'interactive use by the roles: chains the agent-models flow edits; '
       'per-path pinning stays file-tuned.',
-
-  // The power section (power.sleepPrevention + power.hold, issues
-  // #325/#326) picks the host machine's sleep-prevention level and hold
-  // lifecycle for long sessions — hardware policy of the machine the
-  // agent runs on, not a per-conversation preference. Both surfaces
-  // treat it read-only: the CLI's /power shows the level and held-ness
-  // (pointing at the file to change it) and the app's power_guard only
-  // loads it; no settings TUI edits it on any platform.
-  'power':
-      'Sleep-prevention level and hold lifecycle (power.sleepPrevention, '
-      'power.hold, #325/#326) is machine hardware policy for long-running '
-      'sessions; /power and the app guard read it, only the file sets it.',
 };
 
 /// Which app surfaces carry a shared setting: the Flutter app on macOS,
@@ -483,6 +488,16 @@ const settingSurfaces = <SharedSetting, SettingSurfaces>{
         'loop (the request-build rewrite); the app composes its own '
         'requests and reads the section read-only.',
   ),
+  SharedSetting.sleepPrevention: SettingSurfaces(
+    macos: false,
+    ios: false,
+    web: false,
+    extensionPanel: false,
+    gapWhy:
+        'The assertion lifecycle (run-start/settle, session hooks) runs '
+        'in the CLI host process; the app\'s power_guard reads the '
+        'section read-only.',
+  ),
   SharedSetting.contextWindowCap: SettingSurfaces(
     macos: false,
     ios: false,
@@ -625,6 +640,12 @@ const sharedSettingMetadata = <SharedSetting, _SettingMeta>{
     appRef: null, // exempted — request-build global lives in the CLI host.
     yamlKeys: ['images'],
     description: 'Image registry kill switch + per-request cap (issue #395).',
+  ),
+  SharedSetting.sleepPrevention: _SettingMeta(
+    cliRef: 'startPowerFlow',
+    appRef: null, // exempted — assertion lifecycle lives in the CLI host.
+    yamlKeys: ['power'],
+    description: 'Sleep-prevention level + hold lifecycle (issue #397).',
   ),
   SharedSetting.contextWindowCap: _SettingMeta(
     cliRef: 'startContextCapFlow',
