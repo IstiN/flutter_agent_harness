@@ -28,6 +28,7 @@ import '../power_config.dart';
 import '../ttsr/ttsr.dart';
 import '../tools/availability.dart';
 import 'custom_providers.dart';
+import '../task/subagent_heartbeat.dart';
 
 /// Parses the `providerTimeouts:` section: provider watchdog overrides
 /// (see [ProviderTimeoutsOverride]). Strict — a bad schema throws
@@ -198,6 +199,7 @@ final class CliConfig {
     this.wireDump = false,
     this.images,
     this.contextWindowCap,
+    this.subagents = const SubagentsConfig(),
     this.powerSleepPrevention,
     this.powerHold,
     this.tuiTheme,
@@ -297,6 +299,9 @@ final class CliConfig {
       // The agent section (owner-side context cap, issue #273) is strict
       // too.
       contextWindowCap: _parseAgentSection(map['agent']),
+      // The subagents section (background-subagent heartbeat, issue #383)
+      // is strict too; 0 disables the respective mechanism.
+      subagents: SubagentsConfig.fromYaml(map['subagents']),
       // The fabric section (issue #27 phase 2 discovery announcements) is
       // strict too.
       fabric: map['fabric'] == null
@@ -463,6 +468,11 @@ final class CliConfig {
   /// the loop guard). `null` = uncapped (the raw model window).
   final int? contextWindowCap;
 
+  /// The `subagents:` section (issue #383): heartbeat cadence
+  /// (`heartbeatMinutes`, 0 = off) and stall threshold (`stallMinutes`,
+  /// 0 = flags off) for background-subagent status digests.
+  final SubagentsConfig subagents;
+
   /// Sleep-prevention level from the `power:` section
   /// (`power.sleepPrevention`, issue #325 — after oh-my-pi's
   /// `power.sleepPrevention`). `null` means the section is absent; the
@@ -582,6 +592,13 @@ final class CliConfig {
     if (images != null) buffer.write(_imagesYaml());
     if (contextWindowCap != null) {
       buffer.write('agent:\n  contextWindowCap: $contextWindowCap\n');
+    }
+    // The subagents heartbeat section (issue #383), only when explicitly
+    // configured; defaults are never written so the file stays minimal.
+    final subagentsConfig = subagents;
+    if (subagentsConfig.heartbeatMinutes != defaultSubagentHeartbeatMinutes ||
+        subagentsConfig.stallMinutes != defaultSubagentStallMinutes) {
+      buffer.write(subagentsConfig.toYaml());
     }
     buffer.write(_powerYaml());
     return buffer.toString();

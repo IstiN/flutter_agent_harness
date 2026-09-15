@@ -267,8 +267,11 @@ final class TaskExecutor {
   /// child to failed-resumable with the resolver's error recorded (E2).
   Future<void> resumeChild(String id, String message) async {
     final managerOrNull = subagentManager;
-    final (manager, handle) =
-        _assertResumable(id, managerOrNull, managerOrNull?[id]);
+    final (manager, handle) = _assertResumable(
+      id,
+      managerOrNull,
+      managerOrNull?[id],
+    );
     final session = await _resumeSession(id, handle);
     final prior = await session.buildContextMessages();
     _childSessions[id] = session;
@@ -301,6 +304,12 @@ final class TaskExecutor {
       unawaited(resumeCancel.token.onCancel.then((_) => child!.abort()));
       untrackUsage = _trackChildUsage(id, child, from: prior.length);
       child.state.messages = prior;
+      // Issue #383 heartbeat: the same in-flight liveness as a fresh
+      // spawn - completed provider responses touch the handle. The
+      // seeded prior transcript is excluded (from: prior.length), and
+      // the stale previous run's live snapshot resets to zero up front.
+      manager.touch(id, tokens: 0, requests: 0);
+      _attachLivenessTouch(id, child, manager, from: prior.length);
       await child.prompt(message);
       resumeCancel.token.throwIfCancelled();
       // The agent loop surfaces provider failures as an error-tagged final
@@ -463,6 +472,10 @@ final class TaskExecutor {
           ? null
           : () => _inboxSteeringMessages(id),
     );
+    // Issue #383 heartbeat: in-flight liveness - every completed provider
+    // response touches the handle, so the parent's digest sees fresh
+    // last-activity and live request/token counts while the child runs.
+    _attachLivenessTouch(id, child, subagentManager);
     if (cancelToken != null) {
       unawaited(cancelToken.onCancel.then((_) => child.abort()));
     }
@@ -843,6 +856,28 @@ final class TaskExecutor {
     _usageCursors[id] = from;
     return child.subscribe((event, _) {
       if (event is TurnEndEvent) _billChildUsage(id, child);
+    });
+  }
+
+  /// Issue #383 heartbeat: subscribes the child to in-flight liveness -
+  /// every completed provider response touches the registry handle, so
+  /// the parent's digest sees fresh last-activity and live request/token
+  /// counts while the child runs. [from] indexes into the message list so
+  /// a resumed child reports only NEW responses, never the seeded
+  /// transcript. The listener dies with the child agent; no
+  /// unsubscription needed. Null manager is a no-op.
+  static void _attachLivenessTouch(
+    String id,
+    Agent child,
+    SubagentManager? manager, {
+    int from = 0,
+  }) {
+    if (manager == null) return;
+    child.subscribe((event, cancelToken) async {
+      if (event is MessageEndEvent && event.message is AssistantMessage) {
+        final usage = _usageStats(child, from: from);
+        manager.touch(id, tokens: usage.tokens, requests: usage.requests);
+      }
     });
   }
 

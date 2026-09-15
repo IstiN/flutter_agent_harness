@@ -221,6 +221,14 @@ const fileOnlyConfigKeys = <String, String>{
       'debugging escape hatch (issue #385); provisioned deliberately in '
       'the file per environment.',
 
+  // Background-subagent heartbeat cadence and stall threshold (issue
+  // #383): operational knobs for long-running sessions, tuned in the
+  // file; 0/0 disables the heartbeat entirely.
+  'subagents':
+      'Heartbeat cadence and stall threshold for background-subagent '
+      'status digests (issue #383) — operational knobs, tuned in the '
+      'file.',
+
   // The fabric section carries the HOST's discovery announcements (issue
   // #27 phase 2) — written by hosts, read by the runtime, never user-edited.
   'fabric':
