@@ -1,0 +1,39 @@
+# crap4dart configuration for the flutter_app package.
+# https://github.com/IstiN/crap4dart
+#
+# RATCHET (issue #433): the threshold is pinned at the CURRENT worst score
+# measured by the SAME pipeline the CI gate uses — `flutter test --coverage`
+# lcov (E2: widget-test coverage differs from the core's dart lcov, so the
+# bootstrap number must come from this pipeline, not the core's).
+# Bootstrap measurement (2026-09-15): 2450.0 — `JsAppEngine._faCall`
+# (CC 49, 0% line coverage). Pushes may only make the codebase BETTER,
+# never worse; scripts/check_crap_guards.py --only-down rejects a raised
+# threshold in CI. Lower the threshold whenever the top offenders are
+# fixed: cd flutter_app && flutter test --coverage &&
+# dart pub global run crap4dart analyze.
+
+sources: [lib]
+
+# Same generated set as the root config (E1 parity — asserted by
+# scripts/check_crap_guards.py).
+exclude:
+  - '**.g.dart'
+  - '**.freezed.dart'
+  - '**.mocks.dart'
+  - 'build/**'
+
+crap:
+  enabled: true
+  # Current max CRAP score in flutter_app/lib under the flutter lcov
+  # pipeline (2026-09-15 bootstrap). Only down from here.
+  threshold: 2450.0
+
+coverage:
+  # The CI app-crap-gate job merges the two flutter-tests shard reports
+  # (scripts/merge_lcov.py) right before the CRAP step. Pre-commit stays
+  # core-only: flutter coverage is too heavy for every commit.
+  lcov_path: coverage/lcov.info
+  required: true
+  # flutter's lcov carries no BRDA branch records; branch coverage stays
+  # a core-package gate concern.
+  branch_coverage: false
