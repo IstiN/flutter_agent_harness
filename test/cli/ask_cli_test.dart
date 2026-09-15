@@ -217,7 +217,7 @@ void main() {
         io.sendLine('2');
         await _waitFor(() => io.out.toString().contains('answered'));
         expect(askResultText(), 'User selected: OAuth2');
-        expect(io.out.toString(), contains('[ask] done'));
+        expect(io.out.toString(), contains('✓ ask'));
         io.sendLine('/exit');
         await run;
       },
@@ -317,8 +317,8 @@ void main() {
       io.sendLine('!');
       await _waitFor(() => io.out.toString().contains('recovered'));
       expect(askResultText(), contains('cancelled'));
-      expect(io.out.toString(), contains('[ask] done'));
-      expect(io.out.toString(), isNot(contains('[ask] error')));
+      expect(io.out.toString(), contains('✓ ask'));
+      expect(io.out.toString(), isNot(contains('✗')));
       io.sendLine('/exit');
       await run;
     });
@@ -376,7 +376,7 @@ void main() {
       io.sendLine('please ask');
       await _waitFor(() => io.out.toString().contains('adapted'));
       final out = io.out.toString();
-      expect(out, contains('[ask] error:'));
+      expect(out, contains('✗ ask'));
       expect(out, contains('cannot answer questions'));
       io.sendLine('/exit');
       await run;
