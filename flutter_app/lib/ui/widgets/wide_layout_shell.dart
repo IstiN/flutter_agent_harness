@@ -84,6 +84,10 @@ class WideLayoutShell extends StatefulWidget {
 bool get faIsMacOSDesktop =>
     !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
 
+/// The sessions sidebar's resize handle (tests find it by this key; there
+/// are two [_PaneDragHandle]s in the shell and they look identical).
+const Key kSidebarDragHandleKey = ValueKey('sidebar-drag-handle');
+
 /// An [AppBar] with the macOS traffic-light clearance baked in. Pushed
 /// routes (Settings, Files, provider editor, …) otherwise render their
 /// back button/title under the floating traffic lights — the window uses
@@ -142,6 +146,17 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   /// Minimum/maximum width for the apps panel drag handle.
   static const double _appsPanelMinWidth = 240;
   static const double _appsPanelMaxWidth = 640;
+
+  /// The sessions sidebar's width (issue #426 item 4): user-resizable via
+  /// a drag handle on its divider, clamped to the store's
+  /// [SessionUiPrefsStore.minSidebarWidth]..[maxSidebarWidth] and
+  /// persisted through the prefs store. Starts at the stock 240 until the
+  /// store loads (or the host injects one).
+  double _sidebarWidth = SessionUiPrefsStore.defaultSidebarWidth;
+
+  /// True while the sidebar divider is mid-drag: the collapse animation
+  /// is suppressed so the width tracks the pointer 1:1.
+  bool _sidebarDragging = false;
 
   /// Whether we're on macOS desktop (traffic lights float over content).
   static bool get _isMacOS =>
@@ -246,7 +261,16 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     if (widget.sessionPrefsStore != null || _uiPrefs != null) return;
     final prefs = await SessionUiPrefsStore.load(widget.manager.env);
     if (!mounted) return;
-    setState(() => _uiPrefs = prefs);
+    setState(() {
+      _uiPrefs = prefs;
+      final stored = prefs.sidebarWidth;
+      if (stored != null) {
+        _sidebarWidth = stored.clamp(
+          SessionUiPrefsStore.minSidebarWidth,
+          SessionUiPrefsStore.maxSidebarWidth,
+        );
+      }
+    });
   }
 
   /// Rebuilds when the active service notifies (model change, reconfigure).
@@ -303,16 +327,31 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
       color: colors.bg,
       child: Row(
         children: [
-          // Left: collapsible sidebar.
+          // Left: collapsible sidebar (width user-resizable, issue #426).
           AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
+            duration: _sidebarDragging
+                ? Duration.zero
+                : const Duration(milliseconds: 200),
             curve: Curves.easeInOut,
-            width: _sidebarCollapsed ? 60 : 240,
+            width: _sidebarCollapsed ? 60 : _sidebarWidth,
             decoration: BoxDecoration(
               border: Border(right: BorderSide(color: colors.border)),
             ),
             child: _buildSidebar(colors),
           ),
+          // Drag handle: resizes the sessions sidebar.
+          if (!_sidebarCollapsed)
+            _PaneDragHandle(
+              key: kSidebarDragHandleKey,
+              onDrag: (dx) => setState(() {
+                _sidebarDragging = true;
+                _sidebarWidth = (_sidebarWidth + dx).clamp(
+                  SessionUiPrefsStore.minSidebarWidth,
+                  SessionUiPrefsStore.maxSidebarWidth,
+                );
+              }),
+              onDragEnd: (_) => _onSidebarDragEnd(),
+            ),
           // Center: chat (always visible when a session is active).
           Expanded(child: _buildChatArea(colors)),
           // Drag handle: resizes the apps panel.
@@ -330,6 +369,17 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
         ],
       ),
     );
+  }
+
+  /// Persists the settled sidebar width (drag end — one write per gesture,
+  /// not per pixel).
+  void _onSidebarDragEnd() {
+    _sidebarDragging = false;
+    final store = widget.sessionPrefsStore ?? _uiPrefs;
+    if (store != null) {
+      unawaited(store.setSidebarWidth(_sidebarWidth));
+    }
+    setState(() {});
   }
 
   // ---------------------------------------------------------------------------
@@ -949,10 +999,14 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
 /// horizontally to resize the adjacent panel. Renders a 1px line that
 /// thickens on hover with a subtle color change.
 class _PaneDragHandle extends StatefulWidget {
-  const _PaneDragHandle({required this.onDrag});
+  const _PaneDragHandle({super.key, required this.onDrag, this.onDragEnd});
 
   /// Called with the horizontal delta of each drag update.
   final void Function(double dx) onDrag;
+
+  /// Called when the drag gesture settles (pointer up/cancel) — the
+  /// sidebar uses it to persist the settled width once per gesture.
+  final void Function(DragEndDetails details)? onDragEnd;
 
   @override
   State<_PaneDragHandle> createState() => _PaneDragHandleState();
@@ -970,6 +1024,12 @@ class _PaneDragHandleState extends State<_PaneDragHandle> {
       onExit: (_) => setState(() => _hovering = false),
       child: GestureDetector(
         onHorizontalDragUpdate: (details) => widget.onDrag(details.delta.dx),
+        onHorizontalDragEnd: widget.onDragEnd == null
+            ? null
+            : (details) => widget.onDragEnd!(details),
+        onHorizontalDragCancel: widget.onDragEnd == null
+            ? null
+            : () => widget.onDragEnd!(DragEndDetails()),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
           width: 6,

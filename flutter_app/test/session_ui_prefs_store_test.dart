@@ -76,6 +76,25 @@ void main() {
     expect(file.existsSync(), isFalse);
   });
 
+  test('sidebar width persists and a fresh store reads it back (issue '
+      '#426 item 4)', () async {
+    final store = await SessionUiPrefsStore.load(env);
+    expect(store.sidebarWidth, isNull); // default until the user drags
+    await store.setSidebarWidth(360);
+
+    final revived = await SessionUiPrefsStore.load(env);
+    expect(revived.sidebarWidth, 360);
+  });
+
+  test('sidebar width is clamped on write (drag handle + hand-edited '
+      'files)', () async {
+    final store = await SessionUiPrefsStore.load(env);
+    await store.setSidebarWidth(50);
+    expect(store.sidebarWidth, SessionUiPrefsStore.minSidebarWidth);
+    await store.setSidebarWidth(9999);
+    expect(store.sidebarWidth, SessionUiPrefsStore.maxSidebarWidth);
+  });
+
   test('the persisted document is versioned JSON listing both sets', () async {
     final store = await SessionUiPrefsStore.load(env);
     await store.setExpanded('p1', true);

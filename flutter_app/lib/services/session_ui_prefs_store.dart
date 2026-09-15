@@ -44,6 +44,26 @@ class SessionUiPrefsStore {
   Set<String> get expandedParents => Set.unmodifiable(_expanded);
   Set<String> get collapsedParents => Set.unmodifiable(_collapsed);
 
+  /// The persisted sessions-sidebar width (issue #426 item 4), or null
+  /// for the [defaultSidebarWidth] default. Clamped to
+  /// [minSidebarWidth]..[maxSidebarWidth] on both write and read so a
+  /// hand-edited file cannot wedge the layout.
+  double? get sidebarWidth => _sidebarWidth;
+  double? _sidebarWidth;
+
+  /// Records the sidebar width (already clamped by the drag handle).
+  Future<void> setSidebarWidth(double width) async {
+    final clamped = width.clamp(minSidebarWidth, maxSidebarWidth);
+    if (_sidebarWidth == clamped) return;
+    _sidebarWidth = clamped;
+    await _save();
+  }
+
+  /// The drag-handle clamp for the sessions sidebar (logical px).
+  static const double minSidebarWidth = 220;
+  static const double maxSidebarWidth = 480;
+  static const double defaultSidebarWidth = 240;
+
   /// Records the user's expand ([open]) / collapse choice for [parentId],
   /// replacing the previous choice. Persistence is best effort.
   Future<void> setExpanded(String parentId, bool open) async {
@@ -88,6 +108,12 @@ class SessionUiPrefsStore {
               if (id is String && id.isNotEmpty) id,
           });
       }
+      final storedWidth = decoded['sidebarWidth'];
+      if (storedWidth is num) {
+        _sidebarWidth = storedWidth
+            .toDouble()
+            .clamp(minSidebarWidth, maxSidebarWidth);
+      }
     } on Object {
       // Corrupt or incompatible file → empty store, never crash boot.
     }
@@ -103,6 +129,7 @@ class SessionUiPrefsStore {
           'version': version,
           'expandedParents': _expanded.toList(),
           'collapsedParents': _collapsed.toList(),
+          'sidebarWidth': _sidebarWidth,
         }),
       );
     } on Object {
