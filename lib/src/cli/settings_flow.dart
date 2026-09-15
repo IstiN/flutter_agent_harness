@@ -2472,7 +2472,6 @@ extension SettingsFlow on AgentCli {
       ),
       MenuItem(key: 'power', label: 'Power', description: _powerStatusLabel()),
       MenuItem(
-      MenuItem(
         key: 'mcp',
         label: 'MCP servers',
         description: _mcpStatusLabel(),
