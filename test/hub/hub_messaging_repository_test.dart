@@ -384,6 +384,23 @@ void main() {
     });
   });
 
+  test('AC4 IT-ios-lan (host half): --bind lan listens on all interfaces', () async {
+    final lan = FakeHub(bind: 'lan');
+    await lan.start();
+    addTearDown(lan.stop);
+    // 0.0.0.0 covers loopback: the ordinary client path still works.
+    final repo = HubMessagingRepository(
+      url: lan.url,
+      transport: const IoHubTransport(),
+      name: 'loopback-client-of-lan-hub',
+      backoff: testBackoff,
+    );
+    await repo.start();
+    addTearDown(repo.dispose);
+    await waitUntil(() => repo.isConnected);
+    expect(repo.agentId, isNotNull);
+  });
+
   group('identity', () {
     test('a passed identity is stable across restarts', () async {
       final seeds = utf8.encode('0123456789abcdef0123456789abcdef');

@@ -165,10 +165,21 @@ class LocalHub {
   /// AND may enroll; `{"t":"enroll"}` on a master connection issues a
   /// per-client secret (persisted in [stateFile]) that authenticates
   /// later connects. Null = open loopback hub (the zero-config default).
-  LocalHub({this.port = 0, this._masterSecret, this._stateFile});
+  LocalHub({
+    this.port = 0,
+    this.bind = 'loopback',
+    this._masterSecret,
+    this._stateFile,
+  });
 
   /// The port to bind (`0` = ephemeral, tests).
   final int port;
+
+  /// The listener scope (issue #402 AC4): `'loopback'` (default) binds
+  /// 127.0.0.1 only; `'lan'` binds all interfaces so LAN peers — the iOS
+  /// app above all — can reach the hub. Off by default: a LAN-reachable
+  /// hub is an explicit host decision.
+  final String bind;
   String? _masterSecret;
   final File? _stateFile;
   HttpServer? _server;
@@ -237,7 +248,10 @@ class LocalHub {
 
   Future<void> start() async {
     _loadState();
-    _server = await HttpServer.bind('127.0.0.1', port);
+    _server = await HttpServer.bind(
+      bind == 'lan' ? InternetAddress.anyIPv4 : InternetAddress.loopbackIPv4,
+      port,
+    );
     unawaited(_serve());
   }
 
