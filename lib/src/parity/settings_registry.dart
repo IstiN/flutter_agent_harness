@@ -102,6 +102,7 @@ enum SharedSetting {
   /// clamping the EFFECTIVE window for the compaction thresholds, the ctx
   /// meter and the loop's over-window guard (issue #394).
   contextWindowCap,
+
   /// Provider failure resilience: the watchdog timeouts
   /// (`providerTimeouts.connectTimeoutMs`/`streamIdleTimeoutMs`) and the
   /// chain retry policy (`retry:`, issue #393).
@@ -256,16 +257,6 @@ const fileOnlyConfigKeys = <String, String>{
       'A2A gateways are deployment infrastructure (endpoints and '
       'credentials with env-token references); no surface edits them '
       'interactively.',
-
-  // Provider transport tuning: rarely-changed watchdog knobs.
-  'providerTimeouts':
-      'Provider transport watchdog tuning (connect/idle timeouts) — '
-      'rarely-changed knobs, tuned in the file.',
-
-  // Image-tool runtime tuning (registry on/off, per-request cap).
-  'images':
-      'Image-tool runtime tuning (registry on/off, per-request cap) — '
-      'operational knobs, tuned in the file.',
 
   // Trajectory capture tuning (opt-in raw wire dumps, issue #385): a
   // deliberate, size/pII-sensitive escape hatch — file-only by design so
