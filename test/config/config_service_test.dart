@@ -695,8 +695,10 @@ void main() {
       );
       expect(
         (await service.check()).errors.single.message,
-        contains('"power.sleepPrevention" must be off, idle, display or '
-            'system'),
+        contains(
+          '"power.sleepPrevention" must be off, idle, display or '
+          'system',
+        ),
       );
       await env.writeFile(_globalConfig, 'power:\n  bogus: 1\n');
       expect(
@@ -762,6 +764,9 @@ void main() {
       final bodies = [
         'lib/src/cli/cli_config.dart',
         'lib/src/model_roles/roles_config.dart',
+        // The provider-queue resolver reads its section from both config
+        // files at boot (issue #418).
+        'lib/src/cli/startup.dart',
       ].map(File.new).map((file) => file.readAsStringSync());
       for (final key in configTopLevelKeys) {
         final found = bodies.any((body) => body.contains("'$key'"));
@@ -801,8 +806,7 @@ void main() {
     test('agent validation agrees with CliConfig.fromYaml (issue #273)', () {
       final bad = loadYaml('agent:\n  contextWindowCap: 16383\n') as YamlMap;
       expect(() => CliConfig.fromYaml(bad), throwsConfigException);
-      final good =
-          loadYaml('agent:\n  contextWindowCap: 256000\n') as YamlMap;
+      final good = loadYaml('agent:\n  contextWindowCap: 256000\n') as YamlMap;
       expect(() => CliConfig.fromYaml(good), returnsNormally);
     });
   });

@@ -18,6 +18,9 @@ import 'package:test/test.dart';
 const _parserSources = [
   'lib/src/cli/cli_config.dart',
   'lib/src/model_roles/roles_config.dart',
+  // The provider-queue resolver reads `doc['providersQueue']` from both
+  // project and user config files at boot (issue #418).
+  'lib/src/cli/startup.dart',
 ];
 
 void main() {
