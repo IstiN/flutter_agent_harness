@@ -4,6 +4,7 @@ import 'package:flutter_agent_harness/src/agent/agent_loop.dart';
 import 'package:flutter_agent_harness/src/context.dart';
 import 'package:flutter_agent_harness/src/session/session_record.dart';
 import 'package:flutter_agent_harness/src/tools/checkpoint_tool.dart';
+import 'package:flutter_agent_harness/src/trajectory/trajectory_blobs.dart';
 import 'package:flutter_agent_harness/src/trajectory/trajectory_record.dart';
 import 'package:flutter_agent_harness/src/trajectory/trajectory_snapshot.dart';
 import 'package:flutter_agent_harness/src/trajectory/trajectory_snapshot_builder.dart';
@@ -346,7 +347,8 @@ void main() {
           parentId: null,
           timestamp: _at(0),
           customType: checkpointAutoClosedCustomType,
-          content: 'Previous checkpoint auto-closed (a user turn arrived '
+          content:
+              'Previous checkpoint auto-closed (a user turn arrived '
               'after the checkpoint; goal: first detour; anchored at message '
               '3).',
           display: false,
@@ -409,20 +411,29 @@ void main() {
           timestamp: _at(0),
           targetId: 'u1',
         ),
+      ];
+      for (final record in skipped) {
+        builder.append(record);
+      }
+      // Issue #385 AC7: an unknown custom record kind is never silent —
+      // it renders a synthetic context row and feeds unknownRecordCount.
+      builder.append(
         CustomRecord(
           id: 'cu1',
           parentId: null,
           timestamp: _at(0),
           customType: 'misc',
         ),
-      ];
-      for (final record in skipped) {
-        builder.append(record);
-      }
+      );
       final snapshot = builder.build();
-      expect(snapshot.records, isEmpty);
+      expect(snapshot.records, hasLength(1));
+      expect(
+        (snapshot.records.single as TrajectoryContextRecord).text,
+        contains('misc'),
+      );
+      expect(snapshot.unknownRecordCount, 1);
       // Skipped records still advance the revision: one per append.
-      expect(snapshot.revision, skipped.length);
+      expect(snapshot.revision, skipped.length + 1);
     });
   });
 
@@ -863,9 +874,7 @@ void main() {
     /// Deterministic chained script: [turns] turns of user + assistant
     /// (thinking + 2 calls + text) + 2 tool results = 4 records per turn.
     List<SessionRecord> bulkRecords(int turns) {
-      final records = <SessionRecord>[
-        _userRecord('rec-u0', text: 'boot'),
-      ];
+      final records = <SessionRecord>[_userRecord('rec-u0', text: 'boot')];
       var prev = records.first;
       for (var t = 1; t <= turns; t++) {
         final user = _userRecord(
@@ -960,6 +969,208 @@ void main() {
       // Per-append snapshot materialization is the other #262 quadratic.
       expect(builder30.snapshotsBuilt, 1);
       expect(builder60.snapshotsBuilt, 1);
+    });
+  });
+  test('a persisted model_request_summary carries blob pointers', () {
+    const detail = TrajectoryRequestDetail(
+      messageCount: 1,
+      systemPromptChars: 18,
+      systemPromptHash: 'abc123',
+      toolCount: 1,
+      toolNames: ['bash'],
+      toolManifestHash: 'def456',
+      wireDumpHash: '789abc',
+      messages: [],
+    );
+    final summary = CustomRecord(
+      id: 'cu1',
+      parentId: 'u1',
+      timestamp: _at(0),
+      customType: 'model_request_summary',
+      data: detail.toJson(),
+    );
+    final builder = TrajectorySnapshotBuilder();
+    builder.append(_userRecord('u1'));
+    final snapshot = builder.append(summary);
+    final assistant = builder.append(_assistantRecord('a1', parentId: 'u1'));
+    expect(
+      (assistant.records[1] as TrajectoryAssistantRecord)
+          .requestDetail
+          ?.systemPromptHash,
+      'abc123',
+    );
+    expect(
+      (assistant.records[1] as TrajectoryAssistantRecord)
+          .requestDetail
+          ?.wireDumpHash,
+      '789abc',
+    );
+  });
+
+  group('trajectory blobs and unknown records (issue #385)', () {
+    CustomRecord _blobRecord(
+      String id,
+      String type,
+      Map<String, dynamic> data,
+    ) => CustomRecord(
+      id: id,
+      parentId: 'u1',
+      timestamp: _at(0),
+      customType: type,
+      data: data,
+    );
+
+    test('two equal prompt blobs fold to one table entry (AC1)', () {
+      final blob = TrajectoryPromptBlob.of('the system prompt');
+      final data = blob.toJson();
+      final builder = TrajectorySnapshotBuilder();
+      builder.append(_userRecord('u1'));
+      var snapshot = builder.append(
+        _blobRecord('c1', 'trajectory_prompt_blob', data),
+      );
+      snapshot = builder.append(
+        _blobRecord('c2', 'trajectory_prompt_blob', data),
+      );
+      expect(snapshot.blobs.systemPrompts, hasLength(1));
+      expect(
+        snapshot.blobs.systemPrompts[blob.hash]?.text,
+        'the system prompt',
+      );
+    });
+
+    test('wire dumps and manifests land in the snapshot blob table', () {
+      final manifest = TrajectoryToolManifestBlob.of([
+        const Tool(
+          name: 'bash',
+          description: 'run it',
+          parameters: {'type': 'object'},
+        ),
+      ]);
+      final dump = TrajectoryWireDump(
+        hash: 'wh1',
+        payload: '{"systemPrompt":"p"}',
+        truncated: false,
+      );
+      final builder = TrajectorySnapshotBuilder();
+      builder.append(_userRecord('u1'));
+      var snapshot = builder.append(
+        _blobRecord('c1', 'trajectory_manifest_blob', manifest.toJson()),
+      );
+      snapshot = builder.append(
+        _blobRecord('c2', 'trajectory_wire_dump', dump.toJson()),
+      );
+      expect(
+        snapshot.blobs.toolManifests[manifest.hash]?.tools.single.name,
+        'bash',
+      );
+      expect(
+        snapshot.blobs.wireDumps['wh1']?.payload,
+        contains('systemPrompt'),
+      );
+    });
+
+    test('an unknown custom record counts once and renders a row (AC7)', () {
+      final builder = TrajectorySnapshotBuilder();
+      builder.append(_userRecord('u1'));
+      var snapshot = builder.append(
+        CustomRecord(
+          id: 'c1',
+          parentId: 'u1',
+          timestamp: _at(0),
+          customType: 'future_plugin_thing',
+          data: {'x': 1},
+        ),
+      );
+      expect(snapshot.unknownRecordCount, 1);
+      final contextRow = snapshot.records
+          .whereType<TrajectoryContextRecord>()
+          .where((r) => r.text.contains('unknown'))
+          .toList();
+      expect(contextRow, hasLength(1));
+      expect(contextRow.single.text, contains('future_plugin_thing'));
+    });
+
+    test('a hidden range keeps its record ids on the compacted row (F4)', () {
+      final builder = TrajectorySnapshotBuilder();
+      builder.append(_userRecord('u1'));
+      final snapshot = builder.append(
+        HiddenRangeRecord(
+          id: 'h1',
+          parentId: 'u1',
+          timestamp: _at(2),
+          recordIds: const ['r1', 'r2', 'r3'],
+        ),
+      );
+      final compacted = snapshot.records
+          .whereType<TrajectoryCompactedRecord>()
+          .single;
+      expect(compacted.hiddenRecordIds, ['r1', 'r2', 'r3']);
+    });
+  });
+
+  group('system-row hash stamping (issue #385 F7)', () {
+    test('initial and tools rows receive the request blob pointers', () {
+      const prompt = 'You are a test agent.';
+      const detail = TrajectoryRequestDetail(
+        messageCount: 1,
+        systemPromptChars: prompt.length,
+        systemPromptHash: 'phash1',
+        toolCount: 1,
+        toolNames: ['bash'],
+        toolManifestHash: 'mhash1',
+        messages: [],
+      );
+      final builder = TrajectorySnapshotBuilder();
+      final snapshot = builder.append(_userRecord('u1'));
+      // A model change creates the system rows the request stamps.
+      builder.append(
+        ModelChangeRecord(
+          id: 'mc1',
+          parentId: 'u1',
+          timestamp: _at(0),
+          provider: 'anthropic',
+          modelId: 'claude-test',
+        ),
+      );
+      builder.append(
+        ActiveToolsChangeRecord(
+          id: 'tc1',
+          parentId: 'mc1',
+          timestamp: _at(0),
+          activeToolNames: const ['bash'],
+        ),
+      );
+      final withSystem = builder.append(
+        CustomRecord(
+          id: 'cu1',
+          parentId: 'tc1',
+          timestamp: _at(0),
+          customType: 'model_request_summary',
+          data: detail.toJson(),
+        ),
+      );
+      final stamped = builder.append(_assistantRecord('a1', parentId: 'cu1'));
+      final stampedAssistant = stamped.records
+          .whereType<TrajectoryAssistantRecord>()
+          .single;
+      expect(stampedAssistant.requestDetail?.systemPromptHash, 'phash1');
+      final systemRows = withSystem.records
+          .whereType<TrajectorySystemRecord>()
+          .toList();
+      expect(systemRows, isNotEmpty);
+      final promptRows = systemRows
+          .where((r) => r.systemPromptHash != null)
+          .toList();
+      expect(promptRows, isNotEmpty);
+      expect(promptRows.last.systemPromptHash, 'phash1');
+      final manifestRows = systemRows
+          .where((r) => r.toolManifestHash != null)
+          .toList();
+      expect(manifestRows, isNotEmpty);
+      expect(manifestRows.last.toolManifestHash, 'mhash1');
+      // The blob table itself stays empty here: only dedicated blob
+      // records feed it; the rows carry pointers.
+      expect(snapshot.blobs.systemPrompts, isEmpty);
     });
   });
 }

@@ -11,15 +11,26 @@ library;
 
 import 'dart:collection';
 import 'dart:convert';
-
 import '../agent/agent_loop.dart';
 import '../context.dart';
 import '../session/session_record.dart';
 import '../tools/checkpoint_tool.dart';
 import '../types.dart';
 import 'event_projection.dart';
+import 'trajectory_blobs.dart';
 import 'trajectory_record.dart';
 import 'trajectory_snapshot.dart';
+
+/// Custom-record types the trajectory ledger deliberately does NOT render:
+/// hosts' non-row payloads consumed by other surfaces (request summaries
+/// and issue-385 blobs are handled above this set; anything else renders
+/// as an `unknown record` context row — F6, the ledger stays lossless).
+const hiddenCustomRecordTypes = {
+  'subagent_registry',
+  'ttsr_injection',
+  'dynamic_widget',
+  'dynamic_message',
+};
 
 /// Walks session records and live agent events, projecting them into
 /// immutable [TrajectorySnapshot]s.
@@ -36,6 +47,26 @@ final class TrajectorySnapshotBuilder {
   final Map<String, SessionRecord> _byId = {};
   final Map<String, int> _toolIndexByCallId = {};
   final Map<String, String> _toolOwnerByCallId = {};
+
+  /// Content-addressed blobs folded from the session's blob records
+  /// (F1/F2/F5). The blob records themselves produce no ledger row.
+  TrajectoryBlobTable _blobs = const TrajectoryBlobTable();
+
+  /// Unknown record kinds rendered as context rows (F6).
+  int _unknownRecordCount = 0;
+
+  /// Row indexes of the latest prompt-bearing and tools-bearing system
+  /// rows, stamped with blob pointers when their following request
+  /// summary lands (F7).
+  int? _lastPromptRowIndex;
+  int? _lastToolsRowIndex;
+
+  /// Prompt/manifest versions currently active, with their predecessors,
+  /// for the system-row diff stamps.
+  String? _activePromptHash;
+  String? _prevPromptHash;
+  String? _activeManifestHash;
+  String? _prevManifestHash;
 
   /// Settled tool results, re-applied when a replaced message re-creates its
   /// tool rows.
@@ -136,10 +167,43 @@ final class TrajectorySnapshotBuilder {
         // The checkpoint lifecycle audit trail (issue #286): renders as a
         // system row so the trajectory shows why protection ended.
         _appendSystem(record);
+      case CustomMessageRecord(display: false):
+        break; // Deliberately hidden by its producer, not unknown.
       case CustomRecord(customType: 'model_request_summary', data: final data):
         _applyRequestSummary(record, data);
+      case CustomRecord(customType: 'trajectory_prompt_blob', data: final data):
+        // Issue #385 F1: a unique prompt version, stored once.
+        if (data is Map) {
+          _blobs = _blobs.withPromptBlob(
+            TrajectoryPromptBlob.fromJson(data.cast<String, dynamic>()),
+          );
+        }
+      case CustomRecord(
+        customType: 'trajectory_manifest_blob',
+        data: final data,
+      ):
+        // Issue #385 F2: a unique tool-manifest version, stored once.
+        if (data is Map) {
+          _blobs = _blobs.withManifestBlob(
+            TrajectoryToolManifestBlob.fromJson(data.cast<String, dynamic>()),
+          );
+        }
+      case CustomRecord(customType: 'trajectory_wire_dump', data: final data):
+        // Issue #385 F5: an opt-in redacted wire dump.
+        if (data is Map) {
+          _blobs = _blobs.withWireDump(
+            TrajectoryWireDump.fromJson(data.cast<String, dynamic>()),
+          );
+        }
+      case CustomRecord(customType: final customType)
+          when hiddenCustomRecordTypes.contains(customType):
+        break; // Another surface's payload; not a ledger row, not unknown.
+      case CustomRecord(customType: final customType):
+        _appendUnknown(record.id, customType, record.timestamp);
+      case CustomMessageRecord(customType: final customType):
+        _appendUnknown(record.id, customType, record.timestamp);
       default:
-        break; // Not a ledger row.
+        break; // Labels, session info, leaves: indexed, not rows.
     }
     // Only durable appends advance the cursor; replacing mirrored
     // placeholders still counts as placing rows even when net growth is 0.
@@ -240,6 +304,14 @@ final class TrajectorySnapshotBuilder {
     _incTurn = 0;
     _incStep = 0;
     _incPrevWasUser = false;
+    _blobs = const TrajectoryBlobTable();
+    _unknownRecordCount = 0;
+    _lastPromptRowIndex = null;
+    _lastToolsRowIndex = null;
+    _activePromptHash = null;
+    _prevPromptHash = null;
+    _activeManifestHash = null;
+    _prevManifestHash = null;
   }
 
   MessageRecord _syntheticRecord(String kind, Message message) {
@@ -398,6 +470,9 @@ final class TrajectorySnapshotBuilder {
       HiddenRangeRecord() => 'hidden ${record.recordIds.length} records',
       _ => '',
     };
+    final hiddenRecordIds = record is HiddenRangeRecord
+        ? record.recordIds
+        : null;
     _records.add(
       projectCompactedRecord(
         record: record,
@@ -410,6 +485,7 @@ final class TrajectorySnapshotBuilder {
         summary: summary,
         firstKeptEntryId: firstKept,
         previousTime: _prevAbsTime,
+        hiddenRecordIds: hiddenRecordIds,
       ),
     );
     _compactionRequests.add(
@@ -450,6 +526,7 @@ final class TrajectorySnapshotBuilder {
           time: record.timestamp,
         ),
       );
+      _lastPromptRowIndex = _records.length - 1;
       return;
     }
     final (change, text) = switch (record) {
@@ -483,8 +560,18 @@ final class TrajectorySnapshotBuilder {
         change: change,
         detail: text,
         time: record.timestamp,
+        // F7b: the Tools tab renders the real set, not a missing stub.
+        activeToolNames: record is ActiveToolsChangeRecord
+            ? record.activeToolNames
+            : null,
       ),
     );
+    // The row stamps with the prompt/manifest pointers its following
+    // request summary carries (F7a) — remember where it lives.
+    _lastPromptRowIndex = _records.length - 1;
+    if (record is ActiveToolsChangeRecord) {
+      _lastToolsRowIndex = _records.length - 1;
+    }
   }
 
   void _appendContext(CustomMessageRecord record) {
@@ -502,6 +589,26 @@ final class TrajectorySnapshotBuilder {
         startedAt: record.timestamp,
       ),
     );
+  }
+
+  /// Renders an unknown record kind as a context row (F6): the ledger is
+  /// provably lossless — nothing vanishes without a trace.
+  void _appendUnknown(String recordId, String customType, DateTime time) {
+    final text = 'unknown record: $customType';
+    _records.add(
+      TrajectoryContextRecord(
+        index: _records.length + 1,
+        recordId: trajectoryRecordId(
+          kind: 'context',
+          recordId: recordId,
+          index: _records.length + 1,
+        ),
+        text: text,
+        previewMarkdown: text,
+        startedAt: time,
+      ),
+    );
+    _unknownRecordCount++;
   }
 
   void _beginAssistantStream(AssistantMessage message) {
@@ -566,18 +673,58 @@ final class TrajectorySnapshotBuilder {
     final facts = _assistantRequests[key];
     if (facts != null) {
       facts.requestDetail = detail;
-      return;
+    } else {
+      _assistantRequests[key] = _RequestFacts(
+        order: _records.length + 0.5,
+        turn: turnStep.$1,
+        step: turnStep.$2,
+        purpose: TrajectoryRequestPurpose.assistant,
+        provider: '',
+        model: '',
+        status: TrajectoryRequestStatus.running,
+        requestDetail: detail,
+      );
     }
-    _assistantRequests[key] = _RequestFacts(
-      order: _records.length + 0.5,
-      turn: turnStep.$1,
-      step: turnStep.$2,
-      purpose: TrajectoryRequestPurpose.assistant,
-      provider: '',
-      model: '',
-      status: TrajectoryRequestStatus.running,
-      requestDetail: detail,
-    );
+    _stampSystemHashes(detail);
+  }
+
+  /// Stamps the latest prompt-bearing/tools-bearing system rows with the
+  /// blob pointers this request carries (F7): the System-prompt and Tools
+  /// tabs resolve real content from the snapshot's blob table, with the
+  /// previous version for the diff views. Version tracking advances only
+  /// when the hash changes, so a version's later requests re-stamp the
+  /// same pointers without corrupting "previous".
+  void _stampSystemHashes(TrajectoryRequestDetail detail) {
+    final promptHash = detail.systemPromptHash;
+    if (promptHash != null && promptHash != _activePromptHash) {
+      _prevPromptHash = _activePromptHash;
+      _activePromptHash = promptHash;
+    }
+    final manifestHash = detail.toolManifestHash;
+    if (manifestHash != null && manifestHash != _activeManifestHash) {
+      _prevManifestHash = _activeManifestHash;
+      _activeManifestHash = manifestHash;
+    }
+    final promptIndex = _lastPromptRowIndex;
+    if (promptIndex != null && promptIndex < _records.length) {
+      final row = _records[promptIndex];
+      if (row is TrajectorySystemRecord) {
+        _records[promptIndex] = row.withHashes(
+          systemPromptHash: _activePromptHash,
+          previousSystemPromptHash: _prevPromptHash,
+        );
+      }
+    }
+    final toolsIndex = _lastToolsRowIndex;
+    if (toolsIndex != null && toolsIndex < _records.length) {
+      final row = _records[toolsIndex];
+      if (row is TrajectorySystemRecord) {
+        _records[toolsIndex] = row.withHashes(
+          toolManifestHash: _activeManifestHash,
+          previousToolManifestHash: _prevManifestHash,
+        );
+      }
+    }
   }
 
   /// Replays a persisted `model_request_summary` payload onto the matching
@@ -761,7 +908,6 @@ final class TrajectorySnapshotBuilder {
     return turn;
   }
 
-
   /// Records from [record] (inclusive) to the root, leaf-first.
   List<SessionRecord> _chainToRoot(SessionRecord record) {
     final chain = <SessionRecord>[record];
@@ -844,6 +990,8 @@ final class TrajectorySnapshotBuilder {
       runningCalls: UnmodifiableListView(_runningCalls.values.toList()),
       recordLocations: Map.unmodifiable(locations),
       revision: _revision,
+      blobs: _blobs,
+      unknownRecordCount: _unknownRecordCount,
     );
   }
 }

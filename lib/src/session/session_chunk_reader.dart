@@ -273,6 +273,41 @@ final class SessionChunkReader {
   int get locatePassCount => _locatePassCount;
   int _locatePassCount = 0;
 
+  /// Hidden-range drill-in (issue #385 F4): one forward block scan
+  /// collecting the records whose ids appear in [ids] — the records a
+  /// [HiddenRangeRecord] covers. They sit OFF the kept branch (the
+  /// compaction evicted them from the context), so the branch readers
+  /// never surface them; this reads the raw file instead. Serves what
+  /// exists: a range still open at the file tail resolves the records
+  /// already written, honestly; ids absent from the file stay absent from
+  /// the result. Cost is one pass, bounded like [locateRecord].
+  Future<Map<String, SessionRecord>> readRecordsByIds(Set<String> ids) async {
+    final found = <String, SessionRecord>{};
+    if (ids.isEmpty) return found;
+    final info = await stat();
+    if (info == null) return found;
+    const block = 1 << 20;
+    var offset = 0;
+    while (offset < info.size && found.length < ids.length) {
+      final end = (offset + block) < info.size ? offset + block : info.size;
+      final bytes = await _readRange(offset, end);
+      final lines = _splitLines(bytes, offset);
+      for (final (lineOffset, lineBytes) in lines) {
+        final text = utf8.decode(lineBytes, allowMalformed: true);
+        if (text.length < 12) continue;
+        final SessionRecord record;
+        try {
+          record = parseSessionEntryLine(text, '', lineOffset);
+        } on Object {
+          continue; // torn or foreign line: the drill-in degrades around it
+        }
+        if (ids.contains(record.id)) found[record.id] = record;
+      }
+      offset = end;
+    }
+    return found;
+  }
+
   /// Case-sensitive ASCII substring match without decoding.
   bool _containsAscii(Uint8List haystack, String needle) {
     final pattern = ascii.encode(needle);
