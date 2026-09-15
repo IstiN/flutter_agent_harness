@@ -10,6 +10,12 @@ on:
   # CONFLICTING PR (no merge commit to run against) — dispatch gates on the
   # PR branch directly: gh workflow run ci.yml --ref <branch>.
   workflow_dispatch:
+  # Any release publication (API `gh release create`, web UI, or a pushed
+  # annotated tag) builds + attaches the binaries matrix. Pushed tags also
+  # arrive via the push filter above; the binaries job tolerates the
+  # double-fire (duplicate create + --clobber upload, last wins).
+  release:
+    types: [published]
   schedule:
     # Coalesced auto-release catch-up: when pushes outpace the 2h coalesce
     # window, this releases the pending commits (pub.dev caps ~12 publishes/day).
@@ -1495,7 +1501,16 @@ jobs:
     runs-on: ${{ matrix.runner }}
     needs: quality-gate
     timeout-minutes: 45
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    # Tag pushes (annotated, via PAT) and `release: published` events both
+    # build the matrix. Since v0.1.370 the daily-publish plan creates
+    # releases through the API — a lightweight tag with NO push event —
+    # which silently starved linux/windows CLI assets (they existed only
+    # while tags were still PAT-pushed, up to v0.1.369). The release event
+    # fires for every creation path, so the matrix can never be starved
+    # again.
+    if: >-
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      github.event_name == 'release'
     permissions:
       contents: write # attach assets to the GitHub Release
     strategy:
@@ -1607,7 +1622,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     needs: binaries
     timeout-minutes: 15
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      github.event_name == 'release'
     permissions:
       contents: read
     strategy:
