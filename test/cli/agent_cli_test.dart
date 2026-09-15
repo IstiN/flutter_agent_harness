@@ -1154,7 +1154,7 @@ void main() {
     await run;
 
     final output = io.out.toString();
-    expect(output, contains('\x1b[31merror: boom\x1b[0m'));
+    expect(output, contains('\x1b[38;2;248;113;113merror: boom\x1b[0m'));
     // No-color mode (tests above) stays plain for stable assertions.
     expect(output, contains('error: boom'));
   });
