@@ -94,6 +94,61 @@ Future<peer.HubClient> cliPeer(FakeHub hub) async {
   return client;
 }
 
+/// Wraps the real socket: [intercept] sees every outbound frame first and
+/// may swallow it (return true) — a scripted hub-side failure.
+class _SocketSpy implements HubSocket {
+  _SocketSpy(this._inner, this.intercept);
+
+  final HubSocket _inner;
+  final bool Function(String frame) intercept;
+
+  @override
+  Stream<String> get messages => _inner.messages;
+
+  @override
+  bool get isOpen => _inner.isOpen;
+
+  @override
+  Future<void> send(String text) async {
+    if (intercept(text)) return;
+    await _inner.send(text);
+  }
+
+  @override
+  Future<void> close() => _inner.close();
+}
+
+/// A transport whose next [HubTransport.send] fails once — the
+/// deterministic failed-re-announce path.
+class _FlakyTransport implements HubTransport {
+  bool failNextSend = false;
+
+  @override
+  Future<HubSocket> connect(Uri url) async {
+    final inner = await const IoHubTransport().connect(url);
+    return _SocketSpy(inner, (frame) {
+      if (!failNextSend) return false;
+      failNextSend = false;
+      throw StateError('wire gone');
+    });
+  }
+}
+
+/// A transport that connects for real but swallows whois/presence
+/// requests — the pending-waiter side of a drop.
+class _DeafTransport implements HubTransport {
+  @override
+  Future<HubSocket> connect(Uri url) async {
+    final inner = await const IoHubTransport().connect(url);
+    return _SocketSpy(
+      inner,
+      (frame) =>
+          frame.contains('"op":"whois"') ||
+          frame.contains('"op":"presence_query"'),
+    );
+  }
+}
+
 void main() {
   late FakeHub hub;
 
@@ -150,76 +205,74 @@ void main() {
       await arrived;
     });
 
-    test('resolveTarget: exact id resolves; unknown names fall through',
-        () async {
-      final repo = await joinedRepo(hub, name: 'goal_builder');
-      final sender = await cliPeer(hub);
-      addTearDown(sender.disconnect);
-      addTearDown(repo.dispose);
-      await waitUntil(() => repo.isConnected);
+    test(
+      'resolveTarget: exact id resolves; unknown names fall through',
+      () async {
+        final repo = await joinedRepo(hub, name: 'goal_builder');
+        final sender = await cliPeer(hub);
+        addTearDown(sender.disconnect);
+        addTearDown(repo.dispose);
+        await waitUntil(() => repo.isConnected);
 
-      expect(await repo.resolveTarget(sender.agentId!), sender.agentId);
-      // Our own name is our own fabric mailbox, not a target.
-      expect(await repo.resolveTarget('goal_builder'), isNull);
-      // An unknown name resolves to nothing (falls through to the file
-      // fabric in the composition).
-      expect(await repo.resolveTarget('no-such-name'), isNull);
-    });
+        expect(await repo.resolveTarget(sender.agentId!), sender.agentId);
+        // Our own name is our own fabric mailbox, not a target.
+        expect(await repo.resolveTarget('goal_builder'), isNull);
+        // An unknown name resolves to nothing (falls through to the file
+        // fabric in the composition).
+        expect(await repo.resolveTarget('no-such-name'), isNull);
+      },
+    );
 
-    test('queue while disconnected → drain on reconnect in order, no dupes',
-        () async {
-      final gate = GatedTransport();
-      final repo = await joinedRepo(hub, transport: gate);
-      final sender = await cliPeer(hub);
-      addTearDown(sender.disconnect);
-      addTearDown(repo.dispose);
-      await waitUntil(() => repo.isConnected);
-      final target = sender.agentId!;
+    test(
+      'queue while disconnected → drain on reconnect in order, no dupes',
+      () async {
+        final gate = GatedTransport();
+        final repo = await joinedRepo(hub, transport: gate);
+        final sender = await cliPeer(hub);
+        addTearDown(sender.disconnect);
+        addTearDown(repo.dispose);
+        await waitUntil(() => repo.isConnected);
+        final target = sender.agentId!;
 
-      // Pull the plug and HOLD it (gate closed): the drop stays a drop.
-      gate.allow = false;
-      await hub.closeAgent(repo.agentId!);
-      await waitUntil(() => !repo.isConnected);
-      final dialsBefore = gate.dials;
-      AgentMessage mail(String id) => AgentMessage(
-        id: id,
-        fromId: 'main',
-        toId: target,
-        text: 'queued $id',
-        sentAt: DateTime.now().toUtc().toIso8601String(),
-      );
-      await repo.send(mail('q1'));
-      await repo.send(mail('q2'));
-      await repo.send(mail('q3'));
-      expect(repo.isConnected, isFalse);
+        // Pull the plug and HOLD it (gate closed): the drop stays a drop.
+        gate.allow = false;
+        await hub.closeAgent(repo.agentId!);
+        await waitUntil(() => !repo.isConnected);
+        final dialsBefore = gate.dials;
+        AgentMessage mail(String id) => AgentMessage(
+          id: id,
+          fromId: 'main',
+          toId: target,
+          text: 'queued $id',
+          sentAt: DateTime.now().toUtc().toIso8601String(),
+        );
+        await repo.send(mail('q1'));
+        await repo.send(mail('q2'));
+        await repo.send(mail('q3'));
+        expect(repo.isConnected, isFalse);
 
-      // Reopen the gate: the reconnect drain delivers all three, in send
-      // order, once.
-      final received = <String>[];
-      final sub = sender.inbound.listen((m) {
-        if (m.plaintext != null) received.add(m.plaintext!);
-      });
-      addTearDown(sub.cancel);
-      gate.allow = true;
-      await waitUntil(
-        () => received.length >= 3,
-      );
-      expect(
-        received.take(3).map((t) => t.split(' ').last),
-        ['q1', 'q2', 'q3'],
-        reason: 'per-sender order survives the queue',
-      );
-      // No dupes: let the loop settle, the count stays at three.
-      await Future<void>.delayed(const Duration(milliseconds: 300));
-      expect(
-        received.where((t) => t.startsWith('queued ')),
-        hasLength(3),
-      );
-      expect(gate.dials, greaterThan(dialsBefore));
-    });
+        // Reopen the gate: the reconnect drain delivers all three, in send
+        // order, once.
+        final received = <String>[];
+        final sub = sender.inbound.listen((m) {
+          if (m.plaintext != null) received.add(m.plaintext!);
+        });
+        addTearDown(sub.cancel);
+        gate.allow = true;
+        await waitUntil(() => received.length >= 3);
+        expect(received.take(3).map((t) => t.split(' ').last), [
+          'q1',
+          'q2',
+          'q3',
+        ], reason: 'per-sender order survives the queue');
+        // No dupes: let the loop settle, the count stays at three.
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        expect(received.where((t) => t.startsWith('queued ')), hasLength(3));
+        expect(gate.dials, greaterThan(dialsBefore));
+      },
+    );
 
-    test('inbound dedup by frame id: a redelivered frame lands once',
-        () async {
+    test('inbound dedup by frame id: a redelivered frame lands once', () async {
       final repo = await joinedRepo(hub);
       final sender = await cliPeer(hub);
       addTearDown(sender.disconnect);
@@ -285,121 +338,133 @@ void main() {
   });
 
   group('AC7 UT-presence', () {
-    test('busy accepts mail; directory reports busy for self, live for peers',
-        () async {
-      final gate = GatedTransport();
-      final repo = await joinedRepo(hub, name: 'busy-agent', transport: gate);
-      final sender = await cliPeer(hub);
-      addTearDown(sender.disconnect);
-      addTearDown(repo.dispose);
-      await waitUntil(() => repo.isConnected);
+    test(
+      'busy accepts mail; directory reports busy for self, live for peers',
+      () async {
+        final gate = GatedTransport();
+        final repo = await joinedRepo(hub, name: 'busy-agent', transport: gate);
+        final sender = await cliPeer(hub);
+        addTearDown(sender.disconnect);
+        addTearDown(repo.dispose);
+        await waitUntil(() => repo.isConnected);
 
-      // A run starts: busy. Mail still lands (steering semantics).
-      await repo.touch('main', busy: true);
-      await sender.sendDm(repo.agentId!, 'steer the busy turn');
-      var got = <AgentMessage>[];
-      await waitUntil(() async {
-        got = await repo.peek('main');
-        return got.isNotEmpty;
-      });
-      expect(got.single.text, 'steer the busy turn');
+        // A run starts: busy. Mail still lands (steering semantics).
+        await repo.touch('main', busy: true);
+        await sender.sendDm(repo.agentId!, 'steer the busy turn');
+        var got = <AgentMessage>[];
+        await waitUntil(() async {
+          got = await repo.peek('main');
+          return got.isNotEmpty;
+        });
+        expect(got.single.text, 'steer the busy turn');
 
-      final directory = await repo.directory();
-      final me = directory.singleWhere((e) => e.id == repo.agentId);
-      expect(me.presence, AgentPresence.busy);
-      expect(me.source, mailboxSourceHub);
+        final directory = await repo.directory();
+        final me = directory.singleWhere((e) => e.id == repo.agentId);
+        expect(me.presence, AgentPresence.busy);
+        expect(me.source, mailboxSourceHub);
 
-      // The peer shows live (connection-backed presence, not mtime).
-      final peerEntry = directory.singleWhere((e) => e.id == sender.agentId);
-      expect(peerEntry.presence, AgentPresence.live);
+        // The peer shows live (connection-backed presence, not mtime).
+        final peerEntry = directory.singleWhere((e) => e.id == sender.agentId);
+        expect(peerEntry.presence, AgentPresence.live);
 
-      // Run ends → back to live (connected), never offline.
-      await repo.touch('main');
-      expect(
-        (await repo.directory()).singleWhere((e) => e.id == repo.agentId)
-            .presence,
-        AgentPresence.live,
-      );
+        // Run ends → back to live (connected), never offline.
+        await repo.touch('main');
+        expect(
+          (await repo.directory())
+              .singleWhere((e) => e.id == repo.agentId)
+              .presence,
+          AgentPresence.live,
+        );
 
-      // The link drops and STAYS down → the disconnected directory view:
-      // the roster as of last contact, everyone offline.
-      gate.allow = false;
-      await hub.closeAgent(repo.agentId!);
-      await waitUntil(() => !repo.isConnected);
-      final entry = (await repo.directory()).singleWhere(
-        (e) => e.id == repo.agentId,
-      );
-      expect(entry.presence, AgentPresence.offline);
-    });
+        // The link drops and STAYS down → the disconnected directory view:
+        // the roster as of last contact, everyone offline.
+        gate.allow = false;
+        await hub.closeAgent(repo.agentId!);
+        await waitUntil(() => !repo.isConnected);
+        final entry = (await repo.directory()).singleWhere(
+          (e) => e.id == repo.agentId,
+        );
+        expect(entry.presence, AgentPresence.offline);
+      },
+    );
   });
 
   group('link lifecycle', () {
-    test('E4: an unreachable hub boots disconnected and keeps retrying',
-        () async {
-      // Port 1 on loopback: nothing listens, connects refuse instantly.
+    test(
+      'E4: an unreachable hub boots disconnected and keeps retrying',
+      () async {
+        // Port 1 on loopback: nothing listens, connects refuse instantly.
+        final repo = HubMessagingRepository(
+          url: Uri.parse('ws://127.0.0.1:1/ws'),
+          transport: const IoHubTransport(),
+          backoff: testBackoff,
+        );
+        addTearDown(repo.dispose);
+        await repo.start();
+        // The boot never throws; the state is honest.
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+        expect(repo.isConnected, isFalse);
+        expect(
+          repo.state,
+          anyOf(HubLinkState.disconnected, HubLinkState.connecting),
+        );
+        // Queueing works — nothing throws.
+        await repo.send(
+          AgentMessage(
+            id: 'q',
+            fromId: 'main',
+            toId: 'nobody',
+            text: 'later',
+            sentAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
+      },
+    );
+
+    test(
+      'stop → start: clean disconnect, reconnect drains the hub mailbox',
+      () async {
+        final repo = await joinedRepo(hub);
+        final sender = await cliPeer(hub);
+        addTearDown(sender.disconnect);
+        addTearDown(repo.dispose);
+        await waitUntil(() => repo.isConnected);
+
+        // Offline mail: the peer sends while we are cleanly stopped; the hub
+        // parks it in the offline mailbox and flushes on reconnect.
+        await repo.stop();
+        expect(repo.isConnected, isFalse);
+        await sender.sendDm(repo.agentId!, 'while suspended');
+        await repo.start();
+        await waitUntil(() => repo.isConnected);
+        var text = '';
+        await waitUntil(() async {
+          text = (await repo.peek('main')).map((m) => m.text).join('|');
+          return text == 'while suspended';
+        });
+      },
+    );
+  });
+
+  test(
+    'AC4 IT-ios-lan (host half): --bind lan listens on all interfaces',
+    () async {
+      final lan = FakeHub(bind: 'lan');
+      await lan.start();
+      addTearDown(lan.stop);
+      // 0.0.0.0 covers loopback: the ordinary client path still works.
       final repo = HubMessagingRepository(
-        url: Uri.parse('ws://127.0.0.1:1/ws'),
+        url: lan.url,
         transport: const IoHubTransport(),
+        name: 'loopback-client-of-lan-hub',
         backoff: testBackoff,
       );
-      addTearDown(repo.dispose);
       await repo.start();
-      // The boot never throws; the state is honest.
-      await Future<void>.delayed(const Duration(milliseconds: 150));
-      expect(repo.isConnected, isFalse);
-      expect(
-        repo.state,
-        anyOf(HubLinkState.disconnected, HubLinkState.connecting),
-      );
-      // Queueing works — nothing throws.
-      await repo.send(AgentMessage(
-        id: 'q',
-        fromId: 'main',
-        toId: 'nobody',
-        text: 'later',
-        sentAt: DateTime.now().toUtc().toIso8601String(),
-      ));
-    });
-
-    test('stop → start: clean disconnect, reconnect drains the hub mailbox',
-        () async {
-      final repo = await joinedRepo(hub);
-      final sender = await cliPeer(hub);
-      addTearDown(sender.disconnect);
       addTearDown(repo.dispose);
       await waitUntil(() => repo.isConnected);
-
-      // Offline mail: the peer sends while we are cleanly stopped; the hub
-      // parks it in the offline mailbox and flushes on reconnect.
-      await repo.stop();
-      expect(repo.isConnected, isFalse);
-      await sender.sendDm(repo.agentId!, 'while suspended');
-      await repo.start();
-      await waitUntil(() => repo.isConnected);
-      var text = '';
-      await waitUntil(() async {
-        text = (await repo.peek('main')).map((m) => m.text).join('|');
-        return text == 'while suspended';
-      });
-    });
-  });
-
-  test('AC4 IT-ios-lan (host half): --bind lan listens on all interfaces', () async {
-    final lan = FakeHub(bind: 'lan');
-    await lan.start();
-    addTearDown(lan.stop);
-    // 0.0.0.0 covers loopback: the ordinary client path still works.
-    final repo = HubMessagingRepository(
-      url: lan.url,
-      transport: const IoHubTransport(),
-      name: 'loopback-client-of-lan-hub',
-      backoff: testBackoff,
-    );
-    await repo.start();
-    addTearDown(repo.dispose);
-    await waitUntil(() => repo.isConnected);
-    expect(repo.agentId, isNotNull);
-  });
+      expect(repo.agentId, isNotNull);
+    },
+  );
 
   group('identity', () {
     test('a passed identity is stable across restarts', () async {
@@ -429,5 +494,79 @@ void main() {
       await waitUntil(() => second.isConnected);
       expect(second.agentId, address, reason: 'seeds → same hub address');
     });
+  });
+
+  group('register semantics (CRAP coverage)', () {
+    test('pre-start register sets name + capabilities on the first hello; '
+        'a live re-register re-announces', () async {
+      // Before start: no hello has gone out, the settings land locally.
+      final repo = HubMessagingRepository(
+        url: hub.url,
+        transport: const IoHubTransport(),
+        backoff: testBackoff,
+      );
+      addTearDown(repo.dispose);
+      await repo.register(
+        'ignored-until-hello',
+        sessionName: 'renamed-agent',
+        capabilities: const [AgentCapability(name: 'code', payload: null)],
+      );
+      expect(repo.name, 'renamed-agent');
+      expect(repo.capabilities, hasLength(1));
+
+      await repo.start();
+      await waitUntil(() => repo.isConnected);
+      final peer = await cliPeer(hub);
+      addTearDown(peer.disconnect);
+      await waitUntil(
+        () async => (await peer.peers()).any((a) => a.name == 'renamed-agent'),
+      );
+
+      // A live name change re-announces on the spot.
+      await repo.register('again-ignored', sessionName: 'renamed-twice');
+      await waitUntil(
+        () async => (await peer.peers()).any((a) => a.name == 'renamed-twice'),
+      );
+      await peer.disconnect;
+    });
+
+    test('a failed live re-announce never breaks register', () async {
+      final flaky = _FlakyTransport();
+      final repo = await joinedRepo(hub, name: 'before', transport: flaky);
+      addTearDown(repo.dispose);
+      await waitUntil(() => repo.isConnected);
+
+      flaky.failNextSend = true;
+      // The hello re-announce fails inside; register still completes.
+      await repo.register('x', sessionName: 'after');
+      expect(repo.name, 'after');
+    });
+
+    test(
+      'a link drop fails pending whois/presence waiters (no hang)',
+      () async {
+        final deaf = _DeafTransport();
+        final repo = await joinedRepo(hub, transport: deaf);
+        addTearDown(repo.dispose);
+        await waitUntil(() => repo.isConnected);
+
+        // The whois and presence frames are swallowed: both calls stay
+        // pending until the link drops. The outcome wrappers capture the
+        // failure BEFORE the drop so the zone sees no unhandled error.
+        final whois = repo
+            .resolveTarget('a1b2c3d4e5f60718')
+            .then((_) => 'resolved', onError: (Object e) => '$e');
+        final roster = repo.directory().then(
+          (_) => 'listed',
+          onError: (Object e) => '$e',
+        );
+        // Let the request frames settle so every waiter has its listener
+        // attached before the drop (the race this test is NOT about).
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        await hub.stop();
+        expect(await whois, contains('hub link down'));
+        expect(await roster, contains('hub link down'));
+      },
+    );
   });
 }
