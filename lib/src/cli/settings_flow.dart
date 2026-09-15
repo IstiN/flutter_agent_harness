@@ -1398,18 +1398,243 @@ extension SettingsFlow on AgentCli {
     return [...lines.sublist(0, start), ...lines.sublist(end)].join('\n');
   }
 
+  /// The effective retry policy: the roles resolver's, or the parser
+  /// defaults when no resolver runs (the `retry:` section rides the
+  /// `roles:` group).
+  ModelRolesRetryPolicy get _effectiveRetryPolicy =>
+      config.modelRolesResolver?.config.retry ?? const ModelRolesRetryPolicy();
+
+  /// The settings-hub row and `/settings` summary label for resilience
+  /// (issue #393): the effective watchdog timeouts and the retry budget.
+  String _resilienceStatusLabel() =>
+      'connect ${effectiveProviderConnectTimeout.inMilliseconds}ms, '
+      'idle ${effectiveProviderStreamIdleTimeout.inMilliseconds}ms, '
+      'retries ×${_effectiveRetryPolicy.retriesPerEntry}';
+
+  /// Settings → Resilience: the `providerTimeouts:` watchdog knobs and the
+  /// `retry:` backoff policy as an interactive flow (issue #393). Writes
+  /// go through the surgical validated-yaml upsert into the USER config;
+  /// the saved timeouts are re-published onto the process-wide override
+  /// the watchdogs read on every request, and the saved retry policy is
+  /// installed on the roles resolver when one runs. Loops until the pick
+  /// is cancelled or `done`.
+  Future<void> startResilienceFlow() async {
+    for (;;) {
+      final picked = await _pickOption('resilience', _resilienceMenuOptions());
+      if (picked == null || picked == 'done') return;
+      await _applyResiliencePick(picked);
+    }
+  }
+
+  /// Dispatches one [startResilienceFlow] menu pick; the caller re-renders
+  /// the menu afterwards. Split out to keep each function's complexity
+  /// under the repo's CRAP gate.
+  Future<void> _applyResiliencePick(String picked) async {
+    switch (picked) {
+      case 'connect':
+        await _askResilienceMs(
+          'connectTimeoutMs',
+          'connect watchdog (first headers)',
+        );
+      case 'streamIdle':
+        await _askResilienceMs('streamIdleTimeoutMs', 'stream-idle watchdog');
+      case 'retriesPerEntry':
+      case 'baseDelayMs':
+      case 'maxBackoffMs':
+      case 'maxWaitMs':
+      case 'keyBackoffMs':
+        await _askRetryScalar(picked);
+    }
+  }
+
+  /// The main menu of [startResilienceFlow]: the two watchdog knobs (the
+  /// built-in defaults shown, so an override reads as an override) and
+  /// the five retry knobs (each marked `default` when it equals the
+  /// parser default). Pure builder.
+  List<FlowOption> _resilienceMenuOptions() {
+    final retry = _effectiveRetryPolicy;
+    const defaults = ModelRolesRetryPolicy();
+    String inherit(int value, int fallback) =>
+        value == fallback ? 'default' : 'default is $fallback';
+    return [
+      (
+        'connect',
+        'Connect watchdog',
+        '${effectiveProviderConnectTimeout.inMilliseconds}ms '
+            '(built-in ${providerConnectTimeout.inMilliseconds}ms)',
+      ),
+      (
+        'streamIdle',
+        'Stream-idle watchdog',
+        '${effectiveProviderStreamIdleTimeout.inMilliseconds}ms '
+            '(built-in ${providerStreamIdleTimeout.inMilliseconds}ms)',
+      ),
+      (
+        'retriesPerEntry',
+        'Retries per chain entry',
+        '${retry.retriesPerEntry} '
+            '(${inherit(retry.retriesPerEntry, defaults.retriesPerEntry)})',
+      ),
+      (
+        'baseDelayMs',
+        'Backoff base delay',
+        '${retry.baseDelay.inMilliseconds}ms (${inherit(retry.baseDelay.inMilliseconds, defaults.baseDelay.inMilliseconds)})',
+      ),
+      (
+        'maxBackoffMs',
+        'Backoff cap',
+        '${retry.maxBackoff.inMilliseconds}ms (${inherit(retry.maxBackoff.inMilliseconds, defaults.maxBackoff.inMilliseconds)})',
+      ),
+      (
+        'maxWaitMs',
+        'Give-up threshold (failover past it)',
+        '${retry.maxWait.inMilliseconds}ms (${inherit(retry.maxWait.inMilliseconds, defaults.maxWait.inMilliseconds)})',
+      ),
+      (
+        'keyBackoffMs',
+        'Key cooldown',
+        '${retry.keyBackoff.inMilliseconds}ms (${inherit(retry.keyBackoff.inMilliseconds, defaults.keyBackoff.inMilliseconds)})',
+      ),
+      ('done', 'Done', ''),
+    ];
+  }
+
+  /// The watchdog-knob branch: prompts for milliseconds and feeds the raw
+  /// answer through the validated upsert (AC4: a bad value shows the
+  /// parser's verbatim message and writes nothing).
+  Future<void> _askResilienceMs(String key, String label) async {
+    final answer = await _askLine(
+      '$label in ms (empty keeps the current value): ',
+    );
+    if (answer == null) return;
+    final value = answer.trim();
+    if (value.isEmpty) return;
+    await _writeProviderTimeout(key, value);
+  }
+
+  /// The retry-knob branch: prompts for the field's yaml unit (a plain
+  /// count for `retriesPerEntry`, milliseconds for the rest) and feeds
+  /// the raw answer through the validated upsert.
+  Future<void> _askRetryScalar(String key) async {
+    final retry = _effectiveRetryPolicy;
+    final current = switch (key) {
+      'retriesPerEntry' => '${retry.retriesPerEntry}',
+      'baseDelayMs' => '${retry.baseDelay.inMilliseconds}',
+      'maxBackoffMs' => '${retry.maxBackoff.inMilliseconds}',
+      'maxWaitMs' => '${retry.maxWait.inMilliseconds}',
+      _ => '${retry.keyBackoff.inMilliseconds}',
+    };
+    final answer = await _askLine('$key (empty keeps $current): ');
+    if (answer == null) return;
+    final value = answer.trim();
+    if (value.isEmpty) return;
+    await _writeRetryKey(key, value);
+  }
+
+  /// The shared timeout write path: a USER-file upsert of
+  /// `providerTimeouts.<key>` validated by the real section parser first
+  /// (AC4), then the re-publish that installs the saved section on the
+  /// process-wide override (AC3/E3).
+  Future<void> _writeProviderTimeout(String key, String value) async {
+    if (_userConfigPath() == null) {
+      io.writeln('resilience: no user config on this host — not saved');
+      return;
+    }
+    final wrote = await _upsertConfigYaml(
+      ['providerTimeouts', key],
+      value,
+      projectScope: false,
+      validate: validateProviderTimeoutsSection,
+      note:
+          'applies to new requests — the watchdogs read the saved '
+          'override on every request',
+    );
+    if (wrote) await _publishProviderTimeouts();
+  }
+
+  /// Reload-after-publish (E3): what's live is what's on disk — the saved
+  /// file is re-parsed with the boot parser and installed on the
+  /// process-wide override, so a concurrent editor's values survive and
+  /// the menu re-renders the fresh state.
+  Future<void> _publishProviderTimeouts() async {
+    final path = _userConfigPath();
+    if (path == null) return;
+    switch (await _env.readTextFile(path)) {
+      case Ok(:final value):
+        final doc = loadYaml(value);
+        providerTimeoutsOverride = parseProviderTimeouts(
+          doc is YamlMap ? doc['providerTimeouts'] : null,
+        );
+      case Err():
+        // The write just succeeded; a read race keeps the current live
+        // override — the next write re-syncs.
+        break;
+    }
+  }
+
+  /// The shared retry write path: a USER-file upsert of `retry.<key>`,
+  /// validated by the real roles-group parser over the WHOLE document
+  /// (the group parses together — `retry:` without `roles:` is refused
+  /// with the parser's verbatim message), then the reload that installs
+  /// the saved policy on the running resolver when one exists.
+  Future<void> _writeRetryKey(String key, String value) async {
+    if (_userConfigPath() == null) {
+      io.writeln('resilience: no user config on this host — not saved');
+      return;
+    }
+    final wrote = await _upsertConfigYaml(
+      ['retry', key],
+      value,
+      projectScope: false,
+      validateDoc: ModelRolesConfig.fromYaml,
+      note: _retryNote(),
+    );
+    if (wrote) await _reloadRetryPolicy();
+  }
+
+  /// The honest liveness note (AC3): with a resolver the new policy
+  /// governs new failures (the run already streaming keeps the old one);
+  /// without one the section waits for the next boot.
+  String _retryNote() => config.modelRolesResolver == null
+      ? applicationNote('retry')
+      : 'applies to new failures — the run already streaming keeps the '
+            'old policy';
+
+  /// Reload-after-write (E3): the saved file is re-parsed and the policy
+  /// installed on the resolver (wrappers rebuilt), so a concurrent
+  /// editor's values survive and the menu re-renders the fresh state.
+  Future<void> _reloadRetryPolicy() async {
+    final resolver = config.modelRolesResolver;
+    final path = _userConfigPath();
+    if (resolver == null || path == null) return;
+    switch (await _env.readTextFile(path)) {
+      case Ok(:final value):
+        final doc = loadYaml(value);
+        if (doc is! YamlMap) return;
+        resolver.setRetryPolicy(ModelRolesConfig.fromYaml(doc).retry);
+      case Err():
+        // The write just succeeded; a read race keeps the current live
+        // policy — the next write re-syncs.
+        break;
+    }
+  }
+
   /// Upserts [segments] → [value] in the project or user config file,
   /// validating the edited section with [validate] (the real parser)
-  /// BEFORE the write. A JSON array/object value renders as a yaml block
-  /// (list-valued keys — see [configLeafLines]); anything else is the
-  /// single scalar line. [note] overrides the liveness note printed on
-  /// success (default: [applicationNote] for the section). Returns true
-  /// when written; failures print and leave the file untouched.
+  /// BEFORE the write — and, when [validateDoc] is given, the WHOLE
+  /// parsed document with it (the roles group `roles:` / `retry:` parses
+  /// together, so the retry flow validates at document level). A JSON
+  /// array/object value renders as a yaml block (list-valued keys — see
+  /// [configLeafLines]); anything else is the single scalar line. [note]
+  /// overrides the liveness note printed on success (default:
+  /// [applicationNote] for the section). Returns true when written;
+  /// failures print and leave the file untouched.
   Future<bool> _upsertConfigYaml(
     List<String> segments,
     String value, {
     required bool projectScope,
-    required void Function(Object? node) validate,
+    void Function(Object? node)? validate,
+    void Function(YamlMap doc)? validateDoc,
     String? note,
   }) async {
     final path = projectScope
@@ -1435,7 +1660,8 @@ extension SettingsFlow on AgentCli {
     final doc = loadYaml(edited);
     final section = doc is YamlMap ? doc[segments.first] : null;
     try {
-      validate(section);
+      validate?.call(section);
+      if (doc is YamlMap) validateDoc?.call(doc);
     } on Object catch (error) {
       io.writeln('not saved: $error');
       return false;
@@ -1636,6 +1862,11 @@ extension SettingsFlow on AgentCli {
         description: _memoryPathLabel(project: true),
       ),
       MenuItem(
+        key: 'resilience',
+        label: 'Resilience',
+        description: _resilienceStatusLabel(),
+      ),
+      MenuItem(
         key: 'redact',
         label: 'Redaction',
         description: _redactionStatusLabel(),
@@ -1691,6 +1922,7 @@ extension SettingsFlow on AgentCli {
     'keys': () => _handleKeyCommand(''),
     'dap': startDapHubFlow,
     'cube': startCubeSandboxFlow,
+    'resilience': startResilienceFlow,
     'redact': startRedactionFlow,
     'context-cap': startContextCapFlow,
     'memory': startMemoryStoresFlow,
@@ -1705,6 +1937,7 @@ extension SettingsFlow on AgentCli {
     io.writeln('approval: ${_approval.mode.label}');
     io.writeln('mode: ${_currentMode.name}');
     io.writeln('cube: ${_cubeStatusLabel()}');
+    io.writeln('resilience: ${_resilienceStatusLabel()}');
     io.writeln('dap: ${_dapHubStatusLabel()}');
     io.writeln('tools: ${_toolsStatusLabel()}');
     io.writeln('compaction: ${_compactionStatusLabel()}');

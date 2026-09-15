@@ -267,7 +267,19 @@ final class ModelRolesResolver {
     _wrappers.remove(role);
   }
 
-  /// Drops [role]'s chain (the role falls back to the `default` chain — the
+  /// Replaces the retry policy (the settings-hub resilience flow, issue
+  /// #393). Every role's cached wrapper captured the old policy at
+  /// construction, so ALL of them are rebuilt — the new knobs govern the
+  /// next run's retry chain; a run already streaming keeps the old one.
+  void setRetryPolicy(ModelRolesRetryPolicy policy) {
+    config = ModelRolesConfig(
+      roles: config.roles,
+      pathOverrides: config.pathOverrides,
+      retry: policy,
+    );
+    _wrappers.clear();
+  }
+
   /// "use the main model" escape of the settings-hub agent-models flow).
   void clearRoleChain(String role) {
     if (role == defaultModelRole) {

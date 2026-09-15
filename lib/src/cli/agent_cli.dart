@@ -102,7 +102,14 @@ import '../providers/openrouter_oauth.dart';
 import '../agent/image_registry.dart'
     show ImageRegistryConfig, imageDropNotice, imageRegistryConfig;
 import '../providers/provider_common.dart'
-    show authExpiredProvider, stripAuthExpiredMarker;
+    show
+        authExpiredProvider,
+        effectiveProviderConnectTimeout,
+        effectiveProviderStreamIdleTimeout,
+        providerConnectTimeout,
+        providerStreamIdleTimeout,
+        providerTimeoutsOverride,
+        stripAuthExpiredMarker;
 import '../providers/transient_retry_stream.dart';
 import '../prompts/prompt_overrides.dart';
 import '../providers/aiin_auth.dart';
@@ -333,8 +340,7 @@ class AgentCli {
         shellJobs: _shellJobs,
         // Mid-run password asks (issue #367): the TUI opens the masked
         // secret-mode prompt; the value streams to the live process stdin.
-        onPasswordPrompt:
-            io.isInteractive ? _answerPasswordPrompt : null,
+        onPasswordPrompt: io.isInteractive ? _answerPasswordPrompt : null,
         config: ConfigService(env: decoratedEnv, homeDir: config.homeDir),
       ),
       ...memoryTools(

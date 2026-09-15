@@ -32,8 +32,10 @@ import '../task/subagent_heartbeat.dart';
 
 /// Parses the `providerTimeouts:` section: provider watchdog overrides
 /// (see [ProviderTimeoutsOverride]). Strict — a bad schema throws
-/// [ConfigException] instead of silently keeping the defaults.
-ProviderTimeoutsOverride? _parseProviderTimeouts(Object? node) {
+/// [ConfigException] instead of silently keeping the defaults. Public so
+/// the settings-hub resilience flow (issue #393) reloads the saved
+/// section with the SAME parser boot uses.
+ProviderTimeoutsOverride? parseProviderTimeouts(Object? node) {
   if (node == null) return null;
   if (node is! YamlMap) {
     throw ConfigException('providerTimeouts must be a map, got: $node');
@@ -284,7 +286,7 @@ final class CliConfig {
             ),
       // The providerTimeouts section (provider watchdog overrides) is strict
       // too.
-      providerTimeouts: _parseProviderTimeouts(map['providerTimeouts']),
+      providerTimeouts: parseProviderTimeouts(map['providerTimeouts']),
       // The compaction section (engine selector, issue #148) is strict: a
       // typo throws instead of silently running the classic engine.
       compactionEngine: CompactionEngine.fromSection(
