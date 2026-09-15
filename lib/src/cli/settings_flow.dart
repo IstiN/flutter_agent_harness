@@ -584,50 +584,55 @@ extension SettingsFlow on AgentCli {
   Future<void> startRedactionFlow() async {
     for (;;) {
       final picked = await _pickOption('redaction', _redactionMenuOptions());
-      switch (picked) {
-        case null:
-        case 'done':
-          return;
-        case 'enabled':
-          await _writeRedactionKey(const [
-            'redact',
-            'enabled',
-          ], '${!_redactionConfig.enabled}');
-        case 'blockMode':
-          await _writeRedactionKey(const [
-            'redact',
-            'blockMode',
-          ], '${!_redactionConfig.blockMode}');
-        case 'minEntropy':
-          await _askRedactionScalar(const [
-            'redact',
-            'minEntropy',
-          ], 'min entropy in bits/char');
-        case 'minLength':
-          await _askRedactionScalar(const [
-            'redact',
-            'minLength',
-          ], 'min token length');
-        case 'allowlist':
-          await _askRedactionList(const [
-            'redact',
-            'allowlist',
-          ], 'allowlist regex(es)');
-        case 'toolAllow':
-          await _askRedactionList(const [
-            'redact',
-            'toolAllow',
-          ], 'tool allow (only these)');
-        case 'toolDeny':
-          await _askRedactionList(const [
-            'redact',
-            'toolDeny',
-          ], 'tool deny (never redacted)');
-        case 'layers':
-          await _redactionLayersFlow();
-        case 'reset':
-          _resetRedactionStats();
-      }
+      if (picked == null || picked == 'done') return;
+      await _applyRedactionPick(picked);
+    }
+  }
+
+  /// Dispatches one [startRedactionFlow] menu pick; the caller re-renders
+  /// the menu afterwards. Split out to keep each function's complexity
+  /// under the repo's CRAP gate.
+  Future<void> _applyRedactionPick(String picked) async {
+    switch (picked) {
+      case 'enabled':
+        await _writeRedactionKey(const [
+          'redact',
+          'enabled',
+        ], '${!_redactionConfig.enabled}');
+      case 'blockMode':
+        await _writeRedactionKey(const [
+          'redact',
+          'blockMode',
+        ], '${!_redactionConfig.blockMode}');
+      case 'minEntropy':
+        await _askRedactionScalar(const [
+          'redact',
+          'minEntropy',
+        ], 'min entropy in bits/char');
+      case 'minLength':
+        await _askRedactionScalar(const [
+          'redact',
+          'minLength',
+        ], 'min token length');
+      case 'allowlist':
+        await _askRedactionList(const [
+          'redact',
+          'allowlist',
+        ], 'allowlist regex(es)');
+      case 'toolAllow':
+        await _askRedactionList(const [
+          'redact',
+          'toolAllow',
+        ], 'tool allow (only these)');
+      case 'toolDeny':
+        await _askRedactionList(const [
+          'redact',
+          'toolDeny',
+        ], 'tool deny (never redacted)');
+      case 'layers':
+        await _redactionLayersFlow();
+      case 'reset':
+        _resetRedactionStats();
     }
   }
 
@@ -1069,6 +1074,7 @@ extension SettingsFlow on AgentCli {
     'cube': startCubeSandboxFlow,
     'dap': startDapHubFlow,
     'tools': _toolsSettingsFlow,
+    'compaction': startCompactionEngineFlow,
     'memory': startMemoryStoresFlow,
     'redact': startRedactionFlow,
   };

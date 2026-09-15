@@ -1347,6 +1347,17 @@ void main() {
       expect(fake.calls, 0);
     });
 
+    test('every hub row has a dispatch target (Enter never no-ops)', () {
+      final cli = cliFor(FakeStreamFunction([textTurn('ok')]).call);
+      final keys = cli.settingsHubItems().map((item) => item.key).toSet()
+        ..remove('mcp'); // pre-existing main gap — `/mcp` has no picker yet
+      expect(
+        keys.difference(cli.settingsPickerHandlerKeysForTest()),
+        isEmpty,
+        reason: 'a hub row without a handler closes silently on Enter',
+      );
+    });
+
     test(
       'AC2: every section field round-trips through the yaml file',
       () async {
