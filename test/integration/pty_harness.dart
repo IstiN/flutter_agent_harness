@@ -149,8 +149,21 @@ final class FaCliHarness {
   /// Sends Escape.
   void sendEscape() => pty.write('\x1b');
 
+  /// Sends Ctrl+S — the TUI's steer gesture while busy (steers the
+  /// queued follow-ups into the running agent).
+  void sendCtrlS() => pty.write('\x13');
+
   /// Sends Backspace.
   void sendBackspace() => pty.write('\x7f');
+
+  /// Kills the CLI with SIGKILL and reaps it — a real crash (no graceful
+  /// exit, no boundary work). Use when the test needs the exact
+  /// process-death residue (issue #437 phase 2).
+  Future<void> hardKill() async {
+    pty.kill(ProcessSignal.sigkill);
+    await pty.exitCode.timeout(const Duration(seconds: 5), onTimeout: () => -1);
+    await _outputSub?.cancel();
+  }
 
   /// Sends Ctrl+C.
   void sendCtrlC() => pty.write('\x03');

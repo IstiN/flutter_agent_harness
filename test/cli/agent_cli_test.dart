@@ -727,7 +727,11 @@ void main() {
     final secondCallMessages = fake.contexts[1].messages;
     expect(
       secondCallMessages.any(
-        (m) => m is UserMessage && m.content == 'steer me',
+        (m) =>
+            m is UserMessage &&
+            // Issue #437: steered text carries the mail-parity
+            // attribution so the model knows where the input came from.
+            m.content == '[steering from user] steer me',
       ),
       isTrue,
     );

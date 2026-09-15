@@ -18,16 +18,35 @@ import 'agent_hub_view.dart' show hubDuration;
 /// Where a deferred panel came from.
 enum DeferredPanelKind { mail, scheduled, steering }
 
-/// Panel lifecycle: delivered panels run while their turn runs, then
-/// complete / abort / error with it.
-enum DeferredPanelState { running, complete, aborted, error }
+/// Panel lifecycle.
+///
+/// Mail/scheduled panels ride the run: `running` while their turn runs,
+/// then `complete` / `aborted` / `error` with it.
+///
+/// Steering panels follow DELIVERY instead (issue #437): `pending`
+/// (persisted, waiting for a step boundary) → `delivered` (consumed: the
+/// message merged at a step boundary or started a turn), or `dead` (the
+/// consumer is gone — the run ended with the message unconsumed, or the
+/// loop looks wedged). A late delivery from `dead` is honest recovery.
+enum DeferredPanelState {
+  pending,
+  running,
+  delivered,
+  complete,
+  aborted,
+  error,
+  dead,
+}
 
 /// One state icon for the panel header.
 String deferredPanelStateIcon(DeferredPanelState state) => switch (state) {
+  DeferredPanelState.pending => '⏳',
   DeferredPanelState.running => '🔄',
+  DeferredPanelState.delivered => '✅',
   DeferredPanelState.complete => '✅',
   DeferredPanelState.aborted => '🛑',
   DeferredPanelState.error => '❌',
+  DeferredPanelState.dead => '⚠',
 };
 
 /// One label for the panel kind.
@@ -110,6 +129,7 @@ final class DeferredPanelLog {
     required String body,
     String? source,
     String? replyAddress,
+    DeferredPanelState state = DeferredPanelState.running,
   }) {
     final panel = DeferredPanel(
       id: 'btw-${_nextId++}',
@@ -117,6 +137,7 @@ final class DeferredPanelLog {
       from: from,
       body: body,
       createdAt: _now(),
+      state: state,
       source: source,
       replyAddress: replyAddress,
     );
@@ -127,25 +148,28 @@ final class DeferredPanelLog {
     return panel;
   }
 
-  /// Moves every [DeferredPanelState.running] panel to [state]. Returns the
-  /// transitioned ids (for the host's one-line transition notices).
-  List<String> transitionRunning(DeferredPanelState state) {
-    final moved = <String>[];
-    for (final panel in _panels) {
-      if (panel.state == DeferredPanelState.running) {
-        panel.state = state;
-        moved.add(panel.id);
-      }
-    }
-    return moved;
-  }
-
   /// Moves one panel to [state] (no-op when unknown/already terminal).
   bool transition(String id, DeferredPanelState state) {
     final panel = this[id];
     if (panel == null) return false;
     panel.state = state;
     return true;
+  }
+
+  /// Moves every ride-along [DeferredPanelState.running] panel to [state].
+  /// Steering panels are skipped: their lifecycle follows delivery
+  /// (pending → delivered / dead), never the run's (issue #437). Returns
+  /// the transitioned ids (for the host's one-line transition notices).
+  List<String> transitionRunning(DeferredPanelState state) {
+    final moved = <String>[];
+    for (final panel in _panels) {
+      if (panel.kind == DeferredPanelKind.steering) continue;
+      if (panel.state == DeferredPanelState.running) {
+        panel.state = state;
+        moved.add(panel.id);
+      }
+    }
+    return moved;
   }
 }
 
