@@ -251,4 +251,206 @@ void main() {
     );
     expect(manager.tools.map((t) => t.name), ['mcp__srv__a_b']);
   });
+
+  group('live reload (issue #396)', () {
+    setUp(() {
+      factory.onSpawn = (server) {
+        server.tools = [
+          {'name': 'ping'},
+        ];
+      };
+    });
+
+    test('an untouched server keeps its live connection', () async {
+      startManager({'a': stdio('a'), 'b': stdio('b')});
+      await until(() => factory.spawned.length == 2);
+      await until(
+        () => manager.states.values.every(
+          (s) => s.status == McpServerStatus.connected,
+        ),
+      );
+
+      await manager.applyConfig(configOf({'a': stdio('a'), 'b': stdio('b')}));
+      // Nobody respawned: value-equal entries keep their connections.
+      expect(factory.spawned, hasLength(2));
+      expect(
+        manager.states.values.every(
+          (s) => s.status == McpServerStatus.connected,
+        ),
+        isTrue,
+      );
+      expect(manager.tools.map((t) => t.name).toSet(), {
+        'mcp__a__ping',
+        'mcp__b__ping',
+      });
+    });
+
+    test('a changed server reconnects, the rest stay up', () async {
+      startManager({
+        'keep': stdio('keep'),
+        'move': const McpStdioServerConfig(
+          name: 'move',
+          command: 'fake',
+          args: ['-x'],
+        ),
+      });
+      await until(() => factory.spawned.length == 2);
+      await until(
+        () => manager.states.values.every(
+          (s) => s.status == McpServerStatus.connected,
+        ),
+      );
+
+      await manager.applyConfig(
+        configOf({
+          'keep': stdio('keep'),
+          'move': const McpStdioServerConfig(
+            name: 'move',
+            command: 'fake',
+            args: ['-y'],
+          ),
+        }),
+      );
+      await until(() => factory.spawned.length == 3);
+      await until(
+        () => manager.states['move']?.status == McpServerStatus.connected,
+      );
+      // The untouched server keeps its original fake; the touched one
+      // got a fresh connection and its new entry is the live config.
+      expect(manager.states['keep']?.status, McpServerStatus.connected);
+      expect((manager.config.servers['move']! as McpStdioServerConfig).args, [
+        '-y',
+      ]);
+    });
+
+    test('a removed server stops; an added one connects', () async {
+      startManager({'a': stdio('a')});
+      await until(
+        () => manager.states['a']?.status == McpServerStatus.connected,
+      );
+
+      await manager.applyConfig(configOf({'b': stdio('b')}));
+      await until(
+        () => manager.states['b']?.status == McpServerStatus.connected,
+      );
+      expect(manager.states.containsKey('a'), isFalse);
+      expect(manager.tools.map((t) => t.name), ['mcp__b__ping']);
+      expect(manager.config.servers.keys, ['b']);
+
+      await manager.applyConfig(configOf({}));
+      expect(manager.states, isEmpty);
+      expect(manager.tools, isEmpty);
+      expect(manager.promptSection(), isEmpty);
+    });
+
+    test('a tool-call-timeout change restarts every server', () async {
+      startManager({'a': stdio('a'), 'b': stdio('b')});
+      await until(
+        () => manager.states.values.every(
+          (s) => s.status == McpServerStatus.connected,
+        ),
+      );
+      expect(factory.spawned, hasLength(2));
+
+      await manager.applyConfig(
+        McpConfig(
+          servers: {'a': stdio('a'), 'b': stdio('b')},
+          toolCallTimeout: const Duration(seconds: 5),
+        ),
+      );
+      await until(() => factory.spawned.length == 4);
+      expect(manager.config.toolCallTimeout, const Duration(seconds: 5));
+      await until(
+        () => manager.states.values.every(
+          (s) => s.status == McpServerStatus.connected,
+        ),
+      );
+    });
+
+    test('restartServer reconnects just the named server', () async {
+      startManager({'a': stdio('a'), 'b': stdio('b')});
+      await until(
+        () => manager.states.values.every(
+          (s) => s.status == McpServerStatus.connected,
+        ),
+      );
+      expect(factory.spawned, hasLength(2));
+
+      await manager.restartServer('b');
+      await until(() => factory.spawned.length == 3);
+      await until(
+        () => manager.states['b']?.status == McpServerStatus.connected,
+      );
+      // `a` never respawned and stays connected throughout.
+      expect(manager.states['a']?.status, McpServerStatus.connected);
+    });
+
+    test('server configs are value-equal field by field', () {
+      const a = McpStdioServerConfig(
+        name: 's',
+        command: 'fake',
+        args: ['-x'],
+        env: {'K': 'v'},
+      );
+      expect(a, a);
+      expect(a, isNot(const McpStdioServerConfig(name: 's', command: 'x')));
+      expect(
+        a,
+        isNot(
+          const McpStdioServerConfig(name: 's', command: 'fake', args: ['-y']),
+        ),
+      );
+      expect(
+        a,
+        isNot(
+          const McpStdioServerConfig(
+            name: 's',
+            command: 'fake',
+            env: {'K': 'w'},
+          ),
+        ),
+      );
+      const h = McpHttpServerConfig(
+        name: 'r',
+        url: 'http://x',
+        transport: McpHttpTransportKind.sse,
+        headers: {'A': 'b'},
+      );
+      expect(
+        h,
+        const McpHttpServerConfig(
+          name: 'r',
+          url: 'http://x',
+          transport: McpHttpTransportKind.sse,
+          headers: {'A': 'b'},
+        ),
+      );
+      expect(
+        h,
+        isNot(
+          const McpHttpServerConfig(
+            name: 'r',
+            url: 'http://x',
+            transport: McpHttpTransportKind.streamableHttp,
+          ),
+        ),
+      );
+      expect(
+        h,
+        isNot(
+          const McpHttpServerConfig(
+            name: 'r',
+            url: 'http://x',
+            transport: McpHttpTransportKind.sse,
+            headers: {'A': 'c'},
+          ),
+        ),
+      );
+      // Cross-shape never equals, same name or not.
+      expect(
+        a == const McpHttpServerConfig(name: 's', url: 'http://x'),
+        isFalse,
+      );
+    });
+  });
 }
