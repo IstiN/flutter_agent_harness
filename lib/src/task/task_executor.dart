@@ -591,10 +591,8 @@ final class TaskExecutor {
     // children, so the over-window guard stays the last resort. The loop
     // runs the hook BEFORE the steering poll, so a queued `task_send` is
     // delivered on the compacted context, in-order (E1/E2).
-    if (subagentManager != null) {
-      child.prepareNextTurn = (nextTurn) =>
-          _compactChildAtBoundary(id, child, wiring, nextTurn);
-    }
+    child.prepareNextTurn = (nextTurn) =>
+        _compactChildAtBoundary(id, child, wiring, nextTurn);
     if (cancelToken != null) {
       unawaited(cancelToken.onCancel.then((_) => child.abort()));
     }
