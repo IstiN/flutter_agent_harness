@@ -387,7 +387,7 @@ extension AgentCliHubDriver on AgentCli {
   Future<void> _rehydrateJobBoard() async {
     final session = _session;
     if (session == null) return;
-    final latest = _latestJobBoardRecords(await session.getEntries());
+    final latest = ShellJobBoard.latestRecords(await session.getEntries());
     if (latest.isEmpty) return;
     _jobBoard = ShellJobBoard.rehydrated(latest);
     _printBoardLines(_jobBoard.takeTranscriptLines(width: _hubBlockWidth));
@@ -401,25 +401,7 @@ extension AgentCliHubDriver on AgentCli {
     }
   }
 
-  /// The latest `shell_job_registry` records in a resumed session's entry
-  /// list (issue #429 AC9): later entries win wholesale - the board
-  /// snapshot is rewritten per mutation, never merged.
-  static List<Map<String, dynamic>> _latestJobBoardRecords(
-    List<Object> entries,
-  ) {
-    var latest = const <Map<String, dynamic>>[];
-    for (final entry in entries) {
-      if (entry is! CustomRecord) continue;
-      if (entry.customType != 'shell_job_registry') continue;
-      if (entry.data is! List) continue;
-      latest = [
-        for (final item in entry.data as List)
-          if (item is Map<String, dynamic>) item,
-      ];
-    }
-    return latest;
-  }
-
+  /// Renders one task block's lines dim into the transcript.
   void _renderTaskBlock(TaskBlock block) {
     for (final line in taskBlockLines(block, width: _hubBlockWidth)) {
       io.writeln(_style.dim(line));

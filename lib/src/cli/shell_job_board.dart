@@ -22,6 +22,7 @@
 library;
 
 import 'agent_hub_panel.dart';
+import '../session/session_record.dart';
 
 /// AC1 mapping (issue #429): a job's observable lifecycle → card state.
 /// Everything lands terminal except a still-running process; unknown
@@ -54,6 +55,30 @@ const int _maxLiveRows = 3;
 /// The per-session background-job board. See the library doc.
 final class ShellJobBoard {
   ShellJobBoard() : turn = 1;
+
+  /// The latest `shell_job_registry` records in a resumed session's entry
+  /// list (issue #429 AC9): later entries win wholesale - the board
+  /// snapshot is rewritten per mutation, never merged.
+  static List<Map<String, dynamic>> latestRecords(List<Object> entries) {
+    var latest = const <Map<String, dynamic>>[];
+    for (final entry in entries) {
+      final records = _boardRecordsOf(entry);
+      if (records != null) latest = records;
+    }
+    return latest;
+  }
+
+  /// The registry payload of one session entry, or null when the entry is
+  /// not a `shell_job_registry` custom record carrying a list.
+  static List<Map<String, dynamic>>? _boardRecordsOf(Object entry) {
+    if (entry is! CustomRecord) return null;
+    if (entry.customType != 'shell_job_registry') return null;
+    if (entry.data is! List) return null;
+    return [
+      for (final item in entry.data as List)
+        if (item is Map<String, dynamic>) item,
+    ];
+  }
 
   /// Rebuilds a board from its `shell_job_registry` records (issue #429
   /// AC9). Cards recorded as live are demoted to [TaskBlockState.lost] — a

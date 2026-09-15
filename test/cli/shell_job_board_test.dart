@@ -10,6 +10,7 @@ library;
 
 import 'package:flutter_agent_harness/src/cli/agent_hub_panel.dart';
 import 'package:flutter_agent_harness/src/cli/shell_job_board.dart';
+import 'package:flutter_agent_harness/src/session/session_record.dart';
 import 'package:test/test.dart';
 
 TaskBlock _card(
@@ -341,6 +342,94 @@ void main() {
       expect(lines, isNot(contains('running')));
       expect(lines, contains('bash task lost'));
       expect(lines, contains('sh-2'));
+    });
+  });
+  group('latestRecords (session-entry classification)', () {
+    CustomRecord registry(Object? data) => CustomRecord(
+      id: 'r',
+      parentId: 'p',
+      timestamp: DateTime.now(),
+      customType: 'shell_job_registry',
+      data: data,
+    );
+
+    test('later registry entries win wholesale', () {
+      final entries = <Object>[
+        registry([
+          {
+            'id': 'sh-1',
+            'state': 'running',
+            'kind': 'bash',
+            'label': 'a',
+            'turn': 1,
+          },
+        ]),
+        registry([
+          {
+            'id': 'sh-2',
+            'state': 'done',
+            'kind': 'bash',
+            'label': 'b',
+            'turn': 1,
+            'exitCode': 0,
+          },
+        ]),
+      ];
+      final latest = ShellJobBoard.latestRecords(entries);
+      expect(latest, hasLength(1));
+      expect(latest.single['id'], 'sh-2');
+    });
+
+    test('non-registry and malformed entries are skipped', () {
+      final entries = <Object>[
+        registry('not-a-list'),
+        CustomRecord(
+          id: 'x',
+          parentId: 'p',
+          timestamp: DateTime.now(),
+          customType: 'other_thing',
+          data: [
+            {'id': 'nope'},
+          ],
+        ),
+      ];
+      expect(ShellJobBoard.latestRecords(entries), isEmpty);
+    });
+
+    test('non-map payload items are filtered out', () {
+      final latest = ShellJobBoard.latestRecords([
+        registry([
+          'junk',
+          {
+            'id': 'sh-9',
+            'state': 'done',
+            'kind': 'bash',
+            'label': 'c',
+            'turn': 2,
+            'exitCode': 0,
+          },
+        ]),
+      ]);
+      expect(latest, hasLength(1));
+      expect(latest.single['id'], 'sh-9');
+    });
+
+    test('rehydration from classified records never resurrects running', () {
+      final latest = ShellJobBoard.latestRecords([
+        registry([
+          {
+            'id': 'sh-1',
+            'state': 'running',
+            'kind': 'bash',
+            'label': 'a',
+            'turn': 1,
+          },
+        ]),
+      ]);
+      final board = ShellJobBoard.rehydrated(latest);
+      final lines = board.takeTranscriptLines(width: 80);
+      expect(lines.join('\n'), contains('lost'));
+      expect(lines.join('\n'), isNot(contains('running')));
     });
   });
 }
