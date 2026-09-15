@@ -155,6 +155,11 @@ final class TtsrManager {
     return true;
   }
 
+  /// Unregisters [ruleName] (live rule-edit support, issue #392). Returns
+  /// whether a rule was removed. Buffer and injection bookkeeping are left
+  /// alone: a removed rule simply never matches again.
+  bool removeRule(String name) => _rules.remove(name) != null;
+
   /// Compiles [rule]'s patterns into conditions, collecting a warning per
   /// invalid regex (omp: logs and skips). Returns null when no condition
   /// compiles, in which case the rule is skipped.

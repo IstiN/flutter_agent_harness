@@ -944,6 +944,9 @@ String applicationNote(String section) => switch (section) {
   'mcp' => 'applies live after /mcp reload',
   'cube' => 'applies live via /cube reload, otherwise at next boot',
   'compaction' => 'applies at the next compaction (session override: flag)',
+  'ttsr' =>
+    'rule edits apply live when the stream-rule engine is running, '
+        'otherwise at next boot (issue #392)',
   // Issue #279: the session theme switches live on write (`/theme` runs
   // the same persist + switch flow); a hand-edit applies at next boot.
   'tui' => 'applies live via /theme, otherwise at next boot',
