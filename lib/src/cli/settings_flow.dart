@@ -940,21 +940,29 @@ extension SettingsFlow on AgentCli {
       return;
     }
     for (;;) {
-      final current = await _readMcpSection(path);
-      if (current == null) return; // malformed/unreadable — reported
-      final picked = await _pickOption('mcp servers — $path', [
-        for (final server in current.servers.values)
-          ('server:${server.name}', server.name, _mcpServerDescription(server)),
-        ('add', 'Add a server', 'stdio (command) or remote (url)'),
-        ('done', 'Done', ''),
-      ]);
-      if (picked == null || picked == 'done') return;
-      if (picked == 'add') {
-        await _mcpAddAction(path);
-        continue;
-      }
-      await _mcpServerAction(path, picked.substring('server:'.length));
+      if (!await _mcpMenuRound(path)) return;
     }
+  }
+
+  /// One main-menu round. Returns false when the flow must end: the
+  /// section is malformed/unreadable (reported), the user cancelled, or
+  /// picked Done.
+  Future<bool> _mcpMenuRound(String path) async {
+    final current = await _readMcpSection(path);
+    if (current == null) return false;
+    final picked = await _pickOption('mcp servers — $path', [
+      for (final server in current.servers.values)
+        ('server:${server.name}', server.name, _mcpServerDescription(server)),
+      ('add', 'Add a server', 'stdio (command) or remote (url)'),
+      ('done', 'Done', ''),
+    ]);
+    if (picked == null || picked == 'done') return false;
+    if (picked == 'add') {
+      await _mcpAddAction(path);
+      return true;
+    }
+    await _mcpServerAction(path, picked.substring('server:'.length));
+    return true;
   }
 
   /// The per-server menu row: transport + endpoint detail, then the live
@@ -984,42 +992,88 @@ extension SettingsFlow on AgentCli {
     for (;;) {
       final current = await _readMcpSection(path);
       final server = current?.servers[name];
-      if (server == null) return;
       final manager = _mcp.manager;
       final state = manager?.states[name];
-      final action = await _pickOption('mcp server $name', [
-        if (state != null && state.status == McpServerStatus.connected)
-          (
-            'tools',
-            'View tools',
-            '${state.tools.length} advertised as mcp__${name}__*',
-          ),
-        if (manager != null)
-          ('reconnect', 'Reconnect', 'stop and reconnect just this server'),
-        (
-          'edit',
-          'Edit',
-          '${server is McpStdioServerConfig ? 'stdio' : 'remote'} fields',
-        ),
-        ('delete', 'Delete', 'remove from the section (confirm)'),
-        ('back', 'Back', ''),
-      ]);
-      switch (action) {
-        case 'tools':
-          _printMcpServerTools(name, state!.tools);
-        case 'reconnect':
-          await manager!.restartServer(name);
-          io.writeln('mcp: "$name" reconnecting');
-        case 'edit':
-          await _mcpEditAction(path, server);
-          return;
-        case 'delete':
-          await _mcpDeleteAction(path, name);
-          return;
-        default:
-          return; // back / cancelled
+      if (server == null) return;
+      final action = await _pickOption(
+        'mcp server $name',
+        _mcpServerMenuOptions(name, server, manager, state),
+      );
+      if (!await _mcpHandleServerAction(path, name, action, server, state)) {
+        return;
       }
     }
+  }
+
+  /// The submenu rows: tools/reconnect appear only with a live manager
+  List<(String, String, String)> _mcpServerMenuOptions(
+    String name,
+    McpServerConfig server,
+    McpManager? manager,
+    McpServerState? state,
+  ) => [
+    if (state != null && state.status == McpServerStatus.connected)
+      (
+        'tools',
+        'View tools',
+        '${state.tools.length} advertised as mcp__${name}__*',
+      ),
+    if (manager != null)
+      ('reconnect', 'Reconnect', 'stop and reconnect just this server'),
+    (
+      'edit',
+      'Edit',
+      '${server is McpStdioServerConfig ? 'stdio' : 'remote'} fields',
+    ),
+    ('delete', 'Delete', 'remove from the section (confirm)'),
+    ('back', 'Back', ''),
+  ];
+
+  /// Dispatches one submenu action. Returns false when the submenu must
+  /// end (edit/delete consumed it, or back/cancelled).
+  Future<bool> _mcpHandleServerAction(
+    String path,
+    String name,
+    String? action,
+    McpServerConfig server,
+    McpServerState? state,
+  ) async {
+    switch (action) {
+      case 'tools':
+        _printMcpServerTools(name, state!.tools);
+        return true;
+      case 'reconnect':
+        await _mcpReconnectAction(name);
+        return true;
+      default:
+        await _mcpLeaveAction(path, name, action, server);
+        return false;
+    }
+  }
+
+  /// The submenu-leaving actions: edit and delete write the section;
+  /// back/cancelled falls through with nothing written.
+  Future<void> _mcpLeaveAction(
+    String path,
+    String name,
+    String? action,
+    McpServerConfig server,
+  ) async {
+    switch (action) {
+      case 'edit':
+        await _mcpEditAction(path, server);
+      case 'delete':
+        await _mcpDeleteAction(path, name);
+      default:
+        break; // back / cancelled
+    }
+  }
+
+  /// Reconnect stops just this server's loop and starts a fresh one;
+  /// the other servers keep their connections.
+  Future<void> _mcpReconnectAction(String name) async {
+    await _mcp.manager!.restartServer(name);
+    io.writeln('mcp: "$name" reconnecting');
   }
 
   /// The connected server's advertised tools (read-only view).
@@ -1041,34 +1095,64 @@ extension SettingsFlow on AgentCli {
   /// The add branch: kind → name → fields, then reload-before-write (E3)
   /// so a server added meanwhile is not clobbered.
   Future<void> _mcpAddAction(String path) async {
+    final server = await _mcpPromptNewServer();
+    if (server == null) return;
+    await _mcpWriteFresh(
+      path,
+      server.name,
+      expectPresent: false,
+      write: (fresh) async {
+        await _writeMcpSection(
+          path,
+          McpConfig(
+            servers: {...fresh.servers, server.name: server},
+            toolCallTimeout: fresh.toolCallTimeout,
+          ),
+          before: fresh,
+        );
+      },
+    );
+  }
+
+  /// The add wizard: kind → name → fields. Returns null on cancel, an
+  /// empty name, or a body the user aborted (reported).
+  Future<McpServerConfig?> _mcpPromptNewServer() async {
     final kind = await _pickOption('add server — kind', [
       ('stdio', 'stdio', 'spawns a local command (process-capable hosts)'),
       ('remote', 'remote', 'HTTP endpoint (streamable-http or sse)'),
     ]);
-    if (kind == null) return;
+    if (kind == null) return null;
     final name = (await _askLine('server name: '))?.trim() ?? '';
-    if (name.isEmpty) return;
-    final server = await _promptMcpServerBody(
+    if (name.isEmpty) return null;
+    return _promptMcpServerBody(
       name,
       kind == 'stdio'
           ? const McpStdioServerConfig(name: '', command: '')
           : const McpHttpServerConfig(name: '', url: ''),
     );
-    if (server == null) return;
+  }
+
+  /// The shared reload-before-write tail (E3): re-reads the section
+  /// fresh, refuses when [name]'s presence does not match
+  /// [expectPresent] (a concurrent edit — reported, nothing written),
+  /// and otherwise hands the fresh section to [write].
+  Future<void> _mcpWriteFresh(
+    String path,
+    String name, {
+    required bool expectPresent,
+    required Future<void> Function(McpConfig fresh) write,
+  }) async {
     final fresh = await _readMcpSection(path);
     if (fresh == null) return;
-    if (fresh.servers.containsKey(server.name)) {
-      io.writeln('mcp: server "${server.name}" already exists — not saved');
+    if (fresh.servers.containsKey(name) != expectPresent) {
+      io.writeln(
+        expectPresent
+            ? 'mcp: server "$name" is gone from $path — not saved'
+            : 'mcp: server "$name" already exists — not saved',
+      );
       return;
     }
-    await _writeMcpSection(
-      path,
-      McpConfig(
-        servers: {...fresh.servers, server.name: server},
-        toolCallTimeout: fresh.toolCallTimeout,
-      ),
-      before: fresh,
-    );
+    await write(fresh);
   }
 
   /// The edit branch: prompt the fields with the current values as the
@@ -1078,19 +1162,20 @@ extension SettingsFlow on AgentCli {
   Future<void> _mcpEditAction(String path, McpServerConfig server) async {
     final next = await _promptMcpServerBody(server.name, server);
     if (next == null) return;
-    final fresh = await _readMcpSection(path);
-    if (fresh == null) return;
-    if (!fresh.servers.containsKey(server.name)) {
-      io.writeln('mcp: server "${server.name}" is gone from $path — not saved');
-      return;
-    }
-    await _writeMcpSection(
+    await _mcpWriteFresh(
       path,
-      McpConfig(
-        servers: {...fresh.servers, server.name: next},
-        toolCallTimeout: fresh.toolCallTimeout,
-      ),
-      before: fresh,
+      server.name,
+      expectPresent: true,
+      write: (fresh) async {
+        await _writeMcpSection(
+          path,
+          McpConfig(
+            servers: {...fresh.servers, server.name: next},
+            toolCallTimeout: fresh.toolCallTimeout,
+          ),
+          before: fresh,
+        );
+      },
     );
   }
 
@@ -1099,22 +1184,23 @@ extension SettingsFlow on AgentCli {
   Future<void> _mcpDeleteAction(String path, String name) async {
     final sure = (await _askLine("remove server '$name'? (y/N): "))?.trim();
     if (sure?.toLowerCase() != 'y') return;
-    final fresh = await _readMcpSection(path);
-    if (fresh == null) return;
-    if (!fresh.servers.containsKey(name)) {
-      io.writeln('mcp: server "$name" is gone from $path — not saved');
-      return;
-    }
-    await _writeMcpSection(
+    await _mcpWriteFresh(
       path,
-      McpConfig(
-        servers: {
-          for (final entry in fresh.servers.entries)
-            if (entry.key != name) entry.key: entry.value,
-        },
-        toolCallTimeout: fresh.toolCallTimeout,
-      ),
-      before: fresh,
+      name,
+      expectPresent: true,
+      write: (fresh) async {
+        await _writeMcpSection(
+          path,
+          McpConfig(
+            servers: {
+              for (final entry in fresh.servers.entries)
+                if (entry.key != name) entry.key: entry.value,
+            },
+            toolCallTimeout: fresh.toolCallTimeout,
+          ),
+          before: fresh,
+        );
+      },
     );
   }
 
@@ -1128,46 +1214,74 @@ extension SettingsFlow on AgentCli {
   ) async {
     switch (current) {
       case McpStdioServerConfig():
-        final command = await _askMcpRequired('command', current.command);
-        if (command == null) return null;
-        final argsAnswer = await _askMcpOptional(
-          'args (comma-separated)',
-          current.args.join(', '),
-        );
-        final env = await _askMcpPairs('env', current.env);
-        if (env == null) return null;
-        return McpStdioServerConfig(
-          name: name,
-          command: command,
-          args: _splitMcpList(argsAnswer),
-          env: env,
-        );
+        return _promptMcpStdioBody(name, current);
       case McpHttpServerConfig():
-        final url = await _askMcpRequired('url', current.url);
-        if (url == null) return null;
-        final transportAnswer =
-            (await _askLine(
-              "transport (streamable-http or sse, empty keeps "
-              "'${current.transport.label}'): ",
-            ))?.trim() ??
-            '';
-        final McpHttpTransportKind transport;
-        try {
-          transport = transportAnswer.isEmpty
-              ? McpHttpTransportKind.streamableHttp
-              : McpHttpTransportKind.parse(transportAnswer, server: name);
-        } on ConfigException catch (error) {
-          io.writeln('mcp: not saved: ${error.message}');
-          return null;
-        }
-        final headers = await _askMcpPairs('headers', current.headers);
-        if (headers == null) return null;
-        return McpHttpServerConfig(
-          name: name,
-          url: url,
-          transport: transport,
-          headers: headers,
-        );
+        return _promptMcpHttpBody(name, current);
+    }
+  }
+
+  /// The stdio fields: command (required), args (optional list), env
+  /// (KEY=VALUE pairs).
+  Future<McpStdioServerConfig?> _promptMcpStdioBody(
+    String name,
+    McpStdioServerConfig current,
+  ) async {
+    final command = await _askMcpRequired('command', current.command);
+    if (command == null) return null;
+    final argsAnswer = await _askMcpOptional(
+      'args (comma-separated)',
+      current.args.join(', '),
+    );
+    final env = await _askMcpPairs('env', current.env);
+    if (env == null) return null;
+    return McpStdioServerConfig(
+      name: name,
+      command: command,
+      args: _splitMcpList(argsAnswer),
+      env: env,
+    );
+  }
+
+  /// The remote fields: url (required), transport (validated with the
+  /// real parser BEFORE further prompts — a mistake never reaches the
+  /// write), headers (KEY=VALUE pairs).
+  Future<McpHttpServerConfig?> _promptMcpHttpBody(
+    String name,
+    McpHttpServerConfig current,
+  ) async {
+    final url = await _askMcpRequired('url', current.url);
+    if (url == null) return null;
+    final transportAnswer =
+        (await _askLine(
+          "transport (streamable-http or sse, empty keeps "
+          "'${current.transport.label}'): ",
+        ))?.trim() ??
+        '';
+    final transport = _mcpTransportOrNull(transportAnswer, current, name);
+    if (transport == null) return null;
+    final headers = await _askMcpPairs('headers', current.headers);
+    if (headers == null) return null;
+    return McpHttpServerConfig(
+      name: name,
+      url: url,
+      transport: transport,
+      headers: headers,
+    );
+  }
+
+  /// Parses the transport answer with the real parser; null (reported)
+  /// on an unknown kind, [current]'s kind on empty (keep).
+  McpHttpTransportKind? _mcpTransportOrNull(
+    String answer,
+    McpHttpServerConfig current,
+    String name,
+  ) {
+    if (answer.isEmpty) return McpHttpTransportKind.streamableHttp;
+    try {
+      return McpHttpTransportKind.parse(answer, server: name);
+    } on ConfigException catch (error) {
+      io.writeln('mcp: not saved: ${error.message}');
+      return null;
     }
   }
 
