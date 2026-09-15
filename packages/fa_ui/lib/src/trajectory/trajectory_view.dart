@@ -132,6 +132,7 @@ class _TrajectoryViewState extends State<TrajectoryView> {
                   onJumpToChat: widget.onRecordActivate == null
                       ? null
                       : () => widget.onRecordActivate!(record),
+                  resolveHiddenRecords: controller.resolveHiddenRecords,
                 ),
               );
     return Semantics(
@@ -370,6 +371,16 @@ class TrajectoryHeader extends StatelessWidget {
                       label: strings.statsTokensOut('${stats.outputTokens}'),
                       colors: colors,
                     ),
+                    // Issue #385 AC7 honesty: unknown record kinds render
+                    // as context rows, and the header says how many —
+                    // silence would hide ledger loss.
+                    if (controller.snapshot.unknownRecordCount > 0)
+                      _StatPill(
+                        label: strings.statsUnknown(
+                          controller.snapshot.unknownRecordCount,
+                        ),
+                        colors: colors,
+                      ),
                   ],
                 ),
                 const SizedBox(height: 8),
@@ -491,7 +502,6 @@ class TrajectoryDetailsPane extends StatelessWidget {
   /// Jump-in-chat for the selected record (issue #135 AC6); null hides
   /// the action.
   final ValueChanged<TrajectoryRecord>? onRecordActivate;
-
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -514,7 +524,12 @@ class TrajectoryDetailsPane extends StatelessWidget {
             ),
           );
         }
-        final tabs = trajectoryDetailTabs(record, controller.snapshot, strings);
+        final tabs = trajectoryDetailTabs(
+          record,
+          controller.snapshot,
+          strings,
+          resolveHiddenRecords: controller.resolveHiddenRecords,
+        );
         final selected = record;
         return DefaultTabController(
           key: ValueKey(record.recordId),
