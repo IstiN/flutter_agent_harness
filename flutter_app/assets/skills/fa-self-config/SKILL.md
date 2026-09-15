@@ -270,6 +270,34 @@ CLI equivalents: `/model <id>` switches the active model (a
 session (persist per chain via `roles:` entries instead). Role edits apply at
 next boot; `/model` applies live.
 
+## Provider queue
+
+Project or user file section; the `FA_PROVIDERS_QUEUE` env var carries
+the same JSON list and WINS over both files (issue #418). The ordered
+failover chain replaces the main model: the first healthy entry serves,
+a dead provider hands over loudly to the next, the winner sticks for
+the session (RAM-only, never persisted), and cooled-down entries
+re-enter rotation:
+
+```yaml
+providersQueue:
+  - provider_type: openai-completions
+    provider_config:
+      model: moonshotai/Kimi-K2.6
+      baseUrl: https://gate.example/v1
+      apiKeyEnv: OPENAI_API_KEY
+  - provider_type: anthropic
+    provider_config:
+      model: claude-sonnet-4-6
+      apiKeyEnv: ANTHROPIC_API_KEY
+```
+
+`apiKeyEnv` names the ENV indirection — a key VALUE never lives in the
+yaml. CLI equivalent: `/providers queue list|add|remove|move|test`;
+edits persist to the winning scope's file and go live from the next
+turn. App Settings carries the same editor (env scope is read-only
+there).
+
 ## Memory
 
 <!-- parity: /memory -->
