@@ -83,6 +83,10 @@ void main() {
     () async {
       final meta = await namedSession('proj');
       await seedLiveLease(meta.path);
+      // A real transcript row so the viewer's pre-open backlog is
+      // non-empty and its dimmed render is deterministic.
+      final owned = await repo.open(meta);
+      await owned.appendMessage(UserMessage.text('earlier note'));
       final bytesBefore = (await env.readTextFile(meta.path)).valueOrNull;
 
       final cli = cliFor(FakeStreamFunction([]).call, sessionName: 'proj');
@@ -94,7 +98,10 @@ void main() {
         ),
         reason: 'the exact viewer banner',
       );
-
+      await waitForIt(
+        () => out().contains('user: earlier note'),
+        reason: 'the dimmed backlog row renders on watch',
+      );
       // A viewer registers no presence: the app must not think THIS
       // process drives the session.
       expect(await presence.list(), isEmpty);
@@ -287,6 +294,12 @@ void main() {
     await waitForIt(
       () => ownerFake.calls == 1 && !owner.isBusy,
       reason: 'the owner runs the handed-over turn',
+    );
+    // The owner's written turn streams back to the viewer's watch: a
+    // rendered, attributed transcript row (deterministic row coverage).
+    await waitForIt(
+      () => out().contains('[from fa CLI user] hello from the viewer'),
+      reason: 'the viewer renders the owner-run turn row',
     );
     expect(
       ownerFake.contexts.single.messages.whereType<UserMessage>().map(

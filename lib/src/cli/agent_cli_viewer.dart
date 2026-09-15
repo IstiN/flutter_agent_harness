@@ -140,13 +140,15 @@ extension AgentCliLease on AgentCli {
   /// Tail rows: the first event is the pre-open backlog (printed dimmed,
   /// capped — the transcript already lives in the session file); every
   /// later event is live content from the driving host.
-  void _onViewerRows(AttachedSessionEvent event) {
-    final viewer = _viewer;
+  void _onViewerRows(AttachedSessionEvent event) =>
+      _renderViewerRows(_viewer, event.appended);
+
+  void _renderViewerRows(
+    _ViewerAttachment? viewer,
+    List<AttachedMessage> appended,
+  ) {
     if (viewer == null) return;
-    final (rows, caption) = viewerBacklogSlice(
-      event.appended,
-      viewer.sawBacklog,
-    );
+    final (rows, caption) = viewerBacklogSlice(appended, viewer.sawBacklog);
     viewer.sawBacklog = true;
     if (caption != null) io.writeln(_style.dim(caption));
     for (final row in rows) {
