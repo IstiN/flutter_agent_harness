@@ -54,6 +54,8 @@ final class StructuredCompactionPass {
     this.error,
     this.judgeCalls = 0,
     this.hiddenCount = 0,
+    this.summarizedCount = 0,
+    this.summary,
   });
 
   /// `'hide'` or `'checkpoint'`.
@@ -79,6 +81,12 @@ final class StructuredCompactionPass {
 
   /// Records hidden this pass (hide passes).
   final int hiddenCount;
+
+  /// Message records folded into the checkpoint (checkpoint passes).
+  final int summarizedCount;
+
+  /// The checkpoint text this pass wrote; `null` for hide passes.
+  final String? summary;
 }
 
 /// The structured compaction engine.
@@ -220,6 +228,13 @@ final class StructuredCompactor {
         flattenedRecordIds: [for (final ckpt in flattened) ckpt.id],
       );
       final after = await _refreshState();
+      var summarizedCount = 0;
+      for (final id in range.coveredRecordIds) {
+        final seq = range.seqs.seqOf(id);
+        if (seq != null && range.seqs.recordAt(seq) is MessageRecord) {
+          summarizedCount++;
+        }
+      }
       hooks?.onPass(
         StructuredCompactionPass(
           kind: 'checkpoint',
@@ -228,6 +243,8 @@ final class StructuredCompactor {
           tokensAfter: after,
           ok: true,
           judgeCalls: 1,
+          summarizedCount: summarizedCount,
+          summary: text,
         ),
       );
     }
