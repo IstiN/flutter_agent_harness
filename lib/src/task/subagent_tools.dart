@@ -1015,14 +1015,23 @@ Future<ToolExecutionResult> _resumeIdleChild(
     );
   }
   try {
+    // Issue #439 compact-then-deliver: the resume path compacts BEFORE the
+    // first request when prior + incoming would cross the threshold — the
+    // receipt lands on the handle, so surface it to the parent.
+    final compactionsBefore = handle.compactions;
     await resumeChild(id, message);
+    final after = manager[id];
+    final compactNote = after != null && after.compactions > compactionsBefore
+        ? '; subagent compacted before delivery '
+              '(freed ${after.lastCompactionFreed}t)'
+        : '';
+    return ToolExecutionResult.text(
+      'sent message to "$id" — child resumed '
+      '(status: ${after?.status.name ?? 'unknown'})$compactNote',
+    );
   } on Object catch (error) {
     return ToolExecutionResult.text('resume of "$id" failed: $error');
   }
-  return ToolExecutionResult.text(
-    'sent message to "$id" — child resumed '
-    '(status: ${manager[id]?.status.name ?? 'unknown'})',
-  );
 }
 
 /// `task_resume` — continue a FAILED child in its SAME session (issue
@@ -1175,6 +1184,12 @@ String _formatHandleDetail(SubagentHandle h) {
     'last activity: ${h.lastActivity}',
     'tokens: ${h.tokens}',
     'requests: ${h.requests}',
+    if (h.estTokens != null && h.windowTokens != null && h.windowTokens! > 0)
+      'context: ~${h.estTokens}/${h.windowTokens} tokens '
+          '(${(h.estTokens! * 100 / h.windowTokens!).round()}%)'
+    else
+      'context: n/a',
+    'last compaction: ${h.lastCompactionText ?? 'n/a'}',
     if (h.modelId != null) 'model: ${h.modelId}',
     if (h.error != null) 'error: ${h.error}',
   ];
