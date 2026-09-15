@@ -84,6 +84,7 @@ export 'src/messaging/file_messaging_repository.dart';
 export 'src/messaging/messaging_repository.dart';
 export 'src/messaging/fabric_config.dart';
 export 'src/messaging/hub_identity.dart';
+export 'src/messaging/hub_transport.dart';
 export 'src/messaging/hub_messaging_repository.dart';
 export 'src/model.dart';
 export 'src/model_roles/model_roles.dart';

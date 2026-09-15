@@ -56,6 +56,7 @@ import 'package:fa/services/media_tools.dart';
 import 'package:fa/services/notify_service.dart';
 import 'package:fa/services/notify_tool.dart';
 import 'package:fa/services/office/office_boot.dart';
+import 'package:fa/services/agent_network_controller.dart';
 import 'package:fa/services/task_models_store.dart';
 import 'package:fa/services/video_service.dart';
 import 'package:fa/services/video_tool.dart';
@@ -518,12 +519,16 @@ class AgentService extends ChangeNotifier
     // instance sharing this root can exchange messages with them.
     final messagesRoot =
         '$sessionsRoot/${encodeSessionCwd(env.sessionCwd)}/messages';
-    final fabricRepo = FileMessagingRepository(
+    final fileFabricRepo = FileMessagingRepository(
       env: env,
       root: messagesRoot,
       decodeSessionCwd: decodeSessionCwd,
       homeDir: null,
     );
+    // The fabric behind the agent is swappable: opting into the hub
+    // network (issue #402) swaps the hub-primary composite in without
+    // touching any holder of the reference.
+    final fabricRepo = SwappableMessagingRepository(fileFabricRepo);
     _scheduledMessages = ScheduledMessageQueue(
       env: env,
       repo: () => fabricRepo,
@@ -550,6 +555,15 @@ class AgentService extends ChangeNotifier
       messaging: fabricRepo,
       selfId: 'main',
     );
+    // The app agent's opt-in hub membership (issue #402 AC3): the
+    // controller owns the settings store and swaps the hub-primary
+    // composite over the file fabric when enabled.
+    _agentNetwork = AgentNetworkController(
+      env: env,
+      fileLayer: fileFabricRepo,
+      fileFabric: fabricRepo,
+    );
+    unawaited(_agentNetwork.start());
     // Real JSONL child sessions at completion (fast register keeps the
     // steering race away; transcript lands when the child finishes).
     Future<Session> childSessionFactory(String parentId, String childId) async {
@@ -1048,6 +1062,10 @@ class AgentService extends ChangeNotifier
 
   /// Subagent manager (Phase 3a): tracks spawned children for the task tool.
   SubagentManager? _subagentManager;
+
+  /// The app agent's opt-in hub membership (issue #402); owns its own
+  /// settings store and lifecycle, disposed with the service.
+  late final AgentNetworkController _agentNetwork;
 
   /// The session's retained-subagent registry (null before the agent is
   /// built). The settings Agents section renders the live tree from it.
@@ -2537,6 +2555,7 @@ class AgentService extends ChangeNotifier
     // watchdog would otherwise outlive the host by minutes (and wedge
     // widget tests' fake_async invariants on a pending timer).
     _agent.abort();
+    _agentNetwork.dispose();
     _compactExpand?.dispose();
     if (_subagentManager != null) _scheduledMessages.dispose();
     _inboxWatchTimer?.cancel();
