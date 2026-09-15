@@ -146,10 +146,38 @@ final class TrajectorySnapshotBuilder {
     _byId[record.id] = record;
     _revision++;
     final rowsBefore = _records.length;
-    var discarded = 0;
+    final discarded = _foldRecordRows(record, synthetic: synthetic);
+    // Only durable appends advance the cursor; replacing mirrored
+    // placeholders still counts as placing rows even when net growth is 0.
+    if (!synthetic && _records.length + discarded > rowsBefore) {
+      _prevAbsTime = record.timestamp;
+    }
+    _lastRecordId = record.id;
+    // The chain tip advanced: the next record parented here folds in O(1).
+    if (_chainsToTip(record)) _incTipId = record.id;
+  }
+
+  /// Dispatches one session record to its ledger rows (or the blob
+  /// table); returns the number of mirrored rows it replaced.
+  int _foldRecordRows(SessionRecord record, {required bool synthetic}) {
     switch (record) {
       case MessageRecord():
-        discarded = _appendMessage(record, synthetic: synthetic);
+        return _appendMessage(record, synthetic: synthetic);
+      case CustomRecord(customType: final customType, data: final data):
+        _foldCustomRecord(record, customType, data);
+      case CustomMessageRecord():
+        return _foldCustomMessage(record);
+      default:
+        _foldStateRecord(record);
+    }
+    return 0;
+  }
+
+  /// The record-class rows: compaction-family and system-family records
+  /// (issue #286 audit rides the system arm). Unknown classes fall here
+  /// and are indexed without rows.
+  void _foldStateRecord(SessionRecord record) {
+    switch (record) {
       case CompactionRecord() ||
           BranchSummaryRecord() ||
           HiddenRangeRecord() ||
@@ -160,59 +188,66 @@ final class TrajectorySnapshotBuilder {
           ThinkingLevelChangeRecord() ||
           CheckpointRecord():
         _appendSystem(record);
-      case CustomMessageRecord(display: true, customType: 'context'):
-        _appendContext(record);
-      case CustomMessageRecord(customType: final customType)
-          when customType == checkpointAutoClosedCustomType:
-        // The checkpoint lifecycle audit trail (issue #286): renders as a
-        // system row so the trajectory shows why protection ended.
-        _appendSystem(record);
-      case CustomMessageRecord(display: false):
-        break; // Deliberately hidden by its producer, not unknown.
-      case CustomRecord(customType: 'model_request_summary', data: final data):
-        _applyRequestSummary(record, data);
-      case CustomRecord(customType: 'trajectory_prompt_blob', data: final data):
-        // Issue #385 F1: a unique prompt version, stored once.
-        if (data is Map) {
-          _blobs = _blobs.withPromptBlob(
-            TrajectoryPromptBlob.fromJson(data.cast<String, dynamic>()),
-          );
-        }
-      case CustomRecord(
-        customType: 'trajectory_manifest_blob',
-        data: final data,
-      ):
-        // Issue #385 F2: a unique tool-manifest version, stored once.
-        if (data is Map) {
-          _blobs = _blobs.withManifestBlob(
-            TrajectoryToolManifestBlob.fromJson(data.cast<String, dynamic>()),
-          );
-        }
-      case CustomRecord(customType: 'trajectory_wire_dump', data: final data):
-        // Issue #385 F5: an opt-in redacted wire dump.
-        if (data is Map) {
-          _blobs = _blobs.withWireDump(
-            TrajectoryWireDump.fromJson(data.cast<String, dynamic>()),
-          );
-        }
-      case CustomRecord(customType: final customType)
-          when hiddenCustomRecordTypes.contains(customType):
-        break; // Another surface's payload; not a ledger row, not unknown.
-      case CustomRecord(customType: final customType):
-        _appendUnknown(record.id, customType, record.timestamp);
-      case CustomMessageRecord(customType: final customType):
-        _appendUnknown(record.id, customType, record.timestamp);
       default:
         break; // Labels, session info, leaves: indexed, not rows.
     }
-    // Only durable appends advance the cursor; replacing mirrored
-    // placeholders still counts as placing rows even when net growth is 0.
-    if (!synthetic && _records.length + discarded > rowsBefore) {
-      _prevAbsTime = record.timestamp;
+  }
+
+  /// The custom-message rows (context injection, the issue #286 audit
+  /// trail, producer-hidden payloads, unknown types).
+  int _foldCustomMessage(CustomMessageRecord record) {
+    if (record.display && record.customType == 'context') {
+      _appendContext(record);
+      return 0;
     }
-    _lastRecordId = record.id;
-    // The chain tip advanced: the next record parented here folds in O(1).
-    if (_chainsToTip(record)) _incTipId = record.id;
+    // The checkpoint lifecycle audit trail (issue #286): renders as a
+    // system row so the trajectory shows why protection ended.
+    if (record.customType == checkpointAutoClosedCustomType) {
+      _appendSystem(record);
+      return 0;
+    }
+    if (!record.display) return 0; // Hidden by its producer, not unknown.
+    _appendUnknown(record.id, record.customType, record.timestamp);
+    return 0;
+  }
+
+  /// The custom-record payloads: request summaries, the issue #385 blob
+  /// table, other surfaces' hidden records, and unknown types.
+  void _foldCustomRecord(CustomRecord record, String customType, Object? data) {
+    if (customType == 'model_request_summary') {
+      _applyRequestSummary(record, data);
+      return;
+    }
+    if (_foldBlobRecord(customType, data)) return;
+    // Another surface's payload; not a ledger row, not unknown.
+    if (hiddenCustomRecordTypes.contains(customType)) return;
+    _appendUnknown(record.id, customType, record.timestamp);
+  }
+
+  /// Folds a trajectory blob record (issue #385 F1/F2/F5: a unique
+  /// prompt/manifest/wire-dump version, stored once) into the blob
+  /// table; returns whether [customType] named a blob kind.
+  bool _foldBlobRecord(String customType, Object? data) {
+    final map = data is Map ? data.cast<String, dynamic>() : null;
+    switch (customType) {
+      case 'trajectory_prompt_blob':
+        if (map != null) {
+          _blobs = _blobs.withPromptBlob(TrajectoryPromptBlob.fromJson(map));
+        }
+      case 'trajectory_manifest_blob':
+        if (map != null) {
+          _blobs = _blobs.withManifestBlob(
+            TrajectoryToolManifestBlob.fromJson(map),
+          );
+        }
+      case 'trajectory_wire_dump':
+        if (map != null) {
+          _blobs = _blobs.withWireDump(TrajectoryWireDump.fromJson(map));
+        }
+      default:
+        return false;
+    }
+    return true;
   }
 
   /// Whether [record] extends the tracked chain tip (or starts the chain).

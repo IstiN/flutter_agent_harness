@@ -17,6 +17,7 @@
 library;
 
 import 'dart:convert';
+import 'dart:typed_data';
 
 import '../context.dart';
 import '../types.dart';
@@ -383,14 +384,13 @@ final class TrajectoryDiffLine {
   final String text;
 }
 
-/// Minimal unified-style line diff between two prompt versions (AC2): the
-/// common prefix/suffix is trimmed, the middle renders as one changed
-/// block, up to 3 context lines flank it, and collapsed ranges show an
-/// `ellipsis` line. Pure — the UI tab and the CLI mirror share it.
-List<TrajectoryDiffLine> trajectoryPromptDiff(String before, String after) {
-  if (before == after) return const [];
-  final beforeLines = before.split('\n');
-  final afterLines = after.split('\n');
+/// Trims the common prefix/suffix of two line lists (issue #385 AC2),
+/// returning the changed range — the walk half of
+/// [trajectoryPromptDiff], split out to keep both halves simple.
+({int start, int beforeEnd, int afterEnd}) _diffChangedRange(
+  List<String> beforeLines,
+  List<String> afterLines,
+) {
   var start = 0;
   while (start < beforeLines.length &&
       start < afterLines.length &&
@@ -405,6 +405,21 @@ List<TrajectoryDiffLine> trajectoryPromptDiff(String before, String after) {
     beforeEnd--;
     afterEnd--;
   }
+  return (start: start, beforeEnd: beforeEnd, afterEnd: afterEnd);
+}
+
+/// Minimal unified-style line diff between two prompt versions (AC2): the
+/// common prefix/suffix is trimmed, the middle renders as one changed
+/// block, up to 3 context lines flank it, and collapsed ranges show an
+/// `ellipsis` line. Pure — the UI tab and the CLI mirror share it.
+List<TrajectoryDiffLine> trajectoryPromptDiff(String before, String after) {
+  if (before == after) return const [];
+  final beforeLines = before.split('\n');
+  final afterLines = after.split('\n');
+  final (:start, :beforeEnd, :afterEnd) = _diffChangedRange(
+    beforeLines,
+    afterLines,
+  );
   const context = 3;
 
   final lines = <TrajectoryDiffLine>[];
@@ -649,32 +664,54 @@ TrajectoryRequestMessageBlock _boundedBlock(String type, String text) {
 /// Decodes image dimensions from the payload header: PNG IHDR and JPEG SOF
 /// frames are parsed; anything else reports `?x?` (never a crash).
 String _imageDimensions(String base64Data, String mimeType) {
-  final bytes = base64.decode(
-    base64Data.length > 65536 ? base64Data.substring(0, 65536) : base64Data,
-  );
-  if (mimeType.contains('png') && bytes.length >= 24) {
-    final width =
-        (bytes[16] << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19];
-    final height =
-        (bytes[20] << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23];
-    return '${width}x$height';
+  final Uint8List bytes;
+  try {
+    bytes = base64.decode(
+      base64Data.length > 65536 ? base64Data.substring(0, 65536) : base64Data,
+    );
+  } on FormatException {
+    return '?x?'; // Corrupt capture: the marker degrades, never crashes.
   }
+  if (mimeType.contains('png')) return _pngDimensions(bytes);
   if (mimeType.contains('jpeg') || mimeType.contains('jpg')) {
-    var i = 2;
-    while (i + 9 < bytes.length) {
-      if (bytes[i] != 0xFF) break;
-      final marker = bytes[i + 1];
-      final length = (bytes[i + 2] << 8) | bytes[i + 3];
-      if ((marker >= 0xC0 && marker <= 0xCF) &&
-          marker != 0xC4 &&
-          marker != 0xC8 &&
-          marker != 0xCC) {
-        final height = (bytes[i + 5] << 8) | bytes[i + 6];
-        final width = (bytes[i + 7] << 8) | bytes[i + 8];
-        return '${width}x$height';
-      }
-      i += 2 + length;
-    }
+    return _jpegDimensions(bytes);
   }
   return '?x?';
 }
+
+/// PNG IHDR width/height (bytes 16..23), or `?x?` when the capture is
+/// shorter than the header.
+String _pngDimensions(Uint8List bytes) {
+  if (bytes.length < 24) return '?x?';
+  final width =
+      (bytes[16] << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19];
+  final height =
+      (bytes[20] << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23];
+  return '${width}x$height';
+}
+
+/// Walks JPEG SOF segment markers for the frame dimensions (E3: a
+/// truncated or foreign payload reports `?x?` — never a crash).
+String _jpegDimensions(Uint8List bytes) {
+  var i = 2;
+  while (i + 9 < bytes.length) {
+    if (bytes[i] != 0xFF) break;
+    final marker = bytes[i + 1];
+    final length = (bytes[i + 2] << 8) | bytes[i + 3];
+    if (_isJpegSofMarker(marker)) {
+      final height = (bytes[i + 5] << 8) | bytes[i + 6];
+      final width = (bytes[i + 7] << 8) | bytes[i + 8];
+      return '${width}x$height';
+    }
+    i += 2 + length;
+  }
+  return '?x?';
+}
+
+/// SOF0–SOF15 minus the non-frame markers (DHT, JPG, DAC).
+bool _isJpegSofMarker(int marker) =>
+    marker >= 0xC0 &&
+    marker <= 0xCF &&
+    marker != 0xC4 &&
+    marker != 0xC8 &&
+    marker != 0xCC;

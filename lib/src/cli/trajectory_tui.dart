@@ -14,6 +14,7 @@ import 'dart:convert';
 import '../session/session_record.dart';
 import '../session/session_repo.dart';
 import '../session/session_tree.dart';
+import '../trajectory/event_projection.dart';
 import '../trajectory/formatters.dart';
 import '../trajectory/trajectory_blobs.dart';
 import '../trajectory/trajectory_record.dart';
@@ -449,7 +450,16 @@ void _inspectManifestSection(
       lines.add('  ~ ${diff.modified.join(', ')}');
     }
   }
-  for (final tool in blob.tools) {
+  _inspectManifestTools(lines, blob.tools);
+}
+
+/// The name/description/schema listing under a manifest section; schemas
+/// over 200 chars collapse to a size marker (E3).
+void _inspectManifestTools(
+  List<String> lines,
+  List<TrajectoryToolManifestEntry> tools,
+) {
+  for (final tool in tools) {
     lines.add('  ${tool.name}: ${tool.description}');
     if (tool.schemaJson.length <= 200) {
       lines.add('    ${tool.schemaJson}');
@@ -457,6 +467,49 @@ void _inspectManifestSection(
       lines.add('    [schema ${tool.schemaJson.length} chars]');
     }
   }
+}
+
+/// The `/trajectory inspect <n>` report (issue #385 AC9): the row's
+/// detail lines plus, for compacted rows carrying a hidden range, the
+/// lazily resolved drill-in previews. [resolveHidden] serves the range
+/// on demand — null (no session) renders the header only; an empty list
+/// renders the honest "not captured" marker (E6). Pure apart from the
+/// resolver callback — the CLI mirror and tests share it.
+Future<List<String>> trajectoryInspectReport(
+  TrajectorySnapshot snapshot,
+  String arg, {
+  Future<List<TrajectoryHiddenRecordPreview>?> Function(
+    TrajectoryCompactedRecord record,
+  )?
+  resolveHidden,
+}) async {
+  if (snapshot.records.isEmpty) return const ['no records'];
+  final index = int.tryParse(arg);
+  if (index == null) return const ['usage: /trajectory inspect <n>'];
+  final lines = trajectoryInspectLines(snapshot, index);
+  if (lines == null) {
+    return [trajectoryRangeError(index, snapshot.records.length)];
+  }
+  if (snapshot.records[index - 1] case final TrajectoryCompactedRecord record
+      when (record.hiddenRecordIds ?? const <String>[]).isNotEmpty) {
+    final ids = record.hiddenRecordIds ?? const <String>[];
+    lines.add('hidden range: ${ids.length} covered records');
+    final previews = resolveHidden == null ? null : await resolveHidden(record);
+    if (previews == null) {
+      return lines; // No session to serve the range from: header only.
+    }
+    if (previews.isEmpty) {
+      lines.add('  [hidden: not captured for this session]');
+    } else {
+      for (final preview in previews) {
+        final time = preview.timestamp == null
+            ? ''
+            : ' · ${preview.timestamp!.toIso8601String()}';
+        lines.add('  [${preview.type}] ${preview.preview}$time');
+      }
+    }
+  }
+  return lines;
 }
 
 /// The `tokens`/`cost` sections: per-bucket counts preferring the captured

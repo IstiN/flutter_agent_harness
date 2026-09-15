@@ -1008,7 +1008,7 @@ void main() {
   });
 
   group('trajectory blobs and unknown records (issue #385)', () {
-    CustomRecord _blobRecord(
+    CustomRecord blobRecord(
       String id,
       String type,
       Map<String, dynamic> data,
@@ -1026,10 +1026,10 @@ void main() {
       final builder = TrajectorySnapshotBuilder();
       builder.append(_userRecord('u1'));
       var snapshot = builder.append(
-        _blobRecord('c1', 'trajectory_prompt_blob', data),
+        blobRecord('c1', 'trajectory_prompt_blob', data),
       );
       snapshot = builder.append(
-        _blobRecord('c2', 'trajectory_prompt_blob', data),
+        blobRecord('c2', 'trajectory_prompt_blob', data),
       );
       expect(snapshot.blobs.systemPrompts, hasLength(1));
       expect(
@@ -1054,10 +1054,10 @@ void main() {
       final builder = TrajectorySnapshotBuilder();
       builder.append(_userRecord('u1'));
       var snapshot = builder.append(
-        _blobRecord('c1', 'trajectory_manifest_blob', manifest.toJson()),
+        blobRecord('c1', 'trajectory_manifest_blob', manifest.toJson()),
       );
       snapshot = builder.append(
-        _blobRecord('c2', 'trajectory_wire_dump', dump.toJson()),
+        blobRecord('c2', 'trajectory_wire_dump', dump.toJson()),
       );
       expect(
         snapshot.blobs.toolManifests[manifest.hash]?.tools.single.name,

@@ -77,6 +77,35 @@ void main() {
     test('identical texts yield an empty diff', () {
       expect(trajectoryPromptDiff('same', 'same'), isEmpty);
     });
+
+    test('a change with long flanks surfaces both ellipsis lines', () {
+      const flank = 'a\na\na\na\na';
+      const tail = 'z\nz\nz\nz\nz';
+      final lines = trajectoryPromptDiff(
+        '$flank\nchanged\n$tail',
+        '$flank\nedited\n$tail',
+      );
+      expect(lines.first.kind, 'ellipsis');
+      expect(lines.last.kind, 'ellipsis');
+      expect(lines.where((l) => l.kind == 'ellipsis'), hasLength(2));
+    });
+
+    test('changes hugging the head render without a leading ellipsis', () {
+      final lines = trajectoryPromptDiff(
+        'head\nshared\nshared\nshared',
+        'HEAD\nshared\nshared\nshared',
+      );
+      expect(lines.first.kind, 'removed');
+      expect(
+        lines,
+        contains(
+          isA<TrajectoryDiffLine>()
+              .having((l) => l.kind, 'kind', 'added')
+              .having((l) => l.text, 'text', 'HEAD'),
+        ),
+      );
+      expect(lines.where((l) => l.kind == 'ellipsis'), isEmpty);
+    });
   });
 
   group('tool manifests (F2/AC3)', () {
@@ -118,7 +147,7 @@ void main() {
         _tool('bash', parameters: const {'type': 'object'}),
       ]);
       final after = TrajectoryToolManifestBlob.of([
-        _tool('bash', parameters: const {'type': 'object', 'x': const {}}),
+        _tool('bash', parameters: const {'type': 'object', 'x': {}}),
       ]);
       final diff = trajectoryToolManifestDiff(before, after);
       expect(diff.added, isEmpty);
@@ -197,6 +226,79 @@ void main() {
       expect(blocks.single.type, 'image');
       expect(blocks.single.imageMarker, '[image 1x1]');
       expect(blocks.single.text, isEmpty);
+    });
+
+    test('a short png header reports the unknown marker (E3)', () {
+      final blocks = trajectoryRequestBlocks([
+        ImageContent(data: base64Encode([0x89, 0x50]), mimeType: 'image/png'),
+      ]);
+      expect(blocks.single.imageMarker, '[image ?x?]');
+    });
+
+    test('jpeg SOF frames report dimensions, foreign payloads degrade', () {
+      // SOF0 frame: FFC0, length 11, precision 8, height 32, width 16.
+      const jpeg = [
+        0xFF,
+        0xD8,
+        0xFF,
+        0xC0,
+        0x00,
+        0x0B,
+        0x08,
+        0x00,
+        0x20,
+        0x00,
+        0x10,
+        0x01,
+        0x01,
+        0x11,
+        0x00,
+      ];
+      expect(
+        trajectoryRequestBlocks([
+          ImageContent(data: base64Encode(jpeg), mimeType: 'image/jpeg'),
+        ]).single.imageMarker,
+        '[image 16x32]',
+      );
+      // A DHT marker (0xC4) is skipped, then SOF1 (0xC1) resolves:
+      // height 5, width 3.
+      const withDht = [
+        0xFF, 0xD8, // SOI
+        0xFF, 0xC4, 0x00, 0x05, 0x00, 0x00, 0x00, // DHT (skipped)
+        0xFF, 0xC1, 0x00, 0x0B, 0x08, // SOF1
+        0x00, 0x05, 0x00, 0x03, // height 5, width 3
+        0x01, 0x01, 0x00, 0x00, 0x00, 0x00,
+      ];
+      expect(
+        trajectoryRequestBlocks([
+          ImageContent(data: base64Encode(withDht), mimeType: 'image/jpg'),
+        ]).single.imageMarker,
+        '[image 3x5]',
+      );
+      // Truncated payload walking off the end, and a corrupt base64
+      // body, both degrade to the unknown marker.
+      expect(
+        trajectoryRequestBlocks([
+          ImageContent(
+            data: base64Encode([0xFF, 0xD8]),
+            mimeType: 'image/jpeg',
+          ),
+        ]).single.imageMarker,
+        '[image ?x?]',
+      );
+      expect(
+        trajectoryRequestBlocks([
+          ImageContent(data: 'not!base64!', mimeType: 'image/png'),
+        ]).single.imageMarker,
+        '[image ?x?]',
+      );
+      // A webp payload is neither png nor jpeg.
+      expect(
+        trajectoryRequestBlocks([
+          ImageContent(data: base64Encode(jpeg), mimeType: 'image/webp'),
+        ]).single.imageMarker,
+        '[image ?x?]',
+      );
     });
 
     test('a toolCall block carries the call id and name', () {

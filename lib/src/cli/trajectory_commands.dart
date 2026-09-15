@@ -47,62 +47,50 @@ extension on AgentCli {
   Future<void> _trajectoryInspect(String arg) async {
     final snapshot = await _trajectorySnapshot();
     if (snapshot == null) return;
-    if (snapshot.records.isEmpty) {
-      io.writeln('no records');
-      return;
-    }
-    final index = int.tryParse(arg);
-    if (index == null) {
-      io.writeln('usage: /trajectory inspect <n>');
-      return;
-    }
-    final lines = trajectoryInspectLines(snapshot, index);
-    if (lines == null) {
-      io.writeln(trajectoryRangeError(index, snapshot.records.length));
-      return;
-    }
+    final lines = await trajectoryInspectReport(
+      snapshot,
+      arg,
+      resolveHidden: _resolveHiddenPreviews,
+    );
     for (final line in lines) {
       io.writeln(line);
     }
-    // Hidden-range drill-in (issue #385 F4): a compacted row lists the
-    // records its range covers, resolved lazily from the session file —
-    // bounded previews, never loaded into the snapshot.
-    if (snapshot.records[index - 1] case final TrajectoryCompactedRecord record
-        when (record.hiddenRecordIds ?? const <String>[]).isNotEmpty) {
-      await _inspectHiddenRange(record);
+  }
+
+  /// Resolves one compacted row's hidden range on demand (issue #385
+  /// F4): a one-pass chunk-reader lookup, previews capped at
+  /// [hiddenRecordPreviewLimit]. Null = no active session (the report
+  /// prints the header only); empty = the range could not be served and
+  /// the report renders the honest "not captured" marker (E6).
+  Future<List<TrajectoryHiddenRecordPreview>?> _resolveHiddenPreviews(
+    TrajectoryCompactedRecord record,
+  ) async {
+    final session = _session;
+    if (session == null) return null;
+    try {
+      return await _resolveHiddenPreviewsIn(session, record);
+    } on Object {
+      return const [];
     }
   }
 
-  /// Resolves and prints one compacted row's hidden range (issue #385
-  /// F4): a one-pass chunk-reader lookup, previews capped at
-  /// [hiddenRecordPreviewLimit]; ids the file does not hold render as
-  /// explicit "not captured" rows (E6) — never fabricated content.
-  Future<void> _inspectHiddenRange(TrajectoryCompactedRecord record) async {
-    final session = _session;
+  /// The session-shaped half of the resolver: windowed storages read the
+  /// raw file (the evicted records sit OFF the kept branch); full-open
+  /// sessions resolve in memory.
+  Future<List<TrajectoryHiddenRecordPreview>> _resolveHiddenPreviewsIn(
+    Session session,
+    TrajectoryCompactedRecord record,
+  ) async {
     final ids = record.hiddenRecordIds ?? const <String>[];
-    io.writeln('hidden range: ${ids.length} covered records');
-    if (session == null) return;
-    try {
-      final Map<String, SessionRecord> resolved;
-      if (session.getStorage() case final WindowedSessionStorage windowed) {
-        resolved = await windowed.reader.readRecordsByIds(ids.toSet());
-      } else {
-        // Full-open session: every record is resident — resolve in memory.
-        final all = await session.getBranch();
-        resolved = {for (final record in all) record.id: record};
-      }
-      for (final preview in projectHiddenRecordPreviews(
-        recordIds: ids,
-        resolved: resolved,
-      )) {
-        final time = preview.timestamp == null
-            ? ''
-            : ' · ${preview.timestamp!.toIso8601String()}';
-        io.writeln('  [${preview.type}] ${preview.preview}$time');
-      }
-    } on Object {
-      io.writeln('  [hidden: not captured for this session]');
+    final Map<String, SessionRecord> resolved;
+    if (session.getStorage() case final WindowedSessionStorage windowed) {
+      resolved = await windowed.reader.readRecordsByIds(ids.toSet());
+    } else {
+      // Full-open session: every record is resident — resolve in memory.
+      final all = await session.getBranch();
+      resolved = {for (final resolved in all) resolved.id: resolved};
     }
+    return projectHiddenRecordPreviews(recordIds: ids, resolved: resolved);
   }
 
   /// Follows the active session's records, one row per appended record,

@@ -291,21 +291,32 @@ final class SessionChunkReader {
     while (offset < info.size && found.length < ids.length) {
       final end = (offset + block) < info.size ? offset + block : info.size;
       final bytes = await _readRange(offset, end);
-      final lines = _splitLines(bytes, offset);
-      for (final (lineOffset, lineBytes) in lines) {
-        final text = utf8.decode(lineBytes, allowMalformed: true);
-        if (text.length < 12) continue;
-        final SessionRecord record;
-        try {
-          record = parseSessionEntryLine(text, '', lineOffset);
-        } on Object {
-          continue; // torn or foreign line: the drill-in degrades around it
-        }
-        if (ids.contains(record.id)) found[record.id] = record;
-      }
+      _scanChunkForIds(bytes, offset, ids, found);
       offset = end;
     }
     return found;
+  }
+
+  /// Scans one raw chunk for the wanted ids, folding hits into [found]
+  /// (issue #385 F4). Torn or foreign lines are skipped: the drill-in
+  /// degrades around them instead of failing the whole range.
+  void _scanChunkForIds(
+    Uint8List bytes,
+    int offset,
+    Set<String> ids,
+    Map<String, SessionRecord> found,
+  ) {
+    for (final (lineOffset, lineBytes) in _splitLines(bytes, offset)) {
+      final text = utf8.decode(lineBytes, allowMalformed: true);
+      if (text.length < 12) continue;
+      final SessionRecord record;
+      try {
+        record = parseSessionEntryLine(text, '', lineOffset);
+      } on Object {
+        continue;
+      }
+      if (ids.contains(record.id)) found[record.id] = record;
+    }
   }
 
   /// Case-sensitive ASCII substring match without decoding.
