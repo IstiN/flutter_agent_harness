@@ -50,7 +50,9 @@ final class FabricConfig {
     if (caps == null) {
       // Canonical const instances keep identity equality with
       // `const FabricConfig()` (the pinned default-config expectation).
-      return rawHub == false ? const FabricConfig(hub: false) : const FabricConfig();
+      return rawHub == false
+          ? const FabricConfig(hub: false)
+          : const FabricConfig();
     }
     if (caps is! YamlList) {
       throw ConfigException('fabric.capabilities must be a list, got: $caps');

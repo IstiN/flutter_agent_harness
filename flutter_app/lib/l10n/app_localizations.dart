@@ -2144,6 +2144,96 @@ abstract class AppLocalizations {
   /// **'A hub is where your Fa agents meet — the CLI, this app, and the browser extension. Connect once and this agent becomes reachable by name: others can find it and send it messages.'**
   String get settingsDapHubIntro;
 
+  /// No description provided for @settingsAgentNetworkJoin.
+  ///
+  /// In en, this message translates to:
+  /// **'Join as agent'**
+  String get settingsAgentNetworkJoin;
+
+  /// No description provided for @settingsAgentNetworkJoinHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Your agent joins the hub as a live, addressable member — CLI peers and other apps reach it by DM.'**
+  String get settingsAgentNetworkJoinHint;
+
+  /// No description provided for @settingsAgentNetworkUrl.
+  ///
+  /// In en, this message translates to:
+  /// **'Hub URL'**
+  String get settingsAgentNetworkUrl;
+
+  /// No description provided for @settingsAgentNetworkToken.
+  ///
+  /// In en, this message translates to:
+  /// **'Pairing token'**
+  String get settingsAgentNetworkToken;
+
+  /// No description provided for @settingsAgentNetworkName.
+  ///
+  /// In en, this message translates to:
+  /// **'Agent name'**
+  String get settingsAgentNetworkName;
+
+  /// No description provided for @settingsAgentNetworkSave.
+  ///
+  /// In en, this message translates to:
+  /// **'Save'**
+  String get settingsAgentNetworkSave;
+
+  /// No description provided for @settingsAgentNetworkConnected.
+  ///
+  /// In en, this message translates to:
+  /// **'Connected'**
+  String get settingsAgentNetworkConnected;
+
+  /// No description provided for @settingsAgentNetworkConnecting.
+  ///
+  /// In en, this message translates to:
+  /// **'Connecting…'**
+  String get settingsAgentNetworkConnecting;
+
+  /// No description provided for @settingsAgentNetworkOffline.
+  ///
+  /// In en, this message translates to:
+  /// **'Offline'**
+  String get settingsAgentNetworkOffline;
+
+  /// No description provided for @settingsAgentNetworkPeers.
+  ///
+  /// In en, this message translates to:
+  /// **'Peers'**
+  String get settingsAgentNetworkPeers;
+
+  /// No description provided for @settingsAgentNetworkNoPeers.
+  ///
+  /// In en, this message translates to:
+  /// **'No peers visible yet'**
+  String get settingsAgentNetworkNoPeers;
+
+  /// No description provided for @settingsAgentNetworkDmHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Message a peer…'**
+  String get settingsAgentNetworkDmHint;
+
+  /// No description provided for @settingsAgentNetworkSend.
+  ///
+  /// In en, this message translates to:
+  /// **'Send DM'**
+  String get settingsAgentNetworkSend;
+
+  /// No description provided for @settingsAgentNetworkUnsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'Agent network membership is not available on this platform.'**
+  String get settingsAgentNetworkUnsupported;
+
+  /// No description provided for @settingsAgentNetworkSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Agent network settings saved'**
+  String get settingsAgentNetworkSaved;
+
   /// No description provided for @settingsDapIdentityTitle.
   ///
   /// In en, this message translates to:

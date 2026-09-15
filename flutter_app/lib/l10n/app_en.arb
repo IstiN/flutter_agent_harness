@@ -389,6 +389,21 @@
   "settingsDapEnvNote": "DAP_HUB_URL or DAP_AGENT_NAME is set in the environment — env overrides the saved connection.",
   "settingsDapHubHint": "Let Fa agents find and message each other",
   "settingsDapHubIntro": "A hub is where your Fa agents meet — the CLI, this app, and the browser extension. Connect once and this agent becomes reachable by name: others can find it and send it messages.",
+  "settingsAgentNetworkJoin": "Join as agent",
+  "settingsAgentNetworkJoinHint": "Your agent joins the hub as a live, addressable member — CLI peers and other apps reach it by DM.",
+  "settingsAgentNetworkUrl": "Hub URL",
+  "settingsAgentNetworkToken": "Pairing token",
+  "settingsAgentNetworkName": "Agent name",
+  "settingsAgentNetworkSave": "Save",
+  "settingsAgentNetworkConnected": "Connected",
+  "settingsAgentNetworkConnecting": "Connecting…",
+  "settingsAgentNetworkOffline": "Offline",
+  "settingsAgentNetworkPeers": "Peers",
+  "settingsAgentNetworkNoPeers": "No peers visible yet",
+  "settingsAgentNetworkDmHint": "Message a peer…",
+  "settingsAgentNetworkSend": "Send DM",
+  "settingsAgentNetworkUnsupported": "Agent network membership is not available on this platform.",
+  "settingsAgentNetworkSaved": "Agent network settings saved",
   "settingsDapIdentityTitle": "How other agents see you",
   "settingsDapIdentityHint": "The name is how other agents address you. The id is derived from this device’s key.",
   "settingsDapInboundTitle": "Incoming messages",
@@ -728,7 +743,16 @@
   },
   "themeConsentTitle": "Apply theme pack?",
   "themeConsentBody": "{app} wants to apply the theme pack \"{pack}\".",
-  "@themeConsentBody": { "placeholders": { "app": { "type": "String" }, "pack": { "type": "String" } } },
+  "@themeConsentBody": {
+    "placeholders": {
+      "app": {
+        "type": "String"
+      },
+      "pack": {
+        "type": "String"
+      }
+    }
+  },
   "themeConsentContrast": "Warning: some color pairs in this pack are below WCAG AA contrast (4.5:1).",
   "themeConsentApply": "Apply",
   "themeConsentDeny": "Keep current",
@@ -740,7 +764,13 @@
   "themePackActiveChip": "active",
   "themePackWallpaperChip": "wallpaper",
   "themePackImported": "Theme pack \"{name}\" installed",
-  "@themePackImported": { "placeholders": { "name": { "type": "String" } } },
+  "@themePackImported": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "settingsCompactionLabel": "Compaction",
   "@settingsCompactionLabel": {
     "description": "Title of the Settings compaction-engine section (issue #287)"
@@ -782,9 +812,21 @@
     "description": "Note shown instead of the picker on the web stub (issue #287 AC5)"
   },
   "settingsCompactionSaved": "Saved to {file} — applies at the next compaction.",
-  "@settingsCompactionSaved": { "placeholders": { "file": { "type": "String" } } },
+  "@settingsCompactionSaved": {
+    "placeholders": {
+      "file": {
+        "type": "String"
+      }
+    }
+  },
   "settingsCompactionSaveFailed": "Could not save the compaction engine: {error}",
-  "@settingsCompactionSaveFailed": { "placeholders": { "error": { "type": "String" } } },
+  "@settingsCompactionSaveFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "settingsCompactionDocs": "Compaction docs",
   "@settingsCompactionDocs": {
     "description": "Link to the compaction documentation from the settings section (issue #287)"

@@ -580,3 +580,19 @@ Phase-1 scope notes: presence is online/offline only — a `busy` state
 (and richer discovery states) is phase 2. The DAP secret is stored in
 plaintext in `~/.dap/config.json` by `fa_hub_client`; Keychain-backed
 storage is not wired yet (pre-existing, not introduced here).
+
+## 13. App agents on the hub (issue #402)
+
+The macOS/iOS app's agent joins the SAME fabric as a live, addressable
+member. `flutter_app/lib/services/agent_network_controller.dart` wraps
+the harness `HubMessagingRepository` behind the app's
+`AgentNetworkService`: opt-in (the "Join as agent" row in the hub
+settings), at-most-once delivery, reconnect with backoff, and the
+session-scoped file fabric as the offline fallback — an unreachable hub
+boots the app fully usable and keeps retrying. The app agent registers
+under the name stored in its sandbox (`agent_network.json`), appears in
+`agent_directory` with a `[hub]` marker, and both directions of DM work
+against it: CLI peers reach it by name, and the app's roster view
+(composer in the same section) sends hub-ward. The LAN listener pairing
+(E2/A3) ships behind the same controller — the app connects to
+`ws://<mac>:<port>` with the pairing token once the LAN bind lands.

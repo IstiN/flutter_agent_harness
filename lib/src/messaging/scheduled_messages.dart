@@ -263,9 +263,7 @@ final class ScheduledMessageQueue {
           fromId: fix(json['fromId']),
           toId: fix(json['toId']),
           text: json['text'] as String? ?? '',
-          sentAt:
-              json['sentAt'] as String? ??
-              _now().toUtc().toIso8601String(),
+          sentAt: json['sentAt'] as String? ?? _now().toUtc().toIso8601String(),
           hops: json['hops'] as int? ?? 0,
         ),
       );

@@ -13,10 +13,12 @@
 /// material.
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa/services/agent_network_controller.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/provider_registry.dart';
@@ -606,6 +608,46 @@ void main() {
       await expectGolden(tester, 'settings_dap_hub_page_phone');
     });
 
+    testWidgets('dap hub page with agent network joined (desktop)', (
+      tester,
+    ) async {
+      await pumpGolden(
+        tester,
+        size: goldenSizeDesktop,
+        wrap: _wrapPage,
+        DapHubPage(
+          service: _FakeDapHubService(connected),
+          agentNetwork: _joinedAgentNetwork(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Arm the DM composer on a peer so the frame covers the reply path.
+      await tester.tap(find.text('fa-cli'));
+      await tester.pumpAndSettle();
+
+      // The membership card: joined switch on, live state + hub address,
+      // the roster with presence, the DM composer armed on a peer.
+      await expectGolden(tester, 'settings_dap_hub_agent_network');
+    });
+
+    testWidgets('dap hub page with agent network joined (phone)', (
+      tester,
+    ) async {
+      await pumpGolden(
+        tester,
+        size: goldenSizePhone,
+        wrap: _wrapPage,
+        DapHubPage(
+          service: _FakeDapHubService(connected),
+          agentNetwork: _joinedAgentNetwork(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await expectGolden(tester, 'settings_dap_hub_agent_network_phone');
+    });
+
     testWidgets('dap connection editor', (tester) async {
       await pumpGolden(
         tester,
@@ -704,6 +746,73 @@ void main() {
 
 /// Deterministic [DapHubService] for the DAP goldens: returns the same
 /// snapshot on every load/probe, never touches the network or `~/.dap`.
+FileMessagingRepository _memoryFileLayer() => FileMessagingRepository(
+  env: MemoryExecutionEnv(cwd: '/golden'),
+  root: '/golden/messages',
+  homeDir: null,
+  decodeSessionCwd: decodeSessionCwd,
+);
+
+/// A scripted membership controller for the agent-network goldens: the
+/// joined state with a live roster, no real hub.
+class _ScriptedAgentNetwork extends AgentNetworkController {
+  _ScriptedAgentNetwork()
+    : super(
+        env: MemoryExecutionEnv(cwd: '/golden'),
+        fileLayer: _memoryFileLayer(),
+        fileFabric: SwappableMessagingRepository(_memoryFileLayer()),
+        transport: null,
+        loadIdentity: (_) async => null,
+      ) {
+    unawaited(store.setEnabled(true));
+  }
+
+  @override
+  bool get supported => true;
+
+  @override
+  HubLinkState? get state => HubLinkState.connected;
+
+  @override
+  String? get agentId => 'a1b2c3d4e5f60718';
+
+  @override
+  Future<List<MailboxEntry>> peers() async => const [
+    MailboxEntry(
+      id: '9f8e7d6c5b4a3210',
+      name: 'fa-cli',
+      cwd: '/work/repo',
+      presence: AgentPresence.live,
+      source: 'hub',
+    ),
+    MailboxEntry(
+      id: '77aa88bb99cc00dd',
+      name: 'iPad Fa',
+      presence: AgentPresence.busy,
+      source: 'hub',
+    ),
+  ];
+
+  @override
+  Future<void> setEnabled(bool value) async {
+    await store.setEnabled(value);
+  }
+
+  @override
+  Future<void> saveConnection({
+    String? url,
+    String? token,
+    String? name,
+  }) async {
+    await store.setConnection(url: url, token: token, name: name);
+  }
+
+  @override
+  Future<void> sendDm(String to, String text) async {}
+}
+
+AgentNetworkController _joinedAgentNetwork() => _ScriptedAgentNetwork();
+
 class _FakeDapHubService implements DapHubService {
   _FakeDapHubService(this.snapshot);
 

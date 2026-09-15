@@ -5,6 +5,8 @@
 import 'dart:async';
 
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa/services/agent_network_controller.dart';
+import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/dap_binding_store.dart';
 import 'package:fa/services/dap_service.dart';
@@ -15,6 +17,8 @@ import 'package:fa/ui/widgets/dap_hub_mark.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa_ui/fa_ui.dart' as faui;
 import 'package:flutter/material.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show AgentPresence, HubLinkState, MailboxEntry;
 
 /// The settings "DAP hub" row: opens the dedicated [DapHubPage] (connection,
 /// identity, channels) so the top level stays provider-focused. The
@@ -71,10 +75,14 @@ class DapHubSection extends StatelessWidget {
 /// keys for, and the add/edit connection editor. On web (the hub client is
 /// IO-bound) it renders the honest not-supported note instead.
 class DapHubPage extends StatefulWidget {
-  const DapHubPage({super.key, this.service});
+  const DapHubPage({super.key, this.service, this.agentNetwork});
 
   /// Overrides the platform service (tests); defaults to the real one.
   final DapHubService? service;
+
+  /// Overrides the app agent's membership controller (tests, goldens);
+  /// defaults to the live service instance.
+  final AgentNetworkController? agentNetwork;
 
   @override
   State<DapHubPage> createState() => _DapHubPageState();
@@ -363,6 +371,8 @@ class _DapHubPageState extends State<DapHubPage> {
               context.l10n.settingsDapHubIntro,
               style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
             ),
+            const SizedBox(height: 16),
+            AgentNetworkSection(controller: widget.agentNetwork),
             const SizedBox(height: 16),
             Text(
               context.l10n.settingsDapSavedTitle,
@@ -1057,6 +1067,348 @@ class _DapConnectionEditorPageState extends State<DapConnectionEditorPage> {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The agent membership section (issue #402 AC5): the opt-in toggle, the
+/// live link state with this agent's hub address, the roster (peers), and
+/// a DM composer. Reads the live [AgentNetworkController] off the app's
+/// service; [controller] overrides it (tests, goldens).
+class AgentNetworkSection extends StatefulWidget {
+  const AgentNetworkSection({super.key, this.controller});
+
+  /// Overrides the live controller (tests); defaults to the app service's.
+  final AgentNetworkController? controller;
+
+  @override
+  State<AgentNetworkSection> createState() => _AgentNetworkSectionState();
+}
+
+class _AgentNetworkSectionState extends State<AgentNetworkSection> {
+  AgentNetworkController? _controller;
+  final _url = TextEditingController();
+  final _token = TextEditingController();
+  final _name = TextEditingController();
+  final _dm = TextEditingController();
+  final _dmFocus = FocusNode();
+  List<MailboxEntry>? _peers;
+  String? _dmTarget;
+  var _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _bind(widget.controller ?? AgentService.maybeCurrent?.agentNetwork);
+  }
+
+  @override
+  void didUpdateWidget(covariant AgentNetworkSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      _bind(widget.controller ?? AgentService.maybeCurrent?.agentNetwork);
+    }
+  }
+
+  void _bind(AgentNetworkController? controller) {
+    _controller?.removeListener(_refreshPeers);
+    _controller = controller;
+    controller?.addListener(_refreshPeers);
+    final store = controller?.store;
+    _url.text = store?.url ?? '';
+    _token.text = store?.token ?? '';
+    _name.text = store?.name ?? '';
+    _refreshPeers();
+  }
+
+  @override
+  void dispose() {
+    _controller?.removeListener(_refreshPeers);
+    _url.dispose();
+    _token.dispose();
+    _name.dispose();
+    _dm.dispose();
+    _dmFocus.dispose();
+    super.dispose();
+  }
+
+  Future<void> _refreshPeers() async {
+    final controller = _controller;
+    final peers = controller == null
+        ? const <MailboxEntry>[]
+        : await controller.peers();
+    if (mounted) setState(() => _peers = peers);
+  }
+
+  Future<void> _toggle(bool value) async {
+    final controller = _controller;
+    if (controller == null) return;
+    AppAnalytics.instance.dapHubAction('agent-network-toggle');
+    await controller.setEnabled(value);
+    await _refreshPeers();
+  }
+
+  Future<void> _save() async {
+    final controller = _controller;
+    if (controller == null || _saving) return;
+    setState(() => _saving = true);
+    await controller.saveConnection(
+      url: _url.text,
+      token: _token.text,
+      name: _name.text,
+    );
+    if (mounted) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text(context.l10n.settingsAgentNetworkSaved)),
+      );
+    }
+    setState(() => _saving = false);
+    await _refreshPeers();
+  }
+
+  Future<void> _sendDm() async {
+    final controller = _controller;
+    final target = _dmTarget;
+    final text = _dm.text.trim();
+    if (controller == null || target == null || text.isEmpty) return;
+    await controller.sendDm(target, text);
+    _dm.clear();
+    if (mounted) setState(() => _dmTarget = null);
+    unawaited(_refreshPeers());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = _controller;
+    final colors = FahColors.of(context);
+    final theme = Theme.of(context);
+    if (controller == null || !controller.supported) {
+      return Row(
+        children: [
+          const DapHubMark(size: 20),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              context.l10n.settingsAgentNetworkUnsupported,
+              style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
+            ),
+          ),
+        ],
+      );
+    }
+    final store = controller.store;
+    final enabled = store.enabled;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        border: Border.all(color: colors.dim.withValues(alpha: 0.3)),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      context.l10n.settingsAgentNetworkJoin,
+                      style: theme.textTheme.titleSmall,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      context.l10n.settingsAgentNetworkJoinHint,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: colors.dim,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Switch(value: enabled, onChanged: _toggle),
+            ],
+          ),
+          if (enabled) ...[
+            const SizedBox(height: 12),
+            _statusRow(context, controller),
+            const SizedBox(height: 12),
+            _connectionFields(context),
+            const SizedBox(height: 12),
+            _peersList(context, controller),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// The live link state: chip + this agent's hub address.
+  Widget _statusRow(BuildContext context, AgentNetworkController controller) {
+    final colors = FahColors.of(context);
+    final theme = Theme.of(context);
+    final (label, color) = switch (controller.state) {
+      HubLinkState.connected => (
+        context.l10n.settingsAgentNetworkConnected,
+        Colors.green,
+      ),
+      HubLinkState.connecting => (
+        context.l10n.settingsAgentNetworkConnecting,
+        Colors.orange,
+      ),
+      _ => (context.l10n.settingsAgentNetworkOffline, colors.dim),
+    };
+    return Row(
+      children: [
+        Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 8),
+        Text(label, style: theme.textTheme.bodyMedium),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            controller.agentId ?? '',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: colors.dim,
+              fontFamily: 'JetBrainsMono',
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _connectionFields(BuildContext context) {
+    final theme = Theme.of(context);
+    InputDecoration decoration(String label) => InputDecoration(
+      labelText: label,
+      isDense: true,
+      border: const OutlineInputBorder(),
+    );
+    return Column(
+      children: [
+        TextField(
+          controller: _url,
+          decoration: decoration(context.l10n.settingsAgentNetworkUrl),
+          style: theme.textTheme.bodySmall,
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _name,
+                decoration: decoration(context.l10n.settingsAgentNetworkName),
+                style: theme.textTheme.bodySmall,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: TextField(
+                controller: _token,
+                obscureText: true,
+                decoration: decoration(context.l10n.settingsAgentNetworkToken),
+                style: theme.textTheme.bodySmall,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: _saving ? null : _save,
+            icon: const Icon(Icons.save_outlined, size: 18),
+            label: Text(context.l10n.settingsAgentNetworkSave),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _peersList(BuildContext context, AgentNetworkController controller) {
+    final colors = FahColors.of(context);
+    final theme = Theme.of(context);
+    final peers = _peers;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          context.l10n.settingsAgentNetworkPeers,
+          style: theme.textTheme.titleSmall,
+        ),
+        const SizedBox(height: 4),
+        if (peers == null || peers.isEmpty)
+          Text(
+            context.l10n.settingsAgentNetworkNoPeers,
+            style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
+          )
+        else
+          for (final peer in peers) _peerRow(context, peer),
+        if (_dmTarget != null) ...[
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _dm,
+                  focusNode: _dmFocus,
+                  decoration: InputDecoration(
+                    labelText: context.l10n.settingsAgentNetworkDmHint,
+                    isDense: true,
+                    border: const OutlineInputBorder(),
+                  ),
+                  style: theme.textTheme.bodySmall,
+                  onSubmitted: (_) => _sendDm(),
+                ),
+              ),
+              IconButton(
+                tooltip: context.l10n.settingsAgentNetworkSend,
+                icon: const Icon(Icons.send_outlined, size: 18),
+                onPressed: _sendDm,
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _peerRow(BuildContext context, MailboxEntry peer) {
+    final colors = FahColors.of(context);
+    final theme = Theme.of(context);
+    final selected = _dmTarget == peer.id;
+    return InkWell(
+      onTap: () => setState(() => _dmTarget = selected ? null : peer.id),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          children: [
+            Icon(
+              selected ? Icons.chat_bubble_outline : Icons.computer,
+              size: 16,
+              color: selected ? theme.colorScheme.primary : colors.dim,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                peer.name ?? peer.id,
+                style: theme.textTheme.bodySmall,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            Text(switch (peer.presence) {
+              AgentPresence.live => context.l10n.settingsAgentNetworkConnected,
+              AgentPresence.busy => context.l10n.settingsAgentNetworkConnecting,
+              _ => context.l10n.settingsAgentNetworkOffline,
+            }, style: theme.textTheme.labelSmall?.copyWith(color: colors.dim)),
+          ],
         ),
       ),
     );

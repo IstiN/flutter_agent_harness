@@ -20,6 +20,8 @@ export 'src/env/isolate_session_parse_executor.dart';
 export 'src/env/session_parse_executor.dart';
 export 'src/env/io_execution_env.dart';
 export 'src/hub/local_hub.dart';
+export 'src/messaging/hub_transport.dart';
+export 'src/messaging/io_hub_transport.dart';
 export 'src/lsp/io_lsp_transport.dart';
 export 'src/mcp/io_mcp_transport.dart';
 export 'src/power/io_power_runner.dart';
