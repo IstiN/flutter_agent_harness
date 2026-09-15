@@ -122,6 +122,7 @@ import '../session/session_record.dart';
 import '../session/session_repo.dart';
 import '../session/attach/session_presence.dart';
 import '../config/config_service.dart';
+import 'startup.dart';
 import 'cli_config.dart';
 import 'custom_providers.dart';
 import 'folder_model_state.dart';
@@ -564,6 +565,17 @@ class AgentCli {
         _streamFunction = _agent.streamFunction;
         _rolesDriven = true;
       }
+    }
+    // Provider queue (issue #418): when set, it REPLACES the main-model
+    // resolution — the default role runs through the queue's sticky-cursor
+    // failover stream. Auxiliary roles (smol/slow/plan) keep their own
+    // chains; /model and /provider stay functional for everything else.
+    final queueRuntime = config.providersQueueRuntime;
+    if (queueRuntime != null) {
+      _agent.streamFunction = queueRuntime.streamFunction.call;
+      _agent.state.model = queueRuntime.streamFunction.currentModel;
+      _streamFunction = _agent.streamFunction;
+      _rolesDriven = true;
     }
     _approval = ApprovalManager(
       mode: config.approvalMode,

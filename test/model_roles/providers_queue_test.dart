@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:yaml/yaml.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/io.dart';
 import 'package:test/test.dart';
 
 Model _model(String provider, String id) => Model(
@@ -111,6 +113,7 @@ Map<String, String> _secrets([Map<String, String> extra = const {}]) => {
 };
 
 void main() {
+  _bootScopeTests();
   group('parseProviderQueueJsonText', () {
     test('parses the canonical two-entry queue (UT-parse-env-happy)', () {
       final parsed = parseProviderQueueJsonText(
@@ -893,4 +896,117 @@ void main() {
       },
     );
   });
+}
+
+void _bootScopeTests() {
+  group('boot scope resolution (IT-33..36)', () {
+    late Directory tmp;
+    setUp(() => tmp = Directory.systemTemp.createTempSync('fahqueue'));
+    tearDown(() => tmp.deleteSync(recursive: true));
+
+    test('project .fah/config.yaml wins over user; env wins over both', () {
+      final project = Directory('${tmp.path}/proj')..createSync();
+      Directory('${project.path}/.fah').createSync();
+      File('${project.path}/.fah/config.yaml').writeAsStringSync(
+        'providersQueue:\n'
+        '  - provider_type: anthropic\n'
+        '    provider_config: {model: pm, apiKeyEnv: K1_API_KEY}\n',
+      );
+      final home = Directory('${tmp.path}/home')..createSync();
+      Directory('${home.path}/.fah').createSync();
+      File('${home.path}/.fah/config.yaml').writeAsStringSync(
+        'providersQueue:\n'
+        '  - provider_type: anthropic\n'
+        '    provider_config: {model: um, apiKeyEnv: K2_API_KEY}\n',
+      );
+      var r = resolveProviderQueueAtBoot(
+        projectDir: project.path,
+        homeDir: home.path,
+        env: const {},
+      );
+      expect(r.scope, ProviderQueueScope.project);
+      expect(r.entries.single.model, 'pm');
+      expect(r.notices, hasLength(2), reason: 'winner note + shadowed note');
+
+      r = resolveProviderQueueAtBoot(
+        projectDir: project.path,
+        homeDir: home.path,
+        env: {
+          'FA_PROVIDERS_QUEUE': jsonEncode([
+            {
+              'provider_type': 'anthropic',
+              'provider_config': {'model': 'em', 'apiKeyEnv': 'K3_API_KEY'},
+            },
+          ]),
+        },
+      );
+      expect(r.scope, ProviderQueueScope.env);
+      expect(r.entries.single.model, 'em');
+    });
+
+    test(
+      'absent files and sections are not present; no queue = no notices',
+      () {
+        final r = resolveProviderQueueAtBoot(
+          projectDir: tmp.path,
+          homeDir: tmp.path,
+          env: const {},
+        );
+        expect(r.entries, isEmpty);
+        expect(r.notices, isEmpty);
+      },
+    );
+
+    test(
+      'present-but-invalid section is a hard boot error naming the file',
+      () {
+        Directory('${tmp.path}/.fah').createSync();
+        File(
+          '${tmp.path}/.fah/config.yaml',
+        ).writeAsStringSync('providersQueue: [nope\n');
+        expect(
+          () => resolveProviderQueueAtBoot(
+            projectDir: tmp.path,
+            homeDir: tmp.path,
+            env: const {},
+          ),
+          throwsA(isA<ConfigException>()),
+        );
+      },
+    );
+
+    test('collectQueueSecrets: env wins, secure store backs up', () async {
+      final store = _FakeStore({'K_STORED': 'stored-value'});
+      final keys = SecureKeyCache(store);
+      await keys.preload(const {'K_ENV', 'K_STORED', 'K_MISSING'});
+      final entries = [
+        _entry('anthropic', 'a', apiKeyEnv: 'K_ENV'),
+        _entry('anthropic', 'b', apiKeyEnv: 'K_STORED'),
+        _entry('anthropic', 'c', apiKeyEnv: 'K_MISSING'),
+      ];
+      final secrets = collectQueueSecrets(
+        entries,
+        keys,
+        env: {'K_ENV': 'env-value'},
+      );
+      expect(secrets['K_ENV'], 'env-value');
+      expect(secrets['K_STORED'], 'stored-value');
+      expect(secrets.containsKey('K_MISSING'), isFalse);
+    });
+  });
+}
+
+final class _FakeStore implements SecureKeyStore {
+  _FakeStore(this._values);
+  final Map<String, String> _values;
+  @override
+  String get label => 'test store';
+  @override
+  Future<bool> isAvailable() async => true;
+  @override
+  Future<String?> read(String name) async => _values[name];
+  @override
+  Future<void> write(String name, String value) async => _values[name] = value;
+  @override
+  Future<void> delete(String name) async => _values.remove(name);
 }

@@ -47,6 +47,7 @@ final class AgentCliConfig {
     this.approvalMode = ApprovalMode.yolo,
     this.alwaysAllowTools = const {},
     this.modelRolesResolver,
+    this.providersQueueRuntime,
     this.ttsr,
     this.memoryConfig,
     this.redactionPipeline,
@@ -315,6 +316,13 @@ final class AgentCliConfig {
   /// had no `roles:` section (auxiliary roles resolve lazily; the default
   /// chain stays untouched).
   ModelRolesResolver? modelRolesResolver;
+
+  /// The provider-queue runtime (issue #418): when set, the default role
+  /// resolves through the queue's stream function — sticky cursor, loud
+  /// failover on provider death. Wins over the roles resolver's default
+  /// chain; auxiliary roles (smol/slow/plan) keep resolving independently.
+  /// Mutable for the same live-override reasons as [modelRolesResolver].
+  ProviderQueueRuntime? providersQueueRuntime;
 
   /// Optional TTSR configuration (stream rules from the CLI config and the
   /// project rules file). When set and enabled, a [TtsrController] watches
