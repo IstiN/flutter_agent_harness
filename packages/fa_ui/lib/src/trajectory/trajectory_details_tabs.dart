@@ -12,6 +12,7 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 
 import '../chat/markdown_style.dart';
 import 'trajectory_strings.dart';
+import '../theme/app_theme.dart' show FahColors;
 
 /// Content length above which a details page collapses behind a size label
 /// and an expander instead of building the full widget tree (E7:
@@ -58,24 +59,53 @@ class TrajectoryDetailsTab {
 List<TrajectoryDetailsTab> trajectoryDetailTabs(
   TrajectoryRecord record,
   TrajectorySnapshot? snapshot,
-  TrajectoryStrings strings,
-) {
+  TrajectoryStrings strings, {
+  Future<List<TrajectoryHiddenRecordPreview>> Function(
+    TrajectoryCompactedRecord record,
+  )?
+  resolveHiddenRecords,
+}) {
   switch (record) {
     case TrajectorySystemRecord():
+      final blobs = snapshot?.blobs;
+      final promptBlob = record.systemPromptHash == null
+          ? null
+          : blobs?.systemPrompts[record.systemPromptHash];
+      final prevPromptBlob = record.previousSystemPromptHash == null
+          ? null
+          : blobs?.systemPrompts[record.previousSystemPromptHash];
+      final manifestBlob = record.toolManifestHash == null
+          ? null
+          : blobs?.toolManifests[record.toolManifestHash];
+      final prevManifestBlob = record.previousToolManifestHash == null
+          ? null
+          : blobs?.toolManifests[record.previousToolManifestHash];
       return [
         TrajectoryDetailsTab(
           id: 'system-prompt',
           label: strings.tabSystemPrompt,
           build: (context) => _TabPage(
             strings: strings,
-            copyText: record.detail,
-            child: record.detail == null
-                ? _mutedPage(strings.recordSystemPromptMissing)
-                : _bounded(
-                    context,
-                    record.detail!,
-                    (context, text) => _markdownPage(context, text),
-                  ),
+            copyText: promptBlob?.text ?? record.detail,
+            child: promptBlob == null
+                ? (record.detail == null
+                      ? _mutedPage(strings.recordSystemPromptMissing)
+                      : _bounded(
+                          context,
+                          record.detail!,
+                          (context, text) => _markdownPage(context, text),
+                        ))
+                : (prevPromptBlob == null
+                      ? _bounded(
+                          context,
+                          promptBlob.text,
+                          (context, text) => _markdownPage(context, text),
+                        )
+                      : _diffPage(
+                          context,
+                          prevPromptBlob.text,
+                          promptBlob.text,
+                        )),
           ),
         ),
         TrajectoryDetailsTab(
@@ -83,7 +113,22 @@ List<TrajectoryDetailsTab> trajectoryDetailTabs(
           label: strings.tabTools,
           build: (context) => _TabPage(
             strings: strings,
-            child: _mutedPage(strings.recordToolsMissing),
+            copyText: manifestBlob == null ? null : _manifestCopy(manifestBlob),
+            child: manifestBlob == null
+                ? (record.activeToolNames == null ||
+                          record.activeToolNames!.isEmpty
+                      ? _mutedPage(strings.recordToolsMissing)
+                      : _bounded(
+                          context,
+                          record.activeToolNames!.join('\n'),
+                          _textPage,
+                        ))
+                : _manifestPage(
+                    context,
+                    manifestBlob,
+                    prevManifestBlob,
+                    strings,
+                  ),
           ),
         ),
       ];
@@ -98,6 +143,17 @@ List<TrajectoryDetailsTab> trajectoryDetailTabs(
               strings: strings,
               copyText: record.summary,
               child: _bounded(context, record.summary, _textPage),
+            ),
+          ),
+        if (record.hiddenRecordIds != null && resolveHiddenRecords != null)
+          TrajectoryDetailsTab(
+            id: 'hidden',
+            label: strings.tabHiddenRecords,
+            build: (context) => _hiddenRecordsPage(
+              context,
+              record,
+              resolveHiddenRecords,
+              strings,
             ),
           ),
       ];
@@ -370,6 +426,13 @@ Widget _requestPage(
     copyText: _requestSummaryText(detail, strings),
     child: _listPage([
       _DetailRow(strings.requestMessages, '${detail.messageCount}'),
+      // Issue #385 F1/F2/F5 pointers: the exact blob versions this
+      // request referenced (resolve through the snapshot's blob table in
+      // the System-prompt/Tools tabs). Old sessions show none (E6).
+      if (detail.systemPromptHash != null)
+        _DetailRow(strings.requestPromptHash, detail.systemPromptHash!),
+      if (detail.toolManifestHash != null)
+        _DetailRow(strings.requestManifestHash, detail.toolManifestHash!),
       if (detail.systemPromptChars > 0)
         _DetailRow(
           strings.requestSystemPrompt,
@@ -403,6 +466,23 @@ Widget _requestPage(
             color: Theme.of(context).colorScheme.onSurfaceVariant,
           ),
         ),
+        // Issue #385 F3 drill-in: the message's block structure in model
+        // order — bounded full texts and `[image WxH]` markers. Absent
+        // for old sessions (E6): the preview above renders alone.
+        for (final block in message.blocks)
+          Padding(
+            padding: const EdgeInsets.only(left: 12, bottom: 2),
+            child: Text(
+              block.imageMarker != null
+                  ? '${block.type} · ${block.imageMarker}'
+                  : '${block.type} · ${strings.unitChars(block.chars)}'
+                        '${block.truncated ? ' · ⋯' : ''}\n'
+                        '${block.text}',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
       ],
     ]),
   );
@@ -483,11 +563,12 @@ Widget _schemaPage(
   } on FormatException {
     decoded = null;
   }
-  if (decoded is! Map)
+  if (decoded is! Map) {
     return _TabPage(
       strings: strings,
       child: _mutedPage(strings.recordSchemaUnavailable),
     );
+  }
   final name = decoded['name'];
   final description = decoded['description'];
   final parameters = decoded['parameters'];
@@ -513,6 +594,116 @@ Widget _schemaPage(
             : const JsonEncoder.withIndent('  ').convert(parameters),
       ),
     ]),
+  );
+}
+
+/// Plain-text rendering of a tool manifest for the copy button.
+String _manifestCopy(TrajectoryToolManifestBlob blob) => [
+  for (final tool in blob.tools)
+    [
+      '## ${tool.name}',
+      if (tool.description.isNotEmpty) tool.description,
+      if (tool.schemaJson.isNotEmpty) tool.schemaJson,
+    ].join('\n'),
+].join('\n\n');
+
+/// The full tool manifest (F2): per-tool name, description, and schema;
+/// with a previous version available, an added/removed tool count heads
+/// the page.
+Widget _manifestPage(
+  BuildContext context,
+  TrajectoryToolManifestBlob blob,
+  TrajectoryToolManifestBlob? previous,
+  TrajectoryStrings strings,
+) {
+  final children = <Widget>[];
+  if (previous != null) {
+    final before = previous.tools.map((t) => t.name).toSet();
+    final after = blob.tools.map((t) => t.name).toSet();
+    final added = after.difference(before).length;
+    final removed = before.difference(after).length;
+    if (added > 0 || removed > 0) {
+      children.add(
+        Text(
+          strings.toolManifestChanged(added, removed),
+          style: TextStyle(fontSize: 12, color: FahColors.of(context).dim),
+        ),
+      );
+    }
+  }
+  for (final tool in blob.tools) {
+    children.add(
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(tool.name, style: Theme.of(context).textTheme.titleMedium),
+          if (tool.description.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(tool.description),
+            ),
+          if (tool.schemaJson.isNotEmpty) ...[
+            Padding(
+              padding: const EdgeInsets.only(top: 8, bottom: 2),
+              child: Text(strings.recordParameters, style: _headingStyle),
+            ),
+            _jsonText(context, tool.schemaJson),
+          ],
+        ],
+      ),
+    );
+  }
+  return _listPage(children);
+}
+
+/// Hidden-range drill-in (F4): resolves the covered records through the
+/// host and lists bounded previews. A resolution failure renders an
+/// explicit error row — never fabricated content.
+Widget _hiddenRecordsPage(
+  BuildContext context,
+  TrajectoryCompactedRecord record,
+  Future<List<TrajectoryHiddenRecordPreview>> Function(
+    TrajectoryCompactedRecord record,
+  )
+  resolve,
+  TrajectoryStrings strings,
+) {
+  return FutureBuilder<List<TrajectoryHiddenRecordPreview>>(
+    future: resolve(record),
+    builder: (context, snapshot) {
+      final previews = snapshot.data;
+      if (snapshot.connectionState != ConnectionState.done) {
+        return _listPage([
+          Text(strings.hiddenRecordsLoading, style: _headingStyle),
+        ]);
+      }
+      if (previews == null) {
+        return _mutedPage(strings.hiddenRecordsUnavailable);
+      }
+      return _listPage([
+        Text(strings.hiddenRecordsCount(previews.length), style: _headingStyle),
+        for (final preview in previews)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${preview.type} · ${preview.id}',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: FahColors.of(context).dim,
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(preview.preview),
+                ),
+              ],
+            ),
+          ),
+      ]);
+    },
   );
 }
 

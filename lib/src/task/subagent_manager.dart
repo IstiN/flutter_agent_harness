@@ -62,7 +62,15 @@ final class SubagentManager {
     this.selfId = 'main',
     this.maxPendingMessages = 16,
     this.maxReplyChars = 8000,
+    this.clock = _systemUtcClock,
   });
+
+  /// The manager's clock, stamped into `createdAt`/`lastActivity`.
+  /// Injectable so tests drive spawn ages and stall windows
+  /// deterministically (issue #383 heartbeat).
+  final DateTime Function() clock;
+
+  static DateTime _systemUtcClock() => DateTime.now().toUtc();
 
   /// The parent session id (used to derive child session paths).
   final String parentSessionId;
@@ -213,7 +221,7 @@ final class SubagentManager {
     required String task,
     String context = '',
   }) async {
-    final now = DateTime.now().toUtc().toIso8601String();
+    final now = clock().toIso8601String();
     final handle = SubagentHandle(
       id: id,
       name: name,
@@ -261,7 +269,7 @@ final class SubagentManager {
     if (modelId != null) handle.modelId = modelId;
     if (error != null) handle.error = error;
     if (clearError) handle.error = null;
-    handle.lastActivity = DateTime.now().toUtc().toIso8601String();
+    handle.lastActivity = clock().toIso8601String();
     _emit(handle);
     _persist();
   }
@@ -434,7 +442,7 @@ final class SubagentManager {
 
   /// Shared bookkeeping after a message is accepted for [handle].
   void _touchWithMessage(SubagentHandle handle, SubagentMessage message) {
-    handle.lastActivity = DateTime.now().toUtc().toIso8601String();
+    handle.lastActivity = clock().toIso8601String();
     _events.add(SubagentEvent(handle: handle, message: message));
     _persist();
   }
@@ -463,6 +471,20 @@ final class SubagentManager {
     return drained;
   }
 
+  /// In-flight liveness touch (issue #383 heartbeat): the executor calls
+  /// this when the child proves provider-side life — a completed assistant
+  /// response — stamping [SubagentHandle.lastActivity] and the running
+  /// turn's usage snapshot. Deliberately in-memory only: the registry
+  /// snapshot is not rewritten per provider turn (a write storm for a
+  /// freshness signal the next real update refreshes anyway).
+  void touch(String id, {required int tokens, required int requests}) {
+    final handle = _handles[id];
+    if (handle == null) return;
+    handle.lastActivity = clock().toIso8601String();
+    handle.liveTokens = tokens;
+    handle.liveRequests = requests;
+  }
+
   /// Counts the unread inbox messages of [id] (0 without a fabric) — the
   /// `mail:N` indicator in the agents panel.
   Future<int> pendingInboxCount(String id) async =>
@@ -480,7 +502,7 @@ final class SubagentManager {
     handle.lastReply = text.length > maxReplyChars
         ? '${text.substring(0, maxReplyChars)}…[truncated]'
         : text;
-    handle.lastActivity = DateTime.now().toUtc().toIso8601String();
+    handle.lastActivity = clock().toIso8601String();
     _events.add(SubagentEvent(handle: handle));
     _persist();
   }
@@ -493,7 +515,7 @@ final class SubagentManager {
     final handle = _handles[id];
     if (handle == null) return;
     handle.sessionId = sessionPath;
-    handle.lastActivity = DateTime.now().toUtc().toIso8601String();
+    handle.lastActivity = clock().toIso8601String();
     _events.add(SubagentEvent(handle: handle));
     _persist();
   }

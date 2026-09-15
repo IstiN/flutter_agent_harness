@@ -625,8 +625,9 @@ class AgentService extends ChangeNotifier
       ...builtinTools(
         toolEnv,
         webSearch: isOnDevice ? null : webSearchConfig,
-        model: () => _agent.state.model,
         shellJobs: _shellJobs,
+        onPasswordPrompt:
+            (prompt) async => passwordPromptHandler?.call(prompt),
         // Self-configuration on every host (issue #29 S5/AC10/AC11): the
         // same core the `fa config` CLI verbs wrap, over THIS host's env —
         // desktop container, browser storage, or mobile sandbox. Hosts
@@ -1000,6 +1001,9 @@ class AgentService extends ChangeNotifier
   /// the safe headless default.
   @override
   RequestSecretCallback? secretRequestHandler;
+
+  @override
+  PasswordPromptCallback? passwordPromptHandler;
 
   /// Jump-to-message executor installed by the scrolling chat surface
   /// (issue #102 AC5: the ✦ sheet scrolls a widget's message into view).
@@ -1787,6 +1791,37 @@ class AgentService extends ChangeNotifier
   int? get historyAboveCount => _historyAboveCount;
   int? _historyAboveCount;
 
+  /// Hidden-range drill-in (issue #385 F4): resolves a compacted row's
+  /// covered records straight from the session file via the windowed
+  /// chunk reader — bounded previews, missing ids render as explicit
+  /// "not captured" placeholders. Full-open sessions have no hidden
+  /// range, so they expose no resolver (the tab stays hidden).
+  @override
+  Future<List<TrajectoryHiddenRecordPreview>> Function(
+    TrajectoryCompactedRecord record,
+  )?
+  get resolveHiddenRecords {
+    final reader = _windowed?.reader;
+    if (reader == null) return null;
+    return (record) async {
+      final ids = record.hiddenRecordIds ?? const <String>[];
+      if (ids.isEmpty) return const [];
+      try {
+        final resolved = await reader.readRecordsByIds(ids.toSet());
+        return projectHiddenRecordPreviews(recordIds: ids, resolved: resolved);
+      } on Object {
+        return [
+          for (final id in ids)
+            TrajectoryHiddenRecordPreview(
+              id: id,
+              type: 'missing',
+              preview: '[hidden: not captured for this session]',
+            ),
+        ];
+      }
+    };
+  }
+
   bool _loadingHistory = false;
 
   /// Whether a history page ([FaChatService.loadOlderHistory] or
@@ -2071,9 +2106,29 @@ class AgentService extends ChangeNotifier
   /// never land in the new session's state.
   int _loadGeneration = 0;
 
-  /// Request summaries captured live (ModelRequestEvent) but not yet
-  /// written; flushed at the head of every [_persistUnchecked] pass.
-  final List<TrajectoryRequestDetail> _pendingRequestSummaries = [];
+  /// Outbound-request capture records (issue #385: unseen prompt/manifest
+  /// blobs, wire dumps, then the request summary) buffered by
+  /// [AgentServiceEvents._persistModelRequest] until the next persist pass.
+  final List<({String customType, Map<String, dynamic> data})>
+  _pendingRequestRecords = [];
+
+  /// Per-session blob persister (dedup sets); recreated when the session
+  /// changes. Redaction uses the service's active pipeline — each wire
+  /// dump is redacted under the config active at capture time (E1).
+  TrajectoryBlobPersister? _trajectoryBlobPersister;
+  Session? _trajectoryBlobPersisterSession;
+
+  TrajectoryBlobPersister _trajectoryBlobPersisterFor() {
+    final session = _session;
+    if (_trajectoryBlobPersister == null ||
+        _trajectoryBlobPersisterSession != session) {
+      _trajectoryBlobPersister = TrajectoryBlobPersister(
+        redactText: _redactionPipeline?.redact,
+      );
+      _trajectoryBlobPersisterSession = session;
+    }
+    return _trajectoryBlobPersister!;
+  }
 
   /// The producer behind [trajectory]: rebuilt from the active branch on
   /// session open/switch, mirrored live from agent events, and fed the
@@ -2748,19 +2803,18 @@ class AgentService extends ChangeNotifier
     }
   }
 
-  /// Writes every buffered request summary as a context-omitted
-  /// CustomRecord. // ponytail: N buffered summaries flush as one batch —
-  /// the replay walk keys by chain position, so a throttled multi-request
-  /// burst can coalesce onto one step; per-request keys if that matters.
+  /// Writes every buffered request-capture record as context-omitted
+  /// CustomRecords, in chain order (blobs first, summary last — the replay
+  /// walk expects the summary as the step's predecessor). // ponytail: N
+  /// buffered requests flush as one batch — the replay walk keys by chain
+  /// position, so a throttled multi-request burst can coalesce onto one
+  /// step; per-request keys if that matters.
   Future<void> _flushRequestSummaries(Session session) async {
-    if (_pendingRequestSummaries.isEmpty) return;
-    final pending = List.of(_pendingRequestSummaries);
-    _pendingRequestSummaries.clear();
-    for (final detail in pending) {
-      await session.appendCustomEntry(
-        customType: 'model_request_summary',
-        data: detail.toJson(),
-      );
+    if (_pendingRequestRecords.isEmpty) return;
+    final pending = List.of(_pendingRequestRecords);
+    _pendingRequestRecords.clear();
+    for (final (:customType, :data) in pending) {
+      await session.appendCustomEntry(customType: customType, data: data);
     }
   }
 

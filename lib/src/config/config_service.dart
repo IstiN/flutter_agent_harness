@@ -42,6 +42,7 @@ import '../power_config.dart';
 import '../model_roles/model_roles.dart';
 import '../redact/redaction_types.dart';
 import '../tools/availability.dart';
+import '../task/subagent_heartbeat.dart';
 import '../ttsr/ttsr.dart';
 
 /// Sections the PROJECT file participates in (each wins over the user file).
@@ -76,6 +77,7 @@ const configTopLevelKeys = <String>{
   'agent',
   'images',
   'skills',
+  'subagents',
   'fabric',
   'power',
   'tui',
@@ -402,7 +404,7 @@ final class ConfigService {
     // A JSON array/object value renders as a yaml block (list-valued keys
     // — `customProviders`, the `roles:` chains, `redact:` lists); any
     // other value is the single scalar line `upsertYamlPath` always wrote.
-    final leafLines = _leafLines(value, depth: segments.length - 1);
+    final leafLines = configLeafLines(value, depth: segments.length - 1);
     final edited = upsertYamlPath(text, segments, leafLines);
     // New or previously newline-less files still end with a newline.
     final normalized = edited.isEmpty || edited.endsWith('\n')
@@ -738,12 +740,15 @@ int _findKeyLine(
 }
 
 /// Whether a single [leafLines] entry may ride the `key: value` line.
-/// A rendered block entry (a `- item` sequence line, or a map entry
-/// carrying its own indent) must go under a bare `key:` line — gluing it
-/// inline produced invalid yaml for one-element lists/maps.
+/// A rendered block entry (a `- item` sequence line — dash SPACE, the
+/// yaml sequence indicator — or a bare `-`) must go under a bare `key:`
+/// line — gluing it inline produced invalid yaml for one-element
+/// lists/maps. A negative number scalar (`-1`) is NOT an entry: the
+/// plain `startsWith('-')` check corrupted every nested scalar upsert
+/// with a negative value (issue #393 retry knobs).
 bool _inlineSafeLine(String line) {
   final trimmed = line.trim();
-  if (trimmed.startsWith('-')) return false;
+  if (trimmed.startsWith('- ') || trimmed == '-') return false;
   // An indented line is a block map entry; flow-empties stay inline-safe.
   if (line != trimmed) return false;
   return true;
@@ -830,11 +835,12 @@ int _blockEnd(List<String> lines, int keyLine, int depth) {
   return end;
 }
 
-/// The leaf value lines for a `config set` value: a JSON array/object
-/// renders as a yaml block under the key (list-valued keys —
-/// `customProviders`, the `roles:` chains, `redact:` lists); anything
-/// else stays the single scalar line `renderYamlScalar` always wrote.
-List<String> _leafLines(String value, {required int depth}) {
+/// The leaf value lines for a config value: a JSON array/object renders
+/// as a yaml block under the key (list-valued keys — `customProviders`,
+/// the `roles:` chains, `redact:` lists); anything else stays the single
+/// scalar line `renderYamlScalar` always wrote. Shared by `config set`
+/// and the settings flows' surgical upsert.
+List<String> configLeafLines(String value, {required int depth}) {
   final raw = value.trim();
   if (!raw.startsWith('[') && !raw.startsWith('{')) {
     return [renderYamlScalar(value)];
@@ -944,11 +950,44 @@ String applicationNote(String section) => switch (section) {
   'mcp' => 'applies live after /mcp reload',
   'cube' => 'applies live via /cube reload, otherwise at next boot',
   'compaction' => 'applies at the next compaction (session override: flag)',
+  'ttsr' =>
+    'rule edits apply live when the stream-rule engine is running, '
+        'otherwise at next boot (issue #392)',
+  // Issue #395: the flow republishes the process-wide registry global on
+  // every write, so the request build picks the change up immediately.
+  'images' => 'applies to the next request build',
+  // Issue #397: the flow re-arms the session's sleep-prevention
+  // assertion from the saved section on every write (hosts with a power
+  // runner; without one there is no assertion to re-arm at all).
+  'power' =>
+    'applies live — the session re-arms its sleep-prevention assertion '
+        'from the saved file',
   // Issue #279: the session theme switches live on write (`/theme` runs
   // the same persist + switch flow); a hand-edit applies at next boot.
   'tui' => 'applies live via /theme, otherwise at next boot',
+  // Issue #394: the boot-built Agent keeps the cap it was constructed
+  // with (the loop's over-window guard reads its config field); the
+  // running session never re-reads the yaml.
+  'agent' => 'applies at next boot — the running session keeps its boot cap',
   _ => 'applies at next boot',
 };
+
+/// The strict `redact:` section validator, shared by `check`, `set` and
+/// the settings flow (issue #391). [RedactionConfig.fromYaml] is tolerant
+/// for booleans and numbers, but an invalid allowlist regex throws a bare
+/// FormatException mid-parse — wrapped here so every caller surfaces the
+/// parser's verbatim message as a [ConfigException] instead of crashing
+/// (a `config set redact.allowlist` used to escape the diagnostics pass
+/// uncaught).
+void validateRedactSection(Object? value) {
+  try {
+    RedactionConfig.fromYaml(value is Map<dynamic, dynamic> ? value : null);
+  } on ConfigException {
+    rethrow;
+  } on Object catch (error) {
+    throw ConfigException(error.toString());
+  }
+}
 
 /// Collects diagnostics for one config file: syntax errors, unknown keys
 /// (warnings), strict-section schema errors and bad scalars (errors).
@@ -1053,9 +1092,9 @@ bool _validateTopLevelEntry(
 final _sectionValidators = <String, void Function(dynamic value, String label)>{
   'memory': (value, _) => MemoryConfig.fromYaml(value),
   'cube': (value, _) => CubeSettings.fromYaml(value),
-  'tools': (value, _) => ToolsConfig.fromYaml(value),
   'mcp': (value, _) => McpConfig.fromYaml(value),
-  'redact': (value, _) => RedactionConfig.fromYaml(value),
+  'redact': (value, _) => validateRedactSection(value),
+  'tools': (value, _) => ToolsConfig.fromYaml(value),
   'compaction': (value, label) =>
       CompactionEngine.fromSection(value, label: label),
   'models': (value, _) => ModelsConfig.fromYaml(value),
@@ -1064,13 +1103,17 @@ final _sectionValidators = <String, void Function(dynamic value, String label)>{
   'images': (value, _) => _validateImagesSection(value),
   'a2a': (value, _) => A2aConfig.fromYaml(value, (name) => '\${$name}'),
   'fabric': (value, _) => FabricConfig.fromYaml(value),
-  'providerTimeouts': (value, _) => _validateProviderTimeouts(value),
-  'agent': (value, _) => _validateAgentSection(value),
+  'providerTimeouts': (value, _) => validateProviderTimeoutsSection(value),
+  'agent': (value, _) => validateAgentSection(value),
   'skills': (value, _) => _validateSkillsSection(value),
   // The power section (sleep prevention, issue #325) delegates to the
   // SAME public strict parser CliConfig.fromYaml uses — no mirror to
   // keep in sync, unlike the private-parser sections above.
   'power': (value, _) => parsePowerSection(value),
+  // The subagents section (background-subagent heartbeat, issue #383)
+  // delegates to the SAME public strict parser CliConfig.fromYaml uses —
+  // no mirror to keep in sync.
+  'subagents': (value, _) => SubagentsConfig.fromYaml(value),
   // Deep validation (strict prompt names) lives behind cli_config.dart's
   // strict parser; here the section must be a string-valued map.
   'prompts': (value, _) => _validateStringMap(value, 'prompts'),
@@ -1085,7 +1128,8 @@ void _validateTuiSection(Object? node, String label) {
     throw ConfigException('$label: tui section must be a map');
   }
   final unknown = [
-    for (final key in node.keys) if (!{'theme'}.contains('$key')) '$key',
+    for (final key in node.keys)
+      if (!{'theme'}.contains('$key')) '$key',
   ];
   if (unknown.isNotEmpty) {
     throw ConfigException(
@@ -1107,8 +1151,10 @@ void _validateCustomProviders(Object? node) {
   }
 }
 
-/// Mirrors the strict private parser in `cli_config.dart` (pinned by test).
-void _validateProviderTimeouts(Object? node) {
+/// The strict `providerTimeouts:` section validator (mirrors the public
+/// parser `parseProviderTimeouts` in `cli_config.dart`; pinned by test).
+/// Shared by `check`, `set` and the settings flow (issue #393).
+void validateProviderTimeoutsSection(Object? node) {
   if (node is! YamlMap) {
     throw ConfigException('must be a map, got: $node');
   }
@@ -1126,10 +1172,12 @@ void _validateProviderTimeouts(Object? node) {
   }
 }
 
-/// Mirrors the strict private parser in `cli_config.dart` (pinned by
-/// test): the `agent:` section takes exactly `contextWindowCap`, a
-/// positive integer at or above the compaction reserve (issue #273).
-void _validateAgentSection(Object? node) {
+/// The strict `agent:` section validator, shared by `check`, `set` and
+/// the settings flow (issue #394). Mirrors the private boot parser in
+/// `cli_config.dart` (pinned by test): the section takes exactly
+/// `contextWindowCap`, a positive integer at or above the compaction
+/// reserve — a cap below 16384 must never soften that floor.
+void validateAgentSection(Object? node) {
   if (node is! YamlMap) {
     throw ConfigException('must be a map, got: $node');
   }

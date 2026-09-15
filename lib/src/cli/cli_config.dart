@@ -28,11 +28,14 @@ import '../power_config.dart';
 import '../ttsr/ttsr.dart';
 import '../tools/availability.dart';
 import 'custom_providers.dart';
+import '../task/subagent_heartbeat.dart';
 
 /// Parses the `providerTimeouts:` section: provider watchdog overrides
 /// (see [ProviderTimeoutsOverride]). Strict — a bad schema throws
-/// [ConfigException] instead of silently keeping the defaults.
-ProviderTimeoutsOverride? _parseProviderTimeouts(Object? node) {
+/// [ConfigException] instead of silently keeping the defaults. Public so
+/// the settings-hub resilience flow (issue #393) reloads the saved
+/// section with the SAME parser boot uses.
+ProviderTimeoutsOverride? parseProviderTimeouts(Object? node) {
   if (node == null) return null;
   if (node is! YamlMap) {
     throw ConfigException('providerTimeouts must be a map, got: $node');
@@ -69,6 +72,28 @@ ProviderTimeoutsOverride? _parseProviderTimeouts(Object? node) {
 /// The cap must stay at or above the compaction reserve (16384 tokens):
 /// the compaction trigger is `window - reserve`, and a smaller cap would
 /// drive that threshold negative.
+/// Parses the `trajectory:` section (issue #385): today only the
+/// `wireDump` boolean. Unknown keys are strict errors (a typo must never
+/// silently skip the opt-in).
+bool _parseTrajectorySection(Object? node) {
+  if (node == null) return false;
+  if (node is! YamlMap) {
+    throw ConfigException('trajectory must be a map, got: $node');
+  }
+  var wireDump = false;
+  for (final key in node.keys) {
+    if (key != 'wireDump') {
+      throw ConfigException('unknown "trajectory" key: $key');
+    }
+    final value = node[key];
+    if (value is! bool) {
+      throw ConfigException('"trajectory.wireDump" must be a boolean');
+    }
+    wireDump = value;
+  }
+  return wireDump;
+}
+
 int? _parseAgentSection(Object? node) {
   if (node == null) return null;
   if (node is! YamlMap) {
@@ -107,8 +132,9 @@ bool _isGhostProviderEntry(Object? node) =>
 /// Parses the `images:` section (session image registry, issue #171):
 /// `registry` (kill switch) and `maxPerRequest` (per-request unique-image
 /// cap). Strict — a bad schema throws [ConfigException] instead of
-/// silently keeping the defaults.
-ImageRegistryConfig? _parseImagesSection(Object? node) {
+/// silently keeping the defaults. Public so the settings flow's
+/// reload-after-write (issue #395) reuses the same parser the boot runs.
+ImageRegistryConfig? parseImagesSection(Object? node) {
   if (node == null) return null;
   if (node is! YamlMap) {
     throw ConfigException('images must be a map, got: $node');
@@ -173,8 +199,10 @@ final class CliConfig {
     this.tools,
     this.redact,
     this.compactionEngine,
+    this.wireDump = false,
     this.images,
     this.contextWindowCap,
+    this.subagents = const SubagentsConfig(),
     this.powerSleepPrevention,
     this.powerHold,
     this.tuiTheme,
@@ -258,19 +286,25 @@ final class CliConfig {
             ),
       // The providerTimeouts section (provider watchdog overrides) is strict
       // too.
-      providerTimeouts: _parseProviderTimeouts(map['providerTimeouts']),
+      providerTimeouts: parseProviderTimeouts(map['providerTimeouts']),
       // The compaction section (engine selector, issue #148) is strict: a
       // typo throws instead of silently running the classic engine.
       compactionEngine: CompactionEngine.fromSection(
         map['compaction'],
         label: '~/.fah/config.yaml',
       ),
-      images: _parseImagesSection(map['images']),
+      // The trajectory section (issue #385) is a plain boolean today:
+      // `wireDump` opts the raw outbound payloads into the session ledger.
+      wireDump: _parseTrajectorySection(map['trajectory']),
+      images: parseImagesSection(map['images']),
       powerSleepPrevention: powerSection.sleepPrevention,
       powerHold: powerSection.hold,
       // The agent section (owner-side context cap, issue #273) is strict
       // too.
       contextWindowCap: _parseAgentSection(map['agent']),
+      // The subagents section (background-subagent heartbeat, issue #383)
+      // is strict too; 0 disables the respective mechanism.
+      subagents: SubagentsConfig.fromYaml(map['subagents']),
       // The fabric section (issue #27 phase 2 discovery announcements) is
       // strict too.
       fabric: map['fabric'] == null
@@ -415,6 +449,12 @@ final class CliConfig {
   /// the effective engine resolves global < project < runtime.
   final CompactionEngine? compactionEngine;
 
+  /// Optional `trajectory:` section (issue #385) — `wireDump: true` opts
+  /// the raw outbound request payloads into the session ledger as
+  /// redacted, capped `trajectory_wire_dump` records. Default false:
+  /// payloads are never persisted unconditionally.
+  final bool wireDump;
+
   /// Optional `redact:` section — layered secret redaction. `null` means
   /// the section is absent (redaction still runs with default config; the
   /// pipeline assembly happens in the host startup, see
@@ -430,6 +470,11 @@ final class CliConfig {
   /// everywhere it is consumed (compaction thresholds, ctx meter/footer,
   /// the loop guard). `null` = uncapped (the raw model window).
   final int? contextWindowCap;
+
+  /// The `subagents:` section (issue #383): heartbeat cadence
+  /// (`heartbeatMinutes`, 0 = off) and stall threshold (`stallMinutes`,
+  /// 0 = flags off) for background-subagent status digests.
+  final SubagentsConfig subagents;
 
   /// Sleep-prevention level from the `power:` section
   /// (`power.sleepPrevention`, issue #325 — after oh-my-pi's
@@ -477,6 +522,7 @@ final class CliConfig {
       tools: tools,
       redact: redact,
       compactionEngine: compactionEngine,
+      wireDump: wireDump,
       images: images,
       contextWindowCap: contextWindowCap,
       powerSleepPrevention: powerSleepPrevention,
@@ -545,9 +591,17 @@ final class CliConfig {
     if (compactionEngine != null) {
       buffer.write('compaction:\n  engine: ${compactionEngine!.value}\n');
     }
+    if (wireDump) buffer.write('trajectory:\n  wireDump: true\n');
     if (images != null) buffer.write(_imagesYaml());
     if (contextWindowCap != null) {
       buffer.write('agent:\n  contextWindowCap: $contextWindowCap\n');
+    }
+    // The subagents heartbeat section (issue #383), only when explicitly
+    // configured; defaults are never written so the file stays minimal.
+    final subagentsConfig = subagents;
+    if (subagentsConfig.heartbeatMinutes != defaultSubagentHeartbeatMinutes ||
+        subagentsConfig.stallMinutes != defaultSubagentStallMinutes) {
+      buffer.write(subagentsConfig.toYaml());
     }
     buffer.write(_powerYaml());
     return buffer.toString();
@@ -802,6 +856,25 @@ CompactionEngine? loadProjectCompactionEngine(String projectDir) {
       doc['compaction'],
       label: '$projectDir/.fah/config.yaml',
     );
+  } on ConfigException {
+    rethrow;
+  } on Object {
+    return null;
+  }
+}
+
+/// Loads the PROJECT-level `trajectory:` section's `wireDump` flag from
+/// `<projectDir>/.fah/config.yaml` (issue #385). Null when the file or the
+/// section is absent/unreadable; a present-but-invalid section throws
+/// [ConfigException] (strict, like the user config).
+bool? loadProjectWireDump(String projectDir) {
+  final file = File('$projectDir/.fah/config.yaml');
+  if (!file.existsSync()) return null;
+  try {
+    final doc = loadYaml(file.readAsStringSync());
+    if (doc is! YamlMap) return null;
+    final node = doc['trajectory'];
+    return node == null ? null : _parseTrajectorySection(node);
   } on ConfigException {
     rethrow;
   } on Object {

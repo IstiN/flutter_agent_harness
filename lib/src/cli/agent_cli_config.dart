@@ -81,6 +81,7 @@ final class AgentCliConfig {
     this.compactionSettings,
     this.compactionEngine,
     this.contextWindowCap,
+    this.subagents = const SubagentsConfig(),
     this.cubeSpec,
     this.cubeSource,
     this.cubeSettings,
@@ -100,6 +101,7 @@ final class AgentCliConfig {
     this.agentCapabilities = const [],
     this.machineName,
     this.persistAbortedPartials = false,
+    this.wireDump = false,
   });
 
   /// The user's home directory, when the host has one (used for user-level
@@ -116,6 +118,12 @@ final class AgentCliConfig {
   /// `cancelled` HEP frame's counterpart on disk). Default false: the
   /// REPL keeps discarding incomplete streams.
   final bool persistAbortedPartials;
+
+  /// Opt-in raw wire dumps (issue #385 F5, `trajectory.wireDump` yaml,
+  /// default false): when on, the full outbound request payload is
+  /// captured per request, redacted through the active pipeline, capped,
+  /// and persisted as a `trajectory_wire_dump` session record.
+  final bool wireDump;
 
   /// Override for the compaction thresholds (ratio-based trigger, reserve
   /// and recent-token budgets). When `null`, `defaultCompactionSettings`
@@ -134,6 +142,10 @@ final class AgentCliConfig {
   /// of the effective window (compaction thresholds, ctx meter/footer).
   /// `null` = uncapped.
   final int? contextWindowCap;
+
+  /// The `subagents:` section (issue #383): heartbeat cadence and stall
+  /// threshold for background-subagent status digests.
+  final SubagentsConfig subagents;
 
   /// Live compaction-engine override set by the settings-hub Compaction
   /// flow (session scope, or after a yaml write). Wins over the

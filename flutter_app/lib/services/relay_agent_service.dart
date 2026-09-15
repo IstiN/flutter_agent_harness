@@ -91,6 +91,7 @@ final class RelayAgentService extends AgentService {
   ApprovalPrompt? _approvalHandler;
   AskCallback? _askHandler;
   RequestSecretCallback? _secretRequestHandler;
+  PasswordPromptCallback? _passwordPromptHandler;
 
   // -- FaChatService ---------------------------------------------------------
 
@@ -332,6 +333,11 @@ final class RelayAgentService extends AgentService {
   @override
   set secretRequestHandler(RequestSecretCallback? handler) =>
       _secretRequestHandler = handler;
+  @override
+  PasswordPromptCallback? get passwordPromptHandler => _passwordPromptHandler;
+  @override
+  set passwordPromptHandler(PasswordPromptCallback? handler) =>
+      _passwordPromptHandler = handler;
 
   @override
   void setApprovalMode(ApprovalMode mode) {

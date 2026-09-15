@@ -424,18 +424,18 @@ extension SettingsFlow on AgentCli {
   /// The engine menu of [_pickCompactionEngine]: one row per engine, the
   /// effective one marked `(current)` by the picker. Pure builder.
   List<FlowOption> _compactionEngineOptions() => [
-        for (final engine in const [
-          CompactionEngine.classic,
-          CompactionEngine.structured,
-        ])
-          (
-            engine.value,
-            engine == CompactionEngine.classic ? 'Classic' : 'Structured',
-            engine == CompactionEngine.classic
-                ? 'lossy prefix summary'
-                : 'judge-hide + checkpoint passes',
-          ),
-      ];
+    for (final engine in const [
+      CompactionEngine.classic,
+      CompactionEngine.structured,
+    ])
+      (
+        engine.value,
+        engine == CompactionEngine.classic ? 'Classic' : 'Structured',
+        engine == CompactionEngine.classic
+            ? 'lossy prefix summary'
+            : 'judge-hide + checkpoint passes',
+      ),
+  ];
 
   /// Step 1 of [startCompactionEngineFlow]: pick the engine (the current
   /// effective one preselected); null on cancel.
@@ -452,14 +452,12 @@ extension SettingsFlow on AgentCli {
 
   /// Step 2 of [startCompactionEngineFlow]: pick the scope the engine
   /// applies in (session = live only); null on cancel.
-  Future<String?> _pickCompactionScope() => _pickOption(
-        'compaction engine — scope',
-        [
-          ('session', 'Session', 'this session only (no file change)'),
-          ('project', 'Project', '${_env.cwd}/.fah/config.yaml'),
-          ('global', 'Global', _userConfigPath() ?? 'unavailable on this host'),
-        ],
-      );
+  Future<String?> _pickCompactionScope() =>
+      _pickOption('compaction engine — scope', [
+        ('session', 'Session', 'this session only (no file change)'),
+        ('project', 'Project', '${_env.cwd}/.fah/config.yaml'),
+        ('global', 'Global', _userConfigPath() ?? 'unavailable on this host'),
+      ]);
 
   /// Step 3 of [startCompactionEngineFlow]: apply [engine] in [scope] —
   /// `session` flips the live override only; `project`/`global` persist
@@ -493,14 +491,13 @@ extension SettingsFlow on AgentCli {
   Future<bool> _writeCompactionEngineYaml(
     CompactionEngine engine, {
     required bool projectScope,
-  }) =>
-      _upsertConfigYaml(
-        const ['compaction', 'engine'],
-        engine.value,
-        projectScope: projectScope,
-        validate: (node) =>
-            CompactionEngine.fromSection(node, label: 'settings flow'),
-      );
+  }) => _upsertConfigYaml(
+    const ['compaction', 'engine'],
+    engine.value,
+    projectScope: projectScope,
+    validate: (node) =>
+        CompactionEngine.fromSection(node, label: 'settings flow'),
+  );
 
   /// The engine the next compaction pass will use (live override wins;
   /// structured is the resolved default since #287/#295).
@@ -559,15 +556,1234 @@ extension SettingsFlow on AgentCli {
     return section?.resolveUserPath(home) ?? '$home/.fah/memory';
   }
 
-  /// Upserts [segments] → scalar [value] in the project or user config
-  /// file, validating the edited section with [validate] (the real
-  /// parser) BEFORE the write. Returns true when written; failures print
-  /// and leave the file untouched.
+  /// Settings → Stream rules (TTSR): list the `ttsr:` section's rules
+  /// (pattern, scope, enabled?) with per-rule enable/disable and delete,
+  /// plus an add-rule prompt (name, pattern, body, scope). The section is
+  /// read fresh for every action (a concurrent edit survives — E3) and
+  /// written back surgically into `~/.fah/config.yaml` — the boot-real
+  /// home of the section (project `.fah/rules.yaml` is a separate file; a
+  /// `ttsr:` block in the project config is never read for TTSR). Every
+  /// write is validated with the real [TtsrConfig] parser first (AC4).
+  /// When the session booted a live rule engine, the same rule diff is
+  /// applied to the running manager (rules are consulted per stream — no
+  /// restart); otherwise the flow says the change lands at next boot
+  /// (AC3). Loops until cancelled or done.
+  Future<void> startTtsrRulesFlow() async {
+    final path = _userConfigPath();
+    if (path == null) {
+      io.writeln('ttsr: no user config on this host — not saved');
+      return;
+    }
+    for (;;) {
+      final current = await _readTtsrSection(path);
+      if (current == null) return; // malformed/unreadable — reported
+      final picked = await _pickOption('stream rules (ttsr) — $path', [
+        for (final rule in current.rules)
+          ('rule:${rule.name}', rule.name, _ttsrRuleDescription(rule)),
+        ('add', 'Add a rule', 'name, pattern, body, scope'),
+        ('done', 'Done', ''),
+      ]);
+      if (picked == null || picked == 'done') return;
+      if (picked == 'add') {
+        await _ttsrAddAction(path);
+        continue;
+      }
+      await _ttsrRuleAction(path, picked.substring('rule:'.length));
+    }
+  }
+
+  /// The add branch: prompt for the rule, then reload-before-write so a
+  /// concurrent edit that landed while the menus sat open survives (E3).
+  Future<void> _ttsrAddAction(String path) async {
+    final rule = await _promptTtsrRule();
+    if (rule == null) return;
+    final fresh = await _readTtsrSection(path);
+    if (fresh == null) return;
+    await _writeTtsrSection(
+      path,
+      TtsrConfig(settings: fresh.settings, rules: [...fresh.rules, rule]),
+      before: fresh.rules,
+    );
+  }
+
+  /// The per-rule branch (toggle/delete) for the rule named [name]:
+  /// pick the action, reload, and write the same diff.
+  Future<void> _ttsrRuleAction(String path, String name) async {
+    final current = await _readTtsrSection(path);
+    final rule = _ttsrFindRule(current?.rules, name);
+    if (rule == null) return;
+    final action = await _pickOption('rule ${rule.name}', [
+      (
+        'toggle',
+        rule.enabled ? 'Disable' : 'Enable',
+        'persists and applies ${ttsr == null ? 'at next boot' : 'live'}',
+      ),
+      ('delete', 'Delete', 'remove from the section'),
+      ('back', 'Back', ''),
+    ]);
+    if (action != 'toggle' && action != 'delete') return;
+    final fresh = await _readTtsrSection(path);
+    if (fresh == null) return;
+    final target = _ttsrFindRule(fresh.rules, name);
+    if (target == null) {
+      io.writeln('ttsr: rule "$name" is gone from $path — not saved');
+      return;
+    }
+    if (action == 'toggle') {
+      await _ttsrToggleRule(path, fresh, target);
+    } else {
+      await _ttsrDeleteRule(path, fresh, name);
+    }
+  }
+
+  /// Persists the rule with its `enabled` flag flipped.
+  Future<void> _ttsrToggleRule(
+    String path,
+    TtsrConfig fresh,
+    TtsrRule target,
+  ) async {
+    final flipped = TtsrRule(
+      name: target.name,
+      patterns: target.patterns,
+      body: target.body,
+      path: target.path,
+      enabled: !target.enabled,
+      scope: target.scope,
+    );
+    final flippedName = flipped.name;
+    await _writeTtsrSection(
+      path,
+      TtsrConfig(
+        settings: fresh.settings,
+        rules: [
+          for (final existing in fresh.rules)
+            existing.name == flippedName ? flipped : existing,
+        ],
+      ),
+      before: fresh.rules,
+    );
+  }
+
+  /// Persists the removal of the rule named [name].
+  Future<void> _ttsrDeleteRule(
+    String path,
+    TtsrConfig fresh,
+    String name,
+  ) async {
+    await _writeTtsrSection(
+      path,
+      TtsrConfig(
+        settings: fresh.settings,
+        rules: [
+          for (final existing in fresh.rules)
+            if (existing.name != name) existing,
+        ],
+      ),
+      before: fresh.rules,
+    );
+  }
+
+  /// The rule named [name] in [rules] (last wins, matching registration
+  /// dedupe); null when the list is null or the rule is gone.
+  TtsrRule? _ttsrFindRule(List<TtsrRule>? rules, String name) {
+    if (rules == null) return null;
+    TtsrRule? found;
+    for (final candidate in rules) {
+      if (candidate.name == name) found = candidate;
+    }
+    return found;
+  }
+
+  /// Reads and parses the `ttsr:` section of [path]. An absent section
+  /// (or file) parses as defaults (E1); a malformed one reports the
+  /// parser's verbatim message and returns null — the flow never edits
+  /// from a half-parsed section and never writes over one (AC4).
+  Future<TtsrConfig?> _readTtsrSection(String path) async {
+    final String source;
+    switch (await _env.readTextFile(path)) {
+      case Ok(:final value):
+        source = value;
+      case Err(:final error) when error.code == FileErrorCode.notFound:
+        return const TtsrConfig();
+      case Err(:final error):
+        io.writeln('ttsr: cannot read $path: $error — not saved');
+        return null;
+    }
+    if (source.trim().isEmpty) return const TtsrConfig();
+    try {
+      final doc = loadYaml(source);
+      final node = doc is YamlMap ? doc['ttsr'] : null;
+      return node == null
+          ? const TtsrConfig()
+          : TtsrConfig.fromYaml(node, sourcePath: path);
+    } on Object catch (error) {
+      io.writeln('ttsr: not saved: $error');
+      return null;
+    }
+  }
+
+  /// The add-rule prompts: name, regex pattern, body, and the scope guard
+  /// (empty answer = the default text+tool scope). Cancelling any prompt
+  /// aborts the add.
+  Future<TtsrRule?> _promptTtsrRule() async {
+    final name = (await _askLine('rule name: '))?.trim() ?? '';
+    if (name.isEmpty) return null;
+    final pattern = (await _askLine('pattern (regex): '))?.trim() ?? '';
+    if (pattern.isEmpty) return null;
+    final body = (await _askLine('body: '))?.trim() ?? '';
+    if (body.isEmpty) return null;
+    final scopeAnswer =
+        (await _askLine('scope (empty = text + tool): '))?.trim() ?? '';
+    final warnings = <String>[];
+    final scope = TtsrScope.parse(
+      scopeAnswer.isEmpty ? null : scopeAnswer.split(','),
+      ruleName: name,
+      warnings: warnings,
+    );
+    for (final warning in warnings) {
+      io.writeln('[ttsr] $warning');
+    }
+    return TtsrRule(name: name, patterns: [pattern], body: body, scope: scope);
+  }
+
+  /// The surgical `ttsr:` write shared by every action: block replace in
+  /// [path] (absent block appends), validated with the real parser BEFORE
+  /// the write, then the same diff applied to the live rule engine when
+  /// one is running. Returns true when written.
+  Future<bool> _writeTtsrSection(
+    String path,
+    TtsrConfig next, {
+    required List<TtsrRule> before,
+  }) async {
+    // Implied provenance (rule.path == this file) stays implicit so a
+    // pure toggle doesn't grow the block with `path:` lines.
+    final section = TtsrConfig(
+      settings: next.settings,
+      rules: [
+        for (final rule in next.rules)
+          rule.path == path ? _withoutImpliedTtsrPath(rule) : rule,
+      ],
+    );
+    final String source;
+    switch (await _env.readTextFile(path)) {
+      case Ok(:final value):
+        source = value;
+      case Err(:final error) when error.code == FileErrorCode.notFound:
+        source = '';
+      case Err(:final error):
+        io.writeln('ttsr: cannot read $path: $error — not saved');
+        return false;
+    }
+    final edited = _replaceTopLevelYamlBlock(source, 'ttsr', section.toYaml());
+    // Never persist a file the next boot would reject.
+    final doc = loadYaml(edited);
+    final node = doc is YamlMap ? doc['ttsr'] : null;
+    try {
+      TtsrConfig.fromYaml(node, sourcePath: path);
+    } on Object catch (error) {
+      io.writeln('ttsr: not saved: $error');
+      return false;
+    }
+    if (await _env.writeFile(path, edited) is Err) {
+      io.writeln('ttsr: could not write $path');
+      return false;
+    }
+    final live = _syncLiveTtsrRules(before, section);
+    io.writeln(
+      'ttsr saved → $path '
+      '${live ? '(rule edits apply live — rules are consulted per stream)' : '(applies at next boot — no live rule engine this session)'}',
+    );
+    return true;
+  }
+
+  /// [rule] with the file-implied provenance dropped (the section already
+  /// names the file; boot re-derives it).
+  TtsrRule _withoutImpliedTtsrPath(TtsrRule rule) => TtsrRule(
+    name: rule.name,
+    patterns: rule.patterns,
+    body: rule.body,
+    enabled: rule.enabled,
+    scope: rule.scope,
+  );
+
+  /// Applies the section rule diff to the live rule engine ([ttsr]):
+  /// every rule that was added, removed, or changed re-registers by name
+  /// (the registry is name-keyed, first wins — a same-named rule from
+  /// `.fah/rules.yaml` is replaced by the variant the user just edited).
+  /// Returns false when no engine runs this session (the change then
+  /// lands at next boot).
+  bool _syncLiveTtsrRules(List<TtsrRule> before, TtsrConfig after) {
+    final controller = ttsr;
+    if (controller == null) return false;
+    final manager = controller.manager;
+    final beforeByName = {for (final rule in before) rule.name: rule};
+    final afterByName = {for (final rule in after.rules) rule.name: rule};
+    final touched = <String>{
+      for (final entry in beforeByName.entries)
+        if (_ttsrRuleChanged(entry.value, afterByName[entry.key])) entry.key,
+      for (final name in afterByName.keys)
+        if (!beforeByName.containsKey(name)) name,
+    };
+    for (final name in touched) {
+      manager.removeRule(name);
+    }
+    for (final rule in after.rules) {
+      if (!rule.enabled || !touched.contains(rule.name)) continue;
+      final warningsBefore = manager.warnings.length;
+      final added = manager.addRule(rule);
+      for (final warning in manager.warnings.sublist(warningsBefore)) {
+        io.writeln('[ttsr] $warning');
+      }
+      if (!added && manager.warnings.length == warningsBefore) {
+        io.writeln(
+          'ttsr: rule "${rule.name}" is not active this session '
+          '(duplicate name?) — applies at next boot',
+        );
+      }
+    }
+    return true;
+  }
+
+  /// Whether [next] differs from [rule] in any field the manager
+  /// compiles (a null [next] means the rule is gone).
+  bool _ttsrRuleChanged(TtsrRule rule, TtsrRule? next) =>
+      next == null ||
+      next.enabled != rule.enabled ||
+      next.body != rule.body ||
+      next.patterns.join(' ') != rule.patterns.join(' ') ||
+      !_sameTtsrScope(next.scope, rule.scope);
+
+  bool _sameTtsrScope(TtsrScope a, TtsrScope b) =>
+      a.allowText == b.allowText &&
+      a.allowThinking == b.allowThinking &&
+      a.allowAnyTool == b.allowAnyTool &&
+      a.toolNames.join(' ') == b.toolNames.join(' ');
+
+  /// The rule-row description: enabled state, the pattern(s), the scope.
+  String _ttsrRuleDescription(TtsrRule rule) {
+    final pattern = rule.patterns.first;
+    final more = rule.patterns.length > 1
+        ? ' (+${rule.patterns.length - 1})'
+        : '';
+    return '${rule.enabled ? '' : 'off · '}$pattern$more · '
+        'scope: ${_ttsrScopeLabel(rule.scope)}';
+  }
+
+  /// The comma-separated stream list a scope watches (the default scope
+  /// renders as `text, tool`).
+  String _ttsrScopeLabel(TtsrScope scope) {
+    if (scope.allowText &&
+        !scope.allowThinking &&
+        scope.allowAnyTool &&
+        scope.toolNames.isEmpty) {
+      return 'text, tool';
+    }
+    return [
+      if (scope.allowText) 'text',
+      if (scope.allowThinking) 'thinking',
+      if (scope.allowAnyTool) 'tool',
+      for (final name in scope.toolNames) 'tool:$name',
+    ].join(', ');
+  }
+
+  /// The settings-hub row and `/settings` summary label for TTSR: the
+  /// live rule count when the engine runs this session, otherwise an
+  /// honest inactive/not-configured state.
+  String _ttsrStatusLabel() {
+    final controller = ttsr;
+    if (controller != null) {
+      final count = controller.manager.rules.length;
+      return '$count rule${count == 1 ? '' : 's'} · live';
+    }
+    final section = config.ttsr;
+    if (section == null) return 'not configured';
+    if (!section.settings.enabled) return 'disabled';
+    return 'inactive this session';
+  }
+
+  /// The settings-hub row and `/settings` summary label for redaction
+  /// (issue #391): the live pipeline state, or plain `off` when the boot
+  /// config disabled redaction (no pipeline exists).
+  String _redactionStatusLabel() {
+    final pipeline = config.redactionPipeline;
+    if (pipeline == null) return 'off';
+    final cfg = pipeline.config;
+    return '${cfg.enabled ? 'on' : 'off'}, '
+        'block ${cfg.blockMode ? 'on' : 'off'}, '
+        '${pipeline.stats.total} match(es) this session';
+  }
+
+  /// The pipeline's effective config, or the parser defaults when no
+  /// pipeline is running.
+  RedactionConfig get _redactionConfig =>
+      config.redactionPipeline?.config ?? const RedactionConfig();
+
+  /// Settings → Redaction: the `redact:` yaml section as an interactive
+  /// flow (issue #391) — quick toggles, the entropy knobs, the allowlist
+  /// and per-tool policy lists, per-layer toggles and a stats reset.
+  /// Writes go through the surgical validated-yaml upsert into the USER
+  /// config (the machine-level file `fa config set redact…` also uses);
+  /// with a live pipeline the saved section is reloaded from disk and
+  /// installed on the spot, without one the note honestly defers to the
+  /// next boot. Loops until the pick is cancelled or `done`.
+  Future<void> startRedactionFlow() async {
+    for (;;) {
+      final picked = await _pickOption('redaction', _redactionMenuOptions());
+      if (picked == null || picked == 'done') return;
+      await _applyRedactionPick(picked);
+    }
+  }
+
+  /// Dispatches one [startRedactionFlow] menu pick; the caller re-renders
+  /// the menu afterwards. Split out to keep each function's complexity
+  /// under the repo's CRAP gate.
+  Future<void> _applyRedactionPick(String picked) async {
+    switch (picked) {
+      case 'enabled':
+        await _writeRedactionKey(const [
+          'redact',
+          'enabled',
+        ], '${!_redactionConfig.enabled}');
+      case 'blockMode':
+        await _writeRedactionKey(const [
+          'redact',
+          'blockMode',
+        ], '${!_redactionConfig.blockMode}');
+      case 'minEntropy':
+        await _askRedactionScalar(const [
+          'redact',
+          'minEntropy',
+        ], 'min entropy in bits/char');
+      case 'minLength':
+        await _askRedactionScalar(const [
+          'redact',
+          'minLength',
+        ], 'min token length');
+      case 'allowlist':
+        await _askRedactionList(const [
+          'redact',
+          'allowlist',
+        ], 'allowlist regex(es)');
+      case 'toolAllow':
+        await _askRedactionList(const [
+          'redact',
+          'toolAllow',
+        ], 'tool allow (only these)');
+      case 'toolDeny':
+        await _askRedactionList(const [
+          'redact',
+          'toolDeny',
+        ], 'tool deny (never redacted)');
+      case 'layers':
+        await _redactionLayersFlow();
+      case 'reset':
+        _resetRedactionStats();
+    }
+  }
+
+  /// The main menu of [startRedactionFlow]: one row per editable field of
+  /// the section plus the quick actions. Pure builder.
+  List<FlowOption> _redactionMenuOptions() {
+    final cfg = _redactionConfig;
+    final layers = RedactionLayer.values;
+    return [
+      ('enabled', 'Toggle redaction', cfg.enabled ? 'on → off' : 'off → on'),
+      (
+        'blockMode',
+        'Toggle block mode',
+        cfg.blockMode ? 'on → off' : 'off → on',
+      ),
+      ('minEntropy', 'Entropy threshold', '${cfg.minEntropy} bits/char'),
+      ('minLength', 'Entropy min length', '${cfg.minLength} chars'),
+      (
+        'allowlist',
+        'Allowlist regexes',
+        '${cfg.allowlistRegexes.length} pattern(s)',
+      ),
+      (
+        'toolAllow',
+        'Tool allow list',
+        cfg.toolAllow.isEmpty ? '(all tools)' : cfg.toolAllow.join(', '),
+      ),
+      (
+        'toolDeny',
+        'Tool deny list',
+        cfg.toolDeny.isEmpty ? '(none)' : cfg.toolDeny.join(', '),
+      ),
+      (
+        'layers',
+        'Layer toggles',
+        '${layers.where(cfg.isLayerEnabled).length}/${layers.length} on',
+      ),
+      (
+        'reset',
+        'Reset stats',
+        '${config.redactionPipeline?.stats.total ?? 0} match(es)',
+      ),
+      ('done', 'Done', ''),
+    ];
+  }
+
+  /// The shared write path: a USER-file upsert of [segments] → [value]
+  /// with the whole `redact:` section validated by the real parser first
+  /// (AC4: the parser's verbatim error, nothing written), then the
+  /// reload-after-write that installs the saved section on the live
+  /// pipeline (AC3/E3).
+  Future<void> _writeRedactionKey(List<String> segments, String value) async {
+    if (_userConfigPath() == null) {
+      io.writeln('redaction: no user config on this host — not saved');
+      return;
+    }
+    final wrote = await _upsertConfigYaml(
+      segments,
+      value,
+      projectScope: false,
+      validate: validateRedactSection,
+      note: _redactionNote(),
+    );
+    if (wrote) await _reloadRedactionPipeline();
+  }
+
+  /// The honest liveness note (AC3): the flow installs the saved section
+  /// into the running pipeline whenever one exists; only the pipeline-less
+  /// boot (`redact.enabled: false`) must wait for the next start.
+  String _redactionNote() => config.redactionPipeline == null
+      ? applicationNote('redact')
+      : 'applies live — the running pipeline reloads the saved section';
+
+  /// Reload-after-write (E3): what's live is what's on disk — the saved
+  /// file is re-parsed and installed on the pipeline, so a concurrent
+  /// editor's values survive and the menu re-renders the fresh state.
+  Future<void> _reloadRedactionPipeline() async {
+    final pipeline = config.redactionPipeline;
+    final path = _userConfigPath();
+    if (pipeline == null || path == null) return;
+    switch (await _env.readTextFile(path)) {
+      case Ok(:final value):
+        final doc = loadYaml(value);
+        pipeline.config = RedactionConfig.fromYaml(
+          doc is YamlMap ? doc['redact'] as Map<dynamic, dynamic>? : null,
+        );
+      case Err():
+        // The write just succeeded; a read race keeps the current live
+        // config — the next write re-syncs.
+        break;
+    }
+  }
+
+  /// The scalar-field branch (entropy knobs): an empty answer keeps the
+  /// current value; a non-number is refused before any write (the boot
+  /// parser would silently fall back to the default, breaking the
+  /// round-trip AC).
+  Future<void> _askRedactionScalar(List<String> segments, String label) async {
+    final current = segments.last == 'minEntropy'
+        ? _redactionConfig.minEntropy
+        : _redactionConfig.minLength;
+    final answer = await _askLine("$label (empty keeps '$current'): ");
+    if (answer == null) return;
+    final value = answer.trim();
+    if (value.isEmpty) return;
+    final parsed = segments.last == 'minLength'
+        ? int.tryParse(value)
+        : double.tryParse(value);
+    if (parsed == null) {
+      io.writeln('not saved: ${segments.last} must be a number (got "$value")');
+      return;
+    }
+    await _writeRedactionKey(segments, value);
+  }
+
+  /// The list-field branch (allowlist, toolAllow, toolDeny): a
+  /// comma-separated answer renders as a yaml block list, `-` clears, an
+  /// empty answer keeps the current value.
+  Future<void> _askRedactionList(List<String> segments, String label) async {
+    final current = switch (segments.last) {
+      'allowlist' => _redactionConfig.allowlistRegexes.length,
+      'toolAllow' => _redactionConfig.toolAllow.length,
+      _ => _redactionConfig.toolDeny.length,
+    };
+    final answer = await _askLine(
+      "$label, comma-separated ('-' clears; empty keeps the current "
+      "$current): ",
+    );
+    if (answer == null) return;
+    final value = answer.trim();
+    if (value.isEmpty) return;
+    final entries = value == '-'
+        ? const <String>[]
+        : [
+            for (final entry in value.split(','))
+              if (entry.trim().isNotEmpty) entry.trim(),
+          ];
+    await _writeRedactionKey(segments, jsonEncode(entries));
+  }
+
+  /// The per-layer toggle submenu: one row per [RedactionLayer], each
+  /// flip persisted as `redact.layers.<name>`. Loops until cancelled or
+  /// `done`.
+  Future<void> _redactionLayersFlow() async {
+    for (;;) {
+      final cfg = _redactionConfig;
+      final picked = await _pickOption('redaction layers', [
+        for (final layer in RedactionLayer.values)
+          (layer.name, layer.name, cfg.isLayerEnabled(layer) ? 'on' : 'off'),
+        ('done', 'Done', ''),
+      ]);
+      if (picked == null || picked == 'done') return;
+      await _writeRedactionKey([
+        'redact',
+        'layers',
+        picked,
+      ], '${!cfg.isLayerEnabled(RedactionLayer.values.byName(picked))}');
+    }
+  }
+
+  /// The stats-reset action: zeroes the pipeline counters (the same
+  /// counters `/redact stats` prints).
+  void _resetRedactionStats() {
+    final pipeline = config.redactionPipeline;
+    if (pipeline == null) {
+      io.writeln('redaction: pipeline not running on this host');
+      return;
+    }
+    pipeline.stats.reset();
+    io.writeln('redaction stats reset');
+  }
+
+  /// The settings-hub row and `/settings` summary label for the image
+  /// registry (issue #395): the kill-switch state (what `registry: false`
+  /// means — byte-identical legacy requests) and the per-request cap.
+  String _imagesStatusLabel() {
+    final cfg = imageRegistryConfig;
+    return '${cfg.enabled ? 'on' : 'off · legacy request shape'} · '
+        'cap ${cfg.maxPerRequest}';
+  }
+
+  /// Settings → Images: the `images:` config section (issue #395) — the
+  /// registry kill switch (`images.registry: false` reproduces today's
+  /// request shape byte-for-byte) and the per-request unique-image cap.
+  /// Writes go through the surgical validated-yaml upsert into the USER
+  /// config (the file `bin/fah.dart` boots the registry from), and every
+  /// successful write re-publishes the process-wide [imageRegistryConfig]
+  /// from the saved file — the request build consults that global, so the
+  /// change lands on the next request build without a restart (AC3/E3:
+  /// what's live is what's on disk). Loops until cancelled or `done`.
+  Future<void> startImagesFlow() async {
+    for (;;) {
+      final picked = await _pickOption('images', _imagesMenuOptions());
+      if (picked == null || picked == 'done') return;
+      await _applyImagesPick(picked);
+    }
+  }
+
+  /// Dispatches one [startImagesFlow] menu pick; the caller re-renders
+  /// the menu afterwards. Split out to keep each function's complexity
+  /// under the repo's CRAP gate.
+  Future<void> _applyImagesPick(String picked) async {
+    switch (picked) {
+      case 'registry':
+        await _writeImagesKey(const [
+          'images',
+          'registry',
+        ], '${!imageRegistryConfig.enabled}');
+      case 'maxPerRequest':
+        await _askImagesCap();
+    }
+  }
+
+  /// The main menu of [startImagesFlow]: one row per editable field of
+  /// the section. Pure builder.
+  List<FlowOption> _imagesMenuOptions() {
+    final cfg = imageRegistryConfig;
+    return [
+      (
+        'registry',
+        'Toggle registry (kill switch)',
+        cfg.enabled ? 'on → off (byte-identical legacy requests)' : 'off → on',
+      ),
+      (
+        'maxPerRequest',
+        'Per-request cap',
+        '${cfg.maxPerRequest} unique image(s) per request',
+      ),
+      ('done', 'Done', ''),
+    ];
+  }
+
+  /// The settings-hub row and `/settings` summary label for the power
+  /// section (issue #397): the effective sleep-prevention level and hold
+  /// lifecycle, plus whether an assertion is held right now. Without a
+  /// runner (tests, web) the boot config fields still say what a capable
+  /// host would apply.
+  String _powerStatusLabel() {
+    final status = _powerAssertions?.status();
+    if (status == null) {
+      return '${config.powerSleepPrevention.value} · '
+          '${config.powerSleepPreventionHold.value} · '
+          'no runner on this host';
+    }
+    return '${status.level.value} · ${status.hold.value} · '
+        '${status.held ? 'assertion held' : 'not held'}';
+  }
+
+  /// Settings → Power: the `power:` config section (sleep prevention,
+  /// issues #325/#326) — the `sleepPrevention` level and the `hold`
+  /// lifecycle. Writes go through the surgical validated-yaml upsert
+  /// into the USER config, and every successful write re-arms the
+  /// session's assertion from the saved file ([_reloadPowerAssertions]
+  /// — what's live is what's on disk). Loops until cancelled or `done`.
+  Future<void> startPowerFlow() async {
+    for (;;) {
+      final picked = await _pickOption('power', _powerMenuOptions());
+      if (picked == null || picked == 'done') return;
+      await _applyPowerPick(picked);
+    }
+  }
+
+  /// Dispatches one [startPowerFlow] menu pick; the caller re-renders
+  /// the menu afterwards. Split out to keep each function's complexity
+  /// under the repo's CRAP gate.
+  Future<void> _applyPowerPick(String picked) async {
+    switch (picked) {
+      case 'sleepPrevention':
+        await _askPowerLevel();
+      case 'hold':
+        await _togglePowerHold();
+    }
+  }
+
+  /// The main menu of [startPowerFlow]: one row per editable field of
+  /// the section. Pure builder.
+  List<FlowOption> _powerMenuOptions() {
+    final level = _powerAssertions?.level ?? config.powerSleepPrevention;
+    final hold = _powerAssertions?.hold ?? config.powerSleepPreventionHold;
+    return [
+      (
+        'sleepPrevention',
+        'Sleep prevention level',
+        "off|idle|display|system — now '${level.value}'",
+      ),
+      (
+        'hold',
+        'Toggle hold lifecycle',
+        '${hold.value} → '
+            '${hold == PowerAssertionHold.perRun ? 'session' : 'per-run'}',
+      ),
+      ('done', 'Done', ''),
+    ];
+  }
+
+  /// The level branch: an empty answer keeps the current value; anything
+  /// else rides verbatim into the yaml upsert — the strict boot parser
+  /// ([parsePowerSection]) validates the edited section BEFORE the
+  /// write, so a bad value prints the parser's own message and nothing
+  /// is written (AC4).
+  Future<void> _askPowerLevel() async {
+    final current =
+        (_powerAssertions?.level ?? config.powerSleepPrevention).value;
+    final answer = await _askLine(
+      "sleepPrevention off|idle|display|system (empty keeps '$current'): ",
+    );
+    if (answer == null) return;
+    final value = answer.trim();
+    if (value.isEmpty) return;
+    await _writePowerKey(const ['power', 'sleepPrevention'], value);
+  }
+
+  /// The hold toggle: per-run ↔ session, one keypress. The current value
+  /// is the live controller's (it tracks the writes), so the toggle
+  /// always offers the other lifecycle.
+  Future<void> _togglePowerHold() async {
+    final current = _powerAssertions?.hold ?? config.powerSleepPreventionHold;
+    final next = current == PowerAssertionHold.perRun
+        ? PowerAssertionHold.session
+        : PowerAssertionHold.perRun;
+    await _writePowerKey(const ['power', 'hold'], next.value);
+  }
+
+  /// The shared write path: a USER-file upsert of [segments] → [value]
+  /// validated with the real boot parser first, then reload-after-write
+  /// re-arms the session's assertion from the saved file.
+  Future<void> _writePowerKey(List<String> segments, String value) async {
+    if (_userConfigPath() == null) {
+      io.writeln('power: no user config on this host — not saved');
+      return;
+    }
+    final wrote = await _upsertConfigYaml(
+      segments,
+      value,
+      projectScope: false,
+      validate: parsePowerSection,
+    );
+    if (wrote) await _reloadPowerAssertions();
+  }
+
+  /// Reload-after-write (AC3/E3): the boot-built controller keeps its
+  /// construction-time level/hold, so the saved section re-arms the
+  /// session's assertion — the old assertion releases, a session-held
+  /// level re-acquires immediately and per-run waits for the next run
+  /// start. Without a runner on this host there is no assertion
+  /// lifecycle to re-arm (the change lands at next boot where one
+  /// exists); a read race after the successful write keeps the current
+  /// live controller — the next write re-syncs.
+  Future<void> _reloadPowerAssertions() async {
+    final path = _userConfigPath();
+    if (path == null) return;
+    switch (await _env.readTextFile(path)) {
+      case Ok(:final value):
+        final doc = loadYaml(value);
+        await _rearmPowerAssertions(
+          parsePowerSection(doc is YamlMap ? doc['power'] : null),
+        );
+      case Err():
+        break;
+    }
+  }
+
+  /// Swaps the session's sleep-prevention controller for one built from
+  /// [section] (issues #325/#326 wiring): release, rebuild, and a
+  /// session-held level re-acquires at once. The boot construction in
+  /// `agent_cli.dart` applies the same defaults.
+  Future<void> _rearmPowerAssertions(PowerSection section) async {
+    final runner = config.powerRunner;
+    if (runner == null) return;
+    await _powerAssertions?.onSessionClosed();
+    final controller = PowerAssertionController(
+      runner: runner,
+      level: section.sleepPrevention ?? PowerAssertionLevel.idle,
+      hold: section.hold ?? PowerAssertionHold.perRun,
+      onWarn: io.writeln,
+    );
+    _powerAssertions = controller;
+    await controller.onSessionOpened();
+  }
+
+  /// The settings-hub row and `/settings` summary label for the owner cap
+  /// (issue #394): the model's raw window vs the effective cap.
+  String _contextCapStatusLabel() {
+    final cap = config.contextWindowCap;
+    final window = _agent.state.model.contextWindow;
+    return cap == null ? 'off (window $window)' : '$window → $cap';
+  }
+
+  /// Settings → Context cap: the `agent:` section (`contextWindowCap`,
+  /// issue #394) — set or clear the owner-side cap the compaction
+  /// thresholds, the ctx meter and the loop's over-window guard clamp
+  /// through. Writes go through the surgical validated-yaml upsert into
+  /// the USER config (the machine-level file `fa config set agent…`
+  /// also uses); the running session keeps its boot cap (honest note).
+  /// Loops until the pick is cancelled or `done`.
+  Future<void> startContextCapFlow() async {
+    for (;;) {
+      final picked = await _pickOption('context cap', _contextCapMenuOptions());
+      if (picked == null || picked == 'done') return;
+      await _applyContextCapPick(picked);
+    }
+  }
+
+  /// Dispatches one [startContextCapFlow] menu pick; the caller re-renders
+  /// the menu afterwards. Split out to keep each function's complexity
+  /// under the repo's CRAP gate.
+  Future<void> _applyContextCapPick(String picked) async {
+    switch (picked) {
+      case 'set':
+        await _askContextCapValue();
+      case 'clear':
+        await _clearContextCap();
+    }
+  }
+
+  /// The main menu of [startContextCapFlow]. Pure builder.
+  List<FlowOption> _contextCapMenuOptions() {
+    final cap = config.contextWindowCap;
+    return [
+      ('set', 'Set the cap', cap == null ? 'currently off' : 'currently $cap'),
+      (
+        'clear',
+        'Clear the cap',
+        cap == null ? 'already off' : 'removes agent.contextWindowCap',
+      ),
+      ('done', 'Done', ''),
+    ];
+  }
+
+  /// The cap branch: an empty answer keeps the current value; anything
+  /// else rides verbatim into the yaml upsert — the strict boot parser
+  /// ([parseImagesSection]) validates the edited section BEFORE the
+  /// write, so a bad value prints the parser's own message and nothing
+  /// is written (AC4).
+  Future<void> _askImagesCap() async {
+    final current = imageRegistryConfig.maxPerRequest;
+    final answer = await _askLine("per-request cap (empty keeps '$current'): ");
+    if (answer == null) return;
+    final value = answer.trim();
+    if (value.isEmpty) return;
+    await _writeImagesKey(const ['images', 'maxPerRequest'], value);
+  }
+
+  /// The shared write path: a USER-file upsert of [segments] → [value]
+  /// validated with the real boot parser first, then reload-after-write
+  /// republishes the global the request build consults.
+  Future<void> _writeImagesKey(List<String> segments, String value) async {
+    if (_userConfigPath() == null) {
+      io.writeln('images: no user config on this host — not saved');
+      return;
+    }
+    final wrote = await _upsertConfigYaml(
+      segments,
+      value,
+      projectScope: false,
+      validate: parseImagesSection,
+    );
+    if (wrote) await _reloadImageRegistry();
+  }
+
+  /// Reload-after-write (E3): the process-wide registry settings are
+  /// re-parsed from the saved file, so the next request build applies
+  /// exactly what's on disk and a concurrent editor's values survive.
+  Future<void> _reloadImageRegistry() async {
+    final path = _userConfigPath();
+    if (path == null) return;
+    switch (await _env.readTextFile(path)) {
+      case Ok(:final value):
+        final doc = loadYaml(value);
+        imageRegistryConfig =
+            parseImagesSection(doc is YamlMap ? doc['images'] : null) ??
+            const ImageRegistryConfig();
+      case Err():
+        // The write just succeeded; a read race keeps the current live
+        // config — the next write re-syncs.
+        break;
+    }
+  }
+
+  /// The set branch: a positive integer at or above the compaction
+  /// reserve. The raw answer goes through the validated upsert — an
+  /// invalid value prints the parser's verbatim [ConfigException] and
+  /// writes NOTHING (AC4). A cap at or above the model's own window
+  /// clamps nothing — the flow warns after a successful write.
+  Future<void> _askContextCapValue() async {
+    final current = config.contextWindowCap;
+    final answer = await _askLine(
+      'context cap in tokens (min 16384, empty keeps '
+      "${current ?? 'off'}): ",
+    );
+    if (answer == null) return;
+    final value = answer.trim();
+    if (value.isEmpty) return;
+    final wrote = await _upsertConfigYaml(
+      const ['agent', 'contextWindowCap'],
+      value,
+      projectScope: false,
+      validate: validateAgentSection,
+    );
+    if (wrote) _warnCapNoOp(value);
+  }
+
+  /// The ≥-window warning: the cap only CLAMPS below the model's window;
+  /// at or above it the setting is a legal no-op.
+  void _warnCapNoOp(String value) {
+    final cap = int.tryParse(value);
+    final window = _agent.state.model.contextWindow;
+    if (cap != null && window > 0 && cap >= window) {
+      io.writeln('note: $cap ≥ model window $window — the cap clamps nothing');
+    }
+  }
+
+  /// The clear branch: the `agent:` section's only key is
+  /// `contextWindowCap`, so clearing drops the whole top-level block
+  /// (a bare `agent:` would fail the strict diagnostics validator).
+  Future<void> _clearContextCap() async {
+    if (config.contextWindowCap == null) {
+      io.writeln('context cap: already off — nothing to clear');
+      return;
+    }
+    final path = _userConfigPath();
+    if (path == null) {
+      io.writeln('context cap: no user config on this host — not saved');
+      return;
+    }
+    final read = await _env.readTextFile(path);
+    final String source;
+    switch (read) {
+      case Ok(:final value):
+        source = value;
+      case Err(:final error):
+        io.writeln('cannot read $path: $error — not saved');
+        return;
+    }
+    final edited = _dropTopLevelBlock(source, 'agent');
+    // Never persist a file the next boot would reject.
+    try {
+      loadYaml(edited);
+    } on Object catch (error) {
+      io.writeln('not saved: $error');
+      return;
+    }
+    if (await _env.writeFile(path, edited) is Err) {
+      io.writeln('could not write $path');
+      return;
+    }
+    io.writeln(
+      'agent.contextWindowCap removed → $path (${applicationNote('agent')})',
+    );
+  }
+
+  /// Removes the top-level `[key]:` block from [source] — the key line
+  /// plus every following blank/indented line. Everything else survives
+  /// byte-for-byte; an absent key is a no-op.
+  String _dropTopLevelBlock(String source, String key) {
+    final lines = source.split('\n');
+    final start = lines.indexWhere((line) => line.startsWith('$key:'));
+    if (start < 0) return source;
+    var end = start + 1;
+    while (end < lines.length &&
+        (lines[end].isEmpty ||
+            lines[end].startsWith(' ') ||
+            lines[end].startsWith('\t'))) {
+      end++;
+    }
+    return [...lines.sublist(0, start), ...lines.sublist(end)].join('\n');
+  }
+
+  /// The effective retry policy: the roles resolver's, or the parser
+  /// defaults when no resolver runs (the `retry:` section rides the
+  /// `roles:` group).
+  ModelRolesRetryPolicy get _effectiveRetryPolicy =>
+      config.modelRolesResolver?.config.retry ?? const ModelRolesRetryPolicy();
+
+  /// The settings-hub row and `/settings` summary label for resilience
+  /// (issue #393): the effective watchdog timeouts and the retry budget.
+  String _resilienceStatusLabel() =>
+      'connect ${effectiveProviderConnectTimeout.inMilliseconds}ms, '
+      'idle ${effectiveProviderStreamIdleTimeout.inMilliseconds}ms, '
+      'retries ×${_effectiveRetryPolicy.retriesPerEntry}';
+
+  /// Settings → Resilience: the `providerTimeouts:` watchdog knobs and the
+  /// `retry:` backoff policy as an interactive flow (issue #393). Writes
+  /// go through the surgical validated-yaml upsert into the USER config;
+  /// the saved timeouts are re-published onto the process-wide override
+  /// the watchdogs read on every request, and the saved retry policy is
+  /// installed on the roles resolver when one runs. Loops until the pick
+  /// is cancelled or `done`.
+  Future<void> startResilienceFlow() async {
+    for (;;) {
+      final picked = await _pickOption('resilience', _resilienceMenuOptions());
+      if (picked == null || picked == 'done') return;
+      await _applyResiliencePick(picked);
+    }
+  }
+
+  /// Dispatches one [startResilienceFlow] menu pick; the caller re-renders
+  /// the menu afterwards. Split out to keep each function's complexity
+  /// under the repo's CRAP gate.
+  Future<void> _applyResiliencePick(String picked) async {
+    switch (picked) {
+      case 'connect':
+        await _askResilienceMs(
+          'connectTimeoutMs',
+          'connect watchdog (first headers)',
+        );
+      case 'streamIdle':
+        await _askResilienceMs('streamIdleTimeoutMs', 'stream-idle watchdog');
+      case 'retriesPerEntry':
+      case 'baseDelayMs':
+      case 'maxBackoffMs':
+      case 'maxWaitMs':
+      case 'keyBackoffMs':
+        await _askRetryScalar(picked);
+    }
+  }
+
+  /// The main menu of [startResilienceFlow]: the two watchdog knobs (the
+  /// built-in defaults shown, so an override reads as an override) and
+  /// the five retry knobs (each marked `default` when it equals the
+  /// parser default). Pure builder.
+  List<FlowOption> _resilienceMenuOptions() {
+    final retry = _effectiveRetryPolicy;
+    const defaults = ModelRolesRetryPolicy();
+    String inherit(int value, int fallback) =>
+        value == fallback ? 'default' : 'default is $fallback';
+    return [
+      (
+        'connect',
+        'Connect watchdog',
+        '${effectiveProviderConnectTimeout.inMilliseconds}ms '
+            '(built-in ${providerConnectTimeout.inMilliseconds}ms)',
+      ),
+      (
+        'streamIdle',
+        'Stream-idle watchdog',
+        '${effectiveProviderStreamIdleTimeout.inMilliseconds}ms '
+            '(built-in ${providerStreamIdleTimeout.inMilliseconds}ms)',
+      ),
+      (
+        'retriesPerEntry',
+        'Retries per chain entry',
+        '${retry.retriesPerEntry} '
+            '(${inherit(retry.retriesPerEntry, defaults.retriesPerEntry)})',
+      ),
+      (
+        'baseDelayMs',
+        'Backoff base delay',
+        '${retry.baseDelay.inMilliseconds}ms (${inherit(retry.baseDelay.inMilliseconds, defaults.baseDelay.inMilliseconds)})',
+      ),
+      (
+        'maxBackoffMs',
+        'Backoff cap',
+        '${retry.maxBackoff.inMilliseconds}ms (${inherit(retry.maxBackoff.inMilliseconds, defaults.maxBackoff.inMilliseconds)})',
+      ),
+      (
+        'maxWaitMs',
+        'Give-up threshold (failover past it)',
+        '${retry.maxWait.inMilliseconds}ms (${inherit(retry.maxWait.inMilliseconds, defaults.maxWait.inMilliseconds)})',
+      ),
+      (
+        'keyBackoffMs',
+        'Key cooldown',
+        '${retry.keyBackoff.inMilliseconds}ms (${inherit(retry.keyBackoff.inMilliseconds, defaults.keyBackoff.inMilliseconds)})',
+      ),
+      ('done', 'Done', ''),
+    ];
+  }
+
+  /// The watchdog-knob branch: prompts for milliseconds and feeds the raw
+  /// answer through the validated upsert (AC4: a bad value shows the
+  /// parser's verbatim message and writes nothing).
+  Future<void> _askResilienceMs(String key, String label) async {
+    final answer = await _askLine(
+      '$label in ms (empty keeps the current value): ',
+    );
+    if (answer == null) return;
+    final value = answer.trim();
+    if (value.isEmpty) return;
+    await _writeProviderTimeout(key, value);
+  }
+
+  /// The retry-knob branch: prompts for the field's yaml unit (a plain
+  /// count for `retriesPerEntry`, milliseconds for the rest) and feeds
+  /// the raw answer through the validated upsert.
+  Future<void> _askRetryScalar(String key) async {
+    final retry = _effectiveRetryPolicy;
+    final current = switch (key) {
+      'retriesPerEntry' => '${retry.retriesPerEntry}',
+      'baseDelayMs' => '${retry.baseDelay.inMilliseconds}',
+      'maxBackoffMs' => '${retry.maxBackoff.inMilliseconds}',
+      'maxWaitMs' => '${retry.maxWait.inMilliseconds}',
+      _ => '${retry.keyBackoff.inMilliseconds}',
+    };
+    final answer = await _askLine('$key (empty keeps $current): ');
+    if (answer == null) return;
+    final value = answer.trim();
+    if (value.isEmpty) return;
+    await _writeRetryKey(key, value);
+  }
+
+  /// The shared timeout write path: a USER-file upsert of
+  /// `providerTimeouts.<key>` validated by the real section parser first
+  /// (AC4), then the re-publish that installs the saved section on the
+  /// process-wide override (AC3/E3).
+  Future<void> _writeProviderTimeout(String key, String value) async {
+    if (_userConfigPath() == null) {
+      io.writeln('resilience: no user config on this host — not saved');
+      return;
+    }
+    final wrote = await _upsertConfigYaml(
+      ['providerTimeouts', key],
+      value,
+      projectScope: false,
+      validate: validateProviderTimeoutsSection,
+      note:
+          'applies to new requests — the watchdogs read the saved '
+          'override on every request',
+    );
+    if (wrote) await _publishProviderTimeouts();
+  }
+
+  /// Reload-after-publish (E3): what's live is what's on disk — the saved
+  /// file is re-parsed with the boot parser and installed on the
+  /// process-wide override, so a concurrent editor's values survive and
+  /// the menu re-renders the fresh state.
+  Future<void> _publishProviderTimeouts() async {
+    final path = _userConfigPath();
+    if (path == null) return;
+    switch (await _env.readTextFile(path)) {
+      case Ok(:final value):
+        final doc = loadYaml(value);
+        providerTimeoutsOverride = parseProviderTimeouts(
+          doc is YamlMap ? doc['providerTimeouts'] : null,
+        );
+      case Err():
+        // The write just succeeded; a read race keeps the current live
+        // override — the next write re-syncs.
+        break;
+    }
+  }
+
+  /// The shared retry write path: a USER-file upsert of `retry.<key>`,
+  /// validated by the real roles-group parser over the WHOLE document
+  /// (the group parses together — `retry:` without `roles:` is refused
+  /// with the parser's verbatim message), then the reload that installs
+  /// the saved policy on the running resolver when one exists.
+  Future<void> _writeRetryKey(String key, String value) async {
+    if (_userConfigPath() == null) {
+      io.writeln('resilience: no user config on this host — not saved');
+      return;
+    }
+    final wrote = await _upsertConfigYaml(
+      ['retry', key],
+      value,
+      projectScope: false,
+      validateDoc: ModelRolesConfig.fromYaml,
+      note: _retryNote(),
+    );
+    if (wrote) await _reloadRetryPolicy();
+  }
+
+  /// The honest liveness note (AC3): with a resolver the new policy
+  /// governs new failures (the run already streaming keeps the old one);
+  /// without one the section waits for the next boot.
+  String _retryNote() => config.modelRolesResolver == null
+      ? applicationNote('retry')
+      : 'applies to new failures — the run already streaming keeps the '
+            'old policy';
+
+  /// Reload-after-write (E3): the saved file is re-parsed and the policy
+  /// installed on the resolver (wrappers rebuilt), so a concurrent
+  /// editor's values survive and the menu re-renders the fresh state.
+  Future<void> _reloadRetryPolicy() async {
+    final resolver = config.modelRolesResolver;
+    final path = _userConfigPath();
+    if (resolver == null || path == null) return;
+    switch (await _env.readTextFile(path)) {
+      case Ok(:final value):
+        final doc = loadYaml(value);
+        if (doc is! YamlMap) return;
+        resolver.setRetryPolicy(ModelRolesConfig.fromYaml(doc).retry);
+      case Err():
+        // The write just succeeded; a read race keeps the current live
+        // policy — the next write re-syncs.
+        break;
+    }
+  }
+
+  /// Upserts [segments] → [value] in the project or user config file,
+  /// validating the edited section with [validate] (the real parser)
+  /// BEFORE the write — and, when [validateDoc] is given, the WHOLE
+  /// parsed document with it (the roles group `roles:` / `retry:` parses
+  /// together, so the retry flow validates at document level). A JSON
+  /// array/object value renders as a yaml block (list-valued keys — see
+  /// [configLeafLines]); anything else is the single scalar line. [note]
+  /// overrides the liveness note printed on success (default:
+  /// [applicationNote] for the section). Returns true when written;
+  /// failures print and leave the file untouched.
   Future<bool> _upsertConfigYaml(
     List<String> segments,
     String value, {
     required bool projectScope,
-    required void Function(Object? node) validate,
+    void Function(Object? node)? validate,
+    void Function(YamlMap doc)? validateDoc,
+    String? note,
   }) async {
     final path = projectScope
         ? '${_env.cwd}/.fah/config.yaml'
@@ -583,12 +1799,17 @@ extension SettingsFlow on AgentCli {
         io.writeln('cannot read $path: $error — not saved');
         return false;
     }
-    final edited = upsertYamlPath(source, segments, [renderYamlScalar(value)]);
+    final edited = upsertYamlPath(
+      source,
+      segments,
+      configLeafLines(value, depth: segments.length - 1),
+    );
     // Never persist a file the next boot would reject.
     final doc = loadYaml(edited);
     final section = doc is YamlMap ? doc[segments.first] : null;
     try {
-      validate(section);
+      validate?.call(section);
+      if (doc is YamlMap) validateDoc?.call(doc);
     } on Object catch (error) {
       io.writeln('not saved: $error');
       return false;
@@ -599,7 +1820,7 @@ extension SettingsFlow on AgentCli {
     }
     io.writeln(
       '${segments.join('.')} = $value → $path '
-      '(${applicationNote(segments.first)})',
+      '(${note ?? applicationNote(segments.first)})',
     );
     return true;
   }
@@ -723,11 +1944,13 @@ extension SettingsFlow on AgentCli {
     }
   }
 
-  /// The settings hub picker: one entry per configurable area, each
-  /// launching the same interactive flow its dedicated slash command would.
-  void _openSettingsPicker() {
+  /// The settings-hub rows: one entry per configurable area, each
+  /// launching the same interactive flow its dedicated slash command
+  /// would. Pure builder so tests can assert the hub carries every area
+  /// without a TUI controller.
+  List<MenuItem> settingsHubItems() {
     final model = _agent.state.model;
-    final items = [
+    return [
       MenuItem(key: 'provider', label: 'Provider', description: model.provider),
       MenuItem(key: 'model', label: 'Chat model', description: model.id),
       const MenuItem(
@@ -777,18 +2000,55 @@ extension SettingsFlow on AgentCli {
         description: 'engine: ${_compactionStatusLabel()}',
       ),
       MenuItem(
+        key: 'ttsr',
+        label: 'Stream rules (TTSR)',
+        description: _ttsrStatusLabel(),
+      ),
+      MenuItem(
         key: 'memory',
         label: 'Memory',
         description: _memoryPathLabel(project: true),
       ),
+      MenuItem(
+        key: 'resilience',
+        label: 'Resilience',
+        description: _resilienceStatusLabel(),
+      ),
+      MenuItem(
+        key: 'redact',
+        label: 'Redaction',
+        description: _redactionStatusLabel(),
+      ),
+      MenuItem(
+        key: 'context-cap',
+        label: 'Context cap',
+        description: _contextCapStatusLabel(),
+      ),
+      MenuItem(
+        key: 'images',
+        label: 'Images',
+        description: _imagesStatusLabel(),
+      ),
+      MenuItem(key: 'power', label: 'Power', description: _powerStatusLabel()),
       const MenuItem(
         key: 'mcp',
         label: 'MCP servers',
         description: 'status and config reload',
       ),
     ];
-    _tuiController?.openPicker('settings', 'Settings', items);
   }
+
+  /// The settings hub picker: opens the [settingsHubItems] list.
+  void _openSettingsPicker() {
+    _tuiController?.openPicker('settings', 'Settings', settingsHubItems());
+  }
+
+  @visibleForTesting
+  List<MenuItem> settingsHubItemsForTest() => settingsHubItems();
+
+  @visibleForTesting
+  Set<String> settingsPickerHandlerKeysForTest() =>
+      _settingsPickerHandlers.keys.toSet();
 
   /// A settings-hub selection launches the same flow its dedicated slash
   /// command would open.
@@ -800,17 +2060,23 @@ extension SettingsFlow on AgentCli {
   Map<String, Future<void> Function()> get _settingsPickerHandlers => {
     'provider': () async => _openProviderPicker(),
     'model': startChatModelFlow,
+    'approval': () async => _openApprovalPicker(),
+    'mode': () async => _openModePicker(),
     'model-edit': () => _handleModelEdit(''),
     'media': startMediaSlotFlow,
     'agent-models': startAgentModelFlow,
-    'approval': () async => _openApprovalPicker(),
-    'mode': () async => _openModePicker(),
-    'keys': () => _handleKeyCommand(''),
-    'cube': startCubeSandboxFlow,
-    'dap': startDapHubFlow,
     'tools': _toolsSettingsFlow,
     'compaction': startCompactionEngineFlow,
+    'ttsr': startTtsrRulesFlow,
+    'keys': () => _handleKeyCommand(''),
+    'dap': startDapHubFlow,
+    'cube': startCubeSandboxFlow,
+    'resilience': startResilienceFlow,
+    'redact': startRedactionFlow,
+    'context-cap': startContextCapFlow,
     'memory': startMemoryStoresFlow,
+    'images': startImagesFlow,
+    'power': startPowerFlow,
   };
 
   /// The line-mode `/settings` summary (the TUI opens the hub instead).
@@ -821,9 +2087,15 @@ extension SettingsFlow on AgentCli {
     io.writeln('approval: ${_approval.mode.label}');
     io.writeln('mode: ${_currentMode.name}');
     io.writeln('cube: ${_cubeStatusLabel()}');
+    io.writeln('resilience: ${_resilienceStatusLabel()}');
     io.writeln('dap: ${_dapHubStatusLabel()}');
     io.writeln('tools: ${_toolsStatusLabel()}');
     io.writeln('compaction: ${_compactionStatusLabel()}');
+    io.writeln('ttsr: ${_ttsrStatusLabel()}');
+    io.writeln('redact: ${_redactionStatusLabel()}');
+    io.writeln('ctx cap: ${_contextCapStatusLabel()}');
+    io.writeln('images: ${_imagesStatusLabel()}');
+    io.writeln('power: ${_powerStatusLabel()}');
     io.writeln(
       'change via /provider, /model, /approval, /mode, /key, /mcp, /cube, '
       '/tools (agent models: the /settings hub)',

@@ -165,6 +165,40 @@ void main() {
     await expectGolden(tester, 'dynamic_message_tile_error');
   });
 
+  testWidgets('dynamic message tile with the overflow menu open', (
+    tester,
+  ) async {
+    final dm = service()..debugAdd(def, engine: engine());
+    await pumpGolden(
+      tester,
+      DynamicWidgetTile(
+        service: dm,
+        message: FaChatMessage(role: 'widget', content: '', data: def.id),
+        onSaveAsApp: (_) async {},
+      ),
+      size: goldenSizeWide,
+      settle: false,
+    );
+    // Issue #378 AC1: the ⋮ overflow carries the secondary actions.
+    await tester.tap(find.byTooltip('More actions'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await expectGolden(tester, 'dynamic_message_tile_menu');
+  });
+
+  testWidgets('ephemeral full-screen open (no graduation)', (tester) async {
+    final dm = service()..debugAdd(def, engine: engine());
+    await pumpGolden(
+      tester,
+      EphemeralDynamicAppView(service: dm, definition: def),
+      size: goldenSizePhone,
+      settle: false,
+      wrap: (child) => child,
+    );
+    // Issue #378 AC2: the full-screen ephemeral view over the shared
+    // canvas (boot spinner — deterministic, no JS runtime).
+    await expectGolden(tester, 'dynamic_message_ephemeral_view');
+  });
+
   testWidgets('dynamic messages list sheet', (tester) async {
     final agent = Agent(
       model: Model(

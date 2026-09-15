@@ -35,7 +35,11 @@ import 'key_event.dart';
 import 'key_status.dart';
 import 'provider_error_text.dart';
 import '../agent/agent_loop.dart';
-import '../trajectory/trajectory_record.dart' show TrajectoryRequestDetail;
+import '../session/windowed_session_storage.dart' show WindowedSessionStorage;
+import '../trajectory/event_projection.dart'
+    show TrajectoryHiddenRecordPreview, projectHiddenRecordPreviews;
+import '../trajectory/trajectory_record.dart' show TrajectoryCompactedRecord;
+import '../trajectory/trajectory_blobs.dart';
 import '../agent/agent_tool.dart';
 import '../agent/auto_compactor.dart';
 import '../providers/models_for_endpoint.dart';
@@ -53,6 +57,7 @@ import '../task/agent_discovery.dart';
 import '../task/child_session_io.dart';
 import '../task/subagent.dart';
 import '../task/subagent_manager.dart';
+import '../task/subagent_heartbeat.dart';
 import '../task/subagent_tools.dart';
 import '../skills/skills.dart';
 import '../skills/skill_renderer.dart';
@@ -84,6 +89,7 @@ import '../mcp/mcp_manager.dart';
 import '../model.dart';
 import '../model_roles/model_roles.dart';
 import 'tool_phase_labels.dart';
+import 'tool_rows.dart';
 import '../model_roles/vision_models.dart';
 import '../providers/chatgpt_codex_models.dart';
 import '../providers/chatgpt_oauth.dart';
@@ -93,9 +99,17 @@ import '../providers/copilot_oauth.dart';
 import '../providers/dial.dart';
 import '../providers/models_endpoint.dart';
 import '../providers/openrouter_oauth.dart';
-import '../agent/image_registry.dart' show imageDropNotice;
+import '../agent/image_registry.dart'
+    show ImageRegistryConfig, imageDropNotice, imageRegistryConfig;
 import '../providers/provider_common.dart'
-    show authExpiredProvider, stripAuthExpiredMarker;
+    show
+        authExpiredProvider,
+        effectiveProviderConnectTimeout,
+        effectiveProviderStreamIdleTimeout,
+        providerConnectTimeout,
+        providerStreamIdleTimeout,
+        providerTimeoutsOverride,
+        stripAuthExpiredMarker;
 import '../providers/transient_retry_stream.dart';
 import '../prompts/prompt_overrides.dart';
 import '../providers/aiin_auth.dart';
@@ -324,6 +338,9 @@ class AgentCli {
         lsp: config.lspConfig,
         mcp: _mcp.manager,
         shellJobs: _shellJobs,
+        // Mid-run password asks (issue #367): the TUI opens the masked
+        // secret-mode prompt; the value streams to the live process stdin.
+        onPasswordPrompt: io.isInteractive ? _answerPasswordPrompt : null,
         config: ConfigService(env: decoratedEnv, homeDir: config.homeDir),
       ),
       ...memoryTools(
@@ -435,6 +452,16 @@ class AgentCli {
       manager: _a2aManager,
       machineName: config.machineName,
     );
+    // Issue #383: the heartbeat rides the steering channel — the getters
+    // consult the config EVERY tick, so a config rewrite applies at the
+    // next digest without a restart (E6).
+    _subagentHeartbeat = SubagentHeartbeat(
+      manager: _subagentManager,
+      heartbeatMinutes: () => config.subagents.heartbeatMinutes,
+      stallMinutes: () => config.subagents.stallMinutes,
+      notify: _deliverHeartbeatDigest,
+    );
+    _subagentHeartbeat.start();
     // Discover agent types from the agent roots (.fah/.agents/.claude/.github/
     // .codex) — fire-and-forget; the registry starts with built-ins and merges
     // discovered types when they arrive. Third-party roots ride the same
@@ -512,6 +539,10 @@ class AgentCli {
       onRunIdleTimeout: (error) =>
           _logDiagnostic('RUN IDLE WATCHDOG fired sid=$_logSid error=$error'),
       contextWindowCap: config.contextWindowCap,
+      wireDump: config.wireDump,
+      // Issue #387: the loop's over-window guard hands the transcript to
+      // this relief before refusing — one synchronous compaction pass.
+      overWindowRelief: (overWindow) => _relieveOverWindow(overWindow),
     );
     // The main agent's inbox in the messaging fabric: messages from
     // children (agent_message to "main") and from other Fa instances
@@ -759,6 +790,16 @@ class AgentCli {
   @visibleForTesting
   Map<String, String> addProviderExclusionsForTest() => _addProviderExclusions;
 
+  /// Test seam firing one heartbeat tick (issue #383) — the same path the
+  /// cadence timer drives, without waiting real minutes in tests.
+  @visibleForTesting
+  void heartbeatTickForTest() => _subagentHeartbeat.tick();
+
+  /// Test seam exposing the subagent registry — the heartbeat tests plant
+  /// running children without driving a real spawn.
+  @visibleForTesting
+  SubagentManager get subagentManagerForTest => _subagentManager;
+
   /// The preset names with a routing handler — the test asserts
   /// presets == handlers (a preset row without a handler is a dead menu
   /// entry: the picker closes and nothing happens — the live Copilot bug).
@@ -777,6 +818,12 @@ class AgentCli {
   /// happens), so the dispatch test asserts the id set exactly.
   @visibleForTesting
   Set<String> pickerHandlerKeysForTest() => _tuiPickerHandlers.keys.toSet();
+
+  /// Test seam: the settings-hub item keys that have a dispatch target
+  /// (a hub row without one closes silently on Enter).
+  @visibleForTesting
+  Set<String> settingsPickerHandlerKeysForTest() =>
+      _settingsPickerHandlers.keys.toSet();
 
   /// Test seam: opens the sessions picker (building its rows) without a
   /// TUI; the built items land in [sessionPickerItemsForTest].
@@ -862,6 +909,11 @@ class AgentCli {
   }
 
   late final SubagentManager _subagentManager;
+
+  /// The background-subagent heartbeat (issue #383): periodic status
+  /// digests + loud stall flags, delivered through the same steer/wake
+  /// path as completion notices.
+  late final SubagentHeartbeat _subagentHeartbeat;
 
   /// The FILE fabric layer — re-pointed when session storage falls back to
   /// a different root so the mailboxes follow the sessions.
@@ -968,6 +1020,11 @@ class AgentCli {
   );
   Session? _session;
 
+  /// Issue-385 blob persistence state: one persister per session (dedup
+  /// sets live in it); recreated when the session changes.
+  TrajectoryBlobPersister? _trajectoryBlobPersister;
+  Session? _trajectoryBlobPersisterSession;
+
   /// HEP v1 writer for backend agent mode (`--output events`, issue #155);
   /// null in the REPL. Set by [runHeadless], read by the compaction pass
   /// to bracket runs with frames.
@@ -1035,6 +1092,11 @@ class AgentCli {
   /// Paths the agent touched this session (tool call args) — path-gated
   /// skills (`paths:` frontmatter) enter the prompt once their globs match.
   final Set<String> _touchedPaths = {};
+
+  /// Start wall-clock + rendered detail per in-flight tool call (keyed by
+  /// toolCallId) — the end row repeats the detail and adds the elapsed zone
+  /// (issue #366). Unpaired ends render neither.
+  final Map<String, (DateTime, String)> _toolStarts = {};
 
   /// The MCP wiring (manager + re-registration) — see agent_cli_mcp.dart.
   late AgentCliMcpWiring _mcp;
@@ -1899,6 +1961,18 @@ class AgentCli {
       _onTaskJobCompleted,
     );
     final hepSub = hep == null ? null : _agent.subscribe(hep.handleEvent);
+    // Terminal-outcome capture (issue #413): the visible transcript is
+    // REBUILT by post-run compaction (checkpoint records replace the
+    // assistant turns entirely), so the exit code cannot be derived from
+    // `state.messages` — the last completed turn's stop reason is taken
+    // from the turn events as they fire, before any folding.
+    StopReason? terminalStopReason;
+    final turnSub = _agent.subscribe((event, _) {
+      if (event is TurnEndEvent) {
+        terminalStopReason = event.message.stopReason;
+      }
+    });
+    _headlessMode = true;
     try {
       if (images.isEmpty) {
         await _agent.prompt(_redactUserText(prompt));
@@ -1915,9 +1989,21 @@ class AgentCli {
           ),
         );
       }
+      // Settle the finished turn exactly like the REPL's [_runPrompt]
+      // (issue #413): the over-window guard's one-shot compaction +
+      // continuation used to be REPL-only, so a headless run that
+      // exhausted the window mid-task abandoned it and exited — the
+      // freed window was never used.
+      final lastMessage = _agent.state.messages.lastOrNull;
+      final finished = await _settleAfterPrompt(
+        lastMessage,
+        isAutoContinue: false,
+      );
       // Awaits any in-flight TTSR retry chain, persists the messages, and
-      // auto-compacts — the same end-of-turn sequence as a REPL run.
-      await _afterRun();
+      // auto-compacts — the same end-of-turn sequence as a REPL run. The
+      // continuation paths recurse through [_runPrompt], which finalizes
+      // with its own [_afterRun]; only a normally-finished turn does.
+      if (finished) await _afterRun();
       await _awaitHeadlessBackgroundJobs();
     } catch (error) {
       io.writeln(
@@ -1925,15 +2011,23 @@ class AgentCli {
       );
       return 1;
     } finally {
+      _headlessMode = false;
+      turnSub();
       await releasePowerAssertions();
       await _cubeCacheSaveQuietly();
       await interruptSub.cancel();
       await taskSub.cancel();
       hepSub?.call();
     }
-    return switch (_agent.state.messages.lastOrNull) {
-      AssistantMessage(stopReason: StopReason.error) => 1,
-      AssistantMessage(stopReason: StopReason.aborted) => 130,
+    // The exit code describes the LAST completed turn's terminal outcome
+    // (captured from the turn events above) — not the visible transcript,
+    // which post-run compaction rebuilds: the checkpoint fold drops the
+    // assistant turns entirely, and the classic trim marker lands after
+    // the error stop; both used to mask a failed run as exit 0 (issue
+    // #413).
+    return switch (terminalStopReason) {
+      StopReason.error => 1,
+      StopReason.aborted => 130,
       _ => 0,
     };
   }
@@ -2170,6 +2264,12 @@ class AgentCli {
   /// [_runPrompt] entry).
   bool _overWindowAutoResumed = false;
 
+  /// Whether this CLI instance is inside a headless (`fa "prompt"`, `-p`)
+  /// run — guards the REPL-only recovery flows (browser SSO re-auth) from
+  /// firing where no human can complete them. The settle path itself
+  /// (issue #413) stays shared with the REPL.
+  bool _headlessMode = false;
+
   /// Runs one prompt turn: pre-flight ([_beginUserPrompt]) → the agent
   /// stream → outcome settle ([_settleAfterPrompt], `true` = turn finished
   /// normally) → finalize ([_afterRun]); thrown errors land in
@@ -2352,6 +2452,9 @@ class AgentCli {
   /// Handles a CodeMie auth-session expiry if [message] matches one. Returns
   /// `true` when the expiry was handled and the turn is finished.
   Future<bool> _maybeHandleCodeMieError(String message) async {
+    // Headless: the browser SSO re-auth awaits a human that is not there —
+    // surface the error instead and let the exit code carry the failure.
+    if (_headlessMode) return false;
     if (authExpiredProvider(message) != 'codemie') return false;
     await _handleCodeMieAuthExpired(message);
     return true;
@@ -2394,9 +2497,24 @@ class AgentCli {
     }
   }
 
-  /// Called when a background shell job settles (the same async-result flow
-  /// as task-job completions): a transcript note, then a system-notice
-  /// steered into the running turn or run as a fresh turn while idle.
+  /// Delivers a background-subagent heartbeat digest (issue #383) through
+  /// the SAME channel as completion notices: busy → the steering queue
+  /// (delivered at the next step boundary, the turn is never aborted);
+  /// idle → a fresh run (the parent wakes). Text-only — the digest never
+  /// spawns or cancels anything.
+  void _deliverHeartbeatDigest(String digest) {
+    if (_exited) return;
+    if (isBusy) {
+      _agent.steer(UserMessage.text(digest));
+    } else {
+      _startRun(digest);
+    }
+  }
+
+  /// Called when a background shell job settles (the same async-result
+  /// flow as task-job completions): a transcript note, then a
+  /// system-notice steered into the running turn or run as a fresh turn
+  /// while idle.
   void _onShellJobSettled(ShellJobEntry job) {
     _onShellJobSettledBlock(job);
     io.writeln(

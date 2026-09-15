@@ -37,6 +37,9 @@ void main() {
     ModelRolesResolver? modelRolesResolver,
     MemoryConfig? memoryConfig,
     String? homeDir,
+    TtsrConfig? ttsr,
+    RedactionPipeline? redactionPipeline,
+    int? contextWindowCap,
   }) {
     return AgentCli(
       config: AgentCliConfig(
@@ -44,6 +47,8 @@ void main() {
         apiKey: 'test-key',
         env: env,
         homeDir: homeDir,
+        ttsr: ttsr,
+        redactionPipeline: redactionPipeline,
         sessionRoot: '/sessions',
         modelsConfig: modelsConfig,
         onModelsConfigChanged: onModelsConfigChanged,
@@ -54,6 +59,7 @@ void main() {
         modelsHttpClient: modelsHttpClient,
         modelRolesResolver: modelRolesResolver,
         memoryConfig: memoryConfig,
+        contextWindowCap: contextWindowCap,
         dapHubState: dapHubState,
         onDapHubConfigChanged: onDapHubConfigChanged,
         providerKind: 'openai-completions',
@@ -1095,10 +1101,7 @@ void main() {
 
       expect(cli.config.liveCompactionEngine, isNull);
       // The scope prompt never ran.
-      expect(
-        io.out.toString(),
-        isNot(contains('compaction engine — scope')),
-      );
+      expect(io.out.toString(), isNot(contains('compaction engine — scope')));
       final untouched = await env.readTextFile('/work/.fah/config.yaml');
       expect(untouched.valueOrNull, isNull);
       expect(fake.calls, 0);
@@ -1126,74 +1129,68 @@ void main() {
       expect(fake.calls, 0);
     });
 
-    test(
-      'global scope writes the user config and goes live',
-      () async {
-        final fake = FakeStreamFunction([textTurn('ok')]);
-        final cli = cliFor(fake.call, homeDir: '/home/u');
-        final run = cli.run();
+    test('global scope writes the user config and goes live', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, homeDir: '/home/u');
+      final run = cli.run();
 
-        final flow = cli.startCompactionEngineFlow();
-        await waitForIt(() => io.out.toString().contains('compaction engine'));
-        io.sendLine('2'); // structured
-        await waitForIt(
-          () => io.out.toString().contains('compaction engine — scope'),
-        );
-        io.sendLine('3'); // global
-        await waitForIt(
-          () => io.out.toString().contains(
-            'compaction.engine = structured → /home/u/.fah/config.yaml',
-          ),
-        );
-        await flow;
-        io.sendLine('/exit');
-        await run;
+      final flow = cli.startCompactionEngineFlow();
+      await waitForIt(() => io.out.toString().contains('compaction engine'));
+      io.sendLine('2'); // structured
+      await waitForIt(
+        () => io.out.toString().contains('compaction engine — scope'),
+      );
+      io.sendLine('3'); // global
+      await waitForIt(
+        () => io.out.toString().contains(
+          'compaction.engine = structured → /home/u/.fah/config.yaml',
+        ),
+      );
+      await flow;
+      io.sendLine('/exit');
+      await run;
 
-        expect(cli.config.liveCompactionEngine, CompactionEngine.structured);
-        final written = (await env.readTextFile(
-          '/home/u/.fah/config.yaml',
-        )).valueOrNull;
-        expect(written, isNotNull);
-        // The written file parses through the REAL boot parser.
-        final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
-        expect(parsed.compactionEngine, CompactionEngine.structured);
-        // The project config is untouched by a global-scope pick.
-        final project = await env.readTextFile('/work/.fah/config.yaml');
-        expect(project.valueOrNull, isNull);
-        expect(fake.calls, 0);
-      },
-    );
+      expect(cli.config.liveCompactionEngine, CompactionEngine.structured);
+      final written = (await env.readTextFile(
+        '/home/u/.fah/config.yaml',
+      )).valueOrNull;
+      expect(written, isNotNull);
+      // The written file parses through the REAL boot parser.
+      final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
+      expect(parsed.compactionEngine, CompactionEngine.structured);
+      // The project config is untouched by a global-scope pick.
+      final project = await env.readTextFile('/work/.fah/config.yaml');
+      expect(project.valueOrNull, isNull);
+      expect(fake.calls, 0);
+    });
 
-    test(
-      'global scope without a home directory refuses to save',
-      () async {
-        final fake = FakeStreamFunction([textTurn('ok')]);
-        final cli = cliFor(fake.call); // homeDir is null in the test config
-        final run = cli.run();
+    test('global scope without a home directory refuses to save', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call); // homeDir is null in the test config
+      final run = cli.run();
 
-        final flow = cli.startCompactionEngineFlow();
-        await waitForIt(() => io.out.toString().contains('compaction engine'));
-        io.sendLine('2'); // structured
-        await waitForIt(
-          () => io.out.toString().contains('compaction engine — scope'),
-        );
-        io.sendLine('3'); // global
-        await waitForIt(
-          () => io.out.toString().contains(
-            'compaction: no user config on this host — not saved',
-          ),
-        );
-        await flow;
-        io.sendLine('/exit');
-        await run;
+      final flow = cli.startCompactionEngineFlow();
+      await waitForIt(() => io.out.toString().contains('compaction engine'));
+      io.sendLine('2'); // structured
+      await waitForIt(
+        () => io.out.toString().contains('compaction engine — scope'),
+      );
+      io.sendLine('3'); // global
+      await waitForIt(
+        () => io.out.toString().contains(
+          'compaction: no user config on this host — not saved',
+        ),
+      );
+      await flow;
+      io.sendLine('/exit');
+      await run;
 
-        // Refused before any write — nothing went live, nothing on disk.
-        expect(cli.config.liveCompactionEngine, isNull);
-        final untouched = await env.readTextFile('/work/.fah/config.yaml');
-        expect(untouched.valueOrNull, isNull);
-        expect(fake.calls, 0);
-      },
-    );
+      // Refused before any write — nothing went live, nothing on disk.
+      expect(cli.config.liveCompactionEngine, isNull);
+      final untouched = await env.readTextFile('/work/.fah/config.yaml');
+      expect(untouched.valueOrNull, isNull);
+      expect(fake.calls, 0);
+    });
 
     test(
       'project scope keeps the live engine when the config read fails',
@@ -1215,9 +1212,8 @@ void main() {
         );
         io.sendLine('2'); // project
         await waitForIt(
-          () => io.out.toString().contains(
-            'cannot read /work/.fah/config.yaml',
-          ),
+          () =>
+              io.out.toString().contains('cannot read /work/.fah/config.yaml'),
         );
         await flow;
         io.sendLine('/exit');
@@ -1292,5 +1288,1469 @@ void main() {
         expect(fake.calls, 0);
       },
     );
+  });
+
+  group('ttsr rules flow (issue #392)', () {
+    const seedConfig = '''
+model: test-model
+ttsr:
+  enabled: true
+  contextMode: keep
+  repeatMode: after-gap
+  repeatGap: 4
+  maxInjectionsPerTurn: 2
+  retryDelayMs: 25
+  rules:
+    - name: no-secrets
+      pattern: 'sk-[a-zA-Z0-9]{8}'
+      body: Never echo secrets.
+      enabled: false
+      scope: ['text', 'thinking']
+    - name: no-french
+      pattern: 'faux pas'
+      body: Speak English only.
+memory:
+  projectPath: ./mem
+''';
+
+    Future<String> seed(String text) =>
+        env.writeFile('/home/u/.fah/config.yaml', text).then((_) => text);
+
+    // The flow loops, so its menu text repeats in the accumulated buffer —
+    // sequence steps by picker renders (`type a number:` prints once per
+    // render), never by re-matching earlier text.
+    Future<void> render(int n) => waitForIt(
+      () => 'type a number:'.allMatches(io.out.toString()).length >= n,
+    );
+
+    test(
+      'AC1: hub picker row and line-mode summary carry the ttsr value',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(
+          fake.call,
+          homeDir: '/home/u',
+          ttsr: const TtsrConfig(
+            rules: [
+              TtsrRule(name: 'live-one', patterns: ['boom'], body: 'b'),
+            ],
+          ),
+        );
+        expect(cli.ttsr, isNotNull, reason: 'boot wires a live engine');
+
+        final run = cli.run();
+        io.sendLine('/settings');
+        await waitForIt(() => io.out.toString().contains('ttsr:'));
+        io.sendLine('/exit');
+        await run;
+
+        final output = io.out.toString();
+        expect(output, contains('ttsr: 1 rule · live'));
+        final rows = cli.settingsHubItemsForTest();
+        final ttsrRow = rows.where((item) => item.key == 'ttsr').toList();
+        expect(ttsrRow, hasLength(1));
+        expect(ttsrRow.single.label, 'Stream rules (TTSR)');
+        expect(ttsrRow.single.description, contains('1 rule'));
+        expect(
+          cli.settingsPickerHandlerKeysForTest(),
+          contains('ttsr'),
+          reason: 'a hub row without a handler is a dead menu entry',
+        );
+        expect(fake.calls, 0);
+      },
+    );
+
+    test('AC1: summary reports the not-configured state', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, homeDir: '/home/u');
+      final run = cli.run();
+      io.sendLine('/settings');
+      await waitForIt(() => io.out.toString().contains('ttsr:'));
+      io.sendLine('/exit');
+      await run;
+      expect(io.out.toString(), contains('ttsr: not configured'));
+      expect(fake.calls, 0);
+    });
+
+    test(
+      'AC2: toggle round-trips every field and keeps other sections',
+      () async {
+        await seed(seedConfig);
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(fake.call, homeDir: '/home/u');
+        final run = cli.run();
+
+        final flow = cli.startTtsrRulesFlow();
+        await render(1); // main menu
+        await waitForIt(
+          () => io.out.toString().contains('off · sk-[a-zA-Z0-9]{8}'),
+        );
+        io.sendLine('1'); // no-secrets (disabled first)
+        await render(2); // the rule submenu
+        io.sendLine('1'); // toggle → enable
+        await waitForIt(
+          () => io.out.toString().contains(
+            'ttsr saved → /home/u/.fah/config.yaml',
+          ),
+        );
+        await render(3); // the submenu exited; the main menu re-rendered
+        io.sendLine('4'); // done (1=no-secrets, 2=no-french, 3=add, 4=done)
+        await flow;
+        io.sendLine('/exit');
+        await run;
+
+        final written = (await env.readTextFile(
+          '/home/u/.fah/config.yaml',
+        )).valueOrNull;
+        expect(written, isNotNull);
+        // Surgical: everything outside the ttsr block is byte-identical.
+        expect(written!, startsWith('model: test-model\nttsr:'));
+        expect(written, endsWith('memory:\n  projectPath: ./mem\n'));
+        // The real boot parser re-reads the file.
+        final parsed = CliConfig.fromYaml(loadYaml(written) as YamlMap);
+        final ttsr = parsed.ttsr!;
+        // Settings round-trip untouched.
+        expect(ttsr.settings.enabled, isTrue);
+        expect(ttsr.settings.contextMode, TtsrContextMode.keep);
+        expect(ttsr.settings.repeatMode, TtsrRepeatMode.afterGap);
+        expect(ttsr.settings.repeatGap, 4);
+        expect(ttsr.settings.maxInjectionsPerTurn, 2);
+        expect(ttsr.settings.retryDelay, const Duration(milliseconds: 25));
+        // Rules round-trip field by field.
+        expect(ttsr.rules, hasLength(2));
+        final noSecrets = ttsr.rules.singleWhere((r) => r.name == 'no-secrets');
+        expect(noSecrets.patterns, ['sk-[a-zA-Z0-9]{8}']);
+        expect(noSecrets.body, 'Never echo secrets.');
+        expect(noSecrets.enabled, isTrue, reason: 'the toggle flipped it');
+        expect(noSecrets.scope.allowText, isTrue);
+        expect(noSecrets.scope.allowThinking, isTrue);
+        expect(noSecrets.scope.allowAnyTool, isFalse);
+        final noFrench = ttsr.rules.singleWhere((r) => r.name == 'no-french');
+        expect(noFrench.enabled, isTrue);
+        expect(noFrench.scope.allowText, isTrue);
+        expect(noFrench.scope.allowAnyTool, isTrue);
+        expect(fake.calls, 0);
+      },
+    );
+
+    test(
+      'AC2: add persists a new rule with guards through the real parser',
+      () async {
+        await seed('memory:\n  projectPath: ./mem\n');
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(fake.call, homeDir: '/home/u');
+        final run = cli.run();
+
+        final flow = cli.startTtsrRulesFlow();
+        await render(1); // main menu (no rules yet)
+        io.sendLine('1'); // add (no rules yet → first option)
+        await waitForIt(() => io.out.toString().contains('rule name:'));
+        io.sendLine('no-doom');
+        await waitForIt(() => io.out.toString().contains('pattern (regex):'));
+        io.sendLine('doomsday clock');
+        await waitForIt(() => io.out.toString().contains('body:'));
+        io.sendLine('Stop summoning doomsday.');
+        await waitForIt(() => io.out.toString().contains('scope'));
+        io.sendLine('thinking');
+        await waitForIt(
+          () => io.out.toString().contains(
+            'ttsr saved → /home/u/.fah/config.yaml',
+          ),
+        );
+        await render(2); // the main menu re-rendered with the new rule
+        io.sendLine('3'); // done (1=no-doom, 2=add, 3=done)
+        await flow;
+        io.sendLine('/exit');
+        await run;
+
+        final written = (await env.readTextFile(
+          '/home/u/.fah/config.yaml',
+        )).valueOrNull;
+        expect(written, isNotNull);
+        expect(written!, contains('ttsr:'));
+        // The absent block appends: memory stays first, ttsr lands last.
+        expect(written, startsWith('memory:\n  projectPath: ./mem\n'));
+        final parsed = CliConfig.fromYaml(loadYaml(written) as YamlMap);
+        final rule = parsed.ttsr!.rules.single;
+        expect(rule.name, 'no-doom');
+        expect(rule.patterns, ['doomsday clock']);
+        expect(rule.body, 'Stop summoning doomsday.');
+        expect(rule.enabled, isTrue);
+        expect(rule.scope.allowThinking, isTrue);
+        expect(rule.scope.allowText, isFalse);
+        expect(fake.calls, 0);
+      },
+    );
+
+    test('AC2: delete removes only the picked rule', () async {
+      await seed(seedConfig);
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, homeDir: '/home/u');
+      final run = cli.run();
+
+      final flow = cli.startTtsrRulesFlow();
+      await render(1); // main menu
+      io.sendLine('2'); // no-french
+      await render(2); // the rule submenu
+      io.sendLine('2'); // delete
+      await waitForIt(
+        () =>
+            io.out.toString().contains('ttsr saved → /home/u/.fah/config.yaml'),
+      );
+      await render(3); // the submenu exited; the main menu re-rendered
+      io.sendLine('3'); // done (1=no-secrets, 2=add, 3=done)
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      final written = (await env.readTextFile(
+        '/home/u/.fah/config.yaml',
+      )).valueOrNull;
+      final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
+      expect(parsed.ttsr!.rules.map((r) => r.name), ['no-secrets']);
+      expect(written, endsWith('memory:\n  projectPath: ./mem\n'));
+      expect(fake.calls, 0);
+    });
+
+    test('AC3: a live engine applies the same diff and says so', () async {
+      await seed(seedConfig);
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(
+        fake.call,
+        homeDir: '/home/u',
+        ttsr: const TtsrConfig(
+          rules: [
+            TtsrRule(name: 'boot-rule', patterns: ['alpha'], body: 'b1'),
+            // Matches the on-disk seed: disabled at boot, so only
+            // boot-rule registers until the flow's toggle flips it.
+            TtsrRule(
+              name: 'no-secrets',
+              patterns: ['sk-x'],
+              body: 'b2',
+              enabled: false,
+            ),
+          ],
+        ),
+      );
+      expect(cli.ttsr, isNotNull);
+      final run = cli.run();
+
+      final flow = cli.startTtsrRulesFlow();
+      await render(1); // main menu
+      // The live engine booted with the section's rules: no-secrets is
+      // disabled on disk, so only boot-rule registered.
+      expect(cli.ttsr!.manager.rules.map((r) => r.name), ['boot-rule']);
+      io.sendLine('1'); // no-secrets (disabled, first in the list)
+      await render(2); // the rule submenu
+      io.sendLine('1'); // toggle → enable + register live
+      await waitForIt(
+        () => io.out.toString().contains('rule edits apply live'),
+      );
+      await render(3); // the submenu exited; the main menu re-rendered
+      io.sendLine('4'); // done (1=no-secrets, 2=no-french, 3=add, 4=done)
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      expect(
+        cli.ttsr!.manager.rules.map((r) => r.name),
+        containsAll(['boot-rule', 'no-secrets']),
+      );
+      final written = (await env.readTextFile(
+        '/home/u/.fah/config.yaml',
+      )).valueOrNull;
+      final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
+      expect(
+        parsed.ttsr!.rules.singleWhere((r) => r.name == 'no-secrets').enabled,
+        isTrue,
+      );
+      expect(fake.calls, 0);
+    });
+
+    test('AC3: without a live engine the flow names the next boot', () async {
+      await seed(
+        'ttsr:\n  rules:\n    - name: a\n      pattern: x\n      body: b\n',
+      );
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, homeDir: '/home/u');
+      expect(cli.ttsr, isNull, reason: 'no ttsr config at boot');
+      final run = cli.run();
+
+      final flow = cli.startTtsrRulesFlow();
+      await render(1); // main menu
+      io.sendLine('1'); // rule a
+      await render(2); // the rule submenu
+      io.sendLine('1'); // toggle off
+      await waitForIt(() => io.out.toString().contains('applies at next boot'));
+      await render(3); // the submenu exited; the main menu re-rendered
+      io.sendLine('3'); // done (1=rule a, 2=add, 3=done)
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      final written = (await env.readTextFile(
+        '/home/u/.fah/config.yaml',
+      )).valueOrNull;
+      final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
+      expect(parsed.ttsr!.rules.single.enabled, isFalse);
+      expect(fake.calls, 0);
+    });
+
+    test(
+      'AC4: a malformed section shows the verbatim error, writes nothing',
+      () async {
+        final text = await seed('model: kept\nttsr: 42\nmemory: kept-too\n');
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(fake.call, homeDir: '/home/u');
+        final run = cli.run();
+
+        await cli.startTtsrRulesFlow();
+        await waitForIt(
+          () => io.out.toString().contains('"ttsr" must be a map'),
+        );
+        io.sendLine('/exit');
+        await run;
+
+        expect(io.out.toString(), isNot(contains('Add a rule')));
+        expect(
+          (await env.readTextFile('/home/u/.fah/config.yaml')).valueOrNull,
+          text,
+          reason: 'nothing may be written',
+        );
+        expect(fake.calls, 0);
+      },
+    );
+
+    test(
+      'E1: absent section offers defaults and writes a fresh block',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(fake.call, homeDir: '/home/u');
+        final run = cli.run();
+
+        final flow = cli.startTtsrRulesFlow();
+        await render(1); // main menu (no rules → add is the first option)
+        io.sendLine('1'); // add
+        await waitForIt(() => io.out.toString().contains('rule name:'));
+        io.sendLine('first');
+        await waitForIt(() => io.out.toString().contains('pattern (regex):'));
+        io.sendLine('boom');
+        await waitForIt(() => io.out.toString().contains('body:'));
+        io.sendLine('Watch out.');
+        await waitForIt(() => io.out.toString().contains('scope (empty'));
+        io.sendLine(''); // default scope
+        await waitForIt(
+          () => io.out.toString().contains(
+            'ttsr saved → /home/u/.fah/config.yaml',
+          ),
+        );
+        await render(2); // the main menu re-rendered with the new rule
+        io.sendLine('3'); // done (1=first, 2=add, 3=done)
+        await flow;
+        io.sendLine('/exit');
+        await run;
+
+        final written = (await env.readTextFile(
+          '/home/u/.fah/config.yaml',
+        )).valueOrNull;
+        final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
+        expect(parsed.ttsr!.rules.single.name, 'first');
+        expect(parsed.ttsr!.settings.enabled, isTrue);
+        expect(fake.calls, 0);
+      },
+    );
+
+    test('E2: an unwritable config file refuses with a clear error', () async {
+      await env.createDir('/home/u/.fah/config.yaml');
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, homeDir: '/home/u');
+      final run = cli.run();
+
+      await cli.startTtsrRulesFlow();
+      await waitForIt(
+        () =>
+            io.out.toString().contains('cannot read /home/u/.fah/config.yaml'),
+      );
+      io.sendLine('/exit');
+      await run;
+      expect(fake.calls, 0);
+    });
+
+    test('E3: every action re-reads — a concurrent edit survives', () async {
+      await seed(
+        'ttsr:\n  rules:\n    - name: a\n      pattern: x\n      body: b\n',
+      );
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, homeDir: '/home/u');
+      final run = cli.run();
+
+      final flow = cli.startTtsrRulesFlow();
+      await render(1); // main menu
+      io.sendLine('1'); // rule a
+      await render(2); // the rule submenu
+      // A concurrent edit lands while the flow sits in the submenu.
+      await env.writeFile(
+        '/home/u/.fah/config.yaml',
+        'ttsr:\n  rules:\n    - name: a\n      pattern: x\n      body: b\n'
+            '    - name: concurrent\n      pattern: y\n      body: c\n',
+      );
+      io.sendLine('1'); // toggle a off
+      await waitForIt(
+        () =>
+            io.out.toString().contains('ttsr saved → /home/u/.fah/config.yaml'),
+      );
+      await render(3); // the submenu exited; the main menu re-rendered
+      await waitForIt(() => io.out.toString().contains('concurrent'));
+      io.sendLine('4'); // done (1=a, 2=concurrent, 3=add, 4=done)
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      final written = (await env.readTextFile(
+        '/home/u/.fah/config.yaml',
+      )).valueOrNull;
+      final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
+      expect(
+        parsed.ttsr!.rules.map((r) => r.name),
+        contains('concurrent'),
+        reason: 'reload-before-write',
+      );
+      expect(
+        parsed.ttsr!.rules.singleWhere((r) => r.name == 'a').enabled,
+        isFalse,
+      );
+      expect(fake.calls, 0);
+    });
+  });
+  group('redaction flow (issue #391)', () {
+    /// A pipeline wired like the host startup builds one (defaults, no
+    /// secrets) so the flow's live-install paths have a real pipeline.
+    RedactionPipeline pipeline() =>
+        RedactionPipeline(registeredSecrets: const []);
+
+    /// Seeds the USER config (the machine-level file the redact: section
+    /// belongs in, mirroring `fa config set redact…` global scope) and
+    /// returns the cli over it.
+    Future<AgentCli> seededCli(
+      FakeStreamFunction fake, {
+      RedactionPipeline? redactionPipeline,
+      String yaml = 'provider: openrouter\nmodel: m1\n',
+    }) async {
+      await env.writeFile('/home/u/.fah/config.yaml', yaml);
+      return cliFor(
+        fake.call,
+        homeDir: '/home/u',
+        redactionPipeline: redactionPipeline,
+      );
+    }
+
+    test(
+      'AC1: the hub picker and the /settings summary carry redaction',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(fake.call, redactionPipeline: pipeline());
+        final run = cli.run();
+
+        io.sendLine('/settings');
+        await waitForIt(() => io.out.toString().contains('redact: on, block'));
+        io.sendLine('/exit');
+        await run;
+
+        // The hub row exists with the current effective pipeline state.
+        final row = cli.settingsHubItems().firstWhere(
+          (item) => item.key == 'redact',
+        );
+        expect(row.label, 'Redaction');
+        expect(row.description, contains('on, block off'));
+        expect(io.out.toString(), contains('redact: on, block off'));
+        expect(fake.calls, 0);
+      },
+    );
+
+    test('AC1: summary reads off when the boot disabled redaction', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call); // no pipeline — enabled: false boot
+      final run = cli.run();
+
+      io.sendLine('/settings');
+      await waitForIt(() => io.out.toString().contains('redact: off'));
+      io.sendLine('/exit');
+      await run;
+
+      final row = cli.settingsHubItems().firstWhere(
+        (item) => item.key == 'redact',
+      );
+      expect(row.description, 'off');
+      expect(fake.calls, 0);
+    });
+
+    test('every hub row has a dispatch target (Enter never no-ops)', () {
+      final cli = cliFor(FakeStreamFunction([textTurn('ok')]).call);
+      final keys = cli.settingsHubItems().map((item) => item.key).toSet()
+        ..remove('mcp'); // pre-existing main gap — `/mcp` has no picker yet
+      expect(
+        keys.difference(cli.settingsPickerHandlerKeysForTest()),
+        isEmpty,
+        reason: 'a hub row without a handler closes silently on Enter',
+      );
+    });
+
+    test(
+      'AC2: every section field round-trips through the yaml file',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = await seededCli(
+          fake,
+          redactionPipeline: pipeline(),
+          yaml:
+              '# machine policy\nprovider: openrouter\nredact:\n'
+              '  enabled: true\n',
+        );
+        final run = cli.run();
+
+        final flow = cli.startRedactionFlow();
+        await waitForIt(() => io.out.toString().contains('redaction'));
+        // allowlist: two comma-separated regexes → a yaml block list.
+        io.sendLine('5');
+        await waitForIt(() => io.out.toString().contains('Allowlist regexes'));
+        io.sendLine(r'sha-[0-9a-f]{40}, \b[0-9a-f-]{36}\b');
+        await waitForIt(() => io.out.toString().contains('redact.allowlist'));
+        // minEntropy + minLength scalars.
+        io.sendLine('3');
+        await waitForIt(() => io.out.toString().contains('min entropy'));
+        io.sendLine('3.2');
+        await waitForIt(
+          () => io.out.toString().contains('redact.minEntropy = 3.2'),
+        );
+        io.sendLine('4');
+        await waitForIt(() => io.out.toString().contains('min token length'));
+        io.sendLine('40');
+        await waitForIt(
+          () => io.out.toString().contains('redact.minLength = 40'),
+        );
+        // toolDeny list.
+        io.sendLine('7');
+        await waitForIt(() => io.out.toString().contains('tool deny'));
+        io.sendLine('bash, read_file');
+        await waitForIt(() => io.out.toString().contains('redact.toolDeny'));
+        // Layer toggle: pii (index 9 → picker row 10) off → on, then out.
+        io.sendLine('8');
+        await waitForIt(() => io.out.toString().contains('redaction layers'));
+        await waitForIt(() => io.out.toString().contains('10) pii'));
+        io.sendLine('10');
+        await waitForIt(
+          () => io.out.toString().contains('redact.layers.pii = true'),
+        );
+        io.sendLine('12'); // done — out of the layers submenu
+        // blockMode quick toggle off → on.
+        io.sendLine('2');
+        await waitForIt(
+          () => io.out.toString().contains('redact.blockMode = true'),
+        );
+        io.sendLine('10'); // done — out of the redaction menu
+        await flow;
+        io.sendLine('/exit');
+        await run;
+
+        // The real boot parser re-reads the file.
+        final written = (await env.readTextFile(
+          '/home/u/.fah/config.yaml',
+        )).valueOrNull;
+        expect(written, isNotNull);
+        final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
+        final redact = parsed.redact!;
+        expect(redact.enabled, isTrue);
+        expect(redact.blockMode, isTrue);
+        expect(redact.minEntropy, 3.2);
+        expect(redact.minLength, 40);
+        expect(redact.allowlistRegexes.map((r) => r.pattern), [
+          'sha-[0-9a-f]{40}',
+          r'\b[0-9a-f-]{36}\b',
+        ]);
+        expect(redact.toolDeny, {'bash', 'read_file'});
+        expect(redact.isLayerEnabled(RedactionLayer.pii), isTrue);
+        // Surgical write: the other sections survive byte-for-byte.
+        expect(written, contains('# machine policy\nprovider: openrouter\n'));
+        // The live pipeline reloaded the saved section from disk.
+        final live = cli.config.redactionPipeline!.config;
+        expect(live.blockMode, isTrue);
+        expect(live.minEntropy, 3.2);
+        expect(live.minLength, 40);
+        expect(live.allowlistRegexes, hasLength(2));
+        expect(live.toolDeny, {'bash', 'read_file'});
+        expect(live.isLayerEnabled(RedactionLayer.pii), isTrue);
+        expect(fake.calls, 0);
+      },
+    );
+
+    test(
+      'AC3: with a pipeline the write applies live; without, next boot',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = await seededCli(fake, redactionPipeline: pipeline());
+        final run = cli.run();
+
+        final flow = cli.startRedactionFlow();
+        await waitForIt(() => io.out.toString().contains('redaction'));
+        io.sendLine('2'); // blockMode toggle
+        await waitForIt(() => io.out.toString().contains('(applies live'));
+        io.sendLine('10'); // done
+        await flow;
+        io.sendLine('/exit');
+        await run;
+        expect(fake.calls, 0);
+      },
+    );
+
+    test(
+      'AC3: a pipeline-less boot states the change waits for next boot',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = await seededCli(fake); // no pipeline
+        final run = cli.run();
+
+        final flow = cli.startRedactionFlow();
+        await waitForIt(() => io.out.toString().contains('redaction'));
+        io.sendLine('2'); // blockMode toggle
+        await waitForIt(
+          () => io.out.toString().contains('(applies at next boot)'),
+        );
+        io.sendLine('10'); // done
+        await flow;
+        io.sendLine('/exit');
+        await run;
+        expect(fake.calls, 0);
+      },
+    );
+
+    test(
+      'AC4: an invalid allowlist regex shows the parser error, no write',
+      () async {
+        const seed = 'provider: openrouter\nredact:\n  enabled: true\n';
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = await seededCli(
+          fake,
+          redactionPipeline: pipeline(),
+          yaml: seed,
+        );
+        final run = cli.run();
+
+        final flow = cli.startRedactionFlow();
+        await waitForIt(() => io.out.toString().contains('redaction'));
+        io.sendLine('5'); // allowlist
+        await waitForIt(() => io.out.toString().contains('Allowlist regexes'));
+        io.sendLine('[unclosed');
+        await waitForIt(
+          () => io.out.toString().contains('Unterminated character class'),
+        );
+        io.sendLine('10'); // done
+        await flow;
+        io.sendLine('/exit');
+        await run;
+
+        expect(io.out.toString(), contains('not saved:'));
+        // Byte-identical: nothing was written.
+        final written = (await env.readTextFile(
+          '/home/u/.fah/config.yaml',
+        )).valueOrNull;
+        expect(written, seed);
+        // And the live pipeline keeps its previous config.
+        expect(cli.config.redactionPipeline!.config.allowlistRegexes, isEmpty);
+        expect(fake.calls, 0);
+      },
+    );
+
+    test('E1: absent section — the flow writes a fresh block', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, homeDir: '/home/u'); // no file, no pipeline
+      final run = cli.run();
+
+      final flow = cli.startRedactionFlow();
+      await waitForIt(() => io.out.toString().contains('redaction'));
+      io.sendLine('2'); // blockMode toggle
+      await waitForIt(
+        () => io.out.toString().contains('redact.blockMode = true'),
+      );
+      io.sendLine('10'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      final written = (await env.readTextFile(
+        '/home/u/.fah/config.yaml',
+      )).valueOrNull;
+      final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
+      expect(parsed.redact!.blockMode, isTrue);
+      expect(fake.calls, 0);
+    });
+
+    test('E2: unreadable config — clear error, pipeline untouched', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(
+        fake.call,
+        homeDir: '/home/u',
+        redactionPipeline: pipeline(),
+      );
+      final run = cli.run();
+      // A directory where the user config should be.
+      await env.createDir('/home/u');
+      await env.createDir('/home/u/.fah');
+      await env.createDir('/home/u/.fah/config.yaml');
+
+      final flow = cli.startRedactionFlow();
+      await waitForIt(() => io.out.toString().contains('redaction'));
+      io.sendLine('1'); // toggle enabled
+      await waitForIt(
+        () =>
+            io.out.toString().contains('cannot read /home/u/.fah/config.yaml'),
+      );
+      io.sendLine('10'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      expect(cli.config.redactionPipeline!.config.enabled, isTrue);
+      expect(fake.calls, 0);
+    });
+
+    test('E3: reload-after-write picks up a concurrent hand edit', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = await seededCli(
+        fake,
+        redactionPipeline: pipeline(),
+        yaml: 'redact:\n  minEntropy: 4.5\n',
+      );
+      final run = cli.run();
+
+      final flow = cli.startRedactionFlow();
+      await waitForIt(() => io.out.toString().contains('redaction'));
+      // A concurrent editor (the agent's own config save) lands between
+      // the menu render and the flow's write.
+      await env.writeFile(
+        '/home/u/.fah/config.yaml',
+        'redact:\n  minEntropy: 2.0\n',
+      );
+      io.sendLine('2'); // blockMode toggle
+      await waitForIt(
+        () => io.out.toString().contains('redact.blockMode = true'),
+      );
+      io.sendLine('10'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      // The reload installed what the file now holds: BOTH the concurrent
+      // edit and the flow's own write.
+      final live = cli.config.redactionPipeline!.config;
+      expect(live.minEntropy, 2.0);
+      expect(live.blockMode, isTrue);
+      expect(fake.calls, 0);
+    });
+
+    test('reset stats zeroes the pipeline counters', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final redaction = pipeline()
+        ..registerSecret('supersecrettoken1')
+        ..redact('leak: supersecrettoken1 done');
+      expect(redaction.stats.total, greaterThan(0));
+      final cli = await seededCli(fake, redactionPipeline: redaction);
+      final run = cli.run();
+
+      final flow = cli.startRedactionFlow();
+      await waitForIt(() => io.out.toString().contains('redaction'));
+      io.sendLine('9'); // reset stats
+      await waitForIt(
+        () => io.out.toString().contains('redaction stats reset'),
+      );
+      io.sendLine('10'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      expect(redaction.stats.total, 0);
+      expect(redaction.stats.byLayer, isEmpty);
+      expect(fake.calls, 0);
+    });
+
+    test('cancelled at the menu writes nothing', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(
+        fake.call,
+        homeDir: '/home/u',
+        redactionPipeline: pipeline(),
+      );
+      final run = cli.run();
+
+      final flow = cli.startRedactionFlow();
+      await waitForIt(() => io.out.toString().contains('redaction'));
+      io.interrupt();
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      final written = (await env.readTextFile(
+        '/home/u/.fah/config.yaml',
+      )).valueOrNull;
+      expect(written, isNull);
+      expect(fake.calls, 0);
+    });
+  });
+
+  group('context cap flow (issue #394)', () {
+    /// Seeds the USER config (the machine-level file the agent: section
+    /// belongs in, mirroring `fa config set agent…` global scope) and
+    /// returns the cli over it.
+    Future<AgentCli> seededCli(
+      FakeStreamFunction fake, {
+      String yaml = 'provider: openrouter\nmodel: m1\n',
+      int? contextWindowCap,
+    }) async {
+      await env.writeFile('/home/u/.fah/config.yaml', yaml);
+      return cliFor(
+        fake.call,
+        homeDir: '/home/u',
+        contextWindowCap: contextWindowCap,
+      );
+    }
+
+    test(
+      'AC1: the hub picker and the /settings summary carry the cap',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(fake.call, contextWindowCap: 64000);
+        final run = cli.run();
+
+        io.sendLine('/settings');
+        await waitForIt(() => io.out.toString().contains('ctx cap:'));
+        io.sendLine('/exit');
+        await run;
+
+        // The hub row exists with the raw window vs the effective cap.
+        final row = cli.settingsHubItems().firstWhere(
+          (item) => item.key == 'context-cap',
+        );
+        expect(row.label, 'Context cap');
+        expect(row.description, '100000 → 64000');
+        expect(io.out.toString(), contains('ctx cap: 100000 → 64000'));
+        expect(fake.calls, 0);
+      },
+    );
+
+    test('AC1: the summary reads off when no cap is set', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call); // uncapped boot
+      final run = cli.run();
+
+      io.sendLine('/settings');
+      await waitForIt(() => io.out.toString().contains('ctx cap: off'));
+      io.sendLine('/exit');
+      await run;
+
+      final row = cli.settingsHubItems().firstWhere(
+        (item) => item.key == 'context-cap',
+      );
+      expect(row.description, 'off (window 100000)');
+      expect(fake.calls, 0);
+    });
+
+    test('every hub row has a dispatch target (Enter never no-ops)', () {
+      final cli = cliFor(FakeStreamFunction([textTurn('ok')]).call);
+      final keys = cli.settingsHubItems().map((item) => item.key).toSet()
+        ..remove('mcp'); // pre-existing main gap — `/mcp` has no picker yet
+      expect(
+        keys.difference(cli.settingsPickerHandlerKeysForTest()),
+        isEmpty,
+        reason: 'a hub row without a handler closes silently on Enter',
+      );
+    });
+
+    test('AC2: setting the cap round-trips through the yaml file', () async {
+      const seed = '# owner knobs\nprovider: openrouter\n';
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = await seededCli(fake, yaml: seed);
+      final run = cli.run();
+
+      final flow = cli.startContextCapFlow();
+      await waitForIt(() => io.out.toString().contains('context cap'));
+      io.sendLine('1'); // set
+      await waitForIt(
+        () => io.out.toString().contains('context cap in tokens'),
+      );
+      io.sendLine('32768');
+      await waitForIt(
+        () => io.out.toString().contains('agent.contextWindowCap = 32768'),
+      );
+      io.sendLine('3'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      // The real boot parser re-reads the file.
+      final written = (await env.readTextFile(
+        '/home/u/.fah/config.yaml',
+      )).valueOrNull;
+      expect(written, isNotNull);
+      final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
+      expect(parsed.contextWindowCap, 32768);
+      // Surgical write: the other sections survive byte-for-byte.
+      expect(written, contains('# owner knobs\nprovider: openrouter\n'));
+      expect(fake.calls, 0);
+    });
+
+    test('AC2: clearing the cap removes the whole agent block', () async {
+      const seed = 'provider: openrouter\nagent:\n  contextWindowCap: 32768\n';
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = await seededCli(fake, yaml: seed, contextWindowCap: 32768);
+      final run = cli.run();
+
+      final flow = cli.startContextCapFlow();
+      await waitForIt(() => io.out.toString().contains('context cap'));
+      io.sendLine('2'); // clear
+      await waitForIt(
+        () => io.out.toString().contains('agent.contextWindowCap removed'),
+      );
+      io.sendLine('3'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      final written = (await env.readTextFile(
+        '/home/u/.fah/config.yaml',
+      )).valueOrNull;
+      expect(written, isNotNull);
+      // The bare `agent:` would fail the strict diagnostics validator —
+      // the whole one-key block is gone.
+      expect(written, isNot(contains('agent:')));
+      final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
+      expect(parsed.contextWindowCap, isNull);
+      expect(written, contains('provider: openrouter'));
+      expect(fake.calls, 0);
+    });
+
+    test('AC3: the flow states the change waits for the next boot', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = await seededCli(fake);
+      final run = cli.run();
+
+      final flow = cli.startContextCapFlow();
+      await waitForIt(() => io.out.toString().contains('context cap'));
+      io.sendLine('1'); // set
+      await waitForIt(
+        () => io.out.toString().contains('context cap in tokens'),
+      );
+      io.sendLine('16384');
+      await waitForIt(
+        () => io.out.toString().contains('(applies at next boot'),
+      );
+      io.sendLine('3'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+      expect(fake.calls, 0);
+    });
+
+    test(
+      'AC4: below the floor shows the parser error, writes nothing',
+      () async {
+        const seed =
+            'provider: openrouter\nagent:\n  contextWindowCap: 32768\n';
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = await seededCli(fake, yaml: seed);
+        final run = cli.run();
+
+        final flow = cli.startContextCapFlow();
+        await waitForIt(() => io.out.toString().contains('context cap'));
+        io.sendLine('1'); // set
+        await waitForIt(
+          () => io.out.toString().contains('context cap in tokens'),
+        );
+        io.sendLine('16383'); // one below the compaction reserve
+        await waitForIt(
+          () => io.out.toString().contains('must be at least 16384'),
+        );
+        io.sendLine('3'); // done
+        await flow;
+        io.sendLine('/exit');
+        await run;
+
+        expect(io.out.toString(), contains('not saved:'));
+        // Byte-identical: nothing was written.
+        final written = (await env.readTextFile(
+          '/home/u/.fah/config.yaml',
+        )).valueOrNull;
+        expect(written, seed);
+        expect(fake.calls, 0);
+      },
+    );
+
+    test('AC4: a non-integer shows the parser error, writes nothing', () async {
+      const seed = 'provider: openrouter\n';
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = await seededCli(fake, yaml: seed);
+      final run = cli.run();
+
+      final flow = cli.startContextCapFlow();
+      await waitForIt(() => io.out.toString().contains('context cap'));
+      io.sendLine('1'); // set
+      await waitForIt(
+        () => io.out.toString().contains('context cap in tokens'),
+      );
+      io.sendLine('big');
+      await waitForIt(
+        () => io.out.toString().contains('must be a positive integer (tokens)'),
+      );
+      io.sendLine('3'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      expect(io.out.toString(), contains('not saved:'));
+      final written = (await env.readTextFile(
+        '/home/u/.fah/config.yaml',
+      )).valueOrNull;
+      expect(written, seed);
+      expect(fake.calls, 0);
+    });
+
+    test(
+      'a cap at or above the model window warns it clamps nothing',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = await seededCli(fake); // testModel window: 100000
+        final run = cli.run();
+
+        final flow = cli.startContextCapFlow();
+        await waitForIt(() => io.out.toString().contains('context cap'));
+        io.sendLine('1'); // set
+        await waitForIt(
+          () => io.out.toString().contains('context cap in tokens'),
+        );
+        io.sendLine('200000');
+        await waitForIt(
+          () => io.out.toString().contains('the cap clamps nothing'),
+        );
+        io.sendLine('3'); // done
+        await flow;
+        io.sendLine('/exit');
+        await run;
+        expect(fake.calls, 0);
+      },
+    );
+
+    test('E1: absent section — the flow writes a fresh block', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, homeDir: '/home/u'); // no file at all
+      final run = cli.run();
+
+      final flow = cli.startContextCapFlow();
+      await waitForIt(() => io.out.toString().contains('context cap'));
+      io.sendLine('1'); // set
+      await waitForIt(
+        () => io.out.toString().contains('context cap in tokens'),
+      );
+      io.sendLine('16384');
+      await waitForIt(
+        () => io.out.toString().contains('agent.contextWindowCap = 16384'),
+      );
+      io.sendLine('3'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      final written = (await env.readTextFile(
+        '/home/u/.fah/config.yaml',
+      )).valueOrNull;
+      final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
+      expect(parsed.contextWindowCap, 16384);
+      expect(fake.calls, 0);
+    });
+
+    test('E2: unreadable config — clear error, nothing written', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(
+        fake.call,
+        homeDir: '/home/u',
+        contextWindowCap: 32768,
+      );
+      final run = cli.run();
+      // A directory where the user config should be.
+      await env.createDir('/home/u');
+      await env.createDir('/home/u/.fah');
+      await env.createDir('/home/u/.fah/config.yaml');
+
+      final flow = cli.startContextCapFlow();
+      await waitForIt(() => io.out.toString().contains('context cap'));
+      io.sendLine('1'); // set
+      await waitForIt(
+        () => io.out.toString().contains('context cap in tokens'),
+      );
+      io.sendLine('16384');
+      await waitForIt(
+        () =>
+            io.out.toString().contains('cannot read /home/u/.fah/config.yaml'),
+      );
+      io.sendLine('2'); // clear — the same read error on the clear branch
+      await waitForIt(
+        () => 'cannot read'.allMatches(io.out.toString()).length == 2,
+      );
+      io.sendLine('3'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+      expect(fake.calls, 0);
+    });
+
+    test('clearing with no cap set is a no-op', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, homeDir: '/home/u'); // uncapped
+      final run = cli.run();
+
+      final flow = cli.startContextCapFlow();
+      await waitForIt(() => io.out.toString().contains('context cap'));
+      io.sendLine('2'); // clear
+      // The handler output, not the menu row's `already off` description.
+      await waitForIt(() => io.out.toString().contains('nothing to clear'));
+      io.sendLine('3'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      final written = (await env.readTextFile(
+        '/home/u/.fah/config.yaml',
+      )).valueOrNull;
+      expect(written, isNull);
+      expect(fake.calls, 0);
+    });
+
+    test('cancelled at the menu writes nothing', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, homeDir: '/home/u');
+      final run = cli.run();
+
+      final flow = cli.startContextCapFlow();
+      await waitForIt(() => io.out.toString().contains('context cap'));
+      io.interrupt();
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      final written = (await env.readTextFile(
+        '/home/u/.fah/config.yaml',
+      )).valueOrNull;
+      expect(written, isNull);
+      expect(fake.calls, 0);
+    });
+  });
+  group('images settings flow (issue #395)', () {
+    // The registry settings are process-wide globals (bin/fah.dart boots
+    // them from the section); every test starts from a fresh boot state.
+    setUp(() => imageRegistryConfig = const ImageRegistryConfig());
+    tearDown(() => imageRegistryConfig = const ImageRegistryConfig());
+
+    Future<void> seed(String text) =>
+        env.writeFile('/home/u/.fah/config.yaml', text);
+
+    test(
+      'AC1: hub picker row and line-mode summary carry the effective value',
+      () async {
+        // Boot state (bin/fah.dart publishes the section into the global).
+        imageRegistryConfig = const ImageRegistryConfig(
+          enabled: false,
+          maxPerRequest: 7,
+        );
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(fake.call, homeDir: '/home/u');
+        final run = cli.run();
+
+        io.sendLine('/settings');
+        await waitForIt(() => io.out.toString().contains('images:'));
+        io.sendLine('/exit');
+        await run;
+
+        final output = io.out.toString();
+        expect(output, contains('images: off · legacy request shape · cap 7'));
+        final row = cli.settingsHubItems().firstWhere(
+          (item) => item.key == 'images',
+        );
+        expect(row.label, 'Images');
+        expect(row.description, 'off · legacy request shape · cap 7');
+        expect(
+          cli.settingsPickerHandlerKeysForTest(),
+          contains('images'),
+          reason: 'a hub row without a handler is a dead menu entry',
+        );
+        expect(fake.calls, 0);
+      },
+    );
+
+    test(
+      'AC2: toggle and cap round-trip every field; other sections intact',
+      () async {
+        await seed(
+          'provider: openrouter\nmodel: m1\nimages:\n'
+          '  registry: true\n  maxPerRequest: 20\nmemory:\n'
+          '  projectPath: ./mem\n',
+        );
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(fake.call, homeDir: '/home/u');
+        final run = cli.run();
+
+        final flow = cli.startImagesFlow();
+        await waitForIt(() => io.out.toString().contains('Toggle registry'));
+        io.sendLine('1'); // kill switch on → off
+        await waitForIt(
+          () => io.out.toString().contains('images.registry = false'),
+        );
+        io.sendLine('2'); // the cap
+        await waitForIt(
+          () => io.out.toString().contains("per-request cap (empty keeps '20'"),
+        );
+        io.sendLine('5');
+        await waitForIt(
+          () => io.out.toString().contains('images.maxPerRequest = 5'),
+        );
+        io.sendLine('3'); // done
+        await flow;
+        io.sendLine('/exit');
+        await run;
+
+        final written = (await env.readTextFile(
+          '/home/u/.fah/config.yaml',
+        )).valueOrNull;
+        expect(written, isNotNull);
+        // Surgical: everything outside the images block is byte-identical.
+        expect(
+          written!,
+          startsWith('provider: openrouter\nmodel: m1\nimages:'),
+        );
+        expect(written, endsWith('memory:\n  projectPath: ./mem\n'));
+        // The real boot parser re-reads the file.
+        final parsed = CliConfig.fromYaml(loadYaml(written) as YamlMap);
+        expect(
+          parsed.images!.enabled,
+          isFalse,
+          reason: 'the toggle flipped it',
+        );
+        expect(parsed.images!.maxPerRequest, 5);
+        // Reload-after-write: the global the request build consults.
+        expect(imageRegistryConfig.enabled, isFalse);
+        expect(imageRegistryConfig.maxPerRequest, 5);
+        expect(fake.calls, 0);
+      },
+    );
+
+    test(
+      'AC3: the write republishes the live global and names when it lands',
+      () async {
+        await seed('provider: openrouter\nimages:\n  registry: true\n');
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(fake.call, homeDir: '/home/u');
+        final run = cli.run();
+
+        final flow = cli.startImagesFlow();
+        await waitForIt(() => io.out.toString().contains('Toggle registry'));
+        io.sendLine('1'); // registry off
+        await waitForIt(
+          () =>
+              io.out.toString().contains('(applies to the next request build'),
+        );
+        io.sendLine('3'); // done
+        await flow;
+        io.sendLine('/exit');
+        await run;
+
+        // The request build consults this global (agent_loop's rewrite) —
+        // the change is live without a restart.
+        expect(imageRegistryConfig.enabled, isFalse);
+        expect(fake.calls, 0);
+      },
+    );
+
+    test('AC4: an invalid cap shows the parser error, writes nothing; '
+        'an empty answer keeps the value', () async {
+      const seedText = 'provider: openrouter\nimages:\n  maxPerRequest: 20\n';
+      await seed(seedText);
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, homeDir: '/home/u');
+      final run = cli.run();
+
+      final flow = cli.startImagesFlow();
+      await waitForIt(() => io.out.toString().contains('Toggle registry'));
+      io.sendLine('2'); // the cap
+      await waitForIt(
+        () => io.out.toString().contains('per-request cap (empty keeps'),
+      );
+      io.sendLine('abc'); // invalid → the parser's verbatim message
+      await waitForIt(
+        () =>
+            io.out.toString().contains('not saved:') &&
+            io.out.toString().contains(
+              '"images.maxPerRequest" must be a positive integer',
+            ),
+      );
+      // An empty answer keeps the current value (no write, no error).
+      final promptsBefore = 'per-request cap (empty keeps'
+          .allMatches(io.out.toString())
+          .length;
+      io.sendLine('2');
+      await waitForIt(
+        () =>
+            'per-request cap (empty keeps'
+                .allMatches(io.out.toString())
+                .length >
+            promptsBefore,
+      );
+      io.sendLine(''); // empty keeps
+      io.sendLine('3'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      expect(
+        (await env.readTextFile('/home/u/.fah/config.yaml')).valueOrNull,
+        seedText,
+        reason: 'nothing may be written',
+      );
+      expect(imageRegistryConfig.maxPerRequest, 20);
+      expect(fake.calls, 0);
+    });
+
+    test(
+      'E1: absent section offers defaults and writes a fresh block',
+      () async {
+        await seed('provider: openrouter\nmodel: m1\n');
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(fake.call, homeDir: '/home/u');
+        final run = cli.run();
+
+        final flow = cli.startImagesFlow();
+        await waitForIt(() => io.out.toString().contains('Toggle registry'));
+        // The parser defaults are offered.
+        expect(
+          io.out.toString(),
+          contains('on → off (byte-identical legacy requests)'),
+        );
+        expect(io.out.toString(), contains('20 unique image(s) per request'));
+        io.sendLine('1'); // toggle off → a fresh block lands at the end
+        await waitForIt(
+          () => io.out.toString().contains('images.registry = false'),
+        );
+        io.sendLine('3'); // done
+        await flow;
+        io.sendLine('/exit');
+        await run;
+
+        final written = (await env.readTextFile(
+          '/home/u/.fah/config.yaml',
+        )).valueOrNull;
+        expect(written!, startsWith('provider: openrouter\nmodel: m1\n'));
+        final parsed = CliConfig.fromYaml(loadYaml(written) as YamlMap);
+        expect(parsed.images!.enabled, isFalse);
+        expect(parsed.images!.maxPerRequest, 20, reason: 'the parser default');
+        expect(fake.calls, 0);
+      },
+    );
+
+    test('E2: an unreadable config file refuses with a clear error', () async {
+      await env.createDir('/home/u/.fah/config.yaml');
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, homeDir: '/home/u');
+      final run = cli.run();
+
+      final flow = cli.startImagesFlow();
+      await waitForIt(() => io.out.toString().contains('Toggle registry'));
+      io.sendLine('1'); // the toggle → the write path reads the config
+      await waitForIt(
+        () =>
+            io.out.toString().contains('cannot read /home/u/.fah/config.yaml'),
+      );
+      io.sendLine('3'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+      expect(fake.calls, 0);
+    });
+
+    test('no user config on this host prints and writes nothing', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call); // no homeDir → no user config path
+      final run = cli.run();
+
+      final flow = cli.startImagesFlow();
+      await waitForIt(() => io.out.toString().contains('Toggle registry'));
+      io.sendLine('1');
+      await waitForIt(
+        () => io.out.toString().contains('no user config on this host'),
+      );
+      io.sendLine('3'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+      expect(fake.calls, 0);
+    });
+
+    test('E3: a concurrent images edit survives the write', () async {
+      await seed('provider: openrouter\nimages:\n  maxPerRequest: 20\n');
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, homeDir: '/home/u');
+      final run = cli.run();
+
+      final flow = cli.startImagesFlow();
+      await waitForIt(() => io.out.toString().contains('Toggle registry'));
+      io.sendLine('2'); // the cap
+      await waitForIt(
+        () => io.out.toString().contains('per-request cap (empty keeps'),
+      );
+      // A concurrent edit lands while the prompt sits open.
+      await env.writeFile(
+        '/home/u/.fah/config.yaml',
+        'provider: openrouter\nimages:\n  maxPerRequest: 20\n'
+            '  registry: false\n',
+      );
+      io.sendLine('9');
+      await waitForIt(
+        () => io.out.toString().contains('images.maxPerRequest = 9'),
+      );
+      io.sendLine('3'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      final written = (await env.readTextFile(
+        '/home/u/.fah/config.yaml',
+      )).valueOrNull;
+      final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
+      expect(parsed.images!.maxPerRequest, 9);
+      expect(
+        parsed.images!.enabled,
+        isFalse,
+        reason: 'reload-before-write: the concurrent toggle survives',
+      );
+      // The republished global carries both fields.
+      expect(imageRegistryConfig.maxPerRequest, 9);
+      expect(imageRegistryConfig.enabled, isFalse);
+      expect(fake.calls, 0);
+    });
+
+    test('cancelled at the menu writes nothing', () async {
+      const seedText = 'provider: openrouter\n';
+      await seed(seedText);
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, homeDir: '/home/u');
+      final run = cli.run();
+
+      final flow = cli.startImagesFlow();
+      await waitForIt(() => io.out.toString().contains('Toggle registry'));
+      io.interrupt();
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      expect(
+        (await env.readTextFile('/home/u/.fah/config.yaml')).valueOrNull,
+        seedText,
+      );
+      expect(fake.calls, 0);
+    });
   });
 }

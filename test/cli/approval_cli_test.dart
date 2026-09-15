@@ -186,8 +186,8 @@ void main() {
         reason: 'model adapts after the denial',
       );
       final out = io.out.toString();
-      expect(out, contains('[bash] error:'));
-      expect(out, contains('no approval UI'));
+      expect(out, contains('✗ bash'));
+      expect(out, contains('requires approval'));
       io.sendLine('/exit');
       await run;
     });
@@ -202,7 +202,7 @@ void main() {
       io.sendLine('destroy');
       await _waitFor(() => io.out.toString().contains('refused'));
       final out = io.out.toString();
-      expect(out, contains('[bash] error:'));
+      expect(out, contains('✗ bash'));
       expect(out, contains('Critical pattern detected'));
       io.sendLine('/exit');
       await run;
@@ -225,7 +225,7 @@ void main() {
       // Wait for the run to fully settle before sending /exit (an early
       // /exit would be steered into the busy agent instead of quitting).
       await _waitFor(() => io.out.toString().contains('turn-finished'));
-      expect(io.out.toString(), contains('[bash] done'));
+      expect(io.out.toString(), contains('✓ bash'));
       expect(cli.approval.isAlwaysAllowed('bash'), isFalse);
       io.sendLine('/exit');
       await run;
@@ -287,7 +287,7 @@ void main() {
       );
       io.sendLine('n');
       await _waitFor(() => io.out.toString().contains('seq-done'));
-      expect(io.out.toString(), contains('[bash] error:'));
+      expect(io.out.toString(), contains('✗ bash'));
       io.sendLine('/exit');
       await run;
     });

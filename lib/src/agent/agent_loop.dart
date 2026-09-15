@@ -44,6 +44,7 @@ import '../exceptions.dart';
 import '../model.dart';
 import '../types.dart';
 import '../trajectory/event_projection.dart' show textPayloadOf;
+import '../trajectory/trajectory_blobs.dart';
 import '../trajectory/trajectory_record.dart';
 import 'agent_tool.dart';
 import 'image_registry.dart';
@@ -344,6 +345,16 @@ final class AgentLoopTurnUpdate {
 typedef PrepareNextTurnHook =
     FutureOr<AgentLoopTurnUpdate?> Function(NextTurnContext context);
 
+/// Emergency over-window relief (issue #387): called by the loop's
+/// over-window guard when a request is about to be refused (gross mid-turn
+/// overflow). The host runs ONE synchronous compaction and returns the
+/// relieved transcript to retry with — or `null` when nothing hideable
+/// remains (the loop then surfaces the verbatim guard error). The argument
+/// is the loop's live transcript; the returned list REPLACES it for the
+/// rest of the run.
+typedef OverWindowRelief =
+    Future<List<Message>?> Function(List<Message> overWindowMessages);
+
 /// Rewrites the message list sent to the provider before each call (pi's
 /// `transformContext`). The transcript itself is never modified.
 ///
@@ -375,6 +386,7 @@ final class AgentLoopConfig {
     this.afterToolCall,
     this.transformContext,
     this.prepareNextTurn,
+    this.overWindowRelief,
     this.getSteeringMessages,
     this.getFollowUpMessages,
     this.steeringNotifications,
@@ -382,6 +394,7 @@ final class AgentLoopConfig {
     this.maxEmptyRetries = 1,
     this.maxSteeringTurns = 20,
     this.contextWindowCap,
+    this.wireDump = false,
   });
 
   /// The model to call each turn.
@@ -402,6 +415,11 @@ final class AgentLoopConfig {
 
   /// Adjusts context/model between turns.
   final PrepareNextTurnHook? prepareNextTurn;
+
+  /// Emergency relief for the over-window guard (issue #387). Called at
+  /// most once per response before the guard's refusal surfaces; see
+  /// [OverWindowRelief]. `null` = the guard keeps today's behavior.
+  final OverWindowRelief? overWindowRelief;
 
   /// Steering messages to inject at the next turn boundary.
   final QueuedMessagesSource? getSteeringMessages;
@@ -446,6 +464,12 @@ final class AgentLoopConfig {
   /// uncapped: the raw model window, byte-identical to the pre-cap loop.
   final int? contextWindowCap;
 
+  /// Opt-in raw wire-dump capture (issue #385 F5). When true, every
+  /// [ModelRequestEvent] carries `rawWireDump` — the serialized outbound
+  /// request JSON BEFORE provider shaping; hosts redact through their
+  /// active pipeline and cap before persisting. Default: false.
+  final bool wireDump;
+
   /// Returns a copy with [model] replaced (used by [prepareNextTurn]).
   AgentLoopConfig copyWith({Model? model}) {
     return AgentLoopConfig(
@@ -455,6 +479,7 @@ final class AgentLoopConfig {
       afterToolCall: afterToolCall,
       transformContext: transformContext,
       prepareNextTurn: prepareNextTurn,
+      overWindowRelief: overWindowRelief,
       getSteeringMessages: getSteeringMessages,
       getFollowUpMessages: getFollowUpMessages,
       steeringNotifications: steeringNotifications,
@@ -462,6 +487,7 @@ final class AgentLoopConfig {
       maxEmptyRetries: maxEmptyRetries,
       maxSteeringTurns: maxSteeringTurns,
       contextWindowCap: contextWindowCap,
+      wireDump: wireDump,
     );
   }
 }
@@ -584,10 +610,29 @@ final class ToolExecutionStartEvent extends AgentEvent {
 /// produces, and hosts persist it (a hidden `model_request_summary`
 /// record) so replayed sessions keep the same Request tab data.
 final class ModelRequestEvent extends AgentEvent {
-  const ModelRequestEvent({required this.detail});
+  const ModelRequestEvent({
+    required this.detail,
+    this.promptBlob,
+    this.manifestBlob,
+    this.rawWireDump,
+  });
 
   /// Cheap summary of the outbound request payload.
   final TrajectoryRequestDetail detail;
+
+  /// The full system prompt sent with this request (issue #385 F1), for
+  /// hosts to persist once per content hash. Null when the request had no
+  /// system prompt.
+  final TrajectoryPromptBlob? promptBlob;
+
+  /// The complete tool manifest (names, descriptions, schemas — F2), for
+  /// hosts to persist once per content hash. Null when no tools were sent.
+  final TrajectoryToolManifestBlob? manifestBlob;
+
+  /// The RAW serialized outbound request JSON (F5), only when
+  /// [AgentLoopConfig.wireDump] is on. Hosts MUST redact (secrets live in
+  /// plaintext inside) and cap before persisting.
+  final String? rawWireDump;
 }
 
 /// Emitted when the outbound request context needed tool-pairing surgery
@@ -859,15 +904,15 @@ Future<List<Message>> _runAgentLoop({
         newMessages,
       );
       pendingMessages = const [];
-
-      var message = await _streamAssistantResponse(
+      AssistantMessage message;
+      (message, currentContext) = await _streamAssistantResponse(
         currentContext,
         currentConfig,
         emit,
         streamFunction,
         cancelToken,
       );
-      message = await _retryDegenerateEmpty(
+      (message, currentContext) = await _retryDegenerateEmpty(
         message,
         currentContext,
         currentConfig,
@@ -1108,8 +1153,7 @@ bool _isDegenerateEmpty(AssistantMessage message) {
 /// Retries a degenerate-empty completion with the same context (bounded by
 /// `config.maxEmptyRetries`; a blank answer never ends a run on the first
 /// try). The retried messages stay in the transcript (truthful record) and
-/// the eventual real answer follows them.
-Future<AssistantMessage> _retryDegenerateEmpty(
+Future<(AssistantMessage, Context)> _retryDegenerateEmpty(
   AssistantMessage message,
   Context context,
   AgentLoopConfig config,
@@ -1119,11 +1163,12 @@ Future<AssistantMessage> _retryDegenerateEmpty(
 ) async {
   var retries = 0;
   var current = message;
+  var out = context;
   while (_isDegenerateEmpty(current) &&
       retries < config.maxEmptyRetries &&
       !(cancelToken?.isCancelled ?? false)) {
     retries++;
-    current = await _streamAssistantResponse(
+    (current, out) = await _streamAssistantResponse(
       context,
       config,
       emit,
@@ -1131,27 +1176,25 @@ Future<AssistantMessage> _retryDegenerateEmpty(
       cancelToken,
     );
   }
-  return current;
+  return (current, out);
 }
 
 /// Streams one assistant response from the provider, emitting message
 /// lifecycle events and keeping the partial message in [context.messages]
 /// up to date (partial-first). Port of pi's `streamAssistantResponse`.
-Future<AssistantMessage> _streamAssistantResponse(
+Future<(AssistantMessage, Context)> _streamAssistantResponse(
   Context context,
   AgentLoopConfig config,
   AgentEventSink emit,
   StreamFunction streamFunction,
   CancelToken? cancelToken,
 ) async {
+  var reliefUsed = false;
+  var pairingHealed = false;
   // Hardening over pi: short-circuit an already-cancelled token instead of
   // relying on the provider to surface the abort as an error event.
-  if (cancelToken != null && cancelToken.isCancelled) {
-    return _finishWithoutStream(
-      context,
-      emit,
-      _terminalMessage(config.model, StopReason.aborted, 'Operation aborted'),
-    );
+  if (_isCancelRequested(cancelToken)) {
+    return await _abortedTurn(context, config, emit);
   }
   for (var attempt = 0; ; attempt++) {
     final (requestContext, repairReport) = await _buildRequestContext(
@@ -1179,20 +1222,45 @@ Future<AssistantMessage> _streamAssistantResponse(
       config.model.contextWindow,
       config.contextWindowCap,
     );
-    if (window > 0) {
-      // The same accounting basis as the host's ctx meter and the
-      // compaction threshold: transcript estimate PLUS the system-prompt /
-      // tool-schema overhead when no provider-usage anchor prices them in
-      // (an unanchored estimate otherwise undercounts every request by
-      // that overhead — the "meter said 64% but the request was
-      // over-window" mismatch).
-      final tokens = estimateRequestTokens(
-        requestContext.messages,
-        systemPrompt: requestContext.systemPrompt,
-        tools: requestContext.tools ?? const [],
-      );
-      if (tokens > window) {
-      return _finishWithoutStream(
+    // The same accounting basis as the host's ctx meter and the
+    // compaction threshold: transcript estimate PLUS the system-prompt /
+    // tool-schema overhead when no provider-usage anchor prices them in
+    // (an unanchored estimate otherwise undercounts every request by
+    // that overhead — the "meter said 64% but the request was
+    // over-window" mismatch).
+    final tokens = estimateRequestTokens(
+      requestContext.messages,
+      systemPrompt: requestContext.systemPrompt,
+      tools: requestContext.tools ?? const [],
+    );
+    if (window > 0 && tokens > window) {
+      // Issue #387 emergency relief: offer the host ONE synchronous
+      // compaction over the live transcript before giving up. A non-null
+      // result replaces the loop context and the request is retried;
+      // null, a throw, or a still-over result keeps the verbatim error
+      // below. Bounded to one attempt — a tool result bigger than the
+      // window fails fast here instead of looping.
+      if (_reliefAvailable(reliefUsed, config)) {
+        reliefUsed = true;
+        try {
+          final relieved = await config.overWindowRelief!(context.messages);
+          if (relieved != null) {
+            // The relieved transcript becomes the loop's live context:
+            // the retried request is built from it and every later turn
+            // rides it (the tuple return hands it back to the host).
+            context = Context(
+              systemPrompt: context.systemPrompt,
+              messages: relieved,
+              tools: context.tools,
+            );
+            continue;
+          }
+        } catch (_) {
+          // A failed relief = no relief; the error below is the answer.
+        }
+      }
+      return (
+        await _finishWithoutStream(
           context,
           emit,
           _terminalMessage(
@@ -1204,13 +1272,14 @@ Future<AssistantMessage> _streamAssistantResponse(
             'was not sent. Auto-compaction runs next; if it keeps failing, '
             'run /compact or start a fresh session.',
           ),
-        );
-      }
+        ),
+        context,
+      );
     }
 
-    await emit(ModelRequestEvent(detail: _summarizeRequest(requestContext)));
-
     AssistantMessageEventStream response;
+
+    await emit(_captureRequest(config, requestContext));
     try {
       response = streamFunction(
         config.model,
@@ -1218,11 +1287,7 @@ Future<AssistantMessage> _streamAssistantResponse(
         cancelToken: cancelToken,
       );
     } catch (error) {
-      return _finishWithoutStream(
-        context,
-        emit,
-        _terminalMessage(config.model, StopReason.error, '$error'),
-      );
+      return await _providerErrorTurn(context, config, emit, error);
     }
 
     final streamed = await _consumeResponseStream(response, context, emit);
@@ -1233,29 +1298,80 @@ Future<AssistantMessage> _streamAssistantResponse(
       // detection, re-run the repair over the rebuilt request, retry ONCE —
       // a wedged session recovers here instead of never. A second failure
       // surfaces normally (no infinite loop).
-      if (attempt == 0 &&
-          finished.stopReason == StopReason.error &&
-          isToolPairingProviderError(finished.errorMessage)) {
+      if (_needsPairingHeal(pairingHealed, finished)) {
         await emit(
           ToolPairingRepairEvent(
             report: const ToolPairingRepairReport(),
             providerError: finished.errorMessage,
           ),
         );
+        pairingHealed = true;
         continue;
       }
-      return finished;
+      return (finished, context);
     }
 
     // The provider stream closed without a terminal event (provider bug).
-    return _finishWithoutStream(
+    return (
+      await _finishWithoutStream(
+        context,
+        emit,
+        _streamEndedWithoutTerminal(config, streamed.partial),
+        replaceLast: streamed.addedPartial,
+      ),
       context,
-      emit,
-      _streamEndedWithoutTerminal(config, streamed.partial),
-      replaceLast: streamed.addedPartial,
     );
   }
 }
+
+/// Whether the host's one-shot over-window relief is still on the table.
+bool _reliefAvailable(bool reliefUsed, AgentLoopConfig config) =>
+    !reliefUsed && config.overWindowRelief != null;
+
+/// Whether the run was cancelled before its request went out.
+bool _isCancelRequested(CancelToken? cancelToken) =>
+    cancelToken != null && cancelToken.isCancelled;
+
+/// The already-cancelled turn: no request leaves the loop.
+Future<(AssistantMessage, Context)> _abortedTurn(
+  Context context,
+  AgentLoopConfig config,
+  AgentEventSink emit,
+) async {
+  return (
+    await _finishWithoutStream(
+      context,
+      emit,
+      _terminalMessage(config.model, StopReason.aborted, 'Operation aborted'),
+    ),
+    context,
+  );
+}
+
+/// A provider/runtime error thrown by the stream call itself becomes an
+/// error turn, not a crash.
+Future<(AssistantMessage, Context)> _providerErrorTurn(
+  Context context,
+  AgentLoopConfig config,
+  AgentEventSink emit,
+  Object error,
+) async {
+  return (
+    await _finishWithoutStream(
+      context,
+      emit,
+      _terminalMessage(config.model, StopReason.error, '$error'),
+    ),
+    context,
+  );
+}
+
+/// Whether a finished turn needs the one-shot pairing self-heal (issue
+/// #85): a provider pairing 400 on an error stop, before it was used.
+bool _needsPairingHeal(bool pairingHealed, AssistantMessage finished) =>
+    !pairingHealed &&
+    finished.stopReason == StopReason.error &&
+    isToolPairingProviderError(finished.errorMessage);
 
 /// Builds the synthetic error turn for a provider stream that closed
 /// without any terminal event (provider bug): keep the streamed partial
@@ -1321,27 +1437,71 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
   return (requestContext, repaired.report);
 }
 
-/// Builds the cheap outbound-request summary emitted with
-/// [ModelRequestEvent]: message count/sizes, tool names, and bounded text
-/// previews. Sizes are JSON-serialized lengths so tool-call arguments count
-/// like text does.
-TrajectoryRequestDetail _summarizeRequest(Context context) {
+/// Builds the outbound-request capture emitted with [ModelRequestEvent]
+/// (issue #385): the cheap summary (message count/sizes, tool names,
+/// bounded previews), the per-message block structure (F3), the full
+/// system-prompt blob (F1), the complete tool-manifest blob (F2), and —
+/// when [config.wireDump] is on — the RAW serialized request payload (F5;
+/// hosts redact and cap before persisting).
+ModelRequestEvent _captureRequest(AgentLoopConfig config, Context context) {
   final messages = [
     for (final message in context.messages)
       TrajectoryRequestMessageSummary(
         role: message.role,
-        chars: jsonEncode(message.toJson()).length,
+        // Unserializable arguments degrade to the placeholder instead of
+        // throwing mid-loop (issue #385 E3: never a crash).
+        chars: _safeJsonEncode(message.toJson()).length,
         preview: _requestPreview(message),
+        blocks: _requestBlocksOf(message),
       ),
   ];
   final tools = context.tools ?? const <Tool>[];
-  return TrajectoryRequestDetail(
-    messageCount: messages.length,
-    systemPromptChars: context.systemPrompt?.length ?? 0,
-    toolCount: tools.length,
-    toolNames: [for (final tool in tools) tool.name],
-    messages: messages,
+  final prompt = context.systemPrompt;
+  final promptBlob = prompt == null || prompt.isEmpty
+      ? null
+      : TrajectoryPromptBlob.of(prompt);
+  final manifestBlob = tools.isEmpty
+      ? null
+      : TrajectoryToolManifestBlob.of(tools);
+  return ModelRequestEvent(
+    detail: TrajectoryRequestDetail(
+      messageCount: messages.length,
+      systemPromptChars: prompt?.length ?? 0,
+      toolCount: tools.length,
+      toolNames: [for (final tool in tools) tool.name],
+      messages: messages,
+      systemPromptHash: promptBlob?.hash,
+      toolManifestHash: manifestBlob?.hash,
+    ),
+    promptBlob: promptBlob,
+    manifestBlob: manifestBlob,
+    rawWireDump: config.wireDump ? trajectoryWireDumpPayload(context) : null,
   );
+}
+
+/// Block structure of one outbound request message (F3): bounded full
+/// texts and `[image WxH]` markers per content block, in request order.
+List<TrajectoryRequestMessageBlock> _requestBlocksOf(Message message) {
+  final List<ContentBlock> blocks = switch (message) {
+    UserMessage(:final content) =>
+      content is String
+          ? [TextContent(text: content)]
+          : List<ContentBlock>.of(content as List<ContentBlock>),
+    AssistantMessage(:final content) => content,
+    ToolResultMessage(:final content) => content,
+    _ => const <ContentBlock>[],
+  };
+  return trajectoryRequestBlocks(blocks);
+}
+
+/// [jsonEncode] that never throws (cyclic/unserializable values degrade
+/// to a placeholder).
+String _safeJsonEncode(Object? value) {
+  try {
+    return jsonEncode(value);
+  } catch (_) {
+    return '[unserializable]';
+  }
 }
 
 /// Bounded plain-text preview of a request message

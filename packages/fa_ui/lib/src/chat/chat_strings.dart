@@ -59,6 +59,12 @@ abstract class FaChatStrings {
   String chatLoadEarlierCount(String count);
   String get chatLoadEarlierFailed;
   String chatBeginningOfSession(String count);
+
+  /// The bottom quick-action chip label (issue #379).
+  String get chatOpenWidgetAsApp;
+
+  /// The chip dismiss tooltip (issue #379).
+  String get chatOpenWidgetAsAppDismiss;
   String get chatLoadNewer;
   String chatLoadNewerCount(String count);
   String get chatCollapse;
@@ -91,6 +97,9 @@ abstract class FaChatStrings {
   String get secretRequestInvalidName;
   String get secretRequestSave;
   String get secretRequestNotNow;
+  String get passwordPromptLabel;
+  String get passwordPromptSubmit;
+  String get passwordPromptCancel;
   String get mediaPlayTooltip;
   String get mediaPauseTooltip;
   String get mediaMuteTooltip;
@@ -180,6 +189,10 @@ class FaChatStringsEn extends FaChatStrings {
   String chatBeginningOfSession(String count) =>
       'Beginning of session (1 of $count)';
   @override
+  String get chatOpenWidgetAsApp => '✦ Open widget as app';
+  @override
+  String get chatOpenWidgetAsAppDismiss => 'Dismiss';
+  @override
   String get chatLoadNewer => 'Load newer';
   @override
   String chatLoadNewerCount(String count) => 'Load newer ($count more)';
@@ -243,6 +256,12 @@ class FaChatStringsEn extends FaChatStrings {
   String get secretRequestSave => 'Save';
   @override
   String get secretRequestNotNow => 'Not now';
+  @override
+  String get passwordPromptLabel => 'Password';
+  @override
+  String get passwordPromptSubmit => 'Submit';
+  @override
+  String get passwordPromptCancel => 'Cancel';
   @override
   String get mediaPlayTooltip => 'Play';
   @override
@@ -340,6 +359,10 @@ class FaChatStringsRu extends FaChatStrings {
   @override
   String chatBeginningOfSession(String count) => 'Начало сессии (1 из $count)';
   @override
+  String get chatOpenWidgetAsApp => '✦ Открыть виджет как приложение';
+  @override
+  String get chatOpenWidgetAsAppDismiss => 'Скрыть';
+  @override
   String get chatLoadNewer => 'Загрузить более новые';
   @override
   String chatLoadNewerCount(String count) =>
@@ -405,6 +428,12 @@ class FaChatStringsRu extends FaChatStrings {
   String get secretRequestSave => 'Сохранить';
   @override
   String get secretRequestNotNow => 'Не сейчас';
+  @override
+  String get passwordPromptLabel => 'Пароль';
+  @override
+  String get passwordPromptSubmit => 'Отправить';
+  @override
+  String get passwordPromptCancel => 'Отмена';
   @override
   String get mediaPlayTooltip => 'Воспроизвести';
   @override

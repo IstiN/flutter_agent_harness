@@ -144,6 +144,8 @@ const _nestedKeySources = <String, String>{
   'fabric.capabilities': 'lib/src/messaging/fabric_config.dart',
   'fabric.capabilities.[].name': 'lib/src/messaging/fabric_config.dart',
   'fabric.capabilities.[].description': 'lib/src/messaging/fabric_config.dart',
+  'subagents.heartbeatMinutes': 'lib/src/task/subagent_heartbeat.dart',
+  'subagents.stallMinutes': 'lib/src/task/subagent_heartbeat.dart',
 };
 
 /// Resolves a walked key path against the pins (`*` = exactly one segment).
@@ -192,7 +194,8 @@ void main() {
     expect(
       frontmatter,
       contains('theme'),
-      reason: 'a bare "switch the theme" request must match the skill '
+      reason:
+          'a bare "switch the theme" request must match the skill '
           'description — theme keywords belong in the always-visible '
           'frontmatter (issue #279 owner clarification)',
     );

@@ -113,6 +113,13 @@ abstract interface class FaChatService implements FaApprovalModeController {
   RequestSecretCallback? get secretRequestHandler;
   set secretRequestHandler(RequestSecretCallback? handler);
 
+  /// UI hook for a mid-run password ask (issue #367): the bash tool calls
+  /// it when the detector sees a prompt; the sheet's value is streamed to
+  /// the live process stdin. `null` -> the ask resolves as declined (the
+  /// tool writes a bare newline), the safe headless default.
+  PasswordPromptCallback? get passwordPromptHandler;
+  set passwordPromptHandler(PasswordPromptCallback? handler);
+
   /// Jump-to-message executor: scrolls the transcript so the message with
   /// [messageId] is in view. The chat screen installs the handler; null
   /// outside a scrolling chat surface (tests, embedded previews).
@@ -136,6 +143,14 @@ abstract interface class FaChatService implements FaApprovalModeController {
   /// `FaChatFeatures.trajectory` off instead (a never-emitting stream
   /// would only leave the panel loading).
   Stream<TrajectorySnapshot> get trajectory;
+
+  /// Hidden-range drill-in (issue #385 F4): resolves the records a
+  /// compacted ledger row covers, straight from the session file, as
+  /// bounded previews. Default `null` — hosts opt in by overriding; the
+  /// trajectory shows the drill-in tab only when this is non-null.
+  Future<List<TrajectoryHiddenRecordPreview>> Function(
+    TrajectoryCompactedRecord record)?
+  get resolveHiddenRecords => null;
 
   /// Transcript records sitting ABOVE the loaded window: `null` while the
   /// count is still being computed, `0` once the whole transcript is

@@ -228,6 +228,26 @@ extension ApprovalCommands on AgentCli {
     return RequestSecretResult(name: name, value: value, persisted: false);
   }
 
+  /// Answers a mid-run password ask (issue #367: `sudo`/`ssh` prompting on
+  /// the live process stdin): the TUI reuses the masked secret-mode input
+  /// (`TextPromptSpec.secret`), line mode mirrors the secret line flow.
+  /// `null` = declined; the bash tool then fails the command with the ask
+  /// surfaced, never hanging and never echoing the value.
+  Future<String?> _answerPasswordPrompt(String promptLine) async {
+    final tui = _tuiController;
+    if (_useTui && tui != null) {
+      final result = await tui.openPrompt(
+        TextPromptSpec(header: 'Password', question: promptLine, secret: true),
+      );
+      return result is TextPromptAnswer ? result.value : null;
+    }
+    io.writeln('[password] $promptLine');
+    io.write('[password] Enter password (empty = decline): ');
+    final line = await _nextAskLine();
+    final value = line?.trim();
+    return value == null || value.isEmpty ? null : value;
+  }
+
   /// env vars so `$NAME` works in bash tool executions.
 
   /// Renders one question as a numbered menu (+ "(Recommended)" marker) and
@@ -827,15 +847,25 @@ extension ApprovalCommands on AgentCli {
     }
   }
 
-  /// One `/tasks` row for a background shell job.
+  /// One `/tasks` row for a background shell job (issue #366): the command
+  /// in the detail zone, the job id kept as the dim suffix, the log path
+  /// relativized (`.fah/bash_jobs/…` tail) — all inside the width budget.
   String _shellJobLine(ShellJobEntry entry) {
-    final state = entry.isRunning ? '● running' : '✓ exited(${entry.exitCode})';
-    final command = entry.command.length > 60
-        ? '${entry.command.substring(0, 59)}…'
-        : entry.command;
-    return '  ${entry.id}: $state — $command '
-        '${_style.dim('(log: ${entry.logPath})')}';
+    final trailer = entry.isRunning
+        ? entry.id
+        : '${entry.id} exited(${entry.exitCode ?? '?'})';
+    final log = briefPath(entry.logPath, cwd: _env.cwd, home: config.homeDir);
+    return '  ${layoutToolRow(ToolRowSegments(glyph: _shellJobGlyph(entry), label: 'bash', detail: entry.command, elapsed: '$trailer (log: $log)'), _rowWidth).style(glyph: _shellJobGlyphPaint(entry), label: tuiAccent2, dim: tuiDim)}';
   }
+
+  /// Running `●`, clean `✓`, failed `✗`.
+  String _shellJobGlyph(ShellJobEntry entry) =>
+      entry.isRunning ? '●' : (entry.exitCode == 0 ? '✓' : '✗');
+
+  String Function(String) _shellJobGlyphPaint(ShellJobEntry entry) =>
+      entry.isRunning
+      ? tuiAccent2Soft
+      : (entry.exitCode == 0 ? tuiAccentSoft : tuiError);
 
   /// `/tasks cancel <id>`: aborts the job's child run / stops the process.
   void _cancelTaskJob(List<String> parts) {
@@ -935,19 +965,38 @@ extension ApprovalCommands on AgentCli {
     _onAssistantMessageEnd(message);
   }
 
-  /// Tool call header line: the bold indigo name plus dimmed args. Also
-  /// records file-path args into [_touchedPaths] so path-gated skills
-  /// (`paths:` frontmatter) join the prompt on the next turn.
-  void _onToolExecutionStart(String toolName, Map<String, dynamic> args) {
+  /// Tool start row in the compact grammar (issue #366): `• label ·
+  /// detail` — the human detail (question text, command, path), never the
+  /// raw args JSON. Also records file-path args into [_touchedPaths] so
+  /// path-gated skills (`paths:` frontmatter) join the prompt on the next
+  /// turn, and stamps [_toolStarts] for the end row's elapsed zone.
+  void _onToolExecutionStart(
+    String toolCallId,
+    String toolName,
+    Map<String, dynamic> args,
+  ) {
     for (final key in const ['path', 'file', 'filePath', 'target']) {
       final value = args[key];
       if (value is String && value.isNotEmpty) _touchedPaths.add(value);
     }
+    final detail = toolRowDetail(
+      toolName,
+      args,
+      cwd: _env.cwd,
+      home: config.homeDir,
+    );
+    _toolStarts[toolCallId] = (DateTime.now(), detail);
     io.writeln(
-      '${_style.bold(_style.indigo('[$toolName]'))} '
-      '${_style.dim(formatArgs(args))}',
+      layoutToolRow(
+        ToolRowSegments(glyph: '•', label: toolName, detail: detail),
+        _rowWidth,
+      ).style(glyph: tuiAccent2Soft, label: tuiAccent2, dim: tuiDim),
     );
   }
+
+  /// The row budget: the live TUI width, or the classic 80-column default
+  /// for line mode/headless.
+  int get _rowWidth => _tuiController?.termWidth ?? 80;
 
   /// Streaming deltas: answer text (with the once-per-message prefix) and —
   /// TUI only — dimmed thinking as the progress signal.
@@ -1050,26 +1099,44 @@ extension ApprovalCommands on AgentCli {
     }
   }
 
-  /// Tool result line: a red error snippet or a teal done marker.
+  /// Tool end row in the compact grammar (issue #366): `✓ label · detail
+  /// Ns` — the same detail the start row showed, plus the elapsed; errors
+  /// render `✗` with the result's first line as a full-bright snippet (the
+  /// one place the muted detail role gives way to readability).
   void _onToolExecutionEnd(
+    String toolCallId,
     String toolName,
     ToolExecutionResult result, {
     required bool isError,
   }) {
-    final tool = _style.bold(_style.indigo('[$toolName]'));
+    final (started, startDetail) = _toolStarts.remove(toolCallId) ?? (null, '');
+    final elapsed = started == null
+        ? ''
+        : '${DateTime.now().difference(started).inSeconds}s';
+    String detail = startDetail;
+    String Function(String) glyphPaint = tuiAccentSoft;
+    String Function(String) detailPaint = tuiDim;
     if (isError) {
+      glyphPaint = tuiError;
+      // The failure text is the news: keep it bright, not muted.
+      detailPaint = (s) => s;
       final text = result.content
           .whereType<TextContent>()
           .map((block) => block.text)
           .join();
-      var snippet = text.split('\n').first;
-      if (snippet.length > 120) {
-        snippet = '${snippet.substring(0, 120)}...';
-      }
-      io.writeln('$tool ${_style.red('error')}: $snippet');
-    } else {
-      io.writeln('$tool ${_style.teal('done')}');
+      detail = text.split('\n').first;
     }
+    io.writeln(
+      layoutToolRow(
+        ToolRowSegments(
+          glyph: isError ? '✗' : '✓',
+          label: toolName,
+          detail: detail,
+          elapsed: elapsed,
+        ),
+        _rowWidth,
+      ).style(glyph: glyphPaint, label: tuiAccent2, dim: detailPaint),
+    );
   }
 
   /// Prints the `>_Fa ` prefix once per assistant message, before the first

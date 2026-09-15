@@ -72,6 +72,15 @@ final class RedactionStats {
     _byLayer[match.layer.name] = (_byLayer[match.layer.name] ?? 0) + 1;
     _total++;
   }
+
+  /// Zeroes every counter (issue #391 settings flow: the "reset stats"
+  /// action). In-flight scans are unaffected — counting is idempotent per
+  /// scan pass.
+  void reset() {
+    _byLayer.clear();
+    _byTool.clear();
+    _total = 0;
+  }
 }
 
 /// The layered redaction pipeline.

@@ -87,6 +87,33 @@ enum SharedSetting {
   /// `memory.userPath`).
   memoryStores,
 
+  /// The layered redaction pipeline's `redact:` section (enabled/blockMode,
+  /// per-layer toggles, allowlist regexes, entropy knobs, per-tool policy,
+  /// issue #391).
+  redactionPolicy,
+
+  /// The session image registry's `images:` section — the registry kill
+  /// switch (`registry: false` reproduces the legacy request shape
+  /// byte-for-byte) and the per-request unique-image cap
+  /// (`maxPerRequest`, default 20), issue #395.
+  imageRegistry,
+
+  /// The host machine's sleep-prevention (`power:` section — the
+  /// `sleepPrevention` level and the `hold` lifecycle, issues
+  /// #325/#326): the assertion the long run holds so the machine does
+  /// not sleep under it, issue #397.
+  sleepPrevention,
+
+  /// The owner-side context cap (`agent.contextWindowCap`, issue #273)
+  /// clamping the EFFECTIVE window for the compaction thresholds, the ctx
+  /// meter and the loop's over-window guard (issue #394).
+  contextWindowCap,
+
+  /// Provider failure resilience: the watchdog timeouts
+  /// (`providerTimeouts.connectTimeoutMs`/`streamIdleTimeoutMs`) and the
+  /// chain retry policy (`retry:`, issue #393).
+  resiliencePolicy,
+
   /// TUI color palette (tui.theme + ~/.fah/themes/*.json, issue #279).
   tuiTheme,
 }
@@ -124,6 +151,35 @@ const cliOnlySettings = <SharedSetting>{
   // the section read-only (memory_config_loader); editing host paths from
   // inside the sandbox would point the CLI at paths the app cannot see.
   SharedSetting.memoryStores,
+
+  // The redaction pipeline runs inside the CLI host process with the
+  // process's registered secrets in memory; the app has no pipeline
+  // instance to re-toggle live (issue #391 is the CLI half — the app
+  // keeps consuming the section read-only per #288's umbrella).
+  SharedSetting.redactionPolicy,
+
+  // The image registry is process-wide state inside the CLI host's agent
+  // loop (the request-build rewrite reads a global published at boot);
+  // the app composes its own requests and consumes the section read-only
+  // per #288's umbrella (issue #395 is the CLI half).
+  SharedSetting.imageRegistry,
+
+  // The sleep-prevention assertion lifecycle (run-start/settle and
+  // session-open/close hooks) lives in the CLI host process; the app's
+  // power_guard only loads the section read-only and has no controller
+  // to re-arm live (issue #397 is the CLI half — per #288's umbrella).
+  SharedSetting.sleepPrevention,
+  // The context cap feeds the CLI's compaction math, ctx meter and the
+  // loop's over-window guard — all running in the CLI host process; the
+  // app has no agent loop to re-cap live (issue #394 is the CLI half —
+  // the app keeps consuming the section read-only per #288's umbrella).
+  SharedSetting.contextWindowCap,
+  // The resilience knobs (watchdog timeouts + retry policy) govern the
+  // CLI host process's provider connections: the timeouts are published
+  // onto a process-wide override and the retry policy rides the roles
+  // resolver's cached stream wrappers (issue #393 is the CLI half — the
+  // app keeps consuming the sections read-only per #288's umbrella).
+  SharedSetting.resiliencePolicy,
 
   // The TUI palette colors a terminal: the app renders through Flutter's
   // own theming stack (separate system by design — issue #279 non-goal).
@@ -173,6 +229,24 @@ const cliOnlyJustifications = <SharedSetting, String>{
   SharedSetting.promptOverrides:
       'The app ships its prompt templates compiled in; runtime prompt '
       'overrides are a CLI config-file feature.',
+  SharedSetting.redactionPolicy:
+      'The redaction pipeline runs inside the CLI host process with its '
+      'registered secrets in memory; the app reads the section but has no '
+      'pipeline to re-toggle live. Configure it in the CLI (issue #391).',
+  SharedSetting.imageRegistry:
+      'The image registry is process-wide state inside the CLI host agent '
+      'loop (the request-build rewrite reads a global published at boot); '
+      'the app composes its own requests and consumes the section '
+      'read-only. Configure it in the CLI (issue #395).',
+  SharedSetting.sleepPrevention:
+      'The sleep-prevention assertion lifecycle (run-start/settle and '
+      'session-open/close hooks) runs inside the CLI host process; the '
+      'app\'s power_guard reads the section but has no controller to '
+      're-arm live. Configure it in the CLI (issue #397).',
+  SharedSetting.contextWindowCap:
+      'The context cap feeds the CLI agent loop and compaction math '
+      'running in the CLI host process; the app has no agent loop to '
+      're-cap live. Configure it in the CLI (issue #394).',
   SharedSetting.agentMode:
       'Agent modes are CLI REPL prompt presets; the app composes its own '
       'prompts per surface and has no mode presets to switch.',
@@ -182,6 +256,11 @@ const cliOnlyJustifications = <SharedSetting, String>{
   SharedSetting.tuiTheme:
       'The TUI palette colors a terminal emulator; the app themes through '
       'its own Flutter theming stack (separate system by design).',
+  SharedSetting.resiliencePolicy:
+      'The watchdog timeouts and retry policy govern the CLI host '
+      'process\'s provider connections; the app has no process-wide '
+      'override or roles resolver to re-arm. Configure them in the CLI '
+      '(issue #393).',
 };
 
 /// Top-level yaml keys that are intentionally NOT interactive settings on
@@ -189,13 +268,6 @@ const cliOnlyJustifications = <SharedSetting, String>{
 /// design. Every entry carries its WHY (issue #288 AC1: a documented
 /// structural-only key, reviewed).
 const fileOnlyConfigKeys = <String, String>{
-  // Redaction policy (enabled/blockMode/layers/allowlists) is environment
-  // security infrastructure, provisioned per machine in the file; no
-  // surface edits redaction patterns interactively by design.
-  'redact':
-      'Redaction policy is machine-level security infrastructure '
-      '(patterns and layers), provisioned in the file per environment.',
-
   // A2A gateway endpoints + credentials are deployment wiring (env-token
   // references included) — infrastructure, not a user preference.
   'a2a':
@@ -203,29 +275,27 @@ const fileOnlyConfigKeys = <String, String>{
       'credentials with env-token references); no surface edits them '
       'interactively.',
 
-  // Provider transport tuning: rarely-changed watchdog knobs.
-  'providerTimeouts':
-      'Provider transport watchdog tuning (connect/idle timeouts) — '
-      'rarely-changed knobs, tuned in the file.',
+  // Trajectory capture tuning (opt-in raw wire dumps, issue #385): a
+  // deliberate, size/pII-sensitive escape hatch — file-only by design so
+  // it cannot be flipped casually mid-session.
+  'trajectory':
+      'Trajectory wire-dump capture is an opt-in, size/pII-sensitive '
+      'debugging escape hatch (issue #385); provisioned deliberately in '
+      'the file per environment.',
 
-  // Image-tool runtime tuning (registry on/off, per-request cap).
-  'images':
-      'Image-tool runtime tuning (registry on/off, per-request cap) — '
-      'operational knobs, tuned in the file.',
+  // Background-subagent heartbeat cadence and stall threshold (issue
+  // #383): operational knobs for long-running sessions, tuned in the
+  // file; 0/0 disables the heartbeat entirely.
+  'subagents':
+      'Heartbeat cadence and stall threshold for background-subagent '
+      'status digests (issue #383) — operational knobs, tuned in the '
+      'file.',
 
   // The fabric section carries the HOST's discovery announcements (issue
   // #27 phase 2) — written by hosts, read by the runtime, never user-edited.
   'fabric':
       'Host discovery announcements are written BY hosts (issue #27), not '
       'by users; read-only config.',
-
-  // Roles-group member: chain retry/backoff policy, parsed together with
-  // roles:. Interactive editing covers the chains themselves (the
-  // agent-models flow); the retry policy is file-tuned.
-  'retry':
-      'Roles-group member (chain retry/backoff policy); interactive '
-      'editing covers the chains (agent models flow), the policy is '
-      'file-tuned.',
 
   // Roles-group member: per-path role pinning, parsed together with
   // roles:. Superseded for interactive use by the roles: chains the
@@ -234,28 +304,6 @@ const fileOnlyConfigKeys = <String, String>{
       'Roles-group member (per-path role pinning), superseded for '
       'interactive use by the roles: chains the agent-models flow edits; '
       'per-path pinning stays file-tuned.',
-
-  // The agent section carries the owner-side context cap
-  // (agent.contextWindowCap, issue #273): how many tokens of the model's
-  // window this machine's owner allows the agent to occupy. It bounds the
-  // compaction reserve and is a deployment/machine knob — tuned in the
-  // file, no interactive surface edits it.
-  'agent':
-      'Owner-side context cap (agent.contextWindowCap, issue #273) bounds '
-      'the usable window on this machine; a deployment knob tuned in the '
-      'file, not an interactive preference on any surface.',
-
-  // The power section (power.sleepPrevention + power.hold, issues
-  // #325/#326) picks the host machine's sleep-prevention level and hold
-  // lifecycle for long sessions — hardware policy of the machine the
-  // agent runs on, not a per-conversation preference. Both surfaces
-  // treat it read-only: the CLI's /power shows the level and held-ness
-  // (pointing at the file to change it) and the app's power_guard only
-  // loads it; no settings TUI edits it on any platform.
-  'power':
-      'Sleep-prevention level and hold lifecycle (power.sleepPrevention, '
-      'power.hold, #325/#326) is machine hardware policy for long-running '
-      'sessions; /power and the app guard read it, only the file sets it.',
 };
 
 /// Which app surfaces carry a shared setting: the Flutter app on macOS,
@@ -424,6 +472,53 @@ const settingSurfaces = <SharedSetting, SettingSurfaces>{
         'The palette colors a terminal emulator; the app themes through '
         'its own Flutter theming stack.',
   ),
+  SharedSetting.redactionPolicy: SettingSurfaces(
+    macos: false,
+    ios: false,
+    web: false,
+    extensionPanel: false,
+    gapWhy:
+        'The redaction pipeline lives in the CLI host process (registered '
+        'secrets in memory); no app surface has a pipeline to reconfigure.',
+  ),
+  SharedSetting.imageRegistry: SettingSurfaces(
+    macos: false,
+    ios: false,
+    web: false,
+    extensionPanel: false,
+    gapWhy:
+        'The image registry is process-wide state in the CLI host agent '
+        'loop (the request-build rewrite); the app composes its own '
+        'requests and reads the section read-only.',
+  ),
+  SharedSetting.resiliencePolicy: SettingSurfaces(
+    macos: false,
+    ios: false,
+    web: false,
+    extensionPanel: false,
+    gapWhy:
+        'The watchdog override and roles resolver live in the CLI host '
+        'process; no app surface re-arms them.',
+  ),
+  SharedSetting.sleepPrevention: SettingSurfaces(
+    macos: false,
+    ios: false,
+    web: false,
+    extensionPanel: false,
+    gapWhy:
+        'The assertion lifecycle (run-start/settle, session hooks) runs '
+        'in the CLI host process; the app\'s power_guard reads the '
+        'section read-only.',
+  ),
+  SharedSetting.contextWindowCap: SettingSurfaces(
+    macos: false,
+    ios: false,
+    web: false,
+    extensionPanel: false,
+    gapWhy:
+        'The cap clamps the CLI agent loop and compaction math in the CLI '
+        'host process; no app surface runs that loop.',
+  ),
 };
 
 /// Metadata for each [SharedSetting]: what to search for in each platform's
@@ -545,6 +640,36 @@ const sharedSettingMetadata = <SharedSetting, _SettingMeta>{
     appRef: null, // exempted — terminal theming, CLI-only (see above).
     yamlKeys: ['tui'],
     description: 'TUI palette (tui.theme + user themes, issue #279).',
+  ),
+  SharedSetting.redactionPolicy: _SettingMeta(
+    cliRef: 'startRedactionFlow',
+    appRef: null, // exempted — pipeline lives in the CLI host (see above).
+    yamlKeys: ['redact'],
+    description: 'Redaction pipeline policy (issue #391).',
+  ),
+  SharedSetting.imageRegistry: _SettingMeta(
+    cliRef: 'startImagesFlow',
+    appRef: null, // exempted — request-build global lives in the CLI host.
+    yamlKeys: ['images'],
+    description: 'Image registry kill switch + per-request cap (issue #395).',
+  ),
+  SharedSetting.sleepPrevention: _SettingMeta(
+    cliRef: 'startPowerFlow',
+    appRef: null, // exempted — assertion lifecycle lives in the CLI host.
+    yamlKeys: ['power'],
+    description: 'Sleep-prevention level + hold lifecycle (issue #397).',
+  ),
+  SharedSetting.contextWindowCap: _SettingMeta(
+    cliRef: 'startContextCapFlow',
+    appRef: null, // exempted — CLI agent loop only (see above).
+    yamlKeys: ['agent'],
+    description: 'Owner-side context cap (issue #394).',
+  ),
+  SharedSetting.resiliencePolicy: _SettingMeta(
+    cliRef: 'startResilienceFlow',
+    appRef: null, // exempted — lives in the CLI host (see above).
+    yamlKeys: ['providerTimeouts', 'retry'],
+    description: 'Provider failure resilience (issue #393).',
   ),
 };
 
