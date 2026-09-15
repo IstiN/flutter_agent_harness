@@ -11,6 +11,7 @@ import '../env/execution_env.dart';
 import '../session/session_record.dart';
 import '../session/session_storage.dart';
 import '../session/session_tree.dart';
+import '../session_io_retry.dart';
 import '../types.dart';
 import 'subagent_tools.dart' show ChildMessageReader;
 
@@ -21,9 +22,17 @@ import 'subagent_tools.dart' show ChildMessageReader;
 typedef ChildSessionOpener = Future<Session> Function(String sessionPath);
 
 /// A [ChildSessionOpener] over plain JSONL session files.
-ChildSessionOpener jsonlChildSessionOpener(FileSystem fs) {
-  return (sessionPath) async =>
-      Session(await JsonlSessionStorage.open(fs, sessionPath));
+///
+/// [ioRetry] wires the transient-ENOENT retry of the reopen (issue #427):
+/// the task-resume path rides a brief disappearance of the child's file
+/// the same way every other session open does.
+ChildSessionOpener jsonlChildSessionOpener(
+  FileSystem fs, {
+  SessionIoRetryConfig ioRetry = const SessionIoRetryConfig(),
+}) {
+  return (sessionPath) async => Session(
+    await JsonlSessionStorage.open(fs, sessionPath, ioRetry: ioRetry),
+  );
 }
 
 /// A [ChildMessageReader] over plain JSONL session files: reads the active
