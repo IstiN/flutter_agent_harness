@@ -394,7 +394,7 @@ extension on AgentCli {
             await session.appendSessionName(name);
           }
           io.writeln(
-            _style.yellow(
+            tuiWarning(
               'warning: Failed to create session under ${config.sessionRoot} (${error.message}).\n'
               'Falling back to session storage at $fallbackRoot.\n'
               'To fix permissions for shared macOS sessions, run:\n'

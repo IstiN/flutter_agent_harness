@@ -2118,7 +2118,7 @@ class AgentCli {
     providerKind: _providerKind,
     explicitToken: _explicitToken,
     activeCustomName: _activeCustomName,
-    red: _style.red,
+    red: tuiError,
     secureKeys: config.secureKeys,
     customProviders: config.customProviders,
     envVarIsSet: config.envVarIsSet,
@@ -2255,9 +2255,9 @@ class AgentCli {
         null => _style.dim('(connecting…)'),
         _ => switch (state!.status) {
           McpServerStatus.connected =>
-            '${_style.green('connected')} — ${state.tools.length} tool(s)',
+            '${tuiSuccess('connected')} — ${state.tools.length} tool(s)',
           McpServerStatus.failed =>
-            '${_style.red('failed')}: ${state.error ?? 'unknown'}',
+            '${tuiError('failed')}: ${state.error ?? 'unknown'}',
           McpServerStatus.connecting => _style.dim('(connecting…)'),
         },
       };
@@ -2522,7 +2522,7 @@ class AgentCli {
       // itself rendered as a calm note already).
       _overWindowAutoResumed = false;
       io.writeln(
-        _style.yellow(
+        tuiWarning(
           'note: could not free the context window — run /compact or '
           'start a fresh session',
         ),
@@ -2530,9 +2530,7 @@ class AgentCli {
       return false;
     }
     io.writeln(
-      _style.yellow(
-        '[context overflowed — auto-compacted; continuing the turn]',
-      ),
+      tuiWarning('[context overflowed — auto-compacted; continuing the turn]'),
     );
     await _runPrompt(
       await _overWindowContinuationPrompt(),
@@ -2585,18 +2583,16 @@ class AgentCli {
   /// tells the user to repeat the message.
   Future<void> _handleCodeMieAuthExpired(String rawMessage) async {
     final stripped = stripAuthExpiredMarker(compactProviderError(rawMessage));
-    io.writeln(_style.red('error: $stripped'));
+    io.writeln(tuiError('error: $stripped'));
     io.writeln(
-      _style.yellow(
+      tuiWarning(
         'CodeMie session expired — opening browser to re-authorize...',
       ),
     );
     final orgUrl = codeMieOrgUrl(_agent.state.model.baseUrl);
     await _handleCodeMieSsoCommand(orgUrl);
     if (!_exited) {
-      io.writeln(
-        _style.green('Re-authorized. Repeat your message to continue.'),
-      );
+      io.writeln(tuiSuccess('Re-authorized. Repeat your message to continue.'));
     }
   }
 
@@ -2650,7 +2646,7 @@ class AgentCli {
   void _onStaleJobLog(String path) {
     final name = path.split('/').last;
     io.writeln(
-      _style.yellow(
+      tuiWarning(
         'warning: $name was just written by an older fa build also running '
         'in this directory — its output can interleave with stale job logs. '
         'Restart that fa instance on this binary to fix.',

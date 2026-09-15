@@ -15,6 +15,12 @@ library;
 
 import 'tui_text_width.dart';
 
+/// A tool row's lifecycle state (issue #444): the row's border role is
+/// picked by state, never hardcoded — running rows carry the accent
+/// border, settled rows the quiet muted border, done/failed rows the
+/// success/error tints.
+enum ToolRowState { running, settled, done, failed }
+
 /// One tool row's content, ready for layout.
 final class ToolRowSegments {
   const ToolRowSegments({

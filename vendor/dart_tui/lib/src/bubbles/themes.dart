@@ -21,6 +21,26 @@ final class Theme {
     this.accent2 = const Style(),
     this.accent2Soft = const Style(),
     this.userMessageBg = const Style(),
+
+    /// Settled/closed row border (dark, quiet). Unset renders plain —
+    /// never a fallback color (issue #444 role table).
+    this.borderMuted = const Style(),
+
+    /// Tool-row label role (the tool name in `✓ bash · cmd`).
+    this.toolTitle = const Style(),
+
+    /// Tool-row detail/output role (command, path, question text).
+    this.toolOutput = const Style(),
+
+    /// Foreground of echoed user-message lines (readability floor:
+    /// ≥ 7:1 against [userMessageBg] in every built-in palette).
+    this.userMessageText = const Style(),
+
+    /// Successful tool row tint (subtle background).
+    this.toolSuccessBg = const Style(),
+
+    /// Failed tool row tint (subtle background).
+    this.toolErrorBg = const Style(),
   });
 
   final String name;
@@ -56,6 +76,24 @@ final class Theme {
 
   /// Background of echoed user message lines.
   final Style userMessageBg;
+
+  /// Settled/closed row border (dark, quiet).
+  final Style borderMuted;
+
+  /// Tool-row label role (the tool name in `✓ bash · cmd`).
+  final Style toolTitle;
+
+  /// Tool-row detail/output role (command, path, question text).
+  final Style toolOutput;
+
+  /// Foreground of echoed user-message lines.
+  final Style userMessageText;
+
+  /// Successful tool row tint (subtle background).
+  final Style toolSuccessBg;
+
+  /// Failed tool row tint (subtle background).
+  final Style toolErrorBg;
 
   // ── Built-in themes ──────────────────────────────────────────────────────
 
@@ -97,6 +135,21 @@ final class Theme {
     userMessageBg: Style(
       backgroundRgb: RgbColor(24, 24, 37), // #181825 Mantle
     ),
+    borderMuted: Style(
+      foregroundRgb: RgbColor(88, 91, 112), // #585B70 Surface2
+      isDim: true,
+    ),
+    toolTitle: Style(
+      foregroundRgb: RgbColor(137, 180, 250), // #89B4FA Blue
+      isBold: true,
+    ),
+    toolOutput: Style(
+      foregroundRgb: RgbColor(166, 173, 200), // #A6ADC8 Subtext0
+      isDim: true,
+    ),
+    userMessageText: Style(foregroundRgb: RgbColor(205, 214, 244)), // Text
+    toolSuccessBg: Style(backgroundRgb: RgbColor(35, 48, 40)),
+    toolErrorBg: Style(backgroundRgb: RgbColor(58, 42, 48)),
   );
 
   /// Nord — cool arctic blues.
@@ -136,6 +189,21 @@ final class Theme {
     userMessageBg: Style(
       backgroundRgb: RgbColor(59, 66, 82), // #3B4252 Nord1
     ),
+    borderMuted: Style(
+      foregroundRgb: RgbColor(76, 86, 106), // #4C566A Nord3
+      isDim: true,
+    ),
+    toolTitle: Style(
+      foregroundRgb: RgbColor(129, 161, 193), // #81A1C1 Nord9
+      isBold: true,
+    ),
+    toolOutput: Style(
+      foregroundRgb: RgbColor(76, 86, 106), // #4C566A Nord3
+      isDim: true,
+    ),
+    userMessageText: Style(foregroundRgb: RgbColor(236, 239, 244)), // Nord6
+    toolSuccessBg: Style(backgroundRgb: RgbColor(51, 61, 56)),
+    toolErrorBg: Style(backgroundRgb: RgbColor(67, 52, 58)),
   );
 
   /// Dracula — vivid purples and vibrant accents.
@@ -175,6 +243,21 @@ final class Theme {
     userMessageBg: Style(
       backgroundRgb: RgbColor(33, 34, 44), // #21222C
     ),
+    borderMuted: Style(
+      foregroundRgb: RgbColor(98, 114, 164), // #6272A4 Comment
+      isDim: true,
+    ),
+    toolTitle: Style(
+      foregroundRgb: RgbColor(139, 233, 253), // #8BE9FD Cyan
+      isBold: true,
+    ),
+    toolOutput: Style(
+      foregroundRgb: RgbColor(98, 114, 164), // #6272A4 Comment
+      isDim: true,
+    ),
+    userMessageText: Style(foregroundRgb: RgbColor(248, 248, 242)), // F8F8F2
+    toolSuccessBg: Style(backgroundRgb: RgbColor(40, 56, 46)),
+    toolErrorBg: Style(backgroundRgb: RgbColor(62, 40, 48)),
   );
 
   /// Alias for [catppuccin] — the default theme applied to all component styles.
