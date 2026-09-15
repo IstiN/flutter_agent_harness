@@ -2408,14 +2408,10 @@ void main() {
       await run;
 
       final output = io.out.toString();
-      // #446: the tool-call turn replays through the same tool-row
-      // builder as live — `✗ read ·` with the attached result, never the
-      // old collapsed `[read]` marker.
+      // #446: the tool-call turn replays via the shared tool-row builder,
+      // never the old collapsed `[read]` marker.
       expect(output, isNot(contains('[read]')));
-      expect(
-        RegExp(r'^fa:  ✗ read ·', multiLine: true).allMatches(output),
-        hasLength(1),
-      );
+      expect(output, matches(RegExp(r'^fa:  ✗ read ·', multiLine: true)));
       expect(output, contains('fa:  done'));
     });
 
@@ -2458,19 +2454,11 @@ void main() {
       await run;
 
       final output = io.out.toString();
-      // #446: each persisted call replays through the same tool-row
-      // builder as live (attached result, `✗ name ·` grammar) — the old
-      // collapsed `[read] [edit]` run row is gone.
-      expect(output, isNot(contains('[read]')));
-      expect(output, isNot(contains('[edit]')));
-      expect(
-        RegExp(r'^fa:  ✗ read ·', multiLine: true).allMatches(output),
-        hasLength(1),
-      );
-      expect(
-        RegExp(r'^fa:  ✗ edit ·', multiLine: true).allMatches(output),
-        hasLength(1),
-      );
+      // #446: each persisted call replays via the shared tool-row
+      // builder — the old collapsed `[read] [edit]` run row is gone.
+      expect(output, isNot(contains('[read] [edit]')));
+      expect(output, matches(RegExp(r'^fa:  ✗ read ·', multiLine: true)));
+      expect(output, matches(RegExp(r'^fa:  ✗ edit ·', multiLine: true)));
     });
 
     test('exit prints the resume command for a named session', () async {

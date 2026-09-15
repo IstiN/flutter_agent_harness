@@ -21,10 +21,12 @@ import '../event_stream.dart';
 import '../model.dart';
 import '../types.dart';
 
-/// Returns the scripted stream function when `FA_TEST_STREAM_SCRIPT` is
-/// set (and parses), else null so the boot path stays untouched.
-StreamFunction? scriptedTestStreamFunction() {
-  final path = Platform.environment['FA_TEST_STREAM_SCRIPT'];
+/// Returns the scripted stream function for the script at [path]
+/// (defaulting to `FA_TEST_STREAM_SCRIPT`), else null so the boot path
+/// stays untouched. The [path] parameter keeps the consumption contract
+/// unit-testable; production boots never pass it.
+StreamFunction? scriptedTestStreamFunction([String? path]) {
+  path ??= Platform.environment['FA_TEST_STREAM_SCRIPT'];
   if (path == null || path.trim().isEmpty) return null;
   final raw = jsonDecode(File(path.trim()).readAsStringSync()) as List<dynamic>;
   final script = [
@@ -64,19 +66,16 @@ List<AssistantMessageEvent> _events(List<_Step> steps, Model model) {
   AssistantMessage partial({
     List<ContentBlock> content = const [],
     StopReason reason = StopReason.stop,
-  }) =>
-      AssistantMessage(
-        content: content,
-        api: model.api,
-        provider: model.provider,
-        model: model.id,
-        usage: Usage.zero,
-        stopReason: reason,
-        timestamp: DateTime.now(),
-      );
-  final events = <AssistantMessageEvent>[
-    StartEvent(partial: partial()),
-  ];
+  }) => AssistantMessage(
+    content: content,
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: Usage.zero,
+    stopReason: reason,
+    timestamp: DateTime.now(),
+  );
+  final events = <AssistantMessageEvent>[StartEvent(partial: partial())];
   var contentIndex = 0;
   final blocks = <ContentBlock>[];
   var toolUse = false;
