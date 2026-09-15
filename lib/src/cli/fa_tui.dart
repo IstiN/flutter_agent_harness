@@ -1975,12 +1975,7 @@ final class FaTuiModel extends Model {
   /// `>_Fa` prefix), leaving one visible empty line after the user message.
   List<String> _echoAppend(List<String> lines, String text) {
     final rule = _dim('─' * termWidth);
-    final bg = tuiUserMessageBgSgr();
-    const reset = '\x1b[0m';
-    final styledInput = text
-        .split('\n')
-        .map((line) => '$bg$line$reset')
-        .join('\n');
+    final styledInput = text.split('\n').map(tuiUserMessageLine).join('\n');
     final appended = _appendOutput(lines, '$rule\n$styledInput', true);
     return _appendOutput(appended, '', true);
   }
@@ -2002,8 +1997,6 @@ final class FaTuiModel extends Model {
         ? const <TuiImageAttachment>[]
         : List<TuiImageAttachment>.of(attachments);
     final rule = _dim('─' * termWidth);
-    final bg = tuiUserMessageBgSgr();
-    const reset = '\x1b[0m';
     // Empty submits (guided-flow "keep the default" answers) skip the
     // message echo — an empty backgrounded block would read as a glitch.
     if (inputText.isEmpty) {
@@ -2045,7 +2038,7 @@ final class FaTuiModel extends Model {
       outputLines: echoed,
       menuOpen: false,
       menuTokenStart: -1,
-      stickyLines: [rule, '$bg$shown$reset$more'],
+      stickyLines: [rule, '${tuiUserMessageLine(shown)}$more'],
       stickyIndex: outputLines.length,
       stickyEchoLineCount: 2 + inputText.split('\n').length,
       attachments: keepAttachments ? null : const [],
