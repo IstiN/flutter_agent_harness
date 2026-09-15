@@ -358,12 +358,16 @@ void main() {
           shell: _BgShell(),
         );
         io.sendLine('start one');
-        final running = RegExp(r'bash (sh-1-\S+) · running');
-        await _waitFor(
-          () => running.hasMatch(io.out.toString()),
-          reason: 'the background shell job start block',
-        );
-        final id = running.firstMatch(io.out.toString())!.group(1)!;
+        // Issue #429: line mode no longer prints a start block (that was
+        // the running wall); the id comes from the /tasks listing.
+        String out() => io.out.toString();
+        await _waitFor(() {
+          if (!RegExp(r'sh-1-\S+').hasMatch(out())) {
+            io.sendLine('/tasks');
+          }
+          return RegExp(r'sh-1-\S+').hasMatch(out());
+        }, reason: 'the /tasks listing shows the shell job id');
+        final id = RegExp(r'sh-1-\S+').firstMatch(out())!.group(0)!;
 
         io.sendLine('/tasks cancel $id');
         await _waitFor(

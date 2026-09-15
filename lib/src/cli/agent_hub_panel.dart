@@ -191,8 +191,84 @@ String deferredPanelTransitionLine(DeferredPanel panel) =>
     '[btw] ${deferredPanelKindLabel(panel.kind)} from ${panel.from} → '
     '${panel.state.name}';
 
-/// Background-task block states (omp's async job rendering).
-enum TaskBlockState { running, done, failed, aborted }
+/// Background-task block states — the kimi status table (issue #429).
+/// `running` is the only live state; everything else is terminal. A card
+/// that froze in `running` is a lie, so settled history never renders it.
+enum TaskBlockState { running, done, failed, aborted, timedOut, stopped, lost }
+
+/// Whether [state] is final. Live (`running`) cards belong to the transient
+/// board region only — the transcript record never stores them.
+bool taskBlockStateIsTerminal(TaskBlockState state) =>
+    state != TaskBlockState.running;
+
+/// Why a job landed in [TaskBlockState.lost]: the process vanished without
+/// a settle report (host killed, PID gone) — the exit is unknowable.
+const String shellJobLostReason = 'process gone, no exit reported';
+
+/// kimi `MAX_DETAIL_LENGTH`: one dim detail line, capped so it fits any
+/// width and never wraps into noise.
+const int maxShellJobDetailLength = 240;
+
+/// The human subject of a headline: `bash task` / `agent task`.
+String _taskSubject(String kind) => '$kind task';
+
+/// One human headline for a card state (issue #429 AC2): past tense, the
+/// outcome first, no ids. The elapsed rides the completed headline; the
+/// exit code rides the failed one.
+String taskBlockHeadline({
+  required String kind,
+  required TaskBlockState state,
+  double? elapsed,
+  int? exitCode,
+}) {
+  final subject = _taskSubject(kind);
+  return switch (state) {
+    TaskBlockState.running => '$subject started in background',
+    TaskBlockState.done =>
+      elapsed == null
+          ? '$subject completed in background'
+          : '$subject completed in background (${hubDurationLike(elapsed)})',
+    TaskBlockState.failed => '$subject failed (exit ${exitCode ?? '?'})',
+    TaskBlockState.aborted || TaskBlockState.stopped => '$subject stopped',
+    TaskBlockState.timedOut => '$subject timed out',
+    TaskBlockState.lost => '$subject lost',
+  };
+}
+
+/// The last path segment of [cwd] — the cwd tail of a dim detail line.
+String shellJobCwdTail(String? cwd) {
+  if (cwd == null || cwd.isEmpty) return '';
+  final parts = cwd.split('/').where((p) => p.isNotEmpty).toList();
+  return parts.isEmpty ? cwd : parts.last;
+}
+
+/// One dim detail line for a job card: id + cwd tail + reason + log path,
+/// capped at [maxShellJobDetailLength] (issue #429 AC2).
+String shellJobCardDetail({
+  required String id,
+  String? cwd,
+  String? logPath,
+  required TaskBlockState state,
+  int? exitCode,
+}) {
+  final reason = switch (state) {
+    TaskBlockState.running => '',
+    TaskBlockState.done => 'exit 0',
+    TaskBlockState.failed => 'exit ${exitCode ?? '?'}',
+    TaskBlockState.aborted || TaskBlockState.stopped => 'stopped by user',
+    TaskBlockState.timedOut => 'watchdog timeout',
+    TaskBlockState.lost => shellJobLostReason,
+  };
+  final detail = [
+    id,
+    shellJobCwdTail(cwd),
+    if (reason.isNotEmpty) reason,
+    if (logPath != null && logPath.isNotEmpty) 'log: $logPath',
+  ].join(' · ');
+  return detail.length <= maxShellJobDetailLength
+      ? detail
+      : '${detail.substring(0, maxShellJobDetailLength - 1)}…';
+}
 
 /// One compact background-job block: a shell job or a background `task`.
 final class TaskBlock {
@@ -203,9 +279,12 @@ final class TaskBlock {
     required this.state,
     this.elapsed,
     this.detail,
+    this.exitCode,
+    this.turn = 0,
   });
 
-  /// The job id (`sh-…` for shell jobs, the agent:// id for tasks).
+  /// The job id (`sh-…` for shell jobs, the agent:// id for tasks). Lives
+  /// in the dim DETAIL line, never the header (issue #429 AC2).
   final String id;
 
   /// `bash` or `agent`.
@@ -219,24 +298,131 @@ final class TaskBlock {
   /// Elapsed seconds when known (settle time or live age).
   final double? elapsed;
 
-  /// Exit code / log path / agent:// ref line.
+  /// The process exit code when known (drives the failed headline).
+  final int? exitCode;
+
+  /// Exit code / log path / agent:// ref line (dim, pre-capped).
   final String? detail;
+
+  /// The turn bucket this job belongs to (issue #429 collapse per turn).
+  final int turn;
+
+  /// A copy with terminal-state fields filled in (the board's settle).
+  TaskBlock settled({
+    required TaskBlockState state,
+    double? elapsed,
+    int? exitCode,
+    String? detail,
+  }) => TaskBlock(
+    id: id,
+    kind: kind,
+    label: label,
+    state: state,
+    elapsed: elapsed ?? this.elapsed,
+    exitCode: exitCode ?? this.exitCode,
+    detail: detail ?? this.detail,
+    turn: turn,
+  );
+
+  /// The JSONL `shell_job_registry` record shape (issue #429 AC9).
+  Map<String, Object?> toRecord() => {
+    'id': id,
+    'kind': kind,
+    'label': label,
+    'state': state.name,
+    if (elapsed != null) 'elapsed': elapsed,
+    if (exitCode != null) 'exitCode': exitCode,
+    if (detail != null) 'detail': detail,
+    'turn': turn,
+  };
+
+  /// Restores a card from its record. Unknown states restore as
+  /// [TaskBlockState.lost] — a reload never resurrects a live card.
+  factory TaskBlock.fromRecord(Map<Object?, Object?> record) {
+    final stateName = record['state'];
+    final state = TaskBlockState.values.firstWhere(
+      (s) => s.name == stateName,
+      orElse: () => TaskBlockState.lost,
+    );
+    final rest = state == TaskBlockState.running ? TaskBlockState.lost : state;
+    return TaskBlock(
+      id: '${record['id']}',
+      kind: '${record['kind'] ?? 'bash'}',
+      label: '${record['label'] ?? ''}',
+      state: rest,
+      elapsed: (record['elapsed'] as num?)?.toDouble(),
+      exitCode: (record['exitCode'] as num?)?.toInt(),
+      detail: record['detail'] as String?,
+      turn: (record['turn'] as num?)?.toInt() ?? 0,
+    );
+  }
 }
 
-/// Renders one compact task block: a header with id/state/elapsed, the
-/// label line, and the optional detail line.
-List<String> taskBlockLines(TaskBlock block, {int width = 80}) {
+/// Renders one compact task card: the human headline header (no ids), the
+/// label line, and the optional dim detail line. Every line fits [width]
+/// visually (border included).
+List<String> taskBlockLines(TaskBlock block, {required int width}) {
   final w = width < 20 ? 20 : width;
   final inner = w - 2;
-  final elapsed = block.elapsed == null
-      ? ''
-      : ' · ${hubDurationLike(block.elapsed!)}';
-  final header = '${block.kind} ${block.id} · ${block.state.name}$elapsed';
+  final header = taskBlockHeadline(
+    kind: block.kind,
+    state: block.state,
+    elapsed: block.elapsed,
+    exitCode: block.exitCode,
+  );
   final lines = <String>['┌─ ${_clip(header, inner - 3)}'];
   void body(String text) =>
       lines.add('│ ${_pad(_clip(text, inner - 3), inner - 3)}');
   body(block.label);
-  if (block.detail != null) body(block.detail!);
+  if (block.detail != null) {
+    body(block.detail!);
+  } else {
+    // The id always lives in the dim detail line (issue #429 AC2) —
+    // synthesize one when the card arrived without it.
+    body(
+      shellJobCardDetail(
+        id: block.id,
+        state: block.state,
+        exitCode: block.exitCode,
+      ),
+    );
+  }
+  lines.add('└─${'─' * (inner - 2)}');
+  return lines;
+}
+
+/// The live (transient) board summary line: `⟳ Background jobs (17) · 2
+/// running · 15 done · 0 lost`. The lost segment is ALWAYS present — a
+/// zombie is never hidden inside a green count (issue #429 AC3).
+String shellJobLiveSummaryLine({
+  required int total,
+  required int running,
+  required int done,
+  required int lost,
+  bool older = false,
+}) =>
+    '⟳ Background jobs ($total) · $running running · $done done · '
+    '$lost lost${older ? ' · older' : ''}';
+
+/// The settled summary card a collapsed turn leaves in the transcript:
+/// terminal counts only (issue #429 AC6).
+List<String> shellJobSummaryCardLines({
+  required int total,
+  required int running,
+  required int done,
+  required int lost,
+  required int width,
+}) {
+  final w = width < 20 ? 20 : width;
+  final inner = w - 2;
+  final lines = <String>[
+    '┌─ ${_clip('Background jobs ($total) · $running running · $done done · '
+    '$lost lost', inner - 3)}',
+  ];
+  final hint = done + lost > 0
+      ? 'bash_job status lists ids · bash_job output <id> tails a log'
+      : 'still running — a summary settles when the turn\u2019s jobs finish';
+  lines.add('│ ${_pad(_clip(hint, inner - 3), inner - 3)}');
   lines.add('└─${'─' * (inner - 2)}');
   return lines;
 }
