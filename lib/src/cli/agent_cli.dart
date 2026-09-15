@@ -99,7 +99,8 @@ import '../providers/copilot_oauth.dart';
 import '../providers/dial.dart';
 import '../providers/models_endpoint.dart';
 import '../providers/openrouter_oauth.dart';
-import '../agent/image_registry.dart' show imageDropNotice;
+import '../agent/image_registry.dart'
+    show ImageRegistryConfig, imageDropNotice, imageRegistryConfig;
 import '../providers/provider_common.dart'
     show authExpiredProvider, stripAuthExpiredMarker;
 import '../providers/transient_retry_stream.dart';
