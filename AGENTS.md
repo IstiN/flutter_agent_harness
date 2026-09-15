@@ -1454,9 +1454,26 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
 - Line coverage of `lib/` ≥ 80% (full ratchet on main/nightly; PRs ratchet
   CHANGED lines via `scripts/diff_coverage.py`); jscpd duplication < 1%
   core `lib/`, < 3.7% `flutter_app/lib/` (ratchet — only tighten).
-- CRAP ratchet (`crap4dart analyze`, config `crap4dart.yaml`, tool pinned
-  as `dart pub global activate crap4dart 0.2.1`): the threshold is the
-  current repo max — only down from here.
+- CRAP ratchet (`crap4dart analyze`, tool pinned as
+  `dart pub global activate crap4dart 0.2.1`), one config per package,
+  thresholds are the current per-package max — only down from here:
+  - core (`crap4dart.yaml`, sources `[lib, bin]`): **12.0** — three
+    TUI-only dispatchers at CC 3 / 0% cov pending PTY tests (documented
+    exception).
+  - flutter_app (`flutter_app/crap4dart.yaml`, sources `[lib]`,
+    issue #433): **870.0** — measured by the SAME pipeline the CI gate
+    uses (the two `flutter-tests` shards emit `--coverage`; the
+    `app-crap-gate` job merges the lcovs and runs the pinned analyzer —
+    widget-test coverage differs from the core's dart lcov, E2).
+  - The app ladder (follow-up cards, NOT this one): 2450 → 870 (done:
+    `JsAppEngine._faCall` 2450→6 via map dispatch, `patch` 94→19,
+    `_tokenize` 70→18) → next milestones 650 (`codemie_sso_flow`) →
+    600-class `wasm_shell` cluster → … → **40**, each step "fix the
+    code, then lower the threshold" — never lower first.
+  - Guards (`scripts/check_crap_guards.py`): README badge == config
+    threshold for BOTH packages, generated-exclude parity between the
+    two configs, and `--only-down` (a PR that raises any threshold vs
+    the merge base is rejected in CI).
 - Max 2800 lines per `.dart` file (`*.g.dart` exempt).
 - CI layout: `changes` (path filter) → parallel `static`, `test-core`
   (3 duration-balanced shards, `scripts/test_shards.json`, rebalanced

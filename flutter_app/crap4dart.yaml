@@ -4,12 +4,16 @@
 # RATCHET (issue #433): the threshold is pinned at the CURRENT worst score
 # measured by the SAME pipeline the CI gate uses — `flutter test --coverage`
 # lcov (E2: widget-test coverage differs from the core's dart lcov, so the
-# bootstrap number must come from this pipeline, not the core's).
-# Bootstrap measurement (2026-09-15): 2450.0 — `JsAppEngine._faCall`
-# (CC 49, 0% line coverage). Pushes may only make the codebase BETTER,
+# number must come from this pipeline, not the core's).
+# Bootstrap (2026-09-15): 2450.0 — `JsAppEngine._faCall` (CC 49, 0% line
+# coverage). Descent #1 (same day): the issue's three named offenders went
+# under the next milestone line (CRAP ≤ 40 each) and the threshold followed
+# the measured new worst: 2450.0 → 870.0 (`wasm_shell_git.run` and
+# `main`, CC 29 at 0% coverage). Pushes may only make the codebase BETTER,
 # never worse; scripts/check_crap_guards.py --only-down rejects a raised
-# threshold in CI. Lower the threshold whenever the top offenders are
-# fixed: cd flutter_app && flutter test --coverage &&
+# threshold in CI. The staged ladder continues in follow-up cards:
+# 870 → … → 40 (see AGENTS.md "Quality gates"). Re-measure after each fix:
+# cd flutter_app && flutter test --coverage &&
 # dart pub global run crap4dart analyze.
 
 sources: [lib]
@@ -25,8 +29,8 @@ exclude:
 crap:
   enabled: true
   # Current max CRAP score in flutter_app/lib under the flutter lcov
-  # pipeline (2026-09-15 bootstrap). Only down from here.
-  threshold: 2450.0
+  # pipeline (2026-09-15, descent #1 of the #433 ladder). Only down.
+  threshold: 870.0
 
 coverage:
   # The CI app-crap-gate job merges the two flutter-tests shard reports
