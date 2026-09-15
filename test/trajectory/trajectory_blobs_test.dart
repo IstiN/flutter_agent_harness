@@ -162,6 +162,61 @@ void main() {
     });
   });
 
+  group('model-change capture (#440)', () {
+    TrajectoryRequestDetail detail(String? promptHash, String? manifestHash) =>
+        TrajectoryRequestDetail(
+          messageCount: 1,
+          systemPromptChars: 10,
+          toolCount: 1,
+          toolNames: const ['bash'],
+          messages: const [],
+          systemPromptHash: promptHash,
+          toolManifestHash: manifestHash,
+        );
+
+    test('the first captured request opens the first version', () {
+      final persister = TrajectoryBlobPersister();
+      expect(persister.shouldAppendModelChange(detail('a', 'm')), isTrue);
+    });
+
+    test('an unchanged version never re-appends (AC2 dedupe)', () {
+      final persister = TrajectoryBlobPersister();
+      expect(persister.shouldAppendModelChange(detail('a', 'm')), isTrue);
+      for (var i = 0; i < 10; i++) {
+        expect(persister.shouldAppendModelChange(detail('a', 'm')), isFalse);
+      }
+    });
+
+    test('either hash changing opens a new version', () {
+      final persister = TrajectoryBlobPersister();
+      expect(persister.shouldAppendModelChange(detail('a', 'm')), isTrue);
+      expect(persister.shouldAppendModelChange(detail('b', 'm')), isTrue);
+      expect(persister.shouldAppendModelChange(detail('b', 'm2')), isTrue);
+      expect(persister.shouldAppendModelChange(detail('b', 'm2')), isFalse);
+    });
+
+    test('a version run that returns lands its row again (A→B→A)', () {
+      final persister = TrajectoryBlobPersister();
+      expect(persister.shouldAppendModelChange(detail('a', 'm')), isTrue);
+      expect(persister.shouldAppendModelChange(detail('b', 'm')), isTrue);
+      expect(persister.shouldAppendModelChange(detail('a', 'm')), isTrue);
+    });
+
+    test('a fully uncaptured request is not a version (E6)', () {
+      final persister = TrajectoryBlobPersister();
+      expect(persister.shouldAppendModelChange(detail(null, null)), isFalse);
+      expect(persister.shouldAppendModelChange(detail('a', 'm')), isTrue);
+      expect(persister.shouldAppendModelChange(detail(null, null)), isFalse);
+    });
+
+    test('reset drops the version state (new session)', () {
+      final persister = TrajectoryBlobPersister();
+      expect(persister.shouldAppendModelChange(detail('a', 'm')), isTrue);
+      persister.reset();
+      expect(persister.shouldAppendModelChange(detail('a', 'm')), isTrue);
+    });
+  });
+
   group('request message blocks (F3/AC4)', () {
     test('text blocks keep bounded full text with the original size', () {
       final blocks = trajectoryRequestBlocks([
