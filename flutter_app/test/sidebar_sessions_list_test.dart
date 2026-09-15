@@ -9,6 +9,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/session_names_store.dart';
+import 'package:fa/services/session_ui_prefs_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/sidebar_sessions_list.dart';
 import 'package:fa/ui/widgets/session_search_field.dart';
@@ -115,6 +116,7 @@ void main() {
     ValueChanged<String>? onOpenLiveSession,
     String? pendingSessionId,
     String? selectedSessionId,
+    SessionUiPrefsStore? prefsStore,
   }) {
     return MaterialApp(
       theme: buildFahTheme(),
@@ -124,6 +126,7 @@ void main() {
         body: SidebarSessionsList(
           manager: manager,
           sessionNamesStore: names,
+          prefsStore: prefsStore,
           persistedSessions: persisted,
           sessionInfoNames: sessionInfoNames,
           onOpenPersisted: onOpenPersisted,
@@ -927,8 +930,8 @@ void main() {
       return session.getMetadata();
     }
 
-    testWidgets('subagent sessions collapse under a count badge by '
-        'default', (tester) async {
+    testWidgets('small child groups (≤3) render expanded by default '
+        '(issue #426 AC1)', (tester) async {
       final main = await persistSession(userText: 'main');
       final childA = await persistChild(parentId: main.id);
       final childB = await persistChild(parentId: main.id);
@@ -947,14 +950,46 @@ void main() {
 
       expect(find.text('Main chat'), findsOneWidget);
       expect(find.text('2 agents'), findsOneWidget);
-      // Collapsed: the children stay hidden until the badge is tapped.
-      expect(find.text('goal_builder'), findsNothing);
-      expect(find.text('scout'), findsNothing);
+      // A couple of agents read fine inline: children show, indented.
+      expect(find.text('goal_builder'), findsOneWidget);
+      expect(find.text('scout'), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.text('goal_builder')).dx,
+        greaterThan(tester.getTopLeft(find.text('Main chat')).dx),
+      );
     });
 
-    testWidgets('the badge expands the child list and collapses it back', (
-      tester,
-    ) async {
+    testWidgets('more than three children collapse behind the badge by '
+        'default; the badge opens them (issue #426 AC1)', (tester) async {
+      final main = await persistSession(userText: 'main');
+      final children = [
+        for (var i = 0; i < 4; i++) await persistChild(parentId: main.id),
+      ];
+
+      await tester.pumpWidget(
+        harness(
+          names: SessionNamesStore.inMemory({
+            main.id: 'Main chat',
+            for (final (i, child) in children.indexed) child.id: 'agent $i',
+          }),
+          persisted: [main, ...children],
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('4 agents'), findsOneWidget);
+      // Collapsed: the children stay hidden until the badge is tapped.
+      expect(find.text('agent 0'), findsNothing);
+      expect(find.text('agent 3'), findsNothing);
+
+      await tester.tap(find.text('4 agents'));
+      await tester.pumpAndSettle();
+      expect(find.text('agent 0'), findsOneWidget);
+      expect(find.text('agent 3'), findsOneWidget);
+    });
+
+    testWidgets('the badge collapses the child list and expands it back',
+      (tester) async {
       final main = await persistSession(userText: 'main');
       final child = await persistChild(parentId: main.id);
 
@@ -969,6 +1004,12 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      // Expanded by default (1 ≤ 3): the first tap collapses.
+      expect(find.text('goal_builder'), findsOneWidget);
+      await tester.tap(find.text('1 agent'));
+      await tester.pumpAndSettle();
+      expect(find.text('goal_builder'), findsNothing);
+
       await tester.tap(find.text('1 agent'));
       await tester.pumpAndSettle();
       expect(find.text('goal_builder'), findsOneWidget);
@@ -977,10 +1018,65 @@ void main() {
         tester.getTopLeft(find.text('goal_builder')).dx,
         greaterThan(tester.getTopLeft(find.text('Main chat')).dx),
       );
+    });
 
-      await tester.tap(find.text('1 agent'));
+    testWidgets('the expand/collapse choice survives an app restart '
+        '(issue #426 AC1, persisted via the prefs store)', (tester) async {
+      final main = await persistSession(userText: 'main');
+      final childA = await persistChild(parentId: main.id);
+      final childB = await persistChild(parentId: main.id);
+      final names = SessionNamesStore.inMemory({
+        main.id: 'Main chat',
+        childA.id: 'goal_builder',
+        childB.id: 'scout',
+      });
+      final prefs = await SessionUiPrefsStore.load(env);
+
+      await tester.pumpWidget(
+        harness(
+          names: names,
+          persisted: [main, childA, childB],
+          prefsStore: prefs,
+        ),
+      );
+      await tester.pumpAndSettle();
+      // Small group is open; the user collapses it.
+      await tester.tap(find.text('2 agents'));
       await tester.pumpAndSettle();
       expect(find.text('goal_builder'), findsNothing);
+      expect(prefs.collapsedParents, {main.id});
+
+      // "Restart": a brand-new store instance re-reading the same env, a
+      // brand-new manager — the collapsed choice sticks.
+      final revived = await SessionUiPrefsStore.load(env);
+      final manager2 = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
+      addTearDown(manager2.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: SidebarSessionsList(
+              manager: manager2,
+              sessionNamesStore: names,
+              prefsStore: revived,
+              persistedSessions: [main, childA, childB],
+              selectedSessionId: main.id,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('2 agents'), findsOneWidget);
+      expect(find.text('goal_builder'), findsNothing);
+
+      // Re-expanding writes through the new store the same way.
+      await tester.tap(find.text('2 agents'));
+      await tester.pumpAndSettle();
+      expect(find.text('goal_builder'), findsOneWidget);
+      expect(revived.expandedParents, {main.id});
+      expect(revived.collapsedParents, isEmpty);
     });
 
     testWidgets('an active child auto-expands its parent group', (
@@ -1080,8 +1176,8 @@ void main() {
 
       await tester.pumpWidget(harness(names: names, persisted: [main, child]));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('1 agent'));
-      await tester.pumpAndSettle();
+      // The small group renders expanded by default (issue #426) — the
+      // child row is already on screen.
 
       await tester.tap(find.byIcon(Icons.more_horiz).last);
       await tester.pumpAndSettle();

@@ -4,6 +4,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/project_mount_env.dart';
+import 'package:fa/services/session_ui_prefs_store.dart';
 import 'package:fa/services/session_names_store.dart';
 import 'package:fa/ui/widgets/dap_hub_mark.dart';
 import 'package:fa/ui/widgets/rename_session_dialog.dart';
@@ -44,6 +45,7 @@ class SidebarSessionsList extends StatefulWidget {
     this.hubBoundSessionId,
     this.pendingSessionId,
     this.selectedSessionId,
+    this.prefsStore,
   });
 
   /// The session the user just asked to open (a `session_open` dispatch is
@@ -56,6 +58,10 @@ class SidebarSessionsList extends StatefulWidget {
   /// The ONE selected id (pending click > hosted live id > manager slot) —
   /// computed by the host, which owns all three sources.
   final String? selectedSessionId;
+
+  /// Per-parent expand/collapse persistence (issue #426). Null keeps the
+  /// choice in memory only (tests, injected-store-less hosts).
+  final SessionUiPrefsStore? prefsStore;
 
   final FlutterSessionManager manager;
   final SessionNamesStore? sessionNamesStore;
@@ -151,17 +157,34 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
     super.dispose();
   }
 
-  /// Parent session ids the user expanded (issue #198 tree): groups start
-  /// collapsed; a parent whose ACTIVE descendant lives under it is forced
-  /// open regardless (see [sessionTreeRows]).
-  // ponytail: one set, no negative overrides — the active parent can't be
-  // hand-collapsed while its child is the active session.
-  final Set<String> _expandedParents = {};
+  /// Parent session ids the user expanded (issue #198 tree); backed by
+  /// [SessionUiPrefsStore] when one is injected so the choice survives an
+  /// app restart (issue #426). Groups within [sessionTreeAutoExpandChildren]
+  /// children render expanded WITHOUT an entry here — the set only carries
+  /// explicit overrides (see [_toggleExpanded]).
+  final Set<String> _localExpandedParents = {};
 
-  void _toggleExpanded(String parentId) {
-    setState(() {
-      if (!_expandedParents.remove(parentId)) _expandedParents.add(parentId);
-    });
+  /// Explicitly collapsed parents (issue #426): groups at or under the
+  /// auto-expand limit render open by default, so collapsing one is a
+  /// choice that must be remembered just like expanding a big group.
+  final Set<String> _localCollapsedParents = {};
+
+  Set<String> get _expandedParents =>
+      widget.prefsStore?.expandedParents ?? _localExpandedParents;
+  Set<String> get _collapsedParents =>
+      widget.prefsStore?.collapsedParents ?? _localCollapsedParents;
+
+  void _toggleExpanded(String parentId, {required bool expanded}) {
+    final store = widget.prefsStore;
+    if (store != null) {
+      unawaited(store.setExpanded(parentId, !expanded));
+    } else {
+      (expanded ? _localExpandedParents : _localCollapsedParents)
+          .remove(parentId);
+      (expanded ? _localCollapsedParents : _localExpandedParents)
+          .add(parentId);
+    }
+    setState(() {});
   }
 
   String _titleFor(SessionEntry entry, {bool subagent = false}) {
@@ -285,6 +308,7 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
       expandedIds: query.isEmpty
           ? _expandedParents
           : {..._expandedParents, ...contextParents},
+      collapsedIds: query.isEmpty ? _collapsedParents : const {},
       dimmedIds: contextParents,
     );
     return Column(
@@ -392,7 +416,7 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
       childCount: row.childCount,
       expanded: row.expanded,
       onToggleExpand: row.childCount > 0
-          ? () => _toggleExpanded(entry.id)
+          ? () => _toggleExpanded(entry.id, expanded: row.expanded)
           : null,
       subagent: row.isChild,
       indent: row.isChild && !row.orphaned ? sessionChildIndent : 0,
@@ -556,22 +580,31 @@ final class SessionListRow {
   bool get isHeader => label != null;
 }
 
+/// Groups with at most this many subagent children render EXPANDED by
+/// default (issue #426 AC1): a couple of agents read fine inline; a big
+/// batch collapses behind the count badge until tapped.
+const sessionTreeAutoExpandChildren = 3;
+
 /// Folder-grouped, parent-nested rows for a session list (issue #198's
 /// app surface): folder headers stay the top level; under each header the
 /// mains render with their subagent children nested behind a count badge
-/// — collapsed unless [expandedIds] opts in or the ACTIVE session is one
+/// — expanded at or under [sessionTreeAutoExpandChildren] children,
+/// collapsed above it, and either [expandedIds] / [collapsedIds] override
+/// wins (issue #426's persisted user choice). The ACTIVE session is one
 /// of the group's children (E2: the group forces open so the active row
-/// stays visible). Orphaned subagents surface top-level with the glyph.
-/// Parents in [dimmedIds] (issue #200 AC2: pulled in as search context
-/// for a matching child) carry `dimmed` for the host to render faintly.
-/// Pure projection over [metadataById] — no extra I/O (AC5): entries
-/// missing from it (presence-only rows, pre-feature headers) are mains.
+/// stays visible) regardless of every default. Orphaned subagents
+/// surface top-level with the glyph. Parents in [dimmedIds] (issue #200
+/// AC2: pulled in as search context for a matching child) carry `dimmed`
+/// for the host to render faintly. Pure projection over [metadataById] —
+/// no extra I/O (AC5): entries missing from it (presence-only rows,
+/// pre-feature headers) are mains.
 List<SessionListRow> sessionTreeRows(
   List<SessionEntry> entries, {
   required Map<String, SessionMetadata> metadataById,
   required String personalLabel,
   String? activeSessionId,
   Set<String> expandedIds = const {},
+  Set<String> collapsedIds = const {},
   Set<String> dimmedIds = const {},
 }) {
   // Folder groups in first-appearance order (entries arrive pre-sorted).
@@ -609,9 +642,18 @@ List<SessionListRow> sessionTreeRows(
         );
         continue;
       }
+      // Defaults first, then the persisted user choice (issue #426): a
+      // big group starts collapsed, a small one open — an explicit
+      // override beats either. The active child still forces open (E2).
+      final hasActiveChild = group.children.any(
+        (child) => child.id == activeSessionId,
+      );
       final expanded =
-          expandedIds.contains(entry.id) ||
-          group.children.any((child) => child.id == activeSessionId);
+          hasActiveChild ||
+          (collapsedIds.contains(entry.id)
+              ? false
+              : expandedIds.contains(entry.id) ||
+                    group.children.length <= sessionTreeAutoExpandChildren);
       rows.add(
         SessionListRow(
           entry: entry,
@@ -622,7 +664,13 @@ List<SessionListRow> sessionTreeRows(
       );
       if (expanded) {
         for (final child in group.children) {
-          rows.add(SessionListRow(entry: entryById[child.id], isChild: true));
+          final childEntry = entryById[child.id];
+          // A search filter can drop the child from [entries] while the
+          // parent stays — rendering a null-entry row would crash the
+          // tile; the child simply doesn't show under the (context)
+          // parent.
+          if (childEntry == null) continue;
+          rows.add(SessionListRow(entry: childEntry, isChild: true));
         }
       }
     }
@@ -1113,3 +1161,4 @@ class SessionTile extends StatelessWidget {
     );
   }
 }
+

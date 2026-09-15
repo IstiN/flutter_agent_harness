@@ -17,6 +17,7 @@ import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/services/project_mount_flow.dart';
 import 'package:fa/services/dap_binding_store.dart';
+import 'package:fa/services/session_ui_prefs_store.dart';
 import 'package:fa/services/session_names_store.dart';
 import 'package:fa/services/upload.dart';
 
@@ -55,6 +56,7 @@ class WideLayoutShell extends StatefulWidget {
     this.audioControllerFactory,
     this.videoControllerFactory,
     this.tileEngineFactory,
+    this.sessionPrefsStore,
   });
 
   final FlutterSessionManager manager;
@@ -69,6 +71,10 @@ class WideLayoutShell extends StatefulWidget {
   final SandboxAudioControllerFactory? audioControllerFactory;
   final SandboxVideoControllerFactory? videoControllerFactory;
   final TileEngineFactory? tileEngineFactory;
+
+  /// Per-parent expand/collapse persistence for the sessions tree (issue
+  /// #426). Null → the shell lazily loads one from the shared env.
+  final SessionUiPrefsStore? sessionPrefsStore;
 
   @override
   State<WideLayoutShell> createState() => _WideLayoutShellState();
@@ -126,6 +132,10 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   /// (the wide shell's boot path doesn't) — powers custom titles + rename.
   SessionNamesStore? _namesStore;
 
+  /// Lazily loaded sessions-tree prefs (issue #426) when the host did not
+  /// inject one — per-parent expand/collapse survives an app restart.
+  SessionUiPrefsStore? _uiPrefs;
+
   /// Width of the right-side apps panel (user-resizable via drag handle).
   double _appsPanelWidth = 380;
 
@@ -156,6 +166,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     _subscribeToActiveService();
     unawaited(_reloadPersistedSessions());
     unawaited(_ensureNamesStore());
+    unawaited(_ensureUiPrefs());
     if (_pendingOpenId != null &&
         widget.manager.hostedLiveId.value == _pendingOpenId) {
       _pendingOpenId = null; // the broadcast landed — the live id took over
@@ -229,6 +240,15 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     setState(() => _namesStore = store);
   }
 
+  /// Loads the sessions-tree prefs store from the shared env when the
+  /// host did not inject one (issue #426).
+  Future<void> _ensureUiPrefs() async {
+    if (widget.sessionPrefsStore != null || _uiPrefs != null) return;
+    final prefs = await SessionUiPrefsStore.load(widget.manager.env);
+    if (!mounted) return;
+    setState(() => _uiPrefs = prefs);
+  }
+
   /// Rebuilds when the active service notifies (model change, reconfigure).
   void _onServiceChanged() {
     if (mounted) setState(() {});
@@ -252,6 +272,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     _subscribeToActiveService();
     unawaited(_reloadPersistedSessions());
     unawaited(_ensureNamesStore());
+    unawaited(_ensureUiPrefs());
     // Issue #381: boot skipped an oversized last-active session — say so
     // instead of the old silent swap; the action opens it windowed.
     showBootOversizeNotice(
@@ -336,6 +357,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
                 builder: (context, _) => SidebarSessionsList(
                   manager: widget.manager,
                   sessionNamesStore: widget.sessionNamesStore ?? _namesStore,
+                  prefsStore: widget.sessionPrefsStore ?? _uiPrefs,
                   collapsed: _sidebarCollapsed,
                   onNewSession: _newSession,
                   onSessionTap: () => setState(() {}),
