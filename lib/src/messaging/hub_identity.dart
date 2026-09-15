@@ -20,10 +20,8 @@ final _sha256 = Sha256();
 final _random = Random.secure();
 
 /// Random lowercase hex string of [nChars] characters (hello nonces).
-String hubRandomHex(int nChars) => List.generate(
-  nChars,
-  (_) => _random.nextInt(16).toRadixString(16),
-).join();
+String hubRandomHex(int nChars) =>
+    List.generate(nChars, (_) => _random.nextInt(16).toRadixString(16)).join();
 
 /// Opaque unique frame id, uuid-v4 shaped.
 String newHubFrameId() {

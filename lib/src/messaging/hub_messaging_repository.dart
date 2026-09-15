@@ -219,9 +219,7 @@ final class HubMessagingRepository
     final query = _dialUrl.queryParameters;
     final url = token == null || token!.isEmpty
         ? _dialUrl
-        : _dialUrl.replace(
-            queryParameters: {...query, 'dap_token': token},
-          );
+        : _dialUrl.replace(queryParameters: {...query, 'dap_token': token});
     final HubSocket socket;
     try {
       socket = await _transport.connect(url);
@@ -389,15 +387,17 @@ final class HubMessagingRepository
       _log('dropped undecryptable DM from $from: $error');
       return;
     }
-    _inbox.add(AgentMessage(
-      id: id,
-      fromId: from,
-      toId: agentId ?? '',
-      text: text,
-      sentAt: DateTime.fromMillisecondsSinceEpoch(
-        frame['ts'] as int? ?? 0,
-      ).toUtc().toIso8601String(),
-    ));
+    _inbox.add(
+      AgentMessage(
+        id: id,
+        fromId: from,
+        toId: agentId ?? '',
+        text: text,
+        sentAt: DateTime.fromMillisecondsSinceEpoch(
+          frame['ts'] as int? ?? 0,
+        ).toUtc().toIso8601String(),
+      ),
+    );
   }
 
   void _onAgentInfo(Map<String, dynamic> frame) {
@@ -591,7 +591,8 @@ final class HubMessagingRepository
   }
 
   @override
-  Future<List<AgentMessage>> peek(String agent) => Future.value(List.of(_inbox));
+  Future<List<AgentMessage>> peek(String agent) =>
+      Future.value(List.of(_inbox));
 
   @override
   Future<List<AgentMessage>> drain(String agent) async {

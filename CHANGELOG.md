@@ -1,6 +1,17 @@
 # Changelog
 
 ## Unreleased
+- feat(402): app agents join the agent network (Phase 27.1 + app
+  wiring) — `HubMessagingRepository implements MessagingRepository` in
+  the harness (`lib/src/messaging/`, pure Dart over an injectable
+  `HubTransport`/`HubSocket` seam, at-most-once delivery, dedup by id,
+  per-sender ordering, queue-while-disconnected with backoff, presence
+  live/busy/offline from registration) plus the app wiring: the macOS/iOS
+  agent opts in ("Join as agent" in the hub settings) and becomes a live
+  hub member — roster presence, name-addressable DMs from the CLI, the
+  DM composer replying hub-ward — with the session file fabric kept as
+  the offline fallback (unreachable hub boots the app fully usable and
+  retries in the background).
 - fix(365): the TUI busy row no longer jumps horizontally while a run or
   an ask prompt is open — the row is laid out in FIXED cells: the label
   zone holds a constant 24 cells (overlong labels ellipsize inside it),

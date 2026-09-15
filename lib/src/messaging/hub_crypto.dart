@@ -67,10 +67,11 @@ Future<List<int>> _hkdfSha256({
   var previous = const <int>[];
   var okm = <int>[];
   for (var counter = 1; okm.length < length && counter <= 255; counter++) {
-    final block = await _mac.calculateMac(
-      [...previous, ...info, counter],
-      secretKey: SecretKey(prk.bytes),
-    );
+    final block = await _mac.calculateMac([
+      ...previous,
+      ...info,
+      counter,
+    ], secretKey: SecretKey(prk.bytes));
     previous = block.bytes;
     okm = [...okm, ...block.bytes];
   }
@@ -108,11 +109,7 @@ Future<String> hubEncryptPayload({
   required String aadTarget,
   required String plaintext,
 }) async {
-  final key = await _deriveDmKey(
-    sender.dhKeyPair,
-    recipientDhPubkey,
-    frameId,
-  );
+  final key = await _deriveDmKey(sender.dhKeyPair, recipientDhPubkey, frameId);
   final box = await _aead.encrypt(
     utf8.encode(plaintext),
     secretKey: key,
@@ -132,7 +129,11 @@ Future<String> hubDecryptPayload({
 }) async {
   final raw = base64Decode(ciphertextB64);
   if (raw.length < 12 + 16) throw ArgumentError('ciphertext too short');
-  final key = await _deriveDmKey(ourIdentity.dhKeyPair, senderDhPubkey, frameId);
+  final key = await _deriveDmKey(
+    ourIdentity.dhKeyPair,
+    senderDhPubkey,
+    frameId,
+  );
   final clear = await _aead.decrypt(
     SecretBox(
       raw.sublist(12, raw.length - 16),

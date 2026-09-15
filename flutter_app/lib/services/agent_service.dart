@@ -117,10 +117,20 @@ const _noProcessPlatforms = {'web', 'android', 'ios'};
 /// agent lifecycle events into a list of [FahChatMessage].
 class AgentService extends ChangeNotifier
     implements FaChatConnection, FaApprovalModeController, FaChatService {
+  /// The app's live service, when one exists (cleared on dispose).
+  /// Settings surfaces that need agent-scoped state (the DAP page's
+  /// agent-network row, issue #402) read it here instead of threading the
+  /// service through widget trees. Null in widget tests.
+  static AgentService? maybeCurrent;
+
   /// A hosted service (the SW relay) overrides this with a session-names
   /// store whose renames round-trip through the hosting backend so every
   /// surface sees them; `null` keeps the env-file store.
   SessionNamesStore? get namesStoreOverride => null;
+
+  /// The agent's opt-in hub membership (issue #402) — surfaces read the
+  /// live state and toggle the join from here.
+  AgentNetworkController get agentNetwork => _agentNetwork;
 
   /// The sleep-prevention guard (issue #325): acquired on `initialize`,
   /// released on `dispose`. Null (tests, web, `off` config) runs the
@@ -158,6 +168,7 @@ class AgentService extends ChangeNotifier
          mode: initialApprovalMode ?? ApprovalMode.write,
        ),
        _repo = repo ?? JsonlSessionRepo(fs: env, sessionsRoot: sessionsRoot) {
+    maybeCurrent = this;
     _responseTimeout = responseTimeout ?? const Duration(seconds: 90);
     _providerKind = _agent.state.model.provider;
     // Seed the active endpoint from the model (reconfigure overwrites it) so
@@ -468,6 +479,7 @@ class AgentService extends ChangeNotifier
          sessionsRoot: sessionsRoot,
          parseExecutor: parseExecutor,
        ) {
+    maybeCurrent = this;
     _wireImageDropNotice();
     _providerKind = config.providerKind;
     _activeBaseUrl = config.baseUrl;
@@ -2547,6 +2559,7 @@ class AgentService extends ChangeNotifier
 
   @override
   void dispose() {
+    if (identical(maybeCurrent, this)) maybeCurrent = null;
     _disposed = true;
     // Drop the sleep-prevention assertion (issue #325): best-effort and
     // fire-and-forget — dispose stays synchronous.

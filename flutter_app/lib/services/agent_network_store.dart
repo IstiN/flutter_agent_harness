@@ -17,7 +17,13 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 /// address + token are entered by hand, prefilled for the macOS
 /// loopback default).
 class AgentNetworkStore {
-  AgentNetworkStore._(this._env, this._enabled, this._url, this._token, this._name);
+  AgentNetworkStore._(
+    this._env,
+    this._enabled,
+    this._url,
+    this._token,
+    this._name,
+  );
 
   /// A store without persistence (tests): setters flip memory only.
   AgentNetworkStore.inMemory()
@@ -103,11 +109,7 @@ class AgentNetworkStore {
     await _persist();
   }
 
-  Future<void> setConnection({
-    String? url,
-    String? token,
-    String? name,
-  }) async {
+  Future<void> setConnection({String? url, String? token, String? name}) async {
     if (url != null && url.trim().isNotEmpty) _url = url.trim();
     if (token != null) _token = token;
     if (name != null && name.trim().isNotEmpty) _name = name.trim();
