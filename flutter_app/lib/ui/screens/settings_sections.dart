@@ -487,10 +487,8 @@ class _CompactionSectionState extends State<CompactionSection> {
           Align(
             alignment: Alignment.centerLeft,
             child: TextButton.icon(
-              onPressed: () => launchUrl(
-                docs,
-                mode: LaunchMode.externalApplication,
-              ),
+              onPressed: () =>
+                  launchUrl(docs, mode: LaunchMode.externalApplication),
               icon: const Icon(Icons.open_in_new, size: 16),
               label: Text(l10n.settingsCompactionDocs),
             ),
@@ -499,6 +497,7 @@ class _CompactionSectionState extends State<CompactionSection> {
     );
   }
 }
+
 /// The settings "CLI-only" section (issue #288 AC4): settings the registry
 /// classifies as CLI-only are listed here WITH their reason — never a
 /// silent absence. The list and the justifications come straight from the
@@ -572,6 +571,383 @@ class CliOnlySettingsSection extends StatelessWidget {
               ],
             ),
           ),
+      ],
+    );
+  }
+}
+
+/// The provider-queue editor (issue #418): the ordered main-model failover
+/// chain (`providersQueue:`), the same entries the CLI's `/providers queue`
+/// edits. Resolves through the CORE scope precedence — `FA_PROVIDERS_QUEUE`
+/// env (read-only everywhere: a sandboxed UI cannot edit the environment)
+/// > project `.fah/config.yaml` > user `~/.fah/config.yaml` — and writes are
+/// surgical, whole-section-validated upserts, so an edit applies from the
+/// next run without ever leaving a half-edited config behind.
+class ProviderQueueSection extends StatefulWidget {
+  const ProviderQueueSection({
+    super.key,
+    this.projectDir,
+    this.resolve,
+    this.write,
+    this.supported = appProviderQueueConfigSupported,
+  });
+
+  /// The session's project directory — the `.fah/config.yaml` layer the
+  /// boot reads before the user file.
+  final String? projectDir;
+
+  /// Resolution seam (tests inject a fake; default: the shared loader).
+  final ProviderQueueResolution Function({String? projectDir, String? homeDir})?
+  resolve;
+
+  /// Writer seam (tests inject a fake; default: the shared loader).
+  final Future<String> Function(
+    List<ProviderQueueEntry> entries, {
+    required ProviderQueueScope layer,
+    String? projectDir,
+    String? homeDir,
+  })?
+  write;
+
+  /// Whether this platform can persist the queue (false on web).
+  final bool supported;
+
+  @override
+  State<ProviderQueueSection> createState() => _ProviderQueueSectionState();
+}
+
+class _ProviderQueueSectionState extends State<ProviderQueueSection> {
+  ProviderQueueResolution? _resolution;
+
+  @override
+  void initState() {
+    super.initState();
+    _reload();
+  }
+
+  @override
+  void didUpdateWidget(ProviderQueueSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // A session switch (different project dir) re-resolves.
+    if (oldWidget.projectDir != widget.projectDir) _reload();
+  }
+
+  void _reload() {
+    setState(() {
+      _resolution = (widget.resolve ?? resolveAppProviderQueue)(
+        projectDir: widget.projectDir,
+      );
+    });
+  }
+
+  /// The scope a change is written to: the scope that currently wins
+  /// (an explicit file choice is edited in place, never shadowed), else
+  /// the project layer when one exists (mirrors the CLI editor's scope),
+  /// else the user file.
+  ProviderQueueScope get _writeScope {
+    switch (_resolution?.scope) {
+      case ProviderQueueScope.project:
+        return ProviderQueueScope.project;
+      case ProviderQueueScope.env:
+      case ProviderQueueScope.user:
+      case null:
+        return widget.projectDir != null
+            ? ProviderQueueScope.project
+            : ProviderQueueScope.user;
+    }
+  }
+
+  Future<void> _save(List<ProviderQueueEntry> entries) async {
+    try {
+      final file = await (widget.write ?? writeAppProviderQueue)(
+        entries,
+        layer: _writeScope,
+        projectDir: widget.projectDir,
+      );
+      if (!mounted) return;
+      _reload();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(context.l10n.settingsQueueSaved(file)),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    } on Object catch (error) {
+      // A refused write (env wins, validation) surfaces verbatim — the
+      // config files are never left half-edited.
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(context.l10n.settingsQueueSaveFailed(error.toString())),
+          duration: const Duration(seconds: 6),
+        ),
+      );
+    }
+  }
+
+  Future<void> _addEntry() async {
+    final entry = await showDialog<ProviderQueueEntry>(
+      context: context,
+      builder: (context) => const _QueueEntryDialog(),
+    );
+    if (entry == null) return;
+    _save([...?_resolution?.entries, entry]);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final l10n = context.l10n;
+    if (!widget.supported) {
+      // Web: no config yaml to read or write — say so instead of an
+      // editor that cannot persist.
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(l10n.settingsQueueTitle, style: theme.textTheme.titleSmall),
+          const SizedBox(height: 4),
+          Text(l10n.settingsQueueUnsupported),
+        ],
+      );
+    }
+    final resolution = _resolution;
+    final entries = resolution?.entries ?? const [];
+    final envWins = resolution?.scope == ProviderQueueScope.env;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(l10n.settingsQueueTitle, style: theme.textTheme.titleSmall),
+        const SizedBox(height: 4),
+        Text(
+          l10n.settingsQueueHelper,
+          style: TextStyle(
+            color: theme.textTheme.bodySmall?.color,
+            fontSize: 12,
+          ),
+        ),
+        const SizedBox(height: 8),
+        if (resolution == null || !resolution.isSet)
+          Text(l10n.settingsQueueEmpty)
+        else ...[
+          for (final (index, entry) in entries.indexed)
+            _QueueEntryTile(
+              index: index,
+              entry: entry,
+              enabled: !envWins,
+              onMoveUp: index == 0
+                  ? null
+                  : () => _save([
+                      for (var i = 0; i < entries.length; i++)
+                        if (i == index)
+                          entries[index - 1]
+                        else if (i == index - 1)
+                          entries[index]
+                        else
+                          entries[i],
+                    ]),
+              onMoveDown: index == entries.length - 1
+                  ? null
+                  : () => _save([
+                      for (var i = 0; i < entries.length; i++)
+                        if (i == index)
+                          entries[index + 1]
+                        else if (i == index + 1)
+                          entries[index]
+                        else
+                          entries[i],
+                    ]),
+              onRemove: () => _save([
+                for (var i = 0; i < entries.length; i++)
+                  if (i != index) entries[i],
+              ]),
+            ),
+        ],
+        if (envWins)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              l10n.settingsQueueScopeEnv,
+              style: TextStyle(color: theme.colorScheme.tertiary, fontSize: 12),
+            ),
+          ),
+        const SizedBox(height: 8),
+        if (!envWins)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: _addEntry,
+              icon: const Icon(Icons.add),
+              label: Text(l10n.settingsQueueAdd),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// One queue row: position, provider type, model, key env — with
+/// reorder/remove actions disabled when the env scope owns the queue.
+class _QueueEntryTile extends StatelessWidget {
+  const _QueueEntryTile({
+    required this.index,
+    required this.entry,
+    required this.enabled,
+    this.onMoveUp,
+    this.onMoveDown,
+    this.onRemove,
+  });
+
+  final int index;
+  final ProviderQueueEntry entry;
+  final bool enabled;
+  final VoidCallback? onMoveUp;
+  final VoidCallback? onMoveDown;
+  final VoidCallback? onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 28,
+            child: Text(
+              '${index + 1}.',
+              style: TextStyle(color: theme.textTheme.bodySmall?.color),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              '${entry.providerType} · ${entry.model}'
+              '${entry.baseUrl == null ? '' : ' · ${entry.baseUrl}'}'
+              '${entry.apiKeyEnv == null ? '' : ' · \$${entry.apiKeyEnv}'}',
+            ),
+          ),
+          IconButton(
+            tooltip: context.l10n.settingsQueueMoveUp,
+            onPressed: enabled ? onMoveUp : null,
+            icon: const Icon(Icons.arrow_upward, size: 18),
+          ),
+          IconButton(
+            tooltip: context.l10n.settingsQueueMoveDown,
+            onPressed: enabled ? onMoveDown : null,
+            icon: const Icon(Icons.arrow_downward, size: 18),
+          ),
+          IconButton(
+            tooltip: context.l10n.settingsQueueRemove,
+            onPressed: enabled ? onRemove : null,
+            icon: const Icon(Icons.delete_outline, size: 18),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The add-entry dialog: provider type, model, key env, optional base URL.
+/// Validation runs through the REAL parser — the dialog only returns an
+/// entry [parseProviderQueueJsonText] accepts.
+class _QueueEntryDialog extends StatefulWidget {
+  const _QueueEntryDialog();
+
+  @override
+  State<_QueueEntryDialog> createState() => _QueueEntryDialogState();
+}
+
+class _QueueEntryDialogState extends State<_QueueEntryDialog> {
+  final _kind = TextEditingController();
+  final _model = TextEditingController();
+  final _key = TextEditingController();
+  final _url = TextEditingController();
+  String? _error;
+
+  @override
+  void dispose() {
+    _kind.dispose();
+    _model.dispose();
+    _key.dispose();
+    _url.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final json = [
+      {
+        'provider_type': _kind.text.trim(),
+        'provider_config': {
+          'model': _model.text.trim(),
+          if (_key.text.trim().isNotEmpty) 'apiKeyEnv': _key.text.trim(),
+          if (_url.text.trim().isNotEmpty) 'baseUrl': _url.text.trim(),
+        },
+      },
+    ];
+    try {
+      final parsed = parseProviderQueueJsonText(jsonEncode(json));
+      final parsedEntries = parsed.entries;
+      if (parsedEntries.isEmpty) {
+        setState(() => _error = context.l10n.settingsQueueInvalid('empty'));
+        return;
+      }
+      Navigator.of(context).pop(parsedEntries.single);
+    } on Object catch (error) {
+      setState(() => _error = context.l10n.settingsQueueInvalid('$error'));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(context.l10n.settingsQueueAddTitle),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _kind,
+            decoration: InputDecoration(
+              labelText: context.l10n.settingsQueueKind,
+            ),
+          ),
+          TextField(
+            controller: _model,
+            decoration: InputDecoration(
+              labelText: context.l10n.settingsQueueModel,
+            ),
+          ),
+          TextField(
+            controller: _key,
+            decoration: InputDecoration(
+              labelText: context.l10n.settingsQueueApiKeyEnv,
+            ),
+          ),
+          TextField(
+            controller: _url,
+            decoration: InputDecoration(
+              labelText: context.l10n.settingsQueueBaseUrl,
+            ),
+          ),
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                _error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(context.l10n.settingsQueueCancel),
+        ),
+        FilledButton(
+          onPressed: _submit,
+          child: Text(context.l10n.settingsQueueAddAction),
+        ),
       ],
     );
   }

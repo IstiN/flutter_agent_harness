@@ -801,5 +801,24 @@
   "@settingsCompactionDocs": {
     "description": "Link to the compaction documentation from the settings section (issue #287)"
   },
+    "settingsQueueTitle": "Очередь провайдеров",
+  "settingsQueueHelper": "Упорядоченная цепочка провайдеров: когда текущий умирает (квота, авторизация, сеть, таймаут, битый поток, 5xx, плохой finish), следующий перехватывает работу, а победитель закрепляется на сессию. Применяется со следующего запуска.",
+  "settingsQueueEmpty": "Очередь не задана — применяется одиночный провайдер/модель. Добавьте запись, чтобы собрать цепочку.",
+  "settingsQueueScopeEnv": "действует из переменной окружения FA_PROVIDERS_QUEUE — правьте её (здесь только чтение)",
+  "settingsQueueUnsupported": "Недоступно в вебе — здесь нет конфига и переменных окружения.",
+  "settingsQueueAdd": "Добавить запись",
+  "settingsQueueAddTitle": "Новая запись очереди",
+  "settingsQueueKind": "Тип провайдера (например openai-completions)",
+  "settingsQueueModel": "Модель (например moonshotai/Kimi-K2.6)",
+  "settingsQueueApiKeyEnv": "ENV с API-ключом (например KIMI_API_KEY)",
+  "settingsQueueBaseUrl": "Base URL (необязательно)",
+  "settingsQueueCancel": "Отмена",
+  "settingsQueueAddAction": "Добавить",
+  "settingsQueueMoveUp": "Выше",
+  "settingsQueueMoveDown": "Ниже",
+  "settingsQueueRemove": "Удалить",
+  "settingsQueueSaved": "Очередь сохранена в {file} — применится со следующего запуска.",
+  "settingsQueueSaveFailed": "Не удалось сохранить очередь: {error}",
+  "settingsQueueInvalid": "Очередь отклонена: {error}",
   "themePackImportFailed": "Тема отклонена"
 }

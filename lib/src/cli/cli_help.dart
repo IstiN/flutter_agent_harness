@@ -531,7 +531,7 @@ SKILLS AND CONTEXT FILES
                     FA_KEY_COPILOT_<NAME> (env FA_COPILOT_CLIENT_ID
                     overrides the device-flow client id); the short-lived
                     Copilot token refreshes automatically
-  /providers         alias for /provider
+  /providers         provider queue editor (list/add/remove/move/test)
   /key [set|delete]  manage API keys in the OS secure store
   /mode [name]       show or switch the active mode
   /session [name]    show current or switch/create a named session
