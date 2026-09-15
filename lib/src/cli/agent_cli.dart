@@ -809,6 +809,12 @@ class AgentCli {
   @visibleForTesting
   Set<String> pickerHandlerKeysForTest() => _tuiPickerHandlers.keys.toSet();
 
+  /// Test seam: the settings-hub item keys that have a dispatch target
+  /// (a hub row without one closes silently on Enter).
+  @visibleForTesting
+  Set<String> settingsPickerHandlerKeysForTest() =>
+      _settingsPickerHandlers.keys.toSet();
+
   /// Test seam: opens the sessions picker (building its rows) without a
   /// TUI; the built items land in [sessionPickerItemsForTest].
   @visibleForTesting

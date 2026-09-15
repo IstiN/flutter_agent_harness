@@ -87,6 +87,11 @@ enum SharedSetting {
   /// `memory.userPath`).
   memoryStores,
 
+  /// The layered redaction pipeline's `redact:` section (enabled/blockMode,
+  /// per-layer toggles, allowlist regexes, entropy knobs, per-tool policy,
+  /// issue #391).
+  redactionPolicy,
+
   /// TUI color palette (tui.theme + ~/.fah/themes/*.json, issue #279).
   tuiTheme,
 }
@@ -124,6 +129,12 @@ const cliOnlySettings = <SharedSetting>{
   // the section read-only (memory_config_loader); editing host paths from
   // inside the sandbox would point the CLI at paths the app cannot see.
   SharedSetting.memoryStores,
+
+  // The redaction pipeline runs inside the CLI host process with the
+  // process's registered secrets in memory; the app has no pipeline
+  // instance to re-toggle live (issue #391 is the CLI half — the app
+  // keeps consuming the section read-only per #288's umbrella).
+  SharedSetting.redactionPolicy,
 
   // The TUI palette colors a terminal: the app renders through Flutter's
   // own theming stack (separate system by design — issue #279 non-goal).
@@ -173,6 +184,10 @@ const cliOnlyJustifications = <SharedSetting, String>{
   SharedSetting.promptOverrides:
       'The app ships its prompt templates compiled in; runtime prompt '
       'overrides are a CLI config-file feature.',
+  SharedSetting.redactionPolicy:
+      'The redaction pipeline runs inside the CLI host process with its '
+      'registered secrets in memory; the app reads the section but has no '
+      'pipeline to re-toggle live. Configure it in the CLI (issue #391).',
   SharedSetting.agentMode:
       'Agent modes are CLI REPL prompt presets; the app composes its own '
       'prompts per surface and has no mode presets to switch.',
@@ -189,13 +204,6 @@ const cliOnlyJustifications = <SharedSetting, String>{
 /// design. Every entry carries its WHY (issue #288 AC1: a documented
 /// structural-only key, reviewed).
 const fileOnlyConfigKeys = <String, String>{
-  // Redaction policy (enabled/blockMode/layers/allowlists) is environment
-  // security infrastructure, provisioned per machine in the file; no
-  // surface edits redaction patterns interactively by design.
-  'redact':
-      'Redaction policy is machine-level security infrastructure '
-      '(patterns and layers), provisioned in the file per environment.',
-
   // A2A gateway endpoints + credentials are deployment wiring (env-token
   // references included) — infrastructure, not a user preference.
   'a2a':
@@ -440,6 +448,15 @@ const settingSurfaces = <SharedSetting, SettingSurfaces>{
         'The palette colors a terminal emulator; the app themes through '
         'its own Flutter theming stack.',
   ),
+  SharedSetting.redactionPolicy: SettingSurfaces(
+    macos: false,
+    ios: false,
+    web: false,
+    extensionPanel: false,
+    gapWhy:
+        'The redaction pipeline lives in the CLI host process (registered '
+        'secrets in memory); no app surface has a pipeline to reconfigure.',
+  ),
 };
 
 /// Metadata for each [SharedSetting]: what to search for in each platform's
@@ -561,6 +578,12 @@ const sharedSettingMetadata = <SharedSetting, _SettingMeta>{
     appRef: null, // exempted — terminal theming, CLI-only (see above).
     yamlKeys: ['tui'],
     description: 'TUI palette (tui.theme + user themes, issue #279).',
+  ),
+  SharedSetting.redactionPolicy: _SettingMeta(
+    cliRef: 'startRedactionFlow',
+    appRef: null, // exempted — pipeline lives in the CLI host (see above).
+    yamlKeys: ['redact'],
+    description: 'Redaction pipeline policy (issue #391).',
   ),
 };
 
