@@ -124,6 +124,11 @@ final class FaTuiController {
   void setScheduled(int count, int? nextDueMs) {}
 
   /// No-op on web (the TUI never runs there). Mirrors the dart_tui
+  /// controller's method so agent_cli call sites compile for BOTH targets
+  /// (issue #429 background-job board live region).
+  void setJobBoard(List<String> lines) {}
+
+  /// No-op on web (the TUI never runs there). Mirrors the dart_tui
   /// controller's method so /theme hot swaps compile for BOTH targets.
   void applyTheme() {}
 

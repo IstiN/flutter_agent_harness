@@ -321,10 +321,12 @@ extension AgentCliHubDriver on AgentCli {
     );
   }
 
-  /// A background shell job started (`bash` background): its block opens
-  /// with the command line.
+  /// A background shell job started (`bash` background): the board
+  /// registers the live card (issue #429). Line mode prints nothing here —
+  /// the terminal card carries the truth at settle; TUI mode shows the
+  /// live region.
   void _onShellJobStarted(ShellJobEntry job) {
-    _renderTaskBlock(
+    _jobBoard.start(
       TaskBlock(
         kind: 'bash',
         id: job.id,
@@ -332,24 +334,74 @@ extension AgentCliHubDriver on AgentCli {
         label: job.command,
       ),
     );
+    _jobBoardAfterMutation();
   }
 
-  /// A background shell job settled: the block closes (log path + exit).
+  /// A background shell job settled: truthful terminal state in place —
+  /// done/failed/timed out/stopped/lost, never "running" forever.
   void _onShellJobSettledBlock(ShellJobEntry job) {
-    final exit = job.exitCode;
-    _renderTaskBlock(
-      TaskBlock(
-        kind: 'bash',
+    final state = shellJobPhaseOf(
+      isRunning: job.isRunning,
+      exitCode: job.exitCode,
+      stopReason: job.stopReason,
+    );
+    if (!taskBlockStateIsTerminal(state)) return;
+    _jobBoard.settle(
+      job.id,
+      state: state,
+      elapsed: DateTime.now().difference(job.startedAt).inMilliseconds / 1000,
+      exitCode: job.exitCode,
+      detail: shellJobCardDetail(
         id: job.id,
-        state: job.isRunning
-            ? TaskBlockState.running
-            : (exit == 0 ? TaskBlockState.done : TaskBlockState.failed),
-        label: job.command,
-        detail: exit == null ? job.logPath : '${job.logPath} · exit $exit',
+        cwd: job.cwd,
+        logPath: job.logPath,
+        state: state,
+        exitCode: job.exitCode,
       ),
+    );
+    _jobBoardAfterMutation();
+  }
+
+  /// After every board mutation: drain terminal material into the
+  /// transcript, refresh the TUI's live region, persist the records.
+  void _jobBoardAfterMutation() {
+    _printBoardLines(_jobBoard.takeTranscriptLines(width: _hubBlockWidth));
+    _tuiController?.setJobBoard(_jobBoard.liveLines());
+    unawaited(_persistJobBoard());
+  }
+
+  /// Persists the board as `shell_job_registry` custom records (issue #429
+  /// AC9): a resumed session rebuilds from these and never shows "running".
+  Future<void> _persistJobBoard() async {
+    final session = _session;
+    if (session == null) return;
+    await session.appendCustomEntry(
+      customType: 'shell_job_registry',
+      data: _jobBoard.toRecords(),
     );
   }
 
+  /// Rebuilds the board from the resumed session's records. Jobs that were
+  /// live at restart print their lost card after the transcript replay —
+  /// prominent, not silent.
+  Future<void> _rehydrateJobBoard() async {
+    final session = _session;
+    if (session == null) return;
+    final latest = ShellJobBoard.latestRecords(await session.getEntries());
+    if (latest.isEmpty) return;
+    _jobBoard = ShellJobBoard.rehydrated(latest);
+    _printBoardLines(_jobBoard.takeTranscriptLines(width: _hubBlockWidth));
+  }
+
+  /// Prints drained board lines dim - the one place board material reaches
+  /// the transcript (settle drain and rehydration alike).
+  void _printBoardLines(Iterable<String> lines) {
+    for (final line in lines) {
+      io.writeln(_style.dim(line));
+    }
+  }
+
+  /// Renders one task block's lines dim into the transcript.
   void _renderTaskBlock(TaskBlock block) {
     for (final line in taskBlockLines(block, width: _hubBlockWidth)) {
       io.writeln(_style.dim(line));

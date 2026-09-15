@@ -227,6 +227,7 @@ final class FaTuiModel extends Model {
     this.historyDraft,
     this.scheduledCount = 0,
     this.scheduledNextDueMs = -1,
+    this.jobBoardLines = const [],
     this.scheduledTickPending = false,
     this.frameNonce = 0,
     this.hub,
@@ -324,6 +325,10 @@ final class FaTuiModel extends Model {
   /// Earliest pending due time (epoch ms; -1 unknown) — rendered as the
   /// "next in 25m" suffix.
   final int scheduledNextDueMs;
+
+  /// The background-job board's live region (issue #429): summary lines +
+  /// live rows, dim, above the busy row. Empty hides the region.
+  final List<String> jobBoardLines;
 
   /// Whether a [ScheduledTickMsg] timer is outstanding (issue #213) — the
   /// guard that keeps the countdown chain at one pending timer max.
@@ -620,6 +625,7 @@ final class FaTuiModel extends Model {
     int? historyIndex,
     int? scheduledCount,
     int? scheduledNextDueMs,
+    List<String>? jobBoardLines,
     bool? scheduledTickPending,
     Object? historyDraft = _unset,
     FaHubState? hub,
@@ -669,6 +675,7 @@ final class FaTuiModel extends Model {
       historyIndex: historyIndex ?? this.historyIndex,
       scheduledCount: scheduledCount ?? this.scheduledCount,
       scheduledNextDueMs: scheduledNextDueMs ?? this.scheduledNextDueMs,
+      jobBoardLines: jobBoardLines ?? this.jobBoardLines,
       scheduledTickPending: scheduledTickPending ?? this.scheduledTickPending,
       now: nowFn,
       historyDraft: historyDraft == _unset
@@ -732,6 +739,7 @@ final class FaTuiModel extends Model {
   (Model, Cmd?) _updateWithHeartbeat(Msg msg) {
     if (msg is ScheduledStatusMsg) return _handleScheduledStatus(msg);
     if (msg is ScheduledTickMsg) return _handleScheduledTick();
+    if (msg is JobBoardMsg) return _handleJobBoard(msg);
     // Output is handled before the exit check so trailing writes (e.g. the
     // 'bye' line from /exit) still render before the program quits; the host
     // sends _QuitRequestedMsg once it has marked exit.
@@ -772,6 +780,11 @@ final class FaTuiModel extends Model {
     }
     return (next, null);
   }
+
+  /// The background-job board's live region (issue #429): the host pushes
+  /// pre-rendered lines; an empty list hides the region.
+  (Model, Cmd?) _handleJobBoard(JobBoardMsg msg) =>
+      (copyWith(jobBoardLines: msg.lines), null);
 
   /// The minute-boundary countdown tick fired (issue #213): the row
   /// recomputes from [nowFn] at render time, so the repaint alone refreshes
@@ -1757,7 +1770,7 @@ final class FaTuiModel extends Model {
             pickerTitle: '',
           ),
           null,
-      );
+        );
       default:
         return null;
     }
@@ -2641,6 +2654,13 @@ final class FaTuiController {
   /// records) so the indicator row tracks the queue live (issue #115).
   void setScheduled(int count, int? nextDueMs) {
     _send(ScheduledStatusMsg(count, nextDueMs));
+  }
+
+  /// Pushes the background-job board's live region (issue #429): summary
+  /// lines + live rows for the transient area above the busy row. An empty
+  /// list hides the region (everything settled).
+  void setJobBoard(List<String> lines) {
+    _send(JobBoardMsg(List.unmodifiable(lines)));
   }
 
   /// Drains the queued messages (the model echoes them into the history) —
