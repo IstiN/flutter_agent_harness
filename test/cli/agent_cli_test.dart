@@ -2408,8 +2408,14 @@ void main() {
       await run;
 
       final output = io.out.toString();
-      final collapsed = RegExp(r'^fa:  \[read\]$', multiLine: true);
-      expect(collapsed.allMatches(output), hasLength(1));
+      // #446: the tool-call turn replays through the same tool-row
+      // builder as live — `✗ read ·` with the attached result, never the
+      // old collapsed `[read]` marker.
+      expect(output, isNot(contains('[read]')));
+      expect(
+        RegExp(r'^fa:  ✗ read ·', multiLine: true).allMatches(output),
+        hasLength(1),
+      );
       expect(output, contains('fa:  done'));
     });
 
@@ -2452,13 +2458,18 @@ void main() {
       await run;
 
       final output = io.out.toString();
-      // assistant([read]), result, assistant([edit]), result collapse into
-      // ONE run row — the tool results between them stay invisible.
-      final runRow = RegExp(r'^fa:  \[read\] \[edit\]$', multiLine: true);
-      expect(runRow.allMatches(output), hasLength(1));
+      // #446: each persisted call replays through the same tool-row
+      // builder as live (attached result, `✗ name ·` grammar) — the old
+      // collapsed `[read] [edit]` run row is gone.
+      expect(output, isNot(contains('[read]')));
+      expect(output, isNot(contains('[edit]')));
       expect(
-        RegExp(r'^fa:  \[edit\]$', multiLine: true).allMatches(output),
-        isEmpty,
+        RegExp(r'^fa:  ✗ read ·', multiLine: true).allMatches(output),
+        hasLength(1),
+      );
+      expect(
+        RegExp(r'^fa:  ✗ edit ·', multiLine: true).allMatches(output),
+        hasLength(1),
       );
     });
 

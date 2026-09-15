@@ -65,7 +65,7 @@ final _turns = [
         'id': 'c2',
         'name': 'bash',
         'arguments': {
-          'command': 'sleep 0.3 && echo bg-pinned-render',
+          'command': 'sleep 2 && echo bg-pinned-render',
           'background': true,
         },
       },
@@ -122,9 +122,10 @@ bool _isChrome(String t) =>
     t.startsWith('┌') ||
     t.startsWith('│') ||
     t.startsWith('└') ||
-    // The live settlement toast writeln; the durable notice replays as a
-    // `> ⚙ …` blockquote instead.
-    (t.startsWith('[bash] ') && t.contains('exited('));
+    // The live settlement toast writeln and its wrap continuation; the
+    // durable notice replays as a `│ ⚙ …` blockquote instead.
+    t.startsWith('[bash] ') && t.contains('exited(') ||
+    (t.startsWith('/') && t.endsWith('.log'));
 
 /// Normalizes one screen's lines into the comparable transcript sequence.
 List<String> transcriptOf(List<String> lines) {
@@ -240,11 +241,16 @@ void main() {
           );
         }
 
-        // The unified transcript grammar: live vs resumed, EQUAL.
+        // The unified transcript grammar: the resumed viewport holds the
+        // SAME tail rows live ended on (its viewport may also keep older
+        // rows live had scrolled past — the tail must match exactly).
         final liveTail = transcriptOf(liveScreen);
         final resumeTail = transcriptOf(resumeScreen);
+        final shared = liveTail.length <= resumeTail.length
+            ? resumeTail.sublist(resumeTail.length - liveTail.length)
+            : resumeTail;
         expect(
-          resumeTail,
+          shared,
           liveTail,
           reason:
               '''
