@@ -165,7 +165,7 @@ void main() {
       onToolExecutionEnd: (_, _, {required isError}) =>
           fail('unexpected tool end'),
       onTurnEnd: (_) => fail('unexpected turn end'),
-      onModelRequest: (detail) async => details.add(detail),
+      onModelRequest: (event) async => details.add(event.detail),
     );
     expect(details, hasLength(1));
     expect(details.single.toolNames, ['read']);
@@ -189,9 +189,9 @@ void main() {
       onToolExecutionEnd: (_, _, {required isError}) =>
           fail('unexpected tool end'),
       onTurnEnd: (_) => fail('unexpected turn end'),
-      onModelRequest: (detail) => session.appendCustomEntry(
+      onModelRequest: (event) => session.appendCustomEntry(
         customType: 'model_request_summary',
-        data: detail.toJson(),
+        data: event.detail.toJson(),
       ),
     );
     await session.appendMessage(_assistantMessage());

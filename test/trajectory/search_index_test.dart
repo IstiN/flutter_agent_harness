@@ -459,8 +459,15 @@ void main() {
       );
       addTearDown(index.dispose);
 
-      final first = _turn(1, [_group([_user('u1', 'hello')])]);
-      expect(index.update([[first]]), isTrue);
+      final first = _turn(1, [
+        _group([_user('u1', 'hello')]),
+      ]);
+      expect(
+        index.update([
+          [first],
+        ]),
+        isTrue,
+      );
       // The immediate flush inside update() never fires the hook.
       expect(flushes, 0);
       expect(index.search('hello'), {'u1'});
@@ -470,7 +477,12 @@ void main() {
       final second = _turn(1, [
         _group([_user('u1', 'hello'), _user('u2', 'world')]),
       ]);
-      expect(index.update([[second]]), isFalse);
+      expect(
+        index.update([
+          [second],
+        ]),
+        isFalse,
+      );
       expect(index.search('world'), isEmpty);
 
       final deadline = DateTime.now().add(const Duration(seconds: 5));
@@ -480,7 +492,5 @@ void main() {
       expect(flushes, 1);
       expect(index.search('world'), {'u2'});
     });
-
-
   });
 }

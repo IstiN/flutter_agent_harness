@@ -9,6 +9,7 @@ library;
 import 'dart:convert';
 
 import 'trajectory_record.dart';
+import 'trajectory_blobs.dart';
 import 'trajectory_snapshot.dart';
 
 /// Serializes [snapshot] to a pretty-printed JSON string with full fidelity:
@@ -21,6 +22,10 @@ String exportTrajectoryJson(TrajectorySnapshot snapshot) {
     'requests': [
       for (final request in snapshot.requests) _requestJson(request),
     ],
+    // Issue #385 F1/F2/F5: the content-addressed blob table (system
+    // prompts, tool manifests, opt-in wire dumps) exports when non-empty
+    // so the export round-trips the full outbound reality.
+    if (!snapshot.blobs.isEmpty) 'blobs': snapshot.blobs.toJson(),
   });
 }
 
@@ -47,7 +52,50 @@ String exportTrajectoryMarkdown(TrajectorySnapshot snapshot) {
       ..write(_markdownRow(record))
       ..write('\n');
   }
+  _markdownBlobs(snapshot.blobs, buffer);
   return buffer.toString();
+}
+
+/// The blob appendix (issue #385): one subsection per unique
+/// system-prompt version and tool manifest, plus the opt-in wire dumps —
+/// full content in fences, hash-labeled so request pointers resolve.
+void _markdownBlobs(TrajectoryBlobTable blobs, StringBuffer buffer) {
+  if (blobs.isEmpty) return;
+  if (blobs.systemPrompts.isNotEmpty) {
+    buffer
+      ..write('\n## System prompt versions\n')
+      ..write('\n');
+    for (final blob in blobs.systemPrompts.values) {
+      buffer
+        ..write('### prompt ${blob.hash}\n')
+        ..write(_mdFence(blob.text))
+        ..write('\n');
+    }
+  }
+  if (blobs.toolManifests.isNotEmpty) {
+    buffer
+      ..write('\n## Tool manifest versions\n')
+      ..write('\n');
+    for (final blob in blobs.toolManifests.values) {
+      buffer.write('### manifest ${blob.hash}\n');
+      for (final tool in blob.tools) {
+        buffer
+          ..write('- **${tool.name}** — ${tool.description}\n')
+          ..write(_mdFence(tool.schemaJson, language: 'json'));
+      }
+    }
+  }
+  if (blobs.wireDumps.isNotEmpty) {
+    buffer
+      ..write('\n## Wire dumps (opt-in)\n')
+      ..write('\n');
+    for (final dump in blobs.wireDumps.values) {
+      buffer
+        ..write('### wire ${dump.hash}\n')
+        ..write(_mdFence(dump.payload, language: 'json'))
+        ..write('\n');
+    }
+  }
 }
 
 String _markdownRow(TrajectoryRecord record) => switch (record) {

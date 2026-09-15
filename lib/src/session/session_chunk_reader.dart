@@ -273,6 +273,52 @@ final class SessionChunkReader {
   int get locatePassCount => _locatePassCount;
   int _locatePassCount = 0;
 
+  /// Hidden-range drill-in (issue #385 F4): one forward block scan
+  /// collecting the records whose ids appear in [ids] — the records a
+  /// [HiddenRangeRecord] covers. They sit OFF the kept branch (the
+  /// compaction evicted them from the context), so the branch readers
+  /// never surface them; this reads the raw file instead. Serves what
+  /// exists: a range still open at the file tail resolves the records
+  /// already written, honestly; ids absent from the file stay absent from
+  /// the result. Cost is one pass, bounded like [locateRecord].
+  Future<Map<String, SessionRecord>> readRecordsByIds(Set<String> ids) async {
+    final found = <String, SessionRecord>{};
+    if (ids.isEmpty) return found;
+    final info = await stat();
+    if (info == null) return found;
+    const block = 1 << 20;
+    var offset = 0;
+    while (offset < info.size && found.length < ids.length) {
+      final end = (offset + block) < info.size ? offset + block : info.size;
+      final bytes = await _readRange(offset, end);
+      _scanChunkForIds(bytes, offset, ids, found);
+      offset = end;
+    }
+    return found;
+  }
+
+  /// Scans one raw chunk for the wanted ids, folding hits into [found]
+  /// (issue #385 F4). Torn or foreign lines are skipped: the drill-in
+  /// degrades around them instead of failing the whole range.
+  void _scanChunkForIds(
+    Uint8List bytes,
+    int offset,
+    Set<String> ids,
+    Map<String, SessionRecord> found,
+  ) {
+    for (final (lineOffset, lineBytes) in _splitLines(bytes, offset)) {
+      final text = utf8.decode(lineBytes, allowMalformed: true);
+      if (text.length < 12) continue;
+      final SessionRecord record;
+      try {
+        record = parseSessionEntryLine(text, '', lineOffset);
+      } on Object {
+        continue;
+      }
+      if (ids.contains(record.id)) found[record.id] = record;
+    }
+  }
+
   /// Case-sensitive ASCII substring match without decoding.
   bool _containsAscii(Uint8List haystack, String needle) {
     final pattern = ascii.encode(needle);
