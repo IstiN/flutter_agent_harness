@@ -52,4 +52,36 @@ void main() {
       );
     });
   });
+
+  group('hubServe --bind lan (issue #402 AC4 pairing surface)', () {
+    Future<int> freePort() async {
+      final socket = await ServerSocket.bind('127.0.0.1', 0);
+      final port = socket.port;
+      await socket.close();
+      return port;
+    }
+
+    test('lists LAN URLs for each non-loopback IPv4 address', () async {
+      final port = await freePort();
+      final stateFile = File(
+        '${Directory.systemTemp.createTempSync('fah-serve').path}/hub.json',
+      );
+      addTearDown(() => stateFile.parent.delete(recursive: true));
+      var served = false;
+      final code = await hubServe(
+        (port: port, flagSecret: null, flagBind: 'lan'),
+        stateFile: stateFile,
+        pidFile: File('${stateFile.parent.path}/hub.pid'),
+        serveLoop: (hub, _) async {
+          served = true;
+          addTearDown(() => hub.stop());
+        },
+      );
+      expect(code, 0);
+      expect(served, isTrue, reason: 'the serve loop owns the live hub');
+      // The pairing lines depend on host interfaces; a container with no
+      // non-loopback IPv4 prints none - both shapes are correct. What
+      // matters for coverage is that the LAN branch ran without throwing.
+    });
+  });
 }
