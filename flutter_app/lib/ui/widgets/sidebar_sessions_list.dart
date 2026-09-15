@@ -9,6 +9,7 @@ import 'package:fa/services/session_names_store.dart';
 import 'package:fa/ui/widgets/dap_hub_mark.dart';
 import 'package:fa/ui/widgets/rename_session_dialog.dart';
 import 'package:fa/ui/widgets/session_search_field.dart';
+import 'package:fa/ui/widgets/subagent_mark.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -1031,11 +1032,7 @@ class SessionTile extends StatelessWidget {
                   const SizedBox(width: 8),
                 const SizedBox(width: 10),
                 if (subagent) ...[
-                  Icon(
-                    Icons.smart_toy_outlined,
-                    size: 12,
-                    color: colors.dim.withValues(alpha: 0.8),
-                  ),
+                  SubagentMark(size: 12, color: colors.dim.withValues(alpha: 0.8)),
                   const SizedBox(width: 6),
                 ],
                 Expanded(
@@ -1096,38 +1093,54 @@ class SessionTile extends StatelessWidget {
                     ],
                   ),
                 ),
-                if (childCount > 0 && onToggleExpand != null)
+                if (childCount > 0 && onToggleExpand != null) ...[
+                  const SizedBox(width: 8),
                   InkWell(
                     onTap: onToggleExpand,
-                    borderRadius: BorderRadius.circular(6),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 4,
-                        vertical: 4,
+                    borderRadius: BorderRadius.circular(999),
+                    child: Tooltip(
+                      message: context.l10n.sidebarSubagentSessionCount(
+                        childCount,
                       ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          AnimatedRotation(
-                            turns: expanded ? 0.25 : 0,
-                            duration: const Duration(milliseconds: 120),
-                            child: Icon(
-                              Icons.keyboard_arrow_right,
-                              size: 14,
-                              color: colors.dim,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: colors.panelAlt,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            AnimatedRotation(
+                              turns: expanded ? 0.25 : 0,
+                              duration: const Duration(milliseconds: 120),
+                              child: Icon(
+                                Icons.keyboard_arrow_right,
+                                size: 14,
+                                color: colors.dim,
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: 2),
-                          Text(
-                            context.l10n.sidebarSubagentSessionCount(
-                              childCount,
+                            const SizedBox(width: 2),
+                            SubagentMark(size: 11, color: colors.dim),
+                            const SizedBox(width: 4),
+                            Text(
+                              '$childCount',
+                              style: TextStyle(
+                                color: colors.dim,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                height: 1.0,
+                              ),
                             ),
-                            style: TextStyle(color: colors.dim, fontSize: 11),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),
+                ],
                 if (hubBound)
                   Tooltip(
                     message: context.l10n.settingsDapInboundBadgeTooltip,
@@ -1136,23 +1149,28 @@ class SessionTile extends StatelessWidget {
                       child: DapHubMark(size: 13),
                     ),
                   ),
-                // 3-dot menu button (visible on the active tile or on hover).
-                if (onMenu != null)
-                  InkWell(
-                    onTap: () {
-                      final box = context.findRenderObject()! as RenderBox;
-                      onMenu!(box.localToGlobal(Offset.zero) & box.size);
-                    },
-                    borderRadius: BorderRadius.circular(4),
-                    child: Padding(
-                      padding: const EdgeInsets.all(2),
+                // 3-dot menu (visible on the active tile or on hover): the
+                // glyph stays small but the hit area is a comfortable 36×36
+                // (issue #426 v2 — the old 18×18 target was a mis-tap trap).
+                if (onMenu != null) ...[
+                  const SizedBox(width: 4),
+                  SizedBox(
+                    width: 36,
+                    height: 36,
+                    child: InkWell(
+                      onTap: () {
+                        final box = context.findRenderObject()! as RenderBox;
+                        onMenu!(box.localToGlobal(Offset.zero) & box.size);
+                      },
+                      borderRadius: BorderRadius.circular(8),
                       child: Icon(
                         Icons.more_horiz,
-                        size: 14,
-                        color: colors.dim.withValues(alpha: 0.5),
+                        size: 16,
+                        color: colors.dim.withValues(alpha: 0.6),
                       ),
                     ),
                   ),
+                ],
               ],
             ),
           ),

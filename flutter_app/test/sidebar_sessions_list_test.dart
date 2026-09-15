@@ -13,6 +13,7 @@ import 'package:fa/services/session_ui_prefs_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/sidebar_sessions_list.dart';
 import 'package:fa/ui/widgets/session_search_field.dart';
+import 'package:fa/ui/widgets/subagent_mark.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -949,7 +950,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Main chat'), findsOneWidget);
-      expect(find.text('2 agents'), findsOneWidget);
+      expect(find.text('2'), findsOneWidget);
       // A couple of agents read fine inline: children show, indented.
       expect(find.text('goal_builder'), findsOneWidget);
       expect(find.text('scout'), findsOneWidget);
@@ -977,12 +978,12 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('4 agents'), findsOneWidget);
+      expect(find.text('4'), findsOneWidget);
       // Collapsed: the children stay hidden until the badge is tapped.
       expect(find.text('agent 0'), findsNothing);
       expect(find.text('agent 3'), findsNothing);
 
-      await tester.tap(find.text('4 agents'));
+      await tester.tap(find.text('4'));
       await tester.pumpAndSettle();
       expect(find.text('agent 0'), findsOneWidget);
       expect(find.text('agent 3'), findsOneWidget);
@@ -1006,11 +1007,11 @@ void main() {
 
       // Expanded by default (1 ≤ 3): the first tap collapses.
       expect(find.text('goal_builder'), findsOneWidget);
-      await tester.tap(find.text('1 agent'));
+      await tester.tap(find.text('1'));
       await tester.pumpAndSettle();
       expect(find.text('goal_builder'), findsNothing);
 
-      await tester.tap(find.text('1 agent'));
+      await tester.tap(find.text('1'));
       await tester.pumpAndSettle();
       expect(find.text('goal_builder'), findsOneWidget);
       // Children indent under their parent.
@@ -1041,7 +1042,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       // Small group is open; the user collapses it.
-      await tester.tap(find.text('2 agents'));
+      await tester.tap(find.text('2'));
       await tester.pumpAndSettle();
       expect(find.text('goal_builder'), findsNothing);
       expect(prefs.collapsedParents, {main.id});
@@ -1068,11 +1069,11 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('2 agents'), findsOneWidget);
+      expect(find.text('2'), findsOneWidget);
       expect(find.text('goal_builder'), findsNothing);
 
       // Re-expanding writes through the new store the same way.
-      await tester.tap(find.text('2 agents'));
+      await tester.tap(find.text('2'));
       await tester.pumpAndSettle();
       expect(find.text('goal_builder'), findsOneWidget);
       expect(revived.expandedParents, {main.id});
@@ -1100,7 +1101,7 @@ void main() {
       // No tap needed: the group forces open so the active row shows
       // (E2) — and no badge double-renders over it.
       expect(find.text('goal_builder'), findsOneWidget);
-      expect(find.text('1 agent'), findsOneWidget);
+      expect(find.text('1'), findsOneWidget);
     });
 
     testWidgets('unnamed children show as subagent <short-id>', (tester) async {
@@ -1134,7 +1135,7 @@ void main() {
         findsOneWidget,
       );
       // Top-level: no count badge anywhere.
-      expect(find.text('1 agent'), findsNothing);
+      expect(find.text('1'), findsNothing);
     });
 
     testWidgets('pre-feature sessions (no header metadata) stay mains and '
@@ -1162,8 +1163,65 @@ void main() {
       // The metadata-less session heads its own (badge-less) row inside
       // the same folder group as the family.
       expect(find.text('Plain chat'), findsOneWidget);
-      expect(find.text('1 agent'), findsOneWidget);
+      expect(find.text('1'), findsOneWidget);
       expect(find.text('goal_builder'), findsOneWidget);
+    });
+
+    testWidgets('the 3-dot menu hit area is at least 36x36 while the '
+        'glyph stays small (issue #426 item 3)', (tester) async {
+      final main = await persistSession(userText: 'main');
+      await tester.pumpWidget(
+        harness(
+          names: SessionNamesStore.inMemory({main.id: 'Main chat'}),
+          persisted: [main],
+          selectedSessionId: main.id,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final menuInkWell = find.ancestor(
+        of: find.byIcon(Icons.more_horiz),
+        matching: find.byType(InkWell),
+      ).first;
+      final size = tester.getSize(menuInkWell);
+      expect(size.width, greaterThanOrEqualTo(36));
+      expect(size.height, greaterThanOrEqualTo(36));
+      // The glyph itself stays discreet (16-18px per the v2 design).
+      expect(
+        tester.widget<Icon>(find.byIcon(Icons.more_horiz)).size,
+        lessThanOrEqualTo(18),
+      );
+    });
+
+    testWidgets('the count pill carries the branch glyph and toggles the '
+        'group (issue #426 v2 design)', (tester) async {
+      final main = await persistSession(userText: 'main');
+      final child = await persistChild(parentId: main.id);
+
+      await tester.pumpWidget(
+        harness(
+          names: SessionNamesStore.inMemory({
+            main.id: 'Main chat',
+            child.id: 'goal_builder',
+          }),
+          persisted: [main, child],
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // The branch glyph rides INSIDE the pill, next to the count.
+      final pill = find.ancestor(
+        of: find.text('1'),
+        matching: find.byType(Container),
+      ).first;
+      expect(
+        find.descendant(of: pill, matching: find.byType(SubagentMark)),
+        findsOneWidget,
+      );
+      // Tapping the pill (glyph + number, no "agents" word) toggles.
+      await tester.tap(find.text('1'));
+      await tester.pumpAndSettle();
+      expect(find.text('goal_builder'), findsNothing);
     });
 
     testWidgets('child tiles carry the same 3-dot actions', (tester) async {
