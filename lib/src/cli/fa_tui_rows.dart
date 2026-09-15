@@ -162,6 +162,13 @@ extension _TuiRowRenderers on FaTuiModel {
       b.writeln(_dim(clipped));
       row++;
     }
+    // The visible-waiting row (issue #450): WHAT the agent waits for,
+    // while idle. The busy row owns the screen while working — the waiting
+    // row yields to it (E3) and re-renders on the next waiter change.
+    for (final line in _waitingRowLines()) {
+      b.writeln(line);
+      row++;
+    }
     if (busy) {
       b.writeln(_busyRowLine());
       row++;
@@ -217,5 +224,71 @@ extension _TuiRowRenderers on FaTuiModel {
         : ' · next in '
               '${ScheduledMessageQueue.formatDelay(Duration(milliseconds: scheduledNextDueMs - now))}';
     return _dim('⏰ $scheduledCount scheduled$eta');
+  }
+
+  /// The visible-waiting rows (issue #450): one headline row (`⏳ waiting
+  /// · <purpose> · next wake in 4m (timer)`) plus, when more than one
+  /// waiter of a kind exists, up to two capped detail rows and the
+  /// restart-honesty note. Empty while busy or with no waiters — an empty
+  /// list renders nothing and claims no viewport height.
+  List<String> _waitingRowLines() {
+    if (busy) return const [];
+    if (waitingJobs.isEmpty && waitingTimers.isEmpty) return const [];
+    final now = nowFn().millisecondsSinceEpoch;
+    String etaOf(int dueMs) => dueMs <= now
+        ? 'due now'
+        : ScheduledMessageQueue.formatDelay(Duration(milliseconds: dueMs - now));
+    final head = StringBuffer('⏳ waiting');
+    if (waitingJobs.length == 1) {
+      head.write(' · ${waitingJobs.single}');
+    } else if (waitingJobs.length > 1) {
+      head.write(' · ${waitingJobs.length} jobs');
+    }
+    if (waitingTimers.isNotEmpty) {
+      final nearest = waitingTimers
+          .map((t) => t.dueMs)
+          .reduce((a, b) => a < b ? a : b);
+      final eta = etaOf(nearest);
+      head.write(
+        waitingTimers.length == 1
+            ? ' · next wake in $eta (timer)'
+            : ' · ${waitingTimers.length} timers · next wake in $eta',
+      );
+    }
+    final lines = <String>[_dim(head.toString())];
+    // Detail rows exist only when a count hides something (>1 of a kind);
+    // the job board above already lists every job live.
+    final details = <String>[
+      if (waitingJobs.length > 1) ...waitingJobs,
+      if (waitingTimers.length > 1)
+        ...waitingTimers.map((t) => '${t.preview} · due in ${etaOf(t.dueMs)}'),
+    ];
+    for (final detail in details.take(2)) {
+      lines.add(_dim('  $detail'));
+    }
+    if (waitingLostJobs > 0) {
+      final noun = 'background job${waitingLostJobs == 1 ? '' : 's'}';
+      final verb = waitingLostJobs == 1 ? 'was' : 'were';
+      lines.add(_dim('$waitingLostJobs $noun from the previous run $verb lost'));
+    }
+    return lines;
+  }
+
+  /// The visible-waiting push (issue #450): replaces the waiter aggregate;
+  /// while a timer countdown is on screen, arms the shared minute-boundary
+  /// tick (one chain — [scheduledTickPending] guards it).
+  (Model, Cmd?) _handleWaitingStatus(WaitingStatusMsg msg) {
+    final next = copyWith(
+      waitingJobs: msg.jobs,
+      waitingTimers: msg.timers,
+      waitingLostJobs: msg.lostJobs,
+    );
+    if (next.waitingTimers.isNotEmpty && !scheduledTickPending) {
+      return (
+        next.copyWith(scheduledTickPending: true),
+        _scheduleScheduledTick(),
+      );
+    }
+    return (next, null);
   }
 }

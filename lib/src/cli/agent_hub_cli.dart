@@ -335,6 +335,8 @@ extension AgentCliHubDriver on AgentCli {
       ),
     );
     _jobBoardAfterMutation();
+    // Event-driven waiting-row enter (issue #450).
+    unawaited(_waiting.jobStarted(job));
   }
 
   /// A background shell job settled: truthful terminal state in place —
