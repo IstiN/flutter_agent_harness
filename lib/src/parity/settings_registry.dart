@@ -92,6 +92,11 @@ enum SharedSetting {
   /// issue #391).
   redactionPolicy,
 
+  /// The owner-side context cap (`agent.contextWindowCap`, issue #273)
+  /// clamping the EFFECTIVE window for the compaction thresholds, the ctx
+  /// meter and the loop's over-window guard (issue #394).
+  contextWindowCap,
+
   /// TUI color palette (tui.theme + ~/.fah/themes/*.json, issue #279).
   tuiTheme,
 }
@@ -135,6 +140,12 @@ const cliOnlySettings = <SharedSetting>{
   // instance to re-toggle live (issue #391 is the CLI half — the app
   // keeps consuming the section read-only per #288's umbrella).
   SharedSetting.redactionPolicy,
+
+  // The context cap feeds the CLI's compaction math, ctx meter and the
+  // loop's over-window guard — all running in the CLI host process; the
+  // app has no agent loop to re-cap live (issue #394 is the CLI half —
+  // the app keeps consuming the section read-only per #288's umbrella).
+  SharedSetting.contextWindowCap,
 
   // The TUI palette colors a terminal: the app renders through Flutter's
   // own theming stack (separate system by design — issue #279 non-goal).
@@ -188,6 +199,10 @@ const cliOnlyJustifications = <SharedSetting, String>{
       'The redaction pipeline runs inside the CLI host process with its '
       'registered secrets in memory; the app reads the section but has no '
       'pipeline to re-toggle live. Configure it in the CLI (issue #391).',
+  SharedSetting.contextWindowCap:
+      'The context cap feeds the CLI agent loop and compaction math '
+      'running in the CLI host process; the app has no agent loop to '
+      're-cap live. Configure it in the CLI (issue #394).',
   SharedSetting.agentMode:
       'Agent modes are CLI REPL prompt presets; the app composes its own '
       'prompts per surface and has no mode presets to switch.',
@@ -258,16 +273,6 @@ const fileOnlyConfigKeys = <String, String>{
       'Roles-group member (per-path role pinning), superseded for '
       'interactive use by the roles: chains the agent-models flow edits; '
       'per-path pinning stays file-tuned.',
-
-  // The agent section carries the owner-side context cap
-  // (agent.contextWindowCap, issue #273): how many tokens of the model's
-  // window this machine's owner allows the agent to occupy. It bounds the
-  // compaction reserve and is a deployment/machine knob — tuned in the
-  // file, no interactive surface edits it.
-  'agent':
-      'Owner-side context cap (agent.contextWindowCap, issue #273) bounds '
-      'the usable window on this machine; a deployment knob tuned in the '
-      'file, not an interactive preference on any surface.',
 
   // The power section (power.sleepPrevention + power.hold, issues
   // #325/#326) picks the host machine's sleep-prevention level and hold
@@ -457,6 +462,15 @@ const settingSurfaces = <SharedSetting, SettingSurfaces>{
         'The redaction pipeline lives in the CLI host process (registered '
         'secrets in memory); no app surface has a pipeline to reconfigure.',
   ),
+  SharedSetting.contextWindowCap: SettingSurfaces(
+    macos: false,
+    ios: false,
+    web: false,
+    extensionPanel: false,
+    gapWhy:
+        'The cap clamps the CLI agent loop and compaction math in the CLI '
+        'host process; no app surface runs that loop.',
+  ),
 };
 
 /// Metadata for each [SharedSetting]: what to search for in each platform's
@@ -584,6 +598,12 @@ const sharedSettingMetadata = <SharedSetting, _SettingMeta>{
     appRef: null, // exempted — pipeline lives in the CLI host (see above).
     yamlKeys: ['redact'],
     description: 'Redaction pipeline policy (issue #391).',
+  ),
+  SharedSetting.contextWindowCap: _SettingMeta(
+    cliRef: 'startContextCapFlow',
+    appRef: null, // exempted — CLI agent loop only (see above).
+    yamlKeys: ['agent'],
+    description: 'Owner-side context cap (issue #394).',
   ),
 };
 
