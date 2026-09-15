@@ -41,3 +41,84 @@ coverage:
   # flutter's lcov carries no BRDA branch records; branch coverage stays
   # a core-package gate concern.
   branch_coverage: false
+  # crap4dart 0.9.5 flipped the run_tests default to true — a bare
+  # `analyze`/`check` would silently re-run the whole flutter suite
+  # first. Coverage comes from the CI shard merge (scripts/merge_lcov.py)
+  # and pre-commit stays core-only (#433 split); nobody wants a second
+  # suite run inside a 6-minute gate job.
+  run_tests: false
+
+# ─── Gates (issue #447) ────────────────────────────────────────────────────
+# This config is the single source of which gates `crap4dart check` runs
+# (CI app-crap-gate job, pre-commit core hook): 0.9.5 default-enables ALL
+# built-in gates, so everything not enforced below is disabled explicitly.
+gates:
+  loc: {enabled: false} # own ≤2800 gate (scripts/ci_fast_gate.sh)
+  test_coverage: {enabled: false} # own ≥80% coverage-gate job
+  complexity: {enabled: false} # CRAP ratchet below already covers it
+  method_size: {enabled: false}
+  nesting: {enabled: false}
+  class_size: {enabled: false}
+  weight_of_class: {enabled: false}
+  unused_code: {enabled: false}
+  unused_files: {enabled: false}
+  banned_imports: {enabled: false}
+  duplication: {enabled: false} # own jscpd <1% guard
+  file_naming: {enabled: false}
+  magic_constants: {enabled: false}
+  test_assertions: {enabled: false}
+  folder_structure: {enabled: false}
+  external: {enabled: false}
+  public_docs: {enabled: false}
+
+  # Pixel gate over the golden set (165 PNGs). severity: warning + the
+  # excludes below are the documented INTERIM mitigation (#447): the
+  # 0.9.5 detector knows only 3 shapes — it missed both classes that
+  # broke the 40 pre-font goldens of de2f11b9 (solid Ahem text
+  # rectangles, hollow icon squares without an X) and false-positives on:
+  #   - the Habit Tracker checkmark tile (green square + white V
+  #     converging like an X signature; light theme only, the same 22px
+  #     tile at x=234 in all 5 hits),
+  #   - the yellow "25:00" digits on the dark timer card (row y=195 of
+  #     apps_panel/panel_dark: yellow glyph edges alternate with the
+  #     dark card ≥8px with ≥4 transitions — passes the stripe
+  #     heuristic).
+  # Each exclude is an upstream IstiN/crap4dart bug. Flip to
+  # `severity: error` and drop the excludes when the upstream detector
+  # fixes land — scripts/check_golden_detector.py re-verifies all six
+  # classes against this exact detector (see its docstring).
+  broken_goldens:
+    enabled: true
+    severity: warning
+    dirs: [test/golden/goldens]
+    exclude:
+      # false positives: green checkmark tile reads as an X (light theme)
+      - 'test/golden/goldens/launcher/grid_light.png'
+      - 'test/golden/goldens/launcher/sheet_bar_light.png'
+      - 'test/golden/goldens/launcher/sheet_bar_streaming_light.png'
+      - 'test/golden/goldens/launcher/grid_widget_tile_light.png'
+      - 'test/golden/goldens/onboarding_p4_light_phone.png'
+      # false positive: yellow "25:00" digits read as overflow stripes (dark)
+      - 'test/golden/goldens/apps_panel/panel_dark.png'
+
+  # Widget → golden coverage. WARNING (not error): the 0.9.5 widget
+  # census is broader than the enforced test/golden/golden_guard_test.dart
+  # list — 10.5% of lib/ widgets have goldens today. Flip to error when
+  # the census reaches parity with the guard (follow-up card).
+  golden:
+    enabled: true
+    severity: warning
+
+  # Tooltips/labels — the app ships to stores. WARNING: 28+ interactive
+  # widgets lack labels today (InkWell/GestureDetector semantics).
+  # Flip to error after the a11y sweep card lands.
+  accessibility:
+    enabled: true
+    severity: warning
+
+  # l10n discipline (we already ship _ru goldens). WARNING: the sweep of
+  # remaining labelText/hintText/tooltip literals is pending.
+  # Flip to error when lib/ is clean.
+  hardcoded_strings:
+    enabled: true
+    severity: warning
