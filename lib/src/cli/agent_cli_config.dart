@@ -23,6 +23,7 @@ final class AgentCliConfig {
     this.wakeExecutable,
     this.folderModelStateApplies = true,
     this.presenceStore,
+    this.leaseStore,
     this.sessionName,
     this.providerKind = 'openai-completions',
     this.envVarIsSet,
@@ -471,6 +472,11 @@ final class AgentCliConfig {
   /// session here so the Fa app (sharing the sessions root) can mark the
   /// session live and attach to it. Null (tests, web) disables presence.
   final SessionPresenceStore? presenceStore;
+
+  /// Session-ownership leases (issue #428): the store this CLI acquires
+  /// its session's `_owner.json` lease through. Null (tests, web)
+  /// disables ownership — today's unenforced multi-writer behavior.
+  final FileSessionLeaseStore? leaseStore;
 
   /// Optional session name to resume or create on startup.
   final String? sessionName;

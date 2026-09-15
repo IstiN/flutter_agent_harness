@@ -232,6 +232,21 @@ abstract interface class FileSystem {
   });
 }
 
+/// Optional [FileSystem] capability: atomic same-filesystem rename.
+///
+/// Powers the session-ownership lease (#428): the `_owner.json` sidecar
+/// publishes with temp + rename so a concurrent reader never sees a
+/// partial claim (E5 — exactly one acquirer wins). Backends without an
+/// atomic rename (pure web stores) do not implement it — the lease store
+/// probes with `is RenamableFileSystem` and degrades to unenforced
+/// ownership. Decorators forward to their delegate so wrapping an env
+/// never hides the capability.
+abstract interface class RenamableFileSystem {
+  /// Atomically renames/moves [from] to [to] (overwrites an existing
+  /// [to], POSIX semantics).
+  Future<Result<void, FileError>> renamePath(String from, String to);
+}
+
 /// Optional [FileSystem] capability: byte-range reads.
 ///
 /// Powers windowed session loading (`SessionChunkReader`): the app reads

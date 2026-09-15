@@ -122,6 +122,9 @@ import '../secrets/secure_key_store.dart';
 import '../session/session_record.dart';
 import '../session/session_repo.dart';
 import '../session/attach/session_presence.dart';
+import '../session/attach/session_lease.dart';
+import '../session/attach/session_attachment.dart';
+import '../session/attach/file_attachment.dart';
 import '../config/config_service.dart';
 import 'cli_config.dart';
 import 'custom_providers.dart';
@@ -207,6 +210,7 @@ part 'trajectory_commands.dart';
 part 'agent_cli_cube.dart';
 part 'agent_cli_provider_presets.dart';
 part 'agent_cli_inbox.dart';
+part 'agent_cli_viewer.dart';
 part 'agent_hub_cli.dart';
 part 'agent_cli_steering.dart';
 part 'agent_cli_tools.dart';
@@ -927,6 +931,17 @@ class AgentCli {
   /// The launch-cwd messaging root (also backs scheduled messages).
   late final String _messagesRoot;
 
+  /// The ownership lease held for the current session (its sidecar path),
+  /// or null when driving unleased (no store / unenforced backend).
+  String? _heldLeasePath;
+
+  /// The viewer attachment when this instance opened a leased session.
+  _ViewerAttachment? _viewer;
+
+  /// Per-process lease identity (E3): pid recycling across restarts
+  /// cannot impersonate a dead owner because this differs.
+  late final String _leaseBootId = FileSessionLeaseStore.newBootId();
+
   /// Persisted delayed messages (`schedule_message`): pending records live
   /// under `<messagesRoot>/_scheduled/` and are delivered into the
   /// agent's own inbox when due, where the idle-wake starts a turn.
@@ -1242,6 +1257,9 @@ class AgentCli {
     // revalidates on the first menu open (stale entries) — no boot HTTP.
     await _loadPersistedModelCache();
     _session = await _initializeSession();
+    // Ownership lease (#428): claim before anything can drive — a live
+    // lease flips this boot into viewer mode (no takeover exists).
+    await _claimSessionLease();
     // Sleep prevention (#325/#326): only the EXPLICIT session hold
     // acquires here — the default per-run hold acquires at every run
     // start instead, so an idle agent never pins the machine awake.
@@ -1322,7 +1340,7 @@ class AgentCli {
   _registerLivePresence() async {
     final store = config.presenceStore;
     final sessionId = _session?.cachedId;
-    if (store != null && sessionId != null) {
+    if (store != null && sessionId != null && _viewer == null) {
       await store.register(sessionId, pid: config.processId);
       return (store: store, sessionId: sessionId);
     }
@@ -1338,6 +1356,12 @@ class AgentCli {
   ) {
     var heartbeatTick = 0;
     return Timer.periodic(const Duration(seconds: 2), (_) {
+      // Viewer mode: follow the lease only — the owner's mail, presence,
+      // and orphan reclaims are the OWNER's job, never a viewer's.
+      if (_viewer != null) {
+        unawaited(_viewerTick());
+        return;
+      }
       unawaited(_reclaimOrphanFabricMail());
       unawaited(_wakeOnInboxMail());
       if (heartbeatTick++ % 2 == 0) {
@@ -1347,6 +1371,10 @@ class AgentCli {
         // The messaging-fabric heartbeat: agent_directory reports this
         // instance as live even when no mail is pending.
         _touchFabricHeartbeat();
+      } else {
+        // Our lease heartbeat (≈4s, inside the 15s window): a false
+        // return means the lease was lost — demote to viewer.
+        unawaited(_leaseHeartbeat());
       }
     });
   }
@@ -1380,8 +1408,12 @@ class AgentCli {
     if (presence != null) {
       await presence.store.unregister(presence.sessionId);
     }
-    // A session nobody wrote to leaves no file behind.
-    await deleteSessionIfEmpty();
+    // Lease bookkeeping: release OUR lease (graceful exit, #428); a
+    // viewer never touches the owner's lease.
+    await _releaseSessionLease();
+    // A session nobody wrote to leaves no file behind (never a viewer's
+    // call — the owner's file is not ours to delete).
+    if (_viewer == null) await deleteSessionIfEmpty();
   }
 
   /// Warm the endpoint metadata (model list, dial features, reported
@@ -1460,6 +1492,7 @@ class AgentCli {
   /// read-dispatch loop.
   Future<void> _runLineRepl() async {
     await _printBanner();
+    await _printViewerBannerIfAny();
     // Warm the model cache here too (the TUI path does): the endpoint-
     // reported context window lands on the active model only through this
     // refresh, and line-mode `/model <id>` switches read the same map.
@@ -1545,6 +1578,7 @@ class AgentCli {
     // The banner is part of the TUI output history so it stays visible above
     // the input line inside the alternate screen.
     await _printBanner();
+    await _printViewerBannerIfAny();
     // The first _loadAgentContext() ran before the TUI owned the terminal —
     // its "found but disabled" hint never reached the transcript. Re-print.
     _printThirdPartySkillsDisabledHint();
@@ -2135,6 +2169,12 @@ class AgentCli {
     }
     if (trimmed.startsWith('/')) {
       await _handleCommand(trimmed);
+      return;
+    }
+    // Viewer mode (#428): plain input is composer mail to the driving
+    // agent — never a second writer, never a takeover.
+    if (_viewer != null) {
+      await _viewerSend(line);
       return;
     }
     // A new user message ends the previous turn: per-turn skill tool grants
