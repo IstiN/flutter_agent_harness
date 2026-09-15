@@ -143,37 +143,25 @@ extension AgentCliLease on AgentCli {
   void _onViewerRows(AttachedSessionEvent event) {
     final viewer = _viewer;
     if (viewer == null) return;
-    var rows = event.appended;
-    var dimmed = false;
-    if (!viewer.sawBacklog) {
-      viewer.sawBacklog = true;
-      dimmed = true;
-      if (rows.length > _viewerBacklogCap) {
-        io.writeln(
-          _style.dim(
-            '… ${rows.length - _viewerBacklogCap} earlier rows not shown '
-            '— the full transcript lives in the session',
-          ),
-        );
-      }
-      rows = rows.skip(rows.length - _viewerBacklogCap).toList();
-    }
+    final (rows, caption) = viewerBacklogSlice(
+      event.appended,
+      viewer.sawBacklog,
+    );
+    viewer.sawBacklog = true;
+    if (caption != null) io.writeln(_style.dim(caption));
     for (final row in rows) {
-      _printViewerRow(row, dimmed: dimmed);
+      _printViewerRow(row, dimmed: caption != null);
     }
   }
 
   void _printViewerRow(AttachedMessage row, {bool dimmed = false}) {
-    switch (row.role) {
-      case AttachedMessageRole.user:
-        final text = 'user: ${row.text}';
-        io.writeln(dimmed ? _style.dim(text) : _style.bold(text));
-      case AttachedMessageRole.assistant:
-        io.writeln(dimmed ? _style.dim(row.text) : row.text);
-      case AttachedMessageRole.tool:
-        io.writeln(_style.dim('[tool] ${row.toolName ?? ''}'));
-      case AttachedMessageRole.system:
-        io.writeln(_style.dim(row.text));
+    final text = viewerRowText(row);
+    if (dimmed) {
+      io.writeln(_style.dim(text));
+    } else if (row.role == AttachedMessageRole.user) {
+      io.writeln(_style.bold(text));
+    } else {
+      io.writeln(text);
     }
   }
 
@@ -184,18 +172,12 @@ extension AgentCliLease on AgentCli {
     final viewer = _viewer;
     if (viewer == null) return;
     final store = config.leaseStore;
-    if (store == null) return;
+    if (store == null || viewer.stale) return;
     final inspect = await store.inspect(viewer.sessionPath);
-    if (inspect.state == LeaseState.live || viewer.stale) return;
+    if (inspect.state == LeaseState.live) return;
     viewer.stale = true;
     viewer.lease = inspect.lease ?? viewer.lease;
-    io.writeln(
-      _style.yellow(
-        'lease: the driving ${leaseOwnerLabel(viewer.lease.host)} '
-        '(pid ${viewer.lease.pid}) looks dead — reopen this session to '
-        'drive it',
-      ),
-    );
+    io.writeln(_style.yellow(viewerStaleNotice(viewer.lease)));
   }
 
   /// Prints the viewer banner under the boot banner when this instance
@@ -268,24 +250,14 @@ extension AgentCliLease on AgentCli {
     final path = _heldLeasePath;
     final store = config.leaseStore;
     if (path == null || store == null) return;
-    final alive = await store.heartbeat(path, _leaseBootId);
-    if (alive) return;
+    if (await store.heartbeat(path, _leaseBootId)) return;
     _heldLeasePath = null;
     final session = _session;
     if (session == null) return;
     final meta = await session.getMetadata();
     final inspect = await store.inspect(path);
     await _enterViewerMode(
-      lease:
-          inspect.lease ??
-          SessionLease(
-            host: 'unknown',
-            sessionId: meta.id,
-            pid: 0,
-            bootId: 'unknown',
-            heartbeatAt: '',
-            acquiredAt: '',
-          ),
+      lease: inspect.lease ?? _orphanLease(meta),
       meta: meta,
     );
     io.writeln(
@@ -296,4 +268,45 @@ extension AgentCliLease on AgentCli {
     );
     await _printViewerBannerIfAny();
   }
+
+  SessionLease _orphanLease(SessionMetadata meta) => SessionLease(
+    host: 'unknown',
+    sessionId: meta.id,
+    pid: 0,
+    bootId: 'unknown',
+    heartbeatAt: '',
+    acquiredAt: '',
+  );
 }
+
+/// Plain text of one transcript row as a viewer renders it (styles are
+/// applied by the caller; dimming and bolding are presentation).
+String viewerRowText(AttachedMessage row) => switch (row.role) {
+  AttachedMessageRole.user => 'user: ${row.text}',
+  AttachedMessageRole.assistant => row.text,
+  AttachedMessageRole.tool => '[tool] ${row.toolName ?? ''}',
+  AttachedMessageRole.system => row.text,
+};
+
+/// Caps the pre-open backlog to the last [_viewerBacklogCap] rows and
+/// returns an optional caption naming the hidden remainder. Live rows
+/// pass through untouched.
+(List<AttachedMessage>, String?) viewerBacklogSlice(
+  List<AttachedMessage> rows,
+  bool sawBacklog,
+) {
+  if (sawBacklog) return (rows, null);
+  if (rows.length <= _viewerBacklogCap) return (rows, null);
+  return (
+    rows.sublist(rows.length - _viewerBacklogCap),
+    '… ${rows.length - _viewerBacklogCap} earlier rows not shown '
+        '— the full transcript lives in the session',
+  );
+}
+
+/// The once-only notice a viewer prints when the owner's lease flips
+/// live → stale under it.
+String viewerStaleNotice(SessionLease lease) =>
+    'lease: the driving ${leaseOwnerLabel(lease.host)} '
+    '(pid ${lease.pid}) looks dead — reopen this session to '
+    'drive it';

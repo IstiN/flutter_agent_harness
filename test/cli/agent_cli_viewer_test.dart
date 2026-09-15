@@ -252,6 +252,55 @@ void main() {
     expect((await store.inspect(meta.path)).state, LeaseState.live);
   });
 
+  test('AC2: viewer composer lands in the LIVE owner transcript with '
+      'attribution (two real CLIs, one writer)', () async {
+    await namedSession('shared');
+    final ownerFake = FakeStreamFunction([]);
+    final ownerIo = FakeCliIO();
+    addTearDown(ownerIo.close);
+    final owner = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: 'test-key',
+        env: env,
+        sessionRoot: '/sessions',
+        providerKind: 'openai-completions',
+        sessionName: 'shared',
+        leaseStore: store,
+        processId: 4242,
+      ),
+      io: ownerIo,
+      streamFunction: ownerFake.call,
+    );
+    final ownerRun = owner.run();
+    await waitForIt(() => ownerIo.out.isNotEmpty, reason: 'owner boot');
+
+    // A second CLI opens the same session: the live lease makes it a
+    // viewer; its composer hands the words to the owner's agent.
+    final viewer = cliFor(FakeStreamFunction([]).call, sessionName: 'shared');
+    final viewerRun = viewer.run();
+    await waitForIt(
+      () => out().contains('you are viewing'),
+      reason: 'viewer boot',
+    );
+    io.sendLine('hello from the viewer');
+    await waitForIt(
+      () => ownerFake.calls == 1 && !owner.isBusy,
+      reason: 'the owner runs the handed-over turn',
+    );
+    expect(
+      ownerFake.contexts.single.messages.whereType<UserMessage>().map(
+        (m) => m.content is String ? m.content as String : '',
+      ),
+      contains(contains('[from fa CLI user] hello from the viewer')),
+    );
+
+    io.sendLine('/exit');
+    await viewerRun;
+    ownerIo.sendLine('/exit');
+    await ownerRun;
+  });
+
   test('AC4: a viewer switching to a free session exits viewer mode and '
       'drives it', () async {
     final leased = await namedSession('leased');
@@ -290,6 +339,129 @@ void main() {
 
     io.sendLine('/exit');
     await run;
+  });
+  test('AC9: viewer row rendering, backlog cap, and stale notice text', () {
+    expect(
+      viewerRowText(
+        const AttachedMessage(role: AttachedMessageRole.user, text: 'hi'),
+      ),
+      'user: hi',
+    );
+    expect(
+      viewerRowText(
+        const AttachedMessage(role: AttachedMessageRole.assistant, text: 'hey'),
+      ),
+      'hey',
+    );
+    expect(
+      viewerRowText(
+        const AttachedMessage(
+          role: AttachedMessageRole.tool,
+          toolName: 'read',
+          text: '',
+        ),
+      ),
+      '[tool] read',
+    );
+    expect(
+      viewerRowText(
+        const AttachedMessage(role: AttachedMessageRole.system, text: 'note'),
+      ),
+      'note',
+    );
+
+    final rows = List.generate(
+      7,
+      (i) => AttachedMessage(role: AttachedMessageRole.assistant, text: 'r$i'),
+    );
+    final (kept, caption) = viewerBacklogSlice(rows, false);
+    expect(kept.map((m) => m.text), ['r2', 'r3', 'r4', 'r5', 'r6']);
+    expect(caption, contains('2 earlier rows not shown'));
+    expect(viewerBacklogSlice(rows, true), (rows, null));
+    expect(viewerBacklogSlice(rows.take(2).toList(), false).$2, isNull);
+
+    expect(
+      viewerStaleNotice(
+        SessionLease(
+          host: 'cli',
+          sessionId: 's',
+          pid: 999,
+          bootId: 'b',
+          heartbeatAt: '',
+          acquiredAt: '',
+        ),
+      ),
+      contains('the driving fa CLI (pid 999) looks dead'),
+    );
+  });
+
+  test('AC9: the viewer tick prints the stale notice exactly once when '
+      'the owner dies mid-view', () async {
+    final meta = await namedSession('tickflip');
+    await seedLiveLease(meta.path);
+    final cli = cliFor(FakeStreamFunction([]).call, sessionName: 'tickflip');
+    final run = cli.run();
+    await waitForIt(
+      () => out().contains('you are viewing'),
+      reason: 'viewer boot',
+    );
+
+    // The owner dies: freeze the sidecar beyond the 15s window.
+    env.setMtime(
+      store.sidecarPath(meta.path),
+      DateTime.now().millisecondsSinceEpoch -
+          const Duration(seconds: 20).inMilliseconds,
+    );
+    await waitForIt(
+      () => out().contains('looks dead — reopen this session to drive it'),
+      reason: 'the live→stale flip notice',
+    );
+    await Future<void>.delayed(const Duration(seconds: 5));
+    expect(
+      'looks dead — reopen'.allMatches(out()).length,
+      1,
+      reason: 'the notice prints once, not every tick',
+    );
+    io.sendLine('/exit');
+    await run;
+  });
+
+  test('heartbeat: losing the lease mid-run demotes this CLI to a viewer '
+      'of the new owner', () async {
+    final meta = await namedSession('stolen');
+    final cli = cliFor(FakeStreamFunction([]).call, sessionName: 'stolen');
+    final run = cli.run();
+    var live = LeaseInspect.free();
+    for (var i = 0; i < 5000 && live.state != LeaseState.live; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      live = await store.inspect(meta.path);
+    }
+    expect(live.state, LeaseState.live, reason: 'the boot claim');
+
+    // Another host takes the expired lease under us; our next heartbeat
+    // misses and must demote.
+    await seedLiveLease(meta.path, pid: 31337, bootId: 'new-owner');
+    await waitForIt(
+      () => out().contains('lease: lost — another host is driving'),
+      reason: 'the demotion notice',
+    );
+    await waitForIt(
+      () => out().contains('Driven by fa CLI (pid 31337)'),
+      reason: 'the viewer banner of the new owner',
+    );
+    // The demoted composer routes to the new owner's mailbox.
+    io.sendLine('anyone there?');
+    await waitForIt(
+      () => out().contains('anyone there?'),
+      reason: 'the viewer echo',
+    );
+    final mail = await fabric.peek('${meta.id}/main');
+    expect(mail.single.fromId, 'fa CLI user');
+    expect(mail.single.text, 'anyone there?');
+    io.sendLine('/exit');
+    await run;
+    // A viewer's exit never releases the new owner's lease.
+    expect((await store.inspect(meta.path)).lease!.bootId, 'new-owner');
   });
 }
 
