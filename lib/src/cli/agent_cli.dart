@@ -492,6 +492,9 @@ class AgentCli {
       rolesResolver: config.modelRolesResolver,
       subagentManager: _subagentManager,
       a2aManager: _a2aManager,
+      // Issue #439: children compact on the host's engine choice (live
+      // settings override, else config, else structured default).
+      compactionEngine: config.liveCompactionEngine ?? config.compactionEngine,
       // Real JSONL child sessions, created at child completion (fast
       // register keeps the steering race away; the transcript lands when
       // the child finishes).
