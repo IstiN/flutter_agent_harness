@@ -497,25 +497,7 @@ final class LocalShell implements Shell, BackgroundShell {
     final stdout = StringBuffer();
     final stderr = StringBuffer();
     ExecutionError? callbackError;
-    // Feed optional stdin data (bash tool `stdin` param: a passphrase the
-    // user supplied via the ask UI, a `y\n`). With a live stdin channel
-    // (issue #367) the pipe stays OPEN for the process's lifetime so a
-    // mid-run password ask can be answered; otherwise it closes right
-    // after start so tools like ripgrep that fall back to stdin do not
-    // hang forever.
-    final liveStdin = options?.liveStdin;
-    if (liveStdin != null) {
-      liveStdin.bind(process.stdin.write);
-    }
-    if (options?.stdinData != null) {
-      try {
-        process.stdin.write(options!.stdinData);
-        await process.stdin.flush();
-      } on Object {
-        // Process already gone — the exit path reports the real status.
-      }
-    }
-    if (liveStdin == null) unawaited(process.stdin.close());
+    await _wireProcessStdin(process, options);
     final stdoutDone = process.stdout
         .transform(utf8.decoder)
         .forEach(
@@ -556,7 +538,7 @@ final class LocalShell implements Shell, BackgroundShell {
 
     final exitCode = await process.exitCode;
     timer?.cancel();
-    if (liveStdin != null) {
+    if (options?.liveStdin != null) {
       unawaited(process.stdin.close().catchError((_) {}));
     }
     await Future.wait([stdoutDone, stderrDone]);
@@ -570,6 +552,31 @@ final class LocalShell implements Shell, BackgroundShell {
       stderr: stderr,
       exitCode: exitCode,
     );
+  }
+
+  /// Feeds optional stdin data (bash tool `stdin` param: a passphrase the
+  /// user supplied via the ask UI, a `y\n`). With a live stdin channel
+  /// (issue #367) the pipe stays OPEN for the process's lifetime so a
+  /// mid-run password ask can be answered; otherwise it closes right
+  /// after start so tools like ripgrep that fall back to stdin do not
+  /// hang forever.
+  Future<void> _wireProcessStdin(
+    Process process,
+    ShellExecOptions? options,
+  ) async {
+    final liveStdin = options?.liveStdin;
+    if (liveStdin != null) {
+      liveStdin.bind(process.stdin.write);
+    }
+    if (options?.stdinData != null) {
+      try {
+        process.stdin.write(options!.stdinData);
+        await process.stdin.flush();
+      } on Object {
+        // Process already gone — the exit path reports the real status.
+      }
+    }
+    if (liveStdin == null) unawaited(process.stdin.close());
   }
 
   @override
