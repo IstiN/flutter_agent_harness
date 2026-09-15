@@ -42,6 +42,7 @@ void main() {
     expect(service.approvalPromptHandler, isNull);
     expect(service.askHandler, isNull);
     expect(service.secretRequestHandler, isNull);
+    expect(service.passwordPromptHandler, isNull);
   });
 
   testWidgets('detach never clears a foreign handler', (tester) async {
@@ -67,6 +68,7 @@ void main() {
     expect(service.approvalPromptHandler, same(foreign));
     expect(service.askHandler, isNull);
     expect(service.secretRequestHandler, isNull);
+    expect(service.passwordPromptHandler, isNull);
   });
 
   testWidgets('rebinding to a new service moves the trio', (tester) async {
