@@ -7,4 +7,9 @@
 library;
 
 export 'package:fa_ui/fa_ui.dart'
-    show SecretRequestSheet, secretNamePattern, showSecretRequestSheet;
+    show
+        PasswordPromptSheet,
+        SecretRequestSheet,
+        secretNamePattern,
+        showPasswordPromptSheet,
+        showSecretRequestSheet;

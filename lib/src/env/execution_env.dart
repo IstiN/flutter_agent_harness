@@ -295,6 +295,38 @@ final class ExecutionError implements Exception {
   String toString() => 'ExecutionError(${code.name}): $message';
 }
 
+/// A live stdin write channel for a RUNNING process (issue #367): the
+/// caller creates the channel, passes it in [ShellExecOptions.liveStdin],
+/// and the shell implementation binds it to the spawned process's stdin.
+/// While bound, the process's stdin pipe stays OPEN for the process's
+/// lifetime (the password ask may arrive long after launch) instead of the
+/// default close-right-after-start.
+final class LiveStdinChannel {
+  /// The sink the shell implementation bound; null until (and after) the
+  /// process ends.
+  void Function(String data)? _sink;
+
+  /// Whether a process stdin is currently bound.
+  bool get isBound => _sink != null;
+
+  /// Called by the shell implementation once the process is spawned.
+  void bind(void Function(String data) sink) => _sink = sink;
+
+  /// Writes [data] to the running process's stdin. Returns false when no
+  /// process is bound or the write failed (the process is already gone) —
+  /// never throws.
+  bool write(String data) {
+    final sink = _sink;
+    if (sink == null) return false;
+    try {
+      sink(data);
+      return true;
+    } on Object {
+      return false;
+    }
+  }
+}
+
 /// Options for [Shell.exec].
 final class ShellExecOptions {
   /// Creates [ShellExecOptions].
@@ -306,6 +338,7 @@ final class ShellExecOptions {
     this.onStdout,
     this.onStderr,
     this.stdinData,
+    this.liveStdin,
   });
 
   /// Working directory for the command. Defaults to [FileSystem.cwd].
@@ -331,6 +364,13 @@ final class ShellExecOptions {
   /// (a password/passphrase answer, a `y\n` confirmation). Null keeps the
   /// old behavior: stdin closes immediately.
   final String? stdinData;
+
+  /// Optional live stdin write channel (issue #367). When attached, the
+  /// implementation binds the channel to the spawned process's stdin and
+  /// keeps the pipe open for the process's lifetime — a password ask that
+  /// arrives mid-run can be answered through [LiveStdinChannel.write].
+  /// Null keeps the old behavior: stdin closes right after start.
+  final LiveStdinChannel? liveStdin;
 }
 
 /// Outcome of a completed [Shell.exec] invocation.
@@ -391,6 +431,17 @@ abstract interface class ShellJob {
   /// or 'cancelled' ([ShellExecOptions.cancelToken]); null when the process
   /// exited on its own (or is still running).
   String? get stopReason;
+
+  /// Live decoded output (stdout + stderr interleaved) as it is produced,
+  /// in addition to the log file. Broadcast: any number of listeners; no
+  /// buffering for listeners that attach after a chunk was emitted.
+  Stream<String> get output;
+
+  /// Writes [data] to the job's stdin (issue #367: answering a detected
+  /// password ask). Returns false when the stdin pipe is closed (the
+  /// default: stdin closes right after start) or the process is already
+  /// gone — never throws.
+  bool writeStdin(String data);
 
   /// Terminates the process. No-op when it already exited.
   Future<void> stop();

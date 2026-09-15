@@ -9,9 +9,13 @@ final class _FakeShellJob implements ShellJob {
   _FakeShellJob(this.id, this.command, this.logPath, this._env);
 
   final MemoryExecutionEnv _env;
+  final _output = StreamController<String>.broadcast();
   final _settled = Completer<void>();
   int? _exitCode;
   String? _stopReason;
+
+  /// Stdin chunks the tool wrote through [ShellJob.writeStdin].
+  final stdinWrites = <String>[];
 
   @override
   final String id;
@@ -34,7 +38,21 @@ final class _FakeShellJob implements ShellJob {
   @override
   Future<void> get settled => _settled.future;
 
-  Future<void> writeLog(String text) => _env.appendFile(logPath, text);
+  /// Emits a chunk on the live output stream AND appends to the log file
+  /// (the real job does both).
+  Future<void> writeLog(String text) {
+    _output.add(text);
+    return _env.appendFile(logPath, text);
+  }
+
+  @override
+  Stream<String> get output => _output.stream;
+
+  @override
+  bool writeStdin(String data) {
+    stdinWrites.add(data);
+    return true;
+  }
 
   void complete(int code, {String? reason}) {
     if (_exitCode != null) return;

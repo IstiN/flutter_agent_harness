@@ -55,6 +55,16 @@ final class SandboxShellJob implements ShellJob {
   @override
   Future<void> get settled => _settled.future;
 
+  /// No live output stream: sandbox jobs stream into the log file only
+  /// (no OS process to attach to).
+  @override
+  Stream<String> get output => const Stream.empty();
+
+  /// No OS process: a sandbox job cannot accept live stdin writes
+  /// (issue #367 E3 - the ask stays visible in the job log, documented).
+  @override
+  bool writeStdin(String data) => false;
+
   /// Appends one output chunk to the log, serialized so concurrent
   /// stdout/stderr chunks keep their arrival order.
   void writeLog(String chunk) {
