@@ -950,6 +950,10 @@ String applicationNote(String section) => switch (section) {
   // Issue #279: the session theme switches live on write (`/theme` runs
   // the same persist + switch flow); a hand-edit applies at next boot.
   'tui' => 'applies live via /theme, otherwise at next boot',
+  // Issue #394: the boot-built Agent keeps the cap it was constructed
+  // with (the loop's over-window guard reads its config field); the
+  // running session never re-reads the yaml.
+  'agent' => 'applies at next boot — the running session keeps its boot cap',
   _ => 'applies at next boot',
 };
 
@@ -1085,7 +1089,7 @@ final _sectionValidators = <String, void Function(dynamic value, String label)>{
   'a2a': (value, _) => A2aConfig.fromYaml(value, (name) => '\${$name}'),
   'fabric': (value, _) => FabricConfig.fromYaml(value),
   'providerTimeouts': (value, _) => _validateProviderTimeouts(value),
-  'agent': (value, _) => _validateAgentSection(value),
+  'agent': (value, _) => validateAgentSection(value),
   'skills': (value, _) => _validateSkillsSection(value),
   // The power section (sleep prevention, issue #325) delegates to the
   // SAME public strict parser CliConfig.fromYaml uses — no mirror to
@@ -1151,10 +1155,12 @@ void _validateProviderTimeouts(Object? node) {
   }
 }
 
-/// Mirrors the strict private parser in `cli_config.dart` (pinned by
-/// test): the `agent:` section takes exactly `contextWindowCap`, a
-/// positive integer at or above the compaction reserve (issue #273).
-void _validateAgentSection(Object? node) {
+/// The strict `agent:` section validator, shared by `check`, `set` and
+/// the settings flow (issue #394). Mirrors the private boot parser in
+/// `cli_config.dart` (pinned by test): the section takes exactly
+/// `contextWindowCap`, a positive integer at or above the compaction
+/// reserve — a cap below 16384 must never soften that floor.
+void validateAgentSection(Object? node) {
   if (node is! YamlMap) {
     throw ConfigException('must be a map, got: $node');
   }
