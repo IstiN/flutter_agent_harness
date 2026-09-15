@@ -769,236 +769,191 @@ Object.defineProperty(jsr, 'onBack', {
     return permissions.allowedCommands.contains(name);
   }
 
+  /// `jsr.fa.*` bridge dispatch (issue #433 descent). The old if-chain was
+  /// CC 49 / CRAP 2450 — the repo's worst offender. Methods route through
+  /// one map; the `llm` trio, host channels (`back.*`, `emit`) and the
+  /// platform-prefix fallback keep their exact previous semantics,
+  /// including the permission-denied error an unknown prefix produces.
+  late final Map<String, Future<Object?> Function(Map<String, Object?> args)>
+  _faHandlers = {
+    'llm': (args) => _faLlm('llm', args),
+    'llm.chat': (args) => _faLlm('llm.chat', args),
+    'llm.stream': (args) => _faLlm('llm.stream', args),
+    'calendar.events': _calendarEvents,
+    'calendar.create': _calendarCreate,
+    'calendar.update': _calendarUpdate,
+    'calendar.delete': _calendarDelete,
+    'contacts.search': _contactsSearch,
+    'contacts.create': _contactsCreate,
+    'contacts.update': _contactsUpdate,
+    'contacts.delete': _contactsDelete,
+    'contacts.call': _contactsCall,
+    'contacts.sms': _contactsSms,
+    'health.summary': _healthSummary,
+    'asr.record': _asrRecord,
+    'asr.stop': (args) async {
+      final signal = _asrStopSignal;
+      if (signal != null && !signal.isCompleted) signal.complete();
+      return {'stopped': signal != null};
+    },
+    'asr.transcribe': _asrTranscribe,
+    'notify.schedule': _notifySchedule,
+    'notify.cancel': _notifyCancel,
+    'media.generateImage': _mediaGenerateImage,
+    'media.speak': _mediaSpeak,
+    'media.generateMusic': _mediaGenerateMusic,
+    'media.generateVideo': _mediaGenerateVideo,
+    'media.readVideo': _mediaReadVideo,
+    'keys.list': (args) async => _keysList(),
+    'keys.get': (args) async => _keysGet(args),
+    'keys.request': _keysRequest,
+    'theme.list': (args) => _themeList(),
+    'theme.current': (args) => _themeCurrent(),
+    'theme.apply': _themeApply,
+    // Home control (iOS HomeKit). `home.*` is the current surface; the
+    // legacy `homekit.<action>` calls route to the same handlers.
+    'home.homes': (args) => _homeCall('homes', args),
+    'home.rooms': (args) => _homeCall('rooms', args),
+    'home.list': (args) => _homeCall('list', args),
+    'home.read': (args) => _homeCall('read', args),
+    'home.write': (args) => _homeCall('write', args),
+    'home.scenes': (args) => _homeCall('scenes', args),
+    'home.executeScene': (args) => _homeCall('executeScene', args),
+    'home.setPower': (args) => _homeCall('setPower', args),
+    'home.setBrightness': (args) => _homeCall('setBrightness', args),
+    'home.setTemperature': (args) => _homeCall('setTemperature', args),
+    'homekit.homes': (args) => _homeCall('homes', args),
+    'homekit.rooms': (args) => _homeCall('rooms', args),
+    'homekit.list': (args) => _homeCall('list', args),
+    'homekit.listDevices': (args) => _homeCall('list', args),
+    'homekit.read': (args) => _homeCall('read', args),
+    'homekit.write': (args) => _homeCall('write', args),
+    'homekit.scenes': (args) => _homeCall('scenes', args),
+    'homekit.executeScene': (args) => _homeCall('executeScene', args),
+    'homekit.setPower': (args) => _homeCall('setPower', args),
+    'homekit.setBrightness': (args) => _homeCall('setBrightness', args),
+    'homekit.setTemperature': (args) => _homeCall('setTemperature', args),
+    // Back-navigation contract (see _faBootstrapJs): the app reports its
+    // jsr.onBack registration, and asks the host to close when a back
+    // event went unconsumed. Neither is permission-gated.
+    'back.handler': (args) async {
+      backHandlerRegistered.value = args['registered'] == true;
+      return true;
+    },
+    'back.close': (args) async {
+      onCloseRequested?.call();
+      return true;
+    },
+    // Widget->host event channel (dynamic messages): fire-and-forget emit
+    // of one named event with a JSON payload. NOT permission-gated — the
+    // host sink is injected by the presenter (see [onEmit]); installed
+    // apps have none and the bridge resolves {emitted: false}.
+    'emit': _faEmit,
+  };
+
   Future<void> _faCall(
     String id,
     String method,
     Map<String, Object?> args,
   ) async {
     try {
-      if (method == 'llm' || method == 'llm.chat' || method == 'llm.stream') {
-        if (!permissions.llm) throw StateError(_denied('llm'));
-        final handler = llmHandler;
-        if (handler == null) {
-          throw StateError(
-            'no LLM is connected — connect a model in the Fa settings first',
-          );
-        }
-        final messages = method == 'llm'
-            ? [(role: 'user', content: (args['prompt'] ?? '').toString())]
-            : _parseLlmMessages(args['messages']);
-        if (method == 'llm.stream') {
-          // Deltas cross back as reserved 'llm.delta' events (see
-          // _faBootstrapJs) carrying the accumulated partial text.
-          final streamId = (args['stream'] ?? '').toString();
-          final partial = StringBuffer();
-          _resolve?.call(
-            id,
-            await handler(
-              messages,
-              onDelta: (delta) {
-                partial.write(delta);
-                final engine = _engine;
-                if (engine == null) return;
-                unawaited(
-                  engine.callEvent('llm.delta', {
-                    'stream': streamId,
-                    'text': partial.toString(),
-                  }),
-                );
-              },
-            ),
-          );
-          return;
-        }
-        _resolve?.call(id, await handler(messages));
-        return;
-      }
-      if (method == 'calendar.events') {
-        _resolve?.call(id, await _calendarEvents(args));
-        return;
-      }
-      if (method == 'calendar.create') {
-        _resolve?.call(id, await _calendarCreate(args));
-        return;
-      }
-      if (method == 'calendar.update') {
-        _resolve?.call(id, await _calendarUpdate(args));
-        return;
-      }
-      if (method == 'calendar.delete') {
-        _resolve?.call(id, await _calendarDelete(args));
-        return;
-      }
-      if (method == 'contacts.search') {
-        _resolve?.call(id, await _contactsSearch(args));
-        return;
-      }
-      if (method == 'contacts.create') {
-        _resolve?.call(id, await _contactsCreate(args));
-        return;
-      }
-      if (method == 'contacts.update') {
-        _resolve?.call(id, await _contactsUpdate(args));
-        return;
-      }
-      if (method == 'contacts.delete') {
-        _resolve?.call(id, await _contactsDelete(args));
-        return;
-      }
-      if (method == 'contacts.call') {
-        _resolve?.call(id, await _contactsCall(args));
-        return;
-      }
-      if (method == 'contacts.sms') {
-        _resolve?.call(id, await _contactsSms(args));
-        return;
-      }
-      if (method == 'health.summary') {
-        _resolve?.call(id, await _healthSummary(args));
-        return;
-      }
-      if (method == 'asr.record') {
-        _resolve?.call(id, await _asrRecord(args));
-        return;
-      }
-      if (method == 'asr.stop') {
-        final signal = _asrStopSignal;
-        if (signal != null && !signal.isCompleted) signal.complete();
-        _resolve?.call(id, {'stopped': signal != null});
-        return;
-      }
-      if (method == 'asr.transcribe') {
-        _resolve?.call(id, await _asrTranscribe(args));
-        return;
-      }
-      if (method == 'notify.schedule') {
-        _resolve?.call(id, await _notifySchedule(args));
-        return;
-      }
-      if (method == 'notify.cancel') {
-        _resolve?.call(id, await _notifyCancel(args));
-        return;
-      }
-      if (method == 'media.generateImage') {
-        _resolve?.call(id, await _mediaGenerateImage(args));
-        return;
-      }
-      if (method == 'media.speak') {
-        _resolve?.call(id, await _mediaSpeak(args));
-        return;
-      }
-      if (method == 'media.generateMusic') {
-        _resolve?.call(id, await _mediaGenerateMusic(args));
-        return;
-      }
-      if (method == 'media.generateVideo') {
-        _resolve?.call(id, await _mediaGenerateVideo(args));
-        return;
-      }
-      if (method == 'media.readVideo') {
-        _resolve?.call(id, await _mediaReadVideo(args));
-        return;
-      }
-      if (method == 'keys.list') {
-        _resolve?.call(id, _keysList());
-        return;
-      }
-      if (method == 'keys.get') {
-        _resolve?.call(id, _keysGet(args));
-        return;
-      }
-      if (method == 'theme.list') {
-        _resolve?.call(id, await _themeList());
-        return;
-      }
-      if (method == 'theme.current') {
-        _resolve?.call(id, await _themeCurrent());
-        return;
-      }
-      if (method == 'theme.apply') {
-        _resolve?.call(id, await _themeApply(args));
-        return;
-      }
-      if (method == 'keys.request') {
-        _resolve?.call(id, await _keysRequest(args));
-        return;
-      }
-      // Home control (iOS HomeKit). `home.*` is the current surface; the
-      // legacy `homekit.<action>` calls route to the same handlers.
-      final homeAction = switch (method) {
-        'home.homes' || 'homekit.homes' => 'homes',
-        'home.rooms' || 'homekit.rooms' => 'rooms',
-        'home.list' || 'homekit.list' || 'homekit.listDevices' => 'list',
-        'home.read' || 'homekit.read' => 'read',
-        'home.write' || 'homekit.write' => 'write',
-        'home.scenes' || 'homekit.scenes' => 'scenes',
-        'home.executeScene' || 'homekit.executeScene' => 'executeScene',
-        'home.setPower' || 'homekit.setPower' => 'setPower',
-        'home.setBrightness' || 'homekit.setBrightness' => 'setBrightness',
-        'home.setTemperature' || 'homekit.setTemperature' => 'setTemperature',
-        _ => null,
-      };
-      if (homeAction != null) {
-        _resolve?.call(id, await _homeCall(homeAction, args));
-        return;
-      }
-      // Back-navigation contract (see _faBootstrapJs): the app reports its
-      // jsr.onBack registration, and asks the host to close when a back
-      // event went unconsumed. Neither is permission-gated.
-      if (method == 'back.handler') {
-        backHandlerRegistered.value = args['registered'] == true;
-        _resolve?.call(id, true);
-        return;
-      }
-      if (method == 'back.close') {
-        onCloseRequested?.call();
-        _resolve?.call(id, true);
-        return;
-      }
-      // Widget->host event channel (dynamic messages): fire-and-forget emit
-      // of one named event with a JSON payload. NOT permission-gated — the
-      // host sink is injected by the presenter (see [onEmit]); installed
-      // apps have none and the bridge resolves {emitted: false}.
-      if (method == 'emit') {
-        final event = (args['event'] ?? '').toString();
-        if (event.isEmpty) {
-          _resolve?.call(id, {'__error': 'emit requires an event name'});
-          return;
-        }
-        final payload = args['payload'];
-        final sink = onEmit;
-        if (sink != null) {
-          // A throwing host sink must not reject the bridge promise.
-          try {
-            sink(
-              event,
-              payload is Map ? Map<String, Object?>.from(payload) : const {},
-            );
-          } on Object catch (error) {
-            AppLog.i('apps', 'jsr.fa.emit handler failed: $error');
-          }
-        }
-        _resolve?.call(id, {'emitted': sink != null});
-        return;
-      }
-      final prefix = method.split('.').first;
-      final granted = switch (prefix) {
-        'homekit' => permissions.homekit,
-        'health' => permissions.health,
-        'contacts' => permissions.contacts,
-        _ => false,
-      };
-      if (!granted) throw StateError(_denied(prefix));
-      final handler = platformHandler;
-      if (handler == null) {
-        throw StateError(
-          '$prefix bridge is not available on this platform yet',
-        );
-      }
-      _resolve?.call(id, await handler(method, args));
+      final handler =
+          _faHandlers[method] ?? (args) => _faPlatform(method, args);
+      _resolve?.call(id, await handler(args));
     } on Object catch (error) {
       _resolve?.call(id, {'__error': error.toString()});
     }
+  }
+
+  /// The `jsr.fa.llm` / `llm.chat` / `llm.stream` bridge: resolves with the
+  /// assistant reply (accumulated text for streams). Permission-gated on
+  /// `llm`; a missing handler is a setup error, not a permission error.
+  Future<Object?> _faLlm(String method, Map<String, Object?> args) async {
+    if (!permissions.llm) throw StateError(_denied('llm'));
+    final handler = llmHandler;
+    if (handler == null) {
+      throw StateError(
+        'no LLM is connected — connect a model in the Fa settings first',
+      );
+    }
+    final messages = _faLlmMessages(method, args);
+    if (method != 'llm.stream') return handler(messages);
+    return _faLlmStream(handler, messages, (args['stream'] ?? '').toString());
+  }
+
+  /// A bare `llm` call carries `{prompt}`; the chat/stream forms carry
+  /// `{messages}`.
+  List<FaLlmMessage> _faLlmMessages(String method, Map<String, Object?> args) {
+    if (method == 'llm') {
+      return [(role: 'user', content: (args['prompt'] ?? '').toString())];
+    }
+    return _parseLlmMessages(args['messages']);
+  }
+
+  Future<Object?> _faLlmStream(
+    FaLlmHandler handler,
+    List<FaLlmMessage> messages,
+    String streamId,
+  ) {
+    // Deltas cross back as reserved 'llm.delta' events (see
+    // _faBootstrapJs) carrying the accumulated partial text.
+    final partial = StringBuffer();
+    return handler(
+      messages,
+      onDelta: (delta) {
+        partial.write(delta);
+        final engine = _engine;
+        if (engine == null) return;
+        unawaited(
+          engine.callEvent('llm.delta', {
+            'stream': streamId,
+            'text': partial.toString(),
+          }),
+        );
+      },
+    );
+  }
+
+  Future<Map<String, Object?>> _faEmit(Map<String, Object?> args) async {
+    final event = (args['event'] ?? '').toString();
+    if (event.isEmpty) return {'__error': 'emit requires an event name'};
+    final payload = args['payload'];
+    final sink = onEmit;
+    if (sink != null) {
+      // A throwing host sink must not reject the bridge promise.
+      try {
+        sink(
+          event,
+          payload is Map ? Map<String, Object?>.from(payload) : const {},
+        );
+      } on Object catch (error) {
+        AppLog.i('apps', 'jsr.fa.emit handler failed: $error');
+      }
+    }
+    return {'emitted': sink != null};
+  }
+
+  /// Platform-bridge fallback for `homekit.*` / `health.*` / `contacts.*`
+  /// methods the map does not implement — permission-gated by prefix. A
+  /// method with any other prefix (or an ungranted one) fails with the
+  /// same permission-denied error the old chain produced.
+  Future<Object?> _faPlatform(String method, Map<String, Object?> args) async {
+    final prefix = method.split('.').first;
+    if (!_faPrefixGranted(prefix)) throw StateError(_denied(prefix));
+    final handler = platformHandler;
+    if (handler == null) {
+      throw StateError('$prefix bridge is not available on this platform yet');
+    }
+    return handler(method, args);
+  }
+
+  bool _faPrefixGranted(String prefix) {
+    return switch (prefix) {
+      'homekit' => permissions.homekit,
+      'health' => permissions.health,
+      'contacts' => permissions.contacts,
+      _ => false,
+    };
   }
 
   /// `jsr.fa.calendar({date, days})` → `{events: [...]}` — system calendar
@@ -1835,13 +1790,15 @@ Object.defineProperty(jsr, 'onBack', {
   /// declarative descriptors (id, name, version, hasWallpaper,
   /// contrastWarnings). No colors cross the wire here; an app that wants
   /// the active palette reads `jsr.theme` (pushed by the host).
-  Future<Map<String, Object?>> _themeList() async =>
-      {'packs': await _gatedTheme().listPacks()};
+  Future<Map<String, Object?>> _themeList() async => {
+    'packs': await _gatedTheme().listPacks(),
+  };
 
   /// `jsr.fa.theme.current()` → `{pack: {...} | null}` — the active pack's
   /// descriptor, null for the stock Fa look.
-  Future<Map<String, Object?>> _themeCurrent() async =>
-      {'pack': await _gatedTheme().currentPack()};
+  Future<Map<String, Object?>> _themeCurrent() async => {
+    'pack': await _gatedTheme().currentPack(),
+  };
 
   /// `jsr.fa.theme.apply({id})` → `{applied: true|false, reason?}` — asks
   /// the user; the host ALWAYS prompts (issue #169 security model). A
