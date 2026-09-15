@@ -242,9 +242,13 @@ class SessionChatSheetState extends State<SessionChatSheet>
   Map<String, SessionMetadata> _metadataById = const {};
 
   /// Parent session ids the user expanded in the drawer's tree — the
-  /// SAME model as the wide sidebar (groups start collapsed; an active
-  /// descendant forces its parent open).
+  /// SAME model as the wide sidebar (groups within the auto-expand limit
+  /// render open; an active descendant forces its parent open).
   final Set<String> _expandedParents = {};
+
+  /// Parent ids the user explicitly COLLAPSED (issue #426) — small
+  /// groups default open, so closing one must stick.
+  final Set<String> _collapsedParents = {};
 
   /// The session the user just tapped (an open is in flight): its row
   /// highlights AND sorts to the top immediately — the SAME rule the wide
@@ -1202,6 +1206,8 @@ class SessionChatSheetState extends State<SessionChatSheet>
     // Folder-grouped, parent-nested rows (issue #198): the SAME tree row
     // model the wide sidebar renders — subagent sessions collapse under
     // their parent's count badge, orphans surface top-level marked.
+    // Issue #426: explicit collapse overrides ride alongside (small
+    // groups default open, so closing one is a choice).
     final drawerRows = sessionTreeRows(
       visible,
       metadataById: _metadataById,
@@ -1210,6 +1216,7 @@ class SessionChatSheetState extends State<SessionChatSheet>
       expandedIds: query.isEmpty
           ? _expandedParents
           : {..._expandedParents, ...contextParents},
+      collapsedIds: _collapsedParents,
       dimmedIds: contextParents,
     );
     return Container(

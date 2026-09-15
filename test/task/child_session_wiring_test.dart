@@ -2,6 +2,7 @@
 library;
 
 import 'package:flutter_agent_harness/src/env/memory_execution_env.dart';
+import 'package:flutter_agent_harness/src/session/session_grouping.dart';
 import 'package:flutter_agent_harness/src/session/session_repo.dart';
 import 'package:flutter_agent_harness/src/task/subagent_manager.dart';
 import 'package:test/test.dart';
@@ -72,5 +73,40 @@ void main() {
     expect(handle.sessionId, path);
     final info = await env.fileInfo(path);
     expect(info.valueOrNull, isNotNull);
+  });
+
+  test('the parent id assigned after boot reaches the child session '
+      'factory (issue #426: real child headers carry metadata.parent)',
+      () async {
+    final env = MemoryExecutionEnv(cwd: '/work');
+    final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+    // Both hosts construct the manager with an empty parent id: the
+    // session id does not exist at boot.
+    final manager = SubagentManager(parentSessionId: '');
+    expect(manager.parentSessionId, '');
+
+    // ... and assign it when the id materializes (the same moment the
+    // mailbox prefix is set — AgentService._setMailboxPrefix /
+    // AgentCli._syncMailboxPrefix assign both fields together).
+    manager
+      ..parentSessionId = '0198-real-parent'
+      ..mailboxPrefix = '0198-real-parent';
+    expect(manager.mailboxOf('a3'), '0198-real-parent/a3');
+
+    // The executor's lazy-create funnel passes manager.parentSessionId
+    // into the host factory — mirror it and inspect the header.
+    final session = await repo.create(
+      JsonlSessionCreateOptions(
+        cwd: '/work',
+        metadata: {
+          'agent': 'subagent',
+          'id': 'a3',
+          'parent': manager.parentSessionId,
+          'model': 'm',
+        },
+      ),
+    );
+    final header = await session.getMetadata();
+    expect(subagentParentId(header), '0198-real-parent');
   });
 }
