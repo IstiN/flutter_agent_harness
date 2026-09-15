@@ -1919,6 +1919,16 @@ class AppLocalizationsRu extends AppLocalizations {
   String get dynamicTileRetry => 'Повторить';
 
   @override
+  String get dynamicTileMenu => 'Ещё действия';
+
+  @override
+  String get dynamicTileOpenAsApp => 'Открыть как приложение (без сохранения)';
+
+  @override
+  String get dynamicTileOpenUnavailable =>
+      'Виджет не запускается — ошибка загрузки. Сначала повторите запуск в чате.';
+
+  @override
   String get themeConsentTitle => 'Применить тему?';
 
   @override
