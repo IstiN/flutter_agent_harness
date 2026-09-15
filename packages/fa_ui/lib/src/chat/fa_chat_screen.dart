@@ -520,6 +520,9 @@ class _FaChatScreenState extends State<FaChatScreen>
     if (widget.features.secretRequests) {
       service.secretRequestHandler = _handleSecretRequest;
     }
+    // Password asks (issue #367): masked sheet above the composer; the
+    // value streams to the live process stdin, never into the composer.
+    service.passwordPromptHandler = _handlePasswordPrompt;
   }
 
   void _unsubscribeFromService(FaChatService service) {
@@ -535,6 +538,9 @@ class _FaChatScreenState extends State<FaChatScreen>
     }
     if (service.secretRequestHandler == _handleSecretRequest) {
       service.secretRequestHandler = null;
+    }
+    if (service.passwordPromptHandler == _handlePasswordPrompt) {
+      service.passwordPromptHandler = null;
     }
   }
 
@@ -554,6 +560,11 @@ class _FaChatScreenState extends State<FaChatScreen>
   ) {
     if (!mounted) return Future.value(null);
     return showSecretRequestSheet(context, name, reason);
+  }
+
+  Future<String?> _handlePasswordPrompt(String prompt) {
+    if (!mounted) return Future.value(null);
+    return showPasswordPromptSheet(context, prompt);
   }
 
   @override

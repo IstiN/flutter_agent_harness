@@ -625,8 +625,9 @@ class AgentService extends ChangeNotifier
       ...builtinTools(
         toolEnv,
         webSearch: isOnDevice ? null : webSearchConfig,
-        model: () => _agent.state.model,
         shellJobs: _shellJobs,
+        onPasswordPrompt:
+            (prompt) async => passwordPromptHandler?.call(prompt),
         // Self-configuration on every host (issue #29 S5/AC10/AC11): the
         // same core the `fa config` CLI verbs wrap, over THIS host's env —
         // desktop container, browser storage, or mobile sandbox. Hosts
@@ -1000,6 +1001,9 @@ class AgentService extends ChangeNotifier
   /// the safe headless default.
   @override
   RequestSecretCallback? secretRequestHandler;
+
+  @override
+  PasswordPromptCallback? passwordPromptHandler;
 
   /// Jump-to-message executor installed by the scrolling chat surface
   /// (issue #102 AC5: the ✦ sheet scrolls a widget's message into view).

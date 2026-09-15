@@ -113,6 +113,13 @@ abstract interface class FaChatService implements FaApprovalModeController {
   RequestSecretCallback? get secretRequestHandler;
   set secretRequestHandler(RequestSecretCallback? handler);
 
+  /// UI hook for a mid-run password ask (issue #367): the bash tool calls
+  /// it when the detector sees a prompt; the sheet's value is streamed to
+  /// the live process stdin. `null` -> the ask resolves as declined (the
+  /// tool writes a bare newline), the safe headless default.
+  PasswordPromptCallback? get passwordPromptHandler;
+  set passwordPromptHandler(PasswordPromptCallback? handler);
+
   /// Jump-to-message executor: scrolls the transcript so the message with
   /// [messageId] is in view. The chat screen installs the handler; null
   /// outside a scrolling chat surface (tests, embedded previews).
