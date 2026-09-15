@@ -15,6 +15,7 @@ import '../session/session_record.dart';
 import '../session/session_repo.dart';
 import '../session/session_tree.dart';
 import '../trajectory/formatters.dart';
+import '../trajectory/trajectory_blobs.dart';
 import '../trajectory/trajectory_record.dart';
 import '../trajectory/trajectory_snapshot.dart';
 import '../trajectory/trajectory_snapshot_builder.dart';
@@ -264,9 +265,9 @@ List<String>? trajectoryInspectLines(TrajectorySnapshot snapshot, int index) {
   ];
   switch (record) {
     case final TrajectorySystemRecord r:
-      _inspectSystem(lines, r);
+      _inspectSystem(lines, r, snapshot.blobs);
     case final TrajectoryAssistantRecord r:
-      _inspectAssistant(lines, r);
+      _inspectAssistant(lines, r, snapshot.blobs);
     case final TrajectoryToolRecord r:
       _inspectTool(lines, r);
     case final TrajectoryUserRecord r:
@@ -295,15 +296,36 @@ void _inspectDuration(List<String> lines, Duration? timeSeconds) {
   );
 }
 
-void _inspectSystem(List<String> lines, TrajectorySystemRecord r) {
+void _inspectSystem(
+  List<String> lines,
+  TrajectorySystemRecord r,
+  TrajectoryBlobTable blobs,
+) {
   _inspectSection(lines, 'change', r.change.name);
   _inspectSection(lines, 'text', r.text);
   _inspectSection(lines, 'time', r.time?.toIso8601String());
   _inspectSection(lines, 'detail', r.detail);
   _inspectSection(lines, 'error', r.errorMessage);
+  _inspectPromptSection(
+    lines,
+    r.systemPromptHash,
+    blobs,
+    previous: r.previousSystemPromptHash,
+  );
+  _inspectManifestSection(
+    lines,
+    r.toolManifestHash,
+    blobs,
+    previous: r.previousToolManifestHash,
+  );
+  _inspectSection(lines, 'tools', r.activeToolNames?.join(', '));
 }
 
-void _inspectAssistant(List<String> lines, TrajectoryAssistantRecord r) {
+void _inspectAssistant(
+  List<String> lines,
+  TrajectoryAssistantRecord r,
+  TrajectoryBlobTable blobs,
+) {
   lines[0] += ' · turn ${r.turn} · step ${r.step}';
   _inspectSection(
     lines,
@@ -318,10 +340,123 @@ void _inspectAssistant(List<String> lines, TrajectoryAssistantRecord r) {
   _inspectSection(lines, 'completed', r.completedTime?.toIso8601String());
   _inspectDuration(lines, r.timeSeconds);
   _inspectAssistantUsage(lines, r);
+  _inspectRequestBlobs(lines, r, blobs);
   _inspectSection(lines, 'input', r.inputDetail);
   _inspectSection(lines, 'output', r.outputDetail);
   _inspectSection(lines, 'thinking', r.thinkingDetail);
   if (r.isError == true) _inspectSection(lines, 'error', r.errorMessage);
+}
+
+/// The request-blob pointers for an assistant row (issue #385 AC9): the
+/// prompt/manifest/wire-dump hashes the request references, with the
+/// resolved sizes when the blob table holds them (E6: absent hashes print
+/// as pointers only — never as fake content).
+void _inspectRequestBlobs(
+  List<String> lines,
+  TrajectoryAssistantRecord r,
+  TrajectoryBlobTable blobs,
+) {
+  final detail = r.requestDetail;
+  if (detail == null) return;
+  _inspectPromptSection(lines, detail.systemPromptHash, blobs, previous: null);
+  final manifestHash = detail.toolManifestHash;
+  if (manifestHash != null) {
+    final blob = blobs.toolManifests[manifestHash];
+    _inspectSection(
+      lines,
+      'manifest',
+      blob == null
+          ? manifestHash
+          : '$manifestHash · ${blob.tools.length} tools',
+    );
+  }
+  final wireHash = detail.wireDumpHash;
+  if (wireHash != null) {
+    final dump = blobs.wireDumps[wireHash];
+    _inspectSection(
+      lines,
+      'wire dump',
+      dump == null
+          ? wireHash
+          : '$wireHash · ${dump.payload.length} chars${dump.truncated ? ' · truncated' : ''}',
+    );
+  }
+}
+
+/// The system-prompt blob section for a system row (issue #385 AC9):
+/// the full prompt text, or the unified diff against the previous version
+/// when the row records one — the CLI mirror of the UI's System-prompt
+/// tab. Hash-only when the blob is absent (E6).
+void _inspectPromptSection(
+  List<String> lines,
+  String? promptHash,
+  TrajectoryBlobTable blobs, {
+  String? previous,
+}) {
+  if (promptHash == null) return;
+  final blob = blobs.systemPrompts[promptHash];
+  if (blob == null) {
+    _inspectSection(lines, 'system prompt', promptHash);
+    return;
+  }
+  lines.add('system prompt: $promptHash · ${blob.text.length} chars');
+  final previousBlob = previous == null ? null : blobs.systemPrompts[previous];
+  if (previousBlob != null) {
+    lines.add('diff vs $previous:');
+    for (final line in trajectoryPromptDiff(previousBlob.text, blob.text)) {
+      final sign = switch (line.kind) {
+        'added' => '+',
+        'removed' => '-',
+        'ellipsis' => '…',
+        _ => ' ',
+      };
+      lines.add('  $sign${line.text}');
+    }
+    return;
+  }
+  for (final line in blob.text.split('\n')) {
+    lines.add('  $line');
+  }
+}
+
+/// The tools-manifest section for a `toolsChange` system row (issue #385
+/// AC9/AC3): added/removed/modified tool names against the previous
+/// manifest, then the full name/description/schema list — the CLI mirror
+/// of the UI's Tools tab.
+void _inspectManifestSection(
+  List<String> lines,
+  String? manifestHash,
+  TrajectoryBlobTable blobs, {
+  String? previous,
+}) {
+  if (manifestHash == null) return;
+  final blob = blobs.toolManifests[manifestHash];
+  if (blob == null) {
+    _inspectSection(lines, 'tool manifest', manifestHash);
+    return;
+  }
+  final previousBlob = previous == null ? null : blobs.toolManifests[previous];
+  lines.add('tool manifest: $manifestHash · ${blob.tools.length} tools');
+  if (previousBlob != null) {
+    final diff = trajectoryToolManifestDiff(previousBlob, blob);
+    if (diff.added.isNotEmpty) {
+      lines.add('  + ${diff.added.join(', ')}');
+    }
+    if (diff.removed.isNotEmpty) {
+      lines.add('  - ${diff.removed.join(', ')}');
+    }
+    if (diff.modified.isNotEmpty) {
+      lines.add('  ~ ${diff.modified.join(', ')}');
+    }
+  }
+  for (final tool in blob.tools) {
+    lines.add('  ${tool.name}: ${tool.description}');
+    if (tool.schemaJson.length <= 200) {
+      lines.add('    ${tool.schemaJson}');
+    } else {
+      lines.add('    [schema ${tool.schemaJson.length} chars]');
+    }
+  }
 }
 
 /// The `tokens`/`cost` sections: per-bucket counts preferring the captured

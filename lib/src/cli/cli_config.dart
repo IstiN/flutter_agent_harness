@@ -69,6 +69,28 @@ ProviderTimeoutsOverride? _parseProviderTimeouts(Object? node) {
 /// The cap must stay at or above the compaction reserve (16384 tokens):
 /// the compaction trigger is `window - reserve`, and a smaller cap would
 /// drive that threshold negative.
+/// Parses the `trajectory:` section (issue #385): today only the
+/// `wireDump` boolean. Unknown keys are strict errors (a typo must never
+/// silently skip the opt-in).
+bool _parseTrajectorySection(Object? node) {
+  if (node == null) return false;
+  if (node is! YamlMap) {
+    throw ConfigException('trajectory must be a map, got: $node');
+  }
+  var wireDump = false;
+  for (final key in node.keys) {
+    if (key != 'wireDump') {
+      throw ConfigException('unknown "trajectory" key: $key');
+    }
+    final value = node[key];
+    if (value is! bool) {
+      throw ConfigException('"trajectory.wireDump" must be a boolean');
+    }
+    wireDump = value;
+  }
+  return wireDump;
+}
+
 int? _parseAgentSection(Object? node) {
   if (node == null) return null;
   if (node is! YamlMap) {
@@ -173,6 +195,7 @@ final class CliConfig {
     this.tools,
     this.redact,
     this.compactionEngine,
+    this.wireDump = false,
     this.images,
     this.contextWindowCap,
     this.powerSleepPrevention,
@@ -265,6 +288,9 @@ final class CliConfig {
         map['compaction'],
         label: '~/.fah/config.yaml',
       ),
+      // The trajectory section (issue #385) is a plain boolean today:
+      // `wireDump` opts the raw outbound payloads into the session ledger.
+      wireDump: _parseTrajectorySection(map['trajectory']),
       images: _parseImagesSection(map['images']),
       powerSleepPrevention: powerSection.sleepPrevention,
       powerHold: powerSection.hold,
@@ -415,6 +441,12 @@ final class CliConfig {
   /// the effective engine resolves global < project < runtime.
   final CompactionEngine? compactionEngine;
 
+  /// Optional `trajectory:` section (issue #385) — `wireDump: true` opts
+  /// the raw outbound request payloads into the session ledger as
+  /// redacted, capped `trajectory_wire_dump` records. Default false:
+  /// payloads are never persisted unconditionally.
+  final bool wireDump;
+
   /// Optional `redact:` section — layered secret redaction. `null` means
   /// the section is absent (redaction still runs with default config; the
   /// pipeline assembly happens in the host startup, see
@@ -477,6 +509,7 @@ final class CliConfig {
       tools: tools,
       redact: redact,
       compactionEngine: compactionEngine,
+      wireDump: wireDump,
       images: images,
       contextWindowCap: contextWindowCap,
       powerSleepPrevention: powerSleepPrevention,
@@ -545,6 +578,7 @@ final class CliConfig {
     if (compactionEngine != null) {
       buffer.write('compaction:\n  engine: ${compactionEngine!.value}\n');
     }
+    if (wireDump) buffer.write('trajectory:\n  wireDump: true\n');
     if (images != null) buffer.write(_imagesYaml());
     if (contextWindowCap != null) {
       buffer.write('agent:\n  contextWindowCap: $contextWindowCap\n');
@@ -802,6 +836,25 @@ CompactionEngine? loadProjectCompactionEngine(String projectDir) {
       doc['compaction'],
       label: '$projectDir/.fah/config.yaml',
     );
+  } on ConfigException {
+    rethrow;
+  } on Object {
+    return null;
+  }
+}
+
+/// Loads the PROJECT-level `trajectory:` section's `wireDump` flag from
+/// `<projectDir>/.fah/config.yaml` (issue #385). Null when the file or the
+/// section is absent/unreadable; a present-but-invalid section throws
+/// [ConfigException] (strict, like the user config).
+bool? loadProjectWireDump(String projectDir) {
+  final file = File('$projectDir/.fah/config.yaml');
+  if (!file.existsSync()) return null;
+  try {
+    final doc = loadYaml(file.readAsStringSync());
+    if (doc is! YamlMap) return null;
+    final node = doc['trajectory'];
+    return node == null ? null : _parseTrajectorySection(node);
   } on ConfigException {
     rethrow;
   } on Object {
