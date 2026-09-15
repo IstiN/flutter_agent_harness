@@ -184,7 +184,9 @@ final class StructuredCompactor {
       );
       if (ids.isEmpty) break;
       // ignore: avoid_print
-      print('HIDEDBG pass=$i before=$before trigger=$trigger hideable=${_hideableEntries(view.ledger).length} picks=${picks.length} ids=${ids.length} ledger=${view.ledger.entries.length}');
+      print(
+        'HIDEDBG pass=$i before=$before trigger=$trigger hideable=${_hideableEntries(view.ledger).length} picks=${picks.length} ids=${ids.length} ledger=${view.ledger.entries.length}',
+      );
 
       await session.appendHiddenRange(recordIds: ids.toList()..sort());
       final after = await _refreshState();
@@ -295,18 +297,10 @@ final class StructuredCompactor {
     return _requestTokens();
   }
 
-  /// Picks the next checkpoint range: the oldest PROJECTED records up to
-  /// the keep-recent boundary, snapped inward to pair groups.
-  ///
-  /// Issue #387: the walk projects HIDDEN records at their marker size —
-  /// a checkpoint covering a marker run consolidates the per-record
-  /// marker lines into one text summary, so marker overhead cannot grow
-  /// without bound. Without this, hide passes accumulate one-line
-  /// markers that no later pass ever folds (they are invisible to the
-  /// ledger), and the wire payload creeps back toward the window.
-  Future<_CkptRange?> _pickCheckpointRange() async {
-    final view = await _buildView();
-    if (view == null) return null;
+  /// Projects the view path into sized entries: visible records at their
+  /// full token cost, hidden ones at their marker's (issue #387 - a
+  /// checkpoint must see the marker bytes it would consolidate).
+  List<_ProjectedEntry> _projectedEntries(_LedgerView view) {
     final projected = <_ProjectedEntry>[];
     for (final record in view.path) {
       if (!view.state.isCovered(record.id) && _projects(record)) {
@@ -320,6 +314,22 @@ final class StructuredCompactor {
         );
       }
     }
+    return projected;
+  }
+
+  /// Picks the next checkpoint range: the oldest PROJECTED records up to
+  /// the keep-recent boundary, snapped inward to pair groups.
+  ///
+  /// Issue #387: the walk projects HIDDEN records at their marker size —
+  /// a checkpoint covering a marker run consolidates the per-record
+  /// marker lines into one text summary, so marker overhead cannot grow
+  /// without bound. Without this, hide passes accumulate one-line
+  /// markers that no later pass ever folds (they are invisible to the
+  /// ledger), and the wire payload creeps back toward the window.
+  Future<_CkptRange?> _pickCheckpointRange() async {
+    final view = await _buildView();
+    if (view == null) return null;
+    final projected = _projectedEntries(view);
     if (projected.isEmpty) return null;
 
     // The protected tail: newest projected bytes totalling the keep-recent
@@ -491,7 +501,13 @@ List<SessionRecord> classicTransform(List<SessionRecord> path) {
 }
 
 final class _LedgerView {
-  const _LedgerView(this.ledger, this.state, this.visible, this.seqs, this.path);
+  const _LedgerView(
+    this.ledger,
+    this.state,
+    this.visible,
+    this.seqs,
+    this.path,
+  );
 
   final ContextLedger ledger;
   final StructuredViewState state;

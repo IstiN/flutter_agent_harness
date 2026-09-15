@@ -1165,7 +1165,7 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
   var pairingHealed = false;
   // Hardening over pi: short-circuit an already-cancelled token instead of
   // relying on the provider to surface the abort as an error event.
-  if (cancelToken != null && cancelToken.isCancelled) {
+  if (_isCancelRequested(cancelToken)) {
     return await _abortedTurn(context, config, emit);
   }
   for (var attempt = 0; ; attempt++) {
@@ -1295,6 +1295,10 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
     );
   }
 }
+
+/// Whether the run was cancelled before its request went out.
+bool _isCancelRequested(CancelToken? cancelToken) =>
+    cancelToken != null && cancelToken.isCancelled;
 
 /// The already-cancelled turn: no request leaves the loop.
 Future<(AssistantMessage, Context)> _abortedTurn(
