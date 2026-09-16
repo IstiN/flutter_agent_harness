@@ -31,7 +31,8 @@
   real-CLI headless e2e (mock LLM): yolo executes `rm -f /tmp/…` silently,
   `rm -rf /` is still intercepted and denied. Fixes #460.
 
-## Unreleased
+## 0.1.398
+
 - feat(458): tool output cards clamp to a 3-line preview — long dumps no
   longer evict the conversation. A card shows the first 3 lines plus a
   `+N lines` hint (stable height regardless of dump size); tapping
@@ -44,6 +45,7 @@
   width); the host-locked `apps_fa_chat_overlay_rich*` frames need a
   macOS `--update-goldens` pass (the seeded `read`/thinking tiles now
   clamp to 3 lines).
+
 ## 0.1.392
 
 
@@ -3719,6 +3721,8 @@
 - refactor(486): [GATE] CRAP descent #10 - six service monitors (#504)
 - fix(sandbox): split sandbox_builtins.dart under the 2800-line gate via part files (#512)
 - feat(462): modernize sessions icon — A4b «Modern pair + dots» (#509)
+
+## Unreleased
 
 ## Unreleased
 
