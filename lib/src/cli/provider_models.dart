@@ -125,8 +125,7 @@ extension on AgentCli {
           contextWindow: _resolvedContextWindow(entries[i].$1, entries[i].$2),
           cost: _resolvedPricing(entries[i].$1, entries[i].$2),
           isCurrent:
-              entries[i].$1 == current.provider &&
-              entries[i].$2 == current.id,
+              entries[i].$1 == current.provider && entries[i].$2 == current.id,
         ),
     ];
     return buildModelPickerTable(rows, width);
@@ -154,7 +153,8 @@ extension on AgentCli {
       if (reported != null) return reported;
     }
     final kind = _catalogKindForProviderName(provider);
-    final fromCatalog = remoteCatalogEnrichment.cached
+    final fromCatalog = remoteCatalogEnrichment
+        .cached
         ?.providers[kind ?? '']
         ?.contextWindows[modelId];
     if (fromCatalog != null) return fromCatalog;
@@ -171,7 +171,9 @@ extension on AgentCli {
       _catalogKindForProviderName(provider),
       modelId,
     );
-    return pricing == null ? null : (input: pricing.input, output: pricing.output);
+    return pricing == null
+        ? null
+        : (input: pricing.input, output: pricing.output);
   }
 
   /// The distinct provider names behind the cross-provider candidates, in
@@ -1341,6 +1343,14 @@ const _knownModels = <String, List<String>>{
   'anthropic': ['claude-sonnet-4-5', 'claude-opus-4', 'claude-haiku-4'],
   'google': ['gemini-2.5-pro', 'gemini-2.0-flash'],
   'openai': ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini'],
+};
+
+/// Model ids the CLI can put on screen WITHOUT any user config — the
+/// offline fallback catalog above. The cli_visual leak guard subtracts
+/// these from the real-config markers so a hermetic screen is never
+/// flagged for bundled-catalog content (issue #508).
+Set<String> get bundledCatalogModelIds => {
+  for (final ids in _knownModels.values) ...ids,
 };
 
 /// Formats a token count as a compact preset label (`4K`, `16K`, `1M`).

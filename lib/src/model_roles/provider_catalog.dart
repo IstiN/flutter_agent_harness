@@ -263,6 +263,16 @@ List<String> enabledProviderNames() => [
   for (final spec in enabledProviders()) spec.name,
 ];
 
+/// Provider base URLs the CLI can show WITHOUT any user config — the
+/// catalog's default endpoints above. The cli_visual leak guard subtracts
+/// these from the real-config markers so a hermetic screen rendering the
+/// provider picker is never flagged for bundled-catalog content
+/// (issue #508).
+Set<String> get bundledCatalogEndpoints => {
+  for (final spec in enabledProviders())
+    if (spec.defaultBaseUrl.isNotEmpty) spec.defaultBaseUrl,
+};
+
 /// Resolves [name] against the [providerCatalog], honoring the build-time
 /// provider filter (`FA_PROVIDERS` — filtered names resolve to null and the
 /// error paths list only the enabled providers).
