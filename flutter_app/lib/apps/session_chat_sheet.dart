@@ -22,6 +22,7 @@ import 'package:fa_ui/fa_ui.dart'
 import 'package:path/path.dart' as p;
 
 import 'package:fa/apps/dynamic_widget_tile.dart';
+import 'package:fa/apps/dynamic_widget_graduation.dart';
 import 'package:fa/apps/fa_work_bar.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/chat_text_store.dart';
@@ -1714,6 +1715,10 @@ class _SessionTranscriptState extends State<_SessionTranscript>
               dynamicWidgetTileBuilder: (context, message) => DynamicWidgetTile(
                 service: widget.service.dynamicMessages,
                 message: message,
+                // Issue #457 AC3: the launcher panel graduates through the
+                // shared helper — no greyed-out "Save as app" here.
+                onSaveAsApp: (definition) =>
+                    graduateDynamicWidget(context, widget.service, definition),
               ),
             );
           },
