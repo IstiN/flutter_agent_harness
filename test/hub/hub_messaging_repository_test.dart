@@ -149,6 +149,42 @@ class _DeafTransport implements HubTransport {
   }
 }
 
+/// A socket that swallows everything: the hello never reaches a hub, so
+/// the handshake waits on welcome. [kill] drops the link mid-handshake —
+/// the welcome-waiter side of _failWaiters.
+class _HandshakeStubSocket implements HubSocket {
+  final _messages = StreamController<String>.broadcast();
+
+  @override
+  Stream<String> get messages => _messages.stream;
+
+  @override
+  bool get isOpen => !_messages.isClosed;
+
+  @override
+  Future<void> send(String text) async {}
+
+  @override
+  Future<void> close() => _messages.close();
+
+  void kill() => _messages.close();
+}
+
+/// A transport handing out [_HandshakeStubSocket]s; [refuse] makes the
+/// next dial throw so a drop STAYS a drop.
+class _NoWelcomeTransport implements HubTransport {
+  final sockets = <_HandshakeStubSocket>[];
+  bool refuse = false;
+
+  @override
+  Future<HubSocket> connect(Uri url) async {
+    if (refuse) throw StateError('gate closed');
+    final socket = _HandshakeStubSocket();
+    sockets.add(socket);
+    return socket;
+  }
+}
+
 void main() {
   late FakeHub hub;
 
@@ -444,6 +480,32 @@ void main() {
         });
       },
     );
+    test('a drop mid-handshake fails the welcome wait (no hang), logs, '
+        'retries', () async {
+      final transport = _NoWelcomeTransport();
+      final logs = <String>[];
+      final repo = HubMessagingRepository(
+        url: hub.url,
+        transport: transport,
+        backoff: testBackoff,
+        onLog: logs.add,
+      );
+      addTearDown(repo.dispose);
+      await repo.start();
+      // The hello is swallowed: the handshake sits on the welcome
+      // completer while the link looks alive.
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(transport.sockets, isNotEmpty);
+
+      transport.refuse = true;
+      transport.sockets.first.kill();
+      // The drop must fail the welcome completer (the handshake catch
+      // logs exactly this) instead of hanging to the 10 s reply timeout.
+      await waitUntil(
+        () => logs.any((l) => l.contains('hub handshake failed')),
+      );
+      expect(repo.isConnected, isFalse);
+    });
   });
 
   test(
@@ -550,9 +612,11 @@ void main() {
         addTearDown(repo.dispose);
         await waitUntil(() => repo.isConnected);
 
-        // The whois and presence frames are swallowed: both calls stay
-        // pending until the link drops. The outcome wrappers capture the
-        // failure BEFORE the drop so the zone sees no unhandled error.
+        // The presence frames are swallowed: those calls stay pending
+        // until the link drops. A DM to an unknown peer whoises first
+        // (the send path) — a genuine pending whois waiter. The outcome
+        // wrappers capture the failure BEFORE the drop so the zone sees
+        // no unhandled error.
         final whois = repo
             .resolveTarget('a1b2c3d4e5f60718')
             .then((_) => 'resolved', onError: (Object e) => '$e');
@@ -560,12 +624,24 @@ void main() {
           (_) => 'listed',
           onError: (Object e) => '$e',
         );
+        final dm = repo
+            .send(
+              AgentMessage(
+                id: 'w1',
+                fromId: 'main',
+                toId: 'a1b2c3d4e5f60718',
+                text: 'needs a whois first',
+                sentAt: DateTime.now().toUtc().toIso8601String(),
+              ),
+            )
+            .then((_) => 'sent', onError: (Object e) => '$e');
         // Let the request frames settle so every waiter has its listener
         // attached before the drop (the race this test is NOT about).
         await Future<void>.delayed(const Duration(milliseconds: 50));
         await hub.stop();
         expect(await whois, contains('hub link down'));
         expect(await roster, contains('hub link down'));
+        expect(await dm, contains('hub link down'));
       },
     );
   });
