@@ -93,7 +93,8 @@
       "test/trajectory/trajectory_layout_test.dart",
       "test/ttsr/ttsr_controller_test.dart",
       "test/web_search/duckduckgo_test.dart",
-      "test/web_search/pubdev_handler_test.dart"
+      "test/web_search/pubdev_handler_test.dart",
+      "test/cli/fa_tui_waiting_row_test.dart"
     ],
     [
       "test/a2a/a2a_mail_gateway_test.dart",
@@ -188,7 +189,8 @@
       "test/trajectory/trajectory_preview_test.dart",
       "test/ttsr/ttsr_manager_test.dart",
       "test/web_search/html_markdown_test.dart",
-      "test/web_search/web_fetch_tool_test.dart"
+      "test/web_search/web_fetch_tool_test.dart",
+      "test/cli/agent_cli_waiting_integration_test.dart"
     ],
     [
       "test/a2a/a2a_manager_backend_test.dart",
@@ -377,7 +379,8 @@
       "test/trajectory/trajectory_export_test.dart",
       "test/ttsr/ttsr_config_test.dart",
       "test/usage_summary_test.dart",
-      "test/web_search/providers_test.dart"
+      "test/web_search/providers_test.dart",
+      "test/cli/waiting_heartbeat_test.dart"
     ]
   ],
   "meta": {
@@ -755,6 +758,7 @@
       "test/web_search/pubdev_handler_test.dart": 1.0,
       "test/web_search/web_fetch_tool_test.dart": 1.0,
       "test/web_search/web_search_tool_test.dart": 1.0
-    }
+    },
+    "note": "+issue-450 visible-waiting tests"
   }
 }

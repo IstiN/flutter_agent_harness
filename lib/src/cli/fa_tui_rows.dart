@@ -145,73 +145,97 @@ extension _TuiRowRenderers on FaTuiModel {
   }
 
   int _writeBusyAndQueue(StringBuffer b, int baseRow) {
+    var row = baseRow;
     // Scheduled follow-ups sit ON TOP of the working row (issue #115) and
     // stay visible while idle — a pending reminder is exactly what the user
     // needs to see when nothing else is happening.
-    var row = baseRow;
     if (scheduledCount > 0) {
       b.writeln(_scheduledRowLine());
       row++;
     }
-    // The background-job board's live region (issue #429): dim summary +
-    // live rows, clipped per frame at the live width (resize-safe).
+    row = _writeJobBoard(b, row);
+    row = _writeWaitingRows(b, row);
+    row = _writeBusyRow(b, row);
+    row = _writeQueueRows(b, row);
+    row = _writeAttachmentChips(b, row);
+    b.writeln(_dim('─' * termWidth));
+    return row + 1 - baseRow;
+  }
+
+  /// The background-job board's live region (issue #429): dim summary +
+  /// live rows, clipped per frame at the live width (resize-safe).
+  int _writeJobBoard(StringBuffer b, int row) {
     for (final line in jobBoardLines) {
-      final clipped = line.length > termWidth - 2
-          ? '${line.substring(0, termWidth - 3)}…'
-          : line;
-      b.writeln(_dim(clipped));
+      b.writeln(_dim(_clipToWidth(line)));
       row++;
     }
-    // The visible-waiting row (issue #450): WHAT the agent waits for,
-    // while idle. The busy row owns the screen while working — the waiting
-    // row yields to it (E3) and re-renders on the next waiter change.
+    return row;
+  }
+
+  /// The visible-waiting row (issue #450): WHAT the agent waits for,
+  /// while idle. The busy row owns the screen while working — the waiting
+  /// row yields to it (E3) and re-renders on the next waiter change.
+  int _writeWaitingRows(StringBuffer b, int row) {
     for (final line in _waitingRowLines()) {
       b.writeln(line);
       row++;
     }
+    return row;
+  }
+
+  /// The working indicator: the busy row owns the screen while a turn runs.
+  int _writeBusyRow(StringBuffer b, int row) {
     if (busy) {
       b.writeln(_busyRowLine());
       row++;
     }
-    if (queue.isNotEmpty) {
-      // The count badge is the "your typing is not lost" contract (AC2).
-      b.writeln(_dim('⏵ queued (${queue.length})'));
-      row++;
-      for (var q = 0; q < queue.length; q++) {
-        final flat = queue[q].text.replaceAll('\n', ' ');
-        final badge = queue[q].steer ? '⤳ [steer] ' : '❯ ';
-        final line = '$badge$flat';
-        final clipped = line.length > termWidth - 2
-            ? '${line.substring(0, termWidth - 3)}…'
-            : line;
-        b.writeln(_dim(clipped));
-        _hitRegions.add(
-          TuiHitRegion(
-            x: 0,
-            y: row,
-            w: termWidth,
-            h: 1,
-            kind: TuiRegionKind.queueRow,
-            index: q,
-          ),
-        );
-        row++;
-      }
-      b.writeln(_dim('↑ edit · ctrl+x delete · ctrl-s send immediately'));
-      row++;
-    }
-    if (attachments.isNotEmpty) {
-      for (final attachment in attachments) {
-        b.writeln(_accent2Plain(attachment.chip));
-        row++;
-      }
-      b.writeln(_dim('chips send with your next message'));
-      row++;
-    }
-    b.writeln(_dim('─' * termWidth));
-    row++;
-    return row - baseRow;
+    return row;
   }
+
+  /// Queued submissions with their per-row hit regions: the count badge is
+  /// the "your typing is not lost" contract (AC2).
+  int _writeQueueRows(StringBuffer b, int row) {
+    if (queue.isEmpty) return row;
+    b.writeln(_dim('⏵ queued (${queue.length})'));
+    row++;
+    for (var q = 0; q < queue.length; q++) {
+      final flat = queue[q].text.replaceAll('\n', ' ');
+      b.writeln(_dim(_clipToWidth('${_queueBadge(queue[q].steer)}$flat')));
+      _hitRegions.add(
+        TuiHitRegion(
+          x: 0,
+          y: row,
+          w: termWidth,
+          h: 1,
+          kind: TuiRegionKind.queueRow,
+          index: q,
+        ),
+      );
+      row++;
+    }
+    b.writeln(_dim('↑ edit · ctrl+x delete · ctrl-s send immediately'));
+    return row + 1;
+  }
+
+  /// Attachment chips send with the user's next message.
+  int _writeAttachmentChips(StringBuffer b, int row) {
+    if (attachments.isEmpty) return row;
+    for (final attachment in attachments) {
+      b.writeln(_accent2Plain(attachment.chip));
+      row++;
+    }
+    b.writeln(_dim('chips send with your next message'));
+    return row + 1;
+  }
+
+  /// The `steer` badge on a queued submission: steering entries read
+  /// differently from plain queued sends.
+  static String _queueBadge(bool steer) => steer ? '⤳ [steer] ' : '❯ ';
+
+  /// Clips a live row to the frame width, ellipsising the tail (resize-safe).
+  String _clipToWidth(String line) => line.length > termWidth - 2
+      ? '${line.substring(0, termWidth - 3)}…'
+      : line;
 
   /// The scheduled follow-ups indicator line (one dim row): count + the
   /// nearest ETA, styled after the busy row so it reads as one family.
