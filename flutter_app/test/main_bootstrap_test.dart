@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:fa/main.dart';
+import 'package:fa/boot/boot_config_codec.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';

@@ -8,7 +8,7 @@
 // and a credential-bearing endpoint without a usable key on THIS surface
 // fails loudly at selection/boot instead of keyless-requesting a
 // cookie-auth gateway.
-import 'package:fa/main.dart';
+import 'package:fa/boot/boot_config_codec.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
