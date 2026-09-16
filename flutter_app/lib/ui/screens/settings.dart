@@ -7,7 +7,7 @@ import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:fa/services/settings_env.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa_ui/fa_ui.dart' as faui;
@@ -70,40 +70,6 @@ import 'package:fa/ui/widgets/wide_layout_shell.dart';
 export 'package:fa_ui/fa_ui.dart'
     show ProviderPreset, ModelIdAutocompleteField, OpenRouterOAuthButton;
 part 'settings_sections.dart';
-
-/// Compile-time configuration injected via `--dart-define`. Values fall back
-/// to the `.env` file (local dev) at runtime — see [settingsEnv].
-const settingsDartDefines = <String, String>{
-  'OPENROUTER_API_KEY': String.fromEnvironment('OPENROUTER_API_KEY'),
-  'MODEL_ID': String.fromEnvironment('MODEL_ID'),
-  'BASE_URL': String.fromEnvironment('BASE_URL'),
-  'HUGGINGFACE_TOKEN': String.fromEnvironment('HUGGINGFACE_TOKEN'),
-};
-
-/// Resolves a configuration default: `--dart-define` wins, then `.env`, then
-/// [fallback].
-String settingsEnv(String name, String fallback) {
-  final dartValue = settingsDartDefines[name];
-  if (dartValue != null && dartValue.isNotEmpty) return dartValue;
-  if (dotenv.isInitialized && dotenv.env.containsKey(name)) {
-    return dotenv.env[name]!;
-  }
-  return fallback;
-}
-
-/// Resolves a key default with the saved-keys store between `--dart-define`
-/// and `.env` (overlay semantics, like `DotEnvSecretsStore`): an explicitly
-/// saved key shadows the dev `.env`, a compile-time define shadows both.
-String settingsKeyEnv(String name, SessionKeysStore? keysStore) {
-  final dartValue = settingsDartDefines[name];
-  if (dartValue != null && dartValue.isNotEmpty) return dartValue;
-  final stored = keysStore?.valueOf(name);
-  if (stored != null && stored.isNotEmpty) return stored;
-  if (dotenv.isInitialized && dotenv.env.containsKey(name)) {
-    return dotenv.env[name]!;
-  }
-  return '';
-}
 
 /// The key-storage notes match the platform: on secure-store surfaces
 /// (iOS/macOS Keychain, Android Keystore — see [KeychainStore]) saved keys
