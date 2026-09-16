@@ -556,10 +556,16 @@ final class FaTuiModel extends Model {
     // whole frame past the physical height and the terminal scrolled stale
     // rows into the composer region (issue #467 artifact evidence).
     final jobBoardH = jobBoardLines.length;
+    // The pinned user echo (Copilot-style sticky) is written ABOVE the
+    // history window — equally unreserved, it overflowed the bottom edge
+    // by its own row count and scrolled the status row into the composer
+    // (owner evidence #2, issue #467).
+    final stickyH = _stickyActive ? _formattedStickyRows(width).length : 0;
     final queueH = queue.isEmpty ? 0 : queue.length + 2;
     final promptH = prompt != null ? tuiPromptRowCount(prompt!, width) + 2 : 0;
     final used =
         progressH +
+        stickyH +
         _menuReservedLines +
         busyH +
         scheduledH +
