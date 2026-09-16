@@ -39,11 +39,18 @@ class FakeChatService extends ChangeNotifier implements FaChatService {
     required List<FaStagedAttachment> attachments,
     String text = '',
   }) async {}
+
+  /// Files handed to [stageAttachment], in order — drop/paste tests assert
+  /// against this log.
+  final List<({String name, Uint8List bytes})> stagedCalls = [];
   @override
   Future<String> stageAttachment({
     required String name,
     required Uint8List bytes,
-  }) async => name;
+  }) async {
+    stagedCalls.add((name: name, bytes: bytes));
+    return name;
+  }
   @override
   Future<void> discardStagedAttachment(String path) async {}
   @override

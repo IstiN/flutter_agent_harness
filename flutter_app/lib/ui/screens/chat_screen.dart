@@ -359,11 +359,12 @@ class _ChatScreenState extends State<ChatScreen> {
               fsRevision: service.fsRevision,
               onProjectMountChanged: service.refreshProjectMountPrompt,
             ),
-      composerBuilder: (context, chatService) => ChatComposer(
+      composerBuilder: (context, chatService, drop) => ChatComposer(
         service: chatService as AgentService,
         uploadPicker: widget.uploadPicker,
         asr: widget.asr,
         asrTranscriber: widget.asrTranscriber,
+        dropBridge: drop,
       ),
       onPermissionAction: (permission, action) {
         if (action == 'openSettings') {
