@@ -258,6 +258,8 @@ final class FaCliHarness {
   }
 
   /// The last 2000 characters of raw output, for timeout diagnostics.
+  String get rawTail => _rawTail();
+
   String _rawTail() {
     final raw = _rawBuffer.toString();
     return raw.length <= 2000 ? raw : raw.substring(raw.length - 2000);

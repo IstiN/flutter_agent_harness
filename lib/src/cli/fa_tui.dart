@@ -2240,7 +2240,26 @@ final class FaTuiModel extends Model {
     // row math (O(n) scan, ZERO allocations — the old split('\n') built a
     // List<String> of every physical row on every frame just to take its
     // length) and the frame body itself.
-    final body = b.toString();
+    var body = b.toString();
+    // Hard glass guard (#503): whatever the sections miscounted, the frame
+    // must NEVER exceed the terminal — in a shorter terminal the rows past
+    // the bottom clamp onto the last row and overwrite the status with
+    // blanks (owner: status gone at 100x10). Drop the overflow from the
+    // TOP (oldest history/padding — the most dispensable rows) so the
+    // bottom chrome always lands on the glass. Frame rows are complete
+    // self-contained lines by construction, so dropping leading lines is
+    // ANSI-safe. Caveat: hit-regions shift by the dropped count on this
+    // rare path; the next frame re-derives them.
+    final paintedRows = _lineCount(body);
+    if (paintedRows > termHeight && termHeight > 0) {
+      var idx = 0;
+      for (var d = paintedRows - termHeight; d > 0; d--) {
+        final nl = body.indexOf('\n', idx);
+        if (nl < 0) break;
+        idx = nl + 1;
+      }
+      body = body.substring(idx);
+    }
     final inputStartRow = _lineCount(body) - 2 - plan.input;
     final cursorRow = inputStartRow + cursorInputLine;
     final cursorX = cursorScreenCol;
