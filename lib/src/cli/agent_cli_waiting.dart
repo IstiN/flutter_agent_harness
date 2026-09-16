@@ -194,37 +194,31 @@ final class _WaitingCoordinator {
   /// running underneath); the next beat after the turn catches up.
   Future<void> _deliverHeartbeat() async {
     final cli = _cli;
-    if (cli._headlessMode || cli._exited || cli.isBusy) return;
-    if (cli._viewer != null) return; // viewers observe, never drive runs
+    if (_beatBlocked || cli._viewer != null) return;
     final snap = await snapshot();
-    if (snap.isEmpty) {
-      _syncHeartbeat(snap);
-      return;
-    }
-    final since = waitingSince;
-    final elapsedMin = since == null ? 0 : _clock().difference(since).inMinutes;
-    cli._startRun(
+    if (!snap.isEmpty) return _runBeat(snap);
+    _syncHeartbeat(snap);
+  }
+
+  /// Idle-only: while busy the busy row already shows what is happening
+  /// (E3 keeps waiters running underneath); the next beat catches up.
+  bool get _beatBlocked => _cli._headlessMode || _cli._exited || _cli.isBusy;
+
+  /// Starts the ONE short status round for an active beat.
+  void _runBeat(WaiterSnapshot snap) {
+    _cli._startRun(
       '<system-notice>Waiting heartbeat: you have been waiting for '
-      '$elapsedMin min. Still pending: ${describe(snap)}. Emit ONE short '
-      'status line to the user about what you are still waiting for '
-      "(e.g. 'still waiting for CI run X, Nm elapsed'). Do not start new "
-      'work unless a waiter resolved.</system-notice>',
+      '${waitingMinutesElapsed(waitingSince, _clock())} min. Still pending: '
+      '${describe(snap)}. Emit ONE short status line to the user about what '
+      "you are still waiting for (e.g. 'still waiting for CI run X, Nm "
+      "elapsed'). Do not start new work unless a waiter resolved."
+      '</system-notice>',
     );
   }
 
   /// One-line human description of a snapshot ("1 background job (…), "
   /// 2 timers armed").
-  String describe(WaiterSnapshot snap) {
-    final parts = <String>[
-      if (snap.jobs.isNotEmpty)
-        '${snap.jobs.length} background job${snap.jobs.length == 1 ? '' : 's'}'
-            ' (${snap.jobs.first})',
-      if (snap.timers.isNotEmpty)
-        '${snap.timers.length} timer${snap.timers.length == 1 ? '' : 's'}'
-            ' armed',
-    ];
-    return parts.isEmpty ? 'nothing' : parts.join(', ');
-  }
+  String describe(WaiterSnapshot snap) => waitingDescribe(snap);
 
   /// The headless detach summary (AC7): exactly the contract's line, on
   /// stderr, whenever waiters outlive the run. The settle notice is NOT
@@ -232,15 +226,7 @@ final class _WaitingCoordinator {
   Future<void> printHeadlessDetachSummary() async {
     final snap = await snapshot();
     if (snap.isEmpty) return;
-    _cli.io.writeln(_summaryLine(snap));
-  }
-
-  String _summaryLine(WaiterSnapshot snap) {
-    final jobs = snap.jobs.length;
-    final timers = snap.timers.length;
-    return '$jobs background job${jobs == 1 ? '' : 's'} detached '
-        '(logs: .fah/bash_jobs/) · '
-        '$timers timer${timers == 1 ? '' : 's'} armed';
+    _cli.io.writeln(waitingDetachSummary(snap));
   }
 
   /// `--wait-for-jobs` (opt-in): stay alive for the waiters, bounded by
@@ -260,7 +246,7 @@ final class _WaitingCoordinator {
       final now = _clock();
       if (!now.isBefore(deadline)) {
         _cli.io.writeln(
-          '⏳ ${_summaryLine(snap)} — wait ceiling ($ceilingMin min)'
+          '⏳ ${waitingDetachSummary(snap)} — wait ceiling ($ceilingMin min)'
           ' reached, exiting',
         );
         return;
@@ -272,7 +258,7 @@ final class _WaitingCoordinator {
       lastHeartbeat = await _beatIfDue(lastHeartbeat, hbMin);
       snap = await snapshot();
     }
-    _cli.io.writeln('⏳ waiters resolved — ${_summaryLine(snap)}');
+    _cli.io.writeln('⏳ waiters resolved — ${waitingDetachSummary(snap)}');
   }
 
   /// Deliver due timers and let any wake turn (job-settle or timer
@@ -368,6 +354,36 @@ Duration nextWakeDelay({
   }
   return delay;
 }
+
+/// One-line human description of a snapshot (issue #450): "1 background
+/// job (…), 2 timers armed". Pure — unit-tested directly.
+String waitingDescribe(WaiterSnapshot snap) {
+  final parts = <String>[
+    if (snap.jobs.isNotEmpty)
+      '${snap.jobs.length} background job'
+          '${snap.jobs.length == 1 ? '' : 's'} (${snap.jobs.first})',
+    if (snap.timers.isNotEmpty)
+      '${snap.timers.length} timer'
+          '${snap.timers.length == 1 ? '' : 's'} armed',
+  ];
+  if (parts.isEmpty) return 'nothing';
+  return parts.join(', ');
+}
+
+/// The headless detach summary line (issue #450 AC7): "N background jobs
+/// detached (logs: .fah/bash_jobs/) · M timers armed". Pure.
+String waitingDetachSummary(WaiterSnapshot snap) {
+  final jobs = snap.jobs.length;
+  final timers = snap.timers.length;
+  return '$jobs background job${jobs == 1 ? '' : 's'} detached '
+      '(logs: .fah/bash_jobs/) · '
+      '$timers timer${timers == 1 ? '' : 's'} armed';
+}
+
+/// Whole minutes elapsed since the current waiting stretch began
+/// (issue #450): 0 while unknown, otherwise floor of the difference. Pure.
+int waitingMinutesElapsed(DateTime? since, DateTime now) =>
+    since == null ? 0 : now.difference(since).inMinutes;
 
 /// Test seams for the visible-waiting layer (issue #450).
 extension AgentCliWaitingSeams on AgentCli {

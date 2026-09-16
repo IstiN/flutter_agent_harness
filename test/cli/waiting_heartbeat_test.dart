@@ -162,4 +162,50 @@ void main() {
       );
     });
   });
+  group('waiting snapshot text', () {
+    test('waitingDescribe counts jobs and timers with grammar', () {
+      expect(
+        waitingDescribe(const WaiterSnapshot(jobs: [], timers: [])),
+        'nothing',
+      );
+      expect(
+        waitingDescribe(
+          const WaiterSnapshot(
+            jobs: ['gh run watch 42'],
+            timers: [(dueMs: 1, preview: 'p')],
+          ),
+        ),
+        '1 background job (gh run watch 42), 1 timer armed',
+      );
+      expect(
+        waitingDescribe(
+          const WaiterSnapshot(
+            jobs: ['a', 'b'],
+            timers: [(dueMs: 1, preview: 'p')],
+          ),
+        ),
+        '2 background jobs (a), 1 timer armed',
+      );
+    });
+    test('waitingDetachSummary uses the exact AC7 shape', () {
+      expect(
+        waitingDetachSummary(const WaiterSnapshot(jobs: [], timers: [])),
+        '0 background jobs detached (logs: .fah/bash_jobs/) · 0 timers armed',
+      );
+      expect(
+        waitingDetachSummary(
+          const WaiterSnapshot(jobs: ['a'], timers: [(dueMs: 1, preview: 'p')]),
+        ),
+        '1 background job detached (logs: .fah/bash_jobs/) · 1 timer armed',
+      );
+    });
+    test('waitingMinutesElapsed floors and defaults to zero', () {
+      final now = DateTime.utc(2026, 1, 1, 12);
+      expect(waitingMinutesElapsed(null, now), 0);
+      expect(
+        waitingMinutesElapsed(now.subtract(const Duration(seconds: 90)), now),
+        1,
+      );
+    });
+  });
 }
