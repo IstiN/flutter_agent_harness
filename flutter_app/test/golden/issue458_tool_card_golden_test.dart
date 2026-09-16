@@ -3,8 +3,8 @@
 // (full output after tapping the hint), and a failed result expanded to
 // the error cap. Each state in light + dark on the phone frame, pumped
 // through the shared golden helper so real bundled fonts render.
-import 'package:fa/ui/app_theme.dart';
-import 'package:fa/ui/widgets/chat_message_tile.dart';
+// Covers the shared chat tile through flutter_app's re-export shim
+// lib/ui/widgets/chat_message_tile.dart (golden_guard coverage entry).
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
