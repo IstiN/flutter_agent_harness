@@ -796,7 +796,7 @@ jobs:
 
       - name: Archive and upload CLI bundle
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
           RELEASE_TAG: ${{ needs.version.outputs.tag }}
         run: |
           set -euo pipefail
@@ -821,7 +821,7 @@ jobs:
       - name: Draft lifecycle guard (delete orphaned draft on failure)
         if: always() && job.status != 'success'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
           RELEASE_TAG: ${{ needs.version.outputs.tag }}
         run: bash scripts/release_draft_guard.sh "$RELEASE_TAG"
 
@@ -858,7 +858,7 @@ jobs:
 
       - name: Upload extension to the release
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
           RELEASE_TAG: ${{ needs.version.outputs.tag }}
         run: |
           set -euo pipefail
@@ -882,7 +882,7 @@ jobs:
       - name: Draft lifecycle guard (delete orphaned draft on failure)
         if: always() && job.status != 'success'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
           RELEASE_TAG: ${{ needs.version.outputs.tag }}
         run: bash scripts/release_draft_guard.sh "$RELEASE_TAG"
 
@@ -997,6 +997,6 @@ jobs:
       - name: Draft lifecycle guard (delete orphaned draft on failure)
         if: always() && job.status != 'success'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
           RELEASE_TAG: ${{ needs.version.outputs.tag }}
         run: bash scripts/release_draft_guard.sh "$RELEASE_TAG"
