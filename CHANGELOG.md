@@ -3678,6 +3678,10 @@
 - fix(467): composer wraps long input, stays inside the screen budget, no artifact cells (#492)
 - refactor(475): CRAP descent #2 - wasm_shell cluster decomposed + covered, ratchet 870->702 (#491)
 
+## 0.1.395
+
+- refactor(482): decompose sandbox_ssh monoliths into parser/executor/lifecycle layers (#498)
+
 ## Unreleased
 
 ## Unreleased
