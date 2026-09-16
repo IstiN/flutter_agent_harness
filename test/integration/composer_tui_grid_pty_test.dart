@@ -172,8 +172,12 @@ allowedTools: []
       String jq(String s) =>
           '"${s.replaceAll(r'\', r'\\').replaceAll('"', r'\"')}"';
       final server = await MockLlmServer.start()
-        ..enqueueToolCall('bash', '{"command": "sleep 20"}')
+        // The 500+ char tool row FIRST: it must be on screen while the
+        // composed line sits in the composer (the documented simultaneity).
         ..enqueueToolCall('bash', '{"command": ${jq(ascii520)}}')
+        // The long sleep keeps the run alive through the whole sampling
+        // window that follows.
+        ..enqueueToolCall('bash', '{"command": "sleep 20"}')
         ..enqueueToolCall('bash', '{"command": ${jq(cjkCommand)}}')
         ..enqueueText('all done');
       addTearDown(server.stop);
@@ -201,15 +205,18 @@ allowedTools: []
         tempHome.deleteSync(recursive: true);
       });
 
-      await harness.waitForBoot();
+      // Start the run with a SHORT message, then compose the 300-char
+      // line mid-run WITHOUT submitting it — the AC watches the composer
+      // hold the wrapped draft while the run ticks (the AC3 flow).
       final composed300 = 'wrap me ' * 43; // 301 chars — several wrapped rows
-      harness.sendText(composed300.substring(0, 300));
+      harness.sendText('run the long sleep now');
       await Future<void>.delayed(const Duration(milliseconds: 150));
       harness.sendEnter();
       await harness.waitForText(
         '· submit',
         timeout: const Duration(seconds: 20),
       );
+      harness.sendText(composed300.substring(0, 300));
       await Future<void>.delayed(const Duration(milliseconds: 2500));
 
       final grids = <List<String>>[
