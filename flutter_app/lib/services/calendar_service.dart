@@ -178,16 +178,7 @@ typedef CalendarRecurrenceArg = ({CalendarRecurrence? rule, bool remove});
 /// actionable message on any invalid combination.
 CalendarRecurrenceArg parseCalendarRecurrence(Object? value) {
   if (value == null) return (rule: null, remove: false);
-  if (value is String) {
-    if (value.trim().toLowerCase() == 'none') {
-      return (rule: null, remove: true);
-    }
-    throw StateError(
-      'invalid recurrence "$value" — pass an object like '
-      '{frequency: "weekly", daysOfWeek: ["MO","WE"]}, or "none" to remove '
-      'the recurrence',
-    );
-  }
+  if (value is String) return _recurrenceFromString(value);
   if (value is! Map) {
     throw StateError(
       'recurrence must be an object like {frequency: "daily"} '
@@ -195,6 +186,26 @@ CalendarRecurrenceArg parseCalendarRecurrence(Object? value) {
     );
   }
   if (value.isEmpty) return (rule: null, remove: true);
+  _checkRecurrenceKeys(value);
+  return (rule: _parseRecurrenceRule(value), remove: false);
+}
+
+/// The string form: only `"none"` (case/space insensitive) is accepted;
+/// any other string names the object shape.
+CalendarRecurrenceArg _recurrenceFromString(String value) {
+  if (value.trim().toLowerCase() == 'none') {
+    return (rule: null, remove: true);
+  }
+  throw StateError(
+    'invalid recurrence "$value" — pass an object like '
+    '{frequency: "weekly", daysOfWeek: ["MO","WE"]}, or "none" to remove '
+    'the recurrence',
+  );
+}
+
+/// Unknown keys are rejected: a typo (`byDay` vs `daysOfWeek`) must not
+/// silently no-op.
+void _checkRecurrenceKeys(Map value) {
   const knownKeys = {
     'frequency',
     'interval',
@@ -211,6 +222,37 @@ CalendarRecurrenceArg parseCalendarRecurrence(Object? value) {
       );
     }
   }
+}
+
+/// The object form, validated field by field in argument order (each
+/// validator throws the [StateError] the platform contract pins);
+/// `until` and `count` are mutually exclusive series ends.
+CalendarRecurrence _parseRecurrenceRule(Map value) {
+  final frequency = _recurrenceFrequency(value);
+  final interval = _recurrenceInterval(value['interval']);
+  final daysOfWeek = _recurrenceDaysOfWeek(value['daysOfWeek'], frequency);
+  final daysOfMonth = _recurrenceDaysOfMonth(value['daysOfMonth'], frequency);
+  final until = _recurrenceUntil(value['until']);
+  final count = _recurrenceCount(value['count']);
+  if (until != null && count != null) {
+    throw StateError(
+      'recurrence takes at most one end: "until" (a date) or "count" '
+      '(a number of occurrences), not both',
+    );
+  }
+  return (
+    frequency: frequency,
+    interval: interval,
+    daysOfWeek: daysOfWeek,
+    daysOfMonth: daysOfMonth,
+    until: until,
+    count: count,
+  );
+}
+
+/// `frequency` is required: `daily`/`weekly`/`monthly`/`yearly`
+/// (case/space insensitive).
+String _recurrenceFrequency(Map value) {
   final frequency = value['frequency']?.toString().trim().toLowerCase() ?? '';
   const frequencies = {'daily', 'weekly', 'monthly', 'yearly'};
   if (!frequencies.contains(frequency)) {
@@ -219,97 +261,91 @@ CalendarRecurrenceArg parseCalendarRecurrence(Object? value) {
       '${frequencies.join(', ')} (got "$frequency")',
     );
   }
-  final intervalValue = value['interval'];
-  final interval = intervalValue == null
+  return frequency;
+}
+
+/// `interval` ≥ 1, default 1; integer-nums truncate, anything else fails.
+int _recurrenceInterval(Object? value) {
+  final interval = value == null
       ? 1
-      : intervalValue is num
-      ? intervalValue.toInt()
+      : value is num
+      ? value.toInt()
       : -1;
   if (interval < 1) {
     throw StateError('recurrence.interval must be an integer >= 1');
   }
-  List<String>? daysOfWeek;
-  final daysOfWeekValue = value['daysOfWeek'];
-  if (daysOfWeekValue != null) {
-    if (frequency != 'weekly') {
-      throw StateError(
-        'recurrence.daysOfWeek only applies to frequency "weekly" — '
-        'drop it or change the frequency',
-      );
-    }
-    if (daysOfWeekValue is! List) {
-      throw StateError('recurrence.daysOfWeek must be a list like ["MO","WE"]');
-    }
-    daysOfWeek = [
-      for (final day in daysOfWeekValue) day.toString().trim().toUpperCase(),
-    ];
-    for (final day in daysOfWeek) {
-      if (!calendarWeekdayCodes.contains(day)) {
-        throw StateError(
-          'invalid recurrence.daysOfWeek entry "$day" — use two-letter '
-          'codes: ${calendarWeekdayCodes.join(', ')}',
-        );
-      }
-    }
-  }
-  List<int>? daysOfMonth;
-  final daysOfMonthValue = value['daysOfMonth'];
-  if (daysOfMonthValue != null) {
-    if (frequency != 'monthly') {
-      throw StateError(
-        'recurrence.daysOfMonth only applies to frequency "monthly" — '
-        'drop it or change the frequency',
-      );
-    }
-    if (daysOfMonthValue is! List) {
-      throw StateError('recurrence.daysOfMonth must be a list like [1, 15]');
-    }
-    daysOfMonth = [
-      for (final day in daysOfMonthValue) day is num ? day.toInt() : -1,
-    ];
-    for (final day in daysOfMonth) {
-      if (day < 1 || day > 31) {
-        throw StateError(
-          'recurrence.daysOfMonth entries must be integers 1-31 (got $day)',
-        );
-      }
-    }
-  }
-  DateTime? until;
-  final untilValue = value['until'];
-  if (untilValue != null) {
-    until = DateTime.tryParse(untilValue.toString().trim());
-    if (until == null) {
-      throw StateError(
-        'invalid recurrence.until "$untilValue" — expected YYYY-MM-DD',
-      );
-    }
-  }
-  int? count;
-  final countValue = value['count'];
-  if (countValue != null) {
-    count = countValue is num ? countValue.toInt() : -1;
-    if (count < 1) {
-      throw StateError('recurrence.count must be an integer >= 1');
-    }
-  }
-  if (until != null && count != null) {
+  return interval;
+}
+
+/// `daysOfWeek` (`MO`..`SU` codes, normalized) applies to weekly rules
+/// only.
+List<String>? _recurrenceDaysOfWeek(Object? value, String frequency) {
+  if (value == null) return null;
+  if (frequency != 'weekly') {
     throw StateError(
-      'recurrence takes at most one end: "until" (a date) or "count" '
-      '(a number of occurrences), not both',
+      'recurrence.daysOfWeek only applies to frequency "weekly" — '
+      'drop it or change the frequency',
     );
   }
-  return (
-    rule: (
-      frequency: frequency,
-      interval: interval,
-      daysOfWeek: daysOfWeek,
-      daysOfMonth: daysOfMonth,
-      until: until,
-      count: count,
-    ),
-    remove: false,
-  );
+  if (value is! List) {
+    throw StateError('recurrence.daysOfWeek must be a list like ["MO","WE"]');
+  }
+  final days = [for (final day in value) day.toString().trim().toUpperCase()];
+  for (final day in days) {
+    if (!calendarWeekdayCodes.contains(day)) {
+      throw StateError(
+        'invalid recurrence.daysOfWeek entry "$day" — use two-letter '
+        'codes: ${calendarWeekdayCodes.join(', ')}',
+      );
+    }
+  }
+  return days;
+}
+
+/// `daysOfMonth` (1–31) applies to monthly rules only; non-nums map to
+/// the -1 sentinel so the range check rejects them.
+List<int>? _recurrenceDaysOfMonth(Object? value, String frequency) {
+  if (value == null) return null;
+  if (frequency != 'monthly') {
+    throw StateError(
+      'recurrence.daysOfMonth only applies to frequency "monthly" — '
+      'drop it or change the frequency',
+    );
+  }
+  if (value is! List) {
+    throw StateError('recurrence.daysOfMonth must be a list like [1, 15]');
+  }
+  final days = [for (final day in value) day is num ? day.toInt() : -1];
+  for (final day in days) {
+    if (day < 1 || day > 31) {
+      throw StateError(
+        'recurrence.daysOfMonth entries must be integers 1-31 (got $day)',
+      );
+    }
+  }
+  return days;
+}
+
+/// `until` is a date/datetime string parseable by [DateTime.tryParse].
+DateTime? _recurrenceUntil(Object? value) {
+  if (value == null) return null;
+  final until = DateTime.tryParse(value.toString().trim());
+  if (until == null) {
+    throw StateError(
+      'invalid recurrence.until "$value" — expected YYYY-MM-DD',
+    );
+  }
+  return until;
+}
+
+/// `count` ≥ 1; integer-nums truncate, anything else fails.
+int? _recurrenceCount(Object? value) {
+  if (value == null) return null;
+  final count = value is num ? value.toInt() : -1;
+  if (count < 1) {
+    throw StateError('recurrence.count must be an integer >= 1');
+  }
+  return count;
 }
 
 /// Parses the `alarms` argument (minutes BEFORE the start, e.g. `[10, 60]`).
