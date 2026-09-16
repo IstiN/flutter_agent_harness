@@ -433,6 +433,11 @@ abstract interface class ShellJob {
   /// The log file receiving the job's stdout and stderr.
   String get logPath;
 
+  /// The job's root process id, when the platform exposes one (null on
+  /// sandboxed shells). Persisted in the cross-run job manifest so a later
+  /// boot can sweep the job's leftover process group (issue #517).
+  int? get pid;
+
   /// Whether the process is still running.
   bool get isRunning;
 
