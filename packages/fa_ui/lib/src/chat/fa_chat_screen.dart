@@ -3,11 +3,8 @@
 // in the LICENSE file.
 
 import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 import 'package:flutter/services.dart';
@@ -22,7 +19,6 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart'
         TrajectorySnapshot;
 import 'package:flutter_chat_core/flutter_chat_core.dart';
 import 'package:flutter_chat_ui/flutter_chat_ui.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../theme/app_theme.dart';
 import '../theme/fa_ui_theme.dart';
@@ -55,10 +51,6 @@ const double kFaChatFilesPanelWidth = 300;
 typedef FaChatComposerBuilder =
     Widget Function(BuildContext context, FaChatService service);
 
-/// The default [FaChatScreen.imagePreviewCacheWidth]: attached-image
-/// previews decode downscaled to 600px wide (a display/memory
-/// optimization; the stored/sent bytes stay full fidelity).
-const kDefaultImagePreviewCacheWidth = 600;
 
 /// A chat UI over a single [FaChatService], built on top of
 /// `flutter_chat_ui`.
@@ -202,27 +194,6 @@ class FaChatScreen extends StatefulWidget {
   State<FaChatScreen> createState() => _FaChatScreenState();
 }
 
-/// The `source` for an attached-image chat message.
-///
-/// On IO platforms the bytes land in a temp file. The web has no `dart:io`
-/// filesystem (`getTemporaryDirectory` throws there — and the resulting
-/// unhandled error used to repeat on every chat sync), so the bytes ride
-/// inside a `data:` URI instead.
-Future<String> chatImageMessageSource(
-  int index,
-  Uint8List bytes, {
-  required bool isWeb,
-}) async {
-  if (isWeb) {
-    return 'data:image/png;base64,${base64Encode(bytes)}';
-  }
-  final tmp = await getTemporaryDirectory();
-  final file = File('${tmp.path}/fah_chat_image_$index.png');
-  if (!file.existsSync() || file.lengthSync() != bytes.length) {
-    await file.writeAsBytes(bytes);
-  }
-  return file.path;
-}
 
 class _FaChatScreenState extends State<FaChatScreen>
     with TickerProviderStateMixin {
@@ -988,18 +959,20 @@ class _FaChatScreenState extends State<FaChatScreen>
 
     switch (chat.role) {
       case 'user':
-        if (chat.imageBytes != null) {
-          final path = await chatImageMessageSource(
-            index,
-            chat.imageBytes!,
-            isWeb: kIsWeb,
-          );
-          return Message.image(
+        // Issue #461: user messages with attachments render through the
+        // shared ChatMessageTile (thumbnails/chips inside the bubble), the
+        // same way every other surface renders them. Text-only messages
+        // keep the plain text row.
+        if (chat.attachments.isNotEmpty) {
+          return Message.custom(
             id: id,
             authorId: 'user',
-            source: path,
-            text: chat.content.isEmpty ? null : chat.content,
             createdAt: now,
+            metadata: <String, dynamic>{
+              'role': 'user',
+              'content': chat.content,
+              'attachments': chat.attachments,
+            },
           );
         }
         return Message.text(
@@ -1088,80 +1061,11 @@ class _FaChatScreenState extends State<FaChatScreen>
         onAuthRecovery: widget.onAuthRecovery,
         audioControllerFactory: widget.audioControllerFactory,
         videoControllerFactory: widget.videoControllerFactory,
+        imageCacheWidth: widget.imagePreviewCacheWidth,
       ),
     );
   }
 
-  /// Renders attached-image messages (user uploads and in-app screenshots)
-  /// as a compact thumbnail; tap opens the full image. Without an
-  /// imageMessageBuilder flutter_chat_ui asserts and paints a red box.
-  Widget _buildImageMessage(
-    BuildContext context,
-    ImageMessage message,
-    int index, {
-    required bool isSentByMe,
-    MessageGroupStatus? groupStatus,
-  }) {
-    final source = message.source;
-    // Decode at thumbnail scale by default — full-res app screenshots
-    // would otherwise jank every chat rebuild. The host can lift the
-    // constraint (null) for full-quality previews (issue #207).
-    final cacheWidth = widget.imagePreviewCacheWidth;
-    Widget image = source.startsWith('data:')
-        ? Image.memory(
-            base64Decode(source.split(',').last),
-            cacheWidth: cacheWidth,
-          )
-        : Image.file(File(source), cacheWidth: cacheWidth);
-    image = ClipRRect(borderRadius: BorderRadius.circular(10), child: image);
-    return _keyed(
-      message.id,
-      Align(
-        alignment: isSentByMe ? Alignment.centerRight : Alignment.centerLeft,
-        child: Container(
-          margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 16),
-          constraints: const BoxConstraints(maxWidth: 280),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              GestureDetector(
-                onTap: () => _showFullImage(context, source),
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    border: Border.all(color: FahColors.of(context).border),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: image,
-                ),
-              ),
-              if (message.text?.isNotEmpty ?? false)
-                Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Text(
-                    message.text!,
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _showFullImage(BuildContext context, String source) {
-    final Widget image = source.startsWith('data:')
-        ? Image.memory(base64Decode(source.split(',').last))
-        : Image.file(File(source));
-    showDialog<void>(
-      context: context,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.black,
-        insetPadding: const EdgeInsets.all(16),
-        child: InteractiveViewer(child: image),
-      ),
-    );
-  }
 
   Widget _buildCustomMessage(
     BuildContext context,
@@ -1177,6 +1081,9 @@ class _FaChatScreenState extends State<FaChatScreen>
         message: FaChatMessage(
           role: (metadata['role'] as String?) ?? 'system',
           content: (metadata['content'] as String?) ?? '',
+          attachments: (metadata['attachments'] as List<Object?>?)
+              ?.cast<FaChatAttachment>() ??
+              const <FaChatAttachment>[],
           toolName: metadata['toolName'] as String?,
           isError: (metadata['isError'] as bool?) ?? false,
           data: metadata['data'],
@@ -1187,6 +1094,7 @@ class _FaChatScreenState extends State<FaChatScreen>
         onAuthRecovery: widget.onAuthRecovery,
         audioControllerFactory: widget.audioControllerFactory,
         videoControllerFactory: widget.videoControllerFactory,
+        imageCacheWidth: widget.imagePreviewCacheWidth,
         dynamicWidgetTileBuilder: widget.dynamicWidgetTileBuilder,
       ),
     );
@@ -1265,7 +1173,6 @@ class _FaChatScreenState extends State<FaChatScreen>
               builders: Builders(
                 textMessageBuilder: _buildTextMessage,
                 customMessageBuilder: _buildCustomMessage,
-                imageMessageBuilder: _buildImageMessage,
                 chatAnimatedListBuilder: (context, itemBuilder) =>
                     ChatAnimatedList(
                       itemBuilder: itemBuilder,
