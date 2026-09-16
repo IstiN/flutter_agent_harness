@@ -6,6 +6,7 @@ library;
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/dap_hub_mark.dart';
 import 'package:fa/ui/widgets/model_mark.dart';
+import 'package:fa/ui/widgets/subagent_mark.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -60,5 +61,29 @@ void main() {
       size: goldenSizeTall,
     );
     await expectGolden(tester, 'dap_hub_mark');
+  });
+
+  testWidgets('SubagentMark on the dark palette', (tester) async {
+    await pumpGolden(
+      tester,
+      Container(
+        width: 320,
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: FahPalette.panel,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SubagentMark(size: 32),
+            SizedBox(width: 16),
+            SubagentMark(size: 14),
+          ],
+        ),
+      ),
+      size: goldenSizeTall,
+    );
+    await expectGolden(tester, 'subagent_mark');
   });
 }

@@ -206,31 +206,36 @@ void main() {
     expect(service.messages.last.content, 'follow-up answer');
   });
 
-  testWidgets('Shift+Enter inserts a newline instead of sending (desktop '
-      'composer regression)', (tester) async {
-    final env = MemoryExecutionEnv();
-    final service = _fakeService(env, _singleTextResponse('ok'));
-    addTearDown(service.dispose);
-    await service.initialize();
-    await _pumpComposer(tester, service);
-
-    await tester.enterText(find.byType(TextField), 'hello');
-    await tester.pump();
-
-    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
-    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
-    await tester.pump();
-
-    final field = tester.widget<TextField>(find.byType(TextField));
-    expect(field.controller!.text, 'hello\n');
-    // Nothing was sent — the newline never reaches the IME's send action.
-    expect(service.messages.where((m) => m.role == 'user'), isEmpty);
-
-    // Bare Enter (the IME send action) still sends.
-    await tester.runAsync(() async {
-      await tester.testTextInput.receiveAction(TextInputAction.send);
+  group('multiline composer (Enter = newline, send = button / Ctrl+Enter)', () {
+    /// Simulates the IME inserting a newline the way the real one does on
+    /// touch and hardware keyboards: the platform sends the updated editing
+    /// value (composing run intact) — the widget never sees a key event.
+    /// Enter itself (a raw key down) must stay inert: with
+    /// `TextInputAction.newline` there is no submit action to fire.
+    Future<void> imeNewline(WidgetTester tester, String before) async {
+      final controller = tester
+          .widget<TextField>(find.byType(TextField))
+          .controller!;
+      tester.testTextInput.updateEditingValue(
+        TextEditingValue(
+          text: '$before\n',
+          selection: TextSelection.collapsed(offset: before.length + 1),
+          composing: TextRange(start: before.length, end: before.length + 1),
+        ),
+      );
       await tester.pump();
+      // The IME's state must land in the controller untouched (E1: an
+      // in-flight composing run survives the newline).
+      expect(
+        controller.value.composing,
+        TextRange(start: before.length, end: before.length + 1),
+      );
+    }
+
+    Future<void> waitForAssistant(
+      WidgetTester tester,
+      AgentService service,
+    ) async {
       for (
         var i = 0;
         i < 100 && service.messages.where((m) => m.role == 'assistant').isEmpty;
@@ -239,11 +244,163 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 20));
         await tester.pump();
       }
+    }
+
+    testWidgets('AC1: Enter inserts a newline and never submits; the legacy '
+        'send action is inert', (tester) async {
+      final env = MemoryExecutionEnv();
+      final service = _fakeService(env, _singleTextResponse('ok'));
+      addTearDown(service.dispose);
+      await service.initialize();
+      await _pumpComposer(tester, service);
+
+      await tester.enterText(find.byType(TextField), 'hello');
+      await tester.pump();
+      await imeNewline(tester, 'hello');
+
+      final field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.controller!.text, 'hello\n');
+      // The field is wired as the IME contract demands: multiline return
+      // key (newline action), so the touch keyboard offers Return, not
+      // Send, and hardware Enter follows the same path.
+      expect(field.keyboardType, TextInputType.multiline);
+      expect(field.textInputAction, TextInputAction.newline);
+      // Nothing was sent — newline insertion is not a submission.
+      expect(service.messages.where((m) => m.role == 'user'), isEmpty);
+
+      // Even the platform's legacy send action does nothing: submit no
+      // longer lives on the IME action.
+      await tester.testTextInput.receiveAction(TextInputAction.send);
+      await tester.pump();
+      expect(service.messages.where((m) => m.role == 'user'), isEmpty);
     });
-    expect(
-      service.messages.where((m) => m.role == 'user').map((m) => m.content),
-      contains('hello'),
-    );
+
+    testWidgets('AC1: Ctrl+Enter submits (trimmed)', (tester) async {
+      final env = MemoryExecutionEnv();
+      final service = _fakeService(env, _singleTextResponse('ok'));
+      addTearDown(service.dispose);
+      await service.initialize();
+      await _pumpComposer(tester, service);
+
+      await tester.enterText(find.byType(TextField), 'hello\n');
+      await tester.pump();
+
+      await tester.runAsync(() async {
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+        await tester.pump();
+        await waitForAssistant(tester, service);
+      });
+      expect(
+        service.messages.where((m) => m.role == 'user').map((m) => m.content),
+        contains('hello'),
+      );
+      // The Enter-with-modifier never fell into the field as a newline.
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        isEmpty,
+      );
+    });
+
+    testWidgets('AC2: the field grows 1→6 lines, then scrolls internally '
+        '(the height caps)', (tester) async {
+      final env = MemoryExecutionEnv();
+      final service = _fakeService(env, _singleTextResponse('ok'));
+      addTearDown(service.dispose);
+      await service.initialize();
+      await _pumpComposer(tester, service);
+
+      Future<double> heightOf(int lines) async {
+        await tester.enterText(
+          find.byType(TextField),
+          List.generate(lines, (i) => 'line ${i + 1}').join('\n'),
+        );
+        await tester.pump();
+        return tester.getSize(find.byType(TextField)).height;
+      }
+
+      final oneLine = await heightOf(1);
+      final threeLines = await heightOf(3);
+      final sixLines = await heightOf(6);
+      final sevenLines = await heightOf(7);
+      expect(threeLines, greaterThan(oneLine));
+      expect(sixLines, greaterThan(threeLines));
+      // Past the budget the field scrolls internally — the composer height
+      // never exceeds the 6-line cap.
+      expect(sevenLines, sixLines);
+    });
+
+    testWidgets('AC3: whitespace-only stays blocked; trailing newlines are '
+        'trimmed; send clears the field back to 1 line', (tester) async {
+      final env = MemoryExecutionEnv();
+      final service = _fakeService(env, _singleTextResponse('ok'));
+      addTearDown(service.dispose);
+      await service.initialize();
+      await _pumpComposer(tester, service);
+
+      final oneLine = tester.getSize(find.byType(TextField)).height;
+
+      // Whitespace-only: the send button does nothing.
+      await tester.enterText(find.byType(TextField), '  \n\n ');
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.arrow_upward));
+      await tester.pump();
+      expect(service.messages.where((m) => m.role == 'user'), isEmpty);
+
+      // Trailing newlines are trimmed on send; the field clears and
+      // collapses back to the 1-line height.
+      await tester.runAsync(() async {
+        await tester.enterText(find.byType(TextField), 'hello\n\n');
+        await tester.pump();
+        await tester.tap(find.byIcon(Icons.arrow_upward));
+        await tester.pump();
+        await waitForAssistant(tester, service);
+      });
+      expect(
+        service.messages.where((m) => m.role == 'user').map((m) => m.content),
+        contains('hello'),
+      );
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        isEmpty,
+      );
+      await tester.pumpAndSettle();
+      expect(tester.getSize(find.byType(TextField)).height, oneLine);
+    });
+
+    testWidgets('AC2/E2: a 50-line paste caps the visible field but submit '
+        'sends every line', (tester) async {
+      final env = MemoryExecutionEnv();
+      final service = _fakeService(env, _singleTextResponse('ok'));
+      addTearDown(service.dispose);
+      await service.initialize();
+      await _pumpComposer(tester, service);
+
+      // Baseline: exactly 6 lines fills the budget.
+      await tester.enterText(
+        find.byType(TextField),
+        List.generate(6, (i) => 'line ${i + 1}').join('\n'),
+      );
+      await tester.pump();
+      final sixLineHeight = tester.getSize(find.byType(TextField)).height;
+      final longText = List.generate(50, (i) => 'log line $i').join('\n');
+
+      await tester.runAsync(() async {
+        await tester.enterText(find.byType(TextField), longText);
+        await tester.pump();
+        // Visible growth is capped at the 6-line budget; the content is
+        // intact behind the internal scroll.
+        expect(tester.getSize(find.byType(TextField)).height, sixLineHeight);
+        await tester.tap(find.byIcon(Icons.arrow_upward));
+        await tester.pump();
+        await waitForAssistant(tester, service);
+      });
+      expect(
+        service.messages.where((m) => m.role == 'user').map((m) => m.content),
+        contains(longText),
+      );
+    });
   });
 
   group('smart paste (Cmd/Ctrl+V)', () {
