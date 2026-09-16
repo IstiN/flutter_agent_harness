@@ -686,7 +686,19 @@ jobs:
           # coverage.run_tests: false in both configs — the merged shard
           # lcov above is the source; never re-run the suite here.
           dart pub global activate crap4dart ">=0.9.5"
-          cd flutter_app && dart pub global run crap4dart analyze
+          cd flutter_app && dart pub global run crap4dart analyze --format json > crap_report.json
+
+      # Issue #490 AC2: publish the ranked CRAP JSON even when the ratchet
+      # is red (analyze writes the report to stdout before its non-zero
+      # exit) — descents rank from this artifact, never from a local
+      # ad-hoc run.
+      - name: Upload crap_report.json artifact (issue 490 AC2)
+        if: always() && (needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true')
+        uses: actions/upload-artifact@v4
+        with:
+          name: crap_report
+          path: flutter_app/crap_report.json
+          retention-days: 30
 
       - name: Pixel and flutter gates over test/golden/goldens (issue 447)
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true'
