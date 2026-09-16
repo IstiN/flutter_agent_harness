@@ -337,4 +337,53 @@ void main() {
     final reloaded = await ThemePackStore.load(env);
     expect(reloaded.packs, isEmpty);
   });
+
+  test('malformed theme.json rejects at the decode stage', () async {
+    final store = await ThemePackStore.load(MemoryExecutionEnv());
+
+    final badJson = await store.installFromZip(
+      zip({'theme.json': utf8.encode('{"name": ')}),
+    );
+    expect(badJson.spec, isNull);
+    expect(badJson.reasons.single, 'theme.json is not valid JSON');
+
+    final notObject = await store.installFromZip(
+      zip({'theme.json': utf8.encode('[1,2]')}),
+    );
+    expect(notObject.spec, isNull);
+    expect(notObject.reasons.single, 'theme.json must contain an object');
+  });
+
+  test(
+    'a zip with only an empty folder rejects with theme.json missing',
+    () async {
+      final store = await ThemePackStore.load(MemoryExecutionEnv());
+
+      final result = await store.installFromZip(zip({'forest-walk/': <int>[]}));
+      expect(result.spec, isNull);
+      expect(result.reasons.single, 'theme.json missing from the pack root');
+    },
+  );
+
+  test('broken on-disk packs are skipped, never fatal', () async {
+    final env = MemoryExecutionEnv();
+    await env.createDir('themes/no-json');
+    await env.createDir('themes/bad-json');
+    await env.writeFile('themes/bad-json/theme.json', '{"name": ');
+    await env.createDir('themes/not-object');
+    await env.writeFile('themes/not-object/theme.json', '[1]');
+    await env.createDir('themes/empty-asset');
+    await env.writeFile(
+      'themes/empty-asset/theme.json',
+      jsonEncode({
+        'name': 'X',
+        'version': '1.0.0',
+        'wallpaper': {'asset': ''},
+      }),
+    );
+    await env.writeFile('themes/stray.txt', 'not a pack directory');
+
+    final store = await ThemePackStore.load(env);
+    expect(store.packs, isEmpty);
+  });
 }
