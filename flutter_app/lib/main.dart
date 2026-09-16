@@ -566,97 +566,31 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
   /// Extension-panel boot: connect to the service-worker agent and go
   /// straight to chat — no provider form (the SW's chrome.storage config
   /// is edited in Settings, which round-trips `settings_put`), no local
-  /// session store.
+  /// session store. The orchestration lives in the boot module
+  /// ([bootExtensionRelay]); this wrapper owns the widget shell —
+  /// navigation and `mounted`-guarded error state.
   Future<void> _bootRelay() async {
-    final env = widget.env ?? await createPlatformEnv();
-    final manager = FlutterSessionManager(
-      env: env,
-      sessionsRoot: defaultSessionsRoot(env.sessionCwd),
-    );
-    try {
-      final relay = await RelayAgentService.create();
-      if (relay == null) {
-        debugPrint('[fah] relay create returned null (not hosted?)');
+    await bootExtensionRelay(
+      env: widget.env,
+      onHome: (manager, registry) async {
         if (!mounted) return;
-        setState(() => _relayError = 'extension service worker not reachable');
-        return;
-      }
-      manager.addSession(
-        relay.relaySessionId.isEmpty ? 'relay' : relay.relaySessionId,
-        relay,
-      );
-      // The SAME adoption contract as the desktop hosted boot (the
-      // createRelayServiceIfHosted caller below): a session_new/
-      // session_open from ANY surface arrives as an attach broadcast —
-      // re-key the slot and the selection source. Without this the panel
-      // kept its BOOT session id forever: the drawer's live row pinned
-      // the stale dot, the real live session rendered nowhere, and the
-      // archived twin of the stale slot duplicated the row.
-      relay.onLiveSessionIdChanged = (newId) {
-        manager.hostedLiveId.value = newId;
-        manager.rekeyActiveSession(newId);
-      };
-      // The hello/attach handshake may have completed BEFORE the callback
-      // was assigned (RelayAgentService.create awaits it) — converge once
-      // so hostedLiveId is authoritative from the first frame.
-      final liveAtBoot = relay.liveSessionId;
-      if (liveAtBoot != null && liveAtBoot.isNotEmpty) {
-        manager.hostedLiveId.value = liveAtBoot;
-        manager.rekeyActiveSession(liveAtBoot);
-      }
-      // The models/provider screens read this registry; in relay mode the
-      // truth lives in the SW's chrome.storage, so seed one entry from the
-      // attach-time settings snapshot. The key stays session-only
-      // (rememberKey) — re-saving the form round-trips it via
-      // settings_put instead of losing it.
-      // The persisted registry (providers.json) — the Providers screen's
-      // adds live here across reloads. NEVER swap it for a session-only
-      // in-memory instance: the Default-chat-model picker shares this
-      // instance, and an empty one makes the picker show nothing while the
-      // Providers screen (its own null-fallback registry) looks fine.
-      final registry = await ProviderRegistry.load(env);
-      // Issue #327: the guard needs the registry rows to judge a
-      // settings_put against (review MINOR - the relay path skipped it).
-      relay.providerRegistry = registry;
-      final sw = relay.swProvider;
-      debugPrint(
-        '[fah] relay boot: session=${relay.relaySessionId} '
-        'swProvider=${sw == null ? 'none' : '${sw['baseUrl']} / ${sw['model']}'} '
-        'registry=${registry.providers.length}',
-      );
-      if (sw != null && sw['baseUrl']!.isNotEmpty) {
-        // Make sure the SW's active provider exists as a picker tile (the
-        // key stays session-only; the apply flow round-trips it via
-        // settings_put).
-        final known = registry.providers.any((p) => p.baseUrl == sw['baseUrl']);
-        if (!known) {
-          final base = Uri.tryParse(sw['baseUrl']!);
-          final provider = await registry.add(
-            name: base?.host ?? sw['baseUrl']!,
-            baseUrl: sw['baseUrl']!,
-            modelId: sw['model'] ?? '',
-          );
-          registry.rememberKey(provider.id, sw['apiKey'] ?? '');
-        }
-      }
-      if (!mounted) return;
-      AppAnalytics.instance.bootstrapResult('chat');
-      final navigator = Navigator.of(context);
-      await navigator.pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => faHomeScreen(
-            context: navigator.context,
-            manager: manager,
-            registry: registry,
-            restoreAppsMode: true,
+        AppAnalytics.instance.bootstrapResult('chat');
+        final navigator = Navigator.of(context);
+        await navigator.pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => faHomeScreen(
+              context: navigator.context,
+              manager: manager,
+              registry: registry,
+              restoreAppsMode: true,
+            ),
           ),
-        ),
-      );
-    } on Object catch (e) {
-      debugPrint('[fah] relay boot failed: $e');
-      if (!mounted) return;
-      setState(() => _relayError = '$e');
-    }
+        );
+      },
+      onError: (message) {
+        if (mounted) setState(() => _relayError = message);
+      },
+    );
   }
 
   /// Set when the extension-panel relay could not attach (SW dead/broken

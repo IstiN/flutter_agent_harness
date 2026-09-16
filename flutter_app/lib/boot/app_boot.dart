@@ -24,8 +24,12 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/app_log.dart';
+import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/services/relay_agent_service.dart';
+import 'package:fa/services/sessions_root.dart';
 import 'package:fa/services/image_preview_store.dart';
 import 'package:fa/services/keychain_store.dart';
+import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/onboarding_store.dart';
@@ -309,33 +313,36 @@ FirebaseAnalytics? _initAnalytics() {
   return null;
 }
 
+/// The fa_ui chat-event route table (the `_faCall` handler-map pattern,
+/// PR #436): event name → analytics facade call. Unknown events are
+/// ignored — same as the switch this replaced.
+final Map<String, void Function(Map<String, Object> params)>
+_faChatAnalyticsRoutes = {
+  'approval_mode_changed': (params) =>
+      AppAnalytics.instance.approvalModeChanged(params['mode'] as String),
+  'secret_request': (params) =>
+      AppAnalytics.instance.secretRequest(params['result'] as String),
+  'message_sent': (params) => AppAnalytics.instance.messageSent(
+    hasAttachments: params['has_attachments'] as bool,
+    textLength: params['text_length'] as int,
+  ),
+  'upload_added': (params) =>
+      AppAnalytics.instance.uploadAdded(params['count'] as int),
+  'voice_input_used': (_) => AppAnalytics.instance.voiceInputUsed(),
+  'screen_opened': (params) =>
+      AppAnalytics.instance.screenOpened(params['screen_name'] as String),
+  'files_opened': (params) =>
+      AppAnalytics.instance.filesOpened(params['source'] as String),
+  'settings_opened': (_) => AppAnalytics.instance.settingsOpened(),
+};
+
 /// Routes fa_ui chat-widget track events into the app's analytics facade.
 /// Public so the boot assignment can tear it off and tests can drive it.
 void routeFaChatAnalytics(
   String event, [
   Map<String, Object> params = const {},
 ]) {
-  switch (event) {
-    case 'approval_mode_changed':
-      AppAnalytics.instance.approvalModeChanged(params['mode'] as String);
-    case 'secret_request':
-      AppAnalytics.instance.secretRequest(params['result'] as String);
-    case 'message_sent':
-      AppAnalytics.instance.messageSent(
-        hasAttachments: params['has_attachments'] as bool,
-        textLength: params['text_length'] as int,
-      );
-    case 'upload_added':
-      AppAnalytics.instance.uploadAdded(params['count'] as int);
-    case 'voice_input_used':
-      AppAnalytics.instance.voiceInputUsed();
-    case 'screen_opened':
-      AppAnalytics.instance.screenOpened(params['screen_name'] as String);
-    case 'files_opened':
-      AppAnalytics.instance.filesOpened(params['source'] as String);
-    case 'settings_opened':
-      AppAnalytics.instance.settingsOpened();
-  }
+  _faChatAnalyticsRoutes[event]?.call(params);
 }
 
 /// Crashlytics: fatal Flutter errors + uncaught async errors flow into the
@@ -369,4 +376,107 @@ Future<void> _loadIntlDateSymbols() async {
   for (final locale in AppLocalizations.supportedLocales) {
     await initializeDateFormatting(locale.languageCode);
   }
+}
+
+/// The extension-panel relay boot (issue #34, decomposed by #483): builds
+/// the session manager, attaches the SW relay, wires the live-session
+/// adoption contract, seeds the persisted registry from the SW's active
+/// provider, and hands the result to [onHome]. The widget layer (caller)
+/// owns navigation and `mounted` checks; every failure path funnels into
+/// [onError] — including a null [createRelay] result (not hosted) and a
+/// throwing one.
+Future<void> bootExtensionRelay({
+  /// The panel env; `null` builds the platform one (real boots).
+  ExecutionEnv? env,
+
+  /// Overridable for tests; production tears off [RelayAgentService.create].
+  Future<RelayAgentService?> Function()? createRelay,
+  required Future<void> Function(
+    FlutterSessionManager manager,
+    ProviderRegistry registry,
+  )
+  onHome,
+  required void Function(String message) onError,
+}) async {
+  final resolvedEnv = env ?? await createPlatformEnv();
+  final manager = FlutterSessionManager(
+    env: resolvedEnv,
+    sessionsRoot: defaultSessionsRoot(resolvedEnv.sessionCwd),
+  );
+  try {
+    final relay = await (createRelay ?? RelayAgentService.create)();
+    if (relay == null) {
+      debugPrint('[fah] relay create returned null (not hosted?)');
+      onError('extension service worker not reachable');
+      return;
+    }
+    manager.addSession(
+      relay.relaySessionId.isEmpty ? 'relay' : relay.relaySessionId,
+      relay,
+    );
+    // The SAME adoption contract as the desktop hosted boot (the
+    // createRelayServiceIfHosted caller): a session_new/session_open from
+    // ANY surface arrives as an attach broadcast — re-key the slot and the
+    // selection source. Without this the panel kept its BOOT session id
+    // forever: the drawer's live row pinned the stale dot, the real live
+    // session rendered nowhere, and the archived twin of the stale slot
+    // duplicated the row.
+    relay.onLiveSessionIdChanged = (newId) {
+      manager.hostedLiveId.value = newId;
+      manager.rekeyActiveSession(newId);
+    };
+    // The hello/attach handshake may have completed BEFORE the callback
+    // was assigned (RelayAgentService.create awaits it) — converge once
+    // so hostedLiveId is authoritative from the first frame.
+    final liveAtBoot = relay.liveSessionId;
+    if (liveAtBoot != null && liveAtBoot.isNotEmpty) {
+      manager.hostedLiveId.value = liveAtBoot;
+      manager.rekeyActiveSession(liveAtBoot);
+    }
+    // The models/provider screens read this registry; in relay mode the
+    // truth lives in the SW's chrome.storage, so seed one entry from the
+    // attach-time settings snapshot. The key stays session-only
+    // (rememberKey) — re-saving the form round-trips it via settings_put
+    // instead of losing it. The persisted registry (providers.json) — the
+    // Providers screen's adds live here across reloads. NEVER swap it for
+    // a session-only in-memory instance: the Default-chat-model picker
+    // shares this instance, and an empty one makes the picker show nothing
+    // while the Providers screen (its own null-fallback registry) looks
+    // fine.
+    final registry = await ProviderRegistry.load(resolvedEnv);
+    // Issue #327: the guard needs the registry rows to judge a
+    // settings_put against (review MINOR - the relay path skipped it).
+    relay.providerRegistry = registry;
+    final sw = relay.swProvider;
+    debugPrint(
+      '[fah] relay boot: session=${relay.relaySessionId} '
+      'swProvider=${sw == null ? 'none' : '${sw['baseUrl']} / ${sw['model']}'} '
+      'registry=${registry.providers.length}',
+    );
+    await seedRelaySwProvider(registry, sw);
+    await onHome(manager, registry);
+  } on Object catch (e) {
+    debugPrint('[fah] relay boot failed: $e');
+    onError('$e');
+  }
+}
+
+/// Makes sure the SW's active provider exists as a picker tile (the key
+/// stays session-only; the apply flow round-trips it via settings_put).
+/// A no-op when the SW has no active provider or the registry already
+/// knows its base URL.
+Future<void> seedRelaySwProvider(
+  ProviderRegistry registry,
+  Map<String, String>? sw,
+) async {
+  if (sw == null || sw['baseUrl']!.isEmpty) return;
+  final known = registry.providers.any((p) => p.baseUrl == sw['baseUrl']);
+  if (known) return;
+  final base = Uri.tryParse(sw['baseUrl']!);
+  final provider = await registry.add(
+    name: base?.host ?? sw['baseUrl']!,
+    baseUrl: sw['baseUrl']!,
+    modelId: sw['model'] ?? '',
+  );
+  registry.rememberKey(provider.id, sw['apiKey'] ?? '');
 }
