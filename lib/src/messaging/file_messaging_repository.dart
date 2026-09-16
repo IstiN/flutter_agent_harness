@@ -78,6 +78,7 @@ final class FileMessagingRepository implements MessagingRepository {
       }
       await _writeCapabilities(agentDir, capabilities);
       await _clearBusyMarker(agentDir);
+      await _reclaimStaleRootMail(agentId);
       await _recordRegistry(agentId, name: name);
     } on Object {
       // Best-effort registration; a failure must not break process startup.
@@ -208,34 +209,95 @@ final class FileMessagingRepository implements MessagingRepository {
     (await _env.writeFile(path, jsonEncode(message.toJson()))).getOrThrow();
   }
 
-  /// The messages root that actually backs [agentId]'s mailbox: a foreign
-  /// cwd-slug root when the mailbox lives in another project (registry
-  /// entry first, then a sibling-slug scan by `.id` marker), otherwise
-  /// [_root].
+  /// The messages root that actually backs [agentId]'s mailbox (issue #516):
+  /// among every project root holding a mailbox with this id, a LIVE
+  /// registration (fresh heartbeat) wins over any stale directory — an
+  /// agent that moved projects keeps receiving mail under its CURRENT
+  /// root, never in a corpse left under the old one. With no live
+  /// registration anywhere the legacy offline semantics hold (the #402
+  /// hub/file contract): the registry slug's directory (the agent's last
+  /// known project), then the first existing directory, then [_root]
+  /// (offline queue; unknown ids stay local).
   Future<String> _resolveRecipientRoot(String agentId) async {
     final sanitized = sanitizeAgentId(agentId);
-    // Fast path: the best-effort registry maps agent id -> slug.
+    final slugDirs =
+        (await _env.listDir(_sessionRoot())).valueOrNull ?? const [];
+    final existing = <String>[];
+    final live = <String>[];
+    for (final slugDir in slugDirs) {
+      if (slugDir.kind != FileKind.directory) continue;
+      final peerMessages = '${slugDir.path}/messages';
+      final agentDir = '$peerMessages/$sanitized';
+      final marker = (await _env.readTextFile(
+        '$agentDir/.id',
+      )).valueOrNull?.trim();
+      if (marker != agentId) continue;
+      existing.add(peerMessages);
+      if (await _hasFreshHeartbeat(agentDir)) live.add(peerMessages);
+    }
+    // Live registration wins: own root first (the local watcher drains
+    // it cheapest), then the scan order.
+    if (live.isNotEmpty) {
+      return live.contains(_root) ? _root : live.first;
+    }
+    // Stale-only: the registry hint (dir presence is enough — a
+    // registration record, not a liveness claim), then any existing dir.
     final slug = await _registrySlugFor(agentId);
     if (slug != null) {
-      final peer = '${_sessionRoot()}/$slug/messages';
-      if (slug != _ownSlug &&
-          (await _env.exists('$peer/$sanitized')).valueOrNull == true) {
-        return peer;
+      final hinted = '${_sessionRoot()}/$slug/messages';
+      if ((await _env.exists('$hinted/$sanitized')).valueOrNull == true) {
+        return hinted;
       }
     }
-    // Broad scan of sibling slugs (sends are rare; correctness first).
+    if (existing.isNotEmpty) return existing.first;
+    return _root;
+  }
+
+  /// Whether [agentDir]'s `.heartbeat` marker is fresh (inside
+  /// [MailboxEntry.defaultLiveWindow]) — the mailbox is a live
+  /// registration, not a stale corpse (issue #516). Absent, malformed, or
+  /// unparseable content counts as not live: only a positively fresh
+  /// heartbeat may outrank an existing directory.
+  Future<bool> _hasFreshHeartbeat(String agentDir) async {
+    final text = (await _env.readTextFile(
+      '$agentDir/.heartbeat',
+    )).valueOrNull?.trim();
+    final ms = text == null || text.isEmpty ? null : int.tryParse(text);
+    if (ms == null) return false;
+    final age = DateTime.now().difference(
+      DateTime.fromMillisecondsSinceEpoch(ms),
+    );
+    return !age.isNegative && age <= MailboxEntry.defaultLiveWindow;
+  }
+
+  /// Issue #516 stale-mailbox migration: an agent registering under a new
+  /// project root drains the pending inbox of any STALE mailbox holding
+  /// its id under another root (drained-once, collision-safe — no message
+  /// loss) and removes the corpse so no future delivery can pick it. A
+  /// mailbox with a FRESH heartbeat is a live twin (the same id running
+  /// elsewhere) — its inbox belongs to its owner and is never touched.
+  /// Best-effort: a failing move leaves the stale mailbox in place.
+  Future<void> _reclaimStaleRootMail(String agentId) async {
+    final sanitized = sanitizeAgentId(agentId);
     final slugDirs =
         (await _env.listDir(_sessionRoot())).valueOrNull ?? const [];
     for (final slugDir in slugDirs) {
       if (slugDir.kind != FileKind.directory) continue;
       final peerMessages = '${slugDir.path}/messages';
       if (peerMessages == _root) continue;
+      final agentDir = '$peerMessages/$sanitized';
       final marker = (await _env.readTextFile(
-        '$peerMessages/$sanitized/.id',
+        '$agentDir/.id',
       )).valueOrNull?.trim();
-      if (marker == agentId) return peerMessages;
+      if (marker != agentId) continue;
+      if (await _hasFreshHeartbeat(agentDir)) continue;
+      await _moveInboxFiles(
+        _env,
+        from: '$agentDir/inbox',
+        to: '$_root/$sanitized/inbox',
+      );
+      await _env.remove(agentDir, recursive: true, force: true);
     }
-    return _root;
   }
 
   Future<String?> _registrySlugFor(String agentId) async {
@@ -259,14 +321,6 @@ final class FileMessagingRepository implements MessagingRepository {
       return null;
     }
     return null;
-  }
-
-  /// This repository's own cwd slug (the `<slug>` in
-  /// `<sessionRoot>/<slug>/messages`).
-  String get _ownSlug {
-    final parts = _root.split('/').where((s) => s.isNotEmpty).toList();
-    if (parts.length < 2) return '';
-    return parts[parts.length - 2];
   }
 
   @override

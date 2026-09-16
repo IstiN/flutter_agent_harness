@@ -96,4 +96,82 @@ void main() {
       expect(bare.slug, isNull);
     });
   });
+
+  group('cross-root misroute diagnostics (#516)', () {
+    // The issue #516 AC1 fixture: the same id owns a stale mailbox under
+    // the OLD project (demo_widget) and a live one under the CURRENT
+    // project (flutter_agent). Pre-fix a send silently landed in the
+    // stale root; the diagnostic must name both roots instead.
+    MailboxEntry box(
+      String cwd, {
+      DateTime? lastActivity,
+      AgentPresence? presence,
+    }) => MailboxEntry(
+      id: '01a060f2/main',
+      cwd: cwd,
+      lastActivity: lastActivity,
+      presence: presence,
+    );
+
+    final fresh = DateTime.now().toUtc().subtract(const Duration(minutes: 1));
+    final dead = DateTime.now().toUtc().subtract(const Duration(days: 3));
+
+    test('isConfirmedLive trusts evidence, never an undated entry', () {
+      expect(box('/w', lastActivity: fresh).isConfirmedLive, isTrue);
+      expect(box('/w', presence: AgentPresence.busy).isConfirmedLive, isTrue);
+      expect(box('/w', presence: AgentPresence.live).isConfirmedLive, isTrue);
+      expect(box('/w', lastActivity: dead).isConfirmedLive, isFalse);
+      expect(
+        box(
+          '/w',
+          presence: AgentPresence.offline,
+          lastActivity: fresh,
+        ).isConfirmedLive,
+        isFalse,
+      );
+      // Undated (file entry without a heartbeat): visibility says live,
+      // routing evidence says unknown.
+      expect(box('/w').isConfirmedLive, isFalse);
+      expect(MailboxEntry.isLive(null), isTrue);
+    });
+
+    test('the AC1 fixture names the live root and the stale corpse', () {
+      final note = mailboxMisrouteNote([
+        box('/git/demo_widget', lastActivity: dead),
+        box('/git/flutter_agent', lastActivity: fresh),
+      ], '01a060f2/main');
+      expect(note, contains('Delivered to the live mailbox under'));
+      expect(note, contains('/git/flutter_agent'));
+      expect(note, contains('stale mailbox under /git/demo_widget'));
+      expect(note, contains('ignored'));
+    });
+
+    test('several stale copies warn: no live registration anywhere', () {
+      final note = mailboxMisrouteNote([
+        box('/git/demo_widget', lastActivity: dead),
+        box('/git/legacy', lastActivity: dead),
+      ], '01a060f2/main');
+      expect(note, contains('warning'));
+      expect(note, contains('/git/demo_widget, /git/legacy'));
+      expect(note, contains('not live anywhere'));
+    });
+
+    test('a single mailbox — even asleep — stays silent', () {
+      expect(
+        mailboxMisrouteNote([
+          box('/git/flutter_agent', lastActivity: dead),
+        ], '01a060f2/main'),
+        isEmpty,
+      );
+      expect(mailboxMisrouteNote([], '01a060f2/main'), isEmpty);
+      // A different id under two roots is not our target's problem.
+      expect(
+        mailboxMisrouteNote([
+          MailboxEntry(id: 'other', cwd: '/a'),
+          MailboxEntry(id: 'other', cwd: '/b'),
+        ], '01a060f2/main'),
+        isEmpty,
+      );
+    });
+  });
 }
