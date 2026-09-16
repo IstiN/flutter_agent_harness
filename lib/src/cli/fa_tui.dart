@@ -2289,47 +2289,6 @@ final class FaTuiModel extends Model {
     );
   }
 
-  /// The [height]-row window of the wrapped output history at [offset].
-  /// Always paints exactly [height] rows.
-  int _writeHistoryRows(
-    StringBuffer b,
-    int height,
-    List<String> wrapped,
-    int offset,
-  ) {
-    for (var i = 0; i < height; i++) {
-      final row = offset + i;
-      b.writeln(row < wrapped.length ? wrapped[row] : '');
-    }
-    return height;
-  }
-
-  /// Scroll progress indicator — only while the user scrolled away from
-  /// the live edge (a "you are here" hint); while following, the row stays
-  /// blank so the layout never shifts. (A transient viewport shrink, e.g.
-  int _writeScrollIndicator(StringBuffer b, List<String> wrapped, int offset) {
-    final bottom = _scrollBottom(wrapped);
-    if (!followTail && offset < bottom) {
-      final scrollPercent = bottom == 0
-          ? 100
-          : ((offset / bottom) * 100).round().clamp(0, 100);
-      final progressText = ' $scrollPercent% ';
-      final progressWidth = progressText.length;
-      final leftWidth = (termWidth - progressWidth) ~/ 2;
-      final rightWidth = termWidth - progressWidth - leftWidth;
-      b.writeln(
-        _dim('─' * (leftWidth < 0 ? 0 : leftWidth)) +
-            _accent2Plain(progressText) +
-            _dim('─' * (rightWidth < 0 ? 0 : rightWidth)),
-      );
-    } else {
-      // The row is always reserved (progressH): skipping the blank row
-      // while following shifted every later row on scroll.
-      b.writeln();
-    }
-    return 1;
-  }
-
   /// The menu title row: '[Commands]' for the slash menu, otherwise the
   /// picker title with the active filter.
   String _menuTitle() {

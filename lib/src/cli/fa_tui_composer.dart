@@ -42,6 +42,11 @@ extension _TuiComposerLayout on FaTuiModel {
         1 /* progress indicator */ +
         2 /* input frame rules */ +
         1 /* status row */;
+    // The scroll-progress indicator row ALWAYS paints — the percent rule
+    // while the follow latch is detached, a blank row while following
+    // (skipping it shifted every later row on scroll). Its row is the
+    // `1 /* progress indicator */` inside [mandatory] — the busy row is
+    // counted separately (`busy ? 1 : 0`).
     final promptH = prompt != null ? tuiPromptRowCount(prompt!, width) + 2 : 0;
     // Issue #503: the input zone is a YIELDING section, not an unbounded
     // fixed one. A paste-length draft (many composer rows) used to blow
@@ -101,7 +106,15 @@ extension _TuiComposerLayout on FaTuiModel {
     final queueHint = queueTake >= queueWanted;
     // The pinned echo is quantized all-or-nothing: a lone pin rule reads
     // as a glitch. When it does not fit, the row stays with history.
+    // The taken rows LEAVE the consumable budget — history shrinks by
+    // exactly what the echo paints, so the frame's total (sticky +
+    // history + indicator + fixed) always equals the physical height and
+    // the hard glass guard below never has to crop the echo away (the
+    // #502 CI failure: sticky painted but history kept its unsqueezed
+    // height, the 14-row frame overran a 12-row terminal and the guard
+    // dropped rows from the TOP — the echo first).
     final sticky = stickyWanted <= consumable ? stickyWanted : 0;
+    consumable -= sticky;
     return _FramePlan(
       board: board,
       waiting: waiting,
