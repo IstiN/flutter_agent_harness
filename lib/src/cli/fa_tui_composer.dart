@@ -48,18 +48,10 @@ extension _TuiComposerLayout on FaTuiModel {
     // `1 /* progress indicator */` inside [mandatory] — the busy row is
     // counted separately (`busy ? 1 : 0`).
     final promptH = prompt != null ? tuiPromptRowCount(prompt!, width) + 2 : 0;
-    // Issue #503: the input zone is a YIELDING section, not an unbounded
-    // fixed one. A paste-length draft (many composer rows) used to blow
-    // `fixed` past the physical height — the budget floored at 0, the
-    // painted frame overran the glass, the terminal scrolled and the
-    // composer row painted over the status row with the frame rules gone.
-    // The input now keeps a cursor window: at least one row (the one the
-    // caret is on), never more than the chrome leaves room for.
-    final inputWanted = _inputLineCount;
-    final inputCap = (height - mandatory - (busy ? 1 : 0) - promptH)
-        .clamp(1, height == 0 ? 1 : height);
-    final inputVisible = inputWanted < inputCap ? inputWanted : inputCap;
-    final inputOffset = _inputWindowOffset(inputVisible);
+    final (inputVisible, inputOffset) = _visibleInputRows(
+      mandatory + promptH,
+      height,
+    );
     final fixed =
         mandatory + (busy ? 1 : 0) + _menuReservedLines + promptH +
         inputVisible;
@@ -79,11 +71,7 @@ extension _TuiComposerLayout on FaTuiModel {
     // whole viewport (squeezed frames): unsqueezed frames keep the exact
     // pre-#496 viewport so nothing else shifts. The reserve is a FLOOR —
     // the sections below consume from the remainder, never the reserve.
-    var reserve = 0;
-    if (optionalWanted >= budget && budget > 0 && _wrappedLines().isNotEmpty) {
-      const liveEdgeRows = 4;
-      reserve = liveEdgeRows > budget ? budget : liveEdgeRows;
-    }
+    final reserve = _liveEdgeReserve(optionalWanted, budget);
     var consumable = budget - reserve;
     int section(int wanted) {
       final take = wanted < consumable ? wanted : consumable;
@@ -128,6 +116,33 @@ extension _TuiComposerLayout on FaTuiModel {
       input: inputVisible,
       inputOffset: inputOffset,
     );
+  }
+
+  /// The input zone's visible-row cursor window (issue #503): a
+  /// paste-length draft yields rows — at least one row (the one the caret
+  /// is on) always stays painted, never more than the chrome leaves room
+  /// for. Returns the painted row count and the first painted row.
+  (int, int) _visibleInputRows(int fixedChrome, int height) {
+    // Issue #503: the input zone is a YIELDING section, not an unbounded
+    // fixed one. A paste-length draft (many composer rows) used to blow
+    // `fixed` past the physical height — the budget floored at 0, the
+    // painted frame overran the glass, the terminal scrolled and the
+    // composer row painted over the status row with the frame rules gone.
+    final wanted = _inputLineCount;
+    final cap = (height - fixedChrome - (busy ? 1 : 0))
+        .clamp(1, height == 0 ? 1 : height);
+    final visible = wanted < cap ? wanted : cap;
+    return (visible, _inputWindowOffset(visible));
+  }
+
+  /// The live-edge reserve for squeezed frames: [optionalWanted] chrome
+  /// rows against a [budget]-row viewport. Zero while anything of the
+  /// history fits (unsqueezed frames keep the exact pre-#496 viewport).
+  int _liveEdgeReserve(int optionalWanted, int budget) {
+    const liveEdgeRows = 4;
+    if (optionalWanted < budget || budget <= 0) return 0;
+    if (_wrappedLines().isEmpty) return 0;
+    return liveEdgeRows > budget ? budget : liveEdgeRows;
   }
 
   /// The first visible wrapped-input row for a [visible]-row window: the

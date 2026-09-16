@@ -2168,7 +2168,7 @@ final class FaTuiModel extends Model {
         content:
             '${renderHubFrame(hub!, width: termWidth, height: _viewportHeight)}\x1b[?25l',
         cursor: null,
-        mouseMode: mouseCapture ? MouseMode.cellMotion : MouseMode.none,
+        mouseMode: _viewMouseMode,
       );
     }
     final b = StringBuffer();
@@ -2217,19 +2217,7 @@ final class FaTuiModel extends Model {
     // (_cursorInputRow), pickers and approvals need no caret at all — the
     // old "home to the bottom of the frame" behavior left a stray bar
     // sitting on the status line while the dialog had focus.
-    if (prompt != null) {
-      for (final line in renderTuiPrompt(prompt!, termWidth)) {
-        b.writeln(line);
-      }
-      b.writeln(); // spacer
-      b.write(_statusRow());
-      const cursorLine = '\x1b[?25l';
-      return View(
-        content: b.toString() + cursorLine,
-        cursor: null,
-        mouseMode: mouseCapture ? MouseMode.cellMotion : MouseMode.none,
-      );
-    }
+    if (prompt != null) return _promptModeView(b);
 
     final (cursorInputLine, cursorScreenCol) = _writeInputLines(b, row, plan);
     b.writeln(_dim('─' * termWidth));
@@ -2240,26 +2228,7 @@ final class FaTuiModel extends Model {
     // row math (O(n) scan, ZERO allocations — the old split('\n') built a
     // List<String> of every physical row on every frame just to take its
     // length) and the frame body itself.
-    var body = b.toString();
-    // Hard glass guard (#503): whatever the sections miscounted, the frame
-    // must NEVER exceed the terminal — in a shorter terminal the rows past
-    // the bottom clamp onto the last row and overwrite the status with
-    // blanks (owner: status gone at 100x10). Drop the overflow from the
-    // TOP (oldest history/padding — the most dispensable rows) so the
-    // bottom chrome always lands on the glass. Frame rows are complete
-    // self-contained lines by construction, so dropping leading lines is
-    // ANSI-safe. Caveat: hit-regions shift by the dropped count on this
-    // rare path; the next frame re-derives them.
-    final paintedRows = _lineCount(body);
-    if (paintedRows > termHeight && termHeight > 0) {
-      var idx = 0;
-      for (var d = paintedRows - termHeight; d > 0; d--) {
-        final nl = body.indexOf('\n', idx);
-        if (nl < 0) break;
-        idx = nl + 1;
-      }
-      body = body.substring(idx);
-    }
+    final body = _cropToGlass(b.toString());
     final inputStartRow = _lineCount(body) - 2 - plan.input;
     final cursorRow = inputStartRow + cursorInputLine;
     final cursorX = cursorScreenCol;
@@ -2285,8 +2254,49 @@ final class FaTuiModel extends Model {
       cursor: hideCursor
           ? null
           : Cursor(x: cursorX, y: cursorRow, shape: CursorShape.bar),
-      mouseMode: mouseCapture ? MouseMode.cellMotion : MouseMode.none,
+      mouseMode: _viewMouseMode,
     );
+  }
+
+  /// The mouse mode every rendered [View] carries (mouse capture on =
+  /// cell-motion tracking for the wheel/click routing).
+  MouseMode get _viewMouseMode =>
+      mouseCapture ? MouseMode.cellMotion : MouseMode.none;
+
+  /// Prompt-mode frame tail: the prompt zone replaces the input zone and
+  /// the status row owns the bottom; no physical cursor anywhere.
+  View _promptModeView(StringBuffer b) {
+    for (final line in renderTuiPrompt(prompt!, termWidth)) {
+      b.writeln(line);
+    }
+    b.writeln(); // spacer
+    b.write(_statusRow());
+    return View(
+      content: '${b.toString()}\x1b[?25l',
+      cursor: null,
+      mouseMode: _viewMouseMode,
+    );
+  }
+
+  /// Hard glass guard (#503): whatever the sections miscounted, the frame
+  /// must NEVER exceed the terminal — in a shorter terminal the rows past
+  /// the bottom clamp onto the last row and overwrite the status with
+  /// blanks (owner: status gone at 100x10). Drops the overflow from the
+  /// TOP (oldest history/padding — the most dispensable rows) so the
+  /// bottom chrome always lands on the glass. Frame rows are complete
+  /// self-contained lines by construction, so dropping leading lines is
+  /// ANSI-safe. Caveat: hit-regions shift by the dropped count on this
+  /// rare path; the next frame re-derives them.
+  String _cropToGlass(String body) {
+    final paintedRows = _lineCount(body);
+    if (paintedRows <= termHeight || termHeight <= 0) return body;
+    var idx = 0;
+    for (var d = paintedRows - termHeight; d > 0; d--) {
+      final nl = body.indexOf('\n', idx);
+      if (nl < 0) break;
+      idx = nl + 1;
+    }
+    return body.substring(idx);
   }
 
   /// The menu title row: '[Commands]' for the slash menu, otherwise the

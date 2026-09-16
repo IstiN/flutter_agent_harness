@@ -351,40 +351,58 @@ List<String> restoredInputHistory(List<Message> messages) {
             cwd: cwd,
             home: home,
           );
-    if (entry.isNotEmpty &&
-        entries.isNotEmpty &&
-        rows + entry.length > rowBudget) {
-      break;
-    }
     if (entry.isEmpty) {
       firstIndex = i;
       continue;
     }
+    if (!_replayEntryFits(entry, entries, rows, rowBudget)) break;
     // A single marathon message must not stall the boot replay: clip its
     // head with an explicit marker (the tail stays intact — messages at
     // the END are kept whole as long as the row budget lasts).
-    const perMessageCap = 48;
-    if (entry.length > perMessageCap) {
-      entry = [
-        ...entry.take(perMessageCap - 1),
-        dim('… (replay clipped: ${entry.length - perMessageCap + 1} more rows)'),
-      ];
-    }
+    entry = _clipReplayEntry(entry, dim);
     entries.insert(0, entry);
     rows += entry.length;
     firstIndex = i;
   }
-  // The kept region may begin INSIDE a fenced code block whose opener was
-  // dropped with the over-budget head: the view formats the history as one
-  // markdown stream, so the region's first (originally closing) fence would
-  // toggle state ON and swallow everything after it. Open a synthetic fence
-  // to keep the kept region's fence lines balanced.
-  if (firstIndex > 0 &&
-      entries.isNotEmpty &&
-      _fenceOpenBefore(messages, firstIndex)) {
-    entries.insert(0, const ['```']);
+  return (_withFenceFixup(messages, firstIndex, entries), firstIndex);
+}
+
+/// Whether a formatted replay [entry] still fits the boot [rowBudget]:
+/// the first entry always fits (a lone message must never be dropped
+/// wholesale), later ones only while the budget lasts.
+bool _replayEntryFits(
+  List<String> entry,
+  List<List<String>> entries,
+  int rows,
+  int rowBudget,
+) => entries.isEmpty || rows + entry.length <= rowBudget;
+
+/// Clips a marathon entry's head with an explicit marker (the tail stays
+/// intact — messages at the END are kept whole as long as the budget
+/// lasts).
+List<String> _clipReplayEntry(List<String> entry, String Function(String) dim) {
+  const perMessageCap = 48;
+  if (entry.length <= perMessageCap) return entry;
+  return [
+    ...entry.take(perMessageCap - 1),
+    dim('… (replay clipped: ${entry.length - perMessageCap + 1} more rows)'),
+  ];
+}
+
+/// The kept region may begin INSIDE a fenced code block whose opener was
+/// dropped with the over-budget head: the view formats the history as one
+/// markdown stream, so the region's first (originally closing) fence would
+/// toggle state ON and swallow everything after it. Open a synthetic fence
+/// to keep the kept region's fence lines balanced.
+List<List<String>> _withFenceFixup(
+  List<Message> messages,
+  int firstIndex,
+  List<List<String>> entries,
+) {
+  if (firstIndex > 0 && entries.isNotEmpty && _fenceOpenBefore(messages, firstIndex)) {
+    return [const ['```'], ...entries];
   }
-  return (entries, firstIndex);
+  return entries;
 }
 
 /// Whether the text of messages BEFORE [firstIndex] leaves a code fence
