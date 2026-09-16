@@ -4,7 +4,7 @@
 //
 // Load order matters: tabs.js before ops.js (namespace destructure), agent.js
 // is optional (scaffold checkouts without a dart build stay fully functional).
-importScripts('./tabs.js', './bridge.js', './ops.js', './cdp.js');
+importScripts('./tabs.js', './bridge.js', './ops.js', './cdp.js', './fetch_bridge.js');
 // Service workers have no `window`, but package:cryptography's web backend
 // probes window.crypto (WebCrypto itself IS available here via self.crypto).
 // Alias it before the dart2js bundle initializes any crypto lazily.
@@ -50,7 +50,16 @@ const store = {
 };
 
 function pushPanels(msg) {
-  for (const port of ports) port.postMessage(msg);
+  // Sender hygiene (issue #470): a panel port can die without its
+  // onDisconnect having run yet — one dead port must not throw through the
+  // event that is pushing to it, so prune it instead.
+  for (const port of [...ports]) {
+    try {
+      port.postMessage(msg);
+    } catch {
+      ports.delete(port);
+    }
+  }
 }
 
 function snapshot() {
@@ -303,7 +312,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       default:
         return { ok: false, error: `unknown message type "${msg?.type}"` };
     }
-  })().then(sendResponse);
+  })().then(
+    (r) => {
+      try {
+        sendResponse(r);
+      } catch {} // the asker's frame died mid-flight (OWA rebuilds them constantly) — nothing to answer
+    },
+    (e) => {
+      // Never an uncaught rejection (issue #470): surface as the one answer.
+      try {
+        sendResponse({ ok: false, error: String(e?.message || e) });
+      } catch {}
+    },
+  );
   return true; // async sendResponse
 });
 
@@ -312,7 +333,9 @@ chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== PANEL_PORT) return;
   ports.add(port);
   port.onDisconnect.addListener(() => ports.delete(port));
-  port.postMessage({ type: 'status', status: snapshot() });
+  try {
+    port.postMessage({ type: 'status', status: snapshot() });
+  } catch { ports.delete(port); }
 });
 
 chrome.alarms.onAlarm.addListener((a) => {

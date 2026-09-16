@@ -52,15 +52,50 @@ function injectError(e) {
   return opErr(msg, 'node_vanished');
 }
 
-/** Send an op to the content script; inject it first if the page lacks it. */
+/** Send an op to the content script; inject it first if the page lacks it.
+ *
+ * Sender hygiene (issue #470): Outlook/OWA rebuilds its frames constantly,
+ * so a target tab can be a corpse that swallows sendMessage errors forever.
+ * Consecutive misses are counted per tab: the first two failures still run
+ * the inject+retry (a page without the content script is normal), at the
+ * third the sender warns ONCE and stops injecting into that tab; further
+ * sends are a single cheap probe that re-resolves the tab first and fails
+ * fast when it is gone. Any answer resets the tab's counter, so a revived
+ * page is served again immediately. Every rejection is handled here — zero
+ * uncaught rejections reach the SW console (AC4). */
+const SEND_MISS_CAP = 3;
+const sendMisses = new Map(); // tabId -> consecutive failures
+
 async function sendToContent(tabId, op, args) {
   const msg = { pv: 1, op, args };
+  const capped = (sendMisses.get(tabId) ?? 0) >= SEND_MISS_CAP;
+  if (capped) {
+    // Re-resolve before anything else: a gone tab drops with a clean
+    // per-call error instead of a retry into a corpse (E4).
+    try {
+      await chrome.tabs.get(tabId);
+    } catch {
+      throw opErr(`no tab with id ${tabId} (dropped after ${SEND_MISS_CAP} misses)`, 'no_tab');
+    }
+  }
   try {
-    return await chrome.tabs.sendMessage(tabId, msg);
-  } catch {
+    const res = await chrome.tabs.sendMessage(tabId, msg);
+    sendMisses.delete(tabId); // answered — the tab is alive again
+    return res;
+  } catch (first) {
+    const n = (sendMisses.get(tabId) ?? 0) + 1;
+    sendMisses.set(tabId, n);
+    if (capped || n >= SEND_MISS_CAP) {
+      if (n === SEND_MISS_CAP) {
+        console.warn(`[fa] tab ${tabId} unreachable ${SEND_MISS_CAP}× — dropping dead-frame retries until it answers`);
+      }
+      throw injectError(first);
+    }
     try {
       await chrome.scripting.executeScript({ target: { tabId, allFrames: false }, files: ['content/content.js'] });
-      return await chrome.tabs.sendMessage(tabId, msg);
+      const res = await chrome.tabs.sendMessage(tabId, msg);
+      sendMisses.delete(tabId);
+      return res;
     } catch (e) {
       throw injectError(e);
     }
