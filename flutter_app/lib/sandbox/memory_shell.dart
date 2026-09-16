@@ -6,10 +6,17 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:archive/archive.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:http/http.dart' as http;
 
+import 'package:fa/sandbox/memory_shell/awk.dart';
+import 'package:fa/sandbox/memory_shell/grep.dart';
+import 'package:fa/sandbox/memory_shell/interpreters.dart';
+import 'package:fa/sandbox/memory_shell/pipeline.dart';
+import 'package:fa/sandbox/memory_shell/paths.dart';
+import 'package:fa/sandbox/memory_shell/sed.dart';
+import 'package:fa/sandbox/memory_shell/tar.dart';
+import 'package:fa/sandbox/memory_shell/test_expr.dart';
 import 'package:fa/sandbox/sandbox_builtins.dart';
 import 'package:fa/sandbox/sandbox_registry.dart';
 import 'package:fa/sandbox/shell_job.dart';
@@ -219,29 +226,16 @@ final class MemoryShell implements Shell, BackgroundShell {
       final stage = expansion.valueOrNull!;
       final cwd = options?.cwd ?? _currentDir;
 
-      String? stdoutFile;
-      String? stderrFile;
-      var appendStdout = false;
-      var appendStderr = false;
-      String? stdinFile;
-
-      for (final redirect in stage.redirects) {
-        if (redirect.fd == 0 && redirect.kind == RedirectKind.read) {
-          stdinFile = redirect.target;
-        } else if (redirect.fd == 1 || redirect.fd == -1) {
-          stdoutFile = redirect.target;
-          appendStdout = redirect.kind == RedirectKind.append;
-        } else if (redirect.fd == 2 || redirect.fd == -1) {
-          stderrFile = redirect.target;
-          appendStderr = redirect.kind == RedirectKind.append;
-        }
-      }
+      final redirects = parseStageRedirects(stage.redirects);
+      final stdoutFile = redirects.stdoutFile;
+      final stderrFile = redirects.stderrFile;
+      final appendStdout = redirects.appendStdout;
+      final appendStderr = redirects.appendStderr;
+      final stdinFile = redirects.stdinFile;
 
       String? stdinText;
       if (stdinFile != null) {
-        final read = await _fs.readTextFile(
-          _resolveSandboxPath(stdinFile, cwd),
-        );
+        final read = await _fs.readTextFile(resolveSandboxPath(stdinFile, cwd));
         if (read.isErr) {
           stageResult = _StageResult(
             stdout: const [],
@@ -301,7 +295,7 @@ final class MemoryShell implements Shell, BackgroundShell {
     bool append,
     String cwd,
   ) async {
-    final path = _resolveSandboxPath(target, cwd);
+    final path = resolveSandboxPath(target, cwd);
     if (append) {
       await _fs.appendFile(path, utf8.decode(bytes, allowMalformed: true));
     } else {
@@ -426,27 +420,27 @@ final class MemoryShell implements Shell, BackgroundShell {
       httpClient: _httpClient,
       readTextFile: (path) async {
         final result = await _fs.readTextFile(
-          _resolveSandboxPath(path, ctx.cwd),
+          resolveSandboxPath(path, ctx.cwd),
         );
         return result.valueOrNull;
       },
       writeBinaryFile: (path, bytes) async {
         await _fs.writeBinaryFile(
-          _resolveSandboxPath(path, ctx.cwd),
+          resolveSandboxPath(path, ctx.cwd),
           Uint8List.fromList(bytes),
         );
       },
       readBinaryFile: (path) async => (await _fs.readBinaryFile(
-        _resolveSandboxPath(path, ctx.cwd),
+        resolveSandboxPath(path, ctx.cwd),
       )).valueOrNull,
       listDirectory: (path) async => (await _fs.listDir(
-        _resolveSandboxPath(path, ctx.cwd),
+        resolveSandboxPath(path, ctx.cwd),
       )).valueOrNull?.map(_dirEntry).toList(),
       removeFile: (path) async {
-        await _fs.remove(_resolveSandboxPath(path, ctx.cwd));
+        await _fs.remove(resolveSandboxPath(path, ctx.cwd));
       },
       makeDirectory: (path) async {
-        await _fs.createDir(_resolveSandboxPath(path, ctx.cwd));
+        await _fs.createDir(resolveSandboxPath(path, ctx.cwd));
       },
     );
   }
@@ -525,64 +519,20 @@ final class MemoryShell implements Shell, BackgroundShell {
   // ---------------------------------------------------------------------------
   // sqlite3 (sql.js in the browser)
   // ---------------------------------------------------------------------------
-
-  Future<_StageResult> _runSqlite(_Context ctx) async {
-    final args = ctx.args;
-    if (args.contains('--version') || args.contains('-version')) {
-      final version = await WebInterpreters.sqliteVersion();
-      if (version == null) return _interpreterUnavailable('sqlite3');
-      return _text('$version (Fa sandbox sql.js)\n');
-    }
-
-    final positionals = <String>[];
-    for (var i = 0; i < args.length; i++) {
-      final arg = args[i];
-      if (arg == '-cmd' && i + 1 < args.length) {
-        // Accepted for parity with the WASM sqlite3; init commands are not
-        // needed because the full SQL arrives as one argument or via stdin.
-        i++;
-      } else if (arg == '-csv' || arg == '-list' || arg == '-readonly') {
-        // Output stays in the default `|`-separated list mode.
-      } else if (arg.startsWith('-') && arg != '-') {
-        return _error('sqlite3: unsupported option $arg\n', exitCode: 1);
-      } else {
-        positionals.add(arg);
-      }
-    }
-
-    final dbPath = positionals.isNotEmpty ? positionals[0] : null;
-    var sql = positionals.length > 1
-        ? positionals.sublist(1).join(' ')
-        : ctx.stdin;
-    sql ??= '';
-
-    Uint8List? dbBytes;
-    String? resolvedDb;
-    if (dbPath != null && dbPath != ':memory:') {
-      resolvedDb = _resolveSandboxPath(dbPath, ctx.cwd);
-      final read = await _fs.readBinaryFile(resolvedDb);
-      if (read.isOk) dbBytes = read.valueOrNull;
-    }
-
-    final result = await WebInterpreters.runSqlite(sql, dbBytes);
-    if (!result.available) return _interpreterUnavailable('sqlite3');
-
-    // sql.js is in-memory: serialize the database back to the sandbox file
-    // after every invocation so it persists across exec calls.
-    if (resolvedDb != null && result.dbBytes != null) {
-      await _fs.writeBinaryFile(resolvedDb, result.dbBytes!);
-    }
-
-    final hasError = result.stderr.isNotEmpty;
-    return _StageResult(
-      stdout: utf8.encode(result.stdout.isEmpty ? '' : '${result.stdout}\n'),
-      stderr: utf8.encode(hasError ? 'Error: ${result.stderr}\n' : ''),
-      exitCode: hasError ? 1 : 0,
-    );
-  }
+  Future<_StageResult> _runSqlite(_Context ctx) async => _fromInterpreter(
+    await runSqliteCommand(_fs, ctx.cwd, ctx.args, ctx.stdin),
+  );
 
   // ---------------------------------------------------------------------------
-  // Text stream utilities (sed, awk, printf)
+  // Text stream utilities (printf)
+
+  /// Wraps a module interpreter result into pipeline bytes.
+  _StageResult _fromInterpreter(InterpreterOutcome r) => _StageResult(
+    stdout: utf8.encode(r.stdout),
+    stderr: utf8.encode(r.stderr),
+    exitCode: r.exitCode,
+  );
+
   // ---------------------------------------------------------------------------
 
   _StageResult _printf(_Context ctx) {
@@ -656,276 +606,74 @@ final class MemoryShell implements Shell, BackgroundShell {
   }
 
   Future<_StageResult> _sed(_Context ctx) async {
-    var quiet = false;
-    var inPlace = false;
-    final scripts = <String>[];
-    final files = <String>[];
-
-    for (var i = 0; i < ctx.args.length; i++) {
-      final arg = ctx.args[i];
-      if (arg == '-n' || arg == '--quiet' || arg == '--silent') {
-        quiet = true;
-      } else if (arg == '-i' || arg.startsWith('-i')) {
-        inPlace = true;
-      } else if (arg == '-e') {
-        if (i + 1 >= ctx.args.length) {
-          return _error('sed: option requires an argument -- e\n', exitCode: 1);
-        }
-        scripts.add(ctx.args[++i]);
-      } else if (arg.startsWith('-e')) {
-        scripts.add(arg.substring(2));
-      } else if (arg == '-E' || arg == '-r') {
-        // Extended regex is the only syntax this subset supports anyway.
-      } else if (arg == '--') {
-        // End of options.
-      } else if (arg.startsWith('-') && arg != '-') {
-        return _error('sed: unsupported option $arg\n', exitCode: 1);
-      } else if (scripts.isEmpty && files.isEmpty) {
-        scripts.add(arg);
-      } else {
-        files.add(arg);
-      }
+    final parsed = parseSedArgs(ctx.args);
+    final parseError = parsed.error;
+    if (parseError != null) {
+      return _error(parseError.message, exitCode: parseError.exitCode);
     }
-
-    if (scripts.isEmpty) {
-      return _error(
-        'usage: sed [-n] [-i] [-e script] [script] [file...]\n',
-        exitCode: 1,
-      );
-    }
-    if (inPlace && files.isEmpty) {
-      return _error('sed: -i requires file arguments\n', exitCode: 1);
-    }
-
-    final commands = <_SedCommand>[];
-    for (final script in scripts) {
-      final command = _SedCommand.tryParse(script);
+    final commands = <SedCommand>[];
+    for (final script in parsed.scripts) {
+      final command = SedCommand.tryParse(script);
       if (command == null) {
         return _error('sed: unsupported script: $script\n', exitCode: 1);
       }
       commands.add(command);
     }
 
-    if (inPlace) {
-      for (final arg in files) {
-        final resolved = _resolveSandboxPath(arg, ctx.cwd);
+    if (parsed.inPlace) {
+      for (final arg in parsed.files) {
+        final resolved = resolveSandboxPath(arg, ctx.cwd);
         final read = await _fs.readTextFile(resolved);
         if (read.isErr) {
           return _error('sed: $arg: No such file or directory\n');
         }
-        final result = _runSed(read.valueOrNull!, commands, quiet: false);
-        await _fs.writeFile(resolved, result);
+        await _fs.writeFile(
+          resolved,
+          runSed(read.valueOrNull!, commands, quiet: false),
+        );
       }
       return _ok;
     }
 
     String? errorPath;
-    final input = await _readInput(files, ctx, (path) => errorPath = path);
+    final input = await readCommandInput(
+      _fs,
+      ctx.cwd,
+      parsed.files,
+      ctx.stdin,
+      (path) => errorPath = path,
+    );
     if (input == null) {
       return _error('sed: $errorPath: No such file or directory\n');
     }
-    return _text(_runSed(input, commands, quiet: quiet));
-  }
-
-  /// Applies [commands] to [input] line by line; auto-prints each line
-  /// unless [quiet] (`-n`) is set. Always ends the output with a newline
-  /// when the input was non-empty, mirroring GNU sed.
-  String _runSed(
-    String input,
-    List<_SedCommand> commands, {
-    bool quiet = false,
-  }) {
-    final lines = input.split('\n');
-    if (lines.isNotEmpty && lines.last.isEmpty) lines.removeLast();
-    final out = StringBuffer();
-    final ranges = <_SedCommand, bool>{};
-    for (var n = 0; n < lines.length; n++) {
-      var line = lines[n];
-      final lineNo = n + 1;
-      final isLast = n == lines.length - 1;
-      for (final command in commands) {
-        final selected = command.select(lineNo, isLast, line, ranges);
-        if (!selected) continue;
-        switch (command.kind) {
-          case _SedKind.substitute:
-            line = command.applySubstitute(line);
-          case _SedKind.print:
-            out.writeln(line);
-        }
-      }
-      if (!quiet) out.writeln(line);
-    }
-    return out.toString();
+    return _text(runSed(input, commands, quiet: parsed.quiet));
   }
 
   Future<_StageResult> _awk(_Context ctx) async {
-    String? fieldSeparator;
-    final positionals = <String>[];
-    for (var i = 0; i < ctx.args.length; i++) {
-      final arg = ctx.args[i];
-      if (arg == '-F') {
-        if (i + 1 >= ctx.args.length) {
-          return _error('awk: option requires an argument -- F\n', exitCode: 2);
-        }
-        fieldSeparator = ctx.args[++i];
-      } else if (arg.startsWith('-F')) {
-        fieldSeparator = arg.substring(2);
-      } else if (arg.startsWith('-') && arg != '-') {
-        return _error('awk: unsupported option $arg\n', exitCode: 2);
-      } else {
-        positionals.add(arg);
-      }
+    final parsed = parseAwkArgs(ctx.args);
+    final argError = parsed.error;
+    if (argError != null) {
+      return _error(argError.message, exitCode: argError.exitCode);
     }
-    if (fieldSeparator == r'\t') fieldSeparator = '\t';
-
-    if (positionals.isEmpty) {
-      return _error('usage: awk [-F sep] program [file...]\n', exitCode: 2);
+    final program = parseAwkProgram(parsed.positionals.first);
+    final programError = program.error;
+    if (programError != null) {
+      return _error(programError.message, exitCode: programError.exitCode);
     }
-    final program = positionals.first;
-    final files = positionals.sublist(1);
-
-    var body = program.trim();
-    RegExp? pattern;
-    if (body.startsWith('/')) {
-      final end = body.indexOf('/', 1);
-      if (end <= 1) {
-        return _error('awk: bad pattern in program\n', exitCode: 2);
-      }
-      try {
-        pattern = RegExp(body.substring(1, end));
-      } on Object catch (e) {
-        return _error('awk: bad pattern: $e\n', exitCode: 2);
-      }
-      body = body.substring(end + 1).trim();
-    }
-    // A pattern without an action prints the whole record.
-    var printExpr = r'$0';
-    if (body.isNotEmpty) {
-      if (!body.startsWith('{') || !body.endsWith('}')) {
-        return _error('awk: unsupported program: $program\n', exitCode: 2);
-      }
-      final action = body.substring(1, body.length - 1).trim();
-      if (action != 'print' && !action.startsWith('print ')) {
-        return _error('awk: unsupported action: $action\n', exitCode: 2);
-      }
-      printExpr = action == 'print' ? r'$0' : action.substring(6).trim();
-    }
-
     String? errorPath;
-    final input = await _readInput(files, ctx, (path) => errorPath = path);
+    final input = await readCommandInput(
+      _fs,
+      ctx.cwd,
+      parsed.positionals.sublist(1),
+      ctx.stdin,
+      (path) => errorPath = path,
+    );
     if (input == null) {
       return _error('awk: cannot open $errorPath: No such file or directory\n');
     }
-
-    final lines = input.split('\n');
-    if (lines.isNotEmpty && lines.last.isEmpty) lines.removeLast();
-    final out = StringBuffer();
-    for (var n = 0; n < lines.length; n++) {
-      final line = lines[n];
-      if (pattern != null && !pattern.hasMatch(line)) continue;
-      final trimmed = line.trim();
-      final fields = fieldSeparator != null
-          ? line.split(fieldSeparator)
-          : (trimmed.isEmpty ? <String>[] : trimmed.split(RegExp(r'\s+')));
-      final record = _AwkRecord(line: line, fields: fields, nr: n + 1);
-      final values = [
-        for (final expr in _awkSplitTopLevel(printExpr)) _awkEval(expr, record),
-      ];
-      out.writeln(values.join(' '));
-    }
-    return _text(out.toString());
-  }
-
-  /// Splits a print list on top-level commas (commas join fields with OFS,
-  /// a single space here).
-  List<String> _awkSplitTopLevel(String expr) {
-    final parts = <String>[];
-    var depth = 0;
-    var inString = false;
-    var start = 0;
-    for (var i = 0; i < expr.length; i++) {
-      final ch = expr[i];
-      if (ch == '"') inString = !inString;
-      if (inString) continue;
-      if (ch == '(') depth++;
-      if (ch == ')') depth--;
-      if (ch == ',' && depth == 0) {
-        parts.add(expr.substring(start, i));
-        start = i + 1;
-      }
-    }
-    parts.add(expr.substring(start));
-    return parts;
-  }
-
-  /// Evaluates a tiny awk expression: an additive chain of terms (`$N`,
-  /// `$0`, `NR`, `NF`, numbers, "strings") or their concatenation.
-  String _awkEval(String expr, _AwkRecord record) {
-    final tokens = _awkTokens(expr);
-    if (tokens.isEmpty) return '';
-    if (tokens.any((t) => t == '+' || t == '-')) {
-      var total = 0.0;
-      var op = '+';
-      for (final token in tokens) {
-        if (token == '+' || token == '-') {
-          op = token;
-          continue;
-        }
-        final value = _awkTermValue(token, record);
-        final number = value is num ? value : num.tryParse('$value') ?? 0;
-        total = op == '+' ? total + number : total - number;
-      }
-      return total == total.roundToDouble()
-          ? total.toInt().toString()
-          : total.toString();
-    }
-    return tokens.map((t) => '${_awkTermValue(t, record)}').join();
-  }
-
-  List<String> _awkTokens(String expr) {
-    final tokens = <String>[];
-    final buffer = StringBuffer();
-    var inString = false;
-    void flush() {
-      if (buffer.isEmpty) return;
-      tokens.add(buffer.toString());
-      buffer.clear();
-    }
-
-    for (var i = 0; i < expr.length; i++) {
-      final ch = expr[i];
-      if (ch == '"') {
-        buffer.write(ch);
-        inString = !inString;
-        continue;
-      }
-      if (!inString && (ch == '+' || ch == '-' || ch == ' ' || ch == '\t')) {
-        flush();
-        if (ch == '+' || ch == '-') tokens.add(ch);
-        continue;
-      }
-      buffer.write(ch);
-    }
-    flush();
-    return tokens;
-  }
-
-  Object _awkTermValue(String token, _AwkRecord record) {
-    final term = token.trim();
-    if (term.length >= 2 && term.startsWith('"') && term.endsWith('"')) {
-      return term.substring(1, term.length - 1);
-    }
-    if (term == 'NR') return record.nr;
-    if (term == 'NF') return record.fields.length;
-    if (term.startsWith(r'$')) {
-      final index = int.tryParse(term.substring(1));
-      if (index == null) return '';
-      if (index == 0) return record.line;
-      return index <= record.fields.length ? record.fields[index - 1] : '';
-    }
-    final number = num.tryParse(term);
-    if (number != null) return number;
-    return term;
+    return _text(
+      runAwk(input, program.pattern, program.printExpr, parsed.fieldSeparator),
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -976,7 +724,7 @@ final class MemoryShell implements Shell, BackgroundShell {
     }
 
     for (final arg in paths) {
-      final resolved = _resolveSandboxPath(arg, ctx.cwd);
+      final resolved = resolveSandboxPath(arg, ctx.cwd);
       final info = await _fs.fileInfo(resolved);
       if (info.isErr) {
         err.write('find: $arg: No such file or directory\n');
@@ -1010,13 +758,13 @@ final class MemoryShell implements Shell, BackgroundShell {
   }
 
   Future<_StageResult> _realpath(_Context ctx) async {
-    final split = _splitArgs(ctx.args);
+    final split = splitArgs(ctx.args);
     if (split.paths.isEmpty) {
       return _error('realpath: missing operand\n');
     }
     final out = StringBuffer();
     for (final arg in split.paths) {
-      final resolved = _resolveSandboxPath(arg, ctx.cwd);
+      final resolved = resolveSandboxPath(arg, ctx.cwd);
       final exists = await _fs.exists(resolved);
       if (!(exists.valueOrNull ?? false)) {
         return _error('realpath: $arg: No such file or directory\n');
@@ -1091,250 +839,52 @@ final class MemoryShell implements Shell, BackgroundShell {
   }
 
   // ---------------------------------------------------------------------------
-  // Archives (tar, gzip, zip) via package:archive
+  // Archives (tar, gzip, zip) via the memory_shell/tar.dart module
   // ---------------------------------------------------------------------------
 
   Future<_StageResult> _tar(_Context ctx) async {
-    if (ctx.args.isEmpty) {
-      return _error('tar: no operation specified\n', exitCode: 2);
+    final parsed = parseTarArgs(ctx.args);
+    final parseError = parsed.error;
+    if (parseError != null) {
+      return _error(parseError.message, exitCode: parseError.exitCode);
     }
-    var index = 0;
-    var flags = '';
-    final first = ctx.args.first;
-    if (first.startsWith('-')) {
-      flags = first.substring(1);
-      index = 1;
-    } else if (RegExp(r'^[a-zA-Z]+$').hasMatch(first) &&
-        first.contains(RegExp(r'[ctx]'))) {
-      // Old-style `tar cf ...` without a dash.
-      flags = first;
-      index = 1;
-    }
-    final create = flags.contains('c');
-    final extract = flags.contains('x');
-    final compressed = flags.contains('z');
-    if (create == extract) {
-      return _error('tar: specify exactly one of -c or -x\n', exitCode: 2);
-    }
-
-    String? archiveArg;
-    if (flags.contains('f')) {
-      if (index >= ctx.args.length) {
-        return _error('tar: option requires an argument -- f\n', exitCode: 2);
-      }
-      archiveArg = ctx.args[index++];
-    }
-    String? changeDir;
-    final members = <String>[];
-    for (; index < ctx.args.length; index++) {
-      final arg = ctx.args[index];
-      if (arg == '-C' && index + 1 < ctx.args.length) {
-        changeDir = ctx.args[++index];
-      } else {
-        members.add(arg);
-      }
-    }
-    if (archiveArg == null) {
-      return _error('tar: no archive file specified (use -f)\n', exitCode: 2);
-    }
-    final archivePath = _resolveSandboxPath(archiveArg, ctx.cwd);
-
-    if (create) {
-      if (members.isEmpty) {
-        return _error(
-          'tar: Cowardly refusing to create an empty archive\n',
-          exitCode: 2,
-        );
-      }
-      final archive = Archive();
-      for (final member in members) {
-        final resolved = _resolveSandboxPath(member, ctx.cwd);
-        final info = await _fs.fileInfo(resolved);
-        if (info.isErr) {
-          return _error(
-            'tar: $member: Cannot stat: No such file or directory\n',
-            exitCode: 1,
-          );
-        }
-        await _tarAdd(archive, resolved, info.valueOrNull!);
-      }
-      var bytes = TarEncoder().encode(archive);
-      if (compressed) bytes = GZipEncoder().encode(bytes);
-      await _fs.writeBinaryFile(archivePath, Uint8List.fromList(bytes));
-      return _ok;
-    }
-
-    final read = await _fs.readBinaryFile(archivePath);
-    if (read.isErr) {
-      return _error(
-        'tar: $archiveArg: Cannot open: No such file or directory\n',
-        exitCode: 1,
-      );
-    }
-    var bytes = read.valueOrNull!;
-    if (compressed) {
-      try {
-        bytes = Uint8List.fromList(GZipDecoder().decodeBytes(bytes));
-      } on Object {
-        return _error('tar: $archiveArg: not in gzip format\n', exitCode: 1);
-      }
-    }
-    final Archive archive;
-    try {
-      archive = TarDecoder().decodeBytes(bytes);
-    } on Object {
-      return _error('tar: $archiveArg: not in tar format\n', exitCode: 1);
-    }
-    final root = changeDir != null
-        ? _resolveSandboxPath(changeDir, ctx.cwd)
-        : _resolveSandboxPath('.', ctx.cwd);
-    for (final file in archive.files) {
-      final name = file.name.startsWith('/')
-          ? file.name.substring(1)
-          : file.name;
-      if (!file.isFile) {
-        await _fs.createDir('$root/$name');
-        continue;
-      }
-      await _fs.writeBinaryFile('$root/$name', file.content);
+    final opError = await (parsed.create
+        ? createTarArchive(_fs, ctx.cwd, parsed)
+        : extractTarArchive(_fs, ctx.cwd, parsed));
+    if (opError != null) {
+      return _error(opError.message, exitCode: opError.exitCode);
     }
     return _ok;
   }
 
-  /// Adds [resolved] (and its children when it is a directory) to [archive],
-  /// stripping the leading `/` from member names like GNU tar does.
-  Future<void> _tarAdd(Archive archive, String resolved, FileInfo info) async {
-    final name = resolved.startsWith('/') ? resolved.substring(1) : resolved;
-    if (info.kind == FileKind.directory) {
-      archive.addFile(ArchiveFile('$name/', 0, const <int>[])..isFile = false);
-      final entries = await _fs.listDir(resolved);
-      for (final entry in entries.valueOrNull ?? <FileInfo>[]) {
-        await _tarAdd(archive, '$resolved/${entry.name}', entry);
-      }
-      return;
-    }
-    final data = await _fs.readBinaryFile(resolved);
-    if (data.isErr) return;
-    final bytes = data.valueOrNull!;
-    archive.addFile(ArchiveFile(name, bytes.length, bytes));
-  }
-
   Future<_StageResult> _gzip(_Context ctx, {required bool decompress}) async {
-    var unpack = decompress;
-    var keep = false;
-    final files = <String>[];
-    for (final arg in ctx.args) {
-      if (arg == '-d' || arg == '--decompress' || arg == '--uncompress') {
-        unpack = true;
-      } else if (arg == '-k' || arg == '--keep') {
-        keep = true;
-      } else if (RegExp(r'^-[1-9]$').hasMatch(arg)) {
-        // Compression level; irrelevant for the in-memory subset.
-      } else if (arg.startsWith('-') && arg != '-') {
-        return _error('gzip: unsupported option $arg\n', exitCode: 1);
-      } else {
-        files.add(arg);
-      }
+    final parsed = parseGzipArgs(ctx.args, decompress: decompress);
+    final parseError = parsed.error;
+    if (parseError != null) {
+      return _error(parseError.message, exitCode: parseError.exitCode);
     }
-    final name = unpack ? 'gunzip' : 'gzip';
-    if (files.isEmpty) {
-      return _error('$name: missing operand\n', exitCode: 1);
-    }
-    for (final arg in files) {
-      final resolved = _resolveSandboxPath(arg, ctx.cwd);
-      final read = await _fs.readBinaryFile(resolved);
-      if (read.isErr) {
-        return _error('$name: $arg: No such file or directory\n', exitCode: 1);
-      }
-      if (!unpack) {
-        final encoded = GZipEncoder().encode(read.valueOrNull!);
-        await _fs.writeBinaryFile('$resolved.gz', Uint8List.fromList(encoded));
-        if (!keep) await _fs.remove(resolved);
-        continue;
-      }
-      if (!resolved.endsWith('.gz')) {
-        return _error('gzip: $arg: unknown suffix -- ignored\n', exitCode: 1);
-      }
-      final List<int> decoded;
-      try {
-        decoded = GZipDecoder().decodeBytes(read.valueOrNull!);
-      } on Object {
-        return _error('gzip: $arg: not in gzip format\n', exitCode: 1);
-      }
-      final dest = resolved.substring(0, resolved.length - 3);
-      await _fs.writeBinaryFile(dest, Uint8List.fromList(decoded));
-      if (!keep) await _fs.remove(resolved);
+    final opError = await runGzip(_fs, ctx.cwd, parsed);
+    if (opError != null) {
+      return _error(opError.message, exitCode: opError.exitCode);
     }
     return _ok;
   }
 
   Future<_StageResult> _zip(_Context ctx) async {
-    var recursive = false;
-    final positionals = <String>[];
-    for (final arg in ctx.args) {
-      if (arg.startsWith('-') && arg != '-') {
-        if (arg.contains('r') || arg.contains('R')) recursive = true;
-        // Other flags (quiet, compression level, ...) are accepted and
-        // ignored by this subset.
-      } else {
-        positionals.add(arg);
-      }
+    final parsed = parseZipArgs(ctx.args);
+    final parseError = parsed.error;
+    if (parseError != null) {
+      return _error(parseError.message, exitCode: parseError.exitCode);
     }
-    if (positionals.length < 2) {
-      return _error(
-        'zip error: Nothing to do! (usage: zip [-r] archive.zip file...)\n',
-        exitCode: 1,
-      );
+    final opError = await runZip(_fs, ctx.cwd, parsed);
+    if (opError != null) {
+      return _error(opError.message, exitCode: opError.exitCode);
     }
-    final archivePath = _resolveSandboxPath(positionals.first, ctx.cwd);
-    final archive = Archive();
-    for (final member in positionals.sublist(1)) {
-      final resolved = _resolveSandboxPath(member, ctx.cwd);
-      final info = await _fs.fileInfo(resolved);
-      if (info.isErr) {
-        return _error(
-          'zip error: Nothing to do! ($member: No such file or directory)\n',
-          exitCode: 1,
-        );
-      }
-      final fileInfo = info.valueOrNull!;
-      if (fileInfo.kind == FileKind.directory && !recursive) {
-        return _error(
-          'zip error: Nothing to do! ($member is a directory; use -r)\n',
-          exitCode: 1,
-        );
-      }
-      await _tarAdd(archive, resolved, fileInfo);
-    }
-    final bytes = ZipEncoder().encode(archive);
-    await _fs.writeBinaryFile(archivePath, Uint8List.fromList(bytes));
     return _ok;
   }
 
-  Future<_StageResult> _runPython(_Context ctx) async {
-    final args = ctx.args;
-    if (args.contains('--version') || args.contains('-V')) {
-      final version = await WebInterpreters.pythonVersion();
-      if (version == null) return _interpreterUnavailable('python3');
-      return _text('Python $version\n');
-    }
-
-    final code = await _interpreterCode(args, ctx, flag: '-c');
-    if (code == null) {
-      return _error(
-        'usage: python3 [--version] [-c code] [script.py] [args...]\n',
-        exitCode: 2,
-      );
-    }
-    final result = await WebInterpreters.runPython(code);
-    if (!result.available) return _interpreterUnavailable('python3');
-    final hasError = result.stderr.isNotEmpty;
-    return _StageResult(
-      stdout: utf8.encode(result.stdout.isEmpty ? '' : '${result.stdout}\n'),
-      stderr: utf8.encode(result.stderr.isEmpty ? '' : '${result.stderr}\n'),
-      exitCode: hasError ? 1 : 0,
-    );
-  }
+  Future<_StageResult> _runPython(_Context ctx) async =>
+      _fromInterpreter(await runPythonCommand(_fs, ctx.cwd, ctx.args));
 
   /// pip-lite for the web sandbox: installs pure-Python wheels through
   /// pyodide's micropip (loaded from the CDN on first real use; usage errors
@@ -1349,50 +899,8 @@ final class MemoryShell implements Shell, BackgroundShell {
     );
   }
 
-  Future<_StageResult> _runQjs(_Context ctx) async {
-    final args = ctx.args;
-    if (args.contains('--version') || args.contains('-v')) {
-      final version = await WebInterpreters.qjsVersion();
-      if (version == null) return _interpreterUnavailable('qjs');
-      return _text('$version\n');
-    }
-
-    final code = await _interpreterCode(args, ctx, flag: '-e');
-    if (code == null) {
-      return _error(
-        'usage: qjs [--version] [-e code] [script.js] [args...]\n',
-        exitCode: 2,
-      );
-    }
-    final result = await WebInterpreters.runQjs(code);
-    if (!result.available) return _interpreterUnavailable('qjs');
-    final hasError = result.stderr.isNotEmpty;
-    return _StageResult(
-      stdout: utf8.encode(result.stdout.isEmpty ? '' : '${result.stdout}\n'),
-      stderr: utf8.encode(result.stderr.isEmpty ? '' : '${result.stderr}\n'),
-      exitCode: hasError ? 1 : 0,
-    );
-  }
-
-  /// Extracts the code to run: inline via [flag], or a script file's content.
-  Future<String?> _interpreterCode(
-    List<String> args,
-    _Context ctx, {
-    required String flag,
-  }) async {
-    for (var i = 0; i < args.length; i++) {
-      if (args[i] == flag) {
-        if (i + 1 < args.length) return args[i + 1];
-        return null;
-      }
-      if (args[i].startsWith('-')) continue;
-      final resolved = _resolveSandboxPath(args[i], ctx.cwd);
-      final read = await _fs.readTextFile(resolved);
-      if (read.isErr) return null;
-      return read.valueOrNull!;
-    }
-    return null;
-  }
+  Future<_StageResult> _runQjs(_Context ctx) async =>
+      _fromInterpreter(await runQjsCommand(_fs, ctx.cwd, ctx.args));
 
   _StageResult _interpreterUnavailable(String name) {
     return _StageResult(
@@ -1438,28 +946,6 @@ final class MemoryShell implements Shell, BackgroundShell {
     exitCode: exitCode,
   );
 
-  /// Normalizes a sandbox path: collapses `.` and `..` segments and always
-  /// returns an absolute path starting at the sandbox root `/`.
-  String _normalizeSandboxPath(String path) {
-    final segments = <String>[];
-    for (final part in path.split('/')) {
-      if (part.isEmpty || part == '.') continue;
-      if (part == '..') {
-        if (segments.isNotEmpty) segments.removeLast();
-        continue;
-      }
-      segments.add(part);
-    }
-    return '/${segments.join('/')}';
-  }
-
-  /// Resolves [path] against [cwd] inside the sandbox, returning an absolute
-  /// sandbox path.
-  String _resolveSandboxPath(String path, String cwd) {
-    if (path.startsWith('/')) return _normalizeSandboxPath(path);
-    return _normalizeSandboxPath('$cwd/$path');
-  }
-
   /// Effective environment visible to commands and variable expansion:
   /// sandbox defaults, persistent `export`ed variables, and any per-call
   /// overrides (later wins).
@@ -1475,50 +961,6 @@ final class MemoryShell implements Shell, BackgroundShell {
       ..._shellEnv,
       ...?options?.env,
     };
-  }
-
-  /// Reads the input for a command: the files in [paths] concatenated, or the
-  /// stdin text when [paths] is empty. Returns `null` and reports the failing
-  /// file through [onError] when a file cannot be read.
-  Future<String?> _readInput(
-    List<String> paths,
-    _Context ctx,
-    void Function(String path) onError,
-  ) async {
-    if (paths.isEmpty) return ctx.stdin ?? '';
-    final buffer = StringBuffer();
-    for (final arg in paths) {
-      if (arg == '-') {
-        buffer.write(ctx.stdin ?? '');
-        continue;
-      }
-      final resolved = _resolveSandboxPath(arg, ctx.cwd);
-      final result = await _fs.readTextFile(resolved);
-      if (result.isErr) {
-        onError(arg);
-        return null;
-      }
-      buffer.write(result.valueOrNull);
-    }
-    return buffer.toString();
-  }
-
-  /// Splits flags from positional arguments; `--` ends flag parsing and a
-  /// lone `-` is treated as a positional (stdin for filters).
-  ({List<String> flags, List<String> paths}) _splitArgs(List<String> args) {
-    final flags = <String>[];
-    final paths = <String>[];
-    var noMoreFlags = false;
-    for (final arg in args) {
-      if (arg == '--' && !noMoreFlags) {
-        noMoreFlags = true;
-      } else if (!noMoreFlags && arg.startsWith('-') && arg != '-') {
-        flags.add(arg);
-      } else {
-        paths.add(arg);
-      }
-    }
-    return (flags: flags, paths: paths);
   }
 
   // ---------------------------------------------------------------------------
@@ -1571,12 +1013,14 @@ final class MemoryShell implements Shell, BackgroundShell {
   }
 
   Future<_StageResult> _cat(_Context ctx) async {
-    final split = _splitArgs(ctx.args);
+    final split = splitArgs(ctx.args);
     final number = split.flags.contains('-n');
     String? errorPath;
-    final input = await _readInput(
+    final input = await readCommandInput(
+      _fs,
+      ctx.cwd,
       split.paths,
-      ctx,
+      ctx.stdin,
       (path) => errorPath = path,
     );
     if (input == null) {
@@ -1610,7 +1054,7 @@ final class MemoryShell implements Shell, BackgroundShell {
     var exitCode = 0;
     var first = true;
     for (final arg in paths) {
-      final resolved = _resolveSandboxPath(arg, ctx.cwd);
+      final resolved = resolveSandboxPath(arg, ctx.cwd);
       final info = await _fs.fileInfo(resolved);
       if (info.isErr) {
         err.write('ls: cannot access $arg: No such file or directory\n');
@@ -1652,13 +1096,13 @@ final class MemoryShell implements Shell, BackgroundShell {
   }
 
   Future<_StageResult> _mkdir(_Context ctx) async {
-    final split = _splitArgs(ctx.args);
+    final split = splitArgs(ctx.args);
     final parents = split.flags.any((f) => f.contains('p'));
     if (split.paths.isEmpty) {
       return _error('mkdir: missing operand\n');
     }
     for (final arg in split.paths) {
-      final resolved = _resolveSandboxPath(arg, ctx.cwd);
+      final resolved = resolveSandboxPath(arg, ctx.cwd);
       final exists = await _fs.exists(resolved);
       if (exists.valueOrNull ?? false) {
         if (parents) continue;
@@ -1675,12 +1119,12 @@ final class MemoryShell implements Shell, BackgroundShell {
   }
 
   Future<_StageResult> _rmdir(_Context ctx) async {
-    final split = _splitArgs(ctx.args);
+    final split = splitArgs(ctx.args);
     if (split.paths.isEmpty) {
       return _error('rmdir: missing operand\n');
     }
     for (final arg in split.paths) {
-      final resolved = _resolveSandboxPath(arg, ctx.cwd);
+      final resolved = resolveSandboxPath(arg, ctx.cwd);
       final info = await _fs.fileInfo(resolved);
       if (info.isErr || info.valueOrNull!.kind != FileKind.directory) {
         return _error('rmdir: failed to remove $arg: Not a directory\n');
@@ -1694,12 +1138,12 @@ final class MemoryShell implements Shell, BackgroundShell {
   }
 
   Future<_StageResult> _touch(_Context ctx) async {
-    final split = _splitArgs(ctx.args);
+    final split = splitArgs(ctx.args);
     if (split.paths.isEmpty) {
       return _error('touch: missing file operand\n');
     }
     for (final arg in split.paths) {
-      final resolved = _resolveSandboxPath(arg, ctx.cwd);
+      final resolved = resolveSandboxPath(arg, ctx.cwd);
       final exists = await _fs.exists(resolved);
       if (!(exists.valueOrNull ?? false)) {
         await _fs.writeFile(resolved, '');
@@ -1709,7 +1153,7 @@ final class MemoryShell implements Shell, BackgroundShell {
   }
 
   Future<_StageResult> _cp(_Context ctx) async {
-    final split = _splitArgs(ctx.args);
+    final split = splitArgs(ctx.args);
     final recursive = split.flags.any(
       (f) => f.contains('r') || f.contains('R'),
     );
@@ -1718,7 +1162,7 @@ final class MemoryShell implements Shell, BackgroundShell {
     }
     final destArg = split.paths.last;
     final sources = split.paths.sublist(0, split.paths.length - 1);
-    final destResolved = _resolveSandboxPath(destArg, ctx.cwd);
+    final destResolved = resolveSandboxPath(destArg, ctx.cwd);
     final destInfo = await _fs.fileInfo(destResolved);
     final destIsDir =
         destInfo.isOk && destInfo.valueOrNull!.kind == FileKind.directory;
@@ -1726,13 +1170,13 @@ final class MemoryShell implements Shell, BackgroundShell {
       return _error('cp: target $destArg: Not a directory\n');
     }
     for (final srcArg in sources) {
-      final srcResolved = _resolveSandboxPath(srcArg, ctx.cwd);
+      final srcResolved = resolveSandboxPath(srcArg, ctx.cwd);
       final srcInfo = await _fs.fileInfo(srcResolved);
       if (srcInfo.isErr) {
         return _error('cp: cannot stat $srcArg: No such file or directory\n');
       }
       final target = destIsDir
-          ? _normalizeSandboxPath('$destResolved/${srcInfo.valueOrNull!.name}')
+          ? normalizeSandboxPath('$destResolved/${srcInfo.valueOrNull!.name}')
           : destResolved;
       final copyError = await _copyRecursive(
         srcResolved,
@@ -1780,13 +1224,13 @@ final class MemoryShell implements Shell, BackgroundShell {
   }
 
   Future<_StageResult> _mv(_Context ctx) async {
-    final split = _splitArgs(ctx.args);
+    final split = splitArgs(ctx.args);
     if (split.paths.length < 2) {
       return _error('mv: missing file operand\n');
     }
     final destArg = split.paths.last;
     final sources = split.paths.sublist(0, split.paths.length - 1);
-    final destResolved = _resolveSandboxPath(destArg, ctx.cwd);
+    final destResolved = resolveSandboxPath(destArg, ctx.cwd);
     final destInfo = await _fs.fileInfo(destResolved);
     final destIsDir =
         destInfo.isOk && destInfo.valueOrNull!.kind == FileKind.directory;
@@ -1794,13 +1238,13 @@ final class MemoryShell implements Shell, BackgroundShell {
       return _error('mv: target $destArg: Not a directory\n');
     }
     for (final srcArg in sources) {
-      final srcResolved = _resolveSandboxPath(srcArg, ctx.cwd);
+      final srcResolved = resolveSandboxPath(srcArg, ctx.cwd);
       final srcInfo = await _fs.fileInfo(srcResolved);
       if (srcInfo.isErr) {
         return _error('mv: cannot stat $srcArg: No such file or directory\n');
       }
       final target = destIsDir
-          ? _normalizeSandboxPath('$destResolved/${srcInfo.valueOrNull!.name}')
+          ? normalizeSandboxPath('$destResolved/${srcInfo.valueOrNull!.name}')
           : destResolved;
       final moveError = await _moveRecursive(srcResolved, target);
       if (moveError != null) return _error(moveError);
@@ -1831,7 +1275,7 @@ final class MemoryShell implements Shell, BackgroundShell {
   }
 
   Future<_StageResult> _rm(_Context ctx) async {
-    final split = _splitArgs(ctx.args);
+    final split = splitArgs(ctx.args);
     final recursive = split.flags.any(
       (f) => f.contains('r') || f.contains('R'),
     );
@@ -1841,7 +1285,7 @@ final class MemoryShell implements Shell, BackgroundShell {
       return _error('rm: missing operand\n');
     }
     for (final arg in split.paths) {
-      final resolved = _resolveSandboxPath(arg, ctx.cwd);
+      final resolved = resolveSandboxPath(arg, ctx.cwd);
       final info = await _fs.fileInfo(resolved);
       if (info.isErr) {
         if (force) continue;
@@ -1857,7 +1301,7 @@ final class MemoryShell implements Shell, BackgroundShell {
 
   Future<_StageResult> _cd(_Context ctx) async {
     final target = ctx.args.isEmpty ? '/' : ctx.args.first;
-    final resolved = _resolveSandboxPath(target, ctx.cwd);
+    final resolved = resolveSandboxPath(target, ctx.cwd);
     final info = await _fs.fileInfo(resolved);
     if (info.isErr || info.valueOrNull!.kind != FileKind.directory) {
       return _error('cd: $target: No such file or directory\n');
@@ -1867,118 +1311,41 @@ final class MemoryShell implements Shell, BackgroundShell {
   }
 
   Future<_StageResult> _grep(_Context ctx) async {
-    final flags = <String>{};
-    String? pattern;
-    final files = <String>[];
-    var noMoreFlags = false;
-
-    for (var i = 0; i < ctx.args.length; i++) {
-      final arg = ctx.args[i];
-      if (arg == '--' && !noMoreFlags) {
-        noMoreFlags = true;
-        continue;
-      }
-      if (!noMoreFlags && arg == '-e') {
-        if (i + 1 >= ctx.args.length) {
-          return _error(
-            'grep: option requires an argument -- e\n',
-            exitCode: 2,
-          );
-        }
-        pattern = ctx.args[++i];
-        continue;
-      }
-      if (!noMoreFlags && arg.startsWith('-') && arg.length > 1) {
-        flags.addAll(arg.substring(1).split(''));
-        continue;
-      }
-      if (pattern == null) {
-        pattern = arg;
-      } else {
-        files.add(arg);
-      }
+    final parsed = parseGrepArgs(ctx.args);
+    final parseError = parsed.error;
+    if (parseError != null) {
+      return _error(parseError.message, exitCode: parseError.exitCode);
     }
-
-    if (pattern == null) {
-      return _error('grep: missing pattern\n', exitCode: 2);
+    final compiled = compileGrepQuery(parsed.flags, parsed.pattern!);
+    final compileError = compiled.error;
+    if (compileError != null) {
+      return _error(compileError.message, exitCode: compileError.exitCode);
     }
-
-    final ignoreCase = flags.contains('i');
-    final invert = flags.contains('v');
-    final lineNumber = flags.contains('n');
-    final countOnly = flags.contains('c');
-    final filesOnly = flags.contains('l');
-    final quiet = flags.contains('q');
-
-    var source = pattern;
-    if (flags.contains('F')) source = RegExp.escape(source);
-    if (flags.contains('w')) source = '\\b(?:$source)\\b';
-    if (flags.contains('x')) source = '^(?:$source)\$';
-    final RegExp regex;
-    try {
-      regex = RegExp(source, caseSensitive: !ignoreCase);
-    } on Object catch (e) {
-      return _error('grep: invalid pattern: $e\n', exitCode: 2);
-    }
-
-    bool matches(String line) {
-      final found = regex.hasMatch(line);
-      return invert ? !found : found;
-    }
-
-    final out = StringBuffer();
+    final q = compiled.query!;
+    final acc = GrepAccumulator();
     final err = StringBuffer();
-    var anyMatch = false;
     var hadError = false;
 
-    void grepContent(String content, String? label) {
-      final lines = content.split('\n');
-      if (lines.isNotEmpty && lines.last.isEmpty) lines.removeLast();
-      var count = 0;
-      var reportedFile = false;
-      for (var i = 0; i < lines.length; i++) {
-        if (!matches(lines[i])) continue;
-        anyMatch = true;
-        count++;
-        if (quiet) return;
-        if (filesOnly) {
-          if (label != null && !reportedFile) {
-            out.writeln(label);
-            reportedFile = true;
-          }
-          return;
-        }
-        if (countOnly) continue;
-        if (label != null) out.write('$label:');
-        if (lineNumber) out.write('${i + 1}:');
-        out.writeln(lines[i]);
-      }
-      if (countOnly && !quiet && !filesOnly) {
-        if (label != null) out.write('$label:');
-        out.writeln(count);
-      }
-    }
-
-    if (files.isEmpty) {
-      grepContent(ctx.stdin ?? '', null);
+    if (parsed.files.isEmpty) {
+      grepText(ctx.stdin ?? '', null, q, acc);
     } else {
-      final labelPrefix = files.length > 1;
-      for (final arg in files) {
-        final resolved = _resolveSandboxPath(arg, ctx.cwd);
+      final labelPrefix = parsed.files.length > 1;
+      for (final arg in parsed.files) {
+        final resolved = resolveSandboxPath(arg, ctx.cwd);
         final content = await _fs.readTextFile(resolved);
         if (content.isErr) {
           hadError = true;
           err.write('grep: $arg: No such file or directory\n');
           continue;
         }
-        grepContent(content.valueOrNull!, labelPrefix ? arg : null);
+        grepText(content.valueOrNull!, labelPrefix ? arg : null, q, acc);
       }
     }
 
     return _StageResult(
-      stdout: quiet ? const [] : utf8.encode(out.toString()),
+      stdout: q.quiet ? const [] : utf8.encode(acc.buffer.toString()),
       stderr: utf8.encode(err.toString()),
-      exitCode: hadError ? 2 : (anyMatch ? 0 : 1),
+      exitCode: hadError ? 2 : (acc.anyMatch ? 0 : 1),
     );
   }
 
@@ -2001,7 +1368,13 @@ final class MemoryShell implements Shell, BackgroundShell {
       }
     }
     String? errorPath;
-    final input = await _readInput(paths, ctx, (path) => errorPath = path);
+    final input = await readCommandInput(
+      _fs,
+      ctx.cwd,
+      paths,
+      ctx.stdin,
+      (path) => errorPath = path,
+    );
     if (input == null) {
       return _error(
         '$name: cannot open $errorPath for reading: No such file or directory\n',
@@ -2017,7 +1390,7 @@ final class MemoryShell implements Shell, BackgroundShell {
   }
 
   Future<_StageResult> _wc(_Context ctx) async {
-    final split = _splitArgs(ctx.args);
+    final split = splitArgs(ctx.args);
     final showLines =
         split.flags.isEmpty || split.flags.any((f) => f.contains('l'));
     final showWords =
@@ -2054,7 +1427,7 @@ final class MemoryShell implements Shell, BackgroundShell {
     } else {
       for (final arg in split.paths) {
         final content = await _fs.readTextFile(
-          _resolveSandboxPath(arg, ctx.cwd),
+          resolveSandboxPath(arg, ctx.cwd),
         );
         if (content.isErr) {
           return _error('wc: $arg: No such file or directory\n');
@@ -2075,14 +1448,16 @@ final class MemoryShell implements Shell, BackgroundShell {
   }
 
   Future<_StageResult> _sort(_Context ctx) async {
-    final split = _splitArgs(ctx.args);
+    final split = splitArgs(ctx.args);
     final reverse = split.flags.any((f) => f.contains('r'));
     final unique = split.flags.any((f) => f.contains('u'));
     final numeric = split.flags.any((f) => f.contains('n'));
     String? errorPath;
-    final input = await _readInput(
+    final input = await readCommandInput(
+      _fs,
+      ctx.cwd,
       split.paths,
-      ctx,
+      ctx.stdin,
       (path) => errorPath = path,
     );
     if (input == null) {
@@ -2242,7 +1617,7 @@ final class MemoryShell implements Shell, BackgroundShell {
       return _error('test: missing expression\n', exitCode: 2);
     }
     try {
-      final value = await _evalTest(rawArgs, ctx);
+      final value = await evalTestExpr(rawArgs, _MemoryTestFs(_fs, ctx.cwd));
       return _StageResult(
         stdout: const [],
         stderr: const [],
@@ -2251,69 +1626,6 @@ final class MemoryShell implements Shell, BackgroundShell {
     } on FormatException catch (e) {
       return _error('test: integer expected: $e\n', exitCode: 2);
     }
-  }
-
-  Future<bool> _evalTest(List<String> args, _Context ctx) async {
-    if (args.isEmpty) return false;
-    if (args.first == '!') {
-      return !(await _evalTest(args.sublist(1), ctx));
-    }
-    if (args.length == 1) return args.first.isNotEmpty;
-    if (args.length == 2) {
-      final op = args[0];
-      final value = args[1];
-      switch (op) {
-        case '-e':
-          return (await _fs.exists(
-                _resolveSandboxPath(value, ctx.cwd),
-              )).valueOrNull ??
-              false;
-        case '-f':
-          final info = await _fs.fileInfo(_resolveSandboxPath(value, ctx.cwd));
-          return info.isOk && info.valueOrNull!.kind == FileKind.file;
-        case '-d':
-          final info = await _fs.fileInfo(_resolveSandboxPath(value, ctx.cwd));
-          return info.isOk && info.valueOrNull!.kind == FileKind.directory;
-        case '-s':
-          final info = await _fs.fileInfo(_resolveSandboxPath(value, ctx.cwd));
-          return info.isOk &&
-              info.valueOrNull!.kind == FileKind.file &&
-              info.valueOrNull!.size > 0;
-        case '-z':
-          return value.isEmpty;
-        case '-n':
-          return value.isNotEmpty;
-        default:
-          throw const FormatException('unary operator expected');
-      }
-    }
-    if (args.length == 3) {
-      final left = args[0];
-      final op = args[1];
-      final right = args[2];
-      switch (op) {
-        case '=':
-        case '==':
-          return left == right;
-        case '!=':
-          return left != right;
-        case '-eq':
-          return int.parse(left) == int.parse(right);
-        case '-ne':
-          return int.parse(left) != int.parse(right);
-        case '-lt':
-          return int.parse(left) < int.parse(right);
-        case '-le':
-          return int.parse(left) <= int.parse(right);
-        case '-gt':
-          return int.parse(left) > int.parse(right);
-        case '-ge':
-          return int.parse(left) >= int.parse(right);
-        default:
-          throw FormatException('unknown operator: $op');
-      }
-    }
-    throw const FormatException('too many arguments');
   }
 
   _StageResult _env(_Context ctx) {
@@ -2417,277 +1729,18 @@ final class _StageResult {
   final int exitCode;
 }
 
-/// One awk record: the current line, its fields, and its 1-based number.
-final class _AwkRecord {
-  const _AwkRecord({
-    required this.line,
-    required this.fields,
-    required this.nr,
-  });
+/// Wires the `test`/`[` evaluator to the in-memory filesystem.
+final class _MemoryTestFs implements TestFs {
+  const _MemoryTestFs(this._fs, this._cwd);
 
-  final String line;
-  final List<String> fields;
-  final int nr;
-}
+  final MemoryFileSystem _fs;
+  final String _cwd;
 
-/// The sed commands this subset supports.
-enum _SedKind { substitute, print }
+  @override
+  Future<bool> exists(String path) async =>
+      (await _fs.exists(resolveSandboxPath(path, _cwd))).valueOrNull ?? false;
 
-/// A parsed sed command: an optional address range plus `s/pat/repl/[g]` or
-/// `p`. Addresses are 1-based line numbers, `$` (last line), or `/regex/`.
-final class _SedCommand {
-  const _SedCommand._({
-    required this.kind,
-    this.startLine,
-    this.endLine,
-    this.startLast = false,
-    this.endLast = false,
-    this.startRegex,
-    this.endRegex,
-    this.pattern,
-    this.replacement,
-    this.global = false,
-  });
-
-  final _SedKind kind;
-  final int? startLine;
-  final int? endLine;
-  final bool startLast;
-  final bool endLast;
-  final RegExp? startRegex;
-  final RegExp? endRegex;
-  final RegExp? pattern;
-  final String? replacement;
-  final bool global;
-
-  /// Parses `[addr[,addr]]cmd`; returns `null` for unsupported scripts.
-  static _SedCommand? tryParse(String script) {
-    var i = 0;
-
-    ({int? line, bool last, RegExp? regex})? readAddress() {
-      if (i >= script.length) return null;
-      final ch = script[i];
-      if (ch == r'$') {
-        i++;
-        return (line: null, last: true, regex: null);
-      }
-      if (ch == '/') {
-        final end = script.indexOf('/', i + 1);
-        if (end < 0) return null;
-        final RegExp regex;
-        try {
-          regex = RegExp(script.substring(i + 1, end));
-        } on Object {
-          return null;
-        }
-        i = end + 1;
-        return (line: null, last: false, regex: regex);
-      }
-      if (ch.codeUnitAt(0) >= 48 && ch.codeUnitAt(0) <= 57) {
-        var end = i;
-        while (end < script.length &&
-            script[end].codeUnitAt(0) >= 48 &&
-            script[end].codeUnitAt(0) <= 57) {
-          end++;
-        }
-        final line = int.parse(script.substring(i, end));
-        i = end;
-        return (line: line, last: false, regex: null);
-      }
-      return null;
-    }
-
-    final start = readAddress();
-    ({int? line, bool last, RegExp? regex})? end;
-    if (i < script.length && script[i] == ',') {
-      i++;
-      end = readAddress();
-      if (end == null) return null;
-    }
-    if (i >= script.length) return null;
-
-    final command = script[i];
-    if (command == 'p') {
-      if (i + 1 != script.length) return null;
-      return _SedCommand._(
-        kind: _SedKind.print,
-        startLine: start?.line,
-        endLine: end?.line,
-        startLast: start?.last ?? false,
-        endLast: end?.last ?? false,
-        startRegex: start?.regex,
-        endRegex: end?.regex,
-      );
-    }
-    if (command != 's') return null;
-    if (i + 1 >= script.length) return null;
-    final delimiter = script[i + 1];
-    String? scan(int from) {
-      final buffer = StringBuffer();
-      var j = from;
-      while (j < script.length) {
-        if (script[j] == '\\' && j + 1 < script.length) {
-          buffer
-            ..write(script[j])
-            ..write(script[j + 1]);
-          j += 2;
-          continue;
-        }
-        if (script[j] == delimiter) return buffer.toString();
-        buffer.write(script[j]);
-        j++;
-      }
-      return null;
-    }
-
-    final patternStart = i + 2;
-    final patternSource = scan(patternStart);
-    if (patternSource == null) return null;
-    // Advance past the pattern and its closing delimiter.
-    var j = patternStart;
-    while (j < script.length) {
-      if (script[j] == '\\' && j + 1 < script.length) {
-        j += 2;
-        continue;
-      }
-      if (script[j] == delimiter) break;
-      j++;
-    }
-    if (j >= script.length) return null;
-    final replacement = scan(j + 1);
-    if (replacement == null) return null;
-    j++;
-    while (j < script.length) {
-      if (script[j] == '\\' && j + 1 < script.length) {
-        j += 2;
-        continue;
-      }
-      if (script[j] == delimiter) break;
-      j++;
-    }
-    if (j >= script.length) return null;
-    final flags = script.substring(j + 1);
-    if (flags.isNotEmpty && flags != 'g') return null;
-
-    final RegExp regex;
-    try {
-      regex = RegExp(patternSource);
-    } on Object {
-      return null;
-    }
-    return _SedCommand._(
-      kind: _SedKind.substitute,
-      startLine: start?.line,
-      endLine: end?.line,
-      startLast: start?.last ?? false,
-      endLast: end?.last ?? false,
-      startRegex: start?.regex,
-      endRegex: end?.regex,
-      pattern: regex,
-      replacement: replacement,
-      global: flags == 'g',
-    );
-  }
-
-  bool _addressMatches(
-    int? line,
-    bool last,
-    RegExp? regex,
-    int lineNo,
-    bool isLast,
-    String text,
-  ) {
-    if (last) return isLast;
-    if (regex != null) return regex.hasMatch(text);
-    if (line != null) return lineNo == line;
-    return true;
-  }
-
-  /// Whether this command applies to [lineNo]; [ranges] tracks open address
-  /// ranges across lines.
-  bool select(
-    int lineNo,
-    bool isLast,
-    String text,
-    Map<_SedCommand, bool> ranges,
-  ) {
-    final hasStart = startLine != null || startLast || startRegex != null;
-    final hasEnd = endLine != null || endLast || endRegex != null;
-    if (!hasStart) return true;
-    if (!hasEnd) {
-      return _addressMatches(
-        startLine,
-        startLast,
-        startRegex,
-        lineNo,
-        isLast,
-        text,
-      );
-    }
-    var active = ranges[this] ?? false;
-    if (!active &&
-        _addressMatches(
-          startLine,
-          startLast,
-          startRegex,
-          lineNo,
-          isLast,
-          text,
-        )) {
-      active = true;
-      ranges[this] = true;
-      // A same-line end (e.g. `2,2`) closes the range immediately.
-      if (_addressMatches(endLine, endLast, endRegex, lineNo, isLast, text)) {
-        ranges[this] = false;
-      }
-      return true;
-    }
-    if (active) {
-      if (_addressMatches(endLine, endLast, endRegex, lineNo, isLast, text)) {
-        ranges[this] = false;
-      }
-      return true;
-    }
-    return false;
-  }
-
-  /// Applies the substitution to [line]; `&` and `\N` in the replacement
-  /// reference the whole match and capture groups like POSIX sed.
-  String applySubstitute(String line) {
-    final regex = pattern!;
-    final replacement = this.replacement!;
-
-    String expand(Match match) {
-      final buffer = StringBuffer();
-      for (var i = 0; i < replacement.length; i++) {
-        final ch = replacement[i];
-        if (ch == '&') {
-          buffer.write(match[0]);
-          continue;
-        }
-        if (ch == '\\' && i + 1 < replacement.length) {
-          final next = replacement[i + 1];
-          final code = next.codeUnitAt(0);
-          if (code >= 49 && code <= 57) {
-            buffer.write(match[int.parse(next)] ?? '');
-          } else if (next == 'n') {
-            buffer.write('\n');
-          } else if (next == 't') {
-            buffer.write('\t');
-          } else {
-            buffer.write(next);
-          }
-          i++;
-          continue;
-        }
-        buffer.write(ch);
-      }
-      return buffer.toString();
-    }
-
-    if (global) return line.replaceAllMapped(regex, expand);
-    final match = regex.firstMatch(line);
-    if (match == null) return line;
-    return line.replaceRange(match.start, match.end, expand(match));
-  }
+  @override
+  Future<FileInfo?> fileInfo(String path) async =>
+      (await _fs.fileInfo(resolveSandboxPath(path, _cwd))).valueOrNull;
 }
