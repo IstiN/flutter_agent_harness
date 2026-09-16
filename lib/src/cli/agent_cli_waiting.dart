@@ -423,4 +423,10 @@ extension AgentCliWaitingSeams on AgentCli {
   /// Test seam: the current restart-honesty count.
   @visibleForTesting
   int get waitingLostJobsForTest => _waiting.lostJobs;
+
+  /// Test seam: arms a real self-addressed timer so tests can drive the
+  /// ceiling-wait loop through an actual wake source.
+  @visibleForTesting
+  Future<String> waitingScheduleTimerForTest(String text, Duration delay) =>
+      _waiting._timers.schedule(text: text, delay: delay);
 }

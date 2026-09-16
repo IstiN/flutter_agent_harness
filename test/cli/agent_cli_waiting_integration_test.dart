@@ -70,4 +70,28 @@ void main() {
       expect(code, 0);
     },
   );
+
+  test('headless --wait-for-jobs rides a timer wake to resolution', () async {
+    final cli = cliFor(
+      FakeStreamFunction([textTurn('done'), textTurn('woke')]),
+    );
+    await cli.waitingScheduleTimerForTest(
+      'check CI',
+      Duration(milliseconds: 120),
+    );
+    final code = await cli.runHeadless('hi', waitForJobs: true);
+    expect(code, 0);
+    final out = io.out.toString();
+    expect(out, contains('⏳ waiting:'));
+    expect(out, contains('waiters resolved'));
+  });
+
+  test('a torn manifest counts zero lost jobs — never invented', () async {
+    final cli = cliFor(FakeStreamFunction([textTurn('ok')]));
+    final dir = env.cwd;
+    await env.createDir('$dir/.fah/bash_jobs');
+    await env.writeFile('$dir/.fah/bash_jobs/running.json', 'not-json{');
+    await cli.waitingCaptureLostJobsForTest();
+    expect(cli.waitingLostJobsForTest, 0);
+  });
 }
