@@ -247,11 +247,28 @@ allowedTools: []
         for (var i = 0; i < grids.last.length; i++)
           if (grids.last[i].trim() == '─' * columns) i,
       ];
-      final region = grids.last
+      // The composer itself is CLEAN: the line was submitted, so the input
+      // zone holds the cursor only — submitted text must never linger (or
+      // duplicate) in the input row (issue #496).
+      final composer = grids.last
           .sublist(rules[rules.length - 2] + 1, rules.last)
           .map((l) => l.replaceAll(' ', ''))
           .join();
-      expect(region, composed300.substring(0, 300).replaceAll(' ', ''));
+      expect(composer, isEmpty,
+          reason: 'the submitted line must not linger in the composer:\n'
+              '${grids.last.join('\n')}');
+      // …and the line survived the run INTACT: the history echo still
+      // carries all 300 chars, wrapped inside the width (rows already
+      // width-checked above). Probed against 2dfea311: the old check
+      // (text between the last two rules) could never pass on ANY build —
+      // it looked in the cleared composer, not the echo.
+      final onScreen = grids.last
+          .map((l) => l.replaceAll(' ', ''))
+          .join();
+      expect(onScreen, contains(composed300.substring(0, 300)
+          .replaceAll(' ', '')),
+          reason: 'the composed line must survive the run intact (echoed '
+              'into the history, width-wrapped):\n${grids.last.join('\n')}');
     });
   }
 }
