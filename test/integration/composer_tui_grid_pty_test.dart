@@ -247,11 +247,140 @@ allowedTools: []
         for (var i = 0; i < grids.last.length; i++)
           if (grids.last[i].trim() == '─' * columns) i,
       ];
-      final region = grids.last
+      // The composer itself is CLEAN: the line was submitted, so the input
+      // zone holds the cursor only — submitted text must never linger (or
+      // duplicate) in the input row (issue #496).
+      final composer = grids.last
           .sublist(rules[rules.length - 2] + 1, rules.last)
           .map((l) => l.replaceAll(' ', ''))
           .join();
-      expect(region, composed300.substring(0, 300).replaceAll(' ', ''));
+      expect(composer, isEmpty,
+          reason: 'the submitted line must not linger in the composer:\n'
+              '${grids.last.join('\n')}');
+      // …and the line survived the run INTACT: the history echo still
+      // carries all 300 chars, wrapped inside the width (rows already
+      // width-checked above). Probed against 2dfea311: the old check
+      // (text between the last two rules) could never pass on ANY build —
+      // it looked in the cleared composer, not the echo.
+      final onScreen = grids.last
+          .map((l) => l.replaceAll(' ', ''))
+          .join();
+      expect(onScreen, contains(composed300.substring(0, 300)
+          .replaceAll(' ', '')),
+          reason: 'the composed line must survive the run intact (echoed '
+              'into the history, width-wrapped):\n${grids.last.join('\n')}');
+    });
+  }
+  /// NEW AC (owner evidence #2, issue #503): a steering insert landing
+  /// mid-run while the composer holds a TALL multi-row text must keep the
+  /// bottom chrome distinct — the painted frame never overruns the glass
+  /// (the old build floored the _FramePlan budget at 0 while the input
+  /// zone painted all rows unconditionally: the input row overwrote the
+  /// status row, the frame rules vanished).
+  for (final (columns, rowsCount) in [(100, 40), (80, 24)]) {
+    test('steering insert keeps bottom chrome distinct at '
+        '$columns x$rowsCount', () async {
+      final tempHome = Directory.systemTemp.createTempSync('fa_tui_503_steel_');
+      final server = await MockLlmServer.start()
+        ..enqueueToolCall('bash', '{"command": "sleep 15"}')
+        ..enqueueText('steer ack done');
+      addTearDown(server.stop);
+      File('${tempHome.path}/.fah/config.yaml')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('''
+provider: openai-completions
+model: mock-model
+baseUrl: ${server.baseUrl}
+mode: code
+approvalMode: yolo
+allowedTools: []
+''');
+      final workspace = Directory('/tmp/fa503ws')..createSync(recursive: true);
+      addTearDown(() => workspace.deleteSync(recursive: true));
+
+      final harness = await FaCliHarness.spawn(
+        workingDirectory: workspace.path,
+        extraEnv: {'HOME': tempHome.path},
+        columns: columns,
+        rows: rowsCount,
+      );
+      addTearDown(() async {
+        await harness.close();
+        tempHome.deleteSync(recursive: true);
+      });
+
+      await harness.waitForBoot();
+      harness.sendText('run the held tool');
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      harness.sendEnter();
+      await harness.waitForText('· submit', timeout: const Duration(seconds: 20));
+
+      // The steering insert lands mid-run (the owner's trigger).
+      harness.sendText('steer me once');
+      harness.sendCtrlS();
+      await harness.waitForText(
+        'steered into the running turn',
+        timeout: const Duration(seconds: 20),
+      );
+
+      // …while the composer holds a TALL multi-row text (a paste-length
+      // steering draft): 40 rows of input on a 24- or 40-row glass.
+      // ctrl+o inserts composer newlines (LF would submit per line).
+      harness.sendText('\x0f' * 39);
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      harness.sendText('steer draft line 40 of forty');
+      await Future<void>.delayed(const Duration(milliseconds: 1200));
+
+      final grid = [
+        for (final line in harness.viewportLines) line.trimRight(),
+      ];
+      final rule = '─' * columns;
+      String screenShot() => grid.join('\n');
+
+      // The frame fits the glass: no overrun, no hardware scroll.
+      expect(grid.length, rowsCount,
+          reason: 'frame height drifted — the input zone overran the '
+              'glass:\n${screenShot()}');
+
+      // Status: bottom row, left edge intact (cwd, never composer text).
+      var last = grid.length - 1;
+      while (last > 0 && grid[last].trim().isEmpty) {
+        last--;
+      }
+      expect(grid[last].contains(' · turn '), isTrue,
+          reason: 'status is the bottom row:\n${screenShot()}');
+      expect(
+        grid[last].trimLeft().startsWith('/') ||
+            grid[last].trimLeft().startsWith('…'),
+        isTrue,
+        reason: 'status left edge (cwd) not overwritten: '
+            '"${grid[last]}"',
+      );
+      expect(grid[last - 1].trim(), rule,
+          reason: 'a full-width rule separates the composer from the '
+              'status:\n${screenShot()}');
+
+      // Input-frame rules both present, input zone between them.
+      final rules = [
+        for (var i = 0; i < grid.length; i++)
+          if (grid[i].trim() == rule) i,
+      ];
+      expect(rules.length, greaterThanOrEqualTo(2),
+          reason: 'input frame rules present:\n${screenShot()}');
+      expect(rules.last, last - 1,
+          reason: 'the bottom rule sits directly above the status');
+      expect(last - 1 - rules[rules.length - 2], greaterThanOrEqualTo(1),
+          reason: 'the input zone holds at least one row between the '
+              'rules:\n${screenShot()}');
+
+      // The cursor window shows the composer tail (the last typed line).
+      final composer = grid
+          .sublist(rules[rules.length - 2] + 1, rules.last)
+          .map((l) => l.replaceAll(' ', ''))
+          .join();
+      expect(composer, contains('steerdraftline40offorty'),
+          reason: 'the cursor window follows the composer tail:\n'
+              '${screenShot()}');
     });
   }
 }

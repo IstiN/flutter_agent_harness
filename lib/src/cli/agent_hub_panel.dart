@@ -229,6 +229,22 @@ bool taskBlockStateIsTerminal(TaskBlockState state) =>
 /// a settle report (host killed, PID gone) — the exit is unknowable.
 const String shellJobLostReason = 'process gone, no exit reported';
 
+/// The ONE resume summary row (issue #503): jobs that were live at
+/// restart collapse into a single line instead of N four-line cards —
+/// the card flood evicted the resumed transcript tail from the first
+/// glass. Ids stay visible (a zombie is never hidden); full details
+/// remain on the /tasks board and `bash_job` output.
+String shellJobResumeLostSummaryLine({
+  required List<String> ids,
+  required int width,
+}) {
+  final n = ids.length;
+  final head = '✗ $n background task${n == 1 ? '' : 's'} lost on restart'
+      ' ($shellJobLostReason)';
+  final line = ids.isEmpty ? head : '$head: ${ids.join(' · ')}';
+  return line.length <= width ? line : '${line.substring(0, width - 1)}…';
+}
+
 /// kimi `MAX_DETAIL_LENGTH`: one dim detail line, capped so it fits any
 /// width and never wraps into noise.
 const int maxShellJobDetailLength = 240;

@@ -248,4 +248,70 @@ void main() {
       expect(context.activeToolNames, isNull);
     });
   });
+
+  group('ensureCompactionBoundaryResident (windowed CLI resume, #503)', () {
+    test(
+      'a linear session longer than the residency cache reports the tail lost — the caller falls back to the full open',
+      () async {
+        final session = await newSession();
+        for (var i = 0; i < 800; i++) {
+          await session.appendMessage(UserMessage.text('m$i'));
+        }
+        final meta = await session.getMetadata();
+        final reopened = await repo.open(meta, windowed: true);
+        final intact = await reopened.ensureCompactionBoundaryResident();
+        // Paging slid the newest side out of the residency cache: the
+        // leaf-anchored branch would read EMPTY — silently reducing the
+        // resume to a fresh-looking transcript (pty_resume_equivalence
+        // AC6 regression). The contract: report the loss, never finish
+        // with an empty branch the caller cannot distinguish from a
+        // genuinely empty session.
+        expect(intact, isFalse);
+        // The documented degenerate path: the caller re-opens full.
+        final full = await repo.open(meta);
+        final branch = await full.getBranch();
+        expect(branch.length, 800);
+        expect(branch.last.id, await full.getLeafId());
+      },
+    );
+
+    test('a compaction boundary within the cache pages to it, tail intact', () async {
+      final session = await newSession();
+      for (var i = 0; i < 250; i++) {
+        await session.appendMessage(UserMessage.text('m$i'));
+      }
+      final compactId = await session.appendCompaction(
+        summary: 'summarized',
+        firstKeptEntryId: 'kept',
+        tokensBefore: 100,
+      );
+      for (var i = 250; i < 300; i++) {
+        await session.appendMessage(UserMessage.text('m$i'));
+      }
+      final meta = await session.getMetadata();
+      final reopened = await repo.open(meta, windowed: true);
+      final intact = await reopened.ensureCompactionBoundaryResident();
+      expect(intact, isTrue);
+      final branch = await reopened.getBranch();
+      expect(branch.map((r) => r.id), contains(compactId));
+      expect(branch.last.id, await reopened.getLeafId());
+    });
+
+    test('a fresh (empty) session is intact without paging', () async {
+      final session = await newSession();
+      final meta = await session.getMetadata();
+      final reopened = await repo.open(meta, windowed: true);
+      expect(await reopened.ensureCompactionBoundaryResident(), isTrue);
+      expect(await reopened.getBranch(), isEmpty);
+    });
+
+    test('a full (non-windowed) storage is a no-op reporting intact', () async {
+      final session = await newSession();
+      await session.appendMessage(UserMessage.text('one'));
+      final meta = await session.getMetadata();
+      final reopened = await repo.open(meta);
+      expect(await reopened.ensureCompactionBoundaryResident(), isTrue);
+      expect((await reopened.getBranch()).length, 1);
+    });
+  });
 }
