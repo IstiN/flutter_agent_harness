@@ -16,6 +16,7 @@ import 'package:fa_ui/fa_ui.dart'
         FaAuthRecoveryCallback,
         FaChatSurfaceHandlers,
         FaHeaderAction,
+        FaTypingFooter,
         TrajectoryController,
         TrajectoryScreen;
 
@@ -1011,10 +1012,10 @@ class SessionChatSheetState extends State<SessionChatSheet>
                 if (!panelOpen)
                   FaWorkBar(service: service, onExpand: expand, embedded: true),
                 ChatComposer(
-                  // Single ownership (issue #464): docked, the FaWorkBar
-                  // above owns the working state; expanded, it flips to
-                  // the composer's own row — never both at once.
-                  showStreamingStatus: panelOpen,
+                  // Single ownership (issues #464/#459): docked, the
+                  // FaWorkBar above owns the working state; expanded, the
+                  // transcript's typing footer owns it — the composer
+                  // itself never renders typing UI.
                   // The status row above appears/disappears with the panel
                   // and the streaming state — WITHOUT a stable key the
                   // column child matching would recreate the composer on
@@ -1673,7 +1674,13 @@ class _SessionTranscriptState extends State<_SessionTranscript>
       listenable: widget.service,
       builder: (context, _) {
         final messages = widget.service.messages;
-        if (messages.isEmpty) {
+        // The typing indicator lives IN the list (issue #459): the footer
+        // is the visually-LAST item — the reversed list renders it right
+        // above the input bar — and scrolls away with the content (no
+        // sticky pinning). Empty transcript + streaming: it is the only
+        // item (E1).
+        final streaming = widget.service.isStreaming;
+        if (messages.isEmpty && !streaming) {
           return Center(
             child: Padding(
               padding: EdgeInsets.fromLTRB(
@@ -1697,8 +1704,11 @@ class _SessionTranscriptState extends State<_SessionTranscript>
           // keyboard opens and shrinks the viewport.
           reverse: true,
           padding: EdgeInsets.fromLTRB(12, 12, 12, 8 + widget.bottomPadding),
-          itemCount: messages.length,
+          itemCount: messages.length + (streaming ? 1 : 0),
           itemBuilder: (context, index) {
+            if (index == messages.length) {
+              return const FaTypingFooter(key: ValueKey('faChatTypingFooter'));
+            }
             final message = messages[messages.length - 1 - index];
             return ChatMessageTile(
               message: message,

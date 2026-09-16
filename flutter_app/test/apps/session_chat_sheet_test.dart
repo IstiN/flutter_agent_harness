@@ -1381,7 +1381,10 @@ void main() {
 
   group('SessionChatSheet typing-indicator ownership (issue #464)', () {
     const orbitKey = ValueKey('faWorkBarOrbit');
-    const typingRowKey = ValueKey('faChatTypingRow');
+    // Issue #459 moved the expanded-panel indicator into the transcript:
+    // the footer is the visually-last list item; the composer's own row
+    // is gone entirely.
+    const typingRowKey = ValueKey('faChatTypingFooter');
 
     /// Pumps the sheet over a single hung-streaming session, docked
     /// (panel closed) and idle.
@@ -1418,9 +1421,13 @@ void main() {
     void expectOneOwner() {
       final bars = find.byKey(orbitKey).evaluate().length;
       final rows = find.byKey(typingRowKey).evaluate().length;
-      expect(bars + rows, 1,
-          reason: 'a live turn must show exactly one indicator '
-              '(bar=$bars, composerRow=$rows)');
+      expect(
+        bars + rows,
+        1,
+        reason:
+            'a live turn must show exactly one indicator '
+            '(bar=$bars, composerRow=$rows)',
+      );
     }
 
     Future<void> expandPanel(WidgetTester tester) async {
@@ -1448,12 +1455,13 @@ void main() {
 
       await startRun(tester, service);
       expect(service.isStreaming, isTrue);
-      // The bar's orbit is the only indicator: the composer's spinner +
-      // «Fa печатает…» sub-header row is suppressed (RED before the fix —
-      // both rendered stacked).
+      // The bar's orbit is the only indicator (RED before the #464 fix —
+      // the composer row rendered stacked; #459 removed the row, the
+      // transcript footer only mounts with the open panel).
       expect(find.byKey(orbitKey), findsOneWidget);
       expect(find.byKey(typingRowKey), findsNothing);
       expect(find.byType(CircularProgressIndicator), findsNothing);
+      // ...and the composer renders no typing UI at all (issue #459).
     });
 
     testWidgets('AC2: expanding flips the indicator to the composer footer; '

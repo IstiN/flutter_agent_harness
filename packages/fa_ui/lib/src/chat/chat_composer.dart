@@ -18,8 +18,9 @@ import 'fa_glyphs.dart';
 import 'upload_utils.dart';
 
 /// The chat composer: attachment chips + staging into the sandbox `uploads/`
-/// folder, the streaming/queued-steer indicators, the text field, the
-/// voice-input mic button, and the gradient send/stop button.
+/// folder, the queued-steer chips, the text field, the voice-input mic
+/// button, and the gradient send/stop button. The streaming indicator is
+/// NOT here — it is a list footer ([FaTypingFooter], issue #459).
 ///
 /// Backend-agnostic: sends through [FaChatService], picks files/images
 /// through [FaChatHost] hooks (or the constructor overrides, which tests
@@ -37,7 +38,6 @@ class ChatComposer extends StatefulWidget {
     this.clipboardImageReader,
     this.leadingBuilder,
     this.hideMicWhenNotEmpty = false,
-    this.showStreamingStatus = true,
     this.onSent,
     this.onFocusChanged,
     this.autofocus = true,
@@ -49,12 +49,6 @@ class ChatComposer extends StatefulWidget {
   /// Capability flags; the defaults turn everything on and let the host
   /// hooks decide what is actually reachable.
   final FaChatFeatures features;
-
-  /// Renders the compact spinner + «Fa is typing…» row above the field
-  /// while the service streams. Hosts that show a dedicated work bar for
-  /// the same state (the launcher's docked chat bar) pass false — one
-  /// owner per view mode, the two indicators never stack (issue #464).
-  final bool showStreamingStatus;
 
   /// Arbitrary-file picker behind the attach sheet's "Attach file" entry;
   /// overrides [FaChatHost.uploadPicker]. Null (with no host hook) hides
@@ -668,27 +662,6 @@ class _ChatComposerState extends State<ChatComposer>
                   ),
                 ),
               ),
-            if (_isStreaming && widget.showStreamingStatus)
-              Padding(
-                key: const ValueKey('faChatTypingRow'),
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                child: Row(
-                  children: [
-                    const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      strings.chatTyping,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: palette.dim,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
             if (widget.service.pendingSteerTexts.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
@@ -930,6 +903,41 @@ class _ChatComposerState extends State<ChatComposer>
         shape: BoxShape.circle,
       ),
       child: idle,
+    );
+  }
+}
+
+/// The in-list typing indicator footer (issue #459): the compact spinner
+/// + «Fa is typing…» entry rendered as the visually-last item of the
+/// scrollable transcript — it scrolls with the content instead of
+/// occupying fixed space above the input bar. Hosts mount it from the
+/// service's streaming state (the full screen via the chat list's bottom
+/// sliver, the session sheet's transcript as the last list item); the
+/// composer itself never renders typing UI — in docked mode the host's
+/// embedded work bar owns the state (single ownership, issue #464).
+class FaTypingFooter extends StatelessWidget {
+  const FaTypingFooter({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final palette = fahChatColorsOf(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      child: Row(
+        children: [
+          const SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            FaChatStrings.of(context).chatTyping,
+            style: theme.textTheme.bodySmall?.copyWith(color: palette.dim),
+          ),
+        ],
+      ),
     );
   }
 }
