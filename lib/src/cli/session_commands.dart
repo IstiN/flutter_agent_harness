@@ -515,7 +515,20 @@ extension on AgentCli {
   }
 
   Future<Session> _loadSession(SessionMetadata metadata) async {
-    final session = await _repo.open(metadata);
+    // Windowed open (owner directive): the CLI resume used to parse the
+    // WHOLE file — 30s boots on marathon sessions. Open from the tail and
+    // page back only to the newest compaction boundary; sessions without
+    // compaction degenerate to the full load, so behavior is unchanged
+    // for them. Context stays byte-identical: the compaction transform
+    // drops everything before the boundary anyway.
+    var session = await _repo.open(metadata, windowed: true);
+    // A marathon WITHOUT compaction pages past the windowed residency
+    // cache — the leaf slides out and the branch would read empty (a
+    // resume that looks like a fresh session, pty_resume_equivalence
+    // AC6). Fall back to the full open: the documented degenerate path.
+    if (!await session.ensureCompactionBoundaryResident()) {
+      session = await _repo.open(metadata);
+    }
     final messages = await session.buildContextMessages();
     // Loaded usage anchors are generation-time: post-compaction they
     // phantom-report the pre-compaction size (183k on a 27k branch) and

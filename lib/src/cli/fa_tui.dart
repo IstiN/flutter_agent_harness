@@ -473,6 +473,9 @@ final class FaTuiModel extends Model {
       0,
       starts.length - 1,
     );
+    // NOTE: deliberately the RAW scroll offset — the effective (tail-riding)
+    // offset lives in view(); routing _scrollBottom through here would
+    // recurse (the plan needs sticky, sticky would need the plan's viewport).
     return scrollOffset >= starts[echoEndLine];
   }
 
@@ -2165,16 +2168,17 @@ final class FaTuiModel extends Model {
         content:
             '${renderHubFrame(hub!, width: termWidth, height: _viewportHeight)}\x1b[?25l',
         cursor: null,
-        mouseMode: mouseCapture ? MouseMode.cellMotion : MouseMode.none,
+        mouseMode: _viewMouseMode,
       );
     }
     final b = StringBuffer();
-    final height = _viewportHeight;
+    final plan = _framePlanFor(termWidth, termHeight);
+    final height = plan.history;
     // Every frame rebuilds the hit-region registry from the current
     // layout — a resize re-derives every rect before the next click can
     // land (issue #278, E2).
     _hitRegions.clear();
-    final stickyRows = _writeStickyEcho(b);
+    final stickyRows = _writeStickyEcho(b, plan.sticky);
 
     // Output history, padded to a fixed height. Markdown is formatted and
     // ANSI-safely wrapped to physical rows (SGR-only output, escapes never
@@ -2182,7 +2186,13 @@ final class FaTuiModel extends Model {
     // arrive; the pass is memoized in the shared wrap cache, so a frame
     // triggered by scrolling reuses the rows computed on the last change.
     final wrapped = _wrappedLines();
-    final offset = _clampScroll(scrollOffset, wrapped);
+    // A following tail rides the CURRENT bottom (issue #496): when the
+    // frame squeezes, the viewport shrinks without any history append —
+    // only re-clamping here keeps the live edge (the sent echo) on screen
+    // instead of stranding the window at a stale offset.
+    final offset = followTail
+        ? _scrollBottom(wrapped)
+        : _clampScroll(scrollOffset, wrapped);
     final historyRows = _writeHistoryRows(b, height, wrapped, offset);
     _writeScrollIndicator(b, wrapped, offset);
     _hitRegions.add(
@@ -2199,7 +2209,7 @@ final class FaTuiModel extends Model {
     var row = stickyRows + historyRows + 1;
     row += _writeMenu(b, row);
 
-    row += _writeBusyAndQueue(b, row);
+    row += _writeBusyAndQueue(b, row, plan);
 
     // Prompt mode: the prompt zone replaces the entire input zone below it,
     // including the status line. The physical cursor stays HIDDEN the whole
@@ -2207,21 +2217,9 @@ final class FaTuiModel extends Model {
     // (_cursorInputRow), pickers and approvals need no caret at all — the
     // old "home to the bottom of the frame" behavior left a stray bar
     // sitting on the status line while the dialog had focus.
-    if (prompt != null) {
-      for (final line in renderTuiPrompt(prompt!, termWidth)) {
-        b.writeln(line);
-      }
-      b.writeln(); // spacer
-      b.write(_statusRow());
-      const cursorLine = '\x1b[?25l';
-      return View(
-        content: b.toString() + cursorLine,
-        cursor: null,
-        mouseMode: mouseCapture ? MouseMode.cellMotion : MouseMode.none,
-      );
-    }
+    if (prompt != null) return _promptModeView(b);
 
-    final (cursorInputLine, cursorScreenCol) = _writeInputLines(b, row);
+    final (cursorInputLine, cursorScreenCol) = _writeInputLines(b, row, plan);
     b.writeln(_dim('─' * termWidth));
     // The status line stays plain; the busy indicator lives above the input.
     b.write(_statusRow());
@@ -2230,8 +2228,8 @@ final class FaTuiModel extends Model {
     // row math (O(n) scan, ZERO allocations — the old split('\n') built a
     // List<String> of every physical row on every frame just to take its
     // length) and the frame body itself.
-    final body = b.toString();
-    final inputStartRow = _lineCount(body) - 2 - _inputLineCount;
+    final body = _cropToGlass(b.toString());
+    final inputStartRow = _lineCount(body) - 2 - plan.input;
     final cursorRow = inputStartRow + cursorInputLine;
     final cursorX = cursorScreenCol;
     // Pickers (models, sessions, mode, approval, provider, settings, wizard
@@ -2256,61 +2254,49 @@ final class FaTuiModel extends Model {
       cursor: hideCursor
           ? null
           : Cursor(x: cursorX, y: cursorRow, shape: CursorShape.bar),
-      mouseMode: mouseCapture ? MouseMode.cellMotion : MouseMode.none,
+      mouseMode: _viewMouseMode,
     );
   }
 
-  /// The sticky user echo pinned to the top while a run streams and the
-  /// echo itself has scrolled out of view (Copilot-style). Rows come from
-  /// the content-keyed cache — formatting per frame made typing during a
-  int _writeStickyEcho(StringBuffer b) {
-    if (!_stickyActive) return 0;
-    final rows = _formattedStickyRows(termWidth);
-    for (final line in rows) {
+  /// The mouse mode every rendered [View] carries (mouse capture on =
+  /// cell-motion tracking for the wheel/click routing).
+  MouseMode get _viewMouseMode =>
+      mouseCapture ? MouseMode.cellMotion : MouseMode.none;
+
+  /// Prompt-mode frame tail: the prompt zone replaces the input zone and
+  /// the status row owns the bottom; no physical cursor anywhere.
+  View _promptModeView(StringBuffer b) {
+    for (final line in renderTuiPrompt(prompt!, termWidth)) {
       b.writeln(line);
     }
-    return rows.length;
+    b.writeln(); // spacer
+    b.write(_statusRow());
+    return View(
+      content: '${b.toString()}\x1b[?25l',
+      cursor: null,
+      mouseMode: _viewMouseMode,
+    );
   }
 
-  /// The [height]-row window of the wrapped output history at [offset].
-  /// Always paints exactly [height] rows.
-  int _writeHistoryRows(
-    StringBuffer b,
-    int height,
-    List<String> wrapped,
-    int offset,
-  ) {
-    for (var i = 0; i < height; i++) {
-      final row = offset + i;
-      b.writeln(row < wrapped.length ? wrapped[row] : '');
+  /// Hard glass guard (#503): whatever the sections miscounted, the frame
+  /// must NEVER exceed the terminal — in a shorter terminal the rows past
+  /// the bottom clamp onto the last row and overwrite the status with
+  /// blanks (owner: status gone at 100x10). Drops the overflow from the
+  /// TOP (oldest history/padding — the most dispensable rows) so the
+  /// bottom chrome always lands on the glass. Frame rows are complete
+  /// self-contained lines by construction, so dropping leading lines is
+  /// ANSI-safe. Caveat: hit-regions shift by the dropped count on this
+  /// rare path; the next frame re-derives them.
+  String _cropToGlass(String body) {
+    final paintedRows = _lineCount(body);
+    if (paintedRows <= termHeight || termHeight <= 0) return body;
+    var idx = 0;
+    for (var d = paintedRows - termHeight; d > 0; d--) {
+      final nl = body.indexOf('\n', idx);
+      if (nl < 0) break;
+      idx = nl + 1;
     }
-    return height;
-  }
-
-  /// Scroll progress indicator — only while the user scrolled away from
-  /// the live edge (a "you are here" hint); while following, the row stays
-  /// blank so the layout never shifts. (A transient viewport shrink, e.g.
-  int _writeScrollIndicator(StringBuffer b, List<String> wrapped, int offset) {
-    final bottom = _scrollBottom(wrapped);
-    if (!followTail && offset < bottom) {
-      final scrollPercent = bottom == 0
-          ? 100
-          : ((offset / bottom) * 100).round().clamp(0, 100);
-      final progressText = ' $scrollPercent% ';
-      final progressWidth = progressText.length;
-      final leftWidth = (termWidth - progressWidth) ~/ 2;
-      final rightWidth = termWidth - progressWidth - leftWidth;
-      b.writeln(
-        _dim('─' * (leftWidth < 0 ? 0 : leftWidth)) +
-            _accent2Plain(progressText) +
-            _dim('─' * (rightWidth < 0 ? 0 : rightWidth)),
-      );
-    } else {
-      // The row is always reserved (progressH): skipping the blank row
-      // while following shifted every later row on scroll.
-      b.writeln();
-    }
-    return 1;
+    return body.substring(idx);
   }
 
   /// The menu title row: '[Commands]' for the slash menu, otherwise the
