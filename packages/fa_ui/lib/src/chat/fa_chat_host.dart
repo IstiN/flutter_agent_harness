@@ -4,6 +4,7 @@
 
 import 'dart:typed_data';
 
+import 'package:cross_file/cross_file.dart';
 import 'package:flutter/widgets.dart';
 
 import 'fa_chat_service.dart';
@@ -53,6 +54,25 @@ abstract interface class FaChatVoiceInput {
 
 /// Launches a js mini-app referenced by a tool result (fa-only feature).
 typedef FaChatAppLauncher = void Function(BuildContext context, String appId);
+
+/// One OS drop delivered to the chat surface (issue #465). [files] are
+/// filesystem paths or in-memory items to stage as attachments; [rawText]
+/// carries the drag's text payload when the platform exposes one (Linux
+/// URI lists — text drops arrive with an empty [files]).
+typedef FaChatDropHandler =
+    Future<void> Function(List<XFile> files, String? rawText);
+
+/// Bridges OS drag-and-drop from the host surface to the composer. The
+/// chat screen owns the [DropTarget] over the transcript + composer area
+/// and forwards drops through the bridge; the composer state registers its
+/// handler on mount (it is the only owner of the staged chips). Hosts
+/// building a custom composer thread the same bridge through
+/// [FaChatComposerBuilder]; a bridge with no handler swallows drops.
+class FaChatDropBridge {
+  /// The mounted composer's drop consumer; null when no composer (or no
+  /// interested custom composer) is mounted.
+  FaChatDropHandler? handler;
+}
 
 /// Renders a live dynamic-message widget for a `widget`-role chat message
 /// (the host owns the JS engine); a null return renders the stock system

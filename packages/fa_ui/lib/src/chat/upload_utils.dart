@@ -55,6 +55,11 @@ String mimeTypeForUploadName(String name) {
 /// comfortably inside browser quotas.
 const int kMaxUploadBatchBytes = 25 * 1024 * 1024;
 
+/// Maximum number of pending attachment chips in the composer at once
+/// (picker batch, paste spam, multi-file drops). Beyond the cap the extra
+/// files are skipped with a notice (issue #465 E2).
+const int kMaxPendingAttachments = 10;
+
 /// Returns an error message when [files] exceed [maxBytes] in total, else
 /// `null`. Checked before anything is written so an oversized batch never
 /// lands partially.
