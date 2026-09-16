@@ -157,6 +157,26 @@ final class Session {
     return name;
   }
 
+  /// Pages older chunks into a windowed storage until the newest
+  /// compaction record is resident — the "open from the end, up to the
+  /// compaction" resume (owner directive): a marathon session opens in
+  /// O(tail-after-compaction) instead of parsing gigabytes. Stops when
+  /// the active branch carries a [CompactionRecord] or the file start is
+  /// reached (sessions without compaction page everything, as before).
+  /// A no-op for full storages. [maxPages] bounds pathological files.
+  Future<void> ensureCompactionBoundaryResident({int maxPages = 512}) async {
+    final storage = _storage;
+    if (storage is! WindowedSessionStorage) return;
+    var pages = 0;
+    while (pages < maxPages) {
+      final branch = await getBranch();
+      if (branch.any((r) => r is CompactionRecord)) return;
+      if (!storage.hasOlder) return;
+      pages++;
+      await storage.loadOlder();
+    }
+  }
+
   Future<String> _append(
     SessionRecord Function(String id, String? parentId) build,
   ) async {
