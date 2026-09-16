@@ -57,12 +57,17 @@ List<AgentTool> subagentMonitoringTools({
   CurrentSubagentIdProvider? currentSubagentId,
   TaskJobManager? jobs,
   TaskExecutor? executor,
+
+  /// How long `task_send` waits for a resumed child to prove responsive
+  /// before reporting the message queued (issue #488 AC3). A wedged
+  /// child's wake keeps running in the background either way.
+  Duration taskSendWaitCap = const Duration(seconds: 15),
 }) {
   if (manager == null) return const [];
   return [
     _taskStatusTool(manager),
     _taskObserveTool(manager, readMessages),
-    _taskSendTool(manager, resumeChild),
+    _taskSendTool(manager, resumeChild, taskSendWaitCap),
     _taskResumeTool(manager, resumeChild),
     if (jobs != null) _taskCancelTool(jobs, manager, executor),
     _replyTool(manager, currentSubagentId),
@@ -888,6 +893,7 @@ AgentTool _taskObserveTool(
 AgentTool _taskSendTool(
   SubagentManager manager,
   ChildResumeRunner? resumeChild,
+  Duration taskSendWaitCap,
 ) {
   final unavailableNote = resumeChild == null
       ? ' NOTE: this host can steer RUNNING children only — follow-ups to '
@@ -900,9 +906,12 @@ AgentTool _taskSendTool(
         'Send a follow-up message to a subagent. A running child receives '
         'it in its inbox at the next turn boundary; an idle (waiting for '
         'input) or completed child is resumed in its SAME session with the '
-        'message. Failed children are continued with task_resume instead. '
-        'Remote a2a:<name> children cannot be steered or resumed — they '
-        'have no local session or inbox; follow up with a new task item.'
+        'message. The resume wait is capped (${taskSendWaitCap.inSeconds}s): '
+        'a child that does not respond in time reports the message queued '
+        'and keeps waking in the background (check task_status). Failed '
+        'children are continued with task_resume instead. Remote '
+        'a2a:<name> children cannot be steered or resumed — they have no '
+        'local session or inbox; follow up with a new task item.'
         '$unavailableNote',
     parameters: {
       'type': 'object',
@@ -917,7 +926,7 @@ AgentTool _taskSendTool(
     },
     tier: ApprovalTier.write,
     execute: (args, cancelToken, onUpdate) =>
-        _runTaskSend(manager, resumeChild, args),
+        _runTaskSend(manager, resumeChild, args, taskSendWaitCap),
   );
 }
 
@@ -930,6 +939,7 @@ Future<ToolExecutionResult> _runTaskSend(
   SubagentManager manager,
   ChildResumeRunner? resumeChild,
   Map<String, dynamic> args,
+  Duration taskSendWaitCap,
 ) async {
   final id = args['id'] as String;
   final message = args['message'] as String? ?? '';
@@ -951,7 +961,14 @@ Future<ToolExecutionResult> _runTaskSend(
       'carrying your message in its task text.',
     );
   }
-  return _sendByChildStatus(manager, resumeChild, id, handle, message);
+  return _sendByChildStatus(
+    manager,
+    resumeChild,
+    id,
+    handle,
+    message,
+    taskSendWaitCap,
+  );
 }
 
 /// `task_send` dispatch on child status: failed/aborted refuse, active
@@ -963,6 +980,7 @@ Future<ToolExecutionResult> _sendByChildStatus(
   String id,
   SubagentHandle handle,
   String message,
+  Duration taskSendWaitCap,
 ) async {
   switch (handle.status) {
     case SubagentStatus.failed:
@@ -977,7 +995,14 @@ Future<ToolExecutionResult> _sendByChildStatus(
       return _enqueueFollowUp(manager, id, message);
     case SubagentStatus.idle:
     case SubagentStatus.completed:
-      return _resumeIdleChild(manager, resumeChild, id, handle, message);
+      return _resumeIdleChild(
+        manager,
+        resumeChild,
+        id,
+        handle,
+        message,
+        taskSendWaitCap,
+      );
   }
 }
 
@@ -1014,6 +1039,7 @@ Future<ToolExecutionResult> _resumeIdleChild(
   String id,
   SubagentHandle handle,
   String message,
+  Duration taskSendWaitCap,
 ) async {
   if (resumeChild == null) {
     return ToolExecutionResult.text(
@@ -1022,12 +1048,20 @@ Future<ToolExecutionResult> _resumeIdleChild(
       '(capability: child-resume)',
     );
   }
+  // Issue #488 AC3: the parent must never hang on a wedged child. The
+  // wake is raced against the cap; past it the send reports the message
+  // queued and the resume KEEPS RUNNING in the background — when the
+  // wedge breaks, the child completes in its own session (the registry
+  // row and transcript tell the truth, task_cancel reaches it). A late
+  // resume failure is already recorded by resumeChild itself; only its
+  // rethrow is swallowed here.
+  final resumed = resumeChild(id, message);
   try {
     // Issue #439 compact-then-deliver: the resume path compacts BEFORE the
     // first request when prior + incoming would cross the threshold — the
     // receipt lands on the handle, so surface it to the parent.
     final compactionsBefore = handle.compactions;
-    await resumeChild(id, message);
+    await resumed.timeout(taskSendWaitCap);
     final after = manager[id];
     final compactNote = after != null && after.compactions > compactionsBefore
         ? '; subagent compacted before delivery '
@@ -1036,6 +1070,12 @@ Future<ToolExecutionResult> _resumeIdleChild(
     return ToolExecutionResult.text(
       'sent message to "$id" — child resumed '
       '(status: ${after?.status.name ?? 'unknown'})$compactNote',
+    );
+  } on TimeoutException {
+    unawaited(resumed.catchError((Object _) {}));
+    return ToolExecutionResult.text(
+      'child "$id" not responding — message queued; it will be processed '
+      'when the child wakes (see task_status)',
     );
   } on Object catch (error) {
     return ToolExecutionResult.text('resume of "$id" failed: $error');
