@@ -51,6 +51,32 @@ fi
 # after reading hook mode.
 bash scripts/ci_fast_gate.sh --hook
 
+# Issue #447: crap4dart quality gates over the STAGED core diff
+# (core-only #433 split — the flutter_app gates run in CI's
+# app-crap-gate job). The root crap4dart.yaml enables exactly
+# broken_goldens; `check --staged` no-ops when no Dart file is staged.
+# Equivalent to the managed block `crap4dart install --force` would
+# append — do not stack both. Requires crap4dart >= 0.9 (the gate
+# framework; older pins only knew `analyze`).
+if command -v dart >/dev/null 2>&1; then
+  C4D_VER=$(dart pub global list 2>/dev/null | awk '$1=="crap4dart"{print $2}')
+  case "$C4D_VER" in
+    0.9.*|0.[1-9][0-9].*|[1-9].*)
+      echo "🧪 crap4dart gates (staged core files)..."
+      if ! dart pub global run crap4dart check --staged; then
+        echo "❌ QUALITY GATE FAILED — crap4dart gates" >&2
+        exit 1
+      fi
+      ;;
+    "")
+      ;; # not activated — skip silently (CI and the fast gate cover it)
+    *)
+      echo "⚠️  crap4dart $C4D_VER is too old for the gates (need >= 0.9.5);" \
+           "skipping — run: dart pub global activate crap4dart >=0.9.5" >&2
+      ;;
+  esac
+fi
+
 # Golden-coverage quick check — only when the staged diff can affect the
 # flutter_app (the gate's own markers already told us the flutter stage
 # ran or was skipped; recompute cheaply from the staged paths here).
