@@ -3667,6 +3667,14 @@
 
 - refactor(482): decompose sandbox_ssh monoliths into parser/executor/lifecycle layers (#498)
 
+## 0.1.396
+
+- fix(516): mail routing resolves a live registration over a stale cross-root mailbox (#518)
+- feat(457): Dynamic Messages full-width layout, header actions redesign, scrollable canvas (#505)
+- refactor(486): [GATE] CRAP descent #10 - six service monitors (#504)
+- fix(sandbox): split sandbox_builtins.dart under the 2800-line gate via part files (#512)
+- feat(462): modernize sessions icon — A4b «Modern pair + dots» (#509)
+
 ## Unreleased
 
 ## Unreleased
