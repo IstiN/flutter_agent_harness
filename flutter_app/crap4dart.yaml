@@ -14,6 +14,13 @@
 # golden suite, and the cluster's own 812/702/600/506 beasts went down with
 # them; the threshold follows the new measured worst: 870.0 → 650.0
 # (`runCodemieSsoFlow`, CC 25 at 0% cov — another lane's ladder card).
+# Descent #9 (issue #485): the on-device provider stream functions moved to
+# one shared pump + codec walk (lib/on_device/), and the beasts went down
+# with them — gemma 992 → 9, transformers.js 552/506 → 17/1, webllm 420 → 6
+# (all fully covered by the provider suites + the new codec-table/pump
+# tests); the threshold follows the measured new worst: 650.0 → 380.0
+# (`WasiSandboxShell._runStage`, CC 19 at 0% cov — the wasm_shell cluster,
+# another lane's ladder card).
 # Pushes may only make the codebase BETTER,
 # never worse; scripts/check_crap_guards.py --only-down rejects a raised
 # threshold in CI. The staged ladder continues in follow-up cards:
@@ -34,8 +41,8 @@ exclude:
 crap:
   enabled: true
   # Current max CRAP score in flutter_app/lib under the flutter lcov
-  # pipeline (issue #475 descent #2 of the #433 ladder). Only down.
-  threshold: 650.0
+  # pipeline (issue #485 descent #9 of the #433 ladder). Only down.
+  threshold: 380.0
 
 coverage:
   # The CI app-crap-gate job merges the two flutter-tests shard reports
