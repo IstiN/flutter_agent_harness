@@ -2231,7 +2231,7 @@ final class FaTuiModel extends Model {
       );
     }
 
-    final (cursorInputLine, cursorScreenCol) = _writeInputLines(b, row);
+    final (cursorInputLine, cursorScreenCol) = _writeInputLines(b, row, plan);
     b.writeln(_dim('─' * termWidth));
     // The status line stays plain; the busy indicator lives above the input.
     b.write(_statusRow());
@@ -2241,7 +2241,7 @@ final class FaTuiModel extends Model {
     // List<String> of every physical row on every frame just to take its
     // length) and the frame body itself.
     final body = b.toString();
-    final inputStartRow = _lineCount(body) - 2 - _inputLineCount;
+    final inputStartRow = _lineCount(body) - 2 - plan.input;
     final cursorRow = inputStartRow + cursorInputLine;
     final cursorX = cursorScreenCol;
     // Pickers (models, sessions, mode, approval, provider, settings, wizard

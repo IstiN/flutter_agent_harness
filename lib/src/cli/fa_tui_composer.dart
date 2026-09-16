@@ -43,9 +43,21 @@ extension _TuiComposerLayout on FaTuiModel {
         2 /* input frame rules */ +
         1 /* status row */;
     final promptH = prompt != null ? tuiPromptRowCount(prompt!, width) + 2 : 0;
+    // Issue #503: the input zone is a YIELDING section, not an unbounded
+    // fixed one. A paste-length draft (many composer rows) used to blow
+    // `fixed` past the physical height — the budget floored at 0, the
+    // painted frame overran the glass, the terminal scrolled and the
+    // composer row painted over the status row with the frame rules gone.
+    // The input now keeps a cursor window: at least one row (the one the
+    // caret is on), never more than the chrome leaves room for.
+    final inputWanted = _inputLineCount;
+    final inputCap = (height - mandatory - (busy ? 1 : 0) - promptH)
+        .clamp(1, height == 0 ? 1 : height);
+    final inputVisible = inputWanted < inputCap ? inputWanted : inputCap;
+    final inputOffset = _inputWindowOffset(inputVisible);
     final fixed =
         mandatory + (busy ? 1 : 0) + _menuReservedLines + promptH +
-        _inputLineCount;
+        inputVisible;
     final boardWanted = jobBoardLines.length;
     final waitingWanted = _waitingRowLines().length;
     final scheduledWanted = scheduledCount > 0 ? 1 : 0;
@@ -100,7 +112,19 @@ extension _TuiComposerLayout on FaTuiModel {
       queueHint: queueHint,
       sticky: sticky,
       history: consumable + reserve,
+      input: inputVisible,
+      inputOffset: inputOffset,
     );
+  }
+
+  /// The first visible wrapped-input row for a [visible]-row window: the
+  /// caret's row stays the window's LAST row (bottom-anchored, like the
+  /// history follow) so typing at the tail is always on the glass.
+  int _inputWindowOffset(int visible) {
+    final (_, cursorRow, _) = _wrappedInput();
+    final total = _inputLineCount;
+    if (visible >= total) return 0;
+    return (cursorRow - visible + 1).clamp(0, total - visible);
   }
 
   int _viewportHeightFor(int width, int height) =>
@@ -134,23 +158,32 @@ extension _TuiComposerLayout on FaTuiModel {
   /// The framed input lines with horizontal cursor-window scrolling; returns
   /// the cursor's input line index and screen column for the cursor home.
   /// Registers the composer hit-region (issue #278): click = caret move.
-  (int, int) _writeInputLines(StringBuffer b, int baseRow) {
+  /// The framed input lines with the plan's visible-row cursor window
+  /// (issue #503: a tall draft yields rows — the caret's row stays the
+  /// window's last). Returns the cursor's input line index INSIDE THE
+  /// WINDOW and the screen column for the cursor home. Registers the
+  /// composer hit-region (issue #278): click = caret move.
+  (int, int) _writeInputLines(StringBuffer b, int baseRow, _FramePlan plan) {
     final (rows, cursorRow, cursorCol) = _wrappedInput();
+    final start = plan.inputOffset.clamp(0, rows.length);
+    final end = (plan.inputOffset + plan.input).clamp(start, rows.length);
+    final visible = rows.sublist(start, end);
     _hitRegions.add(
       TuiHitRegion(
         x: 0,
         y: baseRow,
         w: termWidth,
-        h: rows.length,
+        h: visible.length,
         kind: TuiRegionKind.composer,
       ),
     );
-    for (var i = 0; i < rows.length; i++) {
+    for (var i = 0; i < visible.length; i++) {
       if (i > 0) b.writeln();
-      b.write(rows[i]);
+      b.write(visible[i]);
     }
     b.writeln();
-    return (cursorRow, cursorCol);
+    final inWindow = cursorRow - start;
+    return (inWindow < 0 ? 0 : inWindow, cursorCol);
   }
 
   /// The input text soft-wrapped to the terminal width (the whole prompt
@@ -223,6 +256,8 @@ final class _FramePlan {
     required this.queueHint,
     required this.sticky,
     required this.history,
+    this.input = 0,
+    this.inputOffset = 0,
   });
 
   final int board;
@@ -234,4 +269,10 @@ final class _FramePlan {
   final bool queueHint;
   final int sticky;
   final int history;
+
+  /// The visible wrapped-input rows (issue #503): the input zone yields
+  /// through a cursor window instead of overrunning the glass; [input]
+  /// counts the painted rows, [inputOffset] is the first painted row.
+  final int input;
+  final int inputOffset;
 }
