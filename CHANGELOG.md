@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+- fix(460): YOLO is YOLO again — the critical-pattern guard
+  `recursive delete from a root path` no longer fires on harmless `rm`
+  commands. The matcher stopped being a regex over the raw string and now
+  parses the invocation: recursion requires an explicit
+  `-r`/`-R`/`--recursive` flag (or a short cluster containing `r`/`R` —
+  `-rf`, `-fr`, `-Rf`), and the target check accepts only genuine roots —
+  `/` itself, `/*`-style root-level globs, `~`/`$HOME` (plus `/` and `/*`
+  suffixes), drive roots (`C:\`, `C:/`) and single top-level components
+  (`/usr`, `/etc`, `/tmp`). Nested absolute paths (`/tmp/x`, `/usr/local/y`),
+  relative paths and unresolved variable components (`/$VAR`) never match;
+  `-f`/`-i`/`-v` alone never make a command recursive. Flags and targets are
+  extracted per simple-command segment after stripping launchers (`sudo`,
+  `nohup`, `env`, `FOO=bar` assignments), so `cd /tmp && rm -rf /` still
+  matches while `git commit -m "rm -rf /"` and `rm -f /tmp/a; ls /` do not.
+  The `chmod`/`chown` recursive-root patterns shared the same
+  absolute-path-as-root false positive (`chmod -R 755 /tmp/x` used to fire)
+  and now ride the same root-precision parser; the other critical patterns
+  (mkfs, fork bomb, disk devices, remote-fetch, force-push) keep their
+  semantics, and all labels — and therefore every surface's prompt text —
+  are unchanged. True catastrophes (`rm -rf /`, `rm -rf /*`, `rm -rf ~`,
+  `rm -rf /usr`) keep outranking every interactive mode; only `unattended`
+  skips the interceptor (#380, unchanged). The two owner regressions
+  (`rm -f /tmp/test_dash.js`, `rm -f /tmp/issue_wip_dm.json
+  /tmp/resp_wip.json`) are permanent never-match fixtures, with a flag ×
+  target matrix table, mode-level yolo/write/always-ask tests and a
+  real-CLI headless e2e (mock LLM): yolo executes `rm -f /tmp/…` silently,
+  `rm -rf /` is still intercepted and denied. Fixes #460.
+
 
 ## Unreleased
 - fix(522): a live session file can never silently vanish. Every
