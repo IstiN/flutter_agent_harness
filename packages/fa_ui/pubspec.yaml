@@ -38,6 +38,12 @@ dependencies:
   # The /models endpoint fetch behind the model quick select.
   http: ^1.6.0
 
+  # OS drag-and-drop onto the chat surface (issue #465): files/images
+  # dropped over the transcript or the composer stage as attachment chips.
+  desktop_drop: ^0.8.4
+  # XFile in the public drop-bridge API (FaChatDropHandler).
+  cross_file: ^0.3.5+5
+
   # Opens the OpenRouter OAuth authorization page in the system browser.
   url_launcher: ^6.3.1
 

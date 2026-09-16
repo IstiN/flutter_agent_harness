@@ -5,6 +5,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 import 'package:flutter/services.dart';
@@ -48,8 +49,15 @@ const double kFaChatFilesPanelWidth = 300;
 
 /// Builds the composer's replacement / customization point; null uses the
 /// default [ChatComposer] driven by [FaChatFeatures] and the host hooks.
+/// Custom builders receive the surface's [FaChatDropBridge] (issue #465):
+/// thread it into [ChatComposer.dropBridge] so OS drops over the chat area
+/// stage into the custom composer's chips too.
 typedef FaChatComposerBuilder =
-    Widget Function(BuildContext context, FaChatService service);
+    Widget Function(
+      BuildContext context,
+      FaChatService service,
+      FaChatDropBridge drop,
+    );
 
 /// A chat UI over a single [FaChatService], built on top of
 /// `flutter_chat_ui`.
@@ -201,6 +209,12 @@ class _FaChatScreenState extends State<FaChatScreen>
   /// without needing a context below the [Scaffold] (the adaptive header
   /// builds its action closures at the screen level).
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+
+  /// OS drag-and-drop over the chat area (issue #465): one [DropTarget]
+  /// wraps the transcript + composer, forwards drops to the composer
+  /// through the bridge, and shows the drop highlight while a drag hovers.
+  final FaChatDropBridge _dropBridge = FaChatDropBridge();
+  bool _dropHovering = false;
 
   /// Own scroll controller for the message list (injected via
   /// [Builders.chatAnimatedListBuilder]) so the follow-tail logic can track
@@ -1120,7 +1134,14 @@ class _FaChatScreenState extends State<FaChatScreen>
     final historyAbove = _historyAbove;
     final historyBelow = _historyBelow;
     final wallpaper = widget.wallpaperBuilder;
-    Widget body = Column(
+    Widget body = DropTarget(
+      // Drag-and-drop over the chat area stages attachments (issue #465).
+      // Hosts that turn the attachments feature off keep drops off too.
+      enable: widget.features.attachments,
+      onDragEntered: (_) => setState(() => _dropHovering = true),
+      onDragExited: (_) => setState(() => _dropHovering = false),
+      onDragDone: _onDropDone,
+      child: Column(
       children: [
         if (_error case final error?)
           Material(
@@ -1231,8 +1252,36 @@ class _FaChatScreenState extends State<FaChatScreen>
             tappable: !_historyLoading,
           ),
         composerBuilder != null
-            ? composerBuilder(context, widget.service)
-            : ChatComposer(service: widget.service, features: widget.features),
+            ? composerBuilder(context, widget.service, _dropBridge)
+            : ChatComposer(
+                service: widget.service,
+                features: widget.features,
+                dropBridge: _dropBridge,
+              ),
+      ],
+      ),
+    );
+    // The drop highlight rides in a Stack above the body so the border
+    // overlay never shifts the transcript layout (AC3).
+    body = Stack(
+      children: [
+        Positioned.fill(child: body),
+        if (_dropHovering)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Container(
+                key: const ValueKey('faChatDropHighlight'),
+                margin: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: fahChatColorsOf(context).indigo,
+                    width: 2,
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
       ],
     );
     if (wallpaper == null) return body;
@@ -1242,6 +1291,15 @@ class _FaChatScreenState extends State<FaChatScreen>
         Positioned.fill(child: body),
       ],
     );
+  }
+
+  /// Forwards a completed drop to the mounted composer through the bridge
+  /// (files stage as chips, a text-only drop inserts at the cursor).
+  void _onDropDone(DropDoneDetails details) {
+    setState(() => _dropHovering = false);
+    final handler = _dropBridge.handler;
+    if (handler == null) return;
+    unawaited(handler(details.files, details.rawText));
   }
 
   /// The top banner hides only on non-windowed hosts (no total, nothing
