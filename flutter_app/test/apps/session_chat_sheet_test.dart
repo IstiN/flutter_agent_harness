@@ -255,6 +255,36 @@ void main() {
       expect(find.byKey(_drawerKey), findsNothing);
     });
 
+    testWidgets('the sessions toggles keep a >=36x36 tap target and a '
+        'semantic label (issue #462 AC2)', (tester) async {
+      final semantics = tester.ensureSemantics();
+      await _pumpSheet(tester);
+      expect(
+        tester.getSize(find.byKey(_drawerButtonKey)).shortestSide,
+        greaterThanOrEqualTo(36),
+        reason: 'the bar drawer toggle must keep its hit target',
+      );
+      // The tooltip doubles as the a11y label — it must survive the
+      // visual swap (AC2: unchanged or improved).
+      // The tooltip doubles as the a11y affordance (Semantics.tooltip) —
+      // it must survive the visual swap (AC2: unchanged or improved).
+      expect(
+        tester.getSemantics(find.byKey(_drawerButtonKey)).tooltip,
+        'Sessions',
+      );
+      await _openPanelViaDrawer(tester, 'sess-b');
+      expect(
+        tester.getSize(find.byKey(_panelSessionsKey)).shortestSide,
+        greaterThanOrEqualTo(36),
+        reason: 'the panel-header sessions toggle must keep its hit target',
+      );
+      expect(
+        tester.getSemantics(find.byKey(_panelSessionsKey)).tooltip,
+        'Sessions',
+      );
+      semantics.dispose();
+    });
+
     testWidgets('the sessions button opens the drawer listing live sessions; '
         'a scrim tap closes it', (tester) async {
       await _pumpSheet(tester);
@@ -1418,9 +1448,13 @@ void main() {
     void expectOneOwner() {
       final bars = find.byKey(orbitKey).evaluate().length;
       final rows = find.byKey(typingRowKey).evaluate().length;
-      expect(bars + rows, 1,
-          reason: 'a live turn must show exactly one indicator '
-              '(bar=$bars, composerRow=$rows)');
+      expect(
+        bars + rows,
+        1,
+        reason:
+            'a live turn must show exactly one indicator '
+            '(bar=$bars, composerRow=$rows)',
+      );
     }
 
     Future<void> expandPanel(WidgetTester tester) async {
