@@ -377,6 +377,107 @@ final class LocalShell implements Shell, BackgroundShell {
   @override
   bool get backgroundJobsSupported => true;
 
+  /// Test seam: pin the own-process-group decision before the first job of
+  /// a test starts. Null = probe the host once.
+  static bool? ownProcessGroupOverride;
+  static bool? _ownGroupCached;
+
+  /// Whether background jobs start as their own session and process-group
+  /// leader (`setsid sh -c …`, posix only): stop() then signals the whole
+  /// tree with one group kill, and the boot sweep can recognize a job's
+  /// leftover group after a crash (issue #517). setsid execs sh in place —
+  /// no fork — so the tracked pid IS the group id.
+  static bool get jobsGetOwnProcessGroup =>
+      ownProcessGroupOverride ?? (_ownGroupCached ??= _probeOwnProcessGroup());
+
+  static bool _probeOwnProcessGroup() {
+    if (Platform.isWindows) return false;
+    try {
+      return Process.runSync('sh', [
+            '-c',
+            'command -v setsid >/dev/null 2>&1',
+          ]).exitCode ==
+          0;
+    } on Object {
+      return false;
+    }
+  }
+
+  /// Grace between the TERM and the KILL round of a tree kill: enough for
+  /// well-behaved children to exit, short enough to keep `bash_job stop`
+  /// snappy.
+  static const _killGrace = Duration(milliseconds: 400);
+
+  /// Terminates [pid]'s whole process tree (issue #517): the process group
+  /// when the job is its own group leader (one signal — also covers
+  /// children forked while the kill runs), otherwise a live `ps` descendant
+  /// walk; Windows delegates to `taskkill /T`. TERM first, a short grace,
+  /// then KILL. Best-effort: never throws.
+  static Future<void> killTree(int pid, {required bool ownGroup}) async {
+    try {
+      if (Platform.isWindows) {
+        await Process.run('taskkill', ['/PID', '$pid', '/T', '/F']);
+        return;
+      }
+      if (ownGroup) {
+        Process.killPid(-pid, ProcessSignal.sigterm);
+        await Future<void>.delayed(_killGrace);
+        Process.killPid(-pid, ProcessSignal.sigkill);
+        return;
+      }
+      // No group leadership on this host (no setsid): walk the live tree.
+      var victims = await _descendantsOf(pid);
+      if (victims.isEmpty) return;
+      await _signalAll(victims, ProcessSignal.sigterm);
+      await Future<void>.delayed(_killGrace);
+      // Children may have been forked while the first round landed; the
+      // walk only roots at a still-observable pid, so a recycled root can
+      // never widen the victim set.
+      victims = await _descendantsOf(pid);
+      await _signalAll(victims, ProcessSignal.sigkill);
+    } on Object {
+      // Best-effort: stop() still backstops the direct child.
+    }
+  }
+
+  /// [root] plus every live descendant, via one `ps` ppid scan. Empty when
+  /// [root] is gone (its pid is recycled only after reaping, and the scan
+  /// roots at an observable row — never at a stranger).
+  static Future<Set<int>> _descendantsOf(int root) async {
+    final ps = await Process.run('ps', ['-ax', '-o', 'pid=,ppid=']);
+    final parentOf = <int, int>{};
+    for (final line in (ps.stdout as String).split('\n')) {
+      final cols = line.trim().split(RegExp(r'\s+'));
+      if (cols.length < 2) continue;
+      final pid = int.tryParse(cols[0]);
+      final ppid = int.tryParse(cols[1]);
+      if (pid != null && ppid != null) parentOf[pid] = ppid;
+    }
+    if (!parentOf.containsKey(root)) return const {};
+    final children = <int, List<int>>{};
+    parentOf.forEach((pid, ppid) {
+      children.putIfAbsent(ppid, () => <int>[]).add(pid);
+    });
+    final out = <int>{root};
+    final queue = <int>[root];
+    while (queue.isNotEmpty) {
+      for (final child in children[queue.removeAt(0)] ?? const <int>[]) {
+        if (out.add(child)) queue.add(child);
+      }
+    }
+    return out;
+  }
+
+  static Future<void> _signalAll(Set<int> pids, ProcessSignal signal) async {
+    for (final pid in pids) {
+      try {
+        Process.killPid(pid, signal);
+      } on Object {
+        // Vanished between the scan and the signal.
+      }
+    }
+  }
+
   /// The child environment: the host's, with the caller's `options.env`
   /// merged on top (its values override, per the [ShellExecOptions.env]
   /// contract — injected vars such as secrets or `FAH_SESSION_*` must not
@@ -420,10 +521,23 @@ final class LocalShell implements Shell, BackgroundShell {
 
   static Future<Result<Process, ExecutionError>> _start(
     String command,
-    ShellExecOptions? options,
-  ) async {
-    final executable = Platform.isWindows ? 'cmd' : 'sh';
-    final args = Platform.isWindows ? ['/c', command] : ['-c', command];
+    ShellExecOptions? options, {
+    bool ownSession = false,
+  }) async {
+    // ownSession (issue #517): `setsid` makes the job its own session and
+    // process-group leader — pgid == pid — so stop() can signal the whole
+    // tree and the boot sweep can recognize leftover groups. setsid execs
+    // sh in place, so the spawned pid is still the tracked one.
+    final executable = Platform.isWindows
+        ? 'cmd'
+        : ownSession
+        ? 'setsid'
+        : 'sh';
+    final args = Platform.isWindows
+        ? ['/c', command]
+        : ownSession
+        ? ['sh', '-c', command]
+        : ['-c', command];
     try {
       return Ok(
         await Process.start(
@@ -603,7 +717,8 @@ final class LocalShell implements Shell, BackgroundShell {
     if (token?.isCancelled ?? false) {
       return const Err(ExecutionError(ExecutionErrorCode.aborted, 'aborted'));
     }
-    final started = await _start(command, options);
+    final ownGroup = LocalShell.jobsGetOwnProcessGroup;
+    final started = await _start(command, options, ownSession: ownGroup);
     if (started.isErr) return Err(started.errorOrNull!);
     final process = started.valueOrNull!;
     // Feed optional stdin data (bash tool `stdin` param). With a live
@@ -646,6 +761,7 @@ final class LocalShell implements Shell, BackgroundShell {
         logSink: logSink,
         timeout: options?.timeout,
         token: token,
+        ownGroup: ownGroup,
       ),
     );
   }
@@ -660,6 +776,7 @@ final class _LocalShellJob implements ShellJob {
     required this.logPath,
     required Process process,
     required this._logSink,
+    required this._ownGroup,
     Duration? timeout,
     CancelToken? token,
   }) : _process = process {
@@ -725,6 +842,10 @@ final class _LocalShellJob implements ShellJob {
 
   final Process _process;
   final IOSink _logSink;
+
+  /// Whether the job is its own session/process-group leader (`setsid`
+  /// spawn) — stop() then signals the whole group, not a pid walk.
+  final bool _ownGroup;
   final _output = StreamController<String>.broadcast();
   late final StreamSubscription<void> _stdoutSub;
   late final StreamSubscription<void> _stderrSub;
@@ -743,6 +864,9 @@ final class _LocalShellJob implements ShellJob {
   final String logPath;
 
   @override
+  int? get pid => _process.pid;
+
+  @override
   bool get isRunning => _exitCode == null;
 
   @override
@@ -756,7 +880,11 @@ final class _LocalShellJob implements ShellJob {
 
   @override
   Future<void> stop() async {
+    // Already settled: never signal — the pid may have been recycled.
+    if (!isRunning) return;
     _stopReason ??= 'stopped';
+    await LocalShell.killTree(_process.pid, ownGroup: _ownGroup);
+    // Backstop for the direct child, whatever the tree path did.
     _process.kill();
   }
 

@@ -4,7 +4,11 @@
 /// return when no waiters exist.
 library;
 
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/io.dart';
 import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
@@ -28,6 +32,66 @@ void main() {
     ),
     io: io,
     streamFunction: fake.call,
+  );
+  test(
+    'boot sweep reaps a previous-run orphan group and warns '
+    '(issue #517)',
+    skip: LocalShell.jobsGetOwnProcessGroup
+        ? null
+        : 'needs setsid (group leadership)',
+    () async {
+      final workspace = await Directory.systemTemp.createTemp('fah517-cli-');
+      addTearDown(() => workspace.delete(recursive: true));
+      // Fabricate the crashed run: a job group whose leader is dead but
+      // whose grandchild survived.
+      final secs = '517.9${DateTime.now().microsecondsSinceEpoch % 100000}';
+      final leader = await Process.start('setsid', [
+        'sh',
+        '-c',
+        'sleep $secs & wait',
+      ]);
+      addTearDown(() => Process.run('pkill', ['-f', 'sleep $secs']));
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      Process.killPid(leader.pid, ProcessSignal.sigkill);
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+
+      final dir = workspace.path;
+      final localEnv = LocalExecutionEnv(cwd: dir);
+      final localIo = FakeCliIO();
+      addTearDown(localIo.close);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'test-key',
+          env: localEnv,
+          sessionRoot: '/sessions',
+          providerKind: 'openai-completions',
+        ),
+        io: localIo,
+        streamFunction: FakeStreamFunction([textTurn('ok')]).call,
+      );
+      await localEnv.createDir('$dir/.fah/bash_jobs');
+      await localEnv.writeFile(
+        '$dir/.fah/bash_jobs/running.json',
+        jsonEncode([
+          {
+            'id': 'sh-dead',
+            'command': 'sleep $secs & wait',
+            'pid': '${leader.pid}',
+          },
+        ]),
+      );
+
+      await cli.waitingCaptureLostJobsForTest();
+      expect(localIo.out.toString(), contains('reaped 1 orphaned job process'));
+      final ps = await Process.run('ps', ['-ax', '-o', 'args=']);
+      final survivors = ps.stdout
+          .toString()
+          .split('\n')
+          .where((l) => l.contains('sleep $secs') && !l.contains('sh -c'))
+          .toList();
+      expect(survivors, isEmpty);
+    },
   );
 
   test('snapshot seam aggregates an empty registry and queue', () async {
