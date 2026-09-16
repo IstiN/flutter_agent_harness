@@ -66,61 +66,18 @@ Future<bool> runAiinConnectFlow({
   CustomProvider? reauthenticateFor,
 }) async {
   if (kIsWeb) {
-    // One-click web connect: a popup OAuth, no loopback server needed
-    // (the hosted callback page posts the code back; both AIIN hosts send
-    // `access-control-allow-origin: *`). Progress lands in SnackBars —
-    // the popup opens before any await, inside the tap gesture.
-    void webStatus(String message) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
-      }
-      debugPrint('[AIIN web] $message');
-    }
-
-    if (!context.mounted) return false;
-    // The HOSTED AIIN sign-in page runs the whole round-trip (all
-    // providers, silent for an existing session) — the popup goes straight
-    // to it. A timeout/cancel falls back to the paste-key path.
-    final coordinator = AiinWebAuthCoordinator.instance;
-    final result = await coordinator.connect(
-      onStatus: webStatus,
-      client: aiinHttpClient,
-      openFn: aiinOpenPopupFn,
-      navigateFn: aiinNavigatePopupFn,
-      timeout: aiinWebTimeout,
-    );
-    if (result == null) {
-      final failure = coordinator.lastFailure ?? '';
-      if ((failure == 'timeout' || failure == 'cancelled') &&
-          context.mounted) {
-        final pasted = await _pasteAiinKeyFallback(context);
-        if (pasted == null) return false;
-        if (!context.mounted) return false;
-        return _finishAiinConnect(
-          context,
-          registry: registry,
-          service: service,
-          lastConnectionStore: lastConnectionStore,
-          sessionKeysStore: sessionKeysStore,
-          keychainStore: keychainStore,
-          apiKey: pasted,
-          aiinModelsFetcher: aiinModelsFetcher,
-          reauthenticateFor: reauthenticateFor,
-        );
-      }
-      return false;
-    }
-    if (!context.mounted) return false;
-    return _finishAiinConnect(
-      context,
+    return runAiinWebConnect(
+      context: context,
       registry: registry,
       service: service,
       lastConnectionStore: lastConnectionStore,
       sessionKeysStore: sessionKeysStore,
       keychainStore: keychainStore,
-      apiKey: result.apiKey.raw,
-      accountLabel: result.email,
+      aiinHttpClient: aiinHttpClient,
+      aiinOpenPopupFn: aiinOpenPopupFn,
+      aiinNavigatePopupFn: aiinNavigatePopupFn,
       aiinModelsFetcher: aiinModelsFetcher,
+      aiinWebTimeout: aiinWebTimeout,
       reauthenticateFor: reauthenticateFor,
     );
   }
@@ -148,9 +105,114 @@ Future<bool> runAiinConnectFlow({
       reauthenticateFor: reauthenticateFor,
     );
   }
+  return _runAiinDesktopConnect(
+    context,
+    registry: registry,
+    service: service,
+    lastConnectionStore: lastConnectionStore,
+    sessionKeysStore: sessionKeysStore,
+    fallbackKeys: fallbackKeys,
+    keychainStore: keychainStore,
+    aiinConnectFn: aiinConnectFn,
+    aiinModelsFetcher: aiinModelsFetcher,
+    reauthenticateFor: reauthenticateFor,
+  );
+}
+
+/// The web one-click branch of [runAiinConnectFlow] (issue #486): a
+/// popup OAuth round-trip through [AiinWebAuthCoordinator]; a
+/// timeout/cancel falls back to the paste-key cabinet path. Public step
+/// seam: the kIsWeb hop is unreachable from VM tests, which drive this
+/// directly (the #476 recipe).
+Future<bool> runAiinWebConnect({
+  required BuildContext context,
+  required ProviderRegistry registry,
+  required AgentService? service,
+  required LastConnectionStore lastConnectionStore,
+  SessionKeysStore? sessionKeysStore,
+  KeychainStore? keychainStore,
+  http.Client? aiinHttpClient,
+  bool Function()? aiinOpenPopupFn,
+  void Function(String url)? aiinNavigatePopupFn,
+  Future<List<String>> Function(String baseUrl, {required String apiKey})?
+  aiinModelsFetcher,
+  Duration? aiinWebTimeout,
+  CustomProvider? reauthenticateFor,
+}) async {
+  // One-click web connect: a popup OAuth, no loopback server needed
+  // (the hosted callback page posts the code back; both AIIN hosts send
+  // `access-control-allow-origin: *`). Progress lands in SnackBars —
+  // the popup opens before any await, inside the tap gesture.
+  void webStatus(String message) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    }
+    debugPrint('[AIIN web] $message');
+  }
 
   if (!context.mounted) return false;
+  // The HOSTED AIIN sign-in page runs the whole round-trip (all
+  // providers, silent for an existing session) — the popup goes straight
+  // to it. A timeout/cancel falls back to the paste-key path.
+  final coordinator = AiinWebAuthCoordinator.instance;
+  final result = await coordinator.connect(
+    onStatus: webStatus,
+    client: aiinHttpClient,
+    openFn: aiinOpenPopupFn,
+    navigateFn: aiinNavigatePopupFn,
+    timeout: aiinWebTimeout,
+  );
+  if (result == null) {
+    final failure = coordinator.lastFailure ?? '';
+    if ((failure == 'timeout' || failure == 'cancelled') &&
+        context.mounted) {
+      final pasted = await _pasteAiinKeyFallback(context);
+      if (pasted == null) return false;
+      if (!context.mounted) return false;
+      return _finishAiinConnect(
+        context,
+        registry: registry,
+        service: service,
+        lastConnectionStore: lastConnectionStore,
+        sessionKeysStore: sessionKeysStore,
+        keychainStore: keychainStore,
+        apiKey: pasted,
+        aiinModelsFetcher: aiinModelsFetcher,
+        reauthenticateFor: reauthenticateFor,
+      );
+    }
+    return false;
+  }
+  if (!context.mounted) return false;
+  return _finishAiinConnect(
+    context,
+    registry: registry,
+    service: service,
+    lastConnectionStore: lastConnectionStore,
+    sessionKeysStore: sessionKeysStore,
+    keychainStore: keychainStore,
+    apiKey: result.apiKey.raw,
+    accountLabel: result.email,
+    aiinModelsFetcher: aiinModelsFetcher,
+    reauthenticateFor: reauthenticateFor,
+  );
+}
 
+/// The desktop branch (issue #486): the browser/CLI sign-in round-trip,
+/// with the cabinet paste-key fallback when it fails.
+Future<bool> _runAiinDesktopConnect(
+  BuildContext context, {
+  required ProviderRegistry registry,
+  required AgentService? service,
+  required LastConnectionStore lastConnectionStore,
+  required SessionKeysStore? sessionKeysStore,
+  required SessionKeysStore? fallbackKeys,
+  required KeychainStore? keychainStore,
+  Future<AiinConnectResult?> Function()? aiinConnectFn,
+  Future<List<String>> Function(String baseUrl, {required String apiKey})?
+  aiinModelsFetcher,
+  CustomProvider? reauthenticateFor,
+}) async {
   if (!context.mounted) return false;
   ScaffoldMessenger.of(context).showSnackBar(
     const SnackBar(
