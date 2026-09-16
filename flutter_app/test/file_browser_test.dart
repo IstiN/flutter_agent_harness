@@ -798,8 +798,8 @@ void main() {
 
       expect(service.messages.first.role, 'user');
       expect(
-        service.messages.first.content,
-        contains('[attached file: uploads/chat.txt — read it with your tools]'),
+        service.messages.first.attachments.single,
+        (bytes: null, path: 'uploads/chat.txt'),
       );
       expect(service.messages.first.content, contains('look at this'));
       // The chip row cleared after sending.
@@ -877,12 +877,13 @@ void main() {
       });
       await tester.pumpAndSettle();
 
-      // Sent as a path reference with no inline image bytes.
-      expect(service.messages.first.imageBytes, isNull);
+      // Issue #461: the reference becomes a file chip in the bubble; the
+      // agent-facing line is stripped from the visible text.
       expect(
-        service.messages.first.content,
-        contains('[attached file: uploads/icon.svg — read it with your tools]'),
+        service.messages.first.attachments.single,
+        (bytes: null, path: 'uploads/icon.svg'),
       );
+      expect(service.messages.first.content, isNot(contains('[attached file')));
     });
 
     testWidgets('a failed send restores the pending chips and the typed '
