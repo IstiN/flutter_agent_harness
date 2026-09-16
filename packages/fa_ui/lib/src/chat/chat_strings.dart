@@ -60,6 +60,7 @@ abstract class FaChatStrings {
   String get chatLoadEarlier;
   String chatAttachmentCap(int skipped);
   String chatDropFolderRejected(String name);
+  String get chatCollapse;
   String chatLoadEarlierCount(String count);
   String get chatLoadEarlierFailed;
   String chatBeginningOfSession(String count);
@@ -193,9 +194,8 @@ class FaChatStringsEn extends FaChatStrings {
   String uploadTooLarge(String max, String total) =>
       'Upload is too large: $total exceeds the $max per-batch limit.';
   @override
-<<<<<<< HEAD
   String chatClampHint(int lines) => lines == 1 ? '+1 line' : '+$lines lines';
-=======
+  @override
   String chatAttachmentCap(int skipped) =>
       'Attachment limit is $kMaxPendingAttachments — skipped $skipped.';
   @override
@@ -203,7 +203,6 @@ class FaChatStringsEn extends FaChatStrings {
       'Folders cannot be attached — "$name" skipped.';
   @override
   String get chatCollapse => 'Collapse';
->>>>>>> 9a0e4587 (feat(465): stage clipboard-pasted and drag-dropped images as composer attachment chips)
   @override
   String get chatShowMore => 'Show more';
   @override
@@ -381,7 +380,6 @@ class FaChatStringsRu extends FaChatStrings {
   String uploadTooLarge(String max, String total) =>
       'Загрузка слишком большая: $total превышает лимит $max на один пакет.';
   @override
-<<<<<<< HEAD
   String chatClampHint(int lines) {
     final mod10 = lines % 10;
     final mod100 = lines % 100;
@@ -392,7 +390,7 @@ class FaChatStringsRu extends FaChatStrings {
         : 'строк';
     return '+$lines $word';
   }
-=======
+  @override
   String chatAttachmentCap(int skipped) =>
       'Лимит вложений — $kMaxPendingAttachments, пропущено $skipped.';
   @override
@@ -400,7 +398,6 @@ class FaChatStringsRu extends FaChatStrings {
       'Папки прикрепить нельзя — «$name» пропущена.';
   @override
   String get chatCollapse => 'Свернуть';
->>>>>>> 9a0e4587 (feat(465): stage clipboard-pasted and drag-dropped images as composer attachment chips)
   @override
   String get chatShowMore => 'Развернуть';
   @override

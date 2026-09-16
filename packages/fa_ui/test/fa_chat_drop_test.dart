@@ -22,12 +22,17 @@ const _channel = MethodChannel('desktop_drop');
 /// Fires a platform→dart method call on the desktop_drop channel. The
 /// dispatch rides [tester.runAsync] because the drop handler chain stages
 /// files through real IO — fake-async futures would never complete (the
-/// chat_composer_test paste-settle pattern).
+/// chat_composer_test paste-settle pattern). Pass [until] to hold the
+/// real-async window open until the drop's observable result lands:
+/// batch reads and oversized files blow past any fixed delay, and a
+/// future still mid-read when the window closes would hang the
+/// fake-async drain.
 Future<void> _fireChannel(
   WidgetTester tester,
   String method,
-  Object arguments,
-) async {
+  Object arguments, {
+  bool Function()? until,
+}) async {
   final data = const StandardMethodCodec().encodeMethodCall(
     MethodCall(method, arguments),
   );
@@ -37,7 +42,14 @@ Future<void> _fireChannel(
       data,
       (_) {},
     );
-    await Future<void>.delayed(const Duration(milliseconds: 100));
+    if (until != null) {
+      final deadline = DateTime.now().add(const Duration(seconds: 10));
+      while (!until() && DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+    } else {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
   });
   await tester.pump();
 }
@@ -82,6 +94,7 @@ void main() {
       tester,
       'performOperation',
       [for (final f in files) f.path],
+      until: () => service.stagedCalls.length == 2,
     );
 
     // Highlight gone, both files staged through the same path as the
@@ -117,6 +130,7 @@ void main() {
       tester,
       'performOperation',
       ['/tmp', file.path],
+      until: () => service.stagedCalls.isNotEmpty,
     );
 
     expect(find.textContaining('Folders cannot be attached'), findsOneWidget);
@@ -134,6 +148,7 @@ void main() {
       tester,
       'performOperation',
       [for (final f in files) f.path],
+      until: () => service.stagedCalls.length == 10,
     );
 
     expect(service.stagedCalls, hasLength(10));
@@ -145,7 +160,12 @@ void main() {
     final service = await _pumpScreen(tester);
     final file = _tempFile('huge.bin', Uint8List(25 * 1024 * 1024 + 1));
 
-    await _fireChannel(tester, 'performOperation', [file.path]);
+    await _fireChannel(
+      tester,
+      'performOperation',
+      [file.path],
+      until: () => find.textContaining('exceeds the').evaluate().isNotEmpty,
+    );
 
     expect(find.textContaining('exceeds the'), findsOneWidget);
     expect(service.stagedCalls, isEmpty);
