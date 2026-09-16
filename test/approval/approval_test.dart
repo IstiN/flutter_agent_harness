@@ -421,6 +421,91 @@ void main() {
     });
 
     test(
+      'issue #460: rm of a /tmp file never escalates in interactive modes',
+      () async {
+        const ownerCommands = [
+          'rm -f /tmp/test_dash.js',
+          'rm -f /tmp/issue_wip_dm.json /tmp/resp_wip.json',
+        ];
+        for (final mode in {
+          ApprovalMode.yolo,
+          ApprovalMode.write,
+          ApprovalMode.alwaysAsk,
+        }) {
+          final requests = <ApprovalRequest>[];
+          final manager = ApprovalManager(
+            mode: mode,
+            prompt: (request) {
+              requests.add(request);
+              return ApprovalDecision.deny;
+            },
+          );
+          for (final command in ownerCommands) {
+            final outcome = await manager.authorize(
+              toolName: 'bash',
+              tier: ApprovalTier.exec,
+              arguments: {'command': command},
+            );
+            expect(
+              requests.where((r) => r.reason.contains('Critical pattern')),
+              isEmpty,
+              reason: 'mode=${mode.name} command=$command',
+            );
+            if (mode == ApprovalMode.yolo) {
+              expect(outcome.allowed, isTrue, reason: command);
+              expect(requests, isEmpty, reason: command);
+            }
+          }
+        }
+      },
+    );
+
+    test('catastrophes escalate in yolo, pass through in unattended', () async {
+      const catastrophes = [
+        'rm -rf /',
+        'rm -rf /*',
+        'rm -rf ~',
+        'rm -rf /usr',
+        'rm -rf \$HOME',
+        'chmod -R 777 /',
+        'chown -R root /',
+      ];
+      for (final command in catastrophes) {
+        final requests = <ApprovalRequest>[];
+        final yolo = ApprovalManager(
+          mode: ApprovalMode.yolo,
+          prompt: (request) {
+            requests.add(request);
+            return ApprovalDecision.deny;
+          },
+        );
+        final outcome = await yolo.authorize(
+          toolName: 'bash',
+          tier: ApprovalTier.exec,
+          arguments: {'command': command},
+        );
+        expect(outcome.allowed, isFalse, reason: command);
+        expect(requests, hasLength(1), reason: command);
+        expect(
+          requests.single.reason,
+          contains('Critical pattern detected'),
+          reason: command,
+        );
+
+        final unattended = ApprovalManager(
+          mode: ApprovalMode.unattended,
+          prompt: (request) => fail('unattended must never prompt: $command'),
+        );
+        final skipped = await unattended.authorize(
+          toolName: 'bash',
+          tier: ApprovalTier.exec,
+          arguments: {'command': command},
+        );
+        expect(skipped.allowed, isTrue, reason: command);
+      }
+    });
+
+    test(
       'unattended auto-allows critical commands without prompting',
       () async {
         // The whole point of unattended mode: there is no user to answer a
