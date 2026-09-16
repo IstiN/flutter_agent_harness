@@ -270,14 +270,15 @@ void main() {
       await tester.pumpWidget(MaterialApp(home: ChatScreen(manager: manager)));
       await tester.pumpAndSettle();
 
-      // Collapsed: the newest reasoning (lines 7-14) is visible, the
-      // preamble is not.
+      // Collapsed: the newest reasoning (lines 12-14) is visible, the
+      // preamble is not; the hint names the hidden remainder (issue #458).
       expect(find.textContaining('reasoning line 14'), findsOneWidget);
-      expect(find.textContaining('reasoning line 7'), findsOneWidget);
-      expect(find.textContaining('reasoning line 6'), findsNothing);
+      expect(find.textContaining('reasoning line 12'), findsOneWidget);
+      expect(find.textContaining('reasoning line 11'), findsNothing);
+      expect(find.text('+11 lines'), findsOneWidget);
 
       // Expand shows everything.
-      await tester.tap(find.text('Show all (14)'));
+      await tester.tap(find.text('+11 lines'));
       await tester.pumpAndSettle();
       expect(find.textContaining('reasoning line 1\n'), findsOneWidget);
     });
