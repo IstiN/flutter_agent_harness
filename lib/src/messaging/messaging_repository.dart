@@ -162,6 +162,17 @@ class MailboxEntry {
     return reference.difference(lastActivity) <= window;
   }
 
+  /// Whether this entry POSITIVELY announces a live owner: transport
+  /// presence (hub roster, file busy marker) or dated activity inside the
+  /// live window. Unlike [isLive], an UNDATED entry is NOT live here —
+  /// routing and misroute diagnostics (issue #516) trust evidence only,
+  /// never the can't-date-means-visible default.
+  bool get isConfirmedLive => switch (presence) {
+    AgentPresence.busy || AgentPresence.live => true,
+    AgentPresence.offline => false,
+    null => lastActivity != null && MailboxEntry.isLive(lastActivity),
+  };
+
   @override
   String toString() =>
       'MailboxEntry($id, name: $name, cwd: $cwd, slug: $slug, '
@@ -199,6 +210,30 @@ class MailboxEntry {
     }
     return true;
   }
+}
+
+/// The cross-root misroute diagnostic for a send resolved to [targetId]
+/// (issue #516). Returns '' when the id maps to fewer than two mailboxes —
+/// the normal case; an asleep target stays silent because offline
+/// queueing is the contract (#402). When the same id owns mailboxes under
+/// SEVERAL project roots, the sender learns where delivery landed instead
+/// of silently queueing: the live registration's root is named and stale
+/// corpses are called out, or — when no root holds a live registration —
+/// the named misroute warning fires.
+String mailboxMisrouteNote(List<MailboxEntry> entries, String targetId) {
+  final matches = entries.where((entry) => entry.id == targetId).toList();
+  if (matches.length < 2) return '';
+  String where(MailboxEntry entry) => entry.cwd ?? entry.slug ?? 'unknown root';
+  final live = matches.where((entry) => entry.isConfirmedLive).toList();
+  final stale = matches.where((entry) => !entry.isConfirmedLive).toList();
+  if (live.isNotEmpty) {
+    final ignored = stale.map(where).join(', ');
+    return ' Delivered to the live mailbox under ${where(live.first)}'
+        '${ignored.isEmpty ? '' : '; stale mailbox under $ignored ignored'}';
+  }
+  return ' warning: mailbox exists under project '
+      '${matches.map(where).join(', ')} but the agent is not live '
+      'anywhere — queued offline';
 }
 
 /// Isolated messaging backend for agent inboxes.

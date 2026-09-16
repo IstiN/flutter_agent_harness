@@ -1225,6 +1225,113 @@ void main() {
       );
     });
   });
+
+  group('cross-root misroute diagnostics (#516)', () {
+    const targetId = '01a060f2-7d4b-73b3-a360-bdf56e8a3a14/main';
+    final fresh = DateTime.now().toUtc().subtract(const Duration(minutes: 1));
+    final dead = DateTime.now().toUtc().subtract(const Duration(days: 3));
+
+    Future<SubagentManager> fabricManager(_FakeMessagingRepository repo) async {
+      final m = SubagentManager(parentSessionId: 'p', messaging: repo)
+        ..mailboxPrefix = 'sess1';
+      await m.register(id: 'a1', name: 'a1', agentType: 'task', task: 'work');
+      return m;
+    }
+
+    Future<dynamic> messageTool(SubagentManager m) async =>
+        subagentMonitoringTools(
+          manager: m,
+          currentSubagentId: () => 'a1',
+        ).firstWhere((t) => t.name == 'agent_message');
+
+    test(
+      'agent_message names the live root and the ignored stale corpse',
+      () async {
+        final repo = _FakeMessagingRepository(
+          entries: [
+            MailboxEntry(
+              id: targetId,
+              cwd: '/git/demo_widget',
+              lastActivity: dead,
+            ),
+            MailboxEntry(
+              id: targetId,
+              cwd: '/git/flutter_agent',
+              lastActivity: fresh,
+            ),
+          ],
+        );
+        final tool = await messageTool(await fabricManager(repo));
+        final result = await tool.execute(
+          {'to': targetId, 'message': 'cross-root hi'},
+          null,
+          null,
+        );
+        final text = (result.content.first as dynamic).text as String;
+        expect(text, contains('message queued'));
+        expect(text, contains('Delivered to the live mailbox under'));
+        expect(text, contains('/git/flutter_agent'));
+        expect(text, contains('stale mailbox under /git/demo_widget ignored'));
+      },
+    );
+
+    test('agent_message warns when no same-id mailbox is live', () async {
+      final repo = _FakeMessagingRepository(
+        entries: [
+          MailboxEntry(
+            id: targetId,
+            cwd: '/git/demo_widget',
+            lastActivity: dead,
+          ),
+          MailboxEntry(id: targetId, cwd: '/git/legacy', lastActivity: dead),
+        ],
+      );
+      final tool = await messageTool(await fabricManager(repo));
+      final result = await tool.execute(
+        {'to': targetId, 'message': 'offline hi'},
+        null,
+        null,
+      );
+      final text = (result.content.first as dynamic).text as String;
+      expect(text, contains('warning'));
+      expect(text, contains('not live anywhere'));
+      expect(text, contains('/git/demo_widget, /git/legacy'));
+      // Offline queue semantics: the mail still went out (#402 contract).
+      expect(repo._inboxes[targetId], isNotEmpty);
+    });
+
+    test(
+      'agent_message ambiguity marks which same-name candidate is live',
+      () async {
+        final repo = _FakeMessagingRepository(
+          entries: [
+            MailboxEntry(
+              id: 'sessA/main',
+              name: 'support',
+              cwd: '/git/stale_copy',
+              lastActivity: dead,
+            ),
+            MailboxEntry(
+              id: 'sessB/main',
+              name: 'support',
+              cwd: '/git/live_copy',
+              lastActivity: fresh,
+            ),
+          ],
+        );
+        final tool = await messageTool(await fabricManager(repo));
+        final result = await tool.execute(
+          {'to': 'support', 'message': 'which one?'},
+          null,
+          null,
+        );
+        final text = (result.content.first as dynamic).text as String;
+        expect(text, contains('ambiguous'));
+        expect(text, contains('[/git/live_copy] — live'));
+        expect(text, isNot(contains('[/git/stale_copy] — live')));
+      },
+    );
+  });
 }
 
 /// Records cross-machine deliveries without touching the wire.
