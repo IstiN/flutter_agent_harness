@@ -1,4 +1,10 @@
+import 'dart:io';
+
+import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
+import 'package:flutter_agent_harness/src/cli/system_notice_render.dart';
+import 'package:flutter_agent_harness/src/cli/tool_rows.dart';
 import 'package:flutter_agent_harness/src/cli/tui_replay.dart';
+import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:flutter_agent_harness/src/context.dart';
 import 'package:flutter_agent_harness/src/session/session_tree.dart'
     show
@@ -22,7 +28,123 @@ void main() {
     timestamp: DateTime.utc(2026),
   );
 
-  group('system-notice replay', () {
+  ToolResultMessage okResult(String callId, String text) => ToolResultMessage(
+    toolCallId: callId,
+    toolName: 'bash',
+    content: [TextContent(text: text)],
+    isError: false,
+    timestamp: DateTime.utc(2026),
+  );
+
+  /// The live end row for [call] — the exact builder the streaming path
+  /// paints in `_onToolExecutionEnd`, minus the live duration (replay shows
+  /// the honest `—`). The replay row must equal this byte for byte.
+  String liveEndRow(
+    ToolCall call,
+    ToolResultMessage? result, {
+    int width = 80,
+  }) {
+    final failed = result == null || result.isError;
+    var detail = toolRowDetail(call.name, call.arguments);
+    var glyphPaint = tuiAccentSoft;
+    var detailPaint = tuiDim;
+    if (result != null && result.isError) {
+      glyphPaint = tuiError;
+      detailPaint = (s) => s;
+      detail = result.content
+          .whereType<TextContent>()
+          .map((b) => b.text)
+          .join()
+          .split('\n')
+          .first;
+    }
+    return layoutToolRow(
+      ToolRowSegments(
+        glyph: failed ? '✗' : '✓',
+        label: call.name,
+        detail: detail,
+        elapsed: '—',
+      ),
+      width,
+    ).style(glyph: glyphPaint, label: tuiAccent2, dim: detailPaint);
+  }
+
+  group('replay tool rows (issue #446 AC2)', () {
+    final call = ToolCall(
+      id: 'c1',
+      name: 'bash',
+      arguments: {'command': 'git status --short'},
+    );
+
+    test('a persisted call with its result renders through the live tool-row '
+        'builder — never an [name] marker', () {
+      final result = okResult('c1', 'M lib/a.dart\n');
+      final lines = replayLinesTui(
+        assistant([call]),
+        width: 80,
+        dim: dim,
+        results: {'c1': result},
+      );
+      expect(lines, [liveEndRow(call, result)]);
+      expect(lines.join(), isNot(contains('[bash]')));
+      expect(lines.single, contains('✓'));
+      expect(lines.single, contains('bash'));
+      // Honest lossy bit: the settled replay row shows no live duration.
+      expect(lines.single, contains('—'));
+    });
+
+    test('the args preview is the human detail (command text), not JSON', () {
+      final lines = replayLinesTui(
+        assistant([call]),
+        width: 80,
+        dim: dim,
+        results: {'c1': okResult('c1', 'ok')},
+      );
+      expect(lines.single, contains('git status --short'));
+      expect(lines.single, isNot(contains('{')));
+    });
+
+    test('an error result renders the ✗ row with the failure first line', () {
+      final result = ToolResultMessage(
+        toolCallId: 'c1',
+        toolName: 'bash',
+        content: [TextContent(text: 'fatal: not a repo\nstack')],
+        isError: true,
+        timestamp: DateTime.utc(2026),
+      );
+      final lines = replayLinesTui(
+        assistant([call]),
+        width: 80,
+        dim: dim,
+        results: {'c1': result},
+      );
+      expect(lines, [liveEndRow(call, result)]);
+      expect(lines.single, contains('✗'));
+      expect(lines.single, contains('fatal: not a repo'));
+    });
+
+    test('E1: a call missing its result renders interrupted — never bare', () {
+      final lines = replayLinesTui(assistant([call]), width: 80, dim: dim);
+      expect(lines, [liveEndRow(call, null)]);
+      expect(lines.single, contains('✗'));
+      expect(lines.join(), isNot(contains('[bash]')));
+    });
+
+    test('line mode renders the same grammar unpainted', () {
+      final lines = replayLines(
+        assistant([call]),
+        maxRows: 0,
+        results: {'c1': okResult('c1', 'ok')},
+      );
+      expect(lines, hasLength(1));
+      expect(lines.single, startsWith('fa:  '));
+      expect(lines.single, contains('✓ bash'));
+      expect(lines.single, contains('git status --short'));
+      expect(lines.join(), isNot(contains('[bash]')));
+    });
+  });
+
+  group('replay system rows (issue #446 AC3)', () {
     const settleNotice =
         '<system-notice>\n'
         'Background shell job sh-32-hlrc finished with exit code 0.\n'
@@ -33,34 +155,40 @@ void main() {
         'log file, and act on it when the result was awaited.\n'
         '</system-notice>';
 
-    test('a settled background-job notice replays as ONE dim chrome line', () {
+    test('a settled background-job notice replays through the system-row '
+        'renderer, exactly the live blockquote shape', () {
       final lines = replayLinesTui(
         UserMessage.text(settleNotice),
         width: 80,
         dim: dim,
       );
-      expect(lines, [
-        '<d>${'─' * 80}</d>',
-        '<d>⚙ Background shell job sh-32-hlrc finished with exit code 0.</d>',
-        '',
-      ]);
+      expect(lines, renderSystemNoticeLines(settleNotice));
     });
 
-    test('the notice never leaks the closing tag or the command dump', () {
+    test(
+      'zero literal ⚙-prefixed raw lines — every gear rides a blockquote',
+      () {
+        final lines = replayLinesTui(
+          UserMessage.text(settleNotice),
+          width: 80,
+          dim: dim,
+        );
+        expect(lines.join('\n'), contains('⚙'));
+        for (final line in lines) {
+          if (line.replaceAll('\x1b[0m', '').contains('⚙')) {
+            expect(
+              line.trimLeft().startsWith('>'),
+              isTrue,
+              reason: 'raw gear line leaked: $line',
+            );
+          }
+        }
+      },
+    );
+
+    test('line mode rides the same renderer', () {
       final lines = replayLines(UserMessage.text(settleNotice), maxRows: 0);
-      expect(lines, hasLength(1));
-      expect(lines.single, contains('⚙'));
-      expect(lines.single, isNot(contains('system-notice')));
-      expect(lines.single, isNot(contains('Command:')));
-      expect(lines.single, isNot(contains('git commit')));
-    });
-
-    test('a one-line mail notice keeps its sentence', () {
-      const mail =
-          '<system-notice>New inter-agent mail arrived (2 message(s))'
-          ' — read it with agent_directory.</system-notice>';
-      final lines = replayLinesTui(UserMessage.text(mail), width: 80, dim: dim);
-      expect(lines[1], contains('New inter-agent mail arrived'));
+      expect(lines, renderSystemNoticeLines(settleNotice));
     });
 
     test('mixed content replays verbatim (not a notice)', () {
@@ -122,22 +250,6 @@ void main() {
       ]);
     });
 
-    test('a block-content user message joins its text blocks', () {
-      final lines = replayLinesTui(
-        UserMessage(
-          content: const [
-            TextContent(text: 'a'),
-            TextContent(text: 'b'),
-          ],
-          timestamp: DateTime.utc(2026),
-        ),
-        width: 4,
-        dim: dim,
-      );
-      expect(lines[1], '\x1b[48;2;30;34;42ma\x1b[0m');
-      expect(lines[2], '\x1b[48;2;30;34;42mb\x1b[0m');
-    });
-
     test('an empty user message renders nothing', () {
       expect(
         replayLinesTui(UserMessage.text('   '), width: 10, dim: dim),
@@ -145,17 +257,72 @@ void main() {
       );
     });
 
-    test('assistant text plus tool calls ends with a dim indicator row', () {
-      final lines = replayLinesTui(
-        assistant(const [
-          TextContent(text: 'answer'),
-          ToolCall(id: '1', name: 'read', arguments: {}),
-          ToolCall(id: '2', name: 'bash', arguments: {}),
-        ]),
-        width: 10,
+    test('markdown parity (AC4): replayed text is the same raw markdown the '
+        'live stream buffers — the view styles both identically', () {
+      const text =
+          'intro\n\n# Title\n\n- a\n2. two\n\n**bold** and '
+          '`code`';
+      final replayRows = replayLinesTui(
+        assistant([TextContent(text: text)]),
+        width: 80,
         dim: dim,
       );
-      expect(lines, ['answer', '<d>[read] [bash]</d>']);
+      final liveRows = [
+        '${assistantStreamPrefix()}intro',
+        '',
+        '# Title',
+        '',
+        '- a',
+        '2. two',
+        '',
+        '**bold** and `code`',
+      ];
+      // Identical raw rows: whatever AnsiMarkdown does to one it does to
+      // the other — same styled segments, same structure, zero dim SGR on
+      // text rows (dim rides thinking only, exactly like live).
+      expect(replayRows, liveRows);
+      expect(replayRows.join('\n'), isNot(contains('\x1b[2m')));
+      final styledReplay = AnsiMarkdown(width: 80);
+      final styledLive = AnsiMarkdown(width: 80);
+      final replayOut = [
+        for (final row in replayRows) styledReplay.formatLine(row),
+      ].join('\n');
+      final liveOut = [
+        for (final row in liveRows) styledLive.formatLine(row),
+      ].join('\n');
+      expect(replayOut, liveOut);
+      expect(replayOut, contains('Title')); // heading marker consumed
+      expect(replayOut, isNot(contains('# Title')));
+      expect(replayOut, contains('\x1b[1mbold\x1b[0m'));
+    });
+
+    test('dim rides thinking rows only — never assistant text', () {
+      final rows = replayLinesTui(
+        assistant([
+          ThinkingContent(thinking: 'reasoning hard\nline two'),
+          TextContent(text: 'the answer'),
+        ]),
+        width: 80,
+        dim: dim,
+      );
+      expect(rows, [
+        '<d>reasoning hard</d>',
+        '<d>line two</d>',
+        '${assistantStreamPrefix()}the answer',
+      ]);
+    });
+
+    test('the `>_Fa ` prefix lands on the first text row only', () {
+      final rows = replayLinesTui(
+        assistant([TextContent(text: 'one\ntwo')]),
+        width: 80,
+        dim: dim,
+      );
+      expect(rows.first, contains('>_'));
+      expect(rows.first, contains('Fa'));
+      expect(rows.first, contains('one'));
+      expect(rows[1], 'two');
+      expect(rows.skip(1).join(), isNot(contains('Fa ')));
     });
 
     test('assistant text replays IN FULL — no per-message head cap', () {
@@ -171,18 +338,22 @@ void main() {
       expect(lines.join('\n'), isNot(contains('…')));
     });
 
-    test('an assistant message without text renders nothing', () {
-      expect(
-        replayLinesTui(
-          assistant(const [ToolCall(id: '1', name: 'read', arguments: {})]),
-          width: 10,
-          dim: dim,
-        ),
-        isEmpty,
+    test('an assistant message without text renders its tool rows only', () {
+      final call = ToolCall(
+        id: 'c1',
+        name: 'read',
+        arguments: {'path': '/tmp/a.dart'},
       );
+      final lines = replayLinesTui(
+        assistant([call]),
+        width: 80,
+        dim: dim,
+        results: {'c1': okResult('c1', 'ok')},
+      );
+      expect(lines, [liveEndRow(call, okResult('c1', 'ok'))]);
     });
 
-    test('tool results never render', () {
+    test('tool results never render standalone', () {
       expect(
         replayLinesTui(
           ToolResultMessage(
@@ -249,10 +420,6 @@ void main() {
     });
 
     test('a long fenced message replays intact, fence balanced', () {
-      // 26 rows with the fence opened at row 2 and closed near the end:
-      // full replay keeps every row so the fence closes NATURALLY — and a
-      // mid-fence budget cut between messages is still balanced by the
-      // synthetic opener tested below.
       final body = [
         'intro',
         '```dart',
@@ -300,6 +467,100 @@ void main() {
         rowBudget: 2,
       );
       expect(entries.first, ['```']);
+    });
+
+    test('a budget cut keeps whole messages and renders tool rows', () {
+      final call = ToolCall(
+        id: 'c9',
+        name: 'bash',
+        arguments: {'command': 'echo hi'},
+      );
+      final old = [
+        UserMessage.text('old question'),
+        assistant([TextContent(text: 'old answer')]),
+      ];
+      final recent = [
+        UserMessage.text('new question'),
+        assistant([call, TextContent(text: 'new answer')]),
+        okResult('c9', 'hi'),
+      ];
+      final (entries, firstIndex) = buildReplayEntries(
+        [...old, ...recent],
+        tui: true,
+        width: 80,
+        dim: dim,
+        rowBudget: 4,
+      );
+      expect(entries.join('\n'), contains('new answer'));
+      expect(entries.join('\n'), contains('echo hi'));
+      expect(entries.join('\n'), isNot(contains('old question')));
+      expect(entries.join('\n'), isNot(contains('old answer')));
+      expect(entries.join('\n'), isNot(contains('new question')));
+      expect(firstIndex, 3);
+    });
+  });
+
+  group('resume golden (issue #446 AC5)', () {
+    test('the restored transcript pins the unified pipeline, shared with the '
+        'live builder fixtures', () {
+      final call = ToolCall(
+        id: 'g1',
+        name: 'bash',
+        arguments: {'command': 'gh run cancel 123'},
+      );
+      final read = ToolCall(
+        id: 'g2',
+        name: 'read',
+        arguments: {'path': 'lib/a.dart'},
+      );
+      const notice =
+          '<system-notice>\n'
+          'Background shell job sh-9 finished with exit code 0.\n'
+          '</system-notice>';
+      final results = {
+        'g1': okResult('g1', 'cancelled'),
+        'g2': okResult('g2', 'contents'),
+      };
+      final messages = [
+        UserMessage.text('ship it'),
+        assistant([
+          TextContent(text: '# Plan\n\n- cancel the run\n- **verify**'),
+          call,
+          read,
+        ]),
+        okResult('g1', 'cancelled'),
+        okResult('g2', 'contents'),
+        UserMessage.text(notice),
+        assistant([TextContent(text: 'done — the run is cancelled')]),
+      ];
+      final (entries, _) = buildReplayEntries(
+        messages,
+        tui: true,
+        width: 80,
+        dim: dim,
+      );
+      // SGR-stripped transcript: pins the grammar, not the palette.
+      String strip(String s) => s.replaceAll(AnsiMarkdown.ansiSgrPattern, '');
+      final transcript = [
+        for (final entry in entries) ...[for (final line in entry) strip(line)],
+      ];
+      // The live builder produces the very same rows for the same records.
+      expect(transcript, contains(strip(liveEndRow(call, results['g1']!))));
+      expect(transcript, contains(strip(liveEndRow(read, results['g2']!))));
+      expect(
+        transcript,
+        containsAll(renderSystemNoticeLines(notice).map(strip)),
+      );
+      expect(transcript.join('\n'), isNot(contains('[bash]')));
+      expect(transcript.join('\n'), isNot(contains('[read]')));
+
+      final file = File('test/cli/goldens/tui_resume.ans');
+      final rendered = '${transcript.join('\n')}\n';
+      if (Platform.environment.containsKey('FA_UPDATE_RESUME_GOLDENS')) {
+        file.writeAsStringSync(rendered);
+        return;
+      }
+      expect(rendered, file.readAsStringSync());
     });
   });
 }
