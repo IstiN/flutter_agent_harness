@@ -76,6 +76,10 @@ enum SessionErrorCode {
   /// A fork/navigation target is not a valid branch point.
   invalidForkTarget,
 
+  /// A destructive operation targeted a session with a fresh live
+  /// registration (issue #522): the owning process is still running.
+  liveSession,
+
   /// The underlying filesystem operation failed.
   storage,
 

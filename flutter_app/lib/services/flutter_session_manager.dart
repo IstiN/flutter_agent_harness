@@ -101,6 +101,12 @@ final class FlutterSessionManager extends ChangeNotifier {
              fs: env,
              sessionsRoot: sessionsRoot,
              parseExecutor: createSessionParseExecutor(),
+             // Issue #522: the deletion gate reads the shared live-session
+             // heartbeats — sidebar deletes refuse sessions a CLI owns.
+             presenceStore: FileSessionPresenceStore(
+               env: env,
+               root: sessionsRoot,
+             ),
            ),
        _parentResolver = parentResolver ?? SubagentParentResolver();
 
@@ -705,7 +711,9 @@ final class FlutterSessionManager extends ChangeNotifier {
       // A session deleted from another surface (or a file cleaned up
       // under us) must not crash the close — the manager forgets it
       // either way.
-      if (metadata != null) await _repo.delete(metadata);
+      if (metadata != null) {
+        await _repo.delete(metadata, actor: 'app:close');
+      }
     } else {
       // A session nobody wrote to leaves no file behind.
       await managed.service.deleteSessionIfEmpty();
@@ -728,7 +736,7 @@ final class FlutterSessionManager extends ChangeNotifier {
     final SessionMetadata? resolved =
         metadata ?? (await _repo.list()).where((m) => m.id == id).firstOrNull;
     if (resolved == null) return; // already gone (deleted elsewhere)
-    await _repo.delete(resolved);
+    await _repo.delete(resolved, actor: 'app:sidebar');
     notifyListeners();
   }
 
