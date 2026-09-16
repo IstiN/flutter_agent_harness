@@ -38,8 +38,7 @@ import 'package:fa/ui/widgets/widget_publish_sheet.dart';
 
 // The screen itself lives in the fa_ui package; these symbols stay
 // re-exported so existing imports of this path keep working.
-export 'package:fa_ui/fa_ui.dart'
-    show chatImageMessageSource, kWideLayoutBreakpoint;
+export 'package:fa_ui/fa_ui.dart' show kWideLayoutBreakpoint;
 
 /// A chat UI backed by [FlutterSessionManager], built on top of
 /// `flutter_chat_ui`.

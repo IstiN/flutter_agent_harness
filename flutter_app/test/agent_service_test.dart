@@ -486,7 +486,7 @@ void main() {
       expect(service.messages.length, 2);
       expect(service.messages[0].role, 'user');
       expect(service.messages[0].content, 'describe this');
-      expect(service.messages[0].imageBytes, bytes);
+      expect(service.messages[0].attachments.single.bytes, bytes);
       expect(service.messages[1].role, 'assistant');
     });
 
@@ -1565,12 +1565,13 @@ void main() {
         await service.waitForIdle();
 
         expect(service.messages[0].role, 'user');
+        // Issue #461: the reference becomes a chip; the visible text is
+        // just the caption.
+        expect(service.messages[0].content, 'summarize it');
         expect(
-          service.messages[0].content,
-          '[attached file: uploads/notes.txt — read it with your tools]\n'
-          'summarize it',
+          service.messages[0].attachments.single,
+          (bytes: null, path: 'uploads/notes.txt'),
         );
-        expect(service.messages[0].imageBytes, isNull);
       },
     );
 
@@ -1609,7 +1610,7 @@ void main() {
       );
       await service.waitForIdle();
 
-      expect(service.messages[0].imageBytes, isNotNull);
+      expect(service.messages[0].attachments.where((a) => a.bytes != null), isNotEmpty);
       final userMessage = captured!.messages.whereType<UserMessage>().last;
       final blocks = userMessage.content as List<ContentBlock>;
       final images = blocks.whereType<ImageContent>().toList();
@@ -1678,7 +1679,12 @@ void main() {
         expect(texts[0].text, contains('[attached file: uploads/pic.png'));
         expect(texts[1].text, '[Image 0]');
         // The UI thumbnail comes from the PNG, never from the SVG bytes.
-        expect(service.messages[0].imageBytes, [1, 2, 3]);
+        expect(
+          service.messages[0].attachments
+              .singleWhere((a) => a.path == 'uploads/pic.png')
+              .bytes,
+          [1, 2, 3],
+        );
       },
     );
 
@@ -1755,11 +1761,15 @@ void main() {
       await service.waitForIdle();
 
       // Text-only on-device backends get the path, never ImageContent.
-      expect(service.messages[0].imageBytes, isNull);
+      // The record has no image bytes — the bubble renders the
+      // `[image unavailable]` placeholder (issue #461 AC3).
       expect(
-        service.messages[0].content,
-        contains('[attached file: uploads/pic.png'),
+        service.messages[0].attachments.single,
+        (bytes: null, path: 'uploads/pic.png'),
       );
+      // No caption: the agent-facing reference is stripped and there is
+      // nothing else to show.
+      expect(service.messages[0].content, isEmpty);
       final userMessage = captured!.messages.whereType<UserMessage>().last;
       // Text-only backends go through prompt(): the user message is plain
       // text, so no ImageContent block can ride along.
