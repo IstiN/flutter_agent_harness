@@ -630,88 +630,30 @@ final class RelayAgentService extends AgentService {
     }
   }
 
+  /// Protocol-message dispatch, one handler per message type (issue
+  /// #486). `UiProtocolMessage` is a sealed family of `final class`es —
+  /// the pattern cases are the dispatch table, and an unmapped type (the
+  /// UI→SW-only messages, raw hello frames) stays the old no-op.
   void _onProtocolMessage(UiProtocolMessage message) {
     switch (message) {
       case HelloAckMsg(:final sessionId):
-        // Hello (re)syncs after boot, panel reload and SW reconnect. The
-        // SW may have switched its live session while we were gone — a
-        // missed session_new/session_open broadcast leaves hostedLiveId
-        // pointing at a session that renders NOWHERE (the SW excludes the
-        // live row from archives, the slot still holds the old id) and
-        // every selection dot disappears. Re-broadcast like an attach.
-        final previousHello = _sessionId;
-        _sessionId = sessionId ?? _sessionId;
-        if (sessionId != null &&
-            sessionId.isNotEmpty &&
-            sessionId != previousHello) {
-          onLiveSessionIdChanged?.call(sessionId);
-        }
+        _onHelloAckMsg(sessionId);
       case AttachedMsg(:final sessionId, :final replay):
-        final previous = _sessionId;
-        _sessionId = sessionId;
-        _rebuild(replay);
-        debugPrint(
-          '[fah][relay] attached: session=$sessionId replay=${replay.length}'
-          '${previous.isNotEmpty && previous != sessionId ? ' (was $previous)' : ''}',
-        );
-        if (sessionId.isNotEmpty && sessionId != previous) {
-          debugPrint(
-            '[fah][relay] live session switched: $previous → $sessionId '
-            '(session_new/session_open from this or another surface)',
-          );
-          onLiveSessionIdChanged?.call(sessionId);
-        }
-        // Pick up the SW's persisted provider/model (chrome.storage) so the
-        // composer reflects reality; reconfigure() writes back the same way.
-        _transport.dispatch(const SettingsQueryMsg());
-        debugPrint('[fah][relay] settings_query sent');
+        _onAttachedMsg(sessionId, replay);
       case MessageDoneMsg(:final message):
-        if ((message['role'] as String? ?? 'assistant') == 'user') {
-          // Composer sends were echoed locally at sendText time; the
-          // matching live row is that echo's SW copy (consume, don't
-          // render). A NON-matching row is host-initiated — inbound
-          // hub/DAP/bridge mail — and must render at ARRIVAL with the
-          // attributed text verbatim (issue #320; it used to be dropped
-          // and the mail stayed invisible until a reload).
-          final content = _stripTurnContext(message['text'] as String? ?? '');
-          // FIFO consume: each steered send matches its own SW copy
-          // (several steers may queue inside one boundary window).
-          if (_pendingEchoes.remove(content)) {
-            break;
-          }
-          _append(fa_ui.FaChatMessage(role: 'user', content: content));
-          _trajectoryAppend(
-            UserMessage.text(content, timestamp: _rowTimestamp(message)),
-          );
-          notifyListeners();
-        } else {
-          _finishAssistant(message);
-        }
+        _onMessageDoneMsg(message);
       case ApprovalRequestMsg(:final id, :final call, :final reason):
         unawaited(_decideApproval(id, call, reason));
       case StreamMsg(:final event):
         _onHostEvent(event);
       case SettingsResultMsg(:final settings):
-        _applySwSettings(settings);
-        final c = _readyCompleter;
-        if (c != null && !_sessionId.isEmpty) {
-          _readyCompleter = null;
-          c.complete();
-        }
+        _onSettingsResultMsg(settings);
       case ToolsStateMsg(:final tools):
-        _swTools
-          ..clear()
-          ..addEntries([for (final t in tools) MapEntry(t.name, t.enabled)]);
-        notifyListeners();
+        _onToolsStateMsg(tools);
       case SessionsResultMsg(:final sessions):
         _sessionsQuery?.complete(sessions);
       case ExtResultMsg(:final id, :final ok, :final data, :final error):
-        final pending = _pendingExt.remove(id);
-        if (pending != null && !pending.isCompleted) {
-          ok
-              ? pending.complete(data ?? const <String, dynamic>{})
-              : pending.completeError(StateError(error ?? 'ext op failed'));
-        }
+        _onExtResultMsg(id, ok, data, error);
       case ToolsPutMsg():
         break; // UI -> SW only
       case ErrorMsg(:final message):
@@ -719,6 +661,98 @@ final class RelayAgentService extends AgentService {
         notifyListeners();
       default:
         break; // hello_ack/attach are the transport's business
+    }
+  }
+
+  /// Hello (re)syncs after boot, panel reload and SW reconnect. The SW
+  /// may have switched its live session while we were gone — a missed
+  /// session_new/session_open broadcast leaves hostedLiveId pointing at
+  /// a session that renders NOWHERE (the SW excludes the live row from
+  /// archives, the slot still holds the old id) and every selection dot
+  /// disappears. Re-broadcast like an attach.
+  void _onHelloAckMsg(String? sessionId) {
+    final previousHello = _sessionId;
+    _sessionId = sessionId ?? _sessionId;
+    if (sessionId != null &&
+        sessionId.isNotEmpty &&
+        sessionId != previousHello) {
+      onLiveSessionIdChanged?.call(sessionId);
+    }
+  }
+
+  void _onAttachedMsg(String sessionId, List<Map<String, dynamic>> replay) {
+    final previous = _sessionId;
+    _sessionId = sessionId;
+    _rebuild(replay);
+    debugPrint(
+      '[fah][relay] attached: session=$sessionId replay=${replay.length}'
+      '${previous.isNotEmpty && previous != sessionId ? ' (was $previous)' : ''}',
+    );
+    if (sessionId.isNotEmpty && sessionId != previous) {
+      debugPrint(
+        '[fah][relay] live session switched: $previous → $sessionId '
+        '(session_new/session_open from this or another surface)',
+      );
+      onLiveSessionIdChanged?.call(sessionId);
+    }
+    // Pick up the SW's persisted provider/model (chrome.storage) so the
+    // composer reflects reality; reconfigure() writes back the same way.
+    _transport.dispatch(const SettingsQueryMsg());
+    debugPrint('[fah][relay] settings_query sent');
+  }
+
+  void _onMessageDoneMsg(Map<String, dynamic> message) {
+    if ((message['role'] as String? ?? 'assistant') == 'user') {
+      // Composer sends were echoed locally at sendText time; the
+      // matching live row is that echo's SW copy (consume, don't
+      // render). A NON-matching row is host-initiated — inbound
+      // hub/DAP/bridge mail — and must render at ARRIVAL with the
+      // attributed text verbatim (issue #320; it used to be dropped
+      // and the mail stayed invisible until a reload).
+      final content = _stripTurnContext(message['text'] as String? ?? '');
+      // FIFO consume: each steered send matches its own SW copy
+      // (several steers may queue inside one boundary window).
+      if (_pendingEchoes.remove(content)) {
+        return;
+      }
+      _append(fa_ui.FaChatMessage(role: 'user', content: content));
+      _trajectoryAppend(
+        UserMessage.text(content, timestamp: _rowTimestamp(message)),
+      );
+      notifyListeners();
+    } else {
+      _finishAssistant(message);
+    }
+  }
+
+  /// Settings snapshots complete `ready` once a live session is attached.
+  void _onSettingsResultMsg(Map<String, dynamic> settings) {
+    _applySwSettings(settings);
+    final c = _readyCompleter;
+    if (c != null && !_sessionId.isEmpty) {
+      _readyCompleter = null;
+      c.complete();
+    }
+  }
+
+  void _onToolsStateMsg(List<UiToolState> tools) {
+    _swTools
+      ..clear()
+      ..addEntries([for (final t in tools) MapEntry(t.name, t.enabled)]);
+    notifyListeners();
+  }
+
+  void _onExtResultMsg(
+    String id,
+    bool ok,
+    Map<String, dynamic>? data,
+    String? error,
+  ) {
+    final pending = _pendingExt.remove(id);
+    if (pending != null && !pending.isCompleted) {
+      ok
+          ? pending.complete(data ?? const <String, dynamic>{})
+          : pending.completeError(StateError(error ?? 'ext op failed'));
     }
   }
 
