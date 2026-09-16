@@ -58,6 +58,8 @@ final class _SudoAskJob implements ShellJob {
 
   @override
   final String logPath;
+  @override
+  int? get pid => null;
 
   final _controller = StreamController<String>.broadcast();
   final _settled = Completer<void>();
