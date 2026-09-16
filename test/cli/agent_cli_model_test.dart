@@ -303,6 +303,37 @@ void main() {
       await run;
     });
 
+    test('settled no-hit filter yields empty rows, not a loading row', () async {
+      // The persisted cache seeds the picker at boot (the #507 visual
+      // fixture path). Once the cache refresh has settled, a filter that
+      // matches nothing must return NO rows — the TUI then renders its
+      // dim no-matches hint — instead of a perpetual 'loading models...'
+      // row that hides the state its screen is named for.
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final seeded = MemoryExecutionEnv(cwd: '/work');
+      await seeded.writeFile(
+        '/home/.fah/model_cache.json',
+        jsonEncode({
+          'test-provider': {
+            'ids': ['test-mini', 'test-max', 'omega'],
+            'fetchedAtMs': DateTime.now().millisecondsSinceEpoch,
+          },
+        }),
+      );
+      final cli = cliFor(fake.call, envOverride: seeded, homeDir: '/home');
+      final run = cli.run();
+      await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
+      // The seeded fixtures are the flat picker's filtered rows ('test-m'
+      // matches the ids but not the provider name).
+      expect(
+        cli.buildModelMenuForTest('test-m').map((i) => i.key),
+        ['test-provider|test-mini', 'test-provider|test-max'],
+      );
+      await waitForIt(() => cli.buildModelMenuForTest('zzz').isEmpty);
+      io.sendLine('/exit');
+      await run;
+    });
+
     test('selecting a provider row opens its model list', () async {
       // The `@<name>` selection routes into the provider's model list
       // (the generic `modelProvider` picker). Without a TUI controller the
