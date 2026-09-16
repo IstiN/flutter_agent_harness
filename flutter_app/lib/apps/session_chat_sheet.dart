@@ -1736,7 +1736,7 @@ class SessionsGlyph extends StatelessWidget {
     this.size = 22,
   });
 
-  /// The stroke color of the front bubble and text lines.
+  /// The stroke color of the front bubble and typing dots.
   final Color color;
 
   /// The fill of the front bubble — pass the surface the glyph sits on so
@@ -1762,43 +1762,56 @@ class _SessionsGlyphPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Drawn on a 24x24 design grid, scaled to the requested size.
+    // Issue #462, approved variant A4b «Modern pair + dots»: a front
+    // typing bubble (three dots) over a half-visible back bubble — drawn
+    // on a 24x24 design grid, scaled to the requested size.
     canvas.save();
     canvas.scale(size.width / 24);
-    final stroke = Paint()
+    // Shared stroke spec of the bar-icon pass (#459 attach, #426
+    // subagent): 2px on the 24 grid, round caps and joins.
+    final back = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.7
+      ..strokeWidth = 2
       ..strokeCap = StrokeCap.round
-      ..color = color;
-    // The back bubble: dimmer, peeking out top-left.
+      ..strokeJoin = StrokeJoin.round
+      ..color = color.withValues(alpha: 0.55);
+    // The back bubble: a dimmer outline peeking out top-right, half
+    // hidden once the front bubble (filled with the surface color) lands
+    // on top of it.
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-        const Rect.fromLTWH(1.6, 2.6, 13, 9.4),
-        const Radius.circular(3.4),
+        const Rect.fromLTWH(9.2, 2.6, 12.2, 9.8),
+        const Radius.circular(4.2),
       ),
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.7
-        ..color = color.withValues(alpha: 0.5),
+      back,
     );
-    // The front bubble: filled first so it reads as ON TOP of the deck.
+    final stroke = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..color = color;
+    // The front bubble: filled first so it reads as ON TOP of the pair.
     final front = RRect.fromRectAndRadius(
-      const Rect.fromLTWH(8.8, 9.4, 13.6, 10.2),
-      const Radius.circular(3.6),
+      const Rect.fromLTWH(4.6, 5.6, 14.8, 9.8),
+      const Radius.circular(4.2),
     );
     canvas.drawRRect(front, Paint()..color = background);
     canvas.drawRRect(front, stroke);
-    // Speech tail, bottom-left of the front bubble.
+    // Speech tail, bottom-left of the front bubble; the endpoints tuck
+    // under the bubble's own bottom stroke.
     canvas.drawPath(
       Path()
-        ..moveTo(11.4, 19.4)
-        ..lineTo(9.8, 22.6)
-        ..lineTo(14.2, 19.4),
+        ..moveTo(8.6, 15.2)
+        ..lineTo(6.9, 19.1)
+        ..lineTo(12.7, 15.2),
       stroke,
     );
-    // Two text lines inside the front bubble.
-    canvas.drawLine(const Offset(12.2, 13.2), const Offset(19.2, 13.2), stroke);
-    canvas.drawLine(const Offset(12.2, 16.2), const Offset(17, 16.2), stroke);
+    // Three typing dots, centered in the bubble.
+    final dots = Paint()..color = color;
+    for (final x in const [8.8, 12.0, 15.2]) {
+      canvas.drawCircle(Offset(x, 10.5), 0.6, dots);
+    }
     canvas.restore();
   }
 
