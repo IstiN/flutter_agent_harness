@@ -242,15 +242,16 @@ void main() {
         () => contexts.length >= 2 && !cli.isBusy,
         reason: 'the collapsed turn starts and settles',
       );
+      // The settle notification crosses one event-loop turn per job
+      // (ShellJobRegistry defers onSettled behind a Duration.zero timer),
+      // so the summary card prints only when the LAST timer fires — any
+      // proxy on steering can observe the follow-up turn first (CI flake:
+      // Expected <1>, Actual []). Anchor the wait on the card itself: the
+      // exact object the assertions below read. `5 done` rides the same
+      // synchronous print batch as the headline.
       await waitForIt(
-        () => contexts.any(
-          (context) => context.messages.any(
-            (message) =>
-                message is UserMessage &&
-                _messageText(message).contains('Background shell job sh-'),
-          ),
-        ),
-        reason: 'the settle notices steer the model',
+        () => io.out.toString().contains('Background jobs (5)'),
+        reason: 'the collapse summary card settles once every job drains',
       );
 
       final out = io.out.toString();
