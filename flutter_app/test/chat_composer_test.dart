@@ -512,5 +512,101 @@ void main() {
       final staged = await env.listDir('uploads');
       expect(staged.valueOrNull, isNotEmpty);
     });
+
+    testWidgets('AC2: clipboard holding image AND text stages the chip and '
+        'inserts the text', (tester) async {
+      final env = MemoryExecutionEnv();
+      final service = _fakeService(env, _singleTextResponse('ok'));
+      addTearDown(service.dispose);
+      await service.initialize();
+      await _pumpComposer(
+        tester,
+        service,
+        clipboardImageReader: () async => (
+          name: 'clipboard-shot.png',
+          bytes: Uint8List.fromList(const [1, 2, 3]),
+          mimeType: 'image/png',
+        ),
+      );
+
+      await tester.tap(find.byType(TextField));
+      await tester.pump();
+      await Clipboard.setData(
+        const ClipboardData(text: 'annotated caption'),
+      );
+      await _pressPaste(tester);
+
+      expect(find.byIcon(Icons.close), findsOneWidget);
+      final field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.controller!.text, 'annotated caption');
+    });
+
+    testWidgets('AC1: the pasted chip sends through the picker upload path '
+        '(uploads/ sandbox file)', (tester) async {
+      final env = MemoryExecutionEnv();
+      final service = _fakeService(env, _singleTextResponse('ok'));
+      addTearDown(service.dispose);
+      await service.initialize();
+      await _pumpComposer(
+        tester,
+        service,
+        clipboardImageReader: () async => (
+          name: 'clipboard-shot.png',
+          bytes: Uint8List.fromList(const [1, 2, 3]),
+          mimeType: 'image/png',
+        ),
+      );
+
+      await tester.tap(find.byType(TextField));
+      await tester.pump();
+      await _pressPaste(tester);
+      expect(find.byIcon(Icons.close), findsOneWidget);
+
+      await tester.runAsync(() async {
+        await _typeAndSend(tester, 'here is the shot');
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pump();
+
+      final staged = await env.listDir('uploads');
+      expect(
+        staged.valueOrNull!.any((f) => f.name.contains('clipboard-shot')),
+        isTrue,
+      );
+      expect(service.messages.where((m) => m.role == 'user'), isNotEmpty);
+    });
+
+    testWidgets('AC4: a platform reporting no image clipboard support '
+        'no-ops to plain text paste', (tester) async {
+      final env = MemoryExecutionEnv();
+      final service = _fakeService(env, _singleTextResponse('ok'));
+      addTearDown(service.dispose);
+      await service.initialize();
+      // No clipboardImageReader override: the app adapter probes the
+      // Pasteboard platform channel; the mock answers "no image".
+      messenger.setMockMethodCallHandler(
+        const MethodChannel('pasteboard'),
+        (call) async => call.method == 'image' ? null : null,
+      );
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(
+          const MethodChannel('pasteboard'),
+          null,
+        ),
+      );
+      await _pumpComposer(tester, service);
+
+      await tester.tap(find.byType(TextField));
+      await tester.pump();
+      await Clipboard.setData(const ClipboardData(text: 'just text'));
+      await _pressPaste(tester);
+
+      final field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.controller!.text, 'just text');
+      expect(find.byIcon(Icons.close), findsNothing);
+      // Nothing staged: the uploads dir may not even exist yet.
+      final uploads = await env.listDir('uploads');
+      expect(uploads.valueOrNull ?? const <FileInfo>[], isEmpty);
+    });
   });
 }
