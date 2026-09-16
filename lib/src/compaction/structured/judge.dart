@@ -3,6 +3,7 @@ library;
 import 'dart:convert';
 
 import '../../agent/agent_loop.dart' show StreamCacheRouting, StreamFunction;
+import '../../cancel_token.dart' show CancelToken;
 import '../../context.dart';
 import '../../model.dart' show Model;
 import '../../session/uuid.dart' show uuidv7;
@@ -110,6 +111,10 @@ HideJudgeFn streamFunctionHideJudge(
   Model model, {
   required String system,
   void Function(String delta)? onDelta,
+
+  /// Aborts the in-flight judge call — the compaction budget owner
+  /// cancels it on expiry (issue #515).
+  CancelToken? cancelToken,
 }) {
   return (String ledgerText) async {
     try {
@@ -120,6 +125,7 @@ HideJudgeFn streamFunctionHideJudge(
             systemPrompt: system,
             messages: [UserMessage.text(ledgerText)],
           ),
+          cancelToken: cancelToken,
         ),
         sessionId: uuidv7(),
         cacheRetention: 'none',
