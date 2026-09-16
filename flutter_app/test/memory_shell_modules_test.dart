@@ -502,6 +502,19 @@ void main() {
         expect(badOpt.exitCode, 1);
         expect(badOpt.stderr, 'sqlite3: unsupported option -bogus\n');
 
+        // The db file is read (or missed) before the engine short-circuits.
+        await fs.writeFile('/data.sqlite', 'stub');
+        final withDb = await runSqliteCommand(fs, '/', [
+          '/data.sqlite',
+          'SELECT 1;',
+        ], null);
+        expect(withDb.exitCode, 127);
+        final missingDb = await runSqliteCommand(fs, '/', [
+          '/nope.sqlite',
+          'SELECT 1;',
+        ], null);
+        expect(missingDb.exitCode, 127);
+
         // --version short-circuits the arg loop: still unavailable in the VM.
         final version = await runSqliteCommand(fs, '/', ['--version'], null);
         expect(version.exitCode, 127);

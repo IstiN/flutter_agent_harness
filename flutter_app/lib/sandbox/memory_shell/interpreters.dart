@@ -62,6 +62,39 @@ SqliteArgs parseSqliteArgs(List<String> args, {required String? stdin}) {
   return (wantVersion: false, dbPath: dbPath, sql: sql, error: null);
 }
 
+/// Reads the database file the invocation names (`:memory:` names no file).
+Future<Uint8List?> _readSqliteDb(
+  MemoryFileSystem fs,
+  String cwd,
+  String? dbPath,
+) async {
+  if (dbPath == null || dbPath == ':memory:') return null;
+  final read = await fs.readBinaryFile(resolveSandboxPath(dbPath, cwd));
+  return read.isOk ? read.valueOrNull : null;
+}
+
+/// Persists the exported database back after every invocation so it
+/// survives across exec calls (sql.js keeps it in memory only).
+Future<void> _writeBackSqliteDb(
+  MemoryFileSystem fs,
+  String cwd,
+  String? dbPath,
+  Uint8List? dbBytes,
+) async {
+  if (dbPath == null || dbPath == ':memory:' || dbBytes == null) return;
+  await fs.writeBinaryFile(resolveSandboxPath(dbPath, cwd), dbBytes);
+}
+
+/// Shapes a sql.js run: a non-empty stderr is a SQL error with exit 1.
+InterpreterOutcome _sqliteOutcome(SqliteRunResult r) {
+  final hasError = r.stderr.isNotEmpty;
+  return (
+    stdout: r.stdout.isEmpty ? '' : '${r.stdout}\n',
+    stderr: hasError ? 'Error: ${r.stderr}\n' : '',
+    exitCode: hasError ? 1 : 0,
+  );
+}
+
 /// Runs `sqlite3` against the in-memory filesystem: reads the database
 /// file, executes via the browser-hosted sql.js, and serializes the
 /// database back after every invocation so it persists across exec calls.
@@ -76,34 +109,41 @@ Future<InterpreterOutcome> runSqliteCommand(
   // version check ran before the option loop.
   if (parsed.wantVersion) {
     final version = await WebInterpreters.sqliteVersion();
-    if (version == null) return _unavailable('sqlite3');
-    return (stdout: '$version (Fa sandbox sql.js)\n', stderr: '', exitCode: 0);
+    return _versionBanner('sqlite3', version, '$version (Fa sandbox sql.js)\n');
   }
   final error = parsed.error;
   if (error != null) {
     return (stdout: '', stderr: error.message, exitCode: error.exitCode);
   }
-
-  Uint8List? dbBytes;
-  String? resolvedDb;
-  final dbPath = parsed.dbPath;
-  if (dbPath != null && dbPath != ':memory:') {
-    resolvedDb = resolveSandboxPath(dbPath, cwd);
-    final read = await fs.readBinaryFile(resolvedDb);
-    if (read.isOk) dbBytes = read.valueOrNull;
-  }
-
+  final dbBytes = await _readSqliteDb(fs, cwd, parsed.dbPath);
   final result = await WebInterpreters.runSqlite(parsed.sql, dbBytes);
   if (!result.available) return _unavailable('sqlite3');
+  await _writeBackSqliteDb(fs, cwd, parsed.dbPath, result.dbBytes);
+  return _sqliteOutcome(result);
+}
 
-  if (resolvedDb != null && result.dbBytes != null) {
-    await fs.writeBinaryFile(resolvedDb, result.dbBytes!);
-  }
+/// The shared usage error of the snippet interpreters (exit 2).
+InterpreterOutcome _usage(String usage) =>
+    (stdout: '', stderr: usage, exitCode: 2);
 
-  final hasError = result.stderr.isNotEmpty;
+/// Shapes a version probe: a `null` version means the browser engine is
+/// absent; otherwise [banner] goes out on stdout.
+InterpreterOutcome _versionBanner(
+  String name,
+  String? version,
+  String banner,
+) => version == null
+    ? _unavailable(name)
+    : (stdout: banner, stderr: '', exitCode: 0);
+
+/// Shapes a snippet run: unavailable → 127, a non-empty stderr → exit 1;
+/// otherwise stdout/stderr each gain the terminal newline the shell emits.
+InterpreterOutcome _snippetOutcome(String name, InterpreterResult r) {
+  if (!r.available) return _unavailable(name);
+  final hasError = r.stderr.isNotEmpty;
   return (
-    stdout: result.stdout.isEmpty ? '' : '${result.stdout}\n',
-    stderr: hasError ? 'Error: ${result.stderr}\n' : '',
+    stdout: r.stdout.isEmpty ? '' : '${r.stdout}\n',
+    stderr: r.stderr.isEmpty ? '' : '${r.stderr}\n',
     exitCode: hasError ? 1 : 0,
   );
 }
@@ -116,26 +156,15 @@ Future<InterpreterOutcome> runPythonCommand(
 ) async {
   if (args.contains('--version') || args.contains('-V')) {
     final version = await WebInterpreters.pythonVersion();
-    if (version == null) return _unavailable('python3');
-    return (stdout: 'Python $version\n', stderr: '', exitCode: 0);
+    return _versionBanner('python3', version, 'Python $version\n');
   }
-
   final code = await interpreterCode(fs, cwd, args, flag: '-c');
   if (code == null) {
-    return (
-      stdout: '',
-      stderr: 'usage: python3 [--version] [-c code] [script.py] [args...]\n',
-      exitCode: 2,
+    return _usage(
+      'usage: python3 [--version] [-c code] [script.py] [args...]\n',
     );
   }
-  final result = await WebInterpreters.runPython(code);
-  if (!result.available) return _unavailable('python3');
-  final hasError = result.stderr.isNotEmpty;
-  return (
-    stdout: result.stdout.isEmpty ? '' : '${result.stdout}\n',
-    stderr: result.stderr.isEmpty ? '' : '${result.stderr}\n',
-    exitCode: hasError ? 1 : 0,
-  );
+  return _snippetOutcome('python3', await WebInterpreters.runPython(code));
 }
 
 /// Runs `qjs`/`js`: `--version`/`-v`, inline `-e`, or a script file.
@@ -146,26 +175,13 @@ Future<InterpreterOutcome> runQjsCommand(
 ) async {
   if (args.contains('--version') || args.contains('-v')) {
     final version = await WebInterpreters.qjsVersion();
-    if (version == null) return _unavailable('qjs');
-    return (stdout: '$version\n', stderr: '', exitCode: 0);
+    return _versionBanner('qjs', version, '$version\n');
   }
-
   final code = await interpreterCode(fs, cwd, args, flag: '-e');
   if (code == null) {
-    return (
-      stdout: '',
-      stderr: 'usage: qjs [--version] [-e code] [script.js] [args...]\n',
-      exitCode: 2,
-    );
+    return _usage('usage: qjs [--version] [-e code] [script.js] [args...]\n');
   }
-  final result = await WebInterpreters.runQjs(code);
-  if (!result.available) return _unavailable('qjs');
-  final hasError = result.stderr.isNotEmpty;
-  return (
-    stdout: result.stdout.isEmpty ? '' : '${result.stdout}\n',
-    stderr: result.stderr.isEmpty ? '' : '${result.stderr}\n',
-    exitCode: hasError ? 1 : 0,
-  );
+  return _snippetOutcome('qjs', await WebInterpreters.runQjs(code));
 }
 
 /// Extracts the code to run: inline via [flag], or a script file's content.
