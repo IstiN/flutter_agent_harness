@@ -18,6 +18,8 @@ final class _FakeShellJob implements ShellJob {
   final String command;
   @override
   final String logPath;
+  @override
+  int? get pid => null;
 
   _FakeShellJob(this.id, this.command, this.logPath, this._env);
 

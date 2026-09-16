@@ -25,6 +25,8 @@ final class _FakeShellJob implements ShellJob {
 
   @override
   final String logPath;
+  @override
+  int? get pid => null;
 
   @override
   bool get isRunning => _exitCode == null;
