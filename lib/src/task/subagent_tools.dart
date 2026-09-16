@@ -558,6 +558,12 @@ AgentTool _agentMessageTool(
         note = ' Cross-machine delivery rode the A2A gateway.';
       } else if (target.contains('/')) {
         note = await _asleepTargetNote(manager, target, args['wake'] != false);
+        // Cross-root honesty (issue #516): when the id owns mailboxes
+        // under several project roots, name where delivery landed — the
+        // live registration wins, a stale corpse is never silent.
+        final entries =
+            await manager.messaging?.directory() ?? const <MailboxEntry>[];
+        note += mailboxMisrouteNote(entries, target);
       }
       return ToolExecutionResult.text('message queued for "$to".$note');
     },
@@ -747,7 +753,9 @@ Future<(String, String?)> _resolveDirectoryAddress(
 /// Formats ambiguous-match candidates for error text.
 String _listMailboxes(List<MailboxEntry> matches) => matches
     .map(
-      (entry) => '  ${entry.id}${entry.cwd == null ? '' : '  [${entry.cwd}]'}',
+      (entry) =>
+          '  ${entry.id}${entry.cwd == null ? '' : '  [${entry.cwd}]'}'
+          '${entry.isConfirmedLive ? ' — live' : ''}',
     )
     .join('\n');
 
