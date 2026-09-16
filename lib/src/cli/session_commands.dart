@@ -128,6 +128,8 @@ extension on AgentCli {
       tui: _useTui,
       width: width,
       dim: _style.dim,
+      cwd: _env.cwd,
+      home: config.homeDir,
     );
     final count = firstIndex > 0
         ? 'last ${messages.length - firstIndex} of ${messages.length}'

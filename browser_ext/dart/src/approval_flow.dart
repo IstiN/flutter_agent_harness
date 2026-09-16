@@ -49,9 +49,9 @@ class DecisionOutcome {
 /// the extraction.
 final class ApprovalFlow {
   ApprovalFlow({
-    required ApprovalEventSink sink,
+    required this._sink,
     this.timeout = const Duration(seconds: 120),
-  }) : _sink = sink;
+  });
 
   /// How long an unanswered prompt pends before the conservative deny.
   /// The SW's only backstop when no connected client can answer.

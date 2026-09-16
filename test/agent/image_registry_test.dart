@@ -8,8 +8,6 @@ import 'dart:convert';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/compaction/structured/markers.dart'
     show localTrimMarkerPrefix;
-import 'package:flutter_agent_harness/src/session/session_tree.dart'
-    show branchSummaryPrefix, branchSummarySuffix;
 import 'package:test/test.dart';
 
 ImageContent _img(String data, {String mimeType = 'image/png'}) =>
@@ -362,7 +360,10 @@ void main() {
             .text;
 
     String lastAssistantText(List<Message> messages) =>
-        (messages.whereType<AssistantMessage>().last.content
+        (messages
+                .whereType<AssistantMessage>()
+                .last
+                .content
                 .whereType<TextContent>()
                 .single)
             .text;
@@ -429,8 +430,11 @@ void main() {
       ]);
       // [Image 0] rides (bbb holds it now), but the citation was authored
       // before the structured hide renumbered the window — degrade it.
-      expect(lastAssistantText(rewritten), contains(unavailableImageNote),
-          reason: 'structured hide without checkpoint must degrade');
+      expect(
+        lastAssistantText(rewritten),
+        contains(unavailableImageNote),
+        reason: 'structured hide without checkpoint must degrade',
+      );
     });
 
     test('a branch summary marker opens the stale epoch too', () {
@@ -443,8 +447,11 @@ void main() {
         _assistantText('about [Image 0]'),
         _user('go on', ms: 3),
       ]);
-      expect(lastAssistantText(rewritten), contains(unavailableImageNote),
-          reason: 'branch summary must degrade stale citations');
+      expect(
+        lastAssistantText(rewritten),
+        contains(unavailableImageNote),
+        reason: 'branch summary must degrade stale citations',
+      );
     });
 
     test('the local trim valve marker does too', () {

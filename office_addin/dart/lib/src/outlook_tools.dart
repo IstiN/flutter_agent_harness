@@ -24,9 +24,12 @@
 // Email content (bodies, attachment bytes) is attacker-controlled
 // untrusted email data: tool descriptions label it, and bodies enter
 // context only through the email_quarantine.dart fence. Pure Dart —
-// compiled into the taskpane: no dart:io, no js_interop.
+// compiled into the taskpane: no dart:io, no js_interop. The dart_tui
+// stack the umbrella re-exports is a VM-only dependency, so the taskpane
+// compiles against these minimal `src` slices instead.
 library;
 
+// ignore_for_file: implementation_imports
 import 'package:flutter_agent_harness/src/agent/agent_loop.dart';
 import 'package:flutter_agent_harness/src/agent/agent_tool.dart';
 import 'package:flutter_agent_harness/src/agent/tool_registry.dart';

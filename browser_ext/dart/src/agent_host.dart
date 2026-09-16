@@ -659,7 +659,7 @@ final class AgentHost implements UiHostBackend {
         'id': id,
         'messages': 0,
         'running': false,
-        if (createdAt != null) 'createdAt': createdAt,
+        'createdAt': ?createdAt,
         'cwd': _env.cwd,
         'archived': true,
       });
@@ -678,6 +678,7 @@ final class AgentHost implements UiHostBackend {
     if (!_mailDedupe.first(from, text)) return; // AC18: bridge/DAP duplicate
     unawaited(_routeMail(from, text));
   }
+
   Future<void> _routeMail(String from, String text) async {
     _routeChain = _routeChain.then((_) => _routeOne(from, text));
   }

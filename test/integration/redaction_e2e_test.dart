@@ -1,10 +1,13 @@
-@Tags(['integration'])
 // End-to-end redaction integration tests (issue #24 AC5/AC6/AC7/AC8).
 //
 // A real [Agent] driven by a scripted fake provider and real [AgentTool]s,
 // with the production wiring (`attachRedactionPipeline`) and a real
 // `JsonlSessionRepo` over an in-memory file system. The session JSONL is
 // asserted byte-level: no raw secret ever reaches the file.
+
+@Tags(['integration'])
+library;
+
 import 'dart:async';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';

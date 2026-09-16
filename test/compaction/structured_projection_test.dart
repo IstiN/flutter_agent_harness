@@ -7,6 +7,8 @@
 /// (JSONL line numbers), never renumbering anything, never splitting tool
 /// pairs on the wire.
 
+library;
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 import 'package:flutter_agent_harness/src/compaction/structured/projection.dart';
