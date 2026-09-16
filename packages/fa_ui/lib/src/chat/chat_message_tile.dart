@@ -418,8 +418,20 @@ class ChatMessageTile extends StatelessWidget {
                     child: _CollapsibleToolOutput(
                       content: content,
                       style: palette.mono(color: palette.dim),
+                      // Failed results start expanded (errors are why you
+                      // look) with the tighter scroll cap.
+                      initiallyExpanded: isError,
+                      maxExpandedLines: isError
+                          ? _CollapsibleToolOutput.errorCapLines
+                          : _CollapsibleToolOutput.expandedLineCap,
                     ),
-                  ),
+                  )
+          else if (toolName != null)
+            // Empty tool output: an explicit stub, no clamp UI (issue #458).
+            Text(
+              FaChatStrings.of(context).chatNoOutput,
+              style: palette.mono(color: palette.dim, fontSize: 12),
+            ),
           if (generatedImagePath != null)
             Padding(
               padding: const EdgeInsets.only(top: 6),
@@ -872,14 +884,19 @@ Widget _authExpiredCard(
   );
 }
 
-/// Tool-output block that caps long dumps (file reads, big writes) at a few
-/// lines with an expand/collapse toggle — keeps the transcript scannable
-/// while the full output stays one tap away.
+/// Tool-output block that caps long dumps (file reads, big writes) at a
+/// three-line preview with an inline expand/collapse toggle (issue #458) —
+/// the transcript stays scannable while the full output remains one tap
+/// away. Failed results start expanded (errors are why you look) with a
+/// tighter scroll cap; the expanded/collapsed choice is per-card and
+/// never persisted.
 class _CollapsibleToolOutput extends StatefulWidget {
   const _CollapsibleToolOutput({
     required this.content,
     required this.style,
     this.showTail = false,
+    this.initiallyExpanded = false,
+    this.maxExpandedLines = expandedLineCap,
   });
 
   final String content;
@@ -889,21 +906,49 @@ class _CollapsibleToolOutput extends StatefulWidget {
   /// bubbles, where the newest reasoning matters more than the preamble.
   final bool showTail;
 
-  /// Outputs longer than this collapse by default.
-  static const int collapsedLineCount = 8;
-  static const int longLineThreshold = 12;
+  /// Start expanded (failed tool results); per-card ephemeral state.
+  final bool initiallyExpanded;
+
+  /// The expanded view grows to at most this many lines and scrolls
+  /// beyond — smaller outputs render at natural height.
+  final int maxExpandedLines;
+
+  /// Collapsed cards show this many source lines plus a `+N lines` hint.
+  static const int collapsedLineCount = 3;
+
+  /// A single monster line wraps far past the preview — past this many
+  /// chars the card offers the toggle even when the line count is small.
   static const int longCharThreshold = 700;
+
+  /// Success-expanded hard max: scrollable beyond 200 lines.
+  static const int expandedLineCap = 200;
+
+  /// Failed results start expanded but capped tighter (errors are why you
+  /// look — capped, not unlimited).
+  static const int errorCapLines = 20;
 
   @override
   State<_CollapsibleToolOutput> createState() => _CollapsibleToolOutputState();
 }
 
 class _CollapsibleToolOutputState extends State<_CollapsibleToolOutput> {
-  bool _expanded = false;
+
+  late bool _expanded = widget.initiallyExpanded;
+
+  @override
+  void didUpdateWidget(covariant _CollapsibleToolOutput oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // A recycled slot showing a different message resets the ephemeral
+    // state — a failed result always opens expanded.
+    if (oldWidget.content != widget.content ||
+        oldWidget.initiallyExpanded != widget.initiallyExpanded) {
+      _expanded = widget.initiallyExpanded;
+    }
+  }
 
   bool get _isLong {
-    final lines = widget.content.split('\n');
-    return lines.length > _CollapsibleToolOutput.longLineThreshold ||
+    return widget.content.split('\n').length >
+            _CollapsibleToolOutput.collapsedLineCount ||
         widget.content.length > _CollapsibleToolOutput.longCharThreshold;
   }
 
@@ -915,21 +960,46 @@ class _CollapsibleToolOutputState extends State<_CollapsibleToolOutput> {
     final palette = FahColors.of(context);
     final strings = FaChatStrings.of(context);
     final lines = widget.content.split('\n');
-    final shown = _expanded
-        ? lines
-        : widget.showTail
-        ? lines
-              .skip(
-                lines.length > _CollapsibleToolOutput.collapsedLineCount
-                    ? lines.length - _CollapsibleToolOutput.collapsedLineCount
-                    : 0,
-              )
-              .toList()
-        : lines.take(_CollapsibleToolOutput.collapsedLineCount).toList();
+    final count = _CollapsibleToolOutput.collapsedLineCount;
+    final total = lines.length;
+    final clamped = total > count;
+    final body = _expanded
+        // Expanded: the full output, scrollable past the hard cap instead
+        // of growing without bound. The cap never exceeds the available
+        // height (shrink-wraps when the text is smaller either way).
+        ? LayoutBuilder(
+            builder: (context, constraints) {
+              final cap = widget.maxExpandedLines * _lineHeight;
+              // A Column parent hands out unbounded height; fall back to
+              // a viewport fraction so a huge dump never towers over the
+              // screen either way.
+              final available = constraints.maxHeight.isFinite
+                  ? constraints.maxHeight
+                  : MediaQuery.sizeOf(context).height * 0.8;
+              final maxHeight = cap < available ? cap : available;
+              return ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: maxHeight),
+                child: SingleChildScrollView(
+                  child: Text(widget.content, style: widget.style),
+                ),
+              );
+            },
+          )
+        : Text(
+            // Clamp on line boundaries, so styles within a line survive;
+            // maxLines also clips a wrapped monster line to the preview.
+            (widget.showTail && clamped
+                    ? lines.sublist(total - count)
+                    : lines.take(count))
+                .join('\n'),
+            maxLines: count,
+            overflow: TextOverflow.ellipsis,
+            style: widget.style,
+          );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(shown.join('\n'), style: widget.style),
+        body,
         const SizedBox(height: 4),
         GestureDetector(
           behavior: HitTestBehavior.opaque,
@@ -938,15 +1008,19 @@ class _CollapsibleToolOutputState extends State<_CollapsibleToolOutput> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(
-                _expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                _expanded
+                    ? Icons.keyboard_arrow_up
+                    : Icons.keyboard_arrow_down,
                 size: 14,
                 color: palette.indigo,
               ),
               const SizedBox(width: 4),
               Text(
                 _expanded
-                    ? strings.chatCollapse
-                    : strings.chatShowAll(lines.length.toString()),
+                    ? strings.chatShowLess
+                    : clamped
+                    ? strings.chatClampHint(total - count)
+                    : strings.chatShowMore,
                 style: palette.mono(color: palette.indigo, fontSize: 12),
               ),
             ],
@@ -955,4 +1029,9 @@ class _CollapsibleToolOutputState extends State<_CollapsibleToolOutput> {
       ],
     );
   }
+
+  /// Rough line height of [style] for the expanded scroll cap; the box
+  /// shrink-wraps smaller outputs, so an estimate only moves the point
+  /// where the card starts to scroll.
+  double get _lineHeight => (widget.style.fontSize ?? 14) * 1.4;
 }
