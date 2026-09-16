@@ -139,16 +139,8 @@ final class ThemePackWallpaper {
   /// The image's opacity over the themed background, 0..1.
   final double opacity;
 
-  /// Parses the schema's fit token.
-  static BoxFit fitFor(String? token) => switch (token) {
-    'contain' => BoxFit.contain,
-    'fill' => BoxFit.fill,
-    'fitWidth' => BoxFit.fitWidth,
-    'fitHeight' => BoxFit.fitHeight,
-    'none' => BoxFit.none,
-    'scaleDown' => BoxFit.scaleDown,
-    _ => BoxFit.cover,
-  };
+  /// Parses the schema's fit token (unknown or missing → cover).
+  static BoxFit fitFor(String? token) => fitModes[token] ?? BoxFit.cover;
 }
 
 /// Outcome of validating one pack import: either a ready [spec], or the
@@ -192,7 +184,260 @@ final RegExp _fontFamily = RegExp(r'^[A-Za-z0-9][A-Za-z0-9 _-]{0,47}$');
 /// or from an already-sandboxed directory listing.
 typedef ThemePackFiles = Map<String, Uint8List>;
 
-/// Validates a candidate pack end to end — schema AND security:
+/// One declarative validation rule (issue #484): a single schema or
+/// security check over the accumulating [ThemePackDraft]. A rule appends
+/// rejection reasons and stages its parse; it never throws and never
+/// stops the fold — staging is [validateThemePack]'s job. A new or
+/// changed rule is one entry in [themePackRules].
+typedef ThemePackRule = void Function(ThemePackDraft draft);
+
+/// The validation accumulator: the raw pack input plus everything the
+/// rules staged so far. Rules run in [themePackRules] order, so a rule
+/// may read an earlier rule's output (the wallpaper build rule reads the
+/// asset name the asset rule vetted, for instance).
+final class ThemePackDraft {
+  ThemePackDraft(this.json, this.files);
+
+  /// The decoded `theme.json`.
+  final Map<String, Object?> json;
+
+  /// The sibling files (name → bytes).
+  final ThemePackFiles files;
+
+  /// Rejection reasons accumulated so far — non-empty rejects the pack.
+  final List<String> reasons = [];
+
+  /// The `colors` section, only when it is a non-empty object.
+  Map<String, Object?>? colorsSection;
+
+  /// The `typography.fontFamily`, only after the family name check.
+  String? fontFamily;
+
+  /// The `wallpaper` section, only when it is an object.
+  Map<String, Object?>? wallpaperSection;
+
+  /// The wallpaper asset name, only after the name/file screens passed.
+  String? wallpaperAsset;
+
+  /// Parsed pack parts, valid when [reasons] stays empty.
+  ThemePackColors? dark;
+  ThemePackColors? light;
+  ThemePackWallpaper? wallpaper;
+}
+
+/// The identity gate: unknown keys, name, version. These reject before
+/// the body rules run, so their reasons are never buried by noise.
+const List<ThemePackRule> _gateRules = [
+  _unknownTopKeysRule,
+  _packNameRule,
+  _packVersionRule,
+];
+
+/// The body rules: colors, typography, wallpaper, the file table.
+const List<ThemePackRule> _bodyRules = [
+  _colorsShapeRule,
+  _colorsVariantsRule,
+  _typographyRule,
+  _wallpaperShapeRule,
+  _wallpaperAssetRule,
+  _wallpaperFitRule,
+  _wallpaperOpacityRule,
+  _wallpaperBuildRule,
+  _packFilesRule,
+];
+
+/// Every validation rule in run order (gate, then body). Public so the
+/// per-rule suite enumerates the full list — a rule without a firing
+/// fixture fails the tests (issue #484 AC3).
+const List<ThemePackRule> themePackRules = [..._gateRules, ..._bodyRules];
+
+void _unknownTopKeysRule(ThemePackDraft d) {
+  _rejectUnknownKeys(
+    d.json,
+    const {'name', 'version', 'colors', 'typography', 'wallpaper'},
+    'unknown theme.json keys',
+    d.reasons,
+  );
+}
+
+void _packNameRule(ThemePackDraft d) {
+  final name = d.json['name'];
+  if (name is! String || name.trim().isEmpty || name.length > 64) {
+    d.reasons.add('name must be a non-empty string (≤ 64 chars)');
+  }
+}
+
+void _packVersionRule(ThemePackDraft d) {
+  final version = d.json['version'];
+  if (version is! String || !_semver.hasMatch(version)) {
+    d.reasons.add('version must be major.minor.patch (e.g. 1.0.0)');
+  }
+}
+
+void _colorsShapeRule(ThemePackDraft d) {
+  final colors = d.json['colors'];
+  if (colors == null) return;
+  if (colors is! Map<String, Object?> || colors.isEmpty) {
+    d.reasons.add('colors must be an object with dark and/or light variants');
+    return;
+  }
+  d.colorsSection = colors;
+  _rejectUnknownKeys(
+    colors,
+    const {'dark', 'light'},
+    'unknown color variants',
+    d.reasons,
+  );
+}
+
+void _colorsVariantsRule(ThemePackDraft d) {
+  final colors = d.colorsSection;
+  if (colors == null) return;
+  d.dark = _parseVariant(colors, 'dark', d.reasons);
+  d.light = _parseVariant(colors, 'light', d.reasons);
+  if (d.dark == null && d.light == null && d.reasons.isEmpty) {
+    d.reasons.add('colors needs at least one of dark or light');
+  }
+}
+
+void _typographyRule(ThemePackDraft d) {
+  final typography = d.json['typography'];
+  if (typography == null) return;
+  if (typography is! Map<String, Object?>) {
+    d.reasons.add('typography must be an object');
+    return;
+  }
+  _rejectUnknownKeys(
+    typography,
+    const {'fontFamily'},
+    'unknown typography keys',
+    d.reasons,
+  );
+  final family = typography['fontFamily'];
+  if (family is! String || !_fontFamily.hasMatch(family)) {
+    d.reasons.add('typography.fontFamily must be a plain font name');
+  } else {
+    d.fontFamily = family;
+  }
+}
+
+void _wallpaperShapeRule(ThemePackDraft d) {
+  final wp = d.json['wallpaper'];
+  if (wp == null) return;
+  if (wp is! Map<String, Object?>) {
+    d.reasons.add('wallpaper must be an object');
+    return;
+  }
+  d.wallpaperSection = wp;
+  _rejectUnknownKeys(
+    wp,
+    const {'asset', 'fit', 'opacity'},
+    'unknown wallpaper keys',
+    d.reasons,
+  );
+}
+
+void _wallpaperAssetRule(ThemePackDraft d) {
+  final wp = d.wallpaperSection;
+  if (wp == null) return;
+  final asset = wp['asset'];
+  if (asset is! String || !_isSafeAssetName(asset)) {
+    d.reasons.add(
+      'wallpaper.asset must be a bundled file name (no paths, no URLs)',
+    );
+    return;
+  }
+  d.wallpaperAsset = asset;
+  final bytes = d.files[asset];
+  if (bytes == null) {
+    d.reasons.add('wallpaper asset missing from the pack: $asset');
+    return;
+  }
+  // Defense in depth: the name screen already pinned the extension, so
+  // this only fires if the two screens ever drift apart.
+  if (!wallpaperExtensions.contains(assetExtension(asset))) {
+    d.reasons.add(
+      'wallpaper asset must be png, jpg or webp (got .${assetExtension(asset)})',
+    );
+  }
+  if (bytes.length > maxWallpaperBytes) {
+    d.reasons.add(
+      'wallpaper asset is ${(bytes.length / 1024 / 1024).toStringAsFixed(1)} MB '
+      '(max 8 MB)',
+    );
+  }
+}
+
+void _wallpaperFitRule(ThemePackDraft d) {
+  // Null asset ⇒ the asset rule rejected (or never ran a section): the
+  // fit/opacity checks live inside its pass, exactly as before.
+  if (d.wallpaperAsset == null) return;
+  final fit = d.wallpaperSection!['fit'];
+  if (fit != null && (fit is! String || !fitModes.containsKey(fit))) {
+    d.reasons.add('wallpaper.fit must be one of: ${fitModes.keys.join(', ')}');
+  }
+}
+
+void _wallpaperOpacityRule(ThemePackDraft d) {
+  if (d.wallpaperAsset == null) return;
+  final opacity = d.wallpaperSection!['opacity'];
+  if (opacity != null && (opacity is! num || opacity < 0 || opacity > 1)) {
+    d.reasons.add('wallpaper.opacity must be a number between 0 and 1');
+  }
+}
+
+void _wallpaperBuildRule(ThemePackDraft d) {
+  final asset = d.wallpaperAsset;
+  if (asset == null) return;
+  final fit = d.wallpaperSection!['fit'];
+  final opacity = d.wallpaperSection!['opacity'];
+  d.wallpaper = ThemePackWallpaper(
+    asset: asset,
+    fit: ThemePackWallpaper.fitFor(fit is String ? fit : null),
+    opacity: opacity is num ? opacity.toDouble() : kWallpaperOpacityDefault,
+  );
+}
+
+void _packFilesRule(ThemePackDraft d) {
+  final expected = <String>{if (d.wallpaper != null) d.wallpaper!.asset};
+  for (final entry in d.files.entries) {
+    if (!expected.contains(entry.key)) {
+      d.reasons.add(
+        'unexpected file in pack (only theme.json and the declared wallpaper '
+        'are allowed): $entry.key',
+      );
+    }
+  }
+}
+
+/// Appends the shared unknown-key rejection (sorted key list after a
+/// `label: ` prefix) and returns the unknown keys.
+List<String> _rejectUnknownKeys(
+  Map<String, Object?> section,
+  Set<String> allowed,
+  String label,
+  List<String> reasons,
+) {
+  final unknown = section.keys.where((k) => !allowed.contains(k)).toList()
+    ..sort();
+  if (unknown.isNotEmpty) {
+    reasons.add('$label: ${unknown.join(', ')}');
+  }
+  return unknown;
+}
+
+bool _foldRules(ThemePackDraft d, List<ThemePackRule> rules) {
+  for (final rule in rules) {
+    rule(d);
+  }
+  return d.reasons.isNotEmpty;
+}
+
+ThemePackValidation _rejected(ThemePackDraft d) =>
+    (spec: null, reasons: d.reasons, warnings: const []);
+
+/// Validates a candidate pack end to end — schema AND security — as a
+/// fold over the staged rule list [themePackRules] (issue #484):
 ///
 /// - unknown keys anywhere REJECT the pack (pinned decision: strict — a
 ///   theme channel must never grow unreviewed fields);
@@ -206,162 +451,30 @@ typedef ThemePackFiles = Map<String, Uint8List>;
 ///   warnings — the pack still installs, but the user sees them before
 ///   applying (AC6).
 ///
+/// The identity gate (unknown keys, name, version) rejects before the
+/// body rules run; any reason rejects the pack, and only a clean fold
+/// builds the [ThemePackSpec].
+///
 /// [json] is the decoded `theme.json`; [files] the sibling files.
 ThemePackValidation validateThemePack(
   Map<String, Object?> json,
   ThemePackFiles files,
 ) {
-  final reasons = <String>[];
+  final d = ThemePackDraft(json, files);
+  if (_foldRules(d, _gateRules)) return _rejected(d);
+  if (_foldRules(d, _bodyRules)) return _rejected(d);
   final warnings = <String>[];
-
-  // ── top-level schema (strict) ──────────────────────────────────────────
-  const topLevel = {'name', 'version', 'colors', 'typography', 'wallpaper'};
-  final unknownTop = json.keys.where((k) => !topLevel.contains(k)).toList()
-    ..sort();
-  if (unknownTop.isNotEmpty) {
-    reasons.add('unknown theme.json keys: ${unknownTop.join(', ')}');
-  }
-  final name = json['name'];
-  if (name is! String || name.trim().isEmpty || name.length > 64) {
-    reasons.add('name must be a non-empty string (≤ 64 chars)');
-  }
-  final version = json['version'];
-  if (version is! String || !_semver.hasMatch(version)) {
-    reasons.add('version must be major.minor.patch (e.g. 1.0.0)');
-  }
-  if (reasons.isNotEmpty) {
-    return (spec: null, reasons: reasons, warnings: const []);
-  }
-
-  // ── colors ─────────────────────────────────────────────────────────────
-  final colors = json['colors'];
-  ThemePackColors? dark;
-  ThemePackColors? light;
-  if (colors != null) {
-    if (colors is! Map<String, Object?> || colors.isEmpty) {
-      reasons.add('colors must be an object with dark and/or light variants');
-    } else {
-      final unknownVariants =
-          colors.keys.where((k) => k != 'dark' && k != 'light').toList()
-            ..sort();
-      if (unknownVariants.isNotEmpty) {
-        reasons.add('unknown color variants: ${unknownVariants.join(', ')}');
-      }
-      dark = _parseVariant(colors, 'dark', reasons);
-      light = _parseVariant(colors, 'light', reasons);
-      if (dark == null && light == null && reasons.isEmpty) {
-        reasons.add('colors needs at least one of dark or light');
-      }
-    }
-  }
-
-  // ── typography ─────────────────────────────────────────────────────────
-  String? fontFamily;
-  final typography = json['typography'];
-  if (typography != null) {
-    if (typography is! Map<String, Object?>) {
-      reasons.add('typography must be an object');
-    } else {
-      final unknown = typography.keys.where((k) => k != 'fontFamily').toList()
-        ..sort();
-      if (unknown.isNotEmpty) {
-        reasons.add('unknown typography keys: ${unknown.join(', ')}');
-      }
-      final family = typography['fontFamily'];
-      if (family is! String || !_fontFamily.hasMatch(family)) {
-        reasons.add('typography.fontFamily must be a plain font name');
-      } else {
-        fontFamily = family;
-      }
-    }
-  }
-
-  // ── wallpaper ──────────────────────────────────────────────────────────
-  ThemePackWallpaper? wallpaper;
-  final wp = json['wallpaper'];
-  if (wp != null) {
-    if (wp is! Map<String, Object?>) {
-      reasons.add('wallpaper must be an object');
-    } else {
-      final unknown =
-          wp.keys
-              .where((k) => !{'asset', 'fit', 'opacity'}.contains(k))
-              .toList()
-            ..sort();
-      if (unknown.isNotEmpty) {
-        reasons.add('unknown wallpaper keys: ${unknown.join(', ')}');
-      }
-      final asset = wp['asset'];
-      if (asset is! String || !_isSafeAssetName(asset)) {
-        reasons.add(
-          'wallpaper.asset must be a bundled file name (no paths, no URLs)',
-        );
-      } else {
-        final bytes = files[asset];
-        if (bytes == null) {
-          reasons.add('wallpaper asset missing from the pack: $asset');
-        } else {
-          final ext = asset.contains('.')
-              ? asset.split('.').last.toLowerCase()
-              : '';
-          if (!wallpaperExtensions.contains(ext)) {
-            reasons.add('wallpaper asset must be png, jpg or webp (got .$ext)');
-          }
-          if (bytes.length > maxWallpaperBytes) {
-            reasons.add(
-              'wallpaper asset is ${(bytes.length / 1024 / 1024).toStringAsFixed(1)} MB '
-              '(max 8 MB)',
-            );
-          }
-        }
-        final fit = wp['fit'];
-        if (fit != null && (fit is! String || !fitTokens.contains(fit))) {
-          reasons.add('wallpaper.fit must be one of: ${fitTokens.join(', ')}');
-        }
-        final opacity = wp['opacity'];
-        if (opacity != null &&
-            (opacity is! num || opacity < 0 || opacity > 1)) {
-          reasons.add('wallpaper.opacity must be a number between 0 and 1');
-        }
-        wallpaper = ThemePackWallpaper(
-          asset: asset,
-          fit: ThemePackWallpaper.fitFor(fit is String ? fit : null),
-          opacity: opacity is num
-              ? opacity.toDouble()
-              : kWallpaperOpacityDefault,
-        );
-      }
-    }
-  }
-
-  // ── file table: exactly theme.json + the declared asset ────────────────
-  final expected = <String>{if (wallpaper != null) wallpaper.asset};
-  for (final entry in files.entries) {
-    if (!expected.contains(entry.key)) {
-      reasons.add(
-        'unexpected file in pack (only theme.json and the declared wallpaper '
-        'are allowed): $entry.key',
-      );
-    }
-  }
-
-  if (reasons.isNotEmpty) {
-    return (spec: null, reasons: reasons, warnings: const []);
-  }
-
-  // ── accessibility warnings (non-blocking) ──────────────────────────────
-  if (dark != null) _contrastWarnings(dark, 'dark', warnings);
-  if (light != null) _contrastWarnings(light, 'light', warnings);
-
+  if (d.dark != null) _contrastWarnings(d.dark!, 'dark', warnings);
+  if (d.light != null) _contrastWarnings(d.light!, 'light', warnings);
   return (
     spec: ThemePackSpec(
-      id: themePackIdFor(name as String),
-      name: name,
-      version: version as String,
-      dark: dark,
-      light: light,
-      fontFamily: fontFamily,
-      wallpaper: wallpaper,
+      id: themePackIdFor(d.json['name'] as String),
+      name: d.json['name'] as String,
+      version: d.json['version'] as String,
+      dark: d.dark,
+      light: d.light,
+      fontFamily: d.fontFamily,
+      wallpaper: d.wallpaper,
       contrastWarnings: List.unmodifiable(warnings),
     ),
     reasons: const [],
@@ -369,14 +482,16 @@ ThemePackValidation validateThemePack(
   );
 }
 
-const Set<String> fitTokens = {
-  'cover',
-  'contain',
-  'fill',
-  'fitWidth',
-  'fitHeight',
-  'none',
-  'scaleDown',
+/// The schema's `wallpaper.fit` tokens → BoxFit, in declaration order
+/// (the fit rule's rejection message lists the keys in this order).
+const Map<String, BoxFit> fitModes = {
+  'cover': BoxFit.cover,
+  'contain': BoxFit.contain,
+  'fill': BoxFit.fill,
+  'fitWidth': BoxFit.fitWidth,
+  'fitHeight': BoxFit.fitHeight,
+  'none': BoxFit.none,
+  'scaleDown': BoxFit.scaleDown,
 };
 
 /// Default wallpaper opacity when the pack does not declare one.
@@ -403,21 +518,13 @@ ThemePackColors? _parseVariant(
     reasons.add('colors.$variant must be an object');
     return null;
   }
-  final unknown = value.keys.where((k) => !packColorKeys.contains(k)).toList()
-    ..sort();
-  if (unknown.isNotEmpty) {
-    reasons.add('unknown colors.$variant keys: ${unknown.join(', ')}');
-  }
-  final parsed = <String, Color?>{};
-  for (final entry in value.entries) {
-    if (!packColorKeys.contains(entry.key)) continue;
-    if (entry.value == null) continue;
-    if (entry.value is! String || !_hexColor.hasMatch(entry.value as String)) {
-      reasons.add('colors.$variant.${entry.key} must be #RRGGBB or #RRGGBBAA');
-      continue;
-    }
-    parsed[entry.key] = _parseHex(entry.value as String);
-  }
+  final unknown = _rejectUnknownKeys(
+    value,
+    packColorKeys,
+    'unknown colors.$variant keys',
+    reasons,
+  );
+  final parsed = _parseColorSlots(value, variant, reasons);
   if (parsed.isEmpty && unknown.isEmpty) {
     reasons.add('colors.$variant sets no colors');
     return null;
@@ -441,6 +548,26 @@ ThemePackColors? _parseVariant(
   );
 }
 
+/// The variant's known, well-formed color slots: `#RRGGBB`/`#RRGGBBAA`
+/// strings parse into the slot map, anything else appends a reason.
+Map<String, Color?> _parseColorSlots(
+  Map<String, Object?> value,
+  String variant,
+  List<String> reasons,
+) {
+  final parsed = <String, Color?>{};
+  for (final entry in value.entries) {
+    if (!packColorKeys.contains(entry.key)) continue;
+    if (entry.value == null) continue;
+    if (entry.value is! String || !_hexColor.hasMatch(entry.value as String)) {
+      reasons.add('colors.$variant.${entry.key} must be #RRGGBB or #RRGGBBAA');
+      continue;
+    }
+    parsed[entry.key] = _parseHex(entry.value as String);
+  }
+  return parsed;
+}
+
 Color _parseHex(String hex) {
   final rgb = hex.replaceFirst('#', '');
   // The schema documents #RRGGBBAA — honor the alpha byte instead of
@@ -456,14 +583,22 @@ Color _parseHex(String hex) {
 /// traversal, no scheme, no drive letter — anything path- or URL-shaped
 /// rejects the pack.
 bool _isSafeAssetName(String name) {
-  if (name.isEmpty || name.length > 128) return false;
-  if (name.contains('/') || name.contains('\\')) return false;
-  if (name.contains('..') || name.startsWith('.')) return false;
-  if (name.contains(':')) return false; // schemes, drive letters
-  return wallpaperExtensions.contains(
-    name.contains('.') ? name.split('.').last.toLowerCase() : '',
-  );
+  if (name.isEmpty || name.length > 128 || _looksLikePathOrUrl(name)) {
+    return false;
+  }
+  return wallpaperExtensions.contains(assetExtension(name));
 }
+
+bool _looksLikePathOrUrl(String name) =>
+    name.contains('/') ||
+    name.contains('\\') ||
+    name.contains('..') ||
+    name.startsWith('.') ||
+    name.contains(':');
+
+/// Lowercased extension of a flat file name ('' when it has no dot).
+String assetExtension(String name) =>
+    name.contains('.') ? name.split('.').last.toLowerCase() : '';
 
 /// WCAG relative luminance contrast warnings for the readable text pairs.
 void _contrastWarnings(
