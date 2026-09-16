@@ -33,6 +33,10 @@ migrate_working_dir/
 /build/
 /coverage/
 
+# Ranked CRAP JSON from the CI app-crap-gate job (issue #490) — fetched
+# via tools/crap_top.sh or gh run download; never committed.
+/crap_report.json
+
 # Symbolication related
 app.*.symbols
 
