@@ -97,10 +97,18 @@ final class FlutterSessionManager extends ChangeNotifier {
            repo ??
            // Issue #199: record parsing rides background isolates on IO
            // platforms (null = inline chunked parsing on web).
+           // Issue #522: session deletes journal + trash; a live
+           // registration (presence heartbeat / ownership lease owned
+           // elsewhere) refuses them with a named error.
            JsonlSessionRepo(
              fs: env,
              sessionsRoot: sessionsRoot,
              parseExecutor: createSessionParseExecutor(),
+             guard: PresenceLeaseSessionGuard(
+               presence: FileSessionPresenceStore(env: env, root: sessionsRoot),
+               lease: leaseStore,
+             ),
+             actor: () => const SessionOpsActor(host: 'app'),
            ),
        _parentResolver = parentResolver ?? SubagentParentResolver();
 
@@ -762,9 +770,6 @@ SessionMetadata _withParentLink(SessionMetadata metadata, String parent) {
     lastUpdatedAt: metadata.lastUpdatedAt,
     parentSessionPath: metadata.parentSessionPath,
     sizeBytes: metadata.sizeBytes,
-    metadata: {
-      ...?metadata.metadata,
-      'parent': parent,
-    },
+    metadata: {...?metadata.metadata, 'parent': parent},
   );
 }

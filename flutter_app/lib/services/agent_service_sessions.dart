@@ -64,10 +64,13 @@ extension AgentServiceSessions on AgentService {
 
   /// Removes every legacy empty `.jsonl` (only header) left on disk by the
   /// previous eager session-creation code paths. Idempotent and silently
-  /// best-effort.
+  /// best-effort. Issue #522: the same boot pass purges trash entries
+  /// older than the TTL (30 days) — the only place trashed sessions are
+  /// ever unlinked.
   Future<void> _cleanupLegacyEmptySessions() async {
     try {
       await _repo.cleanupEmptySessions();
+      await _repo.purgeExpiredTrash();
     } on Object {
       // Never propagate — cleanup is best-effort, the next launch will
       // retry.

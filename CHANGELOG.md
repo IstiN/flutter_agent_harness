@@ -2,6 +2,22 @@
 
 
 ## Unreleased
+- fix(522): a live session file can never silently vanish. Every
+  session-file delete now lands in the per-root `session_ops.journal`
+  (who: pid/host/session/tool, what: path → trash destination, bytes,
+  when), moves the file into `<root>/.trash/<timestamp>_<name>`
+  (never unlink — atomic rename, byte-copy fallback), and is REFUSED
+  with a named `sessionLive` error while a fresh presence heartbeat or
+  ownership lease (#428) holds the session (staleness = heartbeat
+  expiry only; the actor's own pid is exempt — graceful self-close).
+  `cleanupEmptySessions` trashes (and skips live-registered empties),
+  the session walks skip dot-directories so trashed sessions never
+  resurrect in `list()`, and `purgeExpiredTrash(ttl: 30d)` — run by the
+  app at boot — is the only unlink left, enforced by a source-sweep
+  test (`unlink-ok` markers). Wired into the CLI (presence+lease
+  guard, `cli` actor) and the app (manager+service, `app` actor).
+  Incident forensics for the 2026-09-16 424 MB loss: docs/
+  session-deletion-safety.md.
 - feat(458): tool output cards clamp to a 3-line preview — long dumps no
   longer evict the conversation. A card shows the first 3 lines plus a
   `+N lines` hint (stable height regardless of dump size); tapping

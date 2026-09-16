@@ -79,6 +79,11 @@ enum SessionErrorCode {
   /// The underlying filesystem operation failed.
   storage,
 
+  /// The session has a live registration (presence heartbeat or
+  /// ownership lease, issue #522): destructive operations are refused
+  /// while another process drives the session.
+  sessionLive,
+
   /// Any other session failure.
   unknown,
 }

@@ -127,6 +127,7 @@ import '../session/session_repo.dart';
 import '../session_io_retry.dart';
 import '../session/attach/session_presence.dart';
 import '../session/attach/session_lease.dart';
+import '../session/session_ops.dart';
 import '../session/attach/session_attachment.dart';
 import '../session/attach/file_attachment.dart';
 import '../config/config_service.dart';
@@ -1108,6 +1109,19 @@ class AgentCli {
     // Issue #427: transient-ENOENT retries of session-file IO log one
     // `session_io_retry` line each into the diagnostic log (fa.log).
     ioRetry: SessionIoRetryConfig(logger: _logDiagnostic),
+    // Issue #522: this process's identity rides every journal record
+    // (session_ops.journal), and a live registration elsewhere (presence
+    // heartbeat, ownership lease) refuses session-file deletion with a
+    // named error.
+    guard: PresenceLeaseSessionGuard(
+      presence: config.presenceStore,
+      lease: config.leaseStore,
+    ),
+    actor: () => SessionOpsActor(
+      pid: config.processId,
+      host: 'cli',
+      sessionId: _session?.cachedId,
+    ),
   );
   Session? _session;
 

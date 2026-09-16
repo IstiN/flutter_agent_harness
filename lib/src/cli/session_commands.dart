@@ -310,7 +310,12 @@ extension on AgentCli {
     final session = _session;
     if (session == null) return;
     try {
-      await _repo.delete(await session.getMetadata());
+      // Issue #522: the journal names this surface; the trash keeps the
+      // bytes recoverable; a live owner elsewhere refuses the delete.
+      await _repo.delete(
+        await session.getMetadata(),
+        tool: 'delete_session_if_empty',
+      );
       _session = null;
       // The session scope is gone — drop it from the resolution.
       unawaited(AgentCliTools(this).rebuildToolAvailability());

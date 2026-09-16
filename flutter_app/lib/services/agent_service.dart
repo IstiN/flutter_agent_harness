@@ -478,10 +478,17 @@ class AgentService extends ChangeNotifier
                },
        ),
        sessionsRoot = sessionsRoot,
+       // Issue #522: deletes journal + trash; a live registration owned
+       // elsewhere (a running fa CLI's presence heartbeat, an app lease)
+       // refuses them with a named error.
        _repo = JsonlSessionRepo(
          fs: env,
          sessionsRoot: sessionsRoot,
          parseExecutor: parseExecutor,
+         guard: PresenceLeaseSessionGuard(
+           presence: FileSessionPresenceStore(env: env, root: sessionsRoot),
+         ),
+         actor: () => const SessionOpsActor(host: 'app'),
        ) {
     maybeCurrent = this;
     _wireImageDropNotice();

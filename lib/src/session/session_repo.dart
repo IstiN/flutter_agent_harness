@@ -14,6 +14,7 @@ import '../env/session_parse_executor.dart';
 import '../exceptions.dart';
 import '../session_io_retry.dart';
 import 'session_chunk_reader.dart';
+import 'session_ops.dart';
 import 'session_record.dart';
 import 'session_storage.dart';
 import 'windowed_session_storage.dart';
@@ -69,8 +70,13 @@ abstract interface class SessionRepo {
   /// Lists stored sessions, newest first; [cwd] filters to one directory.
   Future<List<SessionMetadata>> list({String? cwd});
 
-  /// Deletes a session file.
-  Future<void> delete(SessionMetadata metadata);
+  /// Deletes a session file — to trash, never unlink (issue #522): the
+  /// file moves into `<root>/.trash/<timestamp>_<name>`, the operation
+  /// lands in the per-root journal, and a live-registered session
+  /// ([SessionDeletionGuard]) throws
+  /// [SessionErrorCode.sessionLive] instead. [tool] names the triggering
+  /// surface for the journal.
+  Future<void> delete(SessionMetadata metadata, {String? tool});
 
   /// Forks [source] into a new session containing a prefix of its tree.
   ///
@@ -157,17 +163,44 @@ final class JsonlSessionRepo implements SessionRepo {
   /// [ioRetry] wires the transient-ENOENT retry of session-file opens,
   /// creations and appends (issue #427); hosts pass their diagnostic log
   /// sink to see one `session_io_retry` line per retry.
+  ///
+  /// Issue #522 wiring: [guard] refuses destructive operations on
+  /// live-registered sessions (presence heartbeats + ownership leases);
+  /// [actor] identifies the acting process in the operation journal
+  /// (`<root>/session_ops.journal`, always on). Both optional — hosts
+  /// without live registrations keep the pre-#522 delete behavior plus
+  /// the journal + trash.
+  // ignore: prefer_initializing_formals
   JsonlSessionRepo({
     required this._fs,
     required String sessionsRoot,
     this._parseExecutor,
     this._ioRetry = const SessionIoRetryConfig(),
-  }) : _sessionsRootInput = sessionsRoot;
+    this._guard,
+    SessionOpsActor Function()? actor, // ignore: prefer_initializing_formals
+  }) : _sessionsRootInput = sessionsRoot,
+       // ignore: prefer_initializing_formals
+       _actor = actor;
 
   final FileSystem _fs;
   final String _sessionsRootInput;
   String? _sessionsRoot;
   final SessionParseExecutor? _parseExecutor;
+
+  /// Live-registration guard (issue #522): null disables refusals
+  /// (no registration sources wired) — journal + trash stay on.
+  final SessionDeletionGuard? _guard;
+
+  /// The acting process identity for journal records (issue #522),
+  /// resolved lazily per operation.
+  final SessionOpsActor Function()? _actor;
+
+  /// The trash directory name under the sessions root (issue #522).
+  static const String trashDirName = '.trash';
+
+  /// The default trash TTL: entries survive a month before the explicit
+  /// purge ([purgeExpiredTrash]) may unlink them.
+  static const Duration defaultTrashTtl = Duration(days: 30);
 
   /// Transient-ENOENT retry wiring (issue #427) threaded into every
   /// session-file open/create this repo performs.
@@ -295,12 +328,164 @@ final class JsonlSessionRepo implements SessionRepo {
     return sessions;
   }
 
+  SessionOpsJournal? _journalCache;
+
+  /// The per-root operation journal (issue #522) — always on for this
+  /// repo's destructive operations.
+  SessionOpsJournal get _ops => _journalCache ??= SessionOpsJournal(
+    fs: _fs,
+    sessionsRoot: _sessionsRootInput,
+    actor: _actor,
+  );
+
+  /// Refuses the operation when a live registration (fresh presence
+  /// heartbeat or ownership lease — #522) owns the session. The actor
+  /// process itself is exempt: closing your OWN session is a graceful
+  /// exit, not a fight.
+  Future<LiveSessionOwner?> _liveOwnerForPath(
+    String sessionId,
+    String path,
+  ) async {
+    final guard = _guard;
+    if (guard == null || sessionId.isEmpty) return null;
+    return guard.liveOwnerOf(sessionId: sessionId, path: path);
+  }
+
+  /// Whether [owner] blocks the operation for this actor.
+  bool _blocksActor(LiveSessionOwner? owner) {
+    if (owner == null) return false;
+    final actor = _actor?.call();
+    if (actor?.pid != null && owner.pid == actor!.pid) return false;
+    return true;
+  }
+
   @override
-  Future<void> delete(SessionMetadata metadata) async {
-    _fsOrThrow(
-      await _fs.remove(metadata.path, force: true),
-      'Failed to delete session ${metadata.path}',
+  Future<void> delete(SessionMetadata metadata, {String? tool}) async {
+    // Live-session guard (issue #522): a fresh registration refuses the
+    // delete with a named error — the file stays put, the refusal is
+    // journaled.
+    final owner = await _liveOwnerForPath(metadata.id, metadata.path);
+    if (_blocksActor(owner)) {
+      await _ops.record(
+        SessionOpKind.refusedLive,
+        path: metadata.path,
+        reason: 'live ${owner.toString()}',
+        tool: tool,
+      );
+      throw SessionException(
+        'Session ${metadata.id} is live (${owner.toString()}) — deletion '
+        'refused (issue #522); stop the owning process first',
+        code: SessionErrorCode.sessionLive,
+      );
+    }
+    await _trashFile(
+      metadata.path,
+      kind: SessionOpKind.trash,
+      tool: tool,
+      sessionId: metadata.id,
     );
+  }
+
+  /// Moves a session file into `<root>/.trash/<timestamp>_<name>`
+  /// (issue #522): rename when the backend supports it, byte-copy
+  /// otherwise; the original path is vacated only AFTER the trash copy
+  /// exists. A missing file is a no-op (idempotent delete).
+  Future<String?> _trashFile(
+    String path, {
+    required SessionOpKind kind,
+    String? tool,
+    String? sessionId,
+    String? reason,
+  }) async {
+    if ((await _fs.exists(path)).valueOrNull != true) return null;
+    final root = await _getSessionsRoot();
+    final trashDir = _fsOrThrow(
+      await _fs.joinPath([root, trashDirName]),
+      'Failed to resolve trash directory',
+    );
+    _fsOrThrow(
+      await _fs.createDir(trashDir, recursive: true),
+      'Failed to create trash directory',
+    );
+    final name = _pathBasename(path);
+    final stamp = DateTime.now().toUtc().toIso8601String().replaceAll(
+      RegExp(r'[-:.]'),
+      '',
+    );
+    final dest = _fsOrThrow(
+      await _fs.joinPath([trashDir, '${stamp}_$name']),
+      'Failed to resolve trash path for $name',
+    );
+    final bytes = (await _fs.fileInfo(path)).valueOrNull?.size;
+    final moved = _fs is RenamableFileSystem
+        ? await (_fs as RenamableFileSystem).renamePath(path, dest)
+        : const Err<void, FileError>(
+            FileError(FileErrorCode.notSupported, 'not renamable'),
+          );
+    if (moved.isErr) {
+      // Non-renamable backend (or a failed rename): copy the bytes,
+      // THEN vacate the original — the trash copy exists before the
+      // source disappears, so a mid-copy crash loses nothing.
+      final content = await _fs.readTextFile(path);
+      if (content.isErr) {
+        throw SessionException(
+          'Failed to delete session $path: ${content.errorOrNull!.message}',
+          code: SessionErrorCode.storage,
+        );
+      }
+      _fsOrThrow(
+        await _fs.writeFile(dest, content.valueOrNull!),
+        'Failed to trash session $path',
+      );
+      // unlink-ok: trash-copy fallback (issue #522) — the copy in
+      // .trash/ already holds the full content.
+      _fsOrThrow(
+        await _fs.remove(path, force: true),
+        'Failed to delete session $path',
+      );
+    }
+    await _ops.record(
+      kind,
+      path: path,
+      to: dest,
+      bytes: bytes,
+      reason: reason,
+      tool: tool,
+    );
+    return dest;
+  }
+
+  /// Purges trash entries older than [ttl] (issue #522) — the ONE place
+  /// session-shaped files are unlinked, and only files already inside
+  /// `.trash/`. Returns the number of purged entries.
+  Future<int> purgeExpiredTrash({Duration ttl = defaultTrashTtl}) async {
+    final root = await _getSessionsRoot();
+    final trashDir = (await _fs.joinPath([root, trashDirName])).valueOrNull;
+    if (trashDir == null) return 0;
+    if ((await _fs.exists(trashDir)).valueOrNull != true) return 0;
+    final entries = (await _fs.listDir(trashDir)).valueOrNull ?? const [];
+    final cutoff = DateTime.now().subtract(ttl).millisecondsSinceEpoch;
+    var purged = 0;
+    for (final entry in entries) {
+      if (entry.kind == FileKind.directory) continue;
+      if (entry.mtimeMs >= cutoff) continue;
+      // unlink-ok: explicit TTL purge of a .trash/ entry (issue #522) —
+      // the file was already "deleted" when it landed here.
+      final removed = await _fs.remove(entry.path, force: true);
+      if (removed.isErr) continue;
+      purged++;
+      await _ops.record(
+        SessionOpKind.purge,
+        path: entry.path,
+        bytes: entry.size,
+      );
+    }
+    return purged;
+  }
+
+  String _pathBasename(String path) {
+    final slash = path.lastIndexOf('/');
+    return slash < 0 ? path : path.substring(slash + 1);
   }
 
   /// Removes every `.jsonl` session whose file contains **only the header
@@ -310,7 +495,9 @@ final class JsonlSessionRepo implements SessionRepo {
   /// legacy empty files that the old `SubagentManager.register` /
   /// `AgentService.initialize` paths left on disk. Returns the number of
   /// files actually deleted (best-effort: a failed read or delete leaves the
-  /// file in place).
+  /// file in place). Issue #522: the cleanup TRASHES the file (never
+  /// unlinks) and skips a session a live registration owns — an empty file
+  /// a process is about to write into is not garbage.
   Future<int> cleanupEmptySessions() async {
     var removed = 0;
     final root = await _getSessionsRoot();
@@ -333,13 +520,37 @@ final class JsonlSessionRepo implements SessionRepo {
       );
       final nonEmpty = lines.where((line) => line.trim().isNotEmpty).length;
       if (nonEmpty > 1) continue;
-      _fsOrThrow(
-        await _fs.remove(path, force: true),
-        'Failed to delete empty session $path',
+      final sessionId = _headerSessionId(lines.firstOrNull, path);
+      final owner = await _liveOwnerForPath(sessionId, path);
+      if (_blocksActor(owner)) {
+        // A live process owns this (empty) session — it is about to
+        // write, not garbage. The refusal is journaled.
+        await _ops.record(
+          SessionOpKind.refusedLive,
+          path: path,
+          reason: 'cleanup skipped: live ${owner.toString()}',
+        );
+        continue;
+      }
+      await _trashFile(
+        path,
+        kind: SessionOpKind.cleanupTrash,
+        reason: 'legacy empty session cleanup',
+        sessionId: sessionId,
       );
       removed++;
     }
     return removed;
+  }
+
+  /// The session id from a header line, when parseable (guard lookup key).
+  String _headerSessionId(String? headerLine, String path) {
+    if (headerLine == null || headerLine.trim().isEmpty) return '';
+    try {
+      return parseSessionHeaderLine(headerLine, path).id;
+    } on Object {
+      return '';
+    }
   }
 
   Future<List<String>> _collectJsonlFiles(String dirPath) async {
@@ -350,6 +561,9 @@ final class JsonlSessionRepo implements SessionRepo {
     final files = <String>[];
     for (final entry in entries) {
       if (entry.kind == FileKind.directory) {
+        // Hidden directories (.trash, .presence — issue #522) hold
+        // sidecars and deleted sessions, never live ones.
+        if (_isInternalDirName(entry.name)) continue;
         files.addAll(await _collectJsonlFiles(entry.path));
         continue;
       }
@@ -357,6 +571,12 @@ final class JsonlSessionRepo implements SessionRepo {
     }
     return files;
   }
+
+  /// Names the session walks never descend into: the dot-prefixed
+  /// management directories (`.trash/` — deleted sessions, `.presence/`
+  /// — heartbeats; issue #522).
+  static bool _isInternalDirName(String name) =>
+      name.startsWith('.') && name.length > 1;
 
   @override
   Future<Session> fork(
@@ -510,6 +730,10 @@ final class JsonlSessionRepo implements SessionRepo {
       for (final entries in discovered) {
         for (final entry in entries) {
           if (entry.kind == FileKind.directory) {
+            // Hidden management directories (.trash/, .presence/) hold
+            // deleted sessions and heartbeats — never listable (issue
+            // #522: a trashed session must not resurrect).
+            if (_isInternalDirName(entry.name)) continue;
             pending.add(entry.path);
           } else if (entry.name.endsWith('.jsonl')) {
             files.add(entry);
