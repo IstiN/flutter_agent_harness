@@ -220,6 +220,37 @@ String? resolveSshIdentityPem({
   return null;
 }
 
+/// Parsed `ssh` command line (see `SandboxSshBuiltins._parseSshArgs`); the
+/// error field carries the usage result for a malformed invocation.
+typedef _SshArgs = ({
+  SandboxBuiltinResult? error,
+  String? identity,
+  String user,
+  String host,
+  int port,
+  List<String> command,
+});
+
+/// Parsed `sftp` command line (see `SandboxSshBuiltins._parseSftpArgs`).
+typedef _SftpArgs = ({
+  SandboxBuiltinResult? error,
+  String? identity,
+  String? batchFile,
+  String user,
+  String host,
+  int port,
+});
+
+/// Parsed `scp` options (see `SandboxSshBuiltins._parseScpOptions`);
+/// [operandStart] is where the operand list begins.
+typedef _ScpOptions = ({
+  SandboxBuiltinResult? error,
+  String? identity,
+  int port,
+  bool recursive,
+  int operandStart,
+});
+
 /// Dart-native `ssh`, `scp`, and `sftp` builtins shared by the shells.
 ///
 /// These are pure Dart (no `dart:io`): the network side goes through the
@@ -337,7 +368,52 @@ final class SandboxSshBuiltins {
     if (args.contains('--help')) {
       return _ok(utf8.encode(_sshUsage));
     }
+    final argsOrError = _parseSshArgs(args, env: env);
+    if (argsOrError.error != null) return argsOrError.error!;
+    final paramsOrError = await _connectParams(
+      identity: argsOrError.identity,
+      user: argsOrError.user,
+      host: argsOrError.host,
+      port: argsOrError.port,
+      env: env,
+      command: 'ssh',
+    );
+    if (paramsOrError.error != null) return paramsOrError.error!;
+    return _withConnection(
+      paramsOrError.params!,
+      command: 'ssh',
+      host: argsOrError.host,
+      timeout: timeout,
+      action: (connection, operationTimeout) async {
+        final result = await connection
+            .exec(argsOrError.command.join(' '), stdin: stdin)
+            .timeout(operationTimeout);
+        // A server that closes the channel without an exit status (e.g.
+        // GitHub's shell-less sshd) maps to 1 rather than fake success.
+        return SandboxBuiltinResult(
+          stdout: result.stdout,
+          stderr: result.stderr,
+          exitCode: result.exitCode ?? 1,
+        );
+      },
+    );
+  }
 
+  /// Parses `ssh` options, the `[user@]host` destination, and the remote
+  /// command operands. Returns the usage-error result for any malformed
+  /// invocation.
+  static _SshArgs _parseSshArgs(
+    List<String> args, {
+    required Map<String, String> env,
+  }) {
+    _SshArgs usage([SandboxBuiltinResult? result]) => (
+      error: result ?? _error(_sshUsage, 2),
+      identity: null,
+      user: '',
+      host: '',
+      port: 0,
+      command: const [],
+    );
     String? identity;
     String? user;
     var port = 22;
@@ -349,80 +425,47 @@ final class SandboxSshBuiltins {
         break;
       }
       if (arg == '-i') {
-        if (i + 1 >= args.length) return _error(_sshUsage, 2);
+        if (i + 1 >= args.length) return usage();
         identity = args[++i];
       } else if (arg == '-l') {
-        if (i + 1 >= args.length) return _error(_sshUsage, 2);
+        if (i + 1 >= args.length) return usage();
         user = args[++i];
       } else if (arg == '-p') {
-        if (i + 1 >= args.length) return _error(_sshUsage, 2);
+        if (i + 1 >= args.length) return usage();
         port = int.tryParse(args[++i]) ?? -1;
         if (port < 1 || port > 65535) {
-          return _error('ssh: bad port number\n$_sshUsage', 2);
+          return usage(_error('ssh: bad port number\n$_sshUsage', 2));
         }
       } else if (arg.startsWith('-')) {
-        return _error(
-          'ssh: unknown option -- ${arg.substring(1)}\n$_sshUsage',
-          2,
+        return usage(
+          _error('ssh: unknown option -- ${arg.substring(1)}\n$_sshUsage', 2),
         );
       } else {
         break;
       }
     }
-
-    if (i >= args.length) return _error(_sshUsage, 2);
+    if (i >= args.length) return usage();
     final destination = args[i++];
-    final at = destination.indexOf('@');
-    final host = at >= 0 ? destination.substring(at + 1) : destination;
-    user ??= at >= 0 ? destination.substring(0, at) : null;
-    if (host.isEmpty || (at >= 0 && user!.isEmpty)) {
-      return _error(_sshUsage, 2);
-    }
-    user ??= env['USER'] ?? 'Fa';
-    if (user.isEmpty) user = 'Fa';
-
     final command = args.sublist(i);
     if (command.isEmpty) {
-      return _error(
-        'ssh: missing command (interactive login shells are not supported)\n'
-        '$_sshUsage',
-        2,
+      return usage(
+        _error(
+          'ssh: missing command (interactive login shells are not supported)\n'
+          '$_sshUsage',
+          2,
+        ),
       );
     }
-
-    final paramsOrError = await _connectParams(
+    final remote = _parseDestination(destination, user: user, env: env);
+    if (remote == null) return usage();
+    return (
+      error: null,
       identity: identity,
-      user: user,
-      host: host,
+      user: remote.user,
+      host: remote.host,
       port: port,
-      env: env,
-      command: 'ssh',
+      command: command,
     );
-    if (paramsOrError.error != null) return paramsOrError.error!;
-    final params = paramsOrError.params!;
-
-    final operationTimeout = timeout ?? defaultOperationTimeout;
-    try {
-      final connection = await connector(params).timeout(operationTimeout);
-      try {
-        final result = await connection
-            .exec(command.join(' '), stdin: stdin)
-            .timeout(operationTimeout);
-        // A server that closes the channel without an exit status (e.g.
-        // GitHub's shell-less sshd) maps to 1 rather than fake success.
-        return SandboxBuiltinResult(
-          stdout: result.stdout,
-          stderr: result.stderr,
-          exitCode: result.exitCode ?? 1,
-        );
-      } finally {
-        await connection.close();
-      }
-    } on TimeoutException {
-      return _error('ssh: $host: operation timed out\n', 1);
-    } on Object catch (e) {
-      return _error('ssh: $host: $e\n', 1);
-    }
   }
 
   /// Resolves the identity and builds connect params, or returns the error
@@ -472,6 +515,55 @@ final class SandboxSshBuiltins {
     );
   }
 
+  /// Splits a `[user@]host` destination, giving the explicit [user] (from
+  /// `-l`) priority over the destination part, then applies the `USER` env
+  /// fallback (`Fa` when unset or empty). Returns null for an empty host or
+  /// an empty explicit user.
+  static ({String user, String host})? _parseDestination(
+    String destination, {
+    String? user,
+    required Map<String, String> env,
+  }) {
+    final at = destination.indexOf('@');
+    final host = at >= 0 ? destination.substring(at + 1) : destination;
+    var resolved = user ?? (at >= 0 ? destination.substring(0, at) : null);
+    if (host.isEmpty || (at >= 0 && resolved!.isEmpty)) return null;
+    resolved ??= env['USER'] ?? 'Fa';
+    if (resolved.isEmpty) resolved = 'Fa';
+    return (user: resolved, host: host);
+  }
+
+  /// Shared session lifecycle for `ssh`/`scp`/`sftp`: connect with the
+  /// operation timeout, run [action] (each protocol step applies the same
+  /// timeout itself), and always close the connection. A timeout or
+  /// protocol failure maps to exit code 1 with a `$command: $host: …`
+  /// diagnostic.
+  Future<SandboxBuiltinResult> _withConnection(
+    SandboxSshConnectParams params, {
+    required String command,
+    required String host,
+    required Duration? timeout,
+    required Future<SandboxBuiltinResult> Function(
+      SandboxSshConnection connection,
+      Duration operationTimeout,
+    )
+    action,
+  }) async {
+    final operationTimeout = timeout ?? defaultOperationTimeout;
+    try {
+      final connection = await connector(params).timeout(operationTimeout);
+      try {
+        return await action(connection, operationTimeout);
+      } finally {
+        await connection.close();
+      }
+    } on TimeoutException {
+      return _error('$command: $host: operation timed out\n', 1);
+    } on Object catch (e) {
+      return _error('$command: $host: $e\n', 1);
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // scp
   // ---------------------------------------------------------------------------
@@ -487,39 +579,10 @@ final class SandboxSshBuiltins {
     if (args.contains('--help')) {
       return _ok(utf8.encode(_scpUsage));
     }
+    final options = _parseScpOptions(args);
+    if (options.error != null) return options.error!;
 
-    String? identity;
-    var port = 22;
-    var recursive = false;
-    var i = 0;
-    for (; i < args.length; i++) {
-      final arg = args[i];
-      if (arg == '--') {
-        i++;
-        break;
-      }
-      if (arg == '-i') {
-        if (i + 1 >= args.length) return _error(_scpUsage, 2);
-        identity = args[++i];
-      } else if (arg == '-P') {
-        if (i + 1 >= args.length) return _error(_scpUsage, 2);
-        port = int.tryParse(args[++i]) ?? -1;
-        if (port < 1 || port > 65535) {
-          return _error('scp: bad port number\n$_scpUsage', 2);
-        }
-      } else if (arg == '-r') {
-        recursive = true;
-      } else if (arg.startsWith('-')) {
-        return _error(
-          'scp: unknown option -- ${arg.substring(1)}\n$_scpUsage',
-          2,
-        );
-      } else {
-        break;
-      }
-    }
-
-    final operands = args.sublist(i);
+    final operands = args.sublist(options.operandStart);
     if (operands.length < 2) return _error(_scpUsage, 2);
     final sources = [
       for (final operand in operands.sublist(0, operands.length - 1))
@@ -528,20 +591,13 @@ final class SandboxSshBuiltins {
     final target = _parseScpOperand(operands.last);
 
     if (target.isRemote) {
-      if (sources.every((s) => s.isRemote)) {
-        return _error(
-          'scp: remote-to-remote (third-party) copies are not supported\n',
-          2,
-        );
-      }
-      if (sources.any((s) => s.isRemote)) {
-        return _error('scp: cannot mix local and remote sources\n', 2);
-      }
+      final planError = _scpUploadPlanError(sources);
+      if (planError != null) return planError;
       return _scpTransfer(
         upload: true,
-        identity: identity,
-        port: port,
-        recursive: recursive,
+        identity: options.identity,
+        port: options.port,
+        recursive: options.recursive,
         connection: target.connection!,
         localSources: [for (final s in sources) s.localPath!],
         remoteSources: const [],
@@ -553,6 +609,93 @@ final class SandboxSshBuiltins {
     }
 
     final remoteSources = sources.where((s) => s.isRemote).toList();
+    final planError = _scpDownloadPlanError(sources, remoteSources);
+    if (planError != null) return planError;
+    return _scpTransfer(
+      upload: false,
+      identity: options.identity,
+      port: options.port,
+      recursive: options.recursive,
+      connection: remoteSources.first.connection!,
+      localSources: const [],
+      remoteSources: [for (final s in remoteSources) s.remotePath!],
+      localTarget: target.localPath,
+      remoteTarget: null,
+      env: env,
+      timeout: timeout,
+    );
+  }
+
+  /// Parses `scp` options (`-i`, `-P`, `-r`) and returns the index where the
+  /// operand list begins. Returns the usage-error result for any malformed
+  /// invocation.
+  static _ScpOptions _parseScpOptions(List<String> args) {
+    _ScpOptions usage([SandboxBuiltinResult? result]) => (
+      error: result ?? _error(_scpUsage, 2),
+      identity: null,
+      port: 22,
+      recursive: false,
+      operandStart: 0,
+    );
+    String? identity;
+    var port = 22;
+    var recursive = false;
+    var i = 0;
+    for (; i < args.length; i++) {
+      final arg = args[i];
+      if (arg == '--') {
+        i++;
+        break;
+      }
+      if (arg == '-i') {
+        if (i + 1 >= args.length) return usage();
+        identity = args[++i];
+      } else if (arg == '-P') {
+        if (i + 1 >= args.length) return usage();
+        port = int.tryParse(args[++i]) ?? -1;
+        if (port < 1 || port > 65535) {
+          return usage(_error('scp: bad port number\n$_scpUsage', 2));
+        }
+      } else if (arg == '-r') {
+        recursive = true;
+      } else if (arg.startsWith('-')) {
+        return usage(
+          _error('scp: unknown option -- ${arg.substring(1)}\n$_scpUsage', 2),
+        );
+      } else {
+        break;
+      }
+    }
+    return (
+      error: null,
+      identity: identity,
+      port: port,
+      recursive: recursive,
+      operandStart: i,
+    );
+  }
+
+  /// scp rejects a remote target fed only from remote sources (third-party
+  /// copy) or from a mix of local and remote sources.
+  static SandboxBuiltinResult? _scpUploadPlanError(List<_ScpOperand> sources) {
+    if (sources.every((s) => s.isRemote)) {
+      return _error(
+        'scp: remote-to-remote (third-party) copies are not supported\n',
+        2,
+      );
+    }
+    if (sources.any((s) => s.isRemote)) {
+      return _error('scp: cannot mix local and remote sources\n', 2);
+    }
+    return null;
+  }
+
+  /// scp rejects a local target with no remote source, a mix of local and
+  /// remote sources, and remote sources spread over several user@host.
+  static SandboxBuiltinResult? _scpDownloadPlanError(
+    List<_ScpOperand> sources,
+    List<_ScpOperand> remoteSources,
+  ) {
     if (remoteSources.isEmpty) {
       return _error(
         'scp: no remote operand (use cp for local-to-local copies)\n',
@@ -570,19 +713,7 @@ final class SandboxSshBuiltins {
     if (!sameHost) {
       return _error('scp: remote sources must share one user@host\n', 2);
     }
-    return _scpTransfer(
-      upload: false,
-      identity: identity,
-      port: port,
-      recursive: recursive,
-      connection: first,
-      localSources: const [],
-      remoteSources: [for (final s in remoteSources) s.remotePath!],
-      localTarget: target.localPath,
-      remoteTarget: null,
-      env: env,
-      timeout: timeout,
-    );
+    return null;
   }
 
   /// One scp operand: either a local sandbox path or `[user@]host:path`.
@@ -629,12 +760,12 @@ final class SandboxSshBuiltins {
     );
     if (paramsOrError.error != null) return paramsOrError.error!;
 
-    final operationTimeout = timeout ?? defaultOperationTimeout;
-    try {
-      final conn = await connector(
-        paramsOrError.params!,
-      ).timeout(operationTimeout);
-      try {
+    return _withConnection(
+      paramsOrError.params!,
+      command: 'scp',
+      host: connection.host,
+      timeout: timeout,
+      action: (conn, operationTimeout) async {
         final ftp = await conn.openSftp().timeout(operationTimeout);
         if (upload) {
           return await _scpUpload(
@@ -650,14 +781,8 @@ final class SandboxSshBuiltins {
           localTarget!,
           recursive: recursive,
         );
-      } finally {
-        await conn.close();
-      }
-    } on TimeoutException {
-      return _error('scp: ${connection.host}: operation timed out\n', 1);
-    } on Object catch (e) {
-      return _error('scp: ${connection.host}: $e\n', 1);
-    }
+      },
+    );
   }
 
   Future<SandboxBuiltinResult> _scpUpload(
@@ -931,7 +1056,49 @@ final class SandboxSshBuiltins {
     if (args.contains('--help')) {
       return _ok(utf8.encode(_sftpUsage));
     }
+    final argsOrError = _parseSftpArgs(args, env: env);
+    if (argsOrError.error != null) return argsOrError.error!;
+    final batchOrError = await _sftpBatchInput(
+      batchFile: argsOrError.batchFile,
+      stdin: stdin,
+    );
+    if (batchOrError.error != null) return batchOrError.error!;
+    final paramsOrError = await _connectParams(
+      identity: argsOrError.identity,
+      user: argsOrError.user,
+      host: argsOrError.host,
+      port: argsOrError.port,
+      env: env,
+      command: 'sftp',
+    );
+    if (paramsOrError.error != null) return paramsOrError.error!;
+    return _withConnection(
+      paramsOrError.params!,
+      command: 'sftp',
+      host: argsOrError.host,
+      timeout: timeout,
+      action: (conn, operationTimeout) async {
+        final ftp = await conn.openSftp().timeout(operationTimeout);
+        return _runSftpBatch(ftp, batchOrError.batch, cwd);
+      },
+    );
+  }
 
+  /// Parses `sftp` options (`-i`, `-b`, `-P`) and the `[user@]host`
+  /// destination. Returns the usage-error result for any malformed
+  /// invocation.
+  static _SftpArgs _parseSftpArgs(
+    List<String> args, {
+    required Map<String, String> env,
+  }) {
+    _SftpArgs usage([SandboxBuiltinResult? result]) => (
+      error: result ?? _error(_sftpUsage, 2),
+      identity: null,
+      batchFile: null,
+      user: '',
+      host: '',
+      port: 0,
+    );
     String? identity;
     String? batchFile;
     var port = 22;
@@ -944,81 +1111,66 @@ final class SandboxSshBuiltins {
         break;
       }
       if (arg == '-i') {
-        if (i + 1 >= args.length) return _error(_sftpUsage, 2);
+        if (i + 1 >= args.length) return usage();
         identity = args[++i];
       } else if (arg == '-b') {
-        if (i + 1 >= args.length) return _error(_sftpUsage, 2);
+        if (i + 1 >= args.length) return usage();
         batchFile = args[++i];
       } else if (arg == '-P') {
-        if (i + 1 >= args.length) return _error(_sftpUsage, 2);
+        if (i + 1 >= args.length) return usage();
         port = int.tryParse(args[++i]) ?? -1;
         if (port < 1 || port > 65535) {
-          return _error('sftp: bad port number\n$_sftpUsage', 2);
+          return usage(_error('sftp: bad port number\n$_sftpUsage', 2));
         }
       } else if (arg.startsWith('-')) {
-        return _error(
-          'sftp: unknown option -- ${arg.substring(1)}\n$_sftpUsage',
-          2,
+        return usage(
+          _error('sftp: unknown option -- ${arg.substring(1)}\n$_sftpUsage', 2),
         );
       } else {
         break;
       }
     }
     if (i < args.length) destination = args[i];
-    if (destination == null) return _error(_sftpUsage, 2);
+    if (destination == null) return usage();
+    final remote = _parseDestination(destination, env: env);
+    if (remote == null) return usage();
+    return (
+      error: null,
+      identity: identity,
+      batchFile: batchFile,
+      user: remote.user,
+      host: remote.host,
+      port: port,
+    );
+  }
 
-    final at = destination.indexOf('@');
-    final host = at >= 0 ? destination.substring(at + 1) : destination;
-    var user = at >= 0 ? destination.substring(0, at) : null;
-    if (host.isEmpty || (at >= 0 && user!.isEmpty)) {
-      return _error(_sftpUsage, 2);
-    }
-    user ??= env['USER'] ?? 'Fa';
-    if (user.isEmpty) user = 'Fa';
-
-    final String batch;
+  /// Resolves the batch text: the `-b` file (a sandbox path) or piped
+  /// [stdin]. Returns the usage-error result when neither is available.
+  Future<({SandboxBuiltinResult? error, String batch})> _sftpBatchInput({
+    required String? batchFile,
+    required List<int>? stdin,
+  }) async {
     if (batchFile != null) {
       final bytes = await readBinaryFile(batchFile);
       if (bytes == null) {
-        return _error('sftp: $batchFile: No such file or directory\n', 2);
+        return (
+          error: _error('sftp: $batchFile: No such file or directory\n', 2),
+          batch: '',
+        );
       }
-      batch = utf8.decode(bytes, allowMalformed: true);
-    } else if (stdin != null) {
-      batch = utf8.decode(stdin, allowMalformed: true);
-    } else {
-      return _error(
+      return (error: null, batch: utf8.decode(bytes, allowMalformed: true));
+    }
+    if (stdin != null) {
+      return (error: null, batch: utf8.decode(stdin, allowMalformed: true));
+    }
+    return (
+      error: _error(
         'sftp: no batch input: pipe commands on stdin or use -b '
         '(interactive sessions are not supported)\n',
         2,
-      );
-    }
-
-    final paramsOrError = await _connectParams(
-      identity: identity,
-      user: user,
-      host: host,
-      port: port,
-      env: env,
-      command: 'sftp',
+      ),
+      batch: '',
     );
-    if (paramsOrError.error != null) return paramsOrError.error!;
-
-    final operationTimeout = timeout ?? defaultOperationTimeout;
-    try {
-      final conn = await connector(
-        paramsOrError.params!,
-      ).timeout(operationTimeout);
-      try {
-        final ftp = await conn.openSftp().timeout(operationTimeout);
-        return await _runSftpBatch(ftp, batch, cwd);
-      } finally {
-        await conn.close();
-      }
-    } on TimeoutException {
-      return _error('sftp: $host: operation timed out\n', 1);
-    } on Object catch (e) {
-      return _error('sftp: $host: $e\n', 1);
-    }
   }
 
   Future<SandboxBuiltinResult> _runSftpBatch(
@@ -1026,116 +1178,207 @@ final class SandboxSshBuiltins {
     String batch,
     String cwd,
   ) async {
-    final stdout = BytesBuilder(copy: false);
-    var remoteCwd = '.';
-    var localCwd = _normalizeLocal(cwd);
+    final state = _SftpBatchState(initialLocalCwd: _normalizeLocal(cwd));
+    for (final line in _parseSftpBatchLines(batch)) {
+      if (line.command == 'exit' ||
+          line.command == 'quit' ||
+          line.command == 'bye') {
+        return _ok(state.stdout.takeBytes());
+      }
+      final handler = switch (line.command) {
+        'pwd' => _sftpPwd,
+        'lpwd' => _sftpLpwd,
+        'cd' => _sftpCd,
+        'lcd' => _sftpLcd,
+        'ls' => _sftpLs,
+        'get' => _sftpGet,
+        'put' => _sftpPut,
+        'mkdir' => _sftpMkdir,
+        'rm' => _sftpRm,
+        'rmdir' => _sftpRmdir,
+        _ => null,
+      };
+      if (handler == null) {
+        return _sftpFail('unknown command: ${line.command}');
+      }
+      try {
+        final terminal = await handler(ftp, line.args, state);
+        if (terminal != null) return terminal;
+      } on Object catch (e) {
+        return _sftpFail('${line.line}: $e');
+      }
+    }
+    return _ok(state.stdout.takeBytes());
+  }
 
-    SandboxBuiltinResult fail(String message) => _error('sftp: $message\n', 1);
+  /// Usage failure inside an sftp batch: aborts the run with exit 1.
+  static SandboxBuiltinResult _sftpFail(String message) =>
+      _error('sftp: $message\n', 1);
 
+  /// Tokenizes a batch: one command per line, blank lines and `#` comments
+  /// skipped, whitespace-split tokens.
+  static List<({String line, String command, List<String> args})>
+  _parseSftpBatchLines(String batch) {
+    final lines = <({String line, String command, List<String> args})>[];
     for (final rawLine in const LineSplitter().convert(batch)) {
       final line = rawLine.trim();
       if (line.isEmpty || line.startsWith('#')) continue;
       final tokens = line.split(RegExp(r'\s+'));
-      final command = tokens.first;
-      final cargs = tokens.sublist(1);
-
-      String remoteResolve(String path) => path.startsWith('/')
-          ? p.posix.normalize(path)
-          : p.posix.normalize(p.posix.join(remoteCwd, path));
-      String localResolve(String path) => path.startsWith('/')
-          ? _normalizeLocal(path)
-          : _normalizeLocal('$localCwd/$path');
-
-      try {
-        switch (command) {
-          case 'exit' || 'quit' || 'bye':
-            return _ok(stdout.takeBytes());
-          case 'pwd':
-            stdout.add(utf8.encode('Remote working directory: $remoteCwd\n'));
-          case 'lpwd':
-            stdout.add(utf8.encode('Local working directory: $localCwd\n'));
-          case 'cd':
-            if (cargs.length != 1) return fail('cd: missing operand');
-            final path = remoteResolve(cargs.single);
-            final stat = await ftp.stat(path);
-            if (stat == null) {
-              return fail('cd: ${cargs.single}: No such file or directory');
-            }
-            if (!stat.isDirectory) {
-              return fail('cd: ${cargs.single}: Not a directory');
-            }
-            remoteCwd = path;
-          case 'lcd':
-            if (cargs.length != 1) return fail('lcd: missing operand');
-            final path = localResolve(cargs.single);
-            if (await localKind(path) != SandboxSshEntryKind.directory) {
-              return fail('lcd: ${cargs.single}: Not a directory');
-            }
-            localCwd = path;
-          case 'ls':
-            if (cargs.length > 1) return fail('ls: too many operands');
-            final path = cargs.isEmpty
-                ? remoteCwd
-                : remoteResolve(cargs.single);
-            final entries = await ftp.listdir(path);
-            for (final entry in entries) {
-              if (entry.name == '.' || entry.name == '..') continue;
-              stdout.add(utf8.encode('${entry.longname ?? entry.name}\n'));
-            }
-          case 'get':
-            if (cargs.isEmpty || cargs.length > 2) {
-              return fail('usage: get remote-path [local-path]');
-            }
-            final remotePath = remoteResolve(cargs.first);
-            final stat = await ftp.stat(remotePath);
-            if (stat == null) {
-              return fail('get: ${cargs.first}: No such file or directory');
-            }
-            if (stat.isDirectory) {
-              return fail('get: ${cargs.first}: is a directory (use scp -r)');
-            }
-            final localPath = localResolve(
-              cargs.length == 2 ? cargs[1] : _baseName(remotePath),
-            );
-            final bytes = await ftp.readFile(remotePath);
-            await writeBinaryFile(localPath, bytes);
-          case 'put':
-            if (cargs.isEmpty || cargs.length > 2) {
-              return fail('usage: put local-path [remote-path]');
-            }
-            final localPath = localResolve(cargs.first);
-            final kind = await localKind(localPath);
-            if (kind == null) {
-              return fail('put: ${cargs.first}: No such file or directory');
-            }
-            if (kind == SandboxSshEntryKind.directory) {
-              return fail('put: ${cargs.first}: is a directory (use scp -r)');
-            }
-            final bytes = await readBinaryFile(localPath);
-            if (bytes == null) {
-              return fail('put: ${cargs.first}: No such file or directory');
-            }
-            final remotePath = cargs.length == 2
-                ? remoteResolve(cargs[1])
-                : _remoteJoin(remoteCwd, _baseName(localPath));
-            await ftp.writeFile(remotePath, bytes);
-          case 'mkdir':
-            if (cargs.length != 1) return fail('mkdir: missing operand');
-            await ftp.mkdir(remoteResolve(cargs.single));
-          case 'rm':
-            if (cargs.length != 1) return fail('rm: missing operand');
-            await ftp.remove(remoteResolve(cargs.single));
-          case 'rmdir':
-            if (cargs.length != 1) return fail('rmdir: missing operand');
-            await ftp.rmdir(remoteResolve(cargs.single));
-          default:
-            return fail('unknown command: $command');
-        }
-      } on Object catch (e) {
-        return fail('$line: $e');
-      }
+      lines.add((line: line, command: tokens.first, args: tokens.sublist(1)));
     }
-    return _ok(stdout.takeBytes());
+    return lines;
+  }
+
+  Future<SandboxBuiltinResult?> _sftpPwd(
+    SandboxSshFtp ftp,
+    List<String> args,
+    _SftpBatchState state,
+  ) async {
+    state.stdout.add(
+      utf8.encode('Remote working directory: ${state.remoteCwd}\n'),
+    );
+    return null;
+  }
+
+  Future<SandboxBuiltinResult?> _sftpLpwd(
+    SandboxSshFtp ftp,
+    List<String> args,
+    _SftpBatchState state,
+  ) async {
+    state.stdout.add(
+      utf8.encode('Local working directory: ${state.localCwd}\n'),
+    );
+    return null;
+  }
+
+  Future<SandboxBuiltinResult?> _sftpCd(
+    SandboxSshFtp ftp,
+    List<String> args,
+    _SftpBatchState state,
+  ) async {
+    if (args.length != 1) return _sftpFail('cd: missing operand');
+    final path = state.remoteResolve(args.single);
+    final stat = await ftp.stat(path);
+    if (stat == null) {
+      return _sftpFail('cd: ${args.single}: No such file or directory');
+    }
+    if (!stat.isDirectory) {
+      return _sftpFail('cd: ${args.single}: Not a directory');
+    }
+    state.remoteCwd = path;
+    return null;
+  }
+
+  Future<SandboxBuiltinResult?> _sftpLcd(
+    SandboxSshFtp ftp,
+    List<String> args,
+    _SftpBatchState state,
+  ) async {
+    if (args.length != 1) return _sftpFail('lcd: missing operand');
+    final path = state.localResolve(args.single);
+    if (await localKind(path) != SandboxSshEntryKind.directory) {
+      return _sftpFail('lcd: ${args.single}: Not a directory');
+    }
+    state.localCwd = path;
+    return null;
+  }
+
+  Future<SandboxBuiltinResult?> _sftpLs(
+    SandboxSshFtp ftp,
+    List<String> args,
+    _SftpBatchState state,
+  ) async {
+    if (args.length > 1) return _sftpFail('ls: too many operands');
+    final path = args.isEmpty
+        ? state.remoteCwd
+        : state.remoteResolve(args.single);
+    final entries = await ftp.listdir(path);
+    for (final entry in entries) {
+      if (entry.name == '.' || entry.name == '..') continue;
+      state.stdout.add(utf8.encode('${entry.longname ?? entry.name}\n'));
+    }
+    return null;
+  }
+
+  Future<SandboxBuiltinResult?> _sftpGet(
+    SandboxSshFtp ftp,
+    List<String> args,
+    _SftpBatchState state,
+  ) async {
+    if (args.isEmpty || args.length > 2) {
+      return _sftpFail('usage: get remote-path [local-path]');
+    }
+    final remotePath = state.remoteResolve(args.first);
+    final stat = await ftp.stat(remotePath);
+    if (stat == null) {
+      return _sftpFail('get: ${args.first}: No such file or directory');
+    }
+    if (stat.isDirectory) {
+      return _sftpFail('get: ${args.first}: is a directory (use scp -r)');
+    }
+    final localPath = state.localResolve(
+      args.length == 2 ? args[1] : _baseName(remotePath),
+    );
+    final bytes = await ftp.readFile(remotePath);
+    await writeBinaryFile(localPath, bytes);
+    return null;
+  }
+
+  Future<SandboxBuiltinResult?> _sftpPut(
+    SandboxSshFtp ftp,
+    List<String> args,
+    _SftpBatchState state,
+  ) async {
+    if (args.isEmpty || args.length > 2) {
+      return _sftpFail('usage: put local-path [remote-path]');
+    }
+    final localPath = state.localResolve(args.first);
+    final kind = await localKind(localPath);
+    if (kind == null) {
+      return _sftpFail('put: ${args.first}: No such file or directory');
+    }
+    if (kind == SandboxSshEntryKind.directory) {
+      return _sftpFail('put: ${args.first}: is a directory (use scp -r)');
+    }
+    final bytes = await readBinaryFile(localPath);
+    if (bytes == null) {
+      return _sftpFail('put: ${args.first}: No such file or directory');
+    }
+    final remotePath = args.length == 2
+        ? state.remoteResolve(args[1])
+        : _remoteJoin(state.remoteCwd, _baseName(localPath));
+    await ftp.writeFile(remotePath, bytes);
+    return null;
+  }
+
+  Future<SandboxBuiltinResult?> _sftpMkdir(
+    SandboxSshFtp ftp,
+    List<String> args,
+    _SftpBatchState state,
+  ) async {
+    if (args.length != 1) return _sftpFail('mkdir: missing operand');
+    await ftp.mkdir(state.remoteResolve(args.single));
+    return null;
+  }
+
+  Future<SandboxBuiltinResult?> _sftpRm(
+    SandboxSshFtp ftp,
+    List<String> args,
+    _SftpBatchState state,
+  ) async {
+    if (args.length != 1) return _sftpFail('rm: missing operand');
+    await ftp.remove(state.remoteResolve(args.single));
+    return null;
+  }
+
+  Future<SandboxBuiltinResult?> _sftpRmdir(
+    SandboxSshFtp ftp,
+    List<String> args,
+    _SftpBatchState state,
+  ) async {
+    if (args.length != 1) return _sftpFail('rmdir: missing operand');
+    await ftp.rmdir(state.remoteResolve(args.single));
+    return null;
   }
 
   // ---------------------------------------------------------------------------
@@ -1213,4 +1456,30 @@ final class _ScpConnection {
 
   /// Remote host.
   final String host;
+}
+
+/// Mutable state of one sftp batch run: the working directories advanced by
+/// `cd`/`lcd` and the stdout accumulated by the printing opcodes.
+final class _SftpBatchState {
+  _SftpBatchState({required String initialLocalCwd})
+    : localCwd = initialLocalCwd;
+
+  /// stdout of the batch (`pwd`, `lpwd`, `ls`).
+  final stdout = BytesBuilder(copy: false);
+
+  /// Remote working directory (`.` until the first `cd`).
+  var remoteCwd = '.';
+
+  /// Local sandbox working directory (starts at the shell's cwd).
+  String localCwd;
+
+  /// Resolves [path] against the remote working directory (POSIX).
+  String remoteResolve(String path) => path.startsWith('/')
+      ? p.posix.normalize(path)
+      : p.posix.normalize(p.posix.join(remoteCwd, path));
+
+  /// Resolves [path] against the local sandbox working directory.
+  String localResolve(String path) => path.startsWith('/')
+      ? SandboxSshBuiltins._normalizeLocal(path)
+      : SandboxSshBuiltins._normalizeLocal('$localCwd/$path');
 }
