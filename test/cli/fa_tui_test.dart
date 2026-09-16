@@ -334,10 +334,11 @@ void main() {
         );
         model = model.update(SpinnerTickMsg()).$1 as FaTuiModel;
       }
-      // The spinner animates; the trailing cursor line shows + homes the
-      // caret into the input zone (visible while streaming by design).
+      // The spinner animates; the caret stays in the input zone while a
+      // run streams (typing mid-stream is first-class) — the View carries
+      // a real cursor, and the program derives DECTCEM visibility from it.
       expect(spinnerRows.length, greaterThan(1));
-      expect(model.view().content.split('\n').last, contains('\x1b[?25h'));
+      expect(model.view().cursor, isNotNull);
       // The busy row carries the elapsed seconds — a wedged endpoint is
       // visible instead of looking like a frozen UI.
       expect(
@@ -1404,44 +1405,43 @@ void main() {
       'the physical cursor stays in the input while busy and homes idle',
       () {
         var model = filledModel();
-        final position = RegExp(r'\x1b\[\d+;\d+H$');
-        expect(
-          model.view().content,
-          contains('\x1b[?25h'),
-          reason: 'idle: cursor shown',
-        );
+        final idleCursor = model.view().cursor;
+        expect(idleCursor, isNotNull, reason: 'idle: cursor shown');
 
         model = send(model, BusyMsg(true));
-        final busyContent = model.view().content;
+        final busyCursor = model.view().cursor;
         // Typing during a stream is first-class since the input-priority
         // card: the caret stays visible in the input zone. The renderer
-        // re-homes it after every painting frame (forceHome on writes), so
-        // the old "cursor jumps inside streamed text" artifact is gone.
-        expect(busyContent, contains('\x1b[?25h'));
-        expect(busyContent, isNot(contains('\x1b[?25l')));
-        expect(position.hasMatch(busyContent), isTrue);
+        // derives DECTCEM visibility from the View cursor and re-homes it
+        // after every painting frame (forceHome on writes), so the old
+        // "cursor jumps inside streamed text" artifact is gone.
+        expect(busyCursor, isNotNull);
+        expect(busyCursor!.x, idleCursor!.x);
+        expect(busyCursor.y, idleCursor.y);
 
         model = send(model, BusyMsg(false));
-        final idleContent = model.view().content;
-        expect(idleContent, contains('\x1b[?25h'));
-        expect(position.hasMatch(idleContent), isTrue);
+        final backCursor = model.view().cursor;
+        expect(backCursor, isNotNull);
+        expect(backCursor!.x, idleCursor.x);
+        expect(backCursor.y, idleCursor.y);
       },
     );
 
     test(
-      'an idle output append keeps the trailing cursor line byte-stable',
+      'an idle output append keeps the frame tail and cursor byte-stable',
       () {
-        // The renderer force-homes the physical cursor after any frame that
-        // painted rows, so the view no longer needs nonce churn to force a
-        // rewrite: the cursor line stays IDENTICAL across idle appends (the
-        // status row stops being repainted on every change).
+        // The renderer force-homes the physical cursor after any frame
+        // that painted rows, so the view needs no nonce churn: the status
+        // row (the frame's last line) and the cursor position stay
+        // IDENTICAL across idle appends.
         var model = filledModel();
-        final before = model.view().content.split('\n').last;
+        final before = model.view();
         model = send(model, OutputMsg('fresh output', newline: true));
-        final after = model.view().content.split('\n').last;
-        expect(after, before);
-        expect(after, contains('\x1b[?25h'));
-        expect(after, contains(RegExp(r'\x1b\[\d+;\d+H$')));
+        final after = model.view();
+        expect(after.content.split('\n').last, before.content.split('\n').last);
+        expect(after.cursor, isNotNull);
+        expect(after.cursor!.x, before.cursor!.x);
+        expect(after.cursor!.y, before.cursor!.y);
       },
     );
 
@@ -2229,8 +2229,6 @@ void main() {
         ),
       );
       final textView = textPrompt.view();
-      expect(textView.content, contains('\x1b[?25l'));
-      expect(textView.content, isNot(contains('\x1b[?25h')));
       expect(textView.cursor, isNull);
 
       // Picker prompt — no text input at all, cursor must stay hidden too.
@@ -2251,8 +2249,6 @@ void main() {
         ),
       );
       final pickerView = pickerPrompt.view();
-      expect(pickerView.content, contains('\x1b[?25l'));
-      expect(pickerView.content, isNot(contains('\x1b[?25h')));
       expect(pickerView.cursor, isNull);
     });
 
@@ -2271,8 +2267,6 @@ void main() {
         ]),
       );
       final pickerView = picker.view();
-      expect(pickerView.content, contains('\x1b[?25l'));
-      expect(pickerView.content, isNot(contains('\x1b[?25h')));
       expect(pickerView.cursor, isNull);
 
       // Slash menu: typing edits the filter, so the cursor stays visible.
@@ -2281,7 +2275,7 @@ void main() {
         KeyPressMsg(const TeaKey(code: KeyCode.rune, text: '/')),
       );
       expect(slashMenu.menuOpen, isTrue);
-      expect(slashMenu.view().content, contains('\x1b[?25h'));
+      expect(slashMenu.view().cursor, isNotNull);
     });
   });
 
