@@ -2,6 +2,8 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -16,6 +18,7 @@ import 'markdown_style.dart';
 import 'media_player.dart';
 import 'media_tool_names.dart';
 import 'fa_chat_host.dart';
+import 'upload_utils.dart' show isInlineImageMimeType, mimeTypeForUploadName;
 
 /// Builds the leading avatar for a transcript message [role] (`user` /
 /// `assistant` / `system` / `tool`); return null for roles without one.
@@ -27,6 +30,15 @@ typedef FaChatAvatarBuilder =
 /// [action] is 'openSettings' or 'tryAgain'.
 typedef FaPermissionActionCallback =
     void Function(String permission, String action);
+
+/// The default [ChatMessageTile.imageCacheWidth]: attachment thumbnails
+/// decode downscaled to 600px wide (a display/memory optimization; the
+/// stored/sent bytes stay full fidelity).
+const int kDefaultImagePreviewCacheWidth = 600;
+
+/// Max attachment thumbnails a user bubble renders inline (issue #461 E1):
+/// past this the bubble shows a `+N more` tile opening the gallery.
+const int _kMaxBubbleThumbs = 8;
 
 /// Called when the user taps the "Authorize" button on an auth-expired card.
 /// [providerId] is the provider identifier from [authExpiredProvider]
@@ -54,6 +66,7 @@ class ChatMessageTile extends StatelessWidget {
     this.onAuthRecovery,
     this.compact = false,
     this.messageFontSize,
+    this.imageCacheWidth = kDefaultImagePreviewCacheWidth,
     this.dynamicWidgetTileBuilder,
   });
 
@@ -94,6 +107,12 @@ class ChatMessageTile extends StatelessWidget {
   /// Chat text-size override (the app's chat text setting): forwarded to
   /// [fahMarkdownStyleSheet]; null renders at the theme's body size.
   final double? messageFontSize;
+
+  /// Decode cap for user-attachment thumbnails: images decode downscaled
+  /// to this width (a display/memory budget — stored bytes stay full
+  /// fidelity); null decodes full resolution (the app's "high-quality
+  /// previews" setting resolves it, issue #207/#461).
+  final int? imageCacheWidth;
 
   /// Renders a `widget`-role message as the host's live dynamic-message
   /// tile; null (or a null return) renders the stock system tile. Every
@@ -176,23 +195,34 @@ class ChatMessageTile extends StatelessWidget {
               ]
             : null,
       ),
-      child: SelectionArea(
-        // ONE selection region for the whole bubble: MarkdownBody's own
-        // `selectable: true` creates an independent region per block, so a
-        // drag stopped at every paragraph boundary. The SelectionArea
-        // handles selection; the body renders non-selectable Markdown.
-        child: MarkdownBody(
-          data: message.content,
-          styleSheet: styleSheet,
-          // Sandbox paths (`![alt](generated/x.png)`) load through the
-          // session env; taps open the fullscreen preview.
-          sizedImageBuilder: images.sizedImageBuilder(
-            onImageTap: (bytes) => showFahImagePreview(context, bytes),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Issue #461: the user's own attachments render INSIDE the
+          // bubble, above the text — thumbnails (wrapped grid when
+          // several), the unavailable-image placeholder, file chips.
+          if (isUser) _userAttachments(context),
+          SelectionArea(
+            // ONE selection region for the whole bubble: MarkdownBody's own
+            // `selectable: true` creates an independent region per block, so a
+            // drag stopped at every paragraph boundary. The SelectionArea
+            // handles selection; the body renders non-selectable Markdown.
+            child: MarkdownBody(
+              data: message.content,
+              styleSheet: styleSheet,
+              // Sandbox paths (`![alt](generated/x.png)`) load through the
+              // session env; taps open the fullscreen preview.
+              sizedImageBuilder: images.sizedImageBuilder(
+                onImageTap: (bytes) =>
+                    showFahImagePreview(context, [bytes]),
+              ),
+              // Audio/video sandbox links open a small inline-player dialog.
+              onTapLink: (text, href, title) =>
+                  _onMarkdownLink(context, text, href, title),
+            ),
           ),
-          // Audio/video sandbox links open a small inline-player dialog.
-          onTapLink: (text, href, title) =>
-              _onMarkdownLink(context, text, href, title),
-        ),
+        ],
       ),
     );
     final avatar = isUser
@@ -213,6 +243,147 @@ class ChatMessageTile extends StatelessWidget {
       ],
     );
   }
+
+  /// The attachment strip of a user bubble (issue #461): a wrapped grid of
+  /// tap-to-zoom thumbnails (one bigger thumb when single, `+N more` past
+  /// the cap), the labeled `[image unavailable]` placeholder when a raster
+  /// attachment's bytes are gone from the record, and a compact file chip
+  /// for non-image attachments.
+  Widget _userAttachments(BuildContext context) {
+    if (message.attachments.isEmpty) return const SizedBox.shrink();
+    final strings = FaChatStrings.of(context);
+    final palette = fahChatColorsOf(context);
+    final thumbs = <int, Uint8List>{
+      for (final (index, attachment) in message.attachments.indexed)
+        if (attachment.bytes != null) index: attachment.bytes!,
+    };
+    final gallery = [for (final bytes in thumbs.values) bytes];
+    final overflow = thumbs.length - _kMaxBubbleThumbs;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          for (final (i, thumb) in thumbs.entries
+              .take(_kMaxBubbleThumbs)
+              .indexed)
+            GestureDetector(
+              onTap: () =>
+                  showFahImagePreview(context, gallery, initialIndex: i),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Image.memory(
+                  thumb.value,
+                  width: thumbs.length == 1 ? 200 : 84,
+                  height: thumbs.length == 1 ? 150 : 84,
+                  cacheWidth: imageCacheWidth,
+                  fit: BoxFit.cover,
+                  gaplessPlayback: true,
+                ),
+              ),
+            ),
+          if (overflow > 0)
+            GestureDetector(
+              onTap: () => showFahImagePreview(
+                context,
+                gallery,
+                initialIndex: _kMaxBubbleThumbs,
+              ),
+              child: _attachmentBox(
+                palette,
+                width: 84,
+                height: 84,
+                center: Text(
+                  strings.chatMoreAttachments(overflow),
+                  style: TextStyle(color: palette.dim, fontSize: 13),
+                ),
+              ),
+            ),
+          for (final attachment in message.attachments)
+            if (attachment.bytes == null) _attachmentChip(context, palette, attachment, strings),
+        ],
+      ),
+    );
+  }
+
+  /// The chip for an attachment without inline bytes: the labeled
+  /// `[image unavailable]` placeholder when the path is a raster image
+  /// whose bytes were dropped from the record (never a silent gap), a
+  /// file chip with the name for every other attachment.
+  Widget _attachmentChip(
+    BuildContext context,
+    FahColors palette,
+    FaChatAttachment attachment,
+    FaChatStrings strings,
+  ) {
+    final path = attachment.path;
+    // Bytes-only records render as thumbnails, never as chips; a chip
+    // without a path cannot exist (issue #461 projection guarantees it).
+    if (path == null) return const SizedBox.shrink();
+    final isImage = isInlineImageMimeType(mimeTypeForUploadName(path));
+    return _attachmentBox(
+      palette,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            isImage
+                ? Icons.image_not_supported_outlined
+                : Icons.insert_drive_file_outlined,
+            size: 14,
+            color: palette.dim,
+          ),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              // A dropped raster keeps its name next to the l10n'd
+              // unavailable label; a non-image shows just the name.
+              isImage
+                  ? '${strings.chatImageUnavailable} · ${_baseName(path)}'
+                  : _baseName(path),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: palette.dim, fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    );
+    // ponytail: chip tap stays a no-op — opening a file preview from a
+    // transcript row needs a host callback; wire it when a surface asks.
+  }
+
+  /// The rounded attachment box shared by the placeholder/file chips and
+  /// the `+N more` tile.
+  Widget _attachmentBox(
+    FahColors palette, {
+    Widget? child,
+    Widget? center,
+    double width = 0,
+    double height = 0,
+  }) {
+    final box = Container(
+      width: width > 0 ? width : null,
+      height: height > 0 ? height : null,
+      padding: width > 0 ? null : const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      alignment: center != null ? Alignment.center : null,
+      decoration: BoxDecoration(
+        color: palette.panelAlt.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: palette.dim.withValues(alpha: 0.3)),
+      ),
+      child: center ?? child,
+    );
+    return width > 0 ? box : ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 280),
+      child: box,
+    );
+  }
+
+  /// The file name of a sandbox attachment path (`uploads/a/b.png` →
+  /// `b.png`).
+  String _baseName(String path) => path.split('/').last;
 
   /// The default AI avatar: the Fa brand `>_` tile ([FaAiAvatar]) — the
   /// launcher brand-tile language, not a stock sparkle. Shown when no
@@ -427,7 +598,7 @@ class ChatMessageTile extends StatelessWidget {
                 constraints: const BoxConstraints(maxWidth: 280),
                 child: images.image(
                   path: generatedImagePath,
-                  onTap: (bytes) => showFahImagePreview(context, bytes),
+                  onTap: (bytes) => showFahImagePreview(context, [bytes]),
                 ),
               ),
             ),

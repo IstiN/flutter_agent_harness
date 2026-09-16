@@ -8,6 +8,7 @@ import 'package:flutter/widgets.dart' show WidgetsBinding;
 import 'package:fa_ui/fa_ui.dart'
     show
         FaApprovalModeController,
+        FaChatAttachment,
         FaChatConnection,
         FaChatMessage,
         FaChatService,
@@ -89,6 +90,8 @@ part 'agent_service_events.dart';
 part 'agent_service_sessions.dart';
 part 'agent_service_runs.dart';
 part 'agent_service_connection_guard.dart';
+part 'agent_service_persistence.dart';
+part 'agent_service_transcript.dart';
 
 /// A UI-facing chat message.
 
@@ -2530,20 +2533,6 @@ class AgentService extends ChangeNotifier
   Timer? _idleWatchdog;
   int _activeToolCalls = 0;
 
-  void _armIdleWatchdog() {
-    _idleWatchdog?.cancel();
-    _idleWatchdog = Timer(_responseTimeout, () {
-      if (_activeToolCalls > 0) return; // a long tool is still running
-      if (!isStreaming) return; // run already completed — no false positive
-      abort();
-      isStreaming = false;
-      error =
-          'The model stopped responding for '
-          '${_responseTimeout.inSeconds} seconds.';
-      notifyListeners();
-    });
-  }
-
   /// Aborts the current run, if any.
   @override
   void abort() => _agent.abort();
@@ -2551,30 +2540,6 @@ class AgentService extends ChangeNotifier
   /// Serializes `_persist` runs so concurrent triggers never double-append
   /// the same message.
   Future<void> _persistChain = Future<void>.value();
-
-  /// Crash-safe persistence: append finished messages/tool results to the
-  /// session file AS THEY LAND (serialized through [_persistChain]), so a
-  /// crash mid-run loses nothing the agent already produced — persisting
-  /// only on AgentEnd (the old behavior) lost the whole turn, tool calls
-  /// included, when the app died mid-run. Torn trailing writes from a crash
-  /// mid-append self-heal on the next load (the JSONL storage truncates
-  /// them).
-  void _persistSoon() {
-    // Our own appends grow the file — re-arm the external watcher's
-    // baseline so our writes don't trigger an external reload.
-    unawaited(() async {
-      final file = _sessionFile;
-      if (file == null) return;
-      final info = (await env.fileInfo(file)).valueOrNull;
-      if (info != null) _sessionWatchBytes = info.size;
-    }());
-    _persistChain = _persistChain.then((_) => _persist()).catchError((
-      Object _,
-    ) {
-      // Best effort: the transcript stays in memory; the next trigger
-      // retries the missed appends (see _persistedCount).
-    });
-  }
 
   @override
   void dispose() {
@@ -2699,53 +2664,6 @@ class AgentService extends ChangeNotifier
     }
   }
 
-  /// Projects a persisted context [Message] back into the UI transcript.
-  static FahChatMessage _toChatMessage(Message message) {
-    switch (message) {
-      case UserMessage(:final content):
-        if (content is String) {
-          return FahChatMessage(role: 'user', content: content);
-        }
-        final blocks = content as List<ContentBlock>;
-        Uint8List? imageBytes;
-        for (final block in blocks.whereType<ImageContent>()) {
-          imageBytes = base64Decode(block.data);
-          break;
-        }
-        // Strip the '[attached file: uploads/… — read it with your tools]'
-        // prefix from the visible text — the image already carries the
-        // content, and the path reference is agent-facing only.
-        final visibleText = blocks
-            .whereType<TextContent>()
-            .map((b) => b.text)
-            .join('\n')
-            .replaceAll(RegExp(r'\[attached file: uploads/[^\]]+\]\s*\n?'), '')
-            .trim();
-        return FahChatMessage(
-          role: 'user',
-          content: visibleText,
-          imageBytes: imageBytes,
-        );
-      case AssistantMessage(:final content):
-        return FahChatMessage(
-          role: 'assistant',
-          content: content.whereType<TextContent>().map((b) => b.text).join(),
-        );
-      case ToolResultMessage(:final content, :final toolName, :final isError):
-        return FahChatMessage(
-          role: 'tool',
-          content: content
-              .whereType<TextContent>()
-              .map((b) => b.text)
-              .join('\n'),
-          toolName: toolName,
-          isError: isError,
-        );
-      default:
-        return FahChatMessage(role: 'system', content: message.toString());
-    }
-  }
-
   void _clearError() {
     if (error != null) {
       error = null;
@@ -2772,7 +2690,13 @@ class AgentService extends ChangeNotifier
         _ => '## ${m.role}',
       };
       buffer.writeln(header);
-      if (m.imageBytes != null) buffer.writeln('[image attached]');
+      final images = m.attachments.where((a) => a.bytes != null).length;
+      if (images > 0) buffer.writeln('[image attached ×$images]');
+      for (final attachment in m.attachments) {
+        if (attachment.path != null && attachment.bytes == null) {
+          buffer.writeln('[attached file: ${attachment.path}]');
+        }
+      }
       if (m.content.isNotEmpty) buffer.writeln(m.content);
       buffer.writeln();
     }
@@ -2794,54 +2718,6 @@ class AgentService extends ChangeNotifier
   /// The skip is safe — the live pass iterates the live list and
   /// advances `_persistedCount` for everything it saw.
   bool _persistRunning = false;
-
-  Future<void> _persist() async {
-    if (_persistRunning) return;
-    _persistRunning = true;
-    try {
-      await _persistUnchecked();
-    } finally {
-      _persistRunning = false;
-    }
-  }
-
-  Future<void> _persistUnchecked() async {
-    // The session is created lazily on the first persisted message — no
-    // JSONL file appears until the user actually writes something.
-    await _materialiseSessionIfNeeded();
-    final session = _session;
-    if (session == null) return;
-    final all = _agent.state.messages;
-    for (final message in all.skip(_persistedCount)) {
-      // A captured summary must sit on the chain AFTER the turn's user
-      // message (else it roots itself off the turn) and BEFORE the assistant
-      // message its request produced — the replay walk derives the step
-      // from exactly that neighborhood.
-      if (message is AssistantMessage) {
-        await _flushRequestSummaries(session);
-      }
-      final id = await session.appendMessage(message);
-      // The finalized record replaces the streamed synthetic rows in the
-      // trajectory ledger (builder keys them by turn/step).
-      final record = await session.getEntry(id);
-      if (record != null) {
-        _trajectory.append(record);
-        // The view branch accumulates own-run records too — a rebuild
-        // while deep-paged must not drop the tail rows the user just
-        // watched stream in (issue #135 round 2).
-        _viewBranch?.add(record);
-      }
-    }
-    // Leftovers (a run aborted before its assistant reply) flush at the
-    // tail; the next assistant step re-attaches them or they stay an
-    // inert orphan.
-    await _flushRequestSummaries(session);
-    // Presented dynamic messages persist right after the messages that
-    // carried them (the replay walk inserts each marker by counting the
-    // message records ahead of it on the chain).
-    await _flushDynamicWidgets(session);
-    _persistedCount = all.length;
-  }
 
   /// Persists presented dynamic messages as `dynamic_widget` custom
   /// records (the replay source; see [DynamicMessagesService.adoptBranch]).

@@ -8,7 +8,6 @@
 library;
 
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:fa/l10n/app_localizations.dart';
@@ -20,11 +19,8 @@ import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:fa_ui/fa_ui.dart' show FaChatAttachment;
 import 'package:flutter_test/flutter_test.dart';
-// path_provider / plugin_platform_interface come in transitively (test-only
-// fakes, same trick as the golden chat tests).
-import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
-import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 /// A 2×2 teal/indigo PNG (76 bytes), generated once offline and embedded
 /// so the tests never touch network or assets.
@@ -77,27 +73,15 @@ AgentService _fakeService(ExecutionEnv env) {
   );
 }
 
-/// Off the web the attachment bytes land in path_provider's temp directory;
-/// there is no plugin implementation in a widget test, so the platform
-/// interface is replaced outright (mirrors the golden chat tests).
-class _FakePathProviderPlatform extends PathProviderPlatform
-    with MockPlatformInterfaceMixin {
-  _FakePathProviderPlatform(this._tempPath);
-
-  final String _tempPath;
-
-  @override
-  Future<String?> getTemporaryPath() async => _tempPath;
-}
-
-/// The attached-image thumbnail — file-backed, unlike sandbox markdown
-/// images ([MemoryImage]). `Image.file(cacheWidth: …)` wraps the provider
-/// in a [ResizeImage]; full-resolution previews keep the bare [FileImage].
+/// The attached-image thumbnail — the user bubble renders it straight
+/// from the record's bytes (`Image.memory(cacheWidth: …)` wraps the
+/// provider in a [ResizeImage]; full-resolution previews keep the bare
+/// [MemoryImage]).
 Finder _attachmentImage() => find.byWidgetPredicate((widget) {
   if (widget is! Image) return false;
   final provider = widget.image;
-  return provider is FileImage ||
-      (provider is ResizeImage && provider.imageProvider is FileImage);
+  return provider is MemoryImage ||
+      (provider is ResizeImage && provider.imageProvider is MemoryImage);
 });
 
 /// The decode constraint of the matched thumbnail: the [ResizeImage.width]
@@ -111,8 +95,8 @@ int? _previewCacheWidth(WidgetTester tester) {
 }
 
 /// Pumps the chat with one image-attachment message inside
-/// [ImagePreviewScope] and lets the temp-file write + image decode (real
-/// async I/O) land before returning.
+/// [ImagePreviewScope] and lets the thumbnail decode (real async I/O)
+/// land before returning.
 Future<void> _pumpChat(
   WidgetTester tester,
   AgentService service,
@@ -146,20 +130,6 @@ Future<void> _pumpChat(
 }
 
 void main() {
-  late Directory tmp;
-  late PathProviderPlatform previousPathProvider;
-
-  setUp(() {
-    tmp = Directory.systemTemp.createTempSync('fah_image_preview_test');
-    previousPathProvider = PathProviderPlatform.instance;
-    PathProviderPlatform.instance = _FakePathProviderPlatform(tmp.path);
-  });
-
-  tearDown(() {
-    PathProviderPlatform.instance = previousPathProvider;
-    tmp.deleteSync(recursive: true);
-  });
-
   AgentService serviceWithAttachment(ExecutionEnv env) {
     final service = _fakeService(env);
     addTearDown(service.dispose);
@@ -167,7 +137,9 @@ void main() {
       FahChatMessage(
         role: 'user',
         content: 'what is this?',
-        imageBytes: _tinyPngBytes,
+        attachments: <FaChatAttachment>[
+          (bytes: _tinyPngBytes, path: 'uploads/what-is-this.png'),
+        ],
       ),
     );
     return service;

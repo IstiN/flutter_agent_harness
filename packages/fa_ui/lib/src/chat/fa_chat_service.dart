@@ -19,7 +19,7 @@ final class FaChatMessage {
   FaChatMessage({
     required this.role,
     required this.content,
-    this.imageBytes,
+    this.attachments = const [],
     this.toolName,
     this.isError = false,
     this.data,
@@ -33,8 +33,11 @@ final class FaChatMessage {
   /// transcript (see `_currentAssistantMessage` in Fa's AgentService).
   String content;
 
-  /// Optional inline image (user attachments).
-  final Uint8List? imageBytes;
+  /// The user message's attachments, oldest first (issue #461). The tile
+  /// renders an inline thumbnail per entry with [bytes], a labeled
+  /// `[image unavailable]` placeholder when only a raster-image [path] is
+  /// known (bytes dropped from the record), and a file chip otherwise.
+  final List<FaChatAttachment> attachments;
 
   /// Tool name for `tool` messages (rendered collapsed by default).
   final String? toolName;
@@ -46,6 +49,12 @@ final class FaChatMessage {
   /// interprets it.
   final Object? data;
 }
+
+
+/// One attachment of a user message: [bytes] when the record carries the
+/// inline image part, plus the sandbox [path] it was staged under
+/// (`uploads/…`, null for bytes sent without a path — in-app screenshots).
+typedef FaChatAttachment = ({Uint8List? bytes, String? path});
 
 /// A file staged in the composer before sending: written into the agent
 /// sandbox and referenced by path.
