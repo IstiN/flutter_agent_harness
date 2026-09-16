@@ -30,6 +30,7 @@ class ChatComposer extends StatelessWidget {
     this.asr,
     this.asrTranscriber,
     this.clipboardImageReader = _readClipboardImage,
+    this.dropBridge,
     this.leadingBuilder,
     this.hideMicWhenNotEmpty = false,
     this.onSent,
@@ -57,6 +58,11 @@ class ChatComposer extends StatelessWidget {
   /// Clipboard image probe for smart paste (Cmd/Ctrl+V). Defaults to the
   /// super_clipboard-backed reader; tests inject a fake or null.
   final fa_ui.FaClipboardImageReader? clipboardImageReader;
+
+  /// OS drag-and-drop over the chat surface (issue #465): the screen's
+  /// [fa_ui.FaChatDropBridge] lands here so dropped files stage as the
+  /// same chips. Tests pass null (the default surface wires its own).
+  final fa_ui.FaChatDropBridge? dropBridge;
 
   /// Replaces the built-in attach button in the leading slot (the session
   /// chat bar's sessions-drawer toggle). Null keeps the attach button.
@@ -106,6 +112,7 @@ class ChatComposer extends StatelessWidget {
         transcriber: asrTranscriber,
       ),
       clipboardImageReader: clipboardImageReader,
+      dropBridge: dropBridge,
       leadingBuilder: leadingBuilder,
       hideMicWhenNotEmpty: hideMicWhenNotEmpty,
       onSent: onSent,
@@ -141,7 +148,8 @@ class ChatComposer extends StatelessWidget {
       // Clipboard access is best effort — a failure just means "no image".
     }
     if (bytes == null || bytes.isEmpty) return null;
-    final name = 'clipboard-${DateTime.now().millisecondsSinceEpoch}.png';
+    // The issue contract's synthesized paste name (issue #465).
+    final name = 'paste-${DateTime.now().millisecondsSinceEpoch}.png';
     return (name: name, bytes: bytes, mimeType: mimeTypeForUploadName(name));
   }
 }

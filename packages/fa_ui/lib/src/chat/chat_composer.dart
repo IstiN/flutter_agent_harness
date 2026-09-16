@@ -4,7 +4,9 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:cross_file/cross_file.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -36,6 +38,7 @@ class ChatComposer extends StatefulWidget {
     this.cameraPicker,
     this.voiceInput,
     this.clipboardImageReader,
+    this.dropBridge,
     this.leadingBuilder,
     this.hideMicWhenNotEmpty = false,
     this.onSent,
@@ -72,6 +75,12 @@ class ChatComposer extends StatefulWidget {
   /// text only.
   final FaClipboardImageReader? clipboardImageReader;
 
+  /// OS drag-and-drop consumer (issue #465): the chat surface owns the
+  /// [DropTarget] over the transcript + composer and forwards drops here;
+  /// the composer state registers its handler so dropped files stage as
+  /// the same pending chips the pickers produce. Null ignores drops.
+  final FaChatDropBridge? dropBridge;
+
   /// Replaces the built-in attach button in the leading slot (e.g. the
   /// launcher's sessions-drawer toggle). Null keeps the default attach
   /// button (shown when a picker is wired).
@@ -99,10 +108,12 @@ class ChatComposer extends StatefulWidget {
   final bool autofocus;
 
   @override
-  State<ChatComposer> createState() => _ChatComposerState();
+  ChatComposerState createState() => ChatComposerState();
 }
 
-class _ChatComposerState extends State<ChatComposer>
+/// Public so the chat surface can hand OS drops to a default composer
+/// through a [GlobalKey] and tests can stage files directly.
+class ChatComposerState extends State<ChatComposer>
     with SingleTickerProviderStateMixin {
   final _textController = TextEditingController();
   final _focusNode = FocusNode();
@@ -157,6 +168,8 @@ class _ChatComposerState extends State<ChatComposer>
     // The send/stop button's look depends on the field being non-empty.
     _textController.addListener(_onTextChanged);
     _focusNode.addListener(_onFocusChange);
+    // OS drops over the chat surface land here (issue #465).
+    widget.dropBridge?.handler = _handleSurfaceDrop;
     // Auto-focus the input when a session opens (first mount or switch).
     if (widget.autofocus) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -168,6 +181,10 @@ class _ChatComposerState extends State<ChatComposer>
   @override
   void didUpdateWidget(covariant ChatComposer oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.dropBridge != widget.dropBridge) {
+      oldWidget.dropBridge?.handler = null;
+      widget.dropBridge?.handler = _handleSurfaceDrop;
+    }
     if (oldWidget.service != widget.service) {
       oldWidget.service.removeListener(_onServiceChanged);
       _isStreaming = widget.service.isStreaming;
@@ -183,6 +200,7 @@ class _ChatComposerState extends State<ChatComposer>
 
   @override
   void dispose() {
+    widget.dropBridge?.handler = null;
     _focusNode.removeListener(_onFocusChange);
     _focusNode.dispose();
     widget.service.removeListener(_onServiceChanged);
@@ -270,6 +288,73 @@ class _ChatComposerState extends State<ChatComposer>
     }
   }
 
+  /// Stages a batch of files as pending chips — the shared tail of the
+  /// picker, paste, and drop paths (issue #465). The batch size cap is
+  /// checked before anything stages (an oversized batch never lands
+  /// partially); beyond [kMaxPendingAttachments] the extra files are
+  /// skipped with a notice (E2).
+  Future<void> stageDroppedFiles(List<FaChatUploadFile> files) async {
+    final strings = FaChatStrings.of(context);
+    final sizeError = uploadBatchSizeError(
+      [for (final file in files) (name: file.name, bytes: file.bytes)],
+      message: (total, max) => strings.uploadTooLarge(max, total),
+    );
+    if (sizeError != null) {
+      _showSnack(sizeError);
+      return;
+    }
+    final room = kMaxPendingAttachments - _pendingAttachments.length;
+    if (files.length > room) {
+      _showSnack(strings.chatAttachmentCap(files.length - room));
+    }
+    for (final file in files.take(room.clamp(0, files.length))) {
+      await _stagePending(file.name, file.bytes);
+    }
+  }
+
+  /// OS drop delivered by the chat surface ([FaChatDropBridge]): files
+  /// stage as chips, a text-only drop inserts at the cursor. Directories
+  /// (iOS Files / Finder folder drags) are rejected with a hint instead
+  /// of ghosting (E4); unreadable files surface the attach-error notice.
+  Future<void> _handleSurfaceDrop(List<XFile> files, String? rawText) async {
+    final staged = <FaChatUploadFile>[];
+    for (final file in files) {
+      if (file.path.isNotEmpty && Directory(file.path).existsSync()) {
+        if (!mounted) return;
+        _showSnack(
+          FaChatStrings.of(context).chatDropFolderRejected(file.name),
+        );
+        continue;
+      }
+      final Uint8List bytes;
+      try {
+        bytes = await file.readAsBytes();
+      } on Object catch (e) {
+        if (!mounted) return;
+        _showSnack(
+          FaChatStrings.of(context).chatAttachError(e.toString(), file.name),
+        );
+        continue;
+      }
+      staged.add((
+        name: file.name,
+        bytes: bytes,
+        mimeType: mimeTypeForUploadName(file.name),
+      ));
+    }
+    if (staged.isNotEmpty) {
+      await stageDroppedFiles(staged);
+      return;
+    }
+    // Text drags (desktop_drop exposes the payload as raw text on Linux).
+    final text = rawText?.trim();
+    if (text != null && text.isNotEmpty) insertDroppedText(text);
+  }
+
+  /// Inserts dropped/pasted text at the cursor (text drags fall back to
+  /// insertion per the issue contract).
+  void insertDroppedText(String text) => _insertTextAtSelection(text);
+
   /// Stages one picked file into `uploads/` right away and adds a pending
   /// chip for it. Failures surface as a snackbar — nothing is staged and
   /// nothing is sent.
@@ -344,7 +429,9 @@ class _ChatComposerState extends State<ChatComposer>
   /// text → staged `.txt` chip; short single-line text → inserted inline at
   /// the cursor. Mirrors YoLoIT's SmartClipboardPasteService, except staged
   /// content lands in the sandbox `uploads/` as an attachment chip instead
-  /// of a pasted temp-file path.
+  /// of a pasted temp-file path. A MIXED clipboard (image + text) lands
+  /// both — the chip AND the inline text; the user keeps what they want
+  /// (issue #465 AC2).
   Future<void> _handleSmartPaste() async {
     final imageReader = _clipboardImageReader;
     if (imageReader != null) {
@@ -352,12 +439,21 @@ class _ChatComposerState extends State<ChatComposer>
         final image = await imageReader();
         if (image != null) {
           if (mounted) await _stagePending(image.name, image.bytes);
+          if (mounted) await _pasteClipboardText();
           return;
         }
       } on Object {
         // Clipboard probing is best effort — fall through to text.
       }
     }
+    if (!mounted) return;
+    await _pasteClipboardText();
+  }
+
+  /// Reads text/plain off the clipboard (silently nothing when the
+  /// platform denies or holds no text — the platform-honesty fallback,
+  /// AC4) and applies the smart-paste rules.
+  Future<void> _pasteClipboardText() async {
     String? text;
     try {
       text = (await Clipboard.getData('text/plain'))?.text;
@@ -473,7 +569,8 @@ class _ChatComposerState extends State<ChatComposer>
 
   /// Picks arbitrary files and stages them as pending attachments. Staging
   /// happens immediately — the chips wait in the composer until the user
-  /// sends (see [_send]).
+  /// sends (see [_send]). The batch flows through [stageDroppedFiles], the
+  /// same size-cap/attachment-cap tail the paste and drop paths use.
   Future<void> _attachFiles(FaChatUploadPicker picker) async {
     final List<FaChatUploadFile> picked;
     try {
@@ -485,20 +582,7 @@ class _ChatComposerState extends State<ChatComposer>
       return;
     }
     if (picked.isEmpty || !mounted) return;
-
-    final sizeError = uploadBatchSizeError(
-      [for (final file in picked) (name: file.name, bytes: file.bytes)],
-      message: (total, max) =>
-          FaChatStrings.of(context).uploadTooLarge(max, total),
-    );
-    if (sizeError != null) {
-      _showSnack(sizeError);
-      return;
-    }
-
-    for (final file in picked) {
-      await _stagePending(file.name, file.bytes);
-    }
+    await stageDroppedFiles(picked);
   }
 
   void _showSnack(String message) {

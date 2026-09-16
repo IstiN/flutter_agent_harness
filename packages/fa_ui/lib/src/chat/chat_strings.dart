@@ -4,6 +4,8 @@
 
 import 'package:flutter/widgets.dart';
 
+import 'upload_utils.dart';
+
 /// The chat UI strings (composer, message tiles, approval/ask/secret sheets,
 /// media player). Same resolution pattern as [FaUiStrings]: built-in
 /// English/Russian defaults, host override via [FaChatStringsScope].
@@ -56,6 +58,9 @@ abstract class FaChatStrings {
   String chatUploadFailed(String error);
   String uploadTooLarge(String max, String total);
   String get chatLoadEarlier;
+  String chatAttachmentCap(int skipped);
+  String chatDropFolderRejected(String name);
+  String get chatCollapse;
   String chatLoadEarlierCount(String count);
   String get chatLoadEarlierFailed;
   String chatBeginningOfSession(String count);
@@ -190,6 +195,14 @@ class FaChatStringsEn extends FaChatStrings {
       'Upload is too large: $total exceeds the $max per-batch limit.';
   @override
   String chatClampHint(int lines) => lines == 1 ? '+1 line' : '+$lines lines';
+  @override
+  String chatAttachmentCap(int skipped) =>
+      'Attachment limit is $kMaxPendingAttachments — skipped $skipped.';
+  @override
+  String chatDropFolderRejected(String name) =>
+      'Folders cannot be attached — "$name" skipped.';
+  @override
+  String get chatCollapse => 'Collapse';
   @override
   String get chatShowMore => 'Show more';
   @override
@@ -377,6 +390,14 @@ class FaChatStringsRu extends FaChatStrings {
         : 'строк';
     return '+$lines $word';
   }
+  @override
+  String chatAttachmentCap(int skipped) =>
+      'Лимит вложений — $kMaxPendingAttachments, пропущено $skipped.';
+  @override
+  String chatDropFolderRejected(String name) =>
+      'Папки прикрепить нельзя — «$name» пропущена.';
+  @override
+  String get chatCollapse => 'Свернуть';
   @override
   String get chatShowMore => 'Развернуть';
   @override
