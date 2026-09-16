@@ -164,17 +164,32 @@ final class Session {
   /// the active branch carries a [CompactionRecord] or the file start is
   /// reached (sessions without compaction page everything, as before).
   /// A no-op for full storages. [maxPages] bounds pathological files.
-  Future<void> ensureCompactionBoundaryResident({int maxPages = 512}) async {
+  ///
+  /// Returns whether the TAIL-ANCHORED branch is intact: deep paging
+  /// slides the newest side out of the residency cache, and once the
+  /// leaf is gone [getBranch] reads EMPTY — the resume would silently
+  /// look like a fresh session (pty_resume_equivalence AC6 regression).
+  /// `false` means the caller must fall back to a full open (the
+  /// documented "sessions without compaction degenerate to the full
+  /// load"); a genuinely empty session reports `true`.
+  Future<bool> ensureCompactionBoundaryResident({int maxPages = 512}) async {
     final storage = _storage;
-    if (storage is! WindowedSessionStorage) return;
+    if (storage is! WindowedSessionStorage) return true;
     var pages = 0;
     while (pages < maxPages) {
       final branch = await getBranch();
-      if (branch.any((r) => r is CompactionRecord)) return;
-      if (!storage.hasOlder) return;
+      // The window slid past the leaf: paging further cannot bring the
+      // compaction boundary and the leaf into one resident set — report
+      // the loss instead of finishing with an empty branch.
+      if (branch.isEmpty && (await storage.getEntries()).isNotEmpty) {
+        return false;
+      }
+      if (branch.any((r) => r is CompactionRecord)) return true;
+      if (!storage.hasOlder) return true;
       pages++;
       await storage.loadOlder();
     }
+    return (await getBranch()).isNotEmpty;
   }
 
   Future<String> _append(
