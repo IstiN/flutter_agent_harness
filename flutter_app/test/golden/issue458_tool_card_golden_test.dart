@@ -18,22 +18,26 @@ final _bashOutput = [
     'flutter analyze --no-fatal-infos  •  issue $i: no problems found!',
 ].join('\n');
 
+Future<ChatMessageTile> _tile({required bool isError}) async => ChatMessageTile(
+  message: FaChatMessage(
+    role: 'tool',
+    content: _bashOutput,
+    toolName: 'bash',
+    isError: isError,
+  ),
+  images: SandboxImageResolver(MemoryExecutionEnv()),
+);
+
 Future<void> _pump(
   WidgetTester tester,
-  FaChatMessage message, {
+  ChatMessageTile tile, {
   required ThemeData theme,
 }) async {
   await pumpGolden(
     tester,
     Align(
       alignment: Alignment.topLeft,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: ChatMessageTile(
-          message: message,
-          images: SandboxImageResolver(MemoryExecutionEnv()),
-        ),
-      ),
+      child: Padding(padding: const EdgeInsets.all(16), child: tile),
     ),
     size: goldenSizePhone,
     theme: theme,
@@ -43,47 +47,58 @@ Future<void> _pump(
 void main() {
   setUpAll(ensureGoldenFonts);
 
-  FaChatMessage tool({required bool isError}) => FaChatMessage(
-    role: 'tool',
-    content: _bashOutput,
-    toolName: 'bash',
-    isError: isError,
-  );
+  testWidgets('clamp default (dark)', (tester) async {
+    await _pump(tester, await _tile(isError: false), theme: buildFahTheme());
+    expect(find.text('+37 lines'), findsOneWidget);
+    await expectGolden(tester, 'issue458_tool_card_clamp');
+  });
 
-  for (final (name, theme) in [
-    ('issue458_tool_card_clamp', buildFahTheme()),
-    ('issue458_tool_card_clamp_light', buildFahThemeLight()),
-  ]) {
-    testWidgets('clamp default ($name)', (tester) async {
-      await _pump(tester, tool(isError: false), theme: theme);
-      expect(find.text('+37 lines'), findsOneWidget);
-      await expectGolden(tester, name);
-    });
-  }
+  testWidgets('clamp default (light)', (tester) async {
+    await _pump(
+      tester,
+      await _tile(isError: false),
+      theme: buildFahThemeLight(),
+    );
+    expect(find.text('+37 lines'), findsOneWidget);
+    await expectGolden(tester, 'issue458_tool_card_clamp_light');
+  });
 
-  for (final (name, theme) in [
-    ('issue458_tool_card_expand', buildFahTheme()),
-    ('issue458_tool_card_expand_light', buildFahThemeLight()),
-  ]) {
-    testWidgets('expanded ($name)', (tester) async {
-      await _pump(tester, tool(isError: false), theme: theme);
-      await tester.tap(find.text('+37 lines'));
-      await tester.pumpAndSettle();
-      expect(find.textContaining('issue 40'), findsOneWidget);
-      await expectGolden(tester, name);
-    });
-  }
+  testWidgets('expanded (dark)', (tester) async {
+    await _pump(tester, await _tile(isError: false), theme: buildFahTheme());
+    await tester.tap(find.text('+37 lines'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('issue 40'), findsOneWidget);
+    await expectGolden(tester, 'issue458_tool_card_expand');
+  });
 
-  for (final (name, theme) in [
-    ('issue458_tool_card_error', buildFahTheme()),
-    ('issue458_tool_card_error_light', buildFahThemeLight()),
-  ]) {
-    testWidgets('error expanded to cap ($name)', (tester) async {
-      await _pump(tester, tool(isError: true), theme: theme);
-      // No tap: failed results open expanded at the error cap.
-      expect(find.textContaining('issue 40'), findsOneWidget);
-      expect(find.text('Show less'), findsOneWidget);
-      await expectGolden(tester, name);
-    });
-  }
+  testWidgets('expanded (light)', (tester) async {
+    await _pump(
+      tester,
+      await _tile(isError: false),
+      theme: buildFahThemeLight(),
+    );
+    await tester.tap(find.text('+37 lines'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('issue 40'), findsOneWidget);
+    await expectGolden(tester, 'issue458_tool_card_expand_light');
+  });
+
+  testWidgets('error expanded to cap (dark)', (tester) async {
+    await _pump(tester, await _tile(isError: true), theme: buildFahTheme());
+    // No tap: failed results open expanded at the error cap.
+    expect(find.textContaining('issue 40'), findsOneWidget);
+    expect(find.text('Show less'), findsOneWidget);
+    await expectGolden(tester, 'issue458_tool_card_error');
+  });
+
+  testWidgets('error expanded to cap (light)', (tester) async {
+    await _pump(
+      tester,
+      await _tile(isError: true),
+      theme: buildFahThemeLight(),
+    );
+    expect(find.textContaining('issue 40'), findsOneWidget);
+    expect(find.text('Show less'), findsOneWidget);
+    await expectGolden(tester, 'issue458_tool_card_error_light');
+  });
 }
