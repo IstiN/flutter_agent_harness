@@ -125,6 +125,7 @@ import '../secrets/secure_key_store.dart';
 import '../session/session_record.dart';
 import '../session/session_repo.dart';
 import '../session_io_retry.dart';
+import '../session/attach/file_presence_store.dart';
 import '../session/attach/session_presence.dart';
 import '../session/attach/session_lease.dart';
 import '../session/attach/session_attachment.dart';
@@ -1108,6 +1109,10 @@ class AgentCli {
     // Issue #427: transient-ENOENT retries of session-file IO log one
     // `session_io_retry` line each into the diagnostic log (fa.log).
     ioRetry: SessionIoRetryConfig(logger: _logDiagnostic),
+    // Issue #522: the deletion gate reads live heartbeats — a session a
+    // running process owns is undeletable from every other surface.
+    presenceStore: config.presenceStore,
+    processId: config.processId,
   );
   Session? _session;
 

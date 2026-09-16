@@ -310,7 +310,10 @@ extension on AgentCli {
     final session = _session;
     if (session == null) return;
     try {
-      await _repo.delete(await session.getMetadata());
+      await _repo.delete(
+        await session.getMetadata(),
+        actor: 'cli:empty-cleanup',
+      );
       _session = null;
       // The session scope is gone — drop it from the resolution.
       unawaited(AgentCliTools(this).rebuildToolAvailability());
@@ -372,6 +375,13 @@ extension on AgentCli {
           final fallbackRepo = JsonlSessionRepo(
             fs: _env,
             sessionsRoot: fallbackRoot,
+            // Issue #522: the gate needs live heartbeats on any root the
+            // process writes sessions into — the fallback root included.
+            presenceStore: FileSessionPresenceStore(
+              env: _env,
+              root: fallbackRoot,
+            ),
+            processId: config.processId,
           );
           final session = await fallbackRepo.create(
             JsonlSessionCreateOptions(
