@@ -38,6 +38,23 @@ void main() {
     expect(snap.isEmpty, isTrue);
   });
 
+  test(
+    'captureLostJobs counts manifest entries left by the previous run',
+    () async {
+      final cli = cliFor(FakeStreamFunction([textTurn('ok')]));
+      final dir = env.cwd;
+      await env.createDir('$dir/.fah/bash_jobs');
+      await env.writeFile(
+        '$dir/.fah/bash_jobs/running.json',
+        '[{"id":"a","command":"sleep 90"},{"id":"b","command":"sleep 120"}]',
+      );
+      await cli.waitingCaptureLostJobsForTest();
+      expect(cli.waitingLostJobsForTest, 2);
+      final snap = await cli.waitersSnapshotForTest();
+      expect(snap.lostJobs, 2);
+    },
+  );
+
   test('heartbeat tick with no waiters settles the chain quietly', () async {
     final cli = cliFor(FakeStreamFunction([textTurn('ok')]));
     cli.waitingHeartbeatTickForTest();

@@ -193,13 +193,11 @@ final class _WaitingCoordinator {
   /// the busy row already shows what is happening (and E3 keeps waiters
   /// running underneath); the next beat after the turn catches up.
   Future<void> _deliverHeartbeat() =>
-      _beatBlocked ? Future.value() : _beatActive();
+      (_beatBlocked || _cli._viewer != null) ? Future.value() : _beatActive();
 
   /// Idle-only: while busy the busy row already shows what is happening
   /// (E3 keeps waiters running underneath); the next beat catches up.
-  /// Viewers observe, never drive runs.
-  bool get _beatBlocked =>
-      _cli._headlessMode || _cli._exited || _cli.isBusy || _cli._viewer != null;
+  bool get _beatBlocked => _cli._headlessMode || _cli._exited || _cli.isBusy;
 
   /// The active beat: no waiters left — sync the chain off; otherwise a
   /// status round through the same self-wake channel as the
@@ -416,4 +414,13 @@ extension AgentCliWaitingSeams on AgentCli {
   /// Test seam: the current waiter aggregate — jobs, timers, lost jobs.
   @visibleForTesting
   Future<WaiterSnapshot> waitersSnapshotForTest() => _waiting.snapshot();
+
+  /// Test seam: re-runs the boot-time restart-honesty capture so tests
+  /// can seed the cross-run manifest and observe the lost-jobs count.
+  @visibleForTesting
+  Future<void> waitingCaptureLostJobsForTest() => _waiting.captureLostJobs();
+
+  /// Test seam: the current restart-honesty count.
+  @visibleForTesting
+  int get waitingLostJobsForTest => _waiting.lostJobs;
 }
