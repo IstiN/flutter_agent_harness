@@ -1011,6 +1011,10 @@ class SessionChatSheetState extends State<SessionChatSheet>
                 if (!panelOpen)
                   FaWorkBar(service: service, onExpand: expand, embedded: true),
                 ChatComposer(
+                  // Single ownership (issue #464): docked, the FaWorkBar
+                  // above owns the working state; expanded, it flips to
+                  // the composer's own row — never both at once.
+                  showStreamingStatus: panelOpen,
                   // The status row above appears/disappears with the panel
                   // and the streaming state — WITHOUT a stable key the
                   // column child matching would recreate the composer on
