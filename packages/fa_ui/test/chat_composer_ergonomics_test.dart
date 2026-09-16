@@ -40,7 +40,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final height = tester.getSize(find.byKey(const ValueKey('composer'))).height;
+    final height = tester
+        .getSize(find.byKey(const ValueKey('composer')))
+        .height;
     // Compact budget: buttons floor the row at 48, outer padding 4+4 —
     // 57dp total (1dp top hairline + 48dp buttons + 4+4dp padding). The pre-fix nested padding
     // (8+12 above and below the text) measures 64dp.
@@ -68,7 +70,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final height = tester.getSize(find.byKey(const ValueKey('composer'))).height;
+    final height = tester
+        .getSize(find.byKey(const ValueKey('composer')))
+        .height;
     expect(height, lessThanOrEqualTo(57), reason: 'composer height');
   });
 
