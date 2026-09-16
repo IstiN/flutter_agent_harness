@@ -9,9 +9,10 @@ import 'package:flutter_svg/flutter_svg.dart';
 /// font dependency): the composer's attach affordance and the assistant's
 /// brand avatar.
 
-/// The attach affordance: a rounded-cap plus inside a hairline circle —
-/// the modern "add content" mark (iMessage-style), rhyming with the mic
-/// circle in the one-action trailing slot. Replaces the stock paperclip.
+/// The attach affordance: a rounded-cap plus inside a rounded square
+/// (owner-approved variant B3) — the modern "add content" mark, its 2px
+/// stroke rhyming with the mic circle in the one-action trailing slot.
+/// Replaces the stock paperclip.
 class FaAttachGlyph extends StatelessWidget {
   const FaAttachGlyph({super.key, required this.color, this.size = 24});
 
@@ -26,11 +27,13 @@ class FaAttachGlyph extends StatelessWidget {
       width: size,
       height: size,
       child: SvgPicture.string(
-        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">'
-        '<circle cx="12" cy="12" r="9.2" fill="none" stroke="$hex" '
-        'stroke-width="1.5"/>'
-        '<path d="M12 8.1v7.8M8.1 12h7.8" fill="none" stroke="$hex" '
-        'stroke-width="1.7" stroke-linecap="round"/>'
+        // Owner-approved variant B3 (2026-09-16), ported verbatim: a
+        // 2px-stroke rounded square with a plus, round caps/joins.
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
+        'fill="none" stroke="$hex" stroke-width="2" stroke-linecap="round" '
+        'stroke-linejoin="round">'
+        '<rect x="3.5" y="3.5" width="17" height="17" rx="5"/>'
+        '<path d="M12 8.5v7M8.5 12h7"/>'
         '</svg>',
         fit: BoxFit.contain,
       ),
