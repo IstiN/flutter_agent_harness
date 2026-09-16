@@ -2,9 +2,11 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:async';
 import 'dart:js_interop';
 
 import 'package:fa/sandbox/fs_persistence.dart';
+import 'package:web/web.dart' as web;
 
 @JS()
 external JSBoolean get _fahFsGetAllDefined;
@@ -37,11 +39,18 @@ external JSPromise _fahFsRemoveJs(JSArray keys);
 final class IdbFsSnapshotStore implements FsSnapshotStore {
   static bool _scriptChecked = false;
 
-  static void _ensureScript() {
+  /// Loads the helper on demand. Every build's `index.html` ships the
+  /// `<script src="fs_store.js">` tag, but a stale or hand-assembled bundle
+  /// can miss it (issue #470: the embedded Outlook pane booted with no
+  /// persistence at all). Instead of only throwing, inject the same-origin
+  /// file — allowed by every CSP here ('self'), unlike the inline injection
+  /// that MV3 extension pages forbid — and re-check once; throw only if the
+  /// helper is still missing afterwards.
+  static Future<void> _ensureScript() async {
     if (_scriptChecked) return;
-    // The helper ships as web/fs_store.js. Injecting it as an inline
-    // <script> violates the MV3 extension CSP (extension_pages forbids
-    // inline code), so the panel build needs the file, not an injection.
+    if (!_fahFsGetAllDefined.toDart) {
+      await _injectFsStoreScript();
+    }
     _scriptChecked = _fahFsGetAllDefined.toDart;
     if (!_scriptChecked) {
       throw StateError(
@@ -51,9 +60,25 @@ final class IdbFsSnapshotStore implements FsSnapshotStore {
     }
   }
 
+  /// Appends `<script src="fs_store.js">` and completes on load/error.
+  static Future<void> _injectFsStoreScript() {
+    final completer = Completer<void>();
+    final script =
+        web.document.createElement('script') as web.HTMLScriptElement;
+    script.src = 'fs_store.js';
+    script.onload = ((web.Event _) {
+      if (!completer.isCompleted) completer.complete();
+    }).toJS;
+    script.onerror = ((web.Event _) {
+      if (!completer.isCompleted) completer.complete();
+    }).toJS;
+    web.document.head?.appendChild(script);
+    return completer.future;
+  }
+
   @override
   Future<Map<String, String>> load() async {
-    _ensureScript();
+    await _ensureScript();
     final result = await _fahFsGetAllJs().toDart;
     if (result == null) return {};
     final dartified = result.dartify() as Map<Object?, Object?>;
@@ -64,13 +89,13 @@ final class IdbFsSnapshotStore implements FsSnapshotStore {
 
   @override
   Future<void> save(Map<String, String> records) async {
-    _ensureScript();
+    await _ensureScript();
     await _fahFsSetJs(records.jsify() as JSObject).toDart;
   }
 
   @override
   Future<void> remove(Iterable<String> keys) async {
-    _ensureScript();
+    await _ensureScript();
     await _fahFsRemoveJs([for (final key in keys) key.toJS].toJS).toDart;
   }
 }

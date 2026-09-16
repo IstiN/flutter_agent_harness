@@ -153,6 +153,10 @@ open(path, 'w').write(html)
 print('injected office.js + pane CSP into', path)
 PYS
 
+# --- 5. Persistence asset guard (issue #470): the pane must ship the
+# fs_store.js tag + file, or every boot loses sessions — assert it, loudly.
+python3 scripts/check_embed_assets.py check "$out/app"
+
 echo "bundled fa web app (build/pages/root/outlook/app/)"
 
 echo "assembled $out/:"
