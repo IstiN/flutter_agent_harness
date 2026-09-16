@@ -21,6 +21,11 @@ import 'package:js_widget_runtime/js_widget_runtime.dart';
 /// live engine UI tree. The engine boots lazily on first render and is
 /// owned by the session's [DynamicMessagesService]; boot failures render
 /// as an expandable error tile (AC9) instead of crashing the chat.
+/// Viewport width (logical px) at or below which the dynamic-widget tile
+/// goes edge-to-edge — zero horizontal margin (issue #457 AC1). Above it
+/// the desktop padding stays (the #379 breakpoint discipline).
+const double kDynamicTileFullWidthBreakpoint = 600;
+
 class DynamicWidgetTile extends StatefulWidget {
   const DynamicWidgetTile({
     super.key,
@@ -58,8 +63,17 @@ class _DynamicWidgetTileState extends State<DynamicWidgetTile> {
       builder: (context, _) {
         final definition = _resolve();
         if (definition == null) return const SizedBox.shrink();
+        // Issue #457 AC1: edge-to-edge on narrow (phone) viewports, the
+        // desktop margin preserved on wider canvases.
         return Container(
-          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          margin: EdgeInsets.symmetric(
+            horizontal:
+                MediaQuery.sizeOf(context).width <=
+                    kDynamicTileFullWidthBreakpoint
+                ? 0
+                : 12,
+            vertical: 6,
+          ),
           decoration: BoxDecoration(
             border: Border.all(color: Theme.of(context).dividerColor),
             borderRadius: BorderRadius.circular(12),
@@ -86,16 +100,19 @@ class _DynamicWidgetTileState extends State<DynamicWidgetTile> {
     return widget.service.byId(id);
   }
 
-  /// The title bar (issue #378 AC1): exactly one affordance, the ⋮
-  /// overflow menu — the inline save/permissions icon buttons moved into
-  /// it. The title tap still toggles collapse (issue #377 contract).
+  /// The title bar (issues #378+#457 AC2): the primary "open as app
+  /// (without saving)" icon, the chevron, and the ⋮ overflow menu — each
+  /// owning its taps outside the collapse zone. The live status renders
+  /// as a minimal dot (the pill spent header width for near-zero value,
+  /// #457 AC2). The title tap still toggles collapse (#377 contract).
   Widget _titleBar(BuildContext context, DynamicMessageDefinition definition) {
     final live = widget.service.engineFor(definition.id) != null;
+    final bootBroken = widget.service.bootErrorFor(definition.id) != null;
     // Hit-test isolation (issue #377): the collapse tap zone covers ONLY
-    // the title zone (spark, title, live badge); the action buttons and
+    // the title zone (spark, title, status dot); the action buttons and
     // the chevron live outside its gesture scope, so an action tap can
-    // never reach the collapse handler — even for the disabled save
-    // button (no onSaveAsApp), whose tap used to toggle the tile.
+    // never reach the collapse handler — including the promoted
+    // open-as-app icon (issue #457 AC2 REG).
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
       child: Row(
@@ -124,7 +141,24 @@ class _DynamicWidgetTileState extends State<DynamicWidgetTile> {
                       style: Theme.of(context).textTheme.titleSmall,
                     ),
                   ),
-                  if (live) DynamicLiveBadge(),
+                  // Issue #457 AC2: the `● live` pill minimized to a dot
+                  // (tooltip keeps the meaning); still updated live by
+                  // the service listenable (E2).
+                  if (live)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 8),
+                      child: Tooltip(
+                        message: context.l10n.dynamicMessagesLive,
+                        child: Container(
+                          width: 8,
+                          height: 8,
+                          decoration: const BoxDecoration(
+                            color: Colors.green,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -141,6 +175,26 @@ class _DynamicWidgetTileState extends State<DynamicWidgetTile> {
                 size: 20,
               ),
             ),
+          ),
+          // The promoted primary action (issue #457 AC2): opens the
+          // ephemeral runtime without saving. Owns its taps — it sits
+          // outside every collapse gesture zone (#377 isolation). A
+          // failed boot disables it with the reason in the tooltip,
+          // matching the ⋮ row's E1 rule.
+          IconButton(
+            tooltip: bootBroken
+                ? context.l10n.dynamicTileOpenUnavailable
+                : context.l10n.dynamicTileOpenAsApp,
+            icon: const Icon(Icons.open_in_new, size: 20),
+            onPressed: bootBroken
+                ? null
+                : () => unawaited(
+                    pushEphemeralDynamicApp(
+                      context,
+                      widget.service,
+                      definition,
+                    ),
+                  ),
           ),
           // Owns its taps: the ⋮ never toggles the title-tap collapse
           // (issue #378; the #377 isolation contract holds — the menu
@@ -166,6 +220,7 @@ class DynamicWidgetCanvas extends StatefulWidget {
     super.key,
     required this.service,
     required this.definition,
+    this.fillAvailable = false,
   });
 
   /// The session's dynamic-messages service owning engines and errors.
@@ -174,6 +229,11 @@ class DynamicWidgetCanvas extends StatefulWidget {
   /// The widget definition to boot and render.
   final DynamicMessageDefinition definition;
 
+  /// Issue #457 AC4: fill the surrounding box (the ephemeral full-screen
+  /// runtime) instead of the clamped height hint. Either way the inner
+  /// viewport scrolls, so content is never clipped.
+  final bool fillAvailable;
+
   @override
   State<DynamicWidgetCanvas> createState() => _DynamicWidgetCanvasState();
 }
@@ -181,6 +241,23 @@ class DynamicWidgetCanvas extends StatefulWidget {
 class _DynamicWidgetCanvasState extends State<DynamicWidgetCanvas> {
   bool _errorExpanded = true;
   bool _bootScheduled = false;
+  final ScrollController _scroll = ScrollController();
+
+  @override
+  void didUpdateWidget(DynamicWidgetCanvas oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Issue #457 AC4: opening (or re-targeting) the canvas starts at the
+    // top — content is reachable by scrolling, never pre-clipped mid-view.
+    if (widget.definition.id != oldWidget.definition.id && _scroll.hasClients) {
+      _scroll.jumpTo(0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
 
   void _scheduleBoot() {
     if (_bootScheduled) return;
@@ -224,45 +301,57 @@ class _DynamicWidgetCanvasState extends State<DynamicWidgetCanvas> {
           120.0,
           560.0,
         );
-        return SizedBox(
-          height: height,
-          child: ValueListenableBuilder<Map<String, dynamic>?>(
-            valueListenable: engine.tree,
-            builder: (context, tree, _) {
-              if (tree == null) {
-                return const Center(child: CircularProgressIndicator());
-              }
-              final scheme = Theme.of(context).colorScheme;
-              final brightness = Theme.of(context).brightness;
-              final renderer = JsonWidgetRenderer(
-                theme: JsonWidgetTheme.fromAccent(
-                  scheme.primary,
-                  brightness: brightness,
-                ),
-                mediaHost: const FaMediaHost(),
-                js3dHost: createFaJs3dHost(widget.service.env),
-                onScene3dTap: (sceneId, payload) =>
-                    engine.dispatchHostEvent('scene3d.tap:$sceneId', payload),
-                onEvent: (actionId, payload) =>
-                    unawaited(engine.callEvent(actionId, payload)),
-              );
-              Widget body;
-              try {
-                body = renderer.build(tree, context);
-              } on Object catch (error) {
-                // A tree the renderer cannot draw (replayed E6 definition,
-                // new renderer against old node kinds) — error tile, never
-                // a crash.
-                return _errorTile(context, '$error');
-              }
-              return ViewportReporter(
-                onSize: (size) => engine.dispatchHostEvent('viewport', {
-                  'width': size.width,
-                  'height': size.height,
-                }),
-                child: ClipRect(child: body),
-              );
-            },
+        // Issue #457 AC4: the inner viewport SCROLLS — a widget taller
+        // than the canvas is fully reachable (E1: the scroll wrapper wins
+        // over a widget-declared fixed height), never clipped mid-control.
+        // The renderer's scroll/list nodes default to shrinkWrap, so the
+        // outer scroll never fights them.
+        Widget sizedViewport(Widget child) => widget.fillAvailable
+            ? SizedBox.expand(child: child)
+            : SizedBox(height: height, child: child);
+        return sizedViewport(
+          ViewportReporter(
+            onSize: (size) => engine.dispatchHostEvent('viewport', {
+              'width': size.width,
+              'height': size.height,
+            }),
+            // Reports the VISIBLE viewport (the engine relayouts to it);
+            // the content inside is free to be taller and scroll.
+            child: SingleChildScrollView(
+              controller: _scroll,
+              child: ValueListenableBuilder<Map<String, dynamic>?>(
+                valueListenable: engine.tree,
+                builder: (context, tree, _) {
+                  if (tree == null) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  final scheme = Theme.of(context).colorScheme;
+                  final brightness = Theme.of(context).brightness;
+                  final renderer = JsonWidgetRenderer(
+                    theme: JsonWidgetTheme.fromAccent(
+                      scheme.primary,
+                      brightness: brightness,
+                    ),
+                    mediaHost: const FaMediaHost(),
+                    js3dHost: createFaJs3dHost(widget.service.env),
+                    onScene3dTap: (sceneId, payload) => engine
+                        .dispatchHostEvent('scene3d.tap:$sceneId', payload),
+                    onEvent: (actionId, payload) =>
+                        unawaited(engine.callEvent(actionId, payload)),
+                  );
+                  Widget body;
+                  try {
+                    body = renderer.build(tree, context);
+                  } on Object catch (error) {
+                    // A tree the renderer cannot draw (replayed E6
+                    // definition, new renderer against old node kinds) —
+                    // error tile, never a crash.
+                    return _errorTile(context, '$error');
+                  }
+                  return body;
+                },
+              ),
+            ),
           ),
         );
       },
@@ -366,16 +455,17 @@ PopupMenuButton<String> dynamicWidgetMenuButton({
       _ => {},
     },
     itemBuilder: (_) => [
-      PopupMenuItem(
-        value: 'save',
-        enabled: onSaveAsApp != null,
-        child: _menuRow(
-          context,
-          Icons.archive_outlined,
-          l10n.dynamicTileSaveAsApp,
-          enabled: onSaveAsApp != null,
+      // Issue #457 AC3: never silently disabled — an unwired graduation
+      // hides the row instead of greying it out.
+      if (onSaveAsApp != null)
+        PopupMenuItem(
+          value: 'save',
+          child: _menuRow(
+            context,
+            Icons.archive_outlined,
+            l10n.dynamicTileSaveAsApp,
+          ),
         ),
-      ),
       PopupMenuItem(
         value: 'open',
         enabled: !bootBroken,
@@ -478,7 +568,13 @@ class EphemeralDynamicAppView extends StatelessWidget {
       child: Scaffold(
         appBar: AppBar(title: Text(definition.title)),
         body: SafeArea(
-          child: DynamicWidgetCanvas(service: service, definition: definition),
+          // Issue #457 AC4: the full-screen runtime fills the screen and
+          // scrolls its content — no fixed hint box, no clipping.
+          child: DynamicWidgetCanvas(
+            service: service,
+            definition: definition,
+            fillAvailable: true,
+          ),
         ),
       ),
     );
