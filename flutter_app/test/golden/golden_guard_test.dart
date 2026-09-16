@@ -278,6 +278,7 @@ void main() {
             );
           }
         }
+        expect(problems, isEmpty, reason: problems.join('\n'));
       }
       expect(problems, isEmpty, reason: problems.join('\n'));
     });
