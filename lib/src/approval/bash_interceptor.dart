@@ -161,36 +161,59 @@ const _commandLaunchers = {'sudo', 'nohup', 'nice', 'env', 'command', 'time'};
 /// real parser; upgrade if that shape ever false-positives.
 bool _recursiveRootInvocation(String command, String commandName) {
   for (final segment in command.split(RegExp(r'\n|&&|\|\||[;|&()]'))) {
-    final words = [
-      for (final word in segment.split(RegExp(r'\s+')))
-        if (word.isNotEmpty) _unquote(word),
-    ];
-    var start = 0;
-    while (start < words.length &&
-        (_commandLaunchers.contains(words[start].toLowerCase()) ||
-            RegExp(r'^[A-Za-z_][A-Za-z0-9_]*=').hasMatch(words[start]))) {
-      start++;
-    }
-    if (start >= words.length || words[start].toLowerCase() != commandName) {
-      continue;
-    }
-    final flags = <String>[];
-    final targets = <String>[];
-    var targetsOnly = false;
-    for (final word in words.skip(start + 1)) {
-      if (!targetsOnly && word == '--') {
-        targetsOnly = true;
-      } else if (!targetsOnly && word.length > 1 && word.startsWith('-')) {
-        flags.add(word);
-      } else {
-        targets.add(word);
-      }
-    }
+    final args = _invocationArgs(segment, commandName);
+    if (args == null) continue;
+    final (flags, targets) = args;
     if (flags.any(_isRecursiveFlag) && targets.any(_isRootLikePath)) {
       return true;
     }
   }
   return false;
+}
+
+/// The [commandName] invocation's `(flags, targets)` in one simple-command
+/// [segment], or `null` when the segment does not invoke it (launchers and
+/// `FOO=bar` assignments are skipped).
+(List<String>, List<String>)? _invocationArgs(
+  String segment,
+  String commandName,
+) {
+  final words = [
+    for (final word in segment.split(RegExp(r'\s+')))
+      if (word.isNotEmpty) _unquote(word),
+  ];
+  var start = 0;
+  while (start < words.length && _isLauncherOrAssignment(words[start])) {
+    start++;
+  }
+  if (start >= words.length || words[start].toLowerCase() != commandName) {
+    return null;
+  }
+  return _splitFlagsAndTargets(words.skip(start + 1));
+}
+
+/// Whether [word] launches a command (`sudo`, …) or assigns an env var
+/// (`FOO=bar`) instead of being one.
+bool _isLauncherOrAssignment(String word) =>
+    _commandLaunchers.contains(word.toLowerCase()) ||
+    RegExp(r'^[A-Za-z_][A-Za-z0-9_]*=').hasMatch(word);
+
+/// Partitions command words after the command name into short/long flags
+/// and targets; `--` makes every remaining word a target.
+(List<String>, List<String>) _splitFlagsAndTargets(Iterable<String> words) {
+  final flags = <String>[];
+  final targets = <String>[];
+  var targetsOnly = false;
+  for (final word in words) {
+    if (!targetsOnly && word == '--') {
+      targetsOnly = true;
+    } else if (!targetsOnly && word.length > 1 && word.startsWith('-')) {
+      flags.add(word);
+    } else {
+      targets.add(word);
+    }
+  }
+  return (flags, targets);
 }
 
 /// `-f`, `-i`, `-v` never satisfy recursion; `-rf`/`-R` clusters do (E1).
@@ -213,15 +236,30 @@ String _unquote(String word) {
 
 /// Root-like deletion targets only — see [_recursiveRootInvocation].
 bool _isRootLikePath(String target) {
+  if (_isHomeRoot(target)) return true;
+  if (RegExp(r'^[A-Za-z]:[\\/]?[*]?$').hasMatch(target)) return true;
+  return _isRootAbsolute(_stripTrailingSlashes(target));
+}
+
+/// `~`, `~/`, `~/*`, `$HOME`, `${HOME}` and their `/` and `/*` suffixes.
+bool _isHomeRoot(String target) {
   const home = {r'$HOME', r'${HOME}'};
   const homeChildren = {r'$HOME/', r'$HOME/*', r'${HOME}/', r'${HOME}/*'};
   if (target == '~' || target == '~/' || target == '~/*') return true;
-  if (home.contains(target) || homeChildren.contains(target)) return true;
-  if (RegExp(r'^[A-Za-z]:[\\/]?[*]?$').hasMatch(target)) return true;
-  var path = target;
-  while (path.length > 1 && path.endsWith('/')) {
-    path = path.substring(0, path.length - 1);
+  return home.contains(target) || homeChildren.contains(target);
+}
+
+String _stripTrailingSlashes(String path) {
+  var stripped = path;
+  while (stripped.length > 1 && stripped.endsWith('/')) {
+    stripped = stripped.substring(0, stripped.length - 1);
   }
+  return stripped;
+}
+
+/// Root-likeness of a trailing-slash-free [path] (see
+/// [_recursiveRootInvocation]).
+bool _isRootAbsolute(String path) {
   if (!path.startsWith('/')) return false; // relative: cwd unknown → not root
   final rest = path.substring(1);
   if (rest.isEmpty) return true; // `/` itself
