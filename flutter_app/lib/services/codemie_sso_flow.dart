@@ -1,22 +1,18 @@
 // l10n:ignore-file — SSO flow screens — en-only by design (EPAM-internal tooling)
-import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter_agent_harness/io.dart'
-    if (dart.library.html) 'package:fa/services/oauth_cli_flow_stubs.dart';
-import 'package:url_launcher/url_launcher.dart' as url_launcher;
 
 import 'package:fa/services/agent_service.dart';
-import 'package:fa/services/codemie_extension_signin.dart';
+import 'package:fa/services/codemie_sso_flow_steps.dart';
 import 'package:fa/services/last_connection.dart';
-import 'package:fa/services/relay/ext_runtime.dart';
-import 'package:fa/ui/screens/codemie_sso_webview.dart';
 import 'package:fa/services/provider_registry.dart';
-import 'package:fa_ui/fa_ui.dart' show FaModelListPicker, pushFaPage;
+import 'package:fa/services/relay/ext_runtime.dart';
+import 'package:fa/ui/screens/codemie_sso_pickers.dart';
+import 'package:fa/ui/screens/codemie_sso_webview.dart';
+
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// Runs the full CodeMie SSO flow:
 ///
@@ -46,6 +42,10 @@ import 'package:fa_ui/fa_ui.dart' show FaModelListPicker, pushFaPage;
 ///
 /// Returns `true` when the flow completed and the service was reconfigured,
 /// `false` when the user cancelled at any step.
+///
+/// The per-surface hops and the credential assembly live in
+/// `codemie_sso_flow_steps.dart` (issue #476); this function only sequences
+/// the steps.
 Future<bool> runCodemieSsoFlow({
   required BuildContext context,
   required ProviderRegistry registry,
@@ -59,59 +59,109 @@ Future<bool> runCodemieSsoFlow({
   // 'include'`, no CORS under host permissions). The redirect
   // interception is a desktop/mobile-only concern.
   if (kIsWeb) {
-    if (isExtensionHost()) {
-      return _extensionCookieSignin(
-        context: context,
-        registry: registry,
-        service: service,
-        lastConnectionStore: lastConnectionStore,
-        orgUrl: orgUrl,
-      );
-    }
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'CodeMie sign-in needs the desktop or mobile app '
-            '(a localhost callback server), or the browser extension '
-            '(cookie sign-in). Use a key-based provider in the plain '
-            'web build.',
-          ),
-        ),
-      );
-    }
-    return false;
-  }
-  // ── Step 1: SSO ─────────────────────────────────────────────────────
-  CodeMieSsoCredentials? credentials;
-  if (Platform.isMacOS) {
-    // macOS: local server + system browser (real cookies, password manager).
-    credentials = await _desktopSso(context, orgUrl);
-  } else if (Platform.isIOS) {
-    // iOS: system auth session (Safari-grade WebAuthn/passkey support).
-    final session = await _systemAuthSessionSso(orgUrl);
-    if (session.sessionUnavailable) {
-      if (!context.mounted) return false;
-      // Fallback: in-app WebView (no passkeys, but password login works).
-      credentials = await Navigator.of(context).push<CodeMieSsoCredentials?>(
-        MaterialPageRoute(
-          builder: (_) => CodeMieSsoWebViewPage(orgUrl: orgUrl),
-        ),
-      );
-    } else {
-      credentials = session.credentials;
-    }
-  } else {
-    // Other platforms: in-app WebView.
-    credentials = await Navigator.of(context).push<CodeMieSsoCredentials?>(
-      MaterialPageRoute(builder: (_) => CodeMieSsoWebViewPage(orgUrl: orgUrl)),
+    return _webSignin(
+      context: context,
+      registry: registry,
+      service: service,
+      lastConnectionStore: lastConnectionStore,
+      orgUrl: orgUrl,
     );
   }
-  if (credentials == null) return false; // cancelled / timed out
 
-  if (!context.mounted) return false;
+  // ── Step 1: SSO ─────────────────────────────────────────────────────
+  final credentials = await _authenticate(context, orgUrl);
+  if (credentials == null || !context.mounted) {
+    return false; // cancelled / timed out
+  }
 
-  // ── Step 2: Pick project ───────────────────────────────────────────
+  return _completeSignIn(
+    context: context,
+    registry: registry,
+    service: service,
+    lastConnectionStore: lastConnectionStore,
+    orgUrl: orgUrl,
+    credentials: credentials,
+  );
+}
+
+Future<bool> _webSignin({
+  required BuildContext context,
+  required ProviderRegistry registry,
+  required AgentService? service,
+  required LastConnectionStore lastConnectionStore,
+  required String orgUrl,
+}) async {
+  if (isExtensionHost()) {
+    return extensionCookieCodeMieSignin(
+      context: context,
+      registry: registry,
+      service: service,
+      lastConnectionStore: lastConnectionStore,
+      orgUrl: orgUrl,
+    );
+  }
+  if (context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'CodeMie sign-in needs the desktop or mobile app '
+          '(a localhost callback server), or the browser extension '
+          '(cookie sign-in). Use a key-based provider in the plain '
+          'web build.',
+        ),
+      ),
+    );
+  }
+  return false;
+}
+
+/// The per-surface SSO hop (Step 1): macOS uses the CLI flow (local server
+/// + system browser), iOS the system auth session with the in-app WebView
+/// as the fallback, every other platform the in-app WebView directly.
+Future<CodeMieSsoCredentials?> _authenticate(
+  BuildContext context,
+  String orgUrl,
+) async {
+  if (Platform.isMacOS) return desktopCodeMieSso(context, orgUrl);
+  if (Platform.isIOS) return _iosSso(context, orgUrl);
+  return _webViewSso(context, orgUrl);
+}
+
+/// iOS: the system auth session first; when the session cannot even start
+/// (`sessionUnavailable`), falls back to the in-app WebView (no passkeys,
+/// but password login works).
+Future<CodeMieSsoCredentials?> _iosSso(
+  BuildContext context,
+  String orgUrl,
+) async {
+  final session = await systemAuthSessionCodeMieSso(orgUrl);
+  if (!session.sessionUnavailable) return session.credentials;
+  if (!context.mounted) return null;
+  return _webViewSso(context, orgUrl);
+}
+
+/// The in-app WebView hop: intercepts `http://localhost:<port>/?token=...`
+/// via its `NavigationDelegate`.
+Future<CodeMieSsoCredentials?> _webViewSso(
+  BuildContext context,
+  String orgUrl,
+) {
+  return Navigator.of(context).push<CodeMieSsoCredentials?>(
+    MaterialPageRoute(builder: (_) => CodeMieSsoWebViewPage(orgUrl: orgUrl)),
+  );
+}
+
+/// Steps 2-4 after a successful SSO: the informational project picker, the
+/// model pick (fresh login MUST pick; re-login keeps the current model
+/// unless the user switches), then the shared save + connect assembly.
+Future<bool> _completeSignIn({
+  required BuildContext context,
+  required ProviderRegistry registry,
+  required AgentService? service,
+  required LastConnectionStore lastConnectionStore,
+  required String orgUrl,
+  required CodeMieSsoCredentials credentials,
+}) async {
   final baseUrl = '${credentials.apiUrl}/v1';
   final cookie = credentials.authToken;
 
@@ -120,483 +170,52 @@ Future<bool> runCodemieSsoFlow({
       .where((p) => p.baseUrl == baseUrl)
       .firstOrNull;
 
-  // Fetch projects (informational, like the CLI flow).
-  List<String> projects = const [];
-  try {
-    projects = await fetchCodeMieProjects(credentials.apiUrl, cookie);
-  } on Object {
-    // Network error — skip the project picker.
-  }
+  if (!await _projectStep(context, credentials)) return false;
+
+  final models = await fetchCodeMieModelsLenient(baseUrl, cookie);
+  if (!context.mounted) return false;
+
+  final modelId = await resolveCodeMieModelId(
+    models: models,
+    current: existing?.modelId,
+    pick: (models, {preselected, allowCancel = false}) =>
+        showCodeMieModelPicker(
+          context,
+          models,
+          preselected: preselected,
+          allowCancel: allowCancel,
+        ),
+  );
+  if (modelId == null || !context.mounted) return false;
+
+  await saveCodemieConnection(
+    registry: registry,
+    service: service,
+    lastConnectionStore: lastConnectionStore,
+    orgUrl: orgUrl,
+    baseUrl: baseUrl,
+    modelId: modelId,
+    key: cookie,
+    existing: existing,
+  );
+  return true;
+}
+
+/// Fetches the projects and shows the informational picker (network errors
+/// skip it entirely). Returns false when the flow must abort (unmounted).
+Future<bool> _projectStep(
+  BuildContext context,
+  CodeMieSsoCredentials credentials,
+) async {
+  final projects = await fetchCodeMieProjectsLenient(
+    credentials.apiUrl,
+    credentials.authToken,
+  );
 
   if (!context.mounted) return false;
   if (projects.isNotEmpty) {
-    await _pickProject(context, projects);
+    await showCodeMieProjectPicker(context, projects);
     if (!context.mounted) return false;
   }
-
-  // ── Step 3: Pick model ──────────────────────────────────────────────
-  String? modelId = existing?.modelId;
-
-  // Fetch available models for the picker.
-  List<String> models = const [];
-  try {
-    models = await fetchCodeMieModels(baseUrl, cookie);
-  } on Object {
-    // Network error — fall through to the picker with an empty list
-    // (the user can type a model id manually).
-  }
-
-  if (!context.mounted) return false;
-
-  if (modelId == null || modelId.isEmpty) {
-    modelId = await _pickModel(context, models, preselected: modelId);
-    if (modelId == null || modelId.isEmpty) return false;
-  } else {
-    // Re-login: briefly show the fetched models so the user can switch
-    // if they want, but pre-select the current model.
-    final switched = await _pickModel(
-      context,
-      models,
-      preselected: modelId,
-      allowCancel: true,
-    );
-    if (switched != null && switched.isNotEmpty) {
-      modelId = switched;
-    }
-  }
-
-  if (!context.mounted) return false;
-
-  // ── Step 3: Save provider + key ─────────────────────────────────────
-  final name = _hostFromUrl(orgUrl);
-  if (existing != null) {
-    final updated = CustomProvider(
-      id: existing.id,
-      name: existing.name,
-      baseUrl: baseUrl,
-      modelId: modelId,
-    );
-    await registry.update(updated);
-    registry.rememberKey(updated.id, cookie);
-  } else {
-    final provider = await registry.add(
-      name: name,
-      baseUrl: baseUrl,
-      modelId: modelId,
-    );
-    registry.rememberKey(provider.id, cookie);
-  }
-
-  // ── Step 4: Connect ─────────────────────────────────────────────────
-  final config = AgentConfig(
-    providerKind: 'openai-completions',
-    modelId: modelId,
-    baseUrl: baseUrl,
-    apiKey: cookie,
-  );
-  // A null service (first-run onboarding) skips the live reconfigure —
-  // the persisted last connection is picked up by the boot auto-connect.
-  if (service != null) await service.reconfigure(config);
-  await lastConnectionStore.saveFromConfig(config);
-
   return true;
-}
-
-/// The extension-host branch of the CodeMie sign-in: no SSO redirect and
-/// no key — the login page opens in a normal browser tab, the cookie jar
-/// is shared with the extension, and the app page's fetch
-/// (`credentials: 'include'`) polls the models endpoint until the session
-/// lands. The saved provider keeps an EMPTY key: the service worker's
-/// streaming fetch carries the jar; a bearer key never exists.
-Future<bool> _extensionCookieSignin({
-  required BuildContext context,
-  required ProviderRegistry registry,
-  required AgentService? service,
-  required LastConnectionStore lastConnectionStore,
-  required String orgUrl,
-}) async {
-  final apiBase = codeMieApiBase(orgUrl);
-  final baseUrl = '$apiBase/v1';
-  final probeUrl = '$apiBase/v1/llm_models?include_all=true';
-
-  // A cancellable wait — the dialog carries only the story and the
-  // Cancel button; the poll below owns the actual waiting.
-  var cancelled = false;
-  if (context.mounted) {
-    unawaited(
-      showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('CodeMie cookie sign-in'),
-          content: const Text(
-            'A browser tab with the CodeMie login page is opening. '
-            'Sign in there — this dialog closes the moment the session '
-            'lands (the extension shares the browser cookie jar).',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                cancelled = true;
-                Navigator.of(dialogContext).pop();
-              },
-              child: const Text('Cancel'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  final models = await pollCodeMieSignIn(
-    probe: () async {
-      final result = await extFetchString(probeUrl);
-      if (result == null) throw StateError('not an extension host');
-      return result;
-    },
-    openLoginPage: () {
-      unawaited(extOpenTab('$orgUrl/login'));
-    },
-    cancelled: () => cancelled,
-  );
-
-  if (context.mounted) {
-    final navigator = Navigator.of(context);
-    if (navigator.canPop()) navigator.pop(); // the wait dialog
-  }
-  if (models == null) {
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'CodeMie sign-in did not complete — no live session appeared '
-            'within the wait window (or it was cancelled). Try again.',
-          ),
-        ),
-      );
-    }
-    return false;
-  }
-
-  if (!context.mounted) return false;
-
-  // Re-login keeps the same model (pre-selected in the picker).
-  final existing = registry.providers
-      .where((p) => p.baseUrl == baseUrl)
-      .firstOrNull;
-  final modelId = await _pickModel(
-    context,
-    models,
-    preselected: existing?.modelId,
-  );
-  if (modelId == null || modelId.isEmpty) return false;
-  if (!context.mounted) return false;
-
-  // Save + connect. The key is deliberately NOT set: CodeMie here
-  // authenticates by cookie, and the SW's fetch attaches it.
-  final name = _hostFromUrl(orgUrl);
-  if (existing != null) {
-    final updated = CustomProvider(
-      id: existing.id,
-      name: existing.name,
-      baseUrl: baseUrl,
-      modelId: modelId,
-    );
-    await registry.update(updated);
-    registry.rememberKey(updated.id, '');
-  } else {
-    final provider = await registry.add(
-      name: name,
-      baseUrl: baseUrl,
-      modelId: modelId,
-    );
-    registry.rememberKey(provider.id, '');
-  }
-  final config = AgentConfig(
-    providerKind: 'openai-completions',
-    modelId: modelId,
-    baseUrl: baseUrl,
-    apiKey: '',
-  );
-  if (service != null) await service.reconfigure(config);
-  await lastConnectionStore.saveFromConfig(config);
-  return true;
-}
-
-/// Extracts the host name from [url] for the provider display name.
-String _hostFromUrl(String url) {
-  final uri = Uri.tryParse(url);
-  if (uri != null && uri.host.isNotEmpty) {
-    final port = uri.port;
-    final defaultPort = uri.scheme == 'https' ? 443 : 80;
-    return port != 0 && port != defaultPort ? '${uri.host}:$port' : uri.host;
-  }
-  return 'codemie';
-}
-
-/// Shows a simple project picker page (dialog on wide, full page on narrow).
-/// Purely informational (like the CLI flow) — the selection does not affect
-/// auth headers.
-Future<void> _pickProject(BuildContext context, List<String> projects) async {
-  await pushFaPage<void>(
-    context,
-    _ProjectPickerPage(projects: projects, onSelected: (_) {}),
-  );
-}
-
-/// The method channel driving `ASWebAuthenticationSession` on iOS (implemented
-/// in `ios/Runner/AppDelegate.swift`).
-const _webAuthSessionChannel = MethodChannel('fah/web_auth_session');
-
-/// iOS SSO via a system-browser auth session. Unlike the embedded WKWebView,
-/// `ASWebAuthenticationSession` runs the page in a Safari-grade context, so
-/// the IdP can offer WebAuthn / passkey (Face ID) sign-in.
-///
-/// The session's scheme interception does NOT fire for `http://` URLs, so
-/// the WebView's dummy-port trick cannot work here. Instead the app runs the
-/// REAL loopback callback server (same as the desktop flow — iOS allows
-/// loopback binds) and the session's final
-/// `http://localhost:<port>/?token=...` redirect loads it for real; the
-/// session sheet is then dismissed programmatically via the channel's
-/// `cancel`.
-///
-/// Returns the decoded credentials, or a record with [sessionUnavailable]
-/// set when the session could not even start (the caller falls back to the
-/// in-app WebView). `null` credentials with `sessionUnavailable == false`
-/// means the user cancelled or the callback carried no usable token.
-Future<({CodeMieSsoCredentials? credentials, bool sessionUnavailable})>
-_systemAuthSessionSso(String orgUrl) async {
-  final server = CodeMieSsoCallbackServer();
-  final int port;
-  try {
-    port = await server.start();
-  } on Object {
-    return (credentials: null, sessionUnavailable: true);
-  }
-  final ssoUrl = buildCodeMieSsoUrl(orgUrl, port);
-  var sessionFailed = false;
-  // No callbackScheme: nothing to intercept — the token arrives through the
-  // local server, the session future completes only on cancel/dismiss.
-  unawaited(
-    _webAuthSessionChannel
-        .invokeMethod<String>('authenticate', {'url': ssoUrl})
-        .then((_) => server.close()) // user cancelled the sheet
-        .onError((_, _) {
-          sessionFailed = true;
-          return server.close();
-        }),
-  );
-  final token = await server.waitForToken();
-  // Dismiss the sheet (shows the "Authorized" page only for a split second).
-  unawaited(
-    _webAuthSessionChannel.invokeMethod<void>('cancel').onError((_, _) => null),
-  );
-  if (sessionFailed) {
-    return (credentials: null, sessionUnavailable: true);
-  }
-  if (token == null || token.isEmpty) {
-    return (credentials: null, sessionUnavailable: false); // cancelled
-  }
-  try {
-    final cookies = decodeCodeMieSsoToken(token);
-    return (
-      credentials: CodeMieSsoCredentials(
-        cookies: cookies,
-        apiUrl: codeMieApiBase(orgUrl),
-        expiresAt: deriveCodeMieExpiresAt(cookies),
-      ),
-      sessionUnavailable: false,
-    );
-  } on Object {
-    return (credentials: null, sessionUnavailable: false);
-  }
-}
-
-/// macOS desktop SSO: starts a local callback server, opens the system
-/// browser (so the user gets their real cookies and password manager), and
-/// waits for the CodeMie redirect to `http://localhost:<port>/?token=...`.
-///
-/// Shows a non-blocking [SnackBar] with status so the user knows what is
-/// happening. Returns `null` if the browser could not be opened or the
-/// callback timed out / was cancelled.
-Future<CodeMieSsoCredentials?> _desktopSso(
-  BuildContext context,
-  String orgUrl,
-) async {
-  // The context might come from a dialog that was popped (the preset
-  // picker) — wrap the snackbar so a missing Scaffold doesn't crash.
-  try {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Opening browser for CodeMie sign-in…'),
-        duration: Duration(seconds: 3),
-      ),
-    );
-  } on Object {
-    // No Scaffold ancestor — the snackbar is cosmetic, not critical.
-  }
-  return runCodeMieSsoCliFlow(
-    codeMieUrl: orgUrl,
-    onStatus: (msg) => debugPrint('[CodeMie SSO] $msg'),
-    openBrowserFn: (url) async {
-      return url_launcher.launchUrl(
-        Uri.parse(url),
-        mode: url_launcher.LaunchMode.externalApplication,
-      );
-    },
-  );
-}
-
-/// Shows a model picker page (dialog on wide, full page on narrow) and
-/// returns the chosen model id.
-///
-/// The shared quick-filter pattern ([FaModelListPicker]): the field is the
-/// value AND the live filter over the fetched [models]; when the list is
-/// empty (fetch failed), a note says the id must be typed manually.
-///
-/// [preselected] seeds the field with the current model. When [allowCancel]
-/// is true, the user can dismiss the page without picking (returns null).
-Future<String?> _pickModel(
-  BuildContext context,
-  List<String> models, {
-  String? preselected,
-  bool allowCancel = false,
-}) async {
-  return pushFaPage<String>(
-    context,
-    _ModelPickerPage(
-      models: models,
-      preselected: preselected,
-      allowCancel: allowCancel,
-    ),
-  );
-}
-
-class _ProjectPickerPage extends StatefulWidget {
-  const _ProjectPickerPage({required this.projects, required this.onSelected});
-
-  final List<String> projects;
-  final ValueChanged<String> onSelected;
-
-  @override
-  State<_ProjectPickerPage> createState() => _ProjectPickerPageState();
-}
-
-class _ProjectPickerPageState extends State<_ProjectPickerPage> {
-  String? _selected;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('CodeMie Project')),
-      body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: ListView.builder(
-                itemCount: widget.projects.length,
-                itemBuilder: (context, index) {
-                  final project = widget.projects[index];
-                  return ListTile(
-                    title: Text(project),
-                    dense: true,
-                    trailing: _selected == project
-                        ? const Icon(Icons.check_circle, size: 20)
-                        : const Icon(Icons.radio_button_unchecked, size: 20),
-                    onTap: () => setState(() => _selected = project),
-                  );
-                },
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: FilledButton(
-                onPressed: () {
-                  widget.onSelected(_selected ?? widget.projects.first);
-                  Navigator.of(context).pop();
-                },
-                child: const Text('Continue'),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ModelPickerPage extends StatefulWidget {
-  const _ModelPickerPage({
-    required this.models,
-    this.preselected,
-    this.allowCancel = false,
-  });
-
-  final List<String> models;
-  final String? preselected;
-  final bool allowCancel;
-
-  @override
-  State<_ModelPickerPage> createState() => _ModelPickerPageState();
-}
-
-class _ModelPickerPageState extends State<_ModelPickerPage> {
-  late final TextEditingController _modelController;
-
-  @override
-  void initState() {
-    super.initState();
-    _modelController = TextEditingController(text: widget.preselected ?? '');
-  }
-
-  @override
-  void dispose() {
-    _modelController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Select Model')),
-      body: SafeArea(
-        child: Column(
-          children: [
-            // The same quick-filter pattern every model picker uses: the
-            // field is the value AND the live filter over the fetched list.
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
-                child: FaModelListPicker(
-                  controller: _modelController,
-                  models: widget.models,
-                  loading: false,
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  if (widget.allowCancel)
-                    TextButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      child: const Text('Cancel'),
-                    ),
-                  FilledButton(
-                    onPressed: () {
-                      final id = _modelController.text.trim();
-                      Navigator.of(context).pop(id.isNotEmpty ? id : null);
-                    },
-                    child: const Text('Connect'),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
