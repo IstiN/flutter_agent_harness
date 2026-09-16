@@ -12,6 +12,7 @@ import '../agent/agent.dart';
 import '../env/execution_env.dart';
 import 'session_repo.dart';
 import 'session_storage.dart';
+import 'attach/session_presence.dart';
 import 'session_tree.dart';
 
 /// One managed session: the [Agent], its persistent [Session], and the
@@ -52,7 +53,16 @@ final class AgentSessionManager {
     required this.sessionsRoot,
     String? cwd,
     JsonlSessionRepo? repo,
-  }) : _repo = repo ?? JsonlSessionRepo(fs: env, sessionsRoot: sessionsRoot),
+    SessionPresenceStore? presenceStore,
+  }) : _repo =
+           repo ??
+           // Issue #522: hosts that own live-session heartbeats pass the
+           // store so deletes refuse sessions another process is running.
+           JsonlSessionRepo(
+             fs: env,
+             sessionsRoot: sessionsRoot,
+             presenceStore: presenceStore,
+           ),
        _cwd = cwd ?? env.cwd;
 
   /// The execution environment shared by all sessions.
@@ -147,7 +157,7 @@ final class AgentSessionManager {
     managed.agent.abort();
     if (deleteFile) {
       final metadata = await managed.session.getMetadata();
-      await _repo.delete(metadata);
+      await _repo.delete(metadata, actor: 'manager:close');
     }
     if (_activeId == sessionId) {
       _activeId = _sessions.isEmpty ? null : _sessions.keys.last;
