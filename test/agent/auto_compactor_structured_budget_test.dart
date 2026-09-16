@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
+import 'package:flutter_agent_harness/src/compaction/structured/engine.dart';
 
 /// Issue #515: the compaction phase's LLM calls (structured judge and
 /// summarizer, classic summarizer) must die at the provider layer when
@@ -238,5 +239,123 @@ void main() {
       isTrue,
       reason: 'budget expiry must cancel the in-flight summarizer call',
     );
+  });
+
+  test('structured engine, direct: the hide judge budget kill surfaces a '
+      'named TimeoutException and cancels the budget token', () async {
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+    // A read pair plus filler turns puts the ledger past protect-last-8,
+    // so the hide pass actually reaches the judge call.
+    await session.appendMessage(UserMessage.text('fix the login crash'));
+    await session.appendMessage(
+      AssistantMessage(
+        content: [
+          const TextContent(text: 'looking'),
+          ToolCall(id: 'c1', name: 'read', arguments: const {}),
+        ],
+        api: 'test-api',
+        provider: 'test-provider',
+        model: 'test-model',
+        usage: Usage.zero,
+        stopReason: StopReason.stop,
+        timestamp: DateTime.utc(2026),
+      ),
+    );
+    await session.appendMessage(
+      ToolResultMessage(
+        toolCallId: 'c1',
+        toolName: 'read',
+        content: [TextContent(text: 'x' * 16000)],
+        isError: false,
+        timestamp: DateTime.utc(2026),
+      ),
+    );
+    for (var i = 0; i < 7; i++) {
+      await session.appendMessage(
+        AssistantMessage(
+          content: [TextContent(text: 'filler $i')],
+          api: 'test-api',
+          provider: 'test-provider',
+          model: 'test-model',
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.utc(2026),
+        ),
+      );
+    }
+    final state = AgentState(
+      model: _model,
+      messages: await session.buildContextMessages(),
+    );
+    final budgetSource = CancelTokenSource();
+    final compactor = StructuredCompactor(
+      session: session,
+      state: state,
+      window: 1000,
+      settings: settings,
+      judge: (ledger) => Completer<String?>().future,
+      summarize: (request) async => SummarizationResult.failure('unused'),
+      checkpointPrompt: 'P',
+      budgetSource: budgetSource,
+      attemptBudget: const Duration(milliseconds: 150),
+    );
+
+    await expectLater(
+      compactor.run(),
+      throwsA(
+        isA<TimeoutException>()
+            .having((e) => e.message, 'message', contains('hide judge'))
+            .having((e) => e.message, 'issue tag', contains('issue #515')),
+      ),
+    );
+    // The engine killed the in-flight call at the token, not just the
+    // await: the provider layer sees the abort.
+    expect(budgetSource.token.isCancelled, isTrue);
+    final records = await session.getEntries();
+    expect(records.whereType<CompactionRecord>(), isEmpty);
+  });
+
+  test('structured engine, direct: the checkpoint summarizer budget kill '
+      'propagates as a named error instead of a null summary', () async {
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+    for (var i = 0; i < 10; i++) {
+      await session.appendMessage(UserMessage.text('a' * 1600));
+    }
+    final state = AgentState(
+      model: _model,
+      messages: await session.buildContextMessages(),
+    );
+    final budgetSource = CancelTokenSource();
+    final compactor = StructuredCompactor(
+      session: session,
+      state: state,
+      window: 1000,
+      settings: settings,
+      // Judge refuses (F1 no-op): straight to pass 2, where the
+      // summarizer wedges past the attempt budget.
+      judge: (ledger) async => null,
+      summarize: (request) => Completer<SummarizationResult>().future,
+      checkpointPrompt: 'P',
+      budgetSource: budgetSource,
+      attemptBudget: const Duration(milliseconds: 150),
+    );
+
+    await expectLater(
+      compactor.run(),
+      throwsA(
+        isA<TimeoutException>()
+            .having(
+              (e) => e.message,
+              'message',
+              contains('checkpoint summarizer'),
+            )
+            .having((e) => e.message, 'issue tag', contains('issue #515')),
+      ),
+    );
+    expect(budgetSource.token.isCancelled, isTrue);
+    // The kill must NOT dissolve into the failure-safety empty summary:
+    // no checkpoint was appended on the way out.
+    final records = await session.getEntries();
+    expect(records.whereType<CompactCheckpointRecord>(), isEmpty);
   });
 }
