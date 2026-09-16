@@ -17,6 +17,7 @@ import 'session_chunk_reader.dart';
 import 'session_record.dart';
 import 'session_storage.dart';
 import 'windowed_session_storage.dart';
+import 'attach/session_presence.dart';
 import 'session_tree.dart';
 import 'uuid.dart';
 
@@ -70,7 +71,13 @@ abstract interface class SessionRepo {
   Future<List<SessionMetadata>> list({String? cwd});
 
   /// Deletes a session file.
-  Future<void> delete(SessionMetadata metadata);
+  ///
+  /// Issue #522: the delete is journaled (who/what/when into the root's
+  /// `session_ops.journal`), soft (the file moves into `<root>/.trash/`),
+  /// and refused with [SessionErrorCode.liveSession] while a fresh
+  /// presence row exists for the session — unless the deleting process
+  /// owns that row. [actor] names the calling flow for the journal.
+  Future<void> delete(SessionMetadata metadata, {String actor = 'unknown'});
 
   /// Forks [source] into a new session containing a prefix of its tree.
   ///
@@ -162,7 +169,11 @@ final class JsonlSessionRepo implements SessionRepo {
     required String sessionsRoot,
     this._parseExecutor,
     this._ioRetry = const SessionIoRetryConfig(),
-  }) : _sessionsRootInput = sessionsRoot;
+    this.presenceStore,
+    this.processId,
+    DateTime Function()? now,
+  }) : _sessionsRootInput = sessionsRoot,
+       now = now ?? DateTime.now;
 
   final FileSystem _fs;
   final String _sessionsRootInput;
@@ -172,6 +183,19 @@ final class JsonlSessionRepo implements SessionRepo {
   /// Transient-ENOENT retry wiring (issue #427) threaded into every
   /// session-file open/create this repo performs.
   final SessionIoRetryConfig _ioRetry;
+
+  /// Live-session presence (issue #522): when set, `delete` refuses any
+  /// session with a fresh heartbeat unless the deleting process owns the
+  /// registration (its own pid).
+  final SessionPresenceStore? presenceStore;
+
+  /// The host process id, journaled as the deletion culprit and matched
+  /// against presence rows for the self-ownership exemption. Null (web)
+  /// treats every live row as foreign.
+  final int? processId;
+
+  /// Clock seam for journal timestamps and trash file stamps (tests).
+  final DateTime Function() now;
 
   /// Header-read concurrency for [list] (issue #199): bounded so 500+
   /// sessions never exhaust fds; ≥ 2 so latency overlaps (E4 pins the VM
@@ -296,21 +320,42 @@ final class JsonlSessionRepo implements SessionRepo {
   }
 
   @override
-  Future<void> delete(SessionMetadata metadata) async {
-    _fsOrThrow(
-      await _fs.remove(metadata.path, force: true),
-      'Failed to delete session ${metadata.path}',
+  Future<void> delete(
+    SessionMetadata metadata, {
+    String actor = 'unknown',
+  }) async {
+    // Issue #522 live guard: a fresh presence row means a running process
+    // owns this session. `list()` already expired stale heartbeats, so a
+    // dead owner never blocks. The owner itself may delete its own file
+    // (the emptiness-gated cleanup flows) — that is the pid match.
+    final row = (await presenceStore?.list())?[metadata.id];
+    final ownRow = row != null && processId != null && row.pid == processId;
+    if (row != null && !ownRow) {
+      throw SessionException(
+        'Session ${metadata.id} is live (pid ${row.pid ?? 'unknown'}, '
+        'heartbeat ${row.touchedAt}) — delete refused. Stop the owning '
+        'process first; the refusal is itself the data-loss guard.',
+        code: SessionErrorCode.liveSession,
+      );
+    }
+    await _softDelete(
+      metadata.path,
+      op: 'delete',
+      sessionId: metadata.id,
+      actor: actor,
     );
   }
 
-  /// Removes every `.jsonl` session whose file contains **only the header
+  /// Trashes every `.jsonl` session whose file contains **only the header
   /// record** and no further entries.
   ///
   /// Used after the migrate-from-eager-creation change to clean up the
   /// legacy empty files that the old `SubagentManager.register` /
   /// `AgentService.initialize` paths left on disk. Returns the number of
-  /// files actually deleted (best-effort: a failed read or delete leaves the
-  /// file in place).
+  /// files actually trashed (best-effort: a failed read leaves the file in
+  /// place). Issue #522: empty does not mean deletable while live — a
+  /// just-booted process owns a header-only file, so live rows are skipped,
+  /// and everything routes through the journaled soft-delete gate.
   Future<int> cleanupEmptySessions() async {
     var removed = 0;
     final root = await _getSessionsRoot();
@@ -319,6 +364,7 @@ final class JsonlSessionRepo implements SessionRepo {
       'Failed to check sessions root $root',
     );
     if (!rootExists) return 0;
+    final live = (await presenceStore?.list()) ?? const {};
     final files = await _collectJsonlFiles(root);
     for (final path in files) {
       // Emptiness is decidable from the first two lines: line 1 is the
@@ -333,13 +379,185 @@ final class JsonlSessionRepo implements SessionRepo {
       );
       final nonEmpty = lines.where((line) => line.trim().isNotEmpty).length;
       if (nonEmpty > 1) continue;
-      _fsOrThrow(
-        await _fs.remove(path, force: true),
-        'Failed to delete empty session $path',
+      final id = _sessionIdFromPath(path);
+      if (id != null && live.containsKey(id)) continue;
+      await _softDelete(
+        path,
+        op: 'cleanup-empty',
+        sessionId: id,
+        actor: 'repo:cleanup-empty',
       );
       removed++;
     }
     return removed;
+  }
+
+  /// The `.trash` directory under the sessions root (issue #522): deleted
+  /// session files land here — `<root>/.trash/<timestamp>_<name>` — and
+  /// stay recoverable until [purgeTrash] drops them past a TTL.
+  static const String trashDirName = '.trash';
+
+  /// The per-root deletion journal (issue #522): one JSON line per
+  /// delete/move/purge with the culprit (pid + actor tag), the path, and
+  /// the outcome. A vanished session file always has a named record.
+  static const String journalFileName = 'session_ops.journal';
+
+  /// Moves [path] into `<root>/.trash/` and journals the operation.
+  ///
+  /// Trash-first: the move is atomic, so a crash can only leave the file
+  /// recoverable in `.trash` (its presence there IS the record) or in
+  /// place — never gone. Backends without a rename primitive (pure web)
+  /// fall back to a journaled remove: the intent line lands BEFORE the
+  /// unlink so even that path names its culprit.
+  Future<void> _softDelete(
+    String path, {
+    required String op,
+    String? sessionId,
+    required String actor,
+  }) async {
+    final root = await _getSessionsRoot();
+    final exists = _fsOrThrow(
+      await _fs.exists(path),
+      'Failed to check session $path',
+    );
+    if (!exists) {
+      await _journal(
+        root,
+        op: op,
+        path: path,
+        sessionId: sessionId,
+        actor: actor,
+        result: 'missing',
+      );
+      return;
+    }
+    final trashPath = await _trashPathFor(root, path);
+    if (_fs is! RenamableFileSystem) {
+      await _journal(
+        root,
+        op: op,
+        path: path,
+        sessionId: sessionId,
+        actor: actor,
+        result: 'remove-fallback',
+      );
+      _fsOrThrow(
+        await _fs.remove(path, force: true),
+        'Failed to delete session $path',
+      );
+      return;
+    }
+    final trashDir = _fsOrThrow(
+      await _fs.joinPath([root, trashDirName]),
+      'Failed to resolve trash directory',
+    );
+    _fsOrThrow(
+      await _fs.createDir(trashDir, recursive: true),
+      'Failed to create trash directory',
+    );
+    _fsOrThrow(
+      await (_fs as RenamableFileSystem).renamePath(path, trashPath),
+      'Failed to move session $path to trash $trashPath',
+    );
+    await _journal(
+      root,
+      op: op,
+      path: path,
+      sessionId: sessionId,
+      actor: actor,
+      result: 'trash',
+      trash: trashPath,
+    );
+  }
+
+  /// `<root>/.trash/<timestamp>_<basename>` — the stamp keeps repeated
+  /// deletions of the same-named file apart.
+  Future<String> _trashPathFor(String root, String path) async {
+    final stamp = now().toIso8601String().replaceAll(RegExp(r'[:.]'), '-');
+    final base = path.split(RegExp(r'[/\\]')).last;
+    return _fsOrThrow(
+      await _fs.joinPath([root, trashDirName, '${stamp}_$base']),
+      'Failed to resolve trash path for $path',
+    );
+  }
+
+  /// Appends one auditable line to the root's `session_ops.journal`.
+  Future<void> _journal(
+    String root, {
+    required String op,
+    required String path,
+    String? sessionId,
+    required String actor,
+    required String result,
+    String? trash,
+  }) async {
+    final line = json_conv.jsonEncode({
+      'at': now().toIso8601String(),
+      'op': op,
+      'path': path,
+      'session': ?sessionId,
+      'pid': ?processId,
+      'actor': actor,
+      'result': result,
+      'trash': ?trash,
+    });
+    final journalPath = _fsOrThrow(
+      await _fs.joinPath([root, journalFileName]),
+      'Failed to resolve journal path',
+    );
+    _fsOrThrow(
+      await _fs.appendFile(journalPath, '$line\n'),
+      'Failed to append session ops journal $journalPath',
+    );
+  }
+
+  /// Removes trash entries older than [ttl] (issue #522): trash is
+  /// recoverable storage with a lifetime, not an unbounded second copy of
+  /// every deleted session. Returns the number of entries purged; every
+  /// purge is journaled.
+  Future<int> purgeTrash({
+    Duration ttl = const Duration(days: 30),
+    String actor = 'repo:purge-trash',
+  }) async {
+    final root = await _getSessionsRoot();
+    final trashDir = _fsOrThrow(
+      await _fs.joinPath([root, trashDirName]),
+      'Failed to resolve trash directory',
+    );
+    if (!_fsOrThrow(await _fs.exists(trashDir), 'Failed to check $trashDir')) {
+      return 0;
+    }
+    final entries = _fsOrThrow(
+      await _fs.listDir(trashDir),
+      'Failed to list $trashDir',
+    );
+    final cutoffMs = now().subtract(ttl).millisecondsSinceEpoch;
+    var purged = 0;
+    for (final entry in entries) {
+      if (entry.mtimeMs >= cutoffMs) continue;
+      _fsOrThrow(
+        await _fs.remove(entry.path, force: true),
+        'Failed to purge ${entry.path}',
+      );
+      await _journal(
+        root,
+        op: 'purge',
+        path: entry.path,
+        actor: actor,
+        result: 'removed',
+      );
+      purged++;
+    }
+    return purged;
+  }
+
+  /// The session id encoded in a session file basename
+  /// (`<timestamp>_<sessionId>.jsonl`); null when the name has no id part.
+  String? _sessionIdFromPath(String path) {
+    final base = path.split(RegExp(r'[/\\]')).last;
+    if (!base.endsWith('.jsonl')) return null;
+    final parts = base.substring(0, base.length - '.jsonl'.length).split('_');
+    return parts.length < 2 || parts.last.isEmpty ? null : parts.last;
   }
 
   Future<List<String>> _collectJsonlFiles(String dirPath) async {
@@ -350,6 +568,9 @@ final class JsonlSessionRepo implements SessionRepo {
     final files = <String>[];
     for (final entry in entries) {
       if (entry.kind == FileKind.directory) {
+        // The trash (issue #522) is recoverable storage, not a session
+        // folder — its files must never re-enter list()/cleanup sweeps.
+        if (entry.name == trashDirName) continue;
         files.addAll(await _collectJsonlFiles(entry.path));
         continue;
       }
@@ -510,6 +731,8 @@ final class JsonlSessionRepo implements SessionRepo {
       for (final entries in discovered) {
         for (final entry in entries) {
           if (entry.kind == FileKind.directory) {
+            // Trash (issue #522) never surfaces as live sessions.
+            if (entry.name == trashDirName) continue;
             pending.add(entry.path);
           } else if (entry.name.endsWith('.jsonl')) {
             files.add(entry);

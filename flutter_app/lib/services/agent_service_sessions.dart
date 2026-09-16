@@ -146,7 +146,10 @@ extension AgentServiceSessions on AgentService {
     final session = _session;
     if (session == null) return;
     try {
-      await _repo.delete(await session.getMetadata());
+      await _repo.delete(
+        await session.getMetadata(),
+        actor: 'app:empty-cleanup',
+      );
       _session = null;
       _sessionId = null;
       _sessionFile = null;
