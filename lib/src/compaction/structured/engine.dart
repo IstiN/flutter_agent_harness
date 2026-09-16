@@ -22,8 +22,10 @@
 /// append.
 library;
 
+import 'dart:async';
+
 import '../../agent/agent.dart' show AgentState;
-import '../../cancel_token.dart' show CancelToken;
+import '../../cancel_token.dart' show CancelToken, CancelTokenSource;
 import '../../session/session_record.dart';
 import '../../session/session_tree.dart';
 import '../../types.dart';
@@ -106,6 +108,8 @@ final class StructuredCompactor {
     this.protectLastN = 8,
     this.depthCap = 4,
     this.cancelToken,
+    this.budgetSource,
+    this.attemptBudget = const Duration(seconds: 90),
   });
 
   /// The session being compacted.
@@ -147,6 +151,22 @@ final class StructuredCompactor {
   /// Cancellation for the LLM calls.
   final CancelToken? cancelToken;
 
+  /// Writable side of the token the factory handed to the judge and
+  /// summarizer adapters; the attempt/total budgets cancel it so a wedged
+  /// call dies at the provider layer (issue #515).
+  final CancelTokenSource? budgetSource;
+
+  /// Wall-clock budget for ONE judge/summarizer call (issue #515). The
+  /// call site's host watchdogs are disarmed by the time compaction runs,
+  /// so a provider that accepts the request and never answers must die
+  /// here: on expiry the budget token aborts the underlying HTTP call and
+  /// a named [TimeoutException] fails the run.
+  final Duration attemptBudget;
+
+  /// The token passed into every LLM call: the budget source when the
+  /// factory provided one, else the plain external [cancelToken].
+  CancelToken? get _effectiveToken => budgetSource?.token ?? cancelToken;
+
   int _pass = 0;
 
   /// The live request-size estimate in the ONE basis the ctx meter, the
@@ -171,6 +191,18 @@ final class StructuredCompactor {
     return _requestTokens() <= trigger;
   }
 
+  /// Cancels the budget token — the factory's total-budget race calls
+  /// this so the wedged call dies at the provider layer.
+  void cancelBudget(Object? reason) => budgetSource?.cancel(reason);
+
+  /// The named [TimeoutException] a budget expiry throws (issue #515).
+  TimeoutException _budgetTimeout(String what, Duration budget) =>
+      TimeoutException(
+        'structured compaction $what exceeded the '
+        '${budget.inSeconds}s budget (issue #515)',
+        budget,
+      );
+
   Future<bool> _runHidePasses(int trigger) async {
     for (var i = 0; i < maxHidePasses; i++) {
       final before = _requestTokens();
@@ -179,7 +211,14 @@ final class StructuredCompactor {
       if (view == null) return true;
       if (_hideableEntries(view.ledger).isEmpty) break;
 
-      final answer = await judge(view.ledger.render());
+      final answer = await judge(view.ledger.render()).timeout(
+        attemptBudget,
+        onTimeout: () {
+          final timeout = _budgetTimeout('hide judge', attemptBudget);
+          budgetSource?.cancel(timeout);
+          throw timeout;
+        },
+      );
       // F1: a failed or empty judge answer is a NO-OP — never an empty
       // hide list, never hide-everything.
       if (answer == null) break;
@@ -216,9 +255,15 @@ final class StructuredCompactor {
       if (range == null) break;
 
       final flattened = _flattenForDepthCap(range);
-      final text = await _summarizeRange(range, flattened);
-      // Summary failure appends nothing (failure-safe).
-      if (text == null) return false;
+      final String text;
+      try {
+        text = await _summarizeRange(range, flattened) ?? '';
+      } on TimeoutException {
+        // A budget kill must surface as a named error (issue #515), not
+        // dissolve into the ordinary failure-safety null.
+        rethrow;
+      }
+      if (text.isEmpty) return false;
 
       await session.appendCompactCheckpoint(
         firstRecordId: range.firstRecordId,
@@ -475,14 +520,29 @@ final class StructuredCompactor {
     }
     prompt.writeln(checkpointPrompt);
     try {
-      final result = await summarize(
-        SummarizationRequest(
-          prompt: prompt.toString(),
-          cancelToken: cancelToken,
-        ),
-      );
+      final result =
+          await summarize(
+            SummarizationRequest(
+              prompt: prompt.toString(),
+              cancelToken: _effectiveToken,
+            ),
+          ).timeout(
+            attemptBudget,
+            onTimeout: () {
+              final timeout = _budgetTimeout(
+                'checkpoint summarizer',
+                attemptBudget,
+              );
+              budgetSource?.cancel(timeout);
+              throw timeout;
+            },
+          );
       final text = result.text?.trim();
       return (text == null || text.isEmpty) ? null : text;
+    } on TimeoutException {
+      // A budget kill surfaces as a named error (issue #515) — the pass
+      // loop must not dissolve it into the failure-safety null.
+      rethrow;
     } catch (_) {
       return null;
     }

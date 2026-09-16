@@ -21,7 +21,7 @@
 library;
 
 import 'dart:async';
-
+import '../cancel_token.dart';
 import '../compaction/compaction.dart';
 import '../compaction/token_estimation.dart';
 import '../compaction/structured/engine.dart';
@@ -572,16 +572,28 @@ final class AutoCompactor {
           prompts: prompts,
           memoryExtractionHook: memoryExtractionHook,
         );
-        final record = await manager
-            .compactSession(session)
-            .timeout(
+        // Issue #515: the budget kill must abort the underlying request,
+        // not abandon it — an endpoint that accepts and never answers
+        // would otherwise keep the connection (and the retry pass) alive
+        // past the timeout.
+        final attemptToken = CancelTokenSource();
+        final compacting = manager.compactSession(
+          session,
+          cancelToken: attemptToken.token,
+        );
+        final record = await compacting.timeout(
+          attemptBudget,
+          onTimeout: () {
+            final timeout = TimeoutException(
+              'compaction attempt exceeded the '
+              '${attemptBudget.inSeconds}s budget',
               attemptBudget,
-              onTimeout: () => throw TimeoutException(
-                'compaction attempt exceeded the '
-                '${attemptBudget.inSeconds}s budget',
-                attemptBudget,
-              ),
             );
+            attemptToken.cancel(timeout);
+            compacting.ignore();
+            throw timeout;
+          },
+        );
         if (record == null) {
           return (
             ok: true,
@@ -729,20 +741,36 @@ class AutoCompactorFactory {
   /// Whole-run wall-clock budget, forwarded to the built [AutoCompactor].
   final Duration totalBudget;
 
+  /// The live request-size estimate on the same basis the structured
+  /// engine enforces (transcript + system-prompt/tool-schema overhead).
+  int _requestTokens() => estimateRequestTokens(
+    state.messages,
+    systemPrompt: state.systemPrompt,
+    tools: state.tools,
+  );
+
   /// Builds the [AutoCompactor] and runs it. Hosts that want to
   /// inspect the compactor before starting (e.g. for logging) can use
   /// [build] instead.
   Future<bool> run() async {
     if (engine == CompactionEngine.structured) {
       final adapter = _StructuredHooksAdapter(hooks);
-      final ok = await _runStructured(adapter: adapter);
-      if (ok) {
+      final outcome = await _runStructured(adapter: adapter);
+      if (outcome.ok) {
         // Close the hooks bracket the classic [AutoCompactor.run] closes
         // on every terminal path: hosts key off [AutoCompactorHooks.onDone]
         // (the CLI's HEP `compaction_end` frame, the Flutter chat sheet),
         // so a structured run that skips it leaves them open forever.
         hooks.onDone(adapter.passCount, _requestTokens());
         return true;
+      }
+      if (outcome.timedOut) {
+        // Budget kill (issue #515): the summarizer/judge wedged past the
+        // watchdog budget and the underlying call was aborted. Fail fast
+        // with the named error — re-running the classic engine here would
+        // only re-wedge the same endpoint.
+        hooks.onBothRolesFailed(outcome.error!);
+        return false;
       }
       // Fall through: the classic prefix compactor is the residual
       // fallback (issue #148 flowchart S7/D4) — its summary then renders
@@ -752,21 +780,15 @@ class AutoCompactorFactory {
     return build().run();
   }
 
-  /// The live request-size estimate on the same basis the structured
-  /// engine enforces (transcript + system-prompt/tool-schema overhead).
-  int _requestTokens() => estimateRequestTokens(
-    state.messages,
-    systemPrompt: state.systemPrompt,
-    tools: state.tools,
-  );
-
-  /// Runs the structured engine (issue #148): pass 1 judge-hides over the
-  /// ledger, pass 2 text checkpoints with covers. Judge and summarizer ride
-  /// the `smol` role (falling back to the main stream) exactly like the
-  /// classic summarizers.
-  Future<bool> _runStructured({_StructuredHooksAdapter? adapter}) async {
+  Future<({bool ok, bool timedOut, Object? error})> _runStructured({
+    _StructuredHooksAdapter? adapter,
+  }) async {
     final smolStream = sources.smolStream ?? sources.mainStream;
     final smolModel = sources.smolModel ?? sources.mainModel;
+    // One budget token for the whole structured run: both the judge and
+    // the summarizer adapters receive it, and the budget expiries below
+    // cancel it so the wedged call dies at the provider layer (#515).
+    final budgetSource = CancelTokenSource();
     final compactor = StructuredCompactor(
       session: session,
       state: state,
@@ -777,12 +799,36 @@ class AutoCompactorFactory {
         smolModel,
         system: prompts.hideJudgeSystem,
         onDelta: hooks.onDelta,
+        cancelToken: budgetSource.token,
       ),
       summarize: streamFunctionSummarizer(smolStream, smolModel),
       checkpointPrompt: prompts.structuredCheckpoint,
       hooks: adapter ?? _StructuredHooksAdapter(hooks),
+      budgetSource: budgetSource,
     );
-    return compactor.run(force: force);
+    final running = compactor.run(force: force);
+    try {
+      final ok = await running.timeout(
+        totalBudget,
+        onTimeout: () {
+          final timeout = TimeoutException(
+            'structured compaction exceeded the '
+            '${totalBudget.inSeconds}s total budget (issue #515)',
+            totalBudget,
+          );
+          // Kill the wedged call at the provider layer, then surface.
+          compactor.cancelBudget(timeout);
+          throw timeout;
+        },
+      );
+      return (ok: ok, timedOut: false, error: null);
+    } on TimeoutException catch (error) {
+      // The engine run may settle later (the abort propagates
+      // asynchronously); drop that late settle — the named failure here
+      // is the authoritative outcome.
+      running.ignore();
+      return (ok: false, timedOut: true, error: error);
+    }
   }
 
   /// Builds the [AutoCompactor] from the factory's configuration without
