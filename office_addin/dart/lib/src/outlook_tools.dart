@@ -27,10 +27,7 @@
 // compiled into the taskpane: no dart:io, no js_interop.
 library;
 
-import 'package:flutter_agent_harness/src/agent/agent_loop.dart';
-import 'package:flutter_agent_harness/src/agent/agent_tool.dart';
-import 'package:flutter_agent_harness/src/agent/tool_registry.dart';
-import 'package:flutter_agent_harness/src/approval/approval.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'email_quarantine.dart';
 import 'office_api.dart';

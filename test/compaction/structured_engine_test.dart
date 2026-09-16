@@ -6,6 +6,8 @@
 /// judge failure, checkpoint append with covers, failure-safe summarize,
 /// under-window termination, and depth-cap flattening.
 
+library;
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/compaction/structured/engine.dart';
 import 'package:test/test.dart';
@@ -14,7 +16,7 @@ AssistantMessage _assistant(String text, {List<ToolCall>? calls}) {
   return AssistantMessage(
     content: [
       TextContent(text: text),
-      if (calls != null) ...calls,
+      ...?calls,
     ],
     api: 'anthropic-messages',
     provider: 'p',

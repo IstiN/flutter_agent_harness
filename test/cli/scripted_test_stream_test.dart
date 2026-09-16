@@ -3,11 +3,10 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_agent_harness/src/cli/scripted_test_stream.dart';
 import 'package:flutter_agent_harness/src/agent/agent_loop.dart'
     show StreamFunction;
-import 'package:flutter_agent_harness/src/cli/scripted_test_stream.dart';
 import 'package:flutter_agent_harness/src/context.dart';
-import 'package:flutter_agent_harness/src/event_stream.dart';
 import 'package:flutter_agent_harness/src/types.dart';
 import 'package:test/test.dart';
 

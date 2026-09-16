@@ -37,7 +37,7 @@ extension type _Chunk._(JSObject _) implements JSObject {
 final class FetchClient extends http.BaseClient {
   /// [credentials] rides the fetch credentials mode: `include` for the
   /// provider traffic (cookie-auth hosts — CodeMie & friends: the SW
-  /// fetch itself must carry the user's jar — with <all_urls> host
+  /// fetch itself must carry the user's jar — with `<all_urls>` host
   /// permissions the browser attaches it, no header surgery; provider
   /// targets are user-configured, so sending credentials is the design,
   /// not a leak), `omit` for agent-driven web_fetch/web_search (the URL
