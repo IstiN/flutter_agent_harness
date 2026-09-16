@@ -32,6 +32,7 @@ class ChatComposer extends StatelessWidget {
     this.clipboardImageReader = _readClipboardImage,
     this.leadingBuilder,
     this.hideMicWhenNotEmpty = false,
+    this.showStreamingStatus = true,
     this.onSent,
     this.onFocusChanged,
     this.autofocus = true,
@@ -65,6 +66,12 @@ class ChatComposer extends StatelessWidget {
   /// iMessage-style trailing slot: exactly one action (mic / stop / send),
   /// swapped with a scale+fade as the field content changes.
   final bool hideMicWhenNotEmpty;
+
+  /// Renders the composer's own spinner + «Fa is typing…» row while the
+  /// service streams. The docked session chat bar passes false — its
+  /// embedded FaWorkBar owns the working state, the two never stack
+  /// (issue #464).
+  final bool showStreamingStatus;
 
   /// Fired after a message was sent successfully.
   final VoidCallback? onSent;
@@ -108,6 +115,7 @@ class ChatComposer extends StatelessWidget {
       clipboardImageReader: clipboardImageReader,
       leadingBuilder: leadingBuilder,
       hideMicWhenNotEmpty: hideMicWhenNotEmpty,
+      showStreamingStatus: showStreamingStatus,
       onSent: onSent,
       onFocusChanged: onFocusChanged,
       autofocus: autofocus,

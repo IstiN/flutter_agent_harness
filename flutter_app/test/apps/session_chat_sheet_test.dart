@@ -1378,6 +1378,183 @@ void main() {
       expect(find.byKey(orbitKey), findsOneWidget); // status row visible
     });
   });
+
+  group('SessionChatSheet typing-indicator ownership (issue #464)', () {
+    const orbitKey = ValueKey('faWorkBarOrbit');
+    const typingRowKey = ValueKey('faChatTypingRow');
+
+    /// Pumps the sheet over a single hung-streaming session, docked
+    /// (panel closed) and idle.
+    Future<AgentService> pumpSheet(WidgetTester tester) async {
+      final env = MemoryExecutionEnv();
+      final service = _fakeService(env, _hungResponse());
+      addTearDown(service.dispose);
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('sess-464', service);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(body: SessionChatSheet(manager: manager)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      return service;
+    }
+
+    /// Starts a run OUTSIDE the bar (no composer onSent) so the panel
+    /// stays closed; timed pumps — the orbit indicator never settles.
+    Future<void> startRun(WidgetTester tester, AgentService service) async {
+      await tester.runAsync(() async {
+        unawaited(service.sendText('long task'));
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+    }
+
+    void expectOneOwner() {
+      final bars = find.byKey(orbitKey).evaluate().length;
+      final rows = find.byKey(typingRowKey).evaluate().length;
+      expect(bars + rows, 1,
+          reason: 'a live turn must show exactly one indicator '
+              '(bar=$bars, composerRow=$rows)');
+    }
+
+    Future<void> expandPanel(WidgetTester tester) async {
+      // Timed pumps throughout: while the turn streams, the visible
+      // indicator animates forever and pumpAndSettle would time out.
+      await tester.tap(find.byIcon(Icons.open_in_full));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+
+    Future<void> collapsePanel(WidgetTester tester) async {
+      // Pull the panel down by its handle (the popup-menu route needs
+      // pumpAndSettle, which never settles while the turn streams).
+      await tester.drag(find.byKey(_handleKey), const Offset(0, 400));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+    }
+
+    testWidgets('AC1: docked streaming shows ONE indicator — the bar; the '
+        'composer typing row is suppressed', (tester) async {
+      final service = await pumpSheet(tester);
+      // Idle docked: neither surface renders.
+      expect(find.byKey(orbitKey), findsNothing);
+      expect(find.byKey(typingRowKey), findsNothing);
+
+      await startRun(tester, service);
+      expect(service.isStreaming, isTrue);
+      // The bar's orbit is the only indicator: the composer's spinner +
+      // «Fa печатает…» sub-header row is suppressed (RED before the fix —
+      // both rendered stacked).
+      expect(find.byKey(orbitKey), findsOneWidget);
+      expect(find.byKey(typingRowKey), findsNothing);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+    });
+
+    testWidgets('AC2: expanding flips the indicator to the composer footer; '
+        'collapsing returns it to the bar', (tester) async {
+      final service = await pumpSheet(tester);
+      await startRun(tester, service);
+      expect(find.byKey(orbitKey), findsOneWidget);
+
+      await expandPanel(tester);
+      expect(find.byKey(_panelKey), findsOneWidget);
+      expect(find.byKey(orbitKey), findsNothing);
+      expect(find.byKey(typingRowKey), findsOneWidget);
+
+      await collapsePanel(tester);
+      expect(find.byKey(_panelKey), findsNothing);
+      expect(find.byKey(orbitKey), findsOneWidget);
+      expect(find.byKey(typingRowKey), findsNothing);
+      expect(service.isStreaming, isTrue);
+    });
+
+    testWidgets('AC3: one service-level flag drives both surfaces — the '
+        'stream toggles flip rendering exclusively', (tester) async {
+      final service = await pumpSheet(tester);
+      // Focus the field first: the panel opens, ownership sits with the
+      // composer footer while the bar is unmounted.
+      await tester.tap(find.byType(TextField).first);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(_panelKey), findsOneWidget);
+      await startRun(tester, service);
+      expect(service.isStreaming, isTrue);
+      expect(find.byKey(typingRowKey), findsOneWidget);
+      expect(find.byKey(orbitKey), findsNothing);
+      // End the turn: the flag flips off, the footer indicator goes.
+      await tester.runAsync(() async {
+        service.abort();
+        for (var i = 0; i < 30 && service.isStreaming; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(service.isStreaming, isFalse);
+      expect(find.byKey(typingRowKey), findsNothing);
+      expect(find.byKey(orbitKey), findsNothing);
+
+      // A second turn while docked: ownership flips back to the bar.
+      await collapsePanel(tester);
+      await startRun(tester, service);
+      expect(service.isStreaming, isTrue);
+      expect(find.byKey(orbitKey), findsOneWidget);
+      expect(find.byKey(typingRowKey), findsNothing);
+    });
+
+    testWidgets('E1: a turn finishing while docked drops the indicator '
+        'cleanly; abort on idle stays a safe no-op', (tester) async {
+      final env = MemoryExecutionEnv();
+      // Self-completing run: the turn ENDS on its own while docked.
+      final service = _fakeService(env, _singleTextResponse('done'));
+      addTearDown(service.dispose);
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('sess-464', service);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(body: SessionChatSheet(manager: manager)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        unawaited(service.sendText('short task'));
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pumpAndSettle();
+
+      // Turn over: no indicator anywhere, nothing mid-animation.
+      expect(service.isStreaming, isFalse);
+      expect(find.byKey(orbitKey), findsNothing);
+      expect(find.byKey(typingRowKey), findsNothing);
+      // Stop on an idle run is a no-op: no throw, no resurrection.
+      service.abort();
+      await tester.pump();
+      expect(service.isStreaming, isFalse);
+      expect(find.byKey(orbitKey), findsNothing);
+    });
+
+    testWidgets('E2: rapid collapse/expand during a live turn keeps exactly '
+        'one owner on every sampled frame', (tester) async {
+      final service = await pumpSheet(tester);
+      await startRun(tester, service);
+      for (var i = 0; i < 3; i++) {
+        await expandPanel(tester);
+        expectOneOwner();
+        await collapsePanel(tester);
+        expectOneOwner();
+      }
+      expect(service.isStreaming, isTrue);
+    });
+  });
   group('SessionChatSheet session tree (issue #198)', () {
     /// Seeds a main + subagent child pair on disk (the header metadata
     /// both hosts' childSessionFactory writes) and returns their
