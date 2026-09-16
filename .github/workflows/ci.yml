@@ -1405,7 +1405,12 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    # Same !cancelled() pattern as the release/binaries jobs (fa#456):
+    # break the transitive skip through always()-quality-gate, then require
+    # the gate to have actually passed before publishing.
+    if: >-
+      !cancelled() && needs.quality-gate.result == 'success' &&
+      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     env:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -1523,9 +1528,15 @@ jobs:
     # while tags were still PAT-pushed, up to v0.1.369). The release event
     # fires for every creation path, so the matrix can never be starved
     # again.
+    # Same !cancelled() pattern as the release job: the transitive skip
+    # through always()-quality-gate starved this matrix on tag pushes and
+    # release events alike (fa#456) — no linux/windows CLI assets since
+    # v0.1.370. The explicit gate check keeps failed-gate runs from
+    # building publishable binaries.
     if: >-
-      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
-      github.event_name == 'release'
+      !cancelled() && needs.quality-gate.result == 'success' &&
+      ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      github.event_name == 'release')
     permissions:
       contents: write # attach assets to the GitHub Release
     strategy:
@@ -1637,6 +1648,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     needs: binaries
     timeout-minutes: 15
+    # Depends on binaries — no !cancelled() needed here: the skip chain is
+    # already broken upstream by the binaries job's own guard (fa#456).
     if: >-
       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
       github.event_name == 'release'
@@ -1697,9 +1710,17 @@ jobs:
     # (0.1.x -> 0.1.y), coalesced to <=1 per 2h — pub.dev rate-limits publishes
     # (~12/day; hit on 2026-07-18). Release commits are skipped (loop guard).
     # Scheduled runs catch up commits that outpaced the coalesce window.
+    # !cancelled() + explicit gate check: GitHub propagates "skipped"
+    # TRANSITIVELY through an always()-job's needs graph. quality-gate uses
+    # if: always() and its needs include path-gated legs (perf-gate etc.)
+    # that skip on ordinary pushes — without !cancelled() this job was
+    # force-skipped on EVERY run since the perf gate landed (fa#456),
+    # silently killing auto-release for a week. The explicit result check
+    # keeps the gate red-line: no release on a failed quality gate.
     if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/main' && !startsWith(github.event.head_commit.message, 'chore(release):'))
-      || github.event_name == 'schedule'
+      !cancelled() && needs.quality-gate.result == 'success' &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main' && !startsWith(github.event.head_commit.message, 'chore(release):'))
+      || github.event_name == 'schedule')
     concurrency:
       group: release-main
       cancel-in-progress: false
