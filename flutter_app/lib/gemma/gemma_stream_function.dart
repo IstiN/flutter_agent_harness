@@ -37,10 +37,11 @@ library;
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:fa/gemma/gemma_types.dart';
+import 'package:fa/on_device/on_device_message_codec.dart';
+import 'package:fa/on_device/on_device_stream_pump.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-
-import 'package:fa/gemma/gemma_types.dart';
 
 /// Builds a [StreamFunction] that runs inference through [service].
 ///
@@ -122,30 +123,17 @@ Future<void> _runGemma(
   Context context,
   CancelToken? cancelToken,
 ) async {
-  final timestamp = DateTime.now();
-  final text = StringBuffer();
-  final toolBlocks = <int, _GemmaToolCallBlock>{};
-  final toolBlockOrder = <int>[];
-  var toolCallCounter = 0;
-  var stopReason = StopReason.stop;
-  String? errorMessage;
-
-  // Partial-first invariant: every event carries a freshly built snapshot of
-  // the message with ALL content accumulated so far (mirrors
-  // ProviderStreamState in the HTTP adapters, which is package-internal).
-  AssistantMessage snapshot() => AssistantMessage(
-    content: [
-      if (text.isNotEmpty) TextContent(text: text.toString()),
-      for (final key in toolBlockOrder) toolBlocks[key]!.toToolCall(),
-    ],
-    api: model.api,
-    provider: model.provider,
-    model: model.id,
-    usage: Usage.zero,
-    stopReason: stopReason,
-    errorMessage: errorMessage,
-    timestamp: timestamp,
+  // The emitter and the turn reference each other (snapshots carry the
+  // partial tool calls); the holder breaks the declaration cycle.
+  _GemmaToolCallEvents? toolEventsRef;
+  final turn = OnDeviceStreamTurn(
+    eventStream: eventStream,
+    model: model,
+    formatError: _formatGemmaError,
+    extraContent: () => toolEventsRef?.calls ?? const <ToolCall>[],
   );
+  final toolEvents = _GemmaToolCallEvents(turn);
+  toolEventsRef = toolEvents;
 
   try {
     cancelToken?.throwIfCancelled();
@@ -179,128 +167,124 @@ Future<void> _runGemma(
       onNote: (note) => debugPrint('[gemma] $note'),
     );
 
-    eventStream.push(StartEvent(partial: snapshot()));
+    turn.pushStart();
 
-    var textStarted = false;
-    String? streamError;
-    final done = Completer<void>();
-
-    void finish() {
-      if (!done.isCompleted) done.complete();
-    }
-
-    // Tool blocks live after the text block when one exists.
-    int toolContentIndex(int orderPosition) =>
-        (textStarted ? 1 : 0) + orderPosition;
-
-    if (cancelToken != null) {
-      unawaited(
-        cancelToken.onCancel.then((_) {
-          unawaited(service.interrupt());
-          finish();
-        }),
-      );
-    }
-
-    await service.chatStream(
-      systemInstruction: fitted.systemPrompt,
-      messages: convertGemmaMessages(
-        Context(
-          systemPrompt: fitted.systemPrompt,
-          messages: fitted.messages,
-          tools: context.tools,
+    final call = await pumpOnDeviceChat(
+      turn: turn,
+      cancelToken: cancelToken,
+      interrupt: service.interrupt,
+      startChat: (call) => service.chatStream(
+        systemInstruction: fitted.systemPrompt,
+        messages: convertGemmaMessages(
+          Context(
+            systemPrompt: fitted.systemPrompt,
+            messages: fitted.messages,
+            tools: context.tools,
+          ),
         ),
+        tools: context.tools != null && context.tools!.isNotEmpty
+            ? convertGemmaTools(context.tools!)
+            : null,
+        maxOutputTokens: model.maxTokens > 0 ? model.maxTokens : null,
+        onChunk: turn.pushTextDelta,
+        onToolCalls: toolEvents.handle,
+        onError: (message) {
+          call.streamError = message;
+          call.complete();
+        },
+        onDone: call.complete,
       ),
-      tools: context.tools != null && context.tools!.isNotEmpty
-          ? convertGemmaTools(context.tools!)
-          : null,
-      maxOutputTokens: model.maxTokens > 0 ? model.maxTokens : null,
-      onChunk: (chunk) {
-        if (chunk.isEmpty) return;
-        if (!textStarted) {
-          textStarted = true;
-          eventStream.push(
-            TextStartEvent(contentIndex: 0, partial: snapshot()),
-          );
-        }
-        text.write(chunk);
-        eventStream.push(
-          TextDeltaEvent(contentIndex: 0, delta: chunk, partial: snapshot()),
-        );
-      },
-      onToolCalls: (toolCallsJson) {
-        final decoded = jsonDecode(toolCallsJson);
-        if (decoded is! List) return;
-        for (final entry in decoded) {
-          if (entry is! Map) continue;
-          final index = entry['index'];
-          final key = index is int ? index : toolBlockOrder.length;
-          var block = toolBlocks[key];
-          if (block == null) {
-            final function = entry['function'];
-            final name = function is Map ? function['name'] as String? : null;
-            block = _GemmaToolCallBlock(
-              // The plugin's tool calls carry no id; synthesize one the way
-              // the Google adapter does for id-less calls.
-              '${(name == null || name.isEmpty) ? 'call' : name}'
-              '_${timestamp.millisecondsSinceEpoch}'
-              '_${toolCallCounter++}',
-            );
-            toolBlocks[key] = block;
-            toolBlockOrder.add(key);
-            eventStream.push(
-              ToolCallStartEvent(
-                contentIndex: toolContentIndex(toolBlockOrder.length - 1),
-                partial: snapshot(),
-              ),
-            );
-          }
-          final function = entry['function'];
-          if (function is! Map) continue;
-          final name = function['name'];
-          if (name is String && name.isNotEmpty) block.name = name;
-          final arguments = function['arguments'];
-          if (arguments is String && arguments.isNotEmpty) {
-            block.partialArgs.write(arguments);
-            eventStream.push(
-              ToolCallDeltaEvent(
-                contentIndex: toolContentIndex(toolBlockOrder.indexOf(key)),
-                delta: arguments,
-                partial: snapshot(),
-              ),
-            );
-          }
-        }
-      },
-      onError: (message) {
-        streamError = message;
-        finish();
-      },
-      onDone: finish,
     );
 
-    await done.future;
-
-    if (streamError != null) {
-      throw StateError(streamError!);
+    if (call.streamError != null) {
+      throw StateError(call.streamError!);
     }
     cancelToken?.throwIfCancelled();
 
-    if (textStarted) {
-      eventStream.push(
-        TextEndEvent(
-          contentIndex: 0,
-          content: text.toString(),
-          partial: snapshot(),
-        ),
-      );
+    turn.pushTextEnd();
+    turn.pushDone(toolEvents.finishAll());
+  } catch (error) {
+    await turn.fail(error, cancelToken: cancelToken);
+  } finally {
+    turn.end();
+  }
+}
+
+/// Turns the plugin's end-of-stream `tool_calls` payloads (complete calls
+/// in the OpenAI streaming shape) into the tool-call event sequence,
+/// tracking the accumulating blocks. The plugin surfaces calls complete at
+/// end-of-stream, so each call becomes [ToolCallStartEvent] → one
+/// [ToolCallDeltaEvent] carrying the full arguments JSON →
+/// [ToolCallEndEvent] — the same event sequence an OpenAI-compatible
+/// server produces when it does not fragment deltas.
+final class _GemmaToolCallEvents {
+  _GemmaToolCallEvents(this._turn);
+
+  final OnDeviceStreamTurn _turn;
+
+  final _blocks = <int, _GemmaToolCallBlock>{};
+  final _order = <int>[];
+  var _counter = 0;
+
+  /// The accumulated blocks as the [ToolCall]s a snapshot carries.
+  List<ToolCall> get calls => [
+    for (final key in _order) _blocks[key]!.toToolCall(),
+  ];
+
+  /// Tool blocks live after the text block when one exists.
+  int _contentIndex(int orderPosition) =>
+      (_turn.hasText ? 1 : 0) + orderPosition;
+
+  /// Ingests one `tool_calls` JSON payload.
+  void handle(String toolCallsJson) {
+    final decoded = jsonDecode(toolCallsJson);
+    if (decoded is! List) return;
+    for (final entry in decoded) {
+      if (entry is! Map) continue;
+      final index = entry['index'];
+      final key = index is int ? index : _order.length;
+      var block = _blocks[key];
+      if (block == null) {
+        final function = entry['function'];
+        final name = function is Map ? function['name'] as String? : null;
+        block = _GemmaToolCallBlock(_syntheticId(name));
+        _blocks[key] = block;
+        _order.add(key);
+        _turn.eventStream.push(
+          ToolCallStartEvent(
+            contentIndex: _contentIndex(_order.length - 1),
+            partial: _turn.snapshot(),
+          ),
+        );
+      }
+      final function = entry['function'];
+      if (function is! Map) continue;
+      final name = function['name'];
+      if (name is String && name.isNotEmpty) block.name = name;
+      final arguments = function['arguments'];
+      if (arguments is String && arguments.isNotEmpty) {
+        block.partialArgs.write(arguments);
+        _turn.eventStream.push(
+          ToolCallDeltaEvent(
+            contentIndex: _contentIndex(_order.indexOf(key)),
+            delta: arguments,
+            partial: _turn.snapshot(),
+          ),
+        );
+      }
     }
-    for (var position = 0; position < toolBlockOrder.length; position++) {
-      final block = toolBlocks[toolBlockOrder[position]]!;
+  }
+
+  /// Closes every block, pushing the end events, and infers the terminal
+  /// stop reason: the plugin reports no finish reason, so the turn ends
+  /// `toolUse` when any call was emitted.
+  StopReason finishAll() {
+    for (var position = 0; position < _order.length; position++) {
+      final block = _blocks[_order[position]]!;
       block.finish();
-      final partial = snapshot();
-      final contentIndex = toolContentIndex(position);
-      eventStream.push(
+      final partial = _turn.snapshot();
+      final contentIndex = _contentIndex(position);
+      _turn.eventStream.push(
         ToolCallEndEvent(
           contentIndex: contentIndex,
           toolCall: partial.content[contentIndex] as ToolCall,
@@ -308,20 +292,15 @@ Future<void> _runGemma(
         ),
       );
     }
-
-    if (toolBlockOrder.isNotEmpty) {
-      stopReason = StopReason.toolUse;
-    }
-    eventStream.push(DoneEvent(reason: stopReason, message: snapshot()));
-  } catch (error) {
-    final aborted =
-        error is CancelledException || (cancelToken?.isCancelled ?? false);
-    stopReason = aborted ? StopReason.aborted : StopReason.error;
-    errorMessage = aborted ? 'Request was aborted' : _formatGemmaError(error);
-    eventStream.push(ErrorEvent(reason: stopReason, error: snapshot()));
-  } finally {
-    eventStream.end();
+    return _order.isEmpty ? StopReason.stop : StopReason.toolUse;
   }
+
+  /// Synthesizes the id the plugin's id-less tool calls carry — the way
+  /// the Google adapter does it.
+  String _syntheticId(String? name) =>
+      '${(name == null || name.isEmpty) ? 'call' : name}'
+      '_${_turn.timestamp.millisecondsSinceEpoch}'
+      '_${_counter++}';
 }
 
 /// Serializes harness [Tool]s to the OpenAI tools array the engine adapter
@@ -342,105 +321,73 @@ List<Map<String, dynamic>> convertGemmaTools(List<Tool> tools) {
 }
 
 /// Maps a harness [Context] to provider-neutral messages for the Gemma
-/// engine.
+/// engine — the shared on-device walk ([convertOnDeviceMessages]) with the
+/// Gemma wire quirks ([_gemmaCodecProfile]).
 ///
 /// The system prompt is NOT part of the output — it travels via
 /// [GemmaEngineApi.chatStream]'s `systemInstruction` (the plugin renders it
 /// natively through the LiteRT-LM conversation config).
 ///
-/// - User text passes through; image blocks degrade to an omission note
-///   (Gemma 4 is multimodal, but this provider ships text-only — vision is
-///   a deliberate follow-up).
-/// - Assistant text passes through; thinking blocks are dropped; historical
-///   tool calls become a `tool_call` message carrying the OpenAI-style
-///   assistant JSON (the shape the plugin's own history replay stores).
-/// - Tool results become `tool_result` messages with [GemmaChatMessage
-///   .toolName] set; the plugin renders them as `<tool_response>` blocks.
+/// User text passes through; image blocks degrade to an omission note
+/// (Gemma 4 is multimodal, but this provider ships text-only — vision is a
+/// deliberate follow-up). Assistant text passes through; thinking blocks
+/// are dropped; historical tool calls become a `tool_call` message carrying
+/// the OpenAI-style assistant JSON (the shape the plugin's own history
+/// replay stores). Tool results become `tool_result` messages with
+/// [GemmaChatMessage.toolName] set; the plugin renders them as
+/// `<tool_response>` blocks.
 List<GemmaChatMessage> convertGemmaMessages(Context context) {
-  final messages = <GemmaChatMessage>[];
-
-  for (final message in context.messages) {
-    switch (message) {
-      case UserMessage():
-        final content = message.content;
-        if (content is String) {
-          if (content.trim().isNotEmpty) {
-            messages.add((role: 'user', content: content, toolName: null));
-          }
-        } else {
-          final blocks = content as List<ContentBlock>;
-          final parts = <String>[
-            for (final block in blocks)
-              if (block is TextContent && block.text.trim().isNotEmpty)
-                block.text,
-          ];
-          if (blocks.any((block) => block is ImageContent)) {
-            parts.add(
-              '(attached image omitted: the Gemma provider is text-only '
-              'in this build)',
-            );
-          }
-          if (parts.isNotEmpty) {
-            messages.add((
-              role: 'user',
-              content: parts.join('\n'),
-              toolName: null,
-            ));
-          }
-        }
-      case AssistantMessage():
-        final parts = <String>[
-          for (final block in message.content)
-            if (block is TextContent && block.text.trim().isNotEmpty)
-              block.text,
-        ];
-        if (parts.isNotEmpty) {
-          messages.add((
-            role: 'assistant',
-            content: parts.join('\n'),
-            toolName: null,
-          ));
-        }
-        final toolCalls = [
-          for (final block in message.content)
-            if (block is ToolCall) block,
-        ];
-        if (toolCalls.isNotEmpty) {
-          // The shape the LiteRT-LM SDK produces for tool-call turns (and
-          // the plugin's own history replay stores): an OpenAI-style
-          // assistant message with a tool_calls array.
-          messages.add((
-            role: 'tool_call',
-            content: jsonEncode({
-              'role': 'assistant',
-              'tool_calls': [
-                for (final call in toolCalls)
-                  {
-                    'type': 'function',
-                    'function': {
-                      'name': call.name,
-                      'arguments': jsonEncode(call.arguments),
-                    },
-                  },
-              ],
-            }),
-            toolName: null,
-          ));
-        }
-      case ToolResultMessage():
-        final resultText = message.content
-            .whereType<TextContent>()
-            .map((block) => block.text)
-            .join('\n');
-        messages.add((
-          role: 'tool_result',
-          content: resultText.isEmpty ? '(no output)' : resultText,
-          toolName: message.toolName,
-        ));
-    }
-  }
-  return messages;
+  return [
+    for (final message in convertOnDeviceMessages(context, _gemmaCodecProfile))
+      (
+        role: message.role,
+        content: message.content,
+        toolName: message.toolName,
+      ),
+  ];
 }
+
+/// The Gemma projection quirks (see [convertGemmaMessages]).
+final _gemmaCodecProfile = OnDeviceCodecProfile(
+  systemMessage: (_, _) => null,
+  projectImages: (images) => (
+    dataUris: const [],
+    omissionNote: images.isEmpty
+        ? null
+        : '(attached image omitted: the Gemma provider is text-only '
+              'in this build)',
+  ),
+  toolCallLine: (_) => null,
+  extraAssistantMessages: (calls) {
+    if (calls.isEmpty) return const [];
+    return [
+      (
+        role: 'tool_call',
+        content: jsonEncode({
+          'role': 'assistant',
+          'tool_calls': [
+            for (final call in calls)
+              {
+                'type': 'function',
+                'function': {
+                  'name': call.name,
+                  'arguments': jsonEncode(call.arguments),
+                },
+              },
+          ],
+        }),
+        toolName: null,
+        images: const [],
+      ),
+    ];
+  },
+  toolResultMessage: (result, resultText) => (
+    role: 'tool_result',
+    content: resultText,
+    toolName: result.toolName,
+    images: const [],
+  ),
+);
 
 String _formatGemmaError(Object error) {
   final text = error is StateError ? error.message : error.toString();
