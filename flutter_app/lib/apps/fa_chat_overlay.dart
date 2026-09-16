@@ -15,6 +15,7 @@ import 'package:fa/ui/markdown_style.dart';
 import 'package:fa/ui/widgets/chat_message_tile.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/apps/dynamic_widget_tile.dart';
+import 'package:fa/apps/dynamic_widget_graduation.dart';
 import 'package:fa/apps/fa_work_bar.dart';
 import 'package:fa/ui/widgets/media_player.dart';
 
@@ -321,6 +322,10 @@ class _FaChatOverlayState extends State<FaChatOverlay> {
       dynamicWidgetTileBuilder: (context, m) => DynamicWidgetTile(
         service: widget.service.dynamicMessages,
         message: m,
+        // Issue #457 AC3: the overlay graduates through the shared
+        // helper — no greyed-out "Save as app" here either.
+        onSaveAsApp: (definition) =>
+            graduateDynamicWidget(context, widget.service, definition),
       ),
     );
   }
