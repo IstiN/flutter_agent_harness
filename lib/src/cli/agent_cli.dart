@@ -441,26 +441,22 @@ class AgentCli {
         final session = _session;
         if (session == null) return;
         await session.appendCustomEntry(
-          customType: 'subagent_registry',
+          customType: subagentRegistryRecordType,
           data: registry,
         );
       },
+      // Issue #488 AC2: the snapshot is read by RAW file scan (the
+      // windowed boot open drops side-leaf custom records out of
+      // getEntries — the registry used to come back EMPTY on every
+      // restart) and transcript-only children are adopted, so
+      // task_send/task_resume address pre-restart children.
       source: () async {
         final session = _session;
         if (session == null) return const [];
-        final entries = await session.getEntries();
-        List<Map<String, dynamic>> latest = const [];
-        for (final entry in entries) {
-          if (entry is CustomRecord &&
-              entry.customType == 'subagent_registry' &&
-              entry.data is List) {
-            latest = [
-              for (final item in entry.data as List)
-                if (item is Map<String, dynamic>) item,
-            ];
-          }
-        }
-        return latest;
+        return subagentRegistryRows(
+          repo: _repo as JsonlSessionRepo,
+          parent: await session.getMetadata(),
+        );
       },
     );
     _subagentManager.machineName = config.machineName;
