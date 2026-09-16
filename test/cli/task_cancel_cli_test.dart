@@ -123,6 +123,8 @@ final class _CtrlJob implements ShellJob {
   final String command;
   @override
   final String logPath;
+  @override
+  int? get pid => null;
 
   var _stopped = false;
   final _settled = Completer<void>();
