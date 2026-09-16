@@ -68,33 +68,71 @@ void main() {
     testWidgets('boot → model picker → filter → select', (tester) async {
       // Fixture models: the picker must show seeded data, never the real
       // user registry (issue #508).
-      final tempHome = _tempHomeWithProvider();
+      final tempHome = _tempHomeWithModels();
       final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
       await harness.screenshot(shotsDir, '01_boot');
       // Issue #506 AC1: the banner mark is the composed two-role label —
       // `>_` in the accent role, `Fa` in accent2 — the same styling tokens
       // the chat-time prefix carries, never a single plain role.
       _expectComposedFaMark(harness, topRow: true, shot: '01_boot');
+      expect(harness.screenText, contains('test-mini'));
+
+      // /model opens the model picker over the seeded fixture models.
       await harness.runSlashCommand('/model');
       await harness.liveWaitForText(
         'Select model',
         timeout: const Duration(seconds: 15),
       );
       await harness.screenshot(shotsDir, '02_model_picker');
+      expect(harness.screenText, contains('test-mini'));
+      expect(harness.screenText, contains('test-max'));
+      expect(harness.screenText, contains('omega'));
+      // The active fixture model carries the current marker.
+      expect(harness.screenText, contains('●'));
 
-      // Type to filter
+      // Type to filter: 'test' matches exactly the two test-* fixtures —
+      // the row set shrinks and omega is filtered OUT.
       harness.sendText('test');
       await harness.settle(settleMs: 300);
       await harness.screenshot(shotsDir, '03_model_filter');
+      expect(harness.screenText, contains('[Select model: test]'));
+      expect(harness.screenText, contains('test-max'));
+      expect(harness.screenText, isNot(contains('omega')));
 
-      // Navigate and select
+      // Navigate: the highlight cursor lands on the second fixture row.
       harness.sendArrowDown();
       await harness.settle(settleMs: 300);
       await harness.screenshot(shotsDir, '04_model_highlight');
+      final highlightedLine = harness.viewportLines
+          .firstWhere((line) => line.contains('▸'), orElse: () => '');
+      expect(
+        highlightedLine,
+        contains('test-max'),
+        reason: 'no highlighted picker row on screen',
+      );
 
+      // Enter switches to the highlighted fixture model.
       harness.sendEnter();
-      await harness.settle(settleMs: 400);
+      await harness.liveWaitForText(
+        'switched model to test-max',
+        timeout: const Duration(seconds: 15),
+      );
       await harness.screenshot(shotsDir, '05_model_selected');
+      expect(harness.screenText, contains('switched model to test-max'));
+      expect(harness.screenText, isNot(contains('Select model')));
+
+      // A query matching nothing is its own named state: the title keeps
+      // the query and the dim no-matches hint renders.
+      await harness.runSlashCommand('/model');
+      await harness.liveWaitForText(
+        'Select model',
+        timeout: const Duration(seconds: 15),
+      );
+      harness.sendText('zzz');
+      await harness.settle(settleMs: 300);
+      await harness.screenshot(shotsDir, '06_model_filter_no_match');
+      expect(harness.screenText, contains('[Select model: zzz]'));
+      expect(harness.screenText, contains('(no matches)'));
 
       await harness.close();
       tempHome.deleteSync(recursive: true);
@@ -103,17 +141,22 @@ void main() {
     testWidgets('boot → /models list', (tester) async {
       // Fixture registry: /models must list seeded providers only — a real
       // provider name on this screen is a config leak (issue #508).
-      final tempHome = _tempHomeWithProvider();
+      final tempHome = _tempHomeWithModels();
       final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
       await harness.screenshot(shotsDir, '10_boot_models');
+      expect(harness.screenText, contains('test-mini'));
 
       await harness.runSlashCommand('/models');
       await harness.settle(settleMs: 500);
       await harness.liveWaitForText(
-        'test-provider',
+        'openai/test-mini',
         timeout: const Duration(seconds: 15),
       );
       await harness.screenshot(shotsDir, '11_models_list');
+      // The line-mode list shows every seeded fixture model.
+      expect(harness.screenText, contains('test-mini'));
+      expect(harness.screenText, contains('test-max'));
+      expect(harness.screenText, contains('omega'));
 
       await harness.close();
       tempHome.deleteSync(recursive: true);
@@ -330,33 +373,51 @@ void main() {
       final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
       await harness.screenshot(shotsDir, '50_boot_model_edit');
 
+      // 50 is the EDIT-FLOW state: the wizard picker its name claims,
+      // not a plain boot frame.
       await harness.runSlashCommand('/model-edit');
       await harness.liveWaitForText(
         'Context Window',
         timeout: const Duration(seconds: 15),
       );
-      await harness.screenshot(shotsDir, '51_model_edit_picker');
+      await harness.screenshot(shotsDir, '50_boot_model_edit');
+      expect(harness.screenText, contains('Model Edit'));
+      expect(harness.screenText, contains('Context Window'));
+      expect(harness.screenText, contains('Max Output Tokens'));
 
-      // Pick Context Window (first option)
+      // Pick Context Window (first option) → the preset list.
       harness.sendEnter();
       await harness.liveWaitForText('4K', timeout: const Duration(seconds: 15));
-      await harness.screenshot(shotsDir, '52_context_presets');
+      await harness.screenshot(shotsDir, '51_context_presets');
+      expect(harness.screenText, contains('4K'));
 
-      // Navigate down to 128K
+      // Navigate down to 128K: the highlight cursor rides the preset row.
       harness.sendArrowDown();
       harness.sendArrowDown();
       harness.sendArrowDown();
       harness.sendArrowDown();
       harness.sendArrowDown();
       await harness.settle(settleMs: 300);
-      await harness.screenshot(shotsDir, '53_context_highlight');
+      await harness.screenshot(shotsDir, '52_context_highlight');
+      // The ask-picker marks the cursor row `N. > label`.
+      final presetLine = harness.viewportLines.firstWhere(
+        (line) => line.contains('128K'),
+        orElse: () => '',
+      );
+      expect(presetLine, isNotEmpty, reason: '128K preset not on screen');
+      expect(
+        presetLine,
+        contains('> 128K'),
+        reason: '128K row is not the highlighted one',
+      );
 
       harness.sendEnter();
       await harness.liveWaitForText(
         'context window set to',
         timeout: const Duration(seconds: 15),
       );
-      await harness.screenshot(shotsDir, '54_context_set');
+      await harness.screenshot(shotsDir, '53_context_set');
+      expect(harness.screenText, contains('context window set to'));
 
       await harness.close();
       tempHome.deleteSync(recursive: true);
@@ -1511,6 +1572,35 @@ mode: code
 approvalMode: yolo
 allowedTools: []
 ''');
+  return tempHome;
+}
+
+/// Creates a temp HOME whose boot model is the fixture `test-mini` and
+/// whose persisted cross-provider model cache seeds the fixture models
+/// the visual picker tests filter by (`test-mini`, `test-max`, `omega`).
+/// This is the real instant-boot path: the CLI trusts a
+/// `~/.fah/model_cache.json` entry younger than 24h, so the picker
+/// renders a deterministic set with no live endpoint.
+Directory _tempHomeWithModels() {
+  final tempHome = Directory.systemTemp.createTempSync('fa_test_');
+  File('${tempHome.path}/.fah/config.yaml')
+    ..createSync(recursive: true)
+    ..writeAsStringSync('''
+provider: openai-completions
+model: test-mini
+baseUrl: http://localhost:9999/v1
+mode: code
+approvalMode: yolo
+allowedTools: []
+''');
+  File('${tempHome.path}/.fah/model_cache.json').writeAsStringSync(
+    jsonEncode({
+      'openai': {
+        'ids': ['test-mini', 'test-max', 'omega'],
+        'fetchedAtMs': DateTime.now().millisecondsSinceEpoch,
+      },
+    }),
+  );
   return tempHome;
 }
 
