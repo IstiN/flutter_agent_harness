@@ -17,6 +17,7 @@ import 'package:fa/apps/session_chat_sheet.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/ui/app_theme.dart';
 import 'package:fa_ui/fa_ui.dart' show FaChatMessage;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -197,6 +198,133 @@ void main() {
     // Issue #378 AC2: the full-screen ephemeral view over the shared
     // canvas (boot spinner — deterministic, no JS runtime).
     await expectGolden(tester, 'dynamic_message_ephemeral_view');
+  });
+
+  // ── Issue #457 AC5: width breakpoints (360dp full-width vs 768dp
+  // padded) in both themes, and the tall-clip fixture before/after
+  // scrolling. ──
+
+  /// A widget tree taller than any canvas: 900px-declared box (E1) of
+  /// rows ending in one button control.
+  final tallTree = {
+    'type': 'sizedBox',
+    'height': 900,
+    'child': {
+      'type': 'column',
+      'mainAxisSize': 'min',
+      'children': [
+        {'type': 'text', 'data': 'top-row'},
+        for (var i = 0; i < 20; i++) {'type': 'text', 'data': 'row-$i'},
+        {'type': 'button', 'text': 'bottom-control'},
+      ],
+    },
+  };
+
+  testWidgets('tile at 360dp, light — full-width (AC5)', (tester) async {
+    final dm = service()..debugAdd(def, engine: engine());
+    await pumpGolden(
+      tester,
+      DynamicWidgetTile(
+        service: dm,
+        message: FaChatMessage(role: 'widget', content: '', data: def.id),
+        onSaveAsApp: (_) async {},
+      ),
+      size: const Size(360, 800),
+      theme: buildFahThemeLight(),
+      settle: false,
+    );
+    await expectGolden(tester, 'dynamic_message_tile_mobile_360_light');
+  });
+
+  testWidgets('tile at 360dp, dark — full-width (AC5)', (tester) async {
+    final dm = service()..debugAdd(def, engine: engine());
+    await pumpGolden(
+      tester,
+      DynamicWidgetTile(
+        service: dm,
+        message: FaChatMessage(role: 'widget', content: '', data: def.id),
+        onSaveAsApp: (_) async {},
+      ),
+      size: const Size(360, 800),
+      settle: false,
+    );
+    await expectGolden(tester, 'dynamic_message_tile_mobile_360_dark');
+  });
+
+  testWidgets('tile at 768dp, light — padded (AC5)', (tester) async {
+    final dm = service()..debugAdd(def, engine: engine());
+    await pumpGolden(
+      tester,
+      DynamicWidgetTile(
+        service: dm,
+        message: FaChatMessage(role: 'widget', content: '', data: def.id),
+        onSaveAsApp: (_) async {},
+      ),
+      size: const Size(768, 1024),
+      theme: buildFahThemeLight(),
+      settle: false,
+    );
+    await expectGolden(tester, 'dynamic_message_tile_tablet_768_light');
+  });
+
+  testWidgets('tile at 768dp, dark — padded (AC5)', (tester) async {
+    final dm = service()..debugAdd(def, engine: engine());
+    await pumpGolden(
+      tester,
+      DynamicWidgetTile(
+        service: dm,
+        message: FaChatMessage(role: 'widget', content: '', data: def.id),
+        onSaveAsApp: (_) async {},
+      ),
+      size: const Size(768, 1024),
+      settle: false,
+    );
+    await expectGolden(tester, 'dynamic_message_tile_tablet_768_dark');
+  });
+
+  testWidgets('tall clip fixture: viewport at the top (AC4 before)', (
+    tester,
+  ) async {
+    final eng = engine();
+    final dm = service()..debugAdd(def, engine: eng);
+    await pumpGolden(
+      tester,
+      DynamicWidgetTile(
+        service: dm,
+        message: FaChatMessage(role: 'widget', content: '', data: def.id),
+        onSaveAsApp: (_) async {},
+      ),
+      size: const Size(360, 800),
+      settle: false,
+    );
+    eng.tree.value = tallTree;
+    await tester.pump();
+    await expectGolden(tester, 'dynamic_message_tall_fixture_top');
+  });
+
+  testWidgets('tall clip fixture: scrolled to the last control '
+      '(AC4 after)', (tester) async {
+    final eng = engine();
+    final dm = service()..debugAdd(def, engine: eng);
+    await pumpGolden(
+      tester,
+      DynamicWidgetTile(
+        service: dm,
+        message: FaChatMessage(role: 'widget', content: '', data: def.id),
+        onSaveAsApp: (_) async {},
+      ),
+      size: const Size(360, 800),
+      settle: false,
+    );
+    eng.tree.value = tallTree;
+    await tester.pump();
+    await tester.scrollUntilVisible(
+      find.text('bottom-control'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pump();
+    await expectGolden(tester, 'dynamic_message_tall_fixture_scrolled');
   });
 
   testWidgets('dynamic messages list sheet', (tester) async {
