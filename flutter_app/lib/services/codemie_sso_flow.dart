@@ -52,6 +52,11 @@ Future<bool> runCodemieSsoFlow({
   required AgentService? service,
   required LastConnectionStore lastConnectionStore,
   String orgUrl = defaultCodeMieBaseUrl,
+  // Injectable hop seams (tests); production passes the defaults.
+  Future<CodeMieSsoCredentials?> Function(BuildContext, String orgUrl)?
+  authenticate,
+  Future<List<String>> Function(String apiBase, String cookie)? fetchProjects,
+  Future<List<String>> Function(String baseUrl, String cookie)? fetchModels,
 }) async {
   // The web build cannot run the loopback callback server — but INSIDE
   // the extension it never needs one: the app page may open the login
@@ -69,7 +74,7 @@ Future<bool> runCodemieSsoFlow({
   }
 
   // ── Step 1: SSO ─────────────────────────────────────────────────────
-  final credentials = await _authenticate(context, orgUrl);
+  final credentials = await (authenticate ?? _authenticate)(context, orgUrl);
   if (credentials == null || !context.mounted) {
     return false; // cancelled / timed out
   }
@@ -81,6 +86,8 @@ Future<bool> runCodemieSsoFlow({
     lastConnectionStore: lastConnectionStore,
     orgUrl: orgUrl,
     credentials: credentials,
+    fetchProjects: fetchProjects,
+    fetchModels: fetchModels,
   );
 }
 
@@ -161,6 +168,8 @@ Future<bool> _completeSignIn({
   required LastConnectionStore lastConnectionStore,
   required String orgUrl,
   required CodeMieSsoCredentials credentials,
+  Future<List<String>> Function(String apiBase, String cookie)? fetchProjects,
+  Future<List<String>> Function(String baseUrl, String cookie)? fetchModels,
 }) async {
   final baseUrl = '${credentials.apiUrl}/v1';
   final cookie = credentials.authToken;
@@ -170,9 +179,15 @@ Future<bool> _completeSignIn({
       .where((p) => p.baseUrl == baseUrl)
       .firstOrNull;
 
-  if (!await _projectStep(context, credentials)) return false;
+  if (!await _projectStep(context, credentials, fetchProjects: fetchProjects)) {
+    return false;
+  }
 
-  final models = await fetchCodeMieModelsLenient(baseUrl, cookie);
+  final models = await (fetchModels ?? fetchCodeMieModelsLenient)(
+    baseUrl,
+    cookie,
+  );
+
   if (!context.mounted) return false;
 
   final modelId = await resolveCodeMieModelId(
@@ -205,13 +220,13 @@ Future<bool> _completeSignIn({
 /// skip it entirely). Returns false when the flow must abort (unmounted).
 Future<bool> _projectStep(
   BuildContext context,
-  CodeMieSsoCredentials credentials,
-) async {
-  final projects = await fetchCodeMieProjectsLenient(
+  CodeMieSsoCredentials credentials, {
+  Future<List<String>> Function(String apiBase, String cookie)? fetchProjects,
+}) async {
+  final projects = await (fetchProjects ?? fetchCodeMieProjectsLenient)(
     credentials.apiUrl,
     credentials.authToken,
   );
-
   if (!context.mounted) return false;
   if (projects.isNotEmpty) {
     await showCodeMieProjectPicker(context, projects);

@@ -25,6 +25,12 @@ const _documentedExemptions = <String, String>{
       'ASWebAuthenticationSession in codemie_sso_flow.dart, which carries '
       'the analytics); shown only when the system session cannot start — '
       'no meaningful user path to track.',
+  'lib/ui/screens/codemie_sso_pickers.dart':
+      'The informational project picker and the model quick-filter page '
+      'extracted out of codemie_sso_flow.dart (issue #476) — the whole '
+      'CodeMie SSO surface carries no AppAnalytics calls by design (see '
+      'the codemie_sso_webview.dart exemption); the pickers fire no new '
+      'user paths, only selection state for the calling flow.',
   'lib/ui/screens/settings_key_dialogs.dart':
       'Two modal key-management dialogs (edit one key, add a key) opened '
       'from the Keys section — the section carries the analytics events; '

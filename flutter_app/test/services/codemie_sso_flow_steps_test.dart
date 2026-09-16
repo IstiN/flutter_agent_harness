@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/codemie_sso_flow.dart';
 import 'package:fa/services/codemie_sso_flow_steps.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
@@ -590,6 +591,124 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(completed, isFalse);
+      expect(registry.providers, isEmpty);
+    });
+  });
+  CodeMieSsoCredentials _credentials() => CodeMieSsoCredentials(
+    cookies: {'codemie_access_token': 'aaa.bbb.ccc'},
+    apiUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+    expiresAt: DateTime.now()
+        .add(const Duration(hours: 20))
+        .millisecondsSinceEpoch,
+  );
+
+  group('runCodemieSsoFlow — the sequencer over injected hops', () {
+    // Pumps the harness (awaited) and wires the flow outcome into [done].
+    Future<void> pumpFlow({
+      required WidgetTester tester,
+      required Completer<bool> done,
+      required ProviderRegistry registry,
+      AgentService? service,
+      LastConnectionStore? store,
+      Future<CodeMieSsoCredentials?> Function(BuildContext, String)?
+      authenticate,
+      List<String> projects = const [],
+      List<String> models = const ['m1'],
+    }) {
+      return tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  unawaited(
+                    runCodemieSsoFlow(
+                      context: context,
+                      registry: registry,
+                      service: service,
+                      lastConnectionStore:
+                          store ?? LastConnectionStore.inMemory(),
+                      orgUrl: 'https://codemie.lab.epam.com',
+                      authenticate: authenticate,
+                      fetchProjects: (_, __) async => projects,
+                      fetchModels: (_, __) async => models,
+                    ).then(done.complete),
+                  );
+                });
+                return const SizedBox();
+              },
+            ),
+          ),
+        ),
+      );
+    }
+
+    testWidgets('happy path: SSO → skip empty projects → pick → save', (
+      tester,
+    ) async {
+      final env = MemoryExecutionEnv();
+      final registry = await ProviderRegistry.load(env);
+      final service = _RecordingService(env);
+      final store = LastConnectionStore.inMemory();
+      final done = Completer<bool>();
+
+      await pumpFlow(
+        tester: tester,
+        done: done,
+        registry: registry,
+        service: service,
+        store: store,
+        authenticate: (_, __) async => _credentials(),
+      );
+      await tester.pumpAndSettle();
+
+      // The model picker is up (fresh login, no preselection).
+      await tester.enterText(find.byType(TextField), 'gpt-x');
+      await tester.tap(find.text('Connect'));
+      await tester.pumpAndSettle();
+
+      expect(await done.future, isTrue);
+      expect(registry.providers.single.modelId, 'gpt-x');
+      expect(service.reconfigured!.modelId, 'gpt-x');
+      expect(store.connection!.modelId, 'gpt-x');
+    });
+
+    testWidgets('cancel at step 1 aborts without saving', (tester) async {
+      final env = MemoryExecutionEnv();
+      final registry = await ProviderRegistry.load(env);
+      final done = Completer<bool>();
+
+      await pumpFlow(
+        tester: tester,
+        done: done,
+        registry: registry,
+        authenticate: (_, __) async => null,
+      );
+      await tester.pumpAndSettle();
+
+      expect(await done.future, isFalse);
+      expect(registry.providers, isEmpty);
+    });
+
+    testWidgets('an empty model pick aborts after a successful SSO', (
+      tester,
+    ) async {
+      final env = MemoryExecutionEnv();
+      final registry = await ProviderRegistry.load(env);
+      final done = Completer<bool>();
+
+      await pumpFlow(
+        tester: tester,
+        done: done,
+        registry: registry,
+        authenticate: (_, __) async => _credentials(),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Connect'));
+      await tester.pumpAndSettle();
+
+      expect(await done.future, isFalse);
       expect(registry.providers, isEmpty);
     });
   });
