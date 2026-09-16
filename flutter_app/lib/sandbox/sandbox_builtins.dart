@@ -47,6 +47,45 @@ typedef SandboxDirLister = Future<List<SandboxDirEntry>?> Function(String path);
 /// shell's current directory.
 typedef SandboxDirMaker = Future<void> Function(String path);
 
+/// Parsed `curl`/`wget` command line; see [SandboxBuiltins.parseCurlArgs].
+final class CurlArgs {
+  CurlArgs();
+
+  String? url;
+  String method = 'GET';
+  final Map<String, String> headers = {};
+  final List<(String, bool)> dataArgs = []; // (value, expand @)
+  String? outputFile;
+  bool silent = false;
+  bool followRedirects = false;
+  bool explicitMethod = false;
+
+}
+
+/// Parsed `jq`/`yq` command line; see [SandboxBuiltins.parseJqArgs].
+final class JqArgs {
+  bool rawOutput = false;
+  bool compact = false;
+  final List<String> positional = [];
+}
+
+/// Parsed `diff` command line; see [SandboxBuiltins.parseDiffArgs].
+final class DiffArgs {
+  bool brief = false;
+  bool newFile = false;
+  int context = 3;
+  final List<String> operands = [];
+  SandboxBuiltinResult? error;
+}
+
+/// Parsed `base64` command line; see [SandboxBuiltins.parseBase64Args].
+final class Base64Args {
+  bool decode = false;
+  int wrap = 76;
+  String? inputFile;
+  SandboxBuiltinResult? error;
+}
+
 /// Raw result of a single builtin command, in the same shape both shells
 /// use for a pipeline stage.
 final class SandboxBuiltinResult {
@@ -207,13 +246,9 @@ final class SandboxBuiltins {
   // curl / wget
   // ---------------------------------------------------------------------------
 
-  /// Runs the `curl` builtin: HTTP via [_httpClient] with the common flag
-  /// subset (`-X`, `-H`, `-d`, `-o`, `-s`, `-L`, `--version`, `--help`).
-  Future<SandboxBuiltinResult> curl(
-    List<String> args, {
-    List<int>? stdinBytes,
-    Duration? timeout,
-  }) async {
+  /// The `--version`/`--help` short-circuits of the curl builtin; null
+  /// when neither flag is present.
+  static SandboxBuiltinResult? _curlPrelude(List<String> args) {
     if (args.contains('--version') || args.contains('-V')) {
       return _ok(
         utf8.encode(
@@ -241,7 +276,31 @@ final class SandboxBuiltins {
         ),
       );
     }
-    final parsed = _parseCurlArgs(args);
+    return null;
+  }
+
+  /// Builds the `package:http` request from parsed curl arguments: a data
+  /// argument implies POST unless `-X` says otherwise (an explicit
+  /// `-X GET -d ...` sends GET with a body).
+  static http.Request _curlRequest(CurlArgs parsed, Uri uri, List<int>? bodyBytes) {
+    final method = !parsed.explicitMethod && parsed.dataArgs.isNotEmpty
+        ? 'POST'
+        : parsed.method;
+    final request = http.Request(method, uri);
+    request.headers.addAll(parsed.headers);
+    if (bodyBytes != null) request.bodyBytes = bodyBytes;
+    request.followRedirects = parsed.followRedirects;
+    return request;
+  }
+
+  Future<SandboxBuiltinResult> curl(
+    List<String> args, {
+    List<int>? stdinBytes,
+    Duration? timeout,
+  }) async {
+    final prelude = _curlPrelude(args);
+    if (prelude != null) return prelude;
+    final parsed = parseCurlArgs(args);
     if (parsed.url == null) {
       return _error('curl: no URL specified\n', 2);
     }
@@ -259,15 +318,7 @@ final class SandboxBuiltins {
     );
     if (bodyError != null) return _error(bodyError, 26);
 
-    // Like curl, a data argument implies POST unless -X says otherwise
-    // (an explicit `-X GET -d ...` sends GET with a body).
-    final method = !parsed.explicitMethod && parsed.dataArgs.isNotEmpty
-        ? 'POST'
-        : parsed.method;
-    final request = http.Request(method, uri);
-    request.headers.addAll(parsed.headers);
-    if (bodyBytes != null) request.bodyBytes = bodyBytes;
-    request.followRedirects = parsed.followRedirects;
+    final request = _curlRequest(parsed, uri, bodyBytes);
 
     final effectiveTimeout = timeout ?? const Duration(seconds: 30);
     final http.Response response;
@@ -287,7 +338,6 @@ final class SandboxBuiltins {
         'HTTP ${response.statusCode} '
         '${response.reasonPhrase ?? ""}\n';
     final stderr = parsed.silent ? const <int>[] : utf8.encode(statusLine);
-
     if (parsed.outputFile != null) {
       await writeBinaryFile(parsed.outputFile!, response.bodyBytes);
       return _ok(const [], stderr);
@@ -295,16 +345,12 @@ final class SandboxBuiltins {
 
     return _ok(response.bodyBytes, stderr);
   }
-
-  /// Runs the `wget` builtin: a thin alias over [curl] translating
-  /// `wget [-q] [-O file] URL` into the equivalent curl flags.
-  Future<SandboxBuiltinResult> wget(
-    List<String> args, {
-    Duration? timeout,
-  }) async {
-    if (args.contains('--version') || args.contains('-V')) {
-      return _ok(utf8.encode('GNU Wget 1.21.4 (fah-sandbox builtin)\n'));
-    }
+  /// Pure `wget` → `curl` argument translation: `-O f`/`--output-document=f`
+  /// become `-o f` (a missing value drops the flag), `-q`/`--quiet` become
+  /// `-s`, and `--no-check-certificate` is dropped (TLS verification is not
+  /// configurable in the curl builtin). Everything else passes through.
+  /// Table-tested; see [wget].
+  static List<String> curlArgsFromWget(List<String> args) {
     final curlArgs = <String>[];
     for (var i = 0; i < args.length; i++) {
       final arg = args[i];
@@ -322,77 +368,81 @@ final class SandboxBuiltins {
         curlArgs.add(arg);
       }
     }
-    return curl(curlArgs, timeout: timeout);
+    return curlArgs;
   }
 
-  ({
-    String? url,
-    String method,
-    Map<String, String> headers,
-    List<(String, bool)> dataArgs,
-    String? outputFile,
-    bool silent,
-    bool followRedirects,
-    bool explicitMethod,
-  })
-  _parseCurlArgs(List<String> args) {
-    var method = 'GET';
-    final headers = <String, String>{};
-    final dataArgs = <(String, bool)>[]; // (value, expand @)
-    String? outputFile;
-    var silent = false;
-    var followRedirects = false;
-    var explicitMethod = false;
-    String? url;
+  /// Runs the `wget` builtin: a thin alias over [curl] translating
+  /// `wget [-q] [-O file] URL` into the equivalent curl flags.
+  Future<SandboxBuiltinResult> wget(
+    List<String> args, {
+    Duration? timeout,
+  }) async {
+    if (args.contains('--version') || args.contains('-V')) {
+      return _ok(utf8.encode('GNU Wget 1.21.4 (fah-sandbox builtin)\n'));
+    }
+    return curl(curlArgsFromWget(args), timeout: timeout);
+  }
 
+  /// Splits an `-H value` argument into its `name: value` pair, or null
+  /// when the colon is missing (or the name is empty) and the header is
+  /// ignored like real curl does.
+  static (String, String)? _curlHeaderPair(String header) {
+    final idx = header.indexOf(':');
+    if (idx > 0) {
+      return (header.substring(0, idx).trim(), header.substring(idx + 1).trim());
+    }
+    return null;
+  }
+
+  /// Applies one `curl` flag that takes a value (`-X`, `-H`, `-d`/`--data*`,
+  /// `-o`, `--url`). [next] is the argument after [arg] (null at the end);
+  /// returns whether the value was consumed. A value flag at the end of the
+  /// line is silently ignored, like real curl.
+  static bool _curlValueFlag(CurlArgs c, String arg, String? next) {
+    switch (arg) {
+      case '-X' || '--request':
+        if (next == null) return false;
+        c.method = next;
+        c.explicitMethod = true;
+      case '-H' || '--header':
+        if (next == null) return false;
+        final pair = _curlHeaderPair(next);
+        if (pair != null) c.headers[pair.$1] = pair.$2;
+      case '-d' || '--data' || '--data-raw' || '--data-binary':
+        if (next == null) return false;
+        // `--data-raw` treats the value literally: no @file/@- expansion.
+        c.dataArgs.add((next, arg != '--data-raw'));
+      case '-o' || '--output':
+        if (next == null) return false;
+        c.outputFile = next;
+      case '--url':
+        if (next == null) return false;
+        c.url = next;
+      default:
+        return false;
+    }
+    return true;
+  }
+
+  /// Pure `curl` argument parser: the common flag subset (`-X`, `-H`, `-d`,
+  /// `-o`, `-s`, `-L`, `--url`, `--version`-less positionals). The last
+  /// non-flag argument wins the URL. Table-tested; see [curl].
+  static CurlArgs parseCurlArgs(List<String> args) {
+    final c = CurlArgs();
     for (var i = 0; i < args.length; i++) {
       final arg = args[i];
-      if (arg == '-X' || arg == '--request') {
-        if (i + 1 < args.length) {
-          method = args[++i];
-          explicitMethod = true;
-        }
-      } else if (arg == '-H' || arg == '--header') {
-        if (i + 1 < args.length) {
-          final header = args[++i];
-          final idx = header.indexOf(':');
-          if (idx > 0) {
-            headers[header.substring(0, idx).trim()] = header
-                .substring(idx + 1)
-                .trim();
-          }
-        }
-      } else if (arg == '-d' ||
-          arg == '--data' ||
-          arg == '--data-raw' ||
-          arg == '--data-binary') {
-        if (i + 1 < args.length) {
-          // `--data-raw` treats the value literally: no @file/@- expansion.
-          dataArgs.add((args[++i], arg != '--data-raw'));
-        }
-      } else if (arg == '-o' || arg == '--output') {
-        if (i + 1 < args.length) outputFile = args[++i];
-      } else if (arg == '-s' || arg == '--silent') {
-        silent = true;
+      final next = i + 1 < args.length ? args[i + 1] : null;
+      if (arg == '-s' || arg == '--silent') {
+        c.silent = true;
       } else if (arg == '-L' || arg == '--location') {
-        followRedirects = true;
-      } else if (arg == '--url') {
-        if (i + 1 < args.length) url = args[++i];
+        c.followRedirects = true;
+      } else if (_curlValueFlag(c, arg, next)) {
+        i++;
       } else if (!arg.startsWith('-')) {
-        url = arg;
+        c.url = arg;
       }
     }
-
-    return (
-      url: url,
-      method: method,
-      headers: headers,
-      dataArgs: dataArgs,
-      outputFile: outputFile,
-      silent: silent,
-      followRedirects: followRedirects,
-      explicitMethod: explicitMethod,
-    );
+    return c;
   }
 
   /// Resolves the POST body from the `-d/--data/--data-binary` arguments:
@@ -484,55 +534,65 @@ final class SandboxBuiltins {
     required ({Object? value, String? error}) Function(String content) parse,
   }) async {
     // Leading flags (`-r`, `--raw-output`, `-c`, `-e`, ...) are accepted but
-    // only `-r`/`-c` change the output; the first positional argument is the
-    // filter and an optional second one is the input file (real jq reads
-    // stdin when no file is given).
-    var rawOutput = false;
-    var compact = false;
-    final positional = <String>[];
-    for (final arg in args) {
-      if (positional.isEmpty && arg.startsWith('-') && arg != '-') {
-        if (arg == '-r' || arg == '--raw-output') rawOutput = true;
-        if (arg == '-c' || arg == '--compact-output') compact = true;
-        continue;
-      }
-      positional.add(arg);
-    }
-    if (positional.isEmpty) {
+    // only `-r`/`-c` change the output; see [parseJqArgs].
+    final parsed = parseJqArgs(args);
+    final (filter, inputFile) = (
+      parsed.positional.isEmpty ? null : parsed.positional.first,
+      parsed.positional.length > 1 ? parsed.positional[1] : null,
+    );
+    if (filter == null) {
       return _error('$name: missing filter\n', 2);
     }
-    final filter = positional.first;
 
-    final String content;
-    if (positional.length > 1) {
-      final inputFile = positional[1];
-      final read = await readTextFile(inputFile);
-      if (read == null) {
+    final String? content;
+    if (inputFile != null) {
+      content = await readTextFile(inputFile);
+      if (content == null) {
         return _error('$name: $inputFile: No such file or directory\n', 2);
       }
-      content = read;
-    } else if (stdin != null) {
-      content = stdin;
     } else {
-      return _error('$name: missing input\n', 2);
+      content = stdin;
+      if (content == null) {
+        return _error('$name: missing input\n', 2);
+      }
     }
 
-    final parsed = parse(content);
-    if (parsed.error != null) {
-      return _error(parsed.error!, 5);
+    final doc = parse(content);
+    if (doc.error != null) {
+      return _error(doc.error!, 5);
     }
 
-    final results = _applyJqFilter(parsed.value, filter);
-    final encoder = compact
+    final results = applyJqFilter(doc.value, filter);
+    final encoder = parsed.compact
         ? JsonEncoder()
         : const JsonEncoder.withIndent('  ');
     final output = results
         .map(
-          (value) =>
-              rawOutput && value is String ? value : encoder.convert(value),
+          (value) => parsed.rawOutput && value is String
+              ? value
+              : encoder.convert(value),
         )
         .join('\n');
     return _ok(utf8.encode(output.isNotEmpty ? '$output\n' : ''));
+  }
+
+
+  /// Pure `jq`/`yq` argument pre-scan: leading flags (any `-x` before the
+  /// first positional) are accepted; only `-r`/`--raw-output` and
+  /// `-c`/`--compact-output` change the output. Everything after the first
+  /// positional is positional (filter, then optional input file).
+  /// Table-tested; see [_jsonFilter].
+  static JqArgs parseJqArgs(List<String> args) {
+    final j = JqArgs();
+    for (final arg in args) {
+      if (j.positional.isEmpty && arg.startsWith('-') && arg != '-') {
+        if (arg == '-r' || arg == '--raw-output') j.rawOutput = true;
+        if (arg == '-c' || arg == '--compact-output') j.compact = true;
+        continue;
+      }
+      j.positional.add(arg);
+    }
+    return j;
   }
 
   // ---------------------------------------------------------------------------
@@ -546,69 +606,23 @@ final class SandboxBuiltins {
   /// reads [stdin] (piped input). Exit codes follow GNU diff: 0 when the
   /// inputs are identical, 1 when they differ, 2 on error.
   Future<SandboxBuiltinResult> diff(List<String> args, {String? stdin}) async {
-    var brief = false;
-    var newFile = false;
-    var context = 3;
-    final operands = <String>[];
-    var noMoreFlags = false;
-    var i = 0;
-    while (i < args.length) {
-      final arg = args[i];
-      if (!noMoreFlags && arg == '--') {
-        noMoreFlags = true;
-      } else if (!noMoreFlags && arg == '--brief') {
-        brief = true;
-      } else if (!noMoreFlags && arg == '--new-file') {
-        newFile = true;
-      } else if (!noMoreFlags && arg == '--unified') {
-        // Unified output is the default.
-      } else if (!noMoreFlags && arg.startsWith('-') && arg != '-') {
-        for (var j = 1; j < arg.length; j++) {
-          final flag = arg[j];
-          switch (flag) {
-            case 'u':
-              break; // Unified output is the default.
-            case 'q':
-              brief = true;
-            case 'N':
-              newFile = true;
-            case 'U':
-              final inline = arg.substring(j + 1);
-              final value = inline.isNotEmpty
-                  ? inline
-                  : (i + 1 < args.length ? args[++i] : '');
-              final parsed = int.tryParse(value);
-              if (parsed == null || parsed < 0) {
-                return _error("diff: invalid context length '$value'\n", 2);
-              }
-              context = parsed;
-              j = arg.length; // The rest of the arg is the number.
-            default:
-              return _error("diff: invalid option -- '$flag'\n", 2);
-          }
-        }
-      } else {
-        operands.add(arg);
-      }
-      i++;
-    }
-    if (operands.length != 2) {
-      return _error('diff: expected two file operands\n', 2);
-    }
+    final d = parseDiffArgs(args);
+    if (d.error != null) return d.error!;
+    final [oldOperand, newOperand] = d.operands;
 
     Future<String?> readOperand(String name) async {
       if (name == '-') return stdin ?? '';
       final read = await readTextFile(name);
-      return read ?? (newFile ? '' : null);
+      return read ?? (d.newFile ? '' : null);
     }
 
-    final oldContent = await readOperand(operands[0]);
+    final oldContent = await readOperand(oldOperand);
     if (oldContent == null) {
-      return _error('diff: ${operands[0]}: No such file or directory\n', 2);
+      return _error('diff: $oldOperand: No such file or directory\n', 2);
     }
-    final newContent = await readOperand(operands[1]);
+    final newContent = await readOperand(newOperand);
     if (newContent == null) {
-      return _error('diff: ${operands[1]}: No such file or directory\n', 2);
+      return _error('diff: $newOperand: No such file or directory\n', 2);
     }
 
     final oldDoc = _LineDoc(oldContent);
@@ -616,9 +630,9 @@ final class SandboxBuiltins {
     final ops = _diffOps(oldDoc.tokens, newDoc.tokens);
     final differ = ops.any((op) => op.kind != _DiffOpKind.context);
     if (!differ) return _ok(const []);
-    if (brief) {
+    if (d.brief) {
       return SandboxBuiltinResult(
-        stdout: utf8.encode('Files ${operands[0]} and ${operands[1]} differ\n'),
+        stdout: utf8.encode('Files $oldOperand and $newOperand differ\n'),
         stderr: const [],
         exitCode: 1,
       );
@@ -629,14 +643,100 @@ final class SandboxBuiltins {
           ops,
           oldDoc.tokens,
           newDoc.tokens,
-          oldLabel: operands[0],
-          newLabel: operands[1],
-          context: context,
+          oldLabel: oldOperand,
+          newLabel: newOperand,
+          context: d.context,
         ),
       ),
       stderr: const [],
       exitCode: 1,
     );
+  }
+
+  /// Resolves the `-U` context width from the inline remainder (`-U5`) or
+  /// the next argument (`-U 5`). Returns the parsed width (-1 when missing
+  /// or not a non-negative integer), the raw value string for error
+  /// messages, and the number of extra operands consumed.
+  static (int, String, int) _diffContextValue(
+    String inline,
+    List<String> args,
+    int i,
+  ) {
+    final (raw, extra) = inline.isNotEmpty
+        ? (inline, 0)
+        : (i + 1 < args.length ? args[i + 1] : '', i + 1 < args.length ? 1 : 0);
+    final parsed = int.tryParse(raw);
+    return (parsed == null || parsed < 0 ? -1 : parsed, raw, extra);
+  }
+
+  /// Applies one `diff` flag at `args[i]`; `--brief`, `--new-file` and
+  /// `--unified` (the default) map directly, anything else is read as a
+  /// bundled short-flag cluster (`-qNu5`), so the first character of an
+  /// unknown long flag is reported exactly like GNU diff does. Returns the
+  /// extra operands consumed (0 or 1) and sets [d.error] on the first
+  /// invalid flag.
+  static int _diffApplyFlag(DiffArgs d, List<String> args, int i, String arg) {
+    switch (arg) {
+      case '--brief':
+        d.brief = true;
+        return 0;
+      case '--new-file':
+        d.newFile = true;
+        return 0;
+      case '--unified':
+        return 0; // Unified output is the default.
+    }
+    for (var j = 1; j < arg.length; j++) {
+      switch (arg[j]) {
+        case 'u':
+          break; // Unified output is the default.
+        case 'q':
+          d.brief = true;
+        case 'N':
+          d.newFile = true;
+        case 'U':
+          final (value, raw, extra) = _diffContextValue(
+            arg.substring(j + 1),
+            args,
+            i,
+          );
+          if (value < 0) {
+            d.error = _error("diff: invalid context length '$raw'\n", 2);
+            return extra;
+          }
+          d.context = value;
+          return extra; // The rest of the arg is the number.
+        default:
+          d.error = _error("diff: invalid option -- '${arg[j]}'\n", 2);
+          return 0;
+      }
+    }
+    return 0;
+  }
+
+  /// Pure `diff` argument parser: `-q`/`--brief`, `-N`/`--new-file`,
+  /// `-u`/`--unified`, `-U n` context width, `--`, and the two file
+  /// operands (an operand of `-` means stdin). The first error wins and
+  /// stops parsing; exactly two operands are required. Table-tested.
+  static DiffArgs parseDiffArgs(List<String> args) {
+    final d = DiffArgs();
+    var noMoreFlags = false;
+    var i = 0;
+    while (i < args.length && d.error == null) {
+      final arg = args[i];
+      if (!noMoreFlags && arg == '--') {
+        noMoreFlags = true;
+      } else if (!noMoreFlags && arg.startsWith('-') && arg != '-') {
+        i += _diffApplyFlag(d, args, i, arg);
+      } else {
+        d.operands.add(arg);
+      }
+      i++;
+    }
+    if (d.error == null && d.operands.length != 2) {
+      d.error = _error('diff: expected two file operands\n', 2);
+    }
+    return d;
   }
 
   /// Runs the `patch` builtin: applies a unified diff read from [stdin]
@@ -648,7 +748,7 @@ final class SandboxBuiltins {
   /// written only when all of its hunks apply. Exit codes follow GNU patch:
   /// 0 when everything applied, 1 when hunks failed, 2 on error.
   Future<SandboxBuiltinResult> patch(List<String> args, {String? stdin}) async {
-    final (error, parsed) = _parsePatchArgs(args);
+    final (error, parsed) = parsePatchArgs(args);
     if (parsed == null) return error!;
     final (:strip, :patchFile, :target) = parsed;
 
@@ -724,12 +824,90 @@ final class SandboxBuiltins {
     );
   }
 
-  /// Parses `patch` CLI flags: `-p n` / `-pn` / `--strip=n` / `--strip n`,
-  /// `-i file` / `-ifile` / `--input=file` / `--input file`, `--`, and the
-  /// positional `[target] [patchfile]` operands. Returns the usage-error
-  /// result (exit code 2), or the parsed values with a null error.
-  (SandboxBuiltinResult?, ({int strip, String? patchFile, String? target})?)
-  _parsePatchArgs(List<String> args) {
+  /// Resolves a `--long=value` / `--long value` / `-s value` / `-svalue`
+  /// flag (the shape shared by `--strip`/`-p` and `--input`/`-i`).
+  /// Returns the value (null when the required argument is missing) plus
+  /// the usage error; [optchar] is the short option letter the GNU-style
+  /// "requires an argument" message names.
+  static (String?, SandboxBuiltinResult?) _patchFlagValue(
+    String arg,
+    String? next, {
+    required String long,
+    required String short,
+    required String optchar,
+  }) {
+    if (arg.startsWith('$long=')) {
+      return (arg.substring(long.length + 1), null);
+    }
+    if (arg == long || arg == short) {
+      if (next == null) {
+        return (
+          null,
+          _error('patch: option requires an argument -- $optchar\n', 2),
+        );
+      }
+      return (next, null);
+    }
+    if (arg.startsWith(short) && !arg.startsWith('--')) {
+      return (arg.substring(short.length), null);
+    }
+    return (null, _error("patch: unrecognized option '$arg'\n", 2));
+  }
+
+  /// The `-p`/`--strip` flag: resolves its value and validates it as a
+  /// non-negative integer. Returns the strip level, the usage error, and
+  /// the extra operand consumed (1 only for the bare `-p`/`--strip` form).
+  static (int?, SandboxBuiltinResult?, int) _patchStripFlag(
+    List<String> args,
+    int i,
+  ) {
+    final arg = args[i];
+    final next = i + 1 < args.length ? args[i + 1] : null;
+    final (value, error) = _patchFlagValue(
+      arg,
+      next,
+      long: '--strip',
+      short: '-p',
+      optchar: 'p',
+    );
+    if (error != null) return (null, error, 0);
+    final parsed = int.tryParse(value!);
+    if (parsed == null || parsed < 0) {
+      return (null, _error("patch: invalid strip count '$value'\n", 2), 0);
+    }
+    return (parsed, null, arg == '-p' || arg == '--strip' ? 1 : 0);
+  }
+
+  /// The `-i`/`--input` flag. Returns the patch file path, the usage
+  /// error, and the extra operand consumed (1 only for the bare
+  /// `-i`/`--input` form).
+  static (String?, SandboxBuiltinResult?, int) _patchInputFlag(
+    List<String> args,
+    int i,
+  ) {
+    final arg = args[i];
+    final next = i + 1 < args.length ? args[i + 1] : null;
+    final (value, error) = _patchFlagValue(
+      arg,
+      next,
+      long: '--input',
+      short: '-i',
+      optchar: 'i',
+    );
+    if (error != null) return (null, error, 0);
+    return (value, null, arg == '-i' || arg == '--input' ? 1 : 0);
+  }
+
+  /// Pure `patch` argument parser: `-p n` / `-pn` / `--strip=n` /
+  /// `--strip n`, `-i file` / `-ifile` / `--input=file` / `--input file`,
+  /// `--`, and the positional `[target] [patchfile]` operands. Returns the
+  /// usage-error result (exit code 2), or the parsed values with a null
+  /// error. Table-tested; see [patch].
+  static (
+    SandboxBuiltinResult?,
+    ({int strip, String? patchFile, String? target})?,
+  )
+  parsePatchArgs(List<String> args) {
     var strip = 0;
     String? patchFile;
     final positional = <String>[];
@@ -741,44 +919,16 @@ final class SandboxBuiltins {
         noMoreFlags = true;
       } else if (!noMoreFlags &&
           (arg.startsWith('-p') || arg.startsWith('--strip'))) {
-        final String value;
-        if (arg.startsWith('--strip=')) {
-          value = arg.substring('--strip='.length);
-        } else if (arg == '--strip' || arg == '-p') {
-          if (i + 1 >= args.length) {
-            return (
-              _error('patch: option requires an argument -- p\n', 2),
-              null,
-            );
-          }
-          value = args[++i];
-        } else if (arg.startsWith('-p') && !arg.startsWith('--')) {
-          value = arg.substring(2);
-        } else {
-          return (_error("patch: unrecognized option '$arg'\n", 2), null);
-        }
-        final parsed = int.tryParse(value);
-        if (parsed == null || parsed < 0) {
-          return (_error("patch: invalid strip count '$value'\n", 2), null);
-        }
-        strip = parsed;
+        final (value, error, extra) = _patchStripFlag(args, i);
+        if (error != null) return (error, null);
+        strip = value!;
+        i += extra;
       } else if (!noMoreFlags &&
           (arg.startsWith('-i') || arg.startsWith('--input'))) {
-        if (arg.startsWith('--input=')) {
-          patchFile = arg.substring('--input='.length);
-        } else if (arg == '--input' || arg == '-i') {
-          if (i + 1 >= args.length) {
-            return (
-              _error('patch: option requires an argument -- i\n', 2),
-              null,
-            );
-          }
-          patchFile = args[++i];
-        } else if (arg.startsWith('-i') && !arg.startsWith('--')) {
-          patchFile = arg.substring(2);
-        } else {
-          return (_error("patch: unrecognized option '$arg'\n", 2), null);
-        }
+        final (value, error, extra) = _patchInputFlag(args, i);
+        if (error != null) return (error, null);
+        patchFile = value;
+        i += extra;
       } else if (!noMoreFlags && arg.startsWith('-') && arg != '-') {
         return (_error("patch: unrecognized option '$arg'\n", 2), null);
       } else {
@@ -804,42 +954,41 @@ final class SandboxBuiltins {
   // nslookup / dig / whois
   // ---------------------------------------------------------------------------
 
-  /// Runs the `nslookup` builtin: `nslookup <host|ipv4>`. A host name is
-  /// resolved for A and AAAA records; an IPv4 literal triggers a PTR reverse
-  /// lookup. Queries go through the injected [SandboxDnsQuery] (the `dart:io`
-  /// system resolver on native), or DNS-over-HTTPS against
-  /// cloudflare-dns.com when none is injected (the web default).
-  /// Exit codes: 0 success, 1 lookup failure, 2 usage error.
-  Future<SandboxBuiltinResult> nslookup(
-    List<String> args, {
+  /// Runs the PTR branch of `nslookup <ipv4>`: reverse-resolves the
+  /// address and prints `name = data` lines. Exit 1 on transport failure
+  /// or NXDOMAIN.
+  Future<SandboxBuiltinResult> _nslookupPtr(
+    String host,
+    String ptrName,
     Duration? timeout,
-  }) async {
-    if (args.length != 1) {
-      return _error('usage: nslookup <host>\n', 2);
-    }
-    final host = args.first;
+  ) async {
     final out = StringBuffer();
-
-    final ptrName = ipv4PtrName(host);
-    if (ptrName != null) {
-      final SandboxDnsResult result;
-      try {
-        result = await _dns(ptrName, 'PTR', timeout);
-      } on Object catch (e) {
-        return _error('nslookup: $e\n', 1);
-      }
-      if (result.answers.isEmpty) {
-        return _error("server can't find $host: NXDOMAIN\n", 1);
-      }
-      out
-        ..writeln('Server:  ${result.resolver}')
-        ..writeln();
-      for (final record in result.answers) {
-        out.writeln('$ptrName name = ${record.data}');
-      }
-      return _ok(utf8.encode(out.toString()));
+    final SandboxDnsResult result;
+    try {
+      result = await _dns(ptrName, 'PTR', timeout);
+    } on Object catch (e) {
+      return _error('nslookup: $e\n', 1);
     }
+    if (result.answers.isEmpty) {
+      return _error("server can't find $host: NXDOMAIN\n", 1);
+    }
+    out
+      ..writeln('Server:  ${result.resolver}')
+      ..writeln();
+    for (final record in result.answers) {
+      out.writeln('$ptrName name = ${record.data}');
+    }
+    return _ok(utf8.encode(out.toString()));
+  }
 
+  /// Runs the forward branch of `nslookup <host>`: queries A and AAAA and
+  /// prints `Name:/Address:` blocks (CNAME records render as
+  /// `canonical name =`). Exit 1 when nothing answers.
+  Future<SandboxBuiltinResult> _nslookupHost(
+    String host,
+    Duration? timeout,
+  ) async {
+    final out = StringBuffer();
     final answers = <SandboxDnsRecord>[];
     var resolver = 'system resolver';
     var nxdomain = false;
@@ -874,6 +1023,25 @@ final class SandboxBuiltins {
     return _ok(utf8.encode(out.toString()));
   }
 
+  /// Runs the `nslookup` builtin: `nslookup <host|ipv4>`. A host name is
+  /// resolved for A and AAAA records; an IPv4 literal triggers a PTR reverse
+  /// lookup. Queries go through the injected [SandboxDnsQuery] (the `dart:io`
+  /// system resolver on native), or DNS-over-HTTPS against
+  /// cloudflare-dns.com when none is injected (the web default).
+  /// Exit codes: 0 success, 1 lookup failure, 2 usage error.
+  Future<SandboxBuiltinResult> nslookup(
+    List<String> args, {
+    Duration? timeout,
+  }) async {
+    if (args.length != 1) {
+      return _error('usage: nslookup <host>\n', 2);
+    }
+    final host = args.first;
+    final ptrName = ipv4PtrName(host);
+    if (ptrName != null) return _nslookupPtr(host, ptrName, timeout);
+    return _nslookupHost(host, timeout);
+  }
+
   /// Record types accepted by the `dig` builtin.
   static const _digTypes = {
     'A',
@@ -898,10 +1066,12 @@ final class SandboxBuiltins {
   /// lookup surfaces as a transport failure (exit 1) because the OS
   /// resolver does not expose the rcode — an exact NXDOMAIN status line is
   /// only available through DNS-over-HTTPS.
-  Future<SandboxBuiltinResult> dig(
-    List<String> args, {
-    Duration? timeout,
-  }) async {
+  /// Pure `dig` argument parser: `-x` (reverse), one host operand, and an
+  /// optional record TYPE (defaults to A; a second TYPE is a usage error).
+  /// `-x` converts an IPv4 literal to its PTR name. Table-tested; see
+  /// [dig].
+  static ({bool reverse, String? name, String type, SandboxBuiltinResult? error})
+  parseDigArgs(List<String> args) {
     var reverse = false;
     String? name;
     var type = 'A';
@@ -909,31 +1079,78 @@ final class SandboxBuiltins {
       if (arg == '-x') {
         reverse = true;
       } else if (arg.startsWith('-')) {
-        return _error("dig: unknown option '$arg'\n", 2);
+        return (
+          reverse: reverse,
+          name: name,
+          type: type,
+          error: _error("dig: unknown option '$arg'\n", 2),
+        );
       } else if (name == null) {
         name = arg;
       } else {
         final upper = arg.toUpperCase();
         if (!_digTypes.contains(upper)) {
-          return _error("dig: unknown query type '$arg'\n", 2);
+          return (
+            reverse: reverse,
+            name: name,
+            type: type,
+            error: _error("dig: unknown query type '$arg'\n", 2),
+          );
         }
         if (type != 'A') {
-          return _error('usage: dig [-x] <host> [TYPE]\n', 2);
+          return (
+            reverse: reverse,
+            name: name,
+            type: type,
+            error: _error('usage: dig [-x] <host> [TYPE]\n', 2),
+          );
         }
         type = upper;
       }
     }
     if (name == null) {
-      return _error('usage: dig [-x] <host> [TYPE]\n', 2);
+      return (
+        reverse: reverse,
+        name: name,
+        type: type,
+        error: _error('usage: dig [-x] <host> [TYPE]\n', 2),
+      );
     }
     if (reverse) {
       final ptrName = ipv4PtrName(name);
       if (ptrName == null) {
-        return _error('dig: -x expects an IPv4 address\n', 2);
+        return (
+          reverse: reverse,
+          name: name,
+          type: type,
+          error: _error('dig: -x expects an IPv4 address\n', 2),
+        );
       }
       name = ptrName;
       type = 'PTR';
     }
+    return (reverse: reverse, name: name, type: type, error: null);
+  }
+
+  /// Runs the `dig` builtin: `dig [-x] <host> [TYPE]` with compact output —
+  /// a status line, the answer section, and the resolver (full BIND output
+  /// is not reproduced). TYPE defaults to A; `-x` turns an IPv4 literal into
+  /// a PTR query. On native, A/AAAA/PTR go through the `dart:io` system
+  /// resolver and the other types through DNS-over-HTTPS; on the web
+  /// everything uses DNS-over-HTTPS. Exit codes: 0 when the query completed
+  /// (any status, including NXDOMAIN, like real dig), 1 on transport
+  /// failure, 2 on usage error. Note: on native a failed A/AAAA system
+  /// lookup surfaces as a transport failure (exit 1) because the OS
+  /// resolver does not expose the rcode — an exact NXDOMAIN status line is
+  /// only available through DNS-over-HTTPS.
+  Future<SandboxBuiltinResult> dig(
+    List<String> args, {
+    Duration? timeout,
+  }) async {
+    final d = parseDigArgs(args);
+    if (d.error != null) return d.error!;
+    final name = d.name!;
+    final type = d.type;
 
     final SandboxDnsResult result;
     try {
@@ -1153,83 +1370,119 @@ final class SandboxBuiltins {
     return null;
   }
 
-  /// Renders an RDAP JSON document as compact whois-style `Key: value`
-  /// lines; falls back to pretty-printed JSON when the document has none of
-  /// the recognized fields.
-  static String _rdapSummary(Object? doc) {
-    if (doc is Map<String, dynamic>) {
-      final out = StringBuffer();
-      final isDomain = doc['objectClassName'] == 'domain';
-      void field(String label, Object? value) {
-        if (value is String && value.isNotEmpty) {
-          out.writeln('$label: $value');
-        }
-      }
-
-      if (isDomain) {
-        field('Domain Name', doc['ldhName']);
-        field('Registry Domain ID', doc['handle']);
-      } else {
-        field('NetName', doc['name']);
-        field('NetHandle', doc['handle']);
-        final start = doc['startAddress'];
-        final end = doc['endAddress'];
-        if (start is String && end is String) {
-          out.writeln('NetRange: $start - $end');
-        }
-        field('Country', doc['country']);
-      }
-      final status = doc['status'];
-      if (status is List) {
-        for (final value in status) {
-          field(isDomain ? 'Domain Status' : 'Status', value);
-        }
-      }
-      final entities = doc['entities'];
-      if (entities is List) {
-        for (final entity in entities) {
-          if (entity is! Map<String, dynamic>) continue;
-          final name = _rdapEntityName(entity);
-          final roles = entity['roles'];
-          if (name == null || roles is! List) continue;
-          if (roles.contains('registrar')) {
-            var line = name;
-            final publicIds = entity['publicIds'];
-            if (publicIds is List && publicIds.isNotEmpty) {
-              final id = publicIds.first;
-              if (id is Map<String, dynamic>) {
-                line += ' (IANA ID: ${id['identifier']})';
-              }
-            }
-            out.writeln('Registrar: $line');
-          } else {
-            for (final role in roles) {
-              out.writeln('${_rdapRoleName(role)}: $name');
-            }
-          }
-        }
-      }
-      final events = doc['events'];
-      if (events is List) {
-        for (final event in events) {
-          if (event is! Map<String, dynamic>) continue;
-          final action = event['eventAction'];
-          final date = event['eventDate'];
-          if (action is! String || date is! String) continue;
-          out.writeln('${_rdapEventName(action)}: $date');
-        }
-      }
-      final nameservers = doc['nameservers'];
-      if (nameservers is List) {
-        for (final ns in nameservers) {
-          if (ns is Map<String, dynamic>) field('Name Server', ns['ldhName']);
-        }
-      }
-      if (out.isNotEmpty) return out.toString();
+  /// Writes the domain-specific or network-specific header fields.
+  static void _rdapHeaderFields(
+    Map<String, dynamic> doc,
+    bool isDomain,
+    void Function(String label, Object? value) field,
+  ) {
+    if (isDomain) {
+      field('Domain Name', doc['ldhName']);
+      field('Registry Domain ID', doc['handle']);
+    } else {
+      field('NetName', doc['name']);
+      field('NetHandle', doc['handle']);
     }
-    return '${const JsonEncoder.withIndent('  ').convert(doc)}\n';
   }
 
+  /// Writes the `NetRange` line for network records.
+  static void _rdapNetRange(Map<String, dynamic> doc, StringBuffer out) {
+    final start = doc['startAddress'];
+    final end = doc['endAddress'];
+    if (start is String && end is String) {
+      out.writeln('NetRange: $start - $end');
+    }
+  }
+
+  /// Writes one line per status value (`Domain Status` for domains).
+  static void _rdapStatusLines(
+    Map<String, dynamic> doc,
+    bool isDomain,
+    void Function(String label, Object? value) field,
+  ) {
+    final status = doc['status'];
+    if (status is List) {
+      for (final value in status) {
+        field(isDomain ? 'Domain Status' : 'Status', value);
+      }
+    }
+  }
+
+  /// Writes the registrar line (with the IANA ID when present) or one
+  /// line per entity role.
+  static void _rdapEntityLines(List<Object?> entities, StringBuffer out) {
+    for (final entity in entities) {
+      if (entity is! Map<String, dynamic>) continue;
+      final name = _rdapEntityName(entity);
+      final roles = entity['roles'];
+      if (name == null || roles is! List) continue;
+      if (roles.contains('registrar')) {
+        var line = name;
+        final publicIds = entity['publicIds'];
+        if (publicIds is List && publicIds.isNotEmpty) {
+          final id = publicIds.first;
+          if (id is Map<String, dynamic>) {
+            line += ' (IANA ID: ${id['identifier']})';
+          }
+        }
+        out.writeln('Registrar: $line');
+      } else {
+        for (final role in roles) {
+          out.writeln('${_rdapRoleName(role)}: $name');
+        }
+      }
+    }
+  }
+
+  /// Writes one `Label: date` line per RDAP event.
+  static void _rdapEventLines(List<Object?> events, StringBuffer out) {
+    for (final event in events) {
+      if (event is! Map<String, dynamic>) continue;
+      final action = event['eventAction'];
+      final date = event['eventDate'];
+      if (action is! String || date is! String) continue;
+      out.writeln('${_rdapEventName(action)}: $date');
+    }
+  }
+
+  /// Writes one `Name Server:` line per RDAP nameserver entry.
+  static void _rdapNameserverLines(
+    List<Object?> nameservers,
+    void Function(String label, Object? value) field,
+  ) {
+    for (final ns in nameservers) {
+      if (ns is Map<String, dynamic>) field('Name Server', ns['ldhName']);
+    }
+  }
+
+  /// Renders an RDAP JSON document as a compact human summary (the
+  /// web `whois` fallback); unrecognized shapes fall back to pretty-printed
+  /// JSON. Table-tested through [whois].
+  static String _rdapSummary(Object? doc) {
+    if (doc is! Map<String, dynamic>) {
+      return '${const JsonEncoder.withIndent('  ').convert(doc)}\n';
+    }
+    final out = StringBuffer();
+    final isDomain = doc['objectClassName'] == 'domain';
+    void field(String label, Object? value) {
+      if (value is String && value.isNotEmpty) {
+        out.writeln('$label: $value');
+      }
+    }
+
+    _rdapHeaderFields(doc, isDomain, field);
+    if (!isDomain) _rdapNetRange(doc, out);
+    field('Country', doc['country']);
+    _rdapStatusLines(doc, isDomain, field);
+    final entities = doc['entities'];
+    if (entities is List) _rdapEntityLines(entities, out);
+    final events = doc['events'];
+    if (events is List) _rdapEventLines(events, out);
+    final nameservers = doc['nameservers'];
+    if (nameservers is List) _rdapNameserverLines(nameservers, field);
+    if (out.isNotEmpty) return out.toString();
+    return '${const JsonEncoder.withIndent('  ').convert(doc)}\n';
+  }
   /// Extracts the display name (`fn`) from an RDAP entity's vCard, falling
   /// back to the entity handle.
   static String? _rdapEntityName(Map<String, dynamic> entity) {
@@ -1319,18 +1572,38 @@ final class SandboxBuiltins {
     return value;
   }
 
-  List<dynamic> _applyJqFilter(dynamic input, String filter) {
-    if (filter == '.') return [input];
-    if (filter == 'length') {
-      if (input is List || input is String || input is Map) {
-        return [(input as dynamic).length as Object];
+  /// Applies one terminal jq filter word: `length` of a list/string/map or
+  /// the `keys` of a map; anything else (including scalars without a
+  /// length) produces no output, like jq's `empty`.
+  static List<dynamic>? _jqTerminal(String part, dynamic current) {
+    if (part == 'length') {
+      if (current is List || current is String || current is Map) {
+        return [(current as dynamic).length as Object];
       }
       return const [];
     }
-    if (filter == 'keys') {
-      if (input is Map) return [input.keys.toList()];
+    if (part == 'keys') {
+      if (current is Map) return [current.keys.toList()];
       return const [];
     }
+    return null;
+  }
+
+  /// Expands `.[]` over a list, applying the remaining [rest] filter to
+  /// every element; a non-list under `.[]` produces nothing.
+  static List<dynamic> _jqExpand(List<dynamic> current, String rest) {
+    return current
+        .expand((e) => applyJqFilter(e, rest.isEmpty ? '.' : '.$rest'))
+        .toList();
+  }
+
+  /// Evaluates the jq filter subset against [input]: `.`, `length`, `keys`,
+  /// dotted paths (`.a.b`), and `[]` iteration (`.a[].b`). Unknown filters
+  /// yield empty output. Table-tested; see [jq].
+  static List<dynamic> applyJqFilter(dynamic input, String filter) {
+    if (filter == '.') return [input];
+    final terminal = _jqTerminal(filter, input);
+    if (terminal != null) return terminal;
 
     final parts = filter.split('.').where((s) => s.isNotEmpty).toList();
     if (parts.isEmpty) return [input];
@@ -1338,25 +1611,15 @@ final class SandboxBuiltins {
     dynamic current = input;
     for (var i = 0; i < parts.length; i++) {
       final part = parts[i];
-      final isLast = i == parts.length - 1;
       if (part == '[]') {
         if (current is List) {
-          final rest = parts.sublist(i + 1).join('.');
-          return current
-              .expand((e) => _applyJqFilter(e, rest.isEmpty ? '.' : '.$rest'))
-              .toList();
+          return _jqExpand(current, parts.sublist(i + 1).join('.'));
         }
         return const [];
       }
-      if (isLast && part == 'length') {
-        if (current is List || current is String || current is Map) {
-          return [(current as dynamic).length as Object];
-        }
-        return const [];
-      }
-      if (isLast && part == 'keys') {
-        if (current is Map) return [current.keys.toList()];
-        return const [];
+      if (i == parts.length - 1) {
+        final terminal = _jqTerminal(part, current);
+        if (terminal != null) return terminal;
       }
       if (current is Map) {
         current = current[part];
@@ -1371,50 +1634,78 @@ final class SandboxBuiltins {
   // tree
   // ---------------------------------------------------------------------------
 
-  /// Runs the `tree` builtin: `tree [path] [-L depth] [-a]` prints a
-  /// recursive listing with the classic tree-drawing characters
-  /// (`├──`/`└──`/`│`), sorted alphabetically with directories mixed in
-  /// (the real tree's default order). Dotfiles are hidden unless `-a` is
-  /// given; `-L n` limits the display depth (the root's immediate children
-  /// are level 1). The listing ends with a `N directories, M files` summary
-  /// line; a file argument prints just itself (`0 directories, 1 file`).
-  /// Exit codes: 0 success, 1 when the path does not exist, 2 usage error.
-  Future<SandboxBuiltinResult> tree(List<String> args) async {
-    final lister = listDirectory;
-    if (lister == null) {
-      return _error('tree: not supported by this shell\n', 2);
+  /// Resolves the `-L`/`-Ln` depth flag: the value comes inline (`-L2`) or
+  /// from the next argument (`-L 2`). Returns the parsed level (null when
+  /// invalid), the extra operand consumed, and the usage error.
+  static (int?, int, SandboxBuiltinResult?) _treeDepthFlag(
+    String arg,
+    List<String> args,
+    int i,
+  ) {
+    if (arg == '-L') {
+      if (i + 1 >= args.length) {
+        return (null, 0, _error('tree: Missing argument to -L option.\n', 2));
+      }
+      final depth = int.tryParse(args[i + 1]);
+      if (depth == null || depth < 1) {
+        return (
+          null,
+          1,
+          _error('tree: Invalid level, must be greater than 0.\n', 2),
+        );
+      }
+      return (depth, 1, null);
+  }
+    final depth = int.tryParse(arg.substring(2));
+    if (depth == null || depth < 1) {
+      return (null, 0, _error('tree: Invalid level, must be greater than 0.\n', 2));
     }
+    return (depth, 0, null);
+  }
+
+  /// Pure `tree` argument parser: `-a`, `-L n`/`-Ln`, one optional root,
+  /// `--help`. [early] carries the `--help` output or the usage error and
+  /// ends the command. Table-tested; see [tree].
+  static ({bool showHidden, int? maxDepth, String? root, SandboxBuiltinResult? early})
+  parseTreeArgs(List<String> args) {
     var showHidden = false;
     int? maxDepth;
     String? root;
-    for (var i = 0; i < args.length; i++) {
+    SandboxBuiltinResult? early;
+    for (var i = 0; i < args.length && early == null; i++) {
       final arg = args[i];
       if (arg == '-a') {
         showHidden = true;
       } else if (arg == '--help') {
-        return _ok(utf8.encode('usage: tree [-a] [-L level] [directory]\n'));
+        early = _ok(utf8.encode('usage: tree [-a] [-L level] [directory]\n'));
       } else if (arg == '-L' || (arg.startsWith('-L') && arg.length > 2)) {
-        final value = arg == '-L'
-            ? (i + 1 < args.length ? args[++i] : null)
-            : arg.substring(2);
-        if (value == null) {
-          return _error('tree: Missing argument to -L option.\n', 2);
-        }
-        maxDepth = int.tryParse(value);
-        if (maxDepth == null || maxDepth < 1) {
-          return _error('tree: Invalid level, must be greater than 0.\n', 2);
+        final (depth, extra, error) = _treeDepthFlag(arg, args, i);
+        if (error != null) {
+          early = error;
+        } else {
+          maxDepth = depth;
+          i += extra;
         }
       } else if (arg.startsWith('-') && arg != '-') {
-        return _error("tree: Invalid option - '${arg.substring(1)}'\n", 2);
+        early = _error("tree: Invalid option - '${arg.substring(1)}'\n", 2);
       } else if (root == null) {
         root = arg;
       } else {
-        return _error('tree: too many arguments\n', 2);
+        early = _error('tree: too many arguments\n', 2);
       }
     }
-    final target = root ?? '.';
+    return (showHidden: showHidden, maxDepth: maxDepth, root: root, early: early);
+  }
 
-    final out = StringBuffer()..writeln(target);
+  /// Draws the recursive `tree` listing into [out], counting directories
+  /// and files (the executor appends the summary line).
+  static Future<({StringBuffer out, int directories, int files})> _renderTree({
+    required SandboxDirLister lister,
+    required bool showHidden,
+    required int? maxDepth,
+    required StringBuffer out,
+    required String root,
+  }) async {
     var directories = 0;
     var files = 0;
 
@@ -1446,8 +1737,40 @@ final class SandboxBuiltins {
       }
     }
 
+    await walk(root, '', 1);
+    return (out: out, directories: directories, files: files);
+  }
+
+  /// Runs the `tree` builtin: `tree [path] [-L depth] [-a]` prints a
+  /// recursive listing with the classic tree-drawing characters
+  /// (`├──`/`└──`/`│`), sorted alphabetically with directories mixed in
+  /// (the real tree's default order). Dotfiles are hidden unless `-a` is
+  /// given; `-L n` limits the display depth (the root's immediate children
+  /// are level 1). The listing ends with a `N directories, M files` summary
+  /// line; a file argument prints just itself (`0 directories, 1 file`).
+  /// Exit codes: 0 success, 1 when the path does not exist, 2 usage error.
+  Future<SandboxBuiltinResult> tree(List<String> args) async {
+    final lister = listDirectory;
+    if (lister == null) {
+      return _error('tree: not supported by this shell\n', 2);
+    }
+    final t = parseTreeArgs(args);
+    if (t.early != null) return t.early!;
+    final target = t.root ?? '.';
+
+    final out = StringBuffer()..writeln(target);
+    var directories = 0;
+    var files = 0;
     if (await lister(target) != null) {
-      await walk(target, '', 1);
+      final rendered = await _renderTree(
+        lister: lister,
+        showHidden: t.showHidden,
+        maxDepth: t.maxDepth,
+        out: out,
+        root: target,
+      );
+      directories = rendered.directories;
+      files = rendered.files;
     } else {
       // A file root prints itself and counts as one file (like real tree).
       final reader = readBinaryFile;
@@ -1558,6 +1881,81 @@ final class SandboxBuiltins {
     );
   }
 
+  /// Parses one bundled short-flag cluster (`-dc`, `-dk`, ...) for the
+  /// decompress family. Returns which letters it sets plus the usage
+  /// error for an unknown letter.
+  static (bool, bool, bool, SandboxBuiltinResult?) _decompressShortFlags(
+    String arg,
+    String name,
+  ) {
+    var d = false;
+    var k = false;
+    var c = false;
+    for (var j = 1; j < arg.length; j++) {
+      switch (arg[j]) {
+        case 'd':
+          d = true;
+        case 'k':
+          k = true;
+        case 'c':
+          c = true;
+        default:
+          return (d, k, c, _error('$name: unsupported option -${arg[j]}\n', 2));
+      }
+    }
+    return (d, k, c, null);
+  }
+
+  /// Pure decompress-family argument parser (`xz`/`bzip2` shape):
+  /// `-d`/`--decompress`/`--uncompress`, `-k`/`--keep`, `-c`/`--stdout`/
+  /// `--to-stdout`, bundled short flags, and file operands. Any other
+  /// option is a usage error. Table-tested; see [xz].
+  static ({
+    bool unpack,
+    bool keep,
+    bool toStdout,
+    List<String> files,
+    SandboxBuiltinResult? error,
+  })
+  _parseDecompressArgs(String name, List<String> args) {
+    var unpack = false;
+    var keep = false;
+    var toStdout = false;
+    final files = <String>[];
+    for (final arg in args) {
+      if (arg == '-d' || arg == '--decompress' || arg == '--uncompress') {
+        unpack = true;
+      } else if (arg == '-k' || arg == '--keep') {
+        keep = true;
+      } else if (arg == '-c' || arg == '--stdout' || arg == '--to-stdout') {
+        toStdout = true;
+      } else if (arg.startsWith('-') && arg != '-') {
+        // Bundled short flags (-dc, -dk, ...).
+        final (d, k, c, error) = _decompressShortFlags(arg, name);
+        unpack = unpack || d;
+        keep = keep || k;
+        toStdout = toStdout || c;
+        if (error != null) {
+          return (
+            unpack: unpack,
+            keep: keep,
+            toStdout: toStdout,
+            files: files,
+            error: error,
+          );
+        }
+      } else {
+        files.add(arg);
+      }
+    }
+    return (
+      unpack: unpack,
+      keep: keep,
+      toStdout: toStdout,
+      files: files,
+      error: null,
+    );
+  }
   Future<SandboxBuiltinResult> _decompress(
     String name,
     List<String> args, {
@@ -1569,37 +1967,12 @@ final class SandboxBuiltins {
     if (reader == null) {
       return _error('$name: not supported by this shell\n', 2);
     }
-    var unpack = decompress;
-    var keep = false;
-    var toStdout = false;
-    final files = <String>[];
-    for (final arg in args) {
-      if (arg == '-d' || arg == '--decompress' || arg == '--uncompress') {
-        unpack = true;
-      } else if (arg == '-k' || arg == '--keep') {
-        keep = true;
-      } else if (arg == '-c' || arg == '--stdout' || arg == '--to-stdout') {
-        toStdout = true;
-      } else if (arg.startsWith('--')) {
-        return _error('$name: unsupported option $arg\n', 2);
-      } else if (arg.startsWith('-') && arg != '-') {
-        // Bundled short flags (-dc, -dk, ...).
-        for (var j = 1; j < arg.length; j++) {
-          switch (arg[j]) {
-            case 'd':
-              unpack = true;
-            case 'k':
-              keep = true;
-            case 'c':
-              toStdout = true;
-            default:
-              return _error('$name: unsupported option -${arg[j]}\n', 2);
-          }
-        }
-      } else {
-        files.add(arg);
-      }
-    }
+    final parsed = _parseDecompressArgs(name, args);
+    if (parsed.error != null) return parsed.error!;
+    var unpack = parsed.unpack || decompress;
+    final keep = parsed.keep;
+    final toStdout = parsed.toStdout;
+    final files = parsed.files;
     if (!unpack) {
       return _error(
         '$name: compression is not supported in this sandbox, '
@@ -1643,6 +2016,82 @@ final class SandboxBuiltins {
   // base64
   // ---------------------------------------------------------------------------
 
+
+  /// Resolves a `-w`/`--wrap`/`--wrap=`/`-wN` flag. Returns the columns
+  /// string (null for the bare `-w`/`--wrap` form) and whether the next
+  /// argument was consumed, or null when [arg] is not a wrap flag.
+  static (String?, bool)? _base64WrapFlag(String arg) {
+    if (arg == '-w' || arg == '--wrap') return (null, true);
+    if (arg.startsWith('--wrap=')) return (arg.substring('--wrap='.length), false);
+    if (arg.startsWith('-w') && arg.length > 2) {
+      return (arg.substring(2), false);
+    }
+    return null;
+  }
+
+  /// Pure `base64` argument parser: `-d`/`--decode`, `-w cols`/`--wrap=cols`
+  /// (0 disables wrapping; a negative or non-numeric width is a usage
+  /// error), one optional input file, `-` for stdin. The first error wins
+  /// and stops parsing. Table-tested; see [base64].
+  static Base64Args parseBase64Args(List<String> args) {
+    final b = Base64Args();
+    for (var i = 0; i < args.length; i++) {
+      final arg = args[i];
+      final wrap = _base64WrapFlag(arg);
+      if (arg == '-d' || arg == '--decode') {
+        b.decode = true;
+      } else if (wrap != null) {
+        final (columns, consumed) = wrap;
+        if (columns == null) {
+          if (i + 1 >= args.length) {
+            b.error = _error("base64: option requires an argument -- 'w'\n", 2);
+            return b;
+          }
+          b.wrap = _base64WrapValue(args[++i], b);
+          if (b.error != null) return b;
+        } else {
+          b.wrap = _base64WrapValue(columns, b);
+          if (b.error != null) return b;
+        }
+        // The bare flag form consumed its value above via ++i.
+        if (!consumed) continue;
+      } else if (arg.startsWith('-') && arg != '-') {
+        b.error = _error("base64: invalid option -- '${arg.substring(1)}'\n", 2);
+        return b;
+      } else if (b.inputFile == null) {
+        b.inputFile = arg;
+      } else {
+        b.error = _error("base64: extra operand '$arg'\n", 2);
+        return b;
+      }
+    }
+    return b;
+  }
+
+  /// Parses a `-w` column count; records the usage error on [b] for a
+  /// negative or non-numeric width (matching GNU base64's message).
+  static int _base64WrapValue(String columns, Base64Args b) {
+    final wrap = int.tryParse(columns) ?? -1;
+    if (wrap < 0) {
+      b.error = _error("base64: invalid wrap size: '$columns'\n", 2);
+    }
+    return wrap;
+  }
+
+  /// Wraps [encoded] at [wrap] columns (0 = one line) with a trailing
+  /// newline, like GNU base64 output.
+  static String _base64Wrapped(String encoded, int wrap) {
+    if (wrap <= 0) return '$encoded\n';
+    final lines = <String>[
+      for (var i = 0; i < encoded.length; i += wrap)
+        encoded.substring(
+          i,
+          i + wrap > encoded.length ? encoded.length : i + wrap,
+        ),
+    ];
+    return '${lines.join('\n')}\n';
+  }
+
   /// Runs the `base64` builtin: `base64 [-d|--decode] [-w cols] [file]`.
   /// Encoding wraps at 76 columns by default (GNU behavior; `-w 0` disables
   /// wrapping) and ends with a newline; `-d` decodes, tolerating whitespace
@@ -1653,54 +2102,25 @@ final class SandboxBuiltins {
     List<String> args, {
     String? stdin,
   }) async {
-    var decode = false;
-    var wrap = 76;
-    String? inputFile;
-    for (var i = 0; i < args.length; i++) {
-      final arg = args[i];
-      String? columns;
-      if (arg == '-d' || arg == '--decode') {
-        decode = true;
-      } else if (arg == '-w' || arg == '--wrap') {
-        columns = i + 1 < args.length ? args[++i] : null;
-        if (columns == null) {
-          return _error("base64: option requires an argument -- 'w'\n", 2);
-        }
-      } else if (arg.startsWith('--wrap=')) {
-        columns = arg.substring('--wrap='.length);
-      } else if (arg.startsWith('-w') && arg.length > 2) {
-        columns = arg.substring(2);
-      } else if (arg.startsWith('-') && arg != '-') {
-        return _error("base64: invalid option -- '${arg.substring(1)}'\n", 2);
-      } else if (inputFile == null) {
-        inputFile = arg;
-      } else {
-        return _error("base64: extra operand '$arg'\n", 2);
-      }
-      if (columns != null) {
-        wrap = int.tryParse(columns) ?? -1;
-        if (wrap < 0) {
-          return _error("base64: invalid wrap size: '$columns'\n", 2);
-        }
-      }
-    }
+    final b = parseBase64Args(args);
+    if (b.error != null) return b.error!;
 
     final List<int> input;
-    if (inputFile != null && inputFile != '-') {
+    if (b.inputFile != null && b.inputFile != '-') {
       final reader = readBinaryFile;
       if (reader == null) {
         return _error('base64: not supported by this shell\n', 2);
       }
-      final read = await reader(inputFile);
+      final read = await reader(b.inputFile!);
       if (read == null) {
-        return _error('base64: $inputFile: No such file or directory\n', 1);
+        return _error('base64: ${b.inputFile}: No such file or directory\n', 1);
       }
       input = read;
     } else {
       input = utf8.encode(stdin ?? '');
     }
 
-    if (decode) {
+    if (b.decode) {
       final text = utf8
           .decode(input, allowMalformed: true)
           .replaceAll(RegExp(r'\s'), '');
@@ -1715,22 +2135,48 @@ final class SandboxBuiltins {
 
     final encoded = base64Encode(input);
     if (encoded.isEmpty) return _ok(const []);
-    final lines = <String>[
-      if (wrap > 0)
-        for (var i = 0; i < encoded.length; i += wrap)
-          encoded.substring(
-            i,
-            i + wrap > encoded.length ? encoded.length : i + wrap,
-          )
-      else
-        encoded,
-    ];
-    return _ok(utf8.encode('${lines.join('\n')}\n'));
+    return _ok(utf8.encode(_base64Wrapped(encoded, b.wrap)));
   }
 
   // ---------------------------------------------------------------------------
   // md5sum / sha*sum
   // ---------------------------------------------------------------------------
+
+  /// Maps a checksum builtin name to its `package:crypto` hasher.
+  static Hash _hashFor(String name) => switch (name) {
+    'md5sum' => md5,
+    'sha1sum' => sha1,
+    'sha224sum' => sha224,
+    'sha256sum' => sha256,
+    'sha384sum' => sha384,
+    'sha512sum' => sha512,
+    _ => throw ArgumentError.value(name, 'name', 'unsupported checksum'),
+  };
+
+  /// Pure checksum-builtin argument parser: `-b`/`-t`/`--binary`/`--text`
+  /// are accepted no-ops (no CRLF translation in the sandbox), any other
+  /// option is a usage error, and the operands default to `-` (stdin).
+  /// Table-tested; see [hashsum].
+  static (List<String>, SandboxBuiltinResult?) _parseHashsumArgs(
+    String name,
+    List<String> args,
+  ) {
+    final paths = <String>[];
+    for (final arg in args) {
+      if (arg == '-b' || arg == '-t' || arg == '--binary' || arg == '--text') {
+        // Binary/text mode is a no-op in the sandbox (no CRLF translation).
+      } else if (arg.startsWith('-') && arg != '-') {
+        return (
+          const [],
+          _error("$name: invalid option -- '${arg.substring(1)}'\n", 2),
+        );
+      } else {
+        paths.add(arg);
+      }
+    }
+    if (paths.isEmpty) paths.add('-');
+    return (paths, null);
+  }
 
   /// Runs a checksum builtin selected by [name] (`md5sum`, `sha1sum`,
   /// `sha224sum`, `sha256sum`, `sha384sum`, `sha512sum`), printing
@@ -1743,26 +2189,9 @@ final class SandboxBuiltins {
     List<String> args, {
     String? stdin,
   }) async {
-    final hash = switch (name) {
-      'md5sum' => md5,
-      'sha1sum' => sha1,
-      'sha224sum' => sha224,
-      'sha256sum' => sha256,
-      'sha384sum' => sha384,
-      'sha512sum' => sha512,
-      _ => throw ArgumentError.value(name, 'name', 'unsupported checksum'),
-    };
-    final paths = <String>[];
-    for (final arg in args) {
-      if (arg == '-b' || arg == '-t' || arg == '--binary' || arg == '--text') {
-        // Binary/text mode is a no-op in the sandbox (no CRLF translation).
-      } else if (arg.startsWith('-') && arg != '-') {
-        return _error("$name: invalid option -- '${arg.substring(1)}'\n", 2);
-      } else {
-        paths.add(arg);
-      }
-    }
-    if (paths.isEmpty) paths.add('-');
+    final hash = _hashFor(name);
+    final (paths, error) = _parseHashsumArgs(name, args);
+    if (error != null) return error;
 
     final reader = readBinaryFile;
     if (reader == null) {
@@ -1786,19 +2215,16 @@ final class SandboxBuiltins {
       exitCode: failed ? 1 : 0,
     );
   }
-
-  // ---------------------------------------------------------------------------
-  // unzip
-  // ---------------------------------------------------------------------------
-
-  /// Runs the `unzip` builtin: extracts zip archives (via package:archive)
-  /// into the current directory, or into the directory given with `-d`.
-  /// `-q`/`-o` are accepted as no-ops (quiet/overwrite are the defaults).
-  Future<SandboxBuiltinResult> unzip(List<String> args) async {
-    final reader = readBinaryFile;
-    if (reader == null) {
-      return _error('unzip: not supported by this shell\n', 1);
-    }
+  /// Pure `unzip` argument parser: `-d dir` (target directory), `-q`/`-o`
+  /// accepted as no-ops (quiet/overwrite are the defaults), archive
+  /// operands. Any other option is an error (exit code 1, matching the
+  /// sandbox unzip's convention). Table-tested; see [unzip].
+  static ({
+    String? destDir,
+    List<String> archives,
+    SandboxBuiltinResult? error,
+  })
+  parseUnzipArgs(List<String> args) {
     String? destDir;
     final archives = <String>[];
     for (var i = 0; i < args.length; i++) {
@@ -1808,15 +2234,54 @@ final class SandboxBuiltins {
       } else if (arg == '-q' || arg == '-o') {
         // Quiet/overwrite are the defaults in this subset.
       } else if (arg.startsWith('-') && arg != '-') {
-        return _error('unzip: unsupported option $arg\n', 1);
+        return (
+          destDir: destDir,
+          archives: archives,
+          error: _error('unzip: unsupported option $arg\n', 1),
+        );
       } else {
         archives.add(arg);
       }
     }
-    if (archives.isEmpty) {
+    return (destDir: destDir, archives: archives, error: null);
+  }
+
+  /// Extracts every regular file of [archive] under [root], recreating
+  /// directories through [makeDirectory] and writing entries through
+  /// [writeBinaryFile]. Leading slashes are stripped from entry names.
+  static Future<void> _extractZip(
+    Archive archive,
+    String root, {
+    required Future<void> Function(String path, List<int> bytes)
+    writeBinaryFile,
+    required Future<void> Function(String path)? makeDirectory,
+  }) async {
+    for (final file in archive.files) {
+      final name = file.name.startsWith('/')
+          ? file.name.substring(1)
+          : file.name;
+      if (!file.isFile || name.endsWith('/')) {
+        await makeDirectory?.call('$root/$name');
+        continue;
+      }
+      await writeBinaryFile('$root/$name', file.content as List<int>);
+    }
+  }
+
+  /// Runs the `unzip` builtin: extracts zip archives (via package:archive)
+  /// into the current directory, or into the directory given with `-d`.
+  /// `-q`/`-o` are accepted as no-ops (quiet/overwrite are the defaults).
+  Future<SandboxBuiltinResult> unzip(List<String> args) async {
+    final reader = readBinaryFile;
+    if (reader == null) {
+      return _error('unzip: not supported by this shell\n', 1);
+    }
+    final u = parseUnzipArgs(args);
+    if (u.error != null) return u.error!;
+    if (u.archives.isEmpty) {
       return _error('unzip: missing archive operand\n', 1);
     }
-    for (final arg in archives) {
+    for (final arg in u.archives) {
       final bytes = await reader(arg);
       if (bytes == null) {
         return _error(
@@ -1830,22 +2295,16 @@ final class SandboxBuiltins {
       } on Object {
         return _error('unzip: $arg: not in zip format\n', 1);
       }
-      final root = destDir ?? '.';
-      for (final file in archive.files) {
-        final name = file.name.startsWith('/')
-            ? file.name.substring(1)
-            : file.name;
-        if (!file.isFile || name.endsWith('/')) {
-          await makeDirectory?.call('$root/$name');
-          continue;
-        }
-        await writeBinaryFile('$root/$name', file.content as List<int>);
-      }
+      await _extractZip(
+        archive,
+        u.destDir ?? '.',
+        writeBinaryFile: writeBinaryFile,
+        makeDirectory: makeDirectory,
+      );
     }
     return _ok(const []);
   }
 }
-
 // ---------------------------------------------------------------------------
 // file(1) magic helpers
 // ---------------------------------------------------------------------------
@@ -1873,11 +2332,8 @@ void _requireMagic(List<int> bytes, List<int> magic) {
   }
 }
 
-/// Classifies [bytes] BSD-file style by magic-number matching; the subset
-/// covers the formats the sandbox can produce or consume. Falls back to
-/// text detection and finally `data`.
-String _describeBytes(List<int> bytes) {
-  if (bytes.isEmpty) return 'empty';
+/// Describes compressed/archive payloads: wasm, zip, gzip, xz, bzip2.
+String? _describeCompressedBytes(List<int> bytes) {
   if (_hasPrefix(bytes, const [0x00, 0x61, 0x73, 0x6d])) {
     // The wasm version is a little-endian uint32 at offset 4 (1 = MVP).
     if (bytes.length >= 8) {
@@ -1906,6 +2362,11 @@ String _describeBytes(List<int> bytes) {
         : '';
     return 'bzip2 compressed data$blockSize';
   }
+  return null;
+}
+
+/// Describes image payloads: PNG, JPEG, GIF, WebP.
+String? _describeImageBytes(List<int> bytes) {
   if (_hasPrefix(bytes, const [
     0x89,
     0x50,
@@ -1929,11 +2390,11 @@ String _describeBytes(List<int> bytes) {
       _hasMagicAt(bytes, 8, 'WEBP'.codeUnits)) {
     return 'RIFF (little-endian) data, Web/P image';
   }
-  if (_hasPrefix(bytes, '%PDF-'.codeUnits)) return 'PDF document';
-  if (_hasPrefix(bytes, 'SQLite format 3\x00'.codeUnits)) {
-    return 'SQLite 3.x database';
-  }
-  if (_hasMagicAt(bytes, 257, 'ustar'.codeUnits)) return 'POSIX tar archive';
+  return null;
+}
+
+/// Describes executable payloads: ELF and the Mach-O variants.
+String? _describeExecutableBytes(List<int> bytes) {
   if (_hasPrefix(bytes, const [0x7f, 0x45, 0x4c, 0x46])) {
     if (bytes.length < 6) return 'ELF executable';
     final bits = bytes[4] == 1 ? '32-bit' : '64-bit';
@@ -1951,6 +2412,25 @@ String _describeBytes(List<int> bytes) {
   if (_hasPrefix(bytes, const [0xca, 0xfe, 0xba, 0xbe])) {
     return 'Mach-O universal binary';
   }
+  return null;
+}
+
+/// Classifies [bytes] BSD-file style by magic-number matching; the subset
+/// covers the formats the sandbox can produce or consume. Falls back to
+/// text detection and finally `data`.
+String _describeBytes(List<int> bytes) {
+  if (bytes.isEmpty) return 'empty';
+  final compressed = _describeCompressedBytes(bytes);
+  if (compressed != null) return compressed;
+  final image = _describeImageBytes(bytes);
+  if (image != null) return image;
+  if (_hasPrefix(bytes, '%PDF-'.codeUnits)) return 'PDF document';
+  if (_hasPrefix(bytes, 'SQLite format 3\x00'.codeUnits)) {
+    return 'SQLite 3.x database';
+  }
+  if (_hasMagicAt(bytes, 257, 'ustar'.codeUnits)) return 'POSIX tar archive';
+  final executable = _describeExecutableBytes(bytes);
+  if (executable != null) return executable;
   if (_isUtf8Text(bytes)) {
     return bytes.every((b) => b < 0x80) ? 'ASCII text' : 'UTF-8 Unicode text';
   }
@@ -2113,6 +2593,35 @@ List<_DiffOp> _diffOps(List<String> oldTokens, List<String> newTokens) {
   return ops;
 }
 
+/// Finds the extent of the next unified-diff hunk starting at or after
+/// [start]: skips leading context, then extends while changes are
+/// separated by at most 2*context context lines (a larger gap starts a
+/// new hunk). Returns (hunkStart, hunkEnd) with hunkEnd exclusive, or
+/// null when no changes remain.
+(int, int)? _nextHunkExtent(List<_DiffOp> ops, int start, int context) {
+  var change = start;
+  while (change < ops.length && ops[change].kind == _DiffOpKind.context) {
+    change++;
+  }
+  if (change == ops.length) return null;
+  final hunkStart = change - context > 0 ? change - context : 0;
+  var lastChange = change;
+  var j = change + 1;
+  while (j < ops.length) {
+    if (ops[j].kind != _DiffOpKind.context) {
+      lastChange = j;
+      j++;
+    } else if (j - lastChange > 2 * context) {
+      break;
+    } else {
+      j++;
+    }
+  }
+  var hunkEnd = lastChange + context + 1;
+  if (hunkEnd > ops.length) hunkEnd = ops.length;
+  return (hunkStart, hunkEnd);
+}
+
 /// Renders [ops] as a unified diff with `---`/`+++` file headers and
 /// `@@ -a,b +c,d @@` hunks with [context] lines of context, mirroring
 /// `diff -u` (including `\ No newline at end of file` markers).
@@ -2128,30 +2637,10 @@ String _formatUnified(
     ..writeln('--- $oldLabel')
     ..writeln('+++ $newLabel');
   var i = 0;
-  while (i < ops.length) {
-    // Hunks only exist around changes; skip leading context.
-    var change = i;
-    while (change < ops.length && ops[change].kind == _DiffOpKind.context) {
-      change++;
-    }
-    if (change == ops.length) break;
-    final hunkStart = change - context > 0 ? change - context : 0;
-    // Extend the hunk while changes are separated by at most 2*context
-    // context lines; a larger gap starts a new hunk.
-    var lastChange = change;
-    var j = change + 1;
-    while (j < ops.length) {
-      if (ops[j].kind != _DiffOpKind.context) {
-        lastChange = j;
-        j++;
-      } else if (j - lastChange > 2 * context) {
-        break;
-      } else {
-        j++;
-      }
-    }
-    var hunkEnd = lastChange + context + 1;
-    if (hunkEnd > ops.length) hunkEnd = ops.length;
+  while (true) {
+    final extent = _nextHunkExtent(ops, i, context);
+    if (extent == null) break;
+    final (hunkStart, hunkEnd) = extent;
 
     var oldCount = 0;
     var newCount = 0;
@@ -2230,6 +2719,42 @@ final class _PatchHunk {
   final int newCount;
   final List<String> body;
 }
+/// Reads one hunk body of [oldCount]/[newCount] lines from [lines]
+/// starting at [i] (hunk-header already consumed). Returns the body lines
+/// (including `\ No newline` markers) and the index after the body, or
+/// null on structural malformation.
+(List<String>, int)? _parseHunkBody(
+  List<String> lines,
+  int i,
+  int oldCount,
+  int newCount,
+) {
+  final body = <String>[];
+  var oldSeen = 0;
+  var newSeen = 0;
+  while (oldSeen < oldCount || newSeen < newCount) {
+    if (i >= lines.length) return null;
+    final line = lines[i];
+    final kind = line.isEmpty ? ' ' : line[0];
+    if (kind == '\\') {
+      body.add(line);
+      i++;
+      continue;
+    }
+    if (kind != ' ' && kind != '-' && kind != '+') return null;
+    body.add(line);
+    if (kind != '+') oldSeen++;
+    if (kind != '-') newSeen++;
+    i++;
+  }
+  // A `\ No newline at end of file` marker can follow the last counted
+  // body line.
+  while (i < lines.length && lines[i].startsWith('\\')) {
+    body.add(lines[i]);
+    i++;
+  }
+  return (body, i);
+}
 
 final _hunkHeaderPattern = RegExp(
   r'^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@',
@@ -2261,39 +2786,10 @@ List<_PatchFile>? _parsePatch(String text) {
       final oldCount = match[2] != null ? int.parse(match[2]!) : 1;
       final newStart = int.parse(match[3]!);
       final newCount = match[4] != null ? int.parse(match[4]!) : 1;
-      i++;
-      final body = <String>[];
-      var oldSeen = 0;
-      var newSeen = 0;
-      var malformed = false;
-      while (oldSeen < oldCount || newSeen < newCount) {
-        if (i >= lines.length) {
-          malformed = true;
-          break;
-        }
-        final line = lines[i];
-        final kind = line.isEmpty ? ' ' : line[0];
-        if (kind == '\\') {
-          body.add(line);
-          i++;
-          continue;
-        }
-        if (kind != ' ' && kind != '-' && kind != '+') {
-          malformed = true;
-          break;
-        }
-        body.add(line);
-        if (kind != '+') oldSeen++;
-        if (kind != '-') newSeen++;
-        i++;
-      }
-      if (malformed) return null;
-      // A `\ No newline at end of file` marker can follow the last counted
-      // body line.
-      while (i < lines.length && lines[i].startsWith('\\')) {
-        body.add(lines[i]);
-        i++;
-      }
+      final parsed = _parseHunkBody(lines, i + 1, oldCount, newCount);
+      if (parsed == null) return null;
+      final (body, next) = parsed;
+      i = next;
       hunks.add(
         _PatchHunk(
           oldStart: oldStart,
@@ -2329,6 +2825,48 @@ String _stripPath(String name, int strip) {
   return absolute ? '/$stripped' : stripped;
 }
 
+/// Splits one hunk's body into its old-side lines, new-side lines, and
+/// the no-newline markers: a `\ No newline` marker after `-` applies to
+/// the old file, after `+` to the new file, after ` ` (or an empty
+/// previous context) to both.
+({
+  List<String> oldPart,
+  List<String> newPart,
+  bool markerOld,
+  bool markerNew,
+})
+_hunkParts(List<String> body) {
+  final oldPart = <String>[];
+  final newPart = <String>[];
+  var markerOld = false;
+  var markerNew = false;
+  String? previousKind;
+  for (final bodyLine in body) {
+    final kind = bodyLine.isEmpty ? ' ' : bodyLine[0];
+    if (kind == '\\') {
+      if (previousKind == '-') {
+        markerOld = true;
+      } else if (previousKind == '+') {
+        markerNew = true;
+      } else if (previousKind == ' ') {
+        markerOld = true;
+        markerNew = true;
+      }
+      continue;
+    }
+    final text = bodyLine.isEmpty ? '' : bodyLine.substring(1);
+    if (kind != '+') oldPart.add(text);
+    if (kind != '-') newPart.add(text);
+    previousKind = kind;
+  }
+  return (
+    oldPart: oldPart,
+    newPart: newPart,
+    markerOld: markerOld,
+    markerNew: markerNew,
+  );
+}
+
 /// Applies [hunks] to [doc], searching for each hunk's position with a
 /// growing offset from the header position (no fuzz). Failed hunks are
 /// skipped and reported by 1-based number; the file content is left
@@ -2343,29 +2881,7 @@ String _stripPath(String name, int strip) {
   var shift = 0;
   for (var h = 0; h < hunks.length; h++) {
     final hunk = hunks[h];
-    final oldPart = <String>[];
-    final newPart = <String>[];
-    var markerOld = false;
-    var markerNew = false;
-    String? previousKind;
-    for (final bodyLine in hunk.body) {
-      final kind = bodyLine.isEmpty ? ' ' : bodyLine[0];
-      if (kind == '\\') {
-        if (previousKind == '-') {
-          markerOld = true;
-        } else if (previousKind == '+') {
-          markerNew = true;
-        } else if (previousKind == ' ') {
-          markerOld = true;
-          markerNew = true;
-        }
-        continue;
-      }
-      final text = bodyLine.isEmpty ? '' : bodyLine.substring(1);
-      if (kind != '+') oldPart.add(text);
-      if (kind != '-') newPart.add(text);
-      previousKind = kind;
-    }
+    final (:oldPart, :newPart, :markerOld, :markerNew) = _hunkParts(hunk.body);
     final start = hunk.oldCount == 0 ? hunk.oldStart : hunk.oldStart - 1;
     final position = _findHunkPosition(lines, oldPart, start + shift);
     if (position == null) {
