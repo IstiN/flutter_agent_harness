@@ -375,7 +375,10 @@ jobs:
           key: pub-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
           restore-keys: pub-${{ runner.os }}-
 
+      # Same scope gate as every other step here: on a skipped (app-only)
+      # PR no dart SDK is set up, so an unconditional pub get dies with 127.
       - run: dart pub get
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
 
       - uses: actions/download-artifact@v4
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
