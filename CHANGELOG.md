@@ -3671,6 +3671,13 @@
 - fix(470): Outlook embed DOA - SW fetch bridge, fs_store gate, dead-frame sender hygiene (#489)
 - fix(464): one typing indicator in docked/collapsed chat — single ownership per view mode (#474)
 
+## 0.1.394
+
+- refactor(480): CRAP descent #4 - sandbox_builtins parser/executor split with table tests (#495)
+- refactor(476): [GATE] CRAP descent #3 — codemie_sso_flow per-surface step extraction + pickers out of the service (#493)
+- fix(467): composer wraps long input, stays inside the screen budget, no artifact cells (#492)
+- refactor(475): CRAP descent #2 - wasm_shell cluster decomposed + covered, ratchet 870->702 (#491)
+
 ## Unreleased
 
 ## Unreleased
