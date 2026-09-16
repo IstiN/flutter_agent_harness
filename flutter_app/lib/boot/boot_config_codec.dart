@@ -10,6 +10,7 @@
 /// so the round-trip property (encode via `LastConnection.fromConfig`,
 /// decode here) is unit-testable without booting the app.
 library;
+
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/services/last_connection.dart';
