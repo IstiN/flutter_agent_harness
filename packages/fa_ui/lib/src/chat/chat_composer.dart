@@ -37,6 +37,7 @@ class ChatComposer extends StatefulWidget {
     this.clipboardImageReader,
     this.leadingBuilder,
     this.hideMicWhenNotEmpty = false,
+    this.showStreamingStatus = true,
     this.onSent,
     this.onFocusChanged,
     this.autofocus = true,
@@ -48,6 +49,12 @@ class ChatComposer extends StatefulWidget {
   /// Capability flags; the defaults turn everything on and let the host
   /// hooks decide what is actually reachable.
   final FaChatFeatures features;
+
+  /// Renders the compact spinner + «Fa is typing…» row above the field
+  /// while the service streams. Hosts that show a dedicated work bar for
+  /// the same state (the launcher's docked chat bar) pass false — one
+  /// owner per view mode, the two indicators never stack (issue #464).
+  final bool showStreamingStatus;
 
   /// Arbitrary-file picker behind the attach sheet's "Attach file" entry;
   /// overrides [FaChatHost.uploadPicker]. Null (with no host hook) hides
@@ -661,8 +668,9 @@ class _ChatComposerState extends State<ChatComposer>
                   ),
                 ),
               ),
-            if (_isStreaming)
+            if (_isStreaming && widget.showStreamingStatus)
               Padding(
+                key: const ValueKey('faChatTypingRow'),
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                 child: Row(
                   children: [

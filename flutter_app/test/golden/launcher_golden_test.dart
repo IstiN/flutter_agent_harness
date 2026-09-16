@@ -14,6 +14,7 @@ import 'dart:typed_data';
 
 import 'package:fa/apps/app_tile_host.dart';
 import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/fa_work_bar.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/asr_service.dart';
@@ -23,6 +24,7 @@ import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/services/session_names_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
+import 'package:fa/ui/widgets/chat_composer.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -822,6 +824,88 @@ void main() {
       await startHungRun(tester);
       await expectGolden(tester, 'launcher/sheet_bar_streaming_light');
     });
+
+    /// The PRE-FIX (#464) docked composition, pinned as the before half
+    /// of the AC4 golden pair: the FaWorkBar status row stacked over the
+    /// composer's own «Fa is typing…» row — the double indicator the
+    /// single-ownership rule removed. The host mounts the same bar-over-
+    /// composer stack the sheet's docked bar renders, with the composer's
+    /// suppression disabled (`showStreamingStatus: true`).
+    Widget doubleIndicatorHost(AgentService service) {
+      return Scaffold(
+        body: Stack(
+          children: [
+            // The apps-grid backdrop the docked bar floats over.
+            ColoredBox(
+              color: FahColors.dark.bg,
+              child: const SizedBox.expand(),
+            ),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  FaWorkBar(service: service, onExpand: () {}, embedded: true),
+                  ChatComposer(
+                    service: service,
+                    hideMicWhenNotEmpty: true,
+                    autofocus: false,
+                    // Pre-fix rendering: the composer shows its own row
+                    // even with the work bar mounted above.
+                    showStreamingStatus: true,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    Future<void> pumpDoubleIndicator(
+      WidgetTester tester, {
+      ThemeData? theme,
+    }) async {
+      final service = _fakeService(MemoryExecutionEnv(), _hungResponse());
+      addTearDown(service.dispose);
+      await pumpGolden(
+        tester,
+        doubleIndicatorHost(service),
+        size: goldenSizePhone,
+        theme: theme,
+        wrap: (child) => child,
+      );
+      await tester.runAsync(() async {
+        unawaited(service.sendText('roll a d20'));
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+    }
+
+    testWidgets('input bar streaming — pre-fix double indicator (dark)', (
+      tester,
+    ) async {
+      await pumpDoubleIndicator(tester);
+      await expectGolden(
+        tester,
+        'launcher/sheet_bar_streaming_double_before_dark',
+      );
+    });
+
+    testWidgets('input bar streaming — pre-fix double indicator (light)', (
+      tester,
+    ) async {
+      await pumpDoubleIndicator(tester, theme: buildFahThemeLight());
+      await expectGolden(
+        tester,
+        'launcher/sheet_bar_streaming_double_before_light',
+      );
+    });
+
 
     testWidgets('sessions drawer — dark', (tester) async {
       await _pumpLauncher(tester, sessions: twoSessions());
