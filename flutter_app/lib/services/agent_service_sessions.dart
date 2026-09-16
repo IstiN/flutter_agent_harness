@@ -232,19 +232,10 @@ extension AgentServiceSessions on AgentService {
     _historyAboveCount = null;
     messages.clear();
     _notify();
-    // Windowed open (issue #135): header + newest chunk only; older
-    // records page in through loadOlderHistory. Small sessions load
-    // completely either way. A windowed-open failure (a corrupt tail,
-    // an IO hiccup on the ranged-read path) falls back to the FULL
-    // open rather than failing the session — the compatibility path
-    // (round-4 review); paging surfaces stay null for full-open.
-    Session session;
-    try {
-      session = await _repo.open(metadata, windowed: true);
-    } on Object {
-      if (!allowFullOpenFallback) rethrow;
-      session = await _repo.open(metadata);
-    }
+    final session = await _openSessionWindowed(
+      metadata,
+      allowFullOpenFallback: allowFullOpenFallback,
+    );
     if (gen != _loadGeneration) return;
     storageMs = openSw.elapsedMilliseconds;
     // The count belongs to the session being opened; the background
@@ -270,47 +261,9 @@ extension AgentServiceSessions on AgentService {
     await _rebuildTrajectory(records: _viewBranch);
     if (gen != _loadGeneration) return;
     ledgerMs = ledgerSw.elapsedMilliseconds;
-    // Restore the session's own model: same wire kind → modelId override;
-    // the provider itself stays the configured connection (its key lives
-    // in the Keychain, not in the session). An unresolvable or
-    // cross-kind mismatch keeps the current model — reopening a session
-    // must never hard-fail on this. Works with a config-less service
-    // too (pre-constructed agents): the kind check then compares against
-    // the agent's live model.
-    final config = _config;
-    final sessionModel = context.model;
-    final activeApi = _agent.state.model.api;
-    if (sessionModel != null &&
-        sessionModel.modelId.isNotEmpty &&
-        sessionModel.modelId != _agent.state.model.id &&
-        (config == null
-            ? sessionModel.provider == activeApi
-            : (sessionModel.provider == config.providerKind ||
-                  sessionModel.provider == config.toModel().api))) {
-      if (config != null) {
-        reconfigure(config.withModelId(sessionModel.modelId));
-      } else {
-        final model = _agent.state.model;
-        _agent.state.model = Model(
-          id: sessionModel.modelId,
-          name: sessionModel.modelId,
-          api: model.api,
-          provider: model.provider,
-          baseUrl: model.baseUrl,
-          reasoning: model.reasoning,
-          input: inputModalitiesFor(sessionModel.modelId),
-          cost: model.cost,
-          contextWindow: model.contextWindow,
-          maxTokens: model.maxTokens,
-          headers: model.headers,
-          compat: model.compat,
-        );
-      }
-      debugPrint(
-        '[Fa] session model restored: ${sessionModel.provider}/'
-        '${sessionModel.modelId}',
-      );
-    }
+    // Restore the session's own model: same wire kind → modelId override,
+    // never a hard failure (see [_restoreSessionModel]).
+    _restoreSessionModel(context.model);
     // The prompt's messaging section carries the live mailbox address.
     final activeConfig = _config;
     if (activeConfig != null) {
@@ -356,6 +309,78 @@ extension AgentServiceSessions on AgentService {
     // Background count of the records above the window (newline stream,
     // no decode): fills in the banner count without blocking the load.
     unawaited(_refreshHistoryAbove());
+  }
+
+  /// Windowed open (issue #135): header + newest chunk only; older
+  /// records page in through loadOlderHistory. Small sessions load
+  /// completely either way. A windowed-open failure (a corrupt tail,
+  /// an IO hiccup on the ranged-read path) falls back to the FULL
+  /// open rather than failing the session — the compatibility path
+  /// (round-4 review); paging surfaces stay null for full-open.
+  Future<Session> _openSessionWindowed(
+    SessionMetadata metadata, {
+    required bool allowFullOpenFallback,
+  }) async {
+    try {
+      return await _repo.open(metadata, windowed: true);
+    } on Object {
+      if (!allowFullOpenFallback) rethrow;
+      return _repo.open(metadata);
+    }
+  }
+
+  /// Restores the session's own model: same wire kind → modelId override;
+  /// the provider itself stays the configured connection (its key lives
+  /// in the Keychain, not in the session). An unresolvable or
+  /// cross-kind mismatch keeps the current model — reopening a session
+  /// must never hard-fail on this. Works with a config-less service
+  /// too (pre-constructed agents): the kind check then compares against
+  /// the agent's live model.
+  void _restoreSessionModel(({String provider, String modelId})? sessionModel) {
+    final config = _config;
+    if (sessionModel == null ||
+        sessionModel.modelId.isEmpty ||
+        !_sessionModelApplies(config, sessionModel)) {
+      return;
+    }
+    if (config != null) {
+      reconfigure(config.withModelId(sessionModel.modelId));
+    } else {
+      final model = _agent.state.model;
+      _agent.state.model = Model(
+        id: sessionModel.modelId,
+        name: sessionModel.modelId,
+        api: model.api,
+        provider: model.provider,
+        baseUrl: model.baseUrl,
+        reasoning: model.reasoning,
+        input: inputModalitiesFor(sessionModel.modelId),
+        cost: model.cost,
+        contextWindow: model.contextWindow,
+        maxTokens: model.maxTokens,
+        headers: model.headers,
+        compat: model.compat,
+      );
+    }
+    debugPrint(
+      '[Fa] session model restored: ${sessionModel.provider}/'
+      '${sessionModel.modelId}',
+    );
+  }
+
+  /// Whether [sessionModel] is a same-kind model id worth restoring
+  /// (compared against the configured provider kind, falling back to the
+  /// agent's live wire kind when no config owns the service).
+  bool _sessionModelApplies(
+    AgentConfig? config,
+    ({String provider, String modelId}) sessionModel,
+  ) {
+    if (sessionModel.modelId == _agent.state.model.id) return false;
+    final activeApi = _agent.state.model.api;
+    return config == null
+        ? sessionModel.provider == activeApi
+        : (sessionModel.provider == config.providerKind ||
+              sessionModel.provider == config.toModel().api);
   }
 
   /// Deletes a persisted session. Deleting the ACTIVE session starts a new

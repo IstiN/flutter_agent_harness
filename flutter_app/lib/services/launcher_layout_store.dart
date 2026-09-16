@@ -373,62 +373,92 @@ class LauncherLayoutStore extends ChangeNotifier {
   /// (wrong version, broken shape, or broken folder references).
   static Future<_ParsedLayout?> _read(ExecutionEnv env) async {
     try {
-      final text = (await env.readTextFile('${env.cwd}/$fileName')).valueOrNull;
+      final text = (await env
+          .readTextFile('${env.cwd}/$fileName'))
+          .valueOrNull;
       if (text == null) return null;
       final decoded = jsonDecode(text);
       if (decoded is! Map<String, dynamic>) return null;
       final version = decoded['version'];
       if (version != 1 && version != _version) return null;
-      final order = decoded['order'];
-      final folders = decoded['folders'];
-      if (order is! List || folders is! List) return null;
-      final parsedFolders = <String, LauncherFolder>{};
-      for (final raw in folders) {
-        if (raw is! Map) continue;
-        final id = raw['id'];
-        final name = raw['name'];
-        final tiles = raw['tiles'];
-        if (id is! String || id.isEmpty) continue;
-        if (name is! String || name.isEmpty) continue;
-        if (tiles is! List) continue;
-        parsedFolders[id] = LauncherFolder(
-          id: id,
-          name: name,
-          tiles: [for (final tile in tiles) tile.toString()],
-        );
-      }
-      final parsedOrder = [for (final key in order) key.toString()];
-      // Referential integrity: every folder entry resolves, every folder is
-      // referenced — otherwise the file is treated as corrupt (defaults).
-      for (final key in parsedOrder) {
-        if (isFolderKey(key) && !parsedFolders.containsKey(folderIdOf(key))) {
-          return null;
-        }
-      }
-      // v2 knobs (v1 migrates with the defaults).
-      int? gridColumns;
-      final tileSizes = <String, TileSize>{};
-      if (version == _version) {
-        final grid = decoded['grid'];
-        if (grid is Map) {
-          final columns = grid['columns'];
-          if (columns is num) gridColumns = _clampColumns(columns.toInt());
-        }
-        final sizes = decoded['tileSizes'];
-        if (sizes is Map) {
-          for (final entry in sizes.entries) {
-            final value = entry.value;
-            if (value == null) continue;
-            final size = parseTileSize(value.toString());
-            if (size != null) tileSizes[entry.key.toString()] = size;
-          }
-        }
-      }
-      return _ParsedLayout(parsedOrder, parsedFolders, gridColumns, tileSizes);
+      return _decodeLayout(decoded, version);
     } on Object {
       // Corrupt or incompatible file → empty layout, never crash boot.
       return null;
     }
+  }
+
+  /// Decode/persist split (issue #486): the I/O + version guard live in
+  /// [_read]; here the order/folders shape is validated, folder
+  /// referential integrity enforced, and the v2 knobs decoded (v1
+  /// migrates with the defaults).
+  static _ParsedLayout? _decodeLayout(
+    Map<String, dynamic> decoded,
+    Object? version,
+  ) {
+    final order = decoded['order'];
+    final folders = decoded['folders'];
+    if (order is! List || folders is! List) return null;
+    final parsedFolders = _decodeFolders(folders);
+    final parsedOrder = [for (final key in order) key.toString()];
+    // Referential integrity: every folder entry resolves, every folder is
+    // referenced — otherwise the file is treated as corrupt (defaults).
+    for (final key in parsedOrder) {
+      if (isFolderKey(key) && !parsedFolders.containsKey(folderIdOf(key))) {
+        return null;
+      }
+    }
+    if (version != _version) {
+      return _ParsedLayout(parsedOrder, parsedFolders, null, const {});
+    }
+    return _ParsedLayout(
+      parsedOrder,
+      parsedFolders,
+      _decodeGridColumns(decoded),
+      _decodeTileSizes(decoded),
+    );
+  }
+
+  static Map<String, LauncherFolder> _decodeFolders(List folders) {
+    final parsedFolders = <String, LauncherFolder>{};
+    for (final raw in folders) {
+      if (raw is! Map) continue;
+      final id = raw['id'];
+      final name = raw['name'];
+      final tiles = raw['tiles'];
+      if (id is! String || id.isEmpty) continue;
+      if (name is! String || name.isEmpty) continue;
+      if (tiles is! List) continue;
+      parsedFolders[id] = LauncherFolder(
+        id: id,
+        name: name,
+        tiles: [for (final tile in tiles) tile.toString()],
+      );
+    }
+    return parsedFolders;
+  }
+
+  /// v2 knob: grid columns (clamped).
+  static int? _decodeGridColumns(Map<String, dynamic> decoded) {
+    final grid = decoded['grid'];
+    if (grid is! Map) return null;
+    final columns = grid['columns'];
+    return columns is num ? _clampColumns(columns.toInt()) : null;
+  }
+
+  /// v2 knob: per-app tile sizes (`"WxH"`, clamped; unparsable entries
+  /// are dropped).
+  static Map<String, TileSize> _decodeTileSizes(Map<String, dynamic> decoded) {
+    final sizes = decoded['tileSizes'];
+    if (sizes is! Map) return const {};
+    final tileSizes = <String, TileSize>{};
+    for (final entry in sizes.entries) {
+      final value = entry.value;
+      if (value == null) continue;
+      final size = parseTileSize(value.toString());
+      if (size != null) tileSizes[entry.key.toString()] = size;
+    }
+    return tileSizes;
   }
 
   /// Swaps the in-memory state for [parsed]; returns true when anything
