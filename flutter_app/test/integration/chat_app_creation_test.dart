@@ -110,7 +110,9 @@ void main() {
         'session', (tester) async {
       final harness = await _pumpLauncher(tester);
       await tester.enterText(find.byType(TextField).last, 'make me a todo app');
-      await tester.testTextInput.receiveAction(TextInputAction.send);
+      // Enter no longer sends (it inserts a newline, #463) — the send
+      // button is the explicit path.
+      await tester.tap(find.byIcon(Icons.arrow_upward));
       // The composer hands the text to the active session's service. (The
       // run itself is driven in the other test — agent runs complete in the
       // real async zone, see below.)

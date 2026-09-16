@@ -598,7 +598,9 @@ void main() {
       expect(find.byIcon(Icons.arrow_upward), findsOneWidget);
       expect(find.byKey(_panelKey), findsOneWidget);
 
-      await tester.testTextInput.receiveAction(TextInputAction.send);
+      // Enter no longer sends (it inserts a newline, #463) — the send
+      // button is the explicit path.
+      await tester.tap(find.byIcon(Icons.arrow_upward));
       await tester.pumpAndSettle();
       final messages = harness.services['sess-b']!.messages;
       expect(messages.first.role, 'user');
@@ -656,12 +658,12 @@ void main() {
       );
       expect(focusNode.hasFocus, isTrue);
 
-      await tester.testTextInput.receiveAction(TextInputAction.send);
+      await tester.tap(find.byIcon(Icons.arrow_upward));
       await tester.pumpAndSettle();
       expect(harness.services['sess-b']!.messages.first.content, 'first');
-      // Still the same focused field after the send: the IME's send action
-      // unfocuses (EditableText finalizes with shouldUnfocus) — the composer
-      // restores focus so the follow-up needs no re-tap.
+      // Still the same focused field after the send: focus never leaves the
+      // field (the send button doesn't steal it, and the composer keeps it
+      // focused so the follow-up needs no re-tap).
       expect(
         tester.widget<EditableText>(fieldEditable).focusNode,
         same(focusNode),

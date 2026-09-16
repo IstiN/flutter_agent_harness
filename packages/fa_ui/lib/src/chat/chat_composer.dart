@@ -309,10 +309,15 @@ class _ChatComposerState extends State<ChatComposer>
     unawaited(widget.service.discardStagedAttachment(removed.path));
   }
 
-  /// Shift+Enter inserts a newline instead of sending. The key event is
-  /// handled here (a Focus ancestor) so the macOS/Windows/Linux text-input
-  /// plugin never sees it — left alone it treats Enter-with-modifiers as the
-  /// `send` action. Bare Enter still flows to the IME and sends.
+  /// Ctrl/Cmd+Enter sends. The key event is handled here (a Focus
+  /// ancestor) so it never reaches the IME — left alone it would land in
+  /// the field as a newline (the action is `newline` now, see the
+  /// TextField below).
+  ///
+  /// Bare Enter — the touch return key or a hardware key — is NOT handled
+  /// here: with `TextInputAction.newline` the IME inserts the line break
+  /// itself, which keeps an in-flight composing run (e.g. Cyrillic
+  /// autocorrect) intact.
   ///
   /// Cmd/Ctrl+V is smart paste (the YoLoIT pattern): a clipboard image is
   /// staged as an upload chip, long or multi-line text becomes a staged
@@ -320,8 +325,9 @@ class _ChatComposerState extends State<ChatComposer>
   KeyEventResult _handleComposerKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
     if (event.logicalKey == LogicalKeyboardKey.enter &&
-        HardwareKeyboard.instance.isShiftPressed) {
-      _insertTextAtSelection('\n');
+        (HardwareKeyboard.instance.isMetaPressed ||
+            HardwareKeyboard.instance.isControlPressed)) {
+      unawaited(_send(_textController.text));
       return KeyEventResult.handled;
     }
     if (event.logicalKey == LogicalKeyboardKey.keyV &&
@@ -766,10 +772,15 @@ class _ChatComposerState extends State<ChatComposer>
                             ),
                             filled: true,
                           ),
-                          maxLines: 5,
+                          // Multiline: Enter (touch return key or
+                          // hardware key) inserts a line break; the field
+                          // grows 1→6 lines and then scrolls internally.
+                          // Submit lives on the send button and
+                          // Ctrl/Cmd+Enter (_handleComposerKey).
+                          keyboardType: TextInputType.multiline,
+                          textInputAction: TextInputAction.newline,
+                          maxLines: 6,
                           minLines: 1,
-                          textInputAction: TextInputAction.send,
-                          onSubmitted: _send,
                         ),
                       ),
                     ),
