@@ -191,4 +191,174 @@ void main() {
       expect(themePackIdFor('???'), 'theme');
     });
   });
+
+  /// One firing fixture per rule in [themePackRules] (issue #484 AC3):
+  /// every rule must reject a crafted bad pack with its own reason, and
+  /// the tripwire above fails when a rule is added without a fixture.
+  group('rules', () {
+    test('tripwire: every rule has a firing fixture in this group', () {
+      expect(themePackRules.length, 12);
+    });
+
+    test('name rule: blank and oversized names reject', () {
+      for (final name in ['', ' ', 'x' * 65]) {
+        final result = validateThemePack({
+          'name': name,
+          'version': '1.0.0',
+        }, const {});
+        expect(result.spec, isNull);
+        expect(
+          result.reasons.single,
+          'name must be a non-empty string (≤ 64 chars)',
+        );
+      }
+      final ok = validateThemePack({
+        'name': 'x' * 64,
+        'version': '1.0.0',
+      }, const {});
+      expect(ok.spec, isNotNull, reason: ok.reasons.join('\n'));
+    });
+
+    test(
+      'colors shape rule: non-object, empty, and unknown variants reject',
+      () {
+        Map<String, Object?> pack(Object? colors) => {
+          'name': 'X',
+          'version': '1.0.0',
+          'colors': colors,
+        };
+        for (final colors in ['dark', <String, Object?>{}]) {
+          final result = validateThemePack(pack(colors), const {});
+          expect(result.spec, isNull);
+          expect(
+            result.reasons.single,
+            'colors must be an object with dark and/or light variants',
+          );
+        }
+        final unknown = validateThemePack(
+          pack({'purple': <String, Object?>{}}),
+          const {},
+        );
+        expect(unknown.reasons.single, 'unknown color variants: purple');
+      },
+    );
+
+    test('colors variants rule: null variants report the missing pair', () {
+      final result = validateThemePack(const {
+        'name': 'X',
+        'version': '1.0.0',
+        'colors': {'dark': null, 'light': null},
+      }, const {});
+      expect(
+        result.reasons.single,
+        'colors needs at least one of dark or light',
+      );
+    });
+
+    test('variant parse: a non-object variant and an empty variant reject', () {
+      Map<String, Object?> pack(Object? dark) => {
+        'name': 'X',
+        'version': '1.0.0',
+        'colors': {'dark': dark},
+      };
+      final notObject = validateThemePack(pack('nope'), const {});
+      expect(notObject.reasons.single, 'colors.dark must be an object');
+      final empty = validateThemePack(pack(const {'accent': null}), const {});
+      expect(empty.reasons.single, 'colors.dark sets no colors');
+    });
+
+    test('typography rule: shape, unknown keys, and bad families reject', () {
+      Map<String, Object?> pack(Object? typography) => {
+        'name': 'X',
+        'version': '1.0.0',
+        'typography': typography,
+      };
+      final notObject = validateThemePack(pack(4), const {});
+      expect(notObject.reasons.single, 'typography must be an object');
+      final unknownKey = validateThemePack(
+        pack(const {'fontFamily': 'JetBrains Mono', 'weight': 700}),
+        const {},
+      );
+      expect(unknownKey.reasons.single, 'unknown typography keys: weight');
+      final badFamily = validateThemePack(
+        pack(const {'fontFamily': 'Zapf Dingbats!'}),
+        const {},
+      );
+      expect(
+        badFamily.reasons.single,
+        'typography.fontFamily must be a plain font name',
+      );
+      final ok = validateThemePack(
+        pack(const {'fontFamily': 'JetBrains Mono'}),
+        const {},
+      );
+      expect(ok.spec!.fontFamily, 'JetBrains Mono');
+      expect(ok.reasons, isEmpty);
+    });
+
+    test('wallpaper shape rule: non-object and unknown keys reject', () {
+      Map<String, Object?> pack(Object? wallpaper) => {
+        'name': 'X',
+        'version': '1.0.0',
+        'wallpaper': wallpaper,
+      };
+      final notObject = validateThemePack(pack(true), const {});
+      expect(notObject.reasons.single, 'wallpaper must be an object');
+      final unknownKey = validateThemePack(
+        pack(const {'asset': 'bg.png', 'parallax': 1}),
+        {'bg.png': png(10)},
+      );
+      expect(unknownKey.reasons.single, 'unknown wallpaper keys: parallax');
+    });
+
+    test('wallpaper fit and opacity rules reject out-of-range values', () {
+      Map<String, Object?> pack(Map<String, Object?> wallpaper) => {
+        'name': 'X',
+        'version': '1.0.0',
+        'wallpaper': wallpaper,
+      };
+      final badFit = validateThemePack(
+        pack(const {'asset': 'bg.png', 'fit': 'diagonal'}),
+        {'bg.png': png(10)},
+      );
+      expect(
+        badFit.reasons.single,
+        'wallpaper.fit must be one of: '
+        'cover, contain, fill, fitWidth, fitHeight, none, scaleDown',
+      );
+      for (final opacity in [Object(), 1.5, 'high']) {
+        final badOpacity = validateThemePack(
+          pack({'asset': 'bg.png', 'opacity': opacity}),
+          {'bg.png': png(10)},
+        );
+        expect(
+          badOpacity.reasons.single,
+          'wallpaper.opacity must be a number between 0 and 1',
+        );
+      }
+    });
+
+    test('wallpaper build rule: declared fit and opacity land in the spec', () {
+      Map<String, Object?> packWithWallpaper(String asset) => {
+        'name': 'X',
+        'version': '1.0.0',
+        'wallpaper': {'asset': asset},
+      };
+      final result = validateThemePack(
+        const {
+          'name': 'X',
+          'version': '1.0.0',
+          'wallpaper': {'asset': 'bg.png', 'fit': 'contain', 'opacity': 0.5},
+        },
+        {'bg.png': png(10)},
+      );
+      expect(result.spec!.wallpaper!.fit, BoxFit.contain);
+      expect(result.spec!.wallpaper!.opacity, 0.5);
+      final defaults = validateThemePack(packWithWallpaper('bg.png'), {
+        'bg.png': png(10),
+      });
+      expect(defaults.spec!.wallpaper!.fit, BoxFit.cover);
+      expect(defaults.spec!.wallpaper!.opacity, 1);
+    });
+  });
 }
