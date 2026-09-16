@@ -1461,15 +1461,19 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
     TUI-only dispatchers at CC 3 / 0% cov pending PTY tests (documented
     exception).
   - flutter_app (`flutter_app/crap4dart.yaml`, sources `[lib]`,
-    issue #433/#475): **702.0** — measured by the SAME pipeline the CI gate
+    issue #433/#475): **650.0** — measured by the SAME pipeline the CI gate
     uses (the two `flutter-tests` shards emit `--coverage`; the
     `app-crap-gate` job merges the lcovs and runs the pinned analyzer —
     widget-test coverage differs from the core's dart lcov, E2).
-  - The app ladder (follow-up cards, NOT this one): 2450 → 870 → 702 (done:
-    `JsAppEngine._faCall` 2450→6 via map dispatch, `patch` 94→19,
-    `_tokenize` 70→18) → next milestones 650 (`codemie_sso_flow`) →
-    600-class `wasm_shell` cluster → … → **40**, each step "fix the
-    code, then lower the threshold" — never lower first.
+  - The app ladder (follow-up cards, NOT this one): 2450 → 870 → 702 → 650
+    (done: `JsAppEngine._faCall` 2450→6 via map dispatch, `patch` 94→19,
+    `_tokenize` 70→18; issue #475: `wasm_shell_git.run` route-table +
+    51 golden tests, app `main()` boot-phase helpers, `wasm_shell` beasts
+    `_grepBuiltin` 812→covered parse helpers, `_runPipeline` 702→210,
+    `_runStage` 600→380, `_parsePrimary` 506→210) → next milestone
+    380-class (`_runStage` residual, `_xargsBuiltin` 272) → … → **40**,
+    each step "fix the code, then lower the threshold" — never lower
+    first.
   - Guards (`scripts/check_crap_guards.py`): README badge == config
     threshold for BOTH packages, generated-exclude parity between the
     two configs, and `--only-down` (a PR that raises any threshold vs
