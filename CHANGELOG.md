@@ -3665,6 +3665,12 @@
 - ci(daily-publish): pin Flutter 3.47.x in the macOS/iOS legs — drop reliance on runner-local SDKs (#260, #261) (#281)
 - fix(cli): TUI scheduled countdown ticks on the minute boundary while idle (#213) (#264)
 
+## 0.1.393
+
+- refactor(481): [GATE] CRAP descent #5 - memory_shell per-utility modules (#494)
+- fix(470): Outlook embed DOA - SW fetch bridge, fs_store gate, dead-frame sender hygiene (#489)
+- fix(464): one typing indicator in docked/collapsed chat — single ownership per view mode (#474)
+
 ## Unreleased
 
 ## Unreleased
