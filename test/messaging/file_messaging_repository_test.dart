@@ -433,9 +433,11 @@ void main() {
   // Cross-project delivery: a mailbox registered under a DIFFERENT cwd slug
   // must receive mail in ITS messages root — the recipient drains only its
   // own root, so sender-rooted delivery silently vanishes (the peer fa in
-  // another project never sees the message). Resolution order: the
-  // messages-registry.json slug lookup, then a broad scan of sibling slugs
-  // for a mailbox whose .id marker matches; unknown ids stay local.
+  // another project never sees the message). Resolution (issue #516): a
+  // LIVE registration (fresh heartbeat) wins over any existing directory;
+  // stale-only — the messages-registry.json slug hint, then a broad scan
+  // of sibling slugs for a mailbox whose .id marker matches; unknown ids
+  // stay local.
   group('cross-project send routing', () {
     test('registry-known foreign slug receives the message', () async {
       await env.writeFile(
@@ -571,6 +573,139 @@ void main() {
       expect(moved, 1);
       final pending = await repo.peek(selfId);
       expect(pending, hasLength(2));
+    });
+  });
+
+  // Issue #516: delivery resolved a mailbox by EXISTING DIRECTORY, not by
+  // the agent's LIVE registration — 31 messages for a support agent live
+  // under flutter_agent landed in a corpse mailbox left under demo_widget
+  // by an older run. The fixture reproduces the incident: a stale mailbox
+  // (no heartbeat) under the OLD project slug sorts before the LIVE
+  // mailbox under the current one, so the legacy first-existing-dir scan
+  // picked the corpse.
+  group('live registration wins over a stale cross-root mailbox (#516)', () {
+    const targetId = '01a060f2-7d4b-73b3-a360-bdf56e8a3a14/main';
+    const staleDir =
+        '/sessions/--git-demo-widget--/messages/'
+        '01a060f2-7d4b-73b3-a360-bdf56e8a3a14_main';
+    const liveRoot = '/sessions/--git-flutter-agent--/messages';
+
+    Future<void> seedStaleCorpse({bool withMail = false}) async {
+      await env.createDir('$staleDir/inbox', recursive: true);
+      await env.writeFile('$staleDir/.id', targetId);
+      if (withMail) {
+        // Real sends name the file after the message id (see _fileName).
+        const first = '1788717144722510_0001_a';
+        const second = '1788717144722510_0002_b';
+        await env.writeFile(
+          '$staleDir/inbox/$first.json',
+          jsonEncode(msg(id: first, to: targetId, text: 's1').toJson()),
+        );
+        await env.writeFile(
+          '$staleDir/inbox/$second.json',
+          jsonEncode(msg(id: second, to: targetId, text: 's2').toJson()),
+        );
+      }
+    }
+
+    FileMessagingRepository liveRepo() => FileMessagingRepository(
+      env: env,
+      root: liveRoot,
+      decodeSessionCwd: decodeSessionCwd,
+    );
+
+    test(
+      'AC1: send lands in the live project root, never the corpse',
+      () async {
+        await seedStaleCorpse();
+        final recipient = liveRepo();
+        await recipient.register(targetId);
+
+        await repo.send(msg(id: 'm1', to: targetId, text: 'where are you?'));
+
+        final liveMail = await recipient.peek(targetId);
+        expect(liveMail, hasLength(1));
+        expect(liveMail.single.text, 'where are you?');
+        final corpseInbox =
+            (await env.listDir('$staleDir/inbox')).valueOrNull ?? const [];
+        expect(corpseInbox.where((e) => e.kind == FileKind.file), isEmpty);
+      },
+    );
+
+    test(
+      'AC1b: a stale registry entry cannot outrank the live registration',
+      () async {
+        await seedStaleCorpse();
+        await env.writeFile(
+          '/home/user/.fah/messages-registry.json',
+          jsonEncode({
+            targetId: {'slug': '--git-demo-widget--', 'cwd': '/demo'},
+          }),
+        );
+        final recipient = liveRepo();
+        await recipient.register(targetId);
+
+        await repo.send(msg(id: 'm1', to: targetId, text: 'registry vs live'));
+
+        expect(await recipient.peek(targetId), hasLength(1));
+        final corpseInbox =
+            (await env.listDir('$staleDir/inbox')).valueOrNull ?? const [];
+        expect(corpseInbox.where((e) => e.kind == FileKind.file), isEmpty);
+      },
+    );
+
+    test(
+      'AC2: registering under a new root drains the stale inbox once',
+      () async {
+        await seedStaleCorpse(withMail: true);
+        final recipient = liveRepo();
+
+        await recipient.register(targetId);
+        final drained = await recipient.drain(targetId);
+        expect(drained, hasLength(2));
+        expect(drained.map((m) => m.id).toString(), contains('0001_a'));
+        expect(drained.map((m) => m.id).toString(), contains('0002_b'));
+        // The corpse is gone — no future delivery can pick it (issue #516).
+        expect((await env.exists(staleDir)).valueOrNull, isNot(true));
+        // Subsequent sends route to the live root.
+        await repo.send(msg(id: 'm2', to: targetId, text: 'after migration'));
+        expect(await recipient.peek(targetId), hasLength(1));
+      },
+    );
+
+    test('register never steals the inbox of a live twin root', () async {
+      // Same id LIVE under the old root: another process owns that inbox
+      // and drains it — migration must skip it.
+      final twin = FileMessagingRepository(
+        env: env,
+        root: '/sessions/--git-demo-widget--/messages',
+        decodeSessionCwd: decodeSessionCwd,
+      );
+      await twin.register(targetId);
+      await env.writeFile(
+        '$staleDir/inbox/twin.json',
+        jsonEncode(msg(id: 't1', to: targetId, text: 'twin mail').toJson()),
+      );
+      final recipient = liveRepo();
+
+      await recipient.register(targetId);
+
+      expect(await twin.peek(targetId), hasLength(1));
+      expect((await env.exists(staleDir)).valueOrNull, isTrue);
+      expect(await recipient.drain(targetId), isEmpty);
+    });
+
+    test('AC1c: the live OWN root outranks a foreign corpse', () async {
+      await seedStaleCorpse();
+      // The recipient is live HERE (this repository's own project root).
+      await repo.touch(targetId);
+
+      await repo.send(msg(id: 'm1', to: targetId, text: 'home is here'));
+
+      expect(await repo.peek(targetId), hasLength(1));
+      final corpseInbox =
+          (await env.listDir('$staleDir/inbox')).valueOrNull ?? const [];
+      expect(corpseInbox.where((e) => e.kind == FileKind.file), isEmpty);
     });
   });
 }
