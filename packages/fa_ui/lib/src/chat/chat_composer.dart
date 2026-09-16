@@ -726,20 +726,22 @@ class _ChatComposerState extends State<ChatComposer>
                 ),
               ),
             Padding(
-              // The one-action slot mode gives the row more air: wider
-              // margins plus gaps between the buttons and the field.
+              // Compact single-layer vertical padding (issue #459): the
+              // field's contentPadding carries the pill's inner air; the
+              // row itself adds only a hairline 4dp above/below.
               padding: widget.hideMicWhenNotEmpty
-                  ? const EdgeInsets.fromLTRB(12, 8, 12, 8)
-                  : const EdgeInsets.fromLTRB(8, 8, 8, 8),
+                  ? const EdgeInsets.fromLTRB(12, 4, 12, 4)
+                  : const EdgeInsets.fromLTRB(8, 4, 8, 4),
               child: Row(
                 children: [
                   if (widget.leadingBuilder != null)
                     widget.leadingBuilder!(context)
                   else if (showAttach)
                     IconButton(
-                      // The modern "add content" mark: a rounded plus in a
-                      // hairline circle (see [FaAttachGlyph]) — rhymes with
-                      // the mic circle in the one-action slot.
+                      // The modern "add content" mark: a plus in a rounded
+                      // square (owner-approved B3, see [FaAttachGlyph]) —
+                      // its 2px stroke rhymes with the mic circle in the
+                      // one-action slot.
                       icon: FaAttachGlyph(color: palette.dim),
                       tooltip: strings.chatAttachTooltip,
                       onPressed: _showAttachmentSheet,
@@ -758,7 +760,7 @@ class _ChatComposerState extends State<ChatComposer>
                             hintText: 'Ask anything…',
                             contentPadding: const EdgeInsets.symmetric(
                               horizontal: 16,
-                              vertical: 12,
+                              vertical: 8,
                             ),
                             border: const OutlineInputBorder(
                               borderRadius: BorderRadius.all(
