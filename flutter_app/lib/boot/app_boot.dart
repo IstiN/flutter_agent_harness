@@ -13,7 +13,6 @@
 /// boot is semantics-preserving.
 library;
 
-import 'dart:async' show unawaited;
 import 'dart:ui' show PlatformDispatcher;
 
 import 'package:fa/firebase_options.dart';
@@ -122,13 +121,14 @@ final class FaAppBoot {
 
   /// Runs the boot stages in the historical `main()` order:
   /// window → services → storage → telemetry → routes.
-  Future<void> run() async {
+  Future<void> run() async => runWithEnv(await createPlatformEnv());
+
+  /// The same pipeline over a caller-provided [ExecutionEnv] — the seam
+  /// unit tests (and future integrations) use to boot without plugin
+  /// channels. Production [run] is this over the real platform env.
+  Future<void> runWithEnv(ExecutionEnv env) async {
     bootWindow();
     await bootServices();
-    // One env for the whole app: the provider registry, the last-connection
-    // store, and the agent share it (on web all ride the same IndexedDB
-    // snapshot; two envs would clobber each other's persisted filesystem).
-    final env = await createPlatformEnv();
     debugPrint(
       '[fah] platform env created: ${env.runtimeType}, cwd=${env.cwd}',
     );

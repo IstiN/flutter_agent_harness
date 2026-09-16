@@ -10,6 +10,7 @@ library;
 
 import 'dart:async';
 
+import 'package:fa/main.dart';
 import 'package:fa/boot/app_boot.dart';
 import 'package:fa/boot/boot_config_codec.dart';
 import 'package:fa/gemma/gemma_types.dart';
@@ -331,6 +332,21 @@ void main() {
           reason: kind,
         );
       }
+    });
+  });
+  group('FaAppBoot pipeline', () {
+    tearDown(() => FaUiHost.keyResolver = null);
+
+    test('runWithEnv drives every stage over the injected env', () async {
+      final env = MemoryExecutionEnv();
+      final routes = <BootStores>[];
+      await FaAppBoot(
+        routes: (stores, analytics) async {
+          routes.add(stores);
+        },
+      ).runWithEnv(env);
+      expect(routes, hasLength(1));
+      expect(routes.single.env, same(env));
     });
   });
 }
