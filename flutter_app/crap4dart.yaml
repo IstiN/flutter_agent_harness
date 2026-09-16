@@ -11,7 +11,7 @@
 # the measured new worst: 2450.0 → 870.0 (`wasm_shell_git.run` and
 # `main`, CC 29 at 0% coverage). Descent #2 (issue #475): both beasts
 # decomposed into route-table dispatch + per-family handlers with a 51-test
-golden suite, and the cluster's own 812/702/600/506 beasts went down with
+# golden suite, and the cluster's own 812/702/600/506 beasts went down with
 # them; the threshold follows the new measured worst: 870.0 → 650.0
 # (`runCodemieSsoFlow`, CC 25 at 0% cov — another lane's ladder card).
 # Pushes may only make the codebase BETTER,
