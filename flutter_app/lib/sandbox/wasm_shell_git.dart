@@ -2,6 +2,7 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io' as io;
 
@@ -20,6 +21,62 @@ import 'package:path/path.dart' as p;
 import 'package:fa/sandbox/git_smart_http.dart';
 import 'package:fa/sandbox/shell_parser.dart';
 import 'package:fa/sandbox/wasm_shell.dart';
+import 'package:http/http.dart' as http;
+
+/// The slice of [WasiSandboxShell] the git porcelain needs: sandbox path
+/// mapping, the current directory, the shared HTTP client and the WASM
+/// `tar` runner (clone-from-tarball). An interface, so the command set is
+/// unit-testable against a plain Dart host (no WASM modules required).
+abstract interface class GitShellHost {
+  /// Host directory exposed to the WASM guest at `/`.
+  String? get sandboxHostPath;
+
+  /// Current working directory of the shell.
+  String get shellCwd;
+
+  /// Host path for a sandbox-absolute path.
+  String hostPathOf(String sandboxPath);
+
+  /// HTTP client used by network builtins (smart HTTP / tarball clone).
+  http.Client get shellHttpClient;
+
+  /// Runs a sandbox command (the `tar` extraction of a tarball clone).
+  Future<Result<StageResult, ExecutionError>> runSandboxCommand(
+    String command,
+    List<String> args,
+  );
+}
+
+/// Pure split of the `git [-C <path>]` prologue (issue #475): scans for
+/// the FIRST `-C` — at any position, as the old router did — removes it
+/// with its value, and returns the option value (`cDir`, `null` when
+/// absent) plus `rest`, the remaining command line. `error` is set when
+/// `-C` has no value; an empty `rest` means "no command given" (the
+/// caller answers with the usage line, as before).
+({String? error, String? cDir, List<String> rest}) parseGitPrologue(
+  List<String> args,
+) {
+  for (var i = 0; i < args.length; i++) {
+    if (args[i] != '-C') continue;
+    if (i + 1 >= args.length) {
+      return (
+        error: 'fatal: option -C requires a value',
+        cDir: null,
+        rest: const <String>[],
+      );
+    }
+    return (
+      error: null,
+      cDir: args[i + 1],
+      rest: [...args.sublist(0, i), ...args.sublist(i + 2)],
+    );
+  }
+  return (error: null, cDir: null, rest: args);
+}
+
+/// One `git <command>` handler bound to an invocation's repo/context.
+typedef _GitCommandHandler =
+    FutureOr<Result<StageResult, ExecutionError>> Function(List<String> args);
 
 /// Pure-Dart git porcelain for the WASM sandbox, backed by `dart_git` for
 /// local operations and the GitHub tarball API for `git clone`.
@@ -27,56 +84,38 @@ final class GitSandboxCommands {
   /// Creates the command set bound to [shell].
   GitSandboxCommands(this._shell);
 
-  final WasiSandboxShell _shell;
+  final GitShellHost _shell;
 
   /// Runs the parsed git command line against the sandbox repository.
+  ///
+  /// Route-table dispatch (the `JsAppEngine._faCall` pattern, issue #475):
+  /// the old if-chain + 17-case switch was CC 29 / CRAP 870 at 0% coverage
+  /// — the app ratchet's worst. The `-C` prologue, the version answer and
+  /// the repo-free/repo-bound routing keep their exact previous semantics,
+  /// including the not-a-repository and unknown-command errors.
   Future<Result<StageResult, ExecutionError>> run(
     Stage stage,
     ShellExecOptions? options,
   ) async {
-    final args = List<String>.from(stage.args);
-    String cwd = options?.cwd ?? _shell.shellCwd;
-
-    // Parse a single global -C option (common for git).
-    for (var i = 0; i < args.length; i++) {
-      if (args[i] == '-C') {
-        if (i + 1 >= args.length) {
-          return _gitError('fatal: option -C requires a value');
-        }
-        cwd = args[i + 1];
-        args.removeRange(i, i + 2);
-        break;
-      }
-    }
-
-    if (args.isEmpty) {
+    final prologue = parseGitPrologue(stage.args);
+    final prologueError = prologue.error;
+    if (prologueError != null) return _gitError(prologueError);
+    if (prologue.rest.isEmpty) {
       return _gitError(
         'usage: git [--version] [--help] [-C <path>] <command> [<args>]',
       );
     }
 
-    final subcommand = args[0];
-    final subArgs = args.sublist(1);
+    final subcommand = prologue.rest.first;
+    final env = options?.env;
+    final hostCwd = _shell.hostPathOf(
+      prologue.cDir ?? options?.cwd ?? _shell.shellCwd,
+    );
 
-    if (subcommand == '--version' || subcommand == '-v') {
-      return Ok(
-        StageResult(
-          stdout: utf8.encode('git version 2.47.0-Fa\n'),
-          stderr: const [],
-          exitCode: 0,
-        ),
-      );
-    }
-
-    final hostCwd = _shell.hostPathOf(cwd);
-
-    // Commands that do not require an existing repository.
-    if (subcommand == 'clone') {
-      return _gitClone(subArgs, hostCwd, options?.env);
-    }
-    if (subcommand == 'init') {
-      return _gitInit(subArgs, hostCwd);
-    }
+    // Commands that do not require an existing repository (plus the
+    // --version answer) route first, exactly as before.
+    final repoFree = _repoFreeCommands(hostCwd, env)[subcommand];
+    if (repoFree != null) return repoFree(prologue.rest.sublist(1));
 
     final root = _findGitRoot(hostCwd);
     if (root == null) {
@@ -87,48 +126,62 @@ final class GitSandboxCommands {
 
     try {
       final repo = dart_git.GitRepository.load(root);
-      switch (subcommand) {
-        case 'add':
-          return _gitAdd(repo, subArgs, hostCwd);
-        case 'rm':
-          return _gitRm(repo, subArgs, hostCwd);
-        case 'commit':
-          return _gitCommit(repo, subArgs, options?.env);
-        case 'log':
-          return _gitLog(repo, subArgs);
-        case 'status':
-          return _gitStatus(repo);
-        case 'branch':
-          return _gitBranch(repo, subArgs);
-        case 'checkout':
-          return _gitCheckout(repo, subArgs, hostCwd);
-        case 'remote':
-          return _gitRemote(repo, subArgs);
-        case 'fetch':
-          return await _gitFetch(repo, subArgs, options?.env);
-        case 'push':
-          return await _gitPush(repo, subArgs, options?.env);
-        case 'show':
-          return _gitShow(repo, subArgs);
-        case 'cat-file':
-          return _gitCatFile(repo, subArgs);
-        case 'hash-object':
-          return _gitHashObject(repo, subArgs, hostCwd);
-        case 'ls-tree':
-          return _gitLsTree(repo, subArgs);
-        case 'write-tree':
-          return _gitWriteTree(repo);
-        case 'merge-base':
-          return _gitMergeBase(repo, subArgs);
-        case 'reset':
-          return _gitReset(repo, subArgs);
-        default:
-          return _gitError('git: \'$subcommand\' is not a git command.');
+      final handler = _repoCommands(repo, hostCwd, env)[subcommand];
+      if (handler == null) {
+        return _gitError('git: \'$subcommand\' is not a git command.');
       }
+      return await handler(prologue.rest.sublist(1));
     } catch (e) {
       return _gitError('error: $e');
     }
   }
+
+  /// Command families that run without an existing repository. Built per
+  /// invocation: the handlers bind this call's cwd and environment.
+  Map<String, _GitCommandHandler> _repoFreeCommands(
+    String hostCwd,
+    Map<String, String>? env,
+  ) => {
+    '--version': _gitVersion,
+    '-v': _gitVersion,
+    'clone': (args) => _gitClone(args, hostCwd, env),
+    'init': (args) => _gitInit(args, hostCwd),
+  };
+
+  /// Command families that require a loaded repository. Built per
+  /// invocation: the handlers bind this call's repo, cwd and environment.
+  Map<String, _GitCommandHandler> _repoCommands(
+    dart_git.GitRepository repo,
+    String hostCwd,
+    Map<String, String>? env,
+  ) => {
+    'add': (args) => _gitAdd(repo, args, hostCwd),
+    'rm': (args) => _gitRm(repo, args, hostCwd),
+    'commit': (args) => _gitCommit(repo, args, env),
+    'log': (args) => _gitLog(repo, args),
+    'status': (_) => _gitStatus(repo),
+    'branch': (args) => _gitBranch(repo, args),
+    'checkout': (args) => _gitCheckout(repo, args, hostCwd),
+    'remote': (args) => _remoteGuarded(() => _gitRemote(repo, args)),
+    'fetch': (args) => _gitFetch(repo, args, env),
+    'push': (args) => _gitPush(repo, args, env),
+    'show': (args) => _gitShow(repo, args),
+    'cat-file': (args) => _gitCatFile(repo, args),
+    'hash-object': (args) => _gitHashObject(repo, args, hostCwd),
+    'ls-tree': (args) => _gitLsTree(repo, args),
+    'write-tree': (_) => _gitWriteTree(repo),
+    'merge-base': (args) => _gitMergeBase(repo, args),
+    'reset': (args) => _gitReset(repo, args),
+  };
+
+  /// The `git --version` / `git -v` answer (identical string as before).
+  Result<StageResult, ExecutionError> _gitVersion(List<String> _) => Ok(
+    StageResult(
+      stdout: utf8.encode('git version 2.47.0-Fa\n'),
+      stderr: const [],
+      exitCode: 0,
+    ),
+  );
 
   Result<StageResult, ExecutionError> _gitError(String message) => Ok(
     StageResult(
@@ -147,27 +200,23 @@ final class GitSandboxCommands {
       return _gitError('usage: git clone <repository> [<directory>]');
     }
     final repoUrl = args[0];
-    String dest;
-    if (args.length > 1 && !args[1].startsWith('-')) {
-      dest = args[1];
-    } else {
-      dest = p.basenameWithoutExtension(repoUrl);
-    }
+    final dest = cloneDestination(repoUrl, args);
     final hostDest = _resolveGitPath(dest, hostCwd);
+    final notEmpty = _cloneDestNotEmpty(hostDest, dest);
+    if (notEmpty != null) return _gitError(notEmpty);
+    return _cloneByTransport(repoUrl, dest, hostDest, env);
+  }
 
-    // Real git refuses to clone into a non-empty directory.
-    final destDir = io.Directory(hostDest);
-    if (destDir.existsSync()) {
-      final hasGitDir = io.Directory(p.join(hostDest, '.git')).existsSync();
-      final isEmpty = destDir.listSync(followLinks: false).isEmpty;
-      if (hasGitDir || !isEmpty) {
-        return _gitError(
-          "fatal: destination path '$dest' already exists and is not an "
-          'empty directory.',
-        );
-      }
-    }
-
+  /// Routes a clone to its transport: SSH URLs over dartssh2, http(s)
+  /// over smart HTTP (falling back to the GitHub tarball API only when
+  /// the endpoint did not speak the protocol before any local state was
+  /// created), and everything else straight to the tarball API.
+  Future<Result<StageResult, ExecutionError>> _cloneByTransport(
+    String repoUrl,
+    String dest,
+    String hostDest,
+    Map<String, String>? env,
+  ) async {
     // SSH URLs (git@host:owner/repo.git, ssh://...) go over dartssh2.
     final sshTransport = _sshTransportFor(repoUrl, env);
     if (sshTransport != null) {
@@ -175,13 +224,7 @@ final class GitSandboxCommands {
         await GitSmartHttp(
           transport: sshTransport,
         ).cloneInto(url: repoUrl, hostDir: hostDest);
-        return Ok(
-          StageResult(
-            stdout: utf8.encode('Cloned into \'$dest\'\n'),
-            stderr: const [],
-            exitCode: 0,
-          ),
-        );
+        return _clonedInto(dest);
       } catch (e) {
         return _gitError('fatal: unable to clone: $e');
       }
@@ -194,13 +237,7 @@ final class GitSandboxCommands {
         await GitSmartHttp(
           client: _shell.shellHttpClient,
         ).cloneInto(url: repoUrl, hostDir: hostDest);
-        return Ok(
-          StageResult(
-            stdout: utf8.encode('Cloned into \'$dest\'\n'),
-            stderr: const [],
-            exitCode: 0,
-          ),
-        );
+        return _clonedInto(dest);
       } catch (e) {
         // Fall back to the GitHub tarball API only when the smart path
         // failed BEFORE creating any local state (i.e. the endpoint does
@@ -214,6 +251,37 @@ final class GitSandboxCommands {
     }
 
     return _gitCloneGitHubTarball(repoUrl, dest, hostDest);
+  }
+
+  /// The success answer for a finished clone.
+  Result<StageResult, ExecutionError> _clonedInto(String dest) => Ok(
+    StageResult(
+      stdout: utf8.encode('Cloned into \'$dest\'\n'),
+      stderr: const [],
+      exitCode: 0,
+    ),
+  );
+
+  /// Pure destination pick for `git clone` (issue #475): the explicit
+  /// non-flag argument, else the URL's basename without extension.
+  static String cloneDestination(String repoUrl, List<String> args) =>
+      args.length > 1 && !args[1].startsWith('-')
+      ? args[1]
+      : p.basenameWithoutExtension(repoUrl);
+
+  /// Real git refuses to clone into a non-empty directory; returns the
+  /// fatal message when [hostDest] exists with a `.git` or any content,
+  /// `null` when the destination is usable.
+  String? _cloneDestNotEmpty(String hostDest, String dest) {
+    final destDir = io.Directory(hostDest);
+    if (!destDir.existsSync()) return null;
+    final hasGitDir = io.Directory(p.join(hostDest, '.git')).existsSync();
+    final isEmpty = destDir.listSync(followLinks: false).isEmpty;
+    if (hasGitDir || !isEmpty) {
+      return "fatal: destination path '$dest' already exists and is not an "
+          'empty directory.';
+    }
+    return null;
   }
 
   Future<Result<StageResult, ExecutionError>> _gitCloneGitHubTarball(
@@ -589,6 +657,84 @@ final class GitSandboxCommands {
     dart_git.GitRepository repo,
     List<String> args,
   ) {
+    final parsed = parseBranchArgs(args);
+    final branchError = parsed.error;
+    if (branchError != null) return _gitError(branchError);
+    final positional = parsed.positional;
+
+    try {
+      if (parsed.delete) {
+        if (positional.isEmpty) {
+          return _gitError('usage: git branch -d <branch>');
+        }
+        repo.deleteBranch(positional.first);
+        return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
+      }
+      if (parsed.listRemote || parsed.listAll) {
+        return _branchListWithRemotes(repo, listAll: parsed.listAll);
+      }
+      if (positional.isEmpty) return _branchListLocal(repo);
+      repo.createBranch(positional.first);
+      return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
+    } catch (e) {
+      return _gitError('fatal: $e');
+    }
+  }
+
+  /// `git branch [-r | -a]`: local branches (with `-a`) then remote
+  /// tracking refs — the same line shapes the old inline block produced.
+  Result<StageResult, ExecutionError> _branchListWithRemotes(
+    dart_git.GitRepository repo, {
+    required bool listAll,
+  }) {
+    final lines = <String>[];
+    if (listAll) {
+      final current = repo.currentBranch();
+      final branches = repo.branches()..sort();
+      lines.addAll(branches.map((b) => b == current ? '* $b' : '  $b'));
+    }
+    final remoteRefs = repo.refStorage.listReferences('refs/remotes/')
+      ..sort((a, b) => a.name.value.compareTo(b.name.value));
+    for (final ref in remoteRefs) {
+      lines.add('  ${ref.name.value.substring('refs/remotes/'.length)}');
+    }
+    return Ok(
+      StageResult(
+        stdout: utf8.encode(lines.isEmpty ? '' : '${lines.join('\n')}\n'),
+        stderr: const [],
+        exitCode: 0,
+      ),
+    );
+  }
+
+  /// `git branch` with no arguments: sorted local branches, `* ` on the
+  /// current one.
+  Result<StageResult, ExecutionError> _branchListLocal(
+    dart_git.GitRepository repo,
+  ) {
+    final current = repo.currentBranch();
+    final branches = repo.branches()..sort();
+    final lines = branches.map((b) => b == current ? '* $b' : '  $b');
+    return Ok(
+      StageResult(
+        stdout: utf8.encode('${lines.join('\n')}\n'),
+        stderr: const [],
+        exitCode: 0,
+      ),
+    );
+  }
+
+  /// Pure arg split for `git branch` (issue #475): `-r` / `-a` list
+  /// flags, `-d`/`-D` delete, any other option is the same unknown-option
+  /// error as before; everything non-flag is positional.
+  static ({
+    String? error,
+    bool listRemote,
+    bool listAll,
+    bool delete,
+    List<String> positional,
+  })
+  parseBranchArgs(List<String> args) {
     var listRemote = false;
     var listAll = false;
     var delete = false;
@@ -601,62 +747,29 @@ final class GitSandboxCommands {
       } else if (arg == '-d' || arg == '-D') {
         delete = true;
       } else if (arg.startsWith('-')) {
-        return _gitError('git branch: unknown option $arg');
+        return (
+          error: 'git branch: unknown option $arg',
+          listRemote: false,
+          listAll: false,
+          delete: false,
+          positional: const <String>[],
+        );
       } else {
         positional.add(arg);
       }
     }
-
-    try {
-      if (delete) {
-        if (positional.isEmpty) {
-          return _gitError('usage: git branch -d <branch>');
-        }
-        repo.deleteBranch(positional.first);
-        return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
-      }
-
-      if (listRemote || listAll) {
-        final lines = <String>[];
-        if (listAll) {
-          final current = repo.currentBranch();
-          final branches = repo.branches()..sort();
-          lines.addAll(branches.map((b) => b == current ? '* $b' : '  $b'));
-        }
-        final remoteRefs = repo.refStorage.listReferences('refs/remotes/')
-          ..sort((a, b) => a.name.value.compareTo(b.name.value));
-        for (final ref in remoteRefs) {
-          lines.add('  ${ref.name.value.substring('refs/remotes/'.length)}');
-        }
-        return Ok(
-          StageResult(
-            stdout: utf8.encode(lines.isEmpty ? '' : '${lines.join('\n')}\n'),
-            stderr: const [],
-            exitCode: 0,
-          ),
-        );
-      }
-
-      if (positional.isEmpty) {
-        final current = repo.currentBranch();
-        final branches = repo.branches()..sort();
-        final lines = branches.map((b) => b == current ? '* $b' : '  $b');
-        return Ok(
-          StageResult(
-            stdout: utf8.encode('${lines.join('\n')}\n'),
-            stderr: const [],
-            exitCode: 0,
-          ),
-        );
-      }
-
-      repo.createBranch(positional.first);
-      return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
-    } catch (e) {
-      return _gitError('fatal: $e');
-    }
+    return (
+      error: null,
+      listRemote: listRemote,
+      listAll: listAll,
+      delete: delete,
+      positional: positional,
+    );
   }
 
+  /// `git checkout [-b] <branch>|<path>`: a local branch switches, a
+  /// resolvable hash/remote-ref detaches HEAD, anything else restores a
+  /// path — each form in its own helper below.
   Result<StageResult, ExecutionError> _gitCheckout(
     dart_git.GitRepository repo,
     List<String> args,
@@ -678,25 +791,12 @@ final class GitSandboxCommands {
 
     try {
       if (create) {
-        final startPoint = positional.length > 1 ? positional[1] : 'HEAD';
-        final hash = _gitResolveHash(repo, startPoint);
-        if (hash == null) {
-          return _gitError(
-            "fatal: '$startPoint' is not a commit and a branch "
-            "'$target' cannot be created from it",
-          );
-        }
-        repo.createBranch(target, hash: hash);
-        repo.checkoutBranch(target);
-        return Ok(
-          StageResult(
-            stdout: utf8.encode('Switched to a new branch \'$target\'\n'),
-            stderr: const [],
-            exitCode: 0,
-          ),
+        return _checkoutNewBranch(
+          repo,
+          target,
+          startPoint: positional.length > 1 ? positional[1] : 'HEAD',
         );
       }
-
       if (repo.branches().contains(target)) {
         repo.checkoutBranch(target);
         return Ok(
@@ -707,37 +807,69 @@ final class GitSandboxCommands {
           ),
         );
       }
+      return _checkoutDetachedOrPath(repo, target, hostCwd);
+    } catch (e) {
+      return _gitError('fatal: $e');
+    }
+  }
 
-      // A remote ref or a full hash: detached HEAD checkout.
-      final hash = _gitResolveHash(repo, target);
-      if (hash != null) {
-        repo.refStorage.saveRef(HashReference(ReferenceName.HEAD(), hash));
-        repo.checkout(repo.workTree);
-        return Ok(
-          StageResult(
-            stdout: utf8.encode(
-              'Note: switching to \'$target\'.\n'
-              'You are in \'detached HEAD\' state.\n'
-              'HEAD is now at ${hash.toOid()}\n',
-            ),
-            stderr: const [],
-            exitCode: 0,
-          ),
-        );
-      }
+  /// `git checkout -b <branch> [<start-point>]`: create from the resolved
+  /// start point (HEAD by default) and switch to it.
+  Result<StageResult, ExecutionError> _checkoutNewBranch(
+    dart_git.GitRepository repo,
+    String target, {
+    required String startPoint,
+  }) {
+    final hash = _gitResolveHash(repo, startPoint);
+    if (hash == null) {
+      return _gitError(
+        "fatal: '$startPoint' is not a commit and a branch "
+        "'$target' cannot be created from it",
+      );
+    }
+    repo.createBranch(target, hash: hash);
+    repo.checkoutBranch(target);
+    return Ok(
+      StageResult(
+        stdout: utf8.encode('Switched to a new branch \'$target\'\n'),
+        stderr: const [],
+        exitCode: 0,
+      ),
+    );
+  }
 
-      // Otherwise treat the target as a path checkout.
-      final count = repo.checkout(_resolveGitPath(target, hostCwd));
+  /// Not a local branch: a resolvable remote ref / full hash is a
+  /// detached-HEAD checkout, anything else is a path checkout.
+  Result<StageResult, ExecutionError> _checkoutDetachedOrPath(
+    dart_git.GitRepository repo,
+    String target,
+    String hostCwd,
+  ) {
+    final hash = _gitResolveHash(repo, target);
+    if (hash != null) {
+      repo.refStorage.saveRef(HashReference(ReferenceName.HEAD(), hash));
+      repo.checkout(repo.workTree);
       return Ok(
         StageResult(
-          stdout: utf8.encode('Updated $count paths\n'),
+          stdout: utf8.encode(
+            'Note: switching to \'$target\'.\n'
+            'You are in \'detached HEAD\' state.\n'
+            'HEAD is now at ${hash.toOid()}\n',
+          ),
           stderr: const [],
           exitCode: 0,
         ),
       );
-    } catch (e) {
-      return _gitError('fatal: $e');
     }
+    // Otherwise treat the target as a path checkout.
+    final count = repo.checkout(_resolveGitPath(target, hostCwd));
+    return Ok(
+      StageResult(
+        stdout: utf8.encode('Updated $count paths\n'),
+        stderr: const [],
+        exitCode: 0,
+      ),
+    );
   }
 
   /// Resolves [spec] to a commit hash: HEAD, a local branch, a remote ref
@@ -762,69 +894,39 @@ final class GitSandboxCommands {
     return null;
   }
 
+  /// `git remote` dispatch (issue #475): one helper per subcommand, the
+  /// same usage/not-found errors and the same remote exception mapping
+  /// the old inline chain produced (via [_remoteGuarded]).
   Result<StageResult, ExecutionError> _gitRemote(
     dart_git.GitRepository repo,
     List<String> args,
   ) {
-    try {
-      if (args.isEmpty) {
-        final names = repo.config.remotes.map((r) => r.name).toList()..sort();
-        return Ok(
-          StageResult(
-            stdout: utf8.encode(names.isEmpty ? '' : '${names.join('\n')}\n'),
-            stderr: const [],
-            exitCode: 0,
-          ),
-        );
-      }
+    if (args.isEmpty) return _remoteList(repo);
+    final action = args[0];
+    switch (action) {
+      case '-v':
+      case '--verbose':
+        return _remoteVerbose(repo);
+      case 'add':
+        return _remoteAdd(repo, args);
+      case 'remove':
+      case 'rm':
+        return _remoteRemove(repo, args);
+      case 'get-url':
+        return _remoteGetUrl(repo, args);
+    }
+    return _gitError('git remote: unknown subcommand $action');
+  }
 
-      final action = args[0];
-      if (action == '-v' || action == '--verbose') {
-        final lines = <String>[
-          for (final r in repo.config.remotes) ...[
-            '${r.name}\t${r.url} (fetch)',
-            '${r.name}\t${r.url} (push)',
-          ],
-        ];
-        return Ok(
-          StageResult(
-            stdout: utf8.encode(lines.isEmpty ? '' : '${lines.join('\n')}\n'),
-            stderr: const [],
-            exitCode: 0,
-          ),
-        );
-      }
-      if (action == 'add') {
-        if (args.length < 3) {
-          return _gitError('usage: git remote add <name> <url>');
-        }
-        repo.addRemote(args[1], args[2]);
-        return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
-      }
-      if (action == 'remove' || action == 'rm') {
-        if (args.length < 2) {
-          return _gitError('usage: git remote remove <name>');
-        }
-        repo.removeRemote(args[1]);
-        return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
-      }
-      if (action == 'get-url') {
-        if (args.length < 2) {
-          return _gitError('usage: git remote get-url <name>');
-        }
-        final remote = repo.config.remote(args[1]);
-        if (remote == null) {
-          return _gitError("fatal: No such remote '${args[1]}'");
-        }
-        return Ok(
-          StageResult(
-            stdout: utf8.encode('${remote.url}\n'),
-            stderr: const [],
-            exitCode: 0,
-          ),
-        );
-      }
-      return _gitError('git remote: unknown subcommand $action');
+  /// Exception mapping for the remote family: dart_git's typed remote
+  /// errors become the same fatal lines the old chain produced. Action
+  /// helpers run under it; the unknown-subcommand answer routes through
+  /// it too, so the error shape stays identical.
+  Result<StageResult, ExecutionError> _remoteGuarded(
+    Result<StageResult, ExecutionError> Function() action,
+  ) {
+    try {
+      return action();
     } on GitRemoteAlreadyExists catch (e) {
       return _gitError('fatal: remote ${e.name} already exists.');
     } on GitRemoteNotFound catch (e) {
@@ -832,6 +934,82 @@ final class GitSandboxCommands {
     } catch (e) {
       return _gitError('fatal: $e');
     }
+  }
+
+  /// `git remote`: sorted remote names, newline-separated.
+  Result<StageResult, ExecutionError> _remoteList(dart_git.GitRepository repo) {
+    final names = repo.config.remotes.map((r) => r.name).toList()..sort();
+    return Ok(
+      StageResult(
+        stdout: utf8.encode(names.isEmpty ? '' : '${names.join('\n')}\n'),
+        stderr: const [],
+        exitCode: 0,
+      ),
+    );
+  }
+
+  /// `git remote -v`: one `name\turl (fetch|push)` line pair per remote.
+  Result<StageResult, ExecutionError> _remoteVerbose(
+    dart_git.GitRepository repo,
+  ) {
+    final lines = <String>[
+      for (final r in repo.config.remotes) ...[
+        '${r.name}\t${r.url} (fetch)',
+        '${r.name}\t${r.url} (push)',
+      ],
+    ];
+    return Ok(
+      StageResult(
+        stdout: utf8.encode(lines.isEmpty ? '' : '${lines.join('\n')}\n'),
+        stderr: const [],
+        exitCode: 0,
+      ),
+    );
+  }
+
+  /// `git remote add <name> <url>`.
+  Result<StageResult, ExecutionError> _remoteAdd(
+    dart_git.GitRepository repo,
+    List<String> args,
+  ) {
+    if (args.length < 3) {
+      return _gitError('usage: git remote add <name> <url>');
+    }
+    repo.addRemote(args[1], args[2]);
+    return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
+  }
+
+  /// `git remote remove <name>` / `git remote rm <name>`.
+  Result<StageResult, ExecutionError> _remoteRemove(
+    dart_git.GitRepository repo,
+    List<String> args,
+  ) {
+    if (args.length < 2) {
+      return _gitError('usage: git remote remove <name>');
+    }
+    repo.removeRemote(args[1]);
+    return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
+  }
+
+  /// `git remote get-url <name>`.
+  Result<StageResult, ExecutionError> _remoteGetUrl(
+    dart_git.GitRepository repo,
+    List<String> args,
+  ) {
+    if (args.length < 2) {
+      return _gitError('usage: git remote get-url <name>');
+    }
+    final remote = repo.config.remote(args[1]);
+    if (remote == null) {
+      return _gitError("fatal: No such remote '${args[1]}'");
+    }
+    return Ok(
+      StageResult(
+        stdout: utf8.encode('${remote.url}\n'),
+        stderr: const [],
+        exitCode: 0,
+      ),
+    );
   }
 
   Future<Result<StageResult, ExecutionError>> _gitFetch(
