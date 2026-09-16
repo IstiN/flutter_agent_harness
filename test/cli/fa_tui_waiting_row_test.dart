@@ -17,6 +17,7 @@ void main() {
         waitingTimers: timers,
         waitingLostJobs: 0,
         nowMs: 0,
+        width: 80,
       ),
       isEmpty,
     );
@@ -27,6 +28,7 @@ void main() {
         waitingTimers: const [],
         waitingLostJobs: 3,
         nowMs: 0,
+        width: 80,
       ),
       isEmpty,
     );
@@ -39,6 +41,7 @@ void main() {
       waitingTimers: const [(dueMs: 30_000, preview: 'timer one')],
       waitingLostJobs: 0,
       nowMs: 0,
+      width: 80,
     );
     expect(lines, hasLength(1));
     expect(lines.single, contains('⏳ waiting · gh run watch 42'));
@@ -52,6 +55,7 @@ void main() {
       waitingTimers: timers,
       waitingLostJobs: 0,
       nowMs: 0,
+      width: 80,
     );
     expect(lines.first, contains('3 jobs'));
     expect(lines.first, contains('2 timers · next wake in '));
@@ -68,6 +72,7 @@ void main() {
       waitingTimers: const [],
       waitingLostJobs: 1,
       nowMs: 0,
+      width: 80,
     );
     expect(
       one.last,
@@ -79,6 +84,7 @@ void main() {
       waitingTimers: const [],
       waitingLostJobs: 2,
       nowMs: 0,
+      width: 80,
     );
     expect(
       many.last,
