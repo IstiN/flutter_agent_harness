@@ -202,9 +202,9 @@ void main() {
             '_writeIdlePrompt early-returns when _useTui',
       };
       final offenders = <String>[];
-      for (final file in io.Directory('lib/src/cli')
-          .listSync(recursive: true)
-          .whereType<io.File>()) {
+      for (final file in io.Directory(
+        'lib/src/cli',
+      ).listSync(recursive: true).whereType<io.File>()) {
         if (!file.path.endsWith('.dart')) continue;
         if (RegExp(
           r'_style\.(cyan|green|yellow|red|magenta|white|blue)\(',
@@ -215,7 +215,8 @@ void main() {
       expect(
         offenders,
         isEmpty,
-        reason: 'anonymous ANSI color helpers bypass the theme roles; '
+        reason:
+            'anonymous ANSI color helpers bypass the theme roles; '
             'use the tui* emitters (issue #444 defect 1). Line-mode-only '
             'exemptions live in [lineModeOnly] with a reason.',
       );
@@ -352,6 +353,31 @@ void main() {
       );
       expect(tuiFaMark(), contains(tuiSgr(c.current.accent)));
       expect(tuiFaMark(), contains(tuiSgr(c.current.accent2)));
+    });
+
+    test('every built-in theme composes the mark from its own role pair '
+        '(issue #506 AC3)', () {
+      final c = FaThemeController.instance;
+      for (final name in kBuiltInTuiThemes.keys) {
+        expect(c.switchTo(name), isTrue, reason: name);
+        final mark = tuiFaMark();
+        expect(
+          mark,
+          '${tuiAccent('>_')}${tuiAccent2('Fa')} ',
+          reason: '$name: the mark is that theme\'s own accent+accent2 pair',
+        );
+        final accentSgr = tuiSgr(c.current.accent);
+        final accent2Sgr = tuiSgr(c.current.accent2);
+        expect(mark, contains(accentSgr), reason: '$name: accent on `>_`');
+        expect(mark, contains(accent2Sgr), reason: '$name: accent2 on `Fa`');
+        expect(
+          accentSgr,
+          isNot(accent2Sgr),
+          reason:
+              '$name: the pair is two distinct roles, never one literal '
+              'color',
+        );
+      }
     });
   });
 
