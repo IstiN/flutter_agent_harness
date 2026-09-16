@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## 0.1.397
+
 
 - fix(460): YOLO is YOLO again — the critical-pattern guard
   `recursive delete from a root path` no longer fires on harmless `rm`
@@ -29,7 +30,6 @@
   target matrix table, mode-level yolo/write/always-ask tests and a
   real-CLI headless e2e (mock LLM): yolo executes `rm -f /tmp/…` silently,
   `rm -rf /` is still intercepted and denied. Fixes #460.
-
 
 ## Unreleased
 - feat(458): tool output cards clamp to a 3-line preview — long dumps no
@@ -3719,6 +3719,8 @@
 - refactor(486): [GATE] CRAP descent #10 - six service monitors (#504)
 - fix(sandbox): split sandbox_builtins.dart under the 2800-line gate via part files (#512)
 - feat(462): modernize sessions icon — A4b «Modern pair + dots» (#509)
+
+## Unreleased
 
 ## Unreleased
 
