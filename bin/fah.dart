@@ -2228,6 +2228,7 @@ Future<void> _runApp(List<String> args) async {
           : '$headlessPrompt\n\n${attachReferences.join('\n\n')}',
       images: attachedImages,
       hep: hep,
+      waitForJobs: effective.waitForJobs,
     );
     final int code;
     try {

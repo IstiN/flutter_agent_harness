@@ -298,6 +298,12 @@ const fileOnlyConfigKeys = <String, String>{
       'status digests (issue #383) — operational knobs, tuned in the '
       'file.',
 
+  // Visible-waiting heartbeat cadence + `--wait-for-jobs` ceiling
+  // (issue #450): operational knobs for long waits, tuned in the file;
+  // 0 disables the heartbeat entirely.
+  'waiting':
+      'Waiting-heartbeat cadence and the headless --wait-for-jobs '
+      'ceiling (issue #450) — operational knobs, tuned in the file.',
   // The fabric section carries the HOST's discovery announcements (issue
   // #27 phase 2) — written by hosts, read by the runtime, never user-edited.
   'fabric':
