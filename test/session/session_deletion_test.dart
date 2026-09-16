@@ -22,9 +22,12 @@ void main() {
   setUp(() async {
     fs = MemoryExecutionEnv(cwd: '/');
     clock = DateTime.utc(2026, 9, 16, 21, 0, 0);
-    // RED on main: processId/now/presenceStore do not exist yet — the
-    // journal assertions below run against the silent hard-unlink repo.
-    repo = JsonlSessionRepo(fs: fs, sessionsRoot: '/sessions');
+    repo = JsonlSessionRepo(
+      fs: fs,
+      sessionsRoot: '/sessions',
+      processId: 4242,
+      now: () => clock,
+    );
   });
 
   Future<SessionMetadata> seedSession(String id, {String? extraLine}) async {
@@ -54,7 +57,7 @@ void main() {
       'delete moves the file into .trash and journals the culprit',
       () async {
         final metadata = await seedSession('aaaaaaaaaaaaaaaaaaaaaaaaaaaa0001');
-        await repo.delete(metadata); // RED on main: no journal, hard unlink.
+        await repo.delete(metadata, actor: 'test:delete');
 
         // The original path is empty and a trash copy exists.
         expect((await fs.exists(metadata.path)).valueOrNull, isFalse);
@@ -109,6 +112,103 @@ void main() {
       await repo.delete(metadata);
       await repo.delete(metadata); // already gone once
       expect((await journalLines()).last['result'], 'missing');
+    });
+    test('purgeTrash removes only entries older than the ttl', () async {
+      // mtime-driven ttl: age a real entry past a tiny ttl — a 60ms wait
+      // guarantees its mtime is strictly older than the 50ms cutoff.
+      final realRepo = JsonlSessionRepo(
+        fs: fs,
+        sessionsRoot: '/sessions',
+        processId: 4242,
+      );
+      final old = await seedSession('aaaaaaaaaaaaaaaaaaaaaaaaaaaa0006');
+      await realRepo.delete(old);
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      await realRepo.purgeTrash(ttl: const Duration(milliseconds: 50));
+
+      expect((await fs.listDir('/sessions/.trash')).valueOrNull, isEmpty);
+      expect((await journalLines()).last['op'], 'purge');
+
+      // A minutes-old entry survives a 30-day ttl.
+      final fresh = await seedSession('aaaaaaaaaaaaaaaaaaaaaaaaaaaa0007');
+      await realRepo.delete(fresh);
+      await realRepo.purgeTrash(ttl: const Duration(days: 30));
+      expect((await fs.listDir('/sessions/.trash')).valueOrNull, hasLength(1));
+      expect(fresh.id, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaa0007');
+    });
+  });
+
+  group('live-session guard (AC2)', () {
+    late FileSessionPresenceStore presence;
+    late JsonlSessionRepo guardedRepo;
+
+    setUp(() {
+      presence = FileSessionPresenceStore(
+        env: fs,
+        root: '/sessions',
+        now: () => clock,
+        staleAfter: const Duration(seconds: 15),
+      );
+      guardedRepo = JsonlSessionRepo(
+        fs: fs,
+        sessionsRoot: '/sessions',
+        processId: 4242,
+        presenceStore: presence,
+        now: () => clock,
+      );
+    });
+
+    test('a fresh foreign heartbeat refuses the delete by name', () async {
+      final metadata = await seedSession('aaaaaaaaaaaaaaaaaaaaaaaaaaaa0008');
+      await presence.register(metadata.id, pid: 9999);
+
+      await expectLater(
+        guardedRepo.delete(metadata, actor: 'test:guarded'),
+        throwsA(
+          isA<SessionException>().having(
+            (e) => e.code,
+            'code',
+            SessionErrorCode.liveSession,
+          ),
+        ),
+      );
+
+      // Nothing was destroyed: the file is in place, no trash was created.
+      expect((await fs.exists(metadata.path)).valueOrNull, isTrue);
+      expect((await fs.exists('/sessions/.trash')).valueOrNull, isFalse);
+    });
+
+    test('an expired heartbeat deletes with a journal entry', () async {
+      final metadata = await seedSession('aaaaaaaaaaaaaaaaaaaaaaaaaaaa0009');
+      await presence.register(metadata.id, pid: 9999);
+      clock = clock.add(const Duration(seconds: 30));
+
+      await guardedRepo.delete(metadata, actor: 'test:guarded');
+
+      expect((await fs.exists(metadata.path)).valueOrNull, isFalse);
+      final entry = (await journalLines()).last;
+      expect(entry['result'], 'trash');
+      expect(entry['session'], metadata.id);
+    });
+
+    test('the owning pid may delete its own live session', () async {
+      final metadata = await seedSession('aaaaaaaaaaaaaaaaaaaaaaaaaaaa001a');
+      await presence.register(metadata.id, pid: 4242);
+
+      await guardedRepo.delete(metadata, actor: 'test:self');
+
+      expect((await fs.exists(metadata.path)).valueOrNull, isFalse);
+    });
+
+    test('cleanupEmptySessions skips a live header-only session', () async {
+      final live = await seedSession('aaaaaaaaaaaaaaaaaaaaaaaaaaaa001b');
+      await seedSession('aaaaaaaaaaaaaaaaaaaaaaaaaaaa001c'); // dead empty
+      await presence.register(live.id, pid: 9999);
+
+      final removed = await guardedRepo.cleanupEmptySessions();
+
+      expect(removed, 1);
+      expect((await fs.exists(live.path)).valueOrNull, isTrue);
     });
   });
 
