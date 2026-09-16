@@ -2,6 +2,9 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -83,6 +86,119 @@ void main() {
       (decoration.border! as Border).top.color,
       buildFahTheme().dividerColor,
     );
+  });
+
+
+  /// A real 2×2 PNG (76 bytes) — Image.memory must decode for the golden
+  /// surface; garbage bytes would throw on the test event loop.
+  final Uint8List tinyPngBytes = base64Decode(
+    'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAE0lEQVR4nGPQvbIfiBga'
+    'e34AEQAw3weL9bEH6gAAAABJRU5ErkJggg==',
+  );
+
+  testWidgets('user bubble renders an attachment thumbnail from the record '
+      'bytes (issue #461)', (tester) async {
+    await tester.pumpWidget(
+      wrap(
+        ChatMessageTile(
+          message: FaChatMessage(
+            role: 'user',
+            content: 'what is this?',
+            attachments: [
+              (bytes: tinyPngBytes, path: 'uploads/swatch.png'),
+            ],
+          ),
+          images: images(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    // Inline thumbnail above the caption — the bytes render, the agent
+    // facing `[attached file: …]` line does not.
+    final provider = tester.widget<Image>(find.byType(Image)).image;
+    // The bubble thumbs downscale through ResizeImage(cacheWidth: …) over
+    // the record's bytes.
+    expect(provider, isA<ResizeImage>());
+    expect((provider as ResizeImage).imageProvider, isA<MemoryImage>());
+    expect(
+      (provider.imageProvider as MemoryImage).bytes,
+      same(tinyPngBytes),
+    );
+    expect(find.text('what is this?'), findsOneWidget);
+    expect(find.textContaining('[attached file'), findsNothing);
+  });
+
+  testWidgets('image without bytes renders the unavailable placeholder; a '
+      'non-image renders a file chip (issue #461 AC3/AC4)', (tester) async {
+    await tester.pumpWidget(
+      wrap(
+        ChatMessageTile(
+          message: FaChatMessage(
+            role: 'user',
+            content: 'two attachments',
+            attachments: [
+              (bytes: null, path: 'uploads/photo.png'),
+              (bytes: null, path: 'uploads/report.pdf'),
+            ],
+          ),
+          images: images(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.text('[image unavailable] · photo.png'),
+      findsOneWidget,
+    );
+    expect(find.byIcon(Icons.image_not_supported_outlined), findsOneWidget);
+    expect(find.text('report.pdf'), findsOneWidget);
+    expect(find.byIcon(Icons.insert_drive_file_outlined), findsOneWidget);
+    expect(find.byType(Image), findsNothing);
+  });
+
+  testWidgets('10 thumbnails collapse behind a +2 tile that opens the '
+      'viewer gallery (issue #461 E1)', (tester) async {
+    await tester.pumpWidget(
+      wrap(
+        ChatMessageTile(
+          message: FaChatMessage(
+            role: 'user',
+            content: 'a lot',
+            attachments: [
+              for (var i = 1; i <= 10; i++)
+                (
+                  bytes: tinyPngBytes,
+                  path: 'uploads/pic$i.png',
+                ),
+            ],
+          ),
+          images: images(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('+2 more'), findsOneWidget);
+    expect(find.byType(Image), findsNWidgets(8));
+    await tester.tap(find.text('+2 more'));
+    await tester.pumpAndSettle();
+    // The overflow tile opens the full gallery, starting past the cap.
+    expect(find.byType(Dialog), findsOneWidget);
+  });
+
+  testWidgets('text-only user bubble renders no attachment row', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      wrap(
+        ChatMessageTile(
+          message: FaChatMessage(role: 'user', content: 'plain text'),
+          images: images(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(Image), findsNothing);
+    expect(find.byIcon(Icons.insert_drive_file_outlined), findsNothing);
   });
 
   testWidgets(

@@ -14,7 +14,6 @@
 library;
 
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:fa/l10n/app_localizations.dart';
@@ -24,19 +23,14 @@ import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/ui/widgets/media_player.dart';
+import 'package:fa_ui/fa_ui.dart' show FaChatAttachment;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show FontLoader, rootBundle;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
-// Platform-interface fakes for path_provider (transitive deps — kept out of
-// pubspec on purpose; the app never imports them directly).
-// ignore: depend_on_referenced_packages
-import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
-// ignore: depend_on_referenced_packages
-import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
-import 'golden_test_helper.dart';
 import '../fake_media_controllers.dart';
+import 'golden_test_helper.dart';
 
 StreamFunction _singleTextResponse(String text) {
   return (model, context, {cancelToken}) {
@@ -102,19 +96,6 @@ final Uint8List _tinyPngBytes = base64Decode(
   '92ATXq/Gi3ONqSAAAAAElFTkSuQmCC',
 );
 
-/// Off the web, `chatImageMessageSource` writes attached-image bytes into
-/// path_provider's temp directory. There is no plugin implementation in a
-/// widget test (and on macOS path_provider talks pigeon, not a plain
-/// MethodChannel), so the platform interface is replaced outright.
-class _FakePathProviderPlatform extends PathProviderPlatform
-    with MockPlatformInterfaceMixin {
-  _FakePathProviderPlatform(this._tempPath);
-
-  final String _tempPath;
-
-  @override
-  Future<String?> getTemporaryPath() async => _tempPath;
-}
 
 /// Pumps the full [ChatScreen] as the app home (it is a Scaffold itself) at
 /// [size] — no left sessions panel exists anymore (legacy); the snapshot is
@@ -282,24 +263,15 @@ void main() {
       await expectGolden(tester, 'chat_conversation');
     });
 
-    testWidgets('image attachment thumbnail', (tester) async {
-      final tmp = Directory.systemTemp.createTempSync('fah_chat_golden');
-      addTearDown(() => tmp.deleteSync(recursive: true));
-      final previous = PathProviderPlatform.instance;
-      PathProviderPlatform.instance = _FakePathProviderPlatform(tmp.path);
-      addTearDown(() => PathProviderPlatform.instance = previous);
-
-      tester.view.physicalSize = goldenSizeWide;
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
-
+    testWidgets('image attachment thumbnail renders inside the user '
+        'bubble (issue #461)', (tester) async {
       final service = _fakeService(MemoryExecutionEnv());
       service.messages
         ..add(
           FahChatMessage(
             role: 'user',
             content: 'what color is this swatch?',
-            imageBytes: _tinyPngBytes,
+            attachments: [(bytes: _tinyPngBytes, path: 'uploads/swatch.png')],
           ),
         )
         ..add(
@@ -313,8 +285,13 @@ void main() {
         sessionsRoot: '/sessions',
       )..addSession('fake-session', service);
 
-      // The message sync writes the temp file and decodes the image on the
-      // real event loop — runAsync lets both finish between pumps.
+      tester.view.physicalSize = goldenSizeWide;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      // The attachment thumbnail decodes on the real event loop — runAsync
+      // lets it finish between pumps (no temp file anymore: the bubble
+      // renders straight from the record's bytes).
       await tester.runAsync(() async {
         await tester.pumpWidget(
           MaterialApp(
@@ -325,12 +302,11 @@ void main() {
             home: ChatScreen(manager: manager),
           ),
         );
-        await Future<void>.delayed(const Duration(milliseconds: 300));
-        await tester.pump();
-        // The image widget only exists after the messages render above; its
-        // file decode is another real-async hop before it can paint.
-        await Future<void>.delayed(const Duration(milliseconds: 300));
-        await tester.pump();
+        // Thumbnails decode on the real event loop; give the hop time.
+        for (var i = 0; i < 8; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          await tester.pump();
+        }
         await tester.pumpAndSettle();
       });
       await expectGolden(tester, 'chat_image');
@@ -484,6 +460,101 @@ void main() {
       expect(find.text('0:00 / 0:07'), findsOneWidget);
       await expectGolden(tester, 'chat_generated_media');
     });
+  });
+
+  // Issue #461 AC5: the user attachment bubble — 1 image, a wrapped
+  // 3-image grid, the unavailable-image placeholder and the file chip —
+  // in light + dark, at phone width.
+  Future<void> _pumpAttachmentBubble(
+    WidgetTester tester, {
+    required List<FaChatAttachment> attachments,
+    required bool light,
+  }) async {
+    final service = _fakeService(MemoryExecutionEnv());
+    service.messages.add(
+      FahChatMessage(
+        role: 'user',
+        content: 'what do you think?',
+        attachments: attachments,
+      ),
+    );
+    final manager = FlutterSessionManager(
+      env: MemoryExecutionEnv(),
+      sessionsRoot: '/sessions',
+    )..addSession('fake-session', service);
+    tester.view.physicalSize = goldenSizePhone;
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await tester.runAsync(() async {
+      await tester.pumpWidget(
+        MaterialApp(
+          debugShowCheckedModeBanner: false,
+          theme: light ? buildFahThemeLight() : buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: ChatScreen(manager: manager),
+        ),
+      );
+      // Thumbnails decode on the real event loop; give the hop time.
+      for (var i = 0; i < 6; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        await tester.pump();
+      }
+      await tester.pumpAndSettle();
+    });
+  }
+
+  group('user bubble attachments (issue #461)', () {
+    final singleImage = <FaChatAttachment>[
+      (bytes: _tinyPngBytes, path: 'uploads/swatch.png'),
+    ];
+    final threeImages = <FaChatAttachment>[
+      (bytes: _tinyPngBytes, path: 'uploads/teal.png'),
+      (bytes: _tinyPngBytes, path: 'uploads/indigo.png'),
+      (bytes: _tinyPngBytes, path: 'uploads/gradient.png'),
+    ];
+    final droppedImage = <FaChatAttachment>[
+      (bytes: null, path: 'uploads/photo.png'),
+    ];
+    final fileChip = <FaChatAttachment>[
+      (bytes: null, path: 'uploads/quarterly-report.pdf'),
+    ];
+    for (final (light, suffix) in [(true, 'light'), (false, 'dark')]) {
+      testWidgets('1 image — $suffix', (tester) async {
+        await _pumpAttachmentBubble(
+          tester,
+          attachments: singleImage,
+          light: light,
+        );
+        await expectGolden(tester, 'chat_bubble_1_image_$suffix');
+      });
+      testWidgets('3 images wrap in a grid — $suffix', (tester) async {
+        await _pumpAttachmentBubble(
+          tester,
+          attachments: threeImages,
+          light: light,
+        );
+        await expectGolden(tester, 'chat_bubble_3_images_$suffix');
+      });
+      testWidgets('dropped image renders the placeholder — $suffix', (
+        tester,
+      ) async {
+        await _pumpAttachmentBubble(
+          tester,
+          attachments: droppedImage,
+          light: light,
+        );
+        await expectGolden(tester, 'chat_bubble_placeholder_$suffix');
+      });
+      testWidgets('non-image renders a file chip — $suffix', (tester) async {
+        await _pumpAttachmentBubble(
+          tester,
+          attachments: fileChip,
+          light: light,
+        );
+        await expectGolden(tester, 'chat_bubble_file_chip_$suffix');
+      });
+    }
   });
 
   group('FaMark goldens', () {

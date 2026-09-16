@@ -334,7 +334,7 @@ extension AgentServiceSessions on AgentService {
       await session.getBranch(),
     );
     if (gen != _loadGeneration) return;
-    final rebuilt = contextMessages.map(AgentService._toChatMessage).toList();
+    final rebuilt = contextMessages.map(_toChatMessage).toList();
     for (final (index, marker) in widgetMarkers) {
       final at = index > rebuilt.length ? rebuilt.length : index;
       rebuilt.insert(at, marker);

@@ -281,7 +281,7 @@ extension CompactionWindowSizing on AgentService {
     _persistedCount = _agent.state.messages.length;
     messages
       ..clear()
-      ..addAll(_agent.state.messages.map(AgentService._toChatMessage));
+      ..addAll(_agent.state.messages.map(_toChatMessage));
     // Extensions may not call the protected notifyListeners — _notify is
     // the class's own one-line wrapper, in scope via the same library.
     _notify();

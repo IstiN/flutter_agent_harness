@@ -55,7 +55,7 @@ extension AgentServiceEvents on AgentService {
         if (message is UserMessage) {
           // User messages (initial prompts and injected steering) reach the
           // transcript through the agent loop so ordering matches the context.
-          messages.add(AgentService._toChatMessage(message));
+          messages.add(_toChatMessage(message));
           // If this text was shown as pending while the agent was busy, drop
           // it from the banner now that it is in the live transcript.
           final text = _userMessageText(message);

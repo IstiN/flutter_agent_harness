@@ -246,16 +246,94 @@ MarkdownSizedImageBuilder fahSandboxImageBuilder(
   void Function(Uint8List bytes)? onImageTap,
 }) => SandboxImageResolver(env).sizedImageBuilder(onImageTap: onImageTap);
 
-/// Fullscreen, zoomable preview dialog for image [bytes] — shared by the
-/// chat screen's Markdown images / `generate_image` tool tiles and the Fa
-/// chat overlay.
-void showFahImagePreview(BuildContext context, Uint8List bytes) {
+/// Fullscreen, zoomable preview gallery for [images] — shared by the chat
+/// screen's Markdown images / `generate_image` tool tiles and the user
+/// bubble attachments (swipe walks one message's images, issue #461).
+void showFahImagePreview(
+  BuildContext context,
+  List<Uint8List> images, {
+  int initialIndex = 0,
+}) {
   showDialog<void>(
     context: context,
     builder: (context) => Dialog(
       backgroundColor: Colors.black,
-      insetPadding: const EdgeInsets.all(16),
-      child: InteractiveViewer(child: Image.memory(bytes)),
+      insetPadding: EdgeInsets.zero,
+      child: _FahImageGallery(images: images, initialIndex: initialIndex),
     ),
   );
+}
+
+/// The gallery route body: one zoomable page per image, a close button and
+/// a page counter. Pinch zooms; a horizontal fling at scale 1.0 flips the
+/// page (pan is ceded to the viewer only while zoomed in).
+class _FahImageGallery extends StatefulWidget {
+  const _FahImageGallery({required this.images, required this.initialIndex});
+
+  final List<Uint8List> images;
+  final int initialIndex;
+
+  @override
+  State<_FahImageGallery> createState() => _FahImageGalleryState();
+}
+
+class _FahImageGalleryState extends State<_FahImageGallery> {
+  late final PageController _controller = PageController(
+    initialPage: widget.initialIndex.clamp(0, widget.images.length - 1),
+  );
+  late int _page = _controller.initialPage;
+  double _scale = 1;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        PageView.builder(
+          controller: _controller,
+          itemCount: widget.images.length,
+          onPageChanged: (page) => setState(() => _page = page),
+          itemBuilder: (context, index) => InteractiveViewer(
+            panEnabled: _scale > 1,
+            maxScale: 5,
+            onInteractionUpdate: (details) =>
+                _scale = details.scale,
+            child: Center(child: Image.memory(widget.images[index])),
+          ),
+        ),
+        SafeArea(
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.close, color: Colors.white),
+                tooltip: MaterialLocalizations.of(
+                  context,
+                ).closeButtonTooltip,
+                onPressed: Navigator.of(context).pop,
+              ),
+            ],
+          ),
+        ),
+        if (widget.images.length > 1)
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Text(
+                  '${_page + 1} / ${widget.images.length}',
+                  style: const TextStyle(color: Colors.white70),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
 }

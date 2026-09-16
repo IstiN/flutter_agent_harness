@@ -111,7 +111,16 @@ abstract class FaChatStrings {
   String get mediaUnmuteTooltip;
   String get mediaFileMissing;
   String get mediaVideoUnsupportedWeb;
-}
+
+  /// The labeled placeholder for a user attachment whose image bytes are
+  /// gone from the message record (registry cap/drop, on-device path-only
+  /// sends) — never a silent gap (issue #461).
+  String get chatImageUnavailable;
+
+  /// The overflow tile label when a bubble shows fewer thumbs than the
+  /// message carries: `+N more` opens the gallery at the first hidden one.
+  String chatMoreAttachments(int count);
+ }
 
 /// Built-in English chat strings.
 class FaChatStringsEn extends FaChatStrings {
@@ -284,6 +293,10 @@ class FaChatStringsEn extends FaChatStrings {
   @override
   String get mediaVideoUnsupportedWeb =>
       'Video playback is not supported in the web build';
+  @override
+  String get chatImageUnavailable => '[image unavailable]';
+  @override
+  String chatMoreAttachments(int count) => '+$count more';
 }
 
 /// Built-in Russian chat strings.
@@ -469,6 +482,10 @@ class FaChatStringsRu extends FaChatStrings {
   @override
   String get mediaVideoUnsupportedWeb =>
       'Воспроизведение видео не поддерживается в веб-сборке';
+  @override
+  String get chatImageUnavailable => '[изображение недоступно]';
+  @override
+  String chatMoreAttachments(int count) => '+$count ещё';
 }
 
 /// Installs a custom [FaChatStrings] implementation above the chat.
