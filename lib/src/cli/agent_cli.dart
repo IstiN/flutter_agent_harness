@@ -1663,11 +1663,12 @@ class AgentCli {
     // The first _loadAgentContext() ran before the TUI owned the terminal —
     // its "found but disabled" hint never reached the transcript. Re-print.
     _printThirdPartySkillsDisabledHint();
-    await _replayRestoredSession();
-
-    // Issue #429: rebuild the background-job board from the session's
-    // shell_job_registry records; live-at-restart jobs announce as lost.
+    // Issue #503: the reconciliation notices paint BEFORE the history
+    // replay — the replay is the final paint, so the resumed session's
+    // tail (the last assistant message) stays on the first glass.
     await _rehydrateJobBoard();
+
+    await _replayRestoredSession();
     // One-time consent question for third-party skill roots: a TUI picker
     // over the first frame (Esc = "Not now", asked again next launch).
     // The visible-waiting row lights up on boot too (issue #450): armed
