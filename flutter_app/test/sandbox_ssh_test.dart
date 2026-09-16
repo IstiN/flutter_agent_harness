@@ -10,6 +10,7 @@
 /// `integration_test/ssh_exec_test.dart`.
 library;
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:fa/sandbox/sandbox_ssh.dart';
@@ -597,6 +598,334 @@ void main() {
       expect(_text(r.stderr), contains('scp -r'));
     });
   });
+  group('option matrix (parser branches)', () {
+    test('ssh truncated flags, -V, --, and destination edges', () async {
+      final h = _Harness();
+      var r = await h.builtins.ssh(const ['-l']);
+      expect(r.exitCode, 2);
+      expect(
+        _text(r.stderr),
+        'usage: ssh [-i identity] [-l user] [-p port] destination '
+        'command [argument...]\n',
+      );
+
+      r = await h.builtins.ssh(const ['-i']);
+      expect(r.exitCode, 2);
+
+      // Valid flag value but no destination after it.
+      r = await h.builtins.ssh(const ['-p', '2222']);
+      expect(r.exitCode, 2);
+
+      r = await h.builtins.ssh(const ['-V']);
+      expect(r.exitCode, 0);
+      expect(_text(r.stdout), contains('dartssh2'));
+
+      r = await h.builtins.ssh(const ['u@', 'true']);
+      expect(r.exitCode, 2);
+
+      r = await h.builtins.ssh(const ['@h', 'true']);
+      expect(r.exitCode, 2);
+      expect(h.connections, isEmpty);
+
+      r = await h.builtins.ssh(
+        const ['--', 'u@h', 'true'],
+        env: {'USER': 'carol'},
+      );
+      expect(r.exitCode, 0, reason: _text(r.stderr));
+      expect(h.connections.single.username, 'u');
+
+      // -l beats the destination user; an empty USER falls back to Fa.
+      r = await h.builtins.ssh(
+        const ['-l', 'alice', 'bob@h', 'true'],
+        env: {'USER': ''},
+      );
+      expect(r.exitCode, 0, reason: _text(r.stderr));
+      expect(h.connections.last.username, 'alice');
+
+      r = await h.builtins.ssh(const ['host', 'true'], env: {'USER': ''});
+      expect(r.exitCode, 0, reason: _text(r.stderr));
+      expect(h.connections.last.username, 'Fa');
+    });
+
+    test('scp truncated flags, unknown option, --, --help', () async {
+      final h = _Harness();
+      var r = await h.builtins.scp(const ['-i']);
+      expect(r.exitCode, 2);
+      expect(_text(r.stderr), contains('usage: scp'));
+
+      r = await h.builtins.scp(const ['-P']);
+      expect(r.exitCode, 2);
+
+      r = await h.builtins.scp(const ['-Q', 'u@h:/a', '/b']);
+      expect(r.exitCode, 2);
+      expect(_text(r.stderr), contains('unknown option -- Q'));
+
+      r = await h.builtins.scp(const ['--help']);
+      expect(r.exitCode, 0);
+      expect(_text(r.stdout), contains('usage: scp'));
+
+      h.remote.write('/srv/a', 'A');
+      r = await h.builtins.scp(const ['--', 'u@h:/srv/a', '/work/x']);
+      expect(r.exitCode, 0, reason: _text(r.stderr));
+      expect(h.local.read('/work/x'), 'A');
+    });
+
+    test('sftp truncated flags, bad port, @-edge, --, --help', () async {
+      final h = _Harness();
+      var r = await h.builtins.sftp(const ['-i']);
+      expect(r.exitCode, 2);
+
+      r = await h.builtins.sftp(const ['-b']);
+      expect(r.exitCode, 2);
+
+      r = await h.builtins.sftp(const ['-P', '99999', 'u@h']);
+      expect(r.exitCode, 2);
+      expect(_text(r.stderr), contains('bad port'));
+
+      r = await h.builtins.sftp(const ['@h'], stdin: utf8.encode('pwd\n'));
+      expect(r.exitCode, 2);
+
+      r = await h.builtins.sftp(const ['--help']);
+      expect(r.exitCode, 0);
+      expect(_text(r.stdout), contains('usage: sftp'));
+
+      r = await h.builtins.sftp(const [
+        '--',
+        'u@h',
+      ], stdin: utf8.encode('pwd\n'));
+      expect(r.exitCode, 0, reason: _text(r.stderr));
+      expect(_text(r.stdout), contains('Remote working directory'));
+    });
+  });
+
+  group('session lifecycle (connect/auth/run/teardown)', () {
+    test('connect timeout names the command and host', () async {
+      final h = _Harness()..connectDelay = const Duration(milliseconds: 200);
+      var r = await h.builtins.ssh(const [
+        'u@h',
+        'true',
+      ], timeout: const Duration(milliseconds: 10));
+      expect(r.exitCode, 1);
+      expect(_text(r.stderr), 'ssh: h: operation timed out\n');
+
+      r = await h.builtins.scp(const [
+        'u@h:/srv/a',
+        '/work/x',
+      ], timeout: const Duration(milliseconds: 10));
+      expect(r.exitCode, 1);
+      expect(_text(r.stderr), 'scp: h: operation timed out\n');
+
+      r = await h.builtins.sftp(
+        const ['u@h'],
+        stdin: utf8.encode('pwd\n'),
+        timeout: const Duration(milliseconds: 10),
+      );
+      expect(r.exitCode, 1);
+      expect(_text(r.stderr), 'sftp: h: operation timed out\n');
+    });
+
+    test('exec timeout still closes the connection', () async {
+      final h = _Harness();
+      h.remote.onExec = (command, stdin) async {
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        return const SandboxSshExecResult(stdout: [], stderr: [], exitCode: 0);
+      };
+      final r = await h.builtins.ssh(const [
+        'u@h',
+        'true',
+      ], timeout: const Duration(milliseconds: 10));
+      expect(r.exitCode, 1);
+      expect(_text(r.stderr), 'ssh: h: operation timed out\n');
+      expect(h.opened.single.closed, isTrue, reason: 'teardown must run');
+    });
+
+    test('connect failures name the command and host', () async {
+      final h = _Harness()..connectError = StateError('boom');
+      var r = await h.builtins.scp(const ['u@h:/srv/a', '/work/x']);
+      expect(r.exitCode, 1);
+      expect(_text(r.stderr), 'scp: h: Bad state: boom\n');
+
+      r = await h.builtins.sftp(const ['u@h'], stdin: utf8.encode('pwd\n'));
+      expect(r.exitCode, 1);
+      expect(_text(r.stderr), 'sftp: h: Bad state: boom\n');
+    });
+
+    test('identity failures name the scp/sftp command', () async {
+      var h = _Harness()..identityPem = null;
+      var r = await h.builtins.scp(const ['u@h:/srv/a', '/work/x']);
+      expect(r.exitCode, 1);
+      expect(_text(r.stderr), contains('scp: no SSH key'));
+
+      h = _Harness()..identityPem = null;
+      r = await h.builtins.sftp(const [
+        '-i',
+        '/nope',
+        'u@h',
+      ], stdin: utf8.encode('pwd\n'));
+      expect(r.exitCode, 1);
+      expect(_text(r.stderr), contains('sftp: /nope: no such identity file'));
+
+      h = _Harness()..identityPem = null;
+      r = await h.builtins.scp(const ['-i', '/nope', 'u@h:/srv/a', '/work/x']);
+      expect(r.exitCode, 1);
+      expect(_text(r.stderr), contains('scp: /nope: no such identity file'));
+
+      h = _Harness();
+      r = await h.builtins.scp(const [
+        '/work/a.txt',
+        'u@h:/in/b.txt',
+        '/work/c.txt',
+      ]);
+      expect(r.exitCode, 2);
+      expect(
+        _text(r.stderr),
+        contains('scp: cannot mix local and remote sources'),
+      );
+    });
+  });
+
+  group('sftp batch opcode table', () {
+    test('malformed invocations abort with exit 1 and exact diagnostics', () async {
+      const malformed = <(String, String)>[
+        ('cd', 'sftp: cd: missing operand\n'),
+        ('cd /a /b', 'sftp: cd: missing operand\n'),
+        ('cd /missing', 'sftp: cd: /missing: No such file or directory\n'),
+        ('lcd', 'sftp: lcd: missing operand\n'),
+        ('lcd /nope', 'sftp: lcd: /nope: Not a directory\n'),
+        ('ls /in /out', 'sftp: ls: too many operands\n'),
+        (
+          'ls /nope',
+          'sftp: ls /nope: Bad state: ls /nope: No such file or directory\n',
+        ),
+        ('get', 'sftp: usage: get remote-path [local-path]\n'),
+        ('get /a /b /c', 'sftp: usage: get remote-path [local-path]\n'),
+        ('get /missing', 'sftp: get: /missing: No such file or directory\n'),
+        ('put', 'sftp: usage: put local-path [remote-path]\n'),
+        (
+          'put /missing.txt',
+          'sftp: put: /missing.txt: No such file or directory\n',
+        ),
+        ('mkdir', 'sftp: mkdir: missing operand\n'),
+        (
+          'mkdir /a/b',
+          'sftp: mkdir /a/b: Bad state: mkdir /a/b: No such file or directory\n',
+        ),
+        ('rm', 'sftp: rm: missing operand\n'),
+        (
+          'rm /gone',
+          'sftp: rm /gone: Bad state: rm /gone: No such file or directory\n',
+        ),
+        ('rmdir', 'sftp: rmdir: missing operand\n'),
+        (
+          'rmdir /gone',
+          'sftp: rmdir /gone: Bad state: rmdir /gone: No such file or directory\n',
+        ),
+      ];
+      for (final (line, expected) in malformed) {
+        final h = _Harness();
+        h.local.mkdirAll('/work/dir');
+        h.remote.mkdirAll('/in');
+        h.remote.write('/in/f.txt', 'F');
+        final r = await h.builtins.sftp(
+          const ['u@h'],
+          stdin: utf8.encode('$line\n'),
+          cwd: '/work',
+        );
+        expect(_text(r.stderr), expected, reason: line);
+      }
+    });
+    test('quit and bye are aliases of exit', () async {
+      final h = _Harness();
+      var r = await h.builtins.sftp(
+        const ['u@h'],
+        stdin: utf8.encode('quit\nput a.txt\n'),
+        cwd: '/work',
+      );
+      expect(r.exitCode, 0, reason: _text(r.stderr));
+      expect(h.remote.files, isEmpty, reason: 'put after quit must not run');
+
+      r = await h.builtins.sftp(
+        const ['u@h'],
+        stdin: utf8.encode('bye\n'),
+        cwd: '/work',
+      );
+      expect(r.exitCode, 0, reason: _text(r.stderr));
+    });
+
+    test('lcd normalizes trailing slashes and dotdot segments', () async {
+      final h = _Harness();
+      h.local.mkdirAll('/work/dir');
+      final r = await h.builtins.sftp(
+        const ['u@h'],
+        stdin: utf8.encode('lcd dir/\nlcd ../dir\nlpwd\n'),
+        cwd: '/work',
+      );
+      expect(r.exitCode, 0, reason: _text(r.stderr));
+      expect(_text(r.stdout), contains('/work/dir'));
+    });
+
+    test(
+      'cd to a remote file reports Not a directory; ls/get default paths',
+      () async {
+        final h = _Harness();
+        h.remote.write('/in/f.txt', 'F');
+        final r = await h.builtins.sftp(
+          const ['u@h'],
+          stdin: utf8.encode(
+            'cd /in/f.txt\n'
+            'ls\n'
+            'get /in/f.txt\n',
+          ),
+          cwd: '/work',
+        );
+        expect(r.exitCode, 1);
+        expect(_text(r.stderr), 'sftp: cd: /in/f.txt: Not a directory\n');
+      },
+    );
+
+    test(
+      'ls without operands lists the remote cwd; get defaults the name',
+      () async {
+        final h = _Harness();
+        h.remote.write('/in/b.txt', 'B');
+        final r = await h.builtins.sftp(
+          const ['u@h'],
+          stdin: utf8.encode(
+            'cd /in\n'
+            'ls\n'
+            'get b.txt\n',
+          ),
+          cwd: '/work',
+        );
+        expect(r.exitCode, 0, reason: _text(r.stderr));
+        expect(_text(r.stdout), contains('b.txt\n'));
+        expect(h.local.read('/work/b.txt'), 'B');
+      },
+    );
+  });
+
+  group('scp transfer edge cases', () {
+    test('upload to a missing parent reports the remote path', () async {
+      final h = _Harness();
+      h.local.write('/work/a.txt', 'A');
+      var r = await h.builtins.scp(const ['a.txt', 'u@h:/nodir/x']);
+      expect(r.exitCode, 1);
+      expect(_text(r.stderr), contains('/nodir/x'));
+
+      r = await h.builtins.scp(const ['a.txt', 'u@h:/nodir2/']);
+      expect(r.exitCode, 1);
+      expect(_text(r.stderr), 'scp: /nodir2/: No such file or directory\n');
+    });
+
+    test('recursive upload onto an existing remote file is refused', () async {
+      final h = _Harness();
+      h.local.writeTree('/work/src', {'t.txt': '1'});
+      h.remote.write('/x', 'existing file');
+      final r = await h.builtins.scp(const ['-r', 'src', 'u@h:/x']);
+      expect(r.exitCode, 1);
+      expect(_text(r.stderr), 'scp: /x: not a directory\n');
+    });
+  });
 }
 
 String _text(List<int> bytes) => utf8.decode(bytes);
@@ -618,12 +947,21 @@ final class _Harness {
   /// Error thrown by the fake connector when set.
   Object? connectError;
 
+  /// Delay inside the fake connector; drives connect timeouts.
+  var connectDelay = Duration.zero;
+
+  /// Connections handed out by the fake connector (teardown asserts).
+  final opened = <_FakeConnection>[];
+
   late final SandboxSshBuiltins builtins = SandboxSshBuiltins(
     connector: (params) async {
       final error = connectError;
       if (error != null) throw error;
+      await Future<void>.delayed(connectDelay);
       connections.add(params);
-      return _FakeConnection(remote);
+      final connection = _FakeConnection(remote);
+      opened.add(connection);
+      return connection;
     },
     resolveIdentity: (path, env) async {
       identityCalls.add(path);
@@ -648,9 +986,9 @@ final class _FakeRemote {
   final files = <String, List<int>>{};
   final execLog = <({String command, List<int>? stdin})>[];
 
-  SandboxSshExecResult Function(String command, List<int>? stdin) onExec =
-      (command, stdin) =>
-          const SandboxSshExecResult(stdout: [], stderr: [], exitCode: 0);
+  FutureOr<SandboxSshExecResult> Function(String command, List<int>? stdin)
+  onExec = (command, stdin) =>
+      const SandboxSshExecResult(stdout: [], stderr: [], exitCode: 0);
 
   String norm(String path) =>
       p.posix.normalize(path.startsWith('/') ? path : '/$path');
