@@ -105,6 +105,17 @@
       ],
       "run_at": "document_idle",
       "all_frames": false
+    },
+    {
+      // Issue #470: the embedded fa pane (fa1.dev inside the Outlook tab)
+      // bridges its provider HTTP to the SW through this relay — page JS has
+      // no chrome.* and CORS-blocked fetches. all_frames: the pane is a
+      // cross-origin iframe; top-frame-only injection never sees it. Inert
+      // everywhere else (it only answers __faEmbed-pane messages).
+      "matches": ["<all_urls>"],
+      "js": ["content/embed_relay.js"],
+      "run_at": "document_start",
+      "all_frames": true
     }
   ],
   "content_security_policy": {
