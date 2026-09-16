@@ -21,6 +21,7 @@ import 'package:fa/sandbox/shell_job.dart';
 import 'package:fa/sandbox/shell_parser.dart';
 import 'package:fa/sandbox/shell_script.dart';
 import 'package:fa/sandbox/python_http_bridge.dart';
+import 'package:fa/sandbox/wasm_shell_builtins.dart';
 import 'package:fa/sandbox/wasm_shell_git.dart';
 import 'package:fa/sandbox/wasm_shell_ssh.dart';
 
@@ -52,7 +53,7 @@ import 'package:fa/sandbox/wasm_shell_ssh.dart';
 /// redirects. Each stage runs in its own WASM instance, so there is no need
 /// for `fork`, `exec`, or process-level pipes — WASM does not expose those on
 /// iOS/Android/Web.
-final class WasiSandboxShell implements Shell, BackgroundShell {
+final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   /// Creates a shell backed by the provided WASM modules.
   WasiSandboxShell({
     required this.coreutils,
@@ -113,6 +114,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
   final String? workingDirectory;
 
   /// Host directory exposed to the WASM guest at `/`.
+  @override
   final String? sandboxHostPath;
 
   final http.Client _httpClient;
@@ -179,6 +181,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
   late final GitSandboxCommands _git = GitSandboxCommands(this);
 
   /// Host path for a sandbox-absolute path (public surface for git commands).
+  @override
   String hostPathOf(String sandboxPath) => _hostPath(sandboxPath);
 
   /// Resolves a sandbox path against [cwd] (public surface for git commands).
@@ -186,12 +189,15 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
       _resolveSandboxPath(path, cwd);
 
   /// Current working directory of the shell (public surface for git commands).
+  @override
   String get shellCwd => _currentDir;
 
   /// HTTP client used by network builtins (public surface for git commands).
+  @override
   http.Client get shellHttpClient => _httpClient;
 
   /// Runs a sandbox command (public surface for git commands, e.g. tar).
+  @override
   Future<Result<StageResult, ExecutionError>> runSandboxCommand(
     String command,
     List<String> args,
@@ -542,37 +548,16 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
       }
       final expandedStage = expansion.valueOrNull!;
 
-      String? stdoutFile;
-      String? stderrFile;
-      var appendStdout = false;
-      var appendStderr = false;
-      String? stdinFile;
-
-      for (final redirect in expandedStage.redirects) {
-        if (redirect.fd == 0 && redirect.kind == RedirectKind.read) {
-          stdinFile = redirect.target;
-        } else if (redirect.fd == 1 || redirect.fd == -1) {
-          if (redirect.kind == RedirectKind.write) {
-            stdoutFile = redirect.target;
-            appendStdout = false;
-          } else if (redirect.kind == RedirectKind.append) {
-            stdoutFile = redirect.target;
-            appendStdout = true;
-          }
-        } else if (redirect.fd == 2 || redirect.fd == -1) {
-          if (redirect.kind == RedirectKind.write) {
-            stderrFile = redirect.target;
-            appendStderr = false;
-          } else if (redirect.kind == RedirectKind.append) {
-            stderrFile = redirect.target;
-            appendStderr = true;
-          }
-        }
-      }
+      final redirects = collectStageRedirects(expandedStage.redirects);
+      final stdoutFile = redirects.stdoutFile;
+      final stderrFile = redirects.stderrFile;
 
       // Resolve input source for this stage.
-      final inputSource = stdinFile != null
-          ? _resolveSandboxPath(stdinFile, options?.cwd ?? _currentDir)
+      final inputSource = redirects.stdinFile != null
+          ? _resolveSandboxPath(
+              redirects.stdinFile!,
+              options?.cwd ?? _currentDir,
+            )
           : previousOutputFile;
 
       final result = await _runCommand(
@@ -594,19 +579,14 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
       // carries no information the caller can act on, so translate it out.
       // Only the bare `<tool>: stdout: Broken pipe` shape is stripped - a
       // python `BrokenPipeError: [Errno 32] Broken pipe` traceback stays.
-      final stderrText = utf8.decode(data.stderr, allowMalformed: true);
-      final lines = stderrText.split('\n');
-      final hasNoise = lines.any(_isSigpipeNoise);
-      final stageStderr = hasNoise
-          ? utf8.encode(lines.where((l) => !_isSigpipeNoise(l)).join('\n'))
-          : data.stderr;
+      final stageStderr = stripSigpipeNoise(data.stderr);
 
       if (stdoutFile != null) {
         final file = _hostFile(
           _resolveSandboxPath(stdoutFile, options?.cwd ?? _currentDir),
         );
         await file.parent.create(recursive: true);
-        if (appendStdout) {
+        if (redirects.appendStdout) {
           await file.writeAsBytes(data.stdout, mode: io.FileMode.append);
         } else {
           await file.writeAsBytes(data.stdout);
@@ -627,7 +607,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
           _resolveSandboxPath(stderrFile, options?.cwd ?? _currentDir),
         );
         await file.parent.create(recursive: true);
-        if (appendStderr) {
+        if (redirects.appendStderr) {
           await file.writeAsBytes(stageStderr, mode: io.FileMode.append);
         } else {
           await file.writeAsBytes(stageStderr);
@@ -844,16 +824,6 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
     return '$key=${_resolveSandboxPath(value, cwd)}';
   }
 
-  /// Matches SIGPIPE stderr noise only: bare `Broken pipe` or the
-  /// `<tool>: <stream>: Broken pipe` shape busybox tools emit. Deliberately
-  /// does NOT match python tracebacks (`BrokenPipeError: [Errno 32] ...`).
-  static final RegExp _sigpipeNoise = RegExp(
-    r'^(Broken pipe|[\w./-]+: (?:stdout|stderr): Broken pipe)$',
-  );
-
-  bool _isSigpipeNoise(String line) =>
-      _sigpipeNoise.hasMatch(line.trim());
-
   String _maybeRewritePath(String command, String arg, String cwd) {
     if (arg.isEmpty || arg == '-') return arg;
     // Absolute paths are already sandbox-rooted; explicit relative paths are
@@ -985,7 +955,11 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
             debugPrint('[wasm_shell] stdout chunk: ${chunk.length} bytes');
             final clean = bridge?.filter(chunk) ?? chunk;
             if (clean.isNotEmpty) {
-              collect(stdoutBuffer, Uint8List.fromList(clean), options?.onStdout);
+              collect(
+                stdoutBuffer,
+                Uint8List.fromList(clean),
+                options?.onStdout,
+              );
             }
           }, onDone: () => debugPrint('[wasm_shell] stdout done'))
         : null;
@@ -1029,35 +1003,17 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
     }
 
     debugPrint('[wasm_shell] run finished timedOut=$timedOut error=$runError');
-    if (callbackError != null) return Err(callbackError!);
-    if (timedOut) {
-      return Err(
-        ExecutionError(ExecutionErrorCode.timeout, 'timeout: $timeout'),
-      );
-    }
-
     final token = options?.cancelToken;
-    if (token != null && token.isCancelled) {
-      return const Err(ExecutionError(ExecutionErrorCode.aborted, 'aborted'));
-    }
-
-    final exitCode = _parseExitCode(runError);
-    _lastStageExitCode = exitCode;
-
-    // If we could not determine an exit code and the process produced no
-    // output, surface the raw trap as an unknown error.
-    if (exitCode == null) {
-      if (stdoutBuffer.isEmpty && stderrBuffer.isEmpty) {
-        return Err(
-          ExecutionError(
-            ExecutionErrorCode.unknown,
-            runError.toString(),
-            cause: runError,
-          ),
-        );
-      }
-      _lastStageExitCode = 1;
-    }
+    final outcome = resolveStageOutcome(
+      callbackError: callbackError,
+      timedOut: timedOut,
+      runError: runError,
+      timeout: timeout,
+      cancelled: token?.isCancelled ?? false,
+      hasOutput: stdoutBuffer.isNotEmpty || stderrBuffer.isNotEmpty,
+    );
+    if (outcome.isErr) return Err(outcome.errorOrNull!);
+    _lastStageExitCode = outcome.valueOrNull!;
 
     return Ok(
       StageResult(
@@ -1071,7 +1027,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
   /// Parses the exit code from a wasmtime I32Exit trap.
   ///
   /// Returns `null` when [error] cannot be parsed as a normal WASI exit.
-  int? _parseExitCode(Object? error) {
+  static int? _parseExitCode(Object? error) {
     if (error == null) return 0;
     final message = error.toString();
 
@@ -1092,6 +1048,44 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
     }
 
     return null;
+  }
+
+  /// Pure post-run outcome resolution for one WASM stage (issue #475).
+  ///
+  /// Public and static so the CRAP-descent unit tests exercise it without
+  /// building a WASM instance. Order is load-bearing: callback errors win,
+  /// then timeout, then cancellation, then exit-code resolution.
+  static Result<int, ExecutionError> resolveStageOutcome({
+    required ExecutionError? callbackError,
+    required bool timedOut,
+    required Object? runError,
+    required Duration timeout,
+    required bool cancelled,
+    required bool hasOutput,
+  }) {
+    if (callbackError != null) return Err(callbackError);
+    if (timedOut) {
+      return Err(
+        ExecutionError(ExecutionErrorCode.timeout, 'timeout: $timeout'),
+      );
+    }
+    if (cancelled) {
+      return const Err(ExecutionError(ExecutionErrorCode.aborted, 'aborted'));
+    }
+    final exitCode = _parseExitCode(runError);
+    if (exitCode != null) return Ok(exitCode);
+    if (!hasOutput) {
+      return Err(
+        ExecutionError(
+          ExecutionErrorCode.unknown,
+          runError.toString(),
+          cause: runError,
+        ),
+      );
+    }
+    // Output was produced but no exit code could be parsed: surface a
+    // generic failure instead of the raw trap.
+    return Ok(1);
   }
 
   // ---------------------------------------------------------------------------
@@ -1699,59 +1693,20 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
     ShellExecOptions? options,
     String? inputSource,
   ) async {
-    final flags = <String>[];
-    String? pattern;
-    final files = <String>[];
-    var quiet = false;
-
-    for (var i = 0; i < stage.args.length; i++) {
-      final arg = stage.args[i];
-      if (arg == '--') continue;
-      if (arg == '-e') {
-        if (i + 1 >= stage.args.length) {
-          return Ok(
-            StageResult(
-              stdout: const [],
-              stderr: utf8.encode('grep: option requires an argument -- e\n'),
-              exitCode: 2,
-            ),
-          );
-        }
-        pattern = stage.args[++i];
-        continue;
-      }
-      if (arg == '-q' || arg == '--quiet' || arg == '--silent') {
-        quiet = true;
-        continue;
-      }
-      if (arg == '-r' || arg == '-R' || arg == '-E') {
-        // rg searches recursively and uses regex syntax by default.
-        continue;
-      }
-      if (arg == '-i' ||
-          arg == '-v' ||
-          arg == '-w' ||
-          arg == '-x' ||
-          arg == '-F' ||
-          arg == '-n' ||
-          arg == '-c' ||
-          arg == '-l') {
-        flags.add(arg);
-        continue;
-      }
-      if (arg.startsWith('-m')) {
-        flags.add(arg);
-        if (arg == '-m' && i + 1 < stage.args.length) {
-          flags.add(stage.args[++i]);
-        }
-        continue;
-      }
-      if (pattern == null) {
-        pattern = arg;
-      } else {
-        files.add(arg);
-      }
+    final parsed = parseGrepArgs(stage.args);
+    if (parsed == null) {
+      return Ok(
+        StageResult(
+          stdout: const [],
+          stderr: utf8.encode('grep: option requires an argument -- e\n'),
+          exitCode: 2,
+        ),
+      );
     }
+    final flags = parsed.flags;
+    final pattern = parsed.pattern;
+    final quiet = parsed.quiet;
+    final files = List<String>.of(parsed.files);
 
     if (pattern == null) {
       return Ok(
@@ -2570,26 +2525,11 @@ final class _TestEvaluator {
     final left = token;
     final op = _advance();
     final right = _advance();
-    switch (op) {
-      case '=':
-        return left == right;
-      case '!=':
-        return left != right;
-      case '-eq':
-        return int.parse(left) == int.parse(right);
-      case '-ne':
-        return int.parse(left) != int.parse(right);
-      case '-lt':
-        return int.parse(left) < int.parse(right);
-      case '-le':
-        return int.parse(left) <= int.parse(right);
-      case '-gt':
-        return int.parse(left) > int.parse(right);
-      case '-ge':
-        return int.parse(left) >= int.parse(right);
-      default:
-        throw _TestError('unsupported binary operator: $op');
+    final result = evalTestBinaryOp(op, left, right);
+    if (result == null) {
+      throw _TestError('unsupported binary operator: $op');
     }
+    return result;
   }
 }
 
