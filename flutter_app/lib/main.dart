@@ -115,56 +115,10 @@ Future<void> main() async {
   providerHttpClientFactory = createPlatformHttpClient;
   // The inter-agent inbox watcher (opt-in: never in tests).
   AgentService.enableInboxWatcher = true;
-  // Tee debug output into the in-app log (settings → copy debug logs); the
-  // original debugPrint still runs, so console output is unchanged.
-  final originalDebugPrint = debugPrint;
-  debugPrint = (message, {wrapWidth}) {
-    originalDebugPrint(message, wrapWidth: wrapWidth);
-    if (message != null) AppLog.i('debug', message);
-  };
-  final options = DefaultFirebaseOptions.currentPlatform;
-  // The browser-extension panel runs the same web build under
-  // chrome-extension://, whose MV3 CSP blocks the inline-script bootstrap
-  // firebase_core_web uses to load the JS SDK — initializing there ends in
-  // an uncaught error. The panel does not need Firebase; skip it.
-  final inExtension = Uri.base.scheme == 'chrome-extension';
-  if (!inExtension && !options.apiKey.startsWith('YOUR_')) {
-    // The native Firebase SDK auto-configures the [DEFAULT] app from
-    // GoogleService-Info.plist when the plugins register — a second
-    // initializeApp throws [core/duplicate-app] and, unhandled here in
-    // main(), kills boot before the first frame (black screen on
-    // macOS/iOS). Reuse the natively configured app in that case.
-    try {
-      await Firebase.initializeApp(options: options);
-    } on FirebaseException catch (error) {
-      if (error.code != 'duplicate-app') rethrow;
-      debugPrint(
-        '[fa] Firebase [DEFAULT] already configured natively — reusing it',
-      );
-    }
-  }
-  try {
-    await setUpWasmRuntime();
-    debugPrint('[fah] WASM runtime setup succeeded');
-  } on Object catch (error) {
-    // Wasm runtime setup is best-effort. If the native bindings are
-    // unavailable the app should still start so the chat UI and other
-    // providers remain usable.
-    debugPrint('[fah] WASM runtime setup failed: $error');
-  }
-  try {
-    await dotenv.load(fileName: '.env');
-  } on Object {
-    // .env is intentionally not committed. Values can be supplied via
-    // --dart-define instead.
-  }
-  // The runtime FA_PROVIDERS override from `.env` (the --dart-define wins
-  // in the core) — filtered-out providers never appear in the pickers,
-  // the add-provider list, or onboarding.
-  final faProviders = dotenv.isInitialized ? dotenv.env['FA_PROVIDERS'] : null;
-  if (faProviders != null && faProviders.trim().isNotEmpty) {
-    providerFilterEnvOverride = faProviders;
-  }
+  _teeDebugPrintIntoAppLog();
+  await _initFirebaseApp();
+  await _setUpWasmRuntimeBestEffort();
+  providerFilterEnvOverride = await _loadProviderFilterOverride();
   // One env for the whole app: the provider registry, the last-connection
   // store, and the agent share it (on web all ride the same IndexedDB
   // snapshot; two envs would clobber each other's persisted filesystem).
@@ -197,75 +151,16 @@ Future<void> main() async {
   // fa_ui's provider UI resolves named keys through the app's chain
   // (dart-defines → saved keys → .env), exactly like the connection form.
   FaUiHost.keyResolver = (name) => settingsKeyEnv(name, sessionKeys);
-  // Analytics is strictly optional. On web with placeholder options
-  // (`YOUR_*` — what CI builds) initializeApp above is skipped, and just
-  // reading Firebase.apps can throw (no JS SDK loaded — seen on Safari,
-  // where it killed startup before runApp); content blockers break it too.
-  FirebaseAnalytics? analytics;
-  try {
-    if (Firebase.apps.isNotEmpty) {
-      analytics = FirebaseAnalytics.instance;
-    }
-  } on Object catch (error) {
-    debugPrint('[fah] analytics unavailable, continuing without: $error');
-  }
+  final analytics = _initAnalytics();
   AppAnalytics.installFirebase(analytics);
   AppAnalytics.instance.appStart(analyticsAvailable: analytics != null);
   // The fa_ui chat widgets report through FaChatHost.track — route those
   // events into the app's analytics facade.
-  FaChatHost.analytics = (event, [params = const {}]) {
-    switch (event) {
-      case 'approval_mode_changed':
-        AppAnalytics.instance.approvalModeChanged(params['mode'] as String);
-      case 'secret_request':
-        AppAnalytics.instance.secretRequest(params['result'] as String);
-      case 'message_sent':
-        AppAnalytics.instance.messageSent(
-          hasAttachments: params['has_attachments'] as bool,
-          textLength: params['text_length'] as int,
-        );
-      case 'upload_added':
-        AppAnalytics.instance.uploadAdded(params['count'] as int);
-      case 'voice_input_used':
-        AppAnalytics.instance.voiceInputUsed();
-      case 'screen_opened':
-        AppAnalytics.instance.screenOpened(params['screen_name'] as String);
-      case 'files_opened':
-        AppAnalytics.instance.filesOpened(params['source'] as String);
-      case 'settings_opened':
-        AppAnalytics.instance.settingsOpened();
-    }
-  };
-  // Crashlytics: fatal Flutter errors + uncaught async errors flow into the
-  // Firebase console (no web support — the guard skips both the placeholder
-  // options used by CI builds and the web platform entirely).
-  if (!kIsWeb) {
-    try {
-      if (Firebase.apps.isNotEmpty) {
-        final crashlytics = FirebaseCrashlytics.instance;
-        FlutterError.onError = crashlytics.recordFlutterFatalError;
-        PlatformDispatcher.instance.onError = (error, stack) {
-          crashlytics.recordError(error, stack, fatal: true);
-          return true;
-        };
-        // Breadcrumbs: the debugPrint tee (already feeding AppLog) also
-        // leaves a trail in the crash report.
-        final baseDebugPrint = debugPrint;
-        debugPrint = (message, {wrapWidth}) {
-          baseDebugPrint(message, wrapWidth: wrapWidth);
-          if (message != null) crashlytics.log(message);
-        };
-        debugPrint('[fah] crashlytics wired');
-      }
-    } on Object catch (error) {
-      debugPrint('[fah] crashlytics unavailable, continuing without: $error');
-    }
-  }
+  FaChatHost.analytics = routeFaChatAnalytics;
+  _wireCrashlyticsBreadcrumbs();
   // intl date symbols for the app locales — DateFormat (derived session
   // titles) only ships en_US data compiled in; the rest must be loaded.
-  for (final locale in AppLocalizations.supportedLocales) {
-    await initializeDateFormatting(locale.languageCode);
-  }
+  await _loadIntlDateSymbols();
   debugPrint('[fah] starting runApp');
   runApp(
     MyApp(
@@ -288,19 +183,159 @@ Future<void> main() async {
   // OpenRouter OAuth callback. This is fire-and-forget: the coordinator
   // singleton forwards codes to any in-flight settings-sheet flow.
   unawaited(attachOpenRouterOAuthLinks());
+  _exchangeOpenRouterWebRedirect(sessionKeys);
+}
 
-  // On mobile web (iOS Safari / PWA) the popup cannot reliably hand the code
-  // back, so OpenRouter redirects to the app URL with `?code=...&state=...`.
-  // Exchange it after the first frame and persist the key.
-  if (kIsWeb) {
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      final key = await completeOpenRouterOAuthFromRedirect();
-      if (key != null && key.isNotEmpty) {
-        await sessionKeys.set('OPENROUTER_API_KEY', key);
-        debugPrint('[Fa] OpenRouter key saved from redirect');
-      }
-    });
+/// Tees debug output into the in-app log (settings → copy debug logs); the
+/// original debugPrint still runs, so console output is unchanged.
+void _teeDebugPrintIntoAppLog() {
+  final originalDebugPrint = debugPrint;
+  debugPrint = (message, {wrapWidth}) {
+    originalDebugPrint(message, wrapWidth: wrapWidth);
+    if (message != null) AppLog.i('debug', message);
+  };
+}
+
+/// Initializes Firebase unless running inside the browser-extension panel
+/// or with placeholder CI options. The extension panel runs the same web
+/// build under chrome-extension://, whose MV3 CSP blocks the inline-script
+/// bootstrap firebase_core_web uses to load the JS SDK — initializing
+/// there ends in an uncaught error, and the panel does not need Firebase.
+///
+/// The native Firebase SDK auto-configures the [DEFAULT] app from
+/// GoogleService-Info.plist when the plugins register — a second
+/// initializeApp throws [core/duplicate-app] and, unhandled, kills boot
+/// before the first frame (black screen on macOS/iOS). Reuse the natively
+/// configured app in that case.
+Future<void> _initFirebaseApp() async {
+  final options = DefaultFirebaseOptions.currentPlatform;
+  final inExtension = Uri.base.scheme == 'chrome-extension';
+  if (inExtension || options.apiKey.startsWith('YOUR_')) return;
+  try {
+    await Firebase.initializeApp(options: options);
+  } on FirebaseException catch (error) {
+    if (error.code != 'duplicate-app') rethrow;
+    debugPrint(
+      '[fa] Firebase [DEFAULT] already configured natively — reusing it',
+    );
   }
+}
+
+/// Wasm runtime setup is best-effort. If the native bindings are
+/// unavailable the app should still start so the chat UI and other
+/// providers remain usable.
+Future<void> _setUpWasmRuntimeBestEffort() async {
+  try {
+    await setUpWasmRuntime();
+    debugPrint('[fah] WASM runtime setup succeeded');
+  } on Object catch (error) {
+    debugPrint('[fah] WASM runtime setup failed: $error');
+  }
+}
+
+/// Loads `.env` (intentionally not committed; values can be supplied via
+/// --dart-define instead) and returns its runtime FA_PROVIDERS override —
+/// the --dart-define wins in the core, so this is `null` unless `.env`
+/// carried the variable. Filtered-out providers never appear in the
+/// pickers, the add-provider list, or onboarding.
+Future<String?> _loadProviderFilterOverride() async {
+  try {
+    await dotenv.load(fileName: '.env');
+  } on Object {
+    return null;
+  }
+  final faProviders = dotenv.isInitialized ? dotenv.env['FA_PROVIDERS'] : null;
+  if (faProviders == null || faProviders.trim().isEmpty) return null;
+  return faProviders;
+}
+
+/// Analytics is strictly optional. On web with placeholder options
+/// (`YOUR_*` — what CI builds) initializeApp is skipped, and just reading
+/// Firebase.apps can throw (no JS SDK loaded — seen on Safari, where it
+/// killed startup before runApp); content blockers break it too.
+FirebaseAnalytics? _initAnalytics() {
+  try {
+    if (Firebase.apps.isNotEmpty) return FirebaseAnalytics.instance;
+  } on Object catch (error) {
+    debugPrint('[fah] analytics unavailable, continuing without: $error');
+  }
+  return null;
+}
+
+/// Routes fa_ui chat-widget track events into the app's analytics facade.
+/// Public so the boot assignment can tear it off and tests can drive it.
+void routeFaChatAnalytics(
+  String event, [
+  Map<String, Object> params = const {},
+]) {
+  switch (event) {
+    case 'approval_mode_changed':
+      AppAnalytics.instance.approvalModeChanged(params['mode'] as String);
+    case 'secret_request':
+      AppAnalytics.instance.secretRequest(params['result'] as String);
+    case 'message_sent':
+      AppAnalytics.instance.messageSent(
+        hasAttachments: params['has_attachments'] as bool,
+        textLength: params['text_length'] as int,
+      );
+    case 'upload_added':
+      AppAnalytics.instance.uploadAdded(params['count'] as int);
+    case 'voice_input_used':
+      AppAnalytics.instance.voiceInputUsed();
+    case 'screen_opened':
+      AppAnalytics.instance.screenOpened(params['screen_name'] as String);
+    case 'files_opened':
+      AppAnalytics.instance.filesOpened(params['source'] as String);
+    case 'settings_opened':
+      AppAnalytics.instance.settingsOpened();
+  }
+}
+
+/// Crashlytics: fatal Flutter errors + uncaught async errors flow into the
+/// Firebase console (no web support — the guard skips the web platform
+/// entirely, and any Firebase setup error keeps boot going without it).
+/// Breadcrumbs: the debugPrint tee (already feeding AppLog) also leaves a
+/// trail in the crash report.
+void _wireCrashlyticsBreadcrumbs() {
+  if (kIsWeb) return;
+  try {
+    if (Firebase.apps.isEmpty) return;
+    final crashlytics = FirebaseCrashlytics.instance;
+    FlutterError.onError = crashlytics.recordFlutterFatalError;
+    PlatformDispatcher.instance.onError = (error, stack) {
+      crashlytics.recordError(error, stack, fatal: true);
+      return true;
+    };
+    final baseDebugPrint = debugPrint;
+    debugPrint = (message, {wrapWidth}) {
+      baseDebugPrint(message, wrapWidth: wrapWidth);
+      if (message != null) crashlytics.log(message);
+    };
+    debugPrint('[fah] crashlytics wired');
+  } on Object catch (error) {
+    debugPrint('[fah] crashlytics unavailable, continuing without: $error');
+  }
+}
+
+/// Loads intl date symbols for every supported app locale.
+Future<void> _loadIntlDateSymbols() async {
+  for (final locale in AppLocalizations.supportedLocales) {
+    await initializeDateFormatting(locale.languageCode);
+  }
+}
+
+/// On mobile web (iOS Safari / PWA) the popup cannot reliably hand the code
+/// back, so OpenRouter redirects to the app URL with `?code=...&state=...`.
+/// Exchange it after the first frame and persist the key.
+void _exchangeOpenRouterWebRedirect(SessionKeysStore sessionKeys) {
+  if (!kIsWeb) return;
+  WidgetsBinding.instance.addPostFrameCallback((_) async {
+    final key = await completeOpenRouterOAuthFromRedirect();
+    if (key != null && key.isNotEmpty) {
+      await sessionKeys.set('OPENROUTER_API_KEY', key);
+      debugPrint('[Fa] OpenRouter key saved from redirect');
+    }
+  });
 }
 
 class MyApp extends StatelessWidget {

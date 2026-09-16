@@ -52,7 +52,7 @@ import 'package:fa/sandbox/wasm_shell_ssh.dart';
 /// redirects. Each stage runs in its own WASM instance, so there is no need
 /// for `fork`, `exec`, or process-level pipes — WASM does not expose those on
 /// iOS/Android/Web.
-final class WasiSandboxShell implements Shell, BackgroundShell {
+final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   /// Creates a shell backed by the provided WASM modules.
   WasiSandboxShell({
     required this.coreutils,
@@ -113,6 +113,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
   final String? workingDirectory;
 
   /// Host directory exposed to the WASM guest at `/`.
+  @override
   final String? sandboxHostPath;
 
   final http.Client _httpClient;
@@ -179,6 +180,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
   late final GitSandboxCommands _git = GitSandboxCommands(this);
 
   /// Host path for a sandbox-absolute path (public surface for git commands).
+  @override
   String hostPathOf(String sandboxPath) => _hostPath(sandboxPath);
 
   /// Resolves a sandbox path against [cwd] (public surface for git commands).
@@ -186,12 +188,15 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
       _resolveSandboxPath(path, cwd);
 
   /// Current working directory of the shell (public surface for git commands).
+  @override
   String get shellCwd => _currentDir;
 
   /// HTTP client used by network builtins (public surface for git commands).
+  @override
   http.Client get shellHttpClient => _httpClient;
 
   /// Runs a sandbox command (public surface for git commands, e.g. tar).
+  @override
   Future<Result<StageResult, ExecutionError>> runSandboxCommand(
     String command,
     List<String> args,
@@ -851,8 +856,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
     r'^(Broken pipe|[\w./-]+: (?:stdout|stderr): Broken pipe)$',
   );
 
-  bool _isSigpipeNoise(String line) =>
-      _sigpipeNoise.hasMatch(line.trim());
+  bool _isSigpipeNoise(String line) => _sigpipeNoise.hasMatch(line.trim());
 
   String _maybeRewritePath(String command, String arg, String cwd) {
     if (arg.isEmpty || arg == '-') return arg;
@@ -985,7 +989,11 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
             debugPrint('[wasm_shell] stdout chunk: ${chunk.length} bytes');
             final clean = bridge?.filter(chunk) ?? chunk;
             if (clean.isNotEmpty) {
-              collect(stdoutBuffer, Uint8List.fromList(clean), options?.onStdout);
+              collect(
+                stdoutBuffer,
+                Uint8List.fromList(clean),
+                options?.onStdout,
+              );
             }
           }, onDone: () => debugPrint('[wasm_shell] stdout done'))
         : null;

@@ -1461,11 +1461,11 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
     TUI-only dispatchers at CC 3 / 0% cov pending PTY tests (documented
     exception).
   - flutter_app (`flutter_app/crap4dart.yaml`, sources `[lib]`,
-    issue #433): **870.0** — measured by the SAME pipeline the CI gate
+    issue #433/#475): **702.0** — measured by the SAME pipeline the CI gate
     uses (the two `flutter-tests` shards emit `--coverage`; the
     `app-crap-gate` job merges the lcovs and runs the pinned analyzer —
     widget-test coverage differs from the core's dart lcov, E2).
-  - The app ladder (follow-up cards, NOT this one): 2450 → 870 (done:
+  - The app ladder (follow-up cards, NOT this one): 2450 → 870 → 702 (done:
     `JsAppEngine._faCall` 2450→6 via map dispatch, `patch` 94→19,
     `_tokenize` 70→18) → next milestones 650 (`codemie_sso_flow`) →
     600-class `wasm_shell` cluster → … → **40**, each step "fix the
