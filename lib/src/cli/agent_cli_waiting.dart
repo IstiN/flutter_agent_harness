@@ -192,17 +192,23 @@ final class _WaitingCoordinator {
   /// channel as the scheduled-message deliveries. Idle-only — while busy
   /// the busy row already shows what is happening (and E3 keeps waiters
   /// running underneath); the next beat after the turn catches up.
-  Future<void> _deliverHeartbeat() async {
-    final cli = _cli;
-    if (_beatBlocked || cli._viewer != null) return;
-    final snap = await snapshot();
-    if (!snap.isEmpty) return _runBeat(snap);
-    _syncHeartbeat(snap);
-  }
+  Future<void> _deliverHeartbeat() =>
+      _beatBlocked ? Future.value() : _beatActive();
 
   /// Idle-only: while busy the busy row already shows what is happening
   /// (E3 keeps waiters running underneath); the next beat catches up.
-  bool get _beatBlocked => _cli._headlessMode || _cli._exited || _cli.isBusy;
+  /// Viewers observe, never drive runs.
+  bool get _beatBlocked =>
+      _cli._headlessMode || _cli._exited || _cli.isBusy || _cli._viewer != null;
+
+  /// The active beat: no waiters left — sync the chain off; otherwise a
+  /// status round through the same self-wake channel as the
+  /// scheduled-message deliveries.
+  Future<void> _beatActive() async {
+    final snap = await snapshot();
+    if (snap.isEmpty) return _syncHeartbeat(snap);
+    return _runBeat(snap);
+  }
 
   /// Starts the ONE short status round for an active beat.
   void _runBeat(WaiterSnapshot snap) {
@@ -235,30 +241,45 @@ final class _WaitingCoordinator {
   /// through the queue and wake the idle run via the inbox path; every
   /// heartbeat cadence a stderr line keeps the wait observable (AC5).
   Future<void> waitForJobsCeiling() async {
-    var snap = await snapshot();
+    final snap = await snapshot();
     if (snap.isEmpty) return;
+    _cli.io.writeln('⏳ waiting: ${describe(snap)}');
+    final settled = await _ceilingWait(snap);
+    _cli.io.writeln('⏳ waiters resolved — ${waitingDetachSummary(settled)}');
+  }
+
+  /// The ceiling wait loop: sleeps to the nearest wake source (a job
+  /// settle, a timer due, the heartbeat cadence, or the ceiling —
+  /// whichever lands first), pumps wake turns, and re-snapshots until
+  /// either the waiters resolve or `waiting.waitCeilingMinutes` runs out.
+  Future<WaiterSnapshot> _ceilingWait(WaiterSnapshot snap) async {
     final ceilingMin = _cli.config.waiting.waitCeilingMinutes;
     final deadline = _clock().add(Duration(minutes: ceilingMin));
     final hbMin = _cli.config.waiting.waitHeartbeatMinutes;
-    _cli.io.writeln('⏳ waiting: ${describe(snap)}');
     var lastHeartbeat = _clock();
     while (!snap.isEmpty) {
+      if (_hitCeiling(snap, deadline, ceilingMin)) return snap;
       final now = _clock();
-      if (!now.isBefore(deadline)) {
-        _cli.io.writeln(
-          '⏳ ${waitingDetachSummary(snap)} — wait ceiling ($ceilingMin min)'
-          ' reached, exiting',
-        );
-        return;
-      }
-      // Sleep until the nearest wake source: a job settle, a timer due,
-      // the heartbeat cadence, or the ceiling — whichever lands first.
+      // Sleep until the nearest wake source — see [_hitCeiling] for the
+      // ceiling leg.
       await _sleepUntilWake(now, deadline, snap, lastHeartbeat, hbMin);
       await _pumpWakeTurns();
       lastHeartbeat = await _beatIfDue(lastHeartbeat, hbMin);
       snap = await snapshot();
     }
-    _cli.io.writeln('⏳ waiters resolved — ${waitingDetachSummary(snap)}');
+    return snap;
+  }
+
+  /// Prints the ceiling-exit line once `waiting.waitCeilingMinutes` have
+  /// passed; true when the wait must stop (AC5 ceiling).
+  bool _hitCeiling(WaiterSnapshot snap, DateTime deadline, int ceilingMin) {
+    final now = _clock();
+    if (now.isBefore(deadline)) return false;
+    _cli.io.writeln(
+      '⏳ ${waitingDetachSummary(snap)} — wait ceiling ($ceilingMin min)'
+      ' reached, exiting',
+    );
+    return true;
   }
 
   /// Deliver due timers and let any wake turn (job-settle or timer
