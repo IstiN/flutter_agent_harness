@@ -158,6 +158,102 @@ allowedTools: []
       }
     });
   }
+
+  /// NEW AC (owner evidence #3, RED first): mid-run with a 500+ char tool
+  /// row AND a 300-char composed line, the frame must stay EXACTLY
+  /// [rowsCount] tall across consecutive ticks — zero hardware-wrapped
+  /// rows anywhere, no board-snapshot residue, status pinned to the bottom.
+  for (final (columns, rowsCount) in [(100, 40), (80, 24)]) {
+    test('zero wrapped rows with overlong tool output at '
+        '$columns x$rowsCount', () async {
+      final tempHome = Directory.systemTemp.createTempSync('fa_tui_467_wrap_');
+      final ascii520 = 'gh issue create --title "${'x' * 500}"';
+      final cjkCommand = 'echo 終${'終' * 60}終'; // wide glyphs: unit-clip trap
+      String jq(String s) =>
+          '"${s.replaceAll(r'\', r'\\').replaceAll('"', r'\"')}"';
+      final server = await MockLlmServer.start()
+        ..enqueueToolCall('bash', '{"command": "sleep 20"}')
+        ..enqueueToolCall('bash', '{"command": ${jq(ascii520)}}')
+        ..enqueueToolCall('bash', '{"command": ${jq(cjkCommand)}}')
+        ..enqueueText('all done');
+      addTearDown(server.stop);
+      File('${tempHome.path}/.fah/config.yaml')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('''
+provider: openai-completions
+model: mock-model
+baseUrl: ${server.baseUrl}
+mode: code
+approvalMode: yolo
+allowedTools: []
+''');
+      final workspace = Directory('/tmp/fa467ws2')..createSync(recursive: true);
+      addTearDown(() => workspace.deleteSync(recursive: true));
+
+      final harness = await FaCliHarness.spawn(
+        workingDirectory: workspace.path,
+        extraEnv: {'HOME': tempHome.path},
+        columns: columns,
+        rows: rowsCount,
+      );
+      addTearDown(() async {
+        await harness.close();
+        tempHome.deleteSync(recursive: true);
+      });
+
+      await harness.waitForBoot();
+      final composed300 = 'wrap me ' * 43; // 301 chars — several wrapped rows
+      harness.sendText(composed300.substring(0, 300));
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      harness.sendEnter();
+      await harness.waitForText(
+        '· submit',
+        timeout: const Duration(seconds: 20),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 2500));
+
+      final grids = <List<String>>[
+        _grid(harness),
+        await Future<void>.delayed(
+          const Duration(milliseconds: 1200),
+        ).then((_) => _grid(harness)),
+        await Future<void>.delayed(
+          const Duration(milliseconds: 1200),
+        ).then((_) => _grid(harness)),
+      ];
+
+      for (var tick = 0; tick < grids.length; tick++) {
+        final grid = grids[tick];
+        expect(grid.length, rowsCount,
+            reason: 'tick $tick: frame height drifted — a row wrapped');
+        // The status stays the BOTTOM row: any wrap above pushes it off.
+        expect(grid[rowsCount - 1].contains(' · turn '), isTrue,
+            reason: 'tick $tick: status not at the bottom — drift');
+        for (final row in grid) {
+          expect(row.runes.length, lessThanOrEqualTo(columns));
+        }
+        // Board residue: a live job id is painted at most once, and no two
+        // board rows are identical (a longer previous snapshot must not
+        // survive a repaint).
+        final boardIds = [
+          for (final row in grid)
+            if (row.contains('↳ ')) row.substring(0, row.indexOf(' ·')),
+        ];
+        expect(boardIds.toSet().length, boardIds.length,
+            reason: 'tick $tick: duplicated board rows (ghost snapshot)');
+      }
+      // The composed line survived intact through the run.
+      final rules = [
+        for (var i = 0; i < grids.last.length; i++)
+          if (grids.last[i].trim() == '─' * columns) i,
+      ];
+      final region = grids.last
+          .sublist(rules[rules.length - 2] + 1, rules.last)
+          .map((l) => l.replaceAll(' ', ''))
+          .join();
+      expect(region, composed300.substring(0, 300).replaceAll(' ', ''));
+    });
+  }
 }
 
 /// The rendered screen: right-trimmed rows, blank rows dropped at the tail
