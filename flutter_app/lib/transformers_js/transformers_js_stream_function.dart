@@ -41,14 +41,14 @@
 library;
 
 import 'dart:async';
-import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
-import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-
+import 'package:fa/on_device/on_device_message_codec.dart';
+import 'package:fa/on_device/on_device_stream_pump.dart';
 import 'package:fa/prompts.g.dart';
 import 'package:fa/services/upload.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// Builds a [StreamFunction] that runs inference through [service], with
 /// tool calling provided by the universal prompt-tools wrapper (see the
@@ -89,36 +89,9 @@ Future<void> _runTransformersJs(
   Context context,
   CancelToken? cancelToken,
 ) async {
-  final timestamp = DateTime.now();
-  final text = StringBuffer();
-  var stopReason = StopReason.stop;
-  String? errorMessage;
   // Set once the engine has loaded the model: only then can a failure be
   // an ORT session poisoning that requires an engine reset.
   var engineEngaged = false;
-  var textStarted = false;
-  var startPushed = false;
-
-  // Partial-first invariant: every event carries a freshly built snapshot of
-  // the message with ALL content accumulated so far (mirrors
-  // ProviderStreamState in the HTTP adapters, which is package-internal).
-  AssistantMessage snapshot() => AssistantMessage(
-    content: [if (text.isNotEmpty) TextContent(text: text.toString())],
-    api: model.api,
-    provider: model.provider,
-    model: model.id,
-    usage: Usage.zero,
-    stopReason: stopReason,
-    errorMessage: errorMessage,
-    timestamp: timestamp,
-  );
-
-  // Cancellation acts on whichever generation is in flight; the listener is
-  // registered once (after the first successful load) and the holders are
-  // swapped per attempt, so a recovery retry stays cancellable.
-  Completer<void>? activeDone;
-  void Function()? activeCancelJs;
-  var cancelHooked = false;
 
   // GPU-crash recovery budget: ONE engine dispose + reload + retry per turn
   // ([isTransformersJsGpuCrash] failures only). The counter caps reload
@@ -126,20 +99,13 @@ Future<void> _runTransformersJs(
   // and the error then surfaces instead of reloading forever.
   var recoveryAttempts = 0;
 
-  /// Terminal path for every non-recovered failure: maps the raw engine
-  /// dump to user-facing text, drops a possibly poisoned engine, and ends
-  /// the stream with an [ErrorEvent].
-  Future<void> fail(Object error) async {
-    final aborted =
-        error is CancelledException || (cancelToken?.isCancelled ?? false);
-    stopReason = aborted ? StopReason.aborted : StopReason.error;
-    final rawMessage = aborted
-        ? 'Request was aborted'
-        : _formatTransformersJsError(error);
-    errorMessage = aborted
-        ? rawMessage
-        : formatTransformersJsErrorForUser(rawMessage);
-    if (!aborted && engineEngaged) {
+  final turn = OnDeviceStreamTurn(
+    eventStream: eventStream,
+    model: model,
+    formatError: _formatTransformersJsError,
+    formatUserError: formatTransformersJsErrorForUser,
+    beforeErrorEvent: (aborted) async {
+      if (aborted || !engineEngaged) return;
       // A failed generate can leave the ORT session poisoned (the WebGPU
       // invalid-buffer OrtRun error an undecodable image input causes):
       // drop the engine so the NEXT message reloads from the cached
@@ -149,9 +115,8 @@ Future<void> _runTransformersJs(
       } on Object {
         // Recovery must never mask the original error.
       }
-    }
-    eventStream.push(ErrorEvent(reason: stopReason, error: snapshot()));
-  }
+    },
+  );
 
   try {
     while (true) {
@@ -161,8 +126,8 @@ Future<void> _runTransformersJs(
         final preset = findTransformersJsPreset(model.id);
         if (preset == null) {
           throw StateError(
-            'Unknown transformers.js model preset: ${model.id}. Pick one of: '
-            '${transformersJsModelPresets.map((p) => p.id).join(', ')}',
+            'Unknown transformers.js model preset: ${model.id}. Pick one '
+            'of: ${transformersJsModelPresets.map((p) => p.id).join(', ')}',
           );
         }
 
@@ -173,93 +138,41 @@ Future<void> _runTransformersJs(
         engineEngaged = true;
         cancelToken?.throwIfCancelled();
 
-        if (cancelToken != null && !cancelHooked) {
-          cancelHooked = true;
-          unawaited(
-            cancelToken.onCancel.then((_) {
-              unawaited(service.interrupt());
-              try {
-                activeCancelJs?.call();
-              } catch (_) {
-                // Best effort: interrupt above is the authoritative stop.
-              }
-              final inFlight = activeDone;
-              if (inFlight != null && !inFlight.isCompleted) {
-                inFlight.complete();
-              }
-            }),
-          );
-        }
+        turn.pushStart();
 
-        if (!startPushed) {
-          startPushed = true;
-          eventStream.push(StartEvent(partial: snapshot()));
-        }
-
-        var finishReason = '';
-        String? streamError;
-        final done = Completer<void>();
-        activeDone = done;
-        void finish() {
-          if (!done.isCompleted) done.complete();
-        }
-
-        activeCancelJs = await service.chatStream(
-          messages: convertTransformersJsMessages(
-            context,
-            supportsVision: preset.supportsVision,
-          ),
-          maxTokens: model.maxTokens > 0 ? model.maxTokens : null,
-          onChunk: (chunk) {
-            if (chunk.isEmpty) return;
-            if (!textStarted) {
-              textStarted = true;
-              eventStream.push(
-                TextStartEvent(contentIndex: 0, partial: snapshot()),
-              );
-            }
-            text.write(chunk);
-            eventStream.push(
-              TextDeltaEvent(
-                contentIndex: 0,
-                delta: chunk,
-                partial: snapshot(),
+        final call = await pumpOnDeviceChat(
+          turn: turn,
+          cancelToken: cancelToken,
+          interrupt: service.interrupt,
+          startChat: (call) async {
+            call.cancelJs = await service.chatStream(
+              messages: convertTransformersJsMessages(
+                context,
+                supportsVision: preset.supportsVision,
               ),
+              maxTokens: model.maxTokens > 0 ? model.maxTokens : null,
+              onChunk: turn.pushTextDelta,
+              onError: (message) {
+                call.streamError = message;
+                call.complete();
+              },
+              onDone: (reason) {
+                call.finishReason = reason;
+                call.complete();
+              },
             );
-          },
-          onError: (message) {
-            streamError = message;
-            finish();
-          },
-          onDone: (reason) {
-            finishReason = reason;
-            finish();
           },
         );
 
-        await done.future;
-        activeDone = null;
-        activeCancelJs = null;
-
-        if (streamError != null) {
-          throw StateError(streamError!);
+        if (call.streamError != null) {
+          throw StateError(call.streamError!);
         }
         cancelToken?.throwIfCancelled();
 
-        if (textStarted) {
-          eventStream.push(
-            TextEndEvent(
-              contentIndex: 0,
-              content: text.toString(),
-              partial: snapshot(),
-            ),
-          );
-        }
-
-        if (finishReason == 'length') {
-          stopReason = StopReason.length;
-        }
-        eventStream.push(DoneEvent(reason: stopReason, message: snapshot()));
+        turn.pushTextEnd();
+        turn.pushDone(
+          call.finishReason == 'length' ? StopReason.length : StopReason.stop,
+        );
         return;
       } catch (error) {
         final aborted =
@@ -271,7 +184,7 @@ Future<void> _runTransformersJs(
         // already out and a retry would stream the answer twice.
         if (!aborted &&
             engineEngaged &&
-            !textStarted &&
+            !turn.hasText &&
             recoveryAttempts < _maxRecoveryAttemptsPerTurn &&
             isTransformersJsGpuCrash(_formatTransformersJsError(error))) {
           recoveryAttempts++;
@@ -287,128 +200,79 @@ Future<void> _runTransformersJs(
           }
           continue;
         }
-        await fail(error);
+        await turn.fail(error, cancelToken: cancelToken);
         return;
       }
     }
   } finally {
-    eventStream.end();
+    turn.end();
   }
 }
 
-/// Maps a harness [Context] to chat messages for the transformers.js engine.
-///
-/// - `systemPrompt` becomes a `system` message. When the context carries no
-///   tools the prompt-tools wrapper is a passthrough, so
-///   [transformersJsNoToolsNote] is appended here instead — the model must
-///   not try to call tools that are not there. (With tools present the
-///   wrapper has already appended the tool instructions to `systemPrompt`
-///   upstream.)
-/// - User text passes through; image blocks become `data:` URIs on the
-///   message's `images` when [supportsVision] AND the MIME type is one the
-///   on-device stack can actually decode ([isInlineImageMimeType]: PNG,
-///   JPEG, GIF, WebP). Everything else — SVG first among them — degrades to
-///   an omission note: feeding undecodable bytes to `RawImage` kills the
-///   ONNX Runtime WebGPU session (`mapAsync ... invalid Buffer`).
-/// - Assistant text passes through; thinking blocks are dropped; historical
-///   tool calls become a `[tool call: ...]` text line so role alternation is
-///   preserved.
-/// - Tool results become `user` messages with a `[tool result]` header
-///   (plain-text fallback — the chat template has no `tool` role).
+/// The transformers.js projection quirks: a system message (carrying
+/// [transformersJsNoToolsNote] when the context has no tools — with tools
+/// present the wrapper already appended the tool instructions upstream),
+/// vision images as decodable `data:` URIs ([isInlineImageMimeType]:
+/// PNG, JPEG, GIF, WebP — feeding undecodable bytes to `RawImage` kills
+/// the ONNX Runtime WebGPU session, `mapAsync ... invalid Buffer`), inline
+/// `[tool call: …]` history lines, and `[tool result]` user headers (the
+/// chat template has no tool role).
+OnDeviceCodecProfile _transformersJsCodecProfile({
+  required bool supportsVision,
+}) => OnDeviceCodecProfile(
+  systemMessage: (system, hasTools) {
+    var text = system;
+    if (!hasTools) {
+      text = text.isEmpty
+          ? transformersJsNoToolsNote
+          : '$text\n\n$transformersJsNoToolsNote';
+    }
+    if (text.isEmpty) return null;
+    return (role: 'system', content: text, toolName: null, images: const []);
+  },
+  projectImages: (images) {
+    final decodable = <ImageContent>[
+      if (supportsVision)
+        for (final block in images)
+          if (isInlineImageMimeType(block.mimeType)) block,
+    ];
+    final omitted = images.length - decodable.length;
+    return (
+      dataUris: [
+        for (final block in decodable)
+          'data:${block.mimeType};base64,${block.data}',
+      ],
+      omissionNote: omitted == 0
+          ? null
+          : supportsVision
+          ? '(attached image omitted: format not decodable on-device)'
+          : '(attached image omitted: this model is text-only)',
+    );
+  },
+  toolCallLine: onDeviceToolCallLine,
+  extraAssistantMessages: (_) => const [],
+  toolResultMessage: (result, resultText) => (
+    role: 'user',
+    content: '${onDeviceToolResultHeader(result)}\n$resultText',
+    toolName: null,
+    images: const [],
+  ),
+);
+
+/// Maps a harness [Context] to chat messages for the transformers.js
+/// engine — the shared on-device walk ([convertOnDeviceMessages]) with the
+/// transformers.js wire quirks ([_transformersJsCodecProfile]).
 List<TransformersJsChatMessage> convertTransformersJsMessages(
   Context context, {
   required bool supportsVision,
 }) {
-  final messages = <TransformersJsChatMessage>[];
-
-  var system = context.systemPrompt ?? '';
-  final tools = context.tools;
-  if (tools == null || tools.isEmpty) {
-    system = system.isEmpty
-        ? transformersJsNoToolsNote
-        : '$system\n\n$transformersJsNoToolsNote';
-  }
-  if (system.isNotEmpty) {
-    messages.add((role: 'system', content: system, images: const []));
-  }
-
-  for (final message in context.messages) {
-    switch (message) {
-      case UserMessage():
-        final content = message.content;
-        if (content is String) {
-          if (content.trim().isNotEmpty) {
-            messages.add((role: 'user', content: content, images: const []));
-          }
-        } else {
-          final blocks = content as List<ContentBlock>;
-          final parts = <String>[
-            for (final block in blocks)
-              if (block is TextContent && block.text.trim().isNotEmpty)
-                block.text,
-          ];
-          final imageBlocks = blocks.whereType<ImageContent>().toList();
-          final decodable = <ImageContent>[
-            if (supportsVision)
-              for (final block in imageBlocks)
-                if (isInlineImageMimeType(block.mimeType)) block,
-          ];
-          final images = <String>[
-            for (final block in decodable)
-              'data:${block.mimeType};base64,${block.data}',
-          ];
-          final omitted = imageBlocks.length - decodable.length;
-          if (omitted > 0) {
-            parts.add(
-              supportsVision
-                  ? '(attached image omitted: format not decodable on-device)'
-                  : '(attached image omitted: this model is text-only)',
-            );
-          }
-          if (parts.isNotEmpty || images.isNotEmpty) {
-            messages.add((
-              role: 'user',
-              content: parts.join('\n'),
-              images: images,
-            ));
-          }
-        }
-      case AssistantMessage():
-        final parts = <String>[
-          for (final block in message.content)
-            if (block is TextContent && block.text.trim().isNotEmpty)
-              block.text,
-        ];
-        for (final block in message.content) {
-          if (block is ToolCall) {
-            parts.add(
-              '[tool call: ${block.name}(${jsonEncode(block.arguments)})]',
-            );
-          }
-        }
-        if (parts.isNotEmpty) {
-          messages.add((
-            role: 'assistant',
-            content: parts.join('\n'),
-            images: const [],
-          ));
-        }
-      case ToolResultMessage():
-        final resultText = message.content
-            .whereType<TextContent>()
-            .map((block) => block.text)
-            .join('\n');
-        messages.add((
-          role: 'user',
-          content:
-              '[tool result · ${message.toolName}'
-              '${message.isError ? ' · error' : ''}]\n'
-              '${resultText.isEmpty ? '(no output)' : resultText}',
-          images: const [],
-        ));
-    }
-  }
-  return messages;
+  return [
+    for (final message in convertOnDeviceMessages(
+      context,
+      _transformersJsCodecProfile(supportsVision: supportsVision),
+    ))
+      (role: message.role, content: message.content, images: message.images),
+  ];
 }
 
 String _formatTransformersJsError(Object error) {
