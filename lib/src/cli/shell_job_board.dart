@@ -18,7 +18,9 @@
 /// Collapse rule: a turn with more than 3 jobs renders no individual
 /// walls — one settled summary card when the whole turn finishes, with
 /// `lost` cards still emitted individually (a zombie is never hidden
-/// inside a green count).
+/// inside a green count). EXCEPTION (issue #503): jobs that were live at
+/// RESTART collapse into one summary row — the individual-card flood
+/// evicted the resumed transcript tail from the first glass.
 library;
 
 import 'agent_hub_panel.dart';
@@ -223,6 +225,20 @@ final class ShellJobBoard {
   /// prominent lost cards) per collapsed turn once ALL its jobs settled.
   List<String> takeTranscriptLines({required int width}) {
     final lines = <String>[];
+    // Issue #503: resume-lost cards never print individually — N four-line
+    // cards flood the first glass and evict the resumed transcript tail.
+    // They collapse into ONE summary row (ids included, details on
+    // /tasks); the per-card loop below then skips them as emitted.
+    if (_pendingResumeLost.isNotEmpty) {
+      _emittedCardIds.addAll(_pendingResumeLost);
+      lines.add(
+        shellJobResumeLostSummaryLine(
+          ids: _pendingResumeLost.toList(growable: false),
+          width: width,
+        ),
+      );
+      _pendingResumeLost.clear();
+    }
     for (final card in _cards) {
       if (!taskBlockStateIsTerminal(card.state)) continue;
       if (_emittedCardIds.contains(card.id)) continue;

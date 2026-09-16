@@ -71,18 +71,24 @@ final class FaCliHarness {
         'PUB_CACHE': Platform.environment['PUB_CACHE']!,
       ...?extraEnv,
     };
+    // FA_BIN (test-only seam): run a prebuilt binary (e.g. the AOT bundle
+    // from `dart build cli`) instead of JIT `dart bin/fah.dart` — perf
+    // probes must measure what install_local.sh actually ships.
+    final faBin = extraEnv?['FA_BIN'];
     final pty = PseudoTerminal.start(
-      'dart',
+      faBin ?? 'dart',
       // Absolute script path so a non-default [workingDirectory] still
       // resolves the repo's binary (folder-scoping tests launch fa in
       // temp dirs while package resolution stays on the repo).
       [
-        // VM flags go BEFORE the script path.
-        if (vmServicePort != null) ...[
-          '--disable-service-auth-codes',
-          '--observe=$vmServicePort',
+        if (faBin == null) ...[
+          // VM flags go BEFORE the script path.
+          if (vmServicePort != null) ...[
+            '--disable-service-auth-codes',
+            '--observe=$vmServicePort',
+          ],
+          '${Directory.current.path}/bin/fah.dart',
         ],
-        '${Directory.current.path}/bin/fah.dart',
         ...args,
       ],
       workingDirectory: workingDirectory ?? Directory.current.path,
@@ -252,6 +258,8 @@ final class FaCliHarness {
   }
 
   /// The last 2000 characters of raw output, for timeout diagnostics.
+  String get rawTail => _rawTail();
+
   String _rawTail() {
     final raw = _rawBuffer.toString();
     return raw.length <= 2000 ? raw : raw.substring(raw.length - 2000);
