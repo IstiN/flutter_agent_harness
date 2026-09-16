@@ -82,15 +82,10 @@ extension AgentCliSteering on AgentCli {
       );
       if (wedged) {
         // Issue #488 AC1a: the warning names the queue — the owner sees
-        // HOW MUCH is saved, not just a per-message nudge.
+        // HOW MUCH is saved, not just a per-message nudge; the stall
+        // copy stays classifier-driven (#514): /restart + esc recovery.
         final queued = _pendingSteering.length + 1;
-        io.writeln(
-          tuiWarning(
-            '⚠ agent not responding — $queued steering '
-            '${queued == 1 ? 'message' : 'messages'} saved to session, '
-            'will deliver if the run wakes',
-          ),
-        );
+        io.writeln(tuiWarning(_stallBannerLine(queued: queued)));
       }
       // The FIFO entry joins SYNCHRONOUSLY — the queued count in the
       // warning above and the wedge watchdog must see every accepted
@@ -290,15 +285,53 @@ extension AgentCliSteering on AgentCli {
     _printDroppedSteering(outcome.texts);
   }
 
-  /// Wedge watchdog, called on the inbox tick: busy run + pending
-  /// steering + heartbeat silent past the stale threshold → the run
-  /// looks dead (issue #437 AC3). Panels flip to `dead` with the
-  /// warning; the FIFO entries STAY — a late boundary merge still
-  /// consumes them (delivered-after-dead is honest recovery), and the
-  /// persisted record keeps the message recoverable across restarts.
+  /// The stall banner (issue #514): names the state, the cause and BOTH
+  /// affordances. Replaces #437's cryptic "not responding … will deliver
+  /// if the run wakes" copy that offered no recovery action. Every
+  /// stall symptom — banner, panel label, busy row — reads the SAME
+  /// classifier ([_runLooksWedged]).
+  String _stallBannerLine({int queued = 0}) {
+    final last = _lastAgentEventAt;
+    final seconds = last == null
+        ? 0
+        : DateTime.now().difference(last).inSeconds;
+    final minutes = seconds < 60 ? 1 : seconds ~/ 60;
+    // Issue #488 AC1a: when the caller knows the queue size (a fresh
+    // wedged steer), the banner names the count instead of the single
+    // "your message" copy.
+    final saved = queued > 0
+        ? '$queued steering ${queued == 1 ? 'message' : 'messages'} '
+            'saved to the session'
+        : 'your message is saved to the session';
+    return '⚠ agent stalled — no response for ${minutes}m. '
+        '$saved: /restart delivers it into a fresh run, esc aborts';
+  }
+
+  /// Pushes the stall state to every consumer (issue #514 AC1): the busy
+  /// row gets [FaTuiController.setRunStalled], the transcript gets the
+  /// banner once per stall EPISODE (edge — not per watchdog tick).
+  void _setRunStalled(bool stalled) {
+    if (stalled == _runStalledPushed) return;
+    _runStalledPushed = stalled;
+    _tuiController?.setRunStalled(stalled);
+    if (stalled) io.writeln(tuiWarning(_stallBannerLine()));
+  }
+
+  /// Wedge watchdog, called on the inbox tick (issue #437 AC3 + #514):
+  /// the shared classifier ([_runLooksWedged]) drives the stall state —
+  /// banner + busy row flip on the episode edge, pending steering
+  /// panels flip to the queued-stalled label. The FIFO entries STAY —
+  /// a late boundary merge still consumes them (delivered-after-stall
+  /// is honest recovery), and the persisted record keeps the message
+  /// recoverable across restarts.
   void _checkPendingSteeringHealth() {
-    if (_pendingSteering.isEmpty || !isBusy) return;
-    if (!_runLooksWedged()) return;
+    if (!isBusy) {
+      _setRunStalled(false);
+      return;
+    }
+    final wedged = _runLooksWedged();
+    _setRunStalled(wedged);
+    if (_pendingSteering.isEmpty || !wedged) return;
     var flipped = 0;
     for (final entry in _pendingSteering) {
       if (entry.panel.state == DeferredPanelState.pending) {
@@ -318,6 +351,27 @@ extension AgentCliSteering on AgentCli {
         ),
       );
     }
+  }
+
+  /// The `/restart` affordance (issue #514): aborts the stalled run
+  /// WITHOUT the interrupt's drop flag — the settle path then re-runs
+  /// the saved steering as a fresh turn (the #437 persisted records
+  /// ride it; a no-steering stall just gets its run back).
+  void _restartRun() {
+    if (!isBusy) {
+      io.writeln(_style.dim('agent is idle — nothing to restart'));
+      return;
+    }
+    io.writeln(
+      tuiWarning(
+        'restarting the stalled run — saved steering delivers '
+        'into the fresh turn',
+      ),
+    );
+    // NOT _abortRequested=true: that drops the queued steering
+    // (resolveLeftoverSteering), which would lose exactly the message
+    // the user is trying to recover.
+    _agent.abort();
   }
 
   /// Scans a loaded session for persisted-but-unconsumed steering
@@ -458,4 +512,14 @@ extension AgentCliSteering on AgentCli {
   /// for the 2s inbox tick (issue #437 E4).
   @visibleForTesting
   void checkPendingSteeringHealthForTest() => _checkPendingSteeringHealth();
+
+  /// Test seam: the shared stall classifier state (issue #514 AC1) —
+  /// `true` iff the watchdog currently pushes the run as stalled.
+  @visibleForTesting
+  bool get runStalledForTest => _runStalledPushed;
+
+  /// Test seam: the `/restart` affordance so tests don't route through
+  /// the slash-command parser.
+  @visibleForTesting
+  void restartRunForTest() => _restartRun();
 }

@@ -217,6 +217,7 @@ final class FaTuiModel extends Model {
     this.busyPhase = '',
     this.busySource = '',
     this.busyLastEventMs = -1,
+    this.runStalled = false,
     this.mouseCapture = true,
     this.spinnerFrame = 0,
     this.stickyLines = const [],
@@ -322,6 +323,12 @@ final class FaTuiModel extends Model {
   /// Last activity timestamp while busy (any non-tick message). Feeds the
   /// "quiet Nm" hint and the watchdog.
   final int busyLastEventMs;
+
+  /// Whether the run is currently wedged (issue #514): pushed by the
+  /// host's wedge watchdog (heartbeat silent past `steeringStaleAfter`)
+  /// — the busy row's `Stalled…` label reads this instead of guessing
+  /// from TUI output activity.
+  final bool runStalled;
 
   /// Pending scheduled follow-up messages (`schedule_message` records this
   /// instance can still deliver); 0 hides the indicator row (issue #115).
@@ -606,6 +613,7 @@ final class FaTuiModel extends Model {
     List<({int dueMs, String preview})>? waitingTimers,
     int? waitingLostJobs,
     bool? scheduledTickPending,
+    bool? runStalled,
     Object? historyDraft = _unset,
     FaHubState? hub,
     bool clearHub = false,
@@ -636,6 +644,7 @@ final class FaTuiModel extends Model {
       menuAllItems: menuAllItems ?? this.menuAllItems,
       pickerId: pickerId ?? this.pickerId,
       pickerTitle: pickerTitle ?? this.pickerTitle,
+      runStalled: runStalled ?? this.runStalled,
       termWidth: termWidth ?? this.termWidth,
       termHeight: termHeight ?? this.termHeight,
       busy: busy ?? this.busy,
@@ -712,6 +721,7 @@ final class FaTuiModel extends Model {
         (busy &&
             msg is! SpinnerTickMsg &&
             msg is! BusyMsg &&
+            msg is! RunStalledMsg &&
             msg is! ScheduledTickMsg)
         ? copyWith(busyLastEventMs: DateTime.now().millisecondsSinceEpoch)
         : this;
@@ -733,6 +743,7 @@ final class FaTuiModel extends Model {
     // output and skip its render. The host's delayed _QuitRequestedMsg is
     // the only quit path that matters.
     if (msg is BusyMsg) return _handleBusyMsg(msg);
+    if (msg is RunStalledMsg) return _handleRunStalled(msg);
     if (msg is SpinnerTickMsg) return _handleSpinnerTick();
     if (msg is DrainQueueMsg) return _handleDrainQueue(msg);
     if (msg is ClearQueueMsg) return _handleClearQueue();
@@ -818,6 +829,12 @@ final class FaTuiModel extends Model {
     return _applyBusyTransition(msg);
   }
 
+  /// The wedge watchdog's liveness push (issue #514): flips the busy row's
+  /// label to `Stalled…` (and back) without touching the elapsed window —
+  /// the stall is a STATE, not a phase relabel.
+  (Model, Cmd?) _handleRunStalled(RunStalledMsg msg) =>
+      (copyWith(runStalled: msg.stalled), null);
+
   /// A phase relabel on a BUSY model: swap the label over the SAME elapsed
   /// window and never schedule another tick here — extra chains would
   /// multiply repaint timers.
@@ -860,6 +877,10 @@ final class FaTuiModel extends Model {
         busyPhase: '',
         busySource: msg.busy ? (msg.source ?? '') : '',
         busyLastEventMs: msg.busy ? DateTime.now().millisecondsSinceEpoch : -1,
+        // A new bracket always starts unstalled: the host pushes the
+        // stall state per-episode, so a stale `Stalled…` must never
+        // leak into the next run (issue #514).
+        runStalled: msg.busy ? runStalled : false,
         spinnerFrame: 0,
         stickyLines: msg.busy ? null : const [],
         stickyIndex: msg.busy ? null : -1,
@@ -867,7 +888,6 @@ final class FaTuiModel extends Model {
       msg.busy ? _scheduleSpinnerTick() : null,
     );
   }
-
   /// Last-resort busy bracket: a row with zero activity for this long is a
   /// wedge — every arm site has a matching release, so a fire means a bug.
   /// The diagnostic log names the last armer.
@@ -2686,6 +2706,13 @@ final class FaTuiController {
     _send(
       WaitingStatusMsg(jobs: jobs, timers: timers, lostJobs: lostJobs),
     );
+  }
+
+  /// Pushes the run-liveness state (issue #514): `true` flips the busy row
+  /// to `Stalled…` while the wedge watchdog sees a stale heartbeat. No
+  /// busy guard — the model renders the label only while the row is up.
+  void setRunStalled(bool stalled) {
+    _send(RunStalledMsg(stalled));
   }
 
   /// Pushes the background-job board's live region (issue #429): summary
