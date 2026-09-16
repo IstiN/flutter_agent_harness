@@ -16,11 +16,14 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show bundledCatalogEndpoints, bundledCatalogModelIds;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pty2/pty2.dart';
 import 'package:xterm/xterm.dart';
@@ -57,30 +60,34 @@ const faTerminalTheme = TerminalTheme(
 const faTerminalStyle = TerminalStyle(fontFamily: 'JetBrainsMono');
 
 /// The Fa CLI running in a PTY, mirrored into an xterm [Terminal].
+///
+/// Hermetic by default (issue #508): [spawn] gives the child a fresh temp
+/// HOME unless the caller passes an explicit one, so an omitted override
+/// can never boot the CLI against the developer's real `~/.fah` — and the
+/// leak guard fails any test whose screen shows a marker of the real
+/// config (see [screenshot]).
 final class CliVisualHarness {
-  CliVisualHarness._({required this.pty, required this.terminal});
+  CliVisualHarness._({
+    required this.pty,
+    required this.terminal,
+    required this.sandboxHome,
+  });
 
   /// Spawns the Fa CLI with a PTY. The PTY starts at pty2's default size;
   /// [pumpTerminalView] resizes it to the real view size before boot
   /// completes, so the CLI draws its first frame at the final geometry.
   ///
   /// [repoRoot] is the flutter_agent repo root (the CLI's working
-  /// directory). [extraEnv] overrides env vars (e.g. `{'HOME': tempHome}`).
+  /// directory). [extraEnv] overrides env vars. When it carries no `HOME`
+  /// the harness creates a fresh temp HOME for the child (exposed as
+  /// [sandboxHome], deleted by [close]) — a test that forgets the override
+  /// can no longer read the developer's real `~/.fah` (issue #508).
   static Future<CliVisualHarness> spawn({
     required String repoRoot,
     Map<String, String>? extraEnv,
     List<String> args = const [],
   }) async {
-    final env = <String, String>{
-      'TERM': 'xterm-256color',
-      'COLORTERM': 'truecolor',
-      // `dart` resolves packages from the pub cache, which lives under the
-      // REAL home; pty2 only forwards a fixed env whitelist, so pass it
-      // explicitly. Without this a HOME override breaks package resolution.
-      if (Platform.environment['PUB_CACHE'] != null)
-        'PUB_CACHE': Platform.environment['PUB_CACHE']!,
-      ...?extraEnv,
-    };
+    final (env, sandboxHome) = resolveSpawnEnv(extraEnv);
     final pty = PseudoTerminal.start(
       'dart',
       // `dart bin/fah.dart`, NOT `dart run ...`: `dart run` spawns a
@@ -95,6 +102,7 @@ final class CliVisualHarness {
     final harness = CliVisualHarness._(
       pty: pty,
       terminal: Terminal(maxLines: 200),
+      sandboxHome: sandboxHome,
     );
     harness.startListening();
     // Answer the CLI's terminal queries (device attributes etc.) so it
@@ -103,11 +111,39 @@ final class CliVisualHarness {
     return harness;
   }
 
+  /// The child environment for [spawn] plus the temp HOME the harness
+  /// created when [extraEnv] carried no `HOME` (null otherwise). Split from
+  /// spawn so the sandbox default is unit-testable without a PTY.
+  static (Map<String, String>, Directory?) resolveSpawnEnv(
+    Map<String, String>? extraEnv,
+  ) {
+    final env = <String, String>{
+      'TERM': 'xterm-256color',
+      'COLORTERM': 'truecolor',
+      // `dart` resolves packages from the pub cache, which lives under the
+      // REAL home; pty2 only forwards a fixed env whitelist, so pass it
+      // explicitly. Without this a HOME override breaks package resolution.
+      if (Platform.environment['PUB_CACHE'] != null)
+        'PUB_CACHE': Platform.environment['PUB_CACHE']!,
+      ...?extraEnv,
+    };
+    if (env.containsKey('HOME')) return (env, null);
+    // Hermetic default: a fresh HOME so an omitted override cannot boot
+    // the CLI against the developer's real ~/.fah (issue #508).
+    final sandbox = Directory.systemTemp.createTempSync('fa_visual_home_');
+    env['HOME'] = sandbox.path;
+    return (env, sandbox);
+  }
+
   /// The pseudo-terminal running the CLI process.
   final PseudoTerminal pty;
 
   /// The xterm terminal emulator — receives all PTY output.
   final Terminal terminal;
+
+  /// The temp HOME this harness created for the child (null when the
+  /// caller supplied a HOME explicitly — then the caller owns cleanup).
+  final Directory? sandboxHome;
 
   /// The widget tester driving the [TerminalView]; set by [attach].
   late final WidgetTester _tester;
@@ -207,7 +243,14 @@ final class CliVisualHarness {
     });
     File('$dir/$name.png').writeAsBytesSync(bytes);
     File('$dir/$name.txt').writeAsStringSync(screenText);
+    final hit = findConfigLeak(screenText, realConfigMarkers());
+    if (hit != null) _leakHits.add('$name: "$hit"');
   }
+
+  /// Screens whose `.txt` twin contained a real-config marker, as
+  /// `<screen>: "<marker>"` — reported (and failed) by [close] so the PTY
+  /// is always cleaned up before the suite goes red.
+  final _leakHits = <String>[];
 
   /// Sends text (arrives as keystrokes on the raw PTY).
   void sendText(String text) => pty.write(text);
@@ -346,8 +389,10 @@ final class CliVisualHarness {
   String get screenText => screenLines.join('\n');
 
   /// Kills the CLI process, cancels the output subscription (otherwise an
-  /// open stream keeps the test runner's event loop alive), and waits for
-  /// the process to exit.
+  /// open stream keeps the test runner's event loop alive), deletes a
+  /// harness-created [sandboxHome], waits for the process to exit — and
+  /// fails the test when [screenshot] recorded a real-config leak
+  /// (issue #508), naming every offending screen.
   Future<void> close() async {
     await _live(() async {
       pty.kill();
@@ -357,5 +402,99 @@ final class CliVisualHarness {
       );
       await _outputSub?.cancel();
     });
+    final sandbox = sandboxHome;
+    if (sandbox != null && sandbox.existsSync()) {
+      sandbox.deleteSync(recursive: true);
+    }
+    if (_leakHits.isNotEmpty) {
+      throw StateError(
+        'cli_visual leaked the real user config onto ${_leakHits.length} '
+        'screen(s) — boot without an explicit HOME is no longer possible, '
+        'so a fixture is showing real data:\n  ${_leakHits.join('\n  ')}',
+      );
+    }
   }
+}
+
+/// The real user config's markers on THIS machine: every value a leaked
+/// screen could show — the top-level `model:`/`baseUrl:`, every
+/// `customProviders` name/modelId/baseUrl, and every live-fetched id from
+/// `~/.fah/model_cache.json`. API keys are deliberately NOT markers (the
+/// CLI never prints them and they must never appear in a failure message).
+/// Empty on machines without a real config (CI) — nothing real to leak.
+///
+/// Pure helper split ([configLeakMarkers]) so the extraction is
+/// unit-testable; the result is cached per process.
+Set<String> realConfigMarkers() {
+  final home = Platform.environment['HOME'];
+  if (home == null) return const {};
+  final config = File('$home/.fah/config.yaml');
+  final cache = File('$home/.fah/model_cache.json');
+  return _markerCache ??= configLeakMarkers(
+    config.existsSync() ? config.readAsStringSync() : '',
+    cache.existsSync() ? cache.readAsStringSync() : '',
+  );
+}
+
+Set<String>? _markerCache;
+
+/// Extracts leak markers from a real config's text: scalar values of the
+/// model-identifying keys plus, when [modelCacheText] parses as JSON, every
+/// fetched model id (the cache's shape is `{"<provider>": {"ids": [...]}}`).
+/// Ids the CLI can show WITHOUT any config (the bundled offline catalog)
+/// are subtracted — a hermetic screen legitimately renders them, so they
+/// are not leak evidence (issue #508).
+Set<String> configLeakMarkers(String configText, String modelCacheText) {
+  final markers = <String>{
+    // `key: value` scalars, including `- name: x` list items (the
+    // customProviders shape) — a yaml block: no quoted values in practice,
+    // URLs and ids never carry spaces.
+    for (final match in RegExp(
+      r'^\s*(?:-\s+)?(model|baseUrl|name|modelId):\s*(\S+)\s*$',
+      multiLine: true,
+    ).allMatches(configText))
+      if (match.group(2)!.length >= 3) match.group(2)!,
+  };
+  try {
+    final cache = jsonDecode(modelCacheText);
+    if (cache is Map) {
+      for (final provider in cache.values) {
+        if (provider is Map) {
+          final ids = provider['ids'];
+          if (ids is List) {
+            markers.addAll(
+              ids.whereType<String>().where((id) => id.length >= 3),
+            );
+          }
+        }
+      }
+    }
+  } on FormatException {
+    // A non-JSON cache file contributes no markers.
+  }
+  // Drop bundled-catalog content: the /models screen renders catalog ids
+  // and the provider picker renders catalog endpoints on any machine. A
+  // real id is dropped when its bare form equals, extends or is extended
+  // by a catalog name — 'openai/gpt-4o-mini' and the live id
+  // 'openai/gpt-4.1' (a prefix of the catalog's 'gpt-4.1-mini') both
+  // collide with legitimate catalog rows; a distinctive id like
+  // 'epam/secret-model' stays. URLs match by exact catalog membership.
+  final bundled = {...bundledCatalogModelIds, ...bundledCatalogEndpoints};
+  bool ambiguousWithCatalog(String marker) {
+    if (bundled.contains(marker)) return true;
+    if (marker.contains('://')) return false;
+    final bare = marker.split('/').last;
+    return bundled.any((b) => b.startsWith(bare) || bare.startsWith(b));
+  }
+
+  markers.removeWhere(ambiguousWithCatalog);
+  return markers;
+}
+
+/// The first [markers] entry appearing in [screenText], or null.
+String? findConfigLeak(String screenText, Set<String> markers) {
+  for (final marker in markers) {
+    if (screenText.contains(marker)) return marker;
+  }
+  return null;
 }
