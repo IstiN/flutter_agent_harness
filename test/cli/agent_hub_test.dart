@@ -464,7 +464,7 @@ void main() {
       );
       expect(
         deferredPanelTransitionLine(panel..state = DeferredPanelState.dead),
-        '[btw] steering from you → dead',
+        '[btw] steering from you → queued (agent stalled)',
       );
     });
 
