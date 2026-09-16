@@ -29,6 +29,7 @@ part 'fa_tui_rows.dart';
 part 'fa_tui_paste.dart';
 part 'fa_tui_theme_swap.dart';
 part 'fa_tui_controller_io.dart';
+part 'fa_tui_picker.dart';
 part 'fa_tui_composer.dart';
 
 /// Translates the (web-safe) headless test hooks into dart_tui program
@@ -463,7 +464,6 @@ final class FaTuiModel extends Model {
     return rows;
   }
 
-
   /// Whether the sticky user echo is pinned right now: a run is streaming
   /// and the echo has FULLY scrolled above the visible window. Rows are
   /// counted wrapped (earlier lines may wrap), and the echo counts as out
@@ -539,7 +539,6 @@ final class FaTuiModel extends Model {
       followTail: next >= _scrollBottom(wrapped),
     );
   }
-
 
   /// The output history formatted and wrapped to physical rows at [width]
   /// (default: the current terminal width). All scroll math happens in
@@ -888,6 +887,7 @@ final class FaTuiModel extends Model {
       msg.busy ? _scheduleSpinnerTick() : null,
     );
   }
+
   /// Last-resort busy bracket: a row with zero activity for this long is a
   /// wedge — every arm site has a matching release, so a fire means a bug.
   /// The diagnostic log names the last armer.
@@ -1742,190 +1742,6 @@ final class FaTuiModel extends Model {
     return (this, null);
   }
 
-  /// Picker mode: arrows navigate, enter/tab select, esc closes. Every
-  /// picker has a type-to-filter input — the models picker rebuilds through
-  /// the host callback, generic pickers (sessions, settings, agents, ...)
-  /// filter their static item list locally.
-  (Model, Cmd?) _handlePickerKey(KeyMsg msg) {
-    return _handlePickerNavKey(msg) ?? _handlePickerSelectKey(msg);
-  }
-
-  /// Picker navigation keys (esc/arrows/pgup/pgdown); null when the key
-  /// belongs to the select/filter cluster.
-  (Model, Cmd?)? _handlePickerNavKey(KeyMsg msg) {
-    return _handlePickerEscKey(msg) ??
-        _handlePickerArrowKey(msg) ??
-        _handlePickerPageKey(msg);
-  }
-
-  /// Picker esc: closes the picker; generic pickers also report the
-  /// cancellation to the host (wizard flows wait on the answer). Null when
-  /// the key belongs to another cluster.
-  (Model, Cmd?)? _handlePickerEscKey(KeyMsg msg) {
-    final isModelsPicker = pickerId == 'models';
-    switch (msg.key) {
-      case 'esc':
-        if (!isModelsPicker && pickerId.isNotEmpty) {
-          callbacks.onPickerCancelled?.call(pickerId);
-        }
-        return (
-          copyWith(
-            menuOpen: false,
-            menuModelMode: false,
-            modelFilter: '',
-            menuAllItems: const [],
-            pickerId: '',
-            pickerTitle: '',
-          ),
-          null,
-        );
-      default:
-        return null;
-    }
-  }
-
-  /// Picker arrow keys (↑/↓); null when the key belongs to another cluster.
-  (Model, Cmd?)? _handlePickerArrowKey(KeyMsg msg) {
-    switch (msg.key) {
-      case 'up':
-        return (
-          copyWith(menuSelected: menuSelected > 0 ? menuSelected - 1 : 0),
-          null,
-        );
-      case 'down':
-        return (
-          copyWith(
-            menuSelected: menuSelected < menuItems.length - 1
-                ? menuSelected + 1
-                : menuSelected,
-          ),
-          null,
-        );
-      default:
-        return null;
-    }
-  }
-
-  /// Picker page keys (pgup/pgdown jump to the first/last item); null when
-  /// the key belongs to another cluster.
-  (Model, Cmd?)? _handlePickerPageKey(KeyMsg msg) {
-    switch (msg.key) {
-      case 'pgup':
-        return (copyWith(menuSelected: 0), null);
-      case 'pgdown':
-        return (
-          copyWith(menuSelected: menuItems.isEmpty ? 0 : menuItems.length - 1),
-          null,
-        );
-      default:
-        return null;
-    }
-  }
-
-  /// Picker select/filter keys (backspace/enter/tab/type-to-filter).
-  (Model, Cmd?) _handlePickerSelectKey(KeyMsg msg) {
-    return _handlePickerBackspaceKey(msg) ??
-        _handlePickerAcceptKey(msg) ??
-        _pickerTypeFilter(msg);
-  }
-
-  /// Picker backspace: trims the filter and rebuilds the item list (the
-  /// models picker via [FaTuiCallbacks.buildModelMenu], generic pickers by
-  /// locally filtering [menuAllItems]). Null when the key belongs to another
-  /// cluster.
-  (Model, Cmd?)? _handlePickerBackspaceKey(KeyMsg msg) {
-    switch (msg.key) {
-      case 'backspace':
-        if (modelFilter.isEmpty) return (this, null);
-        final nextFilter = modelFilter.substring(0, modelFilter.length - 1);
-        return (_filteredPicker(nextFilter), null);
-      default:
-        return null;
-    }
-  }
-
-  /// The picker state with [filter] applied: the models picker rebuilds via
-  /// the host callback, generic pickers filter [menuAllItems] locally
-  /// (case-insensitive contains over label + description).
-  FaTuiModel _filteredPicker(String filter) {
-    final isModelsPicker = pickerId == 'models';
-    final items = isModelsPicker
-        ? callbacks.buildModelMenu(filter, termWidth)
-        : _filterItems(menuAllItems, filter);
-    return copyWith(modelFilter: filter, menuItems: items, menuSelected: 0);
-  }
-
-  /// The local generic-picker filter: [items] whose label or description
-  /// contains [filter] (case-insensitive); an empty filter keeps everything.
-  static List<MenuItem> _filterItems(List<MenuItem> items, String filter) {
-    final query = filter.trim().toLowerCase();
-    if (query.isEmpty) return items;
-    return [
-      for (final item in items)
-        if ('${item.label} ${item.description}'.toLowerCase().contains(query))
-          item,
-    ];
-  }
-
-  /// Picker accept (enter/tab): closes the picker and resolves the
-  /// selection through the host (the model pick for the models picker,
-  /// [FaTuiCallbacks.onPickerSelected] for generic pickers). Null when the
-  /// key belongs to another cluster.
-  (Model, Cmd?)? _handlePickerAcceptKey(KeyMsg msg) {
-    switch (msg.key) {
-      case 'enter':
-      case 'tab':
-        if (menuItems.isEmpty) return (this, null);
-        return _acceptPickerAt(menuSelected);
-      default:
-        return null;
-    }
-  }
-
-  /// Accepts the picker row at [index] — the shared accept flow for the
-  /// keyboard (enter/tab on [menuSelected]) and the mouse (a menuRow hit
-  /// region, issue #278). Closes the picker and resolves the selection
-  /// through the host ([FaTuiCallbacks.onPickerSelected] for pickers).
-  (Model, Cmd?) _acceptPickerAt(int index) {
-    final pickerId = this.pickerId;
-    final isModelsPicker = pickerId == 'models';
-    final item = menuItems[index];
-    if (item.key.isEmpty) return (this, null);
-    return (
-      copyWith(
-        menuOpen: false,
-        menuModelMode: false,
-        modelFilter: '',
-        menuAllItems: const [],
-        pickerId: '',
-        pickerTitle: '',
-        inputText: '',
-        cursor: 0,
-      ),
-      () async {
-        if (isModelsPicker) {
-          await callbacks.onModelSelected(item.key);
-        } else {
-          await callbacks.onPickerSelected?.call(pickerId, item.key);
-        }
-        return null;
-      },
-    );
-  }
-
-  /// Picker type-to-filter: each printable character extends the filter and
-  /// rebuilds the item list (host callback for the models picker, a local
-  /// [menuAllItems] filter for generic pickers).
-  (Model, Cmd?) _pickerTypeFilter(KeyMsg msg) {
-    if (_isCommandKeystroke(msg.key)) return (this, null);
-    final text = msg.keyEvent.text;
-    if (text.isNotEmpty && text.length == 1) {
-      if (text == ' ' && modelFilter.isEmpty) return (this, null);
-      return (_filteredPicker(modelFilter + text), null);
-    }
-    return (this, null);
-  }
-
   /// Prompt-mode key routing: forwards the key to [handleTuiPromptKey] and
   /// resolves the host completer when it produces an answer (closing the
   /// prompt zone and handing control back to normal input).
@@ -2344,9 +2160,6 @@ final class FaTuiModel extends Model {
     return 1 + _writeMenuItems(b, baseRow + 1);
   }
 
-
-
-
   /// Matches a code-fence opener/closer line exactly like the view-time
   /// markdown walk (ansi_markdown.dart `_fenceRe`): parity over the
   /// retained history must agree with what the renderer will compute.
@@ -2448,8 +2261,9 @@ List<WrappedComposerRow> wrapComposerRows(String line, int width) =>
     _ComposerWrap(width < 1 ? 1 : width).run(line);
 
 /// Plain-row view of [wrapComposerRows].
-List<String> wrapComposerLine(String line, int width) =>
-    [for (final row in wrapComposerRows(line, width)) row.text];
+List<String> wrapComposerLine(String line, int width) => [
+  for (final row in wrapComposerRows(line, width)) row.text,
+];
 
 /// The greedy-wrap state machine behind [wrapComposerRows]. One mutable
 /// walker per line; kept as a class so every method stays inside the CRAP
@@ -2703,9 +2517,7 @@ final class FaTuiController {
     required List<({int dueMs, String preview})> timers,
     int lostJobs = 0,
   }) {
-    _send(
-      WaitingStatusMsg(jobs: jobs, timers: timers, lostJobs: lostJobs),
-    );
+    _send(WaitingStatusMsg(jobs: jobs, timers: timers, lostJobs: lostJobs));
   }
 
   /// Pushes the run-liveness state (issue #514): `true` flips the busy row
