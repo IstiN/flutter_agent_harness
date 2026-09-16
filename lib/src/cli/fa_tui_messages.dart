@@ -159,3 +159,73 @@ final class HubStateMsg extends Msg {
 final class _CloseHubMsg extends Msg {
   const _CloseHubMsg();
 }
+
+/// ─── Output-history append machinery (moved out of FaTuiModel to keep
+/// the model file under the 2800-line gate; same library, same members) ───
+  /// Matches a code-fence opener/closer line exactly like the view-time
+  /// markdown walk (ansi_markdown.dart `_fenceRe`): parity over the
+  /// retained history must agree with what the renderer will compute.
+final RegExp _fenceLineStart = RegExp(r'^\s*```');
+
+List<String> _appendToHistory(
+    List<String> lines,
+    String text,
+    bool newline,
+  ) {
+    if (text.isEmpty && !newline) return lines;
+    final result = List.of(lines);
+    final parts = text.split('\n');
+    if (result.isEmpty) result.add('');
+    result[result.length - 1] += parts.first;
+    for (var i = 1; i < parts.length; i++) {
+      result.add(parts[i]);
+    }
+    if (newline) result.add('');
+    // A streamed paragraph with no trailing newline grows the last line
+    // without bound: minutes-long thinking bursts produced HUNDRED-KB
+    // lines, and TranscriptMarkdown's (throttled) tail passes re-format +
+    // re-wrap the WHOLE line each pass — the event loop stalled in bursts
+    // and typing froze. Cap the tail: hard-split an oversized last line
+    // into bounded chunks. Soft wrap renders them identically (the text
+    // continues at the same cell); only an inline span crossing the rare
+    // split point loses its styling into the next chunk.
+    const maxTailLineChars = 32 * 1024;
+    const tailChunkChars = 16 * 1024;
+    if (result.last.length > maxTailLineChars) {
+      final tail = result.last;
+      result
+        ..removeLast()
+        ..addAll([
+          for (var i = 0; i < tail.length; i += tailChunkChars)
+            tail.substring(i, (i + tailChunkChars).clamp(0, tail.length)),
+        ]);
+    }
+    // Keep the history bounded — but AMORTIZED. Trimming back to exactly
+    // maxLines on EVERY append drops the oldest line each flush, and a
+    // changed first line breaks TranscriptMarkdown's boundary identity, so
+    // once an answer crossed the cap every 50 ms streaming flush paid a
+    // full O(history) formatAll+wrap pass (~27 ms at 2000 lines — over half
+    // the flush budget): constant scroll/typing jank for long answers. A
+    // slack window lets ordinary appends stay on the incremental path; one
+    // batch rebuild per [trimSlack] dropped lines is imperceptible.
+    const maxLines = 2000;
+    const trimSlack = 400;
+    if (result.length > maxLines + trimSlack) {
+      // A cut landing inside a fenced code block leaves the retained
+      // history with an open fence: the block's closing ``` then toggles
+      // the walk OPEN and every markdown line after it renders verbatim
+      // (raw **/### walls after a long stream). Count fence lines in the
+      // DROPPED head — the state the rebuilt walk starts in — and prepend
+      // a synthetic closing fence when it is open. The same trick
+      // tui_replay.dart uses for truncated replays.
+      final cut = result.length - maxLines;
+      var open = false;
+      for (var i = 0; i < cut; i++) {
+        if (_fenceLineStart.hasMatch(result[i])) open = !open;
+      }
+      final trimmed = result.sublist(cut);
+      if (open) trimmed.insert(0, '```');
+      return trimmed;
+    }
+    return result;
+  }

@@ -9,7 +9,78 @@ extension _TuiComposerLayout on FaTuiModel {
   /// terminal width, so a long single line occupies several rows. All
   /// layout math (viewport height, cursor homing) must use this count —
   /// the raw `\n` count lies once a line wraps.
-  int get _inputLineCount => _wrappedInput().$1.length;
+  int get _inputLineCount => _sentEchoPinActive
+      ? _sentEchoRows(termWidth).length
+      : _wrappedInput().$1.length;
+
+  /// Whether the composer region currently pins the sent echo: a turn is
+  /// running, nothing is being typed, a submitted message is on hand, and
+  /// the top sticky is not already showing it (scrolled out). While pinned,
+  /// the history window hides the echo block ([_visibleWrappedRows]) so the
+  /// message renders EXACTLY once — in the composer region, where the
+  /// owner's #467 width-clip AC reads it back mid-run.
+  bool get _sentEchoPinActive =>
+      busy &&
+      inputText.isEmpty &&
+      sentEchoLines.isNotEmpty &&
+      !_stickyActive;
+
+  /// The pinned sent echo rows: a dim full-width rule over the message
+  /// wrapped to width, each row padded to the full user-message band so a
+  /// repaint never leaves stale tail cells.
+  List<String> _sentEchoRows(int width) {
+    final w = width < 1 ? 1 : width;
+    final rows = <String>[_dim('─' * w)];
+    for (final line in sentEchoLines) {
+      for (final slice in wrapAnsiLine(line, w)) {
+        final pad = (w - tuiTextWidth(slice)).clamp(0, w);
+        rows.add(
+          '${tuiUserMessageBgSgr()}${tuiUserMessageTextSgr()}$slice'
+          '${' ' * pad}\x1b[0m',
+        );
+      }
+    }
+    return rows;
+  }
+
+  /// The history window's rows with the echo block removed while the sent
+  /// echo is pinned in the composer region — the message must not render
+  /// twice ("no pinned duplicate" contract). Row math above the span is
+  /// untouched; the reply flows straight under the pinned block.
+  List<String> _visibleWrappedRows(List<String> wrapped) {
+    if (!_sentEchoPinActive) return wrapped;
+    final starts = _wrapCache.lineStartRows;
+    if (stickyIndex < 0 || stickyIndex + 1 >= starts.length) return wrapped;
+    final echoEndLine = (stickyIndex + stickyEchoLineCount).clamp(
+      0,
+      starts.length - 1,
+    );
+    final startRow = starts[stickyIndex];
+    final endRow = starts[echoEndLine];
+    if (endRow <= startRow || endRow > wrapped.length) return wrapped;
+    return [...wrapped]..removeRange(startRow, endRow);
+  }
+
+  /// The pinned sent echo painted in place of the empty input row; the
+  /// caret homes to the block's first row (typing releases the pin).
+  (int, int) _writeSentEcho(StringBuffer b, int baseRow) {
+    final rows = _sentEchoRows(termWidth);
+    _hitRegions.add(
+      TuiHitRegion(
+        x: 0,
+        y: baseRow,
+        w: termWidth,
+        h: rows.length,
+        kind: TuiRegionKind.composer,
+      ),
+    );
+    for (var i = 0; i < rows.length; i++) {
+      if (i > 0) b.writeln();
+      b.write(rows[i]);
+    }
+    b.writeln();
+    return (0, 0);
+  }
 
   /// Truncates [text] to [maxWidth] (default: the terminal width) with an
   /// ellipsis. Every chrome row (status, menu items) must fit on one
@@ -75,6 +146,7 @@ extension _TuiComposerLayout on FaTuiModel {
   /// the cursor's input line index and screen column for the cursor home.
   /// Registers the composer hit-region (issue #278): click = caret move.
   (int, int) _writeInputLines(StringBuffer b, int baseRow) {
+    if (_sentEchoPinActive) return _writeSentEcho(b, baseRow);
     final (rows, cursorRow, cursorCol) = _wrappedInput();
     _hitRegions.add(
       TuiHitRegion(

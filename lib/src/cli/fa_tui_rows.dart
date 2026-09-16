@@ -221,7 +221,7 @@ extension _TuiRowRenderers on FaTuiModel {
   int _writeAttachmentChips(StringBuffer b, int row) {
     if (attachments.isEmpty) return row;
     for (final attachment in attachments) {
-      b.writeln(_accent2Plain(attachment.chip));
+      b.writeln(_accent2Plain(_clipToWidth(attachment.chip)));
       row++;
     }
     b.writeln(_dim('chips send with your next message'));
@@ -232,10 +232,12 @@ extension _TuiRowRenderers on FaTuiModel {
   /// differently from plain queued sends.
   static String _queueBadge(bool steer) => steer ? '⤳ [steer] ' : '❯ ';
 
-  /// Clips a live row to the frame width, ellipsising the tail (resize-safe).
-  String _clipToWidth(String line) => line.length > termWidth - 2
-      ? '${line.substring(0, termWidth - 3)}…'
-      : line;
+  /// Clips a live row to the frame width in terminal CELLS, ellipsising the
+  /// tail (resize-safe). The old UTF-16 clip undercounted wide glyphs: a
+  /// CJK row passed the clip at 60 code units yet measured 120 cells, the
+  /// TERMINAL hard-wrapped it, and every lower row drifted one line (the
+  /// owner's #467 artifact evidence — double board ghosts, footer lost).
+  String _clipToWidth(String line) => tuiFitWidth(line, termWidth - 2);
 
   /// The scheduled follow-ups indicator line (one dim row): count + the
   /// nearest ETA, styled after the busy row so it reads as one family.
@@ -247,7 +249,7 @@ extension _TuiRowRenderers on FaTuiModel {
         ? ' · due now'
         : ' · next in '
               '${ScheduledMessageQueue.formatDelay(Duration(milliseconds: scheduledNextDueMs - now))}';
-    return _dim('⏰ $scheduledCount scheduled$eta');
+    return _dim(_clipToWidth('⏰ $scheduledCount scheduled$eta'));
   }
 
   /// The visible-waiting rows (issue #450): headline row (`⏳ waiting ·
@@ -260,6 +262,7 @@ extension _TuiRowRenderers on FaTuiModel {
     waitingTimers: waitingTimers,
     waitingLostJobs: waitingLostJobs,
     nowMs: nowFn().millisecondsSinceEpoch,
+    width: termWidth,
   );
 
   /// The visible-waiting push (issue #450): replaces the waiter aggregate;
@@ -291,6 +294,7 @@ List<String> waitingRowLines({
   required List<({int dueMs, String preview})> waitingTimers,
   required int waitingLostJobs,
   required int nowMs,
+  required int width,
 }) {
   if (busy) return const [];
   if (waitingJobs.isEmpty && waitingTimers.isEmpty) return const [];
@@ -299,10 +303,14 @@ List<String> waitingRowLines({
       : ScheduledMessageQueue.formatDelay(
           Duration(milliseconds: dueMs - nowMs),
         );
+  // Every row is clipped to the live width BEFORE the dim SGR goes on
+  // (#467): a wide-glyph job purpose that passed a code-unit clip still
+  // hardware-wrapped and drifted the whole lower frame.
+  String clip(String inner) => tuiFitWidth(inner, width < 3 ? 1 : width - 2);
   final lines = <String>[
-    _waitingHeadLine(waitingJobs, waitingTimers, etaOf),
-    ..._waitingDetailLines(waitingJobs, waitingTimers, etaOf),
-    if (waitingLostJobs > 0) _waitingLostLine(waitingLostJobs),
+    _waitingHeadLine(waitingJobs, waitingTimers, etaOf, clip),
+    ..._waitingDetailLines(waitingJobs, waitingTimers, etaOf, clip),
+    if (waitingLostJobs > 0) _waitingLostLine(waitingLostJobs, clip),
   ];
   return lines;
 }
@@ -312,6 +320,7 @@ String _waitingHeadLine(
   List<String> jobs,
   List<({int dueMs, String preview})> timers,
   String Function(int) etaOf,
+  String Function(String) clip,
 ) {
   final head = StringBuffer('⏳ waiting');
   if (jobs.length == 1) {
@@ -328,7 +337,7 @@ String _waitingHeadLine(
           : ' · ${timers.length} timers · next wake in $eta',
     );
   }
-  return _dim(head.toString());
+  return _dim(clip(head.toString()));
 }
 
 /// Detail rows exist only when a count hides something (>1 of a kind);
@@ -337,18 +346,19 @@ List<String> _waitingDetailLines(
   List<String> jobs,
   List<({int dueMs, String preview})> timers,
   String Function(int) etaOf,
+  String Function(String) clip,
 ) {
   final details = <String>[
     if (jobs.length > 1) ...jobs,
     if (timers.length > 1)
       ...timers.map((t) => '${t.preview} · due in ${etaOf(t.dueMs)}'),
   ];
-  return [for (final detail in details.take(2)) _dim('  $detail')];
+  return [for (final detail in details.take(2)) _dim(clip('  $detail'))];
 }
 
 /// The restart-honesty note: waiters lost to the previous run's exit.
-String _waitingLostLine(int lost) {
+String _waitingLostLine(int lost, String Function(String) clip) {
   final noun = 'background job${lost == 1 ? '' : 's'}';
   final verb = lost == 1 ? 'was' : 'were';
-  return _dim('$lost $noun from the previous run $verb lost');
+  return _dim(clip('$lost $noun from the previous run $verb lost'));
 }

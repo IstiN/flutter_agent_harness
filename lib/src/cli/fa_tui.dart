@@ -222,6 +222,7 @@ final class FaTuiModel extends Model {
     this.stickyLines = const [],
     this.stickyIndex = -1,
     this.stickyEchoLineCount = 0,
+    this.sentEchoLines = const [],
     this.queue = const [],
     this.attachments = const [],
     this.inputHistory = const [],
@@ -375,6 +376,14 @@ final class FaTuiModel extends Model {
   /// scrolled out of view.
   final int stickyEchoLineCount;
 
+  /// The FULL submitted message's logical lines, pinned INSIDE the composer
+  /// region (rule + wrapped band) while its turn runs and the input sits
+  /// empty — the message's on-screen home during the run (owner #467 width
+  /// clip AC: "the composed line survived intact through the run"). The
+  /// history window hides the echo block for the same span (no duplicate),
+  /// the zone releases as soon as typing resumes, and busy-off clears it.
+  final List<String> sentEchoLines;
+
   /// Messages typed while a run streams (kimi-cli's queue): Enter enqueues
   /// a follow-up, ↑ pops the last one back into the input, ctrl+x deletes
   /// it, ctrl+s steers everything into the running agent, and the host
@@ -449,7 +458,13 @@ final class FaTuiModel extends Model {
       if (same) return cached;
     }
     final md = AnsiMarkdown(width: width);
-    final rows = [for (final line in src) md.formatLine(line)];
+    // Each formatted line WRAPS to physical rows (#467): a stored line that
+    // still overflows the width (resize shrink, degenerate budgets) must
+    // not hardware-wrap the pinned block — stickyH and the painter both
+    // count these rows, so the wrap lives exactly here.
+    final rows = [
+      for (final line in src) ...wrapAnsiLine(md.formatLine(line), width),
+    ];
     _stickyFmtSource = List.of(src);
     _stickyFmtWidth = width;
     _stickyFmtRows = rows;
@@ -592,6 +607,7 @@ final class FaTuiModel extends Model {
     List<String>? stickyLines,
     int? stickyIndex,
     int? stickyEchoLineCount,
+    List<String>? sentEchoLines,
     List<QueuedMessage>? queue,
     List<TuiImageAttachment>? attachments,
     List<String>? inputHistory,
@@ -645,6 +661,7 @@ final class FaTuiModel extends Model {
       stickyLines: stickyLines ?? this.stickyLines,
       stickyIndex: stickyIndex ?? this.stickyIndex,
       stickyEchoLineCount: stickyEchoLineCount ?? this.stickyEchoLineCount,
+      sentEchoLines: sentEchoLines ?? this.sentEchoLines,
       queue: queue ?? this.queue,
       attachments: attachments ?? this.attachments,
       inputHistory: inputHistory ?? this.inputHistory,
@@ -860,6 +877,7 @@ final class FaTuiModel extends Model {
         spinnerFrame: 0,
         stickyLines: msg.busy ? null : const [],
         stickyIndex: msg.busy ? null : -1,
+        sentEchoLines: msg.busy ? null : const [],
       ),
       msg.busy ? _scheduleSpinnerTick() : null,
     );
@@ -889,6 +907,7 @@ final class FaTuiModel extends Model {
           busyLastEventMs: -1,
           stickyLines: const [],
           stickyIndex: -1,
+          sentEchoLines: const [],
         ),
         null,
       );
@@ -1961,8 +1980,10 @@ final class FaTuiModel extends Model {
   List<String> _echoAppend(List<String> lines, String text) {
     final rule = _dim('─' * termWidth);
     final styledInput = text.split('\n').map(tuiUserMessageLine).join('\n');
-    final appended = _appendOutput(lines, '$rule\n$styledInput', true);
-    return _appendOutput(appended, '', true);
+    // Body machinery lives in fa_tui_messages.dart (2800-line gate); the
+    // extension parts still call it through this instance member.
+    final appended = _appendToHistory(lines, '$rule\n$styledInput', true);
+    return _appendToHistory(appended, '', true);
   }
 
   /// Submits [text]: echoes the input into the history immediately (no rule
@@ -2010,10 +2031,13 @@ final class FaTuiModel extends Model {
     // The ellipsis is stored PLAIN: the sticky formatter paints it with
     // the current theme at emit time; a baked dim SGR would freeze the
     // old palette after a mid-session /theme switch (issue #279 E1).
+    // Truncation is CELL-aware (#467): a UTF-16 substring let 40 wide
+    // glyphs fill a 79-unit sticky line that painted 80+ cells and
+    // hardware-wrapped the pinned row.
     final firstLine = inputText.split('\n').first;
-    final fits = firstLine.length <= termWidth - 3 || termWidth <= 3;
-    final shown = fits ? firstLine : firstLine.substring(0, termWidth - 3);
-    final more = inputText.contains('\n') || !fits ? ' …' : '';
+    final fits = tuiTextWidth(firstLine) <= termWidth - 3 || termWidth <= 3;
+    final shown = fits ? firstLine : tuiFitWidth(firstLine, termWidth - 3);
+    final more = inputText.contains('\n') ? ' …' : '';
     final cleared = copyWith(
       inputText: '',
       cursor: 0,
@@ -2026,6 +2050,7 @@ final class FaTuiModel extends Model {
       stickyLines: [rule, '${tuiUserMessageLine(shown)}$more'],
       stickyIndex: outputLines.length,
       stickyEchoLineCount: 2 + inputText.split('\n').length,
+      sentEchoLines: inputText.split('\n'),
       attachments: keepAttachments ? null : const [],
     );
     return (
@@ -2046,6 +2071,12 @@ final class FaTuiModel extends Model {
   /// The input history after recording [text]: plain messages only (no
   /// slash/bang commands), consecutive duplicates collapsed, capped at 100.
   /// Extracted from [_submit] to keep its CRAP in budget.
+  static List<String> _appendOutput(
+    List<String> lines,
+    String text,
+    bool newline,
+  ) => _appendToHistory(lines, text, newline);
+
   static List<String> _recordInputHistory(List<String> history, String text) {
     final recordable =
         text.isNotEmpty && !text.startsWith('/') && !text.startsWith('!');
@@ -2181,7 +2212,9 @@ final class FaTuiModel extends Model {
     // cut at wrap points) so streamed text gains styling as closing markers
     // arrive; the pass is memoized in the shared wrap cache, so a frame
     // triggered by scrolling reuses the rows computed on the last change.
-    final wrapped = _wrappedLines();
+    // While the sent echo is pinned in the composer region the echo block
+    // is removed from the window (rendered once, in the region — #467).
+    final wrapped = _visibleWrappedRows(_wrappedLines());
     final offset = _clampScroll(scrollOffset, wrapped);
     final historyRows = _writeHistoryRows(b, height, wrapped, offset);
     _writeScrollIndicator(b, wrapped, offset);
@@ -2318,7 +2351,11 @@ final class FaTuiModel extends Model {
   String _menuTitle() {
     if (!menuModelMode) return '[Commands]';
     final title = pickerId == 'models' ? 'Select model' : pickerTitle;
-    return modelFilter.isNotEmpty ? '[$title: $modelFilter]' : '[$title]';
+    // Cell-aware clip (#467): a long picker filter must not push the title
+    // row past the physical width.
+    return _clipToWidth(
+      modelFilter.isNotEmpty ? '[$title: $modelFilter]' : '[$title]',
+    );
   }
 
   /// The slash/model/picker menu block above the input zone. A picker whose
@@ -2339,75 +2376,6 @@ final class FaTuiModel extends Model {
   }
 
 
-
-
-  /// Matches a code-fence opener/closer line exactly like the view-time
-  /// markdown walk (ansi_markdown.dart `_fenceRe`): parity over the
-  /// retained history must agree with what the renderer will compute.
-  static final RegExp _fenceLineStart = RegExp(r'^\s*```');
-
-  static List<String> _appendOutput(
-    List<String> lines,
-    String text,
-    bool newline,
-  ) {
-    if (text.isEmpty && !newline) return lines;
-    final result = List.of(lines);
-    final parts = text.split('\n');
-    if (result.isEmpty) result.add('');
-    result[result.length - 1] += parts.first;
-    for (var i = 1; i < parts.length; i++) {
-      result.add(parts[i]);
-    }
-    if (newline) result.add('');
-    // A streamed paragraph with no trailing newline grows the last line
-    // without bound: minutes-long thinking bursts produced HUNDRED-KB
-    // lines, and TranscriptMarkdown's (throttled) tail passes re-format +
-    // re-wrap the WHOLE line each pass — the event loop stalled in bursts
-    // and typing froze. Cap the tail: hard-split an oversized last line
-    // into bounded chunks. Soft wrap renders them identically (the text
-    // continues at the same cell); only an inline span crossing the rare
-    // split point loses its styling into the next chunk.
-    const maxTailLineChars = 32 * 1024;
-    const tailChunkChars = 16 * 1024;
-    if (result.last.length > maxTailLineChars) {
-      final tail = result.last;
-      result
-        ..removeLast()
-        ..addAll([
-          for (var i = 0; i < tail.length; i += tailChunkChars)
-            tail.substring(i, (i + tailChunkChars).clamp(0, tail.length)),
-        ]);
-    }
-    // Keep the history bounded — but AMORTIZED. Trimming back to exactly
-    // maxLines on EVERY append drops the oldest line each flush, and a
-    // changed first line breaks TranscriptMarkdown's boundary identity, so
-    // once an answer crossed the cap every 50 ms streaming flush paid a
-    // full O(history) formatAll+wrap pass (~27 ms at 2000 lines — over half
-    // the flush budget): constant scroll/typing jank for long answers. A
-    // slack window lets ordinary appends stay on the incremental path; one
-    // batch rebuild per [trimSlack] dropped lines is imperceptible.
-    const maxLines = 2000;
-    const trimSlack = 400;
-    if (result.length > maxLines + trimSlack) {
-      // A cut landing inside a fenced code block leaves the retained
-      // history with an open fence: the block's closing ``` then toggles
-      // the walk OPEN and every markdown line after it renders verbatim
-      // (raw **/### walls after a long stream). Count fence lines in the
-      // DROPPED head — the state the rebuilt walk starts in — and prepend
-      // a synthetic closing fence when it is open. The same trick
-      // tui_replay.dart uses for truncated replays.
-      final cut = result.length - maxLines;
-      var open = false;
-      for (var i = 0; i < cut; i++) {
-        if (_fenceLineStart.hasMatch(result[i])) open = !open;
-      }
-      final trimmed = result.sublist(cut);
-      if (open) trimmed.insert(0, '```');
-      return trimmed;
-    }
-    return result;
-  }
 }
 
 /// Thin wrapper around [Program] that lets [AgentCli] push output and refresh
