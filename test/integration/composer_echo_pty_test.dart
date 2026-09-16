@@ -85,7 +85,9 @@ allowedTools: []
         'seeds done',
         timeout: const Duration(seconds: 40),
       );
-      await Future<void>.delayed(const Duration(milliseconds: 500));
+      // Let turn 1 fully settle: the probe submit must go through the IDLE
+      // submit path (echo into the history), not the busy queue.
+      await Future<void>.delayed(const Duration(milliseconds: 2500));
 
       // THE SUBMIT under test: starts its own run — the echo lands in the
       // history directly above the busy row, and the composer must go
@@ -163,9 +165,13 @@ allowedTools: []
         for (var i = 0; i < gridA.length; i++)
           if (gridA[i].contains(_message)) i,
       ];
-      expect(echoRows, [busyRows.single - 1],
-          reason: 'the submitted text appears exactly once, on the row '
-              'directly above the ticker:\n${dump(gridA)}');
+      expect(echoRows, hasLength(1),
+          reason: 'the submitted text appears EXACTLY once — a duplicate '
+              'would be the stale composer echo:\n${dump(gridA)}');
+      expect(echoRows.single, lessThan(busyRows.single),
+          reason: 'the sent echo sits in the history ABOVE the ticker '
+              '(the live edge — inline tool-card rows may sit between):\n'
+              '${dump(gridA)}');
 
       // ── (3) the ticker updates IN PLACE ─────────────────────────────────
       expect(gridB.length, gridA.length, reason: 'no row count drift');

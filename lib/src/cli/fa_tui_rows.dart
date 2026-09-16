@@ -144,28 +144,30 @@ extension _TuiRowRenderers on FaTuiModel {
         '${_dim(padded.substring(frame.length + 1))}';
   }
 
-  int _writeBusyAndQueue(StringBuffer b, int baseRow) {
+  int _writeBusyAndQueue(StringBuffer b, int baseRow, _FramePlan plan) {
     var row = baseRow;
     // Scheduled follow-ups sit ON TOP of the working row (issue #115) and
     // stay visible while idle — a pending reminder is exactly what the user
     // needs to see when nothing else is happening.
-    if (scheduledCount > 0) {
+    if (plan.scheduled > 0) {
       b.writeln(_scheduledRowLine());
       row++;
     }
-    row = _writeJobBoard(b, row);
-    row = _writeWaitingRows(b, row);
+    row = _writeJobBoard(b, row, plan);
+    row = _writeWaitingRows(b, row, plan);
     row = _writeBusyRow(b, row);
-    row = _writeQueueRows(b, row);
-    row = _writeAttachmentChips(b, row);
+    row = _writeQueueRows(b, row, plan);
+    row = _writeAttachmentChips(b, row, plan);
     b.writeln(_dim('─' * termWidth));
     return row + 1 - baseRow;
   }
 
   /// The background-job board's live region (issue #429): dim summary +
-  /// live rows, clipped per frame at the live width (resize-safe).
-  int _writeJobBoard(StringBuffer b, int row) {
-    for (final line in jobBoardLines) {
+  /// live rows, clipped per frame at the live width (resize-safe). Paints
+  /// only the plan's visible rows (issue #496 yield order: the board is
+  /// the most dispensable section).
+  int _writeJobBoard(StringBuffer b, int row, _FramePlan plan) {
+    for (final line in jobBoardLines.take(plan.board)) {
       b.writeln(_dim(_clipToWidth(line)));
       row++;
     }
@@ -175,8 +177,8 @@ extension _TuiRowRenderers on FaTuiModel {
   /// The visible-waiting row (issue #450): WHAT the agent waits for,
   /// while idle. The busy row owns the screen while working — the waiting
   /// row yields to it (E3) and re-renders on the next waiter change.
-  int _writeWaitingRows(StringBuffer b, int row) {
-    for (final line in _waitingRowLines()) {
+  int _writeWaitingRows(StringBuffer b, int row, _FramePlan plan) {
+    for (final line in _waitingRowLines().take(plan.waiting)) {
       b.writeln(line);
       row++;
     }
@@ -193,12 +195,15 @@ extension _TuiRowRenderers on FaTuiModel {
   }
 
   /// Queued submissions with their per-row hit regions: the count badge is
-  /// the "your typing is not lost" contract (AC2).
-  int _writeQueueRows(StringBuffer b, int row) {
-    if (queue.isEmpty) return row;
+  /// the "your typing is not lost" contract (AC2). Under a squeezed frame
+  /// (issue #496) the block yields progressively — the hint row first,
+  /// then the OLDEST queued rows; the header + newest rows stay.
+  int _writeQueueRows(StringBuffer b, int row, _FramePlan plan) {
+    if (!plan.queueHeader) return row;
     b.writeln(_dim('⏵ queued (${queue.length})'));
     row++;
-    for (var q = 0; q < queue.length; q++) {
+    final first = queue.length - plan.queue;
+    for (var q = first < 0 ? 0 : first; q < queue.length; q++) {
       final flat = queue[q].text.replaceAll('\n', ' ');
       b.writeln(_dim(_clipToWidth('${_queueBadge(queue[q].steer)}$flat')));
       _hitRegions.add(
@@ -213,19 +218,23 @@ extension _TuiRowRenderers on FaTuiModel {
       );
       row++;
     }
-    b.writeln(_dim('↑ edit · ctrl+x delete · ctrl-s send immediately'));
-    return row + 1;
+    if (plan.queueHint) {
+      b.writeln(_dim('↑ edit · ctrl+x delete · ctrl-s send immediately'));
+    }
+    return row;
   }
 
   /// Attachment chips send with the user's next message.
-  int _writeAttachmentChips(StringBuffer b, int row) {
-    if (attachments.isEmpty) return row;
-    for (final attachment in attachments) {
+  int _writeAttachmentChips(StringBuffer b, int row, _FramePlan plan) {
+    if (plan.chips <= 0) return row;
+    for (final attachment in attachments.take(plan.chips)) {
       b.writeln(_accent2Plain(attachment.chip));
       row++;
     }
-    b.writeln(_dim('chips send with your next message'));
-    return row + 1;
+    if (plan.chips > attachments.length) {
+      b.writeln(_dim('chips send with your next message'));
+    }
+    return row;
   }
 
   /// The `steer` badge on a queued submission: steering entries read

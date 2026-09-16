@@ -473,6 +473,9 @@ final class FaTuiModel extends Model {
       0,
       starts.length - 1,
     );
+    // NOTE: deliberately the RAW scroll offset — the effective (tail-riding)
+    // offset lives in view(); routing _scrollBottom through here would
+    // recurse (the plan needs sticky, sticky would need the plan's viewport).
     return scrollOffset >= starts[echoEndLine];
   }
 
@@ -2169,12 +2172,13 @@ final class FaTuiModel extends Model {
       );
     }
     final b = StringBuffer();
-    final height = _viewportHeight;
+    final plan = _framePlanFor(termWidth, termHeight);
+    final height = plan.history;
     // Every frame rebuilds the hit-region registry from the current
     // layout — a resize re-derives every rect before the next click can
     // land (issue #278, E2).
     _hitRegions.clear();
-    final stickyRows = _writeStickyEcho(b);
+    final stickyRows = _writeStickyEcho(b, plan.sticky);
 
     // Output history, padded to a fixed height. Markdown is formatted and
     // ANSI-safely wrapped to physical rows (SGR-only output, escapes never
@@ -2182,7 +2186,13 @@ final class FaTuiModel extends Model {
     // arrive; the pass is memoized in the shared wrap cache, so a frame
     // triggered by scrolling reuses the rows computed on the last change.
     final wrapped = _wrappedLines();
-    final offset = _clampScroll(scrollOffset, wrapped);
+    // A following tail rides the CURRENT bottom (issue #496): when the
+    // frame squeezes, the viewport shrinks without any history append —
+    // only re-clamping here keeps the live edge (the sent echo) on screen
+    // instead of stranding the window at a stale offset.
+    final offset = followTail
+        ? _scrollBottom(wrapped)
+        : _clampScroll(scrollOffset, wrapped);
     final historyRows = _writeHistoryRows(b, height, wrapped, offset);
     _writeScrollIndicator(b, wrapped, offset);
     _hitRegions.add(
@@ -2199,7 +2209,7 @@ final class FaTuiModel extends Model {
     var row = stickyRows + historyRows + 1;
     row += _writeMenu(b, row);
 
-    row += _writeBusyAndQueue(b, row);
+    row += _writeBusyAndQueue(b, row, plan);
 
     // Prompt mode: the prompt zone replaces the entire input zone below it,
     // including the status line. The physical cursor stays HIDDEN the whole
@@ -2258,18 +2268,6 @@ final class FaTuiModel extends Model {
           : Cursor(x: cursorX, y: cursorRow, shape: CursorShape.bar),
       mouseMode: mouseCapture ? MouseMode.cellMotion : MouseMode.none,
     );
-  }
-
-  /// The sticky user echo pinned to the top while a run streams and the
-  /// echo itself has scrolled out of view (Copilot-style). Rows come from
-  /// the content-keyed cache — formatting per frame made typing during a
-  int _writeStickyEcho(StringBuffer b) {
-    if (!_stickyActive) return 0;
-    final rows = _formattedStickyRows(termWidth);
-    for (final line in rows) {
-      b.writeln(line);
-    }
-    return rows.length;
   }
 
   /// The [height]-row window of the wrapped output history at [offset].

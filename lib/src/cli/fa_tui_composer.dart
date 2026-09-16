@@ -20,46 +20,106 @@ extension _TuiComposerLayout on FaTuiModel {
   String _fitWidth(String text, [int? maxWidth]) =>
       tuiFitWidth(text, maxWidth ?? termWidth);
 
-  int _viewportHeightFor(int width, int height) {
-    const progressH = 1;
-    // The input zone is framed by a rule above and a rule below it.
-    const inputFrameH = 2;
-    const statusH = 1;
-    final busyH = busy ? 1 : 0;
-    final scheduledH = scheduledCount > 0 ? 1 : 0;
-    final waitingH = _waitingRowLines().length;
-    // The background-job board's live rows (issue #429) render between the
-    // menu and the busy row — unreserved, a mid-run tool row pushed the
-    // whole frame past the physical height and the terminal scrolled stale
-    // rows into the composer region (issue #467 artifact evidence).
-    final jobBoardH = jobBoardLines.length;
-    // The pinned user echo (Copilot-style sticky) is written ABOVE the
-    // history window — equally unreserved, it overflowed the bottom edge
-    // by its own row count and scrolled the status row into the composer
-    // (owner evidence #2, issue #467).
-    final stickyH = _stickyActive ? _formattedStickyRows(width).length : 0;
-    final queueH = queue.isEmpty ? 0 : queue.length + 2;
+  /// The per-frame layout plan (issue #496): how many rows of every
+  /// optional section the frame paints, plus the history window. ONE
+  /// computation serves both the budget getter and the painters, so the
+  /// painted frame can never disagree with the row math — the old code
+  /// floored the viewport at 0 while the pin/board/queue chrome kept
+  /// painting unconditionally, the frame overran the physical screen, the
+  /// real composer rows never reached the glass and stale rows below the
+  /// painted region kept the submitted text + cursor visible (the owner's
+  /// "echo duplicates into the input row").
+  ///
+  /// When the mandatory chrome (progress, busy row, menu, prompt, input
+  /// frame, status, input rows) alone would not leave room, optional
+  /// sections yield, most dispensable first: job board, waiting rows,
+  /// scheduled row, attachment chips, queue block, pinned echo. One
+  /// history row is reserved ahead of the optional chrome whenever the
+  /// transcript is non-empty: the live edge (the sent echo / newest answer
+  /// line) must stay on screen even on a squeezed frame.
+  _FramePlan _framePlanFor(int width, int height) {
+    const mandatory =
+        1 /* progress indicator */ +
+        2 /* input frame rules */ +
+        1 /* status row */;
     final promptH = prompt != null ? tuiPromptRowCount(prompt!, width) + 2 : 0;
-    final used =
-        progressH +
-        stickyH +
-        _menuReservedLines +
-        busyH +
-        scheduledH +
-        waitingH +
-        jobBoardH +
-        queueH +
-        promptH +
-        inputFrameH +
-        statusH +
+    final fixed =
+        mandatory + (busy ? 1 : 0) + _menuReservedLines + promptH +
         _inputLineCount;
-    // Clamp to the physical height (floor 0): a ≥3 floor on a tiny terminal
-    // would promise rows the screen does not have and break the pure-scroll
-    // → CSI S 1:1 mapping (issue #274 review minor).
-    return (height - used).clamp(0, height);
+    final boardWanted = jobBoardLines.length;
+    final waitingWanted = _waitingRowLines().length;
+    final scheduledWanted = scheduledCount > 0 ? 1 : 0;
+    final chipsWanted = attachments.isEmpty ? 0 : attachments.length + 1;
+    final queueWanted = queue.isEmpty ? 0 : queue.length + 2;
+    final stickyWanted =
+        _stickyActive ? _formattedStickyRows(width).length : 0;
+    final optionalWanted =
+        boardWanted + waitingWanted + scheduledWanted + chipsWanted +
+        queueWanted + stickyWanted;
+    var budget = (height - fixed).clamp(0, height);
+    // Reserve a small live-edge tail (the sent echo lines + the newest
+    // tool card) ONLY when the optional chrome would otherwise swallow the
+    // whole viewport (squeezed frames): unsqueezed frames keep the exact
+    // pre-#496 viewport so nothing else shifts. The reserve is a FLOOR —
+    // the sections below consume from the remainder, never the reserve.
+    var reserve = 0;
+    if (optionalWanted >= budget && budget > 0 && _wrappedLines().isNotEmpty) {
+      const liveEdgeRows = 4;
+      reserve = liveEdgeRows > budget ? budget : liveEdgeRows;
+    }
+    var consumable = budget - reserve;
+    int section(int wanted) {
+      final take = wanted < consumable ? wanted : consumable;
+      consumable -= take;
+      return take;
+    }
+
+    final board = section(boardWanted);
+    final waiting = section(waitingWanted);
+    final scheduled = section(scheduledWanted);
+    final chips = section(chipsWanted);
+    final queueTake = section(queueWanted);
+    // The queue block yields progressively: the hint row drops first, then
+    // the OLDEST queued rows — the `queued (N)` header is the "your typing
+    // is not lost" contract and yields last within the block.
+    final queueVisible = queueTake >= queueWanted
+        ? queue.length
+        : (queueTake - 1).clamp(0, queue.length);
+    final queueHeader = queueTake > 0;
+    final queueHint = queueTake >= queueWanted;
+    // The pinned echo is quantized all-or-nothing: a lone pin rule reads
+    // as a glitch. When it does not fit, the row stays with history.
+    final sticky = stickyWanted <= consumable ? stickyWanted : 0;
+    return _FramePlan(
+      board: board,
+      waiting: waiting,
+      scheduled: scheduled,
+      chips: chips,
+      queue: queueVisible,
+      queueHeader: queueHeader,
+      queueHint: queueHint,
+      sticky: sticky,
+      history: consumable + reserve,
+    );
   }
 
+  int _viewportHeightFor(int width, int height) =>
+      _framePlanFor(width, height).history;
+
   int get _viewportHeight => _viewportHeightFor(termWidth, termHeight);
+
+  /// The sticky user echo pinned to the top while a run streams and the
+  /// echo itself has scrolled out of view (Copilot-style, issue #496:
+  /// paints only the plan's visible rows — yields whole when squeezed).
+  int _writeStickyEcho(StringBuffer b, int visible) {
+    if (!_stickyActive || visible <= 0) return 0;
+    final rows = _formattedStickyRows(termWidth);
+    final count = visible < rows.length ? visible : rows.length;
+    for (var i = 0; i < count; i++) {
+      b.writeln(rows[i]);
+    }
+    return count;
+  }
 
   /// The status row, fitted AND padded to the terminal width: a shorter new
   /// status (e.g. switching from a long model id to a short one) must
@@ -142,4 +202,36 @@ extension _TuiComposerLayout on FaTuiModel {
     }
     return (rows, cursorRow, cursorCol);
   }
+}
+
+/// The visible row counts of one frame's optional sections (issue #496).
+/// Produced by [_framePlanFor]; consumed by the budget getter AND the
+/// painters so they can never disagree again. [history] is the viewport
+/// window; [queue] counts visible queued ROWS — [queueHeader] renders the
+/// `queued (N)` badge (it yields last within the block, so a squeezed
+/// frame can show the badge alone), [queueHint] the edit hint; the rest
+/// are plain visible line counts, already yielded to fit the physical
+/// screen.
+final class _FramePlan {
+  const _FramePlan({
+    required this.board,
+    required this.waiting,
+    required this.scheduled,
+    required this.chips,
+    required this.queue,
+    required this.queueHeader,
+    required this.queueHint,
+    required this.sticky,
+    required this.history,
+  });
+
+  final int board;
+  final int waiting;
+  final int scheduled;
+  final int chips;
+  final int queue;
+  final bool queueHeader;
+  final bool queueHint;
+  final int sticky;
+  final int history;
 }
