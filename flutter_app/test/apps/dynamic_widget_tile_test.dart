@@ -155,14 +155,15 @@ void main() {
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
     });
 
-    testWidgets('live badge marks a widget with a running engine', (
-      tester,
-    ) async {
+    testWidgets('status renders as a live dot for a running engine '
+        '(issue #457 AC2)', (tester) async {
       final dm = service();
       final def = definition('dm-1');
       dm.debugAdd(def, engine: engine(def));
       await pumpTile(tester, dm, 'dm-1');
-      expect(find.byType(DynamicLiveBadge), findsOneWidget);
+      // The `● live` pill is minimized to a dot with a tooltip.
+      expect(find.byType(DynamicLiveBadge), findsNothing);
+      expect(find.byTooltip('live'), findsOneWidget);
     });
 
     testWidgets('save-as-app hands the definition to the host', (tester) async {
@@ -176,20 +177,32 @@ void main() {
       await tester.pump();
       expect(saved?.id, 'dm-1');
     });
-
-    testWidgets('title bar shows one overflow affordance with three items', (
-      tester,
-    ) async {
+    testWidgets('title bar shows the promoted open action, chevron and '
+        'overflow (issue #457 AC2)', (tester) async {
       final dm = service();
       final def = definition('dm-1');
       dm.debugAdd(def, engine: engine(def));
-      await pumpTile(tester, dm, 'dm-1');
-      // AC1: exactly one ⋮; the old inline save/permissions icons are gone.
+      await pumpTile(tester, dm, 'dm-1', onSaveAsApp: (_) async {});
+      // Exactly one ⋮; the old inline save/permissions icons stay gone;
+      // the open action is now a primary header icon.
       expect(find.byTooltip('More actions'), findsOneWidget);
+      expect(find.byTooltip('Open as app (without saving)'), findsOneWidget);
       expect(find.byIcon(Icons.archive_outlined), findsNothing);
       expect(find.byIcon(Icons.shield_outlined), findsNothing);
       await openMenu(tester);
       expect(find.text('Save as app'), findsOneWidget);
+      expect(find.text('Open as app (without saving)'), findsOneWidget);
+      expect(find.text('Permissions'), findsOneWidget);
+    });
+
+    testWidgets('unwired graduation hides the save row instead of '
+        'greying it out (issue #457 AC3)', (tester) async {
+      final dm = service();
+      final def = definition('dm-1');
+      dm.debugAdd(def, engine: engine(def));
+      await pumpTile(tester, dm, 'dm-1');
+      await openMenu(tester);
+      expect(find.text('Save as app'), findsNothing);
       expect(find.text('Open as app (without saving)'), findsOneWidget);
       expect(find.text('Permissions'), findsOneWidget);
     });
@@ -286,6 +299,144 @@ void main() {
       await tester.tap(find.byTooltip('More actions'), warnIfMissed: false);
       await tester.pump();
       expect(find.text('Open as app (without saving)'), findsOneWidget);
+    });
+  });
+
+  group('issue #457', () {
+    /// A widget fixture taller than any canvas: a 900px-declared box
+    /// (E1 — the widget's own fixed height) of rows ending in one
+    /// button control.
+    Map<String, dynamic> tallTree() => {
+      'type': 'sizedBox',
+      'height': 900,
+      'child': {
+        'type': 'column',
+        'mainAxisSize': 'min',
+        'children': [
+          {'type': 'text', 'data': 'top-row'},
+          for (var i = 0; i < 20; i++) {'type': 'text', 'data': 'row-$i'},
+          {'type': 'button', 'text': 'bottom-control'},
+        ],
+      },
+    };
+
+    (DynamicMessagesService, JsAppEngine) liveFixture() {
+      final dm = service();
+      final def = definition('dm-1');
+      final eng = engine(def);
+      dm.debugAdd(def, engine: eng);
+      return (dm, eng);
+    }
+
+    Container tileRoot(WidgetTester tester) => tester
+        .widgetList<Container>(
+          find.descendant(
+            of: find.byType(DynamicWidgetTile),
+            matching: find.byWidgetPredicate(
+              (w) => w is Container && w.margin != null,
+            ),
+          ),
+        )
+        .first;
+
+    testWidgets('AC1 WIDGET-full-width: edge-to-edge at ≤600dp, '
+        'desktop padding kept', (tester) async {
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final (dm, _) = liveFixture();
+      await pumpTile(tester, dm, 'dm-1');
+      // Phone: zero horizontal margin.
+      expect(
+        tileRoot(tester).margin,
+        const EdgeInsets.symmetric(horizontal: 0, vertical: 6),
+      );
+      // Desktop widths keep the breakpoint discipline (#379).
+      tester.view.physicalSize = const Size(1280, 800);
+      await tester.pump();
+      expect(
+        tileRoot(tester).margin,
+        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      );
+    });
+
+    testWidgets('AC2 WIDGET-header-actions: the open icon opens the '
+        'ephemeral runtime and never toggles collapse', (tester) async {
+      final (dm, _) = liveFixture();
+      await pumpTile(tester, dm, 'dm-1');
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      await tester.tap(find.byTooltip('Open as app (without saving)'));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      expect(
+        find.byKey(const ValueKey('ephemeral-dynamic-app')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byTooltip('Back'));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      // The tile survived the icon tap expanded (#377 REG).
+      expect(find.byKey(const ValueKey('ephemeral-dynamic-app')), findsNothing);
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    });
+
+    testWidgets('AC4 WIDGET-no-clip: a tall fixture scrolls to its last '
+        'control in the chat tile', (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final (dm, eng) = liveFixture();
+      await pumpTile(tester, dm, 'dm-1');
+      eng.tree.value = tallTree();
+      await tester.pump();
+      final scrollable = find.descendant(
+        of: find.byType(DynamicWidgetTile),
+        matching: find.byType(Scrollable),
+      );
+      final position = tester.state<ScrollableState>(scrollable).position;
+      // E1: the scroll wrapper wins over the widget-declared 900px
+      // height — the content exceeds the canvas and scrolls (pre-fix the
+      // canvas had no scrollable and the overflow was silently clipped).
+      expect(position.maxScrollExtent, greaterThan(0));
+      await tester.scrollUntilVisible(
+        find.text('bottom-control'),
+        200,
+        scrollable: scrollable,
+      );
+      // The last control lands inside the visible canvas.
+      expect(tester.getRect(find.text('bottom-control')).top, lessThan(844));
+    });
+
+    testWidgets('AC4: the ephemeral full-screen runtime scrolls to the '
+        'last control and opens at the top', (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final (dm, eng) = liveFixture();
+      await pumpTile(tester, dm, 'dm-1');
+      eng.tree.value = tallTree();
+      await tester.pump();
+      await tester.tap(find.byTooltip('Open as app (without saving)'));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      // Auto-scroll to top on open: the fresh viewport starts at offset 0.
+      final scrollable = find.byType(Scrollable).last;
+      expect(tester.state<ScrollableState>(scrollable).position.pixels, 0);
+      // E1: the same tall fixture is fully reachable in the full-screen
+      // runtime too (fillAvailable).
+      await tester.scrollUntilVisible(
+        find.text('bottom-control').last,
+        200,
+        scrollable: scrollable,
+      );
+      expect(
+        tester.getRect(find.text('bottom-control').last).top,
+        lessThan(844),
+      );
+      await tester.tap(find.byTooltip('Back'));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.byKey(const ValueKey('ephemeral-dynamic-app')), findsNothing);
     });
   });
 
