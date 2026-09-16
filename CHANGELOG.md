@@ -1,6 +1,21 @@
 # Changelog
 
+
+## Unreleased
+- feat(458): tool output cards clamp to a 3-line preview — long dumps no
+  longer evict the conversation. A card shows the first 3 lines plus a
+  `+N lines` hint (stable height regardless of dump size); tapping
+  expands to the full output, scrollable past a 200-line hard cap
+  (failed results open expanded at a tighter 20-line cap — errors are
+  why you look). Empty results render a localized `(no output)` stub;
+  the Show more/less toggle is localized en+ru (Развернуть/Свернуть);
+  state is per card and never persisted across restarts. Goldens:
+  `issue458_tool_card_*` (clamp/expand/error × light/dark, phone
+  width); the host-locked `apps_fa_chat_overlay_rich*` frames need a
+  macOS `--update-goldens` pass (the seeded `read`/thinking tiles now
+  clamp to 3 lines).
 ## 0.1.392
+
 
 - fix(439): subagents no longer die at the context wall — the main loop's
   compaction discipline (#387/#388) now applies to children: every child
