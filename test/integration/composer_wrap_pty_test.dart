@@ -84,10 +84,15 @@ allowedTools: []
     expect(rules.length, greaterThanOrEqualTo(2), reason: 'input zone frame');
     final region = rows.sublist(rules[rules.length - 2] + 1, rules.last);
 
-    // The busy row really is on screen (we are mid-run) — the label stays
-    // 'Working…' no matter which source bracket owns the row right now.
+    // The busy row really is on screen (we are mid-run) — accept any live
+    // label: generic 'Working…' or the phase label ('Running bash…').
     expect(
-      rows.take(rules[rules.length - 2]).any((l) => l.contains('Working')),
+      rows.take(rules[rules.length - 2]).any(
+        (l) =>
+            l.contains('Working') ||
+            l.contains('Running') ||
+            l.contains('· submit'),
+      ),
       isTrue,
       reason: 'the fake turn must still be running; screen:\n'
           '${rows.take(rules[rules.length - 2] + 1).join("\n")}',

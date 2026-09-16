@@ -551,7 +551,11 @@ final class FaTuiModel extends Model {
     final busyH = busy ? 1 : 0;
     final scheduledH = scheduledCount > 0 ? 1 : 0;
     final waitingH = _waitingRowLines().length;
-    // + count badge and hint rows around the message rows (issue #275).
+    // The background-job board's live rows (issue #429) render between the
+    // menu and the busy row — unreserved, a mid-run tool row pushed the
+    // whole frame past the physical height and the terminal scrolled stale
+    // rows into the composer region (issue #467 artifact evidence).
+    final jobBoardH = jobBoardLines.length;
     final queueH = queue.isEmpty ? 0 : queue.length + 2;
     final promptH = prompt != null ? tuiPromptRowCount(prompt!, width) + 2 : 0;
     final used =
@@ -560,6 +564,7 @@ final class FaTuiModel extends Model {
         busyH +
         scheduledH +
         waitingH +
+        jobBoardH +
         queueH +
         promptH +
         inputFrameH +
