@@ -49,6 +49,8 @@ final class _FakeJob implements ShellJob {
   @override
   final String logPath;
   @override
+  int? get pid => null;
+  @override
   bool get isRunning => false;
   @override
   int? get exitCode => 0;
