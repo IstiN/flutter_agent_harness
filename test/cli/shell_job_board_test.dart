@@ -332,16 +332,33 @@ void main() {
       expect(done.state, TaskBlockState.done);
     });
 
-    test('rehydrated cards print terminal summaries, no running anywhere', () {
+    test('rehydrated resume-lost jobs collapse into ONE summary row', () {
       final records = [
         _card('sh-1', state: TaskBlockState.done, elapsed: 1.0).toRecord(),
         _card('sh-2', state: TaskBlockState.running).toRecord(),
       ];
       final board = ShellJobBoard.rehydrated(records);
-      final lines = board.takeTranscriptLines(width: 100).join('\n');
-      expect(lines, isNot(contains('running')));
-      expect(lines, contains('bash task lost'));
-      expect(lines, contains('sh-2'));
+      final lines = board.takeTranscriptLines(width: 100);
+      expect(lines.join('\n'), isNot(contains('running')));
+      // Issue #503: one row, not one four-line card per lost job.
+      expect(lines, hasLength(1));
+      expect(lines.single, contains('1 background task lost on restart'));
+      expect(lines.single, contains('sh-2'));
+      expect(lines.join('\n'), isNot(contains('bash task lost')));
+    });
+
+    test('ten resume-lost jobs still fit ONE row and keep every id', () {
+      final records = [
+        for (var i = 1; i <= 10; i++)
+          _card('sh-$i', state: TaskBlockState.running).toRecord(),
+      ];
+      final board = ShellJobBoard.rehydrated(records);
+      final lines = board.takeTranscriptLines(width: 200);
+      expect(lines, hasLength(1));
+      expect(lines.single, contains('10 background tasks lost on restart'));
+      for (var i = 1; i <= 10; i++) {
+        expect(lines.single, contains('sh-$i'));
+      }
     });
   });
   group('latestRecords (session-entry classification)', () {
