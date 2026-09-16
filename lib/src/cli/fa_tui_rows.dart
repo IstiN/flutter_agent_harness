@@ -92,12 +92,26 @@ extension _TuiRowRenderers on FaTuiModel {
     final prefix = selected ? '${_accent('▸')} ' : '  ';
     if (tuiTextWidth(full) <= termWidth - 2) {
       if (selected) {
-        return '$prefix${_accent(item.label)}${_dim(desc)}';
+        return '$prefix${_rearmSelection(item.label)}${_dim(desc)}';
       }
       return '$prefix${item.label}${_dim(desc)}';
     }
     final text = _fitWidth(full, termWidth - 2);
-    return selected ? '$prefix${_accent(text)}' : '$prefix$text';
+    return selected ? '$prefix${_rearmSelection(text)}' : '$prefix$text';
+  }
+
+  /// A fuzzy-highlighted label embeds per-match `accent2Soft …\x1b[0m`
+  /// runs; the vendor's full reset strips the wrapping selection accent
+  /// from every later cell — the "letters of different colors" overlay
+  /// tear (issue #519, 97_fuzzy_overlay.png). Re-opens the selection
+  /// accent after each embedded reset so the selected row keeps one base
+  /// role: matched cells accent2Soft, everything else the selection
+  /// accent.
+  String _rearmSelection(String label) {
+    final theme = FaThemeController.instance;
+    final open = theme.sgrPrefix(theme.current.accent);
+    if (open.isEmpty || !label.contains('\x1b[0m')) return label;
+    return label.replaceAll('\x1b[0m', '\x1b[0m$open');
   }
 
   /// The [height]-row window of the wrapped output history at [offset].
