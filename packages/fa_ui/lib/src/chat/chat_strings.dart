@@ -67,8 +67,13 @@ abstract class FaChatStrings {
   String get chatOpenWidgetAsAppDismiss;
   String get chatLoadNewer;
   String chatLoadNewerCount(String count);
-  String get chatCollapse;
-  String chatShowAll(String count);
+  /// The `+N lines` hint on a collapsed tool-output card (issue #458).
+  String chatClampHint(int lines);
+  String get chatShowMore;
+  String get chatShowLess;
+
+  /// Stub body for a tool result with no output — no clamp UI.
+  String get chatNoOutput;
   String approvalAllowToolTitle(String tool);
   String approvalTierLabel(String tier);
   String get approvalDeny;
@@ -184,9 +189,13 @@ class FaChatStringsEn extends FaChatStrings {
   String uploadTooLarge(String max, String total) =>
       'Upload is too large: $total exceeds the $max per-batch limit.';
   @override
-  String get chatCollapse => 'Collapse';
+  String chatClampHint(int lines) => lines == 1 ? '+1 line' : '+$lines lines';
   @override
-  String chatShowAll(String count) => 'Show all ($count)';
+  String get chatShowMore => 'Show more';
+  @override
+  String get chatShowLess => 'Show less';
+  @override
+  String get chatNoOutput => '(no output)';
   @override
   String get chatLoadEarlier => 'Load earlier';
   @override
@@ -358,9 +367,22 @@ class FaChatStringsRu extends FaChatStrings {
   String uploadTooLarge(String max, String total) =>
       'Загрузка слишком большая: $total превышает лимит $max на один пакет.';
   @override
-  String get chatCollapse => 'Свернуть';
+  String chatClampHint(int lines) {
+    final mod10 = lines % 10;
+    final mod100 = lines % 100;
+    final word = mod10 == 1 && mod100 != 11
+        ? 'строка'
+        : (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14))
+        ? 'строки'
+        : 'строк';
+    return '+$lines $word';
+  }
   @override
-  String chatShowAll(String count) => 'Показать все ($count)';
+  String get chatShowMore => 'Развернуть';
+  @override
+  String get chatShowLess => 'Свернуть';
+  @override
+  String get chatNoOutput => '(нет вывода)';
   @override
   String get chatLoadEarlier => 'Загрузить более ранние';
   @override
