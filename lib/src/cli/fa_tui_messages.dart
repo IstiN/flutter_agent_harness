@@ -83,6 +83,28 @@ final class ScheduledStatusMsg extends Msg {
   final int? nextDueMs;
 }
 
+/// Host push of the visible-waiting row state (issue #450): the waiter
+/// aggregate — running background jobs (render purposes), armed self-wake
+/// timers (absolute due epoch ms + preview) — and how many background
+/// jobs a previous run lost. The host pushes on every waiter enter/leave;
+/// the row is never polled per frame.
+final class WaitingStatusMsg extends Msg {
+  const WaitingStatusMsg({
+    required this.jobs,
+    required this.timers,
+    this.lostJobs = 0,
+  });
+
+  /// Running background jobs, one purpose per job (command + id).
+  final List<String> jobs;
+
+  /// Armed timers: due epoch ms + text preview.
+  final List<({int dueMs, String preview})> timers;
+
+  /// Background jobs the previous run of this session left running.
+  final int lostJobs;
+}
+
 /// Host push of the background-job board's live region (issue #429): the
 /// summary lines and live rows for the transient area above the busy row.
 /// Plain strings — the model clips per frame at the live width.

@@ -145,66 +145,97 @@ extension _TuiRowRenderers on FaTuiModel {
   }
 
   int _writeBusyAndQueue(StringBuffer b, int baseRow) {
+    var row = baseRow;
     // Scheduled follow-ups sit ON TOP of the working row (issue #115) and
     // stay visible while idle — a pending reminder is exactly what the user
     // needs to see when nothing else is happening.
-    var row = baseRow;
     if (scheduledCount > 0) {
       b.writeln(_scheduledRowLine());
       row++;
     }
-    // The background-job board's live region (issue #429): dim summary +
-    // live rows, clipped per frame at the live width (resize-safe).
+    row = _writeJobBoard(b, row);
+    row = _writeWaitingRows(b, row);
+    row = _writeBusyRow(b, row);
+    row = _writeQueueRows(b, row);
+    row = _writeAttachmentChips(b, row);
+    b.writeln(_dim('─' * termWidth));
+    return row + 1 - baseRow;
+  }
+
+  /// The background-job board's live region (issue #429): dim summary +
+  /// live rows, clipped per frame at the live width (resize-safe).
+  int _writeJobBoard(StringBuffer b, int row) {
     for (final line in jobBoardLines) {
-      final clipped = line.length > termWidth - 2
-          ? '${line.substring(0, termWidth - 3)}…'
-          : line;
-      b.writeln(_dim(clipped));
+      b.writeln(_dim(_clipToWidth(line)));
       row++;
     }
+    return row;
+  }
+
+  /// The visible-waiting row (issue #450): WHAT the agent waits for,
+  /// while idle. The busy row owns the screen while working — the waiting
+  /// row yields to it (E3) and re-renders on the next waiter change.
+  int _writeWaitingRows(StringBuffer b, int row) {
+    for (final line in _waitingRowLines()) {
+      b.writeln(line);
+      row++;
+    }
+    return row;
+  }
+
+  /// The working indicator: the busy row owns the screen while a turn runs.
+  int _writeBusyRow(StringBuffer b, int row) {
     if (busy) {
       b.writeln(_busyRowLine());
       row++;
     }
-    if (queue.isNotEmpty) {
-      // The count badge is the "your typing is not lost" contract (AC2).
-      b.writeln(_dim('⏵ queued (${queue.length})'));
-      row++;
-      for (var q = 0; q < queue.length; q++) {
-        final flat = queue[q].text.replaceAll('\n', ' ');
-        final badge = queue[q].steer ? '⤳ [steer] ' : '❯ ';
-        final line = '$badge$flat';
-        final clipped = line.length > termWidth - 2
-            ? '${line.substring(0, termWidth - 3)}…'
-            : line;
-        b.writeln(_dim(clipped));
-        _hitRegions.add(
-          TuiHitRegion(
-            x: 0,
-            y: row,
-            w: termWidth,
-            h: 1,
-            kind: TuiRegionKind.queueRow,
-            index: q,
-          ),
-        );
-        row++;
-      }
-      b.writeln(_dim('↑ edit · ctrl+x delete · ctrl-s send immediately'));
-      row++;
-    }
-    if (attachments.isNotEmpty) {
-      for (final attachment in attachments) {
-        b.writeln(_accent2Plain(attachment.chip));
-        row++;
-      }
-      b.writeln(_dim('chips send with your next message'));
-      row++;
-    }
-    b.writeln(_dim('─' * termWidth));
-    row++;
-    return row - baseRow;
+    return row;
   }
+
+  /// Queued submissions with their per-row hit regions: the count badge is
+  /// the "your typing is not lost" contract (AC2).
+  int _writeQueueRows(StringBuffer b, int row) {
+    if (queue.isEmpty) return row;
+    b.writeln(_dim('⏵ queued (${queue.length})'));
+    row++;
+    for (var q = 0; q < queue.length; q++) {
+      final flat = queue[q].text.replaceAll('\n', ' ');
+      b.writeln(_dim(_clipToWidth('${_queueBadge(queue[q].steer)}$flat')));
+      _hitRegions.add(
+        TuiHitRegion(
+          x: 0,
+          y: row,
+          w: termWidth,
+          h: 1,
+          kind: TuiRegionKind.queueRow,
+          index: q,
+        ),
+      );
+      row++;
+    }
+    b.writeln(_dim('↑ edit · ctrl+x delete · ctrl-s send immediately'));
+    return row + 1;
+  }
+
+  /// Attachment chips send with the user's next message.
+  int _writeAttachmentChips(StringBuffer b, int row) {
+    if (attachments.isEmpty) return row;
+    for (final attachment in attachments) {
+      b.writeln(_accent2Plain(attachment.chip));
+      row++;
+    }
+    b.writeln(_dim('chips send with your next message'));
+    return row + 1;
+  }
+
+  /// The `steer` badge on a queued submission: steering entries read
+  /// differently from plain queued sends.
+  static String _queueBadge(bool steer) => steer ? '⤳ [steer] ' : '❯ ';
+
+  /// Clips a live row to the frame width, ellipsising the tail (resize-safe).
+  String _clipToWidth(String line) => line.length > termWidth - 2
+      ? '${line.substring(0, termWidth - 3)}…'
+      : line;
 
   /// The scheduled follow-ups indicator line (one dim row): count + the
   /// nearest ETA, styled after the busy row so it reads as one family.
@@ -218,4 +249,106 @@ extension _TuiRowRenderers on FaTuiModel {
               '${ScheduledMessageQueue.formatDelay(Duration(milliseconds: scheduledNextDueMs - now))}';
     return _dim('⏰ $scheduledCount scheduled$eta');
   }
+
+  /// The visible-waiting rows (issue #450): headline row (`⏳ waiting ·
+  /// purpose · next wake in 4m (timer)`) plus capped detail rows and the
+  /// restart-honesty note; empty while busy or with no waiters. The pure
+  /// builder `waitingRowLines` holds the logic.
+  List<String> _waitingRowLines() => waitingRowLines(
+    busy: busy,
+    waitingJobs: waitingJobs,
+    waitingTimers: waitingTimers,
+    waitingLostJobs: waitingLostJobs,
+    nowMs: nowFn().millisecondsSinceEpoch,
+  );
+
+  /// The visible-waiting push (issue #450): replaces the waiter aggregate;
+  /// while a timer countdown is on screen, arms the shared minute-boundary
+  /// tick (one chain — [scheduledTickPending] guards it).
+  (Model, Cmd?) _handleWaitingStatus(WaitingStatusMsg msg) {
+    final next = copyWith(
+      waitingJobs: msg.jobs,
+      waitingTimers: msg.timers,
+      waitingLostJobs: msg.lostJobs,
+    );
+    if (next.waitingTimers.isNotEmpty && !scheduledTickPending) {
+      return (
+        next.copyWith(scheduledTickPending: true),
+        _scheduleScheduledTick(),
+      );
+    }
+    return (next, null);
+  }
+}
+
+/// Pure row builder for the visible-waiting block (issue #450) — top-level
+/// so tests hit it directly and sibling lanes (#446 row builders) can share
+/// the one implementation. Split into per-piece helpers to keep each CRAP
+/// score under the repo's ≤12 gate.
+List<String> waitingRowLines({
+  required bool busy,
+  required List<String> waitingJobs,
+  required List<({int dueMs, String preview})> waitingTimers,
+  required int waitingLostJobs,
+  required int nowMs,
+}) {
+  if (busy) return const [];
+  if (waitingJobs.isEmpty && waitingTimers.isEmpty) return const [];
+  String etaOf(int dueMs) => dueMs <= nowMs
+      ? 'due now'
+      : ScheduledMessageQueue.formatDelay(
+          Duration(milliseconds: dueMs - nowMs),
+        );
+  final lines = <String>[
+    _waitingHeadLine(waitingJobs, waitingTimers, etaOf),
+    ..._waitingDetailLines(waitingJobs, waitingTimers, etaOf),
+    if (waitingLostJobs > 0) _waitingLostLine(waitingLostJobs),
+  ];
+  return lines;
+}
+
+/// The `⏳ waiting` headline: job purpose and/or the nearest timer wake.
+String _waitingHeadLine(
+  List<String> jobs,
+  List<({int dueMs, String preview})> timers,
+  String Function(int) etaOf,
+) {
+  final head = StringBuffer('⏳ waiting');
+  if (jobs.length == 1) {
+    head.write(' · ${jobs.single}');
+  } else if (jobs.length > 1) {
+    head.write(' · ${jobs.length} jobs');
+  }
+  if (timers.isNotEmpty) {
+    final nearest = timers.map((t) => t.dueMs).reduce((a, b) => a < b ? a : b);
+    final eta = etaOf(nearest);
+    head.write(
+      timers.length == 1
+          ? ' · next wake in $eta (timer)'
+          : ' · ${timers.length} timers · next wake in $eta',
+    );
+  }
+  return _dim(head.toString());
+}
+
+/// Detail rows exist only when a count hides something (>1 of a kind);
+/// the job board above already lists every job live. Capped at two rows.
+List<String> _waitingDetailLines(
+  List<String> jobs,
+  List<({int dueMs, String preview})> timers,
+  String Function(int) etaOf,
+) {
+  final details = <String>[
+    if (jobs.length > 1) ...jobs,
+    if (timers.length > 1)
+      ...timers.map((t) => '${t.preview} · due in ${etaOf(t.dueMs)}'),
+  ];
+  return [for (final detail in details.take(2)) _dim('  $detail')];
+}
+
+/// The restart-honesty note: waiters lost to the previous run's exit.
+String _waitingLostLine(int lost) {
+  final noun = 'background job${lost == 1 ? '' : 's'}';
+  final verb = lost == 1 ? 'was' : 'were';
+  return _dim('$lost $noun from the previous run $verb lost');
 }

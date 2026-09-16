@@ -18,6 +18,7 @@ import '../mcp/mcp_config.dart';
 import '../model_roles/model_roles.dart';
 import '../prompts/prompt_overrides.dart';
 import '../cube/config/cube_settings.dart';
+import 'waiting_heartbeat.dart';
 import '../providers/provider_common.dart';
 import '../skills/skills_access.dart';
 import '../memory_config.dart';
@@ -203,6 +204,7 @@ final class CliConfig {
     this.images,
     this.contextWindowCap,
     this.subagents = const SubagentsConfig(),
+    this.waiting = const WaitingConfig(),
     this.powerSleepPrevention,
     this.powerHold,
     this.tuiTheme,
@@ -303,8 +305,8 @@ final class CliConfig {
       // too.
       contextWindowCap: _parseAgentSection(map['agent']),
       // The subagents section (background-subagent heartbeat, issue #383)
-      // is strict too; 0 disables the respective mechanism.
       subagents: SubagentsConfig.fromYaml(map['subagents']),
+      waiting: WaitingConfig.fromYaml(map['waiting']),
       // The fabric section (issue #27 phase 2 discovery announcements) is
       // strict too.
       fabric: map['fabric'] == null
@@ -470,6 +472,11 @@ final class CliConfig {
   /// everywhere it is consumed (compaction thresholds, ctx meter/footer,
   /// the loop guard). `null` = uncapped (the raw model window).
   final int? contextWindowCap;
+
+  /// The `waiting:` section (issue #450): visible-waiting heartbeat
+  /// cadence (`waitHeartbeatMinutes`, 0 = off) and the `--wait-for-jobs`
+  /// ceiling (`waitCeilingMinutes`, default 30).
+  final WaitingConfig waiting;
 
   /// The `subagents:` section (issue #383): heartbeat cadence
   /// (`heartbeatMinutes`, 0 = off) and stall threshold (`stallMinutes`,

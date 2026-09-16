@@ -6,6 +6,8 @@
 /// user turns, pair-atomic groups, and the validation funnel that turns
 /// judge picks into safe record ids.
 
+library;
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/compaction/structured/ledger.dart';
 import 'package:flutter_agent_harness/src/compaction/structured/judge.dart';
@@ -16,7 +18,7 @@ AssistantMessage _assistant(String text, {List<ToolCall>? calls}) {
   return AssistantMessage(
     content: [
       TextContent(text: text),
-      if (calls != null) ...calls,
+      ...?calls,
     ],
     api: 'anthropic-messages',
     provider: 'p',

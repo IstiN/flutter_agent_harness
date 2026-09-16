@@ -228,6 +228,9 @@ final class FaTuiModel extends Model {
     this.scheduledCount = 0,
     this.scheduledNextDueMs = -1,
     this.jobBoardLines = const [],
+    this.waitingJobs = const [],
+    this.waitingTimers = const [],
+    this.waitingLostJobs = 0,
     this.scheduledTickPending = false,
     this.frameNonce = 0,
     this.hub,
@@ -329,6 +332,17 @@ final class FaTuiModel extends Model {
   /// The background-job board's live region (issue #429): summary lines +
   /// live rows, dim, above the busy row. Empty hides the region.
   final List<String> jobBoardLines;
+
+  /// The visible-waiting row state (issue #450): purposes of the running
+  /// background jobs and the armed self-wake timers (due epoch ms +
+  /// preview), pushed by the host on every waiter enter/leave. The row
+  /// renders only while idle — the busy row owns the screen while working.
+  final List<String> waitingJobs;
+  final List<({int dueMs, String preview})> waitingTimers;
+
+  /// Background jobs the previous run of this session left running — the
+  /// honesty note under the waiting row after a restart.
+  final int waitingLostJobs;
 
   /// Whether a [ScheduledTickMsg] timer is outstanding (issue #213) — the
   /// guard that keeps the countdown chain at one pending timer max.
@@ -535,7 +549,7 @@ final class FaTuiModel extends Model {
     const statusH = 1;
     final busyH = busy ? 1 : 0;
     final scheduledH = scheduledCount > 0 ? 1 : 0;
-    final stickyH = _stickyActive ? stickyLines.length : 0;
+    final waitingH = _waitingRowLines().length;
     // + count badge and hint rows around the message rows (issue #275).
     final queueH = queue.isEmpty ? 0 : queue.length + 2;
     final promptH = prompt != null ? tuiPromptRowCount(prompt!, width) + 2 : 0;
@@ -544,7 +558,7 @@ final class FaTuiModel extends Model {
         _menuReservedLines +
         busyH +
         scheduledH +
-        stickyH +
+        waitingH +
         queueH +
         promptH +
         inputFrameH +
@@ -626,6 +640,9 @@ final class FaTuiModel extends Model {
     int? scheduledCount,
     int? scheduledNextDueMs,
     List<String>? jobBoardLines,
+    List<String>? waitingJobs,
+    List<({int dueMs, String preview})>? waitingTimers,
+    int? waitingLostJobs,
     bool? scheduledTickPending,
     Object? historyDraft = _unset,
     FaHubState? hub,
@@ -676,6 +693,9 @@ final class FaTuiModel extends Model {
       scheduledCount: scheduledCount ?? this.scheduledCount,
       scheduledNextDueMs: scheduledNextDueMs ?? this.scheduledNextDueMs,
       jobBoardLines: jobBoardLines ?? this.jobBoardLines,
+      waitingJobs: waitingJobs ?? this.waitingJobs,
+      waitingTimers: waitingTimers ?? this.waitingTimers,
+      waitingLostJobs: waitingLostJobs ?? this.waitingLostJobs,
       scheduledTickPending: scheduledTickPending ?? this.scheduledTickPending,
       now: nowFn,
       historyDraft: historyDraft == _unset
@@ -740,6 +760,7 @@ final class FaTuiModel extends Model {
     if (msg is ScheduledStatusMsg) return _handleScheduledStatus(msg);
     if (msg is ScheduledTickMsg) return _handleScheduledTick();
     if (msg is JobBoardMsg) return _handleJobBoard(msg);
+    if (msg is WaitingStatusMsg) return _handleWaitingStatus(msg);
     // Output is handled before the exit check so trailing writes (e.g. the
     // 'bye' line from /exit) still render before the program quits; the host
     // sends _QuitRequestedMsg once it has marked exit.
@@ -786,14 +807,19 @@ final class FaTuiModel extends Model {
   (Model, Cmd?) _handleJobBoard(JobBoardMsg msg) =>
       (copyWith(jobBoardLines: msg.lines), null);
 
+  /// True while any countdown is on screen (issue #115 scheduled row, and
+  /// the waiting row's timer countdown — issue #450): the shared
+  /// minute-boundary tick chain repaints both.
+  bool get _hasCountdown =>
+      (scheduledCount > 0 && scheduledNextDueMs >= 0) ||
+      waitingTimers.isNotEmpty;
+
   /// The minute-boundary countdown tick fired (issue #213): the row
   /// recomputes from [nowFn] at render time, so the repaint alone refreshes
-  /// the ETA; re-arm while there is still a countdown to show. A count of 0
-  /// (fired/cancelled — E1) or an unknown ETA (nextDueMs = -1 — E3) ends
-  /// the chain.
+  /// the ETA; re-arm while there is still a countdown to show ([_hasCountdown]).
   (Model, Cmd?) _handleScheduledTick() {
     final next = copyWith(scheduledTickPending: false);
-    if (next.scheduledCount <= 0 || next.scheduledNextDueMs < 0) {
+    if (!next._hasCountdown) {
       return (next, null);
     }
     return (
@@ -2647,6 +2673,19 @@ final class FaTuiController {
   /// records) so the indicator row tracks the queue live (issue #115).
   void setScheduled(int count, int? nextDueMs) {
     _send(ScheduledStatusMsg(count, nextDueMs));
+  }
+
+  /// Replaces the visible-waiting row state (issue #450) so an idle
+  /// terminal shows WHAT the agent waits for: running background jobs,
+  /// armed self-wake timers, and jobs a previous run lost.
+  void setWaiting({
+    required List<String> jobs,
+    required List<({int dueMs, String preview})> timers,
+    int lostJobs = 0,
+  }) {
+    _send(
+      WaitingStatusMsg(jobs: jobs, timers: timers, lostJobs: lostJobs),
+    );
   }
 
   /// Pushes the background-job board's live region (issue #429): summary

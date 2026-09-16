@@ -129,6 +129,15 @@ final class FaTuiController {
   void setJobBoard(List<String> lines) {}
 
   /// No-op on web (the TUI never runs there). Mirrors the dart_tui
+  /// controller so the visible-waiting pushes (issue #450) compile for
+  /// BOTH targets.
+  void setWaiting({
+    required List<String> jobs,
+    required List<({int dueMs, String preview})> timers,
+    int lostJobs = 0,
+  }) {}
+
+  /// No-op on web (the TUI never runs there). Mirrors the dart_tui
   /// controller's method so /theme hot swaps compile for BOTH targets.
   void applyTheme() {}
 

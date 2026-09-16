@@ -85,6 +85,7 @@ final class AgentCliConfig {
     this.compactionEngine,
     this.contextWindowCap,
     this.subagents = const SubagentsConfig(),
+    this.waiting = const WaitingConfig(),
     this.cubeSpec,
     this.cubeSource,
     this.cubeSettings,
@@ -643,6 +644,10 @@ final class AgentCliConfig {
   /// sub-lines of this instance's `agent_directory` entry so peers can
   /// discover what this agent can do.
   final List<AgentCapability> agentCapabilities;
+
+  /// The `waiting:` section (issue #450): visible-waiting heartbeat
+  /// cadence and the `--wait-for-jobs` ceiling.
+  final WaitingConfig waiting;
 
   /// This host's machine name for `name@machine` addressing (issue #27
   /// phase 2): a `@machine` suffix matching it is stripped before local

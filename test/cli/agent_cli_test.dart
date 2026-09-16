@@ -2408,8 +2408,10 @@ void main() {
       await run;
 
       final output = io.out.toString();
-      final collapsed = RegExp(r'^fa:  \[read\]$', multiLine: true);
-      expect(collapsed.allMatches(output), hasLength(1));
+      // #446: the tool-call turn replays via the shared tool-row builder,
+      // never the old collapsed `[read]` marker.
+      expect(output, isNot(contains('[read]')));
+      expect(output, matches(RegExp(r'^fa:  ✗ read ·', multiLine: true)));
       expect(output, contains('fa:  done'));
     });
 
@@ -2452,14 +2454,11 @@ void main() {
       await run;
 
       final output = io.out.toString();
-      // assistant([read]), result, assistant([edit]), result collapse into
-      // ONE run row — the tool results between them stay invisible.
-      final runRow = RegExp(r'^fa:  \[read\] \[edit\]$', multiLine: true);
-      expect(runRow.allMatches(output), hasLength(1));
-      expect(
-        RegExp(r'^fa:  \[edit\]$', multiLine: true).allMatches(output),
-        isEmpty,
-      );
+      // #446: each persisted call replays via the shared tool-row
+      // builder — the old collapsed `[read] [edit]` run row is gone.
+      expect(output, isNot(contains('[read] [edit]')));
+      expect(output, matches(RegExp(r'^fa:  ✗ read ·', multiLine: true)));
+      expect(output, matches(RegExp(r'^fa:  ✗ edit ·', multiLine: true)));
     });
 
     test('exit prints the resume command for a named session', () async {

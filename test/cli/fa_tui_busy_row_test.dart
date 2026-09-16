@@ -231,4 +231,44 @@ void main() {
         .firstWhere((l) => l.contains('waiting for your selection'));
     expect(row.length, 80);
   });
+
+  test('the queued overlay paints scheduled rows, clipped job lines and '
+      'waiting rows while idle-waiting', () {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final model =
+        FaTuiModel(
+          callbacks: callbacks(),
+          isExited: () => false,
+          termWidth: 80,
+        ).copyWith(
+          scheduledCount: 2,
+          scheduledNextDueMs: now + 60000,
+          jobBoardLines: List.generate(3, (i) => 'job-$i ${'x' * 120}'),
+          waitingJobs: List.generate(2, (i) => 'sleep $i'),
+          waitingTimers: const [(dueMs: 1, preview: 'check CI')],
+        );
+    final plain = model
+        .view()
+        .content
+        .split('\n')
+        .map((l) => l.replaceAll(ansi, ''))
+        .toList();
+    expect(
+      plain.where((l) => l.contains('2 scheduled')),
+      isNotEmpty,
+      reason: 'the scheduled row sits on top of the working row',
+    );
+    expect(plain.where((l) => l.contains('job-0')), isNotEmpty);
+    final clipped = plain.firstWhere((l) => l.contains('job-0'));
+    expect(
+      clipped.length,
+      lessThanOrEqualTo(80),
+      reason: 'long job lines are clipped to the live width',
+    );
+    expect(
+      plain.where((l) => l.contains('⏳ waiting')),
+      isNotEmpty,
+      reason: 'the waiting row follows the queue rows',
+    );
+  });
 }

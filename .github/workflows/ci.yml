@@ -392,8 +392,16 @@ jobs:
       - name: CRAP ratchet (threshold pinned in crap4dart.yaml)
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         run: |
-          dart pub global activate crap4dart 0.2.1
+          # Issue #447: 0.9.5+ carries the gate framework (broken_goldens
+          # et al.); 0.2.1 knew only the CRAP ratchet. Both configs set
+          # coverage.run_tests: false — the merged shard lcov above is the
+          # coverage source; gates must not re-run the suite.
+          dart pub global activate crap4dart ">=0.9.5"
           dart pub global run crap4dart analyze
+
+      - name: Broken-goldens gate over core test/ goldens (issue 447)
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+        run: dart pub global run crap4dart check
 
       - name: Duplication guard (lib/ < 1%)
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
@@ -671,8 +679,15 @@ jobs:
       - name: CRAP ratchet (threshold pinned in flutter_app/crap4dart.yaml)
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true'
         run: |
-          dart pub global activate crap4dart 0.2.1
+          # Issue #447: pin bumped 0.2.1 → >=0.9.5 for the gate framework.
+          # coverage.run_tests: false in both configs — the merged shard
+          # lcov above is the source; never re-run the suite here.
+          dart pub global activate crap4dart ">=0.9.5"
           cd flutter_app && dart pub global run crap4dart analyze
+
+      - name: Pixel and flutter gates over test/golden/goldens (issue 447)
+        if: needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true'
+        run: cd flutter_app && dart pub global run crap4dart check
 
   # Issue #283: fa_ui tests sharded ×3 by the test-core template — a
   # duration-balanced manifest (scripts/faui_test_shards.json, rebalanced

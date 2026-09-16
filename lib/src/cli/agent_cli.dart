@@ -53,6 +53,7 @@ import 'agent_hub_panel.dart';
 import 'shell_job_board.dart';
 import 'agent_hub_projection.dart';
 import 'agent_hub_tui.dart';
+import 'waiting_heartbeat.dart';
 import 'agent_hub_view.dart';
 import '../task/agent_discovery.dart';
 import '../task/child_session_io.dart';
@@ -190,6 +191,7 @@ import 'text_format.dart';
 import 'terminal_setup.dart';
 import 'tui_helpers.dart';
 import 'tui_prompt.dart';
+import 'scripted_test_stream.dart';
 import 'tui_replay.dart';
 import 'tui_repl.dart';
 import 'tui_theme.dart';
@@ -222,6 +224,8 @@ part 'agent_cli_tools.dart';
 part 'agent_cli_io.dart';
 part 'agent_cli_hep_io.dart';
 part 'agent_cli_banner.dart';
+part 'agent_cli_waiting.dart';
+part 'agent_cli_mcp_print.dart';
 part 'agent_cli_commands.dart';
 part 'agent_cli_ext.dart';
 part 'agent_cli_theme.dart';
@@ -242,8 +246,13 @@ class AgentCli {
     bool useTui = false,
     this._version = '0.0.0',
     this.environment = const {},
+    DateTime Function()? waitingClock,
+    Future<void> Function(Duration)? waitingSleep,
   }) : io = useTui && io.supportsRawMode ? _TuiCliIO(io) : io,
        _style = _Style(enabled: useColor),
+       _waitingClock = waitingClock ?? DateTime.now,
+       _waitingSleep =
+           waitingSleep ?? ((Duration d) => Future<void>.delayed(d)),
        _useTui = useTui && io.supportsRawMode {
     // Sleep prevention (issue #325): null runner (tests, web) → none.
     _powerAssertions = sessionPowerAssertions(config, this.io.writeln);
@@ -285,6 +294,7 @@ class AgentCli {
 
     _streamFunction =
         streamFunction ??
+        scriptedTestStreamFunction() ??
         _catalogStreamFunction(config.providerKind, config.apiKey);
     // MCP servers connect lazily in the background; their tools land in
     // the registry via _onMcpChanged (registered after the agent exists).
@@ -972,6 +982,19 @@ class AgentCli {
   /// agent's own inbox when due, where the idle-wake starts a turn.
   late final ScheduledMessageQueue _scheduledMessages = _newScheduledMessages();
 
+  /// The visible-waiting layer (issue #450): waiter aggregate, TUI waiting
+  /// row push, waiting heartbeat, restart honesty, headless semantics.
+  late final _WaitingCoordinator _waiting = _WaitingCoordinator(this);
+
+  /// Clock seam for the waiting layer (issue #450 tests): the heartbeat
+  /// cadence, the waiting-since elapsed, and the `--wait-for-jobs` loop
+  /// read this instead of [DateTime.now] directly.
+  final DateTime Function() _waitingClock;
+
+  /// Sleep seam for the `--wait-for-jobs` loop — tests advance the fake
+  /// waiting clock through it instead of really sleeping.
+  final Future<void> Function(Duration) _waitingSleep;
+
   /// The session's retained-subagent registry (tests, the app settings
   /// Agents panel, hosts observing children).
   SubagentManager get subagentManager => _subagentManager;
@@ -1303,6 +1326,10 @@ class AgentCli {
   /// Runs the REPL until `/exit` or the input stream closes.
   Future<void> run() async {
     await _cubeBootRestore();
+    await _claimSessionLease();
+    // Restart honesty (issue #450): jobs in the manifest were left
+    // running by the previous run — count them, then take the file over.
+    await _waiting.captureLostJobs();
     await _loadAgentContext();
     // Persisted model cache (stale-while-revalidate): the /model picker
     // serves the last fetched lists instantly at boot; the live refresh
@@ -1638,15 +1665,14 @@ class AgentCli {
     _printThirdPartySkillsDisabledHint();
     await _replayRestoredSession();
 
-    // Warm the model cache in the background so the first /models picker is
-    // fast; failures are silent and the cache falls back to the hardcoded list.
-    _printThirdPartySkillsDisabledHint();
-    await _replayRestoredSession();
     // Issue #429: rebuild the background-job board from the session's
     // shell_job_registry records; live-at-restart jobs announce as lost.
     await _rehydrateJobBoard();
     // One-time consent question for third-party skill roots: a TUI picker
     // over the first frame (Esc = "Not now", asked again next launch).
+    // The visible-waiting row lights up on boot too (issue #450): armed
+    // timers from previous runs + the restart-honesty note.
+    unawaited(_waiting.push());
     unawaited(_maybePromptSkillsAccess());
 
     // An ambiguous `--session <name>` (same name in several folders or
@@ -2013,6 +2039,7 @@ class AgentCli {
     String prompt, {
     List<ImageContent> images = const [],
     HepWriter? hep,
+    bool waitForJobs = false,
   }) async {
     _hep = hep;
     // Cube cache restore, mirroring [run]'s boot (the headless run sees the
@@ -2022,6 +2049,8 @@ class AgentCli {
     // Ownership lease (#428, E7): a headless run NEVER spawns a second
     // writer over a live lease — it refuses with the banner (exit 3) so
     // wake loops reopen interactively instead of fighting the owner.
+    // Restart honesty (issue #450): detached jobs from the previous run.
+    await _waiting.captureLostJobs();
     final leaseBlocked = await _claimSessionLeaseHeadless();
     if (leaseBlocked != null) {
       io.writeln(viewerBannerText(leaseBlocked, stale: false));
@@ -2105,6 +2134,9 @@ class AgentCli {
       // with its own [_afterRun]; only a normally-finished turn does.
       if (finished) await _afterRun();
       await _awaitHeadlessBackgroundJobs();
+      // Visible waiting (issue #450): stay for the waiters when opted in,
+      // otherwise print the honest detach summary before exiting.
+      await _waiting.waitForJobsOrSummarize(waitForJobs: waitForJobs);
     } catch (error) {
       io.writeln(
         _keyStatusView.errorLine('$error', _agent.state.model.baseUrl),
@@ -2250,50 +2282,6 @@ class AgentCli {
     _startRun(line, images: images);
   }
 
-  /// `/mcp`: prints the configured MCP servers and their live connection
-  /// status, or a guidance line when none are configured.
-  void _printMcpStatus() {
-    final manager = _mcp.manager;
-    if (manager == null || manager.config.servers.isEmpty) {
-      io.writeln(
-        'No MCP servers configured. Add servers to the mcp: section of '
-        '~/.fah/config.yaml:\n'
-        '  mcp:\n'
-        '    servers:\n'
-        '      example:\n'
-        '        command: npx\n'
-        '        args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]\n'
-        '      # or a remote server:\n'
-        '      remote:\n'
-        '        url: https://example.com/mcp',
-      );
-      return;
-    }
-    io.writeln('MCP servers:');
-    final states = manager.states;
-    for (final entry in manager.config.servers.entries) {
-      final name = entry.key;
-      final state = states[name];
-      final status = switch (state?.status) {
-        null => _style.dim('(connecting…)'),
-        _ => switch (state!.status) {
-          McpServerStatus.connected =>
-            '${tuiSuccess('connected')} — ${state.tools.length} tool(s)',
-          McpServerStatus.failed =>
-            '${tuiError('failed')}: ${state.error ?? 'unknown'}',
-          McpServerStatus.connecting => _style.dim('(connecting…)'),
-        },
-      };
-      final server = entry.value;
-      final detail = server is McpStdioServerConfig
-          ? '${server.command} ${(server.args).join(' ')}'
-          : server is McpHttpServerConfig
-          ? server.url
-          : '';
-      io.writeln('  $name — $status  ${_style.dim(detail)}');
-    }
-  }
-
   void _startRun(String text, {List<TuiImageAttachment> images = const []}) {
     // One streaming run at a time: a run-starting command typed mid-stream
     // (/skill:, a command alias) lands here while isBusy — refuse it with
@@ -2346,6 +2334,9 @@ class AgentCli {
         // drop the assertion so an idle agent lets the machine sleep.
         unawaited(runPowerAssertionsSettled());
         _settleLeftoverSteering();
+        // Waiting-row refresh (issue #450): the busy→idle edge is where
+        // the waiting row takes over from the busy row (E3/E4).
+        unawaited(_waiting.push());
         if (!_exited) _writeIdlePrompt();
       }),
     );
@@ -2641,6 +2632,8 @@ class AgentCli {
   /// while idle.
   void _onShellJobSettled(ShellJobEntry job) {
     _onShellJobSettledBlock(job);
+    // Event-driven waiting-row leave (issue #450).
+    unawaited(_waiting.jobSettled(job));
     io.writeln(
       _style.dim('[bash] ${job.id} exited(${job.exitCode}) — ${job.logPath}'),
     );
@@ -2654,6 +2647,11 @@ class AgentCli {
         'Check the result with bash_job (action: output) or by reading the '
         'log file, and act on it when the result was awaited.\n'
         '</system-notice>';
+    // The notice is a persisted user message: echo it into the live
+    // transcript through the same system-notice renderer the replay path
+    // uses (#446), so resume matches live 1:1. Steered messages skip the
+    // composer echo — without this the rows exist only after resume.
+    _tuiController?.sendOutput('$message\n');
     if (isBusy) {
       // Mid-run: the steering queue delivers it at the next step boundary.
       _agent.steer(UserMessage.text(message));

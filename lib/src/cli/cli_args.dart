@@ -103,6 +103,7 @@ final class CliArgs extends CliArgsResult {
     this.positionals = const [],
     this.output,
     this.attachments = const [],
+    this.waitForJobs = false,
   }) : super._();
 
   /// `--model <id>`.
@@ -234,6 +235,12 @@ final class CliArgs extends CliArgsResult {
   /// first user message of a headless run as image content blocks.
   final List<String> attachments;
 
+  /// `--wait-for-jobs` (issue #450): headless opt-in — keep the process
+  /// alive until every detached background job settles or an armed timer
+  /// delivers (bounded by the `waiting.waitCeilingMinutes` config, default
+  /// 30). Without it a headless run prints the detach summary and exits.
+  final bool waitForJobs;
+
   /// Whether this invocation runs a single headless prompt instead of the
   /// interactive REPL.
   bool get isHeadless =>
@@ -265,6 +272,10 @@ CliArgsResult parseCliArgs(List<String> args) {
     final arg = args[i];
     if (const {'--help', '-h'}.contains(arg)) return const CliArgsHelp();
     if (arg == '--version') return CliArgsVersion(output: _prescanOutput(args));
+    if (arg == '--wait-for-jobs') {
+      values.waitForJobs = true;
+      continue;
+    }
     final flag = _valueFlags[arg];
     if (flag != null) {
       final (canonical, apply) = flag;
@@ -964,6 +975,7 @@ final class _CliArgValues {
   String? transcribeModel;
   String? transcribeBaseUrl;
   final plugins = <String>[];
+  bool waitForJobs = false;
   final promptTemplateDirs = <String>[];
   String? mode;
   String? cwd;
@@ -1032,6 +1044,7 @@ final class _CliArgValues {
       prompt: prompt,
       positionals: positionals,
       output: output,
+      waitForJobs: waitForJobs,
       attachments: List.unmodifiable(attachments),
     );
   }

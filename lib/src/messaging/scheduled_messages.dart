@@ -280,21 +280,36 @@ final class ScheduledMessageQueue {
   /// ours to fire, so they are not ours to show either. Powers the CLI's
   /// scheduled-follow-ups indicator (issue #115).
   Future<({int count, int? nextDueMs})> pendingSummary() async {
+    final records = await pendingRecords();
+    int? nearest;
+    for (final record in records) {
+      final due = record.dueMs;
+      if (due != null && (nearest == null || due < nearest)) nearest = due;
+    }
+    return (count: records.length, nextDueMs: nearest);
+  }
+
+  /// Every deliverable pending record with its due time (epoch ms, null
+  /// when unknown) and text preview — the raw view behind [pendingSummary]
+  /// and the CLI's visible-waiting row (issue #450). Same deliverability
+  /// rule as the timer: foreign-owned self-addressed records are not ours
+  /// to fire, so they are not ours to show either. Corrupt records arm no
+  /// timer and light no indicator.
+  Future<List<({int? dueMs, String text})>> pendingRecords() async {
     final dir = await _pendingDir();
     final entries = (await _env.listDir(dir)).valueOrNull ?? const [];
-    var count = 0;
-    int? nearest;
+    final records = <({int? dueMs, String text})>[];
     for (final entry in entries) {
       if (!entry.path.endsWith('.json')) continue;
       final path = entry.path.contains('/') ? entry.path : '$dir/${entry.path}';
       final record = await _readRecord(path);
-      // Corrupt records arm no timer and light no indicator.
       if (record == null || _deliveryTarget(record) == null) continue;
-      count++;
-      final due = record['dueMs'] as int?;
-      if (due != null && (nearest == null || due < nearest)) nearest = due;
+      records.add((
+        dueMs: record['dueMs'] as int?,
+        text: record['text'] as String? ?? '',
+      ));
     }
-    return (count: count, nextDueMs: nearest);
+    return records;
   }
 
   /// In-flight delivery guard: a timer tick landing while [deliverDue] is

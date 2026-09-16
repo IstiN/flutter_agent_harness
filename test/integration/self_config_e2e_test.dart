@@ -13,7 +13,6 @@ import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
-import 'package:flutter_agent_harness/src/config/config_service.dart';
 import 'package:test/test.dart';
 
 import '../cli/agent_cli_test_support.dart';
