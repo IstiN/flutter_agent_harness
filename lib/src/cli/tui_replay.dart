@@ -325,6 +325,9 @@ List<String> restoredInputHistory(List<Message> messages) {
   var firstIndex = messages.length;
   var rows = 0;
   for (var i = messages.length - 1; i >= 0; i--) {
+    // Boot budget guard: nothing further from the head can fit — stop
+    // BEFORE formatting it (monster messages are the boot-cost driver).
+    if (entries.isNotEmpty && rows >= rowBudget) break;
     final message = messages[i];
     if (message is ToolResultMessage) {
       // Results render attached to their call's row, never standalone —
@@ -332,7 +335,7 @@ List<String> restoredInputHistory(List<Message> messages) {
       firstIndex = i;
       continue;
     }
-    final entry = tui
+    var entry = tui
         ? replayLinesTui(
             message,
             width: width,
@@ -356,6 +359,16 @@ List<String> restoredInputHistory(List<Message> messages) {
     if (entry.isEmpty) {
       firstIndex = i;
       continue;
+    }
+    // A single marathon message must not stall the boot replay: clip its
+    // head with an explicit marker (the tail stays intact — messages at
+    // the END are kept whole as long as the row budget lasts).
+    const perMessageCap = 48;
+    if (entry.length > perMessageCap) {
+      entry = [
+        ...entry.take(perMessageCap - 1),
+        dim('… (replay clipped: ${entry.length - perMessageCap + 1} more rows)'),
+      ];
     }
     entries.insert(0, entry);
     rows += entry.length;
