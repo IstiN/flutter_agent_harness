@@ -48,10 +48,8 @@ const _coverage = <String, String>{
   'lib/ui/screens/chat_screen.dart': 'test/golden/chat_golden_test.dart',
   'lib/ui/screens/attached_session_screen.dart':
       'test/golden/attached_session_golden_test.dart',
-  'lib/ui/widgets/chat_composer.dart':
-      'test/golden/composer_golden_test.dart',
-  'lib/ui/widgets/subagent_mark.dart':
-      'test/golden/widgets_golden_test.dart',
+  'lib/ui/widgets/chat_composer.dart': 'test/golden/composer_golden_test.dart',
+  'lib/ui/widgets/subagent_mark.dart': 'test/golden/widgets_golden_test.dart',
   'lib/ui/widgets/media_player.dart': 'test/golden/chat_golden_test.dart',
   'lib/ui/widgets/fa_mark.dart': 'test/golden/chat_golden_test.dart',
   'lib/ui/widgets/model_mark.dart': 'test/golden/widgets_golden_test.dart',
@@ -141,6 +139,10 @@ const _exempt = <String, String>{
       'list-based provider picker; rendered inside AgentSettingsForm (covered by settings goldens)',
   'lib/ui/screens/codemie_sso_webview.dart':
       'WebView SSO page; needs a real webview plugin (not available in tests)',
+  'lib/ui/screens/codemie_sso_pickers.dart':
+      'Codemie SSO/model picker pages; driven by the SSO flow widget tests '
+      '(test/services/codemie_sso_flow_test.dart) — the flow needs real '
+      'auth state to render anything but an empty shell',
   'lib/services/codemie_sso_flow.dart':
       'service flow orchestrator; coordinates SSO + model picker dialogs (no widget of its own)',
   'lib/services/chatgpt_oauth_flow.dart':
@@ -237,9 +239,40 @@ void main() {
           continue;
         }
         for (final name in names) {
-          if (!File('test/golden/goldens/$name.png').existsSync()) {
+          if (!name.contains(r'$')) {
+            if (!File('test/golden/goldens/$name.png').existsSync()) {
+              problems.add(
+                '$testPath: missing snapshot goldens/$name.png — '
+                'run `flutter test test/golden --update-goldens`',
+              );
+            }
+            continue;
+          }
+          // Loop-interpolated names (`'x_$suffix'`,
+          // `'x_${width.round()}'`) resolve to many concrete files; at
+          // least one on-disk snapshot must match the token-widened
+          // pattern.
+          final segments = name
+              .split(RegExp(r'\$\{[^}]+\}|\$[a-zA-Z_]\w*'))
+              .map(RegExp.escape)
+              .join('.*');
+          final pattern = RegExp('^$segments\$');
+          final onDisk = Directory(
+            'test/golden/goldens',
+          ).listSync(recursive: true);
+          final matches = onDisk.any(
+            (entity) =>
+                entity is File &&
+                pattern.hasMatch(
+                  entity.path
+                      .replaceAll('\\', '/')
+                      .replaceFirst('test/golden/goldens/', '')
+                      .replaceFirst('.png', ''),
+                ),
+          );
+          if (!matches) {
             problems.add(
-              '$testPath: missing snapshot goldens/$name.png — '
+              '$testPath: missing snapshots matching goldens/$name — '
               'run `flutter test test/golden --update-goldens`',
             );
           }
