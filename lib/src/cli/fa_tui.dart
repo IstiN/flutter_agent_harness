@@ -17,7 +17,8 @@ import 'tui_prompt.dart';
 import 'tui_theme.dart';
 import 'tui_repl.dart' show MenuItem, QueuedMessage, TuiProgramHooks;
 import 'system_notice_render.dart';
-import 'tui_text_width.dart' show tuiFitWidth, tuiPadRight, tuiTextWidth;
+import 'tui_text_width.dart'
+    show tuiFitWidth, tuiGraphemeWidth, tuiPadRight, tuiTextWidth;
 import '../messaging/scheduled_messages.dart' show ScheduledMessageQueue;
 import 'paste_image.dart';
 
@@ -28,6 +29,7 @@ part 'fa_tui_rows.dart';
 part 'fa_tui_paste.dart';
 part 'fa_tui_theme_swap.dart';
 part 'fa_tui_controller_io.dart';
+part 'fa_tui_composer.dart';
 
 /// Translates the (web-safe) headless test hooks into dart_tui program
 /// options: a scripted key byte stream replaces stdin, the rendered frames
@@ -454,20 +456,6 @@ final class FaTuiModel extends Model {
     return rows;
   }
 
-  /// The input block's height in PHYSICAL rows: the text soft-wraps to the
-  /// terminal width, so a long single line occupies several rows. All
-  /// layout math (viewport height, cursor homing) must use this count —
-  /// the raw `\n` count lies once a line wraps.
-  int get _inputLineCount => _wrappedInput().$1.length;
-
-  /// Truncates [text] to [maxWidth] (default: the terminal width) with an
-  /// ellipsis. Every chrome row (status, menu items) must fit on one
-  /// terminal row: a soft-wrapped chrome line desyncs the renderer's row
-  /// math and smears the frame on every repaint.
-  /// Truncates [text] to the terminal width in terminal cells (not UTF-16
-  /// units) so wide characters cannot push chrome rows past the width.
-  String _fitWidth(String text, [int? maxWidth]) =>
-      tuiFitWidth(text, maxWidth ?? termWidth);
 
   /// Whether the sticky user echo is pinned right now: a run is streaming
   /// and the echo has FULLY scrolled above the visible window. Rows are
@@ -542,35 +530,6 @@ final class FaTuiModel extends Model {
     );
   }
 
-  int _viewportHeightFor(int width, int height) {
-    const progressH = 1;
-    // The input zone is framed by a rule above and a rule below it.
-    const inputFrameH = 2;
-    const statusH = 1;
-    final busyH = busy ? 1 : 0;
-    final scheduledH = scheduledCount > 0 ? 1 : 0;
-    final waitingH = _waitingRowLines().length;
-    // + count badge and hint rows around the message rows (issue #275).
-    final queueH = queue.isEmpty ? 0 : queue.length + 2;
-    final promptH = prompt != null ? tuiPromptRowCount(prompt!, width) + 2 : 0;
-    final used =
-        progressH +
-        _menuReservedLines +
-        busyH +
-        scheduledH +
-        waitingH +
-        queueH +
-        promptH +
-        inputFrameH +
-        statusH +
-        _inputLineCount;
-    // Clamp to the physical height (floor 0): a ≥3 floor on a tiny terminal
-    // would promise rows the screen does not have and break the pure-scroll
-    // → CSI S 1:1 mapping (issue #274 review minor).
-    return (height - used).clamp(0, height);
-  }
-
-  int get _viewportHeight => _viewportHeightFor(termWidth, termHeight);
 
   /// The output history formatted and wrapped to physical rows at [width]
   /// (default: the current terminal width). All scroll math happens in
@@ -2379,88 +2338,8 @@ final class FaTuiModel extends Model {
     return 1 + _writeMenuItems(b, baseRow + 1);
   }
 
-  /// The status row, fitted AND padded to the terminal width: a shorter new
-  /// status (e.g. switching from a long model id to a short one) must
-  /// overwrite the previous row's tail — the renderer only rewrites the
-  /// cells the new content covers. Both operations are cell-width aware
-  /// (grapheme clusters): UTF-16 padding underpads any status carrying wide
-  /// characters and stale cells survive on the right.
-  String _statusRow() => _dim(
-    tuiPadRight(tuiFitWidth(callbacks.statusLine(), termWidth), termWidth),
-  );
 
-  /// The framed input lines with horizontal cursor-window scrolling; returns
-  /// the cursor's input line index and screen column for the cursor home.
-  /// Registers the composer hit-region (issue #278): click = caret move.
-  (int, int) _writeInputLines(StringBuffer b, int baseRow) {
-    final (rows, cursorRow, cursorCol) = _wrappedInput();
-    _hitRegions.add(
-      TuiHitRegion(
-        x: 0,
-        y: baseRow,
-        w: termWidth,
-        h: rows.length,
-        kind: TuiRegionKind.composer,
-      ),
-    );
-    for (var i = 0; i < rows.length; i++) {
-      if (i > 0) b.writeln();
-      b.write(rows[i]);
-    }
-    b.writeln();
-    return (cursorRow, cursorCol);
-  }
 
-  /// The input text soft-wrapped to the terminal width (the whole prompt
-  /// stays visible as a paragraph — no horizontal clipping), plus the
-  /// cursor's row/column inside the wrapped block. A cursor sitting exactly
-  /// past a full-width chunk gets the empty trailing row it points at, so
-  /// the row count is cursor-dependent — [_inputLineCount] uses this same
-  /// computation and the two never disagree.
-  (List<String>, int, int) _wrappedInput() {
-    final width = termWidth < 1 ? 1 : termWidth;
-    final logical = inputText.split('\n');
-    final beforeCursor = inputText.substring(0, cursor);
-    final cursorLogicalLine = '\n'.allMatches(beforeCursor).length;
-    final lastNl = beforeCursor.lastIndexOf('\n');
-    final cursorColInLine = lastNl < 0
-        ? beforeCursor.length
-        : beforeCursor.length - lastNl - 1;
-
-    final rows = <String>[];
-    var cursorRow = 0;
-    var cursorCol = 0;
-    for (var i = 0; i < logical.length; i++) {
-      final lineRows = _wrapInputLine(logical[i], width);
-      if (i == cursorLogicalLine) {
-        cursorRow = rows.length + cursorColInLine ~/ width;
-        cursorCol = cursorColInLine % width;
-        if (cursorColInLine == logical[i].length &&
-            cursorColInLine > 0 &&
-            cursorColInLine % width == 0) {
-          // The cursor rests one row past the last full-width chunk.
-          lineRows.add('');
-        }
-      }
-      rows.addAll(lineRows);
-    }
-    return (rows, cursorRow, cursorCol);
-  }
-
-  /// One logical input line soft-wrapped to [width]-column rows (always at
-  /// least one row, empty when the line is). Extracted from
-  /// [_wrappedInput] to keep its CRAP in budget.
-  static List<String> _wrapInputLine(String line, int width) {
-    final rows = <String>[
-      for (var start = 0; start < line.length; start += width)
-        line.substring(
-          start,
-          start + width > line.length ? line.length : start + width,
-        ),
-    ];
-    if (rows.isEmpty) rows.add('');
-    return rows;
-  }
 
   /// Matches a code-fence opener/closer line exactly like the view-time
   /// markdown walk (ansi_markdown.dart `_fenceRe`): parity over the
@@ -2538,6 +2417,141 @@ final class FaTuiModel extends Model {
 /// slash commands mid-stream) collapse into ONE 0→1 / 1→0 edge for the
 /// model, so the elapsed timer and sticky echo survive re-entry, and an
 /// unpaired release clamps at zero instead of poisoning the count.
+/// One soft-wrapped composer row with the buffer offset (UTF-16 code units
+/// into the SOURCE line) where it starts — the cursor maps back through
+/// these offsets, so a resize re-wraps while the cursor stays on the same
+/// buffer position (issue #467 E3).
+final class WrappedComposerRow {
+  const WrappedComposerRow(this.text, this.startUnit);
+
+  /// The visible row (break-point spaces at its end dropped).
+  final String text;
+
+  /// Code units into the source logical line where this row begins.
+  final int startUnit;
+}
+
+/// Soft-wraps one logical composer line to [width]-terminal-cell rows
+/// (issue #467): word-boundary preferred, a word wider than the viewport
+/// hard-breaks (E1, no wrap-point loop), grapheme clusters never split
+/// across rows (E2 — the renderer measures cells, not code units, and a
+/// row overflowing its width makes the terminal hardware-wrap and desync
+/// the frame). Break-point space runs are dropped only where a row breaks;
+/// interior runs render verbatim. Always returns at least one row.
+List<WrappedComposerRow> wrapComposerRows(String line, int width) =>
+    _ComposerWrap(width < 1 ? 1 : width).run(line);
+
+/// Plain-row view of [wrapComposerRows].
+List<String> wrapComposerLine(String line, int width) =>
+    [for (final row in wrapComposerRows(line, width)) row.text];
+
+/// The greedy-wrap state machine behind [wrapComposerRows]. One mutable
+/// walker per line; kept as a class so every method stays inside the CRAP
+/// gate and the wrap rules read one per method.
+final class _ComposerWrap {
+  _ComposerWrap(this.width);
+
+  /// Row capacity in terminal cells.
+  final int width;
+
+  final rows = <WrappedComposerRow>[];
+  final _row = StringBuffer();
+  final _word = StringBuffer();
+  final _pending = StringBuffer(); // space run since the last word
+  int _rowCells = 0;
+  int _rowStartUnit = 0;
+  int _wordCells = 0;
+  int _wordStartUnit = 0;
+  int _unit = 0; // code units consumed from the line
+
+  List<WrappedComposerRow> run(String line) {
+    if (line.isEmpty) return [const WrappedComposerRow('', 0)];
+    for (final cluster in line.characters) {
+      if (cluster == ' ') {
+        _flushWord();
+        _pending.write(' ');
+      } else {
+        if (_word.isEmpty) _wordStartUnit = _unit;
+        _word.write(cluster);
+        _wordCells += tuiGraphemeWidth(cluster);
+      }
+      _unit += cluster.length;
+    }
+    _flushWord();
+    if (_row.isNotEmpty || rows.isEmpty) _emitRow();
+    return rows;
+  }
+
+  /// Rows that end the frame must be flushed verbatim; [_emitRow] is the
+  /// single place a row leaves the walker.
+  void _emitRow() {
+    rows.add(WrappedComposerRow(_row.toString(), _rowStartUnit));
+    _row.clear();
+    _rowCells = 0;
+  }
+
+  /// Lands the pending word on the current row, breaking the row (dropping
+  /// the pending space run) when the word does not fit, and hard-breaking
+  /// a word wider than the viewport (E1).
+  void _flushWord() {
+    if (_word.isEmpty) return;
+    if (_wordCells > width) {
+      _hardBreakWord();
+      return;
+    }
+    if (_rowCells == 0) {
+      _row.write(_word);
+      _rowCells = _wordCells;
+      _rowStartUnit = _wordStartUnit;
+    } else if (_rowCells + _pending.length + _wordCells <= width) {
+      _row
+        ..write(_pending)
+        ..write(_word);
+      _rowCells += _pending.length + _wordCells;
+    } else {
+      _emitRow();
+      _row.write(_word);
+      _rowCells = _wordCells;
+      _rowStartUnit = _wordStartUnit;
+    }
+    _word.clear();
+    _wordCells = 0;
+    _pending.clear();
+  }
+
+  /// E1: a word wider than the viewport slices into width-cell rows —
+  /// clusters are never cut, and every slice starts a fresh row so two
+  /// wrap points can never fight over the same cluster (no loop).
+  void _hardBreakWord() {
+    if (_rowCells > 0) _emitRow();
+    final clusters = _word.toString().characters.toList();
+    final slice = StringBuffer();
+    var sliceCells = 0;
+    var sliceStartUnit = _wordStartUnit;
+    var sliceUnits = 0;
+    for (final cluster in clusters) {
+      final cells = tuiGraphemeWidth(cluster);
+      if (sliceCells > 0 && sliceCells + cells > width) {
+        rows.add(WrappedComposerRow(slice.toString(), sliceStartUnit));
+        slice.clear();
+        sliceStartUnit += sliceUnits;
+        sliceCells = 0;
+        sliceUnits = 0;
+      }
+      slice.write(cluster);
+      sliceCells += cells;
+      sliceUnits += cluster.length;
+    }
+    // The trailing slice becomes the current row (later words may join it).
+    _row.write(slice);
+    _rowCells = sliceCells;
+    _rowStartUnit = sliceStartUnit;
+    _word.clear();
+    _wordCells = 0;
+    _pending.clear();
+  }
+}
+
 final class BusyDepth {
   var _depth = 0;
 
