@@ -51,7 +51,6 @@ const double kFaChatFilesPanelWidth = 300;
 typedef FaChatComposerBuilder =
     Widget Function(BuildContext context, FaChatService service);
 
-
 /// A chat UI over a single [FaChatService], built on top of
 /// `flutter_chat_ui`.
 ///
@@ -193,7 +192,6 @@ class FaChatScreen extends StatefulWidget {
   @override
   State<FaChatScreen> createState() => _FaChatScreenState();
 }
-
 
 class _FaChatScreenState extends State<FaChatScreen>
     with TickerProviderStateMixin {
@@ -1066,7 +1064,6 @@ class _FaChatScreenState extends State<FaChatScreen>
     );
   }
 
-
   Widget _buildCustomMessage(
     BuildContext context,
     CustomMessage message,
@@ -1081,8 +1078,9 @@ class _FaChatScreenState extends State<FaChatScreen>
         message: FaChatMessage(
           role: (metadata['role'] as String?) ?? 'system',
           content: (metadata['content'] as String?) ?? '',
-          attachments: (metadata['attachments'] as List<Object?>?)
-              ?.cast<FaChatAttachment>() ??
+          attachments:
+              (metadata['attachments'] as List<Object?>?)
+                  ?.cast<FaChatAttachment>() ??
               const <FaChatAttachment>[],
           toolName: metadata['toolName'] as String?,
           isError: (metadata['isError'] as bool?) ?? false,
@@ -1193,7 +1191,24 @@ class _FaChatScreenState extends State<FaChatScreen>
                           _suppressInsertAnimations
                           ? const Duration(milliseconds: 1)
                           : const Duration(milliseconds: 250),
+                      // The typing indicator lives IN the list (issue #459):
+                      // in a reversed scroll view the bottom sliver renders
+                      // visually LAST — below the newest message, right
+                      // above the composer — scrolling away with the
+                      // content instead of pinning above the input bar.
+                      bottomSliver: _isStreaming
+                          ? const SliverToBoxAdapter(
+                              key: ValueKey('faChatTypingFooter'),
+                              child: FaTypingFooter(),
+                            )
+                          : null,
                     ),
+                // While streaming with an empty transcript the footer is the
+                // only item (E1) — the package's default "No messages yet"
+                // overlay would stack under it; idle keeps the default.
+                emptyChatListBuilder: (context) => _isStreaming
+                    ? const SizedBox.shrink()
+                    : const EmptyChatList(),
                 composerBuilder: (_) => const SizedBox.shrink(),
               ),
               theme: Theme.of(context).brightness == Brightness.light
