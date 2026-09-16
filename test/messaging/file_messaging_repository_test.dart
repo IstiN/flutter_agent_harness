@@ -433,9 +433,11 @@ void main() {
   // Cross-project delivery: a mailbox registered under a DIFFERENT cwd slug
   // must receive mail in ITS messages root — the recipient drains only its
   // own root, so sender-rooted delivery silently vanishes (the peer fa in
-  // another project never sees the message). Resolution order: the
-  // messages-registry.json slug lookup, then a broad scan of sibling slugs
-  // for a mailbox whose .id marker matches; unknown ids stay local.
+  // another project never sees the message). Resolution (issue #516): a
+  // LIVE registration (fresh heartbeat) wins over any existing directory;
+  // stale-only — the messages-registry.json slug hint, then a broad scan
+  // of sibling slugs for a mailbox whose .id marker matches; unknown ids
+  // stay local.
   group('cross-project send routing', () {
     test('registry-known foreign slug receives the message', () async {
       await env.writeFile(
@@ -691,6 +693,19 @@ void main() {
       expect(await twin.peek(targetId), hasLength(1));
       expect((await env.exists(staleDir)).valueOrNull, isTrue);
       expect(await recipient.drain(targetId), isEmpty);
+    });
+
+    test('AC1c: the live OWN root outranks a foreign corpse', () async {
+      await seedStaleCorpse();
+      // The recipient is live HERE (this repository's own project root).
+      await repo.touch(targetId);
+
+      await repo.send(msg(id: 'm1', to: targetId, text: 'home is here'));
+
+      expect(await repo.peek(targetId), hasLength(1));
+      final corpseInbox =
+          (await env.listDir('$staleDir/inbox')).valueOrNull ?? const [];
+      expect(corpseInbox.where((e) => e.kind == FileKind.file), isEmpty);
     });
   });
 }
