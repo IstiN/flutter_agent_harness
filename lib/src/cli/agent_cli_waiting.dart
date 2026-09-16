@@ -64,24 +64,39 @@ final class _WaitingCoordinator {
   String get _manifestPath => '${_cli._env.cwd}/.fah/bash_jobs/running.json';
 
   /// Restart honesty: count the manifest entries, then take the file over.
-  /// A torn/unreadable file counts zero — never invent lost jobs.
+  /// A torn/unreadable file counts zero — never invent lost jobs. The
+  /// recorded pids also feed the boot sweep (issue #517): previous-run jobs
+  /// whose wrapper died but whose process group (toolchain grandchildren)
+  /// survived get one warning line, then are reaped.
   Future<void> captureLostJobs() async {
     lostJobs = 0;
+    var pids = const <int>[];
     try {
       final text = (await _cli._env.readTextFile(_manifestPath)).valueOrNull;
       final decoded = text == null ? null : jsonDecode(text);
-      if (decoded is List) lostJobs = decoded.length;
+      if (decoded is List) {
+        lostJobs = decoded.length;
+        pids = [
+          for (final entry in decoded)
+            if (entry is Map) ?int.tryParse('${entry['pid']}'),
+        ];
+      }
     } on Object {
       lostJobs = 0;
     }
     await _writeManifest(const []);
+    await reapOrphanJobGroups(
+      env: _cli._env,
+      candidatePids: pids,
+      onWarn: (message) => _cli.io.writeln(tuiWarning('⚠ $message')),
+    );
   }
 
-  Future<void> _manifestAdd(String id, String command) async {
+  Future<void> _manifestAdd(String id, String command, int? pid) async {
     await _mutateManifest(
       (entries) => [
         ...entries,
-        {'id': id, 'command': command},
+        {'id': id, 'command': command, 'pid': pid?.toString()},
       ],
     );
   }
@@ -104,6 +119,7 @@ final class _WaitingCoordinator {
             {
               'id': entry['id'] as String?,
               'command': entry['command'] as String?,
+              'pid': entry['pid']?.toString(),
             },
       ];
       await _writeManifest(mutate(entries));
@@ -123,7 +139,7 @@ final class _WaitingCoordinator {
   /// A background job started (event-driven waiting-row enter): record it
   /// in the cross-run manifest and refresh the row.
   Future<void> jobStarted(ShellJobEntry job) async {
-    await _manifestAdd(job.id, job.command);
+    await _manifestAdd(job.id, job.command, job.pid);
     await push();
   }
 

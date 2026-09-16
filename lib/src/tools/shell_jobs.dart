@@ -60,6 +60,9 @@ final class ShellJobEntry {
   /// The log file receiving the job's stdout and stderr.
   String get logPath => job.logPath;
 
+  /// The job's root process id, when the environment exposes one.
+  int? get pid => job.pid;
+
   /// Whether the process is still running.
   bool get isRunning => job.isRunning;
 
@@ -225,4 +228,58 @@ final class ShellJobRegistry {
       }
     }
   }
+}
+
+/// Boot sweep (issue #517): reap the process groups of previous-run jobs —
+/// entries whose leader pid is dead but whose group members (the toolchain
+/// grandchildren: dartvm, flutter_tester) survived for hours. Only jobs
+/// that ran as their own group leader (posix `setsid`) can be recognized —
+/// a live group keyed by a DEAD pid can only be a leftover job group, never
+/// this process's own. Best-effort: any shell/platform failure yields a
+/// zero sweep, and [onWarn] fires at most once. Returns the counts.
+Future<({int groups, int processes})> reapOrphanJobGroups({
+  required ExecutionEnv env,
+  required Iterable<int> candidatePids,
+  void Function(String message)? onWarn,
+}) async {
+  const zero = (groups: 0, processes: 0);
+  final pids = candidatePids.where((pid) => pid > 1).toSet();
+  if (pids.isEmpty) return zero;
+  final listed = await env.exec('ps -ax -o pid=,pgid=');
+  if (listed.isErr) return zero;
+  final livePids = <int>{};
+  final groupOf = <int, int>{};
+  for (final line in listed.valueOrNull!.stdout.split('\n')) {
+    final cols = line.trim().split(RegExp(r'\s+'));
+    if (cols.length < 2) continue;
+    final pid = int.tryParse(cols[0]);
+    final pgid = int.tryParse(cols[1]);
+    if (pid != null && pgid != null) {
+      livePids.add(pid);
+      groupOf[pid] = pgid;
+    }
+  }
+  var groups = 0;
+  var processes = 0;
+  for (final pid in pids) {
+    // A live leader is a still-running job (or a recycled pid) — never
+    // ours to reap.
+    if (livePids.contains(pid)) continue;
+    final members = [
+      for (final entry in groupOf.entries)
+        if (entry.value == pid) entry.key,
+    ];
+    if (members.isEmpty) continue;
+    final killed = await env.exec('kill -9 ${members.join(' ')}');
+    if (killed.isErr) continue;
+    groups++;
+    processes += members.length;
+  }
+  if (groups > 0) {
+    onWarn?.call(
+      'reaped $groups orphaned job process group(s) '
+      '($processes processes) from previous-run jobs',
+    );
+  }
+  return (groups: groups, processes: processes);
 }

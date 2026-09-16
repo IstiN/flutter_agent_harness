@@ -162,6 +162,58 @@ void main() {
       expect(await _liveProcesses('sleep $secsA'), isEmpty);
       expect(await _liveProcesses('sleep $secsB'), isEmpty);
     });
+
+    test(
+      'boot sweep reaps a dead-leader group and warns once (AC3)',
+      skip: LocalShell.jobsGetOwnProcessGroup
+          ? null
+          : 'needs setsid (group leadership)',
+      () async {
+        final secs = token(4);
+        addTearDown(() => Process.run('pkill', ['-f', 'sleep $secs']));
+        final started = await env.startShellJob(
+          'sleep $secs & wait',
+          id: 'sh-517c',
+          logPath: '${tempDir.path}/sh-517c.log',
+        );
+        final job = started.valueOrNull!;
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        // Fabricate the crash: kill ONLY the group leader — the grandchild
+        // survives, orphaned but still carrying the job's pgid.
+        Process.killPid(job.pid!, ProcessSignal.sigkill);
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        expect(await _liveProcesses('sleep $secs'), hasLength(1));
+        final warns = <String>[];
+        final reaped = await reapOrphanJobGroups(
+          env: env,
+          candidatePids: [job.pid!],
+          onWarn: warns.add,
+        );
+        expect(reaped.groups, 1);
+        expect(reaped.processes, 1);
+        expect(warns, hasLength(1));
+        expect(await _liveProcesses('sleep $secs'), isEmpty);
+      },
+    );
+
+    test('without group leadership stop still walks the live tree', () async {
+      final secs = token(5);
+      addTearDown(() => Process.run('pkill', ['-f', 'sleep $secs']));
+      LocalShell.ownProcessGroupOverride = false;
+      addTearDown(() => LocalShell.ownProcessGroupOverride = null);
+      final started = await env.startShellJob(
+        'sleep $secs & wait',
+        id: 'sh-517d',
+        logPath: '${tempDir.path}/sh-517d.log',
+      );
+      final job = started.valueOrNull!;
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(await _liveProcesses('sleep $secs'), hasLength(1));
+      await job.stop();
+      await job.settled;
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+      expect(await _liveProcesses('sleep $secs'), isEmpty);
+    });
   });
 }
 
