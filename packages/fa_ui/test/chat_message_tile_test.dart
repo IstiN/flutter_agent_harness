@@ -343,9 +343,9 @@ void main() {
     expect(find.text('Open Settings'), findsNothing);
     expect(find.text('Try again'), findsNothing);
 
-    // The collapsible tile stays — content is long, so the "Show all"
-    // affordance renders (we only show the first 8 lines by default).
-    expect(find.textContaining('Show all'), findsOneWidget);
+    // The collapsible tile stays — 18 lines clamp to a 3-line preview
+    // with the "+15 lines" hint (issue #458).
+    expect(find.text('+15 lines'), findsOneWidget);
   });
 
   testWidgets(
@@ -389,4 +389,154 @@ void main() {
       expect(action, isNotNull);
     },
   );
+  testWidgets('a 40-line tool result clamps to 3 lines with a "+37 lines" '
+      'hint; height independent of output length (AC1)', (tester) async {
+    Widget tile(int lines) => wrap(
+      ChatMessageTile(
+        message: FaChatMessage(
+          role: 'tool',
+          content: [
+            for (var i = 1; i <= lines; i++) 'output line $i',
+          ].join('\n'),
+          toolName: 'bash',
+        ),
+        images: images(),
+      ),
+    );
+
+    await tester.pumpWidget(tile(40));
+    // First three lines only — cut on line boundaries.
+    expect(
+      find.text('output line 1\noutput line 2\noutput line 3'),
+      findsOneWidget,
+    );
+    expect(find.text('output line 4'), findsNothing);
+    expect(find.text('output line 39'), findsNothing);
+    // The hint names the hidden remainder.
+    expect(find.text('+37 lines'), findsOneWidget);
+
+    final clampedHeight = tester.getSize(find.byType(ChatMessageTile)).height;
+    await tester.pumpWidget(tile(400));
+    expect(find.text('+397 lines'), findsOneWidget);
+    // Same preview + same hint → identical collapsed height.
+    expect(tester.getSize(find.byType(ChatMessageTile)).height, clampedHeight);
+  });
+
+  testWidgets('expand shows the full output, collapse returns to the clamp, '
+      'and the state is per card (AC2)', (tester) async {
+    String output(int lines) =>
+        [for (var i = 1; i <= lines; i++) 'output line $i'].join('\n');
+    ChatMessageTile tile() => ChatMessageTile(
+      // 8 lines: clamped, yet two expanded cards still fit the test
+      // viewport — this test is about per-card state, not the cap.
+      message: FaChatMessage(role: 'tool', content: output(8), toolName: 'bash'),
+      images: images(),
+    );
+    await tester.pumpWidget(wrap(Column(children: [tile(), tile()])));
+    expect(find.text('+5 lines'), findsNWidgets(2));
+
+    // Expand only the first card.
+    await tester.tap(find.text('+5 lines').first);
+    await tester.pump();
+    expect(find.textContaining('output line 8'), findsOneWidget);
+    expect(find.text('Show less'), findsOneWidget);
+    // The second card is still clamped — state is per instance.
+    expect(find.text('+5 lines'), findsOneWidget);
+
+    // Collapse back.
+    await tester.tap(find.text('Show less'));
+    await tester.pump();
+    expect(find.textContaining('output line 8'), findsNothing);
+    expect(find.text('+5 lines'), findsNWidgets(2));
+  });
+
+  testWidgets('a 250-line expanded result scrolls instead of growing '
+      'without bound (AC2 hard max)', (tester) async {
+    await tester.pumpWidget(
+      wrap(
+        ChatMessageTile(
+          message: FaChatMessage(
+            role: 'tool',
+            content: [
+              for (var i = 1; i <= 250; i++) 'output line $i',
+            ].join('\n'),
+            toolName: 'bash',
+          ),
+          images: images(),
+        ),
+      ),
+    );
+    await tester.tap(find.text('+247 lines'));
+    await tester.pump();
+    // The full body is in the tree; the card scrolls past the line cap.
+    expect(find.textContaining('output line 250'), findsOneWidget);
+    expect(find.byType(Scrollable), findsOneWidget);
+  });
+
+  testWidgets('a failed tool call starts expanded at the error cap; the '
+      'same body on a success stays clamped (AC3)', (tester) async {
+    Widget tile({required bool isError}) => wrap(
+      ChatMessageTile(
+        message: FaChatMessage(
+          role: 'tool',
+          content: [
+            for (var i = 1; i <= 40; i++) 'output line $i',
+          ].join('\n'),
+          toolName: 'bash',
+          isError: isError,
+        ),
+        images: images(),
+      ),
+    );
+
+    await tester.pumpWidget(tile(isError: false));
+    expect(find.textContaining('output line 10'), findsNothing);
+    expect(find.text('+37 lines'), findsOneWidget);
+
+    await tester.pumpWidget(tile(isError: true));
+    // Expanded by default — no clamp hint, Show less offered instead.
+    expect(find.textContaining('output line 10'), findsOneWidget);
+    expect(find.text('+37 lines'), findsNothing);
+    expect(find.text('Show less'), findsOneWidget);
+  });
+
+  testWidgets('empty tool output renders the "(no output)" stub, no clamp '
+      'UI', (tester) async {
+    await tester.pumpWidget(
+      wrap(
+        ChatMessageTile(
+          message: FaChatMessage(role: 'tool', content: '', toolName: 'edit'),
+          images: images(),
+        ),
+      ),
+    );
+    expect(find.text('(no output)'), findsOneWidget);
+    expect(find.text('Show more'), findsNothing);
+  });
+
+  testWidgets('a single very long line offers the toggle and never '
+      'overflows the card (E1)', (tester) async {
+    await tester.pumpWidget(
+      wrap(
+        SizedBox(
+          width: 360,
+          child: ChatMessageTile(
+            message: FaChatMessage(
+              role: 'tool',
+              content: 'x' * 2000,
+              toolName: 'bash',
+            ),
+            images: images(),
+          ),
+        ),
+      ),
+    );
+    // maxLines clamps the wrapped line (no overflow exception) and the
+    // toggle still offers the full text.
+    expect(find.text('Show more'), findsOneWidget);
+    await tester.tap(find.text('Show more'));
+    await tester.pump();
+    expect(find.text('x' * 2000), findsOneWidget);
+  });
+
 }
