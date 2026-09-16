@@ -1,5 +1,6 @@
 # Changelog
 
+
 ## Unreleased
 - feat(458): tool output cards clamp to a 3-line preview — long dumps no
   longer evict the conversation. A card shows the first 3 lines plus a
@@ -13,6 +14,9 @@
   width); the host-locked `apps_fa_chat_overlay_rich*` frames need a
   macOS `--update-goldens` pass (the seeded `read`/thinking tiles now
   clamp to 3 lines).
+## 0.1.392
+
+
 - fix(439): subagents no longer die at the context wall — the main loop's
   compaction discipline (#387/#388) now applies to children: every child
   turn boundary checks the estimate (transcript + system prompt + tools,
@@ -3660,6 +3664,8 @@
 - ci: shard fa_ui tests ×3 + cap the 220s virtualisation soak (#283) (#285)
 - ci(daily-publish): pin Flutter 3.47.x in the macOS/iOS legs — drop reliance on runner-local SDKs (#260, #261) (#281)
 - fix(cli): TUI scheduled countdown ticks on the minute boundary while idle (#213) (#264)
+
+## Unreleased
 
 ## Unreleased
 
