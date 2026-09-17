@@ -17,6 +17,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:xterm/xterm.dart';
 
 import '../golden/golden_test_helper.dart';
 import 'cli_visual_harness.dart';
@@ -67,8 +68,10 @@ void main() {
     testWidgets('boot → model picker → filter → select', (tester) async {
       final harness = await boot(tester);
       await harness.screenshot(shotsDir, '01_boot');
-
-      // /model opens the model picker
+      // Issue #506 AC1: the banner mark is the composed two-role label —
+      // `>_` in the accent role, `Fa` in accent2 — the same styling tokens
+      // the chat-time prefix carries, never a single plain role.
+      _expectComposedFaMark(harness, topRow: true, shot: '01_boot');
       await harness.runSlashCommand('/model');
       await harness.liveWaitForText(
         'Select model',
@@ -929,6 +932,9 @@ http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
         timeout: const Duration(seconds: 30),
       );
       await harness.screenshot(shotsDir, '100_markdown_wrap');
+      // Issue #506: the chat-time prefix carries the same composed
+      // two-role label the boot banner shows.
+      _expectComposedFaMark(harness, shot: '100_markdown_wrap');
       // The whole line is on screen (wrapped); row splits put newlines into
       // the raw screen text, so assertions run on the flattened form. The
       // markdown markers themselves are consumed by the formatter.
@@ -1237,6 +1243,58 @@ http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
       tempHome.deleteSync(recursive: true);
     });
   });
+}
+
+/// Asserts the `>_Fa` mark on screen is the composed two-role label
+/// (issue #506): `>` + `_` in one bold role, `F` + `a` in another, the two
+/// roles distinct — the boot banner carries the same styling tokens as the
+/// chat-time prefix, never a single plain role. Reads the xterm buffer —
+/// the exact cells the PNG painter draws. With [topRow] the mark must sit
+/// on the screen's top row (the boot banner's position).
+void _expectComposedFaMark(
+  CliVisualHarness harness, {
+  bool topRow = false,
+  required String shot,
+}) {
+  final buf = harness.terminal.buffer;
+  final lastRow = topRow ? buf.scrollBack : buf.lines.length - 1;
+  for (var i = buf.scrollBack; i <= lastRow; i++) {
+    final cells = [for (var x = 0; x < 4; x++) CellData.empty()];
+    for (var x = 0; x < 4; x++) {
+      buf.lines[i].getCellData(x, cells[x]);
+    }
+    final text = cells
+        .map(
+          (c) => String.fromCharCodes([c.content & CellContent.codepointMask]),
+        )
+        .join();
+    if (text != '>_Fa') continue;
+    int fg(int index) => cells[index].foreground & CellColor.valueMask;
+    final accent = fg(0);
+    final brand = fg(2);
+    // A role carrying the terminal DEFAULT fg (type 0) means that half of
+    // the mark is unstyled — the single-role regression this asserts away.
+    int fgType(int index) =>
+        (cells[index].foreground & CellColor.typeMask) >> CellColor.typeShift;
+    expect(fgType(0), isNot(0), reason: '$shot: `>_` role is a real color');
+    expect(fgType(2), isNot(0), reason: '$shot: `Fa` role is a real color');
+    expect(accent, fg(1), reason: '$shot: `>` and `_` share the accent role');
+    expect(brand, fg(3), reason: '$shot: `F` and `a` share the accent2 role');
+    expect(
+      accent,
+      isNot(brand),
+      reason: '$shot: the mark composes two distinct roles',
+    );
+    for (var x = 0; x < 4; x++) {
+      expect(
+        cells[x].flags & CellFlags.bold,
+        CellFlags.bold,
+        reason: '$shot: mark cell $x renders bold',
+      );
+    }
+    return;
+  }
+  fail('$shot: no >_Fa mark row found on screen');
 }
 
 /// Seeds a hub fleet for the visual evidence test (issue #277): a parent
