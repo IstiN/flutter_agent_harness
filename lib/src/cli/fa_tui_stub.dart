@@ -129,6 +129,11 @@ final class FaTuiController {
   void setJobBoard(List<String> lines) {}
 
   /// No-op on web (the TUI never runs there). Mirrors the dart_tui
+  /// controller's method so the run-stall push (issue #514) compiles for
+  /// BOTH targets.
+  void setRunStalled(bool stalled) {}
+
+  /// No-op on web (the TUI never runs there). Mirrors the dart_tui
   /// controller so the visible-waiting pushes (issue #450) compile for
   /// BOTH targets.
   void setWaiting({

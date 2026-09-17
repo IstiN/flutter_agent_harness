@@ -77,6 +77,7 @@ const _nonSettingsCommands = <String, String>{
   '/stats': 'read-only token/cost totals',
   '/tasks': 'lists/cancels background jobs',
   '/reset': 'starts a new session (no persisted setting)',
+  '/restart': 'aborts a run and re-runs its steering, nothing persisted',
   '/compact': 'manual compaction (no persisted setting)',
   '/trajectory': 'read-only ledger views',
   '/sessions': 'read-only session listing',
