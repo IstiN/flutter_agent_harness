@@ -10,9 +10,11 @@ import '../context.dart';
 import '../env/execution_env.dart';
 import '../session/session_record.dart';
 import '../session/session_storage.dart';
+import '../session/session_repo.dart';
 import '../session/session_tree.dart';
 import '../session_io_retry.dart';
 import '../types.dart';
+import 'subagent_manager.dart' show subagentRegistryRecordType;
 import 'subagent_tools.dart' show ChildMessageReader;
 
 /// Opens a retained child session from its JSONL path (the value
@@ -33,6 +35,52 @@ ChildSessionOpener jsonlChildSessionOpener(
   return (sessionPath) async => Session(
     await JsonlSessionStorage.open(fs, sessionPath, ioRetry: ioRetry),
   );
+}
+
+/// The subagent registry rows of a parent session (issue #488 AC2).
+///
+/// Two restart-time losses are healed here:
+/// - the `subagent_registry` snapshot is a side-leaf custom record, so
+///   the windowed boot open never materializes it into
+///   `Session.getEntries` — the raw file scan still sees it. The LAST
+///   snapshot wins (every write carries the full row list).
+/// - a child whose snapshot row was lost (a kill between spawn and
+///   persist) but whose transcript exists is ADOPTED: the sessions tree
+///   is scanned for child headers (`agent: subagent`, `parent:` this
+///   session) missing from the snapshot rows. An adopted row becomes a
+///   `completed` handle on its real JSONL path, so `task_send` /
+///   `task_resume` address it instead of reporting "no subagent with id".
+Future<List<Map<String, dynamic>>> subagentRegistryRows({
+  required JsonlSessionRepo repo,
+  required SessionMetadata parent,
+}) async {
+  final records = await repo.readCustomRecordsOfType(parent, {
+    subagentRegistryRecordType,
+  });
+  final rows = [
+    for (final item
+        in (records.isEmpty ? null : records.last.data as List?) ?? const [])
+      if (item is Map<String, dynamic>) item,
+  ];
+  final known = {for (final row in rows) row['id'] as String?};
+  for (final meta in await repo.list(cwd: parent.cwd)) {
+    final header = meta.metadata;
+    if (header == null || header['agent'] != 'subagent') continue;
+    if (header['parent'] != parent.id) continue;
+    final id = header['id'];
+    if (id is! String ||
+        id.isEmpty ||
+        known.contains(id) ||
+        meta.path == parent.path) {
+      continue;
+    }
+    rows.add({
+      'id': id,
+      'sessionId': meta.path,
+      'createdAt': meta.createdAt.toIso8601String(),
+    });
+  }
+  return rows;
 }
 
 /// A [ChildMessageReader] over plain JSONL session files: reads the active
