@@ -116,7 +116,10 @@ String toolRowDetail(
     case 'ask':
       return _askDetail(args);
     case 'bash':
-      return collapseCd(_firstString(args));
+      // Heredoc-aware (issue #599): first line + `…`, taken BEFORE the
+      // flatten — flattened, the heredoc body would leak into the row as
+      // words. A single-line command passes through untouched (E2).
+      return shellJobCommandPreview(collapseCd(_rawFirstString(args)));
     case 'read':
       return _readDetail(args, cwd: cwd, home: home);
     case 'write':
@@ -166,6 +169,16 @@ String collapseCd(String command) {
   return match == null ? command : match.group(1)!;
 }
 
+/// Heredoc-aware command preview (issue #599): the first line, plus `…`
+/// when the command has more lines. The heredoc body is never a
+/// transcript row source, and a missing `EOF` terminator changes nothing
+/// — there is no body parsing (E1).
+String shellJobCommandPreview(String command) {
+  final nl = command.indexOf('\n');
+  if (nl < 0) return command;
+  return '${command.substring(0, nl)}…';
+}
+
 /// Project-relative when under [cwd], `~`-collapsed when under [home],
 /// otherwise untouched (issue #366 point 4).
 String briefPath(String path, {String? cwd, String? home}) =>
@@ -187,13 +200,18 @@ String _briefPath(String path, {String? cwd, String? home}) {
 /// The first String value in insertion order, whitespace-flattened — the
 /// generic fallback that keeps unknown/MCP tools inside the grammar without
 /// ever JSON-encoding an envelope.
-String _firstString(Map<String, dynamic> args) {
+String _firstString(Map<String, dynamic> args) =>
+    _flatten(_rawFirstString(args));
+
+/// The first String value in insertion order, newlines intact — callers
+/// that must see the original line structure (the issue #599 bash
+/// preview) use this; [_firstString] stays the flattened default.
+String _rawFirstString(Map<String, dynamic> args) {
   for (final value in args.values) {
-    if (value is String && value.trim().isNotEmpty) return _flatten(value);
+    if (value is String && value.trim().isNotEmpty) return value.trim();
   }
   return '';
 }
-
 /// One display row, one line: newlines flatten to spaces, whitespace runs
 /// collapse (a two-line compound command stays a single row).
 String _flatten(String text) => text.replaceAll(RegExp(r'\s+'), ' ').trim();
