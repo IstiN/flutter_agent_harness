@@ -24,13 +24,7 @@ extension AgentServiceRuns on AgentService {
     final model = _agent.state.model;
     final agent = Agent(
       model: model,
-      systemPrompt: [
-        'You are a tiny assistant embedded inside a host '
-            'application. Answer briefly and plainly; no markdown fences unless '
-            'the caller asks for code.',
-        for (final message in messages)
-          if (message.role == 'system') message.content,
-      ].join('\n\n'),
+      systemPrompt: completeOnceSystemPrompt(messages),
       streamFunction: _agent.streamFunction,
       toolRegistry: ToolRegistry(const []),
     );
@@ -43,35 +37,12 @@ extension AgentServiceRuns on AgentService {
         }
       });
     }
-    final conversation = [
-      for (final message in messages)
-        if (message.role == 'assistant')
-          AssistantMessage(
-            content: [TextContent(text: message.content)],
-            api: model.api,
-            provider: model.provider,
-            model: model.id,
-            usage: Usage.zero,
-            stopReason: StopReason.stop,
-            timestamp: DateTime.now(),
-          )
-        else if (message.role == 'user')
-          UserMessage.text(message.content),
-    ];
+    final conversation = completeOnceConversation(messages, model);
     if (conversation.isEmpty) {
       throw StateError('messages must include at least one user message');
     }
     await agent.promptMessages(conversation);
-    final last = agent.state.messages.lastOrNull;
-    if (last is AssistantMessage) {
-      final text = last.content
-          .whereType<TextContent>()
-          .map((b) => b.text)
-          .join();
-      if (text.isNotEmpty) return text;
-      if (last.errorMessage != null) throw StateError(last.errorMessage!);
-    }
-    throw StateError('no completion returned');
+    return completeOnceText(agent.state.messages);
   }
 
   /// Starts one agent run and settles the UI state no matter how it ends.
@@ -110,4 +81,56 @@ extension AgentServiceRuns on AgentService {
       _notify();
     });
   }
+}
+
+/// The `completeOnce` system prompt: the host-app briefing plus every
+/// `system` message the caller folded in.
+String completeOnceSystemPrompt(List<FaLlmMessage> messages) {
+  return [
+    'You are a tiny assistant embedded inside a host '
+        'application. Answer briefly and plainly; no markdown fences unless '
+        'the caller asks for code.',
+    for (final message in messages)
+      if (message.role == 'system') message.content,
+  ].join('\n\n');
+}
+
+/// The throwaway-agent conversation: `assistant` entries are rebuilt as
+/// provider-identical [AssistantMessage]s, `user` entries as plain user
+/// text, anything else dropped.
+List<Message> completeOnceConversation(
+  List<FaLlmMessage> messages,
+  Model model,
+) {
+  return [
+    for (final message in messages)
+      if (message.role == 'assistant')
+        AssistantMessage(
+          content: [TextContent(text: message.content)],
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.now(),
+        )
+      else if (message.role == 'user')
+        UserMessage.text(message.content),
+  ];
+}
+
+/// The completion text of a finished throwaway run: the last message's
+/// text blocks. An empty final assistant message with an error surfaces
+/// the error; anything else is `no completion returned`.
+String completeOnceText(List<Message> messages) {
+  final last = messages.lastOrNull;
+  if (last is AssistantMessage) {
+    final text = last.content
+        .whereType<TextContent>()
+        .map((b) => b.text)
+        .join();
+    if (text.isNotEmpty) return text;
+    if (last.errorMessage != null) throw StateError(last.errorMessage!);
+  }
+  throw StateError('no completion returned');
 }
