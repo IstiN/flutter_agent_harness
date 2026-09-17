@@ -3,7 +3,7 @@
 [![CI](https://github.com/IstiN/flutter_agent_harness/actions/workflows/ci.yml/badge.svg)](https://github.com/IstiN/flutter_agent_harness/actions/workflows/ci.yml)
 [![pub package](https://img.shields.io/pub/v/flutter_agent_harness.svg)](https://pub.dev/packages/flutter_agent_harness)
 [![CRAP max 12.0 — green zone](https://img.shields.io/badge/CRAP%20max-12.0-brightgreen)](https://github.com/IstiN/crap4dart)
-[![CRAP app max 272.0 - descent 10, only-down](https://img.shields.io/badge/CRAP%20app-272.0-brightgreen)](https://github.com/IstiN/crap4dart)
+[![CRAP app max 210.0 - descent 11, only-down](https://img.shields.io/badge/CRAP%20app-210.0-brightgreen)](https://github.com/IstiN/crap4dart)
 [![coverage ≥ 80%](https://img.shields.io/badge/coverage-%E2%89%A5%2093%25-brightgreen)](https://github.com/IstiN/flutter_agent_harness)
 
 Cross-platform AI agent harness for Dart and Flutter — streaming provider
