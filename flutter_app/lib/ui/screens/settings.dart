@@ -49,6 +49,7 @@ import 'package:fa/services/task_models_store.dart';
 import 'package:fa/services/theme_controller.dart';
 import 'package:fa/services/theme_pack_store.dart';
 import 'package:fa/services/upload.dart';
+import 'package:fa/services/theme_packs.dart';
 import 'package:fa/services/upload_picker_stub.dart'
     if (dart.library.html) 'package:fa/services/upload_picker_web.dart';
 import 'package:fa/transformers_js/transformers_js_cache_section.dart';
