@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:fa_hub_client/fa_hub_client.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show JsonlSessionRepo, SessionMetadata;
 import 'package:flutter_agent_harness/io.dart' show LocalExecutionEnv;
@@ -152,7 +153,7 @@ final class IoDapHubService implements DapHubService {
         final repo = JsonlSessionRepo(fs: env, sessionsRoot: root);
         final metas = await repo.list();
         for (final meta in metas) {
-          out.add((id: meta.id, title: _sessionTitle(meta)));
+          out.add((id: meta.id, title: sessionTitle(meta)));
         }
       } on Object {
         // Unreadable root — other roots still list.
@@ -167,16 +168,23 @@ final class IoDapHubService implements DapHubService {
   }
 
   /// Display label for the picker: the app-written title/name metadata,
-  /// else a short id.
-  static String _sessionTitle(SessionMetadata meta) {
-    final raw = meta.metadata;
+  /// else a short id. Exposed for tests.
+  @visibleForTesting
+  static String sessionTitle(SessionMetadata meta) =>
+      preferredLabel(meta.metadata) ?? shortSessionId(meta.id);
+
+  /// The first non-blank of `title`, `name`, `displayName`, else null.
+  static String? preferredLabel(Map<String, dynamic>? raw) {
     for (final key in const ['title', 'name', 'displayName']) {
       final value = raw?[key];
       if (value is String && value.trim().isNotEmpty) return value.trim();
     }
-    final id = meta.id;
-    return 'session ${id.length > 8 ? id.substring(0, 8) : id}';
+    return null;
   }
+
+  /// `session <first-8-chars>` — the whole id when shorter.
+  static String shortSessionId(String id) =>
+      'session ${id.length > 8 ? id.substring(0, 8) : id}';
 
   @override
   Future<DapHubSnapshot> probe() async {

@@ -486,20 +486,29 @@ final class MediaGateway {
         );
       }
       final data = jsonDecode(query.body) as Map<String, dynamic>;
-      final status = data['status'] as String?;
-      if (status == 'Success') return _minimaxVideoFileUrl(data, taskId);
-      if (status == 'Failed') {
-        throw StateError('Video task $taskId failed: ${jsonEncode(data)}');
-      }
-      if (status == 'Cancelled') {
-        throw StateError('Video task $taskId was cancelled');
-      }
+      final fileUrl = _minimaxVideoStatus(data, taskId);
+      if (fileUrl != null) return fileUrl;
       final delaySeconds = (3 + i).clamp(3, 10);
       await Future<void>.delayed(Duration(seconds: delaySeconds));
     }
     throw StateError(
       'Video task $taskId did not finish within the polling window',
     );
+  }
+
+  /// Terminal-status dispatch for one MiniMax poll: the file URL on
+  /// `Success`, null while still pending, `StateError` on terminal failure.
+  String? _minimaxVideoStatus(Map<String, dynamic> data, String taskId) {
+    final status = data['status'] as String?;
+    switch (status) {
+      case 'Success':
+        return _minimaxVideoFileUrl(data, taskId);
+      case 'Failed':
+        throw StateError('Video task $taskId failed: ${jsonEncode(data)}');
+      case 'Cancelled':
+        throw StateError('Video task $taskId was cancelled');
+    }
+    return null;
   }
 
   String _minimaxVideoFileUrl(Map<String, dynamic> data, String taskId) {

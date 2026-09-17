@@ -1,12 +1,10 @@
-// Copyright (c) 2026, the Flutter Agent Harness authors.
-// Use of this source code is governed by a MIT license that can be found
-// in the LICENSE file.
-
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/services.dart';
 
 import 'package:fa/services/calendar_service.dart';
+
 
 /// Whether the current platform has a native calendar backend: EventKit is
 /// wired up on macOS and iOS only (see `MainFlutterWindow.swift` /
@@ -78,14 +76,21 @@ final class MethodChannelCalendarApi implements CalendarApi {
       alarms: (map['alarms'] as List?)
           ?.map((entry) => (entry as num).toInt())
           .toList(),
-      recurrence: _parseRecurrence(map['recurrence']),
+      recurrence: parseRecurrence(map['recurrence']),
     );
   }
 
-  static CalendarRecurrence? _parseRecurrence(Object? raw) {
+  /// Decodes the channel's recurrence map; null when absent or malformed.
+  @visibleForTesting
+  static CalendarRecurrence? parseRecurrence(Object? raw) {
     if (raw is! Map) return null;
     final frequency = raw['frequency']?.toString();
     if (frequency == null || frequency.isEmpty) return null;
+    return _recurrence(frequency, raw);
+  }
+
+  /// The record for an already-validated recurrence map.
+  static CalendarRecurrence _recurrence(String frequency, Map raw) {
     final untilMs = (raw['untilMs'] as num?)?.toInt();
     return (
       frequency: frequency,

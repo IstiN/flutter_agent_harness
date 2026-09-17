@@ -7,6 +7,8 @@ import 'dart:io';
 
 import 'package:fa/services/dap_service.dart' show DapInboundMode;
 import 'package:fa/services/dap_service_io.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show SessionMetadata;
 import 'package:flutter_test/flutter_test.dart';
 
 /// Behavioral tests for the IO-backed DAP hub service: the save/load
@@ -142,5 +144,52 @@ void main() {
     final snapshot = await svc.load();
     expect(snapshot.envLocked, isTrue);
     expect(snapshot.url, 'ws://pinned.example.com/ws');
+  });
+  group('session title', () {
+    SessionMetadata meta(Map<String, dynamic>? metadata) => SessionMetadata(
+      id: 'abcdefghij12345',
+      createdAt: DateTime(2026, 1, 1),
+      cwd: '/tmp',
+      path: '/tmp/s.jsonl',
+      metadata: metadata,
+    );
+
+    test('prefers the first non-blank of title/name/displayName', () {
+      expect(
+        IoDapHubService.sessionTitle(meta({'title': ' Refactor '})),
+        'Refactor',
+      );
+      expect(
+        IoDapHubService.sessionTitle(meta({'name': 'cli-name'})),
+        'cli-name',
+      );
+      expect(IoDapHubService.sessionTitle(meta({'displayName': 'Dap'})), 'Dap');
+    });
+
+    test('blank and non-string metadata falls through to the short id', () {
+      expect(
+        IoDapHubService.sessionTitle(meta({'title': '   '})),
+        'session abcdefgh',
+      );
+      expect(
+        IoDapHubService.sessionTitle(meta({'title': 42})),
+        'session abcdefgh',
+      );
+      expect(IoDapHubService.sessionTitle(meta(null)), 'session abcdefgh');
+    });
+
+    test('a short id is used verbatim', () {
+      expect(
+        IoDapHubService.sessionTitle(
+          SessionMetadata(
+            id: 'abc',
+            createdAt: DateTime(2026, 1, 1),
+            cwd: '/tmp',
+            path: '/p',
+          ),
+        ),
+        'session abc',
+      );
+    });
   });
 }

@@ -298,23 +298,24 @@ final class RelayAgentService extends AgentService {
   String transcriptMarkdown() {
     final buffer = StringBuffer();
     for (final message in _messages) {
-      switch (message.role) {
-        case 'user':
-          buffer
-            ..writeln('## User')
-            ..writeln(message.content);
-        case 'tool':
-          buffer.writeln(
-            '- **${message.toolName ?? 'tool'}**: ${message.content}',
-          );
-        default:
-          buffer
-            ..writeln('## Assistant')
-            ..writeln(message.content);
-      }
-      buffer.writeln();
+      buffer
+        ..write(_transcriptEntry(message))
+        ..writeln();
     }
     return buffer.toString();
+  }
+
+  /// The markdown for one transcript row: role header + content for chat
+  /// roles, one bullet for tool rows.
+  static String _transcriptEntry(fa_ui.FaChatMessage message) {
+    switch (message.role) {
+      case 'user':
+        return '## User\n${message.content}\n';
+      case 'tool':
+        return '- **${message.toolName ?? 'tool'}**: ${message.content}\n';
+      default:
+        return '## Assistant\n${message.content}\n';
+    }
   }
 
   @override

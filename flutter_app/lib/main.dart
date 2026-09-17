@@ -720,74 +720,78 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
   @override
   Widget build(BuildContext context) {
     final config = _config;
+    if (config != null) return _bootSpinner;
+    return _buildWaiting(context);
+  }
+
+  /// The shared boot spinner (restoring a connection, extension relay
+  /// booting).
+  Widget get _bootSpinner => const Scaffold(
+    body: Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          FaBrandTile(size: 48),
+          SizedBox(height: 24),
+          CircularProgressIndicator(),
+        ],
+      ),
+    ),
+  );
+
+  /// No restorable connection: wait for the relay (extension hosts) or
+  /// render the unconfigured surfaces.
+  Widget _buildWaiting(BuildContext context) {
     // Extension panel with an unreachable service worker: retry in place,
     // never fall back to the local provider/onboarding flow.
-    if (config == null && isExtensionHost() && _relayError == null) {
-      // Relay boot in progress — never flash the local onboarding/home.
-      return const Scaffold(
-        body: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              FaBrandTile(size: 48),
-              SizedBox(height: 24),
-              CircularProgressIndicator(),
-            ],
-          ),
-        ),
-      );
-    }
-    if (config == null && _relayError != null) {
-      return Scaffold(
-        body: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const FaBrandTile(size: 48),
-              const SizedBox(height: 16),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: Text(_relayError!, textAlign: TextAlign.center),
-              ),
-              const SizedBox(height: 16),
-              FilledButton(
-                onPressed: () {
-                  setState(() => _relayError = null);
-                  _bootRelay();
-                },
-                child: Text(context.l10n.bootstrapRetry),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-    if (config == null) {
-      if (_showOnboarding) return _buildOnboardingScreen();
-      // After onboarding (seen flag set) the user has already walked
-      // through the provider-first flow. Land them on the home screen
-      // with an empty manager — the launcher's empty-state prompts
-      // them to open Settings → Providers — rather than dumping them
-      // back into the legacy "Connect to Fa" form. The pre-onboarding
-      // (onboardingStore == null) path keeps the legacy SetupScreen
-      // for upgraders / first-launch-without-onboarding.
-      if (widget.onboardingStore != null) {
-        return _buildHomeWithEmptyManager();
-      }
-      return _buildSetupScreen();
-    }
-    return const Scaffold(
+    if (isExtensionHost() && _relayError == null) return _bootSpinner;
+    if (_relayError != null) return _buildRelayError(context);
+    return _buildUnconfiguredScreen();
+  }
+
+  /// The relay error with an in-place retry — the SW is the only way
+  /// forward on an extension panel.
+  Widget _buildRelayError(BuildContext context) {
+    return Scaffold(
       body: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            FaBrandTile(size: 48),
-            SizedBox(height: 24),
-            CircularProgressIndicator(),
+            const FaBrandTile(size: 48),
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Text(_relayError!, textAlign: TextAlign.center),
+            ),
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: () {
+                setState(() => _relayError = null);
+                _bootRelay();
+              },
+              child: Text(context.l10n.bootstrapRetry),
+            ),
           ],
         ),
       ),
     );
+  }
+
+  /// Nothing to restore: onboarding (first launch), the post-onboarding
+  /// home with an empty manager, or the legacy setup form.
+  Widget _buildUnconfiguredScreen() {
+    if (_showOnboarding) return _buildOnboardingScreen();
+    // After onboarding (seen flag set) the user has already walked
+    // through the provider-first flow. Land them on the home screen
+    // with an empty manager — the launcher's empty-state prompts
+    // them to open Settings → Providers — rather than dumping them
+    // back into the legacy "Connect to Fa" form. The pre-onboarding
+    // (onboardingStore == null) path keeps the legacy SetupScreen
+    // for upgraders / first-launch-without-onboarding.
+    if (widget.onboardingStore != null) {
+      return _buildHomeWithEmptyManager();
+    }
+    return _buildSetupScreen();
   }
 }
 

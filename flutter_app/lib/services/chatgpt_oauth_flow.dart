@@ -46,32 +46,8 @@ Future<bool> runChatGptOAuthFlow({
 }) async {
   final sessionKeys = sessionKeysStore ?? SessionKeysScope.maybeOf(context);
   final keychain = keychainStore ?? const KeychainStore();
-  if (kIsWeb) {
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'ChatGPT sign-in needs the desktop app (a localhost callback '
-            'server). Use OpenAI with an API key in the web build.',
-          ),
-        ),
-      );
-    }
-    return false;
-  }
-  if (!(platformSupportedFn?.call() ?? Platform.isMacOS)) {
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'ChatGPT sign-in is not yet available on iOS. '
-            'Use OpenAI with an API key instead.',
-          ),
-        ),
-      );
-    }
-    return false;
-  }
+  final refusal = _unsupportedMessage(platformSupportedFn);
+  if (refusal != null) return _refuse(context, refusal);
 
   ScaffoldMessenger.of(context).showSnackBar(
     const SnackBar(
@@ -80,24 +56,83 @@ Future<bool> runChatGptOAuthFlow({
     ),
   );
 
-  final credentials = chatGptOAuthFlowFn != null
-      ? await chatGptOAuthFlowFn()
-      : await runChatGptOAuthCliFlow(
-          onStatus: (msg) => debugPrint('[ChatGPT OAuth] $msg'),
-          openBrowserFn: (url) async {
-            return url_launcher.launchUrl(
-              Uri.parse(url),
-              mode: url_launcher.LaunchMode.externalApplication,
-            );
-          },
-        );
-  if (credentials == null) return false;
-  if (!context.mounted) return false;
+  final credentials = await _acquireCredentials(chatGptOAuthFlowFn);
+  if (credentials == null || !context.mounted) return false;
 
-  // ── Save provider + key ─────────────────────────────────────────────
-  const baseUrl = chatGptCodexBaseUrl;
   final encoded = credentials.encode();
+  final provider = await _saveCredentials(
+    registry,
+    keychain,
+    sessionKeys,
+    credentials,
+    encoded,
+  );
+  await _connect(
+    service,
+    lastConnectionStore,
+    AgentConfig(
+      providerKind: 'chatgpt-codex',
+      modelId: provider.modelId,
+      baseUrl: chatGptCodexBaseUrl,
+      apiKey: encoded,
+    ),
+  );
+  return true;
+}
 
+const _webUnsupportedMessage =
+    'ChatGPT sign-in needs the desktop app (a localhost callback '
+    'server). Use OpenAI with an API key in the web build.';
+
+const _iosUnsupportedMessage =
+    'ChatGPT sign-in is not yet available on iOS. '
+    'Use OpenAI with an API key instead.';
+
+/// Why ChatGPT sign-in cannot run on this surface, or null when it can:
+/// the web build has no localhost callback server, and the flow ships
+/// macOS-only (iOS awaits a proper in-app WebView flow).
+String? _unsupportedMessage(bool Function()? platformSupportedFn) {
+  if (kIsWeb) return _webUnsupportedMessage;
+  if (platformSupportedFn?.call() ?? Platform.isMacOS) return null;
+  return _iosUnsupportedMessage;
+}
+
+/// The honest unsupported-surface snackbar; the flow always returns
+/// `false`.
+bool _refuse(BuildContext context, String message) {
+  if (context.mounted) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+  return false;
+}
+
+/// Runs the injected flow (tests) or the real CLI flow.
+Future<ChatGptOAuthCredentials?> _acquireCredentials(
+  Future<ChatGptOAuthCredentials?> Function()? chatGptOAuthFlowFn,
+) => chatGptOAuthFlowFn != null
+    ? chatGptOAuthFlowFn()
+    : runChatGptOAuthCliFlow(
+        onStatus: (msg) => debugPrint('[ChatGPT OAuth] $msg'),
+        openBrowserFn: (url) async {
+          return url_launcher.launchUrl(
+            Uri.parse(url),
+            mode: url_launcher.LaunchMode.externalApplication,
+          );
+        },
+      );
+
+/// Reuses the signed-in account's entry (re-auth refreshes it in place)
+/// or adds a de-duplicated one, remembers the session key, and persists
+/// the entry-scoped secure copy.
+Future<CustomProvider> _saveCredentials(
+  ProviderRegistry registry,
+  KeychainStore keychain,
+  SessionKeysStore? sessionKeys,
+  ChatGptOAuthCredentials credentials,
+  String encoded,
+) async {
   // The entry name IS the signed-in account's email. Re-auth: an entry
   // for THIS account (email + endpoint) already exists — keep its name so
   // the flow refreshes it in place. Without an email claim the account
@@ -106,25 +141,11 @@ Future<bool> runChatGptOAuthFlow({
   // accounts never share one entry.
   final email = _chatGptEmail(credentials.idToken);
   final identity = email ?? 'ChatGPT';
-  final existing = email == null
-      ? null
-      : registry.providers
-            .where((p) => p.name == identity && p.baseUrl == baseUrl)
-            .firstOrNull;
-  var name = identity;
-  if (existing == null) {
-    var suffix = 2;
-    while (registry.providers.any(
-      (p) => p.name == name && p.baseUrl == chatGptCodexBaseUrl,
-    )) {
-      name = '$identity-${suffix++}';
-    }
-  }
   final provider =
-      existing ??
+      _existingEntry(registry, email, identity) ??
       await registry.add(
-        name: name,
-        baseUrl: baseUrl,
+        name: _uniqueEntryName(registry, identity),
+        baseUrl: chatGptCodexBaseUrl,
         // The bundled Codex default — the same entry codex-rs surfaces as
         // recommended (chatGptCodexDefaultModel is derived, not const).
         modelId: chatGptCodexDefaultModel,
@@ -132,9 +153,49 @@ Future<bool> runChatGptOAuthFlow({
 
   // Session key for the running app (Keychain-backed when available).
   registry.rememberKey(provider.id, encoded);
-  // Entry-scoped secure persistence (the CLI contract): Keychain first,
-  // saved-keys store as the portable fallback.
-  final keyName = chatgptEntryKeyName(name);
+  await _persistEntryKey(
+    keychain,
+    sessionKeys,
+    chatgptEntryKeyName(provider.name),
+    encoded,
+  );
+  return provider;
+}
+
+/// The registry entry for THIS account (email + endpoint). Without an
+/// email claim the account identity is unknown — a name match is never
+/// treated as re-auth.
+CustomProvider? _existingEntry(
+  ProviderRegistry registry,
+  String? email,
+  String identity,
+) => email == null
+    ? null
+    : registry.providers
+          .where((p) => p.name == identity && p.baseUrl == chatGptCodexBaseUrl)
+          .firstOrNull;
+
+/// A name no other ChatGPT entry uses (`-2`, `-3`, … suffixes), so two
+/// accounts never share one entry.
+String _uniqueEntryName(ProviderRegistry registry, String identity) {
+  var name = identity;
+  var suffix = 2;
+  while (registry.providers.any(
+    (p) => p.name == name && p.baseUrl == chatGptCodexBaseUrl,
+  )) {
+    name = '$identity-${suffix++}';
+  }
+  return name;
+}
+
+/// Keychain first (the entry-scoped CLI contract); the saved-keys store
+/// as the portable fallback.
+Future<void> _persistEntryKey(
+  KeychainStore keychain,
+  SessionKeysStore? sessionKeys,
+  String keyName,
+  String encoded,
+) async {
   var persisted = false;
   if (await keychain.isAvailable()) {
     persisted = await keychain.set(keyName, encoded);
@@ -142,18 +203,17 @@ Future<bool> runChatGptOAuthFlow({
   if (!persisted) {
     await sessionKeys?.set(keyName, encoded);
   }
+}
 
-  // ── Connect ─────────────────────────────────────────────────────────
-  final config = AgentConfig(
-    providerKind: 'chatgpt-codex',
-    modelId: provider.modelId,
-    baseUrl: baseUrl,
-    apiKey: encoded,
-  );
+/// Hands the restored credentials to the running service (when there is
+/// one) and persists the last connection.
+Future<void> _connect(
+  AgentService? service,
+  LastConnectionStore lastConnectionStore,
+  AgentConfig config,
+) async {
   if (service != null) await service.reconfigure(config);
   await lastConnectionStore.saveFromConfig(config);
-
-  return true;
 }
 
 /// Secure-store name of a ChatGPT entry's OAuth credentials blob:

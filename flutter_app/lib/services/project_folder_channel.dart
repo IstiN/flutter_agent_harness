@@ -1,6 +1,7 @@
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart'
+    show kIsWeb, visibleForTesting;
 
 import 'package:flutter/services.dart';
 
@@ -35,6 +36,15 @@ final class ProjectFolderChannelOps implements ProjectFolderOps {
     final result = await _channel.invokeMapMethod<String, String>(
       'pickDirectory',
     );
+    return pickResult(result);
+  }
+
+  /// The picked folder from a channel payload, or null on cancel or an
+  /// incomplete `{path, bookmark}` record. Exposed for tests.
+  @visibleForTesting
+  static ({String path, String bookmark})? pickResult(
+    Map<String, String>? result,
+  ) {
     if (result == null) return null;
     final path = result['path'];
     final bookmark = result['bookmark'];

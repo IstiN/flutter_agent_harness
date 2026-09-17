@@ -506,31 +506,44 @@ String _renderEvent(CalendarEvent event, {bool showDate = false}) {
   return buffer.toString();
 }
 
+/// The recurring-unit phrasing per supported frequency: the plain label
+/// and the plural unit for `every N <unit>`.
+const _frequencyUnits = <String, (String, String)>{
+  'daily': ('daily', 'days'),
+  'weekly': ('weekly', 'weeks'),
+  'monthly': ('monthly', 'months'),
+  'yearly': ('yearly', 'years'),
+};
+
 /// Compact recurrence hint, e.g. `recurs weekly MO,TH until 2026-12-31`
 /// or `recurs every 2 weeks ×10`.
 String _renderRecurrence(CalendarRecurrence rule) {
   final buffer = StringBuffer('recurs ');
-  final interval = rule.interval;
-  switch (rule.frequency) {
-    case 'daily':
-      buffer.write(interval > 1 ? 'every $interval days' : 'daily');
-    case 'weekly':
-      buffer.write(interval > 1 ? 'every $interval weeks' : 'weekly');
-      final days = rule.daysOfWeek;
-      if (days != null && days.isNotEmpty) buffer.write(' ${days.join(',')}');
-    case 'monthly':
-      buffer.write(interval > 1 ? 'every $interval months' : 'monthly');
-      final days = rule.daysOfMonth;
-      if (days != null && days.isNotEmpty) {
-        buffer.write(' on ${days.join(',')}');
-      }
-    case 'yearly':
-      buffer.write(interval > 1 ? 'every $interval years' : 'yearly');
+  buffer.write(_frequencyText(rule));
+  if (rule.frequency == 'weekly') {
+    buffer.write(_daysText(rule.daysOfWeek, prefix: ' '));
+  }
+  if (rule.frequency == 'monthly') {
+    buffer.write(_daysText(rule.daysOfMonth, prefix: ' on '));
   }
   if (rule.until != null) buffer.write(' until ${_dateLabel(rule.until!)}');
   if (rule.count != null) buffer.write(' ×${rule.count}');
   return buffer.toString();
 }
+
+/// The frequency phrase: the plain label, or `every N <unit>` when the
+/// interval is not 1. Unknown frequencies render nothing (the platform
+/// owns expansion; the hint stays honest).
+String _frequencyText(CalendarRecurrence rule) {
+  final unit = _frequencyUnits[rule.frequency];
+  if (unit == null) return '';
+  return rule.interval > 1 ? 'every ${rule.interval} ${unit.$2}' : unit.$1;
+}
+
+/// The comma-joined day list with [prefix], or '' when absent/empty.
+/// Accepts the weekday names and the month-day ints alike.
+String _daysText(List<Object>? days, {required String prefix}) =>
+    days == null || days.isEmpty ? '' : '$prefix${days.join(',')}';
 
 String _dateLabel(DateTime date) => calendarDayLabel(date);
 

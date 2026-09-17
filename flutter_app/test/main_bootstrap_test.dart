@@ -26,6 +26,20 @@ void main() {
       );
     });
 
+    test('null when the connection has no endpoint yet', () {
+      expect(
+        restorableBootConfig(
+          connection: const LastConnection(
+            providerKind: 'openai-completions',
+            modelId: 'k3-256k',
+          ),
+          registry: null,
+          sessionKeysStore: null,
+        ),
+        isNull,
+      );
+    });
+
     test('null for on-device connections (the quick start re-offers them)', () {
       expect(
         restorableBootConfig(
