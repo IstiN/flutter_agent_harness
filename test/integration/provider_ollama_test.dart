@@ -23,10 +23,12 @@
 ///
 /// These tests hit the real Ollama Cloud API and require the
 /// `OLLAMA_API_KEY` environment variable; every test skips gracefully when it
-/// is unset so keyless CI/dev runs pass. Tagged `integration` and therefore
-/// excluded from the pre-commit gate — run manually with:
-/// `dart test --tags integration`
-@Tags(['integration'])
+/// is unset so keyless CI/dev runs pass. Tagged `integration`+`llm`
+/// (real-provider smoke: needs secrets, runs ONLY in the tag-only
+/// provider-smoke job and nightly; every per-PR suite excludes it via
+/// `--exclude-tags llm` — run manually with
+/// `dart test --tags "integration && llm"`).
+@Tags(['integration', 'llm'])
 library;
 
 import 'dart:io';
