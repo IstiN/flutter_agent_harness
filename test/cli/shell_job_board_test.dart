@@ -307,6 +307,57 @@ void main() {
     });
   });
 
+  group('issue #539 frozen older boards (never re-derive)', () {
+    test('an `· older` row keeps its printed counts while its jobs settle', () {
+      final board = ShellJobBoard();
+      for (var i = 0; i < 5; i++) {
+        board.start(_card('sh-old-$i'));
+      }
+      board.newTurn();
+      board.start(_card('sh-new'));
+      final olderBefore = board.liveLines().singleWhere(
+        (l) => l.contains('· older'),
+      );
+      expect(olderBefore, contains('5 running'));
+      // Settle four of five — the printed `· older` row is a frozen
+      // snapshot and must not re-derive from the live registry.
+      board.settle('sh-old-0', state: TaskBlockState.done, elapsed: 1.0);
+      board.settle('sh-old-1', state: TaskBlockState.done, elapsed: 2.0);
+      board.settle('sh-old-2', state: TaskBlockState.lost);
+      board.settle('sh-old-3', state: TaskBlockState.done, elapsed: 3.0);
+      final olderAfter = board.liveLines().singleWhere(
+        (l) => l.contains('· older'),
+      );
+      expect(
+        olderAfter,
+        olderBefore,
+        reason: 'a printed `· older` row never changes counts',
+      );
+      // Full settle removes the row entirely — the truthful terminal
+      // summary card takes over in the transcript.
+      board.settle('sh-old-4', state: TaskBlockState.done, elapsed: 4.0);
+      expect(board.liveLines().where((l) => l.contains('· older')), isEmpty);
+    });
+
+    test(
+      'a restart never shows running on the live board (268/0 impossible)',
+      () {
+        final records = [
+          for (var i = 1; i <= 5; i++)
+            _card('sh-$i', state: TaskBlockState.running).toRecord(),
+        ];
+        final board = ShellJobBoard.rehydrated(records);
+        final live = board.liveLines().join('\n');
+        expect(live, isNot(contains('running')));
+        expect(
+          live,
+          isNot(contains('Background jobs (')),
+          reason: 'lost cards are terminal — no live board rows remain',
+        );
+      },
+    );
+  });
+
   group('records (reload never shows running)', () {
     test('records round-trip and a rehydrated board is terminal', () {
       final board = ShellJobBoard();

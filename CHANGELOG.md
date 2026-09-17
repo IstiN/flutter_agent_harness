@@ -3730,6 +3730,16 @@
 - fix(519): TUI artifacts — paste-chip rows reserved in the input-zone math; fuzzy selected row keeps one base role (#532)
 - test(cli): deflake agent_hub_driver collapse-summary race (#533)
 
+## 0.1.401
+
+- fix(514): wedged run reads stalled everywhere - one classifier, banner with actions, /restart (#526)
+
+## 0.1.402
+
+- fix(539): stacked job boards never shift or lie - frozen frames, serialized persists, restart-lost REG (#540)
+- fix(506): boot-banner >_Fa mark - composed two-role label asserted and gallery regenerated (#528)
+- fix(510): one cursor rule — DECTCEM via View.cursor, phantom escapes out of picker frame content (#534)
+
 ## Unreleased
 
 ## Unreleased

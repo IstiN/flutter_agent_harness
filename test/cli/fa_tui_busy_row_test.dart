@@ -154,6 +154,37 @@ void main() {
     expect(busyRowOf(noClock).substring(elapsedStart, elapsedEnd), '    0s');
   });
 
+  test('issue #539 AC4: the auto-compact badge rides the fixed label zone '
+      'at 80/120/200 and the hour timer never shifts it', () {
+    const badge = 'Working… [auto-compacted · continuing]';
+    for (final width in [80, 120, 200]) {
+      FaTuiModel resized(FaTuiModel model) =>
+          model.update(WindowSizeMsg(width, 30)).$1 as FaTuiModel;
+      final withBadge = busyRowOf(resized(modelAt(3722, phase: badge)));
+      final without = busyRowOf(resized(modelAt(3722)));
+      // The badge clips INSIDE the 24-cell label zone: everything from the
+      // elapsed field on keeps its exact column at every width.
+      expect(
+        withBadge.substring(elapsedStart),
+        without.substring(elapsedStart),
+        reason: 'width $width: ${withBadge.length} cells',
+      );
+      expect(withBadge.length, width, reason: 'width $width');
+      expect(
+        withBadge.substring(2, labelEnd),
+        contains('[auto-compact'),
+        reason: 'width $width: the badge is visible in the label zone',
+      );
+      // The 1h+ timer degrades inside its six cells with the badge up.
+      expect(
+        busyRowOf(
+          modelAt(3722, phase: badge),
+        ).substring(elapsedStart, elapsedEnd),
+        ' 1h02m',
+      );
+    }
+  });
+
   test('E1: a mid-run resize keeps the alignment rules', () {
     var model = modelAt(978);
     model = model.update(WindowSizeMsg(120, 30)).$1 as FaTuiModel;
@@ -270,5 +301,38 @@ void main() {
       isNotEmpty,
       reason: 'the waiting row follows the queue rows',
     );
+  });
+
+  test('issue #514: the stall push flips the row to Stalled… and back '
+      'without touching the elapsed window or the quiet clock', () {
+    final wedged = modelAt(473, quiet: 200);
+    final stalled = wedged.update(const RunStalledMsg(true)).$1 as FaTuiModel;
+    final row = busyRowOf(stalled, marker: 'Stalled…');
+    expect(row, contains('Stalled…'));
+    // The elapsed window survives the relabel — a stall is a STATE on the
+    // same bracket, not a restart of it.
+    expect(row.substring(elapsedStart, elapsedEnd), '  473s');
+    // The push is busy bookkeeping: it must NOT refresh the quiet clock
+    // (the stall keeps deepening while the row says Stalled…).
+    final quietSeconds =
+        (DateTime.now().millisecondsSinceEpoch - stalled.busyLastEventMs) ~/
+        1000;
+    expect(quietSeconds, greaterThanOrEqualTo(200));
+    // The classifier clearing returns the live label.
+    final awake = stalled.update(const RunStalledMsg(false)).$1 as FaTuiModel;
+    expect(busyRowOf(awake), contains('Working…'));
+    expect(awake.runStalled, isFalse);
+  });
+
+  test('issue #514: the busy→idle bracket always starts unstalled', () {
+    final stalled =
+        modelAt(10).update(const RunStalledMsg(true)).$1 as FaTuiModel;
+    expect(stalled.runStalled, isTrue);
+    final idle =
+        stalled.update(const BusyMsg(false, source: 'run')).$1 as FaTuiModel;
+    expect(idle.runStalled, isFalse);
+    final next =
+        idle.update(const BusyMsg(true, source: 'run')).$1 as FaTuiModel;
+    expect(next.runStalled, isFalse);
   });
 }

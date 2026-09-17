@@ -119,6 +119,12 @@ final class ShellJobBoard {
   /// Turn buckets whose summary card has been drained.
   final Set<int> _emittedSummaryTurns = {};
 
+  /// Printed `· older` summary rows, frozen at first print (issue #539):
+  /// the live region re-renders on every job mutation, and a re-derived
+  /// older row mutates across frames — a frozen transcript must never
+  /// show moving counts. Keys are bounded by the card-history cap.
+  final Map<int, String> _frozenOlderSummaries = {};
+
   /// Cards that reload demoted from live to lost — they still owe the
   /// transcript a terminal card.
   final Set<String> _pendingResumeLost = {};
@@ -201,13 +207,30 @@ final class ShellJobBoard {
           ..sort((a, b) => b.compareTo(a));
     for (final t in turnsWithLive) {
       if (cardsOfTurn(t).length <= 3) continue;
+      if (t != turn) {
+        lines.add(
+          _frozenOlderSummaries.putIfAbsent(
+            t,
+            () => shellJobLiveSummaryLine(
+              total: _countOfTurn(t, (_) => true),
+              running: _countOfTurn(
+                t,
+                (c) => c.state == TaskBlockState.running,
+              ),
+              done: _countOfTurn(t, (c) => c.state == TaskBlockState.done),
+              lost: _countOfTurn(t, (c) => c.state == TaskBlockState.lost),
+              older: true,
+            ),
+          ),
+        );
+        continue;
+      }
       lines.add(
         shellJobLiveSummaryLine(
           total: _countOfTurn(t, (_) => true),
           running: _countOfTurn(t, (c) => c.state == TaskBlockState.running),
           done: _countOfTurn(t, (c) => c.state == TaskBlockState.done),
           lost: _countOfTurn(t, (c) => c.state == TaskBlockState.lost),
-          older: t != turn,
         ),
       );
     }

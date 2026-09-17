@@ -29,6 +29,7 @@ part 'fa_tui_rows.dart';
 part 'fa_tui_paste.dart';
 part 'fa_tui_theme_swap.dart';
 part 'fa_tui_controller_io.dart';
+part 'fa_tui_picker.dart';
 part 'fa_tui_composer.dart';
 
 /// Translates the (web-safe) headless test hooks into dart_tui program
@@ -217,6 +218,7 @@ final class FaTuiModel extends Model {
     this.busyPhase = '',
     this.busySource = '',
     this.busyLastEventMs = -1,
+    this.runStalled = false,
     this.mouseCapture = true,
     this.spinnerFrame = 0,
     this.stickyLines = const [],
@@ -322,6 +324,12 @@ final class FaTuiModel extends Model {
   /// Last activity timestamp while busy (any non-tick message). Feeds the
   /// "quiet Nm" hint and the watchdog.
   final int busyLastEventMs;
+
+  /// Whether the run is currently wedged (issue #514): pushed by the
+  /// host's wedge watchdog (heartbeat silent past `steeringStaleAfter`)
+  /// — the busy row's `Stalled…` label reads this instead of guessing
+  /// from TUI output activity.
+  final bool runStalled;
 
   /// Pending scheduled follow-up messages (`schedule_message` records this
   /// instance can still deliver); 0 hides the indicator row (issue #115).
@@ -604,6 +612,7 @@ final class FaTuiModel extends Model {
     List<({int dueMs, String preview})>? waitingTimers,
     int? waitingLostJobs,
     bool? scheduledTickPending,
+    bool? runStalled,
     Object? historyDraft = _unset,
     FaHubState? hub,
     bool clearHub = false,
@@ -634,6 +643,7 @@ final class FaTuiModel extends Model {
       menuAllItems: menuAllItems ?? this.menuAllItems,
       pickerId: pickerId ?? this.pickerId,
       pickerTitle: pickerTitle ?? this.pickerTitle,
+      runStalled: runStalled ?? this.runStalled,
       termWidth: termWidth ?? this.termWidth,
       termHeight: termHeight ?? this.termHeight,
       busy: busy ?? this.busy,
@@ -710,6 +720,7 @@ final class FaTuiModel extends Model {
         (busy &&
             msg is! SpinnerTickMsg &&
             msg is! BusyMsg &&
+            msg is! RunStalledMsg &&
             msg is! ScheduledTickMsg)
         ? copyWith(busyLastEventMs: DateTime.now().millisecondsSinceEpoch)
         : this;
@@ -717,10 +728,8 @@ final class FaTuiModel extends Model {
   }
 
   (Model, Cmd?) _updateWithHeartbeat(Msg msg) {
-    if (msg is ScheduledStatusMsg) return _handleScheduledStatus(msg);
-    if (msg is ScheduledTickMsg) return _handleScheduledTick();
-    if (msg is JobBoardMsg) return _handleJobBoard(msg);
-    if (msg is WaitingStatusMsg) return _handleWaitingStatus(msg);
+    final scheduled = _updateScheduled(msg);
+    if (scheduled != null) return scheduled;
     // Output is handled before the exit check so trailing writes (e.g. the
     // 'bye' line from /exit) still render before the program quits; the host
     // sends _QuitRequestedMsg once it has marked exit.
@@ -731,6 +740,7 @@ final class FaTuiModel extends Model {
     // output and skip its render. The host's delayed _QuitRequestedMsg is
     // the only quit path that matters.
     if (msg is BusyMsg) return _handleBusyMsg(msg);
+    if (msg is RunStalledMsg) return _handleRunStalled(msg);
     if (msg is SpinnerTickMsg) return _handleSpinnerTick();
     if (msg is DrainQueueMsg) return _handleDrainQueue(msg);
     if (msg is ClearQueueMsg) return _handleClearQueue();
@@ -740,6 +750,18 @@ final class FaTuiModel extends Model {
     }
     if (isExited()) return (this, () => quit());
     return _updateAfterExitCheck(msg);
+  }
+
+  /// Scheduled/waiting dispatch group ([_updateWithHeartbeat] prefix):
+  /// host-pushed count/ETA updates, the minute-boundary tick, the job
+  /// board and the waiting row. Returns `null` when [msg] belongs to a
+  /// later group.
+  (Model, Cmd?)? _updateScheduled(Msg msg) {
+    if (msg is ScheduledStatusMsg) return _handleScheduledStatus(msg);
+    if (msg is ScheduledTickMsg) return _handleScheduledTick();
+    if (msg is JobBoardMsg) return _handleJobBoard(msg);
+    if (msg is WaitingStatusMsg) return _handleWaitingStatus(msg);
+    return null;
   }
 
   /// The scheduled follow-ups indicator is a host push for the count/ETA;
@@ -816,6 +838,12 @@ final class FaTuiModel extends Model {
     return _applyBusyTransition(msg);
   }
 
+  /// The wedge watchdog's liveness push (issue #514): flips the busy row's
+  /// label to `Stalled…` (and back) without touching the elapsed window —
+  /// the stall is a STATE, not a phase relabel.
+  (Model, Cmd?) _handleRunStalled(RunStalledMsg msg) =>
+      (copyWith(runStalled: msg.stalled), null);
+
   /// A phase relabel on a BUSY model: swap the label over the SAME elapsed
   /// window and never schedule another tick here — extra chains would
   /// multiply repaint timers.
@@ -858,6 +886,10 @@ final class FaTuiModel extends Model {
         busyPhase: '',
         busySource: msg.busy ? (msg.source ?? '') : '',
         busyLastEventMs: msg.busy ? DateTime.now().millisecondsSinceEpoch : -1,
+        // A new bracket always starts unstalled: the host pushes the
+        // stall state per-episode, so a stale `Stalled…` must never
+        // leak into the next run (issue #514).
+        runStalled: msg.busy ? runStalled : false,
         spinnerFrame: 0,
         stickyLines: msg.busy ? null : const [],
         stickyIndex: msg.busy ? null : -1,
@@ -1720,190 +1752,6 @@ final class FaTuiModel extends Model {
     return (this, null);
   }
 
-  /// Picker mode: arrows navigate, enter/tab select, esc closes. Every
-  /// picker has a type-to-filter input — the models picker rebuilds through
-  /// the host callback, generic pickers (sessions, settings, agents, ...)
-  /// filter their static item list locally.
-  (Model, Cmd?) _handlePickerKey(KeyMsg msg) {
-    return _handlePickerNavKey(msg) ?? _handlePickerSelectKey(msg);
-  }
-
-  /// Picker navigation keys (esc/arrows/pgup/pgdown); null when the key
-  /// belongs to the select/filter cluster.
-  (Model, Cmd?)? _handlePickerNavKey(KeyMsg msg) {
-    return _handlePickerEscKey(msg) ??
-        _handlePickerArrowKey(msg) ??
-        _handlePickerPageKey(msg);
-  }
-
-  /// Picker esc: closes the picker; generic pickers also report the
-  /// cancellation to the host (wizard flows wait on the answer). Null when
-  /// the key belongs to another cluster.
-  (Model, Cmd?)? _handlePickerEscKey(KeyMsg msg) {
-    final isModelsPicker = pickerId == 'models';
-    switch (msg.key) {
-      case 'esc':
-        if (!isModelsPicker && pickerId.isNotEmpty) {
-          callbacks.onPickerCancelled?.call(pickerId);
-        }
-        return (
-          copyWith(
-            menuOpen: false,
-            menuModelMode: false,
-            modelFilter: '',
-            menuAllItems: const [],
-            pickerId: '',
-            pickerTitle: '',
-          ),
-          null,
-        );
-      default:
-        return null;
-    }
-  }
-
-  /// Picker arrow keys (↑/↓); null when the key belongs to another cluster.
-  (Model, Cmd?)? _handlePickerArrowKey(KeyMsg msg) {
-    switch (msg.key) {
-      case 'up':
-        return (
-          copyWith(menuSelected: menuSelected > 0 ? menuSelected - 1 : 0),
-          null,
-        );
-      case 'down':
-        return (
-          copyWith(
-            menuSelected: menuSelected < menuItems.length - 1
-                ? menuSelected + 1
-                : menuSelected,
-          ),
-          null,
-        );
-      default:
-        return null;
-    }
-  }
-
-  /// Picker page keys (pgup/pgdown jump to the first/last item); null when
-  /// the key belongs to another cluster.
-  (Model, Cmd?)? _handlePickerPageKey(KeyMsg msg) {
-    switch (msg.key) {
-      case 'pgup':
-        return (copyWith(menuSelected: 0), null);
-      case 'pgdown':
-        return (
-          copyWith(menuSelected: menuItems.isEmpty ? 0 : menuItems.length - 1),
-          null,
-        );
-      default:
-        return null;
-    }
-  }
-
-  /// Picker select/filter keys (backspace/enter/tab/type-to-filter).
-  (Model, Cmd?) _handlePickerSelectKey(KeyMsg msg) {
-    return _handlePickerBackspaceKey(msg) ??
-        _handlePickerAcceptKey(msg) ??
-        _pickerTypeFilter(msg);
-  }
-
-  /// Picker backspace: trims the filter and rebuilds the item list (the
-  /// models picker via [FaTuiCallbacks.buildModelMenu], generic pickers by
-  /// locally filtering [menuAllItems]). Null when the key belongs to another
-  /// cluster.
-  (Model, Cmd?)? _handlePickerBackspaceKey(KeyMsg msg) {
-    switch (msg.key) {
-      case 'backspace':
-        if (modelFilter.isEmpty) return (this, null);
-        final nextFilter = modelFilter.substring(0, modelFilter.length - 1);
-        return (_filteredPicker(nextFilter), null);
-      default:
-        return null;
-    }
-  }
-
-  /// The picker state with [filter] applied: the models picker rebuilds via
-  /// the host callback, generic pickers filter [menuAllItems] locally
-  /// (case-insensitive contains over label + description).
-  FaTuiModel _filteredPicker(String filter) {
-    final isModelsPicker = pickerId == 'models';
-    final items = isModelsPicker
-        ? callbacks.buildModelMenu(filter, termWidth)
-        : _filterItems(menuAllItems, filter);
-    return copyWith(modelFilter: filter, menuItems: items, menuSelected: 0);
-  }
-
-  /// The local generic-picker filter: [items] whose label or description
-  /// contains [filter] (case-insensitive); an empty filter keeps everything.
-  static List<MenuItem> _filterItems(List<MenuItem> items, String filter) {
-    final query = filter.trim().toLowerCase();
-    if (query.isEmpty) return items;
-    return [
-      for (final item in items)
-        if ('${item.label} ${item.description}'.toLowerCase().contains(query))
-          item,
-    ];
-  }
-
-  /// Picker accept (enter/tab): closes the picker and resolves the
-  /// selection through the host (the model pick for the models picker,
-  /// [FaTuiCallbacks.onPickerSelected] for generic pickers). Null when the
-  /// key belongs to another cluster.
-  (Model, Cmd?)? _handlePickerAcceptKey(KeyMsg msg) {
-    switch (msg.key) {
-      case 'enter':
-      case 'tab':
-        if (menuItems.isEmpty) return (this, null);
-        return _acceptPickerAt(menuSelected);
-      default:
-        return null;
-    }
-  }
-
-  /// Accepts the picker row at [index] — the shared accept flow for the
-  /// keyboard (enter/tab on [menuSelected]) and the mouse (a menuRow hit
-  /// region, issue #278). Closes the picker and resolves the selection
-  /// through the host ([FaTuiCallbacks.onPickerSelected] for pickers).
-  (Model, Cmd?) _acceptPickerAt(int index) {
-    final pickerId = this.pickerId;
-    final isModelsPicker = pickerId == 'models';
-    final item = menuItems[index];
-    if (item.key.isEmpty) return (this, null);
-    return (
-      copyWith(
-        menuOpen: false,
-        menuModelMode: false,
-        modelFilter: '',
-        menuAllItems: const [],
-        pickerId: '',
-        pickerTitle: '',
-        inputText: '',
-        cursor: 0,
-      ),
-      () async {
-        if (isModelsPicker) {
-          await callbacks.onModelSelected(item.key);
-        } else {
-          await callbacks.onPickerSelected?.call(pickerId, item.key);
-        }
-        return null;
-      },
-    );
-  }
-
-  /// Picker type-to-filter: each printable character extends the filter and
-  /// rebuilds the item list (host callback for the models picker, a local
-  /// [menuAllItems] filter for generic pickers).
-  (Model, Cmd?) _pickerTypeFilter(KeyMsg msg) {
-    if (_isCommandKeystroke(msg.key)) return (this, null);
-    final text = msg.keyEvent.text;
-    if (text.isNotEmpty && text.length == 1) {
-      if (text == ' ' && modelFilter.isEmpty) return (this, null);
-      return (_filteredPicker(modelFilter + text), null);
-    }
-    return (this, null);
-  }
-
   /// Prompt-mode key routing: forwards the key to [handleTuiPromptKey] and
   /// resolves the host completer when it produces an answer (closing the
   /// prompt zone and handing control back to normal input).
@@ -2163,8 +2011,7 @@ final class FaTuiModel extends Model {
     // Hub overlay: a full-screen modal frame replaces the whole view.
     if (hub != null) {
       return View(
-        content:
-            '${renderHubFrame(hub!, width: termWidth, height: _viewportHeight)}\x1b[?25l',
+        content: renderHubFrame(hub!, width: termWidth, height: _viewportHeight),
         cursor: null,
         mouseMode: _viewMouseMode,
       );
@@ -2238,18 +2085,17 @@ final class FaTuiModel extends Model {
     // slash menu DOES edit the input line, so it keeps the cursor.
     final pickerOpen = menuOpen && menuModelMode;
     // The caret stays visible in the input zone while a run streams:
-    // typing mid-stream is first-class. The renderer re-homes the physical
-    // cursor after every painting frame (forceHome on any written row/cell),
-    // so the old "cursor jumps inside streamed text between spinner ticks"
-    // artifact no longer applies. Selection-only pickers still hide it —
-    // typing goes nowhere there.
-    final hideCursor = pickerOpen;
-    final cursorLine = hideCursor
-        ? '\x1b[?25l'
-        : '\x1b[?25h\x1b[${cursorRow + 1};${cursorX + 1}H';
+    // typing mid-stream is first-class. Visibility itself is ONE rule —
+    // the View's cursor field: null hides the physical cursor via the
+    // program's DECTCEM (?25l), non-null shows it and the renderer re-homes
+    // it after every painting frame (forceHome on any written row/cell).
+    // The old escape-smuggled-in-content scheme never reached the wire:
+    // the cell renderer parses content into an SGR-only grid and dropped
+    // the DECTCEM, leaving the caret stranded on the last painted cell of
+    // every picker frame (#510).
     return View(
-      content: body + cursorLine,
-      cursor: hideCursor
+      content: body,
+      cursor: pickerOpen
           ? null
           : Cursor(x: cursorX, y: cursorRow, shape: CursorShape.bar),
       mouseMode: _viewMouseMode,
@@ -2270,7 +2116,7 @@ final class FaTuiModel extends Model {
     b.writeln(); // spacer
     b.write(_statusRow());
     return View(
-      content: '${b.toString()}\x1b[?25l',
+      content: b.toString(),
       cursor: null,
       mouseMode: _viewMouseMode,
     );
@@ -2584,7 +2430,11 @@ final class FaTuiController {
   late final Program _program = Program(
     options: [
       withAltScreen(),
-      withHideCursor(false),
+      // Cursor visibility derives from View.cursor == null (one rule for
+      // every picker/wizard/prompt surface, #510): the program emits the
+      // DECTCEM hide/show OUT-OF-BAND — escapes inside frame content die
+      // in the cell renderer's SGR-only grid and never reach the wire.
+      withHideCursor(),
       // Mouse modes are VIEW-driven per frame (the view emits
       // cellMotion/none from mouseCapture) — never boot-static, so
       // /mouse off can actually disarm the terminal (issue #278, AC4).
@@ -2680,6 +2530,13 @@ final class FaTuiController {
     int lostJobs = 0,
   }) {
     _send(WaitingStatusMsg(jobs: jobs, timers: timers, lostJobs: lostJobs));
+  }
+
+  /// Pushes the run-liveness state (issue #514): `true` flips the busy row
+  /// to `Stalled…` while the wedge watchdog sees a stale heartbeat. No
+  /// busy guard — the model renders the label only while the row is up.
+  void setRunStalled(bool stalled) {
+    _send(RunStalledMsg(stalled));
   }
 
   /// Pushes the background-job board's live region (issue #429): summary

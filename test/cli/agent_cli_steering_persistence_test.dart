@@ -296,7 +296,7 @@ void main() {
 
   test(
     'AC3: steering into a wedged consumer (stale heartbeat) marks the '
-    'panel dead with the not-responding warning, never complete',
+    'panel queued-stalled with the stall banner, never complete',
     timeout: const Timeout(Duration(seconds: 120)),
     () async {
       final stream = _GatedStream([
@@ -317,9 +317,12 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 250));
       cli.steerForTest('anyone there?');
 
-      expect(io.out.toString(), contains('steering from you · dead'));
-      expect(io.out.toString(), contains('agent not responding'));
-      expect(io.out.toString(), contains('saved to session'));
+      expect(
+        io.out.toString(),
+        contains('steering from you · queued (agent stalled)'),
+      );
+      expect(io.out.toString(), contains('agent stalled'));
+      expect(io.out.toString(), contains('saved to the session'));
       expect(
         io.out.toString(),
         isNot(contains('steering from you → complete')),
@@ -375,8 +378,11 @@ void main() {
       // escalates pending -> dead, loudly, record intact.
       await Future<void>.delayed(const Duration(milliseconds: 250));
       cli.checkPendingSteeringHealthForTest();
-      expect(io.out.toString(), contains('[btw] steering from you → dead'));
-      expect(io.out.toString(), contains('agent not responding'));
+      expect(
+        io.out.toString(),
+        contains('[btw] steering from you → queued (agent stalled)'),
+      );
+      expect(io.out.toString(), contains('agent stalled'));
       await waitForItAsync(
         () async => (await steeringRecords(env)).length == 1,
         reason: 'escalation never touches the persisted record',

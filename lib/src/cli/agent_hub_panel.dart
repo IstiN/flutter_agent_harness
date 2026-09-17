@@ -56,6 +56,12 @@ String deferredPanelKindLabel(DeferredPanelKind kind) => switch (kind) {
   DeferredPanelKind.steering => 'steering',
 };
 
+/// One label for the panel state (issue #514): `dead` is internal
+/// vocabulary — a wedged consumer reads as `queued (agent stalled)` so the
+/// panel, the busy row and the banner all name ONE state.
+String deferredPanelStateLabel(DeferredPanelState state) =>
+    state == DeferredPanelState.dead ? 'queued (agent stalled)' : state.name;
+
 /// One deferred (btw-style) message panel.
 final class DeferredPanel {
   DeferredPanel({
@@ -191,7 +197,7 @@ List<String> deferredPanelLines(DeferredPanel panel, {int width = 80}) {
   final inner = w - 2;
   final header =
       'btw · ${deferredPanelKindLabel(panel.kind)} from ${panel.from} · '
-      '${panel.state.name}';
+      '${deferredPanelStateLabel(panel.state)}';
   final lines = <String>[
     '┌─ ${_clip(header, inner - 3)}',
     for (final bodyLine in _wrapBody(panel.body, inner - 3))
@@ -213,7 +219,7 @@ String _actionHint(DeferredPanel panel) {
 /// One line of the transition notice printed when a panel settles.
 String deferredPanelTransitionLine(DeferredPanel panel) =>
     '[btw] ${deferredPanelKindLabel(panel.kind)} from ${panel.from} → '
-    '${panel.state.name}';
+    '${deferredPanelStateLabel(panel.state)}';
 
 /// Background-task block states — the kimi status table (issue #429).
 /// `running` is the only live state; everything else is terminal. A card

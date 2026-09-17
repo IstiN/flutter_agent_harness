@@ -1053,6 +1053,10 @@ class AgentCli {
   /// per-turn collapse, records for reload. Replaced wholesale on session
   /// resume by rehydration.
   ShellJobBoard _jobBoard = ShellJobBoard();
+
+  /// The registry-persist serialization tail (issue #539) — see
+  /// `_persistJobBoard` in the hub driver extension.
+  Future<void> _persistChain = Future.value();
   final DateTime _hubMainStartedAt = DateTime.now();
   String? _hubTranscriptId;
   Timer? _hubFollowTimer;
@@ -1263,6 +1267,11 @@ class AgentCli {
   /// Reference to the active TUI controller so asynchronous model-list updates
   /// can refresh the picker while it is open.
   FaTuiController? _tuiController;
+
+  /// Whether the current run was pushed to consumers as stalled (issue
+  /// #514): the edge flag keeps the banner to ONE print per stall
+  /// episode instead of one per watchdog tick.
+  bool _runStalledPushed = false;
 
   /// Model ids shown by the most recent `/model` picker, so `/model N` can
   /// select by number without retyping the full id.
@@ -2305,6 +2314,9 @@ class AgentCli {
     // Issue #429: a new agent turn opens a fresh board bucket — jobs from
     // this turn collapse/count together and older buckets age out.
     _jobBoard.newTurn();
+    // Issue #514: a fresh run starts unstalled — the previous run's stall
+    // episode must never leak into the new bracket.
+    _setRunStalled(false);
     // Per-run sleep prevention (#326): the default hold acquires with the
     // run going in flight — fire-and-forget, never a reason to delay the
     // turn.
@@ -2335,6 +2347,7 @@ class AgentCli {
         // Per-run sleep prevention (#326): the run has fully settled —
         // drop the assertion so an idle agent lets the machine sleep.
         unawaited(runPowerAssertionsSettled());
+        _setRunStalled(false);
         _settleLeftoverSteering();
         // Waiting-row refresh (issue #450): the busy→idle edge is where
         // the waiting row takes over from the busy row (E3/E4).
