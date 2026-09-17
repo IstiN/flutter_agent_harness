@@ -16,6 +16,16 @@ on:
   # double-fire (duplicate create + --clobber upload, last wins).
   release:
     types: [published]
+  # ── Trigger matrix (#597 contract) ──────────────────────────────────────
+  #  PAT-pushed ANNOTATED tag (scripts/auto_release.sh: `git tag -a` +
+  #    RELEASE_PAT push): push(tags) fires immediately (~3s, v0.1.407) and
+  #    the release event fires once a release object exists.
+  #  GITHUB_TOKEN anything (push/tag/release): SUPPRESSED — GitHub never
+  #    fires workflow events from GITHUB_TOKEN (workflow_dispatch excepted).
+  #  API-minted tag (`gh release create` on a missing tag): a lightweight
+  #    ref with NO push event ever; its release event fires only if the
+  #    creator is a PAT, never a bot — the v0.1.370–402 silent era,
+  #    replayed by v0.1.408/409. auto_release.sh refuses this path.
   schedule:
     # Coalesced auto-release catch-up: when pushes outpace the 2h coalesce
     # window, this releases the pending commits (pub.dev caps ~12 publishes/day).
@@ -194,11 +204,16 @@ jobs:
       # job-wide and pub.dev rejects authenticated metadata reads, so
       # resolve unauthenticated (same pattern as the publish job);
       # --dry-run never uploads.
-      - name: Publish dry-run (unauthenticated)
+      # #597: the dry-run targets the STAGED tree (scripts/
+      # stage_publish_package.sh — the same script the publish job ships
+      # from), so a non-self-contained stage reddens at PR time, not at the
+      # tag (the v0.1.407 dart_tui path-dep failure).
+      - name: Publish dry-run against the staged package (unauthenticated)
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         run: |
           dart pub token remove https://pub.dev || true
-          dart pub publish --dry-run --ignore-warnings
+          bash scripts/stage_publish_package.sh
+          (cd /tmp/publish-stage && dart pub publish --dry-run --ignore-warnings)
 
   test-core:
     # Always runs (no job-level path gate): a path-filtered matrix skip
@@ -1562,23 +1577,7 @@ jobs:
       # future bloat a LOCI error instead of a pub.dev rejection.
       - name: Stage publishable package (sub-projects stay out)
         if: steps.gate.outputs.publishable == 'true'
-        run: |
-          mkdir -p /tmp/publish-stage
-          rsync -a ./ /tmp/publish-stage/ \
-            --exclude '.git' --exclude '.github' --exclude '.worktrees' \
-            --exclude 'flutter_app' --exclude 'browser_ext' \
-            --exclude 'office_addin' --exclude 'yoclip' \
-            --exclude 'vendor' --exclude 'docs' --exclude 'fa-local' \
-            --exclude 'packages' \
-            --exclude '.dart_tool' --exclude 'build' --exclude '.fah' \
-            --exclude 'memory' --exclude '.trash'
-          size=$(du -sm /tmp/publish-stage | cut -f1)
-          echo "staged package: ${size} MB"
-          if [ "$size" -gt 90 ]; then
-            echo "::error::staged package is ${size} MB (>90) — pub.dev caps uploads at 100 MB. Trim the staging excludes."
-            exit 1
-          fi
-          (cd /tmp/publish-stage && dart pub get)
+        run: bash scripts/stage_publish_package.sh
 
       - name: Publish (automated publishing via OIDC)
         if: steps.gate.outputs.publishable == 'true'
