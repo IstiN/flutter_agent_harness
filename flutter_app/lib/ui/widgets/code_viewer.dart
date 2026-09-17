@@ -176,28 +176,28 @@ class _CodeEditorState extends State<CodeEditor> {
     });
     if (result.isOk) {
       widget.onSaved?.call();
-      if (mounted) {
+      _showSnackBar(
         // l10n:ignore
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            // l10n:ignore
-            content: Text('Saved'), // l10n:ignore
-            duration: Duration(seconds: 1),
-          ),
-        );
-      }
+        const SnackBar(
+          // l10n:ignore
+          content: Text('Saved'), // l10n:ignore
+          duration: Duration(seconds: 1),
+        ),
+      );
     } else {
       setState(() {
         _error = result.errorOrNull?.message ?? 'Save failed';
       });
-      if (mounted) {
+      _showSnackBar(
         // l10n:ignore
-        ScaffoldMessenger.of(context).showSnackBar(
-          // l10n:ignore
-          SnackBar(content: Text('Save failed: $_error')), // l10n:ignore
-        );
-      }
+        SnackBar(content: Text('Save failed: $_error')), // l10n:ignore
+      );
     }
+  }
+
+  /// Shows [snack] when still mounted (the write hopped async).
+  void _showSnackBar(SnackBar snack) {
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(snack);
   }
 
   @override
