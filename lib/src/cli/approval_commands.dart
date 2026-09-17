@@ -752,6 +752,9 @@ extension ApprovalCommands on AgentCli {
   /// parent conversation — steered mid-run, or as a fresh re-wake run while
   /// idle (omp's idle flush via `agent.prompt`).
   void _onTaskJobCompleted(TaskJob job) {
+    // Event-driven waiting-row leave (issue #450): the settled child no
+    // longer counts as awaited (issue #520 AC3).
+    unawaited(_waiting.push());
     _onTaskJobSettledBlock(job);
     final result = job.result;
     final seconds = result == null
