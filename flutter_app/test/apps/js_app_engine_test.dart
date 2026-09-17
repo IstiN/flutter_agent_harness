@@ -2166,6 +2166,56 @@ void main() {
       );
     });
   });
+
+  group('host-side llm/storage arg helpers (no live engine)', () {
+    test('parseLlmMessages accepts the three roles and coerces content', () {
+      final messages = JsAppEngine.parseLlmMessages([
+        {'role': 'system', 'content': 'be terse'},
+        {'role': 'user', 'content': 'hi'},
+        {'role': 'assistant'},
+      ]);
+      expect(messages, hasLength(3));
+      expect(messages.first.role, 'system');
+      expect(messages[1].content, 'hi');
+      expect(messages.last, (role: 'assistant', content: ''));
+    });
+
+    test('parseLlmMessages rejects non-lists, bad entries and empty input', () {
+      void throws(String fragment, Object? raw) {
+        expect(
+          () => JsAppEngine.parseLlmMessages(raw),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              contains(fragment),
+            ),
+          ),
+        );
+      }
+
+      throws('must be a list', 'not a list');
+      throws('must be a {role, content} object', [
+        {'role': 'user', 'content': 'ok'},
+        'stray',
+      ]);
+      throws('unsupported message role "tool"', [
+        {'role': 'tool', 'content': 'x'},
+      ]);
+      throws('must not be empty', const []);
+    });
+
+    test('stringListArg reads JSON lists and comma-separated strings', () {
+      List<String>? read(Object? value) =>
+          JsAppEngine.stringListArg({'v': value}, 'v');
+
+      expect(read(['  +1 555 ', '', 'x']), ['+1 555', 'x']);
+      expect(read('a, b,,c'), ['a', 'b', 'c']);
+      expect(read(''), isNull);
+      expect(read(null), isNull);
+      expect(read(['  ', '']), isNull);
+    });
+  });
 }
 
 /// Fake [AsrApi] for the `fa.asr` bridge tests — the host-side tests never

@@ -929,7 +929,7 @@ Object.defineProperty(jsr, 'onBack', {
     if (method == 'llm') {
       return [(role: 'user', content: (args['prompt'] ?? '').toString())];
     }
-    return _parseLlmMessages(args['messages']);
+    return parseLlmMessages(args['messages']);
   }
 
   Future<Object?> _faLlmStream(
@@ -1172,8 +1172,8 @@ Object.defineProperty(jsr, 'onBack', {
     if (name.isEmpty) throw StateError('name is required');
     final id = await api.createContact(
       name: name,
-      phones: _stringListArg(args, 'phones'),
-      emails: _stringListArg(args, 'emails'),
+      phones: stringListArg(args, 'phones'),
+      emails: stringListArg(args, 'emails'),
       note: args['note']?.toString(),
     );
     return {'id': id};
@@ -1191,8 +1191,8 @@ Object.defineProperty(jsr, 'onBack', {
     await api.updateContact(
       id: id,
       name: args['name']?.toString(),
-      phones: _stringListArg(args, 'phones'),
-      emails: _stringListArg(args, 'emails'),
+      phones: stringListArg(args, 'phones'),
+      emails: stringListArg(args, 'emails'),
       note: args['note']?.toString(),
     );
     return {'updated': true};
@@ -1258,22 +1258,24 @@ Object.defineProperty(jsr, 'onBack', {
   }
 
   /// Reads a string-list bridge argument: a JSON list, or a single
-  /// comma-separated string. Null when absent/empty.
-  static List<String>? _stringListArg(Map<String, Object?> args, String key) {
+  /// comma-separated string. Null when absent/empty (issue #560 descent:
+  /// public for the direct unit tests, production callers are in-library).
+  @visibleForTesting
+  static List<String>? stringListArg(Map<String, Object?> args, String key) {
     final raw = args[key];
-    final items = <String>[];
-    if (raw is List) {
-      for (final item in raw) {
-        final text = item.toString().trim();
-        if (text.isNotEmpty) items.add(text);
-      }
-    } else if (raw != null) {
-      for (final part in raw.toString().split(',')) {
-        final text = part.trim();
-        if (text.isNotEmpty) items.add(text);
-      }
-    }
+    if (raw == null) return null;
+    final items = _stringList(raw is List ? raw : raw.toString().split(','));
     return items.isEmpty ? null : items;
+  }
+
+  /// The trimmed non-empty strings of [items].
+  static List<String> _stringList(Iterable<Object?> items) {
+    final out = <String>[];
+    for (final item in items) {
+      final text = item.toString().trim();
+      if (text.isNotEmpty) out.add(text);
+    }
+    return out;
   }
 
   /// The permission gate every `jsr.fa.contacts.*` bridge call shares:
@@ -1928,25 +1930,30 @@ Object.defineProperty(jsr, 'onBack', {
 
   /// Validates the `messages` argument of `llm.chat`/`llm.stream`:
   /// `[{role: 'user'|'assistant'|'system', content: '...'}]`.
-  static List<FaLlmMessage> _parseLlmMessages(Object? raw) {
+  @visibleForTesting
+  static List<FaLlmMessage> parseLlmMessages(Object? raw) {
     if (raw is! List) {
       throw StateError('messages must be a list of {role, content} objects');
     }
-    final messages = <FaLlmMessage>[];
-    for (final entry in raw) {
-      if (entry is! Map) {
-        throw StateError('each message must be a {role, content} object');
-      }
-      final role = (entry['role'] ?? '').toString();
-      if (role != 'user' && role != 'assistant' && role != 'system') {
-        throw StateError(
-          'unsupported message role "$role" (user/assistant/system)',
-        );
-      }
-      messages.add((role: role, content: (entry['content'] ?? '').toString()));
-    }
+    final messages = [for (final entry in raw) _parseLlmMessage(entry)];
     if (messages.isEmpty) throw StateError('messages must not be empty');
     return messages;
+  }
+
+  /// One validated message: the role must be one of the three supported
+  /// ones; content coerces to a string (null → '').
+  static FaLlmMessage _parseLlmMessage(Object? entry) {
+    if (entry is! Map) {
+      throw StateError('each message must be a {role, content} object');
+    }
+    final role = (entry['role'] ?? '').toString();
+    const roles = {'user', 'assistant', 'system'};
+    if (!roles.contains(role)) {
+      throw StateError(
+        'unsupported message role "$role" (user/assistant/system)',
+      );
+    }
+    return (role: role, content: (entry['content'] ?? '').toString());
   }
 
   String _denied(String what) =>
