@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/cli/waiting_heartbeat.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:test/test.dart';
 import 'package:yaml/yaml.dart';
@@ -615,6 +616,18 @@ prompts:
         expect(yaml, contains('skills:'));
         expect(yaml, contains('access: denied'));
         expect(yaml, contains('disableShellExecution: true'));
+      });
+
+      test('omits jobs section with default settings', () {
+        expect(CliConfig().toYaml(), isNot(contains('jobs:')));
+      });
+
+      test('emits jobs section only when knobs deviate', () {
+        final yaml = CliConfig(
+          jobs: const JobsConfig(staleHours: 48, logRetentionDays: 7),
+        ).toYaml();
+        expect(yaml, contains('jobs:\n  staleHours: 48'));
+        expect(yaml, contains('logRetentionDays: 7'));
       });
 
       group('cube section', () {

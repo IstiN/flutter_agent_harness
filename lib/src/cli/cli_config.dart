@@ -631,18 +631,22 @@ final class CliConfig {
         subagentsConfig.stallMinutes != defaultSubagentStallMinutes) {
       buffer.write(subagentsConfig.toYaml());
     }
-    // The jobs boot-maintenance section (issue #478), only when
-    // explicitly configured; defaults are never written so the file
-    // stays minimal.
-    final jobsConfig = jobs;
-    if (jobsConfig.staleHours != defaultJobsStaleHours ||
-        jobsConfig.logRetentionDays != defaultJobsLogRetentionDays) {
-      buffer.write(jobsConfig.toYaml());
-    }
+    buffer.write(_jobsYaml());
     buffer.write(_powerYaml());
     return buffer.toString();
   }
 
+  /// The `jobs:` boot-maintenance section (issue #478), only when
+  /// explicitly configured; defaults are never written so the file stays
+  /// minimal.
+  String _jobsYaml() {
+    final jobsConfig = jobs;
+    if (jobsConfig.staleHours == defaultJobsStaleHours &&
+        jobsConfig.logRetentionDays == defaultJobsLogRetentionDays) {
+      return '';
+    }
+    return jobsConfig.toYaml();
+  }
   /// The `compaction:` section, only when explicitly configured; defaults
   /// are never written so the file stays minimal.
   String _compactionYaml() {

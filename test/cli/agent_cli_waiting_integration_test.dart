@@ -5,6 +5,7 @@
 library;
 
 import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -397,4 +398,119 @@ void main() {
     ).waitingCaptureLostJobsForTest();
     expect(ancient.existsSync(), isTrue);
   });
+
+  // -- Registry lock branches (issue #478 CRAP gate) -------------------------
+
+  /// A local-FS CLI: the lock's contended branches need a real
+  /// filesystem — the exclusive create only fails when a regular FILE
+  /// occupies the lock path, which no memory env can express (its
+  /// createDir always succeeds).
+  Future<AgentCli> lockCli(
+    LocalExecutionEnv localEnv,
+    FakeCliIO localIo,
+  ) async {
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: 'test-key',
+        env: localEnv,
+        sessionRoot: '/sessions',
+      ),
+      io: localIo,
+      streamFunction: FakeStreamFunction([textTurn('ok')]).call,
+    );
+    // Nothing from the seeded registry is alive; the probe seam keeps
+    // the reconcile off the real process table.
+    cli.waitingProcessTableForTest = () async => null;
+    return cli;
+  }
+
+  /// The shared fixture: workspace, seeded registry (one dead entry —
+  /// the lost-jobs count is the proof the locked body actually ran),
+  /// and a foreign lock held by a regular file.
+  Future<(AgentCli, String)> lockFixture() async {
+    final workspace = await Directory.systemTemp.createTemp('fah478-lock-');
+    addTearDown(() => workspace.delete(recursive: true));
+    final dir = workspace.path;
+    final localEnv = LocalExecutionEnv(cwd: dir);
+    final localIo = FakeCliIO();
+    addTearDown(localIo.close);
+    final logs = '$dir/.fah/bash_jobs';
+    await localEnv.createDir(logs);
+    await localEnv.writeFile(
+      '$logs/running.json',
+      '[{"id":"sh-dead","command":"sleep 90"}]',
+    );
+    File('$logs/running.json.lock').writeAsStringSync('held');
+    return (await lockCli(localEnv, localIo), logs);
+  }
+
+  test(
+    'a freshly held lock times out and the mutation degrades to an '
+    'unlocked write (issue #478)',
+    () async {
+      final (cli, logs) = await lockFixture();
+
+      await cli.waitingCaptureLostJobsForTest();
+
+      expect(
+        cli.waitingLostJobsForTest,
+        1,
+        reason: 'the bounded wait gives up and the write proceeds unlocked',
+      );
+      expect(
+        File('$logs/running.json.lock').existsSync(),
+        isTrue,
+        reason: "a timed-out contender never removes someone else's lock",
+      );
+    },
+  );
+
+  test(
+    'a stale lock is stolen and released after the mutation (issue #478)',
+    () async {
+      final (cli, logs) = await lockFixture();
+      final lock = File('$logs/running.json.lock');
+      // The holder crashed: nothing refreshes the lock past the 60s
+      // staleness bound.
+      lock.setLastModifiedSync(
+        DateTime.now().subtract(const Duration(minutes: 2)),
+      );
+
+      await cli.waitingCaptureLostJobsForTest();
+
+      expect(cli.waitingLostJobsForTest, 1);
+      expect(
+        lock.existsSync(),
+        isFalse,
+        reason: 'stale lock stolen, then released',
+      );
+    },
+  );
+
+  test(
+    'a lock released during the wait is acquired on retry and released '
+    '(issue #478)',
+    () async {
+      final (cli, logs) = await lockFixture();
+      final lock = File('$logs/running.json.lock');
+      // The holder finishes 50ms in — well inside the 300ms wait bound.
+      Timer(const Duration(milliseconds: 50), () {
+        if (lock.existsSync()) lock.deleteSync();
+      });
+
+      await cli.waitingCaptureLostJobsForTest();
+
+      expect(
+        cli.waitingLostJobsForTest,
+        1,
+        reason: 'acquired on a retry inside the bound — not degraded',
+      );
+      expect(
+        lock.existsSync(),
+        isFalse,
+        reason: 'the winner releases in the finally',
+      );
+    },
+  );
 }
