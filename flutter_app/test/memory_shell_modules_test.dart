@@ -32,6 +32,53 @@ final class _TableFs implements TestFs {
 }
 
 void main() {
+
+  group('snippetOutcome (issue #568)', () {
+    test('unavailable interpreters answer 127 with the not-found line', () {
+      final out = snippetOutcome(
+        'python3',
+        (available: false, stdout: 'ignored', stderr: 'also ignored'),
+      );
+      expect(
+        out,
+        (stdout: '', stderr: 'python3: command not found\n', exitCode: 127),
+      );
+    });
+
+    test('empty output stays empty and exits 0', () {
+      expect(
+        snippetOutcome('qjs', (available: true, stdout: '', stderr: '')),
+        (stdout: '', stderr: '', exitCode: 0),
+      );
+    });
+
+    test('non-empty stdout gains the terminal newline', () {
+      expect(
+        snippetOutcome('qjs', (available: true, stdout: 'hello', stderr: '')),
+        (stdout: 'hello\n', stderr: '', exitCode: 0),
+      );
+      expect(
+        snippetOutcome('qjs', (available: true, stdout: 'hello\n', stderr: '')),
+        (stdout: 'hello\n\n', stderr: '', exitCode: 0),
+        reason: 'frozen behavior: the terminator is appended unconditionally',
+      );
+    });
+
+    test('non-empty stderr forces exit 1 and gains the newline', () {
+      expect(
+        snippetOutcome(
+          'python3',
+          (available: true, stdout: 'partial', stderr: 'Traceback'),
+        ),
+        (stdout: 'partial\n', stderr: 'Traceback\n', exitCode: 1),
+      );
+      expect(
+        snippetOutcome('python3', (available: true, stdout: '', stderr: 'boom')),
+        (stdout: '', stderr: 'boom\n', exitCode: 1),
+      );
+    });
+  });
+
   group('sed', () {
     Future<String> sedRow(
       String script,
