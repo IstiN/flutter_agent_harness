@@ -73,8 +73,13 @@ void main() {
       await harness.waitForBoot();
 
       await harness.runSlashCommand('/dap');
-      await harness.waitForText(
-        'Connection status',
+      // Wait for the LAST menu label on the PAINTED SCREEN (not raw): the
+      // /dap echo reaches the raw stream one frame before the menu paints,
+      // and asserting labels against the pre-paint frame flakes on loaded
+      // runners (v0.1.405 tag CI).
+      final lastLabel = dapMenuOptions().last.$2;
+      await harness.waitForScreen(
+        lastLabel,
         timeout: const Duration(seconds: 20),
       );
       // Every menu label is visible, derived from the structural menu
@@ -85,7 +90,7 @@ void main() {
 
       // Walk to "What is DAP?" structurally (no magic arrow counts).
       await _selectMenuOption(harness, 'about');
-      await harness.waitForText(
+      await harness.waitForScreen(
         'zero-knowledge',
         timeout: const Duration(seconds: 20),
       );
