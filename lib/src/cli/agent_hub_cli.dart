@@ -377,13 +377,29 @@ extension AgentCliHubDriver on AgentCli {
 
   /// Persists the board as `shell_job_registry` custom records (issue #429
   /// AC9): a resumed session rebuilds from these and never shows "running".
-  Future<void> _persistJobBoard() async {
+  ///
+  /// Issue #539: the writes are CHAINED — a wave of near-simultaneous job
+  /// starts fires one persist per mutation, and un-chained appends can land
+  /// out of order. A stale snapshot finishing LAST would win
+  /// `latestRecords` on resume: 4 of 5 running jobs silently vanished from
+  /// the registry (observed: "1 background task lost" for 5 live jobs).
+  /// Chained, the last queued write carries the newest snapshot.
+  Future<void> _persistJobBoard() {
     final session = _session;
-    if (session == null) return;
-    await session.appendCustomEntry(
-      customType: 'shell_job_registry',
-      data: _jobBoard.toRecords(),
-    );
+    if (session == null) return Future.value();
+    _persistChain = _persistChain
+        .then((_) async {
+          final records = _jobBoard.toRecords();
+          await session.appendCustomEntry(
+            customType: 'shell_job_registry',
+            data: records,
+          );
+        })
+        // One failed append must not poison the chain (every later persist
+        // would be skipped) nor escape as an unhandled zone error — the
+        // next mutation retries with a fresh snapshot.
+        .catchError((_) {});
+    return _persistChain;
   }
 
   /// Rebuilds the board from the resumed session's records. Jobs that were
