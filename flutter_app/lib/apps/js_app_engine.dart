@@ -47,6 +47,14 @@ typedef FaPlatformHandler =
 /// map on every call.
 typedef FaHostKeysSource = Map<String, String> Function();
 
+/// One `home`/`homekit` action handler: resolves the bridge map from the
+/// gated [HomeApi] (see [_homeActions]).
+typedef _HomeAction =
+    Future<Map<String, Object?>> Function(
+      HomeApi api,
+      Map<String, Object?> args,
+    );
+
 /// Theme-pack bridge behind `jsr.fa.theme.list/current/apply` (issue #169).
 /// The host implements it; the apply leg ALWAYS renders a consent prompt —
 /// the security model is "declarative data + user consent per apply", so
@@ -1307,126 +1315,200 @@ Object.defineProperty(jsr, 'onBack', {
   ) async {
     final api = await _gatedHome();
     try {
-      switch (action) {
-        case 'homes':
-          final homes = await api.listHomes();
-          AppLog.i('home', 'bridge homes → ${homes.length}');
-          return {
-            'homes': [
-              for (final home in homes)
-                {
-                  'id': home.id,
-                  'name': home.name,
-                  'primary': home.primary,
-                  'roomCount': home.roomCount,
-                  'accessoryCount': home.accessoryCount,
-                },
-            ],
-          };
-        case 'rooms':
-          final rooms = await api.listRooms(
-            homeId: _optionalString(args, 'homeId'),
-          );
-          AppLog.i('home', 'bridge rooms → ${rooms.length}');
-          return {
-            'rooms': [
-              for (final room in rooms)
-                {
-                  'id': room.id,
-                  'name': room.name,
-                  'homeName': room.homeName,
-                  'accessoryCount': room.accessoryCount,
-                },
-            ],
-          };
-        case 'list':
-          final accessories = await api.listAccessories(
-            homeId: _optionalString(args, 'homeId'),
-            roomId: _optionalString(args, 'roomId'),
-          );
-          AppLog.i('home', 'bridge list → ${accessories.length} accessories');
-          return {
-            'accessories': [
-              for (final accessory in accessories) _homeAccessoryMap(accessory),
-            ],
-          };
-        case 'read':
-          return {
-            'accessory': _homeAccessoryMap(
-              await api.readAccessory(id: _requiredId(args)),
-            ),
-          };
-        case 'write':
-          final id = _requiredId(args);
-          final type = (args['type'] ?? '').toString();
-          if (type.isEmpty) throw StateError('type is required');
-          final value = args['value'];
-          if (value == null) throw StateError('value is required');
-          await api.writeCharacteristic(
-            id: id,
-            type: type,
-            value: value,
-            name: _optionalString(args, 'name'),
-            room: _optionalString(args, 'room'),
-          );
-          return {'written': true};
-        case 'scenes':
-          final scenes = await api.listScenes(
-            homeId: _optionalString(args, 'homeId'),
-          );
-          AppLog.i('home', 'bridge scenes → ${scenes.length}');
-          return {
-            'scenes': [
-              for (final scene in scenes)
-                {
-                  'id': scene.id,
-                  'name': scene.name,
-                  'homeName': scene.homeName,
-                  'actionCount': scene.actionCount,
-                  'executing': scene.executing,
-                },
-            ],
-          };
-        case 'executeScene':
-          await api.executeScene(id: _requiredId(args));
-          return {'executed': true};
-        case 'setPower':
-          final id = _requiredId(args);
-          final on = args['on'] == true;
-          await api.setPower(
-            id: id,
-            on: on,
-            name: _optionalString(args, 'name'),
-            room: _optionalString(args, 'room'),
-          );
-          return {'on': on};
-        case 'setBrightness':
-          final id = _requiredId(args);
-          final value = homeBrightness(args['value'] as num?);
-          await api.setBrightness(
-            id: id,
-            value: value,
-            name: _optionalString(args, 'name'),
-            room: _optionalString(args, 'room'),
-          );
-          return {'brightness': value};
-        case 'setTemperature':
-          final id = _requiredId(args);
-          final celsius = homeTemperature(args['celsius'] as num?);
-          await api.setTargetTemperature(
-            id: id,
-            celsius: celsius,
-            name: _optionalString(args, 'name'),
-            room: _optionalString(args, 'room'),
-          );
-          return {'temperature': celsius};
-        default:
-          throw StateError('unknown home action "$action"');
-      }
+      final handler = _homeActions[action];
+      if (handler == null) throw StateError('unknown home action "$action"');
+      return await handler(api, args);
     } on Object catch (error) {
       AppLog.i('home', 'bridge $action failed: $error');
       rethrow;
     }
+  }
+
+  /// Test seam over [_homeCall]: the host-side dispatcher runs against an
+  /// injected [HomeApi] without a live JS engine, so every per-action
+  /// handler stays covered on runners where the live-engine suite is
+  /// skip-guarded (see the engine test's `_engineSkip`).
+  @visibleForTesting
+  Future<Map<String, Object?>> homeCallForTest(
+    String action,
+    Map<String, Object?> args,
+  ) => _homeCall(action, args);
+
+  /// The `home.<action>` route table (issue #560 descent): each action is
+  /// one small handler below; the map keeps [_homeCall] a pure dispatcher,
+  /// mirroring the [_faHandlers] pattern. `homekit.*` aliases route here
+  /// through the same table.
+  late final Map<String, _HomeAction> _homeActions = {
+    'homes': _homeHomes,
+    'rooms': _homeRooms,
+    'list': _homeList,
+    'read': _homeRead,
+    'write': _homeWrite,
+    'scenes': _homeScenes,
+    'executeScene': _homeExecuteScene,
+    'setPower': _homeSetPower,
+    'setBrightness': _homeSetBrightness,
+    'setTemperature': _homeSetTemperature,
+  };
+
+  Future<Map<String, Object?>> _homeHomes(
+    HomeApi api,
+    Map<String, Object?> args,
+  ) async {
+    final homes = await api.listHomes();
+    AppLog.i('home', 'bridge homes → ${homes.length}');
+    return {
+      'homes': [
+        for (final home in homes)
+          {
+            'id': home.id,
+            'name': home.name,
+            'primary': home.primary,
+            'roomCount': home.roomCount,
+            'accessoryCount': home.accessoryCount,
+          },
+      ],
+    };
+  }
+
+  Future<Map<String, Object?>> _homeRooms(
+    HomeApi api,
+    Map<String, Object?> args,
+  ) async {
+    final rooms = await api.listRooms(homeId: _optionalString(args, 'homeId'));
+    AppLog.i('home', 'bridge rooms → ${rooms.length}');
+    return {
+      'rooms': [
+        for (final room in rooms)
+          {
+            'id': room.id,
+            'name': room.name,
+            'homeName': room.homeName,
+            'accessoryCount': room.accessoryCount,
+          },
+      ],
+    };
+  }
+
+  Future<Map<String, Object?>> _homeList(
+    HomeApi api,
+    Map<String, Object?> args,
+  ) async {
+    final accessories = await api.listAccessories(
+      homeId: _optionalString(args, 'homeId'),
+      roomId: _optionalString(args, 'roomId'),
+    );
+    AppLog.i('home', 'bridge list → ${accessories.length} accessories');
+    return {
+      'accessories': [
+        for (final accessory in accessories) _homeAccessoryMap(accessory),
+      ],
+    };
+  }
+
+  Future<Map<String, Object?>> _homeRead(
+    HomeApi api,
+    Map<String, Object?> args,
+  ) async {
+    return {
+      'accessory': _homeAccessoryMap(
+        await api.readAccessory(id: _requiredId(args)),
+      ),
+    };
+  }
+
+  Future<Map<String, Object?>> _homeWrite(
+    HomeApi api,
+    Map<String, Object?> args,
+  ) async {
+    final id = _requiredId(args);
+    final type = (args['type'] ?? '').toString();
+    if (type.isEmpty) throw StateError('type is required');
+    final value = args['value'];
+    if (value == null) throw StateError('value is required');
+    await api.writeCharacteristic(
+      id: id,
+      type: type,
+      value: value,
+      name: _optionalString(args, 'name'),
+      room: _optionalString(args, 'room'),
+    );
+    return {'written': true};
+  }
+
+  Future<Map<String, Object?>> _homeScenes(
+    HomeApi api,
+    Map<String, Object?> args,
+  ) async {
+    final scenes = await api.listScenes(
+      homeId: _optionalString(args, 'homeId'),
+    );
+    AppLog.i('home', 'bridge scenes → ${scenes.length}');
+    return {
+      'scenes': [
+        for (final scene in scenes)
+          {
+            'id': scene.id,
+            'name': scene.name,
+            'homeName': scene.homeName,
+            'actionCount': scene.actionCount,
+            'executing': scene.executing,
+          },
+      ],
+    };
+  }
+
+  Future<Map<String, Object?>> _homeExecuteScene(
+    HomeApi api,
+    Map<String, Object?> args,
+  ) async {
+    await api.executeScene(id: _requiredId(args));
+    return {'executed': true};
+  }
+
+  Future<Map<String, Object?>> _homeSetPower(
+    HomeApi api,
+    Map<String, Object?> args,
+  ) async {
+    final id = _requiredId(args);
+    final on = args['on'] == true;
+    await api.setPower(
+      id: id,
+      on: on,
+      name: _optionalString(args, 'name'),
+      room: _optionalString(args, 'room'),
+    );
+    return {'on': on};
+  }
+
+  Future<Map<String, Object?>> _homeSetBrightness(
+    HomeApi api,
+    Map<String, Object?> args,
+  ) async {
+    final id = _requiredId(args);
+    final value = homeBrightness(args['value'] as num?);
+    await api.setBrightness(
+      id: id,
+      value: value,
+      name: _optionalString(args, 'name'),
+      room: _optionalString(args, 'room'),
+    );
+    return {'brightness': value};
+  }
+
+  Future<Map<String, Object?>> _homeSetTemperature(
+    HomeApi api,
+    Map<String, Object?> args,
+  ) async {
+    final id = _requiredId(args);
+    final celsius = homeTemperature(args['celsius'] as num?);
+    await api.setTargetTemperature(
+      id: id,
+      celsius: celsius,
+      name: _optionalString(args, 'name'),
+      room: _optionalString(args, 'room'),
+    );
+    return {'temperature': celsius};
   }
 
   /// One accessory as the bridge map: the flat conveniences plus the full

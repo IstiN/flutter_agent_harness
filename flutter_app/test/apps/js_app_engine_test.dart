@@ -1998,6 +1998,134 @@ void main() {
       });
     });
   }, skip: _engineSkip);
+
+  group('host-side home dispatcher (no live engine)', () {
+    JsAppInfo app() => JsAppInfo.fromManifest(
+      const {'id': 'demo', 'name': 'Demo'},
+      bundled: false,
+      fallbackId: 'demo',
+    );
+
+    JsAppEngine engine(_FakeHomeApi home, {bool homekit = true}) => JsAppEngine(
+      app: app(),
+      env: MemoryExecutionEnv(),
+      permissions: AppPermissions(homekit: homekit),
+      home: home,
+    );
+
+    Matcher matches(String fragment) => throwsA(
+      isA<StateError>().having(
+        (error) => error.message,
+        'message',
+        contains(fragment),
+      ),
+    );
+
+    test('homeCallForTest routes every action through the gated HomeApi', () async {
+      final api = _FakeHomeApi();
+      final js = engine(api);
+      addTearDown(js.dispose);
+
+      expect(
+        (await js.homeCallForTest('homes', {}))['homes'],
+        hasLength(1),
+      );
+      expect(
+        (await js.homeCallForTest('rooms', {}))['rooms'],
+        hasLength(2),
+      );
+      final accessories =
+          (await js.homeCallForTest('list', {}))['accessories'] as List;
+      expect(accessories, hasLength(2));
+      final light = accessories.first as Map<String, Object?>;
+      expect(light['id'], 'a-light');
+      final services = light['services'] as List<Map<String, Object?>>;
+      expect(
+        services.single['characteristics'],
+        hasLength(2),
+      );
+
+      final read = await js.homeCallForTest('read', {'id': 'a-light'});
+      expect((read['accessory'] as Map)['id'], 'a-light');
+
+      expect(
+        await js.homeCallForTest('write', {
+          'id': 'a-light',
+          'type': 'powerState',
+          'value': true,
+        }),
+        {'written': true},
+      );
+      expect(api.writeCalls.single.id, 'a-light');
+
+      expect(
+        (await js.homeCallForTest('scenes', {}))['scenes'],
+        hasLength(1),
+      );
+      expect(
+        await js.homeCallForTest('executeScene', {'id': 's-1'}),
+        {'executed': true},
+      );
+      expect(api.executedScenes, ['s-1']);
+
+      expect(
+        await js.homeCallForTest('setPower', {'id': 'a-light', 'on': true}),
+        {'on': true},
+      );
+      expect(
+        await js.homeCallForTest('setBrightness', {
+          'id': 'a-light',
+          'value': 40,
+        }),
+        {'brightness': 40},
+      );
+      expect(
+        await js.homeCallForTest('setTemperature', {
+          'id': 'a-thermo',
+          'celsius': 21.5,
+        }),
+        {'temperature': 21.5},
+      );
+      // The write aliases carry the optional name/room narrowing for
+      // duplicate bridge ids.
+      await js.homeCallForTest('setPower', {
+        'id': 'a-light',
+        'on': false,
+        'name': 'Ceiling Light',
+        'room': 'Living Room',
+      });
+      expect(api.powerCalls.last.name, 'Ceiling Light');
+      expect(api.powerCalls.last.room, 'Living Room');
+    });
+
+    test('homeCallForTest gates on the homekit permission', () async {
+      final js = engine(_FakeHomeApi(), homekit: false);
+      addTearDown(js.dispose);
+      await expectLater(js.homeCallForTest('homes', {}), matches('homekit'));
+    });
+
+    test('homeCallForTest rejects unknown actions', () async {
+      final js = engine(_FakeHomeApi());
+      addTearDown(js.dispose);
+      await expectLater(
+        js.homeCallForTest('bogus', {}),
+        matches('unknown home action'),
+      );
+    });
+
+    test('homeCallForTest validates the generic write args', () async {
+      final js = engine(_FakeHomeApi());
+      addTearDown(js.dispose);
+      await expectLater(
+        js.homeCallForTest('write', {'id': 'a-light'}),
+        matches('type is required'),
+      );
+      await expectLater(
+        js.homeCallForTest('write', {'id': 'a-light', 'type': 'powerState'}),
+        matches('value is required'),
+      );
+    });
+  });
 }
 
 /// Fake [AsrApi] for the `fa.asr` bridge tests — the host-side tests never
