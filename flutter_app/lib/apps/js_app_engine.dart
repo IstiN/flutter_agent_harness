@@ -456,33 +456,84 @@ class JsAppEngine {
     Map<String, dynamic> before,
     Map<String, dynamic> after,
   ) {
-    final siblings = _liveByApp[app.id];
+    _broadcastStorageTo(_liveByApp[app.id], before, after);
+  }
+
+  /// The broadcast core: diff [before] → [after], deliver to every
+  /// non-self engine in [siblings] (issue #560 descent: diff computation
+  /// split from the fan-out, both small and unit-testable).
+  void _broadcastStorageTo(
+    Iterable<JsAppEngine>? siblings,
+    Map<String, dynamic> before,
+    Map<String, dynamic> after,
+  ) {
     if (siblings == null || siblings.length < 2) return;
-    final changed = <String, dynamic>{};
-    for (final key in after.keys) {
-      if (!identical(before[key], after[key]) &&
-          jsonEncode(before[key]) != jsonEncode(after[key])) {
-        changed[key] = after[key];
-      }
-    }
-    for (final key in before.keys) {
-      if (!after.containsKey(key)) changed[key] = null;
-    }
+    _deliverStorageChanges(siblings, storageDiff(before, after));
+  }
+
+  void _deliverStorageChanges(
+    Iterable<JsAppEngine> siblings,
+    Map<String, dynamic> changed,
+  ) {
     if (changed.isEmpty) return;
     for (final sibling in siblings) {
-      if (identical(sibling, this)) continue;
-      for (final entry in changed.entries) {
-        unawaited(
-          sibling.callEvent(stateSyncEvent, {
-            'appId': app.id,
-            'key': entry.key,
-            'value': entry.value,
-            'writer': instanceId,
-          }),
-        );
+      if (!identical(sibling, this)) {
+        _sendStateSync(sibling, changed, writer: instanceId);
       }
     }
   }
+
+  /// One fan-out leg: [changed] becomes one `state.sync` event per entry
+  /// on [target] (see [stateSyncEvent] for the protocol shape).
+  void _sendStateSync(
+    JsAppEngine target,
+    Map<String, dynamic> changed, {
+    required String writer,
+  }) {
+    for (final entry in changed.entries) {
+      unawaited(
+        target.callEvent(stateSyncEvent, {
+          'appId': app.id,
+          'key': entry.key,
+          'value': entry.value,
+          'writer': writer,
+        }),
+      );
+    }
+  }
+
+  /// Keys whose value differs between [before] and [after], mapped to the
+  /// NEW value; keys removed in [after] map to null. Values compare by
+  /// JSON encoding, so a mutated nested map counts as changed and a fresh
+  /// deep-equal instance does not (issue #560 descent: the pure core of
+  /// the storage sync, shared by the live broadcast and the boot replay).
+  @visibleForTesting
+  static Map<String, dynamic> storageDiff(
+    Map<String, dynamic> before,
+    Map<String, dynamic> after,
+  ) {
+    final changed = _changedStorageValues(before, after);
+    for (final key in before.keys) {
+      if (!after.containsKey(key)) changed[key] = null;
+    }
+    return changed;
+  }
+
+  static Map<String, dynamic> _changedStorageValues(
+    Map<String, dynamic> before,
+    Map<String, dynamic> after,
+  ) {
+    final changed = <String, dynamic>{};
+    for (final key in after.keys) {
+      if (!_sameStorageValue(before[key], after[key])) {
+        changed[key] = after[key];
+      }
+    }
+    return changed;
+  }
+
+  static bool _sameStorageValue(Object? a, Object? b) =>
+      identical(a, b) || jsonEncode(a) == jsonEncode(b);
 
   /// Delivers this engine the storage changes OTHERS persisted while this
   /// instance was still booting (see [_start]). `writer: 'boot'` marks the
@@ -493,27 +544,10 @@ class JsAppEngine {
     try {
       final baseline = _lastPersistedStorage ?? const {};
       final latest = await _readStorageFile();
-      final changed = <String, dynamic>{};
-      for (final key in latest.keys) {
-        if (jsonEncode(baseline[key]) != jsonEncode(latest[key])) {
-          changed[key] = latest[key];
-        }
-      }
-      for (final key in baseline.keys) {
-        if (!latest.containsKey(key)) changed[key] = null;
-      }
+      final changed = storageDiff(baseline, latest);
       if (changed.isEmpty) return;
       _lastPersistedStorage = Map<String, dynamic>.of(latest);
-      for (final entry in changed.entries) {
-        unawaited(
-          callEvent(stateSyncEvent, {
-            'appId': app.id,
-            'key': entry.key,
-            'value': entry.value,
-            'writer': 'boot',
-          }),
-        );
-      }
+      _sendStateSync(this, changed, writer: 'boot');
     } on Object {
       // Best-effort: the next live broadcast (or a restart) re-syncs.
     }

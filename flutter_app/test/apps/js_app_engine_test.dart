@@ -2021,82 +2021,75 @@ void main() {
       ),
     );
 
-    test('homeCallForTest routes every action through the gated HomeApi', () async {
-      final api = _FakeHomeApi();
-      final js = engine(api);
-      addTearDown(js.dispose);
+    test(
+      'homeCallForTest routes every action through the gated HomeApi',
+      () async {
+        final api = _FakeHomeApi();
+        final js = engine(api);
+        addTearDown(js.dispose);
 
-      expect(
-        (await js.homeCallForTest('homes', {}))['homes'],
-        hasLength(1),
-      );
-      expect(
-        (await js.homeCallForTest('rooms', {}))['rooms'],
-        hasLength(2),
-      );
-      final accessories =
-          (await js.homeCallForTest('list', {}))['accessories'] as List;
-      expect(accessories, hasLength(2));
-      final light = accessories.first as Map<String, Object?>;
-      expect(light['id'], 'a-light');
-      final services = light['services'] as List<Map<String, Object?>>;
-      expect(
-        services.single['characteristics'],
-        hasLength(2),
-      );
+        expect((await js.homeCallForTest('homes', {}))['homes'], hasLength(1));
+        expect((await js.homeCallForTest('rooms', {}))['rooms'], hasLength(2));
+        final accessories =
+            (await js.homeCallForTest('list', {}))['accessories'] as List;
+        expect(accessories, hasLength(2));
+        final light = accessories.first as Map<String, Object?>;
+        expect(light['id'], 'a-light');
+        final services = light['services'] as List<Map<String, Object?>>;
+        expect(services.single['characteristics'], hasLength(2));
 
-      final read = await js.homeCallForTest('read', {'id': 'a-light'});
-      expect((read['accessory'] as Map)['id'], 'a-light');
+        final read = await js.homeCallForTest('read', {'id': 'a-light'});
+        expect((read['accessory'] as Map)['id'], 'a-light');
 
-      expect(
-        await js.homeCallForTest('write', {
+        expect(
+          await js.homeCallForTest('write', {
+            'id': 'a-light',
+            'type': 'powerState',
+            'value': true,
+          }),
+          {'written': true},
+        );
+        expect(api.writeCalls.single.id, 'a-light');
+
+        expect(
+          (await js.homeCallForTest('scenes', {}))['scenes'],
+          hasLength(1),
+        );
+        expect(await js.homeCallForTest('executeScene', {'id': 's-1'}), {
+          'executed': true,
+        });
+        expect(api.executedScenes, ['s-1']);
+
+        expect(
+          await js.homeCallForTest('setPower', {'id': 'a-light', 'on': true}),
+          {'on': true},
+        );
+        expect(
+          await js.homeCallForTest('setBrightness', {
+            'id': 'a-light',
+            'value': 40,
+          }),
+          {'brightness': 40},
+        );
+        expect(
+          await js.homeCallForTest('setTemperature', {
+            'id': 'a-thermo',
+            'celsius': 21.5,
+          }),
+          {'temperature': 21.5},
+        );
+        // The write aliases carry the optional name/room narrowing for
+        // duplicate bridge ids.
+        await js.homeCallForTest('setPower', {
           'id': 'a-light',
-          'type': 'powerState',
-          'value': true,
-        }),
-        {'written': true},
-      );
-      expect(api.writeCalls.single.id, 'a-light');
-
-      expect(
-        (await js.homeCallForTest('scenes', {}))['scenes'],
-        hasLength(1),
-      );
-      expect(
-        await js.homeCallForTest('executeScene', {'id': 's-1'}),
-        {'executed': true},
-      );
-      expect(api.executedScenes, ['s-1']);
-
-      expect(
-        await js.homeCallForTest('setPower', {'id': 'a-light', 'on': true}),
-        {'on': true},
-      );
-      expect(
-        await js.homeCallForTest('setBrightness', {
-          'id': 'a-light',
-          'value': 40,
-        }),
-        {'brightness': 40},
-      );
-      expect(
-        await js.homeCallForTest('setTemperature', {
-          'id': 'a-thermo',
-          'celsius': 21.5,
-        }),
-        {'temperature': 21.5},
-      );
-      // The write aliases carry the optional name/room narrowing for
-      // duplicate bridge ids.
-      await js.homeCallForTest('setPower', {
-        'id': 'a-light',
-        'on': false,
-        'name': 'Ceiling Light',
-        'room': 'Living Room',
-      });
-      expect(api.powerCalls.last.name, 'Ceiling Light');
-      expect(api.powerCalls.last.room, 'Living Room');
-    });
+          'on': false,
+          'name': 'Ceiling Light',
+          'room': 'Living Room',
+        });
+        expect(api.powerCalls.last.name, 'Ceiling Light');
+        expect(api.powerCalls.last.room, 'Living Room');
+      },
+    );
 
     test('homeCallForTest gates on the homekit permission', () async {
       final js = engine(_FakeHomeApi(), homekit: false);
@@ -2123,6 +2116,53 @@ void main() {
       await expectLater(
         js.homeCallForTest('write', {'id': 'a-light', 'type': 'powerState'}),
         matches('value is required'),
+      );
+    });
+  });
+
+  group('host-side storage sync core (no live engine)', () {
+    test('storageDiff reports changed, added and removed keys', () {
+      final diff = JsAppEngine.storageDiff(
+        {'a': 1, 'b': 'keep', 'gone': 'x'},
+        {'a': 2, 'b': 'keep', 'new': true},
+      );
+      expect(diff, {'a': 2, 'new': true, 'gone': null});
+    });
+
+    test('storageDiff compares nested values by JSON, not identity', () {
+      // Same JSON shape through a fresh instance → not a change.
+      expect(
+        JsAppEngine.storageDiff(
+          {
+            'm': {'n': 1},
+          },
+          {
+            'm': {'n': 1},
+          },
+        ),
+        isEmpty,
+      );
+      // A mutated nested map → changed, mapped to the new value.
+      expect(
+        JsAppEngine.storageDiff(
+          {
+            'm': {'n': 1},
+          },
+          {
+            'm': {'n': 2},
+          },
+        ),
+        {
+          'm': {'n': 2},
+        },
+      );
+    });
+
+    test('storageDiff maps a changed key to the new value object', () {
+      final fresh = <String, dynamic>{};
+      expect(
+        JsAppEngine.storageDiff({'k': 'old'}, {'k': fresh}).values.single,
+        same(fresh),
       );
     });
   });
