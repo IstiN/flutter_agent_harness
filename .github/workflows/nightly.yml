@@ -422,5 +422,5 @@ jobs:
           if [ -n "$existing" ]; then
             gh issue comment "$existing" --body "$body"
           else
-            gh issue create --title "$title" --label nightly-red --body "$body"
+            gh issue create --title "$title" --label nightly-red --body "$body" --assignee ai-teammate
           fi
