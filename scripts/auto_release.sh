@@ -94,8 +94,25 @@ PY
   # Annotated tag: --follow-tags only pushes annotated tags, lightweight
   # ones stay local. --atomic makes main+tag land together or not at all.
   git tag -a "v$next" -m "Release v$next"
+  # #597 F3: the tag must point at the commit whose pubspec already carries
+  # $next — a tag over any other tree dies later in the publish job's
+  # "Verify tag matches pubspec version" (the v0.1.408 release-arm death).
+  if [ "$(git show "v$next":pubspec.yaml | grep '^version:' | awk '{print $2}')" != "$next" ]; then
+    echo "::error::aborting: v$next tag tree carries pubspec $(git show "v$next":pubspec.yaml | grep '^version:' | awk '{print $2}'), expected $next"
+    exit 1
+  fi
   if git push --atomic origin main --follow-tags; then
     echo "Released v$next"
+    # #597 F1/F2: the tag MUST reach GitHub as a pushed annotated ref BEFORE
+    # any release object exists. `gh release create` on a missing tag mints a
+    # lightweight API ref at whatever main HEAD is at that instant — no push
+    # event, and a GITHUB_TOKEN release fires no release event either (the
+    # v0.1.408/409 no-run forensics). Assert the remote ref instead of ever
+    # letting gh mint one.
+    if ! git ls-remote --exit-code origin "refs/tags/v$next" >/dev/null 2>&1; then
+      echo "::error::tag v$next did not land on origin — refusing 'gh release create' (it would mint a lightweight API tag, #597)"
+      exit 1
+    fi
     # Create the GitHub Release so the binaries job can attach assets to it.
     # Use the PAT for write access; `gh` is preinstalled on GitHub runners.
     # Notes come from the CHANGELOG section just written above (curated
