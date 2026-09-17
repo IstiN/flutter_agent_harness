@@ -2011,8 +2011,7 @@ final class FaTuiModel extends Model {
     // Hub overlay: a full-screen modal frame replaces the whole view.
     if (hub != null) {
       return View(
-        content:
-            '${renderHubFrame(hub!, width: termWidth, height: _viewportHeight)}\x1b[?25l',
+        content: renderHubFrame(hub!, width: termWidth, height: _viewportHeight),
         cursor: null,
         mouseMode: _viewMouseMode,
       );
@@ -2086,18 +2085,17 @@ final class FaTuiModel extends Model {
     // slash menu DOES edit the input line, so it keeps the cursor.
     final pickerOpen = menuOpen && menuModelMode;
     // The caret stays visible in the input zone while a run streams:
-    // typing mid-stream is first-class. The renderer re-homes the physical
-    // cursor after every painting frame (forceHome on any written row/cell),
-    // so the old "cursor jumps inside streamed text between spinner ticks"
-    // artifact no longer applies. Selection-only pickers still hide it —
-    // typing goes nowhere there.
-    final hideCursor = pickerOpen;
-    final cursorLine = hideCursor
-        ? '\x1b[?25l'
-        : '\x1b[?25h\x1b[${cursorRow + 1};${cursorX + 1}H';
+    // typing mid-stream is first-class. Visibility itself is ONE rule —
+    // the View's cursor field: null hides the physical cursor via the
+    // program's DECTCEM (?25l), non-null shows it and the renderer re-homes
+    // it after every painting frame (forceHome on any written row/cell).
+    // The old escape-smuggled-in-content scheme never reached the wire:
+    // the cell renderer parses content into an SGR-only grid and dropped
+    // the DECTCEM, leaving the caret stranded on the last painted cell of
+    // every picker frame (#510).
     return View(
-      content: body + cursorLine,
-      cursor: hideCursor
+      content: body,
+      cursor: pickerOpen
           ? null
           : Cursor(x: cursorX, y: cursorRow, shape: CursorShape.bar),
       mouseMode: _viewMouseMode,
@@ -2118,7 +2116,7 @@ final class FaTuiModel extends Model {
     b.writeln(); // spacer
     b.write(_statusRow());
     return View(
-      content: '${b.toString()}\x1b[?25l',
+      content: b.toString(),
       cursor: null,
       mouseMode: _viewMouseMode,
     );
@@ -2432,7 +2430,11 @@ final class FaTuiController {
   late final Program _program = Program(
     options: [
       withAltScreen(),
-      withHideCursor(false),
+      // Cursor visibility derives from View.cursor == null (one rule for
+      // every picker/wizard/prompt surface, #510): the program emits the
+      // DECTCEM hide/show OUT-OF-BAND — escapes inside frame content die
+      // in the cell renderer's SGR-only grid and never reach the wire.
+      withHideCursor(),
       // Mouse modes are VIEW-driven per frame (the view emits
       // cellMotion/none from mouseCapture) — never boot-static, so
       // /mouse off can actually disarm the terminal (issue #278, AC4).
