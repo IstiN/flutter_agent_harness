@@ -257,7 +257,7 @@ Future<String?> _askProviderName(
     if (!isUsableCustomProviderName(name)) {
       question =
           '"$name" is not a usable provider name — use letters, digits, '
-          'and . _ + - (empty = $nameDefault): ';
+          'and . _ + - @ : (empty = $nameDefault): ';
       continue;
     }
     return name;

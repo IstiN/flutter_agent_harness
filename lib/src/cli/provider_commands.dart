@@ -1815,7 +1815,7 @@ extension on AgentCli {
     if (!isUsableCustomProviderName(name)) {
       io.writeln(
         '"$name" is not a usable provider name — use letters, digits, '
-        'and . _ + -',
+        'and . _ + - @ :',
       );
       return _askConnectProviderName(
         fallback,
