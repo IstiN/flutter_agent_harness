@@ -667,4 +667,89 @@ void main() {
       );
     });
   });
+
+  group('splitEnvArgs (issue #563)', () {
+    test('splits NAME=value assignments from operands', () {
+      final r = splitEnvArgs(['A=1', 'B=x=y', '/bin/ls']);
+      expect(r.assignments, {'A': '1', 'B': 'x=y'});
+      expect(r.remaining, ['/bin/ls']);
+    });
+
+    test('flags and leading-= never count as assignments', () {
+      final r = splitEnvArgs(['-i', '=v', 'A=1']);
+      expect(r.assignments, {'A': '1'});
+      expect(r.remaining, ['-i', '=v']);
+    });
+
+    test('empty argv splits to empty', () {
+      final r = splitEnvArgs([]);
+      expect(r.assignments, isEmpty);
+      expect(r.remaining, isEmpty);
+    });
+  });
+
+  group('applyExportArgs (issue #563)', () {
+    test('assigns and reassigns NAME=value', () {
+      final env = <String, String>{};
+      applyExportArgs(env, ['A=1']);
+      applyExportArgs(env, ['A=2']);
+      expect(env, {'A': '2'});
+    });
+
+    test('a bare name exports empty without clobbering', () {
+      final env = <String, String>{'A': '1'};
+      applyExportArgs(env, ['A', 'B']);
+      expect(env, {'A': '1', 'B': ''});
+    });
+  });
+
+  group('formatExportListings (issue #563)', () {
+    test('renders sorted declare -x lines, newline-terminated', () {
+      expect(
+        formatExportListings({'B': '2', 'A': '1'}),
+        'declare -x A="1"\ndeclare -x B="2"\n',
+      );
+    });
+
+    test('empty env renders nothing', () {
+      expect(formatExportListings({}), '');
+    });
+  });
+
+  group('idOutput (issue #563)', () {
+    test('bare id prints the full identity', () {
+      expect(idOutput([]), 'uid=0(Fa) gid=0(Fa) groups=0(Fa)\n');
+    });
+
+    test('-u and -g print the numeric id', () {
+      expect(idOutput(['-u']), '0\n');
+      expect(idOutput(['-g']), '0\n');
+    });
+
+    test('-n names the field', () {
+      expect(idOutput(['-u', '-n']), 'Fa\n');
+      expect(idOutput(['-g', '-n']), 'Fa\n');
+    });
+  });
+
+  group('nonFlagArgs (issue #563)', () {
+    test('drops flags, keeps operand order', () {
+      expect(nonFlagArgs(['-x', 'a', 'b']), ['a', 'b']);
+      expect(nonFlagArgs([]), isEmpty);
+    });
+  });
+
+  group('sandboxRelativePath (issue #563)', () {
+    test('relates a sandbox path to a start directory', () {
+      expect(sandboxRelativePath('/work/a.txt', '/work'), 'a.txt');
+      expect(sandboxRelativePath('/a/b/c', '/a'), 'b/c');
+      expect(sandboxRelativePath('/a/b', '/x'), '../a/b');
+    });
+
+    test('root operands stay root-shaped', () {
+      expect(sandboxRelativePath('/', '/'), '.');
+      // p.relative(x, from: '/') is host-cwd rooted — only the root-to-root
+      // identity is sandbox-shaped.
+    });
+  });
 }
