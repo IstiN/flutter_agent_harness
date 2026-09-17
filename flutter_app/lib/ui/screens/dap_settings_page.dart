@@ -333,32 +333,48 @@ class _DapHubPageState extends State<DapHubPage> {
 
   @override
   Widget build(BuildContext context) {
-    final snapshot = _snapshot;
     final selected = _selected;
-    final detailTitle = selected == null
-        ? context.l10n.settingsDapHubTitle
-        : (selected.name.isEmpty ? selected.url : selected.name);
     return Scaffold(
       appBar: faAppBar(
-        title: Text(detailTitle),
-        leading: selected == null
-            ? null
-            : IconButton(
-                icon: const Icon(Icons.arrow_back),
-                onPressed: () => setState(() => _selected = null),
-              ),
+        title: Text(_hubTitle(context, selected)),
+        leading: _hubLeading(context, selected),
       ),
-      body: snapshot == null
-          ? _error != null
-                ? _messageBody(context, _error!)
-                : const Center(child: CircularProgressIndicator())
-          : snapshot.supported
-          ? selected == null
-                ? _listBody(context, snapshot)
-                : _detailBody(context, snapshot, selected)
-          : _unsupportedBody(context),
+      body: _hubBody(context, _snapshot, selected),
     );
   }
+
+  /// The bar title: the hub title on the list, the connection name (or
+  /// its URL when unnamed) on a detail.
+  String _hubTitle(BuildContext context, DapSavedConnection? selected) =>
+      selected == null
+      ? context.l10n.settingsDapHubTitle
+      : (selected.name.isEmpty ? selected.url : selected.name);
+
+  /// The back affordance, only when a detail is open.
+  Widget? _hubLeading(BuildContext context, DapSavedConnection? selected) =>
+      selected == null
+      ? null
+      : IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => setState(() => _selected = null),
+        );
+
+  /// The body state machine: loading/error → unsupported note → the list
+  /// or the selected detail.
+  Widget _hubBody(
+    BuildContext context,
+    DapHubSnapshot? snapshot,
+    DapSavedConnection? selected,
+  ) {
+    if (snapshot == null) return _loadingOrError(context);
+    if (!snapshot.supported) return _unsupportedBody(context);
+    if (selected == null) return _listBody(context, snapshot);
+    return _detailBody(context, snapshot, selected);
+  }
+
+  Widget _loadingOrError(BuildContext context) => _error != null
+      ? _messageBody(context, _error!)
+      : const Center(child: CircularProgressIndicator());
 
   /// The connections list: the active connection first (always present —
   /// synthesized from the snapshot when never bookmarked), then the
