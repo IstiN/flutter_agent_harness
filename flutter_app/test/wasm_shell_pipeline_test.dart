@@ -99,20 +99,20 @@ void main() {
   });
 
   WasiSandboxShell shell() => WasiSandboxShell(
-        coreutils: _SlotModule(rec),
-        rg: _SlotModule(rec),
-        find: _SlotModule(rec),
-        sed: _SlotModule(rec),
-        awk: _SlotModule(rec),
-        tar: _SlotModule(rec),
-        gzip: _SlotModule(rec),
-        zip: _SlotModule(rec),
-        python: _SlotModule(rec),
-        qjs: _SlotModule(rec),
-        sqlite3: _SlotModule(rec),
-        lua: _SlotModule(rec),
-        sandboxHostPath: sandbox.path,
-      );
+    coreutils: _SlotModule(rec),
+    rg: _SlotModule(rec),
+    find: _SlotModule(rec),
+    sed: _SlotModule(rec),
+    awk: _SlotModule(rec),
+    tar: _SlotModule(rec),
+    gzip: _SlotModule(rec),
+    zip: _SlotModule(rec),
+    python: _SlotModule(rec),
+    qjs: _SlotModule(rec),
+    sqlite3: _SlotModule(rec),
+    lua: _SlotModule(rec),
+    sandboxHostPath: sandbox.path,
+  );
 
   group('expr evaluator (Dart builtin path)', () {
     Future<ShellExecResult> run(String script) async {
@@ -203,15 +203,16 @@ void main() {
       final s = shell();
       await s.exec('expr 6 * 7 > out.txt');
       await s.exec('expr 1 + 1 >> out.txt');
-      expect(io.File('${sandbox.path}/out.txt').readAsStringSync(),
-          '42\n2\n');
+      expect(io.File('${sandbox.path}/out.txt').readAsStringSync(), '42\n2\n');
     });
 
     test('stderr redirect captures builtin errors', () async {
       final r = await shell().exec('expr 1 / 0 2> err.txt');
       expect(r.valueOrNull!.exitCode, 2);
-      expect(io.File('${sandbox.path}/err.txt').readAsStringSync(),
-          'expr: division by zero\n');
+      expect(
+        io.File('${sandbox.path}/err.txt').readAsStringSync(),
+        'expr: division by zero\n',
+      );
     });
   });
 
@@ -245,8 +246,7 @@ void main() {
       expect(rec.configs.single.args, ['sed', 's/a/b/', '/work/doc.txt']);
     });
 
-    test('flag values are never rewritten even when the file exists',
-        () async {
+    test('flag values are never rewritten even when the file exists', () async {
       io.Directory('${sandbox.path}/work').createSync();
       io.File('${sandbox.path}/work/2').writeAsStringSync('');
       io.File('${sandbox.path}/work/f.log').writeAsStringSync('');
@@ -259,8 +259,9 @@ void main() {
       io.Directory('${sandbox.path}/work').createSync();
       io.File('${sandbox.path}/work/script.py').writeAsStringSync('');
       rec.next = _ScriptedInstance();
-      await shell()
-          .exec("cd /work && python3 -c 'print(1)' script.py nope.txt");
+      await shell().exec(
+        "cd /work && python3 -c 'print(1)' script.py nope.txt",
+      );
       expect(rec.configs.single.args, [
         'python',
         '-c',
@@ -280,12 +281,13 @@ void main() {
     test('non-python stages get no PYTHONPATH', () async {
       rec.next = _ScriptedInstance();
       await shell().exec('cat notes.txt');
-      expect(rec.configs.single.env.map((e) => e.name),
-          isNot(contains('PYTHONPATH')));
+      expect(
+        rec.configs.single.env.map((e) => e.name),
+        isNot(contains('PYTHONPATH')),
+      );
     });
 
-    test('stdout/stderr chunks reach callbacks and the accumulator',
-        () async {
+    test('stdout/stderr chunks reach callbacks and the accumulator', () async {
       final seen = <String>[];
       final instance = _ScriptedInstance();
       rec.next = instance;

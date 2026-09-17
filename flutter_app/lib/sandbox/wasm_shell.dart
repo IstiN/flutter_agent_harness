@@ -544,8 +544,9 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         return Err(outcome.errorOrNull!);
       }
       final pipeFile = outcome.valueOrNull;
-      previousOutputFile =
-          pipeFile == null ? null : '/${pipeFile.path.split('/').last}';
+      previousOutputFile = pipeFile == null
+          ? null
+          : '/${pipeFile.path.split('/').last}';
     }
 
     await _cleanup(tempFiles);
@@ -588,10 +589,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     final redirects = collectStageRedirects(expandedStage.redirects);
     // Resolve input source for this stage.
     final input = redirects.stdinFile != null
-        ? _resolveSandboxPath(
-            redirects.stdinFile!,
-            options?.cwd ?? _currentDir,
-          )
+        ? _resolveSandboxPath(redirects.stdinFile!, options?.cwd ?? _currentDir)
         : inputSource;
 
     final result = await _runCommand(
@@ -1109,7 +1107,8 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   /// `fa_http` control lines are stripped from the captured stdout and the
   /// requests are served against the real network by [FaHttpBridge].
   FaHttpBridge? _stageBridge(WasmModule module, bool captureStdout) {
-    final enabled = module == python &&
+    final enabled =
+        module == python &&
         captureStdout &&
         (sandboxHostPath?.isNotEmpty ?? false);
     return enabled
@@ -1125,16 +1124,13 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     bool captureStdout,
   ) {
     return captureStdout
-        ? instance.stdout.listen(
-            (chunk) {
-              debugPrint('[wasm_shell] stdout chunk: ${chunk.length} bytes');
-              final clean = bridge?.filter(chunk) ?? chunk;
-              if (clean.isNotEmpty) {
-                io.collect(io.stdoutBuffer, Uint8List.fromList(clean), onStdout);
-              }
-            },
-            onDone: () => debugPrint('[wasm_shell] stdout done'),
-          )
+        ? instance.stdout.listen((chunk) {
+            debugPrint('[wasm_shell] stdout chunk: ${chunk.length} bytes');
+            final clean = bridge?.filter(chunk) ?? chunk;
+            if (clean.isNotEmpty) {
+              io.collect(io.stdoutBuffer, Uint8List.fromList(clean), onStdout);
+            }
+          }, onDone: () => debugPrint('[wasm_shell] stdout done'))
         : null;
   }
 
@@ -1145,20 +1141,16 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     bool captureStderr,
   ) {
     return captureStderr
-        ? instance.stderr.listen(
-            (chunk) {
-              debugPrint('[wasm_shell] stderr chunk: ${chunk.length} bytes');
-              io.collect(io.stderrBuffer, chunk, onStderr);
-            },
-            onDone: () => debugPrint('[wasm_shell] stderr done'),
-          )
+        ? instance.stderr.listen((chunk) {
+            debugPrint('[wasm_shell] stderr chunk: ${chunk.length} bytes');
+            io.collect(io.stderrBuffer, chunk, onStderr);
+          }, onDone: () => debugPrint('[wasm_shell] stderr done'))
         : null;
   }
 
   /// Races the WASI start against the timeout, then cancels the stdio
   /// subscriptions, disposes the instance and flushes the bridge tail.
-  Future<({Object? runError, bool timedOut, Duration timeout})>
-      _runWasiStart(
+  Future<({Object? runError, bool timedOut, Duration timeout})> _runWasiStart(
     WasmInstance instance,
     _StageIo io,
     FaHttpBridge? bridge, {

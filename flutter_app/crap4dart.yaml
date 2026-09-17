@@ -41,8 +41,14 @@ exclude:
 crap:
   enabled: true
   # Current max CRAP score in flutter_app/lib under the flutter lcov
-  # pipeline (issue #485 descent #9 of the #433 ladder). Only down.
-  threshold: 380.0
+  # pipeline. Descent #10 (issue #558): the wasm_shell pipeline-engine
+  # cluster went down (_runStage 380→4, _runPipeline 210→4, _evalExpr
+  # 182→3, _rewriteRelativeArgs 110→2, _maybeRewritePath 72→3, all 100%
+  # covered by test/wasm_shell_pipeline_test.dart); the threshold follows
+  # the measured new worst: 380.0 → 272.0 (`WasiSandboxShell._xargsBuiltin`,
+  # CC 16 at 0% cov — the wasm_shell builtins cluster, the next lane's
+  # ladder card). Only down.
+  threshold: 272.0
 
 coverage:
   # The CI app-crap-gate job merges the two flutter-tests shard reports
