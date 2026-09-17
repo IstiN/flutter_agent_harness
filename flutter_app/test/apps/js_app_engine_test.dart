@@ -118,9 +118,23 @@ final class _FakeCalendarApi implements CalendarApi {
   }
 }
 
+/// The stock address-book entry the contacts bridge tests resolve ids
+/// against (the `fa.contacts` suite expects this exact phone number).
+const _annaContact = (
+  id: 'c-anna',
+  name: 'Anna Ivanova',
+  phones: ['+1 555 0100'],
+  emails: ['anna@example.com'],
+);
+
 /// Fake [ContactApi] for the `fa.contacts` bridge tests — the host-side
 /// tests never touch the real method channel.
 final class _FakeContactApi implements ContactApi {
+  _FakeContactApi({this.book = const [_annaContact]});
+
+  /// The address book `searchContacts` lists (issue #565: configurable so
+  /// the direct `contactsPhone` tests can cover the phone-less branch).
+  final List<Contact> book;
   final created = <({String name, List<String>? phones})>[];
   final deletedIds = <String>[];
   final openedUrls = <String>[];
@@ -136,14 +150,7 @@ final class _FakeContactApi implements ContactApi {
     required String query,
     int limit = 200,
     int offset = 0,
-  }) async => [
-    (
-      id: 'c-anna',
-      name: 'Anna Ivanova',
-      phones: const ['+1 555 0100'],
-      emails: const ['anna@example.com'],
-    ),
-  ];
+  }) async => book;
 
   @override
   Future<String> createContact({
@@ -2214,6 +2221,139 @@ void main() {
       expect(read(''), isNull);
       expect(read(null), isNull);
       expect(read(['  ', '']), isNull);
+    });
+  });
+
+  group('host-side bridge helpers (no live engine, issue #565)', () {
+    Matcher stateError(String fragment) => isA<StateError>().having(
+      (error) => error.message,
+      'message',
+      contains(fragment),
+    );
+
+    test('parseFaEnvelope reads the jsr.fa exec envelope', () {
+      final envelope = JsAppEngine.parseFaEnvelope(
+        '{"fa":"llm.chat","args":{"messages":[]}}',
+      );
+      expect(envelope, isNotNull);
+      expect(envelope!.fa, 'llm.chat');
+      expect(envelope.args, {'messages': const <Object?>[]});
+    });
+
+    test('parseFaEnvelope defaults args to empty and passes commands '
+        'through', () {
+      expect(JsAppEngine.parseFaEnvelope('{"fa":"emit"}')!.args, isEmpty);
+      expect(JsAppEngine.parseFaEnvelope('ls -la'), isNull);
+      expect(JsAppEngine.parseFaEnvelope('{not json'), isNull);
+      expect(JsAppEngine.parseFaEnvelope('{"fa":42}'), isNull);
+      expect(JsAppEngine.parseFaEnvelope('{"args":{}}'), isNull);
+    });
+
+    test('contactsPhone prefers the explicit phone argument', () async {
+      final phone = await JsAppEngine.contactsPhone(_FakeContactApi(), {
+        'phone': ' +1 555 0100 ',
+      });
+      expect(phone, '+1 555 0100');
+    });
+
+    test('contactsPhone resolves the id to the first contact number', () async {
+      final phone = await JsAppEngine.contactsPhone(_FakeContactApi(), {
+        'id': 'c-anna',
+      });
+      expect(phone, '+1 555 0100');
+    });
+
+    test('contactsPhone rejects missing args, unknown and phone-less '
+        'contacts', () async {
+      Future<String> read(Map<String, Object?> args) =>
+          JsAppEngine.contactsPhone(_FakeContactApi(), args);
+      Future<String> phoneless() => JsAppEngine.contactsPhone(
+        _FakeContactApi(
+          book: [(id: 'c-mute', name: 'Mute', phones: [], emails: [])],
+        ),
+        {'id': 'c-mute'},
+      );
+
+      await expectLater(
+        read(const {}),
+        throwsA(stateError('phone (or id) is required')),
+      );
+      await expectLater(
+        read({'id': 'c-nope'}),
+        throwsA(stateError('no contact with id "c-nope"')),
+      );
+      await expectLater(
+        phoneless(),
+        throwsA(stateError('this contact has no phone number')),
+      );
+    });
+
+    test('keysRequestArgs validates the name and defaults the reason', () {
+      final defaulted = JsAppEngine.keysRequestArgs({
+        'name': ' API_KEY ',
+      }, appName: 'Demo');
+      expect(defaulted.name, 'API_KEY');
+      expect(defaulted.reason, 'The app "Demo" asks for the API_KEY key.');
+
+      final custom = JsAppEngine.keysRequestArgs({
+        'name': 'K',
+        'reason': '  for CI  ',
+      }, appName: 'Demo');
+      expect(custom.reason, 'for CI');
+
+      expect(
+        () => JsAppEngine.keysRequestArgs({'reason': 'x'}, appName: 'Demo'),
+        throwsA(stateError('name is required')),
+      );
+    });
+
+    test('calendarUpdateSlot reads the slot keys or returns null', () {
+      expect(JsAppEngine.calendarUpdateSlot(const {}), isNull);
+      expect(JsAppEngine.calendarUpdateSlot({'date': '2026-07-25'}), isNull);
+      expect(JsAppEngine.calendarUpdateSlot({'title': 'x'}), isNull);
+
+      final slot = JsAppEngine.calendarUpdateSlot({
+        'date': '2026-07-25',
+        'startHour': 9,
+        'endHour': 10,
+      });
+      expect(slot!.start, DateTime(2026, 7, 25, 9));
+      expect(slot.end, DateTime(2026, 7, 25, 10));
+      expect(slot.allDay, isFalse);
+
+      final allDay = JsAppEngine.calendarUpdateSlot({
+        'date': '2026-07-25',
+        'allDay': true,
+      });
+      expect(allDay!.allDay, isTrue);
+      expect(allDay.start, DateTime(2026, 7, 25));
+      expect(allDay.end, DateTime(2026, 7, 26));
+    });
+
+    test('mediaReadVideoPath trims and requires a non-empty path', () {
+      expect(
+        JsAppEngine.mediaReadVideoPath({'path': ' vid/a.mp4 '}),
+        'vid/a.mp4',
+      );
+      for (final args in const <Map<String, Object?>>[
+        {},
+        {'path': '   '},
+      ]) {
+        expect(
+          () => JsAppEngine.mediaReadVideoPath(args),
+          throwsA(stateError('path is required')),
+        );
+      }
+    });
+
+    test('emitPayload copies maps and coerces everything else to empty', () {
+      final source = {'a': 1};
+      final payload = JsAppEngine.emitPayload(source);
+      expect(payload, {'a': 1});
+      expect(payload, isNot(same(source)));
+      expect(JsAppEngine.emitPayload('text'), isEmpty);
+      expect(JsAppEngine.emitPayload(null), isEmpty);
+      expect(JsAppEngine.emitPayload(['list']), isEmpty);
     });
   });
 }
