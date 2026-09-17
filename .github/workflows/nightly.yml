@@ -54,6 +54,14 @@ jobs:
       - name: Example app pub get (for repo-wide analyze)
         run: cd flutter_app && flutter pub get
 
+      # The repo-wide `dart analyze` also walks office_addin/dart; without
+      # its package config the analyzer cannot resolve
+      # `package:fa_office_agent/...` imports (nightly full-quality was red
+      # on email_quarantine_test.dart since the add-in landed). ci.yml's
+      # analyze job already does this — nightly must match.
+      - name: Office add-in pub get (for repo-wide analyze)
+        run: dart pub get --directory=office_addin/dart
+
       # .env is gitignored but declared as a Flutter asset (flutter_dotenv);
       # without it the analyzer fails with asset_does_not_exist (a fresh
       # clone hits the same warning locally).
@@ -163,7 +171,13 @@ jobs:
         with:
           channel: stable
           cache: true
-      - run: touch [REDACTED:Credential File]
+      # cli-visual runs `flutter test` inside flutter_app — the asset is
+      # declared in flutter_app/pubspec.yaml, so the placeholder must land
+      # at flutter_app/.env, not the repo root. (This line previously
+      # carried a corrupted literal redaction marker as the path: the
+      # touch created junk files and the asset bundle failed with
+      # "No file or variants found for asset: .env".)
+      - run: touch flutter_app/.env
       - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
       - run: cd flutter_app && flutter pub get
       - name: flutter test test/cli_visual --tags integration

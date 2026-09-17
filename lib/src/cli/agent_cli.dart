@@ -181,6 +181,10 @@ import 'paste_image.dart';
 // a stub that always reports unavailable.
 import 'clipboard_reader_stub.dart'
     if (dart.library.io) 'clipboard_reader.dart';
+// Job-registry process probes are VM-only (`ps` via dart:io); web builds
+// get a stub that always reports "no process table".
+import '../env/process_probe_stub.dart'
+    if (dart.library.io) '../env/process_probe_io.dart';
 
 import 'fa_tui_stub.dart' if (dart.library.io) 'fa_tui.dart';
 import 'prompt_templates.dart';
@@ -1053,6 +1057,10 @@ class AgentCli {
   /// per-turn collapse, records for reload. Replaced wholesale on session
   /// resume by rehydration.
   ShellJobBoard _jobBoard = ShellJobBoard();
+
+  /// The registry-persist serialization tail (issue #539) — see
+  /// `_persistJobBoard` in the hub driver extension.
+  Future<void> _persistChain = Future.value();
   final DateTime _hubMainStartedAt = DateTime.now();
   String? _hubTranscriptId;
   Timer? _hubFollowTimer;

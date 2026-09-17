@@ -290,11 +290,15 @@ class LocalHub {
   List<String> get agentIds => _registry.keys.toList();
 
   /// Resolves when the hub has seen [n] signature-verified hellos.
-  Future<void> waitForHellos(int n) async {
+  /// [timeout] bounds the wait — the default 5s suits unit tests; PTY
+  /// integration tests on loaded runners pass 30s (the CLI's dial
+  /// rides a cold `dart` VM behind a TUI boot).
+  Future<void> waitForHellos(
+    int n, {
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
     if (_hellosSeen >= n) return;
-    await hellos
-        .firstWhere((_) => _hellosSeen >= n)
-        .timeout(const Duration(seconds: 5));
+    await hellos.firstWhere((_) => _hellosSeen >= n).timeout(timeout);
   }
 
   Future<void> _serve() async {

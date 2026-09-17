@@ -3734,24 +3734,16 @@
 
 - fix(514): wedged run reads stalled everywhere - one classifier, banner with actions, /restart (#526)
 
-## Unreleased
+## 0.1.402
 
-## Unreleased
+- fix(539): stacked job boards never shift or lie - frozen frames, serialized persists, restart-lost REG (#540)
+- fix(506): boot-banner >_Fa mark - composed two-role label asserted and gallery regenerated (#528)
+- fix(510): one cursor rule — DECTCEM via View.cursor, phantom escapes out of picker frame content (#534)
 
-## Unreleased
+## 0.1.403
 
-## Unreleased
-
-## Unreleased
-
-## Unreleased
-
-## Unreleased
-
-## Unreleased
-
-## Unreleased
-
-## Unreleased
+- fix(544): boot pipeline created the platform env before binding + wasm runtime — TestFlight build 160 white screen (#545)
+- fix(541): structured-compaction judge SPOF - deterministic fallback + bounded judge input (#543)
+- fix(538): integration suite rot — TUI boot-output race, stale expectations, workflow redaction rot (#542)
 
 ## Unreleased

@@ -345,47 +345,50 @@ void main() {
   });
 
   group('AC4 — upgrade migration (UT-migration, issue #287)', () {
-    test('config without a compaction section → structured; nothing mutated', () {
-      final dir = Directory.systemTemp.createTempSync('fa_comp287_');
-      try {
-        final userConfig = File('${dir.path}/.fah/config.yaml')
-          ..createSync(recursive: true)
-          ..writeAsStringSync(
-            '# my config\nprovider: openai\nmodel: gpt-x\n',
+    test(
+      'config without a compaction section → structured; nothing mutated',
+      () {
+        final dir = Directory.systemTemp.createTempSync('fa_comp287_');
+        try {
+          final userConfig = File('${dir.path}/.fah/config.yaml')
+            ..createSync(recursive: true)
+            ..writeAsStringSync(
+              '# my config\nprovider: openai\nmodel: gpt-x\n',
+            );
+          final projectConfig = File('${dir.path}/proj/.fah/config.yaml')
+            ..createSync(recursive: true)
+            ..writeAsStringSync('tools:\n  shell: false\n');
+          final before = userConfig.readAsStringSync();
+          final projectBefore = projectConfig.readAsStringSync();
+
+          // No compaction section anywhere → the structured default wins.
+          expect(loadProjectCompactionEngine('${dir.path}/proj'), isNull);
+          expect(loadCliConfig(dir.path).compactionEngine, isNull);
+          expect(
+            resolveCompactionEngine(
+              project: loadProjectCompactionEngine('${dir.path}/proj'),
+              global: loadCliConfig(dir.path).compactionEngine,
+            ),
+            CompactionEngine.structured,
+            reason: 'users without a compaction section get 2.0 on upgrade',
           );
-        final projectConfig = File('${dir.path}/proj/.fah/config.yaml')
-          ..createSync(recursive: true)
-          ..writeAsStringSync('tools:\n  shell: false\n');
-        final before = userConfig.readAsStringSync();
-        final projectBefore = projectConfig.readAsStringSync();
 
-        // No compaction section anywhere → the structured default wins.
-        expect(loadProjectCompactionEngine('${dir.path}/proj'), isNull);
-        expect(loadCliConfig(dir.path).compactionEngine, isNull);
-        expect(
-          resolveCompactionEngine(
-            project: loadProjectCompactionEngine('${dir.path}/proj'),
-            global: loadCliConfig(dir.path).compactionEngine,
-          ),
-          CompactionEngine.structured,
-          reason: 'users without a compaction section get 2.0 on upgrade',
-        );
-
-        // Reading never mutates either file (fixture-asserted).
-        expect(userConfig.readAsStringSync(), before);
-        expect(projectConfig.readAsStringSync(), projectBefore);
-      } finally {
-        dir.deleteSync(recursive: true);
-      }
-    });
+          // Reading never mutates either file (fixture-asserted).
+          expect(userConfig.readAsStringSync(), before);
+          expect(projectConfig.readAsStringSync(), projectBefore);
+        } finally {
+          dir.deleteSync(recursive: true);
+        }
+      },
+    );
 
     test('explicit classic keeps classic — the choice is never rewritten', () {
       final dir = Directory.systemTemp.createTempSync('fa_comp287b_');
       try {
         Directory('${dir.path}/.fah').createSync(recursive: true);
-        File('${dir.path}/.fah/config.yaml').writeAsStringSync(
-          'compaction:\n  engine: classic\n',
-        );
+        File(
+          '${dir.path}/.fah/config.yaml',
+        ).writeAsStringSync('compaction:\n  engine: classic\n');
         final global = loadCliConfig(dir.path).compactionEngine;
         expect(global, CompactionEngine.classic);
         expect(
@@ -951,7 +954,7 @@ void main() {
           state: state,
           window: 8000,
           settings: _settings,
-          judge: (ledgerText) async => null, // nothing hideable to pick
+          judge: (ledgerText) async => '[]', // declines: nothing to pick
           summarize: (r) async {
             summarizeCalls++;
             return SummarizationResult.success('checkpoint text');

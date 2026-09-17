@@ -60,6 +60,26 @@ enum CompactionEngine {
   }
 }
 
+/// Parses `compaction.judgeBudgetSeconds` (issue #541): the per-call
+/// judge budget knob. `null` when absent; anything else non-numeric or
+/// non-positive is a strict [ConfigException] — a typo must surface at
+/// boot, not silently restore the 90s default.
+int? parseJudgeBudgetSeconds(Object? value, {required String label}) {
+  if (value == null) return null;
+  if (value is! int) {
+    throw ConfigException(
+      '$label: compaction.judgeBudgetSeconds must be a positive int, '
+      "got: $value",
+    );
+  }
+  if (value <= 0) {
+    throw ConfigException(
+      '$label: compaction.judgeBudgetSeconds must be positive, got: $value',
+    );
+  }
+  return value;
+}
+
 /// Resolves the effective engine: global < project < session, deepest
 /// non-null wins, default [CompactionEngine.structured] (issue #287 —
 /// classic stays selectable as the supported rollback).

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/cli/waiting_heartbeat.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:test/test.dart';
 import 'package:yaml/yaml.dart';
@@ -617,6 +618,18 @@ prompts:
         expect(yaml, contains('disableShellExecution: true'));
       });
 
+      test('omits jobs section with default settings', () {
+        expect(CliConfig().toYaml(), isNot(contains('jobs:')));
+      });
+
+      test('emits jobs section only when knobs deviate', () {
+        final yaml = CliConfig(
+          jobs: const JobsConfig(staleHours: 48, logRetentionDays: 7),
+        ).toYaml();
+        expect(yaml, contains('jobs:\n  staleHours: 48'));
+        expect(yaml, contains('logRetentionDays: 7'));
+      });
+
       group('cube section', () {
         test('absent section parses as null', () {
           expect(loadCliConfig(tmp.path).cube, isNull);
@@ -903,6 +916,42 @@ compaction:
         loadCliConfig(tmp.path).compactionEngine,
         CompactionEngine.structured,
       );
+    });
+
+    test('compaction.judgeBudgetSeconds round-trips (issue #541)', () async {
+      final original = CliConfig(compactionJudgeBudgetSeconds: 300);
+      await saveCliConfig(tmp.path, original);
+      expect(loadCliConfig(tmp.path).compactionJudgeBudgetSeconds, 300);
+    });
+
+    test('compaction.judgeBudgetSeconds defaults to null when absent '
+        '(issue #541)', () {
+      expect(loadCliConfig(tmp.path).compactionJudgeBudgetSeconds, isNull);
+    });
+
+    test('a junk compaction.judgeBudgetSeconds is a strict config error '
+        '(issue #541)', () async {
+      File('${tmp.path}/.fah/config.yaml')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('compaction:\n  judgeBudgetSeconds: soon\n');
+      expect(
+        () => loadCliConfig(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('judgeBudgetSeconds'),
+          ),
+        ),
+      );
+    });
+
+    test('a non-positive compaction.judgeBudgetSeconds is a strict config '
+        'error (issue #541)', () async {
+      File('${tmp.path}/.fah/config.yaml')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('compaction:\n  judgeBudgetSeconds: 0\n');
+      expect(() => loadCliConfig(tmp.path), throwsA(isA<ConfigException>()));
     });
 
     test('the disk a2a block survives verbatim (byte-for-byte)', () async {

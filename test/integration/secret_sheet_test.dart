@@ -54,8 +54,11 @@ void main() {
       'IT-focus: opens on the value field; the name is a placeholder',
       () async {
         await openSheet();
-        final nameLine = harness.screenLines.singleWhere(
-          (l) => l.contains('MY_SERVICE_TOKEN'),
+        // The session history also renders a tool row (`• request_secret
+        // · MY_SERVICE_TOKEN`) above the sheet — the sheet's own name row
+        // is the frame-closed one.
+        final nameLine = harness.screenLines.firstWhere(
+          (l) => l.contains('MY_SERVICE_TOKEN') && l.trimRight().endsWith('│'),
         );
         expect(
           nameLine.contains('>'),

@@ -34,7 +34,7 @@ concurrency:
 #   test-core→ dart test sharded ×4 (file-level units), per-shard coverage
 #              + junit durations (core/shared)
 #   coverage-gate → merge shard coverage; PR: diff-coverage, main: full ratchet
-#   guards   → CRAP + jscpd                                   (core/shared)
+#   guards   → CRAP + jscpd + cross-module dupx              (core/shared/app)
 #   flutter-analyze → flutter_app analyze on ubuntu          (app/core/shared)
 #   flutter-tests → flutter_app tests sharded ×2 on ubuntu   (app/core/shared;
 #                   golden suite stays in build-macos.yml — goldens are
@@ -98,16 +98,16 @@ jobs:
             sed -n 's/^Fast gate scope: .*stages://p')
           echo "gate stages:[$stages]"
           # Empty output can only mean detection failure: full gate.
-          [ -z "$(echo $stages)" ] && stages="size analyze test-core coverage crap dup flutter"
+          [ -z "$(echo $stages)" ] && stages="size analyze test-core coverage crap dup dupx flutter"
           case " $stages " in *"flutter"*) echo "app=true" >> "$GITHUB_OUTPUT" ;; esac
           case " $stages " in *"test-core"*) echo "core=true" >> "$GITHUB_OUTPUT" ;; esac
           case " $stages " in *"analyze"*) echo "docs=true" >> "$GITHUB_OUTPUT" ;; esac
-          # All seven stages selected = a shared/unknown path changed:
+          # All eight stages selected = a shared/unknown path changed:
           if [ -z "$(echo $stages)" ]; then
             # Empty output can only mean detection failure: full gate.
-            stages="size analyze test-core coverage crap dup flutter"
+            stages="size analyze test-core coverage crap dup dupx flutter"
           fi
-          if [ "$(echo $stages | wc -w)" -eq 7 ]; then
+          if [ "$(echo $stages | wc -w)" -eq 8 ]; then
             echo "shared=true" >> "$GITHUB_OUTPUT"
           fi
           # Issue #303: the #262 DoD perf gate must red-block the MERGE for
@@ -170,7 +170,7 @@ jobs:
       - name: Example app setup (full analyze only)
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         run: |
-          printf 'OPENROUTER_API_KEY=\nMODEL_ID=\nBASE_URL=\nHUGGINGFACE_TOKEN=\n' > [REDACTED:Credential File]
+          printf 'OPENROUTER_API_KEY=\nMODEL_ID=\nBASE_URL=\nHUGGINGFACE_TOKEN=\n' > flutter_app/.env
           cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
           dart pub get --directory=office_addin/dart
           cd flutter_app && flutter pub get
@@ -351,11 +351,11 @@ jobs:
       contents: read
     steps:
       - name: Scope fastpass (out-of-scope → green in seconds)
-        if: needs.changes.outputs.core != 'true' && needs.changes.outputs.shared != 'true'
-        run: echo "no core/shared changes — CRAP/duplication green-skipped (required context reported)"
+        if: needs.changes.outputs.core != 'true' && needs.changes.outputs.shared != 'true' && needs.changes.outputs.app != 'true'
+        run: echo "no core/shared/app changes — guards green-skipped (required context reported)"
 
       - uses: actions/checkout@v4
-        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true' || needs.changes.outputs.app == 'true'
 
       - uses: dart-lang/setup-dart@v1
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
@@ -421,6 +421,15 @@ jobs:
           print(f'Duplication: {pct}% (threshold < 1.0%)')
           sys.exit(0 if float(pct) < 1.0 else 1)
           EOF
+
+      # Issue #487: cross-module duplication gate (issue body measured 20
+      # files shipped as app↔core/fa_ui/browser_ext clones). Runs the SAME
+      # stage the pre-commit hook runs — one marker, parity diffable. The
+      # app leg matters: most cross-module clones are born on the app side
+      # and the CRAP/dup steps above stay core/shared-scoped.
+      - name: Cross-module duplication ratchet (issue #487)
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true' || needs.changes.outputs.app == 'true'
+        run: scripts/ci_fast_gate.sh --stages dupx
 
       # Issue #135 AC1 evidence: a realistic ~300 MB / 100k-record
       # session (3 branches, image blocks, compaction checkpoints)

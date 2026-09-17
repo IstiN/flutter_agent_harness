@@ -83,9 +83,11 @@ final class AgentCliConfig {
     this.codeMieGuidedSetupFn,
     this.compactionSettings,
     this.compactionEngine,
+    this.compactionJudgeBudgetSeconds,
     this.contextWindowCap,
     this.subagents = const SubagentsConfig(),
     this.waiting = const WaitingConfig(),
+    this.jobs = const JobsConfig(),
     this.cubeSpec,
     this.cubeSource,
     this.cubeSettings,
@@ -146,6 +148,12 @@ final class AgentCliConfig {
   /// of the effective window (compaction thresholds, ctx meter/footer).
   /// `null` = uncapped.
   final int? contextWindowCap;
+
+  /// Per-call judge/summarizer budget seconds (`compaction.
+  /// judgeBudgetSeconds`, issue #541), resolved by the host from the
+  /// user config. `null` keeps the 90s default — the knob exists for
+  /// giant marathon sessions whose judge cannot answer within 90s.
+  final int? compactionJudgeBudgetSeconds;
 
   /// The `subagents:` section (issue #383): heartbeat cadence and stall
   /// threshold for background-subagent status digests.
@@ -648,6 +656,10 @@ final class AgentCliConfig {
   /// The `waiting:` section (issue #450): visible-waiting heartbeat
   /// cadence and the `--wait-for-jobs` ceiling.
   final WaitingConfig waiting;
+
+  /// The `jobs:` section (issue #478): boot-maintenance knobs for the
+  /// cross-run shell-job state (manifest age belt + log GC).
+  final JobsConfig jobs;
 
   /// This host's machine name for `name@machine` addressing (issue #27
   /// phase 2): a `@machine` suffix matching it is stripped before local

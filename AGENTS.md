@@ -1439,7 +1439,8 @@ set of thresholds; parity is checkable by diffing the hook's
 `GATE_STAGE <name> OK|SKIP` markers against the stages the CI changes job
 logs for the same diff. Path filters: docs/markdown/prompts-only →
 size+analyze; lib/bin/test/example/pubspec → +tests, coverage, CRAP,
-jscpd; flutter_app/packages → +flutter analyze+tests;
+jscpd + cross-module dupx; flutter_app/packages → +dupx, flutter
+analyze+tests;
 scripts/.github/crap4dart.yaml/unknown → everything (safe default, E2 —
 holds in CI too). Hook-only extras: dart format self-heal of staged files
 and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
@@ -1454,6 +1455,14 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
 - Line coverage of `lib/` ≥ 80% (full ratchet on main/nightly; PRs ratchet
   CHANGED lines via `scripts/diff_coverage.py`); jscpd duplication < 1%
   core `lib/`, < 3.7% `flutter_app/lib/` (ratchet — only tighten).
+- Cross-module duplication (issue #487): clones spanning module roots
+  (`lib`, `bin`, `flutter_app/lib`, `packages/*/lib`, `browser_ext/dart`)
+  via `scripts/check_dup_cross_module.sh` — stage `dupx`, ONE jscpd
+  invocation, marker-parity with the CI `guards` job (which also runs it
+  for app-only PRs — cross-module clones are usually born app-side).
+  Baseline 0.3013% of the combined ~283k lines, pinned 0.31 in
+  `ci_fast_gate.sh` (ratchet — only tighten; the per-package gates above
+  cannot see across module boundaries).
 - CRAP ratchet (`crap4dart analyze`, tool pinned as
   `dart pub global activate crap4dart 0.2.1`), one config per package,
   thresholds are the current per-package max — only down from here:
@@ -1534,7 +1543,11 @@ in `lib/src/parity/settings_registry.dart` with a comment explaining WHY.
   on wasm_run FFI exports (`xcrun dyld_info -exports` must list
   `_wire_compile_wasm` — Podfiles force-load + `-exported_symbol` +
   `STRIP_STYLE=non-global`, else white screen on TestFlight). Pods cached
-  keyed by `Podfile.lock`.
+  keyed by `Podfile.lock`. The gate proves FFI exports ONLY — a Dart boot
+  crash before the first frame white-screens TestFlight with a green gate
+  (issue #544: build 160, boot refactor created the platform env before
+  `WidgetsFlutterBinding.ensureInitialized`); boot stage order is pinned by
+  `flutter_app/test/boot/app_boot_test.dart`.
 - TestFlight external distribution (issue #239): the `submit_only` lanes
   (driven by build-mobile.yml / build-macos.yml) distribute every build
   straight to the EXTERNAL group — REQUIRED repo variables

@@ -805,6 +805,13 @@ class AutoCompactorFactory {
       checkpointPrompt: prompts.structuredCheckpoint,
       hooks: adapter ?? _StructuredHooksAdapter(hooks),
       budgetSource: budgetSource,
+      // #541: the knob actually bounds the judge — the factory's
+      // attemptBudget reaches the engine's per-call budget, and the
+      // named failure line carries the smol judge's identity.
+      attemptBudget: attemptBudget,
+      judgeTarget:
+          'role=smol, model=${smolModel.id} @ '
+          '${Uri.parse(smolModel.baseUrl).host}',
     );
     final running = compactor.run(force: force);
     try {
@@ -891,10 +898,14 @@ final class _StructuredHooksAdapter implements StructuredCompactorHooks {
         tokensBefore: pass.tokensBefore,
         tokensAfter: pass.tokensAfter,
         // Name the engine + pass kind: a host watching the report can
-        // tell a structured fold from a classic summary (issue #438).
-        fallback: pass.kind == 'checkpoint'
-            ? 'structured·ckpt'
-            : 'structured·hide',
+        // tell a structured fold from a classic summary (issue #438),
+        // and the deterministic judge-less hide from a judged one
+        // (issue #541).
+        fallback: switch (pass.kind) {
+          'checkpoint' => 'structured·ckpt',
+          'hide-fallback' => 'structured·hide-fallback',
+          _ => 'structured·hide',
+        },
         ok: pass.ok,
         error: pass.error,
         hiddenRecords: pass.hiddenCount,

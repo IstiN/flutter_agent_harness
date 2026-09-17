@@ -112,23 +112,48 @@ final class BootStores {
 /// The boot pipeline. `main()` constructs it with the app's routes stage
 /// and calls [run] — zero logic in `main()` itself.
 final class FaAppBoot {
-  const FaAppBoot({required this.routes});
+  const FaAppBoot({
+    required this.routes,
+    Future<ExecutionEnv> Function()? createEnv,
+  }) : createEnv = createEnv ?? createPlatformEnv;
 
   /// The routes stage: mounts the app UI (`runApp`) and attaches the
   /// boot-time OAuth listeners. Injected so this module stays UI-free.
   final Future<void> Function(BootStores stores, FirebaseAnalytics? analytics)
   routes;
 
+  /// Overridable for tests; production resolves the real platform env.
+  final Future<ExecutionEnv> Function() createEnv;
+
   /// Runs the boot stages in the historical `main()` order:
   /// window → services → storage → telemetry → routes.
-  Future<void> run() async => runWithEnv(await createPlatformEnv());
+  ///
+  /// Issue #544: the platform env is created AFTER the window+services
+  /// stages — `createPlatformEnv()` needs the binding (path_provider
+  /// channels) and the registered wasm_run runtime (`WasiSandboxShell.load`
+  /// compiles modules through the FFI bindings), both established by
+  /// `bootWindow`/`bootServices`. Creating the env first killed iOS and
+  /// Android release boots before the first frame (white screen —
+  /// TestFlight build 160); unit tests inject the env via [runWithEnv] and
+  /// never saw it.
+  Future<void> run() async {
+    bootWindow();
+    await bootServices();
+    return _runStages(await createEnv());
+  }
 
   /// The same pipeline over a caller-provided [ExecutionEnv] — the seam
   /// unit tests (and future integrations) use to boot without plugin
-  /// channels. Production [run] is this over the real platform env.
+  /// channels. Unlike [run] this entry runs the window+services stages
+  /// itself; production [run] has already run them and enters at
+  /// [_runStages], so no stage executes twice.
   Future<void> runWithEnv(ExecutionEnv env) async {
     bootWindow();
     await bootServices();
+    return _runStages(env);
+  }
+
+  Future<void> _runStages(ExecutionEnv env) async {
     debugPrint(
       '[fah] platform env created: ${env.runtimeType}, cwd=${env.cwd}',
     );

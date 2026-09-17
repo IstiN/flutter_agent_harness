@@ -186,8 +186,13 @@ void main() {
     // Bound the exit lifecycle (background timers keep the zone alive).
     await runB.timeout(const Duration(seconds: 5), onTimeout: () {});
 
-    // Session A's override file is keyed by ITS session id only.
-    final cwdDir = (await env.listDir('/sessions-a')).valueOrNull!.single.path;
+    // Session A's override file is keyed by ITS session id only. The root
+    // also carries root-level artifacts by design (the #524 soft-delete
+    // `.trash/` and `session_ops.journal`) — only session DIRECTORIES count.
+    final cwdDir = (await env.listDir('/sessions-a')).valueOrNull!
+        .where((e) => !e.name.startsWith('.') && !e.name.endsWith('.journal'))
+        .single
+        .path;
     final dotTools = (await env.listDir('$cwdDir/.tools')).valueOrNull!;
     expect(dotTools, hasLength(1), reason: 'one scope file: session A');
     expect(dotTools.single.name, endsWith('.yaml'));

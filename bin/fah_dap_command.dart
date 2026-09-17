@@ -227,9 +227,14 @@ class DapHubController {
     }
   }
 
-  /// Waits for `/healthz` on the local port (spawn settle), ≤8s.
+  /// Waits for `/healthz` on the local port (spawn settle), ≤30s. The
+  /// child hub is a fresh `dart` VM; on a loaded CI runner its cold JIT
+  /// boot alone can exceed 8s (nightly legs run the whole integration
+  /// suite concurrently), and a false "did not come up" fails every
+  /// `fa dap start` e2e — poll longer, the fast path still returns in
+  /// ~150ms.
   Future<bool> _waitUntilUp() async {
-    final deadline = DateTime.now().add(const Duration(seconds: 8));
+    final deadline = DateTime.now().add(const Duration(seconds: 30));
     while (DateTime.now().isBefore(deadline)) {
       await Future<void>.delayed(const Duration(milliseconds: 150));
       if (await healthzOk()) return true;
