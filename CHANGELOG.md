@@ -3730,6 +3730,10 @@
 - fix(519): TUI artifacts — paste-chip rows reserved in the input-zone math; fuzzy selected row keeps one base role (#532)
 - test(cli): deflake agent_hub_driver collapse-summary race (#533)
 
+## 0.1.401
+
+- fix(514): wedged run reads stalled everywhere - one classifier, banner with actions, /restart (#526)
+
 ## Unreleased
 
 ## Unreleased
