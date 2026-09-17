@@ -10,6 +10,7 @@
 library;
 
 import '../model_roles/provider_catalog.dart';
+import 'custom_providers.dart';
 import 'agent_cli.dart' show CliIO;
 
 /// One multiple-choice option: stable key + display label + dim description.
@@ -248,6 +249,15 @@ Future<String?> _askProviderName(
       question =
           '"$name" is a built-in provider name — pick another '
           '(empty = $nameDefault): ';
+      continue;
+    }
+    // Issue #555: junk names (`?`, spaces, yaml indicators) either break
+    // `/provider <name>` routing or corrupt the bare config.yaml scalar —
+    // retry instead of saving.
+    if (!isUsableCustomProviderName(name)) {
+      question =
+          '"$name" is not a usable provider name — use letters, digits, '
+          'and . _ + - (empty = $nameDefault): ';
       continue;
     }
     return name;

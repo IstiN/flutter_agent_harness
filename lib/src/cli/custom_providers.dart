@@ -150,6 +150,19 @@ final class CustomProviderEntry {
 bool isReservedCustomProviderName(String name) =>
     providerCatalog.containsKey(name.toLowerCase());
 
+/// The pattern a typed saved-provider name must match: starts with a
+/// letter or digit, then letters/digits/`. _ + -`. Anything else either
+/// breaks `/provider <name>` argument routing (spaces, slashes) or is a
+/// yaml indicator that corrupts the bare `name:` scalar in config.yaml
+/// (issue #555: a name of `?` made the next config load throw).
+final _usableProviderNamePattern = RegExp(r'^[A-Za-z0-9][A-Za-z0-9._+-]*$');
+
+/// Whether [name] is a usable saved-provider name; the name prompts
+/// re-prompt otherwise. Empty answers never reach this — they take the
+/// flow's default name.
+bool isUsableCustomProviderName(String name) =>
+    _usableProviderNamePattern.hasMatch(name);
+
 /// The merge-before-write union for the `customProviders:` section (issue
 /// #221): [caller] is the saving process's intended list, [onDisk] the
 /// freshly re-read list. Caller's entries win per name (case-insensitive)

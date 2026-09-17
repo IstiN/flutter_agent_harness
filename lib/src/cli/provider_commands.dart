@@ -1812,6 +1812,17 @@ extension on AgentCli {
         allowClash: allowClash,
       );
     }
+    if (!isUsableCustomProviderName(name)) {
+      io.writeln(
+        '"$name" is not a usable provider name — use letters, digits, '
+        'and . _ + -',
+      );
+      return _askConnectProviderName(
+        fallback,
+        sameBaseUrl: sameBaseUrl,
+        allowClash: allowClash,
+      );
+    }
     final clash = config.customProviders?.find(name);
     if (clash != null &&
         clash.baseUrl != sameBaseUrl &&
