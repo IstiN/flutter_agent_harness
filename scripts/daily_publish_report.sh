@@ -21,7 +21,7 @@ set -euo pipefail
 
 repo="${GITHUB_REPOSITORY}"
 daily_url="${GITHUB_SERVER_URL}/${repo}/actions/runs/${GITHUB_RUN_ID}"
-assignee="${DAILY_PUBLISH_ASSIGNEE:-vabhzw17eg2qu4m9-bit}"
+assignee="${DAILY_PUBLISH_ASSIGNEE:-ai-teammate}"
 next_tag="${NEXT_TAG:-}"
 failed_legs=""
 actions=""
