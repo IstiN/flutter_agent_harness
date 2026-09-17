@@ -10,6 +10,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/session_parse_factory.dart';
+import 'package:fa/services/session_listing.dart';
 import 'package:fa/services/sessions_root.dart';
 import 'package:fa/services/subagent_parent_resolver.dart';
 
@@ -222,43 +223,11 @@ final class FlutterSessionManager extends ChangeNotifier {
   /// (sessions_query) is the authority there.
   Future<List<SessionMetadata>> listPersistedSessions() async {
     final active = this.active?.service;
-    if (active != null && active.liveSessionId != null) {
-      try {
-        return await active.listSessions();
-      } on Object {
-        return const [];
-      }
+    if (_isHostedListing(active)) {
+      return _listViaHostService(active!);
     }
     try {
-      final roots = allSessionRoots(sessionsRoot);
-      final listed = <SessionMetadata>[];
-      if (roots.length <= 1) {
-        listed.addAll(await _repo.list());
-      } else {
-        final seen = <String>{};
-        for (final root in roots) {
-          try {
-            final repo = root == sessionsRoot
-                ? _repo
-                : JsonlSessionRepo(fs: env, sessionsRoot: root);
-            final list = await repo.list();
-            for (final item in list) {
-              if (seen.add(item.id)) {
-                listed.add(item);
-              }
-            }
-          } on Object {
-            // Secondary root list failure is non-fatal.
-          }
-        }
-        listed.sort((a, b) {
-          final aTime = a.lastUpdatedAt ?? a.createdAt;
-          final bTime = b.lastUpdatedAt ?? b.createdAt;
-          final result = bTime.compareTo(aTime);
-          if (result != 0) return result;
-          return b.createdAt.compareTo(a.createdAt);
-        });
-      }
+      final listed = await _listAcrossRoots();
       // Issue #426: legacy child files carry `parent: ""` (both hosts
       // pinned the subagent manager's parentSessionId before the session
       // id existed). Re-link them from the parent transcripts'
@@ -266,16 +235,44 @@ final class FlutterSessionManager extends ChangeNotifier {
       // nothing to resolve costs nothing.
       final relinked = await _parentResolver.resolve(listed);
       if (relinked.isEmpty) return listed;
-      return [
-        for (final metadata in listed)
-          relinked.containsKey(metadata.id)
-              ? _withParentLink(metadata, relinked[metadata.id]!)
-              : metadata,
-      ];
+      return relinkSubagentParents(listed, relinked);
     } on Object {
       return const [];
     }
   }
+
+  /// Hosted sessions (extension panel / app tab): the session files live
+  /// in the SERVICE WORKER's filesystem — the page-local repo sees an
+  /// empty tree and the sidebar collapses to a single row. The relay
+  /// service's [AgentService.listSessions] (sessions_query) is the
+  /// authority there.
+  Future<List<SessionMetadata>> _listViaHostService(
+    AgentService active,
+  ) async {
+    try {
+      return await active.listSessions();
+    } on Object {
+      return const [];
+    }
+  }
+
+  /// The local listing: the default repo, or a merge across every session
+  /// root (macOS App Group + fallback) when more than one exists.
+  Future<List<SessionMetadata>> _listAcrossRoots() {
+    final roots = allSessionRoots(sessionsRoot);
+    if (roots.length <= 1) return _repo.list();
+    return mergeSessionsAcrossRoots(
+      roots: roots,
+      listRoot: (root) async => root == sessionsRoot
+          ? _repo.list()
+          : JsonlSessionRepo(fs: env, sessionsRoot: root).list(),
+    );
+  }
+
+  /// Whether the ACTIVE service is a hosted relay whose listing replaces
+  /// the local repo's view.
+  bool _isHostedListing(AgentService? active) =>
+      active != null && active.liveSessionId != null;
 
   /// The active session, if any.
   FlutterManagedSession? get active =>
@@ -315,31 +312,41 @@ final class FlutterSessionManager extends ChangeNotifier {
     required AgentConfig config,
     required FutureOr<AgentService> Function() serviceFactory,
   }) async {
-    if (_sessions.containsKey(metadata.id)) return;
-    // Over-budget sessions never pre-cache: a speculative background open
-    // of a giant must not run (its windowed failure would degrade to the
-    // full-open fallback — the heap-storm path). They open on demand,
-    // windowed.
-    if (_tooLarge(metadata)) return;
-    if (!_preCaching.add(metadata.id)) return; // already in flight
+    if (!_preCacheAdmitted(metadata)) return;
     try {
       final service = await serviceFactory();
       await service.loadSession(metadata);
-      if (_sessions.containsKey(metadata.id)) return; // lost a race
-      _sessions[metadata.id] = FlutterManagedSession(
-        id: metadata.id,
-        service: service,
-        createdAt: metadata.createdAt,
-        lastUpdatedAt: metadata.lastUpdatedAt ?? metadata.createdAt,
-      );
-      // Do NOT set _activeId or _rememberActive — this is background work.
-      notifyListeners();
+      _installPreCached(metadata, service);
     } on Object {
       // Pre-cache failure is invisible to the user — they will see a
       // spinner when they actually swipe to this session, same as before.
     } finally {
       _preCaching.remove(metadata.id);
     }
+  }
+
+  /// The three early-exit guards: already managed, over the load budget
+  /// (a speculative background open of a giant must not run — its
+  /// windowed failure would degrade to the full-open fallback, the
+  /// heap-storm path), already in flight. Admitting claims the
+  /// in-flight slot.
+  bool _preCacheAdmitted(SessionMetadata metadata) {
+    if (_sessions.containsKey(metadata.id)) return false;
+    if (_tooLarge(metadata)) return false;
+    return _preCaching.add(metadata.id);
+  }
+
+  /// Installs a successfully pre-cached service as a managed session.
+  /// Does NOT set _activeId or _rememberActive — this is background work.
+  void _installPreCached(SessionMetadata metadata, AgentService service) {
+    if (_sessions.containsKey(metadata.id)) return; // lost a race
+    _sessions[metadata.id] = FlutterManagedSession(
+      id: metadata.id,
+      service: service,
+      createdAt: metadata.createdAt,
+      lastUpdatedAt: metadata.lastUpdatedAt ?? metadata.createdAt,
+    );
+    notifyListeners();
   }
 
   /// Creates a new session and makes it active.
@@ -756,6 +763,20 @@ final class FlutterSessionManager extends ChangeNotifier {
       await managed.service.waitForIdle();
     }
   }
+}
+
+/// [listed] with every id in [relinked] re-pointed at its resolved parent
+/// path (issue #426) — the mapping the sidebar's tree grouping consumes.
+List<SessionMetadata> relinkSubagentParents(
+  List<SessionMetadata> listed,
+  Map<String, String> relinked,
+) {
+  return [
+    for (final metadata in listed)
+      relinked.containsKey(metadata.id)
+          ? _withParentLink(metadata, relinked[metadata.id]!)
+          : metadata,
+  ];
 }
 
 /// A copy of [metadata] whose header `metadata.parent` is [parent] — the
