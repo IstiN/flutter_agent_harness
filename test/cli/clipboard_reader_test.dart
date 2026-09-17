@@ -24,7 +24,7 @@ void main() {
   test('the Linux path hands the raw bytes through untouched', () async {
     Future<ProcessResult> runner(String executable, List<String> args) async =>
         _ok(_pngish);
-    final read = await readPasteboardImage(runner: runner);
+    final read = await readPasteboardImage(runner: runner, platform: 'linux');
     expect(read, isA<PasteboardImage>());
     expect((read as PasteboardImage).bytes, _pngish);
   });
@@ -36,7 +36,7 @@ void main() {
       return calls == 1 ? ProcessResult(1, 1, '', 'nope') : _ok(_pngish);
     }
 
-    final read = await readPasteboardImage(runner: runner);
+    final read = await readPasteboardImage(runner: runner, platform: 'linux');
     expect(calls, 2, reason: 'xclip failed → wl-paste tried');
     expect((read as PasteboardImage).bytes, _pngish);
   });
@@ -44,7 +44,7 @@ void main() {
   test('no backend reachable names the failure (edge E1 shape)', () async {
     Future<ProcessResult> runner(String executable, List<String> args) async =>
         ProcessResult(1, 1, '', 'not found');
-    final read = await readPasteboardImage(runner: runner);
+    final read = await readPasteboardImage(runner: runner, platform: 'linux');
     expect(read, isA<PasteboardUnavailable>());
     expect((read as PasteboardUnavailable).reason, contains('xclip'));
   });

@@ -298,13 +298,18 @@ extension AgentCliSteering on AgentCli {
     final minutes = seconds < 60 ? 1 : seconds ~/ 60;
     // Issue #488 AC1a: when the caller knows the queue size (a fresh
     // wedged steer), the banner names the count instead of the single
-    // "your message" copy.
-    final saved = queued > 0
-        ? '$queued steering ${queued == 1 ? 'message' : 'messages'} '
-              'saved to the session'
-        : 'your message is saved to the session';
-    return '⚠ agent stalled — no response for ${minutes}m. '
-        '$saved: /restart delivers it into a fresh run, esc aborts';
+    // "your message" copy. When no messages are queued, it is an
+    // informational notification that the run has stalled, not a false
+    // claim that a message was saved.
+    if (queued > 0) {
+      final saved = queued == 1
+          ? '1 steering message saved to the session'
+          : '$queued steering messages saved to the session';
+      return '⚠ agent stalled — no response for ${minutes}m. '
+          '$saved: /restart delivers it into a fresh run, esc aborts';
+    }
+    return 'info: agent stalled — no response for ${minutes}m. '
+        '/restart starts a fresh run, esc aborts';
   }
 
   /// Pushes the stall state to every consumer (issue #514 AC1): the busy
@@ -314,7 +319,11 @@ extension AgentCliSteering on AgentCli {
     if (stalled == _runStalledPushed) return;
     _runStalledPushed = stalled;
     _tuiController?.setRunStalled(stalled);
-    if (stalled) io.writeln(tuiWarning(_stallBannerLine()));
+    if (stalled) {
+      final queued = _pendingSteering.length;
+      final line = _stallBannerLine(queued: queued);
+      io.writeln(queued > 0 ? tuiWarning(line) : _style.dim(line));
+    }
   }
 
   /// Wedge watchdog, called on the inbox tick (issue #437 AC3 + #514):
