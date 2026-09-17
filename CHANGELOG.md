@@ -3722,6 +3722,14 @@
 - fix(sandbox): split sandbox_builtins.dart under the 2800-line gate via part files (#512)
 - feat(462): modernize sessions icon — A4b «Modern pair + dots» (#509)
 
+## 0.1.399
+
+- refactor(messaging): de-CRAP HubMessagingRepository._failWaiters under the 12 gate (#531)
+- Fixes #488: steering into a dead/wedged run - queued-steering count, child-registry rehydration, task_send cap (#535)
+- fix(520): main agent stays steerable while children work — waiting is idle, owner mail keeps user-kind, children on the waiting row (#536)
+- fix(519): TUI artifacts — paste-chip rows reserved in the input-zone math; fuzzy selected row keeps one base role (#532)
+- test(cli): deflake agent_hub_driver collapse-summary race (#533)
+
 ## Unreleased
 
 ## Unreleased
