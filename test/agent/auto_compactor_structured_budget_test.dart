@@ -110,13 +110,48 @@ void main() {
     keepRecentTokens: 150,
   );
 
-  test('structured engine: a never-answering judge dies at the attempt '
-      'budget with a named error and a cancelled provider call', () async {
+  test('structured engine: a never-answering judge no longer bricks the '
+      'run — budget kill aborts the call, the deterministic fallback '
+      'compacts, and the session survives', () async {
     final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
-    // Ten turns: the ledger has hideable entries beyond protect-last-8,
-    // so the structured run actually reaches the judge call.
-    for (var i = 0; i < 10; i++) {
-      await session.appendMessage(UserMessage.text('a' * 1600));
+    // A read pair plus assistant fillers: hideable entries beyond the
+    // protected tail, so both the judge call and the fallback engage.
+    await session.appendMessage(UserMessage.text('fix the login crash'));
+    await session.appendMessage(
+      AssistantMessage(
+        content: [
+          const TextContent(text: 'looking'),
+          ToolCall(id: 'c1', name: 'read', arguments: const {}),
+        ],
+        api: 'test-api',
+        provider: 'test-provider',
+        model: 'test-model',
+        usage: Usage.zero,
+        stopReason: StopReason.stop,
+        timestamp: DateTime.utc(2026),
+      ),
+    );
+    await session.appendMessage(
+      ToolResultMessage(
+        toolCallId: 'c1',
+        toolName: 'read',
+        content: [TextContent(text: 'x' * 16000)],
+        isError: false,
+        timestamp: DateTime.utc(2026),
+      ),
+    );
+    for (var i = 0; i < 11; i++) {
+      await session.appendMessage(
+        AssistantMessage(
+          content: [TextContent(text: 'filler $i')],
+          api: 'test-api',
+          provider: 'test-provider',
+          model: 'test-model',
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.utc(2026),
+        ),
+      );
     }
     final state = AgentState(
       model: _model,
@@ -148,30 +183,33 @@ void main() {
     ).run();
     sw.stop();
 
-    // Fail-fast, bounded — not an infinite wedge.
-    expect(ok, isFalse);
+    // #541: a dead judge no longer fails the run — the deterministic
+    // fallback closed the window instead.
+    expect(ok, isTrue);
     expect(sw.elapsed, lessThan(const Duration(seconds: 10)));
-    // The budget reached the provider call AND killed it.
+    // The budget reached the provider call AND killed it (#515 kept).
     expect(tokensSeen, isNotEmpty);
     expect(
-      tokensSeen.every((t) => t != null),
-      isTrue,
-      reason: 'the budget token must ride the judge/summarizer request',
-    );
-    expect(
-      tokensSeen.every((t) => t!.isCancelled),
+      tokensSeen.every((t) => t != null && t.isCancelled),
       isTrue,
       reason: 'budget expiry must cancel the in-flight provider call',
     );
-    // The named error surfaces through the hooks (not silence).
-    expect(hooks.bothRolesError, isA<TimeoutException>());
+    // The failure surfaced through the hooks as a named pass report,
+    // then the fallback hide reported its own receipt.
     expect(
-      (hooks.bothRolesError as TimeoutException).message,
-      contains('issue #515'),
+      hooks.passes.any(
+        (p) => !p.ok && p.error.toString().contains('issue #515'),
+      ),
+      isTrue,
+      reason: 'the judge timeout surfaces as a named failed pass',
     );
-    // Failure appends nothing: zero records, like the incident's run.
-    final records = await session.getEntries();
-    expect(records.whereType<CompactionRecord>(), isEmpty);
+    expect(
+      hooks.passes.any((p) => p.ok && p.fallback == 'structured·hide-fallback'),
+      isTrue,
+      reason: 'the deterministic fallback reports its own receipt',
+    );
+    // Wire stays safe; the read pair did not split.
+    expect(validateToolPairing(state.messages), isEmpty);
   });
 
   test('classic engine: budget expiry cancels the wedged summarizer call '
@@ -241,11 +279,13 @@ void main() {
     );
   });
 
-  test('structured engine, direct: the hide judge budget kill surfaces a '
-      'named TimeoutException and cancels the budget token', () async {
+  test('structured engine, direct: the hide judge budget kill is a counted '
+      'failure — the token still aborts the call, and the deterministic '
+      'fallback compacts instead of bricking', () async {
     final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
     // A read pair plus filler turns puts the ledger past protect-last-8,
-    // so the hide pass actually reaches the judge call.
+    // so the hide pass actually reaches the judge call — and the
+    // fallback has something pair-safe to hide afterwards.
     await session.appendMessage(UserMessage.text('fix the login crash'));
     await session.appendMessage(
       AssistantMessage(
@@ -295,24 +335,26 @@ void main() {
       settings: settings,
       judge: (ledger) => Completer<String?>().future,
       summarize: (request) async => SummarizationResult.failure('unused'),
+      attemptBudget: const Duration(milliseconds: 150),
+      protectLastN: 3,
       checkpointPrompt: 'P',
       budgetSource: budgetSource,
-      attemptBudget: const Duration(milliseconds: 150),
     );
 
-    await expectLater(
-      compactor.run(),
-      throwsA(
-        isA<TimeoutException>()
-            .having((e) => e.message, 'message', contains('hide judge'))
-            .having((e) => e.message, 'issue tag', contains('issue #515')),
-      ),
-    );
+    final ok = await compactor.run();
+    // #541: the timeout no longer bricks the run — the fallback hid
+    // past the recency floor and the window closed.
+    expect(ok, isTrue);
     // The engine killed the in-flight call at the token, not just the
-    // await: the provider layer sees the abort.
+    // await: the provider layer sees the abort (#515 semantics kept).
     expect(budgetSource.token.isCancelled, isTrue);
+    // The fallback hid deterministically, whole pairs, oldest-first.
     final records = await session.getEntries();
-    expect(records.whereType<CompactionRecord>(), isEmpty);
+    final hidden = records.whereType<HiddenRangeRecord>().toList();
+    expect(hidden, hasLength(1));
+    // The read pair (carrier + result) hid whole.
+    expect(hidden.single.recordIds, hasLength(2));
+    expect(validateToolPairing(state.messages), isEmpty);
   });
 
   test('structured engine, direct: the checkpoint summarizer budget kill '
@@ -331,9 +373,9 @@ void main() {
       state: state,
       window: 1000,
       settings: settings,
-      // Judge refuses (F1 no-op): straight to pass 2, where the
+      // Judge declines ('[]', F1 no-op): straight to pass 2, where the
       // summarizer wedges past the attempt budget.
-      judge: (ledger) async => null,
+      judge: (ledger) async => '[]',
       summarize: (request) => Completer<SummarizationResult>().future,
       checkpointPrompt: 'P',
       budgetSource: budgetSource,

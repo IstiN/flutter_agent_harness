@@ -85,8 +85,34 @@ final class ContextLedger {
     return null;
   }
 
-  /// Renders the ledger as the judge's input block.
-  String render() => [for (final entry in entries) _line(entry)].join('\n');
+  /// The judge input cap (issue #541): the newest [judgePreviewEntries]
+  /// entries render. The judge prompt stays O(bounded) regardless of
+  /// session size, so the per-call budget (issue #515) stays winnable on
+  /// marathon sessions instead of growing into a guaranteed timeout.
+  static const int judgePreviewEntries = 512;
+
+  /// Renders the ledger as the judge's input block: at most
+  /// [maxEntries] NEWEST entries, preceded by one summary line for the
+  /// omitted older prefix (issue #541 — the judge decides on a bounded
+  /// preview, not the whole chronicle).
+  String render({int maxEntries = judgePreviewEntries}) {
+    if (entries.length <= maxEntries) {
+      return [for (final entry in entries) _line(entry)].join('\n');
+    }
+    final omitted = entries.length - maxEntries;
+    var omittedTokens = 0;
+    for (final entry in entries.take(omitted)) {
+      omittedTokens += entry.tokens;
+    }
+    final head =
+        '[…] $omitted older records (seqs ${entries.first.seq}-'
+        '${entries[omitted - 1].seq}, ~$omittedTokens tok) are omitted '
+        'from this preview — decide on the newest records below';
+    return [
+      head,
+      for (final entry in entries.skip(omitted)) _line(entry),
+    ].join('\n');
+  }
 
   String _line(LedgerEntry entry) {
     final kind = entry.toolNames.isEmpty ? entry.kind : entry.kind;

@@ -83,6 +83,7 @@ final class AgentCliConfig {
     this.codeMieGuidedSetupFn,
     this.compactionSettings,
     this.compactionEngine,
+    this.compactionJudgeBudgetSeconds,
     this.contextWindowCap,
     this.subagents = const SubagentsConfig(),
     this.waiting = const WaitingConfig(),
@@ -147,6 +148,12 @@ final class AgentCliConfig {
   /// of the effective window (compaction thresholds, ctx meter/footer).
   /// `null` = uncapped.
   final int? contextWindowCap;
+
+  /// Per-call judge/summarizer budget seconds (`compaction.
+  /// judgeBudgetSeconds`, issue #541), resolved by the host from the
+  /// user config. `null` keeps the 90s default — the knob exists for
+  /// giant marathon sessions whose judge cannot answer within 90s.
+  final int? compactionJudgeBudgetSeconds;
 
   /// The `subagents:` section (issue #383): heartbeat cadence and stall
   /// threshold for background-subagent status digests.
