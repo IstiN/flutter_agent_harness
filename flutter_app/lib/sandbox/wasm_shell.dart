@@ -859,41 +859,104 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     final module = resolved.module;
     final argv = [...resolved.argv, ...args];
 
-    if (module == python) {
-      try {
-        await _ensurePythonStdlib();
-      } on Object catch (e) {
-        return Err(
-          ExecutionError(
-            ExecutionErrorCode.unknown,
-            'python stdlib setup failed: $e',
-          ),
-        );
-      }
-    }
+    final env = await _stageEnv(module, options);
+    if (env.isErr) return Err(env.errorOrNull!);
+    final built = await _buildStageInstance(
+      module: module,
+      command: command,
+      argv: argv,
+      env: env.valueOrNull!,
+      captureStdout: captureStdout,
+      captureStderr: captureStderr,
+    );
+    if (built.isErr) return Err(built.errorOrNull!);
+    final instance = built.valueOrNull!;
 
-    final env = _effectiveEnv(options);
-    if (module == python) {
-      // Let the interpreter import pip-installed wheels (an explicit user
-      // PYTHONPATH, e.g. via `export`, wins).
-      env.putIfAbsent('PYTHONPATH', () => _pythonSitePackages);
-    }
+    final bridge = _stageBridge(module, captureStdout);
+    final io = _StageIo();
+    final stdoutSub = _subscribeStdout(
+      instance,
+      io,
+      bridge,
+      options?.onStdout,
+      captureStdout,
+    );
+    final stderrSub = _subscribeStderr(
+      instance,
+      io,
+      options?.onStderr,
+      captureStderr,
+    );
+    final run = await _runWasiStart(
+      instance,
+      io,
+      bridge,
+      stdoutSub: stdoutSub,
+      stderrSub: stderrSub,
+      options: options,
+    );
 
-    final preopenedDirs = <PreopenedDir>[];
-    final hostSandbox = sandboxHostPath;
-    if (hostSandbox != null && hostSandbox.isNotEmpty) {
-      preopenedDirs.add(
-        PreopenedDir(wasmGuestPath: '/', hostPath: hostSandbox),
+    final outcome = resolveStageOutcome(
+      callbackError: io.callbackError,
+      timedOut: run.timedOut,
+      runError: run.runError,
+      timeout: run.timeout,
+      cancelled: options?.cancelToken?.isCancelled ?? false,
+      hasOutput: io.hasOutput,
+    );
+    if (outcome.isErr) return Err(outcome.errorOrNull!);
+    _lastStageExitCode = outcome.valueOrNull!;
+
+    return Ok(
+      StageResult(
+        stdout: io.stdoutBuffer,
+        stderr: io.stderrBuffer,
+        exitCode: _lastStageExitCode ?? 0,
+      ),
+    );
+  }
+
+  /// Prepares the stage environment: unpacks the python stdlib on first
+  /// python use and exposes pip site-packages to the interpreter.
+  Future<Result<Map<String, String>, ExecutionError>> _stageEnv(
+    WasmModule module,
+    ShellExecOptions? options,
+  ) async {
+    if (module != python) return Ok(_effectiveEnv(options));
+    try {
+      await _ensurePythonStdlib();
+    } on Object catch (e) {
+      return Err(
+        ExecutionError(
+          ExecutionErrorCode.unknown,
+          'python stdlib setup failed: $e',
+        ),
       );
     }
+    final env = _effectiveEnv(options);
+    // Let the interpreter import pip-installed wheels (an explicit user
+    // PYTHONPATH, e.g. via `export`, wins).
+    env.putIfAbsent('PYTHONPATH', () => _pythonSitePackages);
+    return Ok(env);
+  }
 
+  /// Builds the WASM instance for one stage, mapping builder failures to a
+  /// spawn error.
+  Future<Result<WasmInstance, ExecutionError>> _buildStageInstance({
+    required WasmModule module,
+    required String command,
+    required List<String> argv,
+    required Map<String, String> env,
+    required bool captureStdout,
+    required bool captureStderr,
+  }) async {
     final builder = module.builder(
       wasiConfig: WasiConfig(
         args: argv,
         env: env.entries
             .map((e) => EnvVariable(name: e.key, value: e.value))
             .toList(),
-        preopenedDirs: preopenedDirs,
+        preopenedDirs: _stagePreopenedDirs(),
         webBrowserFileSystem: const <String, WasiDirectory>{},
         captureStdout: captureStdout,
         captureStderr: captureStderr,
@@ -904,9 +967,10 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     );
 
     debugPrint('[wasm_shell] building instance for $command...');
-    late WasmInstance instance;
     try {
-      instance = await builder.build();
+      final instance = await builder.build();
+      debugPrint('[wasm_shell] instance built, subscribing to stdio...');
+      return Ok(instance);
     } on Object catch (error) {
       debugPrint('[wasm_shell] build failed: $error');
       return Err(
@@ -917,59 +981,81 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         ),
       );
     }
-    debugPrint('[wasm_shell] instance built, subscribing to stdio...');
+  }
 
-    final stdoutBuffer = <int>[];
-    final stderrBuffer = <int>[];
-    ExecutionError? callbackError;
-
-    void collect(
-      List<int> target,
-      Uint8List chunk,
-      void Function(String)? callback,
-    ) {
-      target.addAll(chunk);
-      if (callback == null) return;
-      try {
-        callback(utf8.decode(chunk, allowMalformed: true));
-      } on Object catch (error) {
-        callbackError ??= ExecutionError(
-          ExecutionErrorCode.callbackError,
-          error.toString(),
-          cause: error,
-        );
-      }
+  /// The sandbox root is preopened at `/` so guests see the workspace FS.
+  List<PreopenedDir> _stagePreopenedDirs() {
+    final preopenedDirs = <PreopenedDir>[];
+    final hostSandbox = sandboxHostPath;
+    if (hostSandbox != null && hostSandbox.isNotEmpty) {
+      preopenedDirs.add(
+        PreopenedDir(wasmGuestPath: '/', hostPath: hostSandbox),
+      );
     }
+    return preopenedDirs;
+  }
 
-    // Python stages route HTTP through the host bridge (issue #337 AC1):
-    // `fa_http` control lines are stripped from the captured stdout and the
-    // requests are served against the real network by [FaHttpBridge].
-    final bridge =
-        module == python &&
-            captureStdout &&
-            (sandboxHostPath?.isNotEmpty ?? false)
+  /// Python stages route HTTP through the host bridge (issue #337 AC1):
+  /// `fa_http` control lines are stripped from the captured stdout and the
+  /// requests are served against the real network by [FaHttpBridge].
+  FaHttpBridge? _stageBridge(WasmModule module, bool captureStdout) {
+    final enabled = module == python &&
+        captureStdout &&
+        (sandboxHostPath?.isNotEmpty ?? false);
+    return enabled
         ? FaHttpBridge(sandboxRoot: sandboxHostPath!, httpClient: _httpClient)
         : null;
-    final stdoutSub = captureStdout
-        ? instance.stdout.listen((chunk) {
-            debugPrint('[wasm_shell] stdout chunk: ${chunk.length} bytes');
-            final clean = bridge?.filter(chunk) ?? chunk;
-            if (clean.isNotEmpty) {
-              collect(
-                stdoutBuffer,
-                Uint8List.fromList(clean),
-                options?.onStdout,
-              );
-            }
-          }, onDone: () => debugPrint('[wasm_shell] stdout done'))
-        : null;
-    final stderrSub = captureStderr
-        ? instance.stderr.listen((chunk) {
-            debugPrint('[wasm_shell] stderr chunk: ${chunk.length} bytes');
-            collect(stderrBuffer, chunk, options?.onStderr);
-          }, onDone: () => debugPrint('[wasm_shell] stderr done'))
-        : null;
+  }
 
+  StreamSubscription<Uint8List>? _subscribeStdout(
+    WasmInstance instance,
+    _StageIo io,
+    FaHttpBridge? bridge,
+    void Function(String)? onStdout,
+    bool captureStdout,
+  ) {
+    return captureStdout
+        ? instance.stdout.listen(
+            (chunk) {
+              debugPrint('[wasm_shell] stdout chunk: ${chunk.length} bytes');
+              final clean = bridge?.filter(chunk) ?? chunk;
+              if (clean.isNotEmpty) {
+                io.collect(io.stdoutBuffer, Uint8List.fromList(clean), onStdout);
+              }
+            },
+            onDone: () => debugPrint('[wasm_shell] stdout done'),
+          )
+        : null;
+  }
+
+  StreamSubscription<Uint8List>? _subscribeStderr(
+    WasmInstance instance,
+    _StageIo io,
+    void Function(String)? onStderr,
+    bool captureStderr,
+  ) {
+    return captureStderr
+        ? instance.stderr.listen(
+            (chunk) {
+              debugPrint('[wasm_shell] stderr chunk: ${chunk.length} bytes');
+              io.collect(io.stderrBuffer, chunk, onStderr);
+            },
+            onDone: () => debugPrint('[wasm_shell] stderr done'),
+          )
+        : null;
+  }
+
+  /// Races the WASI start against the timeout, then cancels the stdio
+  /// subscriptions, disposes the instance and flushes the bridge tail.
+  Future<({Object? runError, bool timedOut, Duration timeout})>
+      _runWasiStart(
+    WasmInstance instance,
+    _StageIo io,
+    FaHttpBridge? bridge, {
+    required StreamSubscription<Uint8List>? stdoutSub,
+    required StreamSubscription<Uint8List>? stderrSub,
+    required ShellExecOptions? options,
+  }) async {
     final timeout = options?.timeout ?? const Duration(seconds: 30);
     debugPrint('[wasm_shell] starting _start with timeout $timeout...');
     var timedOut = false;
@@ -997,31 +1083,10 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       instance.dispose();
     }
 
-    final bridgeTail = bridge?.flush();
-    if (bridgeTail != null && bridgeTail.isNotEmpty) {
-      stdoutBuffer.addAll(bridgeTail);
-    }
+    io.stdoutBuffer.addAll(bridge?.flush() ?? const <int>[]);
 
     debugPrint('[wasm_shell] run finished timedOut=$timedOut error=$runError');
-    final token = options?.cancelToken;
-    final outcome = resolveStageOutcome(
-      callbackError: callbackError,
-      timedOut: timedOut,
-      runError: runError,
-      timeout: timeout,
-      cancelled: token?.isCancelled ?? false,
-      hasOutput: stdoutBuffer.isNotEmpty || stderrBuffer.isNotEmpty,
-    );
-    if (outcome.isErr) return Err(outcome.errorOrNull!);
-    _lastStageExitCode = outcome.valueOrNull!;
-
-    return Ok(
-      StageResult(
-        stdout: stdoutBuffer,
-        stderr: stderrBuffer,
-        exitCode: _lastStageExitCode ?? 0,
-      ),
-    );
+    return (runError: runError, timedOut: timedOut, timeout: timeout);
   }
 
   /// Parses the exit code from a wasmtime I32Exit trap.
@@ -2549,6 +2614,36 @@ final class _ExprEvaluator {
     if (op == '*') return value * rhs;
     if (rhs == 0) throw const FormatException('division by zero');
     return op == '/' ? value ~/ rhs : value % rhs;
+  }
+}
+
+/// Mutable stdio state for one running WASM stage: captured bytes, the
+/// first callback failure, and derived flags for outcome resolution.
+final class _StageIo {
+  final stdoutBuffer = <int>[];
+  final stderrBuffer = <int>[];
+  ExecutionError? callbackError;
+
+  bool get hasOutput => stdoutBuffer.isNotEmpty || stderrBuffer.isNotEmpty;
+
+  /// Appends a raw chunk and mirrors it to the caller callback; callback
+  /// failures are recorded (first one wins) instead of breaking the pump.
+  void collect(
+    List<int> target,
+    Uint8List chunk,
+    void Function(String)? callback,
+  ) {
+    target.addAll(chunk);
+    if (callback == null) return;
+    try {
+      callback(utf8.decode(chunk, allowMalformed: true));
+    } on Object catch (error) {
+      callbackError ??= ExecutionError(
+        ExecutionErrorCode.callbackError,
+        error.toString(),
+        cause: error,
+      );
+    }
   }
 }
 
