@@ -203,7 +203,12 @@ jobs:
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         run: |
           dart pub token remove https://pub.dev || true
-          dart pub publish --dry-run --ignore-warnings
+          # Against the STAGED tree, not the repo root (#597 AC1): the
+          # publish job publishes from the stage — the v0.1.407 class of
+          # failure (staged resolution re-pinning vendor/dart_tui through
+          # pubspec_overrides.yaml) must redden the PR, not the tag.
+          bash scripts/stage_publish_package.sh /tmp/pr-dry-run-stage
+          (cd /tmp/pr-dry-run-stage && dart pub get && dart pub publish --dry-run --ignore-warnings)
 
   test-core:
     # Always runs (no job-level path gate): a path-filtered matrix skip
@@ -1596,32 +1601,7 @@ jobs:
       - name: Stage publishable package (sub-projects stay out)
         if: steps.gate.outputs.publishable == 'true'
         run: |
-          mkdir -p /tmp/publish-stage
-          # Path deps of the core pubspec must resolve inside the stage
-          # (#584, `dart pub get` exit 66 on v0.1.407): their subtrees are
-          # included BEFORE the parent excludes, and the parent excludes are
-          # child-scoped (vendor/*) — excluding the parent dir itself would
-          # prune the subtree before the includes are ever consulted.
-          # pubspec_overrides.yaml is the workspace-only dart_tui pin (never
-          # published, see its header); shipped into the stage it re-dangles
-          # dart_tui onto the excluded vendor dir.
-          rsync -a ./ /tmp/publish-stage/ \
-            --include 'vendor/xterm/' --include 'vendor/xterm/**' \
-            --include 'packages/fa_llm_mock/' --include 'packages/fa_llm_mock/**' \
-            --exclude '.git' --exclude '.github' --exclude '.worktrees' \
-            --exclude 'flutter_app' --exclude 'browser_ext' \
-            --exclude 'office_addin' --exclude 'yoclip' \
-            --exclude 'vendor/*' --exclude 'docs' --exclude 'fa-local' \
-            --exclude 'packages/*' \
-            --exclude 'pubspec_overrides.yaml' \
-            --exclude '.dart_tool' --exclude 'build' --exclude '.fah' \
-            --exclude 'memory' --exclude '.trash'
-          size=$(du -sm /tmp/publish-stage | cut -f1)
-          echo "staged package: ${size} MB"
-          if [ "$size" -gt 90 ]; then
-            echo "::error::staged package is ${size} MB (>90) — pub.dev caps uploads at 100 MB. Trim the staging excludes."
-            exit 1
-          fi
+          bash scripts/stage_publish_package.sh /tmp/publish-stage
           (cd /tmp/publish-stage && dart pub get)
 
       - name: Publish (automated publishing via OIDC)
