@@ -36,6 +36,7 @@ final _infoCommandHandlers = <String, Future<void> Function(AgentCli, String)>{
   '/terminal-setup': (cli, rest) async => cli._printTerminalSetup(),
   '/ext': (cli, rest) async => cli._extSlash(rest),
   '/power': (cli, rest) async => cli._powerSlash(),
+  '/restart': (cli, rest) async => cli.restartRunForTest(),
 };
 
 /// Slash-command dispatch on [AgentCli].

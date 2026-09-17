@@ -177,7 +177,9 @@ extension _TuiRowRenderers on FaTuiModel {
         ? 0
         : ((DateTime.now().millisecondsSinceEpoch - busyStartedAtMs) / 1000)
               .floor();
-    final label = busyPhase.isEmpty ? 'Working…' : busyPhase;
+    final label = runStalled
+        ? 'Stalled…'
+        : (busyPhase.isEmpty ? 'Working…' : busyPhase);
     final quietSeconds = busyLastEventMs < 0
         ? 0
         : ((DateTime.now().millisecondsSinceEpoch - busyLastEventMs) / 1000)
