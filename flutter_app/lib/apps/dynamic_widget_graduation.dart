@@ -6,6 +6,7 @@ import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/dynamic_messages.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/github_account_store.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/widget_publication_store.dart';
 import 'package:fa/services/widget_publish_service.dart';
@@ -25,36 +26,13 @@ Future<void> graduateDynamicWidget(
   AgentService service,
   DynamicMessageDefinition definition,
 ) async {
-  String? appId = await service.dynamicMessages.saveAsApp(
-    definition,
-    definition.title,
-  );
-  for (var suffix = 2; appId == null && suffix <= 9; suffix++) {
-    appId = await service.dynamicMessages.saveAsApp(
-      definition,
-      '${definition.title} $suffix',
-    );
-  }
+  final appId = await installGraduatedWidget(service, definition);
   if (!context.mounted) return;
-  final l10n = context.l10n;
-  if (appId == null) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(l10n.dynamicMessagesSaveFailed)));
-    return;
-  }
-  ScaffoldMessenger.of(
+  showGraduationSnackbar(context, appId);
+  if (appId == null) return;
+  final (account, ledger, publish) = await _graduationPublishTargets(
     context,
-  ).showSnackBar(SnackBar(content: Text(l10n.dynamicMessagesSaved(appId))));
-  final keys = SessionKeysScope.maybeOf(context);
-  final account = sharedGithubAccountStore(
-    keys ?? await SessionKeysStore.load(service.env),
-  );
-  final ledger = await initSharedWidgetPublicationStore(service.env);
-  final publish = WidgetPublishService(
-    env: service.env,
-    account: account,
-    ledger: ledger,
+    service,
   );
   if (!context.mounted) return;
   await showWidgetPublishSheet(
@@ -74,5 +52,58 @@ Future<void> graduateDynamicWidget(
     account: account,
     service: publish,
     ledger: ledger,
+  );
+}
+
+/// Installs [definition] under a fresh app id: [DynamicMessagesService]
+/// refuses an id that already exists (returns null), so numbered title
+/// suffixes 2..9 retry the install before the flow gives up.
+@visibleForTesting
+Future<String?> installGraduatedWidget(
+  AgentService service,
+  DynamicMessageDefinition definition,
+) async {
+  String? appId = await service.dynamicMessages.saveAsApp(
+    definition,
+    definition.title,
+  );
+  for (var suffix = 2; appId == null && suffix <= 9; suffix++) {
+    appId = await service.dynamicMessages.saveAsApp(
+      definition,
+      '${definition.title} $suffix',
+    );
+  }
+  return appId;
+}
+
+/// The saved/failed feedback for the graduation install.
+@visibleForTesting
+void showGraduationSnackbar(BuildContext context, String? appId) {
+  final l10n = context.l10n;
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(
+        appId == null
+            ? l10n.dynamicMessagesSaveFailed
+            : l10n.dynamicMessagesSaved(appId),
+      ),
+    ),
+  );
+}
+
+/// The publish-sheet collaborators for a freshly graduated app: the GitHub
+/// account (session-keys scope first, else a store over a fresh load) and
+/// the shared publication ledger.
+Future<(GithubAccountStore, WidgetPublicationStore, WidgetPublishService)>
+_graduationPublishTargets(BuildContext context, AgentService service) async {
+  final keys = SessionKeysScope.maybeOf(context);
+  final account = sharedGithubAccountStore(
+    keys ?? await SessionKeysStore.load(service.env),
+  );
+  final ledger = await initSharedWidgetPublicationStore(service.env);
+  return (
+    account,
+    ledger,
+    WidgetPublishService(env: service.env, account: account, ledger: ledger),
   );
 }
