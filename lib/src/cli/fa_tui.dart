@@ -4,7 +4,7 @@ import 'dart:convert' show latin1, utf8;
 import 'dart:io'
     show IOSink, Platform, Process, ProcessException, ProcessResult, stdin;
 
-import 'package:dart_tui/dart_tui.dart';
+import 'package:dart_tui/dart_tui.dart' hide stripAnsi;
 import 'package:meta/meta.dart';
 
 import 'composer_overlay.dart';
@@ -15,7 +15,7 @@ import 'package:characters/characters.dart';
 import 'tui_hit_regions.dart';
 import 'tui_prompt.dart';
 import 'tui_theme.dart';
-import 'tui_repl.dart' show MenuItem, QueuedMessage, TuiProgramHooks;
+import 'tui_repl.dart' show MenuItem, QueuedMessage, TuiProgramHooks, stripAnsi;
 import 'system_notice_render.dart';
 import 'tui_text_width.dart'
     show tuiFitWidth, tuiGraphemeWidth, tuiPadRight, tuiTextWidth;
