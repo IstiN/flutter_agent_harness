@@ -62,7 +62,7 @@ void main() {
       expect(formatCompactionReport(pass, auto: true).first, 'auto-compacted');
     });
 
-    test('an empty summary still closes the fence (copyable block)', () {
+    test('an empty summary omits the block entirely (issue #578)', () {
       final pass = AutoCompactorPass(
         pass: 1,
         tokensBefore: 1000,
@@ -70,7 +70,9 @@ void main() {
         fallback: 'smol',
         ok: true,
       );
-      expect(formatCompactionReport(pass, auto: false).last, '```');
+      final report = formatCompactionReport(pass, auto: false).join('\n');
+      expect(report, isNot(contains('summary:')));
+      expect(report, isNot(contains('```')));
     });
 
     test('a restamp that grew the transcript clamps to 0 freed', () {
