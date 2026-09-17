@@ -24,6 +24,7 @@
 library;
 
 import 'agent_hub_panel.dart';
+import 'tool_rows.dart' show shellJobCommandPreview;
 import '../session/session_record.dart';
 
 /// AC1 mapping (issue #429): a job's observable lifecycle → card state.
@@ -310,6 +311,11 @@ final class ShellJobBoard {
       .map((c) => c.toRecord())
       .toList();
 
-  static String _clipLabel(String label) =>
-      label.length <= 48 ? label : '${label.substring(0, 47)}…';
+  /// The live row label: first line + `…` (issue #599 — an embedded
+  /// newline would tear one reserved live row into uncounted physical
+  /// rows), then the 48-char width cap.
+  static String _clipLabel(String label) {
+    final preview = shellJobCommandPreview(label);
+    return preview.length <= 48 ? preview : '${preview.substring(0, 47)}…';
+  }
 }

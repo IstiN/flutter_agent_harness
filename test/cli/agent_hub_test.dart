@@ -1,12 +1,15 @@
 @TestOn('vm')
 library;
 
+import 'dart:io' as io;
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/cli/agent_hub_panel.dart';
 import 'package:flutter_agent_harness/src/cli/agent_hub_projection.dart';
 import 'package:flutter_agent_harness/src/cli/agent_hub_tui.dart';
 import 'package:flutter_agent_harness/src/cli/agent_hub_view.dart';
 import 'package:flutter_agent_harness/src/cli/tui_text_width.dart';
+import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
@@ -435,12 +438,12 @@ void main() {
         replyAddress: 'a1',
       );
       final lines = deferredPanelLines(panel, width: 40);
-      // header + 12 body rows + truncation tail + action footer
-      expect(lines, hasLength(15));
+      // header + 6 body rows + truncation tail + action footer
+      expect(lines, hasLength(9));
       expect(lines[1], contains('row 1'));
-      expect(lines[12], contains('row 12'));
-      expect(lines[13], contains('… 18 more'));
-      expect(lines.join('\n'), isNot(contains('row 13')));
+      expect(lines[6], contains('row 6'));
+      expect(lines[7], contains('… 24 more'));
+      expect(lines.join('\n'), isNot(contains('row 7')));
     });
     test('steering panels carry the delivery lifecycle states', () {
       final panel = DeferredPanel(
@@ -563,6 +566,41 @@ void main() {
       expect(line, contains('15 done'));
       expect(line, contains('0 lost'));
     });
+  });
+
+  group('AC4 issue #599 capped-card goldens', () {
+    final update = io.Platform.environment.containsKey('FA_UPDATE_599_GOLDENS');
+    for (final theme in const ['default', 'ohmypi-light']) {
+      test('golden: capped heredoc card ($theme)', () {
+        FaThemeController.instance.reset();
+        FaThemeController.instance.switchTo(theme);
+        final heredoc = [
+          "cat > /tmp/i572.md << 'EOF'",
+          for (var i = 1; i <= 58; i++) 'heredoc body line $i',
+          'EOF',
+        ].join('\n');
+        final card = [
+          for (final line in taskBlockLines(
+            TaskBlock(
+              kind: 'bash',
+              id: 'sh-14',
+              state: TaskBlockState.done,
+              label: heredoc,
+              elapsed: 2,
+              detail: 'sh-14 · i572 · exit 0 · log: .fah/bash_jobs/sh-14.log',
+            ),
+            width: 80,
+          ))
+            tuiDim(line),
+        ].join('\n');
+        final file = io.File('test/cli/goldens/job_card_capped_$theme.ans');
+        if (update) {
+          file.writeAsStringSync('$card\n');
+          return;
+        }
+        expect(card, file.readAsStringSync().trim());
+      });
+    }
   });
 
   group('/mail and /reply commands', () {

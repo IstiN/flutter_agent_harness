@@ -10,6 +10,8 @@ library;
 
 import 'package:flutter_agent_harness/src/cli/agent_hub_panel.dart';
 import 'package:flutter_agent_harness/src/cli/shell_job_board.dart';
+import 'package:flutter_agent_harness/src/cli/tool_rows.dart'
+    show shellJobCommandPreview;
 import 'package:flutter_agent_harness/src/session/session_record.dart';
 import 'package:test/test.dart';
 
@@ -498,6 +500,95 @@ void main() {
       final lines = board.takeTranscriptLines(width: 80);
       expect(lines.join('\n'), contains('lost'));
       expect(lines.join('\n'), isNot(contains('running')));
+    });
+  });
+
+  group('issue #599 bounded card body + heredoc-aware preview', () {
+    final heredoc = [
+      "cat > /tmp/i572.md << 'EOF'",
+      for (var i = 1; i <= 58; i++) 'heredoc body line $i',
+      'EOF',
+    ].join('\n'); // 60 physical lines
+
+    test('preview: first line + ellipsis for multi-line, unchanged for '
+        'single-line', () {
+      expect(shellJobCommandPreview(heredoc),
+          "cat > /tmp/i572.md << 'EOF'…");
+      expect(shellJobCommandPreview('tail -f app.log'), 'tail -f app.log');
+      // E1: a heredoc whose EOF never appears still previews one line —
+      // there is no body parsing to fail.
+      expect(
+        shellJobCommandPreview("cat > x.md << 'EOF'\nno terminator"),
+        "cat > x.md << 'EOF'…",
+      );
+    });
+
+    test('a 60-line heredoc card stays bounded: preview + hint, body '
+        'never a row source', () {
+      final lines = taskBlockLines(
+        _card('sh-14', command: heredoc, state: TaskBlockState.done),
+        width: 80,
+      );
+      final bodyRows = lines.where((l) => l.startsWith('│')).toList();
+      expect(bodyRows.length, lessThanOrEqualTo(6));
+      expect(
+        lines.join('\n'),
+        contains("cat > /tmp/i572.md << 'EOF'"),
+        reason: 'the first command line previews',
+      );
+      expect(
+        lines.join('\n'),
+        contains('… 59 more — bash_job output sh-14'),
+        reason: 'the overflow hint names the remainder and the log pointer',
+      );
+      expect(
+        lines.join('\n'),
+        isNot(contains('heredoc body line')),
+        reason: 'no heredoc body line may render',
+      );
+      expect(lines.join('\n'), isNot(contains('EOF\n')), reason: 'the '
+          'terminator is part of the overflow count, not a rendered row');
+    });
+
+    test('AC2: a 500-line label (captured output shape) caps the card too',
+        () {
+      final outputish = [
+        for (var i = 1; i <= 500; i++) 'output row $i',
+      ].join('\n');
+      final lines = taskBlockLines(
+        _card('sh-7', command: outputish, state: TaskBlockState.done),
+        width: 80,
+      );
+      final bodyRows = lines.where((l) => l.startsWith('│')).toList();
+      expect(bodyRows.length, lessThanOrEqualTo(6));
+      expect(lines.join('\n'), contains('… 499 more — bash_job output sh-7'));
+      expect(lines.join('\n'), isNot(contains('output row 2')));
+    });
+
+    test('E2: a single-line 500-char command stays one width-clipped row '
+        'with no overflow hint', () {
+      final long = 'echo ${'x' * 490}';
+      final lines = taskBlockLines(
+        _card('sh-3', command: long, state: TaskBlockState.running),
+        width: 80,
+      );
+      final bodyRows = lines.where((l) => l.startsWith('│')).toList();
+      expect(bodyRows, hasLength(2)); // label + detail, both width-clipped
+      for (final row in lines) {
+        expect(row.length, lessThanOrEqualTo(80));
+      }
+      expect(lines.join('\n'), isNot(contains('more — bash_job output')));
+    });
+
+    test('the live row keeps one physical line for a multi-line command',
+        () {
+      final board = ShellJobBoard()..start(_card('sh-2', command: heredoc));
+      final live = board.liveLines();
+      expect(live, hasLength(1));
+      expect(live.single.contains('\n'), isFalse,
+          reason: 'an embedded newline would tear the reserved live row');
+      expect(live.single, contains("cat > /tmp/i572.md << 'EOF'"));
+      expect(live.single, isNot(contains('heredoc body line')));
     });
   });
 }
