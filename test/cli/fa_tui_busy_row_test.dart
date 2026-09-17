@@ -271,4 +271,37 @@ void main() {
       reason: 'the waiting row follows the queue rows',
     );
   });
+
+  test('issue #514: the stall push flips the row to Stalled… and back '
+      'without touching the elapsed window or the quiet clock', () {
+    final wedged = modelAt(473, quiet: 200);
+    final stalled = wedged.update(const RunStalledMsg(true)).$1 as FaTuiModel;
+    final row = busyRowOf(stalled, marker: 'Stalled…');
+    expect(row, contains('Stalled…'));
+    // The elapsed window survives the relabel — a stall is a STATE on the
+    // same bracket, not a restart of it.
+    expect(row.substring(elapsedStart, elapsedEnd), '  473s');
+    // The push is busy bookkeeping: it must NOT refresh the quiet clock
+    // (the stall keeps deepening while the row says Stalled…).
+    final quietSeconds =
+        (DateTime.now().millisecondsSinceEpoch - stalled.busyLastEventMs) ~/
+        1000;
+    expect(quietSeconds, greaterThanOrEqualTo(200));
+    // The classifier clearing returns the live label.
+    final awake = stalled.update(const RunStalledMsg(false)).$1 as FaTuiModel;
+    expect(busyRowOf(awake), contains('Working…'));
+    expect(awake.runStalled, isFalse);
+  });
+
+  test('issue #514: the busy→idle bracket always starts unstalled', () {
+    final stalled = modelAt(10).update(const RunStalledMsg(true)).$1
+        as FaTuiModel;
+    expect(stalled.runStalled, isTrue);
+    final idle =
+        stalled.update(const BusyMsg(false, source: 'run')).$1 as FaTuiModel;
+    expect(idle.runStalled, isFalse);
+    final next = idle.update(const BusyMsg(true, source: 'run')).$1
+        as FaTuiModel;
+    expect(next.runStalled, isFalse);
+  });
 }

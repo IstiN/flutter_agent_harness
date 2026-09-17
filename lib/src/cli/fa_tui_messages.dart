@@ -115,6 +115,18 @@ final class JobBoardMsg extends Msg {
   final List<String> lines;
 }
 
+/// Host push of the run-liveness state (issue #514): the wedge watchdog's
+/// classifier (heartbeat silent past `steeringStaleAfter`) drives the busy
+/// row's `Stalled…` label — the row, the banner and the steering panels
+/// name ONE state. Busy bookkeeping: it must not refresh the activity
+/// heartbeat.
+final class RunStalledMsg extends Msg {
+  const RunStalledMsg(this.stalled);
+
+  /// Whether the run currently looks wedged.
+  final bool stalled;
+}
+
 /// One-shot minute-boundary tick keeping the scheduled-follow-ups
 /// indicator's "next in Nm" countdown live while the TUI is idle (issue
 /// #213): the row recomputes from the clock at render time, so the tick
