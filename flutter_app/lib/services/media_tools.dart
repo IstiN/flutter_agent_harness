@@ -7,6 +7,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/media_models_store.dart';
@@ -419,17 +420,8 @@ final class MediaGateway {
       'Authorization': 'Bearer ${endpoint.apiKey}',
   };
 
-  (String, String) _minimaxVideoSize(String? size) {
-    if (size == null || size.trim().isEmpty) return ('2K', '16:9');
-    final parts = size.toLowerCase().split('x');
-    if (parts.length != 2) return ('2K', '16:9');
-    final w = int.tryParse(parts[0]);
-    final h = int.tryParse(parts[1]);
-    if (w == null || h == null || w <= 0 || h <= 0) return ('2K', '16:9');
-    final resolution = w >= 1920 ? '2K' : '1080P';
-    final g = _gcd(w, h);
-    return (resolution, '${w ~/ g}:${h ~/ g}');
-  }
+  (String, String) _minimaxVideoSize(String? size) =>
+      minimaxVideoSizeRequest(size) ?? ('2K', '16:9');
 
   Future<http.Response> _minimaxVideoCreate(
     http.Client client,
@@ -542,16 +534,6 @@ final class MediaGateway {
     return video.bodyBytes;
   }
 
-  int _gcd(int a, int b) {
-    var x = a;
-    var y = b;
-    while (y != 0) {
-      final t = x % y;
-      x = y;
-      y = t;
-    }
-    return x;
-  }
 
   /// Polls the video job at [pollUri] until it reaches a terminal status,
   /// returning the completed job payload. `failed`/`cancelled`/`expired`
@@ -1143,3 +1125,45 @@ AgentTool generateVideoTool(MediaGateway gateway) {
 /// actionable ones; anything else is stringified).
 String _errorText(Object error) =>
     'Error: ${error is StateError ? error.message : error}';
+
+/// MiniMax video size string → the (resolution, aspect-ratio) request
+/// pair; null when [size] is not a usable `WxH` pair (the caller falls
+/// back to the provider default `2K`, `16:9`).
+@visibleForTesting
+(String, String)? minimaxVideoSizeRequest(String? size) {
+  final dims = minimaxVideoDims(size);
+  if (dims == null) return null;
+  final g = _minimaxGcd(dims.$1, dims.$2);
+  return (
+    dims.$1 >= 1920 ? '2K' : '1080P',
+    '${dims.$1 ~/ g}:${dims.$2 ~/ g}',
+  );
+}
+
+/// Parses a `WIDTHxHEIGHT` string (case-insensitive) into positive
+/// dimensions; null when [size] is missing, not exactly `WxH`, or not
+/// two positive integers.
+@visibleForTesting
+(int, int)? minimaxVideoDims(String? size) {
+  if (size == null || size.trim().isEmpty) return null;
+  final parts = size.toLowerCase().split('x');
+  if (parts.length != 2) return null;
+  final w = int.tryParse(parts[0]);
+  final h = int.tryParse(parts[1]);
+  if (!_minimaxDimsValid(w, h)) return null;
+  return (w!, h!);
+}
+
+bool _minimaxDimsValid(int? w, int? h) =>
+    w != null && h != null && w > 0 && h > 0;
+
+int _minimaxGcd(int a, int b) {
+  var x = a;
+  var y = b;
+  while (y != 0) {
+    final t = x % y;
+    x = y;
+    y = t;
+  }
+  return x;
+}

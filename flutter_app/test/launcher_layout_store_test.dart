@@ -306,6 +306,119 @@ void main() {
       await store.reload();
       expect(store.gridColumns, 3);
     });
+
+    group('folder layout equality on reload', () {
+      Future<void> writeFolders(ExecutionEnv env, String foldersJson) async {
+        await env.writeFile(
+          '${env.cwd}/${LauncherLayoutStore.fileName}',
+          '{"version":2,"order":["folder:f1"],"grid":{"columns":4},'
+              '"tileSizes":{},"folders":$foldersJson}',
+        );
+      }
+
+      const pairFolder =
+          '[{"id":"f1","name":"Pair","tiles":["app:a","app:b"]}]';
+
+      test('an unchanged folder layout reloads without notifying', () async {
+        final env = MemoryExecutionEnv();
+        await writeFolders(env, pairFolder);
+        final store = await LauncherLayoutStore.load(env);
+        expect(store.folderById('f1')!.name, 'Pair');
+        var notified = 0;
+        store.addListener(() => notified++);
+
+        await writeFolders(env, pairFolder);
+        await store.reload();
+        expect(notified, 0);
+      });
+
+      test('a renamed folder reloads and notifies', () async {
+        final env = MemoryExecutionEnv();
+        await writeFolders(env, pairFolder);
+        final store = await LauncherLayoutStore.load(env);
+        var notified = 0;
+        store.addListener(() => notified++);
+
+        await writeFolders(
+          env,
+          '[{"id":"f1","name":"Renamed","tiles":["app:a","app:b"]}]',
+        );
+        await store.reload();
+        expect(notified, 1);
+        expect(store.folderById('f1')!.name, 'Renamed');
+      });
+
+      test('a reordered folder reloads and notifies', () async {
+        final env = MemoryExecutionEnv();
+        await writeFolders(env, pairFolder);
+        final store = await LauncherLayoutStore.load(env);
+        var notified = 0;
+        store.addListener(() => notified++);
+
+        await writeFolders(
+          env,
+          '[{"id":"f1","name":"Pair","tiles":["app:b","app:a"]}]',
+        );
+        await store.reload();
+        expect(notified, 1);
+        expect(store.folderById('f1')!.tiles, ['app:b', 'app:a']);
+      });
+
+      test('a different tile count reloads and notifies', () async {
+        final env = MemoryExecutionEnv();
+        await writeFolders(env, pairFolder);
+        final store = await LauncherLayoutStore.load(env);
+        var notified = 0;
+        store.addListener(() => notified++);
+
+        await writeFolders(
+          env,
+          '[{"id":"f1","name":"Pair","tiles":["app:a"]}]',
+        );
+        await store.reload();
+        expect(notified, 1);
+        expect(store.folderById('f1')!.tiles, ['app:a']);
+      });
+
+      test('a folder replaced by another id reloads and notifies', () async {
+        final env = MemoryExecutionEnv();
+        await writeFolders(env, pairFolder);
+        final store = await LauncherLayoutStore.load(env);
+        var notified = 0;
+        store.addListener(() => notified++);
+
+        // Same folder count, different id: the live f1 has no parsed twin.
+        // The order points at the new id so the file stays valid (a
+        // dangling folder reference would load as corrupt instead).
+        await env.writeFile(
+          '${env.cwd}/${LauncherLayoutStore.fileName}',
+          '{"version":2,"order":["folder:f2"],"grid":{"columns":4},'
+              '"tileSizes":{},'
+              '"folders":[{"id":"f2","name":"Pair","tiles":["app:a","app:b"]}]}',
+        );
+        await store.reload();
+        expect(notified, 1);
+        expect(store.folderById('f1'), isNull);
+        expect(store.folderById('f2'), isNotNull);
+      });
+
+      test('an extra folder in the file reloads and notifies', () async {
+        final env = MemoryExecutionEnv();
+        await writeFolders(env, pairFolder);
+        final store = await LauncherLayoutStore.load(env);
+        var notified = 0;
+        store.addListener(() => notified++);
+
+        await writeFolders(
+          env,
+          '[{"id":"f1","name":"Pair","tiles":["app:a","app:b"]},'
+          '{"id":"f3","name":"More","tiles":["app:c"]}]',
+        );
+        await store.reload();
+        expect(notified, 1);
+        expect(store.folderById('f3'), isNotNull);
+      });
+    });
   });
 
   group('launcherInsertionIndex / moveLauncherKey', () {
