@@ -1585,6 +1585,34 @@ jobs:
       - run: dart pub get
         if: steps.gate.outputs.publishable == 'true'
 
+      # The repo root hosts sub-projects that are NOT part of the pub
+      # package (flutter_app with its 57 MB wasm toolchain, yoclip media,
+      # browser_ext, office_addin, vendored forks, docs) — `dart publish`
+      # packs everything under the root that isn't gitignored, which blew
+      # the archive past pub.dev's hard 100 MB cap (v0.1.406: 100.4 MB,
+      # "Content-length exceeds upper bound"). Publish from a staged copy
+      # that carries only the package surface; the size guard makes any
+      # future bloat a LOCI error instead of a pub.dev rejection.
+      - name: Stage publishable package (sub-projects stay out)
+        if: steps.gate.outputs.publishable == 'true'
+        run: |
+          mkdir -p /tmp/publish-stage
+          rsync -a ./ /tmp/publish-stage/ \
+            --exclude '.git' --exclude '.github' --exclude '.worktrees' \
+            --exclude 'flutter_app' --exclude 'browser_ext' \
+            --exclude 'office_addin' --exclude 'yoclip' \
+            --exclude 'vendor' --exclude 'docs' --exclude 'fa-local' \
+            --exclude 'packages' \
+            --exclude '.dart_tool' --exclude 'build' --exclude '.fah' \
+            --exclude 'memory' --exclude '.trash'
+          size=$(du -sm /tmp/publish-stage | cut -f1)
+          echo "staged package: ${size} MB"
+          if [ "$size" -gt 90 ]; then
+            echo "::error::staged package is ${size} MB (>90) — pub.dev caps uploads at 100 MB. Trim the staging excludes."
+            exit 1
+          fi
+          (cd /tmp/publish-stage && dart pub get)
+
       - name: Publish (automated publishing via OIDC)
         if: steps.gate.outputs.publishable == 'true'
         run: |
@@ -1599,7 +1627,7 @@ jobs:
             exit 0
           fi
           dart pub token add https://pub.dev --env-var PUB_TOKEN || true
-          dart pub publish --force
+          (cd /tmp/publish-stage && dart pub publish --force)
           # Verify the upload actually landed (#554): "publish exited 0 but
           # pub.dev still serves the old version" is exactly the failure the
           # daily-verify leg eventually caught after 35 silent releases.

@@ -117,24 +117,12 @@ class _DapHubPageState extends State<DapHubPage> {
 
   Future<void> _reload() async {
     try {
-      final snapshot = await _service.load();
-      final sessions = snapshot.supported
-          ? await _service.listBindableSessions()
-          : const <DapBindableSession>[];
-      List<DapSavedConnection>? saved;
-      final extService = _service;
-      if (extService is ExtensionDapHubService) {
-        try {
-          saved = await extService.savedConnections();
-        } on Object {
-          saved = null; // the list section just stays hidden
-        }
-      }
+      final loaded = await _loadSnapshot();
       if (mounted) {
         setState(() {
-          _snapshot = snapshot;
-          _bindableSessions = sessions;
-          _saved = saved;
+          _snapshot = loaded.snapshot;
+          _bindableSessions = loaded.sessions;
+          _saved = loaded.saved;
           _error = null;
         });
       }
@@ -145,20 +133,58 @@ class _DapHubPageState extends State<DapHubPage> {
     }
   }
 
+  /// One load pass: the snapshot, the named-mode picker options (supported
+  /// hosts only), and the bookmark list (extension only, best effort).
+  Future<
+    ({
+      DapHubSnapshot snapshot,
+      List<DapBindableSession> sessions,
+      List<DapSavedConnection>? saved,
+    })
+  >
+  _loadSnapshot() async {
+    final snapshot = await _service.load();
+    final sessions = snapshot.supported
+        ? await _service.listBindableSessions()
+        : const <DapBindableSession>[];
+    return (
+      snapshot: snapshot,
+      sessions: sessions,
+      saved: await _savedConnections(),
+    );
+  }
+
+  /// The bookmarked connections, or null where the host has none (the list
+  /// section stays hidden). A failed read hides the section — never errors.
+  Future<List<DapSavedConnection>?> _savedConnections() async {
+    final extService = _service;
+    if (extService is! ExtensionDapHubService) return null;
+    try {
+      return await extService.savedConnections();
+    } on Object {
+      return null;
+    }
+  }
+
   Future<void> _probe() async {
     if (_probing) return;
     setState(() => _probing = true);
     AppAnalytics.instance.dapHubAction('probe');
+    final snapshot = await _probeSnapshot();
+    if (!mounted) return;
+    setState(() {
+      if (snapshot != null) _snapshot = snapshot;
+      _probing = false;
+    });
+  }
+
+  /// One probe pass: the fresh snapshot, or null when the probe failed
+  /// (the spinner just stops — the stale snapshot stays on screen).
+  Future<DapHubSnapshot?> _probeSnapshot() async {
     try {
-      final snapshot = await _service.probe();
-      if (mounted) {
-        setState(() {
-          _snapshot = snapshot;
-          _probing = false;
-        });
-      }
+      return await _service.probe();
     } on Object {
-      if (mounted) setState(() => _probing = false);
+      return null;
     }
   }
 
@@ -166,40 +192,15 @@ class _DapHubPageState extends State<DapHubPage> {
     final snapshot = _snapshot;
     if (snapshot == null || !snapshot.supported) return;
     AppAnalytics.instance.dapHubAction('edit');
-    final draft = await faui.pushFaPage<DapConnectionDraft>(
-      context,
+    final draft = await _pushEditor(
       DapConnectionEditorPage(
         initialUrl: snapshot.url,
         initialName: snapshot.name,
       ),
     );
-    if (draft == null) return;
-    try {
-      await _service.saveConnection(
-        url: draft.url,
-        name: draft.name,
-        secret: (draft.secret ?? '').trim().isEmpty ? null : draft.secret,
-      );
-    } on Object {
-      // Bad host (normalizeDapHost) or a failed config write: tell the
-      // user instead of an unhandled async exception.
-      if (!mounted) return;
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        SnackBar(content: Text(context.l10n.settingsDapSaveFailed)),
-      );
-      return;
-    }
+    if (draft == null || !await _commitDraft(draft)) return;
     AppAnalytics.instance.dapHubAction('save');
-    // Keep the bookmark list in lockstep with the active connection: the
-    // edited entry (matched by url) is upserted with the typed secret, or
-    // keeps its stored one when the write-only field was left empty.
-    await _upsertSaved(
-      DapSavedConnection(
-        url: normalizeWebDapHost(draft.url.trim()),
-        name: draft.name.trim(),
-        secret: (draft.secret ?? '').trim(),
-      ),
-    );
+    await _upsertFromDraft(draft);
     await _reload();
   }
 
@@ -209,20 +210,10 @@ class _DapHubPageState extends State<DapHubPage> {
   Future<void> _upsertSaved(DapSavedConnection entry) async {
     final service = _service;
     if (service is! ExtensionDapHubService) return;
-    final current = await service.savedConnections();
-    final keepSecret = current
-        .where((e) => e.url == entry.url && e.secret.isNotEmpty)
-        .map((e) => e.secret)
-        .firstOrNull;
-    final updated = [
-      for (final e in current)
-        if (e.url != entry.url) e,
-      DapSavedConnection(
-        url: entry.url,
-        name: entry.name,
-        secret: entry.secret.isNotEmpty ? entry.secret : keepSecret ?? '',
-      ),
-    ];
+    final updated = mergeDapSavedConnections(
+      await service.savedConnections(),
+      entry,
+    );
     try {
       await service.setSavedConnections(updated);
     } on Object {
@@ -233,11 +224,22 @@ class _DapHubPageState extends State<DapHubPage> {
   /// "Add connection": saves the draft as a bookmark AND makes it the
   /// active connection (the SW reboots the live agent onto it).
   Future<void> _addConnection() async {
-    final draft = await faui.pushFaPage<DapConnectionDraft>(
-      context,
+    final draft = await _pushEditor(
       const DapConnectionEditorPage(initialUrl: ''),
     );
-    if (draft == null) return;
+    if (draft == null || !await _commitDraft(draft)) return;
+    AppAnalytics.instance.dapHubAction('add');
+    await _upsertFromDraft(draft);
+    await _reload();
+  }
+
+  /// Pushes the add/edit form; the popped draft, or null when cancelled.
+  Future<DapConnectionDraft?> _pushEditor(DapConnectionEditorPage page) =>
+      faui.pushFaPage<DapConnectionDraft>(context, page);
+
+  /// Persists the draft to the shared config. False = the save failed and
+  /// the user was told (the flow stops — no bookmark, no analytics save).
+  Future<bool> _commitDraft(DapConnectionDraft draft) async {
     try {
       await _service.saveConnection(
         url: draft.url,
@@ -245,22 +247,25 @@ class _DapHubPageState extends State<DapHubPage> {
         secret: (draft.secret ?? '').trim().isEmpty ? null : draft.secret,
       );
     } on Object {
-      if (!mounted) return;
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        SnackBar(content: Text(context.l10n.settingsDapSaveFailed)),
-      );
-      return;
+      // Bad host (normalizeDapHost) or a failed config write: tell the
+      // user instead of an unhandled async exception.
+      if (!mounted) return false;
+      _showSaveFailed();
+      return false;
     }
-    AppAnalytics.instance.dapHubAction('add');
-    await _upsertSaved(
-      DapSavedConnection(
-        url: normalizeWebDapHost(draft.url.trim()),
-        name: draft.name.trim(),
-        secret: (draft.secret ?? '').trim(),
-      ),
-    );
-    await _reload();
+    return true;
   }
+
+  /// Keeps the bookmark list in lockstep with the active connection: the
+  /// entry (matched by url) is upserted with the typed secret, or keeps
+  /// its stored one when the write-only field was left empty.
+  Future<void> _upsertFromDraft(DapConnectionDraft draft) => _upsertSaved(
+    DapSavedConnection(
+      url: normalizeWebDapHost(draft.url.trim()),
+      name: draft.name.trim(),
+      secret: (draft.secret ?? '').trim(),
+    ),
+  );
 
   /// Tapping a non-active bookmark switches the live agent onto it.
   Future<void> _switchTo(DapSavedConnection entry) async {
@@ -271,9 +276,7 @@ class _DapHubPageState extends State<DapHubPage> {
       await (_service as ExtensionDapHubService).switchConnection(entry.url);
     } on Object {
       if (!mounted) return;
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        SnackBar(content: Text(context.l10n.settingsDapSaveFailed)),
-      );
+      _showSaveFailed();
     } finally {
       if (mounted) setState(() => _switchingConnection = false);
     }
@@ -291,9 +294,7 @@ class _DapHubPageState extends State<DapHubPage> {
       await service.setSavedConnections(updated);
     } on Object {
       if (!mounted) return;
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        SnackBar(content: Text(context.l10n.settingsDapSaveFailed)),
-      );
+      _showSaveFailed();
       return;
     }
     await _reload();
@@ -315,14 +316,19 @@ class _DapHubPageState extends State<DapHubPage> {
       );
     } on Object {
       if (!mounted) return;
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        SnackBar(content: Text(context.l10n.settingsDapSaveFailed)),
-      );
+      _showSaveFailed();
     } finally {
       if (mounted) setState(() => _savingBinding = false);
     }
     unawaited(DapBindingStore.instance.refresh());
     await _reload();
+  }
+
+  /// The shared save-failure note (connection, bookmark, binding, switch).
+  void _showSaveFailed() {
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(content: Text(context.l10n.settingsDapSaveFailed)),
+    );
   }
 
   @override
@@ -452,29 +458,11 @@ class _DapHubPageState extends State<DapHubPage> {
       key: ValueKey('dapConn-${entry.url}'),
       contentPadding: EdgeInsets.zero,
       dense: true,
-      leading: Container(
-        width: 10,
-        height: 10,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: active ? colors.teal : colors.dim.withValues(alpha: 0.4),
-        ),
-      ),
+      leading: _activeDot(colors, active),
       title: Row(
         children: [
-          Expanded(
-            child: Text(
-              entry.name.isEmpty ? entry.url : entry.name,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                fontWeight: active ? FontWeight.w600 : null,
-              ),
-            ),
-          ),
-          if (active)
-            Text(
-              context.l10n.settingsDapActiveChip,
-              style: theme.textTheme.labelSmall?.copyWith(color: colors.teal),
-            ),
+          Expanded(child: _connectionTitle(context, entry, active)),
+          if (active) _activeChip(context),
         ],
       ),
       subtitle: Text(
@@ -489,6 +477,43 @@ class _DapHubPageState extends State<DapHubPage> {
         color: selected ? colors.teal : colors.dim,
       ),
       onTap: () => setState(() => _selected = entry),
+    );
+  }
+
+  /// The row's display name: the saved name, or the url when unnamed;
+  /// bolder when this is the active connection.
+  Widget _connectionTitle(
+    BuildContext context,
+    DapSavedConnection entry,
+    bool active,
+  ) {
+    final theme = Theme.of(context);
+    return Text(
+      entry.name.isEmpty ? entry.url : entry.name,
+      style: theme.textTheme.bodyMedium?.copyWith(
+        fontWeight: active ? FontWeight.w600 : null,
+      ),
+    );
+  }
+
+  /// The 10px status dot in front of a row.
+  Widget _activeDot(FahColors colors, bool active) => Container(
+    width: 10,
+    height: 10,
+    decoration: BoxDecoration(
+      shape: BoxShape.circle,
+      color: active ? colors.teal : colors.dim.withValues(alpha: 0.4),
+    ),
+  );
+
+  /// The teal Active chip on the active row.
+  Widget _activeChip(BuildContext context) {
+    final theme = Theme.of(context);
+    return Text(
+      context.l10n.settingsDapActiveChip,
+      style: theme.textTheme.labelSmall?.copyWith(
+        color: FahColors.of(context).teal,
+      ),
     );
   }
 
@@ -530,39 +555,48 @@ class _DapHubPageState extends State<DapHubPage> {
               style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
             ),
             const SizedBox(height: 24),
-            FilledButton.icon(
-              onPressed: _switchingConnection
-                  ? null
-                  : () async {
-                      await _switchTo(entry);
-                      if (mounted) setState(() => _selected = entry);
-                    },
-              icon: _switchingConnection
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.swap_horiz, size: 18),
-              label: Text(context.l10n.settingsDapMakeActive),
-            ),
+            _makeActiveButton(context, entry),
             const SizedBox(height: 8),
-            OutlinedButton.icon(
-              onPressed: _switchingConnection
-                  ? null
-                  : () async {
-                      await _removeSaved(entry);
-                      if (mounted) setState(() => _selected = null);
-                    },
-              icon: const Icon(Icons.bookmark_remove_outlined, size: 18),
-              label: Text(context.l10n.settingsDapRemoveSaved),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: theme.colorScheme.error,
-              ),
-            ),
+            _removeSavedButton(context, entry),
           ],
         ),
       ),
+    );
+  }
+
+  /// The live switch: swaps the spinner in while a switch is in flight.
+  Widget _makeActiveButton(BuildContext context, DapSavedConnection entry) {
+    return FilledButton.icon(
+      onPressed: _switchingConnection
+          ? null
+          : () async {
+              await _switchTo(entry);
+              if (mounted) setState(() => _selected = entry);
+            },
+      icon: _switchingConnection
+          ? const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.swap_horiz, size: 18),
+      label: Text(context.l10n.settingsDapMakeActive),
+    );
+  }
+
+  /// Drops the bookmark from the detail view.
+  Widget _removeSavedButton(BuildContext context, DapSavedConnection entry) {
+    final theme = Theme.of(context);
+    return OutlinedButton.icon(
+      onPressed: _switchingConnection
+          ? null
+          : () async {
+              await _removeSaved(entry);
+              if (mounted) setState(() => _selected = null);
+            },
+      icon: const Icon(Icons.bookmark_remove_outlined, size: 18),
+      label: Text(context.l10n.settingsDapRemoveSaved),
+      style: OutlinedButton.styleFrom(foregroundColor: theme.colorScheme.error),
     );
   }
 
@@ -710,7 +744,6 @@ class _DapHubPageState extends State<DapHubPage> {
     final colors = FahColors.of(context);
     final theme = Theme.of(context);
     final l10n = context.l10n;
-    final mode = snapshot.inboundMode;
     final sessions = _bindableSessions ?? const <DapBindableSession>[];
     return [
       Text(l10n.settingsDapInboundTitle, style: theme.textTheme.titleSmall),
@@ -720,60 +753,87 @@ class _DapHubPageState extends State<DapHubPage> {
         style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
       ),
       const SizedBox(height: 8),
-      _inboundOption(
-        context,
-        selected: mode == DapInboundMode.dedicated,
-        label: l10n.settingsDapInboundDedicated,
-        detail: mode == DapInboundMode.dedicated
-            ? snapshot.boundSessionTitle
-            : null,
-        onTap: () => _saveBinding(DapInboundMode.dedicated),
-      ),
-      _inboundOption(
-        context,
-        selected: mode == DapInboundMode.currentSession,
-        label: l10n.settingsDapInboundCurrent,
-        onTap: () => _saveBinding(DapInboundMode.currentSession),
-      ),
-      _inboundOption(
-        context,
-        selected: mode == DapInboundMode.named,
-        label: l10n.settingsDapInboundNamed,
-        detail: mode == DapInboundMode.named
-            ? snapshot.boundSessionTitle
-            : null,
-        onTap: sessions.isEmpty
-            ? null
-            : () => _saveBinding(
-                DapInboundMode.named,
-                sessionId: sessions.first.id,
-                sessionTitle: sessions.first.title,
-              ),
-      ),
-      if (mode == DapInboundMode.named && sessions.isNotEmpty) ...[
+      // Display order: dedicated, open session, picked session.
+      for (final mode in const [
+        DapInboundMode.dedicated,
+        DapInboundMode.currentSession,
+        DapInboundMode.named,
+      ])
+        _inboundModeRow(context, snapshot, mode, sessions),
+      if (snapshot.inboundMode == DapInboundMode.named &&
+          sessions.isNotEmpty) ...[
         const SizedBox(height: 4),
-        DropdownMenu<String>(
-          initialSelection: sessions
-              .where((entry) => entry.title == snapshot.boundSessionTitle)
-              .firstOrNull
-              ?.id,
-          enabled: !_savingBinding,
-          dropdownMenuEntries: [
-            for (final entry in sessions)
-              DropdownMenuEntry<String>(value: entry.id, label: entry.title),
-          ],
-          onSelected: (id) {
-            final entry = sessions.where((e) => e.id == id).firstOrNull;
-            if (entry == null) return;
-            _saveBinding(
-              DapInboundMode.named,
-              sessionId: entry.id,
-              sessionTitle: entry.title,
-            );
-          },
-        ),
+        _inboundPicker(context, snapshot, sessions),
       ],
     ];
+  }
+
+  /// One mode row: the label, the bound-session detail line while
+  /// selected, and the tap that persists the mode.
+  Widget _inboundModeRow(
+    BuildContext context,
+    DapHubSnapshot snapshot,
+    DapInboundMode mode,
+    List<DapBindableSession> sessions,
+  ) {
+    final l10n = context.l10n;
+    final selected = snapshot.inboundMode == mode;
+    return _inboundOption(
+      context,
+      selected: selected,
+      label: switch (mode) {
+        DapInboundMode.dedicated => l10n.settingsDapInboundDedicated,
+        DapInboundMode.currentSession => l10n.settingsDapInboundCurrent,
+        DapInboundMode.named => l10n.settingsDapInboundNamed,
+      },
+      detail: selected && mode != DapInboundMode.currentSession
+          ? snapshot.boundSessionTitle
+          : null,
+      onTap: _inboundOnTap(mode, sessions),
+    );
+  }
+
+  /// What tapping a mode row does: named needs a session (the row is dead
+  /// while none is enumerable); the other two just persist their mode.
+  VoidCallback? _inboundOnTap(
+    DapInboundMode mode,
+    List<DapBindableSession> sessions,
+  ) => switch (mode) {
+    DapInboundMode.named when sessions.isEmpty => null,
+    DapInboundMode.named => () => _saveBinding(
+      DapInboundMode.named,
+      sessionId: sessions.first.id,
+      sessionTitle: sessions.first.title,
+    ),
+    _ => () => _saveBinding(mode),
+  };
+
+  /// The named-mode session picker: preselected to the bound session.
+  Widget _inboundPicker(
+    BuildContext context,
+    DapHubSnapshot snapshot,
+    List<DapBindableSession> sessions,
+  ) {
+    return DropdownMenu<String>(
+      initialSelection: sessions
+          .where((entry) => entry.title == snapshot.boundSessionTitle)
+          .firstOrNull
+          ?.id,
+      enabled: !_savingBinding,
+      dropdownMenuEntries: [
+        for (final entry in sessions)
+          DropdownMenuEntry<String>(value: entry.id, label: entry.title),
+      ],
+      onSelected: (id) {
+        final entry = sessions.where((e) => e.id == id).firstOrNull;
+        if (entry == null) return;
+        _saveBinding(
+          DapInboundMode.named,
+          sessionId: entry.id,
+          sessionTitle: entry.title,
+        );
+      },
+    );
   }
 
   /// One selectable inbound-routing row (radio-style, no deprecated
@@ -920,6 +980,29 @@ class _DapHubPageState extends State<DapHubPage> {
       ),
     );
   }
+}
+
+/// The bookmark list after upserting [entry] (one entry per url). An empty
+/// [entry.secret] keeps the stored secret of the same-url entry (the stored
+/// hub password is never echoed back into the UI); same-url entries fold
+/// into the one appended at the end. Pure — unit tested.
+List<DapSavedConnection> mergeDapSavedConnections(
+  List<DapSavedConnection> current,
+  DapSavedConnection entry,
+) {
+  final keepSecret = current
+      .where((e) => e.url == entry.url && e.secret.isNotEmpty)
+      .map((e) => e.secret)
+      .firstOrNull;
+  return [
+    for (final e in current)
+      if (e.url != entry.url) e,
+    DapSavedConnection(
+      url: entry.url,
+      name: entry.name,
+      secret: entry.secret.isNotEmpty ? entry.secret : keepSecret ?? '',
+    ),
+  ];
 }
 
 /// The values collected by the [DapConnectionEditorPage].
