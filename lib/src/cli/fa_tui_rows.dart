@@ -86,18 +86,24 @@ extension _TuiRowRenderers on FaTuiModel {
   /// One menu row (label + dim description, truncated to the width).
   String _menuItemRow(MenuItem item, bool selected) {
     final desc = item.description.isNotEmpty ? ' ${item.description}' : '';
-    // Menu rows must never exceed the width: a soft-wrapped chrome line
-    // desyncs the renderer's row math and smears frames on every key.
     final full = '${item.label}$desc';
+    // Highlighted labels embed SGR runs; widths are VISIBLE cells (the
+    // renderer measures stripped rows — vendor viewport.dart measures
+    // `textWidth(stripAnsi(line))`), so measure and fit the stripped text:
+    // counting the escape bytes as cells over-measured every fuzzy-matched
+    // row ~3× and elided it to a few visible chars (issue #595).
+    final plain = stripAnsi(full);
     final prefix = selected ? '${_accent('▸')} ' : '  ';
-    if (tuiTextWidth(full) <= termWidth - 2) {
+    if (tuiTextWidth(plain) <= termWidth - 2) {
       if (selected) {
         return '$prefix${_rearmSelection(item.label)}${_dim(desc)}';
       }
       return '$prefix${item.label}${_dim(desc)}';
     }
-    final text = _fitWidth(full, termWidth - 2);
-    return selected ? '$prefix${_rearmSelection(text)}' : '$prefix$text';
+    // Truncated rows render stripped: fitting the styled string cut
+    // mid-escape, leaking SGR into the rest of the line. `plain` carries
+    // no `\x1b[0m`, so `_rearmSelection` would be a no-op here.
+    return '$prefix${_fitWidth(plain, termWidth - 2)}';
   }
 
   /// A fuzzy-highlighted label embeds per-match `accent2Soft …\x1b[0m`
