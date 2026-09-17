@@ -1053,6 +1053,10 @@ class AgentCli {
   /// per-turn collapse, records for reload. Replaced wholesale on session
   /// resume by rehydration.
   ShellJobBoard _jobBoard = ShellJobBoard();
+
+  /// The registry-persist serialization tail (issue #539) — see
+  /// `_persistJobBoard` in the hub driver extension.
+  Future<void> _persistChain = Future.value();
   final DateTime _hubMainStartedAt = DateTime.now();
   String? _hubTranscriptId;
   Timer? _hubFollowTimer;
