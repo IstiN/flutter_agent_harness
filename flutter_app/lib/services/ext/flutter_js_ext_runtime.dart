@@ -69,6 +69,103 @@ globalThis.__extFatal = function (m) {
 };
 ''';
 
+/// What one decoded `__ext_host` message asks the host to do. Pure — the
+/// tables live in flutter_js_ext_runtime_test.dart; the runtime only
+/// dispatches on the result.
+sealed class ExtHostRoute {
+  const ExtHostRoute();
+}
+
+/// `main.js` reported a top-level throw: `{fatal}`.
+final class ExtHostFatal extends ExtHostRoute {
+  const ExtHostFatal(this.message);
+  final String message;
+}
+
+/// An adapter invoke reply settled in JS: `{invoke, ok, value|error}`.
+final class ExtHostInvokeReply extends ExtHostRoute {
+  const ExtHostInvokeReply(this.handle, this.ok, this.reply);
+  final Object? handle;
+  final bool ok;
+  final Map<dynamic, dynamic> reply;
+}
+
+/// A bootstrap bridge request from the extension: `{seq, method, args}`.
+final class ExtHostBridgeRequest extends ExtHostRoute {
+  const ExtHostBridgeRequest(this.seq, this.method, this.args);
+  final int seq;
+  final Object? method;
+  final Object? args;
+}
+
+/// Anything else (non-map payloads, unknown shapes) — ignored, exactly as
+/// the old guard chain did.
+final class ExtHostIgnore extends ExtHostRoute {
+  const ExtHostIgnore();
+}
+
+/// Classifies one `__ext_host` message (pure; issue #568). Precedence is
+/// the old guard chain's: fatal, then invoke reply, then bridge request.
+ExtHostRoute routeExtHostMessage(Object? message) {
+  if (message is! Map) return const ExtHostIgnore();
+  final fatal = message['fatal'];
+  if (fatal is String) return ExtHostFatal(fatal);
+  if (message.containsKey('invoke')) {
+    return ExtHostInvokeReply(
+      message['invoke'],
+      message['ok'] == true,
+      message,
+    );
+  }
+  final seq = message['seq'];
+  if (seq is int) {
+    return ExtHostBridgeRequest(seq, message['method'], message['args']);
+  }
+  return const ExtHostIgnore();
+}
+
+/// One bridge call's shaped outcome: the value, or the error text a throw
+/// was rendered into.
+typedef ExtBridgeOutcome = ({bool ok, Object? value, String? error});
+
+/// The wire `method` must be a String; anything else is the empty name (the
+/// bridge then reports unknown-method, exactly as before).
+String extBridgeMethod(Object? method) => method is String ? method : '';
+
+/// The wire `args` must be a Map; anything else is the empty argument set.
+Map<String, dynamic> extBridgeArgs(Object? args) =>
+    args is Map ? Map<String, dynamic>.from(args) : const <String, dynamic>{};
+
+/// Runs [bridges] and captures a throw as the error outcome (public so the
+/// outcome shaping is table-tested without an engine).
+Future<ExtBridgeOutcome> runExtBridge(
+  ExtBridgeHandler bridges,
+  String method,
+  Map<String, dynamic> args,
+) async {
+  try {
+    return (ok: true, value: await bridges(method, args), error: null);
+  } catch (caught) {
+    return (ok: false, value: null, error: '$caught');
+  }
+}
+
+/// Shapes the `__extDeliver` reply for [seq] (pure).
+Map<String, dynamic> extBridgeReply(int seq, ExtBridgeOutcome outcome) =>
+    outcome.ok
+        ? {'seq': seq, 'ok': true, 'value': outcome.value}
+        : {'seq': seq, 'ok': false, 'error': outcome.error};
+
+/// Completes every pending invocation with [error], skipping completers
+/// already settled (public so the drain is table-tested without an engine).
+void failPendingCompleters(Iterable<Completer<Object?>> pending, Object error) {
+  for (final completer in List.of(pending)) {
+    if (!completer.isCompleted) {
+      completer.completeError(error);
+    }
+  }
+}
+
 /// Per-extension JS engine on flutter_js. [start] drives bootstrap + main.js,
 /// [invoke] awaits the JS-side result over the `__ext_host` channel, and a
 /// wedged engine is released (JSC has no script interrupt).
@@ -183,30 +280,29 @@ final class FlutterJsExtRuntime implements JsrRuntime {
       _pending.remove(handle);
     }
   }
-
   @override
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
-    for (final completer in List.of(_pending.values)) {
-      if (!completer.isCompleted) {
-        completer.completeError(StateError('runtime disposed'));
-      }
-    }
+    failPendingCompleters(_pending.values, StateError('runtime disposed'));
     _pending.clear();
     // Release the native engine on the NEXT event-loop turn, after the
     // microtask queue drains (promise-resolve callbacks flutter_js queued are
     // microtasks that may still evaluate into the context). Same recipe as
     // js_widget_runtime's flutter_js backend — releasing synchronously after
     // an evaluate is a native use-after-free (SIGSEGV in the wild).
-    await Future<void>.delayed(Duration.zero, () {
-      try {
-        _rt.executePendingJob();
-      } catch (_) {}
-      try {
-        _rt.dispose();
-      } catch (_) {}
-    });
+    await Future<void>.delayed(Duration.zero, _releaseEngine);
+  }
+
+  /// Releases the native engine, swallowing the teardown races flutter_js
+  /// can raise from either call.
+  void _releaseEngine() {
+    try {
+      _rt.executePendingJob();
+    } catch (_) {}
+    try {
+      _rt.dispose();
+    } catch (_) {}
   }
 
   /// Evaluates [js] and returns `stringResult`; drains the job queue. Throws
@@ -232,29 +328,32 @@ final class FlutterJsExtRuntime implements JsrRuntime {
       if (_rt.executePendingJob() == 0) break;
     }
   }
-
-  /// Routes one `__ext_host` message. flutter_js hands the decoded JSON over:
-  /// `{fatal}` (main.js throw), `{invoke}` (adapter invoke reply), or
+  /// Routes one `__ext_host` message. flutter_js hands the decoded JSON
+  /// over: `{fatal}` (main.js throw), `{invoke}` (adapter invoke reply), or
   /// `{seq}` (bootstrap bridge request).
   void _onHostMessage(dynamic message) {
-    if (message is! Map) return;
-    if (message['fatal'] is String) {
-      _failAll('extension fatal: ${message['fatal']}');
-      return;
+    final routed = routeExtHostMessage(message);
+    if (routed is ExtHostFatal) {
+      _failAll('extension fatal: ${routed.message}');
+    } else if (routed is ExtHostInvokeReply) {
+      _onInvokeReply(routed.handle, routed.ok, routed.reply);
+    } else if (routed is ExtHostBridgeRequest) {
+      unawaited(_onBridgeRequest(routed.seq, routed.method, routed.args));
     }
-    if (message.containsKey('invoke')) {
-      _onInvokeReply(message['invoke'], message['ok'] == true, message);
-      return;
-    }
-    if (message['seq'] is int) {
-      unawaited(
-        _onBridgeRequest(
-          message['seq'] as int,
-          message['method'],
-          message['args'],
-        ),
-      );
-    }
+    // ExtHostIgnore: nothing to do.
+  }
+
+  Future<void> _onBridgeRequest(int seq, dynamic method, dynamic args) async {
+    final outcome = await runExtBridge(
+      _bridges!,
+      extBridgeMethod(method),
+      extBridgeArgs(args),
+    );
+    if (_disposed) return;
+    // jsonEncode output is a valid JS object literal, so the reply can be
+    // interpolated straight into the evaluate.
+    final result = _rt.evaluate('__extDeliver(${jsonEncode(extBridgeReply(seq, outcome))})');
+    if (!result.isError) _drainJobs();
   }
 
   void _onInvokeReply(dynamic handle, bool ok, Map message) {
@@ -269,43 +368,16 @@ final class FlutterJsExtRuntime implements JsrRuntime {
     }
   }
 
-  Future<void> _onBridgeRequest(int seq, dynamic method, dynamic args) async {
-    Object? value;
-    var ok = true;
-    String? error;
-    try {
-      value = await _bridges!(
-        method is String ? method : '',
-        args is Map ? Map<String, dynamic>.from(args) : const <String, dynamic>{},
-      );
-    } catch (caught) {
-      ok = false;
-      error = '$caught';
-    }
-    if (_disposed) return;
-    final reply = ok
-        ? {'seq': seq, 'ok': true, 'value': value}
-        : {'seq': seq, 'ok': false, 'error': error};
-    // jsonEncode output is a valid JS object literal, so the reply can be
-    // interpolated straight into the evaluate.
-    final result = _rt.evaluate('__extDeliver(${jsonEncode(reply)})');
-    if (!result.isError) _drainJobs();
-  }
-
   String? _fatal;
   String? _takeFatal() {
     final fatal = _fatal;
     _fatal = null;
     return fatal;
   }
-
   void _failAll(String message) {
     _fatal ??= message;
-    for (final completer in List.of(_pending.values)) {
-      if (!completer.isCompleted) {
-        completer.completeError(ExtProtocolException(message));
-      }
-    }
+    failPendingCompleters(_pending.values, ExtProtocolException(message));
     _pending.clear();
   }
+
 }

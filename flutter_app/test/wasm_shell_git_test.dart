@@ -18,6 +18,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io' as io;
 
+import 'package:dart_git/dart_git.dart' as dart_git;
+import 'package:dart_git/plumbing/git_hash.dart';
+import 'package:dart_git/plumbing/reference.dart';
 import 'package:fa/sandbox/shell_parser.dart';
 import 'package:fa/sandbox/wasm_shell.dart';
 import 'package:fa/sandbox/wasm_shell_git.dart';
@@ -696,6 +699,212 @@ void main() {
       expect(client.requested.first.path, '/owner/repo/info/refs');
       expect(client.requested.last.host, 'api.github.com');
       expect(client.requested.last.path, '/repos/owner/repo/tarball');
+    });
+  });
+
+  // Pure push/SSH helper tables + remote-tracking ref bookkeeping
+  // (issue #568) — no network: the token and arg shapers are static, and
+  // the SSH resolver only reads sandbox-mapped paths.
+  group('push helpers (issue #568)', () {
+    test('parsePushArgs splits remote/branch and defaults the branch', () {
+      expect(GitSandboxCommands.parsePushArgs([], null), (remoteName: 'origin', branch: null));
+      expect(
+        GitSandboxCommands.parsePushArgs(['main'], null),
+        (remoteName: 'main', branch: null),
+        reason: 'a lone positional names the remote; the current branch '
+            'rides along (null when detached)',
+      );
+      expect(
+        GitSandboxCommands.parsePushArgs(['up', 'topic'], null),
+        (remoteName: 'up', branch: 'topic'),
+      );
+      expect(
+        GitSandboxCommands.parsePushArgs(['--force', 'up', 'topic', '-q'], null),
+        (remoteName: 'up', branch: 'topic'),
+        reason: 'flags are ignored, order is remote then branch',
+      );
+      expect(
+        GitSandboxCommands.parsePushArgs(['--force-with-lease'], null),
+        (remoteName: 'origin', branch: null),
+      );
+    });
+
+    test('parsePushArgs falls back to the current branch name', () {
+      expect(
+        GitSandboxCommands.parsePushArgs([], 'topic'),
+        (remoteName: 'origin', branch: 'topic'),
+      );
+      expect(
+        GitSandboxCommands.parsePushArgs(['up'], 'topic'),
+        (remoteName: 'up', branch: 'topic'),
+      );
+    });
+
+    test('resolvePushToken prefers the shell env, then the platform env',
+        () {
+      const platform = {'GITHUB_TOKEN': 'platform-gh'};
+      expect(
+        GitSandboxCommands.resolvePushToken(
+          {'GIT_TOKEN': 'shell-git'},
+          platform,
+        ),
+        'shell-git',
+        reason: 'shell env wins over the platform env',
+      );
+      expect(
+        GitSandboxCommands.resolvePushToken({'FAH_GIT_TOKEN': 'shell-fah'}, platform),
+        'shell-fah',
+      );
+      expect(
+        GitSandboxCommands.resolvePushToken({'GITHUB_TOKEN': 'shell-gh'}, platform),
+        'shell-gh',
+      );
+      expect(GitSandboxCommands.resolvePushToken(null, platform), 'platform-gh');
+      expect(GitSandboxCommands.resolvePushToken(const {}, const {}), isNull);
+    });
+
+    test('stripTrailingSlash strips the trailing slash unconditionally',
+        () {
+      expect(
+        GitSandboxCommands.stripTrailingSlash('/srv/git/repo/'),
+        '/srv/git/repo',
+      );
+      expect(GitSandboxCommands.stripTrailingSlash('/srv/git/repo'), '/srv/git/repo');
+      expect(
+        GitSandboxCommands.stripTrailingSlash('/'),
+        '',
+        reason: 'frozen behavior: unconditional single-slash strip',
+      );
+      expect(GitSandboxCommands.stripTrailingSlash(''), '');
+    });
+
+    test('resolveSshKeyPem reads inline keys, key files, then defaults', () async {
+      final keyFile = io.File(
+        p.join(temp.path, 'id_ed25519'),
+      )..writeAsStringSync('not a pem\n');
+      final pemFile = io.File(
+        p.join(temp.path, 'id_pem'),
+      )..writeAsStringSync('-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n');
+
+      // Inline PEM with the marker wins immediately.
+      expect(
+        GitSandboxCommands.resolveSshKeyPem(
+          hostPathOf: (_) => '',
+          platformEnv: const {},
+          env: {'GIT_SSH_KEY': '-----BEGIN OPENSSH PRIVATE KEY-----\nz'},
+        ),
+        '-----BEGIN OPENSSH PRIVATE KEY-----\nz',
+      );
+      // Inline without the marker falls through to key files.
+      expect(
+        GitSandboxCommands.resolveSshKeyPem(
+          hostPathOf: (p) => p == '~/id_pem' ? pemFile.path : '',
+          platformEnv: const {},
+          env: {'GIT_SSH_KEY': 'plain token', 'GIT_SSH_KEY_PATH': '~/id_pem'},
+        ),
+        contains('PRIVATE KEY'),
+      );
+      // A key file without the PEM marker is skipped too.
+      expect(
+        GitSandboxCommands.resolveSshKeyPem(
+          hostPathOf: (p) => p == '~/id_ed25519' ? keyFile.path : '',
+          platformEnv: const {},
+          env: {'GIT_SSH_KEY': 'plain', 'GIT_SSH_KEY_PATH': '~/id_ed25519'},
+        ),
+        isNull,
+        reason: 'non-PEM key material is rejected like the old inline check',
+      );
+      // The sandbox default candidates resolve through hostPathOf.
+      expect(
+        GitSandboxCommands.resolveSshKeyPem(
+          hostPathOf: (p) => p == '/.ssh/id_ed25519' ? pemFile.path : '',
+          platformEnv: const {},
+          env: null,
+        ),
+        contains('PRIVATE KEY'),
+      );
+    });
+
+    test('trackPushedRef mirrors the pushed branch under refs/remotes',
+        () async {
+      final (stdout, stderr, code) =
+          await runGit(['init', '-b', 'main']);
+      expect(code, 0, reason: stderr);
+      expect(stdout, isNotEmpty);
+
+      final repo = dart_git.GitRepository.load(temp.path);
+      addTearDown(repo.close);
+      final head = repo.currentBranch();
+      expect(head, 'main');
+
+      // Unborn HEAD: no refs/remotes/origin/main exists yet, and the
+      // helper must not invent one from nothing.
+      GitSandboxCommands.trackPushedRef(repo, 'origin', 'main');
+
+      // Seed the branch ref, push again, and the mirror appears.
+      const hash = 'b3c1526fe274e47d3270da3412314fa25b86c779';
+      repo.refStorage.saveRef(
+        HashReference(
+          ReferenceName.branch('main'),
+          GitHash(hash),
+        ),
+      );
+      GitSandboxCommands.trackPushedRef(repo, 'origin', 'main');
+      final remoteRef = repo.resolveReferenceName(
+        ReferenceName.remote('origin', 'main'),
+      );
+      expect(remoteRef?.hash.toString(), hash);
+    });
+  });
+
+  group('branch listing helpers (issue #568)', () {
+    test('-r lists remote-tracking refs, -a lists both, -l lists local',
+        () async {
+      await runGit(['init', '-b', 'main']);
+      final repo = dart_git.GitRepository.load(temp.path);
+      addTearDown(repo.close);
+      const hash = 'b3c1526fe274e47d3270da3412314fa25b86c779';
+      repo.refStorage.saveRef(
+        HashReference(
+          ReferenceName.branch('main'),
+          GitHash(hash),
+        ),
+      );
+      repo.refStorage.saveRef(
+        HashReference(
+          ReferenceName.branch('feature'),
+          GitHash(hash),
+        ),
+      );
+      repo.refStorage.saveRef(
+        HashReference(
+          ReferenceName.remote('origin', 'main'),
+          GitHash(hash),
+        ),
+      );
+
+      final (rOut, _, rCode) = await runGit(['branch', '-r']);
+      expect(rCode, 0);
+      expect(rOut, 'origin/main\n');
+
+      final (aOut, _, aCode) = await runGit(['branch', '-a']);
+      expect(aCode, 0);
+      expect(
+        aOut.split('\n'),
+        containsAll(['* main', '  feature', 'origin/main']),
+      );
+
+      final (lOut, _, lCode) = await runGit(['branch']);
+      expect(lCode, 0);
+      expect(lOut, '  feature\n* main\n');
+    });
+
+    test('branch listing of an unborn repo answers with an empty line set',
+        () async {
+      await runGit(['init', '-b', 'main']);
+      final (out, _, code) = await runGit(['branch']);
+      expect(code, 0);
+      expect(out, '\n', reason: 'no branches yet: the line list is empty');
     });
   });
 }

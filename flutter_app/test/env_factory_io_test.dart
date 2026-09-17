@@ -1,9 +1,12 @@
 import 'dart:io';
 
 import 'package:fa/sandbox/env_factory_io.dart' as app_env;
+import 'package:fa/services/project_mount_env.dart';
+import 'package:fa/services/project_mount_store.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 
 void main() {
   group('SandboxedExecutionEnv', () {
@@ -111,4 +114,77 @@ void main() {
       expect((await env.readTextFile(info.path)).getOrThrow(), 'roundtrip');
     });
   });
+
+  group('createPlatformEnv builders (issue #568)', () {
+    late Directory appSupport;
+
+    setUp(() {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      appSupport = Directory.systemTemp.createTempSync('fah_app_support_');
+      PathProviderPlatform.instance = _FakePathProviderPlatform(appSupport);
+    });
+
+    tearDown(() {
+      if (appSupport.existsSync()) appSupport.deleteSync(recursive: true);
+    });
+
+    test('createDesktopEnv builds the env on the app-support directory',
+        () async {
+      final env = await app_env.createDesktopEnv();
+      expect(env.cwd, appSupport.path);
+      expect(env, isA<LocalExecutionEnv>());
+    });
+
+    test('applyStoredMount exposes a granted bookmark as the mounted root',
+        () async {
+      final (mountEnv, stored) = await _mountWithStoredMount();
+      app_env.applyStoredMount(mountEnv, stored, granted: true);
+      expect(mountEnv.mountedRoot, '/proj');
+      expect(mountEnv.mountUnavailable, isNull);
+    });
+
+    test('applyStoredMount surfaces a refused bookmark as stale', () async {
+      final (mountEnv, stored) = await _mountWithStoredMount();
+      app_env.applyStoredMount(mountEnv, stored, granted: false);
+      expect(mountEnv.mountedRoot, isNull);
+      expect(mountEnv.mountUnavailable, '/proj');
+    });
+    test('mountedDesktopEnv without a stored mount is a plain wrapper',
+        () async {
+      final baseEnv =
+          LocalExecutionEnv(cwd: Directory.systemTemp.createTempSync('fah_base_').path);
+      addTearDown(() => Directory(baseEnv.cwd).deleteSync(recursive: true));
+      final env =
+          await app_env.mountedDesktopEnv(baseEnv) as ProjectMountEnv;
+      expect(env.mountedRoot, isNull);
+      expect(env.mountUnavailable, isNull);
+      expect(env.cwd, baseEnv.cwd);
+    });
+  });
+}
+
+/// Builds a mount env with a persisted mount via the public save/load API.
+Future<(ProjectMountEnv, ProjectMountStore)> _mountWithStoredMount() async {
+  final baseEnv =
+      LocalExecutionEnv(cwd: Directory.systemTemp.createTempSync('fah_base_').path);
+  addTearDown(() => Directory(baseEnv.cwd).deleteSync(recursive: true));
+  await ProjectMountStore.save(
+    baseEnv,
+    path: '/proj',
+    bookmark: 'bm',
+    scoped: true,
+  );
+  final stored = (await ProjectMountStore.load(baseEnv))!;
+  return (ProjectMountEnv(baseEnv), stored);
+}
+
+/// Platform-interface fake: the path_provider method channel is gated by
+/// the host platform, the interface is not.
+final class _FakePathProviderPlatform extends PathProviderPlatform {
+  _FakePathProviderPlatform(this._appSupport);
+
+  final Directory _appSupport;
+
+  @override
+  Future<String?> getApplicationSupportPath() async => _appSupport.path;
 }
