@@ -114,7 +114,7 @@ String _resolveKey(
   return key;
 }
 
-/// Copilot GitHub tokens are stored entry-scoped (FA_KEY_COPILOT_<NAME>,
+/// Copilot GitHub tokens are stored entry-scoped (`FA_KEY_COPILOT_<NAME>`,
 /// the CLI contract); the entry name is the registry provider's name.
 String _copilotEntryKey(
   String kind,
