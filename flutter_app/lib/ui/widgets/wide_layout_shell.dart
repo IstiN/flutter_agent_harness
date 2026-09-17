@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 
 import 'package:fa/apps/app_tile_host.dart';
 import 'package:fa/apps/apps_store.dart';
+import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/sandbox/env_factory.dart';
 import 'package:fa/services/agent_service.dart';
@@ -612,74 +613,118 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   /// Personal sandbox. The created session's cwd (and its drawer group)
   /// follows the folder.
   Future<void> _newSession() async {
-    final active = widget.manager.active;
-    if (active == null) return;
-    final service = active.service;
+    final target = _newSessionTarget;
+    if (target == null) return;
     // Relay sessions (extension panel) live in the service worker: reset
     // there instead of cloning a local config.
-    final relayReset = service.newSessionAction;
-    if (relayReset != null) {
-      await relayReset();
-      return;
-    }
+    if (await _resetViaRelay(target.service)) return;
+    final choice = await _pickNewSessionFolder(target.service);
+    if (choice == null) return;
+    _createSessionInChosenFolder(target.service, target.config);
+  }
+
+  /// Everything a local new-session clone needs from the active session,
+  /// or null when there is nothing to clone from.
+  ({AgentService service, AgentConfig config})? get _newSessionTarget {
+    final service = widget.manager.active?.service;
+    if (service == null) return null;
     final config = service.configForClone;
-    if (config == null) return;
-    final l10n = context.l10n;
-    final env = service.env;
-    final mountedPath = _mountedPath;
-    final supportsPicking = !kIsWeb && Platform.isMacOS;
+    if (config == null) return null;
+    return (service: service, config: config);
+  }
+
+  /// Runs the relay's new-session action when the surface has one;
+  /// true = handled (the local clone path must not run).
+  Future<bool> _resetViaRelay(AgentService service) async {
+    final relayReset = service.newSessionAction;
+    if (relayReset == null) return false;
+    await relayReset();
+    return true;
+  }
+
+  /// New session: asks which folder it belongs to first — the current
+  /// folder (the active mount), a freshly picked one (the picker mounts
+  /// it for the whole app, like the info dialog's change button), or the
+  /// Personal sandbox. Null = aborted, no session.
+  Future<String?> _pickNewSessionFolder(AgentService service) async {
     final choice = await showDialog<String>(
       context: context,
-      builder: (dialogContext) => SimpleDialog(
-        title: Text(l10n.newSessionFolderTitle),
-        children: [
-          SimpleDialogOption(
-            key: const ValueKey('newSessionCurrentFolder'),
-            onPressed: () => Navigator.pop(dialogContext, 'current'),
-            child: ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text(
-                mountedPath != null
-                    ? l10n.newSessionCurrentFolder(p.basename(mountedPath))
-                    : l10n.sessionFolderPersonal,
-              ),
-              subtitle: mountedPath != null ? Text(mountedPath) : null,
-              leading: const Icon(Icons.folder_outlined),
-            ),
-          ),
-          if (supportsPicking)
-            SimpleDialogOption(
-              key: const ValueKey('newSessionChooseFolder'),
-              onPressed: () => Navigator.pop(dialogContext, 'choose'),
-              child: ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(l10n.workspaceDialogChangeFolder),
-                leading: const Icon(Icons.create_new_folder_outlined),
-              ),
-            ),
-        ],
-      ),
+      builder: (dialogContext) =>
+          _newSessionFolderDialog(dialogContext, context.l10n, _mountedPath),
     );
-    if (choice == null || !mounted) return;
-    if (choice == 'choose') {
-      final messenger = ScaffoldMessenger.of(context);
-      final String? picked;
-      try {
-        picked = await pickAndApplyProjectMount(
-          env: env,
-          onApplied: () => service.refreshProjectMountPrompt(),
-          onAccessDenied: () => messenger.showSnackBar(
-            SnackBar(content: Text(l10n.filesFolderAccessDenied)),
-          ),
-        );
-      } on Object catch (e) {
-        messenger.showSnackBar(
-          SnackBar(content: Text(l10n.filesFolderPickerError(e.toString()))),
-        );
-        return;
-      }
-      if (picked == null) return; // cancelled the picker — no session
+    if (choice == null || !mounted) return null;
+    return choice != 'choose' ? choice : await _chooseNewSessionFolder(service);
+  }
+
+  Future<String?> _chooseNewSessionFolder(AgentService service) async =>
+      (await _applyPickedMount(service)) ? 'choose' : null;
+
+  /// The macOS folder picker: applies the picked mount to the whole app
+  /// (like the info dialog's change button); false = cancelled/failed.
+  Future<bool> _applyPickedMount(AgentService service) async {
+    final l10n = context.l10n;
+    final messenger = ScaffoldMessenger.of(context);
+    final String? picked;
+    try {
+      picked = await pickAndApplyProjectMount(
+        env: service.env,
+        onApplied: () => service.refreshProjectMountPrompt(),
+        onAccessDenied: () => messenger.showSnackBar(
+          SnackBar(content: Text(l10n.filesFolderAccessDenied)),
+        ),
+      );
+    } on Object catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text(l10n.filesFolderPickerError(e.toString()))),
+      );
+      return false;
     }
+    return picked != null;
+  }
+
+  /// The folder question dialog: the current mount (or the Personal
+  /// sandbox) and, on macOS, the pick-another-folder option.
+  Widget _newSessionFolderDialog(
+    BuildContext dialogContext,
+    AppLocalizations l10n,
+    String? mountedPath,
+  ) => SimpleDialog(
+    title: Text(l10n.newSessionFolderTitle),
+    children: [
+      SimpleDialogOption(
+        key: const ValueKey('newSessionCurrentFolder'),
+        onPressed: () => Navigator.pop(dialogContext, 'current'),
+        child: _newSessionCurrentFolderTile(l10n, mountedPath),
+      ),
+      if (!kIsWeb && Platform.isMacOS)
+        SimpleDialogOption(
+          key: const ValueKey('newSessionChooseFolder'),
+          onPressed: () => Navigator.pop(dialogContext, 'choose'),
+          child: ListTile(
+            title: Text(l10n.workspaceDialogChangeFolder),
+            leading: const Icon(Icons.create_new_folder_outlined),
+          ),
+        ),
+    ],
+  );
+
+  Widget _newSessionCurrentFolderTile(
+    AppLocalizations l10n,
+    String? mountedPath,
+  ) => ListTile(
+    contentPadding: EdgeInsets.zero,
+    title: Text(
+      mountedPath != null
+          ? l10n.newSessionCurrentFolder(p.basename(mountedPath))
+          : l10n.sessionFolderPersonal,
+    ),
+    subtitle: mountedPath != null ? Text(mountedPath) : null,
+    leading: const Icon(Icons.folder_outlined),
+  );
+
+  /// The folder is already set ('current' or a freshly applied pick);
+  /// the created session's cwd (and its drawer group) follows it.
+  void _createSessionInChosenFolder(AgentService service, AgentConfig config) {
     unawaited(
       widget.manager.createSession(
         config: config,
@@ -711,9 +756,8 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   /// like the narrow drawer; cloning locally would fail (the page-side
   /// service has no config to clone). Desktop clones the active service.
   Future<void> _openPersistedSession(SessionMetadata metadata) async {
-    final active = widget.manager.active;
-    if (active == null) return;
-    final service = active.service;
+    final service = widget.manager.active?.service;
+    if (service == null) return;
     final relayOpen = service.openSessionAction;
     if (relayOpen != null) {
       debugPrint(
@@ -724,50 +768,72 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
       return;
     }
     debugPrint('[fah][shell] open session ${metadata.id} via local clone');
+    await _clonePersistedSession(service, metadata);
+  }
+
+  /// Opens a persisted session by cloning the active service locally;
+  /// per-failure surfaces (oversize, live lease elsewhere, torn file)
+  /// degrade to snackbars/log lines, never a shell crash.
+  Future<void> _clonePersistedSession(
+    AgentService service,
+    SessionMetadata metadata,
+  ) async {
     try {
       await widget.manager.openSession(
         metadata,
-        config:
-            service.configForClone ??
-            AgentConfig(
-              providerKind: service.providerKind,
-              modelId: service.modelId,
-              baseUrl: '',
-              apiKey: '',
-            ),
+        config: service.configForClone ?? _fallbackCloneConfig(service),
         serviceFactory: () => service.clone(),
       );
     } on SessionTooLargeException {
-      if (!mounted) return;
-      final messenger = ScaffoldMessenger.maybeOf(context);
-      final sizeMb = (metadata.sizeBytes ?? 0) / (1024 * 1024);
-      messenger?.showSnackBar(
-        SnackBar(
-          content: Text(
-            context.l10n.sessionTooLargeTitle(sizeMb.toStringAsFixed(0)),
-          ),
-        ),
-      );
+      _showSessionTooLarge(metadata);
     } on SessionDrivenElsewhereException catch (error) {
       // Live lease (#428): never a second writer. The wide shell has no
       // attach surface — say so instead of silently doing nothing.
-      debugPrint('[fah][shell] ${metadata.id} driven elsewhere: $error');
-      if (!mounted) return;
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        SnackBar(
-          content: Text(
-            context.l10n.sessionDrivenElsewhere(
-              leaseOwnerLabel(error.lease.host),
-              error.lease.pid,
-            ),
-          ),
-        ),
-      );
+      _showDrivenElsewhere(metadata, error);
     } on Object catch (error) {
       // A torn/corrupt session file must not crash the shell — the entry
       // just stays in the list.
       debugPrint('[fah] open persisted session ${metadata.id} failed: $error');
     }
+  }
+
+  /// The open fallback when the service holds no clonable config.
+  AgentConfig _fallbackCloneConfig(AgentService service) => AgentConfig(
+    providerKind: service.providerKind,
+    modelId: service.modelId,
+    baseUrl: '',
+    apiKey: '',
+  );
+
+  void _showSessionTooLarge(SessionMetadata metadata) {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final sizeMb = (metadata.sizeBytes ?? 0) / (1024 * 1024);
+    messenger?.showSnackBar(
+      SnackBar(
+        content: Text(
+          context.l10n.sessionTooLargeTitle(sizeMb.toStringAsFixed(0)),
+        ),
+      ),
+    );
+  }
+
+  void _showDrivenElsewhere(
+    SessionMetadata metadata,
+    SessionDrivenElsewhereException error,
+  ) {
+    debugPrint('[fah][shell] ${metadata.id} driven elsewhere: $error');
+    if (!mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(
+        content: Text(
+          context.l10n.sessionDrivenElsewhere(
+            leaseOwnerLabel(error.lease.host),
+            error.lease.pid,
+          ),
+        ),
+      ),
+    );
   }
 
   /// Opens the shared quick model picker (the same two-step provider →
@@ -790,156 +856,239 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   /// folder is chosen at session creation, not switchable here), the
   /// restrict-access toggle, and the cross-instance mailbox address.
   Future<void> _openSessionInfoDialog() async {
-    final l10n = context.l10n;
     final service = widget.manager.active?.service;
-    final env = service?.env;
-    if (env == null) return;
-    // The session's OWN folder (from its metadata), not the shared env.
-    final sessionFolder = service?.currentSessionCwd;
-    final hasFolder = _sessionHasFolder;
-    final sessionId = service?.currentSessionId;
+    if (service == null) return;
+    final sessionId = service.currentSessionId;
     final names = widget.sessionNamesStore ?? _namesStore;
     final nameController = TextEditingController(
       text: sessionId == null ? '' : names?.titleFor(sessionId) ?? '',
     );
     await showDialog<void>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(l10n.workspaceDialogTitle),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Session name (rename): the same store the CLI's rename
-            // writes, so a title set here shows in `fa --resume` too.
-            if (sessionId != null && names != null) ...[
-              Text(
-                l10n.sessionInfoNameLabel,
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 4),
-              TextField(
-                controller: nameController,
-                decoration: InputDecoration(
-                  hintText: l10n.sidebarRenameHint,
-                  isDense: true,
-                ),
-                onSubmitted: (value) =>
-                    _saveSessionName(names, sessionId, value),
-              ),
-              const SizedBox(height: 12),
-            ],
-            Text(
-              l10n.workspaceDialogCurrentFolder,
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              hasFolder && sessionFolder != null
-                  ? p.basename(sessionFolder)
-                  : l10n.workspaceDialogPersonal,
-              style: Theme.of(dialogContext).textTheme.bodyMedium,
-            ),
-            if (hasFolder && sessionFolder != null) ...[
-              const SizedBox(height: 2),
-              Text(
-                l10n.workspaceDialogHostPath,
-                style: Theme.of(dialogContext).textTheme.bodySmall,
-              ),
-              const SizedBox(height: 2),
-              Text(
-                sessionFolder,
-                style: Theme.of(dialogContext).textTheme.bodySmall,
-              ),
-              const SizedBox(height: 8),
-              // 'Restrict tools to this folder' — gates read/write/bash
-              // outside the session's folder root.
-              StatefulBuilder(
-                builder: (innerContext, setLocal) {
-                  final scoped = currentMountedScoped(env) ?? false;
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      CheckboxListTile(
-                        contentPadding: EdgeInsets.zero,
-                        controlAffinity: ListTileControlAffinity.leading,
-                        value: scoped,
-                        title: Text(l10n.workspaceDialogRestrictTools),
-                        onChanged: (value) async {
-                          if (value == null) return;
-                          await setProjectMountScoped(
-                            env: env,
-                            scoped: value,
-                            onApplied: () =>
-                                service?.refreshProjectMountPrompt(),
-                          );
-                          if (dialogContext.mounted) {
-                            setLocal(() {});
-                            setState(() {});
-                          }
-                        },
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(left: 32, top: 2),
-                        child: Text(
-                          l10n.workspaceDialogRestrictToolsHint,
-                          style: Theme.of(dialogContext).textTheme.bodySmall,
-                        ),
-                      ),
-                    ],
-                  );
-                },
-              ),
-            ],
-            // Cross-instance messaging address — other instances of Fa
-            // (the CLI, a phone, another Mac window) can deliver an
-            // `agent_message` to this exact session by addressing
-            // `<sessionId>/main` over the shared messaging root.
-            const SizedBox(height: 16),
-            const Divider(height: 1),
-            const SizedBox(height: 12),
-            Text(
-              l10n.workspaceDialogMailbox,
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              _mailboxAddress(service),
-              style: Theme.of(dialogContext).textTheme.bodyMedium,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              l10n.workspaceDialogMailboxHint,
-              style: Theme.of(dialogContext).textTheme.bodySmall,
-            ),
-          ],
-        ),
-        actions: [
-          if (sessionId != null && names != null)
-            TextButton(
-              onPressed: () =>
-                  _saveSessionName(names, sessionId, nameController.text),
-              child: Text(l10n.settingsSaveButton),
-            ),
-          TextButton(
-            onPressed: () async {
-              final messenger = ScaffoldMessenger.of(dialogContext);
-              final address = _mailboxAddress(service);
-              await Clipboard.setData(ClipboardData(text: address));
-              messenger.showSnackBar(
-                SnackBar(content: Text(l10n.workspaceDialogMailboxCopied)),
-              );
-            },
-            child: Text(l10n.workspaceDialogMailboxCopy),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: Text(l10n.workspaceDialogClose),
-          ),
-        ],
+      builder: (dialogContext) => _sessionInfoDialog(
+        dialogContext,
+        service,
+        sessionId,
+        names,
+        nameController,
       ),
     );
     nameController.dispose();
+  }
+
+  /// The session info dialog: the active session's name (renameable —
+  /// same store the CLI's rename writes), its folder (read-only display:
+  /// the folder is chosen at session creation, not switchable here), the
+  /// restrict-access toggle, and the cross-instance mailbox address.
+  Widget _sessionInfoDialog(
+    BuildContext dialogContext,
+    AgentService service,
+    String? sessionId,
+    SessionNamesStore? names,
+    TextEditingController nameController,
+  ) => AlertDialog(
+    title: Text(dialogContext.l10n.workspaceDialogTitle),
+    content: _sessionInfoContent(
+      dialogContext,
+      service,
+      sessionId,
+      names,
+      nameController,
+    ),
+    actions: _sessionInfoActions(
+      dialogContext,
+      service,
+      sessionId,
+      names,
+      nameController,
+    ),
+  );
+
+  Widget _sessionInfoContent(
+    BuildContext dialogContext,
+    AgentService service,
+    String? sessionId,
+    SessionNamesStore? names,
+    TextEditingController nameController,
+  ) {
+    final l10n = dialogContext.l10n;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Session name (rename): the same store the CLI's rename
+        // writes, so a title set here shows in `fa --resume` too.
+        if (sessionId != null && names != null)
+          ..._sessionInfoNameSection(l10n, names, sessionId, nameController),
+        ..._sessionInfoFolderSections(dialogContext, service, l10n),
+        // Cross-instance messaging address — other instances of Fa
+        // (the CLI, a phone, another Mac window) can deliver an
+        // `agent_message` to this exact session by addressing
+        // `<sessionId>/main` over the shared messaging root.
+        const SizedBox(height: 16),
+        const Divider(height: 1),
+        const SizedBox(height: 12),
+        Text(
+          l10n.workspaceDialogMailbox,
+          style: const TextStyle(fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          _mailboxAddress(service),
+          style: Theme.of(dialogContext).textTheme.bodyMedium,
+        ),
+        const SizedBox(height: 4),
+        Text(
+          l10n.workspaceDialogMailboxHint,
+          style: Theme.of(dialogContext).textTheme.bodySmall,
+        ),
+      ],
+    );
+  }
+
+  List<Widget> _sessionInfoNameSection(
+    AppLocalizations l10n,
+    SessionNamesStore names,
+    String sessionId,
+    TextEditingController nameController,
+  ) => [
+    Text(
+      l10n.sessionInfoNameLabel,
+      style: const TextStyle(fontWeight: FontWeight.w600),
+    ),
+    const SizedBox(height: 4),
+    TextField(
+      controller: nameController,
+      decoration: InputDecoration(
+        hintText: l10n.sidebarRenameHint,
+        isDense: true,
+      ),
+      onSubmitted: (value) => _saveSessionName(names, sessionId, value),
+    ),
+    const SizedBox(height: 12),
+  ];
+
+  /// The current-folder label plus, when the session has one, its host
+  /// path and the restrict-tools toggle.
+  List<Widget> _sessionInfoFolderSections(
+    BuildContext dialogContext,
+    AgentService service,
+    AppLocalizations l10n,
+  ) {
+    final sessionFolder = service.currentSessionCwd;
+    return [
+      Text(
+        l10n.workspaceDialogCurrentFolder,
+        style: const TextStyle(fontWeight: FontWeight.w600),
+      ),
+      const SizedBox(height: 4),
+      Text(
+        _sessionHasFolder && sessionFolder != null
+            ? p.basename(sessionFolder)
+            : l10n.workspaceDialogPersonal,
+        style: Theme.of(dialogContext).textTheme.bodyMedium,
+      ),
+      if (_sessionHasFolder && sessionFolder != null)
+        ..._sessionInfoFolderDetails(
+          dialogContext,
+          service,
+          l10n,
+          sessionFolder,
+        ),
+    ];
+  }
+
+  List<Widget> _sessionInfoFolderDetails(
+    BuildContext dialogContext,
+    AgentService service,
+    AppLocalizations l10n,
+    String sessionFolder,
+  ) => [
+    const SizedBox(height: 2),
+    Text(
+      l10n.workspaceDialogHostPath,
+      style: Theme.of(dialogContext).textTheme.bodySmall,
+    ),
+    const SizedBox(height: 2),
+    Text(sessionFolder, style: Theme.of(dialogContext).textTheme.bodySmall),
+    const SizedBox(height: 8),
+    // 'Restrict tools to this folder' — gates read/write/bash
+    // outside the session's folder root.
+    _sessionInfoRestrictTile(dialogContext, service, l10n),
+  ];
+
+  Widget _sessionInfoRestrictTile(
+    BuildContext dialogContext,
+    AgentService service,
+    AppLocalizations l10n,
+  ) => StatefulBuilder(
+    builder: (innerContext, setLocal) {
+      final env = service.env;
+      final scoped = currentMountedScoped(env) ?? false;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CheckboxListTile(
+            contentPadding: EdgeInsets.zero,
+            controlAffinity: ListTileControlAffinity.leading,
+            value: scoped,
+            title: Text(l10n.workspaceDialogRestrictTools),
+            onChanged: (value) async {
+              if (value == null) return;
+              await setProjectMountScoped(
+                env: env,
+                scoped: value,
+                onApplied: () => service.refreshProjectMountPrompt(),
+              );
+              if (dialogContext.mounted) {
+                setLocal(() {});
+                setState(() {});
+              }
+            },
+          ),
+          Padding(
+            padding: const EdgeInsets.only(left: 32, top: 2),
+            child: Text(
+              l10n.workspaceDialogRestrictToolsHint,
+              style: Theme.of(dialogContext).textTheme.bodySmall,
+            ),
+          ),
+        ],
+      );
+    },
+  );
+
+  List<Widget> _sessionInfoActions(
+    BuildContext dialogContext,
+    AgentService service,
+    String? sessionId,
+    SessionNamesStore? names,
+    TextEditingController nameController,
+  ) {
+    final l10n = dialogContext.l10n;
+    return [
+      if (sessionId != null && names != null)
+        TextButton(
+          onPressed: () =>
+              _saveSessionName(names, sessionId, nameController.text),
+          child: Text(l10n.settingsSaveButton),
+        ),
+      TextButton(
+        onPressed: () async {
+          final messenger = ScaffoldMessenger.of(dialogContext);
+          final address = _mailboxAddress(service);
+          await Clipboard.setData(ClipboardData(text: address));
+          messenger.showSnackBar(
+            SnackBar(content: Text(l10n.workspaceDialogMailboxCopied)),
+          );
+        },
+        child: Text(l10n.workspaceDialogMailboxCopy),
+      ),
+      TextButton(
+        onPressed: () => Navigator.pop(dialogContext),
+        child: Text(l10n.workspaceDialogClose),
+      ),
+    ];
   }
 
   /// Saves the session title from the info dialog (empty clears → the
