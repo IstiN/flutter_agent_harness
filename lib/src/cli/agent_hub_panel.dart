@@ -1,6 +1,7 @@
 library;
 
 import 'agent_hub_view.dart' show hubDuration;
+import 'tool_rows.dart' show shellJobCommandPreview;
 
 /// Deferred-message panels (btw-style) and background-task blocks for the
 /// agents hub surface (issue #277).
@@ -419,7 +420,15 @@ List<String> taskBlockLines(TaskBlock block, {required int width}) {
   final lines = <String>['┌─ ${_clip(header, inner - 3)}'];
   void body(String text) =>
       lines.add('│ ${_pad(_clip(text, inner - 3), inner - 3)}');
-  body(block.label);
+  // Heredoc-aware preview (issue #599): a multi-line command renders as
+  // its first line plus one overflow hint — the heredoc body is never a
+  // transcript row source, and the body cap (≤ 6 rows) holds for any
+  // multi-line label (AC2).
+  body(shellJobCommandPreview(block.label));
+  final moreLines = '\n'.allMatches(block.label).length;
+  if (moreLines > 0) {
+    body('… $moreLines more — bash_job output ${block.id}');
+  }
   if (block.detail != null) {
     body(block.detail!);
   } else {
@@ -508,5 +517,6 @@ Iterable<String> _wrapBody(String body, int width) sync* {
 }
 
 /// Panel bodies render as a bounded preview: at most [_maxPanelBodyLines]
-/// lines, a `… N more` tail when truncated.
-const int _maxPanelBodyLines = 12;
+/// lines, a `… N more` tail when truncated. The cap is 6 (issue #599) —
+/// a preview may fill a hand's rows, never the glass.
+const int _maxPanelBodyLines = 6;
