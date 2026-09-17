@@ -13,6 +13,7 @@ import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/skills_access_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/onboarding_screen.dart';
+import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa_ui/fa_ui.dart' show ProviderEditorPage;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -394,6 +395,57 @@ void main() {
       expect(find.byType(OnboardingScreen), findsNothing);
       expect(find.byType(SetupScreen), findsNothing);
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    });
+
+    testWidgets('without an onboarding store the legacy setup form shows', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: BootstrapScreen(
+            env: MemoryExecutionEnv(),
+            lastConnectionStore: LastConnectionStore.inMemory(),
+            sessionKeysStore: SessionKeysStore.inMemory(),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.byType(SetupScreen), findsOneWidget);
+      expect(find.byType(OnboardingScreen), findsNothing);
+    });
+
+    testWidgets('a restorable connection boots straight to the spinner', (
+      tester,
+    ) async {
+      final store = LastConnectionStore.inMemory();
+      await store.save(
+        const LastConnection(
+          providerKind: 'openai-completions',
+          modelId: 'k3-256k',
+          baseUrl: 'https://api.kimi.com/coding/v1',
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: BootstrapScreen(
+            env: MemoryExecutionEnv(),
+            lastConnectionStore: store,
+            sessionKeysStore: SessionKeysStore.inMemory({
+              'OPENROUTER_API_KEY': 'sk-saved',
+            }),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.byType(FaBrandTile), findsOneWidget);
+      expect(find.byType(SetupScreen), findsNothing);
+      expect(find.byType(OnboardingScreen), findsNothing);
     });
 
     testWidgets(

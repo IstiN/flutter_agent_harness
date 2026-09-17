@@ -224,6 +224,55 @@ void main() {
     addTearDown(channel.close);
   });
 
+  test('transcriptMarkdown renders user, assistant and tool rows', () async {
+    final (:service, :channel) = await _attached(
+      replay: [
+        {
+          'seq': 1,
+          'event': {
+            'type': 'message_done',
+            'role': 'user',
+            'text': 'open example.com',
+          },
+        },
+        {
+          'seq': 2,
+          'event': {
+            'type': 'message_done',
+            'role': 'assistant',
+            'text': 'opening it now',
+          },
+        },
+        {
+          'seq': 3,
+          'event': {
+            'type': 'tool_result',
+            'toolName': 'browser_navigate',
+            'isError': false,
+            'text': '{"ok":true}',
+          },
+        },
+        {
+          'seq': 4,
+          'event': {'type': 'tool_result', 'isError': true, 'text': 'boom'},
+        },
+      ],
+    );
+    expect(service.transcriptMarkdown(), '''
+## User
+open example.com
+
+## Assistant
+opening it now
+
+- **browser_navigate**: {"ok":true}
+
+- **tool**: boom
+
+''');
+    addTearDown(channel.close);
+  });
+
   test('sendText sends a prompt and renders the user bubble', () async {
     final (:service, :channel) = await _attached();
     await service.sendText('what do you see?');
