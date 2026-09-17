@@ -1560,6 +1560,11 @@ jobs:
       # "Content-length exceeds upper bound"). Publish from a staged copy
       # that carries only the package surface; the size guard makes any
       # future bloat a LOCI error instead of a pub.dev rejection.
+      # The two PATH dev-dependencies (fa_llm_mock, vendored xterm) are
+      # copied back individually — resolution needs them and pub.dev has
+      # accepted them since v0.1.369 — while pubspec_overrides.yaml (the
+      # local-only dart_tui vendor pin, "never ships to pub.dev") must NOT
+      # enter the stage, or version solving re-pins the path dep and fails.
       - name: Stage publishable package (sub-projects stay out)
         if: steps.gate.outputs.publishable == 'true'
         run: |
@@ -1571,7 +1576,11 @@ jobs:
             --exclude 'vendor' --exclude 'docs' --exclude 'fa-local' \
             --exclude 'packages' \
             --exclude '.dart_tool' --exclude 'build' --exclude '.fah' \
-            --exclude 'memory' --exclude '.trash'
+            --exclude 'memory' --exclude '.trash' \
+            --exclude 'pubspec_overrides.yaml'
+          mkdir -p /tmp/publish-stage/packages /tmp/publish-stage/vendor
+          rsync -a packages/fa_llm_mock /tmp/publish-stage/packages/
+          rsync -a vendor/xterm /tmp/publish-stage/vendor/
           size=$(du -sm /tmp/publish-stage | cut -f1)
           echo "staged package: ${size} MB"
           if [ "$size" -gt 90 ]; then
