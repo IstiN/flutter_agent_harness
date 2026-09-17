@@ -404,6 +404,61 @@ void main() {
       },
     );
 
+    test('the /model table renders catalog pricing, not just an em dash',
+        () async {
+      // E3 counterpart: when the remote catalog DOES ship flat
+      // per-Mtok rates for the provider's model, the picker row
+      // carries the real $in/$out pair (`_resolvedPricing` hit
+      // branch) instead of the catalog-miss `—`.
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final enrichment = RemoteCatalogEnrichment();
+      await enrichment.preload(
+        client: MockClient((req) async {
+          return http.Response(
+            '{"providers": {"minimax": {'
+            '"contextWindows": {"MiniMax-M2": 204800}, '
+            '"pricing": {"MiniMax-M2": {"input": 0.3, "output": 1.2}}}}}',
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }),
+      );
+      setRemoteCatalogEnrichmentForTesting(enrichment);
+
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'minimax',
+          apiType: 'minimax',
+          baseUrl: 'https://api.minimax.io/v1',
+          modelId: 'MiniMax-M2',
+        ),
+      ]);
+      final cli = cliFor(
+        fake.call,
+        model: const Model(
+          id: 'MiniMax-M2',
+          api: 'minimax',
+          provider: 'minimax',
+          baseUrl: 'https://api.minimax.io/v1',
+          contextWindow: 204800,
+          maxTokens: 4096,
+        ),
+        customProviders: registry,
+        modelsFetcher: (baseUrl, {required apiKey}) async => const [],
+      );
+      final run = cli.run();
+      await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
+
+      // Single provider (active == the only saved entry) → the picker
+      // skips the provider step and lays out the model table directly.
+      final items = cli.buildModelMenuForTest('');
+      final row = items.where((i) => i.key == 'minimax|MiniMax-M2').single;
+      expect(row.description, contains(r'$0.30/$1.20'));
+
+      io.sendLine('/exit');
+      await run;
+    });
+
     test('status label uses the ACTIVE custom entry, not the first '
         'baseUrl match', () async {
       // Two accounts on ONE endpoint (kimi-ira1 + kimi_me both on

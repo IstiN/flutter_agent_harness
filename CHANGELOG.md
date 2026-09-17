@@ -3746,4 +3746,12 @@
 - fix(541): structured-compaction judge SPOF - deterministic fallback + bounded judge input (#543)
 - fix(538): integration suite rot — TUI boot-output race, stale expectations, workflow redaction rot (#542)
 
+## 0.1.404
+
+- docs: point the integration-tag note at #551 (per-PR via MockLlmServer) (#552)
+- fix(478): shell-job registry boot reconcile + bounded log GC (#547)
+- test(538): de-flake the last two integration legs — /agents types waits for the full frame (raw stream carries cursor-jump splits), shift+enter wire matrix uses unique per-variant markers (stale viewport rows raced the row measurement) (#550)
+- ci(487): cross-module duplication gate at measured baseline (ratchet only-tighten) (#548)
+- chore: collapse duplicated 0.1.403/Unreleased CHANGELOG sections (raced bot auto-release with PR #546) (#549)
+
 ## Unreleased

@@ -66,7 +66,10 @@ void main() {
 
   group('boot and model selection', () {
     testWidgets('boot → model picker → filter → select', (tester) async {
-      final harness = await boot(tester);
+      // Fixture models: the picker must show seeded data, never the real
+      // user registry (issue #508).
+      final tempHome = _tempHomeWithProvider();
+      final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
       await harness.screenshot(shotsDir, '01_boot');
       // Issue #506 AC1: the banner mark is the composed two-role label —
       // `>_` in the accent role, `Fa` in accent2 — the same styling tokens
@@ -94,17 +97,26 @@ void main() {
       await harness.screenshot(shotsDir, '05_model_selected');
 
       await harness.close();
+      tempHome.deleteSync(recursive: true);
     });
 
     testWidgets('boot → /models list', (tester) async {
-      final harness = await boot(tester);
+      // Fixture registry: /models must list seeded providers only — a real
+      // provider name on this screen is a config leak (issue #508).
+      final tempHome = _tempHomeWithProvider();
+      final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
       await harness.screenshot(shotsDir, '10_boot_models');
 
       await harness.runSlashCommand('/models');
       await harness.settle(settleMs: 500);
+      await harness.liveWaitForText(
+        'test-provider',
+        timeout: const Duration(seconds: 15),
+      );
       await harness.screenshot(shotsDir, '11_models_list');
 
       await harness.close();
+      tempHome.deleteSync(recursive: true);
     });
   });
 
@@ -312,7 +324,10 @@ void main() {
 
   group('model edit', () {
     testWidgets('/model-edit → context window presets', (tester) async {
-      final harness = await boot(tester);
+      // Fixture chat model: /model-edit mutates the ACTIVE model's config,
+      // which must never be the real user's (issue #508).
+      final tempHome = _tempHomeWithProvider();
+      final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
       await harness.screenshot(shotsDir, '50_boot_model_edit');
 
       await harness.runSlashCommand('/model-edit');
@@ -344,12 +359,16 @@ void main() {
       await harness.screenshot(shotsDir, '54_context_set');
 
       await harness.close();
+      tempHome.deleteSync(recursive: true);
     });
   });
 
   group('key set', () {
     testWidgets('/key set → masked value entry', (tester) async {
-      final harness = await boot(tester);
+      // /key set PERSISTS a key — into a fixture HOME, never the real
+      // ~/.fah/config.yaml (issue #508).
+      final tempHome = _tempHomeWithProvider();
+      final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
       await harness.screenshot(shotsDir, '60_boot_key');
 
       await harness.runSlashCommand('/key set TEST_KEY');
@@ -372,12 +391,16 @@ void main() {
       await harness.screenshot(shotsDir, '63_key_saved');
 
       await harness.close();
+      tempHome.deleteSync(recursive: true);
     });
   });
 
   group('agents', () {
     testWidgets('/agents shows the live agents tree', (tester) async {
-      final harness = await boot(tester);
+      // Sandboxed HOME: the session tree must come from the fixture, not
+      // the developer's real sessions (issue #508).
+      final tempHome = _tempHome();
+      final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
       await harness.runSlashCommand('/agents');
       await harness.liveWaitForText(
         'main (orchestrator)',
@@ -385,6 +408,7 @@ void main() {
       );
       await harness.screenshot(shotsDir, '90_agents_tree');
       await harness.close();
+      tempHome.deleteSync(recursive: true);
     });
 
     // NOTE: the live badge (`bg:` in the status line during an active
@@ -396,7 +420,8 @@ void main() {
     // close). The agents tree + open session flows are covered below.
 
     testWidgets('/agents types lists the agent type catalog', (tester) async {
-      final harness = await boot(tester);
+      final tempHome = _tempHome();
+      final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
       await harness.runSlashCommand('/agents types');
       await harness.liveWaitForText(
         'agent types:',
@@ -404,6 +429,7 @@ void main() {
       );
       await harness.screenshot(shotsDir, '91_agents_types');
       await harness.close();
+      tempHome.deleteSync(recursive: true);
     });
 
     testWidgets('/agents shows pending inbox markers from the messaging '
