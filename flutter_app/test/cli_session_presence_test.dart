@@ -5,10 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   group('sessionRootAndSlugFromPath', () {
     test('parses root and slug from a session JSONL path', () {
-      expect(
-        sessionRootAndSlugFromPath('/sessions/slug-1/abc.jsonl'),
-        ('/sessions', 'slug-1'),
-      );
+      expect(sessionRootAndSlugFromPath('/sessions/slug-1/abc.jsonl'), (
+        '/sessions',
+        'slug-1',
+      ));
     });
 
     test('null and empty paths parse to null', () {
@@ -23,10 +23,10 @@ void main() {
     });
 
     test('slug segments may contain anything but slashes', () {
-      expect(
-        sessionRootAndSlugFromPath('/root/we ird/-slug-/f.jsonl'),
-        ('/root/we ird', '-slug-'),
-      );
+      expect(sessionRootAndSlugFromPath('/root/we ird/-slug-/f.jsonl'), (
+        '/root/we ird',
+        '-slug-',
+      ));
     });
   });
 
@@ -41,8 +41,7 @@ void main() {
       expect(slug, 'ws');
     });
 
-    test('falls back to the default root plus encoded cwd otherwise',
-        () {
+    test('falls back to the default root plus encoded cwd otherwise', () {
       for (final sessionPath in [null, '', 'junk', '/one']) {
         final (root, slug) = sessionRootAndSlugForPath(
           defaultRoot: '/default',

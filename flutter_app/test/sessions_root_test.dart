@@ -37,7 +37,6 @@ void main() {
     });
   });
 
-
   group('macSessionRootCandidates', () {
     test('default only when neither candidate exists', () {
       final roots = macSessionRootCandidates(
@@ -52,7 +51,8 @@ void main() {
       final roots = macSessionRootCandidates(
         home: '/h',
         defaultRoot: '/h/sessions',
-        exists: (path) => path.endsWith('.fah/sessions') || path.contains('Group'),
+        exists: (path) =>
+            path.endsWith('.fah/sessions') || path.contains('Group'),
       );
       expect(
         roots,
@@ -75,9 +75,13 @@ void main() {
   });
 
   group('platform-independent roots (off macOS)', () {
-    test('defaultSessionsRoot stays under the cwd', () {
-      expect(defaultSessionsRoot('/work'), '/work/sessions');
-    }, skip: Platform.isMacOS ? 'macOS resolves the App Group container' : null);
+    test(
+      'defaultSessionsRoot stays under the cwd',
+      () {
+        expect(defaultSessionsRoot('/work'), '/work/sessions');
+      },
+      skip: Platform.isMacOS ? 'macOS resolves the App Group container' : null,
+    );
 
     test('allSessionRoots collapses to the default', () {
       expect(allSessionRoots('/work/sessions'), ['/work/sessions']);

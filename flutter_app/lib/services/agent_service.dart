@@ -172,18 +172,18 @@ class AgentService extends ChangeNotifier
        approval = ApprovalManager(
          mode: initialApprovalMode ?? ApprovalMode.write,
        ),
-      _repo =
-          repo ??
-          // Issue #522: the deletion gate reads the shared live-session
-          // heartbeats — the app must not delete a session a CLI owns.
-          JsonlSessionRepo(
-            fs: env,
-            sessionsRoot: sessionsRoot,
-            presenceStore: FileSessionPresenceStore(
-              env: env,
-              root: sessionsRoot,
-            ),
-          ) {
+       _repo =
+           repo ??
+           // Issue #522: the deletion gate reads the shared live-session
+           // heartbeats — the app must not delete a session a CLI owns.
+           JsonlSessionRepo(
+             fs: env,
+             sessionsRoot: sessionsRoot,
+             presenceStore: FileSessionPresenceStore(
+               env: env,
+               root: sessionsRoot,
+             ),
+           ) {
     maybeCurrent = this;
     _responseTimeout = responseTimeout ?? const Duration(seconds: 90);
     _providerKind = _agent.state.model.provider;
@@ -490,16 +490,13 @@ class AgentService extends ChangeNotifier
                },
        ),
        sessionsRoot = sessionsRoot,
-      _repo = JsonlSessionRepo(
-        fs: env,
-        sessionsRoot: sessionsRoot,
-        parseExecutor: parseExecutor,
-        // Issue #522: deletions refuse sessions with a live CLI heartbeat.
-        presenceStore: FileSessionPresenceStore(
-          env: env,
-          root: sessionsRoot,
-        ),
-      ) {
+       _repo = JsonlSessionRepo(
+         fs: env,
+         sessionsRoot: sessionsRoot,
+         parseExecutor: parseExecutor,
+         // Issue #522: deletions refuse sessions with a live CLI heartbeat.
+         presenceStore: FileSessionPresenceStore(env: env, root: sessionsRoot),
+       ) {
     maybeCurrent = this;
     _wireImageDropNotice();
     _providerKind = config.providerKind;
@@ -1402,8 +1399,7 @@ class AgentService extends ChangeNotifier
         ? messages.sublist(messages.length - tail)
         : messages;
     return [
-      for (final message in last)
-        (message.role, _previewMessageText(message)),
+      for (final message in last) (message.role, _previewMessageText(message)),
     ];
   }
 

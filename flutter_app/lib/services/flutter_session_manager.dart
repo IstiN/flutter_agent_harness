@@ -246,9 +246,7 @@ final class FlutterSessionManager extends ChangeNotifier {
   /// empty tree and the sidebar collapses to a single row. The relay
   /// service's [AgentService.listSessions] (sessions_query) is the
   /// authority there.
-  Future<List<SessionMetadata>> _listViaHostService(
-    AgentService active,
-  ) async {
+  Future<List<SessionMetadata>> _listViaHostService(AgentService active) async {
     try {
       return await active.listSessions();
     } on Object {
@@ -791,9 +789,6 @@ SessionMetadata _withParentLink(SessionMetadata metadata, String parent) {
     lastUpdatedAt: metadata.lastUpdatedAt,
     parentSessionPath: metadata.parentSessionPath,
     sizeBytes: metadata.sizeBytes,
-    metadata: {
-      ...?metadata.metadata,
-      'parent': parent,
-    },
+    metadata: {...?metadata.metadata, 'parent': parent},
   );
 }

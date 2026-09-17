@@ -3,11 +3,7 @@ import 'package:fa/services/session_listing.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-SessionMetadata _meta(
-  String id, {
-  DateTime? createdAt,
-  DateTime? lastUpdated,
-}) {
+SessionMetadata _meta(String id, {DateTime? createdAt, DateTime? lastUpdated}) {
   final created = createdAt ?? DateTime.utc(2026, 1, 1);
   return SessionMetadata(
     id: id,
@@ -64,9 +60,8 @@ void main() {
     test('a failing secondary root is non-fatal', () async {
       final merged = await mergeSessionsAcrossRoots(
         roots: ['default', 'broken'],
-        listRoot: (root) async => root == 'broken'
-            ? throw StateError('unmounted')
-            : [_meta('a')],
+        listRoot: (root) async =>
+            root == 'broken' ? throw StateError('unmounted') : [_meta('a')],
       );
       expect(merged.map((m) => m.id), ['a']);
     });

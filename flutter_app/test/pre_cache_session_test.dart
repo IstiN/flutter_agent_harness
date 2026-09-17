@@ -79,20 +79,16 @@ void main() {
   });
 
   Future<SessionMetadata> seed(String id) async {
-    await File('$sessionsRoot/$id.jsonl').writeAsString(
-      _header(id) + _userMessage('${id}_1', 'hello from $id'),
-    );
+    await File(
+      '$sessionsRoot/$id.jsonl',
+    ).writeAsString(_header(id) + _userMessage('${id}_1', 'hello from $id'));
     return (await repo.list()).where((m) => m.id == id).single;
   }
 
-  FlutterSessionManager newManager() => FlutterSessionManager(
-    env: env,
-    sessionsRoot: sessionsRoot,
-    repo: repo,
-  );
+  FlutterSessionManager newManager() =>
+      FlutterSessionManager(env: env, sessionsRoot: sessionsRoot, repo: repo);
 
-  test('pre-caches a persisted session without making it active',
-      () async {
+  test('pre-caches a persisted session without making it active', () async {
     final meta = await seed('target');
     final manager = FlutterSessionManager(
       env: env,

@@ -36,7 +36,9 @@ StreamFunction _deltaResponse(List<String> deltas) {
         TextDeltaEvent(contentIndex: 0, delta: delta, partial: partial),
       );
     }
-    stream.push(DoneEvent(reason: StopReason.stop, message: _assistant(joined)));
+    stream.push(
+      DoneEvent(reason: StopReason.stop, message: _assistant(joined)),
+    );
     stream.end();
     return stream;
   };
@@ -74,10 +76,7 @@ void main() {
       expect(conversation[0], isA<UserMessage>());
       expect((conversation[0] as UserMessage).content, 'one');
       final assistant = conversation[1] as AssistantMessage;
-      expect(
-        assistant.content.whereType<TextContent>().single.text,
-        'two',
-      );
+      expect(assistant.content.whereType<TextContent>().single.text, 'two');
       expect(assistant.model, 'test-model');
     });
 
@@ -99,10 +98,7 @@ void main() {
   group('completeOnceText', () {
     test('joins the last assistant message text blocks', () {
       expect(
-        completeOnceText([
-          UserMessage.text('q'),
-          _assistant('part 1\npart 2'),
-        ]),
+        completeOnceText([UserMessage.text('q'), _assistant('part 1\npart 2')]),
         'part 1\npart 2',
       );
     });
@@ -117,10 +113,7 @@ void main() {
     test('no completion returned without an assistant last message', () {
       expect(() => completeOnceText([]), throwsStateError);
       expect(() => completeOnceText([UserMessage.text('q')]), throwsStateError);
-      expect(
-        () => completeOnceText([_assistant('')]),
-        throwsStateError,
-      );
+      expect(() => completeOnceText([_assistant('')]), throwsStateError);
     });
   });
 
@@ -131,10 +124,7 @@ void main() {
         _assistant('second'),
         UserMessage.text('third'),
       ], 2);
-      expect(pairs, [
-        ('assistant', 'second'),
-        ('user', 'third'),
-      ]);
+      expect(pairs, [('assistant', 'second'), ('user', 'third')]);
     });
 
     test('tail beyond the list keeps everything; empty stays empty', () {
@@ -226,10 +216,7 @@ void main() {
         streamFunction: _deltaResponse(['x']),
       );
       addTearDown(service.dispose);
-      await expectLater(
-        service.completeOnce([]),
-        throwsStateError,
-      );
+      await expectLater(service.completeOnce([]), throwsStateError);
     });
   });
 }
