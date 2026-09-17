@@ -35,6 +35,10 @@ typedef SubagentRegistrySink =
 /// Callback to rehydrate the registry from the parent session.
 typedef SubagentRegistrySource = Future<List<Map<String, dynamic>>> Function();
 
+/// The session-record type of the registry snapshot: one full row list
+/// per write, in the parent session's JSONL (a side-leaf custom record).
+const String subagentRegistryRecordType = 'subagent_registry';
+
 /// Session-scoped subagent manager.
 /// Launches a detached, non-interactive run of a session so a SLEEPING
 /// agent processes its pending inbox mail right away (issue: "if the

@@ -81,13 +81,24 @@ extension AgentCliSteering on AgentCli {
         state: wedged ? DeferredPanelState.dead : DeferredPanelState.pending,
       );
       if (wedged) {
+        // Issue #488 AC1a: the warning names the queue — the owner sees
+        // HOW MUCH is saved, not just a per-message nudge.
+        final queued = _pendingSteering.length + 1;
         io.writeln(
           tuiWarning(
-            '⚠ agent not responding — steering saved to session, '
+            '⚠ agent not responding — $queued steering '
+            '${queued == 1 ? 'message' : 'messages'} saved to session, '
             'will deliver if the run wakes',
           ),
         );
       }
+      // The FIFO entry joins SYNCHRONOUSLY — the queued count in the
+      // warning above and the wedge watchdog must see every accepted
+      // steer even while its session write is still in flight (issue
+      // #488 AC1a); the persist below only patches the record id in.
+      _pendingSteering.add(
+        PendingSteering(message: message, recordId: null, panel: panel),
+      );
       unawaited(_persistSteeringAccepted(message, panel));
       _agent.steer(message);
       return;
@@ -136,10 +147,10 @@ extension AgentCliSteering on AgentCli {
   }
 
   /// Persists an accepted mid-run steer: the attributed text as a
-  /// `steering` record (the crash-recovery source of truth), then the
-  /// FIFO entry for boundary-merge consumption. If the run merged the
-  /// message BEFORE the writes completed (fast boundary), the entry is
-  /// consumed immediately instead of stranding pending.
+  /// `steering` record (the crash-recovery source of truth). The FIFO
+  /// entry was added synchronously by the caller; this patches the
+  /// record id in, or consumes the entry when the run merged the message
+  /// BEFORE the write completed (fast boundary) — pending never strands.
   Future<void> _persistSteeringAccepted(
     UserMessage message,
     DeferredPanel panel,
@@ -157,13 +168,20 @@ extension AgentCliSteering on AgentCli {
     } on Object {
       recordId = null; // delivery still works; only recovery is lost.
     }
+    final index = _pendingSteering.indexWhere(
+      (entry) => identical(entry.message, message),
+    );
+    if (index < 0) return; // consumed while the write was in flight.
     if (_agent.state.messages.contains(message)) {
-      // Already merged (the boundary beat the writes): honest delivery.
-      await _steeringDelivered(message, recordId, panel);
+      // Already merged (the boundary beat the write): honest delivery.
+      final entry = _pendingSteering.removeAt(index);
+      await _steeringDelivered(entry.message, recordId, entry.panel);
       return;
     }
-    _pendingSteering.add(
-      PendingSteering(message: message, recordId: recordId, panel: panel),
+    _pendingSteering[index] = PendingSteering(
+      message: message,
+      recordId: recordId,
+      panel: panel,
     );
   }
 
@@ -281,17 +299,24 @@ extension AgentCliSteering on AgentCli {
   void _checkPendingSteeringHealth() {
     if (_pendingSteering.isEmpty || !isBusy) return;
     if (!_runLooksWedged()) return;
+    var flipped = 0;
     for (final entry in _pendingSteering) {
       if (entry.panel.state == DeferredPanelState.pending) {
         entry.panel.state = DeferredPanelState.dead;
         io.writeln(_style.dim(deferredPanelTransitionLine(entry.panel)));
-        io.writeln(
-          tuiWarning(
-            '⚠ agent not responding — steering saved to session, '
-            'will deliver if the run wakes',
-          ),
-        );
+        flipped++;
       }
+    }
+    if (flipped > 0) {
+      // One warning per stall episode, with the full queued count — the
+      // owner sees the queue size, not a per-message nudge (issue #488).
+      io.writeln(
+        tuiWarning(
+          '⚠ agent not responding — ${_pendingSteering.length} steering '
+          '${_pendingSteering.length == 1 ? 'message' : 'messages'} saved '
+          'to session, will deliver if the run wakes',
+        ),
+      );
     }
   }
 
