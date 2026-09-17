@@ -14,6 +14,7 @@
 library;
 
 
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -127,7 +128,7 @@ void main() {
     testWidgets('model picker: golden table, click a row to switch', (
       tester,
     ) async {
-      final tempHome = _tempHome();
+      final tempHome = _tempHomeWithModels();
       final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
 
       await harness.runSlashCommand('/model');
@@ -136,6 +137,12 @@ void main() {
         timeout: const Duration(seconds: 15),
       );
       await harness.screenshot(shotsDir, '103_model_picker_table');
+      // The golden table over the seeded fixtures: three real rows, the
+      // current marker on the boot model, and the footer hint.
+      expect(harness.screenText, contains('test-mini'));
+      expect(harness.screenText, contains('test-max'));
+      expect(harness.screenText, contains('omega'));
+      expect(harness.screenText, contains('●'));
 
       // The footer hint row marks the bottom of the table; the model row
       // right above it is the click target.
@@ -155,6 +162,10 @@ void main() {
       final col = lines[hintRow - 1].indexOf(idToken);
       clickAt(harness, col + 1, hintRow - 1);
       await harness.settle(settleMs: 600);
+      await harness.liveWaitForText(
+        'switched model to omega',
+        timeout: const Duration(seconds: 15),
+      );
       await harness.screenshot(shotsDir, '104_model_switched_by_click');
 
       // The picker closed and the clicked model is the live one.
@@ -277,6 +288,32 @@ mode: code
 approvalMode: yolo
 allowedTools: []
 ''');
+  return tempHome;
+}
+/// Creates a temp HOME whose boot model is the fixture `test-mini` and
+/// whose persisted model cache seeds the fixture models the golden
+/// picker table shows (`test-mini`, `test-max`, `omega`) — the CLI
+/// trusts a fresh `~/.fah/model_cache.json` at boot.
+Directory _tempHomeWithModels() {
+  final tempHome = Directory.systemTemp.createTempSync('fa_mouse_test_');
+  File('${tempHome.path}/.fah/config.yaml')
+    ..createSync(recursive: true)
+    ..writeAsStringSync('''
+provider: openai-completions
+model: test-mini
+baseUrl: http://localhost:9999/v1
+mode: code
+approvalMode: yolo
+allowedTools: []
+''');
+  File('${tempHome.path}/.fah/model_cache.json').writeAsStringSync(
+    jsonEncode({
+      'openai': {
+        'ids': ['test-mini', 'test-max', 'omega'],
+        'fetchedAtMs': DateTime.now().millisecondsSinceEpoch,
+      },
+    }),
+  );
   return tempHome;
 }
 
