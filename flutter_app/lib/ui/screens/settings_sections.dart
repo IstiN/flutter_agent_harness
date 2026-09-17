@@ -113,13 +113,28 @@ class ThemePacksSection extends StatelessWidget {
     if (files.isEmpty) return;
     final result = await store.installFromZip(files.first.bytes);
     if (!context.mounted) return;
-    final l10n = context.l10n;
-    final message = result.spec == null
-        ? '${l10n.themePackImportFailed}:\n${result.reasons.join('\n')}'
-        : result.warnings.isEmpty
-        ? l10n.themePackImported(result.spec!.name)
-        : '${l10n.themePackImported(result.spec!.name)}\n'
-              '${result.warnings.join('\n')}';
+    _showResult(context, _importMessage(result, context.l10n));
+  }
+
+  /// The import snackbar body: success shows the pack name, any per-file
+  /// warnings are appended below it; a failed spec parse lists the
+  /// reasons. Static and pure so the message contract is unit-testable.
+  static String _importMessage(
+    ({ThemePackSpec? spec, List<String> reasons, List<String> warnings})
+    result,
+    AppLocalizations l10n,
+  ) {
+    if (result.spec == null) {
+      return '${l10n.themePackImportFailed}:\n${result.reasons.join('\n')}';
+    }
+    if (result.warnings.isEmpty) {
+      return l10n.themePackImported(result.spec!.name);
+    }
+    return '${l10n.themePackImported(result.spec!.name)}\n'
+        '${result.warnings.join('\n')}';
+  }
+
+  void _showResult(BuildContext context, String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), duration: const Duration(seconds: 6)),
     );
@@ -147,89 +162,128 @@ class ThemePacksSection extends StatelessWidget {
     final canPick = picker != null || createUploadPicker() != null;
     return ListenableBuilder(
       listenable: Listenable.merge([store, controller]),
-      builder: (context, _) {
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    context.l10n.themePacksTitle,
-                    style: theme.textTheme.titleSmall,
-                  ),
-                ),
-                if (canPick)
-                  TextButton.icon(
-                    onPressed: () => _import(context, store),
-                    icon: const Icon(Icons.upload_file, size: 18),
-                    label: Text(context.l10n.themePackImport),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              context.l10n.themePacksSubtitle,
-              style: theme.textTheme.bodySmall,
-            ),
-            RadioGroup<String?>(
-              groupValue: controller.packId,
-              onChanged: (id) => controller.setPack(
-                id,
-                hasWallpaper:
-                    id != null && store.byId(id)?.spec.wallpaper != null,
+      builder: (context, _) => _packs(
+        context: context,
+        theme: theme,
+        store: store,
+        controller: controller,
+        canPick: canPick,
+      ),
+    );
+  }
+
+  Widget _packs({
+    required BuildContext context,
+    required ThemeData theme,
+    required ThemePackStore store,
+    required ThemeController controller,
+    required bool canPick,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _headerRow(context, theme, store, canPick),
+        const SizedBox(height: 4),
+        Text(
+          context.l10n.themePacksSubtitle,
+          style: theme.textTheme.bodySmall,
+        ),
+        RadioGroup<String?>(
+          groupValue: controller.packId,
+          onChanged: (id) => controller.setPack(
+            id,
+            hasWallpaper:
+                id != null && store.byId(id)?.spec.wallpaper != null,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              RadioListTile<String?>(
+                value: null,
+                title: Text(context.l10n.themePackDefault),
+                contentPadding: EdgeInsets.zero,
+                dense: true,
               ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  RadioListTile<String?>(
-                    value: null,
-                    title: Text(context.l10n.themePackDefault),
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
-                  ),
-                  for (final pack in store.packs)
-                    RadioListTile<String?>(
-                      key: ValueKey('theme-pack-${pack.id}'),
-                      value: pack.id,
-                      title: Text(pack.name),
-                      subtitle:
-                          (pack.spec.wallpaper == null &&
-                              pack.spec.contrastWarnings.isEmpty)
-                          ? null
-                          : Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                if (pack.spec.wallpaper != null)
-                                  Text(context.l10n.themePackWallpaperChip),
-                                if (pack.spec.contrastWarnings.isNotEmpty)
-                                  // The failing pairs (AC6), visible before
-                                  // the radio apply — not just in the JS
-                                  // consent dialog.
-                                  Text(
-                                    pack.spec.contrastWarnings.join(' · '),
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      color: theme.colorScheme.error,
-                                    ),
-                                  ),
-                              ],
-                            ),
-                      secondary: IconButton(
-                        tooltip: context.l10n.themePackDelete,
-                        icon: const Icon(Icons.delete_outline, size: 20),
-                        onPressed: () =>
-                            _remove(context, store, controller, pack),
-                      ),
-                      contentPadding: EdgeInsets.zero,
-                      dense: true,
-                    ),
-                ],
-              ),
+              for (final pack in store.packs)
+                _packTile(context, theme, store, controller, pack),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _headerRow(
+    BuildContext context,
+    ThemeData theme,
+    ThemePackStore store,
+    bool canPick,
+  ) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            context.l10n.themePacksTitle,
+            style: theme.textTheme.titleSmall,
+          ),
+        ),
+        if (canPick)
+          TextButton.icon(
+            onPressed: () => _import(context, store),
+            icon: const Icon(Icons.upload_file, size: 18),
+            label: Text(context.l10n.themePackImport),
+          ),
+      ],
+    );
+  }
+
+  Widget _packTile(
+    BuildContext context,
+    ThemeData theme,
+    ThemePackStore store,
+    ThemeController controller,
+    InstalledThemePack pack,
+  ) {
+    return RadioListTile<String?>(
+      key: ValueKey('theme-pack-${pack.id}'),
+      value: pack.id,
+      title: Text(pack.name),
+      subtitle:
+          (pack.spec.wallpaper == null &&
+              pack.spec.contrastWarnings.isEmpty)
+          ? null
+          : _packNotes(context, theme, pack),
+      secondary: IconButton(
+        tooltip: context.l10n.themePackDelete,
+        icon: const Icon(Icons.delete_outline, size: 20),
+        onPressed: () => _remove(context, store, controller, pack),
+      ),
+      contentPadding: EdgeInsets.zero,
+      dense: true,
+    );
+  }
+
+  Widget _packNotes(
+    BuildContext context,
+    ThemeData theme,
+    InstalledThemePack pack,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (pack.spec.wallpaper != null)
+          Text(context.l10n.themePackWallpaperChip),
+        if (pack.spec.contrastWarnings.isNotEmpty)
+          // The failing pairs (AC6), visible before the radio apply —
+          // not just in the JS consent dialog.
+          Text(
+            pack.spec.contrastWarnings.join(' · '),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.error,
             ),
-          ],
-        );
-      },
+          ),
+      ],
     );
   }
 }
