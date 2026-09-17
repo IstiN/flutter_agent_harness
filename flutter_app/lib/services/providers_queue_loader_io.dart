@@ -12,6 +12,7 @@ library;
 import 'dart:convert';
 import 'dart:io' as io;
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:yaml/yaml.dart';
 
@@ -97,45 +98,87 @@ Future<String> writeAppProviderQueue(
   String? projectDir,
   String? homeDir,
 }) async {
+  _assertFileQueueScope(layer);
+  final path = appQueueConfigPath(
+    layer,
+    projectDir: projectDir,
+    homeDir: homeDir,
+  );
+  assertQueueEnvNotSet();
+  final file = io.File(path);
+  final edited = editedQueueYaml(
+    file.existsSync() ? file.readAsStringSync() : '',
+    entries,
+  );
+  // Never persist a file the next boot would reject: the WHOLE edited
+  // section re-parses with the real parser before the write.
+  assertQueueParses(edited, path);
+  if (!file.parent.existsSync()) file.parent.createSync(recursive: true);
+  await file.writeAsString(edited);
+  return path;
+}
+
+/// The env scope has no file behind it (the boot reads FA_PROVIDERS_QUEUE).
+void _assertFileQueueScope(ProviderQueueScope layer) {
   if (layer == ProviderQueueScope.env) {
     throw StateError(
       'FA_PROVIDERS_QUEUE is read-only from the app — edit the project '
       'or user yaml instead',
     );
   }
-  final resolvedHome = homeDir ?? desktopHomeDir();
-  final path = layer == ProviderQueueScope.project
-      ? projectDir == null
-            ? throw StateError('no session project directory')
-            : '$projectDir/.fah/config.yaml'
-      : resolvedHome == null
-      ? throw StateError('no home directory on this host')
-      : '$resolvedHome/.fah/config.yaml';
-  // The env is not writable and always wins: refuse an edit that the
-  // next boot would never read (env set -> file queues are shadowed).
-  if (io.Platform.environment['FA_PROVIDERS_QUEUE']?.trim().isNotEmpty ==
+}
+
+/// The yaml path of [layer]'s config file; the env scope never gets here.
+@visibleForTesting
+String appQueueConfigPath(
+  ProviderQueueScope layer, {
+  String? projectDir,
+  String? homeDir,
+}) => layer == ProviderQueueScope.project
+    ? _projectQueuePath(projectDir)
+    : _homeQueuePath(homeDir ?? desktopHomeDir());
+
+String _projectQueuePath(String? projectDir) => projectDir == null
+    ? throw StateError('no session project directory')
+    : '$projectDir/.fah/config.yaml';
+
+String _homeQueuePath(String? resolvedHome) => resolvedHome == null
+    ? throw StateError('no home directory on this host')
+    : '$resolvedHome/.fah/config.yaml';
+
+/// The env is not writable and always wins: refuse an edit that the next
+/// boot would never read (env set -> file queues are shadowed).
+@visibleForTesting
+void assertQueueEnvNotSet([Map<String, String>? environment]) {
+  if ((environment ?? io.Platform.environment)['FA_PROVIDERS_QUEUE']
+          ?.trim()
+          .isNotEmpty ==
       true) {
     throw StateError(
       'FA_PROVIDERS_QUEUE env wins over any file queue — edit the env '
       'value or unset it',
     );
   }
+}
+
+/// The edited yaml body: a `providersQueue:` JSON block upserted into the
+/// current file source.
+@visibleForTesting
+String editedQueueYaml(String source, List<ProviderQueueEntry> entries) {
   final body = const JsonEncoder.withIndent(
     '  ',
   ).convert([for (final entry in entries) entry.toJson()]);
-  final file = io.File(path);
-  final source = file.existsSync() ? file.readAsStringSync() : '';
-  final edited = upsertYamlPath(source, const [
+  return upsertYamlPath(source, const [
     'providersQueue',
   ], configLeafLines(body, depth: 0));
-  // Never persist a file the next boot would reject: the WHOLE edited
-  // section re-parses with the real parser before the write.
+}
+
+/// Re-parses the whole edited file with the real queue parser.
+@visibleForTesting
+void assertQueueParses(String edited, String path) {
   final doc = loadYaml(edited);
   parseProviderQueueYaml(
     doc is YamlMap ? doc['providersQueue'] : null,
     source: path,
   );
-  if (!file.parent.existsSync()) file.parent.createSync(recursive: true);
-  await file.writeAsString(edited);
-  return path;
 }
