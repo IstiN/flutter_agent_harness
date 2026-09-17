@@ -773,22 +773,38 @@ Object.defineProperty(jsr, 'onBack', {
 ''';
 
   Future<void> _exec(String id, String cmd) async {
-    // The jsr.fa bridge rides on exec with a JSON envelope.
-    if (cmd.startsWith('{')) {
-      try {
-        final decoded = jsonDecode(cmd);
-        if (decoded is Map<String, dynamic> && decoded['fa'] is String) {
-          await _faCall(
-            id,
-            decoded['fa'] as String,
-            (decoded['args'] as Map?)?.cast<String, Object?>() ?? const {},
-          );
-          return;
-        }
-      } on FormatException {
-        // Not a bridge call — fall through to shell handling.
-      }
+    final envelope = parseFaEnvelope(cmd);
+    if (envelope != null) {
+      await _faCall(id, envelope.fa, envelope.args);
+      return;
     }
+    await _execShell(id, cmd);
+  }
+
+  /// The `jsr.fa` bridge envelope riding on exec (issue #565 descent):
+  /// `{"fa": "<method>", "args": {...}}` — null for a plain shell command,
+  /// malformed JSON, or JSON without a string `fa` field.
+  @visibleForTesting
+  static ({String fa, Map<String, Object?> args})? parseFaEnvelope(String cmd) {
+    if (!cmd.startsWith('{')) return null;
+    try {
+      final decoded = jsonDecode(cmd);
+      if (decoded is Map<String, dynamic> && decoded['fa'] is String) {
+        return (
+          fa: decoded['fa'] as String,
+          args: (decoded['args'] as Map?)?.cast<String, Object?>() ?? const {},
+        );
+      }
+    } on FormatException {
+      // Not a bridge call — fall through to shell handling.
+    }
+    return null;
+  }
+
+  /// The shell leg of [_exec]: the allow-listed command runs in the env and
+  /// resolves as {stdout, stderr, exitCode}; anything else is a denial or
+  /// the env's own error.
+  Future<void> _execShell(String id, String cmd) async {
     if (!_isShellAllowed(cmd)) {
       _resolve?.call(id, {'__error': _denied('this command')});
       return;
@@ -959,21 +975,23 @@ Object.defineProperty(jsr, 'onBack', {
   Future<Map<String, Object?>> _faEmit(Map<String, Object?> args) async {
     final event = (args['event'] ?? '').toString();
     if (event.isEmpty) return {'__error': 'emit requires an event name'};
-    final payload = args['payload'];
     final sink = onEmit;
     if (sink != null) {
       // A throwing host sink must not reject the bridge promise.
       try {
-        sink(
-          event,
-          payload is Map ? Map<String, Object?>.from(payload) : const {},
-        );
+        sink(event, emitPayload(args['payload']));
       } on Object catch (error) {
         AppLog.i('apps', 'jsr.fa.emit handler failed: $error');
       }
     }
     return {'emitted': sink != null};
   }
+
+  /// The `emit` payload (issue #565 descent): a map is copied so the JS
+  /// object never aliases host state; anything else becomes an empty map.
+  @visibleForTesting
+  static Map<String, Object?> emitPayload(Object? payload) =>
+      payload is Map ? Map<String, Object?>.from(payload) : const {};
 
   /// Platform-bridge fallback for `homekit.*` / `health.*` / `contacts.*`
   /// methods the map does not implement — permission-gated by prefix. A
@@ -1076,18 +1094,7 @@ Object.defineProperty(jsr, 'onBack', {
     final api = await _gatedCalendar();
     final id = (args['id'] ?? '').toString();
     if (id.isEmpty) throw StateError('id is required');
-    final hasSlot =
-        args.containsKey('startHour') ||
-        args.containsKey('endHour') ||
-        args.containsKey('allDay');
-    final slot = hasSlot
-        ? calendarSlot(
-            date: args['date']?.toString(),
-            startHour: args['startHour'] as num?,
-            endHour: args['endHour'] as num?,
-            allDay: args['allDay'] == true,
-          )
-        : null;
+    final slot = calendarUpdateSlot(args);
     final recurrence = parseCalendarRecurrence(args['recurrence']);
     await api.updateEvent(
       id: id,
@@ -1105,6 +1112,26 @@ Object.defineProperty(jsr, 'onBack', {
       span: parseCalendarSpan(args['span']),
     );
     return {'updated': true};
+  }
+
+  /// The `startHour`/`endHour`/`allDay` slot override of `calendar.update`
+  /// (issue #565 descent) — null when the args touch none of the three keys
+  /// (a metadata-only update must not move the event in time).
+  @visibleForTesting
+  static ({DateTime start, DateTime end, bool allDay})? calendarUpdateSlot(
+    Map<String, Object?> args,
+  ) {
+    final hasSlot =
+        args.containsKey('startHour') ||
+        args.containsKey('endHour') ||
+        args.containsKey('allDay');
+    if (!hasSlot) return null;
+    return calendarSlot(
+      date: args['date']?.toString(),
+      startHour: args['startHour'] as num?,
+      endHour: args['endHour'] as num?,
+      allDay: args['allDay'] == true,
+    );
   }
 
   /// `jsr.fa.calendar.delete({id, span})` → `{deleted: true}`.
@@ -1213,7 +1240,7 @@ Object.defineProperty(jsr, 'onBack', {
   /// a `tel:` URL with the contact's number.
   Future<Map<String, Object?>> _contactsCall(Map<String, Object?> args) async {
     final api = await _gatedContacts();
-    final phone = await _contactsPhone(api, args);
+    final phone = await contactsPhone(api, args);
     if (!await api.openUrl('tel:$phone')) {
       throw StateError('could not open the dialer for $phone');
     }
@@ -1226,7 +1253,7 @@ Object.defineProperty(jsr, 'onBack', {
     final api = await _gatedContacts();
     final text = (args['text'] ?? '').toString().trim();
     if (text.isEmpty) throw StateError('text is required');
-    final phone = await _contactsPhone(api, args);
+    final phone = await contactsPhone(api, args);
     final url = 'sms:$phone?&body=${Uri.encodeComponent(text)}';
     if (!await api.openUrl(url)) {
       throw StateError('could not open the Messages app for $phone');
@@ -1235,8 +1262,10 @@ Object.defineProperty(jsr, 'onBack', {
   }
 
   /// The target phone for contacts.call/sms: the explicit `phone` arg, or
-  /// the first number of the contact with `id`.
-  Future<String> _contactsPhone(
+  /// the first number of the contact with `id` (issue #565 descent: static
+  /// for the direct unit tests, the engine state never enters the lookup).
+  @visibleForTesting
+  static Future<String> contactsPhone(
     ContactApi api,
     Map<String, Object?> args,
   ) async {
@@ -1796,8 +1825,7 @@ Object.defineProperty(jsr, 'onBack', {
         'in the Fa settings first',
       );
     }
-    final path = (args['path'] ?? '').toString().trim();
-    if (path.isEmpty) throw StateError('path is required');
+    final path = mediaReadVideoPath(args);
     final exists = await env.exists(path);
     if (exists.valueOrNull != true) {
       throw StateError('no such file: $path');
@@ -1811,6 +1839,15 @@ Object.defineProperty(jsr, 'onBack', {
       question: args['question']?.toString(),
     );
     return {'description': description};
+  }
+
+  /// The sandbox path of `media.readVideo` (issue #565 descent) — required,
+  /// trimmed; the app-visible path the env maps to a host one.
+  @visibleForTesting
+  static String mediaReadVideoPath(Map<String, Object?> args) {
+    final path = (args['path'] ?? '').toString().trim();
+    if (path.isEmpty) throw StateError('path is required');
+    return path;
   }
 
   /// The permission gate the `jsr.fa.media.*` generation calls share: the
@@ -1876,17 +1913,28 @@ Object.defineProperty(jsr, 'onBack', {
         'in the Fa settings Keys section',
       );
     }
-    final name = (args['name'] ?? '').toString().trim();
-    if (name.isEmpty) throw StateError('name is required');
-    var reason = (args['reason'] ?? '').toString().trim();
-    if (reason.isEmpty) {
-      reason = 'The app "${app.name}" asks for the $name key.';
-    }
-    final result = await handler(name, reason);
+    final request = keysRequestArgs(args, appName: app.name);
+    final result = await handler(request.name, request.reason);
     if (result == null) {
-      throw StateError('the user declined to provide $name');
+      throw StateError('the user declined to provide ${request.name}');
     }
     return {'name': result.name, 'value': result.value};
+  }
+
+  /// The validated name + prompt reason of `keys.request` (issue #565
+  /// descent): the name is required; an absent/blank reason defaults to a
+  /// sentence naming the asking app and the key.
+  @visibleForTesting
+  static ({String name, String reason}) keysRequestArgs(
+    Map<String, Object?> args, {
+    required String appName,
+  }) {
+    final name = (args['name'] ?? '').toString().trim();
+    if (name.isEmpty) throw StateError('name is required');
+    final custom = (args['reason'] ?? '').toString().trim();
+    final reason =
+        custom.isEmpty ? 'The app "$appName" asks for the $name key.' : custom;
+    return (name: name, reason: reason);
   }
 
   /// The permission gate every `jsr.fa.theme.*` call shares: the `theme`
