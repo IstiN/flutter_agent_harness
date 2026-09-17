@@ -84,13 +84,32 @@ final class OpenRouterOAuthCoordinator {
       // Mobile Safari and PWAs cannot reliably return data from a popup,
       // so redirect back to the app URL and let the app read the code from
       // the query string on startup.
-      final isMobileWeb =
-          defaultTargetPlatform == TargetPlatform.iOS ||
-          defaultTargetPlatform == TargetPlatform.android;
-      return isMobileWeb ? webAppCallbackUrl : webCallbackUrl;
+      return webCallbackUrlFor(defaultTargetPlatform);
     }
-    if (Platform.isWindows || Platform.isLinux) return null;
-    if (Platform.isIOS || Platform.isMacOS) return nativeCallbackUrl;
+    if (_lazyCapturePlatforms.contains(defaultTargetPlatform)) return null;
+    return nativeCallbackUrlFor(defaultTargetPlatform);
+  }
+
+  /// Windows/Linux capture through a localhost server started lazily by
+  /// [capture]; every other platform needs the callback URL up front.
+  static const _lazyCapturePlatforms = {
+    TargetPlatform.windows,
+    TargetPlatform.linux,
+  };
+
+  /// The callback URL for the web build: mobile web (iOS/Android) returns
+  /// to the app URL, desktop web to the postMessage page.
+  String webCallbackUrlFor(TargetPlatform platform) =>
+      platform == TargetPlatform.iOS || platform == TargetPlatform.android
+      ? webAppCallbackUrl
+      : webCallbackUrl;
+
+  /// The callback URL for native (non-web, non-lazy-desktop) platforms:
+  /// iOS/macOS use the native HTTPS page, Android the deep link.
+  String nativeCallbackUrlFor(TargetPlatform platform) {
+    if (platform == TargetPlatform.iOS || platform == TargetPlatform.macOS) {
+      return nativeCallbackUrl;
+    }
     return '$deepLinkScheme://oauth/openrouter';
   }
 

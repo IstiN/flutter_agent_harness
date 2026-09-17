@@ -18,25 +18,35 @@ class DefaultFirebaseOptions {
     if (kIsWeb) {
       return web;
     }
-    switch (defaultTargetPlatform) {
+    final options = optionsFor(defaultTargetPlatform);
+    if (options != null) return options;
+    throw UnsupportedError(_unsupportedMessage(defaultTargetPlatform));
+  }
+
+  /// The configured options for a native platform, or null when the project
+  /// has no Firebase registration for it.
+  static FirebaseOptions? optionsFor(TargetPlatform platform) {
+    switch (platform) {
       case TargetPlatform.android:
         return android;
       case TargetPlatform.iOS:
         return ios;
       case TargetPlatform.macOS:
         return macos;
-      case TargetPlatform.windows:
-        throw UnsupportedError(
-          'Firebase is not configured for Windows in this project.',
-        );
-      case TargetPlatform.linux:
-        throw UnsupportedError(
-          'Firebase is not configured for Linux in this project.',
-        );
       default:
-        throw UnsupportedError(
-          'Firebase is not supported on $defaultTargetPlatform.',
-        );
+        return null;
+    }
+  }
+
+  /// The per-platform explanation for a missing Firebase registration.
+  static String _unsupportedMessage(TargetPlatform platform) {
+    switch (platform) {
+      case TargetPlatform.windows:
+        return 'Firebase is not configured for Windows in this project.';
+      case TargetPlatform.linux:
+        return 'Firebase is not configured for Linux in this project.';
+      default:
+        return 'Firebase is not supported on $platform.';
     }
   }
 

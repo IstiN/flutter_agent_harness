@@ -5,7 +5,8 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, debugDefaultTargetPlatformOverride, kIsWeb;
 import 'package:test/test.dart';
 import 'package:url_launcher/url_launcher.dart' show LaunchMode;
 
@@ -13,15 +14,13 @@ import 'package:fa/services/openrouter_oauth_coordinator.dart';
 
 void main() {
   group('OpenRouterOAuthCoordinator', () {
-    test('platformCallbackUrl matches the host platform', () {
-      // Host tests run on macOS/Linux/Windows. Windows/Linux use a localhost
-      // server (null here); macOS uses the HTTPS native callback URL.
-      final url = OpenRouterOAuthCoordinator.instance.platformCallbackUrl;
-      if (Platform.isMacOS) {
-        expect(url, 'https://fa1.dev/oauth/openrouter-native.html');
-      } else {
-        expect(url, isNull);
-      }
+    test('platformCallbackUrl returns the deep link on Android', () {
+      // flutter test pins defaultTargetPlatform to android — the native
+      // Android path goes through the registered deep-link scheme.
+      expect(
+        OpenRouterOAuthCoordinator.instance.platformCallbackUrl,
+        'fah://oauth/openrouter',
+      );
     });
 
     test('platformCallbackUrl uses custom scheme and web URLs', () {
@@ -31,16 +30,7 @@ void main() {
         webAppCallbackUrl: 'https://yoclip.studio/app/index.html',
         nativeCallbackUrl: 'https://yoclip.studio/oauth/openrouter-native.html',
       );
-      // On desktop tests the desktop branch still returns null for
-      // Windows/Linux; macOS gets the native callback URL.
-      if (Platform.isMacOS) {
-        expect(
-          custom.platformCallbackUrl,
-          'https://yoclip.studio/oauth/openrouter-native.html',
-        );
-      } else {
-        expect(custom.platformCallbackUrl, isNull);
-      }
+      expect(custom.platformCallbackUrl, 'yoclip://oauth/openrouter');
       expect(custom.deepLinkScheme, 'yoclip');
       expect(
         custom.webCallbackUrl,
@@ -127,5 +117,58 @@ void main() {
       },
       skip: !Platform.isMacOS,
     );
+
+    test('platformCallbackUrl dispatches per platform', () {
+      final coordinator = OpenRouterOAuthCoordinator(
+        deepLinkScheme: 'yoclip',
+        webCallbackUrl: 'https://yoclip.studio/oauth/openrouter.html',
+        webAppCallbackUrl: 'https://yoclip.studio/app/index.html',
+        nativeCallbackUrl: 'https://yoclip.studio/oauth/openrouter-native.html',
+      );
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      String? nativeFor(TargetPlatform platform) {
+        debugDefaultTargetPlatformOverride = platform;
+        return coordinator.platformCallbackUrl;
+      }
+
+      // Windows/Linux start a lazy localhost server — no URL up front.
+      expect(nativeFor(TargetPlatform.windows), isNull);
+      expect(nativeFor(TargetPlatform.linux), isNull);
+      // iOS/macOS return through the native HTTPS page, Android via the
+      // registered deep-link scheme.
+      expect(
+        nativeFor(TargetPlatform.iOS),
+        'https://yoclip.studio/oauth/openrouter-native.html',
+      );
+      expect(
+        nativeFor(TargetPlatform.macOS),
+        'https://yoclip.studio/oauth/openrouter-native.html',
+      );
+      expect(nativeFor(TargetPlatform.android), 'yoclip://oauth/openrouter');
+      debugDefaultTargetPlatformOverride = null;
+    });
+
+    test('web callback URLs split mobile web from desktop web', () {
+      final coordinator = OpenRouterOAuthCoordinator(
+        deepLinkScheme: 'yoclip',
+        webCallbackUrl: 'https://yoclip.studio/oauth/openrouter.html',
+        webAppCallbackUrl: 'https://yoclip.studio/app/index.html',
+      );
+      // Mobile Safari/PWA cannot postMessage back — those return to the
+      // app URL and read the code from the query string on startup.
+      expect(
+        coordinator.webCallbackUrlFor(TargetPlatform.iOS),
+        'https://yoclip.studio/app/index.html',
+      );
+      expect(
+        coordinator.webCallbackUrlFor(TargetPlatform.android),
+        'https://yoclip.studio/app/index.html',
+      );
+      // Desktop web posts the code back from the popup page.
+      expect(
+        coordinator.webCallbackUrlFor(TargetPlatform.macOS),
+        'https://yoclip.studio/oauth/openrouter.html',
+      );
+    });
   });
 }

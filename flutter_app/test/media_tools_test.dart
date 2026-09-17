@@ -614,6 +614,154 @@ void main() {
         expect(calls, 0);
       },
     );
+
+    group('minimax (async task polling)', () {
+      MediaModelsStore minimaxStore() {
+        final store = MediaModelsStore.inMemory();
+        store.setOverride(
+          MediaSlot.videoGeneration,
+          const MediaSlotOverride(
+            providerKind: 'openai-completions',
+            // The gateway dispatches on a `minimax` marker in the baseUrl.
+            baseUrl: 'https://minimax.test/v1',
+            modelId: 'MiniMax-Hailuo-02',
+            apiKeyName: 'VIDEO_KEY',
+          ),
+        );
+        return store;
+      }
+
+      /// A MockClient answering the MiniMax contract: POST create returns
+      /// the task id, GET query delegates to [query] (0-based poll number),
+      /// GET on cdn.test returns the clip bytes.
+      http_testing.MockClient minimaxClient(
+        http.Response Function(int poll) query,
+      ) {
+        var polls = 0;
+        return http_testing.MockClient((request) async {
+          if (request.method == 'POST') {
+            return http.Response(jsonEncode({'task_id': 'task-7'}), 200);
+          }
+          if (request.url.host == 'cdn.test') {
+            return http.Response.bytes(Uint8List.fromList([7, 7, 7]), 200);
+          }
+          return query(polls++);
+        });
+      }
+
+      MediaGateway minimaxGateway(
+        MemoryExecutionEnv env,
+        http.Client client,
+      ) => MediaGateway(
+        env: env,
+        fallback: () => fallback,
+        store: minimaxStore(),
+        resolveKey: slotKeyResolver,
+        httpClient: client,
+      );
+
+      test('polls through a pending status to Success and downloads', () async {
+        final env = MemoryExecutionEnv();
+        final seen = <http.Request>[];
+        final client = minimaxClient((poll) {
+          seen.add(http.Request('GET', Uri.parse('about:poll#$poll')));
+          return http.Response(
+            jsonEncode(
+              poll == 0
+                  ? {'status': 'Queueing'}
+                  : {
+                      'status': 'Success',
+                      'file_url': 'https://cdn.test/clip.mp4',
+                    },
+            ),
+            200,
+          );
+        });
+        final tool = generateVideoTool(minimaxGateway(env, client));
+
+        final result = await tool.execute(const {'prompt': 'x'}, null, null);
+
+        expect(textOf(result), contains('Video saved to generated/video-'));
+        final queries = seen
+            .where((r) => r.url.toString().contains('about:poll'))
+            .length;
+        expect(queries, 2, reason: 'one pending poll, then Success');
+      });
+
+      test('a Failed task surfaces the failure payload', () async {
+        final env = MemoryExecutionEnv();
+        final client = minimaxClient(
+          (_) => http.Response(
+            jsonEncode({'status': 'Failed', 'base_resp': 'blocked'}),
+            200,
+          ),
+        );
+        final tool = generateVideoTool(minimaxGateway(env, client));
+
+        final result = await tool.execute(const {'prompt': 'x'}, null, null);
+
+        final text = textOf(result);
+        expect(text, startsWith('Error:'));
+        expect(text, contains('task-7 failed'));
+        expect(text, contains('blocked'));
+      });
+
+      test('a Cancelled task reports the cancellation', () async {
+        final env = MemoryExecutionEnv();
+        final client = minimaxClient(
+          (_) => http.Response(jsonEncode({'status': 'Cancelled'}), 200),
+        );
+        final tool = generateVideoTool(minimaxGateway(env, client));
+
+        final result = await tool.execute(const {'prompt': 'x'}, null, null);
+
+        final text = textOf(result);
+        expect(text, startsWith('Error:'));
+        expect(text, contains('task-7 was cancelled'));
+      });
+
+      test('a Success without file_url explains the missing link', () async {
+        final env = MemoryExecutionEnv();
+        final client = minimaxClient(
+          (_) => http.Response(jsonEncode({'status': 'Success'}), 200),
+        );
+        final tool = generateVideoTool(minimaxGateway(env, client));
+
+        final result = await tool.execute(const {'prompt': 'x'}, null, null);
+
+        final text = textOf(result);
+        expect(text, startsWith('Error:'));
+        expect(text, contains('succeeded without file_url'));
+      });
+
+      test('a failing query surfaces the HTTP status and body', () async {
+        final env = MemoryExecutionEnv();
+        final client = minimaxClient((_) => http.Response('quota gone', 429));
+        final tool = generateVideoTool(minimaxGateway(env, client));
+
+        final result = await tool.execute(const {'prompt': 'x'}, null, null);
+
+        final text = textOf(result);
+        expect(text, startsWith('Error:'));
+        expect(text, contains('Video task query failed'));
+        expect(text, contains('HTTP 429'));
+        expect(text, contains('quota gone'));
+      });
+
+      test('a pre-cancelled token aborts before the first poll', () async {
+        final env = MemoryExecutionEnv();
+        final client = minimaxClient(
+          (_) => http.Response(jsonEncode({'status': 'Queueing'}), 200),
+        );
+        final tool = generateVideoTool(minimaxGateway(env, client));
+        final source = CancelTokenSource()..cancel('user stopped');
+
+        await expectLater(
+          tool.execute(const {'prompt': 'x'}, source.token, null),
+          throwsA(isA<CancelledException>()),
+        );
+      });
+    });
   });
 
   group('endpoint resolution shared with the store', () {
