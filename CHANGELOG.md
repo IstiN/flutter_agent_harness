@@ -3754,4 +3754,10 @@
 - ci(487): cross-module duplication gate at measured baseline (ratchet only-tighten) (#548)
 - chore: collapse duplicated 0.1.403/Unreleased CHANGELOG sections (raced bot auto-release with PR #546) (#549)
 
+## 0.1.406
+
+- test(557): dap menu leg waits for the PAINTED screen — pty_harness gains waitForScreen (raw echo races frame paint on loaded runners, the #550 flake family that reddened the v0.1.405 tag CI) (#557)
+- ci(554): tag-run publish must never skip silently — fa#456 transitive-skip fix + loud gate + pub.dev post-verify (#556)
+- fix(507): revive the model-picker visual tests (#529)
+
 ## Unreleased
