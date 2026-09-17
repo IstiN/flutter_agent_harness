@@ -28,7 +28,8 @@ void main() {
     Future<List<String>> Function(String baseUrl, {required String apiKey})?
     modelsFetcher,
     http.Client? modelsHttpClient,
-    Future<void> Function(String providerKind, String apiKey)? onProviderChanged,
+    Future<void> Function(String providerKind, String apiKey)?
+    onProviderChanged,
     SecureKeyCache? secureKeys,
     CustomProviderRegistry? customProviders,
     void Function(String name, String value)? onSecretStored,
@@ -151,7 +152,9 @@ void main() {
     final cli = cliFor(
       fake.call,
       envVarValue: (name) => name == 'ANTHROPIC_API_KEY' ? 'env-key-123' : null,
-      onProviderChanged: (kind, key) async { changes.add((kind, key)); },
+      onProviderChanged: (kind, key) async {
+        changes.add((kind, key));
+      },
     );
     final run = cli.run();
 
@@ -182,7 +185,9 @@ void main() {
     final cli = cliFor(
       fake.call,
       envVarValue: (_) => null,
-      onProviderChanged: (kind, key) async { changes.add((kind, key)); },
+      onProviderChanged: (kind, key) async {
+        changes.add((kind, key));
+      },
     );
     final run = cli.run();
 
@@ -208,7 +213,9 @@ void main() {
     final changes = <(String, String)>[];
     final cli = cliFor(
       fake.call,
-      onProviderChanged: (kind, key) async { changes.add((kind, key)); },
+      onProviderChanged: (kind, key) async {
+        changes.add((kind, key));
+      },
     );
     final run = cli.run();
 
@@ -361,7 +368,9 @@ void main() {
       final cli = cliFor(
         fake.call,
         secureKeys: cache,
-        onProviderChanged: (kind, key) async { changes.add((kind, key)); },
+        onProviderChanged: (kind, key) async {
+          changes.add((kind, key));
+        },
       );
       final run = cli.run();
 
@@ -463,7 +472,9 @@ void main() {
       secureKeys: cache,
       envVarValue: (name) =>
           name == 'FA_KEY_127_0_0_1_1' ? cache.read(name) : null,
-      onProviderChanged: (kind, key) async { changes.add((kind, key)); },
+      onProviderChanged: (kind, key) async {
+        changes.add((kind, key));
+      },
     );
     final run = cli.run();
 
@@ -487,7 +498,9 @@ void main() {
       fake.call,
       secureKeys: cache,
       envVarValue: (name) => name == 'OPENAI_API_KEY' ? cache.read(name) : null,
-      onProviderChanged: (kind, key) async { changes.add((kind, key)); },
+      onProviderChanged: (kind, key) async {
+        changes.add((kind, key));
+      },
     );
     final run = cli.run();
 
@@ -517,7 +530,9 @@ void main() {
         if (name == 'FA_KEY_127_0_0_1_1') return cache.read(name);
         return null;
       },
-      onProviderChanged: (kind, key) async { changes.add((kind, key)); },
+      onProviderChanged: (kind, key) async {
+        changes.add((kind, key));
+      },
     );
     final run = cli.run();
 
@@ -545,7 +560,9 @@ void main() {
     final cli = cliFor(
       fake.call,
       envVarValue: (_) => null,
-      onProviderChanged: (kind, key) async { changes.add((kind, key)); },
+      onProviderChanged: (kind, key) async {
+        changes.add((kind, key));
+      },
     );
     final run = cli.run();
 
@@ -932,7 +949,9 @@ void main() {
       fake.call,
       envVarValue: (_) => null,
       customProviders: registry,
-      onProviderChanged: (kind, key) async { changes.add((kind, key)); },
+      onProviderChanged: (kind, key) async {
+        changes.add((kind, key));
+      },
     );
     final run = cli.run();
     io.sendLine('/exit');
@@ -1265,7 +1284,9 @@ void main() {
           envVarValue: (_) => null,
           secureKeys: cache,
           customProviders: registry,
-          onProviderChanged: (kind, key) async { changes.add((kind, key)); },
+          onProviderChanged: (kind, key) async {
+            changes.add((kind, key));
+          },
         );
         final run = cli.run();
 
@@ -2134,6 +2155,49 @@ void main() {
       expect(registry.find('kimi'), isNull, reason: 'name not saved');
       expect(registry.find('personal'), isNotNull);
     });
+    test(
+      'the provider-name step re-prompts on junk names (issue #555)',
+      () async {
+        // Regression: `?` typed at the name prompt used to be saved — the
+        // bare `name: ?` yaml scalar then broke config.yaml loading (the
+        // next start fell back to defaults). The step must retry instead.
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final store = FakeSecureKeyStore();
+        final cache = SecureKeyCache(store);
+        await cache.probe();
+        final registry = CustomProviderRegistry([]);
+        final cli = cliFor(
+          fake.call,
+          envVarValue: (_) => null,
+          secureKeys: cache,
+          customProviders: registry,
+          modelsFetcher: (baseUrl, {required apiKey}) async => ['k3'],
+        );
+        final run = cli.run();
+
+        io.sendLine('/provider kimi');
+        await waitForIt(() => io.out.toString().contains('Kimi API key'));
+        io.sendLine('sk-kimi-x');
+        await waitForIt(
+          () => io.out.toString().contains('provider name [api.kimi.com]'),
+        );
+        io.sendLine('?'); // junk name — must be rejected with a re-prompt
+        await waitForIt(
+          () => io.out.toString().contains('not a usable provider name'),
+        );
+        io.sendLine('personal');
+        await waitForIt(() => io.out.toString().contains('Kimi model'));
+        io.sendLine('1');
+        await waitForIt(
+          () => io.out.toString().contains('saved provider personal'),
+        );
+        io.sendLine('/exit');
+        await run;
+
+        expect(registry.find('?'), isNull, reason: 'junk name not saved');
+        expect(registry.find('personal'), isNotNull);
+      },
+    );
 
     test('a catalog kimi switch stops recording /model into the previous '
         'custom entry', () async {
@@ -2535,7 +2599,9 @@ void main() {
         secureKeys: cache,
         customProviders: registry,
         modelsFetcher: (baseUrl, {required apiKey}) async => const [],
-        onProviderChanged: (kind, key) async { changes.add((kind, key)); },
+        onProviderChanged: (kind, key) async {
+          changes.add((kind, key));
+        },
       );
       final run = cli.run();
 
