@@ -5,6 +5,7 @@
 import 'dart:convert';
 
 import 'package:fa/sandbox/shell_parser.dart';
+import 'package:path/path.dart' as p;
 
 /// Pure, shell-semantics helpers extracted from [WasiSandboxShell] so the
 /// CRAP descent (#475) can unit test them without loading WASM cores.
@@ -612,3 +613,68 @@ final class TestEvaluator {
     return result;
   }
 }
+
+/// `env` argv split (issue #563 CRAP descent): leading `NAME=value`
+/// assignments vs. the remaining operands. An assignment is any non-flag
+/// argument whose first `=` sits past position 0 — identical to the inline
+/// classification this replaced.
+({Map<String, String> assignments, List<String> remaining}) splitEnvArgs(
+  List<String> args,
+) {
+  final assignments = <String, String>{};
+  final remaining = <String>[];
+  for (final arg in args) {
+    final idx = arg.indexOf('=');
+    if (idx > 0 && !arg.startsWith('-')) {
+      assignments[arg.substring(0, idx)] = arg.substring(idx + 1);
+    } else {
+      remaining.add(arg);
+    }
+  }
+  return (assignments: assignments, remaining: remaining);
+}
+
+/// Applies `export` operands to [env]: `NAME=value` assigns, a bare `NAME`
+/// marks it exported with an empty value only when not already present.
+void applyExportArgs(Map<String, String> env, List<String> args) {
+  for (final arg in args) {
+    final idx = arg.indexOf('=');
+    if (idx > 0) {
+      env[arg.substring(0, idx)] = arg.substring(idx + 1);
+    } else {
+      env.putIfAbsent(arg, () => '');
+    }
+  }
+}
+
+/// Renders `export`'s no-argument listing: sorted `declare -x NAME="value"`
+/// lines, newline-terminated when non-empty.
+String formatExportListings(Map<String, String> env) {
+  final names = env.keys.toList()..sort();
+  final lines = names.map((n) => 'declare -x $n="${env[n]}"').toList();
+  return lines.isEmpty ? '' : '${lines.join('\n')}\n';
+}
+
+/// Output of the `id` builtin for the sandbox's fixed identity: `-u`/`-g`
+/// select a single field, `-n` names it instead of the numeric id.
+String idOutput(List<String> args) {
+  const user = 'Fa';
+  if (args.contains('-u') || args.contains('-g')) {
+    return '${args.contains('-n') ? user : '0'}\n';
+  }
+  return 'uid=0($user) gid=0($user) groups=0($user)\n';
+}
+
+/// Non-flag operands, in order (`relpath`'s positional paths).
+List<String> nonFlagArgs(List<String> args) => [
+  for (final arg in args)
+    if (!arg.startsWith('-')) arg,
+];
+
+/// `relpath TARGET [START]` over sandbox-absolute paths: both are stripped
+/// of the leading `/` (the WASI root maps onto the relative namespace) and
+/// delegated to `package:path`.
+String sandboxRelativePath(String from, String start) => p.relative(
+  from == '/' ? '/' : from.substring(1),
+  from: start == '/' ? '/' : start.substring(1),
+);
