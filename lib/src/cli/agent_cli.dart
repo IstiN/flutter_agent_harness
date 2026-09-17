@@ -2653,6 +2653,11 @@ class AgentCli {
     _onShellJobSettledBlock(job);
     // Event-driven waiting-row leave (issue #450).
     unawaited(_waiting.jobSettled(job));
+    // An inline consumer (a foreground bash that settled before any
+    // steer) already reported this result to the model — skip only the
+    // model-facing notice. The board/waiting bookkeeping above always
+    // runs, or the Running count never drains (issue #562).
+    if (!job.notifyOnSettle) return;
     io.writeln(
       _style.dim('[bash] ${job.id} exited(${job.exitCode}) — ${job.logPath}'),
     );
