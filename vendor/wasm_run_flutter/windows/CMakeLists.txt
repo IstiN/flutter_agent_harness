@@ -20,22 +20,33 @@ set(ArchivePath "${LibRoot}.tar.gz")
 set(BinaryPath "${FLUTTER_TARGET_PLATFORM}/wasm_run_dart.dll")
 
 if(NOT EXISTS "${LibRoot}/${BinaryPath}")
-  if(NOT EXISTS ${ArchivePath})
-    file(DOWNLOAD
-      "https://github.com/juancastillo0/wasm_run/releases/download/${LibraryVersion}/other.tar.gz"
-      ${ArchivePath}
-      TLS_VERIFY ON
+  # Extract into the BUILD directory, never the source directory: on
+  # Windows the plugin's source tree lives under
+  # windows/flutter/ephemeral/.plugin_symlinks (a junction), and libarchive
+  # refuses to write "through a symlink" (archive_write_header: Cannot
+  # extract through symlink) — the nightly Windows release build was red on
+  # exactly this. The build dir is a real path, and the resulting DLL is
+  # referenced from there.
+  set(ExtractRoot "${CMAKE_CURRENT_BINARY_DIR}/${LibraryVersion}")
+  if(NOT EXISTS "${ExtractRoot}/${BinaryPath}")
+    if(NOT EXISTS ${ArchivePath})
+      file(DOWNLOAD
+        "https://github.com/juancastillo0/wasm_run/releases/download/${LibraryVersion}/other.tar.gz"
+        ${ArchivePath}
+        TLS_VERIFY ON
+      )
+    endif()
+
+    # Extract the binaries, overriding any already present.
+    file(REMOVE_RECURSE ${ExtractRoot})
+    file(MAKE_DIRECTORY ${ExtractRoot})
+    execute_process(
+      COMMAND ${CMAKE_COMMAND} -E tar xzf ${ArchivePath}
+      WORKING_DIRECTORY ${ExtractRoot}
     )
   endif()
+  set(LibRoot "${ExtractRoot}")
 
-  # Extract the binaries, overriding any already present.
-  file(REMOVE_RECURSE ${LibRoot})
-  file(MAKE_DIRECTORY ${LibRoot})
-  execute_process(
-    COMMAND ${CMAKE_COMMAND} -E tar xzf ${ArchivePath}
-    WORKING_DIRECTORY ${LibRoot}
-  )
-  
   # Clean up archive files
   file(GLOB LinuxBinaries "${LibRoot}/linux-*")
   file(REMOVE_RECURSE ${ArchivePath} ${LinuxBinaries})

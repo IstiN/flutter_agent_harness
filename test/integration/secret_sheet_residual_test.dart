@@ -98,9 +98,11 @@ void main() {
     await harness.waitForOutput(settleMs: 500);
 
     // The second sheet starts with an EMPTY value buffer: no dots from the
-    // first sheet's secret may linger in the frame.
+    // first sheet's secret may linger in the frame. A single '•' also
+    // appears in tool-row glyphs (`• request_secret · …`), so the residual
+    // check targets RUNS of dots (the masked value), not the glyph.
     expect(
-      harness.screenText.contains('•'),
+      harness.screenText.contains('•••'),
       isFalse,
       reason: 'the second sheet shows value dots from the first secret',
     );
