@@ -118,7 +118,7 @@ if [ "$stale_count" -gt 0 ]; then
     issue_action="commented on #$existing (still finding stale drafts)"
   else
     created_issue=$(gh issue create --repo "$repo" --title "$title" \
-      --body-file "$body" --label bug --label "$label" 2>/dev/null || true)
+      --body-file "$body" --label bug --label "$label" --assignee ai-teammate 2>/dev/null || true)
     issue_action="filed ${created_issue:-<issue creation failed>}"
   fi
   rm -f "$body"
