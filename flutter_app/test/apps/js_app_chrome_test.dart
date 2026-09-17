@@ -24,49 +24,54 @@ final _engineSkip = quickJsBridgeAvailable ? false : kQuickJsBridgeUnavailable;
 /// before ever touching the JS backend); the reload test then fixes the app
 /// and boots the REAL JavaScriptCore backend via the menu's Reload action.
 void main() {
-  group('JS engine (native quickjs/JavaScriptCore bridge)', () {
-    TestWidgetsFlutterBinding.ensureInitialized();
+  TestWidgetsFlutterBinding.ensureInitialized();
 
-    const widgetJs =
-        '(function(){ jsr.render({type:"text",data:"reloaded"}); })();';
+  const widgetJs =
+      '(function(){ jsr.render({type:"text",data:"reloaded"}); })();';
 
-    Future<MemoryExecutionEnv> brokenAppEnv() async {
-      final env = MemoryExecutionEnv();
-      // Only the manifest — no widget.js: a deterministic start error.
-      await env.writeFile('apps/demo/manifest.json', '{}');
-      return env;
-    }
+  Future<MemoryExecutionEnv> brokenAppEnv() async {
+    final env = MemoryExecutionEnv();
+    // Only the manifest — no widget.js: a deterministic start error.
+    await env.writeFile('apps/demo/manifest.json', '{}');
+    return env;
+  }
 
-    Future<void> pumpView(
-      WidgetTester tester,
-      MemoryExecutionEnv env, {
-      Map<String, Object?> manifest = const {'id': 'demo', 'name': 'Demo'},
-    }) async {
-      final permissions = await AppPermissionsStore.load(env);
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: buildFahTheme(),
-          locale: const Locale('en'),
-          localizationsDelegates: AppLocalizations.localizationsDelegates,
-          supportedLocales: AppLocalizations.supportedLocales,
-          home: JsAppView(
-            app: JsAppInfo.fromManifest(
-              manifest,
-              bundled: false,
-              fallbackId: 'demo',
-            ),
-            env: env,
-            permissionsStore: permissions,
+  Future<void> pumpView(
+    WidgetTester tester,
+    MemoryExecutionEnv env, {
+    Map<String, Object?> manifest = const {'id': 'demo', 'name': 'Demo'},
+  }) async {
+    final permissions = await AppPermissionsStore.load(env);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFahTheme(),
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: JsAppView(
+          app: JsAppInfo.fromManifest(
+            manifest,
+            bundled: false,
+            fallbackId: 'demo',
           ),
+          env: env,
+          permissionsStore: permissions,
         ),
-      );
-      await tester.pumpAndSettle();
-    }
+      ),
+    );
+    await tester.pumpAndSettle();
+  }
 
-    Future<void> openChromeMenu(WidgetTester tester) async {
-      await tester.tap(find.byIcon(Icons.more_vert));
-      await tester.pumpAndSettle();
-    }
+  Future<void> openChromeMenu(WidgetTester tester) async {
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await tester.pumpAndSettle();
+  }
+
+  // Display-chrome coverage: the deterministic start error fails the
+  // engine while it is still READING the source — the native JS bridge is
+  // never dlopened, so these run on every host (issue #569: the floating
+  // menu used to hide behind the engine skip and measure 0% coverage).
+  group('full-chrome menu (engine-free)', () {
 
     testWidgets('header chrome keeps the AppBar with permissions and reload', (
       tester,
@@ -180,7 +185,11 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(AppPermissionsDialog), findsNothing);
     });
+  });
 
+  // The reload path boots the REAL JavaScriptCore/QuickJS backend —
+  // engine-dependent, skipped on hosts without the native bridge.
+  group('JS engine (native quickjs/JavaScriptCore bridge)', () {
     testWidgets('full chrome menu reload restarts the app', (tester) async {
       final env = await brokenAppEnv();
       await pumpView(
