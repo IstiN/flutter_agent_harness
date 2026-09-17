@@ -87,6 +87,7 @@ final class AgentCliConfig {
     this.contextWindowCap,
     this.subagents = const SubagentsConfig(),
     this.waiting = const WaitingConfig(),
+    this.jobs = const JobsConfig(),
     this.cubeSpec,
     this.cubeSource,
     this.cubeSettings,
@@ -655,6 +656,10 @@ final class AgentCliConfig {
   /// The `waiting:` section (issue #450): visible-waiting heartbeat
   /// cadence and the `--wait-for-jobs` ceiling.
   final WaitingConfig waiting;
+
+  /// The `jobs:` section (issue #478): boot-maintenance knobs for the
+  /// cross-run shell-job state (manifest age belt + log GC).
+  final JobsConfig jobs;
 
   /// This host's machine name for `name@machine` addressing (issue #27
   /// phase 2): a `@machine` suffix matching it is stripped before local

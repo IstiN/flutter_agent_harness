@@ -1947,6 +1947,7 @@ Future<void> _runApp(List<String> args) async {
       wireDump: wireDump,
       contextWindowCap: saved.contextWindowCap,
       subagents: saved.subagents,
+      jobs: saved.jobs,
       modelRolesResolver: rolesResolver,
       providersQueueRuntime: queueRuntime,
       // The live models config (`models:` section): `/models set`/`remove`

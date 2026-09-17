@@ -298,6 +298,13 @@ const fileOnlyConfigKeys = <String, String>{
       'status digests (issue #383) — operational knobs, tuned in the '
       'file.',
 
+  // Background-job registry knobs (issue #478): the stale-entry age
+  // belt (`staleHours`) and the boot log GC (`logRetentionDays`) —
+  // operational knobs, tuned in the file; 0 disables either.
+  'jobs':
+      'Job-registry reconcile knobs (issue #478) — staleHours age belt '
+      '+ logRetentionDays boot GC; operational, tuned in the file.',
+
   // Visible-waiting heartbeat cadence + `--wait-for-jobs` ceiling
   // (issue #450): operational knobs for long waits, tuned in the file;
   // 0 disables the heartbeat entirely.

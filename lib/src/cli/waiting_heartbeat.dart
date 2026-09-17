@@ -79,6 +79,68 @@ final class WaitingConfig {
       '  waitCeilingMinutes: $waitCeilingMinutes\n';
 }
 
+/// Default age belt for cross-run job manifest entries (`jobs:
+/// staleHours`): entries older than this are dropped at boot; `0`
+/// disables the belt.
+const defaultJobsStaleHours = 24;
+
+/// Default retention for `.fah/bash_jobs/*.log` (`jobs:
+/// logRetentionDays`): older logs are deleted at boot; `0` keeps every
+/// log forever.
+const defaultJobsLogRetentionDays = 3;
+
+/// The `jobs:` yaml section (issue #478): boot-maintenance knobs for the
+/// cross-run shell-job state under `.fah/bash_jobs/`. Parsed strictly
+/// like `waiting:` — a bad schema throws at boot; negative values are
+/// rejected and `0` always means "disabled".
+final class JobsConfig {
+  const JobsConfig({
+    this.staleHours = defaultJobsStaleHours,
+    this.logRetentionDays = defaultJobsLogRetentionDays,
+  });
+
+  /// Manifest entries older than this many hours are dropped at boot
+  /// (the age belt under the pid-liveness reconcile); `0` disables it.
+  final int staleHours;
+
+  /// Job logs older than this many days are deleted at boot; `0` keeps
+  /// every log (the 24k-files leak lives here when raised).
+  final int logRetentionDays;
+
+  factory JobsConfig.fromYaml(Object? node) {
+    if (node == null) return const JobsConfig();
+    if (node is! Map) {
+      throw ConfigException('jobs must be a map, got: $node');
+    }
+    int parse(String key, int fallback) {
+      final value = node[key];
+      if (value == null) return fallback;
+      if (value is! int) {
+        throw ConfigException('"jobs.$key" must be an integer');
+      }
+      if (value < 0) {
+        throw ConfigException('"jobs.$key" must be >= 0 (0 disables)');
+      }
+      return value;
+    }
+
+    for (final key in node.keys) {
+      if (!{'staleHours', 'logRetentionDays'}.contains('$key')) {
+        throw ConfigException('unknown "jobs" key: $key');
+      }
+    }
+    return JobsConfig(
+      staleHours: parse('staleHours', defaultJobsStaleHours),
+      logRetentionDays: parse('logRetentionDays', defaultJobsLogRetentionDays),
+    );
+  }
+
+  String toYaml() =>
+      'jobs:\n'
+      '  staleHours: $staleHours\n'
+      '  logRetentionDays: $logRetentionDays\n';
+}
+
 /// Periodic waiting-heartbeat pings while waiters exist (issue #450).
 ///
 /// One-shot timer chain, not [Timer.periodic]: the cadence getter is read

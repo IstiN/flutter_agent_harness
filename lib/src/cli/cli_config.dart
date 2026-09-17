@@ -206,6 +206,7 @@ final class CliConfig {
     this.contextWindowCap,
     this.subagents = const SubagentsConfig(),
     this.waiting = const WaitingConfig(),
+    this.jobs = const JobsConfig(),
     this.powerSleepPrevention,
     this.powerHold,
     this.tuiTheme,
@@ -316,6 +317,7 @@ final class CliConfig {
       // The subagents section (background-subagent heartbeat, issue #383)
       subagents: SubagentsConfig.fromYaml(map['subagents']),
       waiting: WaitingConfig.fromYaml(map['waiting']),
+      jobs: JobsConfig.fromYaml(map['jobs']),
       // The fabric section (issue #27 phase 2 discovery announcements) is
       // strict too.
       fabric: map['fabric'] == null
@@ -493,6 +495,11 @@ final class CliConfig {
   /// ceiling (`waitCeilingMinutes`, default 30).
   final WaitingConfig waiting;
 
+  /// The `jobs:` section (issue #478): boot-maintenance knobs for the
+  /// cross-run shell-job state — `staleHours` (manifest age belt,
+  /// default 24) and `logRetentionDays` (log GC, default 3; 0 keeps all).
+  final JobsConfig jobs;
+
   /// The `subagents:` section (issue #383): heartbeat cadence
   /// (`heartbeatMinutes`, 0 = off) and stall threshold (`stallMinutes`,
   /// 0 = flags off) for background-subagent status digests.
@@ -624,10 +631,22 @@ final class CliConfig {
         subagentsConfig.stallMinutes != defaultSubagentStallMinutes) {
       buffer.write(subagentsConfig.toYaml());
     }
+    buffer.write(_jobsYaml());
     buffer.write(_powerYaml());
     return buffer.toString();
   }
 
+  /// The `jobs:` boot-maintenance section (issue #478), only when
+  /// explicitly configured; defaults are never written so the file stays
+  /// minimal.
+  String _jobsYaml() {
+    final jobsConfig = jobs;
+    if (jobsConfig.staleHours == defaultJobsStaleHours &&
+        jobsConfig.logRetentionDays == defaultJobsLogRetentionDays) {
+      return '';
+    }
+    return jobsConfig.toYaml();
+  }
   /// The `compaction:` section, only when explicitly configured; defaults
   /// are never written so the file stays minimal.
   String _compactionYaml() {
