@@ -95,7 +95,10 @@ scenarios:
 
       final result = await runFa(server, 'simulate an outage');
 
-      expect(server.chatCalls, 1);
+      // The roles retry policy retries a 503 in place (default
+      // `retriesPerEntry: 2`) — one script hit plus two retries = 3
+      // calls before the run gives up.
+      expect(server.chatCalls, 3);
       expect(result.output, contains('mock outage'));
       expect(result.exitCode, isNot(0));
     });

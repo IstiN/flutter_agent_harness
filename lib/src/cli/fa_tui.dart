@@ -456,7 +456,6 @@ final class FaTuiModel extends Model {
     return rows;
   }
 
-
   /// Whether the sticky user echo is pinned right now: a run is streaming
   /// and the echo has FULLY scrolled above the visible window. Rows are
   /// counted wrapped (earlier lines may wrap), and the echo counts as out
@@ -532,7 +531,6 @@ final class FaTuiModel extends Model {
       followTail: next >= _scrollBottom(wrapped),
     );
   }
-
 
   /// The output history formatted and wrapped to physical rows at [width]
   /// (default: the current terminal width). All scroll math happens in
@@ -2324,9 +2322,6 @@ final class FaTuiModel extends Model {
     return 1 + _writeMenuItems(b, baseRow + 1);
   }
 
-
-
-
   /// Matches a code-fence opener/closer line exactly like the view-time
   /// markdown walk (ansi_markdown.dart `_fenceRe`): parity over the
   /// retained history must agree with what the renderer will compute.
@@ -2428,8 +2423,9 @@ List<WrappedComposerRow> wrapComposerRows(String line, int width) =>
     _ComposerWrap(width < 1 ? 1 : width).run(line);
 
 /// Plain-row view of [wrapComposerRows].
-List<String> wrapComposerLine(String line, int width) =>
-    [for (final row in wrapComposerRows(line, width)) row.text];
+List<String> wrapComposerLine(String line, int width) => [
+  for (final row in wrapComposerRows(line, width)) row.text,
+];
 
 /// The greedy-wrap state machine behind [wrapComposerRows]. One mutable
 /// walker per line; kept as a class so every method stays inside the CRAP
@@ -2683,9 +2679,7 @@ final class FaTuiController {
     required List<({int dueMs, String preview})> timers,
     int lostJobs = 0,
   }) {
-    _send(
-      WaitingStatusMsg(jobs: jobs, timers: timers, lostJobs: lostJobs),
-    );
+    _send(WaitingStatusMsg(jobs: jobs, timers: timers, lostJobs: lostJobs));
   }
 
   /// Pushes the background-job board's live region (issue #429): summary
@@ -2713,7 +2707,6 @@ final class FaTuiController {
   }
 
   Future<void> run() async {
-    _running = true;
     var model = _model;
     for (final msg in _pending) {
       model = model.update(msg).$1 as FaTuiModel;
@@ -2721,6 +2714,21 @@ final class FaTuiController {
     _pending.clear();
     final savedTermios = await _sanitizeTermiosInput();
     try {
+      // Flip `_running` only here — after every await, immediately before
+      // `_program.run` flips the Program's own gate (synchronously, at
+      // `_runCore` entry). With `_running = true` earlier, an output flush
+      // landing while the termios probe awaits (a real `stty` subprocess,
+      // ~20ms on Linux) routed through `_program.send`, which DROPS
+      // messages sent before the program started — boot-time plugin
+      // output (e.g. the hub plugin's `[hub] connected as …`) vanished on
+      // slow hosts (issue #538: dap integration legs red on Linux CI,
+      // green on fast dev machines). Until this point `_send` parks
+      // messages in `_pending`; drain them again now.
+      _running = true;
+      for (final msg in _pending) {
+        model = model.update(msg).$1 as FaTuiModel;
+      }
+      _pending.clear();
       await _program.run(model);
     } finally {
       if (savedTermios != null) await _restoreTermios(savedTermios);

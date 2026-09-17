@@ -290,11 +290,15 @@ class LocalHub {
   List<String> get agentIds => _registry.keys.toList();
 
   /// Resolves when the hub has seen [n] signature-verified hellos.
-  Future<void> waitForHellos(int n) async {
+  /// [timeout] bounds the wait — the default 5s suits unit tests; PTY
+  /// integration tests on loaded runners pass 30s (the CLI's dial
+  /// rides a cold `dart` VM behind a TUI boot).
+  Future<void> waitForHellos(
+    int n, {
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
     if (_hellosSeen >= n) return;
-    await hellos
-        .firstWhere((_) => _hellosSeen >= n)
-        .timeout(const Duration(seconds: 5));
+    await hellos.firstWhere((_) => _hellosSeen >= n).timeout(timeout);
   }
 
   Future<void> _serve() async {
@@ -320,6 +324,11 @@ class LocalHub {
       await for (final Object data in ws) {
         final frame = (jsonDecode(data as String) as Map)
             .cast<String, dynamic>();
+        if (Platform.environment['FA_HUB_TRACE'] == '1') {
+          stderr.writeln(
+            'HUBTRACE in: ${frame['t'] ?? frame['op'] ?? frame} agent=$agentId',
+          );
+        }
         agentId = await _dispatch(ws, frame, agentId);
       }
     } on Object {
@@ -438,6 +447,8 @@ class LocalHub {
     _conns[agentId] = ws;
     _hellosSeen++;
     if (!_helloEvents.isClosed) _helloEvents.add(agentId);
+    if (Platform.environment['FA_HUB_TRACE'] == '1')
+      stderr.writeln('HUBTRACE welcome -> $agentId');
     _reply(ws, {'op': 'welcome', 'agentId': agentId});
     return agentId;
   }
