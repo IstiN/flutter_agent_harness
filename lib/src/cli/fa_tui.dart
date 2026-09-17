@@ -2564,7 +2564,6 @@ final class FaTuiController {
   }
 
   Future<void> run() async {
-    _running = true;
     var model = _model;
     for (final msg in _pending) {
       model = model.update(msg).$1 as FaTuiModel;
@@ -2572,6 +2571,21 @@ final class FaTuiController {
     _pending.clear();
     final savedTermios = await _sanitizeTermiosInput();
     try {
+      // Flip `_running` only here — after every await, immediately before
+      // `_program.run` flips the Program's own gate (synchronously, at
+      // `_runCore` entry). With `_running = true` earlier, an output flush
+      // landing while the termios probe awaits (a real `stty` subprocess,
+      // ~20ms on Linux) routed through `_program.send`, which DROPS
+      // messages sent before the program started — boot-time plugin
+      // output (e.g. the hub plugin's `[hub] connected as …`) vanished on
+      // slow hosts (issue #538: dap integration legs red on Linux CI,
+      // green on fast dev machines). Until this point `_send` parks
+      // messages in `_pending`; drain them again now.
+      _running = true;
+      for (final msg in _pending) {
+        model = model.update(msg).$1 as FaTuiModel;
+      }
+      _pending.clear();
       await _program.run(model);
     } finally {
       if (savedTermios != null) await _restoreTermios(savedTermios);

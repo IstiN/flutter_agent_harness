@@ -82,8 +82,11 @@ void main() {
         try {
           final client = HttpClient()
             ..connectionTimeout = const Duration(milliseconds: 500);
-          final response = await (await client.get('127.0.0.1', p, '/healthz'))
-              .close();
+          final response = await (await client.get(
+            '127.0.0.1',
+            p,
+            '/healthz',
+          )).close();
           await response.drain<void>();
           client.close();
           return response.statusCode == 200;
@@ -111,7 +114,7 @@ void main() {
       );
       expect(spawnCalls, 1, reason: 'the hub is spawned exactly once');
       expect(spawned, isNotNull);
-      await spawned!.waitForHellos(1);
+      await spawned!.waitForHellos(1, timeout: const Duration(seconds: 30));
       expect(io.text, contains('DAP is up'));
       expect(io.text, contains('master secret'));
       // The zero-config URL is persisted for the next boot.
@@ -144,7 +147,7 @@ void main() {
     );
     await slash(['start']);
     expect(spawnCalls, 0);
-    await running.waitForHellos(1);
+    await running.waitForHellos(1, timeout: const Duration(seconds: 30));
     expect(io.text, contains('DAP is up'));
   });
 
@@ -206,16 +209,13 @@ void main() {
     );
     await slash(['start']);
     expect(io.text, contains('DAP is up'));
-    await running.waitForHellos(1);
+    await running.waitForHellos(1, timeout: const Duration(seconds: 30));
     // …and the persisted config moved to the live hub.
-    final saved = File(
-      '${tempHome.path}/.dap/config.json',
-    ).readAsStringSync();
+    final saved = File('${tempHome.path}/.dap/config.json').readAsStringSync();
     expect(saved, contains(running.url.toString()));
   });
 
-  test('the /dap menu shows Stop DAP while the local hub runs (AC7)',
-      () async {
+  test('the /dap menu shows Stop DAP while the local hub runs (AC7)', () async {
     List<PluginMenuOption>? seenOptions;
     final env = <String, String>{};
     final stoppedUrls = <String>[];

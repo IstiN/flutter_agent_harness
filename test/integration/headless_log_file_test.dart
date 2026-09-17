@@ -88,7 +88,9 @@ void main() {
     expect(result.exitCode, 0, reason: '${result.stderr}');
 
     final log = File(logPath).readAsStringSync();
-    expect(log, contains('• bash · log-file-proof'));
+    // The tool row grammar (issue #366) renders the bash COMMAND verbatim
+    // (`echo …` included — only `cd … && …` collapses).
+    expect(log, contains('• bash · echo log-file-proof'));
     expect(log, contains('log-file-proof'));
   });
 

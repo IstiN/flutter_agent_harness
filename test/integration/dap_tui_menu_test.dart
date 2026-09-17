@@ -188,7 +188,7 @@ void main() {
         'master secret set for this session',
         timeout: const Duration(seconds: 20),
       );
-      await fakeHub.waitForHellos(1);
+      await fakeHub.waitForHellos(1, timeout: const Duration(seconds: 30));
       await harness.waitForText(
         'connected',
         timeout: const Duration(seconds: 30),
@@ -272,13 +272,23 @@ void main() {
 
       harness.sendText(fakeHub.url.toString());
       harness.sendEnter();
-      await Future<void>.delayed(const Duration(milliseconds: 300));
-      // name + channel prompts: accept the defaults (empty).
+      // name + channel prompts: accept the defaults (empty). Wait for
+      // each prompt to RENDER before its Enter — on a loaded runner the
+      // prompt can appear later than a fixed 300ms delay, and the blind
+      // keystroke is swallowed by the composer (the flow then stalls and
+      // the hub never sees the hello — CI-only flake, Linux runners).
+      await harness.waitForText(
+        'display name (leave empty for the default)',
+        timeout: const Duration(seconds: 20),
+      );
       harness.sendEnter();
-      await Future<void>.delayed(const Duration(milliseconds: 300));
+      await harness.waitForText(
+        'channel (leave empty for the default room)',
+        timeout: const Duration(seconds: 20),
+      );
       harness.sendEnter();
 
-      await fakeHub.waitForHellos(1);
+      await fakeHub.waitForHellos(1, timeout: const Duration(seconds: 30));
       await harness.waitForText(
         'connected to ${fakeHub.url}',
         timeout: const Duration(seconds: 30),

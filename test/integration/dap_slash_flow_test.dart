@@ -138,7 +138,7 @@ void main() {
     expect(askedSecret, isTrue, reason: 'the master secret prompt masks');
     expect(env[hub.envMasterSecret], 'test-master-secret');
     // The zero-config start dialed the configured hub and connected.
-    await fakeHub.waitForHellos(1);
+    await fakeHub.waitForHellos(1, timeout: const Duration(seconds: 30));
     expect(io.text, contains('master secret set'));
     expect(io.text, contains('connected'));
     expect(io.text, isNot(contains('Bad state')));
@@ -163,7 +163,7 @@ void main() {
     );
     await slash([]);
     expect(questions, isNotEmpty);
-    await targetHub.waitForHellos(1);
+    await targetHub.waitForHellos(1, timeout: const Duration(seconds: 30));
     expect(io.text, contains('connected to ${targetHub.url}'));
   });
 
