@@ -1932,8 +1932,9 @@ Object.defineProperty(jsr, 'onBack', {
     final name = (args['name'] ?? '').toString().trim();
     if (name.isEmpty) throw StateError('name is required');
     final custom = (args['reason'] ?? '').toString().trim();
-    final reason =
-        custom.isEmpty ? 'The app "$appName" asks for the $name key.' : custom;
+    final reason = custom.isEmpty
+        ? 'The app "$appName" asks for the $name key.'
+        : custom;
     return (name: name, reason: reason);
   }
 
