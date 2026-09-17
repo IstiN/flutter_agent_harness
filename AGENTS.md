@@ -1448,7 +1448,9 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
 - `dart analyze` + dart format clean (explicit dirs — `yoclip/` is a
   standalone video workspace with its own toolchain); example app also
   `flutter analyze --no-fatal-infos --no-fatal-warnings`.
-- `dart test` green (integration-tagged excluded — nightly runs them).
+- `dart test` green (integration-tagged excluded — nightly runs them;
+  tag CI runs them on `v*` tags, which needs provider secrets — the rot
+  risk of tag-only legs and the per-PR MockLlmServer plan: #551).
 - `cd flutter_app && flutter test --exclude-tags integration` green
   (includes golden suite; integration-tagged `test/cli_visual` runs in the
   nightly workflow + on demand).
