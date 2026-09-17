@@ -398,7 +398,11 @@ final class GitSandboxCommands {
       return null;
     }
 
-    final pem = _resolveSshKey(env);
+    final pem = resolveSshKeyPem(
+      env: env,
+      platformEnv: io.Platform.environment,
+      hostPathOf: _shell.hostPathOf,
+    );
     if (pem == null) {
       throw StateError(
         'no SSH key: set GIT_SSH_KEY (PEM) or GIT_SSH_KEY_PATH, '
@@ -414,22 +418,35 @@ final class GitSandboxCommands {
     );
   }
 
-  String? _resolveSshKey(Map<String, String>? env) {
-    final inline =
-        env?['GIT_SSH_KEY'] ?? io.Platform.environment['GIT_SSH_KEY'];
-    if (inline != null && inline.contains('PRIVATE KEY')) return inline;
 
+  /// PEM body of the SSH key the git SSH transport should present:
+  /// `GIT_SSH_KEY` (inline) or `GIT_SSH_KEY_PATH` from [env] then the
+  /// process environment, then the sandbox defaults `/.ssh/id_ed25519` and
+  /// `/.ssh/id_rsa`. [platformEnv] and [hostPathOf] are injectable for the
+  /// unit tables (issue #568). Returns null when nothing holds a PEM body.
+  static String? resolveSshKeyPem({
+    Map<String, String>? env,
+    required Map<String, String> platformEnv,
+    required String Function(String) hostPathOf,
+  }) {
+    final inline = env?['GIT_SSH_KEY'] ?? platformEnv['GIT_SSH_KEY'];
+    if (inline != null && inline.contains('PRIVATE KEY')) return inline;
     final keyPath =
-        env?['GIT_SSH_KEY_PATH'] ?? io.Platform.environment['GIT_SSH_KEY_PATH'];
+        env?['GIT_SSH_KEY_PATH'] ?? platformEnv['GIT_SSH_KEY_PATH'];
     final candidates = <String>[?keyPath, '/.ssh/id_ed25519', '/.ssh/id_rsa'];
     for (final candidate in candidates) {
-      final file = io.File(_shell.hostPathOf(candidate));
-      if (file.existsSync()) {
-        final content = file.readAsStringSync();
-        if (content.contains('PRIVATE KEY')) return content;
-      }
+      final pem = _pemAt(hostPathOf(candidate));
+      if (pem != null) return pem;
     }
     return null;
+  }
+
+  /// [path]'s contents when it exists and holds a PEM body, else null.
+  static String? _pemAt(String path) {
+    final file = io.File(path);
+    if (!file.existsSync()) return null;
+    final content = file.readAsStringSync();
+    return content.contains('PRIVATE KEY') ? content : null;
   }
 
   Future<Result<StageResult, ExecutionError>> _gitInit(
@@ -687,17 +704,10 @@ final class GitSandboxCommands {
     dart_git.GitRepository repo, {
     required bool listAll,
   }) {
-    final lines = <String>[];
-    if (listAll) {
-      final current = repo.currentBranch();
-      final branches = repo.branches()..sort();
-      lines.addAll(branches.map((b) => b == current ? '* $b' : '  $b'));
-    }
-    final remoteRefs = repo.refStorage.listReferences('refs/remotes/')
-      ..sort((a, b) => a.name.value.compareTo(b.name.value));
-    for (final ref in remoteRefs) {
-      lines.add('  ${ref.name.value.substring('refs/remotes/'.length)}');
-    }
+    final lines = <String>[
+      if (listAll) ..._localListingLines(repo),
+      ..._remoteListingLines(repo),
+    ];
     return Ok(
       StageResult(
         stdout: utf8.encode(lines.isEmpty ? '' : '${lines.join('\n')}\n'),
@@ -707,14 +717,30 @@ final class GitSandboxCommands {
     );
   }
 
+  /// Sorted local branches, `* ` on the current one (the plain `git branch`
+  /// and `-a` listing body).
+  List<String> _localListingLines(dart_git.GitRepository repo) {
+    final current = repo.currentBranch();
+    final branches = repo.branches()..sort();
+    return [for (final b in branches) b == current ? '* $b' : '  $b'];
+  }
+
+  /// Sorted remote-tracking ref names, `refs/remotes/` stripped.
+  List<String> _remoteListingLines(dart_git.GitRepository repo) {
+    final remoteRefs = repo.refStorage.listReferences('refs/remotes/')
+      ..sort((a, b) => a.name.value.compareTo(b.name.value));
+    return [
+      for (final ref in remoteRefs)
+        ref.name.value.substring('refs/remotes/'.length),
+    ];
+  }
+
   /// `git branch` with no arguments: sorted local branches, `* ` on the
   /// current one.
   Result<StageResult, ExecutionError> _branchListLocal(
     dart_git.GitRepository repo,
   ) {
-    final current = repo.currentBranch();
-    final branches = repo.branches()..sort();
-    final lines = branches.map((b) => b == current ? '* $b' : '  $b');
+    final lines = _localListingLines(repo);
     return Ok(
       StageResult(
         stdout: utf8.encode('${lines.join('\n')}\n'),
@@ -764,6 +790,64 @@ final class GitSandboxCommands {
       listAll: listAll,
       delete: delete,
       positional: positional,
+    );
+  }
+
+  /// Pure arg split for `git push` (issue #568): flags are ignored, the
+  /// first two positionals are `[remote] [branch]`; the branch defaults to
+  /// the current branch (null when detached — the caller answers with the
+  /// not-on-branch fatal, exactly as before).
+  static ({String remoteName, String? branch}) parsePushArgs(
+    List<String> args,
+    String? currentBranch,
+  ) {
+    final positional = <String>[
+      for (final arg in args)
+        if (!arg.startsWith('-')) arg,
+    ];
+    return (
+      remoteName: positional.isNotEmpty ? positional[0] : 'origin',
+      branch: positional.length > 1 ? positional[1] : currentBranch,
+    );
+  }
+
+  /// Env var names a push token may ride, in precedence order.
+  static const _pushTokenVars = ['GITHUB_TOKEN', 'GIT_TOKEN', 'FAH_GIT_TOKEN'];
+
+  /// Token auth for GitHub-style HTTPS push remotes: the shell environment
+  /// ([env]) first, then the process environment — the same precedence as
+  /// the old inline `??` chain. [platformEnv] injects
+  /// `io.Platform.environment` for the unit tables.
+  static String? resolvePushToken(
+    Map<String, String>? env,
+    Map<String, String> platformEnv,
+  ) => _firstDefined(env, _pushTokenVars) ??
+      _firstDefined(platformEnv, _pushTokenVars);
+
+  static String? _firstDefined(Map<String, String>? env, List<String> names) {
+    for (final name in names) {
+      final value = env?[name];
+      if (value != null) return value;
+    }
+    return null;
+  }
+
+  /// `dart_git` work trees carry a trailing slash; the smart-HTTP host dir
+  /// must not (pure).
+  static String stripTrailingSlash(String path) =>
+      path.endsWith('/') ? path.substring(0, path.length - 1) : path;
+
+  /// Updates `refs/remotes/<remoteName>/<branch>` to the just-pushed local
+  /// hash after a successful push (best-effort: no local branch → no-op).
+  static void trackPushedRef(
+    dart_git.GitRepository repo,
+    String remoteName,
+    String branch,
+  ) {
+    final localRef = repo.resolveReferenceName(ReferenceName.branch(branch));
+    if (localRef == null) return;
+    repo.refStorage.saveRef(
+      HashReference(ReferenceName.remote(remoteName, branch), localRef.hash),
     );
   }
 
@@ -1062,39 +1146,33 @@ final class GitSandboxCommands {
     List<String> args,
     Map<String, String>? env,
   ) async {
-    final positional = <String>[
-      for (final arg in args)
-        if (!arg.startsWith('-')) arg,
-    ];
-    final remoteName = positional.isNotEmpty ? positional[0] : 'origin';
-    final branch = positional.length > 1
-        ? positional[1]
-        : _safeCurrentBranch(repo);
-    if (branch == null) {
+    final targets = parsePushArgs(args, _safeCurrentBranch(repo));
+    if (targets.branch == null) {
       return _gitError('fatal: You are not currently on a branch.');
     }
-
-    final remote = repo.config.remote(remoteName);
+    final remote = repo.config.remote(targets.remoteName);
     if (remote == null) {
       return _gitError(
-        "fatal: '$remoteName' does not appear to be a git repository",
+        "fatal: '${targets.remoteName}' does not appear to be a git repository",
       );
     }
-    final url = remote.url;
-    if (url.isEmpty) {
-      return _gitError('fatal: no URL configured for remote $remoteName');
+    if (remote.url.isEmpty) {
+      return _gitError(
+        'fatal: no URL configured for remote ${targets.remoteName}',
+      );
     }
+    return _pushToRemote(repo, targets.remoteName, remote.url, targets.branch!, env);
+  }
 
-    // Token auth for GitHub-style HTTPS remotes: from the shell environment
-    // (GITHUB_TOKEN / GIT_TOKEN / FAH_GIT_TOKEN) or the URL userinfo.
-    final token =
-        env?['GITHUB_TOKEN'] ??
-        env?['GIT_TOKEN'] ??
-        env?['FAH_GIT_TOKEN'] ??
-        io.Platform.environment['GITHUB_TOKEN'] ??
-        io.Platform.environment['GIT_TOKEN'] ??
-        io.Platform.environment['FAH_GIT_TOKEN'];
-
+  /// Pushes [branch] to the guarded remote URL and updates the local
+  /// remote-tracking ref on success (the old inline tail of `_gitPush`).
+  Future<Result<StageResult, ExecutionError>> _pushToRemote(
+    dart_git.GitRepository repo,
+    String remoteName,
+    String url,
+    String branch,
+    Map<String, String>? env,
+  ) async {
     try {
       final report =
           await GitSmartHttp(
@@ -1102,22 +1180,12 @@ final class GitSandboxCommands {
             transport: _sshTransportFor(url, env),
           ).pushInto(
             url: url,
-            hostDir: repo.workTree.endsWith('/')
-                ? repo.workTree.substring(0, repo.workTree.length - 1)
-                : repo.workTree,
+            hostDir: stripTrailingSlash(repo.workTree),
             branch: branch,
-            token: token,
+            token: resolvePushToken(env, io.Platform.environment),
           );
       // Update the local remote-tracking ref after a successful push.
-      final localRef = repo.resolveReferenceName(ReferenceName.branch(branch));
-      if (localRef != null) {
-        repo.refStorage.saveRef(
-          HashReference(
-            ReferenceName.remote(remoteName, branch),
-            localRef.hash,
-          ),
-        );
-      }
+      trackPushedRef(repo, remoteName, branch);
       return Ok(
         StageResult(
           stdout: utf8.encode('To $url\n * $branch -> $branch\n$report\n'),

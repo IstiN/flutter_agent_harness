@@ -98,6 +98,102 @@ Future<void> main() async {
   // must exist before the probe touches the asset bundle.
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  // Pure protocol tables (issue #568): no engine, no probe — dispatch,
+  // shaping and pending-drain helpers must hold without flutter_js.
+  group('ext host protocol tables (pure)', () {
+    test('routeExtHostMessage dispatches fatal, then invoke, then seq', () {
+      expect(
+        routeExtHostMessage(const {'fatal': 'boom'}),
+        isA<ExtHostFatal>().having((f) => f.message, 'message', 'boom'),
+      );
+      expect(
+        routeExtHostMessage(const {'fatal': 'boom', 'invoke': 1}),
+        isA<ExtHostFatal>().having((f) => f.message, 'message', 'boom'),
+        reason: 'fatal outranks every other key',
+      );
+      expect(
+        routeExtHostMessage(const {'invoke': 3, 'ok': true, 'value': 'v'}),
+        isA<ExtHostInvokeReply>()
+            .having((r) => r.handle, 'handle', 3)
+            .having((r) => r.ok, 'ok', isTrue),
+      );
+      expect(
+        routeExtHostMessage(const {'seq': 1, 'method': 'fs.read', 'args': {'a': 1}}),
+        isA<ExtHostBridgeRequest>()
+            .having((r) => r.seq, 'seq', 1)
+            .having((r) => r.method, 'method', 'fs.read'),
+      );
+      expect(
+        routeExtHostMessage(const {'seq': '1', 'method': 'fs.read'}),
+        const ExtHostIgnore(),
+        reason: 'non-int seq is ignored',
+      );
+      expect(
+        routeExtHostMessage(const {'invoke': 1, 'seq': 2, 'method': 'm'}),
+        isA<ExtHostInvokeReply>(),
+        reason: 'invoke outranks seq',
+      );
+      expect(routeExtHostMessage(const {}), const ExtHostIgnore());
+      expect(routeExtHostMessage('nope'), const ExtHostIgnore());
+    });
+
+    test('extBridgeMethod and extBridgeArgs normalize the bridge surface', () {
+      expect(extBridgeMethod('fs.read'), 'fs.read');
+      expect(extBridgeMethod(42), '');
+      expect(extBridgeMethod(null), '');
+
+      final args = extBridgeArgs(const {'a': 1});
+      expect(args, {'a': 1});
+      expect(identical(args, const {'a': 1}), isFalse,
+          reason: 'args must be a copy the handler may mutate');
+      expect(extBridgeArgs('nope'), isEmpty);
+      expect(extBridgeArgs(null), isEmpty);
+    });
+
+    test('runExtBridge routes through the handler and traps throws', () async {
+      final ok = await runExtBridge(
+        (method, args) async => '$method:${args['p']}',
+        'fs.read',
+        {'p': 'x'},
+      );
+      expect(ok, (ok: true, value: 'fs.read:x', error: null));
+
+      final failed = await runExtBridge(
+        (method, args) => throw StateError('nope'),
+        'fs.read',
+        {},
+      );
+      expect(failed.ok, isFalse);
+      expect(failed.error, contains('Bad state: nope'),
+          reason: 'the bridge reports the error instead of crashing the zone');
+    });
+
+    test('extBridgeReply shapes ok and error transports by seq', () {
+      expect(
+        extBridgeReply(1, (ok: true, value: {'x': 1}, error: null)),
+        {'seq': 1, 'ok': true, 'value': {'x': 1}},
+      );
+      expect(
+        extBridgeReply(2, (ok: false, value: null, error: 'nope')),
+        {'seq': 2, 'ok': false, 'error': 'nope'},
+      );
+    });
+
+    test('failPendingCompleters drains pending values as errors', () {
+      final pending = <Completer<Object?>>[
+        Completer<Object?>(),
+        Completer<Object?>(),
+      ];
+      pending.first.complete('already done');
+      failPendingCompleters(
+        pending,
+        const ExtProtocolException('runtime disposed'),
+      );
+      expect(pending.first.isCompleted, isTrue,
+          reason: 'completed completers are skipped, not double-completed');
+      expect(() => pending.last.future, throwsA(isA<ExtProtocolException>()));
+    });
+  });
   group('FlutterJsExtRuntime (real engine)', () {
     setUpAll(() async {
       _engineAvailable = await _probeEngine();

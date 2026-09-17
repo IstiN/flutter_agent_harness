@@ -33,40 +33,73 @@ Future<ExecutionEnv> createPlatformEnv({http.Client? httpClient}) async {
   }
 
   if (Platform.isAndroid || Platform.isIOS) {
-    final appDir = await getApplicationDocumentsDirectory();
-    final sandbox = Directory('${appDir.path}/fah_sandbox');
-    await sandbox.create(recursive: true);
-
-    // Both Android and iOS run the WASI sandbox shell; on iOS the wasm_run
-    // library is statically linked into the app binary (see setUpWasmRuntime).
-    final shell = await WasiSandboxShell.load(
-      workingDirectory: '/',
-      sandboxHostPath: sandbox.path,
-      httpClient: httpClient,
-    );
-    return SandboxedExecutionEnv(
-      LocalExecutionEnv(cwd: sandbox.path, shell: shell),
-      sandbox.path,
-    );
+    return createMobileSandboxEnv(httpClient: httpClient);
   }
+  return createDesktopEnv();
+}
 
-  // Desktop: use the application-support directory as the container cwd so
-  // settings/stores live inside the app sandbox and do not trigger a
-  // permission prompt on macOS. macOS additionally layers the optional
-  // project-folder mount on top via [ProjectMountEnv].
+/// The Android/iOS branch of [createPlatformEnv]: a sandboxed host directory
+/// plus the WASI shell backed by MIT-licensed uutils/ripgrep WASM binaries
+/// so the agent has a working shell on mobile. Straight-line (no branches):
+/// it only runs on a device, where the WASM runtime asset exists.
+Future<ExecutionEnv> createMobileSandboxEnv({http.Client? httpClient}) async {
+  final appDir = await getApplicationDocumentsDirectory();
+  final sandbox = Directory('${appDir.path}/fah_sandbox');
+  await sandbox.create(recursive: true);
+
+  // Both Android and iOS run the WASI sandbox shell; on iOS the wasm_run
+  // library is statically linked into the app binary (see setUpWasmRuntime).
+  final shell = await WasiSandboxShell.load(
+    workingDirectory: '/',
+    sandboxHostPath: sandbox.path,
+    httpClient: httpClient,
+  );
+  return SandboxedExecutionEnv(
+    LocalExecutionEnv(cwd: sandbox.path, shell: shell),
+    sandbox.path,
+  );
+}
+
+/// The desktop branch of [createPlatformEnv]: the application-support
+/// directory as the container cwd so settings/stores live inside the app
+/// sandbox and do not trigger a permission prompt on macOS. macOS
+/// additionally layers the optional project-folder mount on top via
+/// [mountedDesktopEnv].
+Future<ExecutionEnv> createDesktopEnv() async {
   final appDir = await getApplicationSupportDirectory();
   final baseEnv = LocalExecutionEnv(cwd: appDir.path);
   if (!Platform.isMacOS) return baseEnv;
+  return mountedDesktopEnv(baseEnv);
+}
+
+/// macOS project-folder mount layer over [baseEnv]: restores the persisted
+/// mount (bookmark access re-granted → [ProjectMountEnv.mountedRoot], or the
+/// stale-mount note when access is refused).
+Future<ExecutionEnv> mountedDesktopEnv(LocalExecutionEnv baseEnv) async {
   final mountEnv = ProjectMountEnv(baseEnv);
   final stored = await ProjectMountStore.load(baseEnv);
-  if (stored != null) {
-    if (await ProjectFolderChannelOps().startAccessing(stored.bookmark)) {
-      mountEnv.mountedRoot = stored.path;
-    } else {
-      mountEnv.mountUnavailable = stored.path;
-    }
-  }
+  if (stored == null) return mountEnv;
+  applyStoredMount(
+    mountEnv,
+    stored,
+    granted: await ProjectFolderChannelOps().startAccessing(stored.bookmark),
+  );
   return mountEnv;
+}
+
+/// Applies a restored mount to [mountEnv]: a granted bookmark exposes the
+/// project folder as the mounted root; a refused one surfaces the
+/// stale-mount note (public so both branches are table-tested).
+void applyStoredMount(
+  ProjectMountEnv mountEnv,
+  ProjectMountStore stored, {
+  required bool granted,
+}) {
+  if (granted) {
+    mountEnv.mountedRoot = stored.path;
+  } else {
+    mountEnv.mountUnavailable = stored.path;
+  }
 }
 
 /// `true` when running on a mobile OS that needs the WASM shell sandbox.
