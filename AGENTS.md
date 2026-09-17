@@ -160,10 +160,12 @@ factual: paths, commands, invariants — no essays.
   `flutter_app/lib/sandbox/shell_job.dart` — own cwd/vars/capture, shared
   fs). `bash background: true` runs detached with output
   streaming into `.fah/bash_jobs/<id>.log`; `bash_job {status|output|stop}`
-  (write tier) manages them. A settle fires `onSettled` (CLI
-  `_onShellJobSettled`, app `sendText` system-notice) → steered mid-run or a
-  fresh idle turn. A foreground call that consumed the result inline
-  suppresses the notification. Job logs on disk are NOT secret-redacted.
+  (write tier) manages them. A settle fires `onSettled` on every exit —
+  the CLI's terminal bookkeeping (`_onShellJobSettled`: job-board Running
+  count, waiting row) hangs off it (issue #562). The model-facing notice
+  (steered mid-run or a fresh idle turn; app `sendText` system-notice)
+  is skipped when a foreground call consumed the result inline
+  (`suppressSettleNotification`). Job logs on disk are NOT secret-redacted.
 - `lib/src/tools/availability.dart` + `availability_gate.dart` —
   capability-gated tool availability (issue #19): `resolveToolAvailability`
   merges the `tools:` scope stack (global `~/.fah/config.yaml` < project
@@ -1472,19 +1474,26 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
     TUI-only dispatchers at CC 3 / 0% cov pending PTY tests (documented
     exception).
   - flutter_app (`flutter_app/crap4dart.yaml`, sources `[lib]`,
-    issue #433/#475): **650.0** — measured by the SAME pipeline the CI gate
+    issue #433/#475): **210.0** — measured by the SAME pipeline the CI gate
     uses (the two `flutter-tests` shards emit `--coverage`; the
     `app-crap-gate` job merges the lcovs and runs the pinned analyzer —
     widget-test coverage differs from the core's dart lcov, E2).
   - The app ladder (follow-up cards, NOT this one): 2450 → 870 → 702 → 650
-    (done: `JsAppEngine._faCall` 2450→6 via map dispatch, `patch` 94→19,
-    `_tokenize` 70→18; issue #475: `wasm_shell_git.run` route-table +
-    51 golden tests, app `main()` boot-phase helpers, `wasm_shell` beasts
-    `_grepBuiltin` 812→covered parse helpers, `_runPipeline` 702→210,
-    `_runStage` 600→380, `_parsePrimary` 506→210) → next milestone
-    380-class (`_runStage` residual, `_xargsBuiltin` 272) → … → **40**,
-    each step "fix the code, then lower the threshold" — never lower
-    first.
+    → 380 → 272 → 210 (done: `JsAppEngine._faCall` 2450→6 via map
+    dispatch, `patch` 94→19, `_tokenize` 70→18; issue #475:
+    `wasm_shell_git.run` route-table + 51 golden tests, app `main()`
+    boot-phase helpers, `wasm_shell` beasts `_grepBuiltin` 812→covered
+    parse helpers, `_runPipeline` 702→210, `_runStage` 600→380,
+    `_parsePrimary` 506→210; issue #558: the wasm_shell pipeline engine
+    (`_runStage` 380→4, `_runPipeline` 210→4, `_evalExpr` 182→3); issue
+    #559: the wasm_shell builtins (`_xargsBuiltin` 272→7,
+    `_TestEvaluator._parsePrimary` 210→3, `_trBuiltin` 210→4,
+    `_testBuiltin` 132→9, `_duBuiltin` 132→3, `_expandTrSet` 110→gone,
+    `_tacBuiltin` 90→6, `_pipBuiltin` 72→3 — spec/table-driven parse
+    helpers in `wasm_shell_builtins.dart` + tested exec halves) → next
+    milestone 210-class (`GemmaService.chatStream`, `_statBuiltin` 156,
+    wide_layout 156 pair) → … → **40**, each step "fix the code, then
+    lower the threshold" — never lower first.
   - Guards (`scripts/check_crap_guards.py`): README badge == config
     threshold for BOTH packages, generated-exclude parity between the
     two configs, and `--only-down` (a PR that raises any threshold vs

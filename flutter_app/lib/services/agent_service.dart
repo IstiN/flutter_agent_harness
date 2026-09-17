@@ -68,6 +68,7 @@ import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_parse_factory.dart';
+import 'package:fa/services/session_listing.dart';
 import 'package:fa/services/sessions_root.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/skills_access_store.dart';
@@ -171,18 +172,18 @@ class AgentService extends ChangeNotifier
        approval = ApprovalManager(
          mode: initialApprovalMode ?? ApprovalMode.write,
        ),
-      _repo =
-          repo ??
-          // Issue #522: the deletion gate reads the shared live-session
-          // heartbeats — the app must not delete a session a CLI owns.
-          JsonlSessionRepo(
-            fs: env,
-            sessionsRoot: sessionsRoot,
-            presenceStore: FileSessionPresenceStore(
-              env: env,
-              root: sessionsRoot,
-            ),
-          ) {
+       _repo =
+           repo ??
+           // Issue #522: the deletion gate reads the shared live-session
+           // heartbeats — the app must not delete a session a CLI owns.
+           JsonlSessionRepo(
+             fs: env,
+             sessionsRoot: sessionsRoot,
+             presenceStore: FileSessionPresenceStore(
+               env: env,
+               root: sessionsRoot,
+             ),
+           ) {
     maybeCurrent = this;
     _responseTimeout = responseTimeout ?? const Duration(seconds: 90);
     _providerKind = _agent.state.model.provider;
@@ -489,16 +490,13 @@ class AgentService extends ChangeNotifier
                },
        ),
        sessionsRoot = sessionsRoot,
-      _repo = JsonlSessionRepo(
-        fs: env,
-        sessionsRoot: sessionsRoot,
-        parseExecutor: parseExecutor,
-        // Issue #522: deletions refuse sessions with a live CLI heartbeat.
-        presenceStore: FileSessionPresenceStore(
-          env: env,
-          root: sessionsRoot,
-        ),
-      ) {
+       _repo = JsonlSessionRepo(
+         fs: env,
+         sessionsRoot: sessionsRoot,
+         parseExecutor: parseExecutor,
+         // Issue #522: deletions refuse sessions with a live CLI heartbeat.
+         presenceStore: FileSessionPresenceStore(env: env, root: sessionsRoot),
+       ) {
     maybeCurrent = this;
     _wireImageDropNotice();
     _providerKind = config.providerKind;
@@ -1335,23 +1333,10 @@ class AgentService extends ChangeNotifier
     final handle = _subagentManager?[id];
     if (handle == null) return const [];
     try {
-      final metadata = SessionMetadata(
-        id: handle.sessionId,
-        createdAt: DateTime.fromMillisecondsSinceEpoch(0),
-        cwd: env.sessionCwd,
-        path: handle.sessionId,
-      );
       final exists = await env.fileInfo(handle.sessionId);
       if (exists.valueOrNull == null) return const [];
-      final session = await _repo.open(metadata);
-      final messages = await session.buildContextMessages();
-      final last = messages.length > tail
-          ? messages.sublist(messages.length - tail)
-          : messages;
-      return [
-        for (final message in last)
-          (message.role, _previewMessageText(message)),
-      ];
+      final session = await _repo.open(_subagentSessionMetadata(handle));
+      return tailMessagePairs(await session.buildContextMessages(), tail);
     } on Object {
       return const [];
     }
@@ -1365,18 +1350,9 @@ class AgentService extends ChangeNotifier
     if (handle == null) {
       throw StateError('no subagent "$id"');
     }
-    if (handle.status == SubagentStatus.failed ||
-        handle.status == SubagentStatus.aborted) {
-      throw StateError('cannot send to ${handle.status.name} subagent "$id"');
-    }
+    ensureSendableSubagent(handle, id);
     try {
-      final metadata = SessionMetadata(
-        id: handle.sessionId,
-        createdAt: DateTime.fromMillisecondsSinceEpoch(0),
-        cwd: env.sessionCwd,
-        path: handle.sessionId,
-      );
-      final session = await _repo.open(metadata);
+      final session = await _repo.open(_subagentSessionMetadata(handle));
       await session.appendMessage(UserMessage.text(message));
     } on Object {
       // Fall back to the sibling pending queue when the session is gone.
@@ -1391,6 +1367,40 @@ class AgentService extends ChangeNotifier
       return;
     }
     await _subagentManager!.update(id, status: SubagentStatus.running);
+  }
+
+  /// The child-transcript metadata both observe and send open the session
+  /// with (epoch creation time; the path IS the session id).
+  SessionMetadata _subagentSessionMetadata(SubagentHandle handle) {
+    return SessionMetadata(
+      id: handle.sessionId,
+      createdAt: DateTime.fromMillisecondsSinceEpoch(0),
+      cwd: env.sessionCwd,
+      path: handle.sessionId,
+    );
+  }
+
+  /// A follow-up message needs a live-or-idle child; failed/aborted
+  /// children have no session to append to.
+  static void ensureSendableSubagent(SubagentHandle handle, String id) {
+    if (handle.status == SubagentStatus.failed ||
+        handle.status == SubagentStatus.aborted) {
+      throw StateError('cannot send to ${handle.status.name} subagent "$id"');
+    }
+  }
+
+  /// The last [tail] messages as `(role, text)` pairs — the observe
+  /// payload. Public for tests.
+  static List<(String, String)> tailMessagePairs(
+    List<Message> messages,
+    int tail,
+  ) {
+    final last = messages.length > tail
+        ? messages.sublist(messages.length - tail)
+        : messages;
+    return [
+      for (final message in last) (message.role, _previewMessageText(message)),
+    ];
   }
 
   static String _previewMessageText(Message message) {
@@ -2289,9 +2299,11 @@ class AgentService extends ChangeNotifier
 
   /// Called when a background shell job settles: the completion re-enters
   /// the conversation as a system notice (sendText steers mid-run and
-  /// starts a fresh turn while idle — the same flow as inbox mail).
+  /// starts a fresh turn while idle — the same flow as inbox mail). A
+  /// foreground consumer that took the result inline skips the notice —
+  /// the registry settle bookkeeping itself always runs (issue #562).
   void _onShellJobSettled(ShellJobEntry job) {
-    if (_disposed) return;
+    if (_disposed || !job.notifyOnSettle) return;
     unawaited(
       sendText(
         '<system-notice>\n'
@@ -2646,35 +2658,16 @@ class AgentService extends ChangeNotifier
     try {
       final roots = _includeSharedSessionRoots
           ? allSessionRoots(sessionsRoot)
-          : [sessionsRoot];
+          : <String>[sessionsRoot];
       if (roots.length <= 1) {
         return await _repo.list();
       }
-      final seen = <String>{};
-      final merged = <SessionMetadata>[];
-      for (final root in roots) {
-        try {
-          final repo = root == sessionsRoot
-              ? _repo
-              : JsonlSessionRepo(fs: env, sessionsRoot: root);
-          final list = await repo.list();
-          for (final item in list) {
-            if (seen.add(item.id)) {
-              merged.add(item);
-            }
-          }
-        } on Object {
-          // Secondary root list failure is non-fatal.
-        }
-      }
-      merged.sort((a, b) {
-        final aTime = a.lastUpdatedAt ?? a.createdAt;
-        final bTime = b.lastUpdatedAt ?? b.createdAt;
-        final result = bTime.compareTo(aTime);
-        if (result != 0) return result;
-        return b.createdAt.compareTo(a.createdAt);
-      });
-      return merged;
+      return await mergeSessionsAcrossRoots(
+        roots: roots,
+        listRoot: (root) async => root == sessionsRoot
+            ? _repo.list()
+            : JsonlSessionRepo(fs: env, sessionsRoot: root).list(),
+      );
     } on Object {
       return _repo.list();
     }
