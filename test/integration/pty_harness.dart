@@ -257,6 +257,29 @@ final class FaCliHarness {
     );
   }
 
+  /// Waits for [pattern] to appear on the CURRENT terminal screen — the
+  /// painted viewport, not the raw stream. `waitForText` also matches raw
+  /// bytes, which races frame painting on loaded CI runners: the echo hits
+  /// the raw buffer first and an immediate `expect(screenText, …)` still
+  /// sees the previous frame (#550/#557 flake family). Use this when the
+  /// assertion contract is the SCREEN.
+  Future<String> waitForScreen(
+    Pattern pattern, {
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      final screen = screenText;
+      if (screen.contains(pattern)) return screen;
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+    throw TimeoutException(
+      'Timed out waiting for "$pattern" on screen.\n--- screen ---\n'
+      '$screenText\n--- raw tail ---\n${_rawTail()}',
+      timeout,
+    );
+  }
+
   /// The last 2000 characters of raw output, for timeout diagnostics.
   String get rawTail => _rawTail();
 
