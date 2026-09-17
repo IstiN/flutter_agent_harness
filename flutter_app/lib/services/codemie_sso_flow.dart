@@ -58,6 +58,14 @@ Future<bool> runCodemieSsoFlow({
   Future<List<String>> Function(String apiBase, String cookie)? fetchProjects,
   Future<List<String>> Function(String baseUrl, String cookie)? fetchModels,
 }) async {
+  // Issue #586: the caller's context belongs to the transcript's owning
+  // surface (the chat sheet) — an incoming LLM message rebuilds the list
+  // mid-flow and disposes that context, so the re-auth prompt surfaces
+  // (project/model pickers, webview) never appear or the pick is thrown
+  // away right after the auth sheet flashed. Anchor the flow on the ROOT
+  // navigator instead: it outlives every transcript rebuild, so the
+  // prompt stays up until the user acts.
+  final flowContext = Navigator.of(context, rootNavigator: true).context;
   // The web build cannot run the loopback callback server — but INSIDE
   // the extension it never needs one: the app page may open the login
   // tab and fetch with the browser jar (`chrome.tabs` + `credentials:
@@ -65,7 +73,7 @@ Future<bool> runCodemieSsoFlow({
   // interception is a desktop/mobile-only concern.
   if (kIsWeb) {
     return _webSignin(
-      context: context,
+      context: flowContext,
       registry: registry,
       service: service,
       lastConnectionStore: lastConnectionStore,
@@ -74,13 +82,13 @@ Future<bool> runCodemieSsoFlow({
   }
 
   // ── Step 1: SSO ─────────────────────────────────────────────────────
-  final credentials = await (authenticate ?? _authenticate)(context, orgUrl);
-  if (credentials == null || !context.mounted) {
+  final credentials = await (authenticate ?? _authenticate)(flowContext, orgUrl);
+  if (credentials == null || !flowContext.mounted) {
     return false; // cancelled / timed out
   }
 
   return _completeSignIn(
-    context: context,
+    context: flowContext,
     registry: registry,
     service: service,
     lastConnectionStore: lastConnectionStore,
