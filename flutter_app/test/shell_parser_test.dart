@@ -108,4 +108,37 @@ void main() {
       );
     });
   });
+
+  group('isIdentifier (issue #568)', () {
+    test('accepts POSIX-ish identifiers', () {
+      expect(isIdentifier('a'), isTrue);
+      expect(isIdentifier('Z'), isTrue);
+      expect(isIdentifier('_x'), isTrue);
+      expect(isIdentifier('i'), isTrue);
+      expect(isIdentifier('file1'), isTrue);
+      expect(isIdentifier('a_b_c9'), isTrue);
+    });
+
+    test('rejects empty, leading digits, punctuation and spaces', () {
+      expect(isIdentifier(''), isFalse);
+      expect(isIdentifier('9x'), isFalse);
+      expect(isIdentifier('-flag'), isFalse);
+      expect(isIdentifier('a b'), isFalse);
+      expect(isIdentifier('a.b'), isFalse);
+      expect(isIdentifier('é'), isFalse, reason: 'ASCII only');
+    });
+
+    test('the for-loop parser rejects non-identifier loop variables', () {
+      expect(
+        () => parseShellScript('for 9x in a b; do echo \$9x; done'),
+        throwsA(
+          isA<ShellParseException>().having(
+            (e) => e.message,
+            'message',
+            'for: expected a variable name',
+          ),
+        ),
+      );
+    });
+  });
 }

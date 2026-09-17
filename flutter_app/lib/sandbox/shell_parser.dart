@@ -526,24 +526,20 @@ int _scanSingleQuote(String input, int i, StringBuffer buffer) {
 bool _isDigit(String ch) =>
     ch.length == 1 && ch.codeUnitAt(0) >= 48 && ch.codeUnitAt(0) <= 57;
 
-bool _isIdentifier(String value) {
-  if (value.isEmpty) return false;
-  final first = value.codeUnitAt(0);
-  final firstOk =
-      (first >= 65 && first <= 90) ||
-      (first >= 97 && first <= 122) ||
-      first == 95;
-  if (!firstOk) return false;
-  for (var i = 1; i < value.length; i++) {
-    final c = value.codeUnitAt(i);
-    final ok =
-        (c >= 65 && c <= 90) ||
-        (c >= 97 && c <= 122) ||
-        (c >= 48 && c <= 57) ||
-        c == 95;
-    if (!ok) return false;
-  }
-  return true;
+/// ASCII identifier char class: `[A-Za-z_]` (pure, issue #568).
+bool _isIdentifierStart(int code) =>
+    (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code == 95;
+
+/// ASCII identifier continuation: [isIdentifierStart] plus digits.
+bool _isIdentifierPart(int code) =>
+    _isIdentifierStart(code) || (code >= 48 && code <= 57);
+
+/// `true` when [value] is a POSIX-ish shell identifier: `[A-Za-z_]
+/// [A-Za-z0-9_]*`. Public for the shell_parser tables (same util tier as
+/// [substitutionSpanEnd]).
+bool isIdentifier(String value) {
+  if (value.isEmpty || !_isIdentifierStart(value.codeUnitAt(0))) return false;
+  return value.codeUnits.skip(1).every(_isIdentifierPart);
 }
 
 /// Returns the index just past the closing `)` or backquote of the command
@@ -702,7 +698,7 @@ final class _ScriptParser {
   ScriptFor _parseFor(StatementOperator op) {
     _pos++; // consume 'for'
     final name = _atEnd ? null : tokens[_pos];
-    if (name is! _Word || !_isIdentifier(name.value)) {
+    if (name is! _Word || !isIdentifier(name.value)) {
       throw const ShellParseException("for: expected a variable name");
     }
     _pos++;
