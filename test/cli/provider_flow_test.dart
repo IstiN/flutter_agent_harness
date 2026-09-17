@@ -11,6 +11,7 @@ import 'agent_cli_test_support.dart';
 final class _ScriptedHost {
   final io = FakeCliIO();
   final optionAnswers = <String?>[];
+  final lineQuestions = <String>[];
   final lineAnswers = <String?>[];
   final optionTitles = <String>[];
   CustomProviderSetup? applied;
@@ -24,8 +25,10 @@ final class _ScriptedHost {
     String? initialModelId,
   }) {
     return CustomProviderFlowConfig(
-      askLine: (question, {bool secret = false}) async =>
-          lineAnswers.isEmpty ? null : lineAnswers.removeAt(0),
+      askLine: (question, {bool secret = false}) async {
+        lineQuestions.add(question);
+        return lineAnswers.isEmpty ? null : lineAnswers.removeAt(0);
+      },
       pickOption: (title, options, {String? initialKey}) async {
         optionTitles.add(title);
         return optionAnswers.isEmpty ? null : optionAnswers.removeAt(0);
@@ -243,6 +246,44 @@ void main() {
         host.applied!.token,
         '_oauth2_proxy=refreshed;KEYCLOAK_IDENTITY=k1',
       );
+    });
+  });
+  group('custom provider flow — provider-name validation (issue #555)', () {
+    test('`?` at the name prompt re-prompts and is never applied', () async {
+      final host = _ScriptedHost()
+        ..optionAnswers.addAll(['openai'])
+        ..lineAnswers.addAll(['', '?', 'good-name', '', '']);
+      await runCustomProviderFlow(host.io, host.config());
+
+      expect(
+        host.lineQuestions.join('\n'),
+        contains('not a usable provider name'),
+      );
+      expect(host.applied, isNotNull);
+      expect(host.applied!.name, 'good-name');
+    });
+    test(
+      'spaces in the name re-prompt (they break /provider routing)',
+      () async {
+        final host = _ScriptedHost()
+          ..optionAnswers.addAll(['openai'])
+          ..lineAnswers.addAll(['', 'my name', 'good-name', '', '']);
+        await runCustomProviderFlow(host.io, host.config());
+
+        expect(
+          host.lineQuestions.join('\n'),
+          contains('not a usable provider name'),
+        );
+        expect(host.applied!.name, 'good-name');
+      },
+    );
+    test('empty input keeps the derived default without validation', () async {
+      final host = _ScriptedHost()
+        ..optionAnswers.addAll(['openai'])
+        ..lineAnswers.addAll(['', '', '', '']);
+      await runCustomProviderFlow(host.io, host.config());
+
+      expect(host.applied!.name, 'openrouter.ai');
     });
   });
 }

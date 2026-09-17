@@ -1998,6 +1998,224 @@ void main() {
       });
     });
   }, skip: _engineSkip);
+
+  group('host-side home dispatcher (no live engine)', () {
+    JsAppInfo app() => JsAppInfo.fromManifest(
+      const {'id': 'demo', 'name': 'Demo'},
+      bundled: false,
+      fallbackId: 'demo',
+    );
+
+    JsAppEngine engine(_FakeHomeApi home, {bool homekit = true}) => JsAppEngine(
+      app: app(),
+      env: MemoryExecutionEnv(),
+      permissions: AppPermissions(homekit: homekit),
+      home: home,
+    );
+
+    Matcher matches(String fragment) => throwsA(
+      isA<StateError>().having(
+        (error) => error.message,
+        'message',
+        contains(fragment),
+      ),
+    );
+
+    test(
+      'homeCallForTest routes every action through the gated HomeApi',
+      () async {
+        final api = _FakeHomeApi();
+        final js = engine(api);
+        addTearDown(js.dispose);
+
+        expect((await js.homeCallForTest('homes', {}))['homes'], hasLength(1));
+        expect((await js.homeCallForTest('rooms', {}))['rooms'], hasLength(2));
+        final accessories =
+            (await js.homeCallForTest('list', {}))['accessories'] as List;
+        expect(accessories, hasLength(2));
+        final light = accessories.first as Map<String, Object?>;
+        expect(light['id'], 'a-light');
+        final services = light['services'] as List<Map<String, Object?>>;
+        expect(services.single['characteristics'], hasLength(2));
+
+        final read = await js.homeCallForTest('read', {'id': 'a-light'});
+        expect((read['accessory'] as Map)['id'], 'a-light');
+
+        expect(
+          await js.homeCallForTest('write', {
+            'id': 'a-light',
+            'type': 'powerState',
+            'value': true,
+          }),
+          {'written': true},
+        );
+        expect(api.writeCalls.single.id, 'a-light');
+
+        expect(
+          (await js.homeCallForTest('scenes', {}))['scenes'],
+          hasLength(1),
+        );
+        expect(await js.homeCallForTest('executeScene', {'id': 's-1'}), {
+          'executed': true,
+        });
+        expect(api.executedScenes, ['s-1']);
+
+        expect(
+          await js.homeCallForTest('setPower', {'id': 'a-light', 'on': true}),
+          {'on': true},
+        );
+        expect(
+          await js.homeCallForTest('setBrightness', {
+            'id': 'a-light',
+            'value': 40,
+          }),
+          {'brightness': 40},
+        );
+        expect(
+          await js.homeCallForTest('setTemperature', {
+            'id': 'a-thermo',
+            'celsius': 21.5,
+          }),
+          {'temperature': 21.5},
+        );
+        // The write aliases carry the optional name/room narrowing for
+        // duplicate bridge ids.
+        await js.homeCallForTest('setPower', {
+          'id': 'a-light',
+          'on': false,
+          'name': 'Ceiling Light',
+          'room': 'Living Room',
+        });
+        expect(api.powerCalls.last.name, 'Ceiling Light');
+        expect(api.powerCalls.last.room, 'Living Room');
+      },
+    );
+
+    test('homeCallForTest gates on the homekit permission', () async {
+      final js = engine(_FakeHomeApi(), homekit: false);
+      addTearDown(js.dispose);
+      await expectLater(js.homeCallForTest('homes', {}), matches('homekit'));
+    });
+
+    test('homeCallForTest rejects unknown actions', () async {
+      final js = engine(_FakeHomeApi());
+      addTearDown(js.dispose);
+      await expectLater(
+        js.homeCallForTest('bogus', {}),
+        matches('unknown home action'),
+      );
+    });
+
+    test('homeCallForTest validates the generic write args', () async {
+      final js = engine(_FakeHomeApi());
+      addTearDown(js.dispose);
+      await expectLater(
+        js.homeCallForTest('write', {'id': 'a-light'}),
+        matches('type is required'),
+      );
+      await expectLater(
+        js.homeCallForTest('write', {'id': 'a-light', 'type': 'powerState'}),
+        matches('value is required'),
+      );
+    });
+  });
+
+  group('host-side storage sync core (no live engine)', () {
+    test('storageDiff reports changed, added and removed keys', () {
+      final diff = JsAppEngine.storageDiff(
+        {'a': 1, 'b': 'keep', 'gone': 'x'},
+        {'a': 2, 'b': 'keep', 'new': true},
+      );
+      expect(diff, {'a': 2, 'new': true, 'gone': null});
+    });
+
+    test('storageDiff compares nested values by JSON, not identity', () {
+      // Same JSON shape through a fresh instance → not a change.
+      expect(
+        JsAppEngine.storageDiff(
+          {
+            'm': {'n': 1},
+          },
+          {
+            'm': {'n': 1},
+          },
+        ),
+        isEmpty,
+      );
+      // A mutated nested map → changed, mapped to the new value.
+      expect(
+        JsAppEngine.storageDiff(
+          {
+            'm': {'n': 1},
+          },
+          {
+            'm': {'n': 2},
+          },
+        ),
+        {
+          'm': {'n': 2},
+        },
+      );
+    });
+
+    test('storageDiff maps a changed key to the new value object', () {
+      final fresh = <String, dynamic>{};
+      expect(
+        JsAppEngine.storageDiff({'k': 'old'}, {'k': fresh}).values.single,
+        same(fresh),
+      );
+    });
+  });
+
+  group('host-side llm/storage arg helpers (no live engine)', () {
+    test('parseLlmMessages accepts the three roles and coerces content', () {
+      final messages = JsAppEngine.parseLlmMessages([
+        {'role': 'system', 'content': 'be terse'},
+        {'role': 'user', 'content': 'hi'},
+        {'role': 'assistant'},
+      ]);
+      expect(messages, hasLength(3));
+      expect(messages.first.role, 'system');
+      expect(messages[1].content, 'hi');
+      expect(messages.last, (role: 'assistant', content: ''));
+    });
+
+    test('parseLlmMessages rejects non-lists, bad entries and empty input', () {
+      void throws(String fragment, Object? raw) {
+        expect(
+          () => JsAppEngine.parseLlmMessages(raw),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              contains(fragment),
+            ),
+          ),
+        );
+      }
+
+      throws('must be a list', 'not a list');
+      throws('must be a {role, content} object', [
+        {'role': 'user', 'content': 'ok'},
+        'stray',
+      ]);
+      throws('unsupported message role "tool"', [
+        {'role': 'tool', 'content': 'x'},
+      ]);
+      throws('must not be empty', const []);
+    });
+
+    test('stringListArg reads JSON lists and comma-separated strings', () {
+      List<String>? read(Object? value) =>
+          JsAppEngine.stringListArg({'v': value}, 'v');
+
+      expect(read(['  +1 555 ', '', 'x']), ['+1 555', 'x']);
+      expect(read('a, b,,c'), ['a', 'b', 'c']);
+      expect(read(''), isNull);
+      expect(read(null), isNull);
+      expect(read(['  ', '']), isNull);
+    });
+  });
 }
 
 /// Fake [AsrApi] for the `fa.asr` bridge tests — the host-side tests never
