@@ -12,6 +12,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io' as io;
 import 'dart:typed_data';
+import 'package:archive/archive.dart';
 
 import 'package:fa/sandbox/wasm_shell.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -555,6 +556,157 @@ void main() {
         expect(r.exitCode, 2);
         expect(r.stderr, contains('pip: unknown command "frobnicate"'));
       });
+    });
+  });
+
+  group('env/export/id/relpath builtins (issue #563)', () {
+    test('env prints the effective environment plus assignments', () async {
+      final r = await shell().exec('env FOO=bar');
+      expect(r.valueOrNull!.exitCode, 0);
+      expect(r.valueOrNull!.stdout, contains('FOO=bar\n'));
+    });
+
+    test('env with a non-assignment operand fails like env(1)', () async {
+      final r = await shell().exec('env /bin/ls');
+      expect(r.valueOrNull!.exitCode, 127);
+      expect(
+        r.valueOrNull!.stderr,
+        "env: '/bin/ls': No such file or directory\n",
+      );
+    });
+
+    test('export assigns and bare names export empty', () async {
+      final s = shell();
+      await s.exec('export A=1; export B');
+      final r = await s.exec('export');
+      expect(r.valueOrNull!.stdout, contains('declare -x A="1"\n'));
+      expect(r.valueOrNull!.stdout, contains('declare -x B=""\n'));
+    });
+
+    test('a bare export does not clobber an assigned value', () async {
+      final s = shell();
+      await s.exec('export A=1; export A');
+      final r = await s.exec('export');
+      expect(r.valueOrNull!.stdout, contains('declare -x A="1"\n'));
+    });
+
+    test('exported vars reach later stages', () async {
+      final s = shell();
+      await s.exec('export FOO=bar');
+      final r = await s.exec('env');
+      expect(r.valueOrNull!.stdout, contains('FOO=bar\n'));
+    });
+
+    test('id prints the identity; -u/-g select fields', () async {
+      expect(
+        (await shell().exec('id')).valueOrNull!.stdout,
+        'uid=0(Fa) gid=0(Fa) groups=0(Fa)\n',
+      );
+      expect((await shell().exec('id -u')).valueOrNull!.stdout, '0\n');
+      expect((await shell().exec('id -g -n')).valueOrNull!.stdout, 'Fa\n');
+    });
+
+    test('relpath relates against cwd and an explicit start', () async {
+      final r = await shell().exec(
+        'relpath /work/a.txt /work',
+        options: ShellExecOptions(cwd: '/work'),
+      );
+      expect(r.valueOrNull!.stdout, 'a.txt\n');
+      final r2 = await shell().exec(
+        'relpath a.txt /work',
+        options: ShellExecOptions(cwd: '/work'),
+      );
+      expect(r2.valueOrNull!.stdout, 'a.txt\n');
+    });
+
+    test('relpath without operands fails', () async {
+      final r = await shell().exec('relpath');
+      expect(r.valueOrNull!.exitCode, 1);
+      expect(r.valueOrNull!.stderr, 'relpath: missing operand\n');
+    });
+  });
+
+  group('grep builtin (issue #563)', () {
+    test('flags, pattern and rewritten operands forward to rg', () async {
+      io.File('${sandbox.path}/hay.txt').writeAsStringSync('x');
+      final instance = _ScriptedInstance();
+      rec.next = instance;
+      final future = shell().exec('grep -i needle hay.txt');
+      instance.out.add(utf8.encode('needle line\n'));
+      final r = await future;
+      expect(r.isOk, isTrue);
+      expect(rec.configs.single.args, ['rg', '-i', '-e', 'needle', '/hay.txt']);
+      expect(r.valueOrNull!.stdout, 'needle line\n');
+    });
+
+    test('-q suppresses stdout but keeps the exit code', () async {
+      io.File('${sandbox.path}/hay.txt').writeAsStringSync('x');
+      rec.next = _ScriptedInstance();
+      final r = await shell().exec('grep -q needle hay.txt');
+      expect(r.valueOrNull!.exitCode, 0);
+      expect(r.valueOrNull!.stdout, '');
+    });
+
+    test('redirected input becomes the searched file', () async {
+      io.File('${sandbox.path}/in.txt').writeAsStringSync('needle\n');
+      final instance = _ScriptedInstance();
+      rec.next = instance;
+      final future = shell().exec('grep needle < in.txt');
+      instance.out.add(utf8.encode('needle\n'));
+      final r = await future;
+      expect(r.isOk, isTrue);
+      expect(rec.configs.single.args, hasLength(4));
+      expect(rec.configs.single.args.take(3), ['rg', '-e', 'needle']);
+      expect(r.valueOrNull!.stdout, 'needle\n');
+    });
+
+    test('missing pattern and missing -e value exit 2', () async {
+      expect((await shell().exec('grep')).valueOrNull!.exitCode, 2);
+      final r = await shell().exec('grep -e');
+      expect(r.valueOrNull!.exitCode, 2);
+      expect(r.valueOrNull!.stderr, 'grep: option requires an argument -- e\n');
+    });
+  });
+
+  group('sandbox host IO builtins (issue #563)', () {
+    test('jq reads sandbox files through the host filesystem', () async {
+      io.File('${sandbox.path}/d.json').writeAsStringSync('{"a":7}');
+      final r = await shell().exec('jq -r .a d.json');
+      expect(r.valueOrNull!.exitCode, 0);
+      expect(r.valueOrNull!.stdout, '7\n');
+    });
+
+    test('diff reads two sandbox files', () async {
+      io.File('${sandbox.path}/a.txt').writeAsStringSync('same\n');
+      io.File('${sandbox.path}/b.txt').writeAsStringSync('same\n');
+      expect((await shell().exec('diff a.txt b.txt')).valueOrNull!.exitCode, 0);
+      io.File('${sandbox.path}/b.txt').writeAsStringSync('other\n');
+      expect((await shell().exec('diff a.txt b.txt')).valueOrNull!.exitCode, 1);
+    });
+
+    test('tree lists the sandbox directory tree', () async {
+      io.File('${sandbox.path}/a.txt').writeAsStringSync('');
+      io.Directory('${sandbox.path}/sub').createSync();
+      io.File('${sandbox.path}/sub/b.txt').writeAsStringSync('');
+      final r = await shell().exec('tree');
+      expect(r.valueOrNull!.exitCode, 0);
+      expect(r.valueOrNull!.stdout, contains('a.txt'));
+      expect(r.valueOrNull!.stdout, contains('b.txt'));
+    });
+
+    test('bunzip2 writes the decoded sibling and drops the archive', () async {
+      final encoded = BZip2Encoder().encode(utf8.encode('payload'));
+      io.File('${sandbox.path}/p.txt.bz2').writeAsBytesSync(encoded);
+      final r = await shell().exec('bunzip2 p.txt.bz2');
+      expect(r.valueOrNull!.exitCode, 0);
+      expect(io.File('${sandbox.path}/p.txt').readAsStringSync(), 'payload');
+      expect(io.File('${sandbox.path}/p.txt.bz2').existsSync(), isFalse);
+    });
+
+    test('A queries resolve through the system resolver', () async {
+      final r = await shell().exec('nslookup localhost');
+      expect(r.isOk, isTrue);
+      expect(r.valueOrNull!.stdout, contains('127.0.0.1'));
     });
   });
 }
