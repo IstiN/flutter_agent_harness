@@ -59,27 +59,36 @@ _RichKind _richKindFor(String name) {
   return _RichKind.none;
 }
 
-/// Magic-byte sniff for the image formats we preview.
-bool _sniffsAsImage(Uint8List bytes) {
-  bool startsWith(List<int> magic) {
-    if (bytes.length < magic.length) return false;
-    for (var i = 0; i < magic.length; i++) {
-      if (bytes[i] != magic[i]) return false;
-    }
-    return true;
-  }
+/// Image format magic-byte signatures (matched as prefixes).
+const _kPngMagic = [0x89, 0x50, 0x4E, 0x47];
+const _kJpegMagic = [0xFF, 0xD8, 0xFF];
+const _kGifMagic = [0x47, 0x49, 0x46, 0x38]; // GIF8
+const _kRiffMagic = [0x52, 0x49, 0x46, 0x46]; // RIFF
+const _kWebpMagic = [0x57, 0x45, 0x42, 0x50]; // WEBP
 
-  if (startsWith(const [0x89, 0x50, 0x4E, 0x47])) return true; // PNG
-  if (startsWith(const [0xFF, 0xD8, 0xFF])) return true; // JPEG
-  if (startsWith(const [0x47, 0x49, 0x46, 0x38])) return true; // GIF8
-  // RIFF....WEBP
-  return bytes.length >= 12 &&
-      startsWith(const [0x52, 0x49, 0x46, 0x46]) &&
-      bytes[8] == 0x57 &&
-      bytes[9] == 0x45 &&
-      bytes[10] == 0x42 &&
-      bytes[11] == 0x50;
+/// Whether [bytes] match [magic] starting at [offset].
+@visibleForTesting
+bool magicMatchesAt(Uint8List bytes, int offset, List<int> magic) {
+  if (offset + magic.length > bytes.length) return false;
+  for (var i = 0; i < magic.length; i++) {
+    if (bytes[offset + i] != magic[i]) return false;
+  }
+  return true;
 }
+
+/// RIFF container sniff: WEBP lives at bytes 8..11 of a RIFF header.
+bool _sniffsAsWebp(Uint8List bytes) =>
+    bytes.length >= 12 &&
+    magicMatchesAt(bytes, 0, _kRiffMagic) &&
+    magicMatchesAt(bytes, 8, _kWebpMagic);
+
+/// Magic-byte sniff for the image formats we preview.
+@visibleForTesting
+bool sniffsAsImage(Uint8List bytes) =>
+    magicMatchesAt(bytes, 0, _kPngMagic) ||
+    magicMatchesAt(bytes, 0, _kJpegMagic) ||
+    magicMatchesAt(bytes, 0, _kGifMagic) ||
+    _sniffsAsWebp(bytes);
 
 /// Git-style binary heuristic: a NUL byte in the first 8 KB means binary.
 bool _looksBinary(Uint8List bytes) {
@@ -203,7 +212,7 @@ class _FilePreviewViewState extends State<FilePreviewView> {
       }
       final ext = fileExtension(widget.name);
       if (_kImageExtensions.contains(ext)) {
-        if (!_sniffsAsImage(bytes)) {
+        if (!sniffsAsImage(bytes)) {
           _showInfo(context.l10n.filePreviewNoPreview);
         } else {
           setState(() {

@@ -667,26 +667,7 @@ class _JsAppViewState extends State<JsAppView> {
       clipBehavior: Clip.antiAlias,
       child: PopupMenuButton<String>(
         icon: const Icon(Icons.more_vert),
-        onSelected: (value) {
-          switch (value) {
-            case 'permissions':
-              unawaited(_openPermissions());
-            case 'reload':
-              AppAnalytics.instance.jsAppReloaded();
-              unawaited(_restart());
-            case 'close':
-              // Mirror the system-back contract: an app that registered
-              // `jsr.onBack` owns the close flow, otherwise pop directly.
-              // Full-chrome apps (maps) have no AppBar back arrow and the
-              // canvas swallows the iOS edge swipe, so this menu item is
-              // their only reliable exit.
-              if (_engine?.backHandlerRegistered.value ?? false) {
-                _forwardBackToApp();
-              } else {
-                _closeFromJs();
-              }
-          }
-        },
+        onSelected: _onChromeMenuSelection,
         itemBuilder: (context) => [
           PopupMenuItem(
             value: 'permissions',
@@ -721,6 +702,32 @@ class _JsAppViewState extends State<JsAppView> {
         ],
       ),
     );
+  }
+
+  /// Dispatches a full-chrome menu selection — the same actions the
+  /// header AppBar offers.
+  void _onChromeMenuSelection(String value) {
+    switch (value) {
+      case 'permissions':
+        unawaited(_openPermissions());
+      case 'reload':
+        AppAnalytics.instance.jsAppReloaded();
+        unawaited(_restart());
+      case 'close':
+        _closeFromMenu();
+    }
+  }
+
+  /// Menu close mirrors the system-back contract: an app that registered
+  /// `jsr.onBack` owns the close flow, otherwise pop directly. Full-chrome
+  /// apps (maps) have no AppBar back arrow and the canvas swallows the iOS
+  /// edge swipe, so this menu item is their only reliable exit.
+  void _closeFromMenu() {
+    if (_engine?.backHandlerRegistered.value ?? false) {
+      _forwardBackToApp();
+    } else {
+      _closeFromJs();
+    }
   }
 
   /// Wraps the app body in the runtime's [JsKeyboardCapture] when an engine

@@ -701,38 +701,53 @@ class SessionChatSheetState extends State<SessionChatSheet>
         await relayOpen(metadata.id);
         return;
       }
-      try {
-        await widget.manager.openSession(
-          metadata,
-          config:
-              active.configForClone ??
-              AgentConfig(
-                providerKind: active.providerKind,
-                modelId: active.modelId,
-                baseUrl: '',
-                apiKey: '',
-              ),
-          serviceFactory: () async => active.clone(),
-        );
-      } on SessionTooLargeException {
-        if (!mounted) return;
-        final sizeMb = (metadata.sizeBytes ?? 0) / (1024 * 1024);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              context.l10n.sessionTooLargeTitle(sizeMb.toStringAsFixed(0)),
-            ),
-          ),
-        );
-      } on SessionDrivenElsewhereException {
-        // Live lease (#428): never a second writer — attach as a viewer
-        // (transcript tail; the composer hands over to the driving agent).
-        if (!mounted) return;
-        await _attachToCliSession(metadata.id);
-      }
+      await _openClonedSession(metadata, active);
     } finally {
       _opening.remove(metadata.id);
     }
+  }
+
+  /// Opens [metadata] as a clone of the active service, mapping the two
+  /// recoverable open failures onto their fallback surfaces (budget snackbar,
+  /// viewer attach).
+  Future<void> _openClonedSession(
+    SessionMetadata metadata,
+    AgentService active,
+  ) async {
+    try {
+      await widget.manager.openSession(
+        metadata,
+        config:
+            active.configForClone ??
+            AgentConfig(
+              providerKind: active.providerKind,
+              modelId: active.modelId,
+              baseUrl: '',
+              apiKey: '',
+            ),
+        serviceFactory: () async => active.clone(),
+      );
+    } on SessionTooLargeException {
+      _showSessionTooLarge(metadata);
+    } on SessionDrivenElsewhereException {
+      // Live lease (#428): never a second writer — attach as a viewer
+      // (transcript tail; the composer hands over to the driving agent).
+      if (!mounted) return;
+      await _attachToCliSession(metadata.id);
+    }
+  }
+
+  /// The over-budget refusal: a snackbar naming the session's size in MB.
+  void _showSessionTooLarge(SessionMetadata metadata) {
+    if (!mounted) return;
+    final sizeMb = (metadata.sizeBytes ?? 0) / (1024 * 1024);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          context.l10n.sessionTooLargeTitle(sizeMb.toStringAsFixed(0)),
+        ),
+      ),
+    );
   }
 
   Future<void> _newSession() async {

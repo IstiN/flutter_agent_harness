@@ -12,7 +12,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    show SubagentEvent, SubagentStatus;
+    show SubagentEvent, SubagentHandle, SubagentStatus;
 
 /// Compact "Fa is working" bar shown at the bottom of a JS app view while
 /// the agent runs: an orbiting comet indicator around the Fa mark, a live
@@ -156,28 +156,25 @@ class _FaWorkBarState extends State<FaWorkBar>
   String _activeAgentsBadge() {
     final manager = widget.service.subagentManager;
     if (manager == null) return '';
-    final active = manager.handles
-        .where(
-          (h) =>
-              h.status == SubagentStatus.queued ||
-              h.status == SubagentStatus.running ||
-              h.status == SubagentStatus.idle,
-        )
-        .toList();
+    final active = manager.handles.where(_isActiveAgent).toList();
     if (active.isEmpty) return '';
     final now = DateTime.now();
-    final shown = active
-        .take(2)
-        .map((h) {
-          final created = DateTime.tryParse(h.createdAt);
-          final elapsed = created == null
-              ? 0
-              : now.difference(created).inSeconds;
-          return '${h.agentType}:${h.id}(${elapsed}s)';
-        })
-        .join(',');
+    final shown = active.take(2).map((h) => _badgeEntry(h, now)).join(',');
     final overflow = active.length > 2 ? ',+${active.length - 2}' : '';
     return 'agents:$shown$overflow';
+  }
+
+  /// Whether [handle] counts toward the live badge — terminal states don't.
+  bool _isActiveAgent(SubagentHandle handle) =>
+      handle.status == SubagentStatus.queued ||
+      handle.status == SubagentStatus.running ||
+      handle.status == SubagentStatus.idle;
+
+  /// One badge entry — `type:id(NNs)`, seconds elapsed since creation.
+  String _badgeEntry(SubagentHandle handle, DateTime now) {
+    final created = DateTime.tryParse(handle.createdAt);
+    final elapsed = created == null ? 0 : now.difference(created).inSeconds;
+    return '${handle.agentType}:${handle.id}(${elapsed}s)';
   }
 
   Future<void> _send() async {
