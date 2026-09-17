@@ -974,7 +974,7 @@ void main() {
       );
     });
   });
-  Finder _searchField() => find.byWidgetPredicate(
+  Finder searchField() => find.byWidgetPredicate(
     (w) => w is TextField && w.decoration?.hintText == 'Search widgets…',
   );
 
@@ -982,7 +982,7 @@ void main() {
     testWidgets('search filters the grid to matching tiles', (tester) async {
       await _pumpLauncher(tester);
 
-      await tester.enterText(_searchField(), 'alp');
+      await tester.enterText(searchField(), 'alp');
       await tester.pumpAndSettle();
 
       // Only Alpha matches (id or display name, case-insensitive); the
@@ -997,7 +997,7 @@ void main() {
     ) async {
       await _pumpLauncher(tester);
 
-      await tester.enterText(_searchField(), 'zzz');
+      await tester.enterText(searchField(), 'zzz');
       await tester.pumpAndSettle();
 
       expect(find.text('∅'), findsOneWidget);
@@ -1009,7 +1009,7 @@ void main() {
     ) async {
       await _pumpLauncher(tester);
 
-      await tester.enterText(_searchField(), 'beta');
+      await tester.enterText(searchField(), 'beta');
       await tester.pumpAndSettle();
       expect(find.text('Beta'), findsOneWidget);
 
