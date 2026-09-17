@@ -32,6 +32,60 @@ final class WaiterSnapshot {
   bool get isEmpty => jobs.isEmpty && timers.isEmpty;
 }
 
+/// The boot process snapshot (issue #478): every live pid plus, when the
+/// platform reports it, its start string — the pid-reuse guard (a
+/// recycled pid's start never matches the recorded one).
+typedef _ProcessTable = ({Set<int> pids, Map<int, String> starts});
+
+/// One cross-run registry entry (`running.json`): the job identity plus
+/// the owner-process evidence a later boot reconciles against — the OS
+/// pid, its start string (pid reuse), and the entry's own birth time
+/// (the `jobs.staleHours` age belt). Legacy records carry only
+/// id/command/pid; missing fields degrade per-field.
+final class _ManifestEntry {
+  const _ManifestEntry({
+    required this.id,
+    this.command,
+    this.pid,
+    this.pidStart,
+    this.startedAtMs,
+  });
+
+  final String id;
+  final String? command;
+  final int? pid;
+
+  /// The owner pid's OS start string (`ps -o lstart=`) at record time.
+  final String? pidStart;
+
+  /// When the entry was written (epoch ms) — the age belt's clock.
+  final int? startedAtMs;
+
+  /// Parses one raw JSON entry; null for anything without a usable id
+  /// (tolerated and dropped — only a structurally broken FILE is
+  /// quarantined).
+  static _ManifestEntry? tryParse(Object? raw) {
+    if (raw is! Map) return null;
+    final id = raw['id'];
+    if (id is! String || id.isEmpty) return null;
+    return _ManifestEntry(
+      id: id,
+      command: raw['command'] is String ? raw['command'] as String : null,
+      pid: int.tryParse('${raw['pid']}'),
+      pidStart: raw['pidStart'] is String ? raw['pidStart'] as String : null,
+      startedAtMs: raw['startedAtMs'] is int ? raw['startedAtMs'] as int : null,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'command': command,
+    'pid': pid?.toString(),
+    if (pidStart != null) 'pidStart': pidStart,
+    if (startedAtMs != null) 'startedAtMs': startedAtMs,
+  };
+}
+
 /// Owns the visible-waiting state and its event pushes. All mutations are
 /// best-effort: a snapshot (disk scan) or manifest write failure must
 /// never take a run down.
@@ -40,8 +94,9 @@ final class _WaitingCoordinator {
 
   final AgentCli _cli;
 
-  /// Background jobs the previous run left running (restart honesty,
-  /// captured once at boot from the cross-run manifest).
+  /// Previous-run jobs the boot reconcile (issue #478) dropped as lost:
+  /// dead or recycled pid, no pid at all, or past the `jobs.staleHours`
+  /// age belt. Live detached jobs are kept — they are not lost.
   int lostJobs = 0;
 
   /// When the current waiting stretch began — the heartbeat's elapsed base.
@@ -58,88 +113,330 @@ final class _WaitingCoordinator {
 
   ScheduledMessageQueue get _timers => _cli._scheduledMessages;
 
-  /// The cross-run manifest of jobs this process started
-  /// (`<cwd>/.fah/bash_jobs/running.json`): entries present at boot were
-  /// left running by the previous run — count them, then truncate.
+  /// The cross-run job registry (`<cwd>/.fah/bash_jobs/running.json`):
+  /// one entry per job any fa process in this workspace still considers
+  /// running. Boot reconcile (issue #478) drops entries whose owning
+  /// process is gone instead of letting them sit there forever.
   String get _manifestPath => '${_cli._env.cwd}/.fah/bash_jobs/running.json';
 
-  /// Restart honesty: count the manifest entries, then take the file over.
-  /// A torn/unreadable file counts zero — never invent lost jobs. The
-  /// recorded pids also feed the boot sweep (issue #517): previous-run jobs
-  /// whose wrapper died but whose process group (toolchain grandchildren)
+  /// Where a corrupt registry goes before the rebuild — the evidence
+  /// stays inspectable instead of being silently lost.
+  String get _badManifestPath => '$_manifestPath.bad';
+
+  /// The per-root lock guarding registry mutations: parent + subagent fa
+  /// processes share `.fah/bash_jobs/` (issue #478).
+  String get _manifestLockPath => '$_manifestPath.lock';
+
+  /// Boot reconcile (issue #478). Entries survive their owner's death
+  /// (kill -9, crash, restart) — without this sweep they are immortal
+  /// ghosts and `.fah/bash_jobs/` accumulates forever. Per boot, under
+  /// the per-root lock:
+  ///
+  /// - a corrupt/unparseable file is quarantined as `running.json.bad`
+  ///   and rebuilt empty — never double-counted (concurrent writers once
+  ///   concatenated two JSON documents into it);
+  /// - entries whose pid is dead — or was recycled onto another process
+  ///   (start-time mismatch) — are dropped; so are entries with no pid
+  ///   at all (nothing to verify) and entries past `jobs.staleHours`
+  ///   (the age belt). Live entries are KEPT — a detached job
+  ///   legitimately outlives the run that started it. Every drop counts
+  ///   as [lostJobs] (restart honesty);
+  /// - job logs older than `jobs.logRetentionDays` are deleted (24,144
+  ///   files accumulated once — nothing ever pruned them).
+  ///
+  /// One notice line summarizes the reconcile + the GC. The recorded
+  /// pids also feed the boot sweep (issue #517): previous-run jobs whose
+  /// wrapper died but whose process group (toolchain grandchildren)
   /// survived get one warning line, then are reaped.
   Future<void> captureLostJobs() async {
     lostJobs = 0;
     var pids = const <int>[];
-    try {
-      final text = (await _cli._env.readTextFile(_manifestPath)).valueOrNull;
-      final decoded = text == null ? null : jsonDecode(text);
-      if (decoded is List) {
-        lostJobs = decoded.length;
-        pids = [
-          for (final entry in decoded)
-            if (entry is Map) ?int.tryParse('${entry['pid']}'),
-        ];
+    var quarantined = false;
+    var dropped = 0;
+    var aged = 0;
+    await _withRegistryLock(() async {
+      final entries = await _readRegistryEntries(
+        onQuarantined: () => quarantined = true,
+      );
+      pids = [
+        for (final entry in entries)
+          if (entry.pid != null) entry.pid!,
+      ];
+      final table = await _bootProcessTable();
+      final staleBefore = _clock().subtract(
+        Duration(hours: _cli.config.jobs.staleHours),
+      );
+      final kept = <_ManifestEntry>[];
+      for (final entry in entries) {
+        final started = entry.startedAtMs;
+        final tooOld =
+            started != null &&
+            DateTime.fromMillisecondsSinceEpoch(started).isBefore(staleBefore);
+        if (tooOld || !_entryAlive(entry, table)) {
+          dropped++;
+          if (tooOld) aged++;
+          continue;
+        }
+        kept.add(entry);
       }
-    } on Object {
-      lostJobs = 0;
-    }
-    await _writeManifest(const []);
+      lostJobs = dropped;
+      if (quarantined || kept.length != entries.length) {
+        await _writeRegistryEntries(kept);
+      }
+    });
+    // The orphan-group reaper (issue #517) wants every previous-run pid —
+    // it skips live leaders itself.
     await reapOrphanJobGroups(
       env: _cli._env,
       candidatePids: pids,
       onWarn: (message) => _cli.io.writeln(tuiWarning('⚠ $message')),
     );
+    final prunedLogs = await _pruneOldJobLogs();
+    final notes = <String>[
+      if (quarantined) 'corrupt running.json quarantined as running.json.bad',
+      if (dropped > 0)
+        '$dropped stale job ${dropped == 1 ? 'entry' : 'entries'} dropped'
+            '${aged > 0 ? ', $aged past the age belt' : ''}',
+      if (prunedLogs > 0) '$prunedLogs old job log(s) pruned',
+    ];
+    if (notes.isNotEmpty) {
+      _cli.io.writeln(tuiWarning('⚠ bash_jobs: ${notes.join(' · ')}'));
+    }
   }
 
-  Future<void> _manifestAdd(String id, String command, int? pid) async {
-    await _mutateManifest(
+  Future<void> _manifestAdd(
+    String id,
+    String command,
+    int? pid, {
+    String? pidStart,
+  }) async {
+    await _mutateRegistry(
       (entries) => [
         ...entries,
-        {'id': id, 'command': command, 'pid': pid?.toString()},
+        _ManifestEntry(
+          id: id,
+          command: command,
+          pid: pid,
+          pidStart: pidStart,
+          startedAtMs: _clock().millisecondsSinceEpoch,
+        ),
       ],
     );
   }
 
   Future<void> _manifestRemove(String id) async {
-    await _mutateManifest(
-      (entries) => entries.where((e) => e['id'] != id).toList(),
+    await _mutateRegistry(
+      (entries) => [
+        for (final entry in entries)
+          if (entry.id != id) entry,
+      ],
     );
   }
 
-  Future<void> _mutateManifest(
-    List<Map<String, String?>> Function(List<Map<String, String?>>) mutate,
+  /// Reads the registry under the lock, mutates, writes back ATOMICALLY.
+  /// A failure anywhere is swallowed — the registry is best-effort
+  /// bookkeeping and the job itself is unaffected.
+  Future<void> _mutateRegistry(
+    List<_ManifestEntry> Function(List<_ManifestEntry>) mutate,
   ) async {
+    await _withRegistryLock(() async {
+      await _writeRegistryEntries(mutate(await _readRegistryEntries()));
+    });
+  }
+
+  /// Reads + parses the registry: missing → empty; a structurally broken
+  /// file → quarantined ([onQuarantined] fired) and rebuilt empty; raw
+  /// entries without a usable id dropped; duplicate ids (concurrent
+  /// double-writes) deduped keeping the first.
+  Future<List<_ManifestEntry>> _readRegistryEntries({
+    void Function()? onQuarantined,
+  }) async {
+    final text = (await _cli._env.readTextFile(_manifestPath)).valueOrNull;
+    if (text == null) return const [];
+    Object? decoded;
     try {
-      final text = (await _cli._env.readTextFile(_manifestPath)).valueOrNull;
-      final decoded = text == null ? null : jsonDecode(text);
-      final entries = [
-        for (final entry in decoded is List ? decoded : const [])
-          if (entry is Map)
-            {
-              'id': entry['id'] as String?,
-              'command': entry['command'] as String?,
-              'pid': entry['pid']?.toString(),
-            },
-      ];
-      await _writeManifest(mutate(entries));
+      decoded = jsonDecode(text);
     } on Object {
-      // Best-effort bookkeeping — the job itself is unaffected.
+      decoded = null;
+    }
+    if (decoded is! List) {
+      await _quarantineCorruptRegistry();
+      onQuarantined?.call();
+      return const [];
+    }
+    final seen = <String>{};
+    return [
+      for (final raw in decoded)
+        if (_ManifestEntry.tryParse(raw) case final entry?
+            when seen.add(entry.id))
+          entry,
+    ];
+  }
+
+  /// Moves the corrupt file aside (`.bad`) so the next reader starts
+  /// clean; without a rename capability it is removed — either way the
+  /// registry rebuilds instead of double-counting the broken file.
+  Future<void> _quarantineCorruptRegistry() async {
+    final env = _cli._env;
+    var renamed = false;
+    if (env case final RenamableFileSystem renamable) {
+      renamed = (await renamable.renamePath(
+        _manifestPath,
+        _badManifestPath,
+      )).isOk;
+    }
+    if (!renamed) await env.remove(_manifestPath, force: true);
+  }
+
+  Future<void> _writeRegistryEntries(List<_ManifestEntry> entries) =>
+      _writeRegistry(jsonEncode([for (final e in entries) e.toJson()]));
+
+  /// Writes the registry ATOMICALLY (tmp + rename, issue #478): several
+  /// fa processes share `.fah/bash_jobs/`, and a plain overwrite can be
+  /// torn by a crash or read mid-write. Backends without rename (memory,
+  /// web — single-writer anyway) degrade to a plain write.
+  Future<void> _writeRegistry(String json) async {
+    final env = _cli._env;
+    try {
+      if (env case final RenamableFileSystem renamable) {
+        final tmp = '$_manifestPath.tmp';
+        await env.writeFile(tmp, json);
+        if ((await renamable.renamePath(tmp, _manifestPath)).isOk) return;
+      }
+      await env.writeFile(_manifestPath, json);
+    } on Object {
+      // Ignore: the registry is a best-effort provenance sidecar.
     }
   }
 
-  Future<void> _writeManifest(List<Map<String, String?>> entries) async {
+  /// The per-root registry lock: `createDir` is an atomic
+  /// exclusive-create on the local filesystem — the loser's call fails.
+  /// Bounded wait; a stale lock (no mutation runs this long — the holder
+  /// crashed) is stolen. Backends without exclusive create (memory, web)
+  /// degrade to unlocked single writes, like the session lease degrades
+  /// without rename.
+  static const _lockStaleAfter = Duration(seconds: 60);
+  static const _lockWaitBound = Duration(milliseconds: 300);
+
+  Future<void> _withRegistryLock(Future<void> Function() body) async {
+    // The lock dir lives under `.fah/bash_jobs/` — make sure the parent
+    // exists or the exclusive create fails for the wrong reason and every
+    // mutation pays the full contention wait.
+    await _cli._env.createDir('${_cli._env.cwd}/.fah/bash_jobs');
+    if (!await _acquireRegistryLock()) return body();
     try {
-      await _cli._env.writeFile(_manifestPath, jsonEncode(entries));
-    } on Object {
-      // Ignore: the manifest is a best-effort provenance sidecar.
+      await body();
+    } finally {
+      await _cli._env.remove(_manifestLockPath, recursive: true, force: true);
     }
+  }
+
+  Future<bool> _acquireRegistryLock() async {
+    final deadline = _clock().add(_lockWaitBound);
+    for (;;) {
+      if ((await _cli._env.createDir(
+        _manifestLockPath,
+        recursive: false,
+      )).isOk) {
+        return true;
+      }
+      final info = await _cli._env.fileInfo(_manifestLockPath);
+      final stale =
+          info.isOk &&
+          DateTime.fromMillisecondsSinceEpoch(
+            info.valueOrNull!.mtimeMs,
+          ).isBefore(_clock().subtract(_lockStaleAfter));
+      if (stale) {
+        await _cli._env.remove(_manifestLockPath, recursive: true, force: true);
+        continue;
+      }
+      if (_clock().isAfter(deadline)) return false;
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+    }
+  }
+
+  /// Test seam: replaces the boot process probe. Null (default) runs the
+  /// real `ps -ax -o pid=,lstart=` through the environment.
+  Future<_ProcessTable?> Function()? _liveProcesses;
+
+  /// The boot process snapshot: the injected seam when a test set one,
+  /// else the real probe.
+  Future<_ProcessTable?> _bootProcessTable() =>
+      _liveProcesses?.call() ?? _probeLiveProcesses();
+
+  /// One `ps` round-trip: every live pid plus its start string (the
+  /// pid-reuse guard). Null when the platform cannot report it — entries
+  /// are then kept rather than destroyed on unverifiable evidence.
+  Future<_ProcessTable?> _probeLiveProcesses() async {
+    final ps = await _cli._env.exec('ps -ax -o pid=,lstart=');
+    if (ps.isErr) return null;
+    final pids = <int>{};
+    final starts = <int, String>{};
+    for (final line in ps.valueOrNull!.stdout.split('\n')) {
+      final trimmed = line.trim();
+      final space = trimmed.indexOf(' ');
+      if (space <= 0) continue;
+      final pid = int.tryParse(trimmed.substring(0, space));
+      if (pid == null) continue;
+      pids.add(pid);
+      starts[pid] = trimmed.substring(space + 1).trim();
+    }
+    return (pids: pids, starts: starts);
+  }
+
+  /// The OS start string of [pid] (`ps -o lstart=`), or null when the
+  /// platform cannot tell (the entry then has no pid-reuse protection
+  /// but still gets plain liveness checks + the age belt).
+  Future<String?> _pidStart(int? pid) async {
+    if (pid == null) return null;
+    final ps = await _cli._env.exec('ps -o lstart= -p $pid');
+    final start = ps.valueOrNull?.stdout.trim();
+    return ps.isOk && start != null && start.isNotEmpty ? start : null;
+  }
+
+  /// Whether the entry's owning process is alive: a dead pid is a ghost;
+  /// a pid whose start string drifted from the recorded one was recycled
+  /// onto an unrelated process — equally gone.
+  bool _entryAlive(_ManifestEntry entry, _ProcessTable? table) {
+    final pid = entry.pid;
+    if (pid == null) return false;
+    final t = table;
+    if (t == null) return true;
+    if (!t.pids.contains(pid)) return false;
+    final recorded = entry.pidStart;
+    final actual = t.starts[pid];
+    return recorded == null || actual == null || recorded == actual;
+  }
+
+  /// Boot log GC (issue #478): deletes `*.log` files older than
+  /// `jobs.logRetentionDays` (`0` keeps all) and returns how many went.
+  Future<int> _pruneOldJobLogs() async {
+    final days = _cli.config.jobs.logRetentionDays;
+    if (days <= 0) return 0;
+    final listed = await _cli._env.listDir('${_cli._env.cwd}/.fah/bash_jobs');
+    if (listed.isErr) return 0;
+    final cutoffMs =
+        _clock().millisecondsSinceEpoch - days * Duration.millisecondsPerDay;
+    var pruned = 0;
+    for (final info in listed.valueOrNull!) {
+      if (!info.name.endsWith('.log')) continue;
+      if (info.mtimeMs >= cutoffMs) continue;
+      if ((await _cli._env.remove(info.path, force: true)).isOk) pruned++;
+    }
+    return pruned;
   }
 
   /// A background job started (event-driven waiting-row enter): record it
-  /// in the cross-run manifest and refresh the row.
+  /// in the cross-run registry and refresh the row. The pid's OS start
+  /// time rides along (issue #478) so a later boot can tell a recycled
+  /// pid from the real owner.
   Future<void> jobStarted(ShellJobEntry job) async {
-    await _manifestAdd(job.id, job.command, job.pid);
+    await _manifestAdd(
+      job.id,
+      job.command,
+      job.pid,
+      pidStart: await _pidStart(job.pid),
+    );
     await push();
   }
 
@@ -458,6 +755,13 @@ extension AgentCliWaitingSeams on AgentCli {
   /// Test seam: the current restart-honesty count.
   @visibleForTesting
   int get waitingLostJobsForTest => _waiting.lostJobs;
+
+  /// Test seam: replaces the boot process probe (issue #478 reconcile).
+  /// Null restores the real `ps` probe.
+  @visibleForTesting
+  set waitingProcessTableForTest(
+    Future<({Set<int> pids, Map<int, String> starts})?> Function()? probe,
+  ) => _waiting._liveProcesses = probe;
 
   /// Test seam: arms a real self-addressed timer so tests can drive the
   /// ceiling-wait loop through an actual wake source.
