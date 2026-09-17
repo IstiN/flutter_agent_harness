@@ -248,4 +248,130 @@ void main() {
       );
     });
   });
+  group('launcherGridHoverTarget', () {
+    // Two rows; Beta is a 2x2 tall tile, so row 0's bottom edge is its
+    // own (y=0 + h=112), not Alpha's (y=0 + h=56).
+    final keys = ['a', 'b', 'c'];
+    final rects = [
+      (x: 0.0, y: 0.0, w: 56.0, h: 56.0), // a (row 0)
+      (x: 72.0, y: 0.0, w: 112.0, h: 112.0), // b (row 0, tall)
+      (x: 0.0, y: 128.0, w: 56.0, h: 56.0), // c (row 1)
+    ];
+
+    test('above the first row targets the first tile before it', () {
+      expect(
+        launcherGridHoverTarget(
+          pointer: const Offset(30, -10),
+          keys: keys,
+          rects: rects,
+        ),
+        ('a', 0.0),
+      );
+    });
+
+    test('inside a row: the first center right of the pointer wins', () {
+      // Alpha's center is at x=28.
+      expect(
+        launcherGridHoverTarget(
+          pointer: const Offset(10, 10),
+          keys: keys,
+          rects: rects,
+        ),
+        ('a', 0.0),
+      );
+      // Between Alpha's and Beta's centers → inserts before Beta.
+      expect(
+        launcherGridHoverTarget(
+          pointer: const Offset(40, 10),
+          keys: keys,
+          rects: rects,
+        ),
+        ('b', 0.0),
+      );
+      // Beta's center is at x=128.
+      expect(
+        launcherGridHoverTarget(
+          pointer: const Offset(100, 10),
+          keys: keys,
+          rects: rects,
+        ),
+        ('b', 0.0),
+      );
+      expect(
+        launcherGridHoverTarget(
+          pointer: const Offset(150, 10),
+          keys: keys,
+          rects: rects,
+        ),
+        ('b', 1.0),
+      );
+    });
+
+    test('row extent follows the tallest tile, not the first', () {
+      // y=60 is past Alpha's bottom (56) but inside Beta's (112): still
+      // row 0.
+      expect(
+        launcherGridHoverTarget(
+          pointer: const Offset(10, 60),
+          keys: keys,
+          rects: rects,
+        ),
+        ('a', 0.0),
+      );
+    });
+
+    test('later rows group by y, not index order', () {
+      // c starts at y=128: a pointer there scans row 1 only.
+      expect(
+        launcherGridHoverTarget(
+          pointer: const Offset(10, 140),
+          keys: keys,
+          rects: rects,
+        ),
+        ('c', 0.0),
+      );
+    });
+
+    test('below every row targets the last tile after it', () {
+      expect(
+        launcherGridHoverTarget(
+          pointer: const Offset(30, 500),
+          keys: keys,
+          rects: rects,
+        ),
+        ('c', 1.0),
+      );
+    });
+
+    test('rows group by y even when stored out of order (backfill)', () {
+      // Same grid, but the parallel lists store row 1 first (hole
+      // backfill order): grouping must still key on y.
+      const backfillKeys = ['c', 'a', 'b'];
+      final backfillRects = [rects[2], rects[0], rects[1]];
+      expect(
+        launcherGridHoverTarget(
+          pointer: const Offset(10, 140),
+          keys: backfillKeys,
+          rects: backfillRects,
+        ),
+        ('c', 0.0),
+      );
+      expect(
+        launcherGridHoverTarget(
+          pointer: const Offset(10, -5),
+          keys: backfillKeys,
+          rects: backfillRects,
+        ),
+        ('c', 0.0),
+      );
+      expect(
+        launcherGridHoverTarget(
+          pointer: const Offset(10, 10),
+          keys: backfillKeys,
+          rects: backfillRects,
+        ),
+        ('a', 0.0),
+      );
+    });
+  });
 }

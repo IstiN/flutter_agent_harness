@@ -143,6 +143,62 @@ double packedTilesHeight(List<TileRect> rects) {
   return max;
 }
 
+/// Maps a grid-local [pointer] to `(targetKey, fx)` for the launcher's
+/// background-hover preview (issue #166): above the first row → before
+/// the first tile; inside a row → the tile whose center is right of the
+/// pointer (or after the row's last); below → after the last. Rows are
+/// grouped by y because first-fit packing backfills holes (y is NOT
+/// monotonic in index).
+(String, double) launcherGridHoverTarget({
+  required Offset pointer,
+  required List<String> keys,
+  required List<TileRect> rects,
+}) {
+  final rowTops = <double>{for (final r in rects) r.y}.toList()..sort();
+  if (pointer.dy < rowTops.first) return (keys.first, 0);
+  for (final top in rowTops) {
+    if (pointer.dy > _rowBottom(rects, top)) continue;
+    return _scanHoverRow(pointer, keys, rects, top);
+  }
+  return (keys.last, 1);
+}
+
+/// First tile of [top]'s row whose center is right of the pointer
+/// inserts before it (fx 0); past them all inserts after the row's last
+/// (fx 1).
+(String, double) _scanHoverRow(
+  Offset pointer,
+  List<String> keys,
+  List<TileRect> rects,
+  double top,
+) {
+  final indices = _hoverRowIndices(rects, top);
+  for (final i in indices) {
+    if (pointer.dx < rects[i].x + rects[i].w / 2) return (keys[i], 0);
+  }
+  return (keys[indices.last], 1);
+}
+
+/// Indices of the rects starting at row [top], left-to-right.
+List<int> _hoverRowIndices(List<TileRect> rects, double top) {
+  final indices = <int>[
+    for (var i = 0; i < rects.length; i++)
+      if (rects[i].y == top) i,
+  ];
+  indices.sort((a, b) => rects[a].x.compareTo(rects[b].x));
+  return indices;
+}
+
+/// The lowest bottom edge among the rects starting at row [top].
+double _rowBottom(List<TileRect> rects, double top) {
+  var bottom = top;
+  for (final r in rects) {
+    if (r.y != top) continue;
+    bottom = r.y + r.h > bottom ? r.y + r.h : bottom;
+  }
+  return bottom;
+}
+
 /// Rectangular-cell grid delegate with per-child spans (see [packTileSpans])
 /// on the [LauncherGridSpec] icon-unit geometry. A WxH tile measures
 /// `W` × `H` cells plus the inter-cell spacing inside the span.
