@@ -766,7 +766,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   };
 
   /// Flags whose following argument is NOT a path, per command. Used by
-  /// [_rewriteRelativeArgs] to avoid rewriting flag values.
+  /// [_rewritePositionalArgs] to avoid rewriting flag values.
   static const Map<String, Set<String>> _nonPathFlagValues = {
     'cut': {'-b', '-c', '-d', '-f'},
     'head': {'-c', '-n'},
@@ -787,25 +787,31 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     List<String> args,
     String cwd,
   ) {
-    if (command == 'dd') {
-      return [for (final arg in args) _rewriteDdArg(arg, cwd)];
-    }
+    if (command == 'dd') return _rewriteDdArgs(args, cwd);
+    return _rewritePositionalArgs(command, args, cwd);
+  }
+
+  /// `dd` uses `if=`/`of=` key=value operands instead of bare paths.
+  List<String> _rewriteDdArgs(List<String> args, String cwd) =>
+      args.map((arg) => _rewriteDdArg(arg, cwd)).toList();
+
+  List<String> _rewritePositionalArgs(
+    String command,
+    List<String> args,
+    String cwd,
+  ) {
     final skipFlags = _nonPathFlagValues[command] ?? const <String>{};
     final result = <String>[];
     var positionalIndex = 0;
     for (var i = 0; i < args.length; i++) {
       final arg = args[i];
-      if (arg.startsWith('-') && arg != '-') {
-        result.add(arg);
-        continue;
-      }
-      if (i > 0 && skipFlags.contains(args[i - 1])) {
+      if (!_isPathArg(args, i, skipFlags)) {
         result.add(arg);
         continue;
       }
       positionalIndex++;
       // sed/awk: the first positional argument is the script, not a path.
-      if ((command == 'sed' || command == 'awk') && positionalIndex == 1) {
+      if (_isScriptArg(command, positionalIndex)) {
         result.add(arg);
         continue;
       }
@@ -813,6 +819,20 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     }
     return result;
   }
+
+  /// Whether args[i] is a positional operand: not a flag and not the value
+  /// of a flag listed in [_nonPathFlagValues] for this command.
+  bool _isPathArg(List<String> args, int i, Set<String> skipFlags) {
+    final arg = args[i];
+    if (arg.startsWith('-') && arg != '-') return false;
+    return !_isFlagValue(args, i, skipFlags);
+  }
+
+  bool _isFlagValue(List<String> args, int i, Set<String> skipFlags) =>
+      i > 0 && skipFlags.contains(args[i - 1]);
+
+  bool _isScriptArg(String command, int positionalIndex) =>
+      positionalIndex == 1 && (command == 'sed' || command == 'awk');
 
   String _rewriteDdArg(String arg, String cwd) {
     final idx = arg.indexOf('=');
@@ -825,16 +845,27 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   }
 
   String _maybeRewritePath(String command, String arg, String cwd) {
-    if (arg.isEmpty || arg == '-') return arg;
-    // Absolute paths are already sandbox-rooted; explicit relative paths are
-    // always resolved.
+    if (_isVerbatimArg(arg)) return arg;
+    // Absolute paths are already sandbox-rooted.
     if (arg.startsWith('/')) return arg;
+    return _rewriteRelativePath(command, arg, cwd);
+  }
+
+  /// Operands that must never be touched: empty and the stdin/stdout `-`.
+  bool _isVerbatimArg(String arg) => arg.isEmpty || arg == '-';
+
+  String _rewriteRelativePath(String command, String arg, String cwd) {
+    // Explicit relative paths are always resolved.
     if (arg.startsWith('./') || arg.startsWith('../')) {
       return _resolveSandboxPath(arg, cwd);
     }
     if (_pathPositionalCommands.contains(command)) {
       return _resolveSandboxPath(arg, cwd);
     }
+    return _rewriteExistingPath(command, arg, cwd);
+  }
+
+  String _rewriteExistingPath(String command, String arg, String cwd) {
     // Heuristic for commands with mixed argument kinds (e.g. rg, python -c):
     // rewrite a word only when it names an existing file or directory.
     // Anything else (URLs, inline code, patterns) must stay verbatim -
