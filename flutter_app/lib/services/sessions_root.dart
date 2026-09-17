@@ -20,26 +20,13 @@ String defaultSessionsRoot(String cwd) {
   if (kIsWeb) return '$cwd/sessions';
   if (Platform.isMacOS) {
     final home = Platform.environment['HOME'] ?? '';
+    // Probe the group container only when it already exists or the CLI
+    // is installed — otherwise this machine would never use it anyway.
     final groupDir =
-        '$home/Library/Group Containers/$_kSharedAppGroupId/fa/sessions';
-    final groupDirExists = Directory(groupDir).existsSync();
-    if (!groupDirExists && !isFaCliInstalled()) {
-      return '$home/.fah/sessions';
-    }
-    try {
-      final dir = Directory(groupDir);
-      if (!dir.existsSync()) {
-        dir.createSync(recursive: true);
-      }
-      final probe = File(
-        '$groupDir/.probe_${DateTime.now().microsecondsSinceEpoch}',
-      );
-      probe.writeAsStringSync('');
-      probe.deleteSync();
-      return groupDir;
-    } catch (_) {
-      return '$home/.fah/sessions';
-    }
+        Directory(sessionsGroupDir(home)).existsSync() || isFaCliInstalled()
+        ? probedSessionsGroupDir(home)
+        : null;
+    return groupDir ?? '$home/.fah/sessions';
   }
   return '$cwd/sessions';
 }
@@ -48,16 +35,52 @@ String defaultSessionsRoot(String cwd) {
 /// both shared App Group sessions and fallback `~/.fah/sessions`.
 List<String> allSessionRoots(String defaultRoot) {
   if (kIsWeb || !Platform.isMacOS) return [defaultRoot];
-  final home = Platform.environment['HOME'] ?? '';
-  final groupDir =
-      '$home/Library/Group Containers/$_kSharedAppGroupId/fa/sessions';
-  final fallbackDir = '$home/.fah/sessions';
-  final roots = <String>{defaultRoot};
-  if (groupDir != defaultRoot && Directory(groupDir).existsSync()) {
-    roots.add(groupDir);
+  return macSessionRootCandidates(
+    home: Platform.environment['HOME'] ?? '',
+    defaultRoot: defaultRoot,
+    exists: (path) => Directory(path).existsSync(),
+  );
+}
+
+/// The macOS App Group sessions directory for [home] (may not exist).
+String sessionsGroupDir(String home) =>
+    '$home/Library/Group Containers/$_kSharedAppGroupId/fa/sessions';
+
+/// Creates (when missing) and probe-writes the macOS App Group sessions
+/// directory, returning its path; null when the container is unusable —
+/// the caller falls back to `~/.fah/sessions`.
+String? probedSessionsGroupDir(String home) {
+  final groupDir = sessionsGroupDir(home);
+  try {
+    final dir = Directory(groupDir);
+    if (!dir.existsSync()) {
+      dir.createSync(recursive: true);
+    }
+    final probe = File(
+      '$groupDir/.probe_${DateTime.now().microsecondsSinceEpoch}',
+    );
+    probe.writeAsStringSync('');
+    probe.deleteSync();
+    return groupDir;
+  } catch (_) {
+    return null;
   }
-  if (fallbackDir != defaultRoot && Directory(fallbackDir).existsSync()) {
-    roots.add(fallbackDir);
+}
+
+/// The macOS roots beyond [defaultRoot]: the App Group container and the
+/// `~/.fah/sessions` fallback, each only when it exists and differs from
+/// [defaultRoot]. [exists] is injected so the candidacy rule is testable
+/// on every platform.
+List<String> macSessionRootCandidates({
+  required String home,
+  required String defaultRoot,
+  required bool Function(String path) exists,
+}) {
+  final roots = <String>{defaultRoot};
+  for (final dir in [sessionsGroupDir(home), '$home/.fah/sessions']) {
+    if (dir != defaultRoot && exists(dir)) {
+      roots.add(dir);
+    }
   }
   return roots.toList();
 }
