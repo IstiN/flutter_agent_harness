@@ -3777,4 +3777,14 @@
 - refactor(559): wasm_shell builtins CRAP 272->24 (descent 11, app ratchet 272->210) (#579)
 - fix(578): omit empty summary block from auto-compaction report (#580)
 
+## 0.1.410
+
+- fix(595): measure picker menu rows in visible cells, not SGR bytes (#601)
+- fix(605): degrade silently when systemd-inhibit is absent (containers) (#606)
+- refactor(568): sandbox tail II — 13 methods CRAP 56→≤24 (split + cover) (#583)
+- fix(599): bound job-card bodies - heredoc-aware one-line previews, 6-row cap, scroll-safe transcript (#604)
+- ci: route every auto-filed failure to ai-teammate (#602)
+- fix(514): emit informational notice on stalled run without queued messages (#598)
+- refactor(569): apps/widgets tail 12 methods 42->24 CRAP, split + covered (#588)
+
 ## Unreleased
