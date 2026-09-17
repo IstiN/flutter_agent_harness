@@ -186,6 +186,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     widget.manager.addListener(_onManagerChanged);
     _attachFsRevision();
     _layout?.addListener(_onLayoutChanged);
+    _searchController.addListener(_onSearchChanged);
     if (_layout == null) unawaited(_loadLayout());
     unawaited(_reloadApps());
     unawaited(_autoUpdateWidgets());
@@ -440,39 +441,15 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     final box = _gridBox;
     if (layout == null || box == null || keys.isEmpty) return;
     final pointer = box.globalToLocal(details.offset + _grabOffset);
-    final (targetKey, fx) = _gridHoverTarget(pointer, keys, rects);
+    final (targetKey, fx) = launcherGridHoverTarget(
+      pointer: pointer,
+      keys: keys,
+      rects: rects,
+    );
     _backgroundTarget = (targetKey, fx);
     _previewInsert(details.data, targetKey, fx);
   }
 
-  /// Maps a grid-local pointer to (targetKey, fx): above the first row →
-  /// before the first tile; inside a row → the tile whose center is right
-  /// of the pointer (or after the row's last); below → after the last.
-  /// Rows are grouped by y because first-fit packing backfills holes (y is
-  /// NOT monotonic in index).
-  (String, double) _gridHoverTarget(
-    Offset pointer,
-    List<String> keys,
-    List<TileRect> rects,
-  ) {
-    final rowTops = <double>{for (final r in rects) r.y}.toList()..sort();
-    if (pointer.dy < rowTops.first) return (keys.first, 0);
-    for (final top in rowTops) {
-      final indices = [
-        for (var i = 0; i < rects.length; i++)
-          if (rects[i].y == top) i,
-      ]..sort((a, b) => rects[a].x.compareTo(rects[b].x));
-      final rowBottom = indices
-          .map((i) => rects[i].y + rects[i].h)
-          .reduce((a, b) => a > b ? a : b);
-      if (pointer.dy > rowBottom) continue;
-      for (final i in indices) {
-        if (pointer.dx < rects[i].x + rects[i].w / 2) return (keys[i], 0);
-      }
-      return (keys[indices.last], 1);
-    }
-    return (keys.last, 1);
-  }
 
   /// One drop onto the slot of [targetKey]: folder-add on folder tiles,
   /// folder-create when the center-band hover armed folder intent, reorder
@@ -801,13 +778,21 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   /// (see [AppsStore.resetDemoApp] — user data in `storage.json` survives).
   Future<void> _restoreDemoApp(String appId) async {
     final restored = await _appsStore.resetDemoApp(appId);
+    _logRestore(appId, restored);
+    if (!mounted) return;
+    if (restored) await _reloadApps();
+    if (!mounted) return;
+    _showRestoreResult(restored);
+  }
+
+  void _logRestore(String appId, bool restored) {
     AppLog.i(
       'apps',
       'restore demo app: $appId → ${restored ? 'ok' : 'FAILED'}',
     );
-    if (!mounted) return;
-    if (restored) await _reloadApps();
-    if (!mounted) return;
+  }
+
+  void _showRestoreResult(bool restored) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
@@ -1126,16 +1111,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   /// long-press shows the same tile menu (remove included) — drag&drop
   /// and folders stay exclusive to the main grid.
   Widget _buildSearchResults(FahColors colors) {
-    final query = _searchController.text.trim().toLowerCase();
-    final locale = Localizations.localeOf(context).toLanguageTag();
-    final matches = (_apps ?? const <JsAppInfo>[])
-        .where(
-          (app) =>
-              app.displayName(locale).toLowerCase().contains(query) ||
-              app.id.toLowerCase().contains(query) ||
-              app.displayDescription(locale).toLowerCase().contains(query),
-        )
-        .toList();
+    final matches = _searchMatches();
     if (matches.isEmpty) {
       return Center(
         child: Text(
@@ -1160,39 +1136,63 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
         mainAxisSpacing: 12,
       ),
       itemCount: matches.length,
-      itemBuilder: (context, index) {
-        final app = matches[index];
-        return InkWell(
-          borderRadius: BorderRadius.circular(12),
-          hoverColor: colors.indigo.withValues(alpha: 0.06),
-          onTap: () => unawaited(_launchApp(app)),
-          onSecondaryTapUp: (details) =>
-              unawaited(_showTileMenu('app:${app.id}', details.globalPosition)),
-          onLongPress: () {
-            final box = context.findRenderObject();
-            final center = box is RenderBox
-                ? box.localToGlobal(box.size.center(Offset.zero))
-                : Offset.zero;
-            unawaited(_showTileMenu('app:${app.id}', center));
-          },
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              AppIcon(app: app, env: widget.manager.env, size: 32),
-              const SizedBox(height: 6),
-              Text(
-                app.displayName(
-                  Localizations.localeOf(context).toLanguageTag(),
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ],
-          ),
-        );
-      },
+      itemBuilder: (context, index) =>
+          _searchResultTile(colors, context, matches[index]),
     );
+  }
+
+  /// Case-insensitive match over display name, id and description (in
+  /// the resolved locale).
+  List<JsAppInfo> _searchMatches() {
+    final query = _searchController.text.trim().toLowerCase();
+    final locale = Localizations.localeOf(context).toLanguageTag();
+    return (_apps ?? const <JsAppInfo>[])
+        .where(
+          (app) =>
+              app.displayName(locale).toLowerCase().contains(query) ||
+              app.id.toLowerCase().contains(query) ||
+              app.displayDescription(locale).toLowerCase().contains(query),
+        )
+        .toList();
+  }
+
+  Widget _searchResultTile(
+    FahColors colors,
+    BuildContext context,
+    JsAppInfo app,
+  ) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      hoverColor: colors.indigo.withValues(alpha: 0.06),
+      onTap: () => unawaited(_launchApp(app)),
+      onSecondaryTapUp: (details) =>
+          unawaited(_showTileMenu('app:${app.id}', details.globalPosition)),
+      onLongPress: () =>
+          unawaited(_showTileMenu('app:${app.id}', _tileCenter(context))),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          AppIcon(app: app, env: widget.manager.env, size: 32),
+          const SizedBox(height: 6),
+          Text(
+            app.displayName(
+              Localizations.localeOf(context).toLanguageTag(),
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Global center of [context]'s render box (long-press menu anchor).
+  Offset _tileCenter(BuildContext context) {
+    final box = context.findRenderObject();
+    return box is RenderBox
+        ? box.localToGlobal(box.size.center(Offset.zero))
+        : Offset.zero;
   }
 
   /// The main content: the iOS-style draggable grid (extracted from the
