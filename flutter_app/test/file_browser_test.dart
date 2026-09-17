@@ -8,6 +8,7 @@ import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/widgets/file_preview.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/upload.dart';
+import 'package:fa/services/icloud_sync_service.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -235,6 +236,36 @@ final class _ThrowingSendService extends AgentService {
     String text = '',
   }) {
     throw StateError('simulated send failure');
+  }
+}
+
+/// Fake [ICloudSyncService] scripting the availability check and the merge
+/// outcome for the header sync button tests.
+final class _FakeICloudSync implements ICloudSyncService {
+  _FakeICloudSync({this.available = true, this.error});
+
+  bool available;
+  Object? error;
+  int syncCalls = 0;
+
+  @override
+  Future<bool> isAvailable() async => available;
+  @override
+  Future<String?> containerUrl() async => available ? 'file:///icloud' : null;
+
+  @override
+  Future<DateTime?> lastSyncAt() async => null;
+
+  @override
+  Future<ICloudSyncReport> syncNow() async {
+    syncCalls++;
+    final failure = error;
+    if (failure != null) throw failure;
+    return (
+      filesCopied: 2,
+      bytesCopied: 120,
+      syncedAt: DateTime.utc(2026, 9, 17, 12),
+    );
   }
 }
 
@@ -797,10 +828,10 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(service.messages.first.role, 'user');
-      expect(
-        service.messages.first.attachments.single,
-        (bytes: null, path: 'uploads/chat.txt'),
-      );
+      expect(service.messages.first.attachments.single, (
+        bytes: null,
+        path: 'uploads/chat.txt',
+      ));
       expect(service.messages.first.content, contains('look at this'));
       // The chip row cleared after sending.
       expect(find.byTooltip('Remove attachment'), findsNothing);
@@ -879,10 +910,10 @@ void main() {
 
       // Issue #461: the reference becomes a file chip in the bubble; the
       // agent-facing line is stripped from the visible text.
-      expect(
-        service.messages.first.attachments.single,
-        (bytes: null, path: 'uploads/icon.svg'),
-      );
+      expect(service.messages.first.attachments.single, (
+        bytes: null,
+        path: 'uploads/icon.svg',
+      ));
       expect(service.messages.first.content, isNot(contains('[attached file')));
     });
 
@@ -940,6 +971,55 @@ void main() {
       expect(picker.calls, 1);
       expect(find.textContaining('Upload failed'), findsOneWidget);
       expect(find.textContaining('broken.bin'), findsOneWidget);
+    });
+  });
+  group('FileBrowser iCloud sync', () {
+    testWidgets('unavailable container shows the guidance snackbar', (
+      tester,
+    ) async {
+      final env = await _seededEnv();
+      final sync = _FakeICloudSync(available: false);
+      await tester.pumpWidget(
+        _wrap(FileBrowser(env: env, iCloudSyncService: sync)),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Sync sessions and apps with iCloud'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('iCloud sync is unavailable'), findsOneWidget);
+      expect(sync.syncCalls, isZero);
+    });
+
+    testWidgets('a finished merge reports the copied files and reloads', (
+      tester,
+    ) async {
+      final env = await _seededEnv();
+      final sync = _FakeICloudSync();
+      await tester.pumpWidget(
+        _wrap(FileBrowser(env: env, iCloudSyncService: sync)),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Sync sessions and apps with iCloud'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Synced 2 files'), findsOneWidget);
+      expect(sync.syncCalls, 1);
+    });
+
+    testWidgets('a failed merge shows the failure snackbar', (tester) async {
+      final env = await _seededEnv();
+      final sync = _FakeICloudSync(error: StateError('boom'));
+      await tester.pumpWidget(
+        _wrap(FileBrowser(env: env, iCloudSyncService: sync)),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Sync sessions and apps with iCloud'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('iCloud sync failed'), findsOneWidget);
     });
   });
 }
