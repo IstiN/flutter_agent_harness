@@ -57,6 +57,13 @@ final class CaffeinatePowerRunner implements PowerAssertionRunner {
 /// the `system` level, sleep) inhibition while its watchdog command
 /// lives — the watchdog polls the fa pid, so the assertion dies with the
 /// fa process even if fa is SIGKILLed.
+///
+/// Containers and systemd-less hosts have no `systemd-inhibit` (issue
+/// #605): the spawn fails with ENOENT (errno 2), which this runner
+/// caches and answers with a SILENT no-op from then on — the runner is
+/// constructed once per host process, so the failed spawn happens at
+/// most once instead of warning after every run. Other failures
+/// propagate for the controller to warn about, as before.
 final class SystemdInhibitPowerRunner implements PowerAssertionRunner {
   SystemdInhibitPowerRunner({required this.pid, PowerProcessLauncher? launcher})
     : _launcher = launcher ?? _defaultLauncher;
@@ -65,14 +72,29 @@ final class SystemdInhibitPowerRunner implements PowerAssertionRunner {
   final int pid;
   final PowerProcessLauncher _launcher;
 
+  /// Set once the spawn reports ENOENT — no `systemd-inhibit` here (#605).
+  var _helperMissing = false;
+
+  static const _silentNoop = NoopPowerAssertionHandle(
+    'systemd-inhibit unavailable (container or no systemd)',
+  );
+
   @override
   Future<PowerAssertionHandle> acquire(PowerAssertionOptions options) async {
+    if (_helperMissing) return _silentNoop;
     final arguments = systemdInhibitArguments(options, pid: pid);
-    final process = await _launcher('systemd-inhibit', arguments);
-    return ProcessPowerAssertionHandle(
-      process: process,
-      description: 'systemd-inhibit ${arguments.join(' ')}',
-    );
+    try {
+      final process = await _launcher('systemd-inhibit', arguments);
+      return ProcessPowerAssertionHandle(
+        process: process,
+        description: 'systemd-inhibit ${arguments.join(' ')}',
+      );
+    } on ProcessException catch (error) {
+      // errno 2 = ENOENT: helper absent (containers, systemd-less hosts).
+      if (error.errorCode != 2) rethrow;
+      _helperMissing = true;
+      return _silentNoop;
+    }
   }
 }
 
