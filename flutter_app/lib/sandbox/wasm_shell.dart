@@ -1393,17 +1393,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     ShellExecOptions? options,
   ) async {
     final env = _effectiveEnv(options);
-
-    final assignments = <String, String>{};
-    final remaining = <String>[];
-    for (final arg in stage.args) {
-      final idx = arg.indexOf('=');
-      if (idx > 0 && !arg.startsWith('-')) {
-        assignments[arg.substring(0, idx)] = arg.substring(idx + 1);
-      } else {
-        remaining.add(arg);
-      }
-    }
+    final (:assignments, :remaining) = splitEnvArgs(stage.args);
 
     if (remaining.isNotEmpty) {
       return Ok(
@@ -1438,47 +1428,66 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       dnsQuery: _systemDnsQuery,
       whoisConnector: (query, server) =>
           _tcpWhois(query, server, timeout: timeout),
-      readTextFile: (path) async {
-        final file = _hostFile(_resolveSandboxPath(path, cwd));
-        if (!await file.exists()) return null;
-        return file.readAsString();
-      },
-      writeBinaryFile: (path, bytes) async {
-        final file = _hostFile(_resolveSandboxPath(path, cwd));
-        await file.parent.create(recursive: true);
-        await file.writeAsBytes(bytes);
-      },
-      readBinaryFile: (path) async {
-        final file = _hostFile(_resolveSandboxPath(path, cwd));
-        if (!await file.exists()) return null;
-        return file.readAsBytes();
-      },
-      listDirectory: (path) async {
-        final host = _hostPath(_resolveSandboxPath(path, cwd));
-        if (io.FileSystemEntity.typeSync(host) !=
-            io.FileSystemEntityType.directory) {
-          return null;
-        }
-        final entries = <SandboxDirEntry>[];
-        try {
-          await for (final entity in io.Directory(
-            host,
-          ).list(followLinks: false)) {
-            entries.add((
-              name: p.basename(entity.path),
-              isDirectory: entity is io.Directory,
-            ));
-          }
-        } on Object {
-          // Unreadable directories list as empty.
-        }
-        return entries;
-      },
-      removeFile: (path) async {
-        final file = _hostFile(_resolveSandboxPath(path, cwd));
-        if (await file.exists()) await file.delete();
-      },
+      readTextFile: (path) => _readSandboxText(_resolveSandboxPath(path, cwd)),
+      writeBinaryFile: (path, bytes) =>
+          _writeSandboxBytes(_resolveSandboxPath(path, cwd), bytes),
+      readBinaryFile: (path) =>
+          _readSandboxBytes(_resolveSandboxPath(path, cwd)),
+      listDirectory: (path) => _listSandboxDir(_resolveSandboxPath(path, cwd)),
+      removeFile: (path) => _removeSandboxFile(_resolveSandboxPath(path, cwd)),
     );
+  }
+
+  /// Host read for the sandbox file at sandbox-absolute [path], `null` when
+  /// it does not exist.
+  Future<String?> _readSandboxText(String path) async {
+    final file = _hostFile(path);
+    if (!await file.exists()) return null;
+    return file.readAsString();
+  }
+
+  /// Host write for the sandbox file at sandbox-absolute [path].
+  Future<void> _writeSandboxBytes(String path, List<int> bytes) async {
+    final file = _hostFile(path);
+    await file.parent.create(recursive: true);
+    await file.writeAsBytes(bytes);
+  }
+
+  /// Host binary read for the sandbox file at sandbox-absolute [path],
+  /// `null` when it does not exist.
+  Future<List<int>?> _readSandboxBytes(String path) async {
+    final file = _hostFile(path);
+    if (!await file.exists()) return null;
+    return file.readAsBytes();
+  }
+
+  /// Host listing of the sandbox directory at sandbox-absolute [path]:
+  /// `null` when it is not a directory, empty when unreadable.
+  Future<List<SandboxDirEntry>?> _listSandboxDir(String path) async {
+    final host = _hostPath(path);
+    if (io.FileSystemEntity.typeSync(host) !=
+        io.FileSystemEntityType.directory) {
+      return null;
+    }
+    final entries = <SandboxDirEntry>[];
+    try {
+      await for (final entity in io.Directory(host).list(followLinks: false)) {
+        entries.add((
+          name: p.basename(entity.path),
+          isDirectory: entity is io.Directory,
+        ));
+      }
+    } on Object {
+      // Unreadable directories list as empty.
+    }
+    return entries;
+  }
+
+  /// Host delete of the sandbox file at sandbox-absolute [path], no-op when
+  /// it does not exist.
+  Future<void> _removeSandboxFile(String path) async {
+    final file = _hostFile(path);
+    if (await file.exists()) await file.delete();
   }
 
   /// Resolves DNS through the dart:io system resolver for A/AAAA/PTR (like
@@ -1487,38 +1496,50 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   Future<SandboxDnsResult> _systemDnsQuery(String name, String type) async {
     switch (type) {
       case 'A' || 'AAAA':
-        final addresses = await io.InternetAddress.lookup(name);
-        final wantV4 = type == 'A';
-        return SandboxDnsResult(
-          status: 0,
-          resolver: 'system resolver',
-          answers: [
-            for (final address in addresses)
-              if ((address.type == io.InternetAddressType.IPv4) == wantV4)
-                SandboxDnsRecord(
-                  name: name,
-                  type: wantV4 ? 1 : 28,
-                  ttl: 0,
-                  data: address.address,
-                ),
-          ],
-        );
+        return _systemLookupQuery(name, type);
       case 'PTR':
-        final ip = SandboxBuiltins.ipv4FromPtrName(name);
-        if (ip == null) {
-          throw FormatException('unsupported PTR query name: $name');
-        }
-        final reversed = await io.InternetAddress(ip).reverse();
-        return SandboxDnsResult(
-          status: 0,
-          resolver: 'system resolver',
-          answers: [
-            SandboxDnsRecord(name: name, type: 12, ttl: 0, data: reversed.host),
-          ],
-        );
+        return _systemPtrQuery(name);
       default:
         return SandboxBuiltins.dohQuery(_httpClient, name, type);
     }
+  }
+
+  /// `A`/`AAAA` lookup through the system resolver: the answers keep only
+  /// the requested address family.
+  Future<SandboxDnsResult> _systemLookupQuery(String name, String type) async {
+    final addresses = await io.InternetAddress.lookup(name);
+    final wantV4 = type == 'A';
+    return SandboxDnsResult(
+      status: 0,
+      resolver: 'system resolver',
+      answers: [
+        for (final address in addresses)
+          if ((address.type == io.InternetAddressType.IPv4) == wantV4)
+            SandboxDnsRecord(
+              name: name,
+              type: wantV4 ? 1 : 28,
+              ttl: 0,
+              data: address.address,
+            ),
+      ],
+    );
+  }
+
+  /// `PTR` lookup through the system resolver; the query name must be a
+  /// reverse-zone form (`4.3.2.1.in-addr.arpa`).
+  Future<SandboxDnsResult> _systemPtrQuery(String name) async {
+    final ip = SandboxBuiltins.ipv4FromPtrName(name);
+    if (ip == null) {
+      throw FormatException('unsupported PTR query name: $name');
+    }
+    final reversed = await io.InternetAddress(ip).reverse();
+    return SandboxDnsResult(
+      status: 0,
+      resolver: 'system resolver',
+      answers: [
+        SandboxDnsRecord(name: name, type: 12, ttl: 0, data: reversed.host),
+      ],
+    );
   }
 
   /// Runs one raw whois exchange with [server] over TCP port 43.
@@ -1814,33 +1835,15 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     Stage stage,
   ) async {
     if (stage.args.isEmpty) {
-      final names = _shellEnv.keys.toList()..sort();
-      final lines = names
-          .map((n) => 'declare -x $n="${_shellEnv[n]}"')
-          .toList();
       return Ok(
         StageResult(
-          stdout: utf8.encode(lines.isEmpty ? '' : '${lines.join('\n')}\n'),
+          stdout: utf8.encode(formatExportListings(_shellEnv)),
           stderr: const [],
           exitCode: 0,
         ),
       );
     }
-    for (final arg in stage.args) {
-      final idx = arg.indexOf('=');
-      if (idx > 0) {
-        _shellEnv[arg.substring(0, idx)] = arg.substring(idx + 1);
-      } else {
-        _shellEnv.putIfAbsent(arg, () => '');
-      }
-    }
-    return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
-  }
-
-  Future<Result<StageResult, ExecutionError>> _unsetBuiltin(Stage stage) async {
-    for (final arg in stage.args) {
-      _shellEnv.remove(arg);
-    }
+    applyExportArgs(_shellEnv, stage.args);
     return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
   }
 
@@ -1859,10 +1862,8 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         ),
       );
     }
-    final flags = parsed.flags;
     final pattern = parsed.pattern;
     final quiet = parsed.quiet;
-    final files = List<String>.of(parsed.files);
 
     if (pattern == null) {
       return Ok(
@@ -1875,17 +1876,15 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         ),
       );
     }
-    if (files.isEmpty && inputSource != null) {
-      files.add(inputSource);
-    }
-    final cwd = options?.cwd ?? _currentDir;
-    final rewrittenFiles = [
-      for (final file in files) _maybeRewritePath('rg', file, cwd),
-    ];
+    final files = _grepInputFiles(
+      parsed,
+      inputSource,
+      options?.cwd ?? _currentDir,
+    );
 
     final rgResult = await _runStage(
       command: 'rg',
-      args: [...flags, '-e', pattern, ...rewrittenFiles],
+      args: [...parsed.flags, '-e', pattern, ...files],
       options: options,
       captureStdout: true,
       captureStderr: true,
@@ -1899,6 +1898,19 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         exitCode: data.exitCode,
       ),
     );
+  }
+
+  /// Assembles grep's file operand list: the parsed operands, plus the
+  /// piped input when no file was given; every operand is rewritten
+  /// against [cwd] the way `rg` positional paths are.
+  List<String> _grepInputFiles(
+    GrepArgs parsed,
+    String? inputSource,
+    String cwd,
+  ) {
+    final files = List<String>.of(parsed.files);
+    if (files.isEmpty && inputSource != null) files.add(inputSource);
+    return [for (final file in files) _maybeRewritePath('rg', file, cwd)];
   }
 
   Future<Result<StageResult, ExecutionError>> _wgetBuiltin(
@@ -2229,44 +2241,27 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   }
 
   Future<Result<StageResult, ExecutionError>> _idBuiltin(Stage stage) async {
-    const user = 'Fa';
-    if (stage.args.contains('-u')) {
-      final name = stage.args.contains('-n') ? user : '0';
-      return Ok(
-        StageResult(
-          stdout: utf8.encode('$name\n'),
-          stderr: const [],
-          exitCode: 0,
-        ),
-      );
-    }
-    if (stage.args.contains('-g')) {
-      final name = stage.args.contains('-n') ? user : '0';
-      return Ok(
-        StageResult(
-          stdout: utf8.encode('$name\n'),
-          stderr: const [],
-          exitCode: 0,
-        ),
-      );
-    }
     return Ok(
       StageResult(
-        stdout: utf8.encode('uid=0($user) gid=0($user) groups=0($user)\n'),
+        stdout: utf8.encode(idOutput(stage.args)),
         stderr: const [],
         exitCode: 0,
       ),
     );
   }
 
+  Future<Result<StageResult, ExecutionError>> _unsetBuiltin(Stage stage) async {
+    for (final arg in stage.args) {
+      _shellEnv.remove(arg);
+    }
+    return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
+  }
+
   Future<Result<StageResult, ExecutionError>> _relpathBuiltin(
     Stage stage,
     ShellExecOptions? options,
   ) async {
-    final paths = <String>[
-      for (final arg in stage.args)
-        if (!arg.startsWith('-')) arg,
-    ];
+    final paths = nonFlagArgs(stage.args);
     if (paths.isEmpty) {
       return Ok(
         StageResult(
@@ -2279,10 +2274,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     final cwd = options?.cwd ?? _currentDir;
     final from = _resolveSandboxPath(paths[0], cwd);
     final start = paths.length > 1 ? _resolveSandboxPath(paths[1], cwd) : cwd;
-    final relative = p.relative(
-      from == '/' ? '/' : from.substring(1),
-      from: start == '/' ? '/' : start.substring(1),
-    );
+    final relative = sandboxRelativePath(from, start);
     return Ok(
       StageResult(
         stdout: utf8.encode('$relative\n'),
