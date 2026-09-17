@@ -264,27 +264,49 @@ final class GitSmartHttp {
     required String remoteName,
   }) async {
     final advertisement = await _fetchRefs(url);
-    final branchRefs = advertisement.refs.entries
-        .where((e) => e.key.startsWith('refs/heads/'))
-        .toList();
+    final branchRefs = _branchRefs(advertisement);
     if (branchRefs.isEmpty) {
       throw StateError('remote advertised no branches');
     }
 
     final repo = GitRepository.load(hostDir);
-
-    // Only request commits we do not already have; writeObject skips
-    // existing loose objects anyway, but this keeps the pack small when the
-    // local repo is almost up to date.
-    final missing = <String>[
-      for (final entry in branchRefs)
-        if (!_hasObject(repo, entry.value)) entry.value,
-    ];
+    final missing = _missingHashes(repo, branchRefs);
     if (missing.isNotEmpty) {
+      // Only request commits we do not already have; writeObject skips
+      // existing loose objects anyway, but this keeps the pack small when
+      // the local repo is almost up to date.
       final packBytes = await _fetchPack(url, missing);
       _PackImporter().import(packBytes, repo);
     }
 
+    final moved = _applyFetchedBranches(repo, remoteName, branchRefs);
+    repo.close();
+    return moved;
+  }
+
+  /// The `refs/heads/*` entries of the advertisement (pure filter).
+  List<MapEntry<String, String>> _branchRefs(_RefAdvertisement advertisement) =>
+      advertisement.refs.entries
+          .where((e) => e.key.startsWith('refs/heads/'))
+          .toList();
+
+  /// Hashes advertised but not present locally — keeps the pack small when
+  /// the local repo is almost up to date.
+  List<String> _missingHashes(
+    GitRepository repo,
+    List<MapEntry<String, String>> branchRefs,
+  ) => <String>[
+    for (final entry in branchRefs)
+      if (!_hasObject(repo, entry.value)) entry.value,
+  ];
+
+  /// Saves every advertised branch under `refs/remotes/<remoteName>/` and
+  /// reports the branches whose remote ref moved.
+  List<String> _applyFetchedBranches(
+    GitRepository repo,
+    String remoteName,
+    List<MapEntry<String, String>> branchRefs,
+  ) {
     final moved = <String>[];
     for (final entry in branchRefs) {
       final branch = entry.key.substring('refs/heads/'.length);
@@ -295,7 +317,6 @@ final class GitSmartHttp {
       }
       repo.refStorage.saveRef(HashReference(refName, GitHash(entry.value)));
     }
-    repo.close();
     return moved;
   }
 
@@ -580,36 +601,60 @@ final class GitSmartHttp {
       final payload = reader.next();
       if (payload == null) break; // flush pkt
       if (payload.isEmpty) continue;
-      // NAK/ACK lines are plain text before the pack.
-      if (_startsWithAscii(payload, 'NAK') ||
-          _startsWithAscii(payload, 'ACK')) {
-        continue;
-      }
-      final channel = payload[0];
-      switch (channel) {
-        case 1:
-          packData.add(payload.sublist(1));
-        case 2:
-        // Progress messages: ignored (no-progress requested anyway).
-        case 3:
-          error = utf8.decode(payload.sublist(1), allowMalformed: true).trim();
-        default:
-          // Not a side-band stream after all: fall back to scanning.
-          final start = _indexOfPack(bytes);
-          if (start == -1) {
-            throw StateError('upload-pack response contains no packfile');
-          }
-          return bytes.sublist(start);
-      }
+      final chunk = _sideBandChunk(payload, packData);
+      if (chunk.notSideBand) return _scanPackFallback(bytes);
+      if (chunk.error != null) error = chunk.error;
     }
     if (error != null) {
       throw StateError('remote error: $error');
     }
-    final result = packData.takeBytes();
-    if (result.length < 12 || _indexOfPack(result) != 0) {
+    return _validatedPack(packData.takeBytes());
+  }
+
+  /// One side-band payload, multiplexed per the side-band-64k capability:
+  /// NAK/ACK keep-lines are skipped, channel 1 carries packfile data, 2 is
+  /// progress (ignored — no-progress was requested), 3 an error message.
+  /// `notSideBand` marks a payload that is not a side-band stream at all.
+  ({String? error, bool notSideBand}) _sideBandChunk(
+    Uint8List payload,
+    BytesBuilder packData,
+  ) {
+    if (_startsWithAscii(payload, 'NAK') || _startsWithAscii(payload, 'ACK')) {
+      return (error: null, notSideBand: false);
+    }
+    switch (payload[0]) {
+      case 1:
+        packData.add(payload.sublist(1));
+      case 2:
+        break;
+      case 3:
+        return (
+          error: utf8.decode(payload.sublist(1), allowMalformed: true).trim(),
+          notSideBand: false,
+        );
+      default:
+        return (error: null, notSideBand: true);
+    }
+    return (error: null, notSideBand: false);
+  }
+
+  /// Not a side-band stream after all: fall back to scanning the raw body
+  /// for the packfile signature.
+  Uint8List _scanPackFallback(Uint8List bytes) {
+    final start = _indexOfPack(bytes);
+    if (start == -1) {
       throw StateError('upload-pack response contains no packfile');
     }
-    return result;
+    return bytes.sublist(start);
+  }
+
+  /// A demultiplexed pack must start with the PACK signature and carry at
+  /// least its 12-byte header.
+  Uint8List _validatedPack(Uint8List pack) {
+    if (pack.length < 12 || _indexOfPack(pack) != 0) {
+      throw StateError('upload-pack response contains no packfile');
+    }
+    return pack;
   }
 
   int _indexOfPack(Uint8List bytes) {

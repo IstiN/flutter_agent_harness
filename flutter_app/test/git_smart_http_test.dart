@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:dart_git/dart_git.dart';
+import 'package:dart_git/plumbing/git_hash.dart';
+import 'package:dart_git/plumbing/reference.dart';
 import 'package:flutter/foundation.dart';
 import 'package:fa/sandbox/git_smart_http.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -262,4 +264,220 @@ void main() {
       repo.close();
     });
   });
+
+  group('fetch protocol splits (issue #568)', () {
+    late HttpServer server;
+    late int port;
+
+    /// The info/refs advertisement bytes the next fetch will see.
+    List<int> advertisement = const [];
+    /// The git-upload-pack response bytes the next fetch will see.
+    List<int> uploadPackResponse = const [];
+
+    setUpAll(() async {
+      server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      port = server.port;
+      unawaited(
+        server.forEach((request) async {
+          if (request.uri.path.endsWith('/info/refs')) {
+            request.response
+              ..headers.contentType = ContentType(
+                'application',
+                'x-git-upload-pack-advertisement',
+              )
+              ..add(advertisement);
+          } else if (request.uri.path.endsWith('/git-upload-pack')) {
+            await request.fold<List<int>>(
+              <int>[],
+              (acc, chunk) => acc..addAll(chunk),
+            );
+            request.response
+              ..headers.contentType = ContentType(
+                'application',
+                'x-git-upload-pack-result',
+              )
+              ..add(uploadPackResponse);
+          } else {
+            request.response.statusCode = HttpStatus.notFound;
+          }
+          await request.response.close();
+        }),
+      );
+    });
+
+    tearDownAll(() async {
+      await server.close(force: true);
+    });
+
+    Directory freshRepo() {
+      final tmp = Directory.systemTemp.createTempSync('fah_git_fetch_test');
+      addTearDown(() => tmp.delete(recursive: true));
+      return tmp;
+    }
+
+    /// Seeds a repo by cloning the fixture, then points its remote-tracking
+    /// ref at a decoy hash.
+    Future<Directory> seededRepo(String remoteHash) async {
+      advertisement = fixtureAdvertisement;
+      uploadPackResponse = fixturePack;
+      final tmp = freshRepo();
+      await GitSmartHttp().cloneInto(
+        url: 'http://127.0.0.1:$port/repo.git',
+        hostDir: tmp.path,
+      );
+      final repo = GitRepository.load(tmp.path);
+      repo.refStorage.saveRef(
+        HashReference(
+          ReferenceName.remote('origin', 'main'),
+          GitHash(remoteHash),
+        ),
+      );
+      repo.close();
+      return tmp;
+    }
+
+    test('reports the branches whose remote ref moved', () async {
+      // Local tracking ref sits on a decoy; the advertisement says the
+      // branch now points at the fixture head.
+      final tmp = await seededRepo('e' * 40);
+      final moved = await GitSmartHttp().fetchInto(
+        url: 'http://127.0.0.1:$port/repo.git',
+        hostDir: tmp.path,
+        remoteName: 'origin',
+      );
+      expect(moved, ['main']);
+    });
+
+    test('reports no moves when the tracking refs are up to date', () async {
+      advertisement = fixtureAdvertisement;
+      uploadPackResponse = fixturePack;
+      final tmp = freshRepo();
+      await GitSmartHttp().cloneInto(
+        url: 'http://127.0.0.1:$port/repo.git',
+        hostDir: tmp.path,
+      );
+      final moved = await GitSmartHttp().fetchInto(
+        url: 'http://127.0.0.1:$port/repo.git',
+        hostDir: tmp.path,
+        remoteName: 'origin',
+      );
+      expect(moved, isEmpty);
+    });
+
+    test('fails on an advertisement without branches', () async {
+      advertisement = utf8.encode('0000');
+      final tmp = freshRepo();
+      GitRepository.init(tmp.path);
+      await expectLater(
+        () => GitSmartHttp().fetchInto(
+          url: 'http://127.0.0.1:$port/repo.git',
+          hostDir: tmp.path,
+          remoteName: 'origin',
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            'remote advertised no branches',
+          ),
+        ),
+      );
+    });
+
+    test('surfaces side-band channel-3 errors', () async {
+      advertisement = fixtureAdvertisement;
+      uploadPackResponse = [
+        ...pktLine([0x03, ...utf8.encode('boom')]),
+        ...utf8.encode('0000'),
+      ];
+      final tmp = freshRepo();
+      GitRepository.init(tmp.path);
+      await expectLater(
+        () => GitSmartHttp().fetchInto(
+          url: 'http://127.0.0.1:$port/repo.git',
+          hostDir: tmp.path,
+          remoteName: 'origin',
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            'remote error: boom',
+          ),
+        ),
+      );
+    });
+
+    test('ignores progress frames and validates the demultiplexed pack',
+        () async {
+      advertisement = fixtureAdvertisement;
+      // Channel 2 (progress) + a channel-1 payload too short to be a pack
+      // header: the validator must reject it.
+      uploadPackResponse = [
+        ...pktLine([0x02, ...utf8.encode('Counting objects...')]),
+        ...pktLine([0x01, ...utf8.encode('PACK')]),
+        ...utf8.encode('0000'),
+      ];
+      final tmp = freshRepo();
+      GitRepository.init(tmp.path);
+      await expectLater(
+        () => GitSmartHttp().fetchInto(
+          url: 'http://127.0.0.1:$port/repo.git',
+          hostDir: tmp.path,
+          remoteName: 'origin',
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            'upload-pack response contains no packfile',
+          ),
+        ),
+      );
+    });
+
+    test('scans for a packfile when the stream is not side-band', () async {
+      advertisement = fixtureAdvertisement;
+      // An unknown channel means "not side-band at all": the demuxer falls
+      // back to scanning the raw body, which here has no packfile either.
+      uploadPackResponse = [
+        ...pktLine([0x09, ...utf8.encode('nope')]),
+        ...utf8.encode('0000'),
+      ];
+      final tmp = freshRepo();
+      GitRepository.init(tmp.path);
+      await expectLater(
+        () => GitSmartHttp().fetchInto(
+          url: 'http://127.0.0.1:$port/repo.git',
+          hostDir: tmp.path,
+          remoteName: 'origin',
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            'upload-pack response contains no packfile',
+          ),
+        ),
+      );
+    });
+  });
+}
+
+/// The repo advertisement shipped with the suite (HEAD = refs/heads/main).
+final Uint8List fixtureAdvertisement = () {
+  final bytes = File('test/fixtures/upload_pack_advertisement.bin');
+  return bytes.existsSync() ? bytes.readAsBytesSync() : Uint8List(0);
+}();
+
+/// The side-band upload-pack response shipped with the suite.
+final Uint8List fixturePack = () {
+  final bytes = File('test/fixtures/upload_pack_response.bin');
+  return bytes.existsSync() ? bytes.readAsBytesSync() : Uint8List(0);
+}();
+
+/// One pkt-line: 4 hex length bytes (payload + the 4 header bytes).
+List<int> pktLine(List<int> payload) {
+  final hex = (payload.length + 4).toRadixString(16).padLeft(4, '0');
+  return [...hex.codeUnits, ...payload];
 }
