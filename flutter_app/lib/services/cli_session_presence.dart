@@ -117,17 +117,27 @@ SessionAttachTransport fileAttachTransport({
   required String? sessionPath,
   required String fallbackCwd,
 }) {
-  final path = sessionPath;
-  if (path == null || path.isEmpty) {
+  final parsed = sessionRootAndSlugFromPath(sessionPath);
+  if (parsed == null) {
     return (defaultRoot, encodeSessionCwd(fallbackCwd));
   }
+  return parsed;
+}
+
+/// Parses `<root>/<slug>/<file>.jsonl` into `(root, slug)`; null when the
+/// path is null/empty or does not carry both separators (the caller falls
+/// back to the default root plus the encoded cwd).
+(String, String)? sessionRootAndSlugFromPath(String? path) {
+  if (path == null || path.isEmpty) return null;
+  return _parseSessionRootSlug(path);
+}
+
+(String, String)? _parseSessionRootSlug(String path) {
   final fileNameSlash = path.lastIndexOf('/');
   final slugSlash = fileNameSlash > 0
       ? path.lastIndexOf('/', fileNameSlash - 1)
       : -1;
-  if (fileNameSlash <= 0 || slugSlash <= 0) {
-    return (defaultRoot, encodeSessionCwd(fallbackCwd));
-  }
+  if (fileNameSlash <= 0 || slugSlash <= 0) return null;
   return (
     path.substring(0, slugSlash),
     path.substring(slugSlash + 1, fileNameSlash),
