@@ -18,7 +18,9 @@ Top-level test dirs that exist on disk but are MISSING from the manifest
 shards at runtime by file count, so new suites run this PR — not at some
 future rebalance (issue #194, AC5). For file-level manifests the same
 runtime bin-pack applies per uncovered FILE (issue #283, E2).
-test/integration is excluded: it runs in its own CI job. --exclude STR
+test/integration is excluded from the core shards: issue #551 gives it a
+dedicated per-PR gate stage (no-key legs) plus the tag-only provider smoke.
+--exclude STR
 drops paths containing STR (e.g. golden — host-locked suites stay out of
 the shards even when a PR adds one post-rebalance, issue #283 E4).
 

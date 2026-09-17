@@ -9,10 +9,10 @@
 /// environment variable — run `/provider chatgpt oauth` once, then export the
 /// blob stored under that key name. Every test skips cleanly when it is unset
 /// so keyless CI/dev runs pass. The blob is never printed: failures surface
-/// only server-side error text. Tagged `integration` and therefore excluded
-/// from the pre-commit gate — run manually with:
-/// `dart test --tags integration`
-@Tags(['integration'])
+/// only server-side error text. Tagged `integration`+`llm` (real-provider
+/// smoke: needs secrets, runs ONLY in the tag-only provider-smoke job and
+/// nightly; every per-PR suite excludes it via `--exclude-tags llm`).
+@Tags(['integration', 'llm'])
 library;
 
 import 'dart:io';

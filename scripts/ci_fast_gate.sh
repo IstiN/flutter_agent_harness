@@ -27,11 +27,14 @@
 #   --scope app   size + analyze + dup + dupx + flutter.
 #   --scope docs  size + analyze only.
 #   --stages l    Comma-separated stage list; overrides the scope-derived set.
-#                 Known stages: size,analyze,test-core,coverage,crap,dup,dupx,flutter
+#                 Known stages: size,analyze,test-core,coverage,crap,dup,dupx,flutter,integration-mock
+#
 #
 # Path rules (union logic, E1; test/** counts as core, E6):
 #   docs/ | *.md | prompts/ .................. size + analyze
 #   lib/ | bin/ | test/ | pubspec.* .......... + test-core, coverage, crap, dup, dupx
+#   test/integration/** ...................... + integration-mock (no-key legs,
+#                                              MockLlmServer; issue #551)
 #   flutter_app/ | packages/ ................. + dup, dupx, flutter
 #   scripts/ | .github/ | crap4dart.yaml ..... ALL stages (safe default, E2)
 #   anything unknown ......................... ALL stages (safe default)
@@ -75,7 +78,7 @@ DUP_THRESHOLD_APP=3.7
 DUP_THRESHOLD_XMOD=0.31
 MAX_LINES=2800
 
-ALL_STAGES="size analyze test-core coverage crap dup dupx flutter"
+ALL_STAGES="size analyze test-core coverage crap dup dupx flutter integration-mock"
 
 # ── Load-aware test concurrency (copied from scripts/pre-commit) ───────────
 # A busy box (other agents, IDE builds) makes widget tests' runAsync() flake
@@ -115,6 +118,7 @@ classify_path() {
   # Echoes the stage group contributed by one changed path (union logic).
   case "$1" in
     scripts/*|.github/*|crap4dart.yaml) echo "all" ;;
+    test/integration/*) echo "integ" ;;
     lib/*|bin/*|test/*|example/*|pubspec.yaml|pubspec.*) echo "core" ;;
     flutter_app/*|packages/*) echo "app" ;;
     docs/*|prompts/*|*.md) echo "docs" ;;
@@ -126,6 +130,7 @@ resolve_scope() {
   case "$SCOPE" in
     all) add_stages "$ALL_STAGES"; APP_IN_SCOPE=1 ;;
     core) add_stages "size analyze test-core coverage crap dup dupx" ;;
+    integ) add_stages "size analyze test-core coverage crap dup dupx integration-mock" ;;
     app) add_stages "size analyze dup dupx flutter"; APP_IN_SCOPE=1 ;;
     docs) add_stages "size analyze" ;;
     auto)
@@ -147,7 +152,8 @@ resolve_scope() {
         case "$g" in
           all) add_stages "$ALL_STAGES"; APP_IN_SCOPE=1 ;;
           core) add_stages "size analyze test-core coverage crap dup dupx" ;;
-          app) add_stages "size analyze dup dupx flutter"; APP_IN_SCOPE=1 ;;
+          core) add_stages "size analyze test-core coverage crap dup dupx" ;;
+          integ) add_stages "size analyze test-core coverage crap dup dupx integration-mock" ;;
           docs) add_stages "size analyze" ;;
         esac
       done <<EOF
@@ -227,6 +233,20 @@ stage_test_core() {
   local conc="${FA_DART_TEST_CONCURRENCY:-$(detect_test_concurrency)}"
   echo "   concurrency: ${conc:-default}"
   dart test ${conc:+--concurrency=$conc} --coverage=coverage --exclude-tags integration
+}
+
+stage_integration_mock() {
+  # Issue #551: the no-key integration legs run on EVERY PR that touches
+  # them — MockLlmServer scenarios, no secrets, no network, so they cannot
+  # rot silently between releases (#538 class). Real-provider files carry
+  # the `llm` tag and stay in the tag-only smoke job; browser-ext owns its
+  # own workflow; perf has the #303 per-PR trajectory gate; `pty` marks
+  # child-agent-spawn tests (issue #553) — nightly-only, unbounded boot time.
+  echo "🧪 Running no-key integration legs (MockLlmServer)..."
+  local conc="${FA_DART_TEST_CONCURRENCY:-$(detect_test_concurrency)}"
+  echo "   concurrency: ${conc:-default}"
+  dart test ${conc:+--concurrency=$conc} test/integration \
+    --exclude-tags llm,browser-ext,perf,pty
 }
 
 stage_coverage() {
@@ -348,6 +368,7 @@ for stage in $ALL_STAGES; do
     size) stage_size ;;
     analyze) stage_analyze ;;
     test-core) stage_test_core ;;
+    integration-mock) stage_integration_mock ;;
     coverage) stage_coverage ;;
     crap)
       if ! stage_crap; then

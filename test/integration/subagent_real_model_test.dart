@@ -1,5 +1,9 @@
 @TestOn('vm')
-@Tags(['integration'])
+// Real-model leg: spawns a subagent through the ZAI provider (see the
+// hasZaiKey guard below). Tagged `integration`+`llm` — runs ONLY in the
+// tag-only provider-smoke job and nightly; per-PR suites exclude it via
+// `--exclude-tags llm`.
+@Tags(['integration', 'llm'])
 @Timeout(Duration(minutes: 5))
 library;
 

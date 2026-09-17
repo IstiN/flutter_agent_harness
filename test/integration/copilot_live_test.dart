@@ -13,10 +13,12 @@
 /// gracefully when unset — run `/provider copilot` in the harness to obtain a
 /// token via device flow, or export one directly. `COPILOT_ACCOUNT_TYPE`
 /// selects the API host (`individual` | `business` | `enterprise`, default
-/// `individual`). Tagged `integration` and therefore excluded from the
-/// pre-commit gate — run manually with:
-/// `dart test test/integration/copilot_live_test.dart --tags integration`
-@Tags(['integration'])
+/// `individual`). Tagged `integration`+`llm` (real-provider smoke: needs a
+/// GitHub token with Copilot access, runs ONLY in the tag-only
+/// provider-smoke job and nightly; every per-PR suite excludes it via
+/// `--exclude-tags llm` — run manually with
+/// `dart test test/integration/copilot_live_test.dart --tags "integration && llm"`).
+@Tags(['integration', 'llm'])
 library;
 
 import 'dart:convert';
