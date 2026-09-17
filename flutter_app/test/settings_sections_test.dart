@@ -1,9 +1,15 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:fa/services/provider_registry.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:fa/ui/screens/settings_key_dialogs.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/theme_controller.dart';
 import 'package:fa/ui/screens/settings.dart';
-import 'package:fa/ui/screens/settings_key_dialogs.dart';
+import 'package:archive/archive.dart';
+import 'package:fa/services/theme_pack_store.dart';
+import 'package:fa/services/upload.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -15,9 +21,54 @@ Future<void> _pump(WidgetTester tester, Widget child) {
   );
 }
 
+/// A minimal valid theme pack zip (same shape as the store-level tests).
+Uint8List _packZip() {
+  final archive = Archive()
+    ..add(
+      ArchiveFile.bytes(
+        'theme.json',
+        utf8.encode(
+          jsonEncode({
+            'name': 'Forest Walk',
+            'version': '1.0.0',
+            'colors': {
+              'dark': {'accent': '#2E7D32'},
+            },
+            'wallpaper': {'asset': 'bg.png', 'fit': 'cover'},
+          }),
+        ),
+      ),
+    )
+    ..add(ArchiveFile.bytes('bg.png', _tinyPng));
+  return Uint8List.fromList(ZipEncoder().encode(archive));
+}
+
+/// 1×1 transparent PNG (a real decodable header, per the store tests).
+final Uint8List _tinyPng = Uint8List.fromList(const [
+  0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, //
+  0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, //
+  0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x0A, //
+  0x5B, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00, //
+  0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, //
+  0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+]);
+
+/// Fake [UploadPicker] returning canned files without a platform dialog.
+final class _FakePicker implements UploadPicker {
+  _FakePicker(this.files);
+
+  List<UploadFile> files;
+
+  @override
+  Future<List<UploadFile>> pick() async => files;
+}
+
+UploadFile _uploadFile(String name, Uint8List bytes) =>
+    (name: name, bytes: bytes);
 void main() {
   group('ThemeModeSection', () {
     testWidgets('hides when no controller is available', (tester) async {
+
       await _pump(tester, const ThemeModeSection());
       expect(find.text('Theme'), findsNothing);
     });
@@ -305,6 +356,84 @@ void main() {
           .where((text) => text.isNotEmpty);
       expect(reasons, isNotEmpty);
       expect(find.text(''), findsNothing);
+    });
+  });
+  group('ThemePacksSection', () {
+    testWidgets('hides when no store scope is available', (tester) async {
+      await _pump(tester, const ThemePacksSection());
+      expect(find.text('Theme packs'), findsNothing);
+    });
+
+    testWidgets('lists installed packs with their notes and removals '
+        'revert the active choice', (tester) async {
+      final env = MemoryExecutionEnv();
+      final store = await ThemePackStore.load(env);
+      final controller = ThemeController.inMemory();
+      final install = await store.installFromZip(_packZip());
+      expect(install.spec, isNotNull, reason: install.reasons.join('; '));
+      await _pump(
+        tester,
+        ThemePackScope(
+          store: store,
+          child: FahThemeScope(
+            controller: controller,
+            child: ThemePacksSection(picker: _FakePicker(const [])),
+          ),
+        ),
+      );
+
+      expect(find.text('Theme packs'), findsOneWidget);
+      expect(find.text('Default Fa look'), findsOneWidget);
+      expect(find.text('Forest Walk'), findsOneWidget);
+      // A pack with a wallpaper always shows its note (the warning list
+      // is empty here, so only the wallpaper chip renders).
+      expect(find.text('wallpaper'), findsOneWidget);
+
+      // Selecting the pack drives the controller; removing it reverts.
+      await tester.tap(find.text('Forest Walk'));
+      await tester.pumpAndSettle();
+      expect(controller.packId, 'forest-walk');
+
+      await tester.tap(find.byIcon(Icons.delete_outline));
+      await tester.pumpAndSettle();
+      expect(store.packs, isEmpty);
+      // The active choice reverts with the pack (never a dangling id).
+      expect(controller.packId, isNull);
+      expect(find.text('Forest Walk'), findsNothing);
+    });
+
+    testWidgets('import through the picker installs the pack and reports '
+        'the result', (tester) async {
+      final store = await ThemePackStore.load(MemoryExecutionEnv());
+      final controller = ThemeController.inMemory();
+      final picker = _FakePicker([_uploadFile('forest.zip', _packZip())]);
+      await _pump(
+        tester,
+        ThemePackScope(
+          store: store,
+          child: FahThemeScope(
+            controller: controller,
+            child: ThemePacksSection(
+              picker: picker,
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Import theme pack'));
+      await tester.pumpAndSettle();
+
+      expect(store.packs.single.name, 'Forest Walk');
+      picker.files = [_uploadFile('bad.zip', Uint8List.fromList([1, 2, 3]))];
+      expect(find.textContaining('installed'), findsOneWidget);
+      // SnackBars queue: let the install report retire before tapping
+      // again, or the rejection report waits out its 6s slot.
+      await tester.pump(const Duration(seconds: 7));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Import theme pack'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('rejected'), findsOneWidget);
     });
   });
 }
