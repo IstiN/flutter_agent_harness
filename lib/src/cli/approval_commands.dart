@@ -868,7 +868,8 @@ extension ApprovalCommands on AgentCli {
   }
 
   /// One `/tasks` row for a background shell job (issue #366): the command
-  /// in the detail zone, the job id kept as the dim suffix, the log path
+  /// preview in the detail zone (issue #599 — a multi-line command would
+  /// tear the row), the job id kept as the dim suffix, the log path
   /// relativized (`.fah/bash_jobs/…` tail) — all inside the width budget.
   String _shellJobLine(ShellJobEntry entry) {
     final trailer = entry.isRunning
@@ -879,7 +880,7 @@ extension ApprovalCommands on AgentCli {
       ToolRowSegments(
         glyph: _shellJobGlyph(entry),
         label: 'bash',
-        detail: entry.command,
+        detail: shellJobCommandPreview(entry.command),
         elapsed: '$trailer (log: $log)',
       ),
       _rowWidth - 2,
