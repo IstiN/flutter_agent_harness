@@ -2074,91 +2074,33 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
 
   String _evalExpr(List<String> args) {
     if (args.isEmpty) throw const FormatException('missing operand');
+    final stringFn = _evalStringFn(args);
+    if (stringFn != null) return stringFn;
+    return _ExprEvaluator(args).evaluate();
+  }
 
-    // String functions: length, substr.
+  /// String functions handled before integer parsing: `length`, `substr`.
+  String? _evalStringFn(List<String> args) {
     if (args[0] == 'length') {
       if (args.length != 2) throw const FormatException('syntax error');
       return '${args[1].length}';
     }
-    if (args[0] == 'substr') {
-      if (args.length != 4) throw const FormatException('syntax error');
-      final str = args[1];
-      final pos = int.tryParse(args[2]);
-      final len = int.tryParse(args[3]);
-      if (pos == null || len == null) {
-        throw const FormatException('non-numeric argument');
-      }
-      final start = (pos - 1).clamp(0, str.length);
-      final end = (start + len).clamp(0, str.length);
-      return str.substring(start, end);
-    }
+    if (args[0] == 'substr') return _evalSubstr(args);
+    return null;
+  }
 
-    // Integer arithmetic / comparisons with precedence climbing.
-    var pos = 0;
-    int peek() => pos < args.length ? 0 : -1;
-
-    int parseValue() {
-      if (pos >= args.length) throw const FormatException('syntax error');
-      final value = int.tryParse(args[pos]);
-      if (value == null) {
-        throw FormatException('non-integer argument: ${args[pos]}');
-      }
-      pos++;
-      return value;
+  /// POSIX `substr`: 1-based position and length, clamped to the string.
+  String _evalSubstr(List<String> args) {
+    if (args.length != 4) throw const FormatException('syntax error');
+    final str = args[1];
+    final pos = int.tryParse(args[2]);
+    final len = int.tryParse(args[3]);
+    if (pos == null || len == null) {
+      throw const FormatException('non-numeric argument');
     }
-
-    int parseTerm() {
-      var value = parseValue();
-      while (pos < args.length &&
-          (args[pos] == '*' || args[pos] == '/' || args[pos] == '%')) {
-        final op = args[pos++];
-        final rhs = parseValue();
-        if (op == '*') value *= rhs;
-        if (op == '/') {
-          if (rhs == 0) throw const FormatException('division by zero');
-          value ~/= rhs;
-        }
-        if (op == '%') {
-          if (rhs == 0) throw const FormatException('division by zero');
-          value %= rhs;
-        }
-      }
-      return value;
-    }
-
-    int parseSum() {
-      var value = parseTerm();
-      while (pos < args.length && (args[pos] == '+' || args[pos] == '-')) {
-        final op = args[pos++];
-        final rhs = parseTerm();
-        if (op == '+') value += rhs;
-        if (op == '-') value -= rhs;
-      }
-      return value;
-    }
-
-    final left = parseSum();
-    if (peek() == -1) return '$left';
-    if (pos < args.length) {
-      const comparisons = {'=', '!=', '<', '<=', '>', '>='};
-      final op = args[pos++];
-      if (!comparisons.contains(op)) {
-        throw FormatException('syntax error: $op');
-      }
-      final right = parseSum();
-      if (pos != args.length) throw const FormatException('syntax error');
-      final result = switch (op) {
-        '=' => left == right,
-        '!=' => left != right,
-        '<' => left < right,
-        '<=' => left <= right,
-        '>' => left > right,
-        '>=' => left >= right,
-        _ => false,
-      };
-      return result ? '1' : '0';
-    }
-    return '$left';
+    final start = (pos - 1).clamp(0, str.length);
+    final end = (start + len).clamp(0, str.length);
+    return str.substring(start, end);
   }
 
   Future<Result<StageResult, ExecutionError>> _idBuiltin(Stage stage) async {
@@ -2530,6 +2472,83 @@ final class _TestEvaluator {
       throw _TestError('unsupported binary operator: $op');
     }
     return result;
+  }
+}
+
+/// Precedence-climbing evaluator for `expr` integer arithmetic:
+/// `*`/`/`/`%` bind tighter than `+`/`-`, comparisons loosest. Throws
+/// [FormatException] with GNU-expr-shaped messages on malformed input.
+final class _ExprEvaluator {
+  _ExprEvaluator(this._args);
+
+  final List<String> _args;
+  var _pos = 0;
+
+  String evaluate() {
+    final left = _parseSum();
+    if (_pos >= _args.length) return '$left';
+    return _compare(left);
+  }
+
+  /// At most one trailing comparison; anything after the right operand is
+  /// a syntax error.
+  String _compare(int left) {
+    const comparisons = {'=', '!=', '<', '<=', '>', '>='};
+    final op = _args[_pos++];
+    if (!comparisons.contains(op)) {
+      throw FormatException('syntax error: $op');
+    }
+    final right = _parseSum();
+    if (_pos != _args.length) throw const FormatException('syntax error');
+    final result = switch (op) {
+      '=' => left == right,
+      '!=' => left != right,
+      '<' => left < right,
+      '<=' => left <= right,
+      '>' => left > right,
+      '>=' => left >= right,
+      _ => false,
+    };
+    return result ? '1' : '0';
+  }
+
+  int _parseValue() {
+    if (_pos >= _args.length) throw const FormatException('syntax error');
+    final value = int.tryParse(_args[_pos]);
+    if (value == null) {
+      throw FormatException('non-integer argument: ${_args[_pos]}');
+    }
+    _pos++;
+    return value;
+  }
+
+  int _parseTerm() {
+    var value = _parseValue();
+    while (_pos < _args.length && _isMulOp(_args[_pos])) {
+      value = _applyMul(value, _args[_pos++], _parseValue());
+    }
+    return value;
+  }
+
+  int _parseSum() {
+    var value = _parseTerm();
+    while (_pos < _args.length && _isAddOp(_args[_pos])) {
+      final op = _args[_pos++];
+      value = op == '+' ? value + _parseTerm() : value - _parseTerm();
+    }
+    return value;
+  }
+
+  static bool _isMulOp(String op) => op == '*' || op == '/' || op == '%';
+
+  static bool _isAddOp(String op) => op == '+' || op == '-';
+
+  /// `*` never divides; `/` and `%` reject a zero right operand like GNU
+  /// expr.
+  int _applyMul(int value, String op, int rhs) {
+    if (op == '*') return value * rhs;
+    if (rhs == 0) throw const FormatException('division by zero');
+    return op == '/' ? value ~/ rhs : value % rhs;
   }
 }
 
