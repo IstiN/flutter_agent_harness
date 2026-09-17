@@ -492,7 +492,7 @@ final class LocalShell implements Shell, BackgroundShell {
     // remote used to open /dev/tty ("Username for 'https://…':") and block
     // the whole agent run on the TUI-owned terminal — the session looked
     // stuck at the input zone with dead keyboard input. Defaults (a
-    // caller's explicit env or the host environment still wins):
+    // caller's explicit env still wins):
     // GIT_TERMINAL_PROMPT=0 makes git fail fast with "terminal prompts
     // disabled", GIT_ASKPASS=echo keeps GUI credential helpers out of an
     // unattended child (echo returns an empty credential — auth fails
@@ -502,7 +502,9 @@ final class LocalShell implements Shell, BackgroundShell {
       'GIT_ASKPASS': 'echo',
     };
     for (final entry in nonInteractiveDefaults.entries) {
-      if (!base.containsKey(entry.key)) base[entry.key] = entry.value;
+      if (given == null || !given.containsKey(entry.key)) {
+        base[entry.key] = entry.value;
+      }
     }
     var current = base['PATH'] ?? '';
     if (current.isEmpty) {
