@@ -1430,74 +1430,135 @@ class _P2State extends State<_P2> {
   /// routing as the app's Add Provider picker): SSO/OAuth flows for
   /// CodeMie/ChatGPT, the editor for key-based presets and Custom.
   Future<void> _configure(faui.AddProviderPreset preset) async {
+    final registry = _beginPresetFlow(preset);
+    if (registry == null) return;
+    var ok = false;
+    try {
+      ok = await _runPresetFlow(preset, registry);
+    } on Object catch (e) {
+      _showFlowError(e);
+    } finally {
+      _endPresetFlow(preset.key);
+    }
+    _notifyConfigured(preset.key, ok);
+  }
+
+  /// Claims the tap for [preset] (null = ignore): no registry, the
+  /// double-tap lock, or the same preset already mid-flow.
+  faui.ProviderRegistry? _beginPresetFlow(faui.AddProviderPreset preset) {
     final registry = widget.registry;
-    if (registry == null || _busy) return;
-    if (!_runningPresets.add(preset.key)) return; // flow already running
+    if (registry == null || _busy) return null;
+    if (!_runningPresets.add(preset.key)) return null; // flow already running
     setState(() => _busy = true);
-    // The busy flag is double-tap protection, NOT a flow-long lock: an SSO
-    // flow waits on the system browser and may hang for minutes when the
-    // user abandons it — it must never lock the whole list. The flows are
-    // modal anyway, so a short window is all the protection needed.
+    _armBusyTimer();
+    return registry;
+  }
+
+  /// The busy flag is double-tap protection, NOT a flow-long lock: an SSO
+  /// flow waits on the system browser and may hang for minutes when the
+  /// user abandons it — it must never lock the whole list. The flows are
+  /// modal anyway, so a short window is all the protection needed.
+  void _armBusyTimer() {
     _busyTimer?.cancel();
     _busyTimer = Timer(const Duration(seconds: 3), () {
       if (mounted) setState(() => _busy = false);
     });
-    var ok = false;
-    try {
-      switch (preset.key) {
-        case 'codemie':
-          ok = await runCodemieSsoFlow(
-            context: context,
-            registry: registry,
-            service: null, // no live service during onboarding
-            lastConnectionStore:
-                widget.lastConnectionStore ?? LastConnectionStore.inMemory(),
-          );
-        case 'chatgpt':
-          ok = await runChatGptOAuthFlow(
-            context: context,
-            registry: registry,
-            service: null,
-            lastConnectionStore:
-                widget.lastConnectionStore ?? LastConnectionStore.inMemory(),
-          );
-        case 'aiin':
-          ok = await runAiinConnectFlow(
-            context: context,
-            registry: registry,
-            service: null,
-            lastConnectionStore:
-                widget.lastConnectionStore ?? LastConnectionStore.inMemory(),
-          );
-        case 'custom':
-          final provider = await faui.pushProviderEditor(
-            context,
-            registry,
-            title: preset.name,
-          );
-          ok = provider != null;
-          if (ok) {
-            await _saveConnection(provider.baseUrl, provider.modelId, '');
-          }
-        default:
-          ok = await _configureKeyBased(preset, registry);
-      }
-    } on Object catch (e) {
-      debugPrint('[onboarding] provider flow failed: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not open the provider setup: $e')),
-        );
-      }
-    } finally {
-      _runningPresets.remove(preset.key);
-      _busyTimer?.cancel();
-      if (mounted) setState(() => _busy = false);
-    }
-    if (ok && mounted) {
-      widget.onConfigured?.call(preset.key);
+  }
+
+  void _endPresetFlow(String presetKey) {
+    _runningPresets.remove(presetKey);
+    _busyTimer?.cancel();
+    if (mounted) setState(() => _busy = false);
+  }
+
+  void _showFlowError(Object e) {
+    debugPrint('[onboarding] provider flow failed: $e');
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not open the provider setup: $e')),
+      );
     }
   }
+
+  void _notifyConfigured(String presetKey, bool ok) {
+    if (ok && mounted) widget.onConfigured?.call(presetKey);
+  }
+
+  /// The SSO/OAuth presets, routed to their flows below (the same set the
+  /// app's Add Provider picker routes); everything else is key-based.
+  static const _ssoFlowKeys = {'codemie', 'chatgpt', 'aiin'};
+
+  Future<bool> _runPresetFlow(
+    faui.AddProviderPreset preset,
+    faui.ProviderRegistry registry,
+  ) {
+    if (preset.key == 'custom') return _connectCustom(preset, registry);
+    if (_ssoFlowKeys.contains(preset.key)) {
+      return _connectSso(preset.key, registry);
+    }
+    return _configureKeyBased(preset, registry);
+  }
+
+  Future<bool> _connectSso(String presetKey, faui.ProviderRegistry registry) {
+    switch (presetKey) {
+      case 'codemie':
+        return _connectCodemie(registry);
+      case 'chatgpt':
+        return _connectChatGpt(registry);
+      default:
+        return _connectAiin(registry);
+    }
+  }
+
+  Future<bool> _connectCodemie(faui.ProviderRegistry registry) =>
+      runCodemieSsoFlow(
+        context: context,
+        registry: registry,
+        service: null, // no live service during onboarding
+        lastConnectionStore:
+            widget.lastConnectionStore ?? LastConnectionStore.inMemory(),
+      );
+
+  Future<bool> _connectChatGpt(faui.ProviderRegistry registry) =>
+      runChatGptOAuthFlow(
+        context: context,
+        registry: registry,
+        service: null,
+        lastConnectionStore:
+            widget.lastConnectionStore ?? LastConnectionStore.inMemory(),
+      );
+
+  Future<bool> _connectAiin(faui.ProviderRegistry registry) =>
+      runAiinConnectFlow(
+        context: context,
+        registry: registry,
+        service: null,
+        lastConnectionStore:
+            widget.lastConnectionStore ?? LastConnectionStore.inMemory(),
+      );
+
+  Future<bool> _connectCustom(
+    faui.AddProviderPreset preset,
+    faui.ProviderRegistry registry,
+  ) async {
+    final provider = await faui.pushProviderEditor(
+      context,
+      registry,
+      title: preset.name,
+    );
+    if (provider == null) return false;
+    await _saveConnection(provider.baseUrl, provider.modelId, '');
+    return true;
+  }
+
+  /// Key-based preset keys and the editor preset each opens; a key not in
+  /// the map gets the editable custom editor (see [_keyBasedEditorPage]).
+  static const _keyBasedPresetModes = <String, faui.ProviderPreset>{
+    'openrouter': faui.ProviderPreset.openrouter,
+    'ollama': faui.ProviderPreset.ollamaCloud,
+    'google': faui.ProviderPreset.gemini,
+    'dial': faui.ProviderPreset.dial,
+  };
 
   /// Key-based preset: the editor pre-filled with the preset endpoint,
   /// then persist the provider, its key, and the last connection.
@@ -1505,32 +1566,44 @@ class _P2State extends State<_P2> {
     faui.AddProviderPreset preset,
     faui.ProviderRegistry registry,
   ) async {
-    final presetMode = switch (preset.key) {
-      'openrouter' => faui.ProviderPreset.openrouter,
-      'ollama' => faui.ProviderPreset.ollamaCloud,
-      'google' => faui.ProviderPreset.gemini,
-      'dial' => faui.ProviderPreset.dial,
-      _ => faui.ProviderPreset.custom,
-    };
-    // Every key-based preset keeps an editable base URL in the editor —
-    // the preset endpoint is just the prefill (self-hosted DIAL/Ollama
-    // instances point at their own URL).
-    final editable = presetMode == faui.ProviderPreset.custom;
+    final presetMode = _keyBasedPresetModes[preset.key];
     final result = await faui.pushFaPage<faui.ProviderEditorResult>(
       context,
-      faui.ProviderEditorPage(
-        title: preset.name,
-        preset: editable ? null : presetMode,
-        prefillName: editable ? preset.name : null,
-        prefillBaseUrl: editable ? preset.baseUrl : null,
-        keyHelpUrl: preset.keyHelpUrl,
-        registry: registry,
-        openRouterOAuthCallbackUrl:
-            OpenRouterOAuthCoordinator.instance.platformCallbackUrl,
-        openRouterOAuthCapture: OpenRouterOAuthCoordinator.instance.capture,
-      ),
+      _keyBasedEditorPage(preset, presetMode, registry),
     );
     if (result == null || result.deleted) return false;
+    await _persistKeyBased(result, registry);
+    return true;
+  }
+
+  /// Every key-based preset keeps an editable base URL in the editor —
+  /// the preset endpoint is just the prefill (self-hosted DIAL/Ollama
+  /// instances point at their own URL). An unknown key (or [presetMode]
+  /// null) opens the fully editable custom editor pre-filled with the
+  /// preset's name/URL.
+  faui.ProviderEditorPage _keyBasedEditorPage(
+    faui.AddProviderPreset preset,
+    faui.ProviderPreset? presetMode,
+    faui.ProviderRegistry registry,
+  ) {
+    final editable = presetMode == null;
+    return faui.ProviderEditorPage(
+      title: preset.name,
+      preset: editable ? null : presetMode,
+      prefillName: editable ? preset.name : null,
+      prefillBaseUrl: editable ? preset.baseUrl : null,
+      keyHelpUrl: preset.keyHelpUrl,
+      registry: registry,
+      openRouterOAuthCallbackUrl:
+          OpenRouterOAuthCoordinator.instance.platformCallbackUrl,
+      openRouterOAuthCapture: OpenRouterOAuthCoordinator.instance.capture,
+    );
+  }
+
+  Future<void> _persistKeyBased(
+    faui.ProviderEditorResult result,
+    faui.ProviderRegistry registry,
+  ) async {
     final provider = await registry.add(
       name: result.name,
       baseUrl: result.baseUrl,
@@ -1540,7 +1613,6 @@ class _P2State extends State<_P2> {
       registry.rememberKey(provider.id, result.apiKey);
     }
     await _saveConnection(result.baseUrl, result.modelId, result.apiKey);
-    return true;
   }
 
   /// Persists the fresh connection so the boot auto-connects straight to
