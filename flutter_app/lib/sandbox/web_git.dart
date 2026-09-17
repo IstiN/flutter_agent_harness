@@ -596,6 +596,36 @@ final class WebGitCommands {
     GitRepository repo,
     List<String> args,
   ) {
+    final parsed = parseWebBranchArgs(args);
+    if (parsed.error != null) return _error(parsed.error!);
+    try {
+      if (parsed.delete) return _deleteBranch(repo, parsed.positional);
+      if (parsed.positional.isEmpty) {
+        return _ok('${localBranchListing(repo)}\n');
+      }
+      repo.createBranch(parsed.positional.first);
+      return _ok('');
+    } catch (e) {
+      return _error('fatal: $e');
+    }
+  }
+
+  /// `git branch -d`: the positional branch name is required.
+  ({String stdout, String stderr, int exitCode}) _deleteBranch(
+    GitRepository repo,
+    List<String> positional,
+  ) {
+    if (positional.isEmpty) return _error('usage: git branch -d <branch>');
+    repo.deleteBranch(positional.first);
+    return _ok('');
+  }
+
+  /// Pure arg split for the web `git branch` (issue #568): `-d`/`-D`
+  /// delete, `-r`/`-a` tolerated and ignored (no remotes on web — list
+  /// behaves like a plain branch listing), any other option is the same
+  /// unknown-option error as before; everything non-flag is positional.
+  static ({String? error, bool delete, List<String> positional})
+  parseWebBranchArgs(List<String> args) {
     var delete = false;
     final positional = <String>[];
     for (final arg in args) {
@@ -604,29 +634,24 @@ final class WebGitCommands {
       } else if (arg == '-r' || arg == '-a') {
         // No remotes on web: list behaves like a plain branch listing.
       } else if (arg.startsWith('-')) {
-        return _error('git branch: unknown option $arg');
+        return (
+          error: 'git branch: unknown option $arg',
+          delete: false,
+          positional: const <String>[],
+        );
       } else {
         positional.add(arg);
       }
     }
+    return (error: null, delete: delete, positional: positional);
+  }
 
-    try {
-      if (delete) {
-        if (positional.isEmpty) return _error('usage: git branch -d <branch>');
-        repo.deleteBranch(positional.first);
-        return _ok('');
-      }
-      if (positional.isEmpty) {
-        final current = repo.currentBranch();
-        final branches = repo.branches()..sort();
-        final lines = branches.map((b) => b == current ? '* $b' : '  $b');
-        return _ok('${lines.join('\n')}\n');
-      }
-      repo.createBranch(positional.first);
-      return _ok('');
-    } catch (e) {
-      return _error('fatal: $e');
-    }
+  /// `git branch` with no arguments: sorted local branches, `* ` on the
+  /// current one (pure shaping; no trailing newline).
+  static String localBranchListing(GitRepository repo) {
+    final current = repo.currentBranch();
+    final branches = repo.branches()..sort();
+    return branches.map((b) => b == current ? '* $b' : '  $b').join('\n');
   }
 
   Future<({String stdout, String stderr, int exitCode})> _checkout(
@@ -853,39 +878,7 @@ final class WebGitCommands {
     List<String> args,
   ) {
     try {
-      if (args.isEmpty) {
-        final names = repo.config.remotes.map((r) => r.name).toList()..sort();
-        return _ok(names.isEmpty ? '' : '${names.join('\n')}\n');
-      }
-      final action = args[0];
-      if (action == '-v' || action == '--verbose') {
-        final lines = <String>[
-          for (final r in repo.config.remotes) ...[
-            '${r.name}\t${r.url} (fetch)',
-            '${r.name}\t${r.url} (push)',
-          ],
-        ];
-        return _ok(lines.isEmpty ? '' : '${lines.join('\n')}\n');
-      }
-      if (action == 'add') {
-        if (args.length < 3) {
-          return _error('usage: git remote add <name> <url>');
-        }
-        repo.addRemote(args[1], args[2]);
-        return _ok('');
-      }
-      if (action == 'remove' || action == 'rm') {
-        if (args.length < 2) return _error('usage: git remote remove <name>');
-        repo.removeRemote(args[1]);
-        return _ok('');
-      }
-      if (action == 'get-url') {
-        if (args.length < 2) return _error('usage: git remote get-url <name>');
-        final remote = repo.config.remote(args[1]);
-        if (remote == null) return _error("fatal: No such remote '${args[1]}'");
-        return _ok('${remote.url}\n');
-      }
-      return _error('git remote: unknown subcommand $action');
+      return _remoteSubcommand(repo, args);
     } on GitRemoteAlreadyExists catch (e) {
       return _error('fatal: remote ${e.name} already exists.');
     } on GitRemoteNotFound catch (e) {
@@ -893,6 +886,72 @@ final class WebGitCommands {
     } catch (e) {
       return _error('fatal: $e');
     }
+  }
+
+  /// Table-driven `git remote` dispatch (issue #568): a total subcommand
+  /// switch over per-surface helpers with the exact previous usage/error
+  /// strings — the old 17-CC if-chain, split.
+  ({String stdout, String stderr, int exitCode}) _remoteSubcommand(
+    GitRepository repo,
+    List<String> args,
+  ) {
+    if (args.isEmpty) return _remoteList(repo);
+    return switch (args[0]) {
+      '-v' || '--verbose' => _remoteVerbose(repo),
+      'add' => _remoteAdd(repo, args),
+      'remove' || 'rm' => _remoteRemove(repo, args),
+      'get-url' => _remoteGetUrl(repo, args),
+      _ => _error('git remote: unknown subcommand ${args[0]}'),
+    };
+  }
+
+  /// `git remote`: sorted remote names, blank stdout when none.
+  ({String stdout, String stderr, int exitCode}) _remoteList(
+    GitRepository repo,
+  ) {
+    final names = repo.config.remotes.map((r) => r.name).toList()..sort();
+    return _ok(names.isEmpty ? '' : '${names.join('\n')}\n');
+  }
+
+  /// `git remote -v`: fetch/push URL lines per remote, blank when none.
+  ({String stdout, String stderr, int exitCode}) _remoteVerbose(
+    GitRepository repo,
+  ) {
+    final lines = <String>[
+      for (final r in repo.config.remotes) ...[
+        '${r.name}\t${r.url} (fetch)',
+        '${r.name}\t${r.url} (push)',
+      ],
+    ];
+    return _ok(lines.isEmpty ? '' : '${lines.join('\n')}\n');
+  }
+
+  ({String stdout, String stderr, int exitCode}) _remoteAdd(
+    GitRepository repo,
+    List<String> args,
+  ) {
+    if (args.length < 3) return _error('usage: git remote add <name> <url>');
+    repo.addRemote(args[1], args[2]);
+    return _ok('');
+  }
+
+  ({String stdout, String stderr, int exitCode}) _remoteRemove(
+    GitRepository repo,
+    List<String> args,
+  ) {
+    if (args.length < 2) return _error('usage: git remote remove <name>');
+    repo.removeRemote(args[1]);
+    return _ok('');
+  }
+
+  ({String stdout, String stderr, int exitCode}) _remoteGetUrl(
+    GitRepository repo,
+    List<String> args,
+  ) {
+    if (args.length < 2) return _error('usage: git remote get-url <name>');
+    final remote = repo.config.remote(args[1]);
+    if (remote == null) return _error("fatal: No such remote '${args[1]}'");
+    return _ok('${remote.url}\n');
   }
 }
 

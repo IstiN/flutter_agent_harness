@@ -136,14 +136,19 @@ InterpreterOutcome _versionBanner(
     ? _unavailable(name)
     : (stdout: banner, stderr: '', exitCode: 0);
 
+/// The trailing newline the shell emits on a non-empty output line (pure).
+String _terminator(String s) => s.isEmpty ? '' : '$s\n';
+
 /// Shapes a snippet run: unavailable → 127, a non-empty stderr → exit 1;
 /// otherwise stdout/stderr each gain the terminal newline the shell emits.
-InterpreterOutcome _snippetOutcome(String name, InterpreterResult r) {
+/// Public for the interpreters tables (same util tier as
+/// [interpreterCode]).
+InterpreterOutcome snippetOutcome(String name, InterpreterResult r) {
   if (!r.available) return _unavailable(name);
   final hasError = r.stderr.isNotEmpty;
   return (
-    stdout: r.stdout.isEmpty ? '' : '${r.stdout}\n',
-    stderr: r.stderr.isEmpty ? '' : '${r.stderr}\n',
+    stdout: _terminator(r.stdout),
+    stderr: _terminator(r.stderr),
     exitCode: hasError ? 1 : 0,
   );
 }
@@ -164,7 +169,7 @@ Future<InterpreterOutcome> runPythonCommand(
       'usage: python3 [--version] [-c code] [script.py] [args...]\n',
     );
   }
-  return _snippetOutcome('python3', await WebInterpreters.runPython(code));
+  return snippetOutcome('python3', await WebInterpreters.runPython(code));
 }
 
 /// Runs `qjs`/`js`: `--version`/`-v`, inline `-e`, or a script file.
@@ -181,7 +186,7 @@ Future<InterpreterOutcome> runQjsCommand(
   if (code == null) {
     return _usage('usage: qjs [--version] [-e code] [script.js] [args...]\n');
   }
-  return _snippetOutcome('qjs', await WebInterpreters.runQjs(code));
+  return snippetOutcome('qjs', await WebInterpreters.runQjs(code));
 }
 
 /// Extracts the code to run: inline via [flag], or a script file's content.
