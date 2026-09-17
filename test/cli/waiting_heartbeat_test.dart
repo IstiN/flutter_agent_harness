@@ -41,6 +41,34 @@ void main() {
     });
   });
 
+  group('JobsConfig', () {
+    test('defaults: 24h age belt, 3-day log retention', () {
+      const config = JobsConfig();
+      expect(config.staleHours, 24);
+      expect(config.logRetentionDays, 3);
+    });
+
+    test('fromYaml(null) keeps defaults', () {
+      final config = JobsConfig.fromYaml(null);
+      expect(config.staleHours, 24);
+      expect(config.logRetentionDays, 3);
+    });
+
+    test('fromYaml parses both keys', () {
+      final config = JobsConfig.fromYaml({
+        'staleHours': 48,
+        'logRetentionDays': 7,
+      });
+      expect(config.staleHours, 48);
+      expect(config.logRetentionDays, 7);
+    });
+
+    test('fromYaml rejects unknown and negative values', () {
+      expect(() => JobsConfig.fromYaml({'staleHours': -1}), throwsA(anything));
+      expect(() => JobsConfig.fromYaml({'bogus': 1}), throwsA(anything));
+    });
+  });
+
   group('WaitingHeartbeat', () {
     test('tick fires the beat only while armed', () {
       var beats = 0;
