@@ -930,4 +930,29 @@ void main() {
       expect(calls, 0);
     });
   });
+
+  group('MiniMax video size parsing', () {
+    test('null, blank, malformed and non-positive sizes fall back', () {
+      expect(minimaxVideoSizeRequest(null), isNull);
+      expect(minimaxVideoSizeRequest('   '), isNull);
+      expect(minimaxVideoSizeRequest('big'), isNull);
+      expect(minimaxVideoSizeRequest('1920'), isNull);
+      expect(minimaxVideoSizeRequest('1920x1080x60'), isNull);
+      expect(minimaxVideoSizeRequest('0x100'), isNull);
+      expect(minimaxVideoSizeRequest('100x0'), isNull);
+      expect(minimaxVideoSizeRequest('-5x100'), isNull);
+      expect(minimaxVideoSizeRequest('12a8x100'), isNull);
+      expect(minimaxVideoDims(null), isNull);
+    });
+
+    test('landscape 1920+ maps to 2K with a reduced aspect ratio', () {
+      expect(minimaxVideoSizeRequest('1920x1080'), ('2K', '16:9'));
+      expect(minimaxVideoSizeRequest('2560x1440'), ('2K', '16:9'));
+      expect(minimaxVideoSizeRequest('3840X2160'), ('2K', '16:9')); // case
+      expect(minimaxVideoSizeRequest('1280x720'), ('1080P', '16:9'));
+      expect(minimaxVideoSizeRequest('1080x1920'), ('1080P', '9:16'));
+      // Whitespace inside the operands survives int.tryParse.
+      expect(minimaxVideoSizeRequest(' 1440x900 '), ('1080P', '8:5'));
+    });
+  });
 }

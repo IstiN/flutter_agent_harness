@@ -175,70 +175,29 @@ final class GemmaService implements GemmaEngineApi {
     List<Map<String, dynamic>>? tools,
     int? maxOutputTokens,
   }) async {
-    final model = _model;
-    final preset = _loadedPreset;
-    if (model == null || preset == null) {
-      throw StateError(
-        'No Gemma model is loaded. Install and load one from the settings '
-        'form first.',
-      );
-    }
+    final (model, preset) = _requireLoadedModel();
     // openChat (not createChat): it forwards `tools` to the session, which
     // for ModelType.gemma4 becomes the SDK-native tools_json conversation
     // config — createChat drops them (verified against flutter_gemma
     // 1.3.1). Each turn gets a fresh chat; the harness owns conversation
     // history, so the full context is replayed below on every call. That
     // keeps compaction/rewrite semantics exact at the cost of re-prefill.
-    final chat = await model.openChat(
-      temperature: preset.temperature,
-      topK: preset.topK,
-      topP: preset.topP,
+    final chat = await _openChat(
+      model,
+      preset,
       systemInstruction: systemInstruction,
-      tools: [
-        for (final tool in tools ?? const <Map<String, dynamic>>[])
-          _toPluginTool(tool),
-      ],
-      supportsFunctionCalls: tools != null && tools.isNotEmpty,
-      modelType: ModelType.gemma4,
+      pluginTools: _pluginTools(tools),
       maxOutputTokens: maxOutputTokens,
     );
     _activeChat = chat;
     try {
-      for (final message in messages) {
-        await chat.addQueryChunk(_toPluginMessage(message));
-      }
+      await _primeContext(chat, messages);
       // The plugin surfaces Gemma 4 tool calls complete (SDK-parsed) at
       // end-of-stream; accumulate them and emit one OpenAI-shaped payload.
       final calls = <Map<String, dynamic>>[];
-      await for (final response in chat.generateChatResponseAsync()) {
-        switch (response) {
-          case TextResponse(:final token):
-            if (token.isNotEmpty) onChunk(token);
-          case FunctionCallResponse(:final name, :final args):
-            calls.add({'name': name, 'args': args});
-          case ParallelFunctionCallResponse(calls: final batch):
-            for (final call in batch) {
-              calls.add({'name': call.name, 'args': call.args});
-            }
-          case ThinkingResponse():
-            // Thinking is disabled (isThinking: false); drop defensively.
-            break;
-        }
-      }
+      await _drainResponses(chat, calls, onChunk);
       if (calls.isNotEmpty) {
-        onToolCalls?.call(
-          jsonEncode([
-            for (var i = 0; i < calls.length; i++)
-              {
-                'index': i,
-                'type': 'function',
-                'function': {
-                  'name': calls[i]['name'],
-                  'arguments': jsonEncode(calls[i]['args']),
-                },
-              },
-          ]),
-        );
+        onToolCalls?.call(_toolCallsPayload(calls));
       }
       onDone?.call();
     } catch (error) {
@@ -248,6 +207,106 @@ final class GemmaService implements GemmaEngineApi {
       unawaited(chat.close());
     }
   }
+
+  /// Replays the harness-owned conversation history into the fresh chat
+  /// (the full-context replay keeps compaction semantics exact at the
+  /// cost of re-prefill).
+  Future<void> _primeContext(
+    InferenceChat chat,
+    List<GemmaChatMessage> messages,
+  ) async {
+    for (final message in messages) {
+      await chat.addQueryChunk(_toPluginMessage(message));
+    }
+  }
+
+  /// The loaded (model, preset) pair, or a StateError naming the settings
+  /// form — chatStream has nothing to talk to before a model is loaded.
+  (InferenceModel, GemmaModelPreset) _requireLoadedModel() {
+    final model = _model;
+    final preset = _loadedPreset;
+    if (model == null || preset == null) {
+      throw StateError(
+        'No Gemma model is loaded. Install and load one from the settings '
+        'form first.',
+      );
+    }
+    return (model, preset);
+  }
+
+  /// Converts the harness tool schema into plugin tools; null/empty means
+  /// plain text generation (which also disables function calls).
+  List<Tool> _pluginTools(List<Map<String, dynamic>>? tools) => [
+    for (final tool in tools ?? const <Map<String, dynamic>>[])
+      _toPluginTool(tool),
+  ];
+
+  /// Opens the Gemma 4 chat session with the turn's sampling config.
+  Future<InferenceChat> _openChat(
+    InferenceModel model,
+    GemmaModelPreset preset, {
+    required String? systemInstruction,
+    required List<Tool> pluginTools,
+    required int? maxOutputTokens,
+  }) {
+    return model.openChat(
+      temperature: preset.temperature,
+      topK: preset.topK,
+      topP: preset.topP,
+      systemInstruction: systemInstruction,
+      tools: pluginTools,
+      supportsFunctionCalls: pluginTools.isNotEmpty,
+      modelType: ModelType.gemma4,
+      maxOutputTokens: maxOutputTokens,
+    );
+  }
+
+  /// Streams the chat response: text tokens go to [onChunk], complete
+  /// function calls (single or parallel batch) accumulate into [calls].
+  Future<void> _drainResponses(
+    InferenceChat chat,
+    List<Map<String, dynamic>> calls,
+    void Function(String chunk) onChunk,
+  ) async {
+    await for (final response in chat.generateChatResponseAsync()) {
+      if (response is TextResponse) {
+        if (response.token.isNotEmpty) onChunk(response.token);
+      } else {
+        calls.addAll(_functionCallsFrom(response));
+      }
+    }
+  }
+
+  /// The OpenAI-shaped calls a non-text response carries (empty for the
+  /// defensively-dropped thinking responses).
+  List<Map<String, dynamic>> _functionCallsFrom(ModelResponse response) {
+    if (response is FunctionCallResponse) {
+      return [
+        {'name': response.name, 'args': response.args},
+      ];
+    }
+    if (response is ParallelFunctionCallResponse) {
+      return [
+        for (final call in response.calls)
+          {'name': call.name, 'args': call.args},
+      ];
+    }
+    return const [];
+  }
+
+  /// The OpenAI-shaped tool-calls payload: an index/type/function
+  /// envelope over the accumulated calls.
+  String _toolCallsPayload(List<Map<String, dynamic>> calls) => jsonEncode([
+    for (var i = 0; i < calls.length; i++)
+      {
+        'index': i,
+        'type': 'function',
+        'function': {
+          'name': calls[i]['name'],
+          'arguments': jsonEncode(calls[i]['args']),
+        },
+      },
+  ]);
 
   @override
   Future<void> interrupt() async {
