@@ -807,52 +807,77 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   Future<void> _connectWebLlm() async {
     final preset = _webllmModel;
     final service = widget.webLlmEngine ?? createWebLlmService();
+    _beginModelLoad();
+    StreamSubscription<WebLlmProgress>? progressSub;
+    try {
+      progressSub = service.progressEvents.listen(_onModelProgress);
+      await _loadAndConnectWebLlm(service, preset);
+    } catch (e) {
+      _showLoadError(e);
+    } finally {
+      _endModelLoad(progressSub);
+    }
+  }
+
+  /// Switches the form into the on-device load state (progress bar, no
+  /// stale error).
+  void _beginModelLoad() {
     setState(() {
       _loading = true;
       _error = null;
       _loadFraction = null;
       _loadStatus = null;
     });
-    StreamSubscription<WebLlmProgress>? progressSub;
-    try {
-      progressSub = service.progressEvents.listen((report) {
-        if (!mounted) return;
-        setState(() {
-          _loadFraction = report.fraction;
-          _loadStatus = report.text;
-        });
+  }
+
+  void _onModelProgress(WebLlmProgress report) {
+    if (!mounted) return;
+    setState(() {
+      _loadFraction = report.fraction;
+      _loadStatus = report.text;
+    });
+  }
+
+  Future<void> _loadAndConnectWebLlm(
+    WebLlmEngineApi service,
+    WebLlmModelPreset preset,
+  ) async {
+    await service.loadModel(preset);
+    if (!mounted) return;
+    await widget.onConnect(_webLlmConfig(preset));
+  }
+
+  AgentConfig _webLlmConfig(WebLlmModelPreset preset) {
+    return AgentConfig(
+      providerKind: webLlmProviderKind,
+      modelId: preset.id,
+      baseUrl: '',
+      apiKey: '',
+      // No WebLLM-specific system prompt: the default sandbox prompt
+      // (identity + capabilities) applies, and the prompt-tools wrapper
+      // appends the tool instructions upstream.
+      contextWindow: preset.contextWindow,
+      maxTokens: 1024,
+    );
+  }
+
+  void _showLoadError(Object e) {
+    if (mounted) {
+      setState(() => _error = e is StateError ? e.message : e.toString());
+    }
+  }
+
+  /// Not awaited: the subscription detaches synchronously on cancel(),
+  /// and awaiting the completion future can stall this finally inside
+  /// widget-test zones (the returned future is zone-scheduled).
+  void _endModelLoad(StreamSubscription<WebLlmProgress>? progressSub) {
+    unawaited(progressSub?.cancel());
+    if (mounted) {
+      setState(() {
+        _loading = false;
+        _loadFraction = null;
+        _loadStatus = null;
       });
-      await service.loadModel(preset);
-      if (!mounted) return;
-      await widget.onConnect(
-        AgentConfig(
-          providerKind: webLlmProviderKind,
-          modelId: preset.id,
-          baseUrl: '',
-          apiKey: '',
-          // No WebLLM-specific system prompt: the default sandbox prompt
-          // (identity + capabilities) applies, and the prompt-tools wrapper
-          // appends the tool instructions upstream.
-          contextWindow: preset.contextWindow,
-          maxTokens: 1024,
-        ),
-      );
-    } catch (e) {
-      if (mounted) {
-        setState(() => _error = e is StateError ? e.message : e.toString());
-      }
-    } finally {
-      // Not awaited: the subscription detaches synchronously on cancel(),
-      // and awaiting the completion future can stall this finally inside
-      // widget-test zones (the returned future is zone-scheduled).
-      unawaited(progressSub?.cancel());
-      if (mounted) {
-        setState(() {
-          _loading = false;
-          _loadFraction = null;
-          _loadStatus = null;
-        });
-      }
     }
   }
 

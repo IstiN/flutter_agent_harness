@@ -303,6 +303,65 @@ final class FakeGemmaEngine implements GemmaEngineApi {
   Future<void> uninstall(String filename) async {}
 }
 
+/// Fake [WebLlmEngineApi] for the settings form: records load calls,
+/// emits scripted progress reports, and can hold the load open (to assert
+/// mid-download UI) or fail it.
+final class FakeWebLlmEngine implements WebLlmEngineApi {
+  var available = true;
+  Object? loadError;
+
+  /// Standard (async) broadcast, like the real engine: progress lands on
+  /// a later microtask, so tests pump to let it render.
+  final progress = StreamController<WebLlmProgress>.broadcast();
+
+  WebLlmModelPreset? loadedPreset;
+
+  /// While non-null and incomplete, `loadModel` awaits it after emitting
+  /// [pendingProgress].
+  Completer<void>? loadGate;
+
+  /// Emitted by `loadModel` before the gate.
+  WebLlmProgress? pendingProgress;
+
+  @override
+  bool get isAvailable => available;
+
+  @override
+  String? get loadedModelId => loadedPreset?.id;
+
+  @override
+  Stream<WebLlmProgress> get progressEvents => progress.stream;
+
+  @override
+  Future<void> loadModel(WebLlmModelPreset preset) async {
+    final error = loadError;
+    if (error != null) throw error;
+    final pending = pendingProgress;
+    if (pending != null) progress.add(pending);
+    final gate = loadGate;
+    if (gate != null) await gate.future;
+    loadedPreset = preset;
+  }
+
+  @override
+  Future<void Function()> chatStream({
+    required List<WebLlmChatMessage> messages,
+    required void Function(String chunk) onChunk,
+    void Function(String finishReason)? onDone,
+    void Function(String message)? onError,
+    int? maxTokens,
+  }) async => () {};
+
+  @override
+  Future<void> interrupt() async {}
+
+  @override
+  Future<WebLlmCacheInfo?> modelCacheInfo(String modelId) async => null;
+
+  @override
+  Future<void> deleteCachedModel(String modelId) async {}
+}
+
 void main() {
   group('BYOK setup screen', () {
     testWidgets('shows the provider picker, key/model/url fields, and the '
@@ -1038,6 +1097,79 @@ void main() {
       expect(connection.baseUrl, 'http://localhost:8080/v1');
     });
   });
+
+  group('On-device (WebLLM) connect', () {
+    testWidgets('connect loads with progress and hands over the webllm '
+        'config', (tester) async {
+      final engine = FakeWebLlmEngine()
+        ..pendingProgress = const WebLlmProgress(
+          fraction: 0.4,
+          text: 'Downloading weights… 40%',
+        )
+        ..loadGate = Completer<void>();
+      AgentConfig? connected;
+      await _pumpForm(
+        tester,
+        ProviderRegistry.inMemory(),
+        webLlmEngine: engine,
+        isWeb: true,
+        onConnect: (config) async => connected = config,
+      );
+
+      await _selectProvider(tester, 'On-device (WebLLM)');
+
+      await tester.ensureVisible(find.text('Start chat'));
+      await tester.tap(find.text('Start chat'));
+      // Let the connect flow reach the (held) load and render progress.
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text('Downloading weights… 40%'), findsOneWidget);
+      final bar = tester.widget<LinearProgressIndicator>(
+        find.byType(LinearProgressIndicator),
+      );
+      expect(bar.value, 0.4);
+      expect(engine.loadedPreset, isNull);
+      expect(connected, isNull);
+
+      engine.loadGate!.complete();
+      await tester.pumpAndSettle();
+
+      expect(engine.loadedPreset?.id, webLlmModelPresets.first.id);
+      expect(connected?.providerKind, webLlmProviderKind);
+      expect(connected?.modelId, webLlmModelPresets.first.id);
+      expect(connected?.baseUrl, isEmpty);
+      expect(connected?.apiKey, isEmpty);
+      expect(connected?.contextWindow, webLlmModelPresets.first.contextWindow);
+      expect(connected?.maxTokens, 1024);
+      // Progress UI is cleared once the connect flow finishes.
+      expect(find.byType(LinearProgressIndicator), findsNothing);
+    });
+
+    testWidgets('a failed load surfaces the engine error', (tester) async {
+      final engine = FakeWebLlmEngine()..loadError = StateError('No WebGPU');
+      AgentConfig? connected;
+      await _pumpForm(
+        tester,
+        ProviderRegistry.inMemory(),
+        webLlmEngine: engine,
+        isWeb: true,
+        onConnect: (config) async => connected = config,
+      );
+
+      await _selectProvider(tester, 'On-device (WebLLM)');
+
+      await tester.ensureVisible(find.text('Start chat'));
+      await tester.tap(find.text('Start chat'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('No WebGPU'), findsOneWidget);
+      expect(connected, isNull);
+      // The form returns to idle: no progress bar, button usable again.
+      expect(find.byType(LinearProgressIndicator), findsNothing);
+    });
+  });
+
 
   group('On-device (Gemma) provider', () {
     // Widget tests run with defaultTargetPlatform = android by default, so
