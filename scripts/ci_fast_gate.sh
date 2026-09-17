@@ -2,7 +2,7 @@
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  SHARED FAST GATE — DO NOT LOWER THESE THRESHOLDS WITHOUT TEAM APPROVAL   ║
 # ║  size ≤ 2800 lines · analyze · tests · coverage ≥ 80% · CRAP ratchet ·    ║
-# ║  duplication < 1% (flutter_app < 3.7%)                                    ║
+# ║  duplication < 1% (flutter_app < 3.7%) · cross-module < 0.31%             ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 #
 # THE shared fast gate used by BOTH the pre-commit hook and CI (issue #177,
@@ -23,16 +23,16 @@
 #                   `git diff --name-only $BASE_REF...$HEAD_REF`;
 #                 - otherwise: "all" (safe default).
 #   --scope all   Run every stage.
-#   --scope core  size + analyze + test-core + coverage + crap + dup.
-#   --scope app   size + analyze + dup + flutter.
+#   --scope core  size + analyze + test-core + coverage + crap + dup + dupx.
+#   --scope app   size + analyze + dup + dupx + flutter.
 #   --scope docs  size + analyze only.
 #   --stages l    Comma-separated stage list; overrides the scope-derived set.
-#                 Known stages: size,analyze,test-core,coverage,crap,dup,flutter
+#                 Known stages: size,analyze,test-core,coverage,crap,dup,dupx,flutter
 #
 # Path rules (union logic, E1; test/** counts as core, E6):
 #   docs/ | *.md | prompts/ .................. size + analyze
-#   lib/ | bin/ | test/ | pubspec.* .......... + test-core, coverage, crap, dup
-#   flutter_app/ | packages/ ................. + dup, flutter
+#   lib/ | bin/ | test/ | pubspec.* .......... + test-core, coverage, crap, dup, dupx
+#   flutter_app/ | packages/ ................. + dup, dupx, flutter
 #   scripts/ | .github/ | crap4dart.yaml ..... ALL stages (safe default, E2)
 #   anything unknown ......................... ALL stages (safe default)
 #
@@ -68,9 +68,14 @@ COVERAGE_BASELINE=80.0
 DUP_THRESHOLD=1.0
 # flutter_app duplication ratchet: only allowed DOWN from the pinned ~3.66%.
 DUP_THRESHOLD_APP=3.7
+# Cross-module duplication ratchet (issue #487): clones spanning module
+# roots (lib, bin, flutter_app/lib, packages/*/lib, browser_ext/dart) as a
+# % of the combined surface. Baseline 0.3013% measured at #487; only
+# allowed DOWN from the pinned 0.31 (scripts/check_dup_cross_module.sh).
+DUP_THRESHOLD_XMOD=0.31
 MAX_LINES=2800
 
-ALL_STAGES="size analyze test-core coverage crap dup flutter"
+ALL_STAGES="size analyze test-core coverage crap dup dupx flutter"
 
 # ── Load-aware test concurrency (copied from scripts/pre-commit) ───────────
 # A busy box (other agents, IDE builds) makes widget tests' runAsync() flake
@@ -120,8 +125,8 @@ classify_path() {
 resolve_scope() {
   case "$SCOPE" in
     all) add_stages "$ALL_STAGES"; APP_IN_SCOPE=1 ;;
-    core) add_stages "size analyze test-core coverage crap dup" ;;
-    app) add_stages "size analyze dup flutter"; APP_IN_SCOPE=1 ;;
+    core) add_stages "size analyze test-core coverage crap dup dupx" ;;
+    app) add_stages "size analyze dup dupx flutter"; APP_IN_SCOPE=1 ;;
     docs) add_stages "size analyze" ;;
     auto)
       local files=""
@@ -141,8 +146,8 @@ resolve_scope() {
         g=$(classify_path "$f")
         case "$g" in
           all) add_stages "$ALL_STAGES"; APP_IN_SCOPE=1 ;;
-          core) add_stages "size analyze test-core coverage crap dup" ;;
-          app) add_stages "size analyze dup flutter"; APP_IN_SCOPE=1 ;;
+          core) add_stages "size analyze test-core coverage crap dup dupx" ;;
+          app) add_stages "size analyze dup dupx flutter"; APP_IN_SCOPE=1 ;;
           docs) add_stages "size analyze" ;;
         esac
       done <<EOF
@@ -292,6 +297,17 @@ except Exception:
   fi
 }
 
+stage_dupx() {
+  if ! command -v jscpd >/dev/null 2>&1 && ! command -v npx >/dev/null 2>&1; then
+    return 2  # caller prints SKIP marker
+  fi
+  echo "🔍 Checking cross-module duplication (< ${DUP_THRESHOLD_XMOD}% across module roots)..."
+  if ! bash scripts/check_dup_cross_module.sh "$DUP_THRESHOLD_XMOD"; then
+    echo "❌ QUALITY GATE FAILED — CROSS-MODULE DUPLICATION (see scripts/check_dup_cross_module.sh)" >&2
+    exit 1
+  fi
+}
+
 stage_flutter() {
   if ! command -v flutter >/dev/null 2>&1; then
     return 2  # caller prints SKIP marker
@@ -342,6 +358,12 @@ for stage in $ALL_STAGES; do
     dup)
       if ! stage_dup; then
         marker_skip dup "jscpd-not-found"
+        continue
+      fi
+      ;;
+    dupx)
+      if ! stage_dupx; then
+        marker_skip dupx "jscpd-not-found"
         continue
       fi
       ;;
