@@ -42,9 +42,7 @@ class _WedgeStream {
           await Future<void>.delayed(const Duration(milliseconds: 5));
         }
         final cancelled = cancelToken?.isCancelled ?? false;
-        emit(
-          cancelled ? _abortedTurn() : turns.removeAt(0),
-        );
+        emit(cancelled ? _abortedTurn() : turns.removeAt(0));
       }());
     } else if (turns.isEmpty) {
       stream.end();
@@ -154,9 +152,7 @@ void main() {
     'busy-row state',
     timeout: const Timeout(Duration(seconds: 120)),
     () async {
-      final stream = _WedgeStream([
-        textTurn('first answer'),
-      ], gateOnCall: 1);
+      final stream = _WedgeStream([textTurn('first answer')], gateOnCall: 1);
       final cli = buildCli(
         stream,
         steeringStaleAfter: const Duration(milliseconds: 80),
@@ -166,8 +162,8 @@ void main() {
 
       io.sendLine('start');
       await waitForIt(() => stream.calls >= 1 && cli.isBusy);
- 
-       io.sendLine('/exit');
+
+      io.sendLine('/exit');
       // Outlast the stale threshold with no events flowing (the gated
       // stream is silent): the run is stalled — not "working", not dead.
       await Future<void>.delayed(const Duration(milliseconds: 250));
@@ -178,9 +174,11 @@ void main() {
       // The banner names the state, the cause, and BOTH affordances.
       final out = io.out.toString();
       expect(out, contains('agent stalled'));
+      expect(out, contains('info: agent stalled'));
       expect(out, contains('no response for'));
       expect(out, contains('/restart'));
       expect(out, contains('esc aborts'));
+      expect(out, isNot(contains('saved to the session')));
       // The #437 cryptic copy is gone.
       expect(out, isNot(contains('agent not responding')));
       // Edge, not per-tick: a second watchdog pass prints no new banner.
