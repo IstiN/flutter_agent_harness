@@ -1452,8 +1452,9 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
 - `dart test` green (integration-tagged excluded from test-core — issue
   #551: `test/integration/**` changes also run the `integration-mock` leg
   per-PR: no-key legs via `MockLlmServer`, `--exclude-tags llm,browser-ext,
-  perf`; real-provider files carry `@Tags(['integration', 'llm'])` and run
-  ONLY in the tag-only provider-smoke job and nightly with secrets).
+  perf,pty`; real-provider files carry `@Tags(['integration', 'llm'])` and
+  run ONLY in the tag-only provider-smoke job and nightly with secrets;
+  child-agent-spawn PTY tests carry `pty` and stay in nightly (issue #553).
   Tag-only CI = llm smoke + publish + binaries; nightly keeps the full
   real-provider suite (pty-integration).
 - `cd flutter_app && flutter test --exclude-tags integration` green

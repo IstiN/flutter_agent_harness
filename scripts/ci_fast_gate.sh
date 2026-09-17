@@ -240,12 +240,13 @@ stage_integration_mock() {
   # them — MockLlmServer scenarios, no secrets, no network, so they cannot
   # rot silently between releases (#538 class). Real-provider files carry
   # the `llm` tag and stay in the tag-only smoke job; browser-ext owns its
-  # own workflow; perf has the #303 per-PR trajectory gate.
+  # own workflow; perf has the #303 per-PR trajectory gate; `pty` marks
+  # child-agent-spawn tests (issue #553) — nightly-only, unbounded boot time.
   echo "🧪 Running no-key integration legs (MockLlmServer)..."
   local conc="${FA_DART_TEST_CONCURRENCY:-$(detect_test_concurrency)}"
   echo "   concurrency: ${conc:-default}"
   dart test ${conc:+--concurrency=$conc} test/integration \
-    --exclude-tags llm,browser-ext,perf
+    --exclude-tags llm,browser-ext,perf,pty
 }
 
 stage_coverage() {

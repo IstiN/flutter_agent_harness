@@ -299,7 +299,9 @@ jobs:
   # discovered only at tag time) becomes a red PR at the commit that broke
   # them. Real-provider legs carry the `llm` tag and stay in the tag-only
   # provider-smoke job; perf has its own #303 trajectory gate; browser-ext
-  # its own workflow.
+  # its own workflow. `pty` marks child-agent-spawn tests whose second
+  # process boot is unbounded under runner load (issue #553, red twice on
+  # this leg) — they stay in nightly's pty-integration job.
   integration-mock:
     name: Integration tests (mock LLM)
     runs-on: ubuntu-latest
@@ -314,8 +316,8 @@ jobs:
         with:
           sdk: stable
       - run: dart pub get
-      - name: dart test test/integration (excluding llm, browser-ext, perf)
-        run: dart test test/integration --exclude-tags llm,browser-ext,perf
+      - name: dart test test/integration (excluding llm, browser-ext, perf, pty)
+        run: dart test test/integration --exclude-tags llm,browser-ext,perf,pty
 
   coverage-gate:
     name: Coverage ratchet

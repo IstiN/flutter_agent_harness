@@ -12,6 +12,12 @@ tags:
     # secrets. They carry `integration` too and run ONLY in the tag-only
     # provider-smoke job (v* tags) and nightly — every per-PR suite excludes
     # them: dart test --exclude-tags llm
+  pty:
+    # Child-agent-spawn PTY tests (issue #553): the test drives a full task
+    # tool spawn — a second CLI process whose boot/JIT time is unbounded on a
+    # loaded runner. They carry `integration` too and stay in nightly's
+    # pty-integration job; the per-PR integration-mock leg excludes them:
+    # dart test --exclude-tags pty
   io:
     # IO tests use dart:io primitives (local sockets, processes) and are
     # excluded from the default pre-commit gate. Run them with:

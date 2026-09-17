@@ -1,5 +1,5 @@
 @TestOn('vm')
-@Tags(['integration'])
+@Tags(['integration', 'pty'])
 @Timeout(Duration(minutes: 5))
 library;
 
