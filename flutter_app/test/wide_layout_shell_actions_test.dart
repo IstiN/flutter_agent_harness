@@ -10,11 +10,9 @@ import 'package:fa/main.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/ui/app_theme.dart';
-import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_agent_harness/src/session/session_repo.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:intl/intl.dart';
 
