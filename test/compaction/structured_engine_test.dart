@@ -139,34 +139,40 @@ void main() {
     expect(judgeCalls, 1);
   });
 
-  test('judge failure is a no-op for hides — pass 2 still engages', () async {
-    final (session, state) = await overWindowSession();
-    var judgeCalls = 0;
-    final compactor = StructuredCompactor(
-      session: session,
-      state: state,
-      window: 8000,
-      settings: _settings,
-      judge: (ledger) async {
-        judgeCalls++;
-        return null; // Failed call (F1): never an empty hide list.
-      },
-      summarize: (request) async => SummarizationResult.success('S'),
-      checkpointPrompt: 'P',
-    );
-    await compactor.run();
+  test(
+    'a failed judge call is counted, retried, and pass 2 still engages',
+    () async {
+      final (session, state) = await overWindowSession();
+      var judgeCalls = 0;
+      final compactor = StructuredCompactor(
+        session: session,
+        state: state,
+        window: 8000,
+        settings: _settings,
+        judge: (ledger) async {
+          judgeCalls++;
+          // First call fails (F1: null, never an empty hide list); the
+          // retry answers as a healthy no-op so the run continues to
+          // pass 2 without a fallback hide.
+          return judgeCalls == 1 ? null : '[]';
+        },
+        summarize: (request) async => SummarizationResult.success('S'),
+        checkpointPrompt: 'P',
+      );
+      await compactor.run();
 
-    // F1: no hide records from a failed judge; exactly one bounded call.
-    expect(judgeCalls, 1);
-    final records = await session.getEntries();
-    expect(records.whereType<HiddenRangeRecord>(), isEmpty);
-    // Pressure remained, so pass 2 checkpointed legitimately.
-    expect(records.whereType<CompactCheckpointRecord>(), isNotEmpty);
-    expect(
-      state.messages.whereType<UserMessage>().map((m) => m.content as String),
-      anyElement(contains(':ckpt')),
-    );
-  });
+      // One bounded retry after the failed call — then the healthy answer.
+      expect(judgeCalls, 2);
+      final records = await session.getEntries();
+      expect(records.whereType<HiddenRangeRecord>(), isEmpty);
+      // Pressure remained, so pass 2 checkpointed legitimately.
+      expect(records.whereType<CompactCheckpointRecord>(), isNotEmpty);
+      expect(
+        state.messages.whereType<UserMessage>().map((m) => m.content as String),
+        anyElement(contains(':ckpt')),
+      );
+    },
+  );
 
   test(
     'pass 2 checkpoints the oldest range with covers and open asks',
@@ -178,7 +184,7 @@ void main() {
         state: state,
         window: 8000,
         settings: _settings,
-        judge: (ledger) async => null, // Judge refuses: straight to pass 2.
+        judge: (ledger) async => '[]', // Judge declines: straight to pass 2.
         summarize: (request) async {
           prompts.add(request.prompt);
           return SummarizationResult.success(
@@ -231,9 +237,9 @@ void main() {
       state: state,
       window: 8000,
       settings: _settings,
-      judge: (ledger) async => null,
       summarize: (request) async => SummarizationResult.failure('boom'),
       checkpointPrompt: 'P',
+      judge: (ledger) async => '[]', // Judge declines: straight to pass 2.
     );
     final ok = await compactor.run();
 
@@ -257,7 +263,7 @@ void main() {
         reserveTokens: 100,
         keepRecentTokens: 100,
       ),
-      judge: (ledger) async => null,
+      judge: (ledger) async => '[]',
       summarize: (request) async =>
           SummarizationResult.success('round summary'),
       checkpointPrompt: 'P',

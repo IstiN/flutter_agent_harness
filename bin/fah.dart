@@ -1390,6 +1390,10 @@ Future<void> _runApp(List<String> args) async {
     global: saved.compactionEngine,
   );
 
+  // Judge budget knob (issue #541): user-level `compaction.
+  // judgeBudgetSeconds`; `null` keeps the 90s default.
+  final compactionJudgeBudgetSeconds = saved.compactionJudgeBudgetSeconds;
+
   // Raw wire dumps (issue #385 F5): opt-in only — the project
   // `.fah/config.yaml` `trajectory:` section wins over the user one.
   final wireDump = loadProjectWireDump(cwd) ?? saved.wireDump;
@@ -1939,6 +1943,7 @@ Future<void> _runApp(List<String> args) async {
       alwaysAllowTools: saved.allowedTools.toSet(),
       runtimeTools: runtimeTools,
       compactionEngine: compactionEngine,
+      compactionJudgeBudgetSeconds: compactionJudgeBudgetSeconds,
       wireDump: wireDump,
       contextWindowCap: saved.contextWindowCap,
       subagents: saved.subagents,

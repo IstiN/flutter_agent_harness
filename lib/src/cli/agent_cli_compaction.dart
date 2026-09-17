@@ -361,6 +361,10 @@ extension AgentCliCompactionRun on AgentCli {
           config.liveCompactionEngine ??
           config.compactionEngine ??
           CompactionEngine.structured,
+      // Judge budget knob (issue #541): null keeps the 90s default.
+      attemptBudget: Duration(
+        seconds: config.compactionJudgeBudgetSeconds ?? 90,
+      ),
       memoryExtractionHook: (text) async {
         final tui = _tuiController;
         tui?.setBusyPhase('Extracting memory…');
