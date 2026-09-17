@@ -647,7 +647,7 @@ jobs:
         env:
           NEXT_TAG: ${{ needs.plan.outputs.next_tag }}
           PLAN_RESULT: ${{ needs.plan.result }}
-          DAILY_PUBLISH_ASSIGNEE: vabhzw17eg2qu4m9-bit
+          DAILY_PUBLISH_ASSIGNEE: ai-teammate
           LEG_TESTFLIGHT: ${{ needs.testflight.result }}
           LEG_TESTFLIGHT_URL: ${{ needs.testflight.outputs.run_url }}
           LEG_PLAY: ${{ needs.play.result }}
