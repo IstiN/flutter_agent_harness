@@ -1597,12 +1597,23 @@ jobs:
         if: steps.gate.outputs.publishable == 'true'
         run: |
           mkdir -p /tmp/publish-stage
+          # Path deps of the core pubspec must resolve inside the stage
+          # (#584, `dart pub get` exit 66 on v0.1.407): their subtrees are
+          # included BEFORE the parent excludes, and the parent excludes are
+          # child-scoped (vendor/*) — excluding the parent dir itself would
+          # prune the subtree before the includes are ever consulted.
+          # pubspec_overrides.yaml is the workspace-only dart_tui pin (never
+          # published, see its header); shipped into the stage it re-dangles
+          # dart_tui onto the excluded vendor dir.
           rsync -a ./ /tmp/publish-stage/ \
+            --include 'vendor/xterm/' --include 'vendor/xterm/**' \
+            --include 'packages/fa_llm_mock/' --include 'packages/fa_llm_mock/**' \
             --exclude '.git' --exclude '.github' --exclude '.worktrees' \
             --exclude 'flutter_app' --exclude 'browser_ext' \
             --exclude 'office_addin' --exclude 'yoclip' \
-            --exclude 'vendor' --exclude 'docs' --exclude 'fa-local' \
-            --exclude 'packages' \
+            --exclude 'vendor/*' --exclude 'docs' --exclude 'fa-local' \
+            --exclude 'packages/*' \
+            --exclude 'pubspec_overrides.yaml' \
             --exclude '.dart_tool' --exclude 'build' --exclude '.fah' \
             --exclude 'memory' --exclude '.trash'
           size=$(du -sm /tmp/publish-stage | cut -f1)
