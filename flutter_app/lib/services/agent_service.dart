@@ -2299,9 +2299,11 @@ class AgentService extends ChangeNotifier
 
   /// Called when a background shell job settles: the completion re-enters
   /// the conversation as a system notice (sendText steers mid-run and
-  /// starts a fresh turn while idle — the same flow as inbox mail).
+  /// starts a fresh turn while idle — the same flow as inbox mail). A
+  /// foreground consumer that took the result inline skips the notice —
+  /// the registry settle bookkeeping itself always runs (issue #562).
   void _onShellJobSettled(ShellJobEntry job) {
-    if (_disposed) return;
+    if (_disposed || !job.notifyOnSettle) return;
     unawaited(
       sendText(
         '<system-notice>\n'
