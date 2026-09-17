@@ -192,7 +192,8 @@ void main() {
       },
     );
 
-    test('onSettled fires on completion unless suppressed', () async {
+    test('onSettled fires on every settle; suppression gates only the model '
+        'notice (issue #562)', () async {
       final env = _FakeBackgroundEnv(MemoryExecutionEnv(cwd: '/work'));
       final settled = <String>[];
       final registry = ShellJobRegistry(
@@ -206,7 +207,13 @@ void main() {
       env.jobs[1].complete(0);
       await Future<void>.delayed(Duration.zero);
       await Future<void>.delayed(Duration.zero);
-      expect(settled, [a.id]);
+      // The terminal bookkeeping (job board, waiting row) hangs off
+      // onSettled — it must fire even for an inline-consumed job, or
+      // the board's Running count never drains (issue #562).
+      expect(settled, [a.id, b.id]);
+      // The host still sees the suppression and skips the model notice.
+      expect(a.notifyOnSettle, isTrue);
+      expect(b.notifyOnSettle, isFalse);
       expect(a.exitCode, 0);
     });
 
@@ -274,8 +281,9 @@ void main() {
         () => tool.execute({'command': 'make'}, null, null),
         zoneValues: {yieldTokenZoneKey: CancelTokenSource().token},
       );
-      // The job settles before any yield: inline result, notification
-      // suppressed.
+      // The job settles before any yield: inline result; the model notice
+      // is suppressed (the flag the host reads), the registry settle
+      // callback still fires — it drives the terminal bookkeeping.
       final job = await _waitForJob(env);
       await job.writeLog('built\n');
       job.complete(0);
@@ -283,7 +291,8 @@ void main() {
       expect(_text(result), 'built');
       await Future<void>.delayed(Duration.zero);
       await Future<void>.delayed(Duration.zero);
-      expect(settleNotifications, isEmpty);
+      expect(settleNotifications, [job.id]);
+      expect(registry.jobs.single.notifyOnSettle, isFalse);
     });
 
     test(
