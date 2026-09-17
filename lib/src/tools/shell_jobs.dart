@@ -8,12 +8,15 @@
 /// model (`bash_job output`, the `read` tool) and the user can inspect it
 /// while the job runs.
 ///
-/// When a job settles, [ShellJobRegistry.onSettled] fires — the host turns
-/// it into a follow-up/steer message (omp's async-result flow, the same one
-/// background `task` jobs use), so the model learns about completions at the
-/// next step boundary without polling. A foreground bash call that consumed
-/// its job's result inline suppresses that notification
-/// ([ShellJobEntry.suppressSettleNotification]) to avoid a duplicate.
+/// When a job settles, [ShellJobRegistry.onSettled] fires — the host's
+/// terminal bookkeeping (the job board's Running count, the waiting row)
+/// hangs off it. The host turns it into a follow-up/steer message (omp's
+/// async-result flow, the same one background `task` jobs use) so the
+/// model learns about completions at the next step boundary without
+/// polling. A foreground bash call that consumed its job's result inline
+/// skips only that model-facing notice
+/// ([ShellJobEntry.suppressSettleNotification]) to avoid a duplicate —
+/// the bookkeeping itself always runs (issue #562).
 library;
 
 import 'dart:async';
@@ -52,8 +55,10 @@ final class ShellJobEntry {
   /// tail, issue #429 AC2).
   final String? cwd;
 
-  /// Whether the registry's settle notification should still fire (a
-  /// foreground consumer that took the result inline suppresses it).
+  /// Whether the model-facing settle notice should still be delivered (a
+  /// foreground consumer that took the result inline clears it). The
+  /// registry's settle bookkeeping runs regardless — see
+  /// [ShellJobRegistry.onSettled].
   bool _notifyOnSettle = true;
 
   String get id => job.id;
@@ -84,9 +89,14 @@ final class ShellJobEntry {
   Future<void> stop() => job.stop();
 
   /// The caller that awaited this job inline (foreground bash that finished
-  /// before a steer-yield) reports the result itself — suppress the
-  /// registry's settle notification so the model is not told twice.
+  /// before a steer-yield) reports the result itself — clear the model
+  /// notice so the model is not told twice. The job board and waiting row
+  /// still settle through [ShellJobRegistry.onSettled] (issue #562).
   void suppressSettleNotification() => _notifyOnSettle = false;
+
+  /// Whether the model-facing settle notice is still pending; hosts check
+  /// this before steering the completion into the conversation.
+  bool get notifyOnSettle => _notifyOnSettle;
 }
 
 /// `sh-7.log` — the pre-unique-id job-log name scheme. Every fa build older
@@ -102,8 +112,7 @@ bool isOldFormatJobLogName(String name) {
 /// The session's background shell jobs. See the library doc.
 final class ShellJobRegistry {
   /// Creates a registry over [env]; [onStart] fires when a job starts
-  /// (the hub's start block), [onSettled] when a job exits and nobody
-  /// consumed its result inline.
+  /// (the hub's start block), [onSettled] when a job exits.
   ShellJobRegistry({
     required this.env,
     this.onStart,
@@ -115,7 +124,9 @@ final class ShellJobRegistry {
   /// The environment jobs run in.
   final ExecutionEnv env;
 
-  /// Fires when a job exits and nobody consumed its result inline.
+  /// Fires on every job exit — the host's terminal bookkeeping (job
+  /// board, waiting row) hangs off it. Whether the MODEL is also told is
+  /// the host's call, via [ShellJobEntry.notifyOnSettle] (issue #562).
   final void Function(ShellJobEntry job)? onSettled;
 
   /// Fires when a job successfully starts (issue #277 task blocks).
@@ -189,10 +200,12 @@ final class ShellJobRegistry {
       entry.settled.then((_) async {
         // An inline consumer (foreground bash that awaited this same settle)
         // resumes on the same microtask train AFTER this listener was
-        // registered — give it one event-loop turn to suppress the
-        // notification so the model is not told twice.
+        // registered — give it one event-loop turn to clear the model
+        // notice. The bookkeeping callback fires regardless: gating it on
+        // the flag left settled jobs counted as running forever on the
+        // board (issue #562).
         await Future<void>.delayed(Duration.zero);
-        if (entry._notifyOnSettle) onSettled?.call(entry);
+        onSettled?.call(entry);
       }),
     );
     onStart?.call(entry);
