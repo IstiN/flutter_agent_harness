@@ -71,7 +71,9 @@ Future<(Future<bool>, _RecordingService, ProviderRegistry)> _launch(
   WidgetTester tester, {
   ProviderRegistry? registry,
   SessionKeysStore? keys,
-  required ChatGptOAuthCredentials credentials,
+  ChatGptOAuthCredentials? credentials,
+  bool platformSupported = true,
+  Future<ChatGptOAuthCredentials?> Function()? flowFn,
 }) async {
   final resolvedRegistry = registry ?? ProviderRegistry.inMemory();
   final service = _RecordingService(MemoryExecutionEnv());
@@ -88,8 +90,8 @@ Future<(Future<bool>, _RecordingService, ProviderRegistry)> _launch(
                 service: service,
                 lastConnectionStore: LastConnectionStore.inMemory(),
                 sessionKeysStore: keys ?? SessionKeysStore.inMemory(),
-                platformSupportedFn: () => true,
-                chatGptOAuthFlowFn: () async => credentials,
+                platformSupportedFn: () => platformSupported,
+                chatGptOAuthFlowFn: flowFn ?? () async => credentials,
               );
             },
             child: const Text('go'),
@@ -268,5 +270,65 @@ void main() {
         .where((name) => name != first.name)
         .single;
     expect(second, 'ChatGPT-2');
+  });
+
+  testWidgets('an unsupported surface refuses with a snackbar', (tester) async {
+    final (done, service, registry) = await _launch(
+      tester,
+      credentials: _credentials('alice@example.com'),
+      platformSupported: false,
+    );
+    expect(await done, isFalse);
+    expect(registry.providers, isEmpty);
+    expect(service.reconfigured, isNull);
+    expect(
+      find.text(
+        'ChatGPT sign-in is not yet available on iOS. '
+        'Use OpenAI with an API key instead.',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('a cancelled OAuth (null credentials) refuses silently', (
+    tester,
+  ) async {
+    final (done, service, registry) = await _launch(
+      tester,
+      flowFn: () async => null,
+    );
+    expect(await done, isFalse);
+    expect(registry.providers, isEmpty);
+    expect(service.reconfigured, isNull);
+  });
+
+  testWidgets('a Keychain-backed surface persists entry-scoped without '
+      'touching saved-keys', (tester) async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(const MethodChannel('fah/keychain'), (
+          call,
+        ) async {
+          return switch (call.method) {
+            'isAvailable' => true,
+            'set' => true,
+            _ => null,
+          };
+        });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(const MethodChannel('fah/keychain'), null);
+    });
+    final keys = SessionKeysStore.inMemory();
+    final (done, _, registry) = await _launch(
+      tester,
+      keys: keys,
+      credentials: _credentials('alice@example.com'),
+    );
+    expect(await done, isTrue);
+    expect(
+      registry.keyFor(registry.providers.single.id),
+      _credentials('alice@example.com').encode(),
+    );
+    expect(keys.valueOf('FA_KEY_CHATGPT_COM_ALICE_EXAMPLE_COM'), isNull);
   });
 }
