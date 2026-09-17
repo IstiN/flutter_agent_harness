@@ -69,6 +69,9 @@ jobs:
       # PR-only (issue #303): a trajectory-touching diff flips this on so
       # the perf-gate leg below runs the #262 DoD gate per-merge.
       perf: ${{ steps.paths.outputs.perf }}
+      # PR-only (issue #551): test/integration/** changes run the no-key
+      # mock-LLM integration legs per-PR instead of at tag time only.
+      intmock: ${{ steps.paths.outputs.intmock }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -98,21 +101,23 @@ jobs:
             sed -n 's/^Fast gate scope: .*stages://p')
           echo "gate stages:[$stages]"
           # Empty output can only mean detection failure: full gate.
-          [ -z "$(echo $stages)" ] && stages="size analyze test-core coverage crap dup dupx flutter"
+          [ -z "$(echo $stages)" ] && stages="size analyze test-core coverage crap dup dupx flutter integration-mock"
           case " $stages " in *"flutter"*) echo "app=true" >> "$GITHUB_OUTPUT" ;; esac
           case " $stages " in *"test-core"*) echo "core=true" >> "$GITHUB_OUTPUT" ;; esac
           case " $stages " in *"analyze"*) echo "docs=true" >> "$GITHUB_OUTPUT" ;; esac
-          # All eight stages selected = a shared/unknown path changed:
+          # Issue #551: test/integration changes select the mock-LLM leg.
+          case " $stages " in *"integration-mock"*) echo "intmock=true" >> "$GITHUB_OUTPUT" ;; esac
+          # All nine stages selected = a shared/unknown path changed:
           if [ -z "$(echo $stages)" ]; then
             # Empty output can only mean detection failure: full gate.
-            stages="size analyze test-core coverage crap dup dupx flutter"
+            stages="size analyze test-core coverage crap dup dupx flutter integration-mock"
           fi
-          if [ "$(echo $stages | wc -w)" -eq 8 ]; then
+          if [ "$(echo $stages | wc -w)" -eq 9 ]; then
             echo "shared=true" >> "$GITHUB_OUTPUT"
           fi
           # Issue #303: the #262 DoD perf gate must red-block the MERGE for
-          # trajectory regressions, not only the release (the `integration`
-          # job selects `--tags integration` on v* tags only). The perf-gate
+          # trajectory regressions, not only the release — before #551 the
+          # only integration leg outside PRs was tag-time. The perf-gate
           # leg re-selects the same gate via --tags perf. Paths = everything
           # the #262 fix touched: ledger core, fa_ui trajectory widgets, CLI
           # trajectory parts, the fah entrypoint, its tests, and the app's
@@ -287,6 +292,30 @@ jobs:
           name: junit-shard-${{ matrix.shard }}
           path: test-results/junit-shard-${{ matrix.shard }}.xml
           retention-days: 7
+
+  # Issue #551: the no-key integration legs (MockLlmServer scenarios, PTY
+  # harness, no secrets, no network) run per-PR whenever test/integration/**
+  # changes — the #538 rot class (legs breaking silently between releases,
+  # discovered only at tag time) becomes a red PR at the commit that broke
+  # them. Real-provider legs carry the `llm` tag and stay in the tag-only
+  # provider-smoke job; perf has its own #303 trajectory gate; browser-ext
+  # its own workflow.
+  integration-mock:
+    name: Integration tests (mock LLM)
+    runs-on: ubuntu-latest
+    needs: changes
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    if: needs.changes.outputs.intmock == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - run: dart pub get
+      - name: dart test test/integration (excluding llm, browser-ext, perf)
+        run: dart test test/integration --exclude-tags llm,browser-ext,perf
 
   coverage-gate:
     name: Coverage ratchet
@@ -1263,7 +1292,7 @@ jobs:
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, cli-visual-settings, build-web, build-android, build-ios, build-macos]
+    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, cli-visual-settings, build-web, build-android, build-ios, build-macos, integration-mock]
     if: always()
     timeout-minutes: 5
     permissions:
@@ -1279,12 +1308,14 @@ jobs:
           echo "test-faui     = ${{ needs.test-faui.result }}"
           echo "app-crap-gate = ${{ needs.app-crap-gate.result }}"
           echo "perf-gate     = ${{ needs.perf-gate.result }}"
+          echo "integ-mock    = ${{ needs.integration-mock.result }}"
       - name: Fail on any real failure
         run: |
           for r in "${{ needs.static.result }}" "${{ needs.test-core.result }}" \
                    "${{ needs.coverage-gate.result }}" "${{ needs.guards.result }}" \
                    "${{ needs.flutter-tests.result }}" "${{ needs.app-crap-gate.result }}" \
-                   "${{ needs.test-faui.result }}" "${{ needs.perf-gate.result }}"; do
+                   "${{ needs.test-faui.result }}" "${{ needs.perf-gate.result }}" \
+                   "${{ needs.integration-mock.result }}"; do
             if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then
               echo "Quality gate FAILED (a leg is $r)"
               exit 1
@@ -1293,8 +1324,9 @@ jobs:
           echo "Quality gate OK"
 
   # Issue #303 (the #262 DoD): the perf-tagged e2e gate must red-block the
-  # MERGE, not only the release — the `integration` job selecting
-  # `--tags integration` fires on v* tags only. This leg runs the same
+  # MERGE, not only the release — before #551 the only integration leg
+  # outside PRs was tag-time, and perf stays excluded from integration-mock.
+  # This leg runs the same
   # perf-tagged tests for trajectory-touching PRs and aggregates into
   # Quality gate below. `--tags perf` is precise: the only perf-tagged test
   # is the #262 gate (test/integration/trajectory/perf_open_gate_test.dart,
@@ -1421,9 +1453,8 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit --allow-empty -m "$msg"
           git push origin HEAD:"${{ github.event.pull_request.head.ref }}"
-
   integration:
-    name: Integration tests (LLM)
+    name: Provider smoke (LLM, tag-only)
     runs-on: ubuntu-latest
     needs: quality-gate
     timeout-minutes: 20
@@ -1445,15 +1476,15 @@ jobs:
       - uses: dart-lang/setup-dart@v1
         with:
           sdk: stable
-      - run: dart pub get
-      # --exclude-tags browser-ext: the extension suite owns its own
-      # dedicated workflow (browser-ext.yml) which builds sw/agent.js and
-      # supplies Chrome for Testing — this job has neither, so running the
-      # suite here always failed (every tag since the suite landed).
-      - name: dart test --tags integration, excluding browser-ext
-        # Live-provider tests self-skip without keys (their own skip guards);
-        # mock-endpoint PTY tests always run — no blanket skip.
-        run: dart test --tags integration --exclude-tags browser-ext
+      # Issue #551: the ONLY tag-only LLM job — a small provider smoke.
+      # `--tags "integration && llm"` selects the real-provider files
+      # (anthropic / google / openrouter / ollama round-trips; copilot,
+      # chatgpt-codex and subagent-real-model self-skip without their
+      # creds). The 50-file integration suite itself runs per-PR now
+      # (integration-mock + nightly pty-integration): tag CI no longer
+      # gates releases on it, publish waits on this smoke instead.
+      - name: dart test --tags "integration && llm"
+        run: dart test --tags "integration && llm"
 
   js-ext-integration:
     name: JS engine integration (quickjs-ng)
@@ -1479,9 +1510,7 @@ jobs:
 
   publish:
     name: Publish to pub.dev
-    runs-on: ubuntu-latest
-    needs: quality-gate
-    timeout-minutes: 10
+    needs: [quality-gate, integration]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
       id-token: write # OIDC — pub.dev verifies the GitHub identity, no secrets

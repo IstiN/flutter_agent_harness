@@ -1439,8 +1439,9 @@ set of thresholds; parity is checkable by diffing the hook's
 `GATE_STAGE <name> OK|SKIP` markers against the stages the CI changes job
 logs for the same diff. Path filters: docs/markdown/prompts-only →
 size+analyze; lib/bin/test/example/pubspec → +tests, coverage, CRAP,
-jscpd + cross-module dupx; flutter_app/packages → +dupx, flutter
-analyze+tests;
+jscpd + cross-module dupx; `test/integration/**` → + `integration-mock`
+(issue #551: the no-key legs run per-PR); flutter_app/packages → +dupx,
+flutter analyze+tests;
 scripts/.github/crap4dart.yaml/unknown → everything (safe default, E2 —
 holds in CI too). Hook-only extras: dart format self-heal of staged files
 and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
@@ -1448,9 +1449,13 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
 - `dart analyze` + dart format clean (explicit dirs — `yoclip/` is a
   standalone video workspace with its own toolchain); example app also
   `flutter analyze --no-fatal-infos --no-fatal-warnings`.
-- `dart test` green (integration-tagged excluded — nightly runs them;
-  tag CI runs them on `v*` tags, which needs provider secrets — the rot
-  risk of tag-only legs and the per-PR MockLlmServer plan: #551).
+- `dart test` green (integration-tagged excluded from test-core — issue
+  #551: `test/integration/**` changes also run the `integration-mock` leg
+  per-PR: no-key legs via `MockLlmServer`, `--exclude-tags llm,browser-ext,
+  perf`; real-provider files carry `@Tags(['integration', 'llm'])` and run
+  ONLY in the tag-only provider-smoke job and nightly with secrets).
+  Tag-only CI = llm smoke + publish + binaries; nightly keeps the full
+  real-provider suite (pty-integration).
 - `cd flutter_app && flutter test --exclude-tags integration` green
   (includes golden suite; integration-tagged `test/cli_visual` runs in the
   nightly workflow + on demand).
@@ -1501,10 +1506,13 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
   empty-commit retrigger — never `gh run rerun`, which reallocates into
   the same degraded runner pool). `perf-gate` (issue #303) folds the #262
   DoD `dart test --tags perf` trajectory gate into the aggregate for
-  trajectory-touching PRs; the full `--tags integration` leg stays
-  tag-gated to releases. `nightly.yml` runs the full monolith +
-  PTY/CLI integration + terminal-visual suites; `coverage-gardener.yml`
-  bumps the only-up CLI coverage baseline weekly.
+  trajectory-touching PRs. Issue #551 adds the `integration-mock` leg to
+  the aggregate for `test/integration/**` PRs (no-key legs via
+  MockLlmServer); the tag-only `integration` job is just the llm provider
+  smoke and `publish` waits on it. `nightly.yml` runs the full monolith +
+  PTY/CLI integration (full real-provider suite with secrets) +
+  terminal-visual suites; `coverage-gardener.yml` bumps the only-up CLI
+  coverage baseline weekly.
 
 ## Cross-platform parity
 
