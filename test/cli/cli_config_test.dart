@@ -905,6 +905,42 @@ compaction:
       );
     });
 
+    test('compaction.judgeBudgetSeconds round-trips (issue #541)', () async {
+      final original = CliConfig(compactionJudgeBudgetSeconds: 300);
+      await saveCliConfig(tmp.path, original);
+      expect(loadCliConfig(tmp.path).compactionJudgeBudgetSeconds, 300);
+    });
+
+    test('compaction.judgeBudgetSeconds defaults to null when absent '
+        '(issue #541)', () {
+      expect(loadCliConfig(tmp.path).compactionJudgeBudgetSeconds, isNull);
+    });
+
+    test('a junk compaction.judgeBudgetSeconds is a strict config error '
+        '(issue #541)', () async {
+      File('${tmp.path}/.fah/config.yaml')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('compaction:\n  judgeBudgetSeconds: soon\n');
+      expect(
+        () => loadCliConfig(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('judgeBudgetSeconds'),
+          ),
+        ),
+      );
+    });
+
+    test('a non-positive compaction.judgeBudgetSeconds is a strict config '
+        'error (issue #541)', () async {
+      File('${tmp.path}/.fah/config.yaml')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('compaction:\n  judgeBudgetSeconds: 0\n');
+      expect(() => loadCliConfig(tmp.path), throwsA(isA<ConfigException>()));
+    });
+
     test('the disk a2a block survives verbatim (byte-for-byte)', () async {
       // The block is copied as raw text, never re-rendered from the typed
       // config — `${NAME}` env-token references stay literal (a typed
