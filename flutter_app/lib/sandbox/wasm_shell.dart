@@ -530,102 +530,22 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     String? previousOutputFile;
 
     for (var i = 0; i < pipeline.stages.length; i++) {
-      final stage = pipeline.stages[i];
-      final isLast = i == pipeline.stages.length - 1;
-
-      // Expand `$VAR`/`$(...)` references at execution time so earlier
-      // statements in the same command line (e.g. `export A=1 && echo $A`)
-      // are visible.
-      final stageEnv = _effectiveEnv(options);
-      final expansion = await expandShellStage(
-        stage,
-        stageEnv,
-        (source) => _scriptRunner.substitute(source, options, depth),
-      );
-      if (expansion.isErr) {
-        await _cleanup(tempFiles);
-        return Err(expansion.errorOrNull!);
-      }
-      final expandedStage = expansion.valueOrNull!;
-
-      final redirects = collectStageRedirects(expandedStage.redirects);
-      final stdoutFile = redirects.stdoutFile;
-      final stderrFile = redirects.stderrFile;
-
-      // Resolve input source for this stage.
-      final inputSource = redirects.stdinFile != null
-          ? _resolveSandboxPath(
-              redirects.stdinFile!,
-              options?.cwd ?? _currentDir,
-            )
-          : previousOutputFile;
-
-      final result = await _runCommand(
-        command: expandedStage.command,
-        args: expandedStage.args,
+      final outcome = await _runPipelineStage(
+        pipeline.stages[i],
+        index: i,
+        isLast: i == pipeline.stages.length - 1,
         options: options,
-        inputSource: inputSource,
-        captureStdout: true,
-        captureStderr: true,
+        depth: depth,
+        inputSource: previousOutputFile,
+        tempFiles: tempFiles,
       );
-      if (result.isErr) {
+      if (outcome.isErr) {
         await _cleanup(tempFiles);
-        return Err(result.errorOrNull!);
+        return Err(outcome.errorOrNull!);
       }
-      final data = result.valueOrNull!;
-      _lastStageExitCode = data.exitCode;
-
-      // WASI guests surface SIGPIPE as stderr noise (issue #337 AC5); it
-      // carries no information the caller can act on, so translate it out.
-      // Only the bare `<tool>: stdout: Broken pipe` shape is stripped - a
-      // python `BrokenPipeError: [Errno 32] Broken pipe` traceback stays.
-      final stageStderr = stripSigpipeNoise(data.stderr);
-
-      if (stdoutFile != null) {
-        final file = _hostFile(
-          _resolveSandboxPath(stdoutFile, options?.cwd ?? _currentDir),
-        );
-        await file.parent.create(recursive: true);
-        if (redirects.appendStdout) {
-          await file.writeAsBytes(data.stdout, mode: io.FileMode.append);
-        } else {
-          await file.writeAsBytes(data.stdout);
-        }
-      } else {
-        final text = utf8.decode(data.stdout, allowMalformed: true);
-        // Only the LAST stage's stdout leaves the pipeline (the rest goes
-        // into the pipe) — intermediate stages must not leak into command
-        // substitution captures or the exec accumulator.
-        if (isLast && text.isNotEmpty) {
-          _lastStdout = (_lastStdout ?? '') + text;
-          _capture.feed(text);
-        }
-      }
-
-      if (stderrFile != null) {
-        final file = _hostFile(
-          _resolveSandboxPath(stderrFile, options?.cwd ?? _currentDir),
-        );
-        await file.parent.create(recursive: true);
-        if (redirects.appendStderr) {
-          await file.writeAsBytes(stageStderr, mode: io.FileMode.append);
-        } else {
-          await file.writeAsBytes(stageStderr);
-        }
-      } else {
-        final text = utf8.decode(stageStderr, allowMalformed: true);
-        if (isLast && text.isNotEmpty) {
-          _lastStderr = (_lastStderr ?? '') + text;
-        }
-      }
-
-      if (!isLast) {
-        final temp = _hostFile('.fah_pipe_$i');
-        await temp.parent.create(recursive: true);
-        await temp.writeAsBytes(data.stdout);
-        tempFiles.add(temp);
-        previousOutputFile = '/${temp.path.split('/').last}';
-      }
+      final pipeFile = outcome.valueOrNull;
+      previousOutputFile =
+          pipeFile == null ? null : '/${pipeFile.path.split('/').last}';
     }
 
     await _cleanup(tempFiles);
@@ -637,6 +557,165 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         exitCode: _lastStageExitCode ?? 0,
       ),
     );
+  }
+
+  /// Expands and runs one pipeline stage, then stores its output. Returns
+  /// the temp pipe file carrying stdout to the next stage (null for the
+  /// last stage).
+  Future<Result<io.File?, ExecutionError>> _runPipelineStage(
+    Stage stage, {
+    required int index,
+    required bool isLast,
+    required ShellExecOptions? options,
+    required int depth,
+    required String? inputSource,
+    required List<io.File> tempFiles,
+  }) async {
+    // Expand `$VAR`/`$(...)` references at execution time so earlier
+    // statements in the same command line (e.g. `export A=1 && echo $A`)
+    // are visible.
+    final stageEnv = _effectiveEnv(options);
+    final expansion = await expandShellStage(
+      stage,
+      stageEnv,
+      (source) => _scriptRunner.substitute(source, options, depth),
+    );
+    if (expansion.isErr) {
+      return Err(expansion.errorOrNull!);
+    }
+    final expandedStage = expansion.valueOrNull!;
+
+    final redirects = collectStageRedirects(expandedStage.redirects);
+    // Resolve input source for this stage.
+    final input = redirects.stdinFile != null
+        ? _resolveSandboxPath(
+            redirects.stdinFile!,
+            options?.cwd ?? _currentDir,
+          )
+        : inputSource;
+
+    final result = await _runCommand(
+      command: expandedStage.command,
+      args: expandedStage.args,
+      options: options,
+      inputSource: input,
+      captureStdout: true,
+      captureStderr: true,
+    );
+    if (result.isErr) {
+      return Err(result.errorOrNull!);
+    }
+    final data = result.valueOrNull!;
+    _lastStageExitCode = data.exitCode;
+
+    final pipeFile = await _writeStageStdout(
+      data,
+      redirects,
+      index: index,
+      isLast: isLast,
+      options: options,
+      tempFiles: tempFiles,
+    );
+    // WASI guests surface SIGPIPE as stderr noise (issue #337 AC5); it
+    // carries no information the caller can act on, so translate it out.
+    // Only the bare `<tool>: stdout: Broken pipe` shape is stripped - a
+    // python `BrokenPipeError: [Errno 32] Broken pipe` traceback stays.
+    await _storeStageStderr(
+      stripSigpipeNoise(data.stderr),
+      redirects,
+      isLast: isLast,
+      options: options,
+    );
+    return Ok(pipeFile);
+  }
+
+  /// Writes a stage's stdout to its `>`/`>>` redirect target, the output
+  /// accumulator (last stage), or a temp pipe file feeding the next stage.
+  Future<io.File?> _writeStageStdout(
+    StageResult data,
+    StageRedirects redirects, {
+    required int index,
+    required bool isLast,
+    required ShellExecOptions? options,
+    required List<io.File> tempFiles,
+  }) async {
+    final stdoutFile = redirects.stdoutFile;
+    if (stdoutFile != null) {
+      await _writeRedirectBytes(
+        data.stdout,
+        stdoutFile,
+        append: redirects.appendStdout,
+        options: options,
+      );
+    } else if (isLast) {
+      _captureStageStdout(data.stdout);
+    }
+    if (isLast) return null;
+    return _writePipeFile(data.stdout, index, tempFiles);
+  }
+
+  /// Appends the final stage's stdout text to the exec accumulator and the
+  /// output capture (command substitution / background-log consumers).
+  void _captureStageStdout(List<int> bytes) {
+    final text = utf8.decode(bytes, allowMalformed: true);
+    if (text.isEmpty) return;
+    _lastStdout = (_lastStdout ?? '') + text;
+    _capture.feed(text);
+  }
+
+  /// Writes a stage's stderr to its redirect target or the accumulator.
+  Future<void> _storeStageStderr(
+    List<int> bytes,
+    StageRedirects redirects, {
+    required bool isLast,
+    required ShellExecOptions? options,
+  }) async {
+    final stderrFile = redirects.stderrFile;
+    if (stderrFile != null) {
+      await _writeRedirectBytes(
+        bytes,
+        stderrFile,
+        append: redirects.appendStderr,
+        options: options,
+      );
+      return;
+    }
+    final text = utf8.decode(bytes, allowMalformed: true);
+    if (isLast && text.isNotEmpty) {
+      _lastStderr = (_lastStderr ?? '') + text;
+    }
+  }
+
+  /// Writes [bytes] to a redirect target inside the sandbox.
+  Future<void> _writeRedirectBytes(
+    List<int> bytes,
+    String sandboxFile, {
+    required bool append,
+    required ShellExecOptions? options,
+  }) async {
+    final file = _hostFile(
+      _resolveSandboxPath(sandboxFile, options?.cwd ?? _currentDir),
+    );
+    await file.parent.create(recursive: true);
+    if (append) {
+      await file.writeAsBytes(bytes, mode: io.FileMode.append);
+    } else {
+      await file.writeAsBytes(bytes);
+    }
+  }
+
+  /// Persists a non-final stage's stdout into a temp pipe file; the caller
+  /// derives the next stage's sandbox input path from it.
+  Future<io.File> _writePipeFile(
+    List<int> bytes,
+    int index,
+    List<io.File> tempFiles,
+  ) async {
+    final temp = _hostFile('.fah_pipe_$index');
+    await temp.parent.create(recursive: true);
+    await temp.writeAsBytes(bytes);
+    tempFiles.add(temp);
+    return temp;
   }
 
   Future<void> _cleanup(List<io.File> files) async {
