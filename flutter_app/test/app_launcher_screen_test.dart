@@ -974,4 +974,48 @@ void main() {
       );
     });
   });
+  Finder searchField() => find.byWidgetPredicate(
+    (w) => w is TextField && w.decoration?.hintText == 'Search widgets…',
+  );
+
+  group('AppLauncherScreen search', () {
+    testWidgets('search filters the grid to matching tiles', (tester) async {
+      await _pumpLauncher(tester);
+
+      await tester.enterText(searchField(), 'alp');
+      await tester.pumpAndSettle();
+
+      // Only Alpha matches (id or display name, case-insensitive); the
+      // flat results grid replaces the draggable grid entirely.
+      expect(find.text('Alpha'), findsOneWidget);
+      expect(find.text('Beta'), findsNothing);
+      expect(find.text('Gamma'), findsNothing);
+    });
+
+    testWidgets('a query with no matches shows the empty marker', (
+      tester,
+    ) async {
+      await _pumpLauncher(tester);
+
+      await tester.enterText(searchField(), 'zzz');
+      await tester.pumpAndSettle();
+
+      expect(find.text('∅'), findsOneWidget);
+      expect(find.text('Alpha'), findsNothing);
+    });
+
+    testWidgets('a search-result tile long-press opens the tile menu', (
+      tester,
+    ) async {
+      await _pumpLauncher(tester);
+
+      await tester.enterText(searchField(), 'beta');
+      await tester.pumpAndSettle();
+      expect(find.text('Beta'), findsOneWidget);
+
+      await tester.longPress(find.text('Beta'));
+      await tester.pumpAndSettle();
+      expect(find.text('Remove widget'), findsOneWidget);
+    });
+  });
 }
