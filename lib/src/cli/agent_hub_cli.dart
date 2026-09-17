@@ -290,6 +290,9 @@ extension AgentCliHubDriver on AgentCli {
   /// `/task` background agent start: a distinct block opens in the
   /// transcript the moment the job registers.
   void _onTaskJobStarted(TaskJob job) {
+    // Event-driven waiting-row enter (issue #450): the awaited child joins
+    // the row the moment it registers (issue #520 AC3).
+    unawaited(_waiting.push());
     _renderTaskBlock(
       TaskBlock(
         kind: 'agent',

@@ -443,6 +443,12 @@ final class SubagentManager {
         text: message.text,
         sentAt: message.sentAt,
         hops: message.hops,
+        // Issue #520: owner mail (user input from an attached client)
+        // must stay user-kind across the fabric — it wakes the idle
+        // agent streak-cap-free and is attributed as the user's words.
+        kind: message.isUserInput
+            ? AgentMessageKind.user
+            : AgentMessageKind.agent,
       ),
     );
     if (handle != null) _touchWithMessage(handle, message);

@@ -158,11 +158,19 @@ final class _WaitingCoordinator {
   }
 
   /// The aggregate: live jobs + deliverable timers. A settled job or a
-  /// fired timer drops out of the next snapshot (AC1).
+  /// fired timer drops out of the next snapshot (AC1). Running background
+  /// children (`task` jobs) count as waiters too (issue #520 AC3): a main
+  /// agent with children in flight is visibly waiting on them.
   Future<WaiterSnapshot> snapshot() async {
     final jobs = [
       for (final job in _jobs.jobs)
         if (job.isRunning) _jobPurpose(job),
+      ...[
+        for (final job in _cli._taskConfig.jobManager.jobs)
+          if (job.status == TaskJobStatus.queued ||
+              job.status == TaskJobStatus.running)
+            _taskJobPurpose(job),
+      ],
     ];
     final timers = [
       for (final record in await _timers.pendingRecords())
@@ -176,6 +184,17 @@ final class _WaitingCoordinator {
   }
 
   String _jobPurpose(ShellJobEntry job) => '${job.command} (${job.id})';
+
+  /// One awaited child's purpose: `<id> (<task preview>) · <status>` —
+  /// the owner reads «waiting: fix503 (test run) · running» (issue #520
+  /// AC3), never silence.
+  String _taskJobPurpose(TaskJob job) {
+    final preview = job.task.replaceAll('\n', ' ').trim();
+    final clipped = preview.length > 48
+        ? '${preview.substring(0, 48)}…'
+        : preview;
+    return '${job.id} ($clipped) · ${job.status.name}';
+  }
 
   /// Recomputes the snapshot and pushes it at the TUI row + heartbeat.
   /// Callers fire-and-forget this on every waiter event: job start/settle,
