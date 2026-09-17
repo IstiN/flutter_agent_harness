@@ -96,13 +96,20 @@ void main() {
     await harness.waitForBoot();
     await harness.runSlashCommand('/agents types');
 
+    // The TUI paints the listing as one frame but repaints partial cells
+    // (cursor jumps) — the RAW stream can carry "ag…nt types:" split by
+    // escapes, so raw-contains is not assertable. Wait for the LAST line
+    // of the listing: once it is on screen the whole frame is painted and
+    // the viewport holds every row together.
     await harness.waitForText(
-      'agent types:',
+      'plan (built-in)',
       timeout: const Duration(seconds: 15),
     );
-    expect(harness.screenText, contains('task'));
-    expect(harness.screenText, contains('explore'));
-    expect(harness.screenText, contains('review'));
+    final screen = harness.screenText;
+    expect(screen, contains('agent types:'));
+    expect(screen, contains('task'));
+    expect(screen, contains('explore'));
+    expect(screen, contains('review'));
   });
 
   test(
