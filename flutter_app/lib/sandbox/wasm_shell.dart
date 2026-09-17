@@ -1261,29 +1261,19 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
 
   Future<Result<StageResult, ExecutionError>> _testBuiltin(Stage stage) async {
     final rawArgs = stage.args.toList();
-    if (stage.command == '[') {
-      if (rawArgs.isEmpty || rawArgs.last != ']') {
-        return Ok(
-          StageResult(
-            stdout: const [],
-            stderr: utf8.encode('[[: missing `]]\n'),
-            exitCode: 2,
-          ),
-        );
-      }
-      rawArgs.removeLast();
-    }
-    if (rawArgs.isEmpty) {
+    final error = validateTestInvocation(stage.command, rawArgs);
+    if (error != null) {
       return Ok(
         StageResult(
           stdout: const [],
-          stderr: utf8.encode('test: missing expression\n'),
+          stderr: utf8.encode('$error\n'),
           exitCode: 2,
         ),
       );
     }
+    if (stage.command == '[') rawArgs.removeLast();
     try {
-      final evaluator = _TestEvaluator(
+      final value = await TestEvaluator(
         fileExists: (path) async {
           try {
             return await io.File(
@@ -1311,8 +1301,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
             return 0;
           }
         },
-      );
-      final value = await evaluator.evaluate(rawArgs);
+      ).evaluate(rawArgs);
       return Ok(
         StageResult(
           stdout: const [],
@@ -1320,7 +1309,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
           exitCode: value ? 0 : 1,
         ),
       );
-    } on _TestError catch (e) {
+    } on TestExpressionError catch (e) {
       return Ok(
         StageResult(
           stdout: const [],
@@ -1945,65 +1934,62 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     final pip = SandboxPipBuiltins(
       httpClient: _httpClient,
       sitePackagesPath: _pythonSitePackages,
-      writeBinaryFile: (path, bytes) async {
-        final file = _hostFile(path);
-        await file.parent.create(recursive: true);
-        await file.writeAsBytes(bytes);
-      },
-      listDirectory: (path) async {
-        final dir = io.Directory(_hostPath(path));
-        if (!await dir.exists()) return null;
-        final entries = <SandboxDirEntry>[];
-        await for (final entity in dir.list(followLinks: false)) {
-          entries.add((
-            name: p.basename(entity.path),
-            isDirectory: entity is io.Directory,
-          ));
-        }
-        return entries;
-      },
-      readTextFile: (path) async {
-        final file = _hostFile(path);
-        if (!await file.exists()) return null;
-        return file.readAsString();
-      },
-      removeFile: (path) async {
-        final file = _hostFile(path);
-        if (await file.exists()) await file.delete();
-      },
-      removeDirectory: (path) async {
-        final dir = io.Directory(_hostPath(path));
-        if (await dir.exists()) await dir.delete(recursive: true);
-      },
+      writeBinaryFile: _pipWriteBinary,
+      listDirectory: _pipListDirectory,
+      readTextFile: _pipReadTextFile,
+      removeFile: _pipRemoveFile,
+      removeDirectory: _pipRemoveDirectory,
     );
     return _builtinOk(await pip.run(stage.args, timeout: options?.timeout));
+  }
+
+  Future<void> _pipWriteBinary(String path, List<int> bytes) async {
+    final file = _hostFile(path);
+    await file.parent.create(recursive: true);
+    await file.writeAsBytes(bytes);
+  }
+
+  Future<List<SandboxDirEntry>?> _pipListDirectory(String path) async {
+    final dir = io.Directory(_hostPath(path));
+    if (!await dir.exists()) return null;
+    final entries = <SandboxDirEntry>[];
+    await for (final entity in dir.list(followLinks: false)) {
+      entries.add((
+        name: p.basename(entity.path),
+        isDirectory: entity is io.Directory,
+      ));
+    }
+    return entries;
+  }
+
+  Future<String?> _pipReadTextFile(String path) async {
+    final file = _hostFile(path);
+    if (!await file.exists()) return null;
+    return file.readAsString();
+  }
+
+  Future<void> _pipRemoveFile(String path) async {
+    final file = _hostFile(path);
+    if (await file.exists()) await file.delete();
+  }
+
+  Future<void> _pipRemoveDirectory(String path) async {
+    final dir = io.Directory(_hostPath(path));
+    if (await dir.exists()) await dir.delete(recursive: true);
   }
 
   Future<Result<StageResult, ExecutionError>> _duBuiltin(
     Stage stage,
     ShellExecOptions? options,
   ) async {
-    var human = false;
-    var summarize = false;
-    final paths = <String>[];
-    for (final arg in stage.args) {
-      if (arg == '-h' || arg == '--human-readable') {
-        human = true;
-      } else if (arg == '-s' || arg == '--summarize') {
-        summarize = true;
-      } else if (!arg.startsWith('-')) {
-        paths.add(arg);
-      }
-    }
-    if (paths.isEmpty) paths.add('.');
-
+    final parsed = parseDuArgs(stage.args);
     final cwd = options?.cwd ?? _currentDir;
     final lines = <String>[];
-    for (final path in paths) {
+    for (final path in parsed.paths) {
       final resolved = _resolveSandboxPath(path, cwd);
       final host = _hostPath(resolved);
-      final type = io.FileSystemEntity.typeSync(host);
-      if (type == io.FileSystemEntityType.notFound) {
+      if (io.FileSystemEntity.typeSync(host) ==
+          io.FileSystemEntityType.notFound) {
         return Ok(
           StageResult(
             stdout: const [],
@@ -2012,11 +1998,8 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
           ),
         );
       }
-      final bytes = await _duSize(host, recursive: !summarize);
-      final size = human
-          ? _formatHumanSize(bytes)
-          : '${(bytes + 1023) ~/ 1024}';
-      lines.add('$size\t$resolved');
+      final bytes = await _duSize(host, recursive: !parsed.summarize);
+      lines.add('${formatDuSize(bytes, human: parsed.human)}\t$resolved');
     }
     return Ok(
       StageResult(
@@ -2054,20 +2037,6 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       // Skip unreadable directories.
     }
     return total;
-  }
-
-  String _formatHumanSize(int bytes) {
-    const units = ['B', 'K', 'M', 'G', 'T'];
-    var size = bytes.toDouble();
-    var unit = 0;
-    while (size >= 1024 && unit < units.length - 1) {
-      size /= 1024;
-      unit++;
-    }
-    final text = size >= 10 || unit == 0
-        ? size.round().toString()
-        : size.toStringAsFixed(1);
-    return '$text${units[unit]}';
   }
 
   Future<Result<StageResult, ExecutionError>> _statBuiltin(
@@ -2177,19 +2146,14 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     String? inputSource,
   ) async {
     final cwd = options?.cwd ?? _currentDir;
-    final files = <String>[
-      for (final arg in stage.args)
-        if (!arg.startsWith('-')) arg,
-    ];
+    final files = scanFlags(stage.args, const FlagSpec()).positional;
     if (files.isEmpty && inputSource != null) files.add(inputSource);
     if (files.isEmpty) {
       return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
     }
-
     final out = StringBuffer();
     for (final file in files) {
-      final resolved = _resolveSandboxPath(file, cwd);
-      final hostFile = io.File(_hostPath(resolved));
+      final hostFile = io.File(_hostPath(_resolveSandboxPath(file, cwd)));
       if (!hostFile.existsSync()) {
         return Ok(
           StageResult(
@@ -2199,13 +2163,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
           ),
         );
       }
-      final content = await hostFile.readAsString();
-      final hadTrailingNewline = content.endsWith('\n');
-      final lines = content.split('\n');
-      if (hadTrailingNewline) lines.removeLast();
-      final reversed = lines.reversed.join('\n');
-      out.write(reversed);
-      if (hadTrailingNewline || reversed.isNotEmpty) out.write('\n');
+      out.write(reverseLines(await hostFile.readAsString()));
     }
     return Ok(
       StageResult(
@@ -2345,112 +2303,21 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     if (!await file.exists()) {
       return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
     }
-
-    var delete = false;
-    String? set1;
-    String? set2;
-    for (final arg in stage.args) {
-      if (arg == '-d') {
-        delete = true;
-      } else if (set1 == null) {
-        set1 = arg;
-      } else {
-        set2 ??= arg;
-      }
-    }
-
-    if (set1 == null) {
+    final invocation = parseTrArgs(stage.args);
+    final error = validateTrInvocation(invocation);
+    if (error != null) {
       return Ok(
         StageResult(
           stdout: const [],
-          stderr: utf8.encode('tr: missing operand\n'),
+          stderr: utf8.encode('$error\n'),
           exitCode: 2,
         ),
       );
     }
-    if (!delete && set2 == null) {
-      return Ok(
-        StageResult(
-          stdout: const [],
-          stderr: utf8.encode('tr: missing operand after "$set1"\n'),
-          exitCode: 2,
-        ),
-      );
-    }
-
-    final input = await file.readAsString();
-    final expanded1 = _expandTrSet(set1);
-    final expanded2 = delete ? null : _expandTrSet(set2!);
-
-    String output;
-    if (delete) {
-      final chars = expanded1.toSet();
-      output = input.split('').where((c) => !chars.contains(c)).join();
-    } else {
-      final map = <String, String>{};
-      for (var i = 0; i < expanded1.length; i++) {
-        map[expanded1[i]] = i < expanded2!.length
-            ? expanded2[i]
-            : expanded2.last;
-      }
-      output = input
-          .split('')
-          .map((c) => map.containsKey(c) ? map[c]! : c)
-          .join();
-    }
-
+    final output = applyTr(await file.readAsString(), invocation);
     return Ok(
       StageResult(stdout: utf8.encode(output), stderr: const [], exitCode: 0),
     );
-  }
-
-  /// Expands POSIX character classes (`[:lower:]`) and ranges (`a-z`) used by
-  /// the `tr` builtin.
-  List<String> _expandTrSet(String set) {
-    final result = <String>[];
-    var i = 0;
-    while (i < set.length) {
-      if (set.startsWith('[:lower:]', i)) {
-        result.addAll('abcdefghijklmnopqrstuvwxyz'.split(''));
-        i += 9;
-        continue;
-      }
-      if (set.startsWith('[:upper:]', i)) {
-        result.addAll('ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split(''));
-        i += 9;
-        continue;
-      }
-      if (set.startsWith('[:digit:]', i)) {
-        result.addAll('0123456789'.split(''));
-        i += 9;
-        continue;
-      }
-      if (set.startsWith('[:alnum:]', i)) {
-        result.addAll(
-          'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
-              .split(''),
-        );
-        i += 9;
-        continue;
-      }
-      if (set.startsWith('[:space:]', i)) {
-        result.addAll(' \t\n\r\f\v'.split(''));
-        i += 9;
-        continue;
-      }
-      if (i + 2 < set.length && set[i + 1] == '-') {
-        final start = set.codeUnitAt(i);
-        final end = set.codeUnitAt(i + 2);
-        for (var c = start; c <= end; c++) {
-          result.add(String.fromCharCode(c));
-        }
-        i += 3;
-        continue;
-      }
-      result.add(set[i]);
-      i++;
-    }
-    return result;
   }
 
   Future<Result<StageResult, ExecutionError>> _xargsBuiltin(
@@ -2465,29 +2332,8 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     if (!await file.exists()) {
       return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
     }
-    final lines = await file.readAsLines();
-
-    String? placeholder;
-    var commandIndex = 0;
-    for (var i = 0; i < stage.args.length; i++) {
-      final arg = stage.args[i];
-      if (arg.startsWith('-I')) {
-        placeholder = arg.length > 2
-            ? arg.substring(2)
-            : (i + 1 < stage.args.length ? stage.args[++i] : null);
-        if (placeholder == null || placeholder.isEmpty) placeholder = '{}';
-        commandIndex = i + 1;
-        continue;
-      }
-      if (arg.startsWith('-')) {
-        commandIndex = i + 1;
-        continue;
-      }
-      commandIndex = i;
-      break;
-    }
-
-    if (commandIndex >= stage.args.length) {
+    final plan = parseXargsArgs(stage.args);
+    if (plan.commandIndex >= stage.args.length) {
       return Ok(
         StageResult(
           stdout: const [],
@@ -2496,37 +2342,20 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         ),
       );
     }
-
-    final command = stage.args[commandIndex];
-    final initialArgs = stage.args.sublist(commandIndex + 1);
-
+    final command = stage.args[plan.commandIndex];
+    final initialArgs = stage.args.sublist(plan.commandIndex + 1);
+    final invocations = xargsInvocations(
+      initialArgs,
+      await file.readAsLines(),
+      plan.placeholder,
+    );
     final stdout = <int>[];
     final stderr = <int>[];
     var exitCode = 0;
-
-    if (placeholder != null) {
-      final ph = placeholder;
-      for (final line in lines) {
-        final args = initialArgs.map((a) => a.replaceAll(ph, line)).toList();
-        final result = await _runCommand(
-          command: command,
-          args: args,
-          options: options,
-          inputSource: null,
-          captureStdout: true,
-          captureStderr: true,
-        );
-        if (result.isErr) return result;
-        final data = result.valueOrNull!;
-        stdout.addAll(data.stdout);
-        stderr.addAll(data.stderr);
-        if (data.exitCode != 0) exitCode = data.exitCode;
-      }
-    } else {
-      final allArgs = [...initialArgs, ...lines];
+    for (final args in invocations) {
       final result = await _runCommand(
         command: command,
-        args: allArgs,
+        args: args,
         options: options,
         inputSource: null,
         captureStdout: true,
@@ -2536,109 +2365,9 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       final data = result.valueOrNull!;
       stdout.addAll(data.stdout);
       stderr.addAll(data.stderr);
-      exitCode = data.exitCode;
+      if (data.exitCode != 0) exitCode = data.exitCode;
     }
-
     return Ok(StageResult(stdout: stdout, stderr: stderr, exitCode: exitCode));
-  }
-}
-
-/// Error thrown by [_TestEvaluator] for malformed `test` expressions.
-final class _TestError implements Exception {
-  _TestError(this.message);
-  final String message;
-}
-
-/// Minimal evaluator for POSIX `test`/`[` expressions.
-final class _TestEvaluator {
-  _TestEvaluator({
-    required this.fileExists,
-    required this.dirExists,
-    required this.fileSize,
-  });
-
-  final Future<bool> Function(String path) fileExists;
-  final Future<bool> Function(String path) dirExists;
-  final Future<int> Function(String path) fileSize;
-
-  late List<String> _args;
-  int _pos = 0;
-
-  Future<bool> evaluate(List<String> args) async {
-    _args = args;
-    _pos = 0;
-    return _parseOr();
-  }
-
-  String? get _peek => _pos < _args.length ? _args[_pos] : null;
-
-  String _advance() {
-    final token = _args[_pos];
-    _pos++;
-    return token;
-  }
-
-  Future<bool> _parseOr() async {
-    var result = await _parseAnd();
-    while (_peek == '-o') {
-      _advance();
-      result = result || await _parseAnd();
-    }
-    return result;
-  }
-
-  Future<bool> _parseAnd() async {
-    var result = await _parseUnary();
-    while (_peek == '-a') {
-      _advance();
-      result = result && await _parseUnary();
-    }
-    return result;
-  }
-
-  Future<bool> _parseUnary() async {
-    if (_peek == '!') {
-      _advance();
-      return !(await _parseUnary());
-    }
-    return _parsePrimary();
-  }
-
-  Future<bool> _parsePrimary() async {
-    final token = _advance();
-    if (token == '(') {
-      final result = await _parseOr();
-      if (_peek != ')') throw _TestError('missing `)`');
-      _advance();
-      return result;
-    }
-    if (token.startsWith('-')) {
-      final path = _advance();
-      switch (token) {
-        case '-e':
-          return await fileExists(path);
-        case '-f':
-          return await fileExists(path) && !await dirExists(path);
-        case '-d':
-          return await dirExists(path);
-        case '-s':
-          return await fileExists(path) && await fileSize(path) > 0;
-        case '-z':
-          return _advance().isEmpty;
-        case '-n':
-          return _advance().isNotEmpty;
-        default:
-          throw _TestError('unsupported unary operator: $token');
-      }
-    }
-    final left = token;
-    final op = _advance();
-    final right = _advance();
-    final result = evalTestBinaryOp(op, left, right);
-    if (result == null) {
-      throw _TestError('unsupported binary operator: $op');
-    }
-    return result;
   }
 }
 
