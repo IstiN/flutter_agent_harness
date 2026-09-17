@@ -3767,4 +3767,14 @@
 - refactor(560): js_app_engine 5 beasts 240/156/72/72/72 -> <=24 (CRAP descent 3/4) (#574)
 - ci(554): publish from a staged package — sub-projects (flutter_app wasm toolchain, yoclip media, browser_ext, office_addin, vendor, packages) blew the pub.dev 100MB cap (v0.1.406: 100.4MB); staged copy is ~32MB with a loud 90MB guard (#571)
 
+## 0.1.409
+
+- refactor(566): settings/onboarding UI cluster — 9 methods 56→24 CRAP, split + covered (#581)
+- refactor(563): wasm_shell tail — 7 surviving methods 56/42/30 -> <=6 CRAP (#594)
+- fix(586): anchor the CodeMie re-auth flow on the root navigator (#593)
+- refactor(567): session services — 9 methods 52→≤24 CRAP (ladder #433) (#582)
+- fix(562): job-board Running count drains after inline-settled jobs (#573)
+- refactor(559): wasm_shell builtins CRAP 272->24 (descent 11, app ratchet 272->210) (#579)
+- fix(578): omit empty summary block from auto-compaction report (#580)
+
 ## Unreleased
