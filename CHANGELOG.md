@@ -3748,6 +3748,14 @@
 
 ## Unreleased
 
+## 0.1.403
+
+- fix(544): boot pipeline created the platform env before binding + wasm runtime — TestFlight build 160 white screen (#545)
+- fix(541): structured-compaction judge SPOF - deterministic fallback + bounded judge input (#543)
+- fix(538): integration suite rot — TUI boot-output race, stale expectations, workflow redaction rot (#542)
+
+## Unreleased
+
 ## Unreleased
 
 ## Unreleased
