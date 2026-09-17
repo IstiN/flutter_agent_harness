@@ -1510,26 +1510,46 @@ jobs:
 
   publish:
     name: Publish to pub.dev
+    runs-on: ubuntu-latest
     needs: [quality-gate, integration]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    timeout-minutes: 10
+    # !cancelled() + explicit gate check — the fa#456 class: GitHub propagates
+    # "skipped" TRANSITIVELY through the always()-quality-gate's needs graph.
+    # Path-gated legs (perf-gate is PR-only) skip on EVERY tag run, so this
+    # job's implicit success() condition force-skipped publish on every tag
+    # since the gate graph grew — quality-gate showed green, publish never
+    # ran, and pub.dev stalled at v0.1.369 for 35 releases (#554). Same fix
+    # pattern as the release/integration/binaries jobs. The release arm
+    # covers tags that only ever fire a release event (the v0.1.370-402 era:
+    # API-created lightweight tags produce no push event, so publish never
+    # even triggered there).
+    if: >-
+      !cancelled() && needs.quality-gate.result == 'success' &&
+      ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'release' && startsWith(github.ref, 'refs/tags/v')))
+    concurrency:
+      # push + release events both fire for PAT-pushed tags; serialize the
+      # double-fire so the loser no-ops on the already-published guard below
+      # instead of racing dart pub publish (version already exists → red).
+      group: publish-${{ github.ref }}
+      cancel-in-progress: false
     permissions:
       id-token: write # OIDC — pub.dev verifies the GitHub identity, no secrets
       contents: read
     steps:
       - uses: actions/checkout@v4
 
-      # The core package is currently marked private in pubspec.yaml
-      # (publish_to: none) — honor that instead of failing every tag.
-      # Removing the flag from pubspec is all it takes to re-enable this.
+      # A tag is a release announcement: if pubspec says publish_to: none,
+      # failing LOUDLY is correct (#554) — a green skip is how pub.dev went
+      # 35 versions stale unnoticed. Removing the flag from pubspec re-enables.
       - id: gate
         name: Publish gate
         run: |
           if grep -Eq '^publish_to:[[:space:]]*none' pubspec.yaml; then
-            echo "publishable=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::pubspec sets publish_to: none — the core package is private, skipping pub.dev publish"
-          else
-            echo "publishable=true" >> "$GITHUB_OUTPUT"
+            echo "::error::pubspec.yaml sets publish_to: none — a tagged release cannot reach pub.dev. Remove the flag from pubspec.yaml, or stop tagging v* releases (see #554)."
+            exit 1
           fi
+          echo "publishable=true" >> "$GITHUB_OUTPUT"
 
       - uses: dart-lang/setup-dart@v1
         if: steps.gate.outputs.publishable == 'true'
@@ -1566,8 +1586,31 @@ jobs:
       - name: Publish (automated publishing via OIDC)
         if: steps.gate.outputs.publishable == 'true'
         run: |
+          pkg=$(grep '^name:' pubspec.yaml | awk '{print $2}')
+          ver="${GITHUB_REF_NAME#v}"
+          served() { curl -fsSL "https://pub.dev/api/packages/$pkg" 2>/dev/null | jq -r '.latest.version' || true; }
+          # The push-run and release-run twins of the same tag both land here
+          # (serialized by the job concurrency group): the loser must see the
+          # version already served and exit green, not fail on a re-upload.
+          if [ "$(served)" = "$ver" ]; then
+            echo "::notice::pub.dev already serves $pkg $ver — nothing to publish"
+            exit 0
+          fi
           dart pub token add https://pub.dev --env-var PUB_TOKEN || true
           dart pub publish --force
+          # Verify the upload actually landed (#554): "publish exited 0 but
+          # pub.dev still serves the old version" is exactly the failure the
+          # daily-verify leg eventually caught after 35 silent releases.
+          ok=""
+          for i in 1 2 3 4 5; do
+            if [ "$(served)" = "$ver" ]; then ok=1; break; fi
+            sleep 3
+          done
+          if [ -z "$ok" ]; then
+            echo "::error::tag $GITHUB_REF_NAME processed but pub.dev serves '$(served)' — publish did not upload. Manual publish needed (see #554)."
+            exit 1
+          fi
+          echo "pub.dev verified: $pkg $ver"
 
   binaries:
     name: Build native binaries
