@@ -32,6 +32,37 @@ Future<ProjectMountEnv> _envWithHost() async {
 Widget _wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
 
 void main() {
+  group('ProjectFolderChannelOps', () {
+    test('pickResult maps a complete payload to the record', () {
+      expect(
+        ProjectFolderChannelOps.pickResult(const {
+          'path': '/host/repo',
+          'bookmark': 'Ym9va21hcms=',
+        }),
+        (path: '/host/repo', bookmark: 'Ym9va21hcms='),
+      );
+    });
+
+    test('null payloads and incomplete records count as cancel', () {
+      expect(ProjectFolderChannelOps.pickResult(null), isNull);
+      expect(ProjectFolderChannelOps.pickResult(const {}), isNull);
+      expect(ProjectFolderChannelOps.pickResult(const {'path': '/x'}), isNull);
+      expect(
+        ProjectFolderChannelOps.pickResult(const {'bookmark': 'bm='}),
+        isNull,
+      );
+    });
+
+    test('pickDirectory is a no-op off macOS', () async {
+      // The unit-test host has no native handler: unsupported platforms
+      // resolve to null without touching the channel.
+      if (ProjectFolderChannelOps.isSupported) return;
+      const ops = ProjectFolderChannelOps();
+      expect(await ops.pickDirectory(), isNull);
+      expect(await ops.startAccessing('bm='), isFalse);
+    });
+  });
+
   testWidgets('open-folder button mounts and lists the project', (
     tester,
   ) async {

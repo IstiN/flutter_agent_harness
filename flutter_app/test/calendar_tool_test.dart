@@ -257,6 +257,86 @@ void main() {
       );
     });
 
+    test('renders every recurrence shape the platform accepts', () async {
+      final day = DateTime(2026, 7, 25);
+      CalendarRecurrence rule(
+        String frequency, {
+        int interval = 1,
+        List<String>? daysOfWeek,
+        List<int>? daysOfMonth,
+      }) => (
+        frequency: frequency,
+        interval: interval,
+        daysOfWeek: daysOfWeek,
+        daysOfMonth: daysOfMonth,
+        until: null,
+        count: null,
+      );
+      final calendar = FakeCalendarApi(
+        events: [
+          _event(
+            id: 'ev-a',
+            title: 'A',
+            start: day.add(const Duration(hours: 9)),
+            end: day.add(const Duration(hours: 10)),
+            recurrence: rule('daily', interval: 3),
+          ),
+          _event(
+            id: 'ev-b',
+            title: 'B',
+            start: day.add(const Duration(hours: 9)),
+            end: day.add(const Duration(hours: 10)),
+            recurrence: rule('weekly', interval: 2),
+          ),
+          _event(
+            id: 'ev-c',
+            title: 'C',
+            start: day.add(const Duration(hours: 9)),
+            end: day.add(const Duration(hours: 10)),
+            recurrence: rule('monthly', interval: 2, daysOfMonth: const [1, 15]),
+          ),
+          _event(
+            id: 'ev-d',
+            title: 'D',
+            start: day.add(const Duration(hours: 9)),
+            end: day.add(const Duration(hours: 10)),
+            recurrence: rule('yearly'),
+          ),
+          _event(
+            id: 'ev-e',
+            title: 'E',
+            start: day.add(const Duration(hours: 9)),
+            end: day.add(const Duration(hours: 10)),
+            recurrence: rule('monthly', daysOfMonth: const []),
+          ),
+          _event(
+            id: 'ev-f',
+            title: 'F',
+            start: day.add(const Duration(hours: 9)),
+            end: day.add(const Duration(hours: 10)),
+            recurrence: rule('oddly'),
+          ),
+        ],
+      );
+      final tool = calendarEventsTool(calendar);
+
+      final result = await tool.execute(
+        const {'date': '2026-07-25'},
+        null,
+        null,
+      );
+
+      final text = _textOf(result);
+      expect(text, contains('[recurs every 3 days]'));
+      expect(text, contains('[recurs every 2 weeks]'));
+      expect(text, contains('[recurs every 2 months on 1,15]'));
+      expect(text, contains('[recurs yearly]'));
+      expect(text, contains('[recurs monthly]'));
+      // Unknown frequency: only the bare hint renders (platform owns
+      // expansion; no invented label).
+      expect(text, contains('[recurs ]'));
+    });
+
     test('date + days select the requested range', () async {
       final calendar = FakeCalendarApi();
       final tool = calendarEventsTool(calendar);
