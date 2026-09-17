@@ -113,7 +113,12 @@ extension on AgentCli {
     int width,
   ) {
     if (entries.isEmpty) {
-      return const [MenuItem(key: '', label: 'loading models...')];
+      // A filter that matched nothing must surface the picker's
+      // no-matches hint, not a perpetual loading row — the placeholder is
+      // only honest while the first cache refresh is still in flight.
+      return _modelCacheNeedsRefresh
+          ? const [MenuItem(key: '', label: 'loading models...')]
+          : const [];
     }
     final current = _agent.state.model;
     final rows = <ModelRowSpec>[
