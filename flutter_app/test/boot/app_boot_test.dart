@@ -25,7 +25,7 @@ import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/webllm/webllm_types.dart';
 import 'package:fa_browser_agent/fa_browser_agent.dart';
 import 'package:fa_ui/fa_ui.dart';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -65,6 +65,17 @@ final class FakePortChannel implements UiPortChannel {
 Future<void> _pumpUntilSent(FakePortChannel channel, String kind) async {
   for (var i = 0; i < 200 && channel.sentOf(kind) == null; i++) {
     await Future<void>.delayed(Duration.zero);
+  }
+}
+
+/// `true` when the widgets binding is initialized. The `.instance` getter
+/// throws [FlutterError] when it is not, so probe through try/catch.
+bool _flutterBindingInitialized() {
+  try {
+    WidgetsBinding.instance;
+    return true;
+  } on FlutterError {
+    return false;
   }
 }
 
@@ -348,5 +359,38 @@ void main() {
       expect(routes, hasLength(1));
       expect(routes.single.env, same(env));
     });
+
+    test(
+      'run() creates the platform env only after the window stage (#544)',
+      () async {
+        // TestFlight build 160 white-screened because run() awaited
+        // createPlatformEnv() BEFORE bootWindow(): path_provider channels and
+        // the wasm_run FFI the sandbox shell compiles through ran without the
+        // binding. Pin the order — the env factory must observe an
+        // initialized binding, i.e. the window+services stages already ran.
+        var bindingAtEnvCreation = true;
+        final env = MemoryExecutionEnv();
+        final routes = <BootStores>[];
+        await FaAppBoot(
+          routes: (stores, analytics) async {
+            routes.add(stores);
+          },
+          createEnv: () async {
+            bindingAtEnvCreation = _flutterBindingInitialized();
+            return env;
+          },
+        ).run();
+        expect(
+          bindingAtEnvCreation,
+          isTrue,
+          reason:
+              'createPlatformEnv uses plugin channels — the binding and '
+              'the wasm runtime must be up before it runs (white screen '
+              'on TestFlight build 160)',
+        );
+        expect(routes, hasLength(1));
+        expect(routes.single.env, same(env));
+      },
+    );
   });
 }
