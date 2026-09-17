@@ -3760,4 +3760,11 @@
 - ci(554): tag-run publish must never skip silently — fa#456 transitive-skip fix + loud gate + pub.dev post-verify (#556)
 - fix(507): revive the model-picker visual tests (#529)
 
+## 0.1.407
+
+- refactor(564): dap_settings_page 10 methods 56→24 CRAP, split + covered (#576)
+- fix(555): provider-name prompts re-prompt on '?' instead of saving a config-bricking name (#572)
+- refactor(560): js_app_engine 5 beasts 240/156/72/72/72 -> <=24 (CRAP descent 3/4) (#574)
+- ci(554): publish from a staged package — sub-projects (flutter_app wasm toolchain, yoclip media, browser_ext, office_addin, vendor, packages) blew the pub.dev 100MB cap (v0.1.406: 100.4MB); staged copy is ~32MB with a loud 90MB guard (#571)
+
 ## Unreleased
