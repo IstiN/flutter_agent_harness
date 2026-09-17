@@ -51,8 +51,10 @@ class _RecordingLauncher {
   final processes = <_FakeProcess>[];
 
   Future<Process> call(String executable, List<String> arguments) async {
-    if (error != null) throw error!;
+    // Every attempt is recorded, successful or not (#605 asserts the
+    // ENOENT probe happens at most once).
     spawns.add((executable, arguments));
+    if (error != null) throw error!;
     final process = _FakeProcess();
     processes.add(process);
     return process;
@@ -123,6 +125,62 @@ void main() {
       ProcessException('caffeinate', const [], 'No such file'),
     );
     final runner = CaffeinatePowerRunner(pid: 1, launcher: launcher.call);
+    await expectLater(
+      runner.acquire(_options(PowerAssertionLevel.idle)),
+      throwsA(isA<ProcessException>()),
+    );
+  });
+
+  // Issue #605: containers and systemd-less hosts have no systemd-inhibit —
+  // the spawn fails with ENOENT (errno 2). The runner must degrade to a
+  // silent no-op and cache that, never warn after every run.
+  test('systemd-inhibit ENOENT degrades silently, cached (#605)', () async {
+    final launcher = _RecordingLauncher(
+      ProcessException(
+        'systemd-inhibit',
+        const [],
+        'No such file or directory',
+        2, // errno 2 = ENOENT
+      ),
+    );
+    final runner = SystemdInhibitPowerRunner(pid: 1, launcher: launcher.call);
+    final handle = await runner.acquire(_options(PowerAssertionLevel.idle));
+    expect(handle, isA<NoopPowerAssertionHandle>());
+    expect(handle.held, isFalse);
+    expect(handle.description, contains('unavailable'));
+    // The probe result is cached: a later acquire never re-execs.
+    await runner.acquire(_options(PowerAssertionLevel.idle));
+    expect(launcher.spawns, hasLength(1));
+  });
+
+  test('three per-run cycles on an ENOENT host stay silent (#605)', () async {
+    final launcher = _RecordingLauncher(
+      ProcessException(
+        'systemd-inhibit',
+        const [],
+        'No such file or directory',
+        2,
+      ),
+    );
+    final warnings = <String>[];
+    final controller = PowerAssertionController(
+      runner: SystemdInhibitPowerRunner(pid: 1, launcher: launcher.call),
+      level: PowerAssertionLevel.idle,
+      onWarn: warnings.add,
+    );
+    for (var i = 0; i < 3; i++) {
+      controller.onRunStarted();
+      await controller.onRunSettled();
+    }
+    expect(warnings, isEmpty);
+    expect(launcher.spawns, hasLength(1)); // one probe total, then cached
+  });
+
+  test('a non-ENOENT systemd-inhibit failure still propagates', () async {
+    final launcher = _RecordingLauncher(
+      ProcessException('systemd-inhibit', const [], 'Permission denied', 13),
+    );
+    final runner = SystemdInhibitPowerRunner(pid: 1, launcher: launcher.call);
     await expectLater(
       runner.acquire(_options(PowerAssertionLevel.idle)),
       throwsA(isA<ProcessException>()),
