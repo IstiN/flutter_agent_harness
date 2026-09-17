@@ -156,6 +156,8 @@ const builtinSlashCommands = <String, String>{
       'observe, open session',
   '/mail': '[<id>] — deferred messages (btw panels) and their state',
   '/reply': '<id|agent|mailbox> <text> — answer a panel or agent',
+  '/restart':
+      'abort a stalled run and re-run its saved steering as a fresh turn',
   '/model': '<provider/model> — select model (opens selector)',
   '/models': '[filter] | config | set <slot> <model> [baseUrl] | remove <slot>',
   '/model-edit':
