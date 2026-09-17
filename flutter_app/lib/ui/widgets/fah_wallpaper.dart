@@ -29,24 +29,34 @@ class FahWallpaper extends StatelessWidget {
     if (controller == null || store == null) return const SizedBox.shrink();
     return ListenableBuilder(
       listenable: Listenable.merge([controller, store]),
-      builder: (context, _) {
-        final active = store.byId(controller.packId);
-        // E4: the wallpaper outlives a switch to a colors-only pack —
-        // fall back to the last pack that shipped one.
-        final pack =
-            active?.spec.wallpaper != null
-            ? active
-            : store.byId(controller.wallpaperPackId) ?? active;
-        final wallpaper = pack?.spec.wallpaper;
-        final bytes = pack?.wallpaperBytes;
-        if (pack == null || wallpaper == null || bytes == null) {
-          return const SizedBox.shrink();
-        }
-        return Opacity(
-          opacity: wallpaper.opacity,
-          child: Image.memory(bytes, fit: wallpaper.fit),
-        );
-      },
+      builder: (context, _) => _wallpaperLayer(store, controller),
     );
+  }
+
+  /// The painted layer for the resolved pack, or nothing when neither the
+  /// active pack nor the fallback ships a wallpaper with bytes on disk.
+  Widget _wallpaperLayer(ThemePackStore store, ThemeController controller) {
+    final pack = _resolveWallpaperPack(store, controller);
+    final wallpaper = pack?.spec.wallpaper;
+    final bytes = pack?.wallpaperBytes;
+    if (pack == null || wallpaper == null || bytes == null) {
+      return const SizedBox.shrink();
+    }
+    return Opacity(
+      opacity: wallpaper.opacity,
+      child: Image.memory(bytes, fit: wallpaper.fit),
+    );
+  }
+
+  /// E4: the wallpaper outlives a switch to a colors-only pack — the
+  /// active pack's own wallpaper first, else the last pack that shipped
+  /// one, else the active pack (nothing).
+  InstalledThemePack? _resolveWallpaperPack(
+    ThemePackStore store,
+    ThemeController controller,
+  ) {
+    final active = store.byId(controller.packId);
+    if (active?.spec.wallpaper != null) return active;
+    return store.byId(controller.wallpaperPackId) ?? active;
   }
 }

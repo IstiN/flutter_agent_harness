@@ -105,15 +105,19 @@ class _WidgetPublishSheetState extends State<WidgetPublishSheet> {
     }
   }
 
-  bool get _canPublish {
+  /// Connected account + pre-flight clean + submittable form.
+  bool get _canPublish =>
+      widget.account.isConnected && _preflightClean && _formReady;
+
+  /// Pre-flight ran and reported no blockers.
+  bool get _preflightClean {
     final issues = _issues;
-    return widget.account.isConnected &&
-        issues != null &&
-        issues.isEmpty &&
-        _repoController.text.trim().isNotEmpty &&
-        !_publishing &&
-        _result == null;
+    return issues != null && issues.isEmpty;
   }
+
+  /// Repo name present, no publish in flight, no result shown yet.
+  bool get _formReady =>
+      _repoController.text.trim().isNotEmpty && !_publishing && _result == null;
 
   Future<void> _connect() async {
     final connected = await showGithubConnectSheet(
@@ -141,19 +145,19 @@ class _WidgetPublishSheetState extends State<WidgetPublishSheet> {
         });
       }
     } on GithubApiException catch (error) {
-      if (mounted) {
-        setState(() {
-          _publishing = false;
-          _error = error.message;
-        });
-      }
+      _setPublishError(error.message);
     } on Object catch (error) {
-      if (mounted) {
-        setState(() {
-          _publishing = false;
-          _error = error.toString();
-        });
-      }
+      _setPublishError(error.toString());
+    }
+  }
+
+  /// Lands a failed publish back on the form (never when unmounted).
+  void _setPublishError(String message) {
+    if (mounted) {
+      setState(() {
+        _publishing = false;
+        _error = message;
+      });
     }
   }
 
