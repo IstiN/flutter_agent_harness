@@ -160,10 +160,12 @@ factual: paths, commands, invariants — no essays.
   `flutter_app/lib/sandbox/shell_job.dart` — own cwd/vars/capture, shared
   fs). `bash background: true` runs detached with output
   streaming into `.fah/bash_jobs/<id>.log`; `bash_job {status|output|stop}`
-  (write tier) manages them. A settle fires `onSettled` (CLI
-  `_onShellJobSettled`, app `sendText` system-notice) → steered mid-run or a
-  fresh idle turn. A foreground call that consumed the result inline
-  suppresses the notification. Job logs on disk are NOT secret-redacted.
+  (write tier) manages them. A settle fires `onSettled` on every exit —
+  the CLI's terminal bookkeeping (`_onShellJobSettled`: job-board Running
+  count, waiting row) hangs off it (issue #562). The model-facing notice
+  (steered mid-run or a fresh idle turn; app `sendText` system-notice)
+  is skipped when a foreground call consumed the result inline
+  (`suppressSettleNotification`). Job logs on disk are NOT secret-redacted.
 - `lib/src/tools/availability.dart` + `availability_gate.dart` —
   capability-gated tool availability (issue #19): `resolveToolAvailability`
   merges the `tools:` scope stack (global `~/.fah/config.yaml` < project
