@@ -765,7 +765,10 @@ extension AgentCliShellJobSettle on AgentCli {
         '<system-notice>\n'
         'Background shell job ${job.id} finished with exit code '
         '${job.exitCode}.\n'
-        'Command: ${job.command}\n'
+        // Issue #599: the preview, never the multi-line body — this
+        // notice is echoed into the transcript verbatim, and the full
+        // command lives in the job log (right below).
+        'Command: ${shellJobCommandPreview(job.command)}\n'
         'Log: ${job.logPath}\n'
         'Check the result with bash_job (action: output) or by reading the '
         'log file, and act on it when the result was awaited.\n'
