@@ -46,9 +46,96 @@ final class _RecordingService extends AgentService {
 
   AgentConfig? reconfigured;
 
+  /// Test seam for issue #586: fires the service's listeners — the
+  /// incoming-LLM-message event the transcript rebuilds on.
+  void fireLlmMessageEvent() => notifyListeners();
+
   @override
   Future<void> reconfigure(AgentConfig config) async {
     reconfigured = config;
+  }
+}
+
+/// Issue #586 harness: stands in for the transcript's owning surface. The
+/// SSO flow starts from a Builder INSIDE the transcript subtree (the
+/// auth-expired card's Authorize tap); an incoming LLM message event
+/// rebuilds the list and UNMOUNTS that subtree — the flow's context dies
+/// mid-flight, exactly the churn the owner reports ("last message
+/// jumping") while the re-auth is in progress.
+class _TranscriptHost extends StatefulWidget {
+  const _TranscriptHost({
+    required this.done,
+    required this.registry,
+    required this.service,
+    required this.store,
+    required this.authenticate,
+    required this.fetchProjects,
+    required this.models,
+  });
+
+  final Completer<bool> done;
+  final ProviderRegistry registry;
+  final _RecordingService service;
+
+  final LastConnectionStore store;
+  final Future<CodeMieSsoCredentials?> Function(BuildContext, String)
+  authenticate;
+  final Future<List<String>> Function(String, String) fetchProjects;
+  final List<String> models;
+
+  @override
+  State<_TranscriptHost> createState() => _TranscriptHostState();
+}
+
+class _TranscriptHostState extends State<_TranscriptHost> {
+  var _transcriptMounted = true;
+
+  void _onLlmMessageEvent() {
+    if (!mounted) return;
+    // The rebuild replaces the transcript subtree — the context the flow
+    // started from is disposed.
+    setState(() => _transcriptMounted = false);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    // The incoming-LLM-message event rebuilds (and here replaces) the
+    // transcript subtree.
+    widget.service.addListener(_onLlmMessageEvent);
+  }
+
+  @override
+  void dispose() {
+    widget.service.removeListener(_onLlmMessageEvent);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: _transcriptMounted
+          ? Builder(
+              builder: (context) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  unawaited(
+                    runCodemieSsoFlow(
+                      context: context,
+                      registry: widget.registry,
+                      service: widget.service,
+                      lastConnectionStore: widget.store,
+                      orgUrl: 'https://codemie.lab.epam.com',
+                      authenticate: widget.authenticate,
+                      fetchProjects: (_, __) => widget.fetchProjects('', ''),
+                      fetchModels: (_, __) async => widget.models,
+                    ).then(widget.done.complete),
+                  );
+                });
+                return const SizedBox();
+              },
+            )
+          : const SizedBox(),
+    );
   }
 }
 
@@ -602,6 +689,16 @@ void main() {
         .millisecondsSinceEpoch,
   );
 
+  /// Issue #586: the re-auth runs AFTER the access cookie expired — the
+  /// minted token the flow carries is already (or about-to-be) stale.
+  CodeMieSsoCredentials _expiredCredentials() => CodeMieSsoCredentials(
+    cookies: {'codemie_access_token': 'expired.jwt.token'},
+    apiUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+    expiresAt: DateTime.now()
+        .subtract(const Duration(hours: 1))
+        .millisecondsSinceEpoch,
+  );
+
   group('runCodemieSsoFlow — the sequencer over injected hops', () {
     // Pumps the harness (awaited) and wires the flow outcome into [done].
     Future<void> pumpFlow({
@@ -711,5 +808,63 @@ void main() {
       expect(await done.future, isFalse);
       expect(registry.providers, isEmpty);
     });
+  });
+
+  group('runCodemieSsoFlow — issue #586: the prompt outlives transcript churn', () {
+    testWidgets(
+      'an LLM-delta rebuild mid-flow keeps the authorize prompt up until the user acts',
+      (tester) async {
+        final env = MemoryExecutionEnv();
+        final registry = await ProviderRegistry.load(env);
+        final service = _RecordingService(env);
+        final store = LastConnectionStore.inMemory();
+        final done = Completer<bool>();
+        // Holds the flow inside the post-SSO network hop until the churn
+        // has fired — the window where the sheet's context dies.
+        final projectsGate = Completer<List<String>>();
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: _TranscriptHost(
+              done: done,
+              registry: registry,
+              service: service,
+              store: store,
+              authenticate: (_, __) async => _expiredCredentials(),
+              fetchProjects: (_, __) => projectsGate.future,
+              models: const ['m1'],
+            ),
+          ),
+        );
+        await tester.pump(); // flow started; authenticate resolved; in _projectStep
+
+        // The LLM replies mid-flow: the transcript rebuilds and the
+        // subtree owning the flow's context is disposed.
+        service.fireLlmMessageEvent();
+        await tester.pump();
+
+        projectsGate.complete(const []);
+        await tester.pumpAndSettle();
+
+        // The authorize prompt (the model picker — the step that demands
+        // the user's action) must be up, and STAY up while the transcript
+        // keeps rebuilding underneath it.
+        expect(find.text('Connect'), findsOneWidget);
+        await tester.pump();
+        await tester.pump();
+        expect(find.text('Connect'), findsOneWidget);
+
+        // The user acts: the pick lands, the flow completes, the provider
+        // is saved and the service reconfigured.
+        await tester.enterText(find.byType(TextField), 'gpt-x');
+        await tester.tap(find.text('Connect'));
+        await tester.pumpAndSettle();
+
+        expect(await done.future, isTrue);
+        expect(registry.providers.single.modelId, 'gpt-x');
+        expect(service.reconfigured!.modelId, 'gpt-x');
+        expect(store.connection!.modelId, 'gpt-x');
+      },
+    );
   });
 }
