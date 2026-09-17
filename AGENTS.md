@@ -1543,7 +1543,11 @@ in `lib/src/parity/settings_registry.dart` with a comment explaining WHY.
   on wasm_run FFI exports (`xcrun dyld_info -exports` must list
   `_wire_compile_wasm` — Podfiles force-load + `-exported_symbol` +
   `STRIP_STYLE=non-global`, else white screen on TestFlight). Pods cached
-  keyed by `Podfile.lock`.
+  keyed by `Podfile.lock`. The gate proves FFI exports ONLY — a Dart boot
+  crash before the first frame white-screens TestFlight with a green gate
+  (issue #544: build 160, boot refactor created the platform env before
+  `WidgetsFlutterBinding.ensureInitialized`); boot stage order is pinned by
+  `flutter_app/test/boot/app_boot_test.dart`.
 - TestFlight external distribution (issue #239): the `submit_only` lanes
   (driven by build-mobile.yml / build-macos.yml) distribute every build
   straight to the EXTERNAL group — REQUIRED repo variables
