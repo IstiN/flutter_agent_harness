@@ -20,6 +20,10 @@ import 'dart:async';
 import 'dart:math';
 
 import '../env/execution_env.dart';
+// The boot-sweep process-table probe is VM-only infrastructure (`ps` via
+// dart:io); web builds get a stub that always reports "no process table".
+import '../env/process_probe_stub.dart'
+    if (dart.library.io) '../env/process_probe_io.dart';
 
 final Random _shellJobRandom = Random.secure();
 
@@ -245,11 +249,15 @@ Future<({int groups, int processes})> reapOrphanJobGroups({
   const zero = (groups: 0, processes: 0);
   final pids = candidatePids.where((pid) => pid > 1).toSet();
   if (pids.isEmpty) return zero;
-  final listed = await env.exec('ps -ax -o pid=,pgid=');
-  if (listed.isErr) return zero;
+  // The process-table read is infrastructure evidence, never an agent
+  // command: it bypasses [Shell.exec] (and its decorations) so no
+  // phantom `ps` surfaces in the recorded command stream (CI run
+  // 35213198081). The `kill` below stays a real shell action.
+  final listed = await processGroupTableSnapshot();
+  if (listed == null) return zero;
   final livePids = <int>{};
   final groupOf = <int, int>{};
-  for (final line in listed.valueOrNull!.stdout.split('\n')) {
+  for (final line in listed.split('\n')) {
     final cols = line.trim().split(RegExp(r'\s+'));
     if (cols.length < 2) continue;
     final pid = int.tryParse(cols[0]);

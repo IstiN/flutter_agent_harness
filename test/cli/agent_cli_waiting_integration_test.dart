@@ -192,6 +192,47 @@ void main() {
     expect(io.out.toString(), contains('1 stale job entry dropped'));
   });
 
+  test('boot reconcile probes never ride the shell command stream '
+      '(issue #478 CI)', () async {
+    // A recording shell: anything the reconcile executes through the
+    // environment's Shell lands here — CI run 35213198081 caught the
+    // `ps` probes leaking into the recorded `!`-command history this
+    // way. The probes read the process table straight from the OS.
+    final shell = FakeShell();
+    final shellEnv = MemoryExecutionEnv(cwd: '/work', shell: shell);
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: 'test-key',
+        env: shellEnv,
+        sessionRoot: '/sessions',
+        jobs: const JobsConfig(),
+      ),
+      io: io,
+      streamFunction: FakeStreamFunction([textTurn('ok')]).call,
+    );
+    // A previous run left one entry behind: verifying it needs the OS
+    // table (read off-stream), and a pid nothing alive matches is
+    // dropped — while the shell stream stays empty.
+    const dir = '/work';
+    await shellEnv.createDir('$dir/.fah/bash_jobs');
+    await shellEnv.writeFile(
+      '$dir/.fah/bash_jobs/running.json',
+      jsonEncode([
+        {
+          'id': 'sh-ghost',
+          'command': 'sleep 99 & wait',
+          'pid': '424242',
+          'startedAtMs': DateTime.now().millisecondsSinceEpoch,
+        },
+      ]),
+    );
+
+    await cli.waitingCaptureLostJobsForTest();
+    expect(cli.waitingLostJobsForTest, 1);
+    expect(shell.commands, isEmpty);
+  });
+
   test('boot reconcile keeps a live-pid entry (issue #478)', () async {
     final cli = cliFor(FakeStreamFunction([textTurn('ok')]));
     cli.waitingProcessTableForTest = () async =>

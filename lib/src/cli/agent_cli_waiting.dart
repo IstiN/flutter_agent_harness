@@ -162,7 +162,9 @@ final class _WaitingCoordinator {
         for (final entry in entries)
           if (entry.pid != null) entry.pid!,
       ];
-      final table = await _bootProcessTable();
+      // An empty registry has nothing to verify — skip the process probe
+      // entirely (the #517 sweep has no pids to work with either).
+      final table = entries.isEmpty ? null : await _bootProcessTable();
       final staleBefore = _clock().subtract(
         Duration(hours: _cli.config.jobs.staleHours),
       );
@@ -355,8 +357,10 @@ final class _WaitingCoordinator {
     }
   }
 
-  /// Test seam: replaces the boot process probe. Null (default) runs the
-  /// real `ps -ax -o pid=,lstart=` through the environment.
+  /// Test seam: replaces the boot process probe. Null (default) reads
+  /// the real process table straight from the OS (Process.run), outside
+  /// the environment's shell stream — infrastructure evidence, never a
+  /// recorded command.
   Future<_ProcessTable?> Function()? _liveProcesses;
 
   /// The boot process snapshot: the injected seam when a test set one,
@@ -368,11 +372,11 @@ final class _WaitingCoordinator {
   /// pid-reuse guard). Null when the platform cannot report it — entries
   /// are then kept rather than destroyed on unverifiable evidence.
   Future<_ProcessTable?> _probeLiveProcesses() async {
-    final ps = await _cli._env.exec('ps -ax -o pid=,lstart=');
-    if (ps.isErr) return null;
+    final raw = await processTableSnapshot();
+    if (raw == null) return null;
     final pids = <int>{};
     final starts = <int, String>{};
-    for (final line in ps.valueOrNull!.stdout.split('\n')) {
+    for (final line in raw.split('\n')) {
       final trimmed = line.trim();
       final space = trimmed.indexOf(' ');
       if (space <= 0) continue;
@@ -389,9 +393,7 @@ final class _WaitingCoordinator {
   /// but still gets plain liveness checks + the age belt).
   Future<String?> _pidStart(int? pid) async {
     if (pid == null) return null;
-    final ps = await _cli._env.exec('ps -o lstart= -p $pid');
-    final start = ps.valueOrNull?.stdout.trim();
-    return ps.isOk && start != null && start.isNotEmpty ? start : null;
+    return pidStartSnapshot(pid);
   }
 
   /// Whether the entry's owning process is alive: a dead pid is a ghost;

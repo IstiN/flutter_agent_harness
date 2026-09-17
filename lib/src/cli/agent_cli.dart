@@ -181,6 +181,10 @@ import 'paste_image.dart';
 // a stub that always reports unavailable.
 import 'clipboard_reader_stub.dart'
     if (dart.library.io) 'clipboard_reader.dart';
+// Job-registry process probes are VM-only (`ps` via dart:io); web builds
+// get a stub that always reports "no process table".
+import '../env/process_probe_stub.dart'
+    if (dart.library.io) '../env/process_probe_io.dart';
 
 import 'fa_tui_stub.dart' if (dart.library.io) 'fa_tui.dart';
 import 'prompt_templates.dart';
