@@ -63,7 +63,14 @@ grep -qF "$marker" "$notes" || printf '\n%s\n' "$marker" >> "$notes"
 # (GH_TOKEN=RELEASE_PAT in build-macos) so the tag CI fires. A push with
 # the workflow's default github.token would be equally dead — GitHub
 # suppresses events triggered by GITHUB_TOKEN.
-if ! git ls-remote --exit-code origin "refs/tags/$tag" >/dev/null 2>&1; then
+# Gate on the DEFINITE missing verdict (ls-remote --exit-code rc 2):
+# sandboxes without an origin remote fatal with 128 — indeterminable
+# falls through to the plain create path (test fixtures rely on it).
+set +e
+git ls-remote --exit-code origin "refs/tags/$tag" >/dev/null 2>&1
+ls_remote_rc=$?
+set -e
+if [ "$ls_remote_rc" -eq 2 ]; then
   target="${RELEASE_TARGET_SHA:-${GITHUB_SHA:?}}"
   echo "tag $tag missing — creating annotated tag at $target (PAT push, fires tag CI)"
   git fetch origin "$target" --depth=1 2>/dev/null || git fetch origin main --depth=50
