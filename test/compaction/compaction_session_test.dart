@@ -133,6 +133,37 @@ void main() {
         expect(messages, hasLength(4));
       },
     );
+    test(
+      'blank mock summary: the report omits the block (issue #578)',
+      () async {
+        final session = await sessionWithHistory();
+        final fake = _FakeSummarizer([SummarizationResult.success('   \n')]);
+        final manager = CompactionManager(
+          summarize: fake.call,
+          settings: settings,
+        );
+
+        final record = await manager.compactSession(session);
+        expect(record, isNotNull);
+
+        // The pass record carries the blank text exactly as _attempt surfaces
+        // it (`summary: record.summary`) — but the rendered report must show
+        // just the header/token/records lines, never an empty fenced block.
+        final pass = AutoCompactorPass(
+          pass: 1,
+          tokensBefore: record!.tokensBefore,
+          tokensAfter: record.tokensBefore - 100,
+          fallback: 'smol=test',
+          ok: true,
+          summary: record.summary,
+          hiddenRecords: 2,
+          summarizedMessages: 2,
+        );
+        final report = formatCompactionReport(pass, auto: true).join('\n');
+        expect(report, isNot(contains('summary:')));
+        expect(report, isNot(contains('```')));
+      },
+    );
 
     test('empty session: nothing to compact', () async {
       final session = await newSession();

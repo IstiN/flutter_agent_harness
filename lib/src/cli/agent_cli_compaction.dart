@@ -213,9 +213,12 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
 /// before → after, freed count/percent, WHICH ENGINE did the summarizing
 /// (the `smol`/`main` role — review major 3: a report that doesn't name
 /// the engine can't be judged), how many records were hidden vs
-/// summarized, and the summary in a fenced block so the user can eyeball
-/// — and copy — what the transcript was condensed to. Pure;
-/// [_AgentCliCompactionReportPrinter.print] renders it.
+/// summarized, and — when the pass actually wrote summary text — the
+/// summary in a fenced block so the user can eyeball — and copy — what
+/// the transcript was condensed to. A pass with no summary text (all
+/// evictions went to hide, or the model returned blank — issue #578)
+/// omits the block: an empty ```-fence says nothing and reads as a bug.
+/// Pure; [_AgentCliCompactionReportPrinter.print] renders it.
 List<String> formatCompactionReport(
   AutoCompactorPass pass, {
   required bool auto,
@@ -229,16 +232,19 @@ List<String> formatCompactionReport(
       : (freed * 100 / pass.tokensBefore).round();
   final engine = pass.fallback == null ? '' : ' · ${pass.fallback}';
   final passSuffix = pass.pass == 1 ? '' : ' · pass ${pass.pass}';
+  final summary = pass.summary?.trim();
   return [
     '${auto ? 'auto-compacted' : 'compacted'}$engine$passSuffix',
     'tokens: ${pass.tokensBefore} → ${pass.tokensAfter} '
         '($freed freed · $pct%)',
     'records: ${pass.hiddenRecords} hidden · '
         '${pass.summarizedMessages} summarized',
-    'summary:',
-    '```',
-    pass.summary?.trim() ?? '',
-    '```',
+    if (summary != null && summary.isNotEmpty) ...[
+      'summary:',
+      '```',
+      summary,
+      '```',
+    ],
   ];
 }
 
