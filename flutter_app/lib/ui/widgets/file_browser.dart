@@ -50,6 +50,7 @@ class FileBrowser extends StatefulWidget {
     required this.env,
     this.inlinePreview = true,
     this.uploadPicker,
+    this.iCloudSyncService,
     this.maxUploadBatchBytes = kMaxUploadBatchBytes,
     this.fsRevision,
     this.htmlPreviewBuilder,
@@ -68,6 +69,11 @@ class FileBrowser extends StatefulWidget {
   /// File chooser behind the upload button. Defaults to the platform picker
   /// (`null` off the web → the button is hidden); tests inject a fake.
   final UploadPicker? uploadPicker;
+
+  /// iCloud sync backend behind the header's sync button. Defaults to the
+  /// platform service (`null` off macOS/iOS → the button is hidden); tests
+  /// inject a fake (same pattern as [uploadPicker]).
+  final ICloudSyncService? iCloudSyncService;
 
   /// Total-byte cap for one upload batch; oversized batches are refused
   /// with a message before anything is written.
@@ -169,9 +175,9 @@ class _FileBrowserState extends State<FileBrowser> {
 
   /// iCloud sync backend behind the header's sync button; `null` off
   /// macOS/iOS (web/Android), which hides the button. Manual trigger only.
-  late final ICloudSyncService? _iCloudSync = icloudSyncSupported
-      ? createICloudSyncService(widget.env)
-      : null;
+  late final ICloudSyncService? _iCloudSync =
+      widget.iCloudSyncService ??
+      (icloudSyncSupported ? createICloudSyncService(widget.env) : null);
 
   @override
   void initState() {
@@ -310,25 +316,39 @@ class _FileBrowserState extends State<FileBrowser> {
   Future<void> _syncICloud() async {
     final service = _iCloudSync;
     if (service == null) return;
+    await _runSync(service);
+  }
+
+  /// Guarded sync body: availability check, one merge, then the outcome
+  /// snackbar + reload (extracted so [_syncICloud] stays a thin guard).
+  Future<void> _runSync(ICloudSyncService service) async {
     if (!await service.isAvailable()) {
-      if (mounted) _showSnack(context.l10n.filesICloudSyncUnavailable);
+      if (mounted) _showSyncUnavailable();
       return;
     }
     try {
       final report = await service.syncNow();
       if (!mounted) return;
-      _showSnack(
-        context.l10n.filesICloudSyncDone(
-          report.filesCopied,
-          formatFileSize(report.bytesCopied),
-          formatICloudSyncTimestamp(report.syncedAt),
-        ),
-      );
+      _showSyncDone(report);
       await _load();
     } on Object catch (e) {
-      if (mounted) _showSnack(context.l10n.filesICloudSyncFailed(e.toString()));
+      if (mounted) _showSyncFailed(e);
     }
   }
+
+  void _showSyncUnavailable() =>
+      _showSnack(context.l10n.filesICloudSyncUnavailable);
+
+  void _showSyncDone(ICloudSyncReport report) => _showSnack(
+    context.l10n.filesICloudSyncDone(
+      report.filesCopied,
+      formatFileSize(report.bytesCopied),
+      formatICloudSyncTimestamp(report.syncedAt),
+    ),
+  );
+
+  void _showSyncFailed(Object e) =>
+      _showSnack(context.l10n.filesICloudSyncFailed(e.toString()));
 
   /// Picks files and writes them into the currently viewed folder of the
   /// sandbox filesystem, so the agent can work with them right away.

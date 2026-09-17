@@ -257,6 +257,84 @@ void main() {
       expect(find.text('Skip'), findsOneWidget); // gate is past
     });
 
+    testWidgets('without a registry the provider cards are inert', (
+      tester,
+    ) async {
+      await _pumpOnboarding(tester, initialPage: 1);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('OpenRouter'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ProviderEditorPage), findsNothing);
+      expect(find.text('Choose how Fa thinks.'), findsOneWidget);
+    });
+
+    testWidgets('a key-based preset opens the editor and persists the '
+        'provider', (tester) async {
+      final registry = ProviderRegistry.inMemory();
+      final lastConnection = LastConnectionStore.inMemory();
+      await _pumpOnboarding(
+        tester,
+        initialPage: 1,
+        registry: registry,
+        lastConnectionStore: lastConnection,
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('OpenRouter'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ProviderEditorPage), findsOneWidget);
+
+      await tester.enterText(
+        find.widgetWithText(TextField, 'API key (optional)'),
+        'sk-or-test',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
+
+      // Provider + key persisted, the connection saved for the boot
+      // auto-connect, and the flow advanced to the permissions page.
+      expect(registry.providers, hasLength(1));
+      expect(registry.keyFor(registry.providers.single.id), 'sk-or-test');
+      expect(lastConnection.connection?.baseUrl, isNotEmpty);
+      expect(find.text('Give access only when it helps.'), findsOneWidget);
+    });
+
+    testWidgets('cancelling a key-based preset editor keeps the gate', (
+      tester,
+    ) async {
+      final registry = ProviderRegistry.inMemory();
+      await _pumpOnboarding(
+        tester,
+        initialPage: 1,
+        registry: registry,
+        lastConnectionStore: LastConnectionStore.inMemory(),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('OpenRouter'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ProviderEditorPage), findsOneWidget);
+
+      // Back without saving: no provider, still gated on this step — and
+      // the short busy lock releases so a re-tap opens the editor again.
+      await tester.tap(
+        find.descendant(
+          of: find.byType(ProviderEditorPage),
+          matching: find.byType(BackButton),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(ProviderEditorPage), findsNothing);
+      expect(registry.providers, isEmpty);
+      expect(find.text('Choose how Fa thinks.'), findsOneWidget);
+
+      await tester.tap(find.text('OpenRouter'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ProviderEditorPage), findsOneWidget);
+    });
+
     testWidgets('Skip sets the seen flag and reports skipped', (tester) async {
       final store = OnboardingStore.inMemory();
       bool? skippedFlag;
