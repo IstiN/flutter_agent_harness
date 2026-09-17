@@ -66,4 +66,31 @@ void main() {
       expect(catalogProvider('openai-completions'), isNull);
     });
   });
-}
+
+  group('bundledCatalogEndpoints', () {
+    test('is exactly the non-empty endpoints of the enabled providers', () {
+      expect(
+        bundledCatalogEndpoints,
+        enabledProviders()
+            .map((s) => s.defaultBaseUrl)
+            .where((url) => url.isNotEmpty)
+            .toSet(),
+      );
+      // The cli_visual leak guard subtracts this set from real-config
+      // markers: an empty set would flag every hermetic screen that
+      // renders the provider picker with catalog defaults (#508).
+      expect(bundledCatalogEndpoints, isNotEmpty);
+    });
+
+    test('follows the FA_PROVIDERS filter like every picker surface', () {
+      providerFilterEnvOverride = 'dial,codemie';
+      expect(
+        bundledCatalogEndpoints,
+        {
+          providerCatalog['codemie']!.defaultBaseUrl,
+          providerCatalog['dial']!.defaultBaseUrl,
+        },
+      );
+    });
+  });
+ }

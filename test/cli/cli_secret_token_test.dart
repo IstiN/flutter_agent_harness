@@ -175,4 +175,25 @@ void main() {
       expect(granted, isFalse);
     });
   });
-}
+
+  group('bundledCatalogModelIds', () {
+    test('exposes the offline fallback ids the leak guard must subtract',
+        () {
+      // The cli_visual leak guard subtracts this set from real-config
+      // markers: every id the /models offline fallback can render
+      // without user config must be here, or a hermetic screen showing
+      // bundled-catalog content gets flagged (#508).
+      expect(
+        bundledCatalogModelIds,
+        containsAll([
+          'anthropic/claude-sonnet-4', // openrouter
+          'k3', // kimi
+          'claude-sonnet-4-5', // anthropic
+          'gemini-2.5-pro', // google
+          'gpt-4o-mini', // openai
+        ]),
+      );
+      expect(bundledCatalogModelIds, everyElement(isNotEmpty));
+    });
+  });
+ }
