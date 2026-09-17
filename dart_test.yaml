@@ -7,6 +7,11 @@ tags:
     # through the dedicated browser-ext.yml workflow (builds sw/agent.js and
     # supplies Chrome for Testing); ci.yml's tag job excludes it:
     # dart test --tags integration --exclude-tags browser-ext
+  llm:
+    # Real-provider smoke tests (issue #551): hit live provider APIs and need
+    # secrets. They carry `integration` too and run ONLY in the tag-only
+    # provider-smoke job (v* tags) and nightly — every per-PR suite excludes
+    # them: dart test --exclude-tags llm
   io:
     # IO tests use dart:io primitives (local sockets, processes) and are
     # excluded from the default pre-commit gate. Run them with:

@@ -6,92 +6,131 @@ library;
 import 'dart:async';
 import 'dart:io';
 
+import 'package:fa_llm_mock/fa_llm_mock.dart';
 import 'package:test/test.dart';
 
 import 'pty_harness.dart';
 
-/// Non-null when the real config pins provider keys that are absent from
-/// this environment (secure-store-only `apiKeyName`s): the spawned CLI
-/// cannot boot, so every test here is skipped with this reason.
-final String? bootBlocker = _bootBlocker();
-
-String? _bootBlocker() {
-  final config = File('${Platform.environment['HOME']}/.fah/config.yaml');
-  if (!config.existsSync()) return null;
-  final content = config.readAsStringSync();
-  final keyRefs = RegExp(
-    r'apiKeyName:\s*([A-Z0-9_]+)',
-  ).allMatches(content).map((m) => m.group(1)!).toSet();
-  final missing = keyRefs.where((v) => (Platform.environment[v] ?? '').isEmpty);
-  if (missing.isEmpty) return null;
-  return 'config references keys not in the environment: '
-      '${missing.join(', ')}';
-}
-
+/// Issue #551: every leg here is keyless — model turns come from
+/// `MockLlmServer` (scripted FIFO over the OpenAI wire) instead of the real
+/// `~/.fah` config, so the file runs in the per-PR gate and can no longer rot
+/// between releases (the #538 class).
 void main() {
   late Directory tempHome;
+  late Directory workspace;
 
-  setUpAll(() {
-    // Use the real home for provider keys, but a temp dir for session storage.
+  setUp(() {
     tempHome = Directory.systemTemp.createTempSync('fa_subagent_test_');
-    // Copy the real config so providers resolve.
-    final realConfig = File('${Platform.environment['HOME']}/.fah/config.yaml');
-    if (realConfig.existsSync()) {
-      final tempConfig = File('${tempHome.path}/.fah/config.yaml')
-        ..createSync(recursive: true);
-      tempConfig.writeAsStringSync(realConfig.readAsStringSync());
-    }
+    workspace = Directory.systemTemp.createTempSync('fa_subagent_ws_');
+    // Keyless boot config (localhost:9999 is never contacted); mock-LLM tests
+    // repoint baseUrl at their server before spawning.
+    File('${tempHome.path}/.fah/config.yaml')
+      ..createSync(recursive: true)
+      ..writeAsStringSync('''
+provider: openai-completions
+model: test-model
+baseUrl: http://localhost:9999/v1
+mode: code
+approvalMode: yolo
+allowedTools: []
+''');
   });
 
-  tearDownAll(() {
+  tearDown(() {
     tempHome.deleteSync(recursive: true);
+    workspace.deleteSync(recursive: true);
   });
+
+  /// Repoints the boot config at [server] so parent AND subagent model turns
+  /// are served by the same scripted FIFO.
+  void useMockLlm(MockLlmServer server) {
+    final config = File('${tempHome.path}/.fah/config.yaml');
+    config.writeAsStringSync(
+      config.readAsStringSync().replaceFirst(
+            'baseUrl: http://localhost:9999/v1',
+            'baseUrl: ${server.baseUrl}',
+          ),
+    );
+  }
+
+  /// Spawns the CLI in the bare [workspace] — the repo root carries a
+  /// knowledgebase/ whose background tag generator would steal FIFO slots
+  /// from the scripted mock (the fa_cube/headless legs do the same).
+  Future<FaCliHarness> spawnHarness() async {
+    final harness = await FaCliHarness.spawn(
+      workingDirectory: workspace.path,
+      extraEnv: {'HOME': tempHome.path},
+    );
+    harness.startListening();
+    addTearDown(() async => harness.close());
+    return harness;
+  }
 
   test(
-    'task tool spawns a subagent that completes',
-    skip: bootBlocker,
-    timeout: const Timeout(Duration(minutes: 3)),
+    'task tool spawns a subagent that completes (full mock loop)',
+    timeout: const Timeout(Duration(minutes: 2)),
     () async {
-      final harness = await FaCliHarness.spawn(
-        extraEnv: {'HOME': tempHome.path},
-      );
-      harness.startListening();
-      addTearDown(() async => harness.close());
+      // Content-routed script (substring match on the LAST user message):
+      // each request is answered by its own content, so background LLM
+      // noise (memory tag generation, title/summary calls) can never steal
+      // a slot — unmatched traffic degrades to a tolerated mock 500.
+      final script = MockLlmScript.parse('''
+scenarios:
+  - match: "Use the task tool"
+    responses:
+      - toolCall:
+          name: task
+          arguments: >-
+            {"context":"Prove the task loop","tasks":[{"name":"explorer1",
+            "agent":"explore","task":"List the files in the current
+            directory.","background":false}]}
+      - text: "subagent finished: agent://explorer1 reported 3 files"
+  - match: "List the files in the current directory"
+    responses:
+      - text: "subagent-done: 3 files listed"
+  - match: "Existing tags:"
+    responses:
+      - text: ""
+''');
+      final server = await MockLlmServer.start(script: script);
+      addTearDown(server.stop);
+      useMockLlm(server);
+
+      final harness = await spawnHarness();
 
       await harness.waitForBoot();
 
-      // Ask the agent to use the task tool for a simple research task.
       harness.sendText(
-        'Use the task tool with agent "explore" to list the files in the current directory. Reply with the result.',
+        'Use the task tool with agent "explore" to list the files in the '
+        'current directory. Reply with the result.',
       );
       harness.sendEnter();
 
-      // Wait for either a task completion or an error — the agent should
-      // call the task tool which spawns a subagent.
-      try {
-        await harness.waitForText(
-          'agent://',
-          timeout: const Duration(seconds: 120),
-        );
-        // The task tool returns an agent:// reference on completion.
-        expect(harness.screenText, contains('agent://'));
-      } on TimeoutException {
-        // If the model didn't call task tool, that's OK — the test verifies
-        // the infrastructure works, not that a specific model calls a specific
-        // tool. Check for any output indicating a subagent was spawned.
-        expect(
-          harness.screenText,
-          anyOf(contains('task'), contains('agent://'), contains('explore')),
-          reason: 'Expected some subagent activity in the output',
-        );
-      }
+      // Full loop semantics (issue #551 AC): user msg → task tool call →
+      // subagent execution → agent:// result → parent reply. The ✓ task row
+      // proves the spawned subagent ran to completion; the subagent's own
+      // model turn is proven on the wire (chatBodies); the parent's scripted
+      // reply proves the result flowed back into a final turn. (The child's
+      // text itself is captured into the agent:// artifact, not painted.)
+      await harness.waitForText(
+        'agent://',
+        timeout: const Duration(seconds: 60),
+      );
+      await harness.waitForText(
+        'subagent finished',
+        timeout: const Duration(seconds: 30),
+      );
+      final screen = harness.screenText;
+      expect(screen, contains('✓ task · Prove the task loop'));
+      expect(screen, contains('subagent finished: agent://explorer1'));
+      // >= 3 chat round-trips: parent tool-call turn, subagent turn, parent
+      // reply turn (session title/summary calls may add more).
+      expect(server.chatBodies.length, greaterThanOrEqualTo(3));
     },
   );
 
-  test('/agents lists built-in agent types', skip: bootBlocker, () async {
-    final harness = await FaCliHarness.spawn(extraEnv: {'HOME': tempHome.path});
-    harness.startListening();
-    addTearDown(() async => harness.close());
+  test('/agents lists built-in agent types', () async {
+    final harness = await spawnHarness();
 
     await harness.waitForBoot();
     await harness.runSlashCommand('/agents types');
@@ -112,78 +151,66 @@ void main() {
     expect(screen, contains('review'));
   });
 
-  test(
-    '/agents bare shows the live tree with main and children',
-    skip: bootBlocker,
-    () async {
-      // Keyless test-model config (localhost:9999 is never contacted here).
-      final keylessHome = Directory.systemTemp.createTempSync(
-        'fa_agents_tree_',
-      );
-      File('${keylessHome.path}/.fah/config.yaml')
-        ..createSync(recursive: true)
-        ..writeAsStringSync('''
-provider: openai-completions
-model: test-model
-baseUrl: http://localhost:9999/v1
-mode: code
-approvalMode: yolo
-allowedTools: []
+  test('/agents bare shows the live tree with main and children', () async {
+    final harness = await spawnHarness();
+
+    await harness.waitForBoot();
+
+    await harness.runSlashCommand('/agents');
+
+    // TUI picker shows the main orchestrator row (no subagents spawned yet).
+    await harness.waitForText(
+      'main (orchestrator)',
+      timeout: const Duration(seconds: 15),
+    );
+    final screen = harness.screenText;
+    expect(screen, contains('main (orchestrator)'));
+  });
+
+  test('memory_add and memory_search tools are available', () async {
+    // Content-routed script: the parent prompt drives add → search → reply;
+    // the memory package's background tag generator (its prompt carries
+    // "Existing tags:") gets an empty response or a tolerated 500 instead
+    // of stealing a slot.
+    final script = MockLlmScript.parse('''
+scenarios:
+  - match: "Use the memory_add tool"
+    responses:
+      - toolCall:
+          name: memory_add
+          arguments: '{"text": "The project uses Dart 3.12"}'
+      - toolCall:
+          name: memory_search
+          arguments: '{"query": "Dart"}'
+      - text: "memory round-trip complete"
+  - match: "Existing tags:"
+    responses:
+      - text: ""
 ''');
-      addTearDown(() => keylessHome.deleteSync(recursive: true));
+    final server = await MockLlmServer.start(script: script);
+    addTearDown(server.stop);
+    useMockLlm(server);
 
-      final harness = await FaCliHarness.spawn(
-        extraEnv: {'HOME': keylessHome.path},
-      );
-      harness.startListening();
-      addTearDown(() async => harness.close());
+    final harness = await spawnHarness();
 
-      await harness.waitForBoot();
+    await harness.waitForBoot();
 
-      await harness.runSlashCommand('/agents');
+    harness.sendText(
+      'Use the memory_add tool to save this fact: "The project uses Dart '
+      '3.12". Then use memory_search to find it.',
+    );
+    harness.sendEnter();
 
-      // TUI picker shows the main orchestrator row (no subagents spawned yet).
-      await harness.waitForText(
-        'main (orchestrator)',
-        timeout: const Duration(seconds: 15),
-      );
-      final screen = harness.screenText;
-      expect(screen, contains('main (orchestrator)'));
-    },
-  );
-
-  test(
-    'memory_add and memory_search tools are available',
-    skip: bootBlocker,
-    () async {
-      final harness = await FaCliHarness.spawn(
-        extraEnv: {'HOME': tempHome.path},
-      );
-      harness.startListening();
-      addTearDown(() async => harness.close());
-
-      await harness.waitForBoot();
-
-      // Check that memory tools are in the /help output.
-      await harness.runSlashCommand('/help');
-      await harness.waitForOutput(settleMs: 500);
-
-      // The tools should be registered — verify via a direct tool call.
-      harness.sendText(
-        'Use the memory_add tool to save this fact: "The project uses Dart 3.12". Then use memory_search to find it.',
-      );
-      harness.sendEnter();
-
-      // Wait for a response that indicates memory was saved.
-      try {
-        await harness.waitForText(
-          'saved memory',
-          timeout: const Duration(seconds: 60),
-        );
-        expect(harness.screenText, contains('saved memory'));
-      } on TimeoutException {
-        // Model may not call the tool — that's OK for this infrastructure test.
-      }
-    },
-  );
+    // The add row and the search row prove both tool turns executed; the
+    // scripted reply proves the result flowed back into a final turn — the
+    // full loop, not just boot (issue #551 AC).
+    await harness.waitForText(
+      '✓ memory_add',
+      timeout: const Duration(seconds: 30),
+    );
+    await harness.waitForText(
+      'memory round-trip complete',
+      timeout: const Duration(seconds: 30),
+    );
+  });
 }

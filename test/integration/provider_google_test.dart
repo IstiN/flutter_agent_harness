@@ -7,10 +7,11 @@
 /// These tests hit the real Gemini API and require the `GOOGLE_API_KEY`
 /// environment variable; every test skips gracefully when it is unset so
 /// keyless CI/dev runs pass. Prompts are kept tiny and `maxTokens` small to
-/// bound cost. Tagged `integration` and therefore excluded from the
-/// pre-commit gate — run manually with:
-/// `dart test --tags integration`
-@Tags(['integration'])
+/// bound cost. Tagged `integration`+`llm` (real-provider smoke: needs
+/// secrets, runs ONLY in the tag-only provider-smoke job and nightly; every
+/// per-PR suite excludes it via `--exclude-tags llm` — run manually with
+/// `dart test --tags "integration && llm"`).
+@Tags(['integration', 'llm'])
 library;
 
 import 'dart:convert';
