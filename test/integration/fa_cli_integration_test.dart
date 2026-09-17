@@ -545,18 +545,25 @@ void main() {
   });
 }
 
-/// Types `ab`, sends [rawKey], types `cd`, and asserts `cd` landed on a row
-/// BELOW `ab` (a newline was inserted) without submitting the composer.
+/// Types `a{n}b`, sends [rawKey], types `c{n}d`, and asserts `c{n}d` landed
+/// on a row BELOW `a{n}b` (a newline was inserted) without submitting the
+/// composer. Each call gets a UNIQUE numeric marker — earlier variants leave
+/// stale `a…b`/`c…d` rows on the viewport (and loaded CI runners repaint
+/// partial frames), so shared markers make the row measurement race with
+/// history; unique markers can only ever match the CURRENT composer render.
 /// Backspaces the buffer clean afterwards so variants can share one harness.
 Future<void> expectNewline(FaCliHarness harness, String rawKey) async {
-  harness.sendText('ab');
+  _newlineVariant++;
+  final ab = 'a${_newlineVariant}b';
+  final cd = 'c${_newlineVariant}d';
+  harness.sendText(ab);
   await harness.waitForOutput(settleMs: 200);
   harness.sendText(rawKey);
   await harness.waitForOutput(settleMs: 300);
-  harness.sendText('cd');
+  harness.sendText(cd);
   await harness.waitForOutput(settleMs: 300);
-  final abRow = harness.viewportLines.indexWhere((l) => l.contains('ab'));
-  final cdRow = harness.viewportLines.indexWhere((l) => l.contains('cd'));
+  final abRow = harness.viewportLines.indexWhere((l) => l.contains(ab));
+  final cdRow = harness.viewportLines.indexWhere((l) => l.contains(cd));
   expect(
     abRow,
     greaterThanOrEqualTo(0),
@@ -566,21 +573,24 @@ Future<void> expectNewline(FaCliHarness harness, String rawKey) async {
     cdRow,
     greaterThan(abRow),
     reason:
-        '"cd" must land on a row BELOW "ab" (newline inserted), '
+        '"$cd" must land on a row BELOW "$ab" (newline inserted), '
         'got rows ab=$abRow cd=$cdRow for $rawKey',
   );
   expect(
-    harness.screenText.contains('abcd'),
+    harness.screenText.contains('$ab$cd'),
     isFalse,
     reason: 'shift+enter submitted instead of newline for $rawKey',
   );
-  // Reset the input for the next variant: backspace over 'cd', then
-  // over the newline and 'ab'.
-  for (var i = 0; i < 6; i++) {
+  // Reset the input for the next variant: backspace over the tail, then
+  // over the newline and the head (marker-length aware — the variant
+  // number widens the markers as it grows).
+  for (var i = 0; i < ab.length + cd.length + 1; i++) {
     harness.sendBackspace();
   }
   await harness.waitForOutput(settleMs: 150);
 }
+
+int _newlineVariant = 0;
 
 /// Creates a temp HOME with a minimal keyless config (yolo mode so tests
 /// never hit an approval gate).
