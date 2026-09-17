@@ -346,7 +346,7 @@ class AgentCli {
     // settle notifications re-enter the conversation like task completions.
     _shellJobs = ShellJobRegistry(
       env: decoratedEnv,
-      onSettled: _onShellJobSettled,
+      onSettled: AgentCliShellJobSettle(this)._onShellJobSettled,
       onStart: _onShellJobStarted,
       onStaleJobLog: _onStaleJobLog,
     );
@@ -2642,40 +2642,6 @@ class AgentCli {
       _agent.steer(UserMessage.text(digest));
     } else {
       _startRun(digest);
-    }
-  }
-
-  /// Called when a background shell job settles (the same async-result
-  /// flow as task-job completions): a transcript note, then a
-  /// system-notice steered into the running turn or run as a fresh turn
-  /// while idle.
-  void _onShellJobSettled(ShellJobEntry job) {
-    _onShellJobSettledBlock(job);
-    // Event-driven waiting-row leave (issue #450).
-    unawaited(_waiting.jobSettled(job));
-    io.writeln(
-      _style.dim('[bash] ${job.id} exited(${job.exitCode}) — ${job.logPath}'),
-    );
-    if (_exited) return;
-    final message =
-        '<system-notice>\n'
-        'Background shell job ${job.id} finished with exit code '
-        '${job.exitCode}.\n'
-        'Command: ${job.command}\n'
-        'Log: ${job.logPath}\n'
-        'Check the result with bash_job (action: output) or by reading the '
-        'log file, and act on it when the result was awaited.\n'
-        '</system-notice>';
-    // The notice is a persisted user message: echo it into the live
-    // transcript through the same system-notice renderer the replay path
-    // uses (#446), so resume matches live 1:1. Steered messages skip the
-    // composer echo — without this the rows exist only after resume.
-    _tuiController?.sendOutput('$message\n');
-    if (isBusy) {
-      // Mid-run: the steering queue delivers it at the next step boundary.
-      _agent.steer(UserMessage.text(message));
-    } else {
-      _startRun(message);
     }
   }
 
