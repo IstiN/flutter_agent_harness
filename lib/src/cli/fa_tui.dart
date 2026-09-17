@@ -728,10 +728,8 @@ final class FaTuiModel extends Model {
   }
 
   (Model, Cmd?) _updateWithHeartbeat(Msg msg) {
-    if (msg is ScheduledStatusMsg) return _handleScheduledStatus(msg);
-    if (msg is ScheduledTickMsg) return _handleScheduledTick();
-    if (msg is JobBoardMsg) return _handleJobBoard(msg);
-    if (msg is WaitingStatusMsg) return _handleWaitingStatus(msg);
+    final scheduled = _updateScheduled(msg);
+    if (scheduled != null) return scheduled;
     // Output is handled before the exit check so trailing writes (e.g. the
     // 'bye' line from /exit) still render before the program quits; the host
     // sends _QuitRequestedMsg once it has marked exit.
@@ -752,6 +750,18 @@ final class FaTuiModel extends Model {
     }
     if (isExited()) return (this, () => quit());
     return _updateAfterExitCheck(msg);
+  }
+
+  /// Scheduled/waiting dispatch group ([_updateWithHeartbeat] prefix):
+  /// host-pushed count/ETA updates, the minute-boundary tick, the job
+  /// board and the waiting row. Returns `null` when [msg] belongs to a
+  /// later group.
+  (Model, Cmd?)? _updateScheduled(Msg msg) {
+    if (msg is ScheduledStatusMsg) return _handleScheduledStatus(msg);
+    if (msg is ScheduledTickMsg) return _handleScheduledTick();
+    if (msg is JobBoardMsg) return _handleJobBoard(msg);
+    if (msg is WaitingStatusMsg) return _handleWaitingStatus(msg);
+    return null;
   }
 
   /// The scheduled follow-ups indicator is a host push for the count/ETA;

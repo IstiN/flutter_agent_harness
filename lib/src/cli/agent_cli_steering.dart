@@ -301,7 +301,7 @@ extension AgentCliSteering on AgentCli {
     // "your message" copy.
     final saved = queued > 0
         ? '$queued steering ${queued == 1 ? 'message' : 'messages'} '
-            'saved to the session'
+              'saved to the session'
         : 'your message is saved to the session';
     return '⚠ agent stalled — no response for ${minutes}m. '
         '$saved: /restart delivers it into a fresh run, esc aborts';
