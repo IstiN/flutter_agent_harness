@@ -1103,6 +1103,12 @@ class AgentService extends ChangeNotifier
   /// built). The settings Agents section renders the live tree from it.
   SubagentManager? get subagentManager => _subagentManager;
 
+  /// Test-only injection: the lightweight constructor (pre-built agent)
+  /// never builds the messaging fabric, so widget tests that exercise
+  /// subagent surfaces (badge, task list) install a bare manager here.
+  @visibleForTesting
+  set subagentManager(SubagentManager? manager) => _subagentManager = manager;
+
   /// Task tool config (child surface set after registry is built).
   TaskToolConfig? _taskConfig;
 

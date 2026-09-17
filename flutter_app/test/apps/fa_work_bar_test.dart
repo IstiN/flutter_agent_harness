@@ -237,4 +237,80 @@ void main() {
     await tester.pump();
     expect(sent, ['make it purple']);
   });
+
+  testWidgets('status line carries the live agents badge while streaming', (
+    tester,
+  ) async {
+    final service = hungService();
+    // The injected manager makes dispose() touch the messaging-only
+    // `_scheduledMessages` late field the lightweight ctor never builds —
+    // unhook it first.
+    addTearDown(() {
+      service.subagentManager = null;
+      service.dispose();
+    });
+    final manager = SubagentManager(parentSessionId: 'p');
+    service.subagentManager = manager;
+    await tester.runAsync(() async {
+      final a1 = await manager.register(
+        id: 'a1',
+        name: 'one',
+        agentType: 'task',
+        task: 't',
+      );
+      final a2 = await manager.register(
+        id: 'a2',
+        name: 'two',
+        agentType: 'explore',
+        task: 't',
+      );
+      final a3 = await manager.register(
+        id: 'a3',
+        name: 'three',
+        agentType: 'review',
+        task: 't',
+      );
+      final done = await manager.register(
+        id: 'a4',
+        name: 'done',
+        agentType: 'task',
+        task: 't',
+      );
+      a1.status = SubagentStatus.running;
+      a2.status = SubagentStatus.queued;
+      a3.status = SubagentStatus.idle;
+      done.status = SubagentStatus.completed; // terminal — not badgeable
+    });
+    await tester.pumpWidget(
+      MaterialApp(home: Scaffold(body: FaWorkBar(service: service))),
+    );
+    await tester.runAsync(() async {
+      await service.sendText('work');
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    });
+    await tester.pump();
+
+    // Up to 2 live children with elapsed seconds, +N overflow, and the
+    // terminal child never counted.
+    expect(
+      find.textContaining(RegExp(r'agents:task:a1\(\d+s\),')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('+1'), findsOneWidget);
+  });
+
+  testWidgets('badge stays empty without subagents', (tester) async {
+    final service = hungService();
+    addTearDown(service.dispose);
+    await tester.pumpWidget(
+      MaterialApp(home: Scaffold(body: FaWorkBar(service: service))),
+    );
+    await tester.runAsync(() async {
+      await service.sendText('work');
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    });
+    await tester.pump();
+    expect(find.textContaining('agents:'), findsNothing);
+    expect(find.text('Fa is working…'), findsOneWidget);
+  });
 }
