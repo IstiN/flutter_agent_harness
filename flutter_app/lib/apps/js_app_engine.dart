@@ -47,6 +47,14 @@ typedef FaPlatformHandler =
 /// map on every call.
 typedef FaHostKeysSource = Map<String, String> Function();
 
+/// One `home`/`homekit` action handler: resolves the bridge map from the
+/// gated [HomeApi] (see [_homeActions]).
+typedef _HomeAction =
+    Future<Map<String, Object?>> Function(
+      HomeApi api,
+      Map<String, Object?> args,
+    );
+
 /// Theme-pack bridge behind `jsr.fa.theme.list/current/apply` (issue #169).
 /// The host implements it; the apply leg ALWAYS renders a consent prompt —
 /// the security model is "declarative data + user consent per apply", so
@@ -448,33 +456,84 @@ class JsAppEngine {
     Map<String, dynamic> before,
     Map<String, dynamic> after,
   ) {
-    final siblings = _liveByApp[app.id];
+    _broadcastStorageTo(_liveByApp[app.id], before, after);
+  }
+
+  /// The broadcast core: diff [before] → [after], deliver to every
+  /// non-self engine in [siblings] (issue #560 descent: diff computation
+  /// split from the fan-out, both small and unit-testable).
+  void _broadcastStorageTo(
+    Iterable<JsAppEngine>? siblings,
+    Map<String, dynamic> before,
+    Map<String, dynamic> after,
+  ) {
     if (siblings == null || siblings.length < 2) return;
-    final changed = <String, dynamic>{};
-    for (final key in after.keys) {
-      if (!identical(before[key], after[key]) &&
-          jsonEncode(before[key]) != jsonEncode(after[key])) {
-        changed[key] = after[key];
-      }
-    }
-    for (final key in before.keys) {
-      if (!after.containsKey(key)) changed[key] = null;
-    }
+    _deliverStorageChanges(siblings, storageDiff(before, after));
+  }
+
+  void _deliverStorageChanges(
+    Iterable<JsAppEngine> siblings,
+    Map<String, dynamic> changed,
+  ) {
     if (changed.isEmpty) return;
     for (final sibling in siblings) {
-      if (identical(sibling, this)) continue;
-      for (final entry in changed.entries) {
-        unawaited(
-          sibling.callEvent(stateSyncEvent, {
-            'appId': app.id,
-            'key': entry.key,
-            'value': entry.value,
-            'writer': instanceId,
-          }),
-        );
+      if (!identical(sibling, this)) {
+        _sendStateSync(sibling, changed, writer: instanceId);
       }
     }
   }
+
+  /// One fan-out leg: [changed] becomes one `state.sync` event per entry
+  /// on [target] (see [stateSyncEvent] for the protocol shape).
+  void _sendStateSync(
+    JsAppEngine target,
+    Map<String, dynamic> changed, {
+    required String writer,
+  }) {
+    for (final entry in changed.entries) {
+      unawaited(
+        target.callEvent(stateSyncEvent, {
+          'appId': app.id,
+          'key': entry.key,
+          'value': entry.value,
+          'writer': writer,
+        }),
+      );
+    }
+  }
+
+  /// Keys whose value differs between [before] and [after], mapped to the
+  /// NEW value; keys removed in [after] map to null. Values compare by
+  /// JSON encoding, so a mutated nested map counts as changed and a fresh
+  /// deep-equal instance does not (issue #560 descent: the pure core of
+  /// the storage sync, shared by the live broadcast and the boot replay).
+  @visibleForTesting
+  static Map<String, dynamic> storageDiff(
+    Map<String, dynamic> before,
+    Map<String, dynamic> after,
+  ) {
+    final changed = _changedStorageValues(before, after);
+    for (final key in before.keys) {
+      if (!after.containsKey(key)) changed[key] = null;
+    }
+    return changed;
+  }
+
+  static Map<String, dynamic> _changedStorageValues(
+    Map<String, dynamic> before,
+    Map<String, dynamic> after,
+  ) {
+    final changed = <String, dynamic>{};
+    for (final key in after.keys) {
+      if (!_sameStorageValue(before[key], after[key])) {
+        changed[key] = after[key];
+      }
+    }
+    return changed;
+  }
+
+  static bool _sameStorageValue(Object? a, Object? b) =>
+      identical(a, b) || jsonEncode(a) == jsonEncode(b);
 
   /// Delivers this engine the storage changes OTHERS persisted while this
   /// instance was still booting (see [_start]). `writer: 'boot'` marks the
@@ -485,27 +544,10 @@ class JsAppEngine {
     try {
       final baseline = _lastPersistedStorage ?? const {};
       final latest = await _readStorageFile();
-      final changed = <String, dynamic>{};
-      for (final key in latest.keys) {
-        if (jsonEncode(baseline[key]) != jsonEncode(latest[key])) {
-          changed[key] = latest[key];
-        }
-      }
-      for (final key in baseline.keys) {
-        if (!latest.containsKey(key)) changed[key] = null;
-      }
+      final changed = storageDiff(baseline, latest);
       if (changed.isEmpty) return;
       _lastPersistedStorage = Map<String, dynamic>.of(latest);
-      for (final entry in changed.entries) {
-        unawaited(
-          callEvent(stateSyncEvent, {
-            'appId': app.id,
-            'key': entry.key,
-            'value': entry.value,
-            'writer': 'boot',
-          }),
-        );
-      }
+      _sendStateSync(this, changed, writer: 'boot');
     } on Object {
       // Best-effort: the next live broadcast (or a restart) re-syncs.
     }
@@ -887,7 +929,7 @@ Object.defineProperty(jsr, 'onBack', {
     if (method == 'llm') {
       return [(role: 'user', content: (args['prompt'] ?? '').toString())];
     }
-    return _parseLlmMessages(args['messages']);
+    return parseLlmMessages(args['messages']);
   }
 
   Future<Object?> _faLlmStream(
@@ -1130,8 +1172,8 @@ Object.defineProperty(jsr, 'onBack', {
     if (name.isEmpty) throw StateError('name is required');
     final id = await api.createContact(
       name: name,
-      phones: _stringListArg(args, 'phones'),
-      emails: _stringListArg(args, 'emails'),
+      phones: stringListArg(args, 'phones'),
+      emails: stringListArg(args, 'emails'),
       note: args['note']?.toString(),
     );
     return {'id': id};
@@ -1149,8 +1191,8 @@ Object.defineProperty(jsr, 'onBack', {
     await api.updateContact(
       id: id,
       name: args['name']?.toString(),
-      phones: _stringListArg(args, 'phones'),
-      emails: _stringListArg(args, 'emails'),
+      phones: stringListArg(args, 'phones'),
+      emails: stringListArg(args, 'emails'),
       note: args['note']?.toString(),
     );
     return {'updated': true};
@@ -1216,22 +1258,24 @@ Object.defineProperty(jsr, 'onBack', {
   }
 
   /// Reads a string-list bridge argument: a JSON list, or a single
-  /// comma-separated string. Null when absent/empty.
-  static List<String>? _stringListArg(Map<String, Object?> args, String key) {
+  /// comma-separated string. Null when absent/empty (issue #560 descent:
+  /// public for the direct unit tests, production callers are in-library).
+  @visibleForTesting
+  static List<String>? stringListArg(Map<String, Object?> args, String key) {
     final raw = args[key];
-    final items = <String>[];
-    if (raw is List) {
-      for (final item in raw) {
-        final text = item.toString().trim();
-        if (text.isNotEmpty) items.add(text);
-      }
-    } else if (raw != null) {
-      for (final part in raw.toString().split(',')) {
-        final text = part.trim();
-        if (text.isNotEmpty) items.add(text);
-      }
-    }
+    if (raw == null) return null;
+    final items = _stringList(raw is List ? raw : raw.toString().split(','));
     return items.isEmpty ? null : items;
+  }
+
+  /// The trimmed non-empty strings of [items].
+  static List<String> _stringList(Iterable<Object?> items) {
+    final out = <String>[];
+    for (final item in items) {
+      final text = item.toString().trim();
+      if (text.isNotEmpty) out.add(text);
+    }
+    return out;
   }
 
   /// The permission gate every `jsr.fa.contacts.*` bridge call shares:
@@ -1307,126 +1351,200 @@ Object.defineProperty(jsr, 'onBack', {
   ) async {
     final api = await _gatedHome();
     try {
-      switch (action) {
-        case 'homes':
-          final homes = await api.listHomes();
-          AppLog.i('home', 'bridge homes → ${homes.length}');
-          return {
-            'homes': [
-              for (final home in homes)
-                {
-                  'id': home.id,
-                  'name': home.name,
-                  'primary': home.primary,
-                  'roomCount': home.roomCount,
-                  'accessoryCount': home.accessoryCount,
-                },
-            ],
-          };
-        case 'rooms':
-          final rooms = await api.listRooms(
-            homeId: _optionalString(args, 'homeId'),
-          );
-          AppLog.i('home', 'bridge rooms → ${rooms.length}');
-          return {
-            'rooms': [
-              for (final room in rooms)
-                {
-                  'id': room.id,
-                  'name': room.name,
-                  'homeName': room.homeName,
-                  'accessoryCount': room.accessoryCount,
-                },
-            ],
-          };
-        case 'list':
-          final accessories = await api.listAccessories(
-            homeId: _optionalString(args, 'homeId'),
-            roomId: _optionalString(args, 'roomId'),
-          );
-          AppLog.i('home', 'bridge list → ${accessories.length} accessories');
-          return {
-            'accessories': [
-              for (final accessory in accessories) _homeAccessoryMap(accessory),
-            ],
-          };
-        case 'read':
-          return {
-            'accessory': _homeAccessoryMap(
-              await api.readAccessory(id: _requiredId(args)),
-            ),
-          };
-        case 'write':
-          final id = _requiredId(args);
-          final type = (args['type'] ?? '').toString();
-          if (type.isEmpty) throw StateError('type is required');
-          final value = args['value'];
-          if (value == null) throw StateError('value is required');
-          await api.writeCharacteristic(
-            id: id,
-            type: type,
-            value: value,
-            name: _optionalString(args, 'name'),
-            room: _optionalString(args, 'room'),
-          );
-          return {'written': true};
-        case 'scenes':
-          final scenes = await api.listScenes(
-            homeId: _optionalString(args, 'homeId'),
-          );
-          AppLog.i('home', 'bridge scenes → ${scenes.length}');
-          return {
-            'scenes': [
-              for (final scene in scenes)
-                {
-                  'id': scene.id,
-                  'name': scene.name,
-                  'homeName': scene.homeName,
-                  'actionCount': scene.actionCount,
-                  'executing': scene.executing,
-                },
-            ],
-          };
-        case 'executeScene':
-          await api.executeScene(id: _requiredId(args));
-          return {'executed': true};
-        case 'setPower':
-          final id = _requiredId(args);
-          final on = args['on'] == true;
-          await api.setPower(
-            id: id,
-            on: on,
-            name: _optionalString(args, 'name'),
-            room: _optionalString(args, 'room'),
-          );
-          return {'on': on};
-        case 'setBrightness':
-          final id = _requiredId(args);
-          final value = homeBrightness(args['value'] as num?);
-          await api.setBrightness(
-            id: id,
-            value: value,
-            name: _optionalString(args, 'name'),
-            room: _optionalString(args, 'room'),
-          );
-          return {'brightness': value};
-        case 'setTemperature':
-          final id = _requiredId(args);
-          final celsius = homeTemperature(args['celsius'] as num?);
-          await api.setTargetTemperature(
-            id: id,
-            celsius: celsius,
-            name: _optionalString(args, 'name'),
-            room: _optionalString(args, 'room'),
-          );
-          return {'temperature': celsius};
-        default:
-          throw StateError('unknown home action "$action"');
-      }
+      final handler = _homeActions[action];
+      if (handler == null) throw StateError('unknown home action "$action"');
+      return await handler(api, args);
     } on Object catch (error) {
       AppLog.i('home', 'bridge $action failed: $error');
       rethrow;
     }
+  }
+
+  /// Test seam over [_homeCall]: the host-side dispatcher runs against an
+  /// injected [HomeApi] without a live JS engine, so every per-action
+  /// handler stays covered on runners where the live-engine suite is
+  /// skip-guarded (see the engine test's `_engineSkip`).
+  @visibleForTesting
+  Future<Map<String, Object?>> homeCallForTest(
+    String action,
+    Map<String, Object?> args,
+  ) => _homeCall(action, args);
+
+  /// The `home.<action>` route table (issue #560 descent): each action is
+  /// one small handler below; the map keeps [_homeCall] a pure dispatcher,
+  /// mirroring the [_faHandlers] pattern. `homekit.*` aliases route here
+  /// through the same table.
+  late final Map<String, _HomeAction> _homeActions = {
+    'homes': _homeHomes,
+    'rooms': _homeRooms,
+    'list': _homeList,
+    'read': _homeRead,
+    'write': _homeWrite,
+    'scenes': _homeScenes,
+    'executeScene': _homeExecuteScene,
+    'setPower': _homeSetPower,
+    'setBrightness': _homeSetBrightness,
+    'setTemperature': _homeSetTemperature,
+  };
+
+  Future<Map<String, Object?>> _homeHomes(
+    HomeApi api,
+    Map<String, Object?> args,
+  ) async {
+    final homes = await api.listHomes();
+    AppLog.i('home', 'bridge homes → ${homes.length}');
+    return {
+      'homes': [
+        for (final home in homes)
+          {
+            'id': home.id,
+            'name': home.name,
+            'primary': home.primary,
+            'roomCount': home.roomCount,
+            'accessoryCount': home.accessoryCount,
+          },
+      ],
+    };
+  }
+
+  Future<Map<String, Object?>> _homeRooms(
+    HomeApi api,
+    Map<String, Object?> args,
+  ) async {
+    final rooms = await api.listRooms(homeId: _optionalString(args, 'homeId'));
+    AppLog.i('home', 'bridge rooms → ${rooms.length}');
+    return {
+      'rooms': [
+        for (final room in rooms)
+          {
+            'id': room.id,
+            'name': room.name,
+            'homeName': room.homeName,
+            'accessoryCount': room.accessoryCount,
+          },
+      ],
+    };
+  }
+
+  Future<Map<String, Object?>> _homeList(
+    HomeApi api,
+    Map<String, Object?> args,
+  ) async {
+    final accessories = await api.listAccessories(
+      homeId: _optionalString(args, 'homeId'),
+      roomId: _optionalString(args, 'roomId'),
+    );
+    AppLog.i('home', 'bridge list → ${accessories.length} accessories');
+    return {
+      'accessories': [
+        for (final accessory in accessories) _homeAccessoryMap(accessory),
+      ],
+    };
+  }
+
+  Future<Map<String, Object?>> _homeRead(
+    HomeApi api,
+    Map<String, Object?> args,
+  ) async {
+    return {
+      'accessory': _homeAccessoryMap(
+        await api.readAccessory(id: _requiredId(args)),
+      ),
+    };
+  }
+
+  Future<Map<String, Object?>> _homeWrite(
+    HomeApi api,
+    Map<String, Object?> args,
+  ) async {
+    final id = _requiredId(args);
+    final type = (args['type'] ?? '').toString();
+    if (type.isEmpty) throw StateError('type is required');
+    final value = args['value'];
+    if (value == null) throw StateError('value is required');
+    await api.writeCharacteristic(
+      id: id,
+      type: type,
+      value: value,
+      name: _optionalString(args, 'name'),
+      room: _optionalString(args, 'room'),
+    );
+    return {'written': true};
+  }
+
+  Future<Map<String, Object?>> _homeScenes(
+    HomeApi api,
+    Map<String, Object?> args,
+  ) async {
+    final scenes = await api.listScenes(
+      homeId: _optionalString(args, 'homeId'),
+    );
+    AppLog.i('home', 'bridge scenes → ${scenes.length}');
+    return {
+      'scenes': [
+        for (final scene in scenes)
+          {
+            'id': scene.id,
+            'name': scene.name,
+            'homeName': scene.homeName,
+            'actionCount': scene.actionCount,
+            'executing': scene.executing,
+          },
+      ],
+    };
+  }
+
+  Future<Map<String, Object?>> _homeExecuteScene(
+    HomeApi api,
+    Map<String, Object?> args,
+  ) async {
+    await api.executeScene(id: _requiredId(args));
+    return {'executed': true};
+  }
+
+  Future<Map<String, Object?>> _homeSetPower(
+    HomeApi api,
+    Map<String, Object?> args,
+  ) async {
+    final id = _requiredId(args);
+    final on = args['on'] == true;
+    await api.setPower(
+      id: id,
+      on: on,
+      name: _optionalString(args, 'name'),
+      room: _optionalString(args, 'room'),
+    );
+    return {'on': on};
+  }
+
+  Future<Map<String, Object?>> _homeSetBrightness(
+    HomeApi api,
+    Map<String, Object?> args,
+  ) async {
+    final id = _requiredId(args);
+    final value = homeBrightness(args['value'] as num?);
+    await api.setBrightness(
+      id: id,
+      value: value,
+      name: _optionalString(args, 'name'),
+      room: _optionalString(args, 'room'),
+    );
+    return {'brightness': value};
+  }
+
+  Future<Map<String, Object?>> _homeSetTemperature(
+    HomeApi api,
+    Map<String, Object?> args,
+  ) async {
+    final id = _requiredId(args);
+    final celsius = homeTemperature(args['celsius'] as num?);
+    await api.setTargetTemperature(
+      id: id,
+      celsius: celsius,
+      name: _optionalString(args, 'name'),
+      room: _optionalString(args, 'room'),
+    );
+    return {'temperature': celsius};
   }
 
   /// One accessory as the bridge map: the flat conveniences plus the full
@@ -1812,25 +1930,30 @@ Object.defineProperty(jsr, 'onBack', {
 
   /// Validates the `messages` argument of `llm.chat`/`llm.stream`:
   /// `[{role: 'user'|'assistant'|'system', content: '...'}]`.
-  static List<FaLlmMessage> _parseLlmMessages(Object? raw) {
+  @visibleForTesting
+  static List<FaLlmMessage> parseLlmMessages(Object? raw) {
     if (raw is! List) {
       throw StateError('messages must be a list of {role, content} objects');
     }
-    final messages = <FaLlmMessage>[];
-    for (final entry in raw) {
-      if (entry is! Map) {
-        throw StateError('each message must be a {role, content} object');
-      }
-      final role = (entry['role'] ?? '').toString();
-      if (role != 'user' && role != 'assistant' && role != 'system') {
-        throw StateError(
-          'unsupported message role "$role" (user/assistant/system)',
-        );
-      }
-      messages.add((role: role, content: (entry['content'] ?? '').toString()));
-    }
+    final messages = [for (final entry in raw) _parseLlmMessage(entry)];
     if (messages.isEmpty) throw StateError('messages must not be empty');
     return messages;
+  }
+
+  /// One validated message: the role must be one of the three supported
+  /// ones; content coerces to a string (null → '').
+  static FaLlmMessage _parseLlmMessage(Object? entry) {
+    if (entry is! Map) {
+      throw StateError('each message must be a {role, content} object');
+    }
+    final role = (entry['role'] ?? '').toString();
+    const roles = {'user', 'assistant', 'system'};
+    if (!roles.contains(role)) {
+      throw StateError(
+        'unsupported message role "$role" (user/assistant/system)',
+      );
+    }
+    return (role: role, content: (entry['content'] ?? '').toString());
   }
 
   String _denied(String what) =>
