@@ -611,16 +611,7 @@ final class CliConfig {
       buffer.write(toolsConfig.toYaml());
     }
     buffer.write(_redactYaml());
-    if (compactionEngine != null || compactionJudgeBudgetSeconds != null) {
-      final section = <String>[];
-      if (compactionEngine != null) {
-        section.add('  engine: ${compactionEngine!.value}');
-      }
-      if (compactionJudgeBudgetSeconds != null) {
-        section.add('  judgeBudgetSeconds: $compactionJudgeBudgetSeconds');
-      }
-      buffer.write('compaction:\n${section.join('\n')}\n');
-    }
+    buffer.write(_compactionYaml());
     if (wireDump) buffer.write('trajectory:\n  wireDump: true\n');
     if (images != null) buffer.write(_imagesYaml());
     if (contextWindowCap != null) {
@@ -635,6 +626,20 @@ final class CliConfig {
     }
     buffer.write(_powerYaml());
     return buffer.toString();
+  }
+
+  /// The `compaction:` section, only when explicitly configured; defaults
+  /// are never written so the file stays minimal.
+  String _compactionYaml() {
+    final engine = compactionEngine;
+    final judgeBudgetSeconds = compactionJudgeBudgetSeconds;
+    if (engine == null && judgeBudgetSeconds == null) return '';
+    final section = <String>[
+      if (engine != null) '  engine: ${engine.value}',
+      if (judgeBudgetSeconds != null)
+        '  judgeBudgetSeconds: $judgeBudgetSeconds',
+    ];
+    return 'compaction:\n${section.join('\n')}\n';
   }
 
   /// The `power:` section (issue #325), only when sleep prevention or hold

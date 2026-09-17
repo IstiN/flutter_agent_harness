@@ -347,20 +347,16 @@ final class StructuredCompactor {
     for (var i = 0; i < tailStart && freed < over; i++) {
       final entry = ledger.entries[i];
       if (entry.exempt || ids.contains(entry.recordId)) continue;
+      // Pair integrity (#85/D6): a group hides whole or never — the
+      // veto lives in the token helper below.
       final group = ledger.groupOf(entry.recordId);
-      // Pair integrity (#85/D6): a group hides whole or never — any
-      // member reaching into the protected tail vetoes the group.
-      var safe = true;
-      var groupTokens = 0;
-      for (final id in group) {
-        final idx = indexById[id];
-        if (idx == null || idx >= tailStart) {
-          safe = false;
-          break;
-        }
-        groupTokens += ledger.entries[idx].tokens;
-      }
-      if (!safe) continue;
+      final groupTokens = _hideableGroupTokens(
+        ledger,
+        group,
+        indexById,
+        tailStart,
+      );
+      if (groupTokens == null) continue;
       ids.addAll(group);
       freed += groupTokens;
     }
@@ -404,6 +400,22 @@ final class StructuredCompactor {
       if (entry.tokens > largest.tokens) largest = entry;
     }
     return '[${largest.seq}] ${largest.kind} ~${largest.tokens}tok';
+  }
+
+  /// Returns the group's token weight, or null when vetoed.
+  int? _hideableGroupTokens(
+    ContextLedger ledger,
+    Iterable<String> group,
+    Map<String, int> indexById,
+    int tailStart,
+  ) {
+    var groupTokens = 0;
+    for (final id in group) {
+      final idx = indexById[id];
+      if (idx == null || idx >= tailStart) return null;
+      groupTokens += ledger.entries[idx].tokens;
+    }
+    return groupTokens;
   }
 
   /// The named judge-timeout error (issue #541 AC3): role, model and
