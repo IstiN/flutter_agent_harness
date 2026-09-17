@@ -35,6 +35,7 @@ import 'judge.dart';
 import 'ledger.dart';
 import 'markers.dart';
 import 'projection.dart';
+import '../../exceptions.dart' show CompactionException;
 
 /// Progress surface for the structured engine.
 abstract interface class StructuredCompactorHooks {
@@ -110,6 +111,7 @@ final class StructuredCompactor {
     this.cancelToken,
     this.budgetSource,
     this.attemptBudget = const Duration(seconds: 90),
+    this.judgeTarget = 'role=default',
   });
 
   /// The session being compacted.
@@ -163,6 +165,17 @@ final class StructuredCompactor {
   /// a named [TimeoutException] fails the run.
   final Duration attemptBudget;
 
+  /// Who the judge call talks to, for the named failure line (issue
+  /// #541 AC3): `role=smol, model=kimi-k2 @ gate.example.ai` — a dead
+  /// judge must never surface as an anonymous TimeoutException.
+  final String judgeTarget;
+
+  /// Consecutive judge failures before the deterministic fallback hide
+  /// engages (issue #541): one retry, then the judge-less hide.
+  static const int _judgeFallbackAfter = 2;
+
+  int _consecutiveJudgeFailures = 0;
+
   /// The token passed into every LLM call: the budget source when the
   /// factory provided one, else the plain external [cancelToken].
   CancelToken? get _effectiveToken => budgetSource?.token ?? cancelToken;
@@ -204,6 +217,7 @@ final class StructuredCompactor {
       );
 
   Future<bool> _runHidePasses(int trigger) async {
+    _consecutiveJudgeFailures = 0;
     for (var i = 0; i < maxHidePasses; i++) {
       final before = _requestTokens();
       if (before <= trigger) return true;
@@ -211,19 +225,29 @@ final class StructuredCompactor {
       if (view == null) return true;
       if (_hideableEntries(view.ledger).isEmpty) break;
 
-      final answer = await judge(view.ledger.render()).timeout(
-        attemptBudget,
-        onTimeout: () {
-          final timeout = _budgetTimeout('hide judge', attemptBudget);
-          budgetSource?.cancel(timeout);
-          throw timeout;
-        },
-      );
-      // F1: a failed or empty judge answer is a NO-OP — never an empty
-      // hide list, never hide-everything.
-      if (answer == null) break;
-      final picks = parseHidePicks(answer);
-      if (picks == null || picks.isEmpty) break;
+      final call = await _callJudge(view);
+      if (call.failure != null) {
+        // F1: a failed judge call hides nothing — but since #541 it is
+        // COUNTED, not fatal: one retry, then the deterministic
+        // judge-less hide, so a dead judge can no longer brick the run.
+        if (!await _registerJudgeFailure(trigger, call.failure!)) break;
+        continue;
+      }
+      final picks = parseHidePicks(call.answer!);
+      if (picks == null) {
+        // A garbage answer decided nothing — a failure like any other.
+        if (!await _registerJudgeFailure(
+          trigger,
+          const CompactionException(
+            'hide judge returned an unparseable answer',
+          ),
+        )) {
+          break;
+        }
+        continue;
+      }
+      _consecutiveJudgeFailures = 0;
+      if (picks.isEmpty) break;
       final ids = validateHidePicks(
         picks,
         view.ledger,
@@ -246,6 +270,161 @@ final class StructuredCompactor {
     }
     return true;
   }
+
+  /// One judge call under the attempt budget (issue #515). A budget
+  /// expiry cancels the budget token — aborting the wedged provider
+  /// call — but since #541 it is a JUDGE failure, not a run failure:
+  /// the caller counts it and falls toward the deterministic hide.
+  Future<({String? answer, Object? failure})> _callJudge(
+    _LedgerView view,
+  ) async {
+    try {
+      final answer = await judge(view.ledger.render()).timeout(
+        attemptBudget,
+        onTimeout: () {
+          final timeout = _judgeTimeout();
+          budgetSource?.cancel(timeout);
+          throw timeout;
+        },
+      );
+      // HideJudgeFn contract: null IS a failed call (F1) — count it.
+      return (
+        answer: answer,
+        failure: answer == null
+            ? const CompactionException('hide judge failed call')
+            : null,
+      );
+    } on TimeoutException catch (error) {
+      return (answer: null, failure: error);
+    } on Object catch (error) {
+      // The adapter threw (provider error) — a judge failure like any
+      // other; the run must not die on it.
+      return (answer: null, failure: error);
+    }
+  }
+
+  /// Records a judge failure (issue #541): a named pass report, then —
+  /// after N consecutive failures — the deterministic judge-less hide.
+  /// Returns whether the hide loop continues.
+  Future<bool> _registerJudgeFailure(int trigger, Object error) async {
+    _consecutiveJudgeFailures++;
+    final tokens = _requestTokens();
+    hooks?.onPass(
+      StructuredCompactionPass(
+        kind: 'hide',
+        pass: ++_pass,
+        tokensBefore: tokens,
+        tokensAfter: tokens,
+        ok: false,
+        error: error,
+      ),
+    );
+    if (_consecutiveJudgeFailures < _judgeFallbackAfter) return true;
+    return _deterministicHide(trigger);
+  }
+
+  /// The deterministic judge-less hide (issue #541): the judge is down
+  /// after N consecutive failures — hide oldest-first, whole pair
+  /// groups, past the recency floor, until the request fits under the
+  /// trigger again. No LLM: the session always makes progress, even
+  /// with every judge endpoint dark.
+  Future<bool> _deterministicHide(int trigger) async {
+    if (cancelToken?.isCancelled ?? false) return false;
+    final view = await _buildView();
+    if (view == null) return false;
+    final ledger = view.ledger;
+    final before = _requestTokens();
+    final over = before - trigger;
+    final tailStart = ledger.entries.length - protectLastN < 0
+        ? 0
+        : ledger.entries.length - protectLastN;
+    final indexById = <String, int>{
+      for (var i = 0; i < ledger.entries.length; i++)
+        ledger.entries[i].recordId: i,
+    };
+    final ids = <String>{};
+    var freed = 0;
+    for (var i = 0; i < tailStart && freed < over; i++) {
+      final entry = ledger.entries[i];
+      if (entry.exempt || ids.contains(entry.recordId)) continue;
+      // Pair integrity (#85/D6): a group hides whole or never — the
+      // veto lives in the token helper below.
+      final group = ledger.groupOf(entry.recordId);
+      final groupTokens = _hideableGroupTokens(
+        ledger,
+        group,
+        indexById,
+        tailStart,
+      );
+      if (groupTokens == null) continue;
+      ids.addAll(group);
+      freed += groupTokens;
+    }
+    if (ids.isEmpty) {
+      // E1: even oldest-first cannot free anything — name the largest
+      // remaining record instead of looping silently.
+      hooks?.onPass(
+        StructuredCompactionPass(
+          kind: 'hide',
+          pass: ++_pass,
+          tokensBefore: before,
+          tokensAfter: before,
+          ok: false,
+          error: CompactionException(
+            'deterministic fallback found nothing hideable past the '
+            'recency floor; largest remaining record: '
+            '${_largestEntry(ledger)}',
+          ),
+        ),
+      );
+      return false;
+    }
+    await session.appendHiddenRange(recordIds: ids.toList()..sort());
+    final after = await _refreshState();
+    hooks?.onPass(
+      StructuredCompactionPass(
+        kind: 'hide-fallback',
+        pass: ++_pass,
+        tokensBefore: before,
+        tokensAfter: after,
+        ok: true,
+        hiddenCount: ids.length,
+      ),
+    );
+    return true;
+  }
+
+  String _largestEntry(ContextLedger ledger) {
+    LedgerEntry largest = ledger.entries.first;
+    for (final entry in ledger.entries) {
+      if (entry.tokens > largest.tokens) largest = entry;
+    }
+    return '[${largest.seq}] ${largest.kind} ~${largest.tokens}tok';
+  }
+
+  /// Returns the group's token weight, or null when vetoed.
+  int? _hideableGroupTokens(
+    ContextLedger ledger,
+    Iterable<String> group,
+    Map<String, int> indexById,
+    int tailStart,
+  ) {
+    var groupTokens = 0;
+    for (final id in group) {
+      final idx = indexById[id];
+      if (idx == null || idx >= tailStart) return null;
+      groupTokens += ledger.entries[idx].tokens;
+    }
+    return groupTokens;
+  }
+
+  /// The named judge-timeout error (issue #541 AC3): role, model and
+  /// endpoint of the dead call — never an anonymous TimeoutException.
+  TimeoutException _judgeTimeout() => TimeoutException(
+    'structured compaction judge timeout '
+    '($judgeTarget, ${attemptBudget.inSeconds}s budget) (issue #515)',
+    attemptBudget,
+  );
 
   Future<bool> _runCheckpointPasses(int trigger) async {
     for (var i = 0; i < maxCheckpointPasses; i++) {

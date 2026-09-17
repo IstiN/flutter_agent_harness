@@ -200,6 +200,7 @@ final class CliConfig {
     this.tools,
     this.redact,
     this.compactionEngine,
+    this.compactionJudgeBudgetSeconds,
     this.wireDump = false,
     this.images,
     this.contextWindowCap,
@@ -289,10 +290,18 @@ final class CliConfig {
       // The providerTimeouts section (provider watchdog overrides) is strict
       // too.
       providerTimeouts: parseProviderTimeouts(map['providerTimeouts']),
-      // The compaction section (engine selector, issue #148) is strict: a
-      // typo throws instead of silently running the classic engine.
+      // The compaction section (engine selector, issue #148; judge
+      // budget knob, issue #541) is strict: a typo throws instead of
+      // silently running the classic engine or restoring the default
+      // 90s budget.
       compactionEngine: CompactionEngine.fromSection(
         map['compaction'],
+        label: '~/.fah/config.yaml',
+      ),
+      compactionJudgeBudgetSeconds: parseJudgeBudgetSeconds(
+        map['compaction'] is Map
+            ? (map['compaction'] as Map)['judgeBudgetSeconds']
+            : null,
         label: '~/.fah/config.yaml',
       ),
       // The trajectory section (issue #385) is a plain boolean today:
@@ -451,6 +460,12 @@ final class CliConfig {
   /// the effective engine resolves global < project < runtime.
   final CompactionEngine? compactionEngine;
 
+  /// Optional `compaction.judgeBudgetSeconds` (issue #541) — the
+  /// per-call judge/summarizer budget in seconds. `null` keeps the
+  /// 90s default; the knob exists so owners of giant marathon sessions
+  /// can give a slow judge room without touching code.
+  final int? compactionJudgeBudgetSeconds;
+
   /// Optional `trajectory:` section (issue #385) — `wireDump: true` opts
   /// the raw outbound request payloads into the session ledger as
   /// redacted, capped `trajectory_wire_dump` records. Default false:
@@ -529,6 +544,7 @@ final class CliConfig {
       tools: tools,
       redact: redact,
       compactionEngine: compactionEngine,
+      compactionJudgeBudgetSeconds: compactionJudgeBudgetSeconds,
       wireDump: wireDump,
       images: images,
       contextWindowCap: contextWindowCap,
@@ -595,9 +611,7 @@ final class CliConfig {
       buffer.write(toolsConfig.toYaml());
     }
     buffer.write(_redactYaml());
-    if (compactionEngine != null) {
-      buffer.write('compaction:\n  engine: ${compactionEngine!.value}\n');
-    }
+    buffer.write(_compactionYaml());
     if (wireDump) buffer.write('trajectory:\n  wireDump: true\n');
     if (images != null) buffer.write(_imagesYaml());
     if (contextWindowCap != null) {
@@ -612,6 +626,20 @@ final class CliConfig {
     }
     buffer.write(_powerYaml());
     return buffer.toString();
+  }
+
+  /// The `compaction:` section, only when explicitly configured; defaults
+  /// are never written so the file stays minimal.
+  String _compactionYaml() {
+    final engine = compactionEngine;
+    final judgeBudgetSeconds = compactionJudgeBudgetSeconds;
+    if (engine == null && judgeBudgetSeconds == null) return '';
+    final section = <String>[
+      if (engine != null) '  engine: ${engine.value}',
+      if (judgeBudgetSeconds != null)
+        '  judgeBudgetSeconds: $judgeBudgetSeconds',
+    ];
+    return 'compaction:\n${section.join('\n')}\n';
   }
 
   /// The `power:` section (issue #325), only when sleep prevention or hold
