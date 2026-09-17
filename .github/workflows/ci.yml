@@ -1923,3 +1923,44 @@ jobs:
         run: |
           echo "binaries-pr result: ${{ needs.binaries-pr.result }}"
           exit 1
+
+  # Every failing push/tag run must reach a human-facing tracker item the
+  # moment it goes red (user ask 2026-09-17): PR failures are visible on
+  # the PR itself, but main/tag reds used to live only in the Actions
+  # tab. Files/updates one issue per red run, always assigned to
+  # ai-teammate. quality-gate aggregates every leg (always()), so its
+  # failure verdict covers the whole matrix — the fa#456 lesson on
+  # transitive skips: this job keys on the aggregator's result directly.
+  ci-red-report:
+    name: CI red → issue (ai-teammate)
+    needs: [quality-gate]
+    if: ${{ always() && github.event_name == 'push' && needs.quality-gate.result == 'failure' }}
+    permissions:
+      issues: write
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: File or update the red-run issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          REF: ${{ github.ref_name }}
+        run: |
+          failed=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" \
+            --jq '[.jobs[] | select(.conclusion == "failure") | .name] | join(", ")')
+          title="[ci-red] $REF failed"
+          url="https://github.com/$REPO/actions/runs/$RUN_ID"
+          body="**Failed jobs:** ${failed:-unknown}
+          **Run:** $url
+
+          Auto-filed by the ci-red-report leg; assignee ai-teammate. Closes manually when the ref goes green."
+          existing=$(gh issue list --repo "$REPO" --state open --label ci-red \
+            --json number --jq ".[0].number // empty")
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$REPO" --body "$body"
+            echo "commented on #$existing"
+          else
+            gh issue create --repo "$REPO" --title "$title" --body "$body" \
+              --label bug --label ci-red --assignee ai-teammate
+          fi
