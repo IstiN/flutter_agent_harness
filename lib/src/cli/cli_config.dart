@@ -647,6 +647,7 @@ final class CliConfig {
     }
     return jobsConfig.toYaml();
   }
+
   /// The `compaction:` section, only when explicitly configured; defaults
   /// are never written so the file stays minimal.
   String _compactionYaml() {
@@ -787,16 +788,29 @@ final class CliConfig {
     final buffer = StringBuffer('customProviders:\n');
     for (final entry in customProviders) {
       buffer.write(
-        '  - name: ${entry.name}\n'
+        '  - name: ${_yamlScalar(entry.name)}\n'
         '    apiType: ${entry.apiType}\n'
-        '    baseUrl: ${entry.baseUrl}\n',
+        '    baseUrl: ${_yamlScalar(entry.baseUrl)}\n',
       );
       if (entry.keyName != null) {
-        buffer.write('    keyName: ${entry.keyName}\n');
+        buffer.write('    keyName: ${_yamlScalar(entry.keyName!)}\n');
       }
-      buffer.write('    modelId: ${entry.modelId}\n');
+      buffer.write('    modelId: ${_yamlScalar(entry.modelId)}\n');
     }
     return buffer.toString();
+  }
+
+  /// The yaml scalar for a user-data value: plain when unambiguously
+  /// plain-safe, single-quoted otherwise. Issue #555 backstop: a bare
+  /// `name: ?` throws "Mapping keys are not allowed here" on the next
+  /// load — the CLI then starts from defaults (the saved config is
+  /// lost). A trailing `:` breaks the same way ("mapping values are not
+  /// allowed here").
+  String _yamlScalar(String value) {
+    const plain = r'^[A-Za-z0-9][A-Za-z0-9._+/:?=&~-]*$';
+    return !value.endsWith(':') && RegExp(plain).hasMatch(value)
+        ? value
+        : "'${value.replaceAll("'", "''")}'";
   }
 }
 

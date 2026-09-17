@@ -49,6 +49,24 @@ void main() {
       expect(loaded.modelId, 'openai/gpt-4o-mini');
     });
 
+    test('a yaml-hostile provider entry name survives the roundtrip', () async {
+      // Issue #555: `name: ?` written bare throws "Mapping keys are not
+      // allowed here" on load — the next start fell back to defaults and
+      // the user's saved config was effectively lost.
+      final original = CliConfig().withCustomProviders([
+        CustomProviderEntry(
+          name: '?',
+          apiType: 'openai',
+          baseUrl: 'https://x.example.com/v1',
+          modelId: 'm1',
+        ),
+      ]);
+      await saveCliConfig(tmp.path, original);
+      final loaded = loadCliConfig(tmp.path);
+      expect(loaded.customProviders.single.name, '?');
+      expect(loaded.customProviders.single.baseUrl, 'https://x.example.com/v1');
+      expect(loaded.customProviders.single.modelId, 'm1');
+    });
     test('approval settings default when absent from the file', () {
       final loaded = loadCliConfig(tmp.path);
       expect(loaded.approvalMode, 'yolo');
