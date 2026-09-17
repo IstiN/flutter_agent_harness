@@ -324,11 +324,6 @@ class LocalHub {
       await for (final Object data in ws) {
         final frame = (jsonDecode(data as String) as Map)
             .cast<String, dynamic>();
-        if (Platform.environment['FA_HUB_TRACE'] == '1') {
-          stderr.writeln(
-            'HUBTRACE in: ${frame['t'] ?? frame['op'] ?? frame} agent=$agentId',
-          );
-        }
         agentId = await _dispatch(ws, frame, agentId);
       }
     } on Object {
@@ -447,8 +442,6 @@ class LocalHub {
     _conns[agentId] = ws;
     _hellosSeen++;
     if (!_helloEvents.isClosed) _helloEvents.add(agentId);
-    if (Platform.environment['FA_HUB_TRACE'] == '1')
-      stderr.writeln('HUBTRACE welcome -> $agentId');
     _reply(ws, {'op': 'welcome', 'agentId': agentId});
     return agentId;
   }
