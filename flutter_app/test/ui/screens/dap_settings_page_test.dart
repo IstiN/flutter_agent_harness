@@ -321,6 +321,40 @@ void main() {
       expect(find.text(saveFailed), findsOneWidget);
     });
 
+    testWidgets('an unnamed bookmark titles its detail by the URL', (
+      tester,
+    ) async {
+      useTallSurface(tester);
+      final h = _extensionHarness(
+        storage: {
+          'faDap': {
+            'url': 'ws://hub.example.com/ws',
+            'name': 'ext-agent',
+            'savedConnections': [
+              {'url': 'ws://hub.example.com/ws', 'name': 'ext-agent'},
+              {'url': 'ws://other:8787/ws', 'name': ''},
+            ],
+          },
+        },
+      );
+      await pumpPage(tester, h.service);
+
+      await tester.tap(
+        find.byKey(const ValueKey('dapConn-ws://other:8787/ws')),
+      );
+      await tester.pumpAndSettle();
+
+      // The empty name falls back to the URL, on the row and in the
+      // detail's bar title.
+      expect(
+        find.descendant(
+          of: find.byType(AppBar),
+          matching: find.text('ws://other:8787/ws'),
+        ),
+        findsOneWidget,
+      );
+    });
+
     testWidgets('Remove drops the bookmark and returns to the list', (
       tester,
     ) async {

@@ -494,14 +494,21 @@ class LauncherLayoutStore extends ChangeNotifier {
   bool _foldersEqual(Map<String, LauncherFolder> other) {
     if (_folders.length != other.length) return false;
     for (final entry in _folders.entries) {
-      final folder = other[entry.key];
-      if (folder == null || folder.name != entry.value.name) return false;
-      final a = entry.value.tiles;
-      final b = folder.tiles;
-      if (a.length != b.length) return false;
-      for (var i = 0; i < a.length; i++) {
-        if (a[i] != b[i]) return false;
-      }
+      if (!_folderEquals(other[entry.key], entry.value)) return false;
+    }
+    return true;
+  }
+
+  /// One parsed folder equals the live one: same name, same tile order.
+  static bool _folderEquals(LauncherFolder? parsed, LauncherFolder current) =>
+      parsed != null &&
+      parsed.name == current.name &&
+      _tilesEqual(parsed.tiles, current.tiles);
+
+  static bool _tilesEqual(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
     }
     return true;
   }
