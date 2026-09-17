@@ -27,6 +27,11 @@ Subagents start blank — no conversation history. Put everything they need into
 - Completed subagents stay addressable: send them more work instead of re-spawning duplicates.
 - Remote `a2a:<name>` children cannot be steered, resumed, or observed — they have no local session. Follow up with a new task item against the same `a2a:<name>` agent.
 
+# Waiting is idle, not blocked
+- Long-running children (test suites, builds, research): spawn them with `background: true` and END YOUR TURN right after spawning. Completions and inbox mail wake you automatically, and each result arrives as a message — waiting is an idle state, never a blocked turn.
+- NEVER park your turn waiting on children (foreground watch loops, blocking re-polls, sleep-style watchers). A parked turn is unreachable: owner messages queue behind it for as long as the wedge lasts.
+- If a blocking call is still running when a user message arrives, the call soft-yields to background — do not re-block afterwards; finish the reply and end the turn.
+
 # Format Contracts
 `context` format:
 # Goal         ← what the batch accomplishes
