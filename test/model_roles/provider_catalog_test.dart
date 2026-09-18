@@ -135,4 +135,36 @@ void main() {
       );
     });
   });
+
+  group('explicit input modalities (issue #638 AC1)', () {
+    test('buildCatalogModel: explicit input overrides the catalog spec', () {
+      // zai's catalog spec is text-only; a preconfig declaring
+      // input: ["text","image"] must win.
+      expect(buildCatalogModel('zai', 'glm-5.3-flash').input, ['text']);
+      expect(
+        buildCatalogModel(
+          'zai',
+          'glm-5.3-flash',
+          input: const ['text', 'image'],
+        ).input,
+        ['text', 'image'],
+      );
+    });
+
+    test('buildCliDefaultModel threads the explicit input override', () {
+      expect(
+        buildCliDefaultModel(
+          'zai',
+          modelId: 'glm-5.3-flash',
+          input: const ['text', 'image'],
+        ).input,
+        ['text', 'image'],
+      );
+      // Absent override keeps the catalog spec (today's behavior).
+      expect(
+        buildCliDefaultModel('zai', modelId: 'glm-5.3-flash').input,
+        ['text'],
+      );
+    });
+  });
 }

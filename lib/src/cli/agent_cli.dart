@@ -113,7 +113,8 @@ import '../providers/provider_common.dart'
         providerConnectTimeout,
         providerStreamIdleTimeout,
         providerTimeoutsOverride,
-        stripAuthExpiredMarker;
+        stripAuthExpiredMarker,
+        textOnlyImageDropNotice;
 import '../providers/transient_retry_stream.dart';
 import '../prompts/prompt_overrides.dart';
 import '../providers/aiin_auth.dart';

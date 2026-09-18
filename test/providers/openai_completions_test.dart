@@ -1838,6 +1838,115 @@ void main() {
     );
 
     test(
+      'a declared-vision model keeps image parts (issue #638 AC1)',
+      () async {
+        Map<String, dynamic>? capturedBody;
+        final dropNotices = <int>[];
+        textOnlyImageDropNotice = dropNotices.add;
+        addTearDown(() => textOnlyImageDropNotice = null);
+        final client = http_testing.MockClient.streaming((request, body) async {
+          capturedBody =
+              jsonDecode(await body.bytesToString()) as Map<String, dynamic>;
+          return http.StreamedResponse(Stream.value(utf8.encode(okSse)), 200);
+        });
+
+        // The shape an `input: ["text","image"]` env preconfig boots:
+        // same endpoint family the catalog calls text-only, explicit
+        // declaration wins.
+        final declaredVision = Model(
+          id: 'glm-5.3-flash',
+          api: 'openai-completions',
+          provider: 'zai',
+          baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+          input: const ['text', 'image'],
+          contextWindow: 128000,
+          maxTokens: 16384,
+        );
+        final context = Context(
+          messages: [
+            UserMessage(
+              content: const [
+                TextContent(text: 'look:'),
+                ImageContent(data: 'aGk=', mimeType: 'image/png'),
+              ],
+              timestamp: DateTime.utc(2026),
+            ),
+          ],
+        );
+
+        final stream = streamOpenAICompletions(
+          declaredVision,
+          context,
+          const OpenAICompletionsOptions(apiKey: 'test-key'),
+          client,
+        );
+        await stream.result;
+
+        final messages = capturedBody!['messages'] as List;
+        expect(messages.single['content'], [
+          {'type': 'text', 'text': 'look:'},
+          {
+            'type': 'image_url',
+            'image_url': {'url': 'data:image/png;base64,aGk='},
+          },
+        ]);
+        expect(dropNotices, isEmpty);
+      },
+    );
+
+    test(
+      'stripping a text-only model announces the drop (issue #638 AC1)',
+      () async {
+        Map<String, dynamic>? capturedBody;
+        final dropNotices = <int>[];
+        textOnlyImageDropNotice = dropNotices.add;
+        addTearDown(() => textOnlyImageDropNotice = null);
+        final client = http_testing.MockClient.streaming((request, body) async {
+          capturedBody =
+              jsonDecode(await body.bytesToString()) as Map<String, dynamic>;
+          return http.StreamedResponse(Stream.value(utf8.encode(okSse)), 200);
+        });
+
+        final textOnlyModel = Model(
+          id: 'glm-5.3',
+          api: 'openai-completions',
+          provider: 'zai',
+          baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+          input: const ['text'],
+          contextWindow: 128000,
+          maxTokens: 16384,
+        );
+        final context = Context(
+          messages: [
+            UserMessage(
+              content: const [
+                TextContent(text: 'look:'),
+                ImageContent(data: 'aGk=', mimeType: 'image/png'),
+              ],
+              timestamp: DateTime.utc(2026),
+            ),
+          ],
+        );
+
+        final stream = streamOpenAICompletions(
+          textOnlyModel,
+          context,
+          const OpenAICompletionsOptions(apiKey: 'test-key'),
+          client,
+        );
+        await stream.result;
+
+        expect(dropNotices, [1]);
+        final messages = capturedBody!['messages'] as List;
+        expect(
+          jsonEncode(messages),
+          isNot(contains('image_url')),
+          reason: 'the strip still fires',
+        );
+      },
+    );
+
+    test(
       'sends OpenRouter-style reasoning object for reasoning models',
       () async {
         Map<String, dynamic>? capturedBody;

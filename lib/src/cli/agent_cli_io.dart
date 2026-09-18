@@ -157,6 +157,7 @@ extension AgentCliRunNotices on AgentCli {
   void wireRunNoticesForTesting() {
     _wireTransientRetryNotice();
     _wireImageDropNotice();
+    _wireTextOnlyImageDropNotice();
   }
 
   /// Transient network retry visibility (the Wi-Fi-switch case): the
@@ -190,6 +191,21 @@ extension AgentCliRunNotices on AgentCli {
       );
       _logDiagnostic(
         'image registry drop sid=$_logSid index=$index key=$keyPreview',
+      );
+    };
+  }
+  /// Text-only model image drop visibility (issue #638): when a model
+  /// declared text-only forced the request-time strip, say so - a dim
+  /// transcript line + an fa.log entry instead of a silent degradation.
+  void _wireTextOnlyImageDropNotice() {
+    textOnlyImageDropNotice = (dropped) {
+      io.writeln(
+        _style.dim(
+          '[images] $dropped image(s) dropped — model declared text-only',
+        ),
+      );
+      _logDiagnostic(
+        'text-only image drop sid=$_logSid count=$dropped',
       );
     };
   }

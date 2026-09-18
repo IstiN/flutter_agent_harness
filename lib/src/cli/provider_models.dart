@@ -1030,6 +1030,7 @@ extension on AgentCli {
           baseUrl: def.baseUrl,
           contextWindow: def.contextWindow,
           maxTokens: def.maxTokens,
+          input: def.input,
           // Keep the endpoint's scoped key on the pin (see _switchProvider).
           apiKeyName:
               _rolesKeyNameFor(spec.name, def.baseUrl) ??
@@ -1055,24 +1056,9 @@ extension on AgentCli {
         baseUrl: def.baseUrl,
         contextWindow: def.contextWindow,
         maxTokens: def.maxTokens,
+        input: def.input,
       );
-      final modalities = def.input;
-      _agent.state.model = modalities == null
-          ? built
-          : Model(
-              id: built.id,
-              name: built.name,
-              api: built.api,
-              provider: built.provider,
-              baseUrl: built.baseUrl,
-              reasoning: built.reasoning,
-              input: modalities,
-              cost: built.cost,
-              contextWindow: built.contextWindow,
-              maxTokens: built.maxTokens,
-              headers: built.headers,
-              compat: built.compat,
-            );
+      _agent.state.model = built;
     }
     _activeCustomName = null;
     // The cached model list belongs to the previous provider/endpoint.
