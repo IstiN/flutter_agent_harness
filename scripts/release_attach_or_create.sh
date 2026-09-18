@@ -56,6 +56,28 @@ marker="<!-- release-draft-owner: run/${GITHUB_RUN_ID:?GITHUB_RUN_ID must be set
 [ -s "$notes" ] || printf 'Release %s — see the CHANGELOG.\n' "$tag" > "$notes"
 grep -qF "$marker" "$notes" || printf '\n%s\n' "$marker" >> "$notes"
 
+# A `gh release create` for a MISSING tag mints a lightweight API tag:
+# no push event → no ci.yml tag run → no publish/binaries (the v0.1.408
+# silent class, issue #597). If the ref is absent, create it as an
+# ANNOTATED tag and push it with the PAT the job already carries
+# (GH_TOKEN=RELEASE_PAT in build-macos) so the tag CI fires. A push with
+# the workflow's default github.token would be equally dead — GitHub
+# suppresses events triggered by GITHUB_TOKEN.
+# Gate on the DEFINITE missing verdict (ls-remote --exit-code rc 2):
+# sandboxes without an origin remote fatal with 128 — indeterminable
+# falls through to the plain create path (test fixtures rely on it).
+set +e
+git ls-remote --exit-code origin "refs/tags/$tag" >/dev/null 2>&1
+ls_remote_rc=$?
+set -e
+if [ "$ls_remote_rc" -eq 2 ]; then
+  target="${RELEASE_TARGET_SHA:-${GITHUB_SHA:?}}"
+  echo "tag $tag missing — creating annotated tag at $target (PAT push, fires tag CI)"
+  git fetch origin "$target" --depth=1 2>/dev/null || git fetch origin main --depth=50
+  git tag -a "$tag" -m "Release $tag" "$target"
+  git push "${GH_TOKEN:+https://x-access-token:${GH_TOKEN}@github.com/${repo}.git}" "refs/tags/$tag"
+fi
+
 # Bare vX.Y.Z title (#282): matches the tag, matches pub.dev. Assets ride
 # the create command — gh uploads them through a draft first, so the job's
 # draft lifecycle guard owns the failure path.

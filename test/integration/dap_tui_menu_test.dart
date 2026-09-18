@@ -90,8 +90,13 @@ void main() {
 
       // Walk to "What is DAP?" structurally (no magic arrow counts).
       await _selectMenuOption(harness, 'about');
+      // Wait for the FINAL artifact, not the intermediate 'zero-knowledge'
+      // blurb: a late boot-frame repaint can overwrite the screen between
+      // two observations (#550 family — raw echo races frame paint on
+      // loaded runners); anchoring on the asserted marker itself makes the
+      // wait and the expect agree by construction.
       await harness.waitForScreen(
-        'zero-knowledge',
+        'DAP_MASTER_SECRET',
         timeout: const Duration(seconds: 20),
       );
       expect(harness.screenText, contains('DAP_MASTER_SECRET'));

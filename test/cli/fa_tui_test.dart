@@ -2302,7 +2302,7 @@ void main() {
       expect(result, 'saved-string');
       expect(calls, hasLength(2));
       expect(calls.first, ['-F', '/dev/tty', '-g']);
-      expect(calls.last, ['-F', '/dev/tty', '-ixon', '-ixoff', '-icrnl']);
+      expect(calls.last, ['-F', '/dev/tty', '-ixon', '-ixoff', '-icrnl', '-discard']);
     });
 
     test('sttySanitizeInput returns null when saving fails', () async {
