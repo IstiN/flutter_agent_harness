@@ -263,6 +263,34 @@ void main() {
     expect(row.length, 80);
   });
 
+  test('the prompt mode busy row shows Waiting for input', () {
+    var model = modelAt(978);
+    model = model.copyWith(
+      prompt: TuiPromptState(SecretPromptSpec(name: 'KEY', reason: 'r')),
+    );
+    final row = model
+        .view()
+        .content
+        .split('\n')
+        .map((l) => l.replaceAll(ansi, ''))
+        .firstWhere((l) => l.contains('Waiting for input'));
+    expect(row.length, 80);
+  });
+
+  test('prompt mode view crops to glass when lines exceed terminal height', () {
+    final model = FaTuiModel(
+      callbacks: callbacks(),
+      isExited: () => false,
+      termWidth: 80,
+      termHeight: 15,
+    ).copyWith(
+      jobBoardLines: List.generate(20, (i) => 'job-$i test'),
+      prompt: TuiPromptState(SecretPromptSpec(name: 'KEY', reason: 'r')),
+    );
+    final lines = model.view().content.split('\n');
+    expect(lines.length, lessThanOrEqualTo(15));
+  });
+
   test('the queued overlay paints scheduled rows, clipped job lines and '
       'waiting rows while idle-waiting', () {
     final now = DateTime.now().millisecondsSinceEpoch;
