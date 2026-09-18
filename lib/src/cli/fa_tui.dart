@@ -2132,7 +2132,7 @@ final class FaTuiModel extends Model {
     b.writeln(); // spacer
     b.write(_statusRow());
     return View(
-      content: b.toString(),
+      content: _cropToGlass(b.toString()),
       cursor: null,
       mouseMode: _viewMouseMode,
     );

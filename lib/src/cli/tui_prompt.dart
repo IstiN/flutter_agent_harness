@@ -1319,13 +1319,11 @@ List<String> _secretInputRows(TuiPromptState state, int inner) {
   final rows = <String>[];
   final visible = state.secretValueVisible;
   final nameFocused = state.secretCursor < 0;
+
+  // Name field
   rows.add(
     _wrapBodyLine(
-      _dim(
-        visible
-            ? 'Name (UPPER_SNAKE) — value visible (Ctrl+R hides):'
-            : 'Name (UPPER_SNAKE) — value hidden (Ctrl+R reveals):',
-      ),
+      _dim('Name (UPPER_SNAKE):'),
       inner,
       dim: true,
     ),
@@ -1346,10 +1344,13 @@ List<String> _secretInputRows(TuiPromptState state, int inner) {
       bold: committedName.isNotEmpty,
     ),
   );
-  final hint = nameFocused
-      ? 'Type to replace it · Tab to the value · Esc cancel'
-      : 'Enter to save · Tab to edit the name · Esc cancel';
-  rows.add(_wrapBodyLine(_dim(hint), inner, dim: true));
+
+  // Value field
+  final valueLabel = visible
+      ? 'Value — visible (Ctrl+R hides):'
+      : 'Value — hidden (Ctrl+R reveals):';
+  rows.add(_wrapBodyLine(_dim(valueLabel), inner, dim: true));
+
   // A multiline value (PEM paste) becomes one frame row per line - a bare
   // LF inside a row would physically tear the frame in the terminal. Masked
   // mode dots each segment separately so line structure stays visible.
@@ -1361,8 +1362,35 @@ List<String> _secretInputRows(TuiPromptState state, int inner) {
   final segments = display.split('\n');
   for (var i = 0; i < segments.length; i++) {
     final marker = nameFocused || i > 0 ? '  ' : '${_accent('>')} ';
-    rows.add(_wrapBodyLine('$marker${segments[i]}', inner, bold: true));
+    if (!nameFocused && i == 0 && state.secretValue.isEmpty) {
+      rows.add(
+        _wrapBodyLine(
+          '$marker${_dim('(paste or type secret)')}',
+          inner,
+        ),
+      );
+    } else if (!nameFocused && i == 0) {
+      final clampedCursor = state.secretCursor.clamp(0, segments[i].length);
+      final before = segments[i].substring(0, clampedCursor);
+      final at = clampedCursor < segments[i].length
+          ? segments[i][clampedCursor]
+          : ' ';
+      final after = clampedCursor < segments[i].length
+          ? segments[i].substring(clampedCursor + 1)
+          : '';
+      final line = '$before\x1b[7m$at\x1b[27m$after';
+      rows.add(_wrapBodyLine('$marker$line', inner, bold: true));
+    } else {
+      rows.add(_wrapBodyLine('$marker${segments[i]}', inner, bold: true));
+    }
   }
+
+  // Footer action hint
+  final hint = nameFocused
+      ? 'Type to replace name · Tab to value · Esc cancel'
+      : 'Enter to save · Tab to edit name · Esc cancel';
+  rows.add(_wrapBodyLine(_dim(hint), inner, dim: true));
+
   final error = state.secretEnterError;
   if (error.isNotEmpty) {
     rows.add(_wrapBodyLine(_red(error), inner));

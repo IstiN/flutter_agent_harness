@@ -1236,4 +1236,38 @@ void main() {
       expectRowsFit(renderTuiPrompt(state, 50), 50);
     });
   });
+
+  group('Secret prompt layout and cues', () {
+    test('renders distinct name and value labels with placeholder cue', () {
+      final state = TuiPromptState(
+        SecretPromptSpec(name: 'MY_TOKEN', reason: 'for testing'),
+      );
+      final rows = renderTuiPrompt(state, 60).join('\n');
+      expect(rows, contains('Name (UPPER_SNAKE):'));
+      expect(rows, contains('MY_TOKEN'));
+      expect(rows, contains('Value — hidden (Ctrl+R reveals):'));
+      expect(rows, contains('(paste or type secret)'));
+      expect(rows, contains('Enter to save · Tab to edit name · Esc cancel'));
+    });
+
+    test('renders masked value with cursor when characters are entered', () {
+      var state = TuiPromptState(
+        SecretPromptSpec(name: 'MY_TOKEN', reason: 'for testing'),
+      );
+      state = handleTuiPromptKey(state, PromptChar('s')).state;
+      state = handleTuiPromptKey(state, PromptChar('e')).state;
+      final rows = renderTuiPrompt(state, 60).join('\n');
+      expect(rows, contains('••'));
+      expect(rows, isNot(contains('(paste or type secret)')));
+    });
+
+    test('renders name focus marker and appropriate hint on Tab', () {
+      var state = TuiPromptState(
+        SecretPromptSpec(name: 'MY_TOKEN', reason: 'for testing'),
+      );
+      state = handleTuiPromptKey(state, const PromptTab()).state;
+      final rows = renderTuiPrompt(state, 60).join('\n');
+      expect(rows, contains('Type to replace name · Tab to value · Esc cancel'));
+    });
+  });
 }
