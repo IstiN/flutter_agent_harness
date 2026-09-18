@@ -1,15 +1,16 @@
 // Issue #584: the tag-release publish leg builds a staged copy of the repo
-// (.github/workflows/ci.yml, "Stage publishable package") and runs
-// `dart pub get` inside it. If any `path:` dependency of the core pubspec is
-// stripped by the staging rsync filters, resolution dies with exit 66 AFTER a
-// tag is cut — v0.1.406 and v0.1.407 both blocked releases this way.
+// (scripts/stage_publish_package.sh, called from the "Stage publishable
+// package" step) and runs `dart pub get` inside it. If any `path:`
+// dependency of the core pubspec is stripped by the staging rsync filters,
+// resolution dies with exit 66 AFTER a tag is cut — v0.1.406 and v0.1.407
+// both blocked releases this way.
 //
-// These tests parse the workflow's rsync include/exclude list (single source
-// of truth — no copy of the filter list lives here) and simulate rsync's
-// first-match-wins filtering to prove the staged tree stays self-consistent:
-// every path dependency of pubspec.yaml lands in the stage, and
-// pubspec_overrides.yaml (workspace-only dart_tui pin, never published) does
-// not leak into it.
+// These tests parse the staging script's rsync include/exclude list (single
+// source of truth — no copy of the filter list lives here) and simulate
+// rsync's first-match-wins filtering to prove the staged tree stays
+// self-consistent: every path dependency of pubspec.yaml lands in the stage,
+// and pubspec_overrides.yaml (workspace-only dart_tui pin, never published)
+// does not leak into it.
 //
 // ponytail: static filter simulation, not a real rsync run — CI has no
 // guarantee of rsync here; upgrade to executing the stage if filters grow
@@ -22,8 +23,8 @@ import 'dart:io';
 import 'package:test/test.dart';
 import 'package:yaml/yaml.dart';
 
-const _workflow = '.github/workflows/ci.yml';
-const _stageMarker = 'rsync -a ./ /tmp/publish-stage/';
+const _stagingScript = 'scripts/stage_publish_package.sh';
+const _stageMarker = 'rsync -a';
 const _overridesFile = 'pubspec_overrides.yaml';
 
 class _Filter {
@@ -40,12 +41,12 @@ class _Filter {
   late final String body;
 }
 
-/// Ordered include/exclude list of the staging rsync command in ci.yml.
+/// Ordered include/exclude list of the staging rsync command in the script.
 List<_Filter> _stagingFilters() {
-  final lines = File(_workflow).readAsLinesSync();
+  final lines = File(_stagingScript).readAsLinesSync();
   final start = lines.indexWhere((l) => l.contains(_stageMarker));
   if (start < 0) {
-    fail('staging rsync command not found in $_workflow — update this test');
+    fail('staging rsync command not found in $_stagingScript — update this test');
   }
   final filters = <_Filter>[];
   // The command continues across lines ending with a backslash.
@@ -130,7 +131,7 @@ void main() {
   group('publish staging self-consistency (issue #584)', () {
     test('staging rsync block carries filter rules', () {
       expect(_stagingFilters(), isNotEmpty,
-          reason: 'no --include/--exclude rules parsed from $_workflow');
+          reason: 'no --include/--exclude rules parsed from $_stagingScript');
     });
 
     test('every pubspec path dependency lands in the staged tree', () {
