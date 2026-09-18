@@ -3815,4 +3815,10 @@
 - fix(615): waiting row never clears after its job settles (#618)
 - feat(machine): assignment-driven trigger — assign to ai-teammate starts the loop (#625)
 
+## 0.1.417
+
+- chore: ignore machine-loop workspace artifacts (codegraph, dmtools logs) (#637)
+- fix(machine): wire the autocommit timer into all four runners (#634)
+- fix(machine): runner path overrides — factory-agents/ layout for fa (#631)
+
 ## Unreleased
