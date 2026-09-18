@@ -599,7 +599,9 @@ factual: paths, commands, invariants — no essays.
   deny-all, lexical path normalization as traversal guard), `CubeResolver`
   (path > name lookup), Dart-layer enforcement (`SandboxedExecutionEnv`
   decorator: `CubeFsGuard` gates the agent's own read/edit/write tools,
-  `CubePolicyEngine` gates bash incl. pipes/`$(...)` subshells, exit 127
+  `CubePolicyEngine` gates bash incl. pipes/`$(...)` subshells and shell
+  redirect targets (`>`/`>>`/`<>`/`&>`/`2>` writes, `<` reads, `2>&1`
+  exempt; arguments stay name-gated only), exit 127
   denials with per-exec reason), content-addressed `CubeCacheManager` under
   `.fah/cube-cache/<md5>/` (manifest + ttl). `spec.backend:` = `policy`
   (default, Dart-only) | `kernel` opt-in: every command wrapped in the OS
@@ -607,8 +609,13 @@ factual: paths, commands, invariants — no essays.
   <profile>`, Linux `unshare --user --map-root-user --mount [--net iff the
   spec allows no network]` + `ulimit -v/-t` ceilings, both over a clean
   `env -i` environment; profiles staged `.fah/cube-profiles/<md5>.sb` once
-  per spec; Windows = Job Object descriptor only (degrades to policy); a
-  wrapper that is missing from PATH or refuses the sandbox (EPERM, SBPL
+  per spec; the macOS SBPL profile denies writes blanket outside the
+  workspace + `rw` mounts (`/dev/null`, `/dev/fd` exempt) and denies reads
+  of `/etc` + user homes when no root mount grants reads (a blanket read
+  deny would abort exec — dyld); Windows = Job Object descriptor only
+  (degrades to policy, loudly: `fa_cube[<name>]: kernel backend
+  unavailable, running in policy mode`); a wrapper that is missing from
+  PATH or refuses the sandbox (EPERM, SBPL
   rejection) surfaces as a clean `fa_cube[<name>]: kernel backend ...`
   spawn error in foreground execs and background jobs alike. CLI:
   startup precedence flags > project `.fah/config.yaml` `cube:` > user
