@@ -22,6 +22,7 @@ import '../agent/agent_loop.dart' show ToolExecutionResult;
 import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
 import '../env/execution_env.dart';
+import '../model_roles/media_model_slots.dart';
 import '../model_roles/models_config.dart';
 import '../types.dart';
 
@@ -81,7 +82,6 @@ Future<MediaEndpoint?> resolveImageGenerationEndpoint(
 }) async {
   final override = modelsConfig?.slots['imageGeneration'];
   if (override == null) {
-    // No override: fall back to the main connection.
     if (mainBaseUrl.isNotEmpty && mainModelId.isNotEmpty) {
       return MediaEndpoint(
         baseUrl: mainBaseUrl,
@@ -91,30 +91,18 @@ Future<MediaEndpoint?> resolveImageGenerationEndpoint(
     }
     return null;
   }
-  // A slot override is its own provider configuration: it NEVER uses the
-  // main provider key (that key belongs to a different endpoint — sending
-  // it is a credential leak that fails confusingly). Only the slot's named
-  // key applies; without one the endpoint is not usable.
-  // Exception: if the override uses the same endpoint host as the main
-  // connection, reusing the main provider key is safe.
-  final keyName = override.apiKeyName;
-  var key = (keyName == null || keyName.isEmpty)
-      ? ''
-      : (await resolveKey?.call(keyName)) ?? '';
-  if (key.isEmpty && (keyName == null || keyName.isEmpty)) {
-    final overrideHost = Uri.tryParse(override.baseUrl)?.host.toLowerCase();
-    final mainHost = Uri.tryParse(mainBaseUrl)?.host.toLowerCase();
-    if (overrideHost != null &&
-        overrideHost.isNotEmpty &&
-        overrideHost == mainHost &&
-        mainApiKey.isNotEmpty) {
-      key = mainApiKey;
-    }
-  }
+  final key = await _resolveSlotKey(
+    override,
+    mainBaseUrl: mainBaseUrl,
+    mainApiKey: mainApiKey,
+    resolveKey: resolveKey,
+  );
   if (key.isEmpty) {
+    final keyName = override.apiKeyName;
+    final named =
+        (keyName == null || keyName.isEmpty) ? '' : ' (named "$keyName")';
     throw MediaException(
-      'the imageGeneration slot has no resolvable API key'
-      '${(keyName == null || keyName.isEmpty) ? '' : ' (named "$keyName")'} '
+      'the imageGeneration slot has no resolvable API key$named '
       '— a slot override never uses the main provider key; set '
       'models.slots.imageGeneration.apiKeyName to a stored key name '
       '(/key set <name>) or an environment variable',
@@ -125,6 +113,28 @@ Future<MediaEndpoint?> resolveImageGenerationEndpoint(
     modelId: override.modelId,
     apiKey: key,
   );
+}
+
+bool _isSameHost(String a, String b) {
+  final hostA = Uri.tryParse(a)?.host.toLowerCase();
+  final hostB = Uri.tryParse(b)?.host.toLowerCase();
+  return hostA != null && hostA.isNotEmpty && hostA == hostB;
+}
+
+Future<String> _resolveSlotKey(
+  MediaSlotModelConfig override, {
+  required String mainBaseUrl,
+  required String mainApiKey,
+  MediaKeyResolver? resolveKey,
+}) async {
+  final keyName = override.apiKeyName;
+  if (keyName != null && keyName.isNotEmpty) {
+    return (await resolveKey?.call(keyName)) ?? '';
+  }
+  if (_isSameHost(override.baseUrl, mainBaseUrl)) {
+    return mainApiKey;
+  }
+  return '';
 }
 
 /// One image-generation dialect (its own URL shape, body schema, and
@@ -177,7 +187,9 @@ final class DialImageDialect extends ImageDialect {
         ? endpoint.baseUrl.substring(0, endpoint.baseUrl.length - 1)
         : endpoint.baseUrl;
     final response = await client.post(
-      Uri.parse('$base/openai/deployments/${endpoint.modelId}/chat/completions'),
+      Uri.parse(
+        '$base/openai/deployments/${endpoint.modelId}/chat/completions',
+      ),
       headers: {
         'Content-Type': 'application/json',
         if (endpoint.apiKey.isNotEmpty) 'Api-Key': endpoint.apiKey,
@@ -195,48 +207,66 @@ final class DialImageDialect extends ImageDialect {
       );
     }
     final data = jsonDecode(response.body) as Map<String, dynamic>;
-    final choices = data['choices'];
-    if (choices is List && choices.isNotEmpty) {
-      final msg = (choices.first as Map<String, dynamic>)['message'];
-      if (msg is Map<String, dynamic>) {
-        final customContent = msg['custom_content'];
-        if (customContent is Map<String, dynamic>) {
-          final attachments = customContent['attachments'];
-          if (attachments is List && attachments.isNotEmpty) {
-            final att = attachments.first as Map<String, dynamic>;
-            final b64 = att['b64_json'] ?? att['data'];
-            if (b64 is String && b64.isNotEmpty) {
-              final bytes = base64Decode(b64);
-              final path = await _save(env, 'images', 'png', bytes);
-              return (path: path, bytes: bytes, detail: 'saved to $path');
-            }
-            final relUrl = att['url'] as String?;
-            if (relUrl != null && relUrl.isNotEmpty) {
-              final downloadUrl = relUrl.startsWith('http://') ||
-                      relUrl.startsWith('https://')
-                  ? relUrl
-                  : '$base/v1/${relUrl.startsWith('/') ? relUrl.substring(1) : relUrl}';
-              final imgResp = await client.get(
-                Uri.parse(downloadUrl),
-                headers: {
-                  if (endpoint.apiKey.isNotEmpty) 'Api-Key': endpoint.apiKey,
-                },
-              );
-              if (imgResp.statusCode == 200) {
-                final bytes = imgResp.bodyBytes;
-                final path = await _save(env, 'images', 'png', bytes);
-                return (path: path, bytes: bytes, detail: 'saved to $path');
-              }
-              throw MediaException(
-                'failed to download image from DIAL: HTTP ${imgResp.statusCode}: '
-                '${imgResp.body}',
-              );
-            }
-          }
-        }
-      }
+    final attachment = _extractDialAttachment(data);
+    if (attachment == null) {
+      throw MediaException('image generation: no image in DIAL response');
     }
-    throw MediaException('image generation: no image in DIAL response');
+    final bytes = await _downloadDialAttachment(
+      attachment,
+      base: base,
+      apiKey: endpoint.apiKey,
+      client: client,
+    );
+    final path = await _save(env, 'images', 'png', bytes);
+    return (path: path, bytes: bytes, detail: 'saved to $path');
+  }
+
+  Map<String, dynamic>? _extractDialAttachment(Map<String, dynamic> data) {
+    final choices = data['choices'];
+    if (choices is! List || choices.isEmpty) return null;
+    final first = choices.first;
+    if (first is! Map<String, dynamic>) return null;
+    final msg = first['message'];
+    if (msg is! Map<String, dynamic>) return null;
+    final customContent = msg['custom_content'];
+    if (customContent is! Map<String, dynamic>) return null;
+    final attachments = customContent['attachments'];
+    if (attachments is! List || attachments.isEmpty) return null;
+    final att = attachments.first;
+    return att is Map<String, dynamic> ? att : null;
+  }
+
+  Future<Uint8List> _downloadDialAttachment(
+    Map<String, dynamic> att, {
+    required String base,
+    required String apiKey,
+    required http.Client client,
+  }) async {
+    final b64 = att['b64_json'] ?? att['data'];
+    if (b64 is String && b64.isNotEmpty) {
+      return base64Decode(b64);
+    }
+    final relUrl = att['url'] as String?;
+    if (relUrl == null || relUrl.isEmpty) {
+      throw MediaException('image generation: no image in DIAL response');
+    }
+    final downloadUrl =
+        relUrl.startsWith('http://') || relUrl.startsWith('https://')
+            ? relUrl
+            : '$base/v1/${relUrl.startsWith('/') ? relUrl.substring(1) : relUrl}';
+    final imgResp = await client.get(
+      Uri.parse(downloadUrl),
+      headers: {
+        if (apiKey.isNotEmpty) 'Api-Key': apiKey,
+      },
+    );
+    if (imgResp.statusCode != 200) {
+      throw MediaException(
+        'failed to download image from DIAL: HTTP ${imgResp.statusCode}: '
+        '${imgResp.body}',
+      );
+    }
+    return imgResp.bodyBytes;
   }
 }
 
