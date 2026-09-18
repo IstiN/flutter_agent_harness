@@ -203,16 +203,28 @@ extension _AgentServiceSendGuard on AgentService {
   /// re-check them per request.)
   String? _liveConnectionRowProblem() {
     final registry = _providerRegistry;
-    if (registry == null) return null;
     if (AgentService._isOnDeviceKind(_providerKind)) return null;
-    return _modelRowMismatch(
-      registry,
-      AgentConfig(
-        providerKind: _providerKind,
-        modelId: _agent.state.model.id,
-        baseUrl: _activeBaseUrl,
-        apiKey: _activeApiKey,
-      ),
+    final config = AgentConfig(
+      providerKind: _providerKind,
+      modelId: _agent.state.model.id,
+      baseUrl: _activeBaseUrl,
+      apiKey: _activeApiKey,
     );
+    // Issue #633 AC2: the live trajectory shows a send dispatched with
+    // model: "" — an unresolved model must fail fast BY NAME before any
+    if (config.modelId.isEmpty) {
+      return 'no model selected — pick a model from a provider row '
+          'before sending';
+    }
+    // Issue #327 review MAJOR 2: the registry-row half at request time.
+    // Issue #633 AC2: the credential half joins it — a hosted preset or
+    // CodeMie endpoint without a key on THIS surface is a guaranteed 401,
+    // so the request is refused here with the row-naming message.
+    return _modelRowMismatch(registry, config) ??
+        _missingCredential(
+          registry,
+          config,
+          extensionHost: isExtensionHost(),
+        );
   }
 }
