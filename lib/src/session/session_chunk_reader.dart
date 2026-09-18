@@ -136,6 +136,81 @@ final class SessionChunkReader {
     maxBytes: maxBytes,
   );
 
+  /// Boundary-walk block read (issue #503): ONE strip of up to [maxBytes]
+  /// immediately above [anchorOffset], trimmed to the newest [maxRecords]
+  /// records. Unlike the capped [readBefore] — whose doubling window
+  /// re-splits and re-decodes its whole buffer on every pass — every byte
+  /// here is read, decoded and parsed exactly once, so a deep resume walk
+  /// costs one linear pass over the span instead of ~5x the parse work
+  /// (a 400 MB tail-after-compaction walked 10s+ through [readBefore]).
+  ///
+  /// A single record wider than the strip re-reads with a doubled span
+  /// until it fits (pathological giant lines only). When the strip reaches
+  /// the file top the header line (offset 0) is dropped; [SessionChunk.
+  /// hasOlder] stays true when the record cap trimmed or the strip started
+  /// mid-file.
+  Future<SessionChunk> readBlockBefore(
+    int anchorOffset, {
+    int maxRecords = defaultChunkRecords,
+    int maxBytes = defaultChunkBytes,
+  }) async {
+    final info = await stat();
+    if (info == null) {
+      throw SessionException(
+        'Session not found: $path',
+        code: SessionErrorCode.notFound,
+      );
+    }
+    final limit = anchorOffset < info.size ? anchorOffset : info.size;
+    SessionChunk chunk(List<SessionChunkEntry> entries, bool hasOlder) =>
+        SessionChunk(
+          entries: entries,
+          fileSize: info.size,
+          fileMtimeMs: info.mtimeMs,
+          hasOlder: hasOlder,
+          limitOffset: limit,
+        );
+    if (limit <= 0) return chunk(const [], false);
+    final (lines, reachedTop) = await _readStripLines(limit, maxBytes);
+    var entries = await _parseAllLines(lines);
+    var hasOlder = !reachedTop;
+    if (entries.length > maxRecords) {
+      entries = entries.sublist(entries.length - maxRecords);
+      hasOlder = true;
+    }
+    if (reachedTop) {
+      // File top: the offset-0 line is the session header, not a record.
+      entries = [
+        for (final entry in entries)
+          if (entry.offset != 0) entry,
+      ];
+    }
+    return chunk(entries, hasOlder);
+  }
+
+  /// The raw lines of one strip above [limit], span-grown (×2 per pass)
+  /// until at least one COMPLETE line fits or the file top is reached —
+  /// the giant-line escape of [readBlockBefore] (a record wider than the
+  /// first strip straddles it whole). Returns the parseable lines (the
+  /// partial first segment of a mid-file strip already dropped) plus
+  /// whether the strip reached the file top.
+  Future<(List<(int, Uint8List)>, bool)> _readStripLines(
+    int limit,
+    int maxBytes,
+  ) async {
+    var span = maxBytes;
+    while (true) {
+      final lo = limit - span > 0 ? limit - span : 0;
+      final bytes = await _readRange(lo, limit);
+      var lines = _splitLines(bytes, lo);
+      // The first segment of a mid-file strip is the TAIL of a record that
+      // begins above the strip — not parseable on its own.
+      if (lo > 0 && lines.isNotEmpty) lines = lines.sublist(1);
+      if (lines.isNotEmpty || lo == 0) return (lines, lo == 0);
+      span *= 2; // a single record straddles the whole strip: widen
+    }
+  }
+
   /// Reads a window centered on the record at [byteOffset] (a jump target):
   /// the record itself, the newer records below it, and older records above
   /// it, bounded by the same dual cap.
