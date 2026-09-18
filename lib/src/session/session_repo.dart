@@ -297,6 +297,21 @@ final class JsonlSessionRepo implements SessionRepo {
         code: SessionErrorCode.notFound,
       );
     }
+    // Resume-timing caller attribution: full opens on big sessions are the
+    // expensive kind — the log must name who asked (issue: slow resume
+    // investigation). Windowed opens stay caller-less (they are cheap).
+    if (!windowed && timingLog != null) {
+      final frames = StackTrace.current
+          .toString()
+          .split('\n')
+          .where((l) => !l.contains('session_repo.dart'))
+          .take(3)
+          .map((l) => l.trim())
+          .join(' <- ');
+      timingLog!.call(
+        'resume_timing open-caller file=${metadata.path.split('/').last} $frames',
+      );
+    }
     return Session(
       windowed
           ? await WindowedSessionStorage.open(
