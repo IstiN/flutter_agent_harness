@@ -37,6 +37,8 @@
       "./factory-agents/instructions/pr_rework/output_rules.md",
       "./factory-agents/instructions/common/dmtools_cli.md",
       "./factory-agents/prompts/bash_tools.md"
-    ]
+    ],
+    "timerIntervalSeconds": 300,
+    "timerJSAction": "factory-agents/js/timerAutoCommitAndSave.js"
   }
 }
