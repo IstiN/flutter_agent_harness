@@ -1,0 +1,52 @@
+# Machine SM — thin stub over the dmtools-agents factory (reusable pack).
+#
+# The whole reconcile tick (engine checkout, dmtools install, rule run)
+# lives in IstiN/dmtools-agents/.github/workflows/factory-sm.yml. This
+# file carries only the triggers (cron + manual dry dispatch) and the
+# call. NO caller-side concurrency: the factory owns the `machine-sm`
+# group — a caller declaring the same group deadlocks the called workflow
+# (it waits forever on a group its own caller holds).
+
+name: 'Machine SM'
+
+run-name: >-
+  🧹 SM ${{
+    github.event_name == 'workflow_dispatch' && 'manual tick' ||
+    format('tick {0}', github.event.schedule || '') }}${{
+  github.event.inputs.dryRun == 'true' && ' (dry)' || '' }}
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'   # short ticks — the engine idles when busy
+  workflow_dispatch:
+    inputs:
+      dryRun:
+        description: 'Log the plan, perform no action'
+        required: false
+        type: boolean
+        default: true
+
+
+jobs:
+  sm:
+    # Pinned to the immutable SHA the `agents` submodule pins — the branch
+    # head renamed the reusable workflows away from factory/<name>.yml, so
+    # a branch ref would fail every */10 cron tick. Flip in lockstep with
+    # the submodule when dmtools-agents#424 merges.
+    # Guarded by test/machine_kit/factory_stub_ref_test.dart.
+    uses: IstiN/dmtools-agents/.github/workflows/factory-sm.yml@5b6376a7ec9c82dc9137c78dde5090e65ce75532
+    with:
+      # The literal uses-ref: the factory requires it (it cannot derive its
+      # own ref — github.workflow_ref in a called workflow is the CALLER's).
+      factory_ref: 5b6376a7ec9c82dc9137c78dde5090e65ce75532
+      # Manual ticks default to dry; cron ticks run live.
+      dryRun: ${{ github.event.inputs.dryRun || 'false' }}
+    # Explicit mapping — the factory DECLARES SOURCE_GITHUB_TOKEN as a
+    # required named secret (plus optional ZAI_CODE_KEY / KIMI_REVIEW_KEY),
+    # and `secrets: inherit` does not satisfy required-secret validation at
+    # call time (live bisect: inherit => startup failure, explicit => green).
+    secrets:
+      # EXACTLY the set factory-sm.yml declares (SOURCE only) — mapping a
+      # secret the callee does not declare is rejected at call time
+      # (probe H2: +ZAI/KIMI => startup failure; probe I: exact set => green).
+      SOURCE_GITHUB_TOKEN: ${{ secrets.SOURCE_GITHUB_TOKEN }}
