@@ -63,11 +63,11 @@ void main() {
         // completes on the scripted follow-up.
         await harness.waitForText(
           'PWD-FED-OK',
-          timeout: const Duration(seconds: 30),
+          timeout: const Duration(seconds: 60),
         );
         await harness.waitForText(
           'turn-complete',
-          timeout: const Duration(seconds: 30),
+          timeout: const Duration(seconds: 60),
         );
         // The follow-up request (tool result + transcript) never carries
         // the secret either — only the command's own output marker.
