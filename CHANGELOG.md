@@ -3806,4 +3806,9 @@
 - fix(466): nightly auto-issue leg repo-pinning + green-run sunset (#616)
 - feat(machine): dmtools-agents factory rollout — ai-teammate-author gated (#614)
 
+## 0.1.415
+
+- fix(machine): drop the read-only permissions block — startup_failure (#624)
+- fix(620): raise password prompt PTY test waits 30s to 60s (#621)
+
 ## Unreleased
