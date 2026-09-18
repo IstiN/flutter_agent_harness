@@ -251,7 +251,7 @@ void main() {
 
   group('ensureCompactionBoundaryResident (windowed CLI resume, #503)', () {
     test(
-      'a linear session longer than the residency cache reports the tail lost — the caller falls back to the full open',
+      'a linear session longer than the residency cache pages everything, tail intact — no full-open fallback',
       () async {
         final session = await newSession();
         for (var i = 0; i < 800; i++) {
@@ -260,18 +260,18 @@ void main() {
         final meta = await session.getMetadata();
         final reopened = await repo.open(meta, windowed: true);
         final intact = await reopened.ensureCompactionBoundaryResident();
-        // Paging slid the newest side out of the residency cache: the
-        // leaf-anchored branch would read EMPTY — silently reducing the
-        // resume to a fresh-looking transcript (pty_resume_equivalence
-        // AC6 regression). The contract: report the loss, never finish
-        // with an empty branch the caller cannot distinguish from a
-        // genuinely empty session.
-        expect(intact, isFalse);
-        // The documented degenerate path: the caller re-opens full.
+        // The anchored walk (eviction suspended) keeps the leaf resident
+        // while paging to the file head: the old loadOlder loop slid the
+        // tail out, the branch read EMPTY, and the resume degenerated to
+        // a full open (10s+ on a marathon file — the observed 38s case).
+        expect(intact, isTrue);
+        final branch = await reopened.getBranch();
+        expect(branch, hasLength(800));
+        expect(branch.last.id, await reopened.getLeafId());
         final full = await repo.open(meta);
-        final branch = await full.getBranch();
-        expect(branch.length, 800);
-        expect(branch.last.id, await full.getLeafId());
+        final fullBranch = await full.getBranch();
+        expect(fullBranch.length, 800);
+        expect(fullBranch.last.id, await full.getLeafId());
       },
     );
 
