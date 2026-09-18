@@ -414,7 +414,6 @@ jobs:
             gh issue close "$existing" --repo "$repo"
           fi
 
-    steps:
       - name: Create or update the nightly-red issue
         if: failure()
         env:
