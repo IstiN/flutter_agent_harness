@@ -4,6 +4,9 @@ import 'dart:convert' show latin1, utf8;
 import 'dart:io'
     show IOSink, Platform, Process, ProcessException, ProcessResult, stdin;
 
+// The composer's editor types come from the vendored tui_editor.dart
+// (issue #613): hosted dart_tui exports none, so this file compiles
+// against BOTH resolutions.
 import 'package:dart_tui/dart_tui.dart' hide stripAnsi;
 import 'package:meta/meta.dart';
 
@@ -12,6 +15,7 @@ import 'ansi_markdown.dart';
 import 'agent_hub_tui.dart';
 import 'model_picker_table.dart' show modelPickerFooterHint;
 import 'package:characters/characters.dart';
+import 'tui_editor.dart';
 import 'tui_hit_regions.dart';
 import 'tui_prompt.dart';
 import 'tui_theme.dart';
@@ -199,7 +203,7 @@ final class FaTuiModel extends Model {
     required this.isExited,
     this.prompt,
     this.outputLines = const [],
-    LineEditor? editor,
+    TuiLineEditor? editor,
     this.scrollOffset = 0,
     this.followTail = true,
     this.menuOpen = false,
@@ -220,6 +224,7 @@ final class FaTuiModel extends Model {
     this.busyLastEventMs = -1,
     this.runStalled = false,
     this.mouseCapture = true,
+    this.forceSyncUpdates = false,
     this.spinnerFrame = 0,
     this.stickyLines = const [],
     this.stickyIndex = -1,
@@ -240,7 +245,7 @@ final class FaTuiModel extends Model {
     this.hub,
     DateTime Function()? now,
   }) : nowFn = now ?? DateTime.now,
-       editor = editor ?? const LineEditor.empty();
+       editor = editor ?? const TuiLineEditor.empty();
 
   final FaTuiCallbacks callbacks;
   final bool Function() isExited;
@@ -260,7 +265,7 @@ final class FaTuiModel extends Model {
   /// truth for the composer text + caret, carrying the per-session
   /// kill-ring and grouped undo (E4: the ring survives submissions —
   /// the model lives for the whole session).
-  final LineEditor editor;
+  final TuiLineEditor editor;
 
   String get inputText => editor.text;
   int get cursor => editor.cursor;
@@ -368,6 +373,13 @@ final class FaTuiModel extends Model {
   /// without capture a two-finger scroll does nothing. Selection still
   /// works through the bypass modifier (Shift); `FA_TUI_MOUSE=0` opts out.
   final bool mouseCapture;
+
+  /// Force DEC 2026 synchronized output ON at boot (`FA_TUI_SYNC=1`):
+  /// [init] emits a synthetic capability report the program consumes
+  /// exactly like a terminal's DECRQM answer — public API on the hosted
+  /// package and the vendored fork alike, replacing the fork-only
+  /// `withSyncUpdates` ProgramOption (issue #613).
+  final bool forceSyncUpdates;
   final int spinnerFrame;
 
   /// The last submitted user echo (rule + first input line), pinned to the
@@ -577,7 +589,7 @@ final class FaTuiModel extends Model {
     List<String>? outputLines,
     String? inputText,
     int? cursor,
-    LineEditor? editor,
+    TuiLineEditor? editor,
     int? scrollOffset,
     bool? followTail,
     bool? menuOpen,
@@ -597,6 +609,7 @@ final class FaTuiModel extends Model {
     String? busySource,
     int? busyLastEventMs,
     bool? mouseCapture,
+    bool? forceSyncUpdates,
     int? spinnerFrame,
     List<String>? stickyLines,
     int? stickyIndex,
@@ -627,7 +640,7 @@ final class FaTuiModel extends Model {
           (inputText == null && cursor == null
               ? this.editor
               : this.editor.withBuffer(
-                  LineBuffer(
+                  TuiLineBuffer(
                     inputText ?? this.inputText,
                     cursor ?? this.cursor,
                   ),
@@ -652,6 +665,7 @@ final class FaTuiModel extends Model {
       busySource: busySource ?? this.busySource,
       busyLastEventMs: busyLastEventMs ?? this.busyLastEventMs,
       mouseCapture: mouseCapture ?? this.mouseCapture,
+      forceSyncUpdates: forceSyncUpdates ?? this.forceSyncUpdates,
       spinnerFrame: spinnerFrame ?? this.spinnerFrame,
       stickyLines: stickyLines ?? this.stickyLines,
       stickyIndex: stickyIndex ?? this.stickyIndex,
@@ -688,7 +702,9 @@ final class FaTuiModel extends Model {
   }
 
   @override
-  Cmd? init() => null;
+  Cmd? init() => forceSyncUpdates
+      ? () => ModeReportMsg(mode: 2026, value: 1)
+      : null;
 
   Cmd _scheduleSpinnerTick() {
     return () async {
@@ -1691,7 +1707,7 @@ final class FaTuiModel extends Model {
   /// line end, ctrl+y yank (consecutive ctrl+y walks the ring older),
   /// ctrl+t transpose, ctrl+z grouped undo. Null when unclaimed.
   (Model, Cmd?)? _handleReadlineKey(KeyMsg msg) {
-    final LineEditor edited;
+    final TuiLineEditor edited;
     switch (msg.key) {
       case 'ctrl+k':
         if (cursor >= inputText.length) return (this, null);
@@ -2426,6 +2442,7 @@ final class FaTuiController {
     callbacks: callbacks,
     isExited: isExited,
     mouseCapture: mouseCapture,
+    forceSyncUpdates: syncOutput == true,
   );
   late final Program _program = Program(
     options: [
@@ -2442,9 +2459,13 @@ final class FaTuiController {
       // ops + BSU/ESU framing — the line renderer repaints every shifted
       // row on scroll and has no atomic frames.
       withCellRenderer(),
-      // FA_TUI_SYNC tri-state: force on, force off, or auto (DECRQM).
-      if (syncOutput != null)
-        syncOutput! ? withSyncUpdates() : withoutSyncUpdates(),
+      // FA_TUI_SYNC tri-state (issue #613): force-off drops the DEC 2026
+      // capability report at the program's public message gate; force-on
+      // is FaTuiModel.init's synthetic report; null = auto (DECRQM).
+      // Both work identically against hosted dart_tui and the vendored
+      // fork — no fork-only ProgramOptions.
+      if (syncOutput == false)
+        withFilter((_, msg) => msg is ModeReportMsg && msg.mode == 2026 ? null : msg),
       ..._programHookOptions(programHooks),
     ],
   );

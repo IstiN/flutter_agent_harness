@@ -208,7 +208,13 @@ jobs:
           # failure (staged resolution re-pinning vendor/dart_tui through
           # pubspec_overrides.yaml) must redden the PR, not the tag.
           bash scripts/stage_publish_package.sh /tmp/pr-dry-run-stage
-          (cd /tmp/pr-dry-run-stage && dart pub get && dart pub publish --dry-run --ignore-warnings)
+          # The staged tree must ANALYZE clean: v0.1.411 shipped files
+          # with broken imports (the staging filter pruned lib/src/memory;
+          # imports of fork-only dart_tui symbols) that only a consumer's
+          # `dart analyze` ever surfaced (issue #613). Errors fail the
+          # gate; warnings/infos pass, matching the static analyze stage.
+          (cd /tmp/pr-dry-run-stage && dart pub get && dart analyze)
+          (cd /tmp/pr-dry-run-stage && dart pub publish --dry-run --ignore-warnings)
 
   test-core:
     # Always runs (no job-level path gate): a path-filtered matrix skip

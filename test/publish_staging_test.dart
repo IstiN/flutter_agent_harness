@@ -31,7 +31,11 @@ class _Filter {
   _Filter(this.include, this.pattern)
       : dirOnly = pattern.endsWith('/'),
         anchored = pattern.contains('/') {
-    body = pattern.endsWith('/') ? pattern.substring(0, pattern.length - 1) : pattern;
+    final unanchored =
+        pattern.endsWith('/') ? pattern.substring(0, pattern.length - 1) : pattern;
+    // rsync anchors a leading `/` on the transfer root — the body itself
+    // carries no slash (issue #613).
+    body = unanchored.startsWith('/') ? unanchored.substring(1) : unanchored;
   }
 
   final bool include;
@@ -51,8 +55,11 @@ List<_Filter> _stagingFilters() {
   final filters = <_Filter>[];
   // The command continues across lines ending with a backslash.
   var block = [lines[start]];
-  for (var i = start + 1; i < lines.length && lines[i].trimRight().endsWith(r'\'); i++) {
+  for (var i = start + 1; i < lines.length; i++) {
     block.add(lines[i]);
+    // The last line of the command carries no trailing backslash —
+    // stopping BEFORE adding it silently dropped its filters (issue #613).
+    if (!lines[i].trimRight().endsWith(r'\')) break;
   }
   final argPattern = RegExp(r"--(include|exclude) '([^']+)'");
   for (final line in block) {
@@ -155,6 +162,21 @@ void main() {
       // v0.1.407 failure. The published package resolves hosted dart_tui.
       expect(_landsInStage(_stagingFilters(), _overridesFile), isFalse,
           reason: '$_overridesFile must be excluded from the publish stage');
+    });
+
+    test('root-scoped excludes prune only the repo root (issue #613)', () {
+      // v0.1.411: unanchored `--exclude 'memory'` matched ANY directory
+      // named `memory`, pruning lib/src/memory/ out of the stage — the
+      // published package shipped broken memory imports. Root-scoped
+      // excludes must be anchored; package subtrees must survive.
+      final filters = _stagingFilters();
+      expect(_landsInStage(filters, 'lib/src/memory/memory_controller.dart'), isTrue,
+          reason: 'lib/src/memory/ is package surface — pruning it ships '
+              'uri_does_not_exist (v0.1.411, issue #613)');
+      expect(_landsInStage(filters, 'memory/note/n_0001_abcd.md'), isFalse,
+          reason: 'the repo-root memory/ dir stays out of the stage');
+      expect(_landsInStage(filters, 'docs/architecture.md'), isFalse,
+          reason: 'the repo-root docs/ dir stays out of the stage');
     });
   });
 }
