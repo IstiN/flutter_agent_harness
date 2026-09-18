@@ -190,18 +190,30 @@ final class WindowedSessionStorage
     int? residentBytes,
     SessionParseExecutor? parseExecutor,
     SessionIoRetryConfig ioRetry = const SessionIoRetryConfig(),
+    SessionTimingLogger? timingLog,
   }) async {
+    final totalSw = Stopwatch()..start();
+    var phaseSw = Stopwatch()..start();
     final reader = SessionChunkReader(
       fs: fs,
       path: filePath,
       parseExecutor: parseExecutor,
     );
+    final readerMs = phaseSw.elapsedMilliseconds;
+    phaseSw
+      ..reset()
+      ..start();
     final header = await reader.readHeader();
+    final headerMs = phaseSw.elapsedMilliseconds;
+    phaseSw
+      ..reset()
+      ..start();
     final chunk = await reader.readTail(
       maxRecords: chunkRecords,
       maxBytes: chunkBytes,
     );
-    return WindowedSessionStorage._(
+    final tailMs = phaseSw.elapsedMilliseconds;
+    final storage = WindowedSessionStorage._(
       fs,
       filePath,
       reader,
@@ -211,6 +223,13 @@ final class WindowedSessionStorage
       residentBytes: residentBytes ?? defaultResidentBytes,
       ioRetry: ioRetry,
     );
+    timingLog?.call(
+      'resume_timing open file=${filePath.split('/').last} mode=windowed '
+      'reader_ms=$readerMs header_ms=$headerMs tail_ms=$tailMs '
+      'window_records=${chunk.entries.length} file_bytes=${chunk.fileSize} '
+      'has_older=${chunk.hasOlder} total_ms=${totalSw.elapsedMilliseconds}',
+    );
+    return storage;
   }
 
   /// Background record count (streams newlines, no JSON decode). The first

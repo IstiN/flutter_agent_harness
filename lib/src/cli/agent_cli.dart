@@ -1117,6 +1117,10 @@ class AgentCli {
     // Issue #427: transient-ENOENT retries of session-file IO log one
     // `session_io_retry` line each into the diagnostic log (fa.log).
     ioRetry: SessionIoRetryConfig(logger: _logDiagnostic),
+    // Resume diagnostics: session-open timings (read/parse/rebuild, bytes,
+    // record counts) as `resume_timing` lines in fa.log — answers "why is
+    // resume slow" without a profiler.
+    timingLog: _logDiagnostic,
     // Issue #522: the deletion gate reads live heartbeats — a session a
     // running process owns is undeletable from every other surface.
     presenceStore: config.presenceStore,
