@@ -274,6 +274,15 @@ void main() {
       expect(lines.join('\n'), isNot(contains('Background jobs (')));
     });
 
+    test('liveLines collapses multiline commands into a single line', () {
+      final board = ShellJobBoard();
+      board.start(_card('sh-1', command: 'python3 -c "\nimport os\nprint(1)\n"'));
+      final live = board.liveLines();
+      expect(live, hasLength(1));
+      expect(live.single, isNot(contains('\n')));
+      expect(live.single, contains('↳ sh-1 · python3 -c "…'));
+    });
+
     test(
       'a collapsed turn with a straggler waits for it before summarizing',
       () {

@@ -482,7 +482,13 @@ final class _WaitingCoordinator {
     return WaiterSnapshot(jobs: jobs, timers: timers, lostJobs: lostJobs);
   }
 
-  String _jobPurpose(ShellJobEntry job) => '${job.command} (${job.id})';
+  String _jobPurpose(ShellJobEntry job) {
+    final preview = shellJobCommandPreview(job.command);
+    final clipped = preview.length > 48
+        ? '${preview.substring(0, 48)}…'
+        : preview;
+    return '$clipped (${job.id})';
+  }
 
   /// One awaited child's purpose: `<id> (<task preview>) · <status>` —
   /// the owner reads «waiting: fix503 (test run) · running» (issue #520
