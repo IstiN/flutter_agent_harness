@@ -21,6 +21,7 @@ void main() {
     io.close();
     transientRetryNotice = null;
     imageDropNotice = null;
+    deliverySloSink = null;
   });
 
   test('the transient retry notice prints a dim transcript line', () {
@@ -92,5 +93,34 @@ void main() {
       io.out.toString(),
       contains('model declared text-only'),
     );
+  });
+
+  test('the delivery SLO sink logs stages and surfaces BREACH visibly '
+      '(issue #647 AC6)', () {
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: 'test-key',
+        env: env,
+        sessionRoot: '/sessions',
+        providerKind: 'openai-completions',
+      ),
+      io: io,
+    );
+    cli.wireRunNoticesForTesting();
+    expect(deliverySloSink, isNotNull, reason: 'the boot wires the sink');
+
+    const breach =
+        '[slo BREACH] task_send child=c1 stage=consumed elapsed=3400ms '
+        '(slo 2000ms)';
+    deliverySloSink?.call(breach);
+    const healthy = '[slo] task_send child=c1 stage=enqueued';
+    deliverySloSink?.call(healthy);
+
+    // A breach is visible on the transcript channel (stderr in headless
+    // mode); a healthy stage stays log-only — no per-send noise.
+    expect(io.out.toString(), contains('[slo BREACH]'));
+    expect(io.out.toString(), contains('stage=consumed elapsed=3400ms'));
+    expect(io.out.toString(), isNot(contains('stage=enqueued')));
   });
 }

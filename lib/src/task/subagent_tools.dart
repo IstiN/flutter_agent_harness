@@ -13,6 +13,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter_agent_harness/src/messaging/agent_message.dart';
+import 'delivery_slo.dart';
 import 'package:flutter_agent_harness/src/messaging/messaging_repository.dart';
 
 import '../agent/agent_loop.dart';
@@ -58,10 +59,12 @@ List<AgentTool> subagentMonitoringTools({
   TaskJobManager? jobs,
   TaskExecutor? executor,
 
-  /// How long `task_send` waits for a resumed child to prove responsive
-  /// before reporting the message queued (issue #488 AC3). A wedged
-  /// child's wake keeps running in the background either way.
-  Duration taskSendWaitCap = const Duration(seconds: 15),
+  /// How long `task_send` waits for a resumed child to acknowledge before
+  /// reporting (issue #647). The default equals the delivery SLO: the
+  /// warm wake consumes the message before the boot, so the wait never
+  /// blocks on session load. A wedged child's wake keeps running in the
+  /// background either way.
+  Duration taskSendWaitCap = const Duration(milliseconds: 1500),
 }) {
   if (manager == null) return const [];
   return [
@@ -1007,7 +1010,9 @@ Future<ToolExecutionResult> _sendByChildStatus(
 }
 
 /// Steering a queued/running child: the message lands in its inbox and is
-/// delivered at the next turn boundary.
+/// delivered at the next turn boundary — soft-yielded into a long tool
+/// call within the SLO (issue #647: the child loop probes the inbox and
+/// the executor pokes the child on arrival).
 Future<ToolExecutionResult> _enqueueFollowUp(
   SubagentManager manager,
   String id,
@@ -1025,6 +1030,7 @@ Future<ToolExecutionResult> _enqueueFollowUp(
   } on StateError catch (error) {
     return ToolExecutionResult.text('error: $error');
   }
+  deliveryStage(id, 'enqueued');
   return ToolExecutionResult.text(
     'queued message for running subagent "$id" — delivered at the '
     'next turn boundary',
@@ -1048,13 +1054,15 @@ Future<ToolExecutionResult> _resumeIdleChild(
       '(capability: child-resume)',
     );
   }
-  // Issue #488 AC3: the parent must never hang on a wedged child. The
-  // wake is raced against the cap; past it the send reports the message
-  // queued and the resume KEEPS RUNNING in the background — when the
-  // wedge breaks, the child completes in its own session (the registry
-  // row and transcript tell the truth, task_cancel reaches it). A late
-  // resume failure is already recorded by resumeChild itself; only its
-  // rethrow is swallowed here.
+  // Issue #488 AC3 + #647: the parent must never hang on a wedged child,
+  // and the wait must respect the delivery SLO. The warm wake consumes
+  // the message before the boot, so the default cap (1.5s) reports the
+  // receipt; past the cap the send reports the message queued and the
+  // resume KEEPS RUNNING in the background — when the wedge breaks, the
+  // child completes in its own session (the registry row and transcript
+  // tell the truth, task_cancel reaches it). A late resume failure is
+  // already recorded by resumeChild itself; only its rethrow is swallowed
+  // here.
   final resumed = resumeChild(id, message);
   try {
     // Issue #439 compact-then-deliver: the resume path compacts BEFORE the
@@ -1074,8 +1082,10 @@ Future<ToolExecutionResult> _resumeIdleChild(
   } on TimeoutException {
     unawaited(resumed.catchError((Object _) {}));
     return ToolExecutionResult.text(
-      'child "$id" not responding — message queued; it will be processed '
-      'when the child wakes (see task_status)',
+      'child "$id" not responding within the wait cap — message queued '
+      'in its inbox (consumed into the resumed run, which keeps going in '
+      'the background and will process it as its first action; see '
+      'task_status)',
     );
   } on Object catch (error) {
     return ToolExecutionResult.text('resume of "$id" failed: $error');

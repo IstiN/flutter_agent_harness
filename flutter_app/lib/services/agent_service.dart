@@ -197,6 +197,7 @@ class AgentService extends ChangeNotifier
     _activeApiKey = '';
     _wireImageDropNotice();
     _wireTextOnlyImageDropNotice();
+    _wireDeliverySloNotice();
     _redactor = redactor;
     _attachRedactor(redactor);
     _attachApproval();
@@ -235,6 +236,14 @@ class AgentService extends ChangeNotifier
     textOnlyImageDropNotice = (dropped) {
       AppLog.i('images', '$dropped image(s) dropped — model declared text-only');
     };
+  }
+
+  /// Delivery SLO stages must never be silent (issue #647 AC6): the app
+  /// surface is AppLog (`logs/app.log`), same rule as the drop notices
+  /// above. Armed from every constructor (public, `_withEnv`, relay base
+  /// delegates here).
+  static void _wireDeliverySloNotice() {
+    deliverySloSink = (line) => AppLog.i('slo', line);
   }
 
   /// Relay-mode base construction (issue #34 item 1): builds the shell the
@@ -513,6 +522,7 @@ class AgentService extends ChangeNotifier
     maybeCurrent = this;
     _wireImageDropNotice();
     _wireTextOnlyImageDropNotice();
+    _wireDeliverySloNotice();
     _providerKind = config.providerKind;
     _activeBaseUrl = config.baseUrl;
     _activeApiKey = config.apiKey;

@@ -191,6 +191,7 @@ class Agent {
     this.transformContext,
     this.prepareNextTurn,
     this.externalSteeringSource,
+    this.externalSteeringProbe,
     QueueMode steeringMode = QueueMode.oneAtATime,
     QueueMode followUpMode = QueueMode.oneAtATime,
     this.toolExecution = ToolExecutionMode.parallel,
@@ -328,6 +329,16 @@ class Agent {
 
   /// Queue a message to run only after the agent would otherwise stop.
   void followUp(Message message) => _followUpQueue.enqueue(message);
+
+  /// Fires the steering-arrived notification WITHOUT queueing a message —
+  /// the external-inbox fast path (issue #647): the owner of the external
+  /// source (e.g. the task executor seeing mail land on a running child's
+  /// handle) pokes the run so the tool-call phase's soft-yield fires
+  /// instantly instead of waiting out the 2s external probe. Delivery
+  /// itself still happens once, at the boundary drain.
+  void pokeSteering() {
+    if (!_steeringArrived.isClosed) _steeringArrived.add(null);
+  }
 
   /// Remove all queued steering messages.
   void clearSteeringQueue() => _steeringQueue.clear();
