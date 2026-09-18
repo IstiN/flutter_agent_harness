@@ -367,13 +367,19 @@ jobs:
         working-directory: flutter_app
         run: flutter pub get
 
-      # Mirrors build-android: overwrite the committed placeholder from
-      # the secret when available (the plugin hard-fails without a file).
+      # Mirrors build-android, gated to the store flavor: the secret file
+      # carries ONLY the dev.fa1.app client, while the god applicationId is
+      # dev.fa1.app.god — overwriting it would hard-fail the google-services
+      # plugin ("No matching client found for package name
+      # 'dev.fa1.app.god'"). god builds with the committed placeholder
+      # google-services.json, which carries both clients.
       - name: Write google-services.json (Android)
         env:
           GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
         run: |
-          if [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
+          if [ "$FLAVOR" != "store" ]; then
+            echo "$FLAVOR builds with the committed placeholder google-services.json — the secret file has no dev.fa1.app.god client"
+          elif [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
             echo "$GOOGLE_SERVICES_JSON_BASE64" | base64 --decode > flutter_app/android/app/google-services.json
             echo "google-services.json written"
           else
