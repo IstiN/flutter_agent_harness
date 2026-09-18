@@ -1,0 +1,155 @@
+# AI Teammate — thin stub over the dmtools-agents factory (reusable pack).
+#
+# ROLLOUT SCOPE (this phase): the loop reacts ONLY to artifacts authored
+# by the machine itself — issues opened by `ai-teammate` and PRs opened
+# by `ai-teammate`. Human-created issues (even labeled/assigned to the
+# agent) do NOT trigger anything yet; that gate opens in a later phase.
+#
+#   issue opened by ai-teammate      → factory, leg=dev (labels not set yet)
+#   issue labeled/assigned (machine
+#     authorship only)               → factory, leg derived by the guard
+#   PR opened by ai-teammate         → factory, leg=review on the linked
+#                                      issue (parsed from the PR body)
+#   workflow_dispatch (SM / manual)  → leg pinned by input
+#
+# ALL loop logic lives in IstiN/dmtools-agents/.github/workflows/
+# factory-teammate.yml (guard, legs, verdict, sessions, memory). This file
+# carries only what cannot live in a reusable workflow: the repository
+# event triggers, the author filter, the PR→issue resolution, the
+# per-issue concurrency group, and the call itself.
+#
+# Secrets (explicit mapping): SOURCE_GITHUB_TOKEN (required by the factory),
+# ZAI_CODE_KEY, KIMI_REVIEW_KEY (optional provider keys).
+# Vars: FA_VERSION_MACHINE || FA_VERSION || latest, DMTOOLS_VERSION,
+# MAX_AUTO_REWORK_ROUNDS.
+
+name: 'AI Teammate'
+
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch' &&
+      format('▶ {0} (SM) · gh-{1}', github.event.inputs.leg, github.event.inputs.issue) ||
+      github.event_name == 'pull_request' && format('🔍 review (PR) · gh-{1}', github.event.number) ||
+      format('{0} · gh-{1}: {2}',
+        github.event.action == 'opened' && '⚒️ dev (machine issue)' || 'machine loop',
+        github.event.issue.number, github.event.issue.title) }}
+
+on:
+  issues:
+    types: [opened, labeled, assigned]
+  pull_request:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: 'Issue number to run the agent on'
+        required: true
+        type: number
+      leg:
+        description: 'Which leg to run'
+        required: true
+        type: choice
+        options: [dev, review, rework]
+      reason:
+        description: 'Why this dispatch (audit trail, shown in logs)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+concurrency:
+  group: ai-teammate-issue-${{ github.event.issue.number || github.event.inputs.issue }}
+  cancel-in-progress: false
+
+jobs:
+  # Author gate + PR→issue resolution. Runs ONLY for machine-authored
+  # artifacts (or explicit dispatch); everything else exits empty and the
+  # factory job is skipped.
+  gate:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issues' && github.event.issue.user.login == 'ai-teammate') ||
+      (github.event_name == 'pull_request' && github.event.pull_request.user.login == 'ai-teammate')
+    runs-on: ubuntu-latest
+    outputs:
+      issue: ${{ steps.resolve.outputs.issue }}
+      leg: ${{ steps.resolve.outputs.leg }}
+    steps:
+      - name: Resolve target issue and leg for this event
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          NUMBER: ${{ github.event.number }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -eu
+          case "$EVENT" in
+            workflow_dispatch)
+              # Manual/SM dispatch: inputs flow straight through.
+              echo "issue=${ISSUE_NUMBER}" >> "$GITHUB_OUTPUT"   # empty here; factory takes inputs.issue
+              echo "leg=" >> "$GITHUB_OUTPUT"
+              ;;
+            issues)
+              # Machine-authored issue. `opened` has no machine labels yet
+              # → dev leg explicitly; labeled/assigned (agent:review /
+              # agent:rework added by the machine itself) → guard derives.
+              if [ "$ACTION" = "opened" ]; then
+                echo "leg=dev" >> "$GITHUB_OUTPUT"
+              else
+                echo "leg=" >> "$GITHUB_OUTPUT"
+              fi
+              echo "issue=${ISSUE_NUMBER}" >> "$GITHUB_OUTPUT"
+              ;;
+            pull_request)
+              # Machine-authored PR: find the driving issue in the body
+              # ("Closes #N" / "Fixes #N" / "gh-N" title marker) and run
+              # the review leg on it.
+              body="$(gh pr view "$NUMBER" --json body -q .body || true)"
+              issue=""
+              if echo "$body" | grep -oE '(Closes|Fixes|Resolves) #[0-9]+' | grep -oE '[0-9]+' | head -1 > /tmp/n; then
+                issue="$(cat /tmp/n)"
+              else
+                # fallback: the agent prefixes branches/titles with gh-<n>
+                title="$(gh pr view "$NUMBER" --json title -q .title || true)"
+                issue="$(echo "$title" | grep -oE 'gh-[0-9]+' | head -1 | grep -oE '[0-9]+' || true)"
+              fi
+              if [ -z "$issue" ]; then
+                echo "::notice::PR #$NUMBER (ai-teammate) has no linked issue — nothing for the agent"
+                echo "issue=" >> "$GITHUB_OUTPUT"
+                echo "leg=" >> "$GITHUB_OUTPUT"
+              else
+                echo "issue=${issue}" >> "$GITHUB_OUTPUT"
+                echo "leg=review" >> "$GITHUB_OUTPUT"
+              fi
+              ;;
+          esac
+          echo "→ gate done (see outputs)"
+
+  factory:
+    needs: gate
+    if: needs.gate.result == 'success' && needs.gate.outputs.issue != ''
+    # Pinned to an immutable SHA of IstiN/dmtools-agents (branch heads move;
+    # a branch ref executes whatever is at the head at run start). Flip in
+    # lockstep with the machine-sm.yml pin — guarded by
+    # test/machine_kit/factory_stub_ref_test.dart.
+    uses: IstiN/dmtools-agents/.github/workflows/factory-teammate.yml@5b6376a7ec9c82dc9137c78dde5090e65ce75532
+    with:
+      # The literal uses-ref: the factory requires it (it cannot derive its
+      # own ref — github.workflow_ref in a called workflow is the CALLER's).
+      factory_ref: 5b6376a7ec9c82dc9137c78dde5090e65ce75532
+      # STRING — number/choice-typed reusable inputs cannot take expressions.
+      issue: ${{ needs.gate.outputs.issue || github.event.inputs.issue }}
+      leg: ${{ needs.gate.outputs.leg || github.event.inputs.leg || '' }}
+      reason: ${{ github.event.inputs.reason || 'ai-teammate-author gate' }}
+    # Explicit mapping — the factory DECLARES SOURCE_GITHUB_TOKEN as a
+    # required named secret (plus optional ZAI_CODE_KEY / KIMI_REVIEW_KEY),
+    # and `secrets: inherit` does not satisfy required-secret validation at
+    # call time (live bisect on dmtools-dart: inherit => startup failure).
+    secrets:
+      SOURCE_GITHUB_TOKEN: ${{ secrets.SOURCE_GITHUB_TOKEN }}
+      ZAI_CODE_KEY: ${{ secrets.ZAI_CODE_KEY }}
+      KIMI_REVIEW_KEY: ${{ secrets.KIMI_REVIEW_KEY }}
