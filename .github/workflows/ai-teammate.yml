@@ -119,7 +119,7 @@ jobs:
     with:
       # The literal uses-ref: the factory requires it (it cannot derive its
       # own ref — github.workflow_ref in a called workflow is the CALLER's).
-      factory_ref: c5c4fa0e0205685148acd6bd1c02f8ee8470f774
+      factory_ref: a9a4b5df83722068b01fb03aaa1f2d0a5dbd4d0b
       # STRING — number/choice-typed reusable inputs cannot take expressions.
       issue: ${{ needs.gate.outputs.issue || github.event.inputs.issue }}
       leg: ${{ needs.gate.outputs.leg || github.event.inputs.leg || '' }}
