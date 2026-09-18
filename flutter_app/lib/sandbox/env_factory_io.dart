@@ -6,9 +6,14 @@ import 'package:flutter_agent_harness/io.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
+import 'package:fa/services/app_log.dart';
 import 'package:fa/services/project_folder_channel.dart';
 import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/project_mount_store.dart';
+import 'package:fa/sandbox/fs_persistence_stub.dart'
+    if (dart.library.html) 'fs_persistence_web.dart';
+import 'package:fa/sandbox/memory_shell.dart';
+import 'package:fa/sandbox/persistent_web_env.dart';
 import 'package:fa/sandbox/wasm_shell.dart';
 
 /// Creates the execution environment for the current platform.
@@ -40,24 +45,45 @@ Future<ExecutionEnv> createPlatformEnv({http.Client? httpClient}) async {
 
 /// The Android/iOS branch of [createPlatformEnv]: a sandboxed host directory
 /// plus the WASI shell backed by MIT-licensed uutils/ripgrep WASM binaries
-/// so the agent has a working shell on mobile. Straight-line (no branches):
-/// it only runs on a device, where the WASM runtime asset exists.
-Future<ExecutionEnv> createMobileSandboxEnv({http.Client? httpClient}) async {
+/// so the agent has a working shell on mobile.
+///
+/// Issue #640: if the WASM runtime fails (e.g. a Rust PanicException while
+/// JIT-compiling python.wasm inside the Android `untrusted_app` VM limits),
+/// the failure used to kill boot before the first frame — a black screen.
+/// It now logs a warning and falls back to the pure-Dart [MemoryShell] over
+/// a [MemoryExecutionEnv] + [PersistentWebExecutionEnv] (the web shell
+/// stack), so the app always boots to the UI.
+Future<ExecutionEnv> createMobileSandboxEnv({
+  http.Client? httpClient,
+  @visibleForTesting Future<WasiSandboxShell> Function()? loadShell,
+}) async {
   final appDir = await getApplicationDocumentsDirectory();
   final sandbox = Directory('${appDir.path}/fah_sandbox');
   await sandbox.create(recursive: true);
 
   // Both Android and iOS run the WASI sandbox shell; on iOS the wasm_run
   // library is statically linked into the app binary (see setUpWasmRuntime).
-  final shell = await WasiSandboxShell.load(
-    workingDirectory: '/',
-    sandboxHostPath: sandbox.path,
-    httpClient: httpClient,
-  );
-  return SandboxedExecutionEnv(
-    LocalExecutionEnv(cwd: sandbox.path, shell: shell),
-    sandbox.path,
-  );
+  try {
+    final shell =
+        await (loadShell ??
+            () => WasiSandboxShell.load(
+              workingDirectory: '/',
+              sandboxHostPath: sandbox.path,
+              httpClient: httpClient,
+            ))();
+    return SandboxedExecutionEnv(
+      LocalExecutionEnv(cwd: sandbox.path, shell: shell),
+      sandbox.path,
+    );
+  } on Object catch (e) {
+    final note = 'WASM shell unavailable, falling back to MemoryShell: $e';
+    debugPrint('[env_factory] $note');
+    AppLog.i('sandbox', note);
+    final shell = MemoryShell(httpClient: httpClient);
+    final env = MemoryExecutionEnv(cwd: '/', shell: shell);
+    shell.attach(env);
+    return PersistentWebExecutionEnv.restore(env, createFsSnapshotStore());
+  }
 }
 
 /// The desktop branch of [createPlatformEnv]: the application-support
