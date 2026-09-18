@@ -37,7 +37,7 @@ MobileElementIndex parseMobileHierarchy(
   var packageName = '';
 
   final nodeTag = RegExp(r'<node\b((?:[^>"]|"[^"]*")*?)/?>');
-  final attr = RegExp(r'(\w+)="([^"]*)"');
+  final attr = RegExp(r'([\w-]+)="([^"]*)"');
 
   for (final match in nodeTag.allMatches(xml)) {
     final attrs = <String, String>{
@@ -47,11 +47,9 @@ MobileElementIndex parseMobileHierarchy(
     final pkg = _unescape(attrs['package'] ?? '');
     if (pkg.isNotEmpty && packageName.isEmpty) packageName = pkg;
 
-    final bounds = _parseBounds(attrs['bounds']);
-    if (bounds == null) continue; // malformed/absent bounds — not tappable
+    final bounds = _nodeBounds(attrs['bounds']);
+    if (bounds == null) continue; // malformed/absent bounds or zero-area
     final (left, top, right, bottom) = bounds;
-    // Zero-area nodes are never interactive (artemis prunes them first).
-    if (right <= left || bottom <= top) continue;
 
     final clickable = attrs['clickable'] == 'true';
     final scrollable = attrs['scrollable'] == 'true';
@@ -65,15 +63,17 @@ MobileElementIndex parseMobileHierarchy(
     final password = attrs['password'] == 'true';
 
     // The artemis keep-rule: informative or interactive only.
-    final informative =
-        text.isNotEmpty ||
-        contentDesc.isNotEmpty ||
-        viewId.isNotEmpty ||
-        clickable ||
-        scrollable ||
-        editable ||
-        checkable;
-    if (!informative) continue;
+    if (!_isInformative(
+      text: text,
+      contentDesc: contentDesc,
+      viewId: viewId,
+      clickable: clickable,
+      scrollable: scrollable,
+      editable: editable,
+      checkable: checkable,
+    )) {
+      continue;
+    }
 
     if (kept.length >= cap) {
       truncated = true;
@@ -82,7 +82,7 @@ MobileElementIndex parseMobileHierarchy(
     kept.add(
       MobileElement(
         id: 'e${kept.length + 1}',
-        text: password ? null : (text.isEmpty ? null : text),
+        text: _visibleText(text, password: password),
         contentDesc: contentDesc.isEmpty ? null : contentDesc,
         className: _classNameOf(attrs['class']),
         viewId: viewId.isEmpty ? null : viewId,
@@ -123,6 +123,42 @@ String? _classNameOf(String? full) {
     int.parse(m.group(3)!),
     int.parse(m.group(4)!),
   );
+}
+
+/// Valid, non-zero-area bounds: malformed/absent and zero-area nodes are
+/// not actionable (artemis prunes them first).
+(int, int, int, int)? _nodeBounds(String? raw) {
+  final bounds = _parseBounds(raw);
+  if (bounds == null) return null;
+  final (left, top, right, bottom) = bounds;
+  if (right <= left || bottom <= top) return null;
+  return bounds;
+}
+
+/// The artemis keep-rule: a node survives when it carries text, an
+/// accessibility label, a view id, or any interactive affordance.
+bool _isInformative({
+  required String text,
+  required String contentDesc,
+  required String viewId,
+  required bool clickable,
+  required bool scrollable,
+  required bool editable,
+  required bool checkable,
+}) {
+  return text.isNotEmpty ||
+      contentDesc.isNotEmpty ||
+      viewId.isNotEmpty ||
+      clickable ||
+      scrollable ||
+      editable ||
+      checkable;
+}
+
+/// Screen text of a node: password fields never expose their value.
+String? _visibleText(String text, {required bool password}) {
+  if (password || text.isEmpty) return null;
+  return text;
 }
 
 /// Decodes the five XML predefined entities the serializer emits.
