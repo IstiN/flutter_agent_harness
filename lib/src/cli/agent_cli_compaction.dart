@@ -206,6 +206,23 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
   }
 }
 
+/// The busy-row phase push (issue #653): a plain passthrough. The busy
+/// row names the CURRENT activity — `Compacting context…` while the fold
+/// runs, then the post-fold handback (`''`) clears the marker the moment
+/// the compaction finishes, and later tool/stream labels stay marker-free.
+/// The «[auto-compacted · continuing]» badge used to be appended to every
+/// label here, so after any fold the row led with the stale marker for
+/// the rest of the run (owner screenshot: `[auto-compacted ×7 · c…` over
+/// active tool work). The badge lives on the status row only
+/// (`_statusLine`, until the turn settles — issue #438 AC3).
+extension AgentCliBusyPhase on AgentCli {
+  /// Pushes a phase label onto the TUI busy row.
+  void _pushBusyPhase(String phase) {
+    busyPhasesForTest.add(phase);
+    _tuiController?.setBusyPhase(phase);
+  }
+}
+
 /// Auto/manual compaction run methods (moved from agent_cli.dart under the
 /// repo's 2800-line size gate). Same library, so private state is in scope.
 
