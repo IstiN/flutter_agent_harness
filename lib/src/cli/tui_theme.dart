@@ -37,13 +37,27 @@ import 'dart:math' as math;
 
 // The PURE entry point: the barrel (dart_tui.dart) drags in
 // program/windows_terminal -> dart:ffi, which the web build cannot
-// compile (fa_tui_stub -> tui_prompt -> tui_theme ships to web).
-import 'package:dart_tui/style.dart' show ColorProfile, RgbColor, Style, Theme;
+// compile (fa_tui_stub -> tui_prompt -> tui_theme ships to web). The
+// hosted package has no pure entry point (the vendored fork's
+// lib/style.dart shim is local-only, never published), so import the
+// pure source files directly — the very libraries the fork's shim
+// re-exports, and the same libraries the barrel exports for the VM-only
+// TUI code, so types stay identical across both resolutions.
+// ponytail: these src/ paths are not semver-covered; the fork patches
+// these exact files and 2.0.0→2.1.0 kept them stable. Revisit if
+// upstream moves them (then: propose the pure shim upstream).
+import 'package:dart_tui/src/bubbles/style.dart' show RgbColor, Style;
+import 'tui_theme_palette.dart';
+
+/// The fah-owned palette type (see tui_theme_palette.dart): the hosted
+/// dart_tui `Theme` lacks the #444 roles, so fah vendors its extension.
+export 'tui_theme_palette.dart';
+import 'package:dart_tui/src/msg.dart' show ColorProfile;
 import 'tool_rows.dart' show LaidOutToolRow, ToolRowState;
 
 /// The boot default: the historical site palette (site/styles.css teal +
 /// indigo). Truecolor output is byte-identical to the pre-theming CLI.
-const Theme kDefaultTuiTheme = Theme(
+const TuiTheme kDefaultTuiTheme = TuiTheme(
   name: 'default',
   base: Style(),
   muted: Style(isDim: true),
@@ -80,18 +94,18 @@ const Theme kDefaultTuiTheme = Theme(
 
 /// The built-in catalog, keyed by config name. `default` wins the
 /// `default` alias; every other name resolves literally.
-const Map<String, Theme> kBuiltInTuiThemes = {
+const Map<String, TuiTheme> kBuiltInTuiThemes = {
   'default': kDefaultTuiTheme,
-  'catppuccin': Theme.catppuccin,
-  'nord': Theme.nord,
-  'dracula': Theme.dracula,
+  'catppuccin': TuiTheme.catppuccin,
+  'nord': TuiTheme.nord,
+  'dracula': TuiTheme.dracula,
   'ohmypi-dark': _ohmypiDark,
   'ohmypi-light': _ohmypiLight,
   'pi': _piDark,
 };
 
 /// oh-my-pi `dark.json` port (vars resolved; see the library-docs mapping).
-const Theme _ohmypiDark = Theme(
+const TuiTheme _ohmypiDark = TuiTheme(
   name: 'ohmypi-dark',
   base: Style(),
   muted: Style(foregroundRgb: RgbColor(0x5f, 0x66, 0x73), isDim: true),
@@ -114,7 +128,7 @@ const Theme _ohmypiDark = Theme(
 );
 
 /// oh-my-pi `light.json` port.
-const Theme _ohmypiLight = Theme(
+const TuiTheme _ohmypiLight = TuiTheme(
   name: 'ohmypi-light',
   base: Style(),
   muted: Style(foregroundRgb: RgbColor(0x76, 0x76, 0x76), isDim: true),
@@ -136,7 +150,7 @@ const Theme _ohmypiLight = Theme(
 );
 
 /// pi's interactive-mode dark palette (`theme/dark.json`) port.
-const Theme _piDark = Theme(
+const TuiTheme _piDark = TuiTheme(
   name: 'pi',
   base: Style(foregroundRgb: RgbColor(0xd4, 0xd4, 0xd4)),
   muted: Style(foregroundRgb: RgbColor(0x66, 0x66, 0x66), isDim: true),
@@ -220,7 +234,7 @@ int _roleLine(String text, String role) {
 /// Parses a user theme JSON document ([text], named [fileName]): tolerant of
 /// missing roles (they inherit the default theme) and naming every problem
 /// with its role and line — never a raw crash.
-Theme parseUserTheme(String text, String fileName) {
+TuiTheme parseUserTheme(String text, String fileName) {
   final Object? doc;
   try {
     doc = jsonDecode(text);
@@ -280,7 +294,7 @@ Theme parseUserTheme(String text, String fileName) {
     backgroundRgb: resolved[role] ?? _defaultRoleStyle(role)?.backgroundRgb,
   );
 
-  return Theme(
+  return TuiTheme(
     name: fileName,
     base: const Style(),
     accent2Soft: fg('accent2Soft'),
@@ -330,12 +344,12 @@ Style? _defaultRoleStyle(String role) => switch (role) {
 /// shadow a built-in are skipped (user themes can never shadow built-ins);
 /// unparseable files are collected into [errors] instead of failing the
 /// boot.
-({Map<String, Theme> themes, List<String> errors}) loadUserThemes(
+({Map<String, TuiTheme> themes, List<String> errors}) loadUserThemes(
   String? homeDir,
   List<String> Function(String dir) listJsonFiles,
   String Function(String path) readFile,
 ) {
-  final themes = <String, Theme>{};
+  final themes = <String, TuiTheme>{};
   final errors = <String>[];
   if (homeDir == null || homeDir.isEmpty) return (themes: themes, errors: errors);
   final dir = '$homeDir/.fah/themes';
@@ -387,25 +401,25 @@ final class FaThemeController {
   /// The process-wide controller the color helpers read.
   static final FaThemeController instance = FaThemeController._();
 
-  Theme _current = kDefaultTuiTheme;
+  TuiTheme _current = kDefaultTuiTheme;
   String _currentName = kDefaultTuiTheme.name;
-  final Map<String, Theme> _userThemes = {};
+  final Map<String, TuiTheme> _userThemes = {};
 
   /// The color profile emitters render with (null = no styling).
   ColorProfile? profile = ColorProfile.trueColor;
 
   /// The current theme.
-  Theme get current => _current;
+  TuiTheme get current => _current;
 
   /// The current theme's config name.
   String get currentName => _currentName;
 
   /// All available themes: built-ins first, then user themes (which can
   /// never shadow a built-in name).
-  Map<String, Theme> available() => {...kBuiltInTuiThemes, ..._userThemes};
+  Map<String, TuiTheme> available() => {...kBuiltInTuiThemes, ..._userThemes};
 
   /// Installs user themes (boot-time; see [loadUserThemes]).
-  void addUserThemes(Map<String, Theme> themes) => _userThemes.addAll(themes);
+  void addUserThemes(Map<String, TuiTheme> themes) => _userThemes.addAll(themes);
 
   /// Applies [name] if known; returns whether it resolved. Does not
   /// persist (that is `/theme`'s job).
@@ -556,10 +570,10 @@ String tuiFaMark() {
 
 /// Paints a laid-out tool row for its lifecycle [state] (issue #444
 /// defect 2): the state rail picks a border role — running rows the
-/// accent border ([Theme.focusBorder], pi's `borderAccent`), settled
-/// rows [Theme.borderMuted], done/failed rows the success/error tints
-/// ([Theme.toolSuccessBg]/[Theme.toolErrorBg]); label and detail render
-/// in [Theme.toolTitle]/[Theme.toolOutput]. No profile → a plain rail
+/// accent border ([TuiTheme.focusBorder], pi's `borderAccent`), settled
+/// rows [TuiTheme.borderMuted], done/failed rows the success/error tints
+/// ([TuiTheme.toolSuccessBg]/[TuiTheme.toolErrorBg]); label and detail render
+/// in [TuiTheme.toolTitle]/[TuiTheme.toolOutput]. No profile → a plain rail
 /// + row, deterministically (E2).
 String tuiToolRow(LaidOutToolRow row, ToolRowState state) {
   final c = FaThemeController.instance;
@@ -605,7 +619,7 @@ String _swatch(Style style, String label) =>
 
 /// A live-preview swatch row for [theme]: colored blocks sampling the
 /// palette's load-bearing roles. Plain blocks when styling is off.
-String themeSwatchRow(Theme theme) {
+String themeSwatchRow(TuiTheme theme) {
   String block(Style style) => _swatch(style, '███');
 
   return [
@@ -633,7 +647,7 @@ List<String> themeTableLines({String? current}) {
 
 /// WCAG-ish sanity floor for E2: base fg must stay readable against the
 /// message background in the same palette (contrast ratio ≥ 2.5).
-double themeContrast(Theme theme) {
+double themeContrast(TuiTheme theme) {
   final bg = theme.userMessageBg.backgroundRgb ?? const RgbColor(0, 0, 0);
   // Base text inherits the terminal's own foreground (oh-my-pi light.json
   // ships "text": "" too), so the reference fg contrasts with whatever
@@ -647,9 +661,9 @@ double themeContrast(Theme theme) {
 }
 
 /// The user-message readability floor (issue #444 AC4): contrast of
-/// [Theme.userMessageText] against [Theme.userMessageBg]. A theme
+/// [TuiTheme.userMessageText] against [TuiTheme.userMessageBg]. A theme
 /// leaving the text role unset reads against the plain base fg.
-double themeUserMessageContrast(Theme theme) {
+double themeUserMessageContrast(TuiTheme theme) {
   final bg = theme.userMessageBg.backgroundRgb ?? const RgbColor(0, 0, 0);
   final fg =
       theme.userMessageText.foregroundRgb ??

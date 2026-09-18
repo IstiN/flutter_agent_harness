@@ -10,7 +10,8 @@ library;
 
 import 'dart:io' as io;
 
-import 'package:dart_tui/style.dart' show ColorProfile, RgbColor, Theme;
+import 'package:dart_tui/src/bubbles/style.dart' show RgbColor;
+import 'package:dart_tui/src/msg.dart' show ColorProfile;
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/tool_rows.dart';
 import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
@@ -164,7 +165,7 @@ void main() {
 
   group('built-in ports (AC2)', () {
     void expectRole(
-      Theme theme,
+      TuiTheme theme,
       String role,
       RgbColor color, {
       bool bold = false,
@@ -340,7 +341,7 @@ void main() {
       // The built-in catalog still wins the name.
       expect(
         {...kBuiltInTuiThemes, ...loaded.themes}['catppuccin'],
-        same(Theme.catppuccin),
+        same(TuiTheme.catppuccin),
       );
     });
   });

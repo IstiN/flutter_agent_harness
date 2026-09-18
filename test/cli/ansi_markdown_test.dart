@@ -1,4 +1,4 @@
-import 'package:dart_tui/style.dart' show ColorProfile;
+import 'package:dart_tui/src/msg.dart' show ColorProfile;
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:flutter_agent_harness/src/cli/tui_text_width.dart';

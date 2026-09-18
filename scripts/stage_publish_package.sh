@@ -34,17 +34,22 @@ target="${1:?usage: stage_publish_package.sh <target-dir>}"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 mkdir -p "$target"
+# Root-scoped excludes are ANCHORED: rsync matches an unanchored name
+# against the basename at ANY depth — `memory` also pruned lib/src/memory/,
+# shipping v0.1.411 with broken memory imports (issue #613). build/ and
+# .dart_tool stay unanchored: build artifacts may appear at any depth and
+# never belong in the stage.
 rsync -a "$repo_root"/ "$target"/ \
   --include 'vendor/xterm/' --include 'vendor/xterm/**' \
   --include 'packages/fa_llm_mock/' --include 'packages/fa_llm_mock/**' \
-  --exclude '.git' --exclude '.github' --exclude '.worktrees' \
-  --exclude 'flutter_app' --exclude 'browser_ext' \
-  --exclude 'office_addin' --exclude 'yoclip' \
-  --exclude 'vendor/*' --exclude 'docs' --exclude 'fa-local' \
+  --exclude '/.git' --exclude '/.github' --exclude '/.worktrees' \
+  --exclude '/flutter_app' --exclude '/browser_ext' \
+  --exclude '/office_addin' --exclude '/yoclip' \
+  --exclude 'vendor/*' --exclude '/docs' --exclude '/fa-local' \
   --exclude 'packages/*' \
-  --exclude 'pubspec_overrides.yaml' \
-  --exclude '.dart_tool' --exclude 'build' --exclude '.fah' \
-  --exclude 'memory' --exclude '.trash' --exclude 'coverage'
+  --exclude '/pubspec_overrides.yaml' \
+  --exclude '.dart_tool' --exclude 'build' \
+  --exclude '/memory' --exclude '/.trash' --exclude '/coverage'
 
 size=$(du -sm "$target" | cut -f1)
 echo "staged package: ${size} MB"
