@@ -3787,4 +3787,12 @@
 - fix(514): emit informational notice on stalled run without queued messages (#598)
 - refactor(569): apps/widgets tail 12 methods 42->24 CRAP, split + covered (#588)
 
+## 0.1.411
+
+- fix(608): sync firebase_options template public API (optionsFor) with tracked file (#609)
+- refactor(570): services tail + boot CRAP 42->24 (ladder #433 closer, +45 tests) (#596)
+- ci(551): run integration tests per-PR via MockLlmServer; real-provider smoke tag-only (#553)
+- fix(584): publish stage resolves path deps — include vendor/xterm + fa_llm_mock, drop pubspec_overrides (#587)
+- refactor(561): UI+services singles 9 methods 56→24 CRAP (split + cover, ladder 4/4) (#589)
+
 ## Unreleased
