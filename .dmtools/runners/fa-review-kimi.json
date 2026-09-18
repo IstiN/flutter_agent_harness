@@ -1,6 +1,7 @@
 {
-  "parent": { "path": "../../factory-agents/pr_review.json" },
-  "merge": ["params.cliPrompts"],
+  "parent": {
+    "path": "../../factory-agents/pr_review.json"
+  },
   "params": {
     "envVariables": {
       "AI_AGENT_PROVIDER": "fa",
@@ -13,6 +14,27 @@
       "allowApproveWithSuggestions": true,
       "formalGithubReview": true
     },
-    "cliPrompts": ["./factory-agents/instructions/pr_review/review_verdict_rules.md"]
+    "cliPrompts": [
+      "Senior Code Reviewer & Security Expert",
+      "./factory-agents/instructions/common/agent_task_preamble.md",
+      "./factory-agents/instructions/common/review_coding_guidelines.md",
+      "./factory-agents/instructions/pr_review/general_guidelines.md",
+      "./factory-agents/instructions/pr_review/output_rules.md",
+      "./factory-agents/instructions/pr_review/formatting_rules.md",
+      "./factory-agents/instructions/pr_review/few_shots.md",
+      "./factory-agents/instructions/common/dmtools_cli.md",
+      "./factory-agents/prompts/bash_tools.md"
+    ],
+    "preJSAction": "factory-agents/js/checkWipLabel.js",
+    "preCliJSAction": "factory-agents/js/preparePRForReview.js",
+    "postJSAction": "factory-agents/js/postPRReviewComments.js",
+    "cliCommands": [
+      "./factory-agents/scripts/run-agent.sh"
+    ],
+    "cliPromptsByTracker": {
+      "github": [
+        "./factory-agents/instructions/common/github_comment_format.md"
+      ]
+    }
   }
 }

@@ -1,5 +1,7 @@
 {
-  "parent": { "path": "../../factory-agents/bug_development.json" },
+  "parent": {
+    "path": "../../factory-agents/bug_development.json"
+  },
   "params": {
     "envVariables": {
       "DEFAULT_TRACKER": "github",
@@ -9,7 +11,28 @@
     },
     "inputJql": "",
     "cliPromptsByTracker": {
-      "github": ["./factory-agents/instructions/common/github_comment_format.md"]
-    }
+      "github": [
+        "./factory-agents/instructions/common/github_comment_format.md"
+      ]
+    },
+    "preJSAction": "factory-agents/js/checkWipLabel.js",
+    "preCliJSAction": "factory-agents/js/preCliDevelopmentSetup.js",
+    "postJSAction": "factory-agents/js/developBugAndCreatePR.js",
+    "cliCommands": [
+      "./factory-agents/scripts/run-agent.sh"
+    ],
+    "cliPrompts": [
+      "Senior Developer Engineer specializing in root cause analysis and bug fixing",
+      "./factory-agents/instructions/common/agent_task_preamble.md",
+      "./factory-agents/instructions/common/coding_guidelines.md",
+      "./factory-agents/instructions/common/input_context_reading.md",
+      "./factory-agents/instructions/bug_development/general_guidelines.md",
+      "./factory-agents/instructions/bug_development/tdd_approach.md",
+      "./factory-agents/instructions/bug_development/output_rules.md",
+      "./factory-agents/instructions/bug_development/formatting_rules.md",
+      "./factory-agents/instructions/bug_development/few_shots.md",
+      "./factory-agents/instructions/common/dmtools_cli.md",
+      "./factory-agents/prompts/bash_tools.md"
+    ]
   }
 }
