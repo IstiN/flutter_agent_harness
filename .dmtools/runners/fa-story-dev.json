@@ -33,6 +33,8 @@
       "./factory-agents/instructions/story_development/few_shots.md",
       "./factory-agents/instructions/common/dmtools_cli.md",
       "./factory-agents/prompts/bash_tools.md"
-    ]
+    ],
+    "timerIntervalSeconds": 300,
+    "timerJSAction": "factory-agents/js/timerAutoCommitAndSave.js"
   }
 }
