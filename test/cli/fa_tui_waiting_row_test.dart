@@ -85,4 +85,17 @@ void main() {
       contains('2 background jobs from the previous run were lost'),
     );
   });
+
+  test('multiline job and timer are sanitized to single lines', () {
+    final lines = waitingRowLines(
+      busy: false,
+      waitingJobs: const ['python3 -c "\nimport os\nprint(1)\n" (sh-1)'],
+      waitingTimers: const [(dueMs: 30_000, preview: 'line 1\nline 2')],
+      waitingLostJobs: 0,
+      nowMs: 0,
+    );
+    expect(lines, hasLength(1));
+    expect(lines.single, isNot(contains('\n')));
+    expect(lines.single, contains('python3 -c " import os print(1) " (sh-1)'));
+  });
 }
