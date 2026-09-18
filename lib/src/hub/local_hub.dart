@@ -677,26 +677,10 @@ Future<void> handleRelayRequest(
   required String? Function() requireCredential,
   required String? allowedOrigin,
 }) async {
-  void cors() {
-    if (allowedOrigin == null) return;
-    request.response.headers
-      ..set('Access-Control-Allow-Origin', allowedOrigin)
-      ..set('Vary', 'Origin');
-  }
-
   if (request.method == 'OPTIONS') {
-    request.response.statusCode = 204;
-    cors();
-    if (allowedOrigin != null) {
-      request.response.headers
-        ..set('Access-Control-Allow-Methods', 'POST, OPTIONS')
-        ..set('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-        ..set('Access-Control-Max-Age', '600');
-    }
-    await request.response.close();
+    await _relayPreflight(request, allowedOrigin);
     return;
   }
-
   final credential = requireCredential();
   if (credential != null &&
       request.headers.value('authorization') != 'Bearer $credential') {
@@ -704,25 +688,68 @@ Future<void> handleRelayRequest(
     await request.response.close();
     return;
   }
+  final parsed = await _relayEnvelope(request, allowedOrigin);
+  if (parsed == null) return;
+  await _relayForward(request, parsed.$1, parsed.$2, allowedOrigin);
+}
 
-  final Uri url;
-  Map<String, dynamic> envelope = const {};
+/// CORS grant for a relay response — only when the origin was allowlisted
+/// (never `*`).
+void _relayCors(HttpRequest request, String? allowedOrigin) {
+  if (allowedOrigin == null) return;
+  request.response.headers
+    ..set('Access-Control-Allow-Origin', allowedOrigin)
+    ..set('Vary', 'Origin');
+}
+
+/// OPTIONS preflight: 204 plus the full method/header grant so the
+/// browser sends the real POST.
+Future<void> _relayPreflight(HttpRequest request, String? allowedOrigin) async {
+  request.response.statusCode = 204;
+  _relayCors(request, allowedOrigin);
+  if (allowedOrigin != null) {
+    request.response.headers
+      ..set('Access-Control-Allow-Methods', 'POST, OPTIONS')
+      ..set('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+      ..set('Access-Control-Max-Age', '600');
+  }
+  await request.response.close();
+}
+
+/// Reads and validates the bridge envelope; answers 400 and returns null
+/// when the body is not JSON or the url is missing/non-http(s).
+Future<(Uri, Map<String, dynamic>)?> _relayEnvelope(
+  HttpRequest request,
+  String? allowedOrigin,
+) async {
   try {
     final body = await utf8.decoder.bind(request).join();
-    envelope = (jsonDecode(body) as Map).cast<String, dynamic>();
-    url = Uri.tryParse('${envelope['url']}') ?? Uri();
+    final envelope = (jsonDecode(body) as Map).cast<String, dynamic>();
+    final url = Uri.tryParse('${envelope['url']}') ?? Uri();
     if (!url.isScheme('https') && !url.isScheme('http')) {
       throw const FormatException('url must be http(s)');
     }
+    return (url, envelope);
   } on FormatException {
     request.response.statusCode = 400;
-    cors();
-    request.response.write('{"error":"expecting {url, method?, headers?, '
-        'bodyB64?} with an http(s) url"}');
+    _relayCors(request, allowedOrigin);
+    request.response.write(
+      '{"error":"expecting {url, method?, headers?, '
+      'bodyB64?} with an http(s) url"}',
+    );
     await request.response.close();
-    return;
+    return null;
   }
+}
 
+/// Proxies the raw upstream response (status + content-type + streamed
+/// body, so SSE rides through incrementally); 502 when unreachable.
+Future<void> _relayForward(
+  HttpRequest request,
+  Uri url,
+  Map<String, dynamic> envelope,
+  String? allowedOrigin,
+) async {
   final upstream = HttpClient();
   try {
     final req = await upstream.openUrl('${envelope['method'] ?? 'POST'}', url);
@@ -734,7 +761,7 @@ Future<void> handleRelayRequest(
     }
     final res = await req.close();
     request.response.statusCode = res.statusCode;
-    cors();
+    _relayCors(request, allowedOrigin);
     final contentType = res.headers.value('content-type');
     if (contentType != null) {
       request.response.headers.set('Content-Type', contentType);
@@ -743,7 +770,7 @@ Future<void> handleRelayRequest(
     await request.response.close();
   } on Object {
     request.response.statusCode = 502;
-    cors();
+    _relayCors(request, allowedOrigin);
     request.response.write('{"error":"upstream unreachable"}');
     await request.response.close();
   } finally {
