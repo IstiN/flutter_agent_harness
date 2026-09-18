@@ -294,16 +294,24 @@ final class SubagentManager {
 
   /// Queues [message] for [id] (Phase 3b `agent_message` / parent steering).
   /// Throws [StateError] for an unknown id or a full pending queue; caps the
-  /// body at [maxReplyChars]. Aborted children refuse new messages.
+  /// body at [maxReplyChars] unless [capText] is false — the warm-wake
+  /// resume path passes the parent's steering verbatim (the mailbox cap
+  /// would silently truncate it AND shrink it under the over-window
+  /// guard, letting an oversized request slip through to the provider).
+  /// Aborted children refuse new messages.
   ///
   /// With a [messaging] fabric the message is DELIVERED to the recipient's
   /// inbox (cross-process visible); otherwise it sits in the in-process
   /// pending queue. `main` ([selfId]) is a valid recipient — that is how
   /// children message the parent.
-  Future<void> enqueueMessage(String id, SubagentMessage message) async {
+  Future<void> enqueueMessage(
+    String id,
+    SubagentMessage message, {
+    bool capText = true,
+  }) async {
     final handle = _handles[id];
     await _guardRecipient(id, handle);
-    final capped = _capMessage(message);
+    final capped = capText ? _capMessage(message) : message;
     final gateway = a2aGateway;
     if (gateway != null && id.contains('@')) {
       await _deliverViaA2a(gateway, id, capped);

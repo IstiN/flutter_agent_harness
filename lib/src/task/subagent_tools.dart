@@ -1082,8 +1082,10 @@ Future<ToolExecutionResult> _resumeIdleChild(
   } on TimeoutException {
     unawaited(resumed.catchError((Object _) {}));
     return ToolExecutionResult.text(
-      'child "$id" slow to wake — message consumed into its inbox; the '
-      'resumed run will process it as its first action (see task_status)',
+      'child "$id" not responding within the wait cap — message queued '
+      'in its inbox (consumed into the resumed run, which keeps going in '
+      'the background and will process it as its first action; see '
+      'task_status)',
     );
   } on Object catch (error) {
     return ToolExecutionResult.text('resume of "$id" failed: $error');

@@ -158,6 +158,7 @@ extension AgentCliRunNotices on AgentCli {
     _wireTransientRetryNotice();
     _wireImageDropNotice();
     _wireTextOnlyImageDropNotice();
+    _wireDeliverySloNotice();
   }
 
   /// Transient network retry visibility (the Wi-Fi-switch case): the
@@ -207,6 +208,17 @@ extension AgentCliRunNotices on AgentCli {
       _logDiagnostic(
         'text-only image drop sid=$_logSid count=$dropped',
       );
+    };
+  }
+
+  /// Delivery SLO visibility (issue #647 AC6): every delivery stage line
+  /// lands in fa.log; a BREACH additionally surfaces as a dim transcript
+  /// line (stderr in headless mode, where writeln routes) naming the
+  /// stalled stage — no silent queues.
+  void _wireDeliverySloNotice() {
+    deliverySloSink = (line) {
+      _logDiagnostic('delivery slo sid=$_logSid $line');
+      if (line.contains('BREACH')) io.writeln(_style.dim(line));
     };
   }
 }

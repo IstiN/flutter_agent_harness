@@ -61,6 +61,7 @@ import '../task/subagent.dart';
 import '../task/subagent_manager.dart';
 import '../task/subagent_heartbeat.dart';
 import '../task/subagent_tools.dart';
+import '../task/delivery_slo.dart';
 import '../skills/skills.dart';
 import '../skills/skill_renderer.dart';
 import '../prompts/prompts.g.dart'
@@ -1373,8 +1374,8 @@ class AgentCli {
     // version next to the session id before any lifecycle line.
     _logDiagnostic('fa boot sid=$_logSid version=$_version');
     _wireTransientRetryNotice();
+    _wireDeliverySloNotice();
     _wireImageDropNotice();
-    // Issue #312: catalogue unclassified vendor words (default transient).
     onUnknownFinishReason = (reason) =>
         _logDiagnostic('unknown finish_reason sid=$_logSid reason=$reason');
     _livePresence = await _registerLivePresence();

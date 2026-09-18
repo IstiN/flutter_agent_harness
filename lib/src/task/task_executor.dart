@@ -290,60 +290,57 @@ final class TaskExecutor {
     _resumesInFlight.add(id);
     _currentSubagentIds.add(id);
     _inFlightCancels[id] = resumeCancel;
-    await manager.update(id, status: SubagentStatus.running, clearError: true);
-
-    // Warm wake (issue #647): the message lands in the child's inbox
-    // FIRST (durable, instant), then the resume run's first action drains
-    // the inbox — consumption never waits out the session boot. The
-    // drained mail becomes the prompt with its sender attributed; if the
-    // resume fails the mail goes back to the inbox (at-least-once).
-    await manager.enqueueMessage(
-      id,
-      SubagentMessage(
-        fromId: manager.selfId,
-        text: message,
-        sentAt: DateTime.now().toUtc().toIso8601String(),
-      ),
-    );
-    final mail = await manager.drainMessages(id);
-    final since = mail.isEmpty
-        ? null
-        : DateTime.tryParse(mail.first.sentAt);
-    deliveryStage(id, 'consumed', since: since);
-    final promptText = mail.isEmpty
-        ? message
-        : mail.map((m) => 'from ${m.fromId}: ${m.text}').join('\n');
-
-    final session = await _resumeSession(id, handle);
-    final prior = await session.buildContextMessages();
-    _childSessions[id] = session;
-    _childSessionWrites[id] = await _appendedMessageCount(session);
-    deliveryStage(id, 'wake', since: since);
-    await semaphore.acquire();
     Agent? child;
     void Function()? untrackUsage;
     StreamSubscription<void>? inboxWakeSub;
+    var semaphoreAcquired = false;
+    List<SubagentMessage> mail = const [];
     try {
-      final definition = _resolveDefinition(handle.agentType);
-      final wiring = _resolveChildWiring(definition);
-      child = Agent(
-        model: wiring.model,
-        // The ORIGINAL batch context rides along (persisted on the handle):
-        // the transcript does not carry the system prompt, so a resume that
-        // rebuilt the prompt without it would silently drop the batch's
-        // shared background.
-        systemPrompt: _buildSystemPrompt(definition, handle.context),
-        streamFunction: wiring.stream,
-        toolRegistry: _childToolRegistry(definition),
-        externalSteeringSource: () => _inboxSteeringMessages(id),
-        externalSteeringProbe: () => manager.hasPendingMessages(id),
+      await manager.update(
+        id,
+        status: SubagentStatus.running,
+        clearError: true,
       );
+
+      // Warm wake (issue #647): the message lands in the child's inbox
+      // FIRST (durable, instant), then the resume run's first action drains
+      // the inbox — consumption never waits out the session boot. The
+      // drained mail becomes the prompt with its sender attributed; if the
+      // resume fails the mail goes back to the inbox (at-least-once).
+      await manager.enqueueMessage(
+        id,
+        SubagentMessage(
+          fromId: manager.selfId,
+          text: message,
+          sentAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+        // The parent's steering IS the child's next prompt: verbatim, so
+        // the over-window guard still sees its true size (an 8000-char
+        // mailbox cap would silently truncate it and slip an oversized
+        // request past the guard).
+        capText: false,
+      );
+      mail = await manager.drainMessages(id);
+      final since = mail.isEmpty ? null : DateTime.tryParse(mail.first.sentAt);
+      deliveryStage(id, 'consumed', since: since);
+      final promptText = mail.isEmpty
+          ? message
+          : mail.map((m) => 'from ${m.fromId}: ${m.text}').join('\n');
+      final session = await _resumeSession(id, handle);
+      final prior = await session.buildContextMessages();
+      _childSessions[id] = session;
+      _childSessionWrites[id] = await _appendedMessageCount(session);
+      deliveryStage(id, 'wake', since: since);
+      await semaphore.acquire();
+      semaphoreAcquired = true;
+      final (built, wakeSub, wiring) = _buildResumeChild(
+        id: id,
+        handle: handle,
+        manager: manager,
+      );
+      child = built;
+      inboxWakeSub = wakeSub;
       final agent = child;
-      inboxWakeSub = manager.events.listen((event) {
-        if (event.handle.id == id && event.message != null) {
-          agent.pokeSteering();
-        }
-      });
       unawaited(resumeCancel.token.onCancel.then((_) => agent.abort()));
       untrackUsage = _trackChildUsage(id, child, from: prior.length);
       child.state.messages = prior;
@@ -404,7 +401,7 @@ final class TaskExecutor {
       untrackUsage?.call();
       unawaited(inboxWakeSub?.cancel());
       _usageCursors.remove(id);
-      semaphore.release();
+      if (semaphoreAcquired) semaphore.release();
       _resumesInFlight.remove(id);
       _currentSubagentIds.remove(id);
       _inFlightCancels.remove(id);
@@ -424,11 +421,7 @@ final class TaskExecutor {
       try {
         await manager.enqueueMessage(
           id,
-          SubagentMessage(
-            fromId: m.fromId,
-            text: m.text,
-            sentAt: m.sentAt,
-          ),
+          SubagentMessage(fromId: m.fromId, text: m.text, sentAt: m.sentAt),
         );
       } on Object {
         // Best-effort by contract.
@@ -488,7 +481,6 @@ final class TaskExecutor {
       windowTokens: window,
     );
     if (!shouldCompact(est, window, settings)) return false;
-
     await _flushChildTranscript(id, child);
     final session = _childSessions[id];
     if (session == null) return false;
@@ -585,6 +577,43 @@ final class TaskExecutor {
     }
   }
 
+  /// Builds the resume-run child agent over the seeded prior transcript
+  /// and attaches its inbox wake subscription (the event-poked fast half
+  /// of the #647 delivery SLO). Extracted from [resumeChild] to keep its
+  /// CRAP in budget.
+  (
+    Agent,
+    StreamSubscription<SubagentEvent>,
+    ({Model model, StreamFunction stream}),
+  )
+  _buildResumeChild({
+    required String id,
+    required SubagentHandle handle,
+    required SubagentManager manager,
+  }) {
+    final definition = _resolveDefinition(handle.agentType);
+    final wiring = _resolveChildWiring(definition);
+    final child = Agent(
+      model: wiring.model,
+      // The ORIGINAL batch context rides along (persisted on the handle):
+      // the transcript does not carry the system prompt, so a resume that
+      // rebuilt the prompt without it would silently drop the batch's
+      // shared background.
+      systemPrompt: _buildSystemPrompt(definition, handle.context),
+      streamFunction: wiring.stream,
+      toolRegistry: _childToolRegistry(definition),
+      externalSteeringSource: () => _inboxSteeringMessages(id),
+      externalSteeringProbe: () => manager.hasPendingMessages(id),
+    );
+    final agent = child;
+    final inboxWakeSub = manager.events.listen((event) {
+      if (event.handle.id == id && event.message != null) {
+        agent.pokeSteering();
+      }
+    });
+    return (child, inboxWakeSub, wiring);
+  }
+
   /// The number of transcript messages already appended to [session] —
   /// the flush-counter seed for a resume so only NEW messages append.
   Future<int> _appendedMessageCount(Session session) async {
@@ -631,46 +660,14 @@ final class TaskExecutor {
       await subagentManager!.update(id, status: SubagentStatus.running);
     }
 
-    final toolRegistry = _childToolRegistry(definition);
     final wiring = _resolveChildWiring(definition);
-
-    final child = Agent(
-      model: wiring.model,
+    final (child, inboxWakeSub) = _buildChild(
+      id: id,
       systemPrompt: _buildSystemPrompt(definition, context),
-      streamFunction: wiring.stream,
-      toolRegistry: toolRegistry,
-      // The child's inbox: messages from the parent/siblings (and other Fa
-      // instances sharing the messaging root) arrive at turn boundaries.
-      externalSteeringSource: subagentManager == null
-          ? null
-          : () => _inboxSteeringMessages(id),
-      // The delivery SLO (issue #647): inbox mail must soft-yield a long
-      // tool call within 2s. The probe is the slow (cross-process) fallback;
-      // the manager-event subscription below pokes the same path instantly
-      // for same-host mail.
-      externalSteeringProbe: subagentManager == null
-          ? null
-          : () => subagentManager!.hasPendingMessages(id),
+      toolRegistry: _childToolRegistry(definition),
+      wiring: wiring,
+      cancelToken: cancelToken,
     );
-    final inboxWakeSub = subagentManager?.events.listen((event) {
-      if (event.handle.id == id && event.message != null) {
-        child.pokeSteering();
-      }
-    });
-    // Issue #383 heartbeat: in-flight liveness - every completed provider
-    // response touches the handle, so the parent's digest sees fresh
-    // last-activity and live request/token counts while the child runs.
-    _attachLivenessTouch(id, child, subagentManager);
-    // Issue #439: threshold-based proactive compaction at every child turn
-    // boundary — the main loop's discipline (#387/#388) applied to
-    // children, so the over-window guard stays the last resort. The loop
-    // runs the hook BEFORE the steering poll, so a queued `task_send` is
-    // delivered on the compacted context, in-order (E1/E2).
-    child.prepareNextTurn = (nextTurn) =>
-        _compactChildAtBoundary(id, child, wiring, nextTurn);
-    if (cancelToken != null) {
-      unawaited(cancelToken.onCancel.then((_) => child.abort()));
-    }
     // Issue #332: usage is billed to the registry row at every TURN
     // BOUNDARY, not only at completion — a host restart mid-run then
     // persists a 'running' row that already carries the child's usage, so
@@ -749,6 +746,58 @@ final class TaskExecutor {
       _usageCursors.remove(id);
       unawaited(_flushChildTranscript(id, child));
     }
+  }
+
+  /// Builds the child agent and attaches its manager wiring: the inbox
+  /// wake subscription (event-poked for same-host mail — the fast half of
+  /// the #647 delivery SLO, the steering probe is the cross-process
+  /// fallback), the liveness touch (#383), boundary compaction (#439) and
+  /// cancel propagation. Extracted from [_run] to keep its CRAP in budget.
+  (Agent, StreamSubscription<SubagentEvent>?) _buildChild({
+    required String id,
+    required String systemPrompt,
+    required ToolRegistry toolRegistry,
+    required ({Model model, StreamFunction stream}) wiring,
+    required CancelToken? cancelToken,
+  }) {
+    final child = Agent(
+      model: wiring.model,
+      systemPrompt: systemPrompt,
+      streamFunction: wiring.stream,
+      toolRegistry: toolRegistry,
+      // The child's inbox: messages from the parent/siblings (and other Fa
+      // instances sharing the messaging root) arrive at turn boundaries.
+      externalSteeringSource: subagentManager == null
+          ? null
+          : () => _inboxSteeringMessages(id),
+      // The delivery SLO (issue #647): inbox mail must soft-yield a long
+      // tool call within 2s. The probe is the slow (cross-process) fallback;
+      // the manager-event subscription below pokes the same path instantly
+      // for same-host mail.
+      externalSteeringProbe: subagentManager == null
+          ? null
+          : () => subagentManager!.hasPendingMessages(id),
+    );
+    final inboxWakeSub = subagentManager?.events.listen((event) {
+      if (event.handle.id == id && event.message != null) {
+        child.pokeSteering();
+      }
+    });
+    // Issue #383 heartbeat: in-flight liveness - every completed provider
+    // response touches the handle, so the parent's digest sees fresh
+    // last-activity and live request/token counts while the child runs.
+    _attachLivenessTouch(id, child, subagentManager);
+    // Issue #439: threshold-based proactive compaction at every child turn
+    // boundary — the main loop's discipline (#387/#388) applied to
+    // children, so the over-window guard stays the last resort. The loop
+    // runs the hook BEFORE the steering poll, so a queued `task_send` is
+    // delivered on the compacted context, in-order (E1/E2).
+    child.prepareNextTurn = (nextTurn) =>
+        _compactChildAtBoundary(id, child, wiring, nextTurn);
+    if (cancelToken != null) {
+      unawaited(cancelToken.onCancel.then((_) => child.abort()));
+    }
+    return (child, inboxWakeSub);
   }
 
   /// Builds the child's tool registry from the agent-type surface plus the
