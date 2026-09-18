@@ -5,9 +5,8 @@
 # by `ai-teammate`. Human-created issues (even labeled/assigned to the
 # agent) do NOT trigger anything yet; that gate opens in a later phase.
 #
-#   issue opened by ai-teammate      → factory, leg=dev (labels not set yet)
-#   issue labeled/assigned (machine
-#     authorship only)               → factory, leg derived by the guard
+#   issue ASSIGNED to ai-teammate   → factory, leg=dev (fresh handoff)
+#   issue labeled while assigned     → factory, leg derived by the guard
 #   PR opened by ai-teammate         → factory, leg=review on the linked
 #                                      issue (parsed from the PR body)
 #   workflow_dispatch (SM / manual)  → leg pinned by input
@@ -30,12 +29,12 @@ run-name: >-
       format('▶ {0} (SM) · gh-{1}', github.event.inputs.leg, github.event.inputs.issue) ||
       github.event_name == 'pull_request' && format('🔍 review (PR) · gh-{1}', github.event.number) ||
       format('{0} · gh-{1}: {2}',
-        github.event.action == 'opened' && '⚒️ dev (machine issue)' || 'machine loop',
+        github.event.action == 'assigned' && '⚒️ dev (assigned handoff)' || 'machine loop',
         github.event.issue.number, github.event.issue.title) }}
 
 on:
   issues:
-    types: [opened, labeled, assigned]
+    types: [assigned, labeled]
   pull_request:
     types: [opened]
   workflow_dispatch:
@@ -65,13 +64,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Author gate + PR→issue resolution. Runs ONLY for machine-authored
-  # artifacts (or explicit dispatch); everything else exits empty and the
-  # factory job is skipped.
+  # Assignment gate + PR→issue resolution. Runs ONLY when the issue is
+  # assigned to `ai-teammate` (the human handoff), the PR is authored by
+  # the machine, or on explicit dispatch. Everything else exits empty and
+  # the factory job is skipped.
   gate:
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'issues' && github.event.issue.user.login == 'ai-teammate') ||
+      (github.event_name == 'issues' && contains(github.event.issue.assignees.*.login, 'ai-teammate')) ||
       (github.event_name == 'pull_request' && github.event.pull_request.user.login == 'ai-teammate')
     runs-on: ubuntu-latest
     outputs:
@@ -95,10 +95,10 @@ jobs:
               echo "leg=" >> "$GITHUB_OUTPUT"
               ;;
             issues)
-              # Machine-authored issue. `opened` has no machine labels yet
-              # → dev leg explicitly; labeled/assigned (agent:review /
-              # agent:rework added by the machine itself) → guard derives.
-              if [ "$ACTION" = "opened" ]; then
+              # Assignment-driven loop: a fresh `assigned` event (human
+              # handoff) → dev leg; `labeled` (agent:review / agent:rework
+              # added by the machine itself while assigned) → guard derives.
+              if [ "$ACTION" = "assigned" ]; then
                 echo "leg=dev" >> "$GITHUB_OUTPUT"
               else
                 echo "leg=" >> "$GITHUB_OUTPUT"

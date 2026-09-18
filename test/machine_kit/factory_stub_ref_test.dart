@@ -104,17 +104,31 @@ void main() {
     }
   });
 
-  test('author gate: the loop reacts only to ai-teammate artifacts '
-      '(issues AND pull_request triggers carry the author filter)', () {
+  test('assignment gate: the loop starts when a human ASSIGNS an issue to '
+      'ai-teammate (assignee filter on issues, author filter on PRs)', () {
     expect(
-      teammate.contains("github.event.issue.user.login == 'ai-teammate'"),
+      teammate.contains(
+        "contains(github.event.issue.assignees.*.login, 'ai-teammate')",
+      ),
       isTrue,
+      reason: 'issues trigger must key on the ASSIGNEE, not the author',
     );
     expect(
       teammate.contains(
         "github.event.pull_request.user.login == 'ai-teammate'",
       ),
       isTrue,
+      reason: 'PR review leg stays keyed on machine authorship',
+    );
+    expect(
+      teammate.contains('types: [assigned, labeled]'),
+      isTrue,
+      reason: 'the `opened` trigger is gone: nothing starts until assigned',
+    );
+    expect(
+      teammate.contains("github.event.issue.user.login == 'ai-teammate'"),
+      isFalse,
+      reason: 'the old author filter must not linger',
     );
   });
 }
