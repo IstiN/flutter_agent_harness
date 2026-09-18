@@ -27,7 +27,6 @@ name: 'AI Teammate'
 run-name: >-
   ${{ github.event_name == 'workflow_dispatch' &&
       format('▶ {0} (SM) · gh-{1}', github.event.inputs.leg, github.event.inputs.issue) ||
-      github.event_name == 'pull_request' && format('🔍 review (PR) · gh-{1}', github.event.number) ||
       format('{0} · gh-{1}: {2}',
         github.event.action == 'assigned' && '⚒️ dev (assigned handoff)' || 'machine loop',
         github.event.issue.number, github.event.issue.title) }}
@@ -35,8 +34,6 @@ run-name: >-
 on:
   issues:
     types: [assigned, labeled]
-  pull_request:
-    types: [opened]
   workflow_dispatch:
     inputs:
       issue:
@@ -64,15 +61,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Assignment gate + PR→issue resolution. Runs ONLY when the issue is
-  # assigned to `ai-teammate` (the human handoff), the PR is authored by
-  # the machine, or on explicit dispatch. Everything else exits empty and
-  # the factory job is skipped.
+  # Assignment gate. Runs ONLY when the issue is assigned to `ai-teammate`
+  # (the human handoff) or on explicit dispatch (SM ticks). Everything else
+  # exits empty and the factory job is skipped. PRs do NOT trigger this
+  # workflow: the loop's review/rework legs are driven by SM ticks and
+  # issue labels, and pull_request-triggered runs of this stub validated
+  # as startup_failure on PRs #624/#625 (red-X noise with no value).
   gate:
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'issues' && contains(github.event.issue.assignees.*.login, 'ai-teammate')) ||
-      (github.event_name == 'pull_request' && github.event.pull_request.user.login == 'ai-teammate')
+      (github.event_name == 'issues' && contains(github.event.issue.assignees.*.login, 'ai-teammate'))
     runs-on: ubuntu-latest
     outputs:
       issue: ${{ steps.resolve.outputs.issue }}
@@ -105,34 +103,14 @@ jobs:
               fi
               echo "issue=${ISSUE_NUMBER}" >> "$GITHUB_OUTPUT"
               ;;
-            pull_request)
-              # Machine-authored PR: find the driving issue in the body
-              # ("Closes #N" / "Fixes #N" / "gh-N" title marker) and run
-              # the review leg on it.
-              body="$(gh pr view "$NUMBER" --json body -q .body || true)"
-              issue=""
-              if echo "$body" | grep -oE '(Closes|Fixes|Resolves) #[0-9]+' | grep -oE '[0-9]+' | head -1 > /tmp/n; then
-                issue="$(cat /tmp/n)"
-              else
-                # fallback: the agent prefixes branches/titles with gh-<n>
-                title="$(gh pr view "$NUMBER" --json title -q .title || true)"
-                issue="$(echo "$title" | grep -oE 'gh-[0-9]+' | head -1 | grep -oE '[0-9]+' || true)"
-              fi
-              if [ -z "$issue" ]; then
-                echo "::notice::PR #$NUMBER (ai-teammate) has no linked issue — nothing for the agent"
-                echo "issue=" >> "$GITHUB_OUTPUT"
-                echo "leg=" >> "$GITHUB_OUTPUT"
-              else
-                echo "issue=${issue}" >> "$GITHUB_OUTPUT"
-                echo "leg=review" >> "$GITHUB_OUTPUT"
-              fi
-              ;;
           esac
           echo "→ gate done (see outputs)"
 
   factory:
     needs: gate
-    if: needs.gate.result == 'success' && needs.gate.outputs.issue != ''
+    # Dispatch runs carry the target in inputs (gate outputs are empty by
+    # design there); event runs carry it in gate outputs.
+    if: needs.gate.result == 'success' && (needs.gate.outputs.issue != '' || github.event_name == 'workflow_dispatch')
     # Pinned to an immutable SHA of IstiN/dmtools-agents (branch heads move;
     # a branch ref executes whatever is at the head at run start). Flip in
     # lockstep with the machine-sm.yml pin — guarded by
