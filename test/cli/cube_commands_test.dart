@@ -309,7 +309,7 @@ spec:
         expect(out, contains('3) strict — project cube manifest'));
         // The built-in security-level presets sit between the project
         // manifests and the custom path.
-        expect(out, contains('4) L1 · core apps — L1 — reads and writes'));
+        expect(out, contains('4) L1 · core apps — L1 — writes only'));
         expect(out, contains('5) L1 · full system apps'));
         expect(out, contains('6) L2 · core apps'));
         expect(out, contains('7) L2 · full system apps'));

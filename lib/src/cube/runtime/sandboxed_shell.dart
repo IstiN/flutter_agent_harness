@@ -68,19 +68,36 @@ final class SandboxedShell implements Shell {
   /// [fs] and [os] enable `backend: kernel` mode: [fs] stages the backend's
   /// profile artifact and [os] names the host platform (`macos` or
   /// `linux`). Either missing — or a backend that does not enforce on the
-  /// given platform — keeps the shell in pure policy mode.
-  SandboxedShell(this._inner, CubeSpec? spec, {FileSystem? fs, String? os})
-    : _fs = fs,
-      _os = os {
+  /// given platform — keeps the shell in pure policy mode, and [onDegrade]
+  /// is called with a loud `fa_cube[<name>]:` warning when a `backend:
+  /// kernel` spec takes that path.
+  ///
+  /// [homeDir] resolves `~` redirection targets in the policy engine.
+  SandboxedShell(
+    this._inner,
+    CubeSpec? spec, {
+    FileSystem? fs,
+    String? os,
+    String? homeDir,
+    void Function(String message)? onDegrade,
+  }) : _fs = fs,
+       _os = os,
+       _homeDir = homeDir,
+       onDegrade = onDegrade {
     if (spec != null) updateSpec(spec);
   }
 
   final Shell _inner;
   final FileSystem? _fs;
   final String? _os;
+  final String? _homeDir;
   CubeSpec? _spec;
   late CubePolicyEngine _engine;
   _KernelRun? _kernel;
+
+  /// Called when a `backend: kernel` spec degrades to policy mode because
+  /// no enforcing backend exists for the host.
+  final void Function(String message)? onDegrade;
 
   @override
   Future<Result<ShellExecResult, ExecutionError>> exec(
@@ -120,10 +137,24 @@ final class SandboxedShell implements Shell {
       _kernel?.wrap(command, env: env) ?? Future.value(command);
 
   /// Swaps the enforced spec live; the next [exec] uses the new policies.
+  /// A `backend: kernel` spec with no enforcing backend for the host
+  /// degrades to policy mode and fires [onDegrade].
   void updateSpec(CubeSpec spec) {
     _spec = spec;
-    _engine = CubePolicyEngine(spec);
+    _engine = CubePolicyEngine(
+      spec,
+      homeDir: _homeDir,
+      workspaceRoot: _fs?.cwd,
+    );
     _kernel = _kernelRunFor(spec);
+    if (_kernel == null &&
+        spec.backend == CubeBackendMode.kernel &&
+        onDegrade != null) {
+      onDegrade!(
+        'fa_cube[${spec.name}]: kernel backend unavailable, '
+        'running in policy mode',
+      );
+    }
   }
 
   /// Leaves sandbox mode: every command is forwarded untouched.

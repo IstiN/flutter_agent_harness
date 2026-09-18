@@ -4,11 +4,23 @@
 /// from the schema) and carry the level/app-axis semantics.
 library;
 
-import 'package:flutter_agent_harness/src/cube/config/cube_presets.dart';
-import 'package:flutter_agent_harness/src/cube/config/cube_spec.dart';
-import 'package:flutter_agent_harness/src/cube/config/fs_policy.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 import 'package:yaml/yaml.dart';
+
+/// A shell that records started commands and answers everything.
+class _MatrixShell implements Shell {
+  final commands = <String>[];
+
+  @override
+  Future<Result<ShellExecResult, ExecutionError>> exec(
+    String command, {
+    ShellExecOptions? options,
+  }) async {
+    commands.add(command);
+    return const Ok(ShellExecResult(stdout: '', stderr: '', exitCode: 0));
+  }
+}
 
 void main() {
   group('CubePresets.all', () {
@@ -146,5 +158,60 @@ void main() {
       expect(CubePresets.maybeSpec(name: 'my-cube.yaml', cwd: '/tmp'), isNull);
       expect(CubePresets.maybeSpec(name: 'l9', cwd: '/tmp'), isNull);
     });
+  });
+  group('preset confinement matrix', () {
+    test(
+      'every preset confines out-of-scope writes through guard and shell',
+      () async {
+        const cwd = '/work';
+        for (final preset in CubePresets.all) {
+          final escapesDenied = preset.level != 'L3';
+          final spec = CubePresets.maybeSpec(name: preset.id, cwd: cwd)!;
+          final inner = _MatrixShell();
+          final env = SandboxedExecutionEnv(
+            MemoryExecutionEnv(cwd: cwd, shell: inner),
+            spec,
+          );
+
+          // bash: a redirect write one level above the workspace.
+          final escaped = await env.exec('echo x > ../escape');
+          // bash: a redirect inside the workspace stays runnable.
+          await env.exec('echo x > out.txt');
+          // fs tool: a write outside the workspace.
+          final write = await env.writeFile('../escape.txt', 'x');
+          // fs tool: an L1 read of a system path vanishes.
+          final read = await env.readTextFile('/etc/hosts');
+
+          if (escapesDenied) {
+            final exec = escaped.getOrThrow();
+            expect(exec.exitCode, 127, reason: preset.id);
+            expect(
+              exec.stderr,
+              startsWith('fa_cube[${preset.id}]:'),
+              reason: preset.id,
+            );
+            expect(inner.commands, ['echo x > out.txt'], reason: preset.id);
+            expect(
+              write.errorOrNull!.code,
+              FileErrorCode.permissionDenied,
+              reason: preset.id,
+            );
+          } else {
+            expect(inner.commands, [
+              'echo x > ../escape',
+              'echo x > out.txt',
+            ], reason: preset.id);
+            expect(write.isOk, isTrue, reason: preset.id);
+          }
+          if (preset.level == 'L1') {
+            expect(
+              read.errorOrNull!.code,
+              FileErrorCode.notFound,
+              reason: preset.id,
+            );
+          }
+        }
+      },
+    );
   });
 }

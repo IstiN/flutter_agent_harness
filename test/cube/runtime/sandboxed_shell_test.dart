@@ -261,6 +261,39 @@ void main() {
     });
 
     test(
+      'a kernel spec degrading to policy mode emits a loud warning',
+      () async {
+        final inner = _RecordingShell();
+        final degradations = <String>[];
+        final shell = SandboxedShell(
+          inner,
+          kernelSpec(),
+          fs: _FakeFs(),
+          os: 'windows',
+          onDegrade: degradations.add,
+        );
+        await shell.exec('git status');
+        expect(degradations, hasLength(1));
+        expect(degradations.single, startsWith('fa_cube[test-cube]:'));
+        expect(degradations.single, contains('policy mode'));
+        expect(inner.commands.single, 'git status');
+      },
+    );
+
+    test('an enforcing kernel spec does not report degradation', () async {
+      final degradations = <String>[];
+      final shell = SandboxedShell(
+        _RecordingShell(),
+        kernelSpec(),
+        fs: _FakeFs(),
+        os: 'macos',
+        onDegrade: degradations.add,
+      );
+      await shell.exec('git status');
+      expect(degradations, isEmpty);
+    });
+
+    test(
       'a missing sandbox-exec spawn failure maps to a clean error',
       () async {
         final inner = _RecordingShell()

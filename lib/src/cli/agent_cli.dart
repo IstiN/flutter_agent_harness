@@ -335,6 +335,9 @@ class AgentCli {
       homeDir: config.homeDir,
       workspaceRoot: _env.cwd,
       os: config.osName,
+      // A `backend: kernel` cube degrading to policy mode (no enforcing
+      // backend on this host) is a security-relevant downgrade — say so.
+      onWarning: (message) => io.writeln(tuiWarning(message)),
     );
     _cubeSource = config.cubeSource;
     _coreToolEnv = SessionVarsExecutionEnv(_cubeEnv, _sessionEnvVars);

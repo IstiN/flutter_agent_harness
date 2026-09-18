@@ -172,9 +172,26 @@ Slash commands (line mode):
 |---|---|---|
 | Tools | `SandboxedShell` checks every command of a line (subshells included) against the allow/deny sets; a denied command answers exit 127 with an `fa_cube[<name>]:` note. | Process confinement at exec time. |
 | Network | Lexical URL check on `curl`/`wget` arguments only. | Egress control (`--net` when nothing is allowed). |
-| Filesystem | `CubeFsGuard` clamps file operations to the fs policy (lexical, per above). | Mount namespace; SBPL `file-read*`/`file-write*` rules. |
+| Filesystem | `CubeFsGuard` clamps file operations to the fs policy (lexical, per above); `SandboxedShell` additionally path-checks shell **redirect targets** (`>`, `>>`, `<>`, `&>`, `2>`, `<` as a read; `2>&1` exempt). | macOS: SBPL rules (below). Linux: `ro` mounts re-bound read-only. |
 | Environment | Clean base + declared vars (additive; cannot strip inherited vars). | Full environment isolation. |
 | Resources | Timeout clamp per command; disk cap prunes cache entries. | Backend-interpreted caps. |
+
+### Filesystem confinement per level and mode
+
+What the strongest promise ("everything outside the workspace is denied")
+actually holds, per level and enforcement mode:
+
+| Level | Policy mode (every host) | Kernel mode · macOS (`sandbox-exec`) | Kernel mode · Linux (`unshare`) |
+|---|---|---|---|
+| L1 | Command allowlist plus redirect-target path checks. Command **arguments** are not path-checked (`cat /etc/hosts` passes the name gate). | Writes: only the workspace, plus the persistence-free sinks `/dev/null` and `/dev/fd`. Reads: `/etc` (both spellings) and every user home (`/Users`) denied; the workspace stays readable and the rest of the system remains readable — a blanket read deny is impossible because exec itself must read `/bin/bash` and `/usr/lib/…` (dyld). | Names + redirects only: L1 has no mounts for unshare to re-bind. |
+| L2 | Same policy floor as L1. | Writes: blanket `deny file-write*` with the workspace re-allowed and the `ro /` mount denying writes. Reads: everywhere (the `ro /` mount). | `ro /` re-bound read-only: writes confined, reads everywhere. |
+| L3 | Redirects unrestricted — writes are allowed everywhere by design. | Reads and writes everywhere. | Reads and writes everywhere. |
+
+A `backend: kernel` spec that degrades to policy mode — no enforcing
+backend for the host (Windows, web, Linux without user namespaces) —
+announces it loudly: `fa_cube[<name>]: kernel backend unavailable, running
+in policy mode`. The policy-mode floor is the redirect check above, not a
+kernel boundary.
 
 Backend selection follows the host OS: macOS generates a `sandbox-exec`
 SBPL profile, Linux an `unshare` user-namespace argv prefix, and other
@@ -185,8 +202,10 @@ platforms (including Windows) currently report a descriptor-only no-op.
 - **Denied, not audited.** A refused command or file operation fails with
   a short note (exit 127 for commands); there is no audit log of denials.
 - **The Dart layer is a convenience, not a boundary.** The command
-  scanner is quote-aware but not a shell parser: redirects, `eval`
-  indirection and quoting inside `$( )` are above its ceiling, and the
+  scanner is quote-aware but not a shell parser: redirection targets are
+  extracted and path-checked (`>`/`>>`/`<>`/`&>`/`N>` as writes, `<` as a
+  read, `N>&M` fd duplicates exempt), but quoting inside `$(`, process
+  substitution and `eval` indirection are above its ceiling, and the
   network scan sees only `curl`/`wget` URL arguments — bare-host
   operands are unchecked. The fs guard resolves symlinks by their
   written form only.
@@ -221,5 +240,11 @@ crashed run.
   is missing from PATH or refuses the sandbox surfaces as a clean
   `fa_cube[<name>]:` spawn error, in foreground execs and background jobs
   alike.
-- **Network — Dart scan only:** the policy engine checks `curl`/`wget`
-  arguments; full egress proxy filtering is future work.
+- **L1 confinement repair (#632) — landed:** the macOS profile denies
+  writes blanket outside the workspace and `rw` mounts (device sinks
+  exempt) and denies reads of `/etc` and user homes for specs without a
+  root mount; the policy engine path-checks shell redirect targets in
+  policy mode; kernel→policy degradation warns loudly. `cat /etc/hosts`
+  under `l1-core` kernel mode on macOS is denied (live-validated by
+  `test/cube/backends/macos_sandbox_live_test.dart`, skipped where
+  `sandbox-exec` is absent).
