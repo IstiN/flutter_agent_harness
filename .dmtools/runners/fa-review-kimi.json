@@ -35,6 +35,8 @@
       "github": [
         "./factory-agents/instructions/common/github_comment_format.md"
       ]
-    }
+    },
+    "timerIntervalSeconds": 300,
+    "timerJSAction": "factory-agents/js/timerAutoCommitAndSave.js"
   }
 }
