@@ -59,12 +59,21 @@ void main() {
         expect(harness.rawOutput.contains(secret), isFalse);
         expect(harness.screenText.contains(secret), isFalse);
         harness.sendEnter();
-        // The write unblocks `head`; the command finishes and the turn
-        // completes on the scripted follow-up.
-        await harness.waitForText(
-          'PWD-FED-OK',
-          timeout: const Duration(seconds: 60),
-        );
+        // The write unblocks `head`; the command finishes and its output
+        // (marker included) reaches the model on the scripted follow-up.
+        // Wait on that REQUEST BODY, not the screen: the command only ever
+        // surfaced idle-side through the waiting row, and the stale row
+        // that outlived its job is exactly the #615 bug this branch fixes —
+        // with the row clearing on settle, the body is the honest
+        // observable (same assertion as below, awaited).
+        final fedDeadline = DateTime.now().add(const Duration(seconds: 60));
+        while (mock.bodies.length < 2 ||
+            !mock.bodies[1].contains('PWD-FED-OK')) {
+          if (DateTime.now().isAfter(fedDeadline)) {
+            fail('follow-up request never carried PWD-FED-OK');
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
         await harness.waitForText(
           'turn-complete',
           timeout: const Duration(seconds: 60),
