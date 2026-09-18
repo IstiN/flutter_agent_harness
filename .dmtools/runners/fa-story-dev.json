@@ -35,6 +35,12 @@
       "./factory-agents/prompts/bash_tools.md"
     ],
     "timerIntervalSeconds": 300,
-    "timerJSAction": "factory-agents/js/timerAutoCommitAndSave.js"
+    "timerJSAction": "factory-agents/js/timerAutoCommitAndSave.js",
+    "customParams": {
+      "targetRepository": {
+        "workingDir": ".",
+        "baseBranch": "main"
+      }
+    }
   }
 }
