@@ -1316,80 +1316,96 @@ List<String> _textInputRows(TuiPromptState state, int inner) {
 }
 
 List<String> _secretInputRows(TuiPromptState state, int inner) {
-  final rows = <String>[];
-  final visible = state.secretValueVisible;
   final nameFocused = state.secretCursor < 0;
+  return [
+    ..._secretNameRows(state, inner, focused: nameFocused),
+    ..._secretValueRows(state, inner, focused: !nameFocused),
+    ..._secretFooterRows(state, inner, nameFocused: nameFocused),
+  ];
+}
 
-  // Name field
-  rows.add(
-    _wrapBodyLine(
-      _dim('Name (UPPER_SNAKE):'),
-      inner,
-      dim: true,
-    ),
-  );
-  // F4: the focused row carries the > marker (ASCII: ambiguous-width
-  // glyphs like ▸/★ measure 2 cells in the width table while terminals
-  // draw them 1, which shifts every padded row - issue #109). F1: an
-  // untouched name shows
-  // the agent's suggestion as dimmed ghost text, never as committed input.
+List<String> _secretNameRows(
+  TuiPromptState state,
+  int inner, {
+  required bool focused,
+}) {
   final committedName = state.secretName;
   final nameRow = committedName.isEmpty
       ? _dim(state.effectiveSecretName)
       : committedName;
-  rows.add(
-    _wrapBodyLine(
-      '${nameFocused ? '${_accent('>')} ' : '  '}$nameRow',
-      inner,
-      bold: committedName.isNotEmpty,
-    ),
-  );
+  final marker = focused ? '${_accent('>')} ' : '  ';
+  return [
+    _wrapBodyLine(_dim('Name (UPPER_SNAKE):'), inner, dim: true),
+    _wrapBodyLine('$marker$nameRow', inner, bold: committedName.isNotEmpty),
+  ];
+}
 
-  // Value field
+List<String> _secretValueRows(
+  TuiPromptState state,
+  int inner, {
+  required bool focused,
+}) {
+  final visible = state.secretValueVisible;
   final valueLabel = visible
       ? 'Value — visible (Ctrl+R hides):'
       : 'Value — hidden (Ctrl+R reveals):';
-  rows.add(_wrapBodyLine(_dim(valueLabel), inner, dim: true));
+  final rows = <String>[_wrapBodyLine(_dim(valueLabel), inner, dim: true)];
 
-  // A multiline value (PEM paste) becomes one frame row per line - a bare
-  // LF inside a row would physically tear the frame in the terminal. Masked
-  // mode dots each segment separately so line structure stays visible.
-  // Marker is ASCII '>' (issue #109: ambiguous-width glyphs shift padded
-  // rows; only the first line of the value block carries the focus marker).
   final display = visible
       ? state.secretValue
       : state.secretValue.split('\n').map((s) => '•' * s.length).join('\n');
   final segments = display.split('\n');
   for (var i = 0; i < segments.length; i++) {
-    final marker = nameFocused || i > 0 ? '  ' : '${_accent('>')} ';
-    if (!nameFocused && i == 0 && state.secretValue.isEmpty) {
-      rows.add(
-        _wrapBodyLine(
-          '$marker${_dim('(paste or type secret)')}',
-          inner,
-        ),
-      );
-    } else if (!nameFocused && i == 0) {
-      final clampedCursor = state.secretCursor.clamp(0, segments[i].length);
-      final before = segments[i].substring(0, clampedCursor);
-      final at = clampedCursor < segments[i].length
-          ? segments[i][clampedCursor]
-          : ' ';
-      final after = clampedCursor < segments[i].length
-          ? segments[i].substring(clampedCursor + 1)
-          : '';
-      final line = '$before\x1b[7m$at\x1b[27m$after';
-      rows.add(_wrapBodyLine('$marker$line', inner, bold: true));
-    } else {
-      rows.add(_wrapBodyLine('$marker${segments[i]}', inner, bold: true));
-    }
+    rows.add(
+      _secretValueSegmentRow(
+        segment: segments[i],
+        index: i,
+        state: state,
+        inner: inner,
+        focused: focused,
+      ),
+    );
   }
+  return rows;
+}
 
-  // Footer action hint
+String _secretValueSegmentRow({
+  required String segment,
+  required int index,
+  required TuiPromptState state,
+  required int inner,
+  required bool focused,
+}) {
+  final isFirst = index == 0;
+  final marker = focused && isFirst ? '${_accent('>')} ' : '  ';
+  if (focused && isFirst && state.secretValue.isEmpty) {
+    return _wrapBodyLine(
+      '$marker${_dim('(paste or type secret)')}',
+      inner,
+    );
+  }
+  if (focused && isFirst) {
+    final clampedCursor = state.secretCursor.clamp(0, segment.length);
+    final before = segment.substring(0, clampedCursor);
+    final at = clampedCursor < segment.length ? segment[clampedCursor] : ' ';
+    final after = clampedCursor < segment.length
+        ? segment.substring(clampedCursor + 1)
+        : '';
+    final line = '$before\x1b[7m$at\x1b[27m$after';
+    return _wrapBodyLine('$marker$line', inner, bold: true);
+  }
+  return _wrapBodyLine('$marker$segment', inner, bold: true);
+}
+
+List<String> _secretFooterRows(
+  TuiPromptState state,
+  int inner, {
+  required bool nameFocused,
+}) {
   final hint = nameFocused
       ? 'Type to replace name · Tab to value · Esc cancel'
       : 'Enter to save · Tab to edit name · Esc cancel';
-  rows.add(_wrapBodyLine(_dim(hint), inner, dim: true));
+  final rows = <String>[_wrapBodyLine(_dim(hint), inner, dim: true)];
 
   final error = state.secretEnterError;
   if (error.isNotEmpty) {
