@@ -95,3 +95,40 @@ FahChatMessage _toChatMessage(Message message) {
       return FahChatMessage(role: 'system', content: message.toString());
   }
 }
+
+/// Resolves every auth-expired card in the live transcript (issue #623).
+///
+/// A failed provider run lands its `[[auth-expired:<id>]]` error in the
+/// transcript as an actionable "Session expired — Authorize" card (see
+/// `_finalizeAssistant`). Once a sign-in completes — from that card's own
+/// button, the extension cookie flow, or Settings — the card no longer
+/// reflects reality, and leaving it up invites a pointless second
+/// authorize for a session that is already READY. All stale cards are
+/// removed and a single system note lands where the newest one was, so
+/// the transcript reads as resolved instead of stuck.
+extension AgentServiceTranscript on AgentService {
+  void resolveAuthExpiredCards() {
+    final staleIndexes = <int>[
+      for (var i = 0; i < messages.length; i++)
+        if (authExpiredProvider(messages[i].content) != null) i,
+    ];
+    if (staleIndexes.isEmpty) return;
+    final providerId =
+        authExpiredProvider(messages[staleIndexes.last].content) ?? 'codemie';
+    // Tail-first removal keeps the pending indexes valid.
+    for (final index in staleIndexes.reversed) {
+      messages.removeAt(index);
+    }
+    // The newest card's slot, shifted by the cards removed ahead of it.
+    final noteAt = staleIndexes.last - (staleIndexes.length - 1);
+    messages.insert(
+      noteAt.clamp(0, messages.length),
+      FaChatMessage(
+        role: 'system',
+        content: 'Authorization successful — the $providerId session was '
+            'refreshed. Try sending your message again.',
+      ),
+    );
+    _notify();
+  }
+}
