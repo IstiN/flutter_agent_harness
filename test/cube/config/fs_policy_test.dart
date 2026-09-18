@@ -100,6 +100,15 @@ mounts:
       );
     });
 
+    test('a root mount grants its access level everywhere', () {
+      final ro = parse('mounts: [{path: /, access: ro}]');
+      expect(ro.accessFor('/etc/hosts'), CubePathAccess.readOnly);
+      expect(ro.accessFor('/work/file.txt'), CubePathAccess.readOnly);
+      final rw = parse('mounts: [{path: /, access: rw}]');
+      expect(rw.accessFor('/etc/out.txt'), CubePathAccess.readWrite);
+      expect(rw.accessFor('/work/file.txt'), CubePathAccess.readWrite);
+    });
+
     test('deny mount inside the workspace beats the workspace default', () {
       final policy = parse(
         'mounts: [{path: /workspace/secrets, access: deny}]',
