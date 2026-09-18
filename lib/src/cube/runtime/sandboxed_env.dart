@@ -35,16 +35,19 @@ final class SandboxedExecutionEnv implements ExecutionEnv, BackgroundShell {
   /// [os] names the host platform for `backend: kernel` specs (the CLI
   /// passes `Platform.operatingSystem`; `lib/src` itself stays pure Dart).
   /// A null [os] — or a platform without an enforcing backend — keeps
-  /// kernel-mode cubes in pure policy mode.
+  /// kernel-mode cubes in pure policy mode, announced through [onWarning]
+  /// with a loud `fa_cube[<name>]:` line.
   SandboxedExecutionEnv(
     this._delegate,
     CubeSpec? spec, {
     String? homeDir,
     String? workspaceRoot,
     String? os,
+    void Function(String message)? onWarning,
   }) : _homeDir = homeDir,
        _workspaceRoot = workspaceRoot,
-       _os = os {
+       _os = os,
+       _onWarning = onWarning {
     if (spec == null) {
       // Passthrough from the start: the shell exists but enforces nothing.
       _shell = SandboxedShell(_delegate, null);
@@ -57,6 +60,7 @@ final class SandboxedExecutionEnv implements ExecutionEnv, BackgroundShell {
   final ExecutionEnv _delegate;
   final String? _workspaceRoot;
   final String? _os;
+  final void Function(String message)? _onWarning;
 
   CubeFsGuard? _guard;
   late SandboxedShell _shell;
@@ -160,8 +164,19 @@ final class SandboxedExecutionEnv implements ExecutionEnv, BackgroundShell {
       homeDir: _homeDir,
       workspaceRoot: _workspaceRoot,
     );
-    _shell = SandboxedShell(_delegate, spec, fs: _delegate, os: _os);
-    _engine = CubePolicyEngine(spec);
+    _shell = SandboxedShell(
+      _delegate,
+      spec,
+      fs: _delegate,
+      os: _os,
+      homeDir: _homeDir,
+      onDegrade: _onWarning,
+    );
+    _engine = CubePolicyEngine(
+      spec,
+      homeDir: _homeDir,
+      workspaceRoot: _delegate.cwd,
+    );
   }
 
   /// Leaves sandbox mode: every operation forwards untouched.

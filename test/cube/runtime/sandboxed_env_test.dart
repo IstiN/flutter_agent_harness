@@ -89,6 +89,22 @@ void main() {
       expect(inner.jobs, isEmpty);
     });
 
+    test('a job escaping the workspace through a redirect is denied', () async {
+      final inner = _RecordingShell();
+      final env = SandboxedExecutionEnv(
+        MemoryExecutionEnv(cwd: '/work', shell: inner),
+        spec('l1-core'),
+      );
+      final result = await env.startShellJob(
+        'echo x > ../escape',
+        id: 'j1',
+        logPath: '/tmp/j1.log',
+      );
+      expect(result.isErr, isTrue);
+      expect(result.errorOrNull!.message, startsWith('fa_cube[l1-core]:'));
+      expect(inner.jobs, isEmpty);
+    });
+
     test('an allowed job is forwarded', () async {
       final inner = _RecordingShell();
       final env = SandboxedExecutionEnv(

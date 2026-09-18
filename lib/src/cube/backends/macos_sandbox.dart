@@ -1,11 +1,15 @@
 /// macOS sandbox-exec backend: generates an SBPL profile from a cube spec
 /// and wraps commands in `sandbox-exec -f <profile>`.
 ///
-/// The generated policy mirrors [CubeSpec]: the workspace is writable, `ro`
-/// mounts are readable but not writable, `deny` mounts vanish, and the
-/// network is fully denied unless the spec allows it. The wrapped command
-/// runs under `/usr/bin/env -i` — the clean-environment ceiling: inherited
-/// host variables are gone, only the PATH/HOME/TMPDIR trio plus the cube's
+/// The generated policy mirrors [CubeSpec]: the workspace is writable,
+/// `ro` mounts are readable but not writable, `deny` mounts vanish, and
+/// the network is fully denied unless the spec allows it. Unless a mount
+/// grants root-level access, writes outside the workspace and `rw` mounts
+/// are denied blanket-wide (`2>/dev/null` and the stdio fd aliases stay
+/// writable), and specs that do not grant root reads get a curated read
+/// deny set (system config, user homes). The wrapped command runs under
+/// `/usr/bin/env -i` — the clean-environment ceiling: inherited host
+/// variables are gone, only the PATH/HOME/TMPDIR trio plus the cube's
 /// injected vars are present.
 library;
 
@@ -76,11 +80,47 @@ final class MacOsSandboxBackend
   /// `file-read-data`/`literal` single-file forms do not hold).
   String buildSandboxProfile(CubeSpec spec, {String? workspaceRoot}) {
     final workspace = workspaceRoot ?? spec.filesystem.workspace;
+    final mounts = spec.filesystem.mounts;
     final buffer = StringBuffer('(version 1)\n(allow default)\n');
+    // A root-level mount decides whether a side is broad by design (L2's
+    // `ro /` reads everywhere, L3's `rw /` writes everywhere). Without
+    // one, the default-allow profile would leave the side unconfined, so
+    // it gets a blanket deny and specific re-allows (SBPL resolves
+    // conflicts by specificity: the subpath allow wins).
+    final readsEverywhere = mounts.any(
+      (mount) => mount.path == '/' && mount.access != CubePathAccess.deny,
+    );
+    final writesEverywhere = mounts.any(
+      (mount) => mount.path == '/' && mount.access == CubePathAccess.readWrite,
+    );
+    if (!writesEverywhere) {
+      buffer.writeln('(deny file-write*)');
+      // Persistence-free sinks stay writable: `2>/dev/null` and the stdio
+      // fd aliases must keep working inside the sandbox.
+      buffer
+        ..writeln('(allow file-write* (subpath "/dev/null"))')
+        ..writeln('(allow file-write* (subpath "/dev/fd"))');
+    }
+    if (!readsEverywhere) {
+      // Curated read confinement: deny the high-value disclosure targets
+      // (system config, every user home) while keeping exec viable — a
+      // blanket `(deny file-read*)` aborts exec, since the payload and
+      // dyld must read /bin/bash and /usr/lib/….
+      for (final path in [
+        ..._resolvedVariants('/etc'),
+        ..._resolvedVariants('/Users'),
+      ]) {
+        buffer.writeln('(deny file-read* (subpath "$path"))');
+      }
+      // The workspace may live under /Users: re-allow it over the deny.
+      for (final path in _resolvedVariants(workspace)) {
+        buffer.writeln('(allow file-read* (subpath "$path"))');
+      }
+    }
     for (final path in _resolvedVariants(workspace)) {
       buffer.writeln('(allow file-write* (subpath "$path"))');
     }
-    for (final mount in spec.filesystem.mounts) {
+    for (final mount in mounts) {
       for (final path in _resolvedVariants(mount.path)) {
         switch (mount.access) {
           case CubePathAccess.readOnly:
