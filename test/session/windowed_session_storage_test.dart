@@ -114,16 +114,26 @@ void main() {
 
   /// Builds a big session file in one write (raw JSONL lines) — thousands
   /// of awaited storage appends would dominate the test runtime.
-  Future<int> seedRaw(int count) async {
+  /// [compactionAt] inserts a compaction record with that chain index.
+  Future<int> seedRaw(int count, {int? compactionAt}) async {
     const iso = '2026-01-01T00:00:00.000Z';
     final buffer = StringBuffer(
       '{"type":"session","version":3,"id":"big","timestamp":"$iso",'
       '"cwd":"/work"}\n',
     );
     for (var i = 0; i < count; i++) {
+      if (compactionAt == i) {
+        buffer.write(
+          '{"type":"compaction","id":"c$i","parentId":'
+          '${i == 0 ? 'null' : '"e${i - 1}"'},"timestamp":"$iso",'
+          '"summary":"compacted prefix","firstKeptEntryId":"e$i",'
+          '"tokensBefore":12345}\n',
+        );
+      }
       buffer.write(
         '{"type":"message","id":"e$i","parentId":'
-        '${i == 0 ? 'null' : '"e${i - 1}"'},"timestamp":"$iso",'
+        '${i == 0 && compactionAt != 0 ? 'null' : (compactionAt == i ? '"c$i"' : '"e${i - 1}"')},'
+        '"timestamp":"$iso",'
         '"message":{"role":"user","content":[{"type":"text","text":'
         '"message $i with a bit of body to be realistic"}]}}\n',
       );
@@ -886,6 +896,92 @@ void main() {
       expect(ingest.reanchored, isTrue);
       // The window re-anchored on the (rewritten) tail.
       expect(idsOf(await storage.getEntries()).last, 'e99');
+    });
+  });
+
+  group('growOlderUntil (resume boundary walk)', () {
+    // The CLI resume pages a windowed open back to the newest compaction
+    // boundary (issue #503). The page loop MUST keep the tail anchored:
+    // the old ensure path slid the newest side out of the residency cache
+    // on the first chunk and the branch read EMPTY — every resume with a
+    // boundary deeper than one chunk fell back to a full open (10s+ on a
+    // marathon session, observed on a 1.4 GB live file).
+    test(
+      'pages several chunks to the boundary WITHOUT sliding the tail out',
+      () async {
+        const count = 1200;
+        const boundary = 300; // chunks above the tail window
+        await seedRaw(count, compactionAt: boundary);
+        final windowed = await WindowedSessionStorage.open(
+          fs,
+          path,
+          chunkRecords: 50,
+          residentRecords: 100,
+        );
+        final leafBefore = await windowed.getLeafId();
+        expect(leafBefore, 'e${count - 1}');
+
+        final ok = await windowed.growOlderUntil(
+          (r) => r is CompactionRecord,
+        );
+
+        expect(ok, isTrue);
+        expect(await windowed.getLeafId(), leafBefore);
+        final branch = await windowed.getPathToRoot(leafBefore!);
+        expect(branch, isNotEmpty);
+        expect(branch.last.id, leafBefore);
+        expect(branch.any((r) => r is CompactionRecord), isTrue);
+        // The boundary itself is resident: the resume context starts here.
+        final boundaryRecord = branch.firstWhere(
+          (r) => r is CompactionRecord,
+        );
+        expect(boundaryRecord.id, 'c$boundary');
+      },
+    );
+
+    test(
+      'session without compaction pages to the file head and keeps the '
+      'whole chain (no full-open fallback needed)',
+      () async {
+        const count = 700;
+        await seedRaw(count);
+        final windowed = await WindowedSessionStorage.open(
+          fs,
+          path,
+          chunkRecords: 50,
+          residentRecords: 100,
+        );
+        final leafBefore = await windowed.getLeafId();
+
+        final ok = await windowed.growOlderUntil(
+          (r) => r is CompactionRecord,
+        );
+
+        expect(ok, isTrue);
+        expect(windowed.hasOlder, isFalse);
+        final branch = await windowed.getPathToRoot(leafBefore!);
+        expect(branch.first.id, 'e0');
+        expect(branch.last.id, leafBefore);
+        expect(branch, hasLength(count));
+      },
+    );
+
+    test('maxPages exhaustion reports false (fallback preserved)', () async {
+      const count = 1200;
+      await seedRaw(count, compactionAt: 100);
+      final windowed = await WindowedSessionStorage.open(
+        fs,
+        path,
+        chunkRecords: 50,
+        residentRecords: 100,
+      );
+
+      final ok = await windowed.growOlderUntil(
+        (r) => r is CompactionRecord,
+        maxPages: 1,
+      );
+
+      expect(ok, isFalse);
     });
   });
 }
