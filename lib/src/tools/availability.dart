@@ -76,6 +76,21 @@ const knownToolIds = <String>{
   /// name that IS an availability id to itself, never to the family).
   'browser',
   'browser_eval',
+
+  /// The on-device automation family (issue #622): `mobile.launch` +
+  /// `mobile.logs`. Present wherever an Android app host wires the mobile
+  /// driver (both store and god flavors); other hosts stay absent.
+  'mobile',
+
+  /// The accessibility/media-projection automation surface (god flavor
+  /// only): hierarchy, tap/swipe/text, screenshot. The store flavor gates
+  /// it with the sideload reason instead of hiding the capability.
+  'mobile_automation',
+
+  /// The Shizuku shell bridge (god flavor, user opt-in). Present at the
+  /// floor in god; without a running Shizuku the tool answers the named
+  /// `Shizuku not running` error at runtime.
+  'mobile_shell',
 };
 
 /// The scope stack in resolution precedence order, shallow→deep: global,
@@ -146,6 +161,21 @@ const coreToolFamilies = <String, Set<String>>{
     'outlook.read_attachment',
     'outlook.insert_draft_body',
   },
+  /// On-device automation (issue #622). Three ids over one tool contract:
+  /// the tier decides which pass the capability floor — store keeps
+  /// launch/logs, god adds the accessibility surface and the Shizuku
+  /// shell. The app wires the floor; `resolveToolAvailability` does the
+  /// rest, and gated tools surface the honest sideload reason (#327
+  /// lesson: never silent).
+  'mobile': {'mobile.launch', 'mobile.logs'},
+  'mobile_automation': {
+    'mobile.hierarchy',
+    'mobile.tap',
+    'mobile.swipe',
+    'mobile.text',
+    'mobile.screenshot',
+  },
+  'mobile_shell': {'mobile.shell'},
 };
 
 /// Reverse index of [coreToolFamilies]: member tool name → availability

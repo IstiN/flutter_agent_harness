@@ -13,6 +13,14 @@ library;
 /// (`shellTool` in `builtin_tools.dart` registers under this name).
 const bashToolName = 'bash';
 
+/// The on-device shell tool (issue #622): the critical patterns below
+/// apply to its `command` argument exactly like `bash` — the Shizuku
+/// bridge executes at adb-shell privilege, so `rm -rf /`-class shapes
+/// must still force a prompt. (Wire-name twin of
+/// `mobile_tools.dart`'s `mobileShellToolName`; the approval layer cannot
+/// import the tools layer without a cycle.)
+const mobileShellToolName = 'mobile.shell';
+
 /// A destructive shell pattern with a human-readable label, surfaced in the
 /// approval prompt's reason.
 final class CriticalBashPattern {
