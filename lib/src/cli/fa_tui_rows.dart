@@ -234,11 +234,28 @@ extension _TuiRowRenderers on FaTuiModel {
   /// only the plan's visible rows (issue #496 yield order: the board is
   /// the most dispensable section).
   int _writeJobBoard(StringBuffer b, int row, _FramePlan plan) {
-    for (final line in jobBoardLines.take(plan.board)) {
+    for (final line in _visibleBoardLines(plan)) {
       b.writeln(_dim(_clipToWidth(line)));
       row++;
     }
     return row;
+  }
+
+  /// The board rows one frame paints — exactly [plan.board] of them, the
+  /// count the budget paid for (single-source with `_framePlanFor`). When
+  /// the plan clips a non-empty board (issue #479 AC5) the summary line
+  /// and the NEWEST live rows keep the region and one explicit
+  /// `… +N more` tail row reports the hidden count — never a silent drop.
+  List<String> _visibleBoardLines(_FramePlan plan) {
+    final lines = jobBoardLines;
+    if (plan.board >= lines.length) return lines;
+    if (plan.board <= 0) return const [];
+    if (plan.board == 1) return [lines.first];
+    return [
+      lines.first,
+      ...lines.sublist(lines.length - plan.board + 2),
+      '… +${lines.length - plan.board + 1} more',
+    ];
   }
 
   /// The visible-waiting row (issue #450): WHAT the agent waits for,
@@ -308,10 +325,11 @@ extension _TuiRowRenderers on FaTuiModel {
   /// differently from plain queued sends.
   static String _queueBadge(bool steer) => steer ? '⤳ [steer] ' : '❯ ';
 
-  /// Clips a live row to the frame width, ellipsising the tail (resize-safe).
-  String _clipToWidth(String line) => line.length > termWidth - 2
-      ? '${line.substring(0, termWidth - 3)}…'
-      : line;
+  /// Clips a live row to the frame width, ellipsising the tail
+  /// (resize-safe). CELL-aware (issue #479 AC6): [tuiFitWidth] measures
+  /// grapheme clusters — the old UTF-16 count let a CJK line render past
+  /// the width and soft-wrap the chrome out of the row grid.
+  String _clipToWidth(String line) => tuiFitWidth(line, termWidth - 2);
 
   /// The scheduled follow-ups indicator line (one dim row): count + the
   /// nearest ETA, styled after the busy row so it reads as one family.

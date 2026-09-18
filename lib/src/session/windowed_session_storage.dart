@@ -51,6 +51,8 @@ final class WindowedSessionStorage
     SessionChunk chunk, {
     int residentRecords = defaultResidentRecords,
     int residentBytes = defaultResidentBytes,
+    this._chunkRecords = defaultChunkRecords,
+    this._chunkBytes = defaultChunkBytes,
     this._ioRetry = const SessionIoRetryConfig(),
   }) : _metadata = metadata,
        _hasOlder = chunk.hasOlder,
@@ -74,6 +76,17 @@ final class WindowedSessionStorage
 
   final int _residentRecordCap;
   final int _residentByteCap;
+
+  /// Open-time chunk sizing — the STARTING block size of the
+  /// [growOlderUntil] boundary walk (the walk doubles per page, so deep
+  /// boundaries converge in a handful of single-read strips).
+  final int _chunkRecords;
+  final int _chunkBytes;
+
+  /// While true, [_evictToBound] is a no-op — set for the duration of a
+  /// [growOlderUntil] boundary walk so the newest side (the resume's
+  /// tail anchor) cannot slide out mid-walk.
+  bool _suspendEviction = false;
 
   final FileSystem _fs;
   final String _filePath;
@@ -221,6 +234,8 @@ final class WindowedSessionStorage
       chunk,
       residentRecords: residentRecords ?? defaultResidentRecords,
       residentBytes: residentBytes ?? defaultResidentBytes,
+      chunkRecords: chunkRecords,
+      chunkBytes: chunkBytes,
       ioRetry: ioRetry,
     );
     timingLog?.call(
@@ -276,6 +291,86 @@ final class WindowedSessionStorage
     }
     _evictToBound(newestSide: true);
     return joined;
+  }
+
+  /// Pages older chunks until [found] matches a record on the active
+  /// branch, the file top is reached, or [maxPages] pass — WITHOUT
+  /// sliding the newest side out: the residency cap is suspended for the
+  /// walk, so a resume keeps the tail anchored while reaching the
+  /// compaction boundary (the CLI resume walks to the newest compaction
+  /// — the old ensure path let [loadOlder] evict the leaf on the first
+  /// chunk, the branch read empty, and every deep-boundary resume fell
+  /// back to a full open: 10s+ on a marathon file).
+  ///
+  /// Returns whether the tail-anchored branch is intact after the walk;
+  /// `false` only on [maxPages] exhaustion (the caller's documented
+  /// full-open fallback). A session without a match pages everything —
+  /// the whole chain is then resident and the walk reports `true`.
+  Future<bool> growOlderUntil(
+    bool Function(SessionRecord record) found, {
+    int maxPages = 512,
+  }) async {
+    _suspendEviction = true;
+    try {
+      var pages = 0;
+      // The walk pages in BLOCKS that double per page (chunk size → 2x →
+      // …, capped): each strip is read, decoded and parsed exactly ONCE
+      // (SessionChunkReader.readBlockBefore). The capped loadOlder path
+      // re-decoded its doubling window on every pass — a 400 MB
+      // tail-after-compaction cost 10s+ in redundant decode alone.
+      var blockRecords = _chunkRecords;
+      var blockBytes = _chunkBytes;
+      while (pages < maxPages) {
+        final leaf = await getLeafId();
+        if (leaf == null) return true; // genuinely empty session
+        final branch = await getPathToRoot(leaf);
+        if (branch.any(found)) return true;
+        if (!_hasOlder) return true; // paged everything
+        pages++;
+        await _readOlderBlock(blockRecords, blockBytes);
+        if (blockRecords < maxWalkBlockRecords) blockRecords *= 2;
+        if (blockBytes < maxWalkBlockBytes) blockBytes *= 2;
+      }
+      return false;
+    } finally {
+      _suspendEviction = false;
+    }
+  }
+
+  /// Largest single block of the [growOlderUntil] walk — the per-page
+  /// doubling ceiling (64 MB / 4096 records keeps one page at ~300 ms and
+  /// bounds the transient strip buffer).
+  static const maxWalkBlockRecords = 4096;
+  static const maxWalkBlockBytes = 64 << 20;
+
+  /// One block page-up for the boundary walk ([growOlderUntil]): a
+  /// single-read strip above the window (see
+  /// [SessionChunkReader.readBlockBefore]), indexed like a regular chunk.
+  /// No branch join here — the walk's predicate reads the index through
+  /// [getPathToRoot]; eviction stays suspended by the caller.
+  Future<void> _readOlderBlock(int maxRecords, int maxBytes) async {
+    final top = _windowTopOffset;
+    if (top == null) {
+      _hasOlder = false;
+      return;
+    }
+    final chunk = await _reader.readBlockBefore(
+      top,
+      maxRecords: maxRecords,
+      maxBytes: maxBytes,
+    );
+    if (chunk.isEmpty) {
+      // Mirrors _readOlderChunk: an empty read above the window ends the
+      // walk (file top, or a torn region — degenerate, but bounded).
+      _hasOlder = false;
+      return;
+    }
+    _windowTopOffset = chunk.firstOffset;
+    _hasOlder = chunk.hasOlder;
+    _indexChunk(chunk, prepend: true);
+    _aboveCount = _aboveCount == null
+        ? null
+        : _aboveCount! - chunk.entries.length;
   }
 
   /// One page-up pass: reads the chunk above the window, indexes it
@@ -660,6 +755,12 @@ final class WindowedSessionStorage
   /// index, the id/label caches — so nothing stays strongly referenced
   /// past residency.
   int _evictToBound({required bool newestSide}) {
+    // Suspended during a boundary walk ([growOlderUntil]): the resume
+    // pages back to the compaction boundary while keeping the tail
+    // anchored — evicting the newest side mid-walk is exactly what slid
+    // the leaf out and turned every deep-boundary resume into a full
+    // open.
+    if (_suspendEviction) return 0;
     var evicted = 0;
     while (_entries.isNotEmpty &&
         (_entries.length > _residentRecordCap ||

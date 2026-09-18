@@ -55,6 +55,12 @@ import 'package:fa/sandbox/wasm_shell_ssh.dart';
 /// iOS/Android/Web.
 final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   /// Creates a shell backed by the provided WASM modules.
+  ///
+  /// The heavy interpreter modules ([python], [qjs], [sqlite3], [lua]) are
+  /// optional (issue #640): `load()` leaves them null and passes a
+  /// [moduleLoader], so a 29 MB `python.wasm` is compiled on the first
+  /// `python` invocation instead of blocking app boot. Callers that compile
+  /// everything up front (tests) may keep passing all four.
   WasiSandboxShell({
     required this.coreutils,
     required this.rg,
@@ -64,13 +70,14 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     required this.tar,
     required this.gzip,
     required this.zip,
-    required this.python,
-    required this.qjs,
-    required this.sqlite3,
-    required this.lua,
+    this.python,
+    this.qjs,
+    this.sqlite3,
+    this.lua,
     this.workingDirectory,
     this.sandboxHostPath,
     http.Client? httpClient,
+    this.moduleLoader,
   }) : _httpClient = httpClient ?? http.Client(),
        _currentDir = workingDirectory ?? '/';
 
@@ -98,17 +105,20 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   /// zip/unzip module.
   final WasmModule zip;
 
-  /// CPython module (Python 3.14, WASI build).
-  final WasmModule python;
+  /// CPython module (Python 3.14, WASI build). Null until the lazy
+  /// loader compiles `python.wasm` on first use (issue #640).
+  final WasmModule? python;
 
-  /// QuickJS module (JavaScript engine, WASI build).
-  final WasmModule qjs;
+  /// QuickJS module (JavaScript engine, WASI build). Lazily compiled.
+  final WasmModule? qjs;
 
   /// SQLite CLI module (WASI build from the official amalgamation).
-  final WasmModule sqlite3;
+  /// Lazily compiled.
+  final WasmModule? sqlite3;
 
   /// Lua interpreter module (gopher-lua, Lua 5.1, WASI build).
-  final WasmModule lua;
+  /// Lazily compiled.
+  final WasmModule? lua;
 
   /// Default working directory used when [ShellExecOptions.cwd] is omitted.
   final String? workingDirectory;
@@ -116,6 +126,14 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   /// Host directory exposed to the WASM guest at `/`.
   @override
   final String? sandboxHostPath;
+
+  /// Compiles a bundled `assets/wasm/<name>` module on demand (issue #640).
+  /// Null when all modules were supplied eagerly (tests).
+  final Future<WasmModule> Function(String assetName)? moduleLoader;
+
+  /// Interpreter modules compiled so far, keyed by asset name. A failed
+  /// lazy compile is not cached: the next invocation retries.
+  final Map<String, WasmModule> _lazyModules = <String, WasmModule>{};
 
   final http.Client _httpClient;
 
@@ -215,7 +233,14 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     ShellExecOptions? options,
   ) => _git.run(stage, options);
 
-  /// Loads all three WASM modules from the Flutter asset bundle.
+  /// Loads the shell from the Flutter asset bundle.
+  ///
+  /// The eight light POSIX modules compile eagerly (they back every basic
+  /// command); the four heavy interpreters — `python.wasm` (~29 MB),
+  /// `qjs.wasm`, `sqlite3.wasm`, `lua.wasm` — do NOT (issue #640):
+  /// JIT-compiling them at boot exhausted the Android `untrusted_app` VM
+  /// limits (Rust PanicException → black screen). They are compiled on the
+  /// first invocation of the respective command via [moduleLoader].
   static Future<WasiSandboxShell> load({
     String? workingDirectory,
     String? sandboxHostPath,
@@ -246,13 +271,10 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       tar: await loadAsset('tar.wasm'),
       gzip: await loadAsset('gzip.wasm'),
       zip: await loadAsset('zip.wasm'),
-      python: await loadAsset('python.wasm'),
-      qjs: await loadAsset('qjs.wasm'),
-      sqlite3: await loadAsset('sqlite3.wasm'),
-      lua: await loadAsset('lua.wasm'),
       workingDirectory: workingDirectory,
       sandboxHostPath: sandboxHostPath,
       httpClient: httpClient,
+      moduleLoader: loadAsset,
     );
   }
 
@@ -273,8 +295,9 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         _builtinCommands.contains(command);
   }
 
-  /// Resolves a command to the module and the exact argv that selects it.
-  ({WasmModule module, List<String> argv}) _resolve(String command) {
+  /// Resolves a command to the eagerly compiled module (null for the four
+  /// lazily compiled interpreters) and the exact argv that selects it.
+  ({WasmModule? module, List<String> argv}) _resolve(String command) {
     if (_coreutilsApplets.contains(command)) {
       return (module: coreutils, argv: [command]);
     }
@@ -287,12 +310,47 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       'gzip' => (module: gzip, argv: const ['gzip']),
       'zip' => (module: zip, argv: const ['zip']),
       'unzip' => (module: zip, argv: const ['zip_util']),
+      // Heavy interpreters compile lazily on first use (issue #640).
       'python' || 'python3' => (module: python, argv: const ['python']),
       'qjs' || 'js' => (module: qjs, argv: const ['qjs']),
       'sqlite3' => (module: sqlite3, argv: const ['sqlite3']),
       'lua' => (module: lua, argv: const ['lua']),
       _ => (module: coreutils, argv: [command]),
     };
+  }
+
+  /// Whether [command] runs the CPython stage (stdlib extraction and the
+  /// HTTP bridge attach to it regardless of how the module was compiled).
+  static bool _isPythonCommand(String command) =>
+      command == 'python' || command == 'python3';
+
+  /// Resolves a stage command to its WASM module, lazily compiling the
+  /// heavy interpreter modules on first use (issue #640). A failed lazy
+  /// compile surfaces as `Err` with a clear message — the stage maps it to
+  /// exit code 1 + stderr, never a host crash.
+  Future<Result<WasmModule, String>> _moduleFor(String command) async {
+    final resolved = _resolve(command);
+    final eager = resolved.module;
+    if (eager != null) return Ok(eager);
+    final asset = switch (command) {
+      'python' || 'python3' => 'python.wasm',
+      'qjs' || 'js' => 'qjs.wasm',
+      'sqlite3' => 'sqlite3.wasm',
+      _ => 'lua.wasm',
+    };
+    final cached = _lazyModules[asset];
+    if (cached != null) return Ok(cached);
+    final loader = moduleLoader;
+    if (loader == null) {
+      return Err('$command: $asset was not compiled (no lazy loader)');
+    }
+    try {
+      debugPrint('[wasm_shell] lazily compiling $asset for $command...');
+      return Ok(_lazyModules[asset] = await loader(asset));
+    } on Object catch (e) {
+      debugPrint('[wasm_shell] lazy compile of $asset failed: $e');
+      return Err('$command: failed to load $asset: $e');
+    }
   }
 
   /// Dispatches a builtin command to its Dart implementation.
@@ -963,11 +1021,24 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     required bool captureStdout,
     required bool captureStderr,
   }) async {
-    final resolved = _resolve(command);
-    final module = resolved.module;
-    final argv = [...resolved.argv, ...args];
+    final loaded = await _moduleFor(command);
+    if (loaded.isErr) {
+      // Issue #640: a failed lazy compile of an interpreter must degrade to
+      // a normal failed command (exit 1 + stderr), never crash the host.
+      final message = loaded.errorOrNull!;
+      _lastStageExitCode = 1;
+      return Ok(
+        StageResult(
+          stdout: const [],
+          stderr: utf8.encode('$message\n'),
+          exitCode: 1,
+        ),
+      );
+    }
+    final module = loaded.valueOrNull!;
+    final argv = [..._resolve(command).argv, ...args];
 
-    final env = await _stageEnv(module, options);
+    final env = await _stageEnv(command, options);
     if (env.isErr) return Err(env.errorOrNull!);
     final built = await _buildStageInstance(
       module: module,
@@ -980,7 +1051,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     if (built.isErr) return Err(built.errorOrNull!);
     final instance = built.valueOrNull!;
 
-    final bridge = _stageBridge(module, captureStdout);
+    final bridge = _stageBridge(command, captureStdout);
     final io = _StageIo();
     final stdoutSub = _subscribeStdout(
       instance,
@@ -1027,10 +1098,10 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   /// Prepares the stage environment: unpacks the python stdlib on first
   /// python use and exposes pip site-packages to the interpreter.
   Future<Result<Map<String, String>, ExecutionError>> _stageEnv(
-    WasmModule module,
+    String command,
     ShellExecOptions? options,
   ) async {
-    if (module != python) return Ok(_effectiveEnv(options));
+    if (!_isPythonCommand(command)) return Ok(_effectiveEnv(options));
     try {
       await _ensurePythonStdlib();
     } on Object catch (e) {
@@ -1106,9 +1177,9 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   /// Python stages route HTTP through the host bridge (issue #337 AC1):
   /// `fa_http` control lines are stripped from the captured stdout and the
   /// requests are served against the real network by [FaHttpBridge].
-  FaHttpBridge? _stageBridge(WasmModule module, bool captureStdout) {
+  FaHttpBridge? _stageBridge(String command, bool captureStdout) {
     final enabled =
-        module == python &&
+        _isPythonCommand(command) &&
         captureStdout &&
         (sandboxHostPath?.isNotEmpty ?? false);
     return enabled

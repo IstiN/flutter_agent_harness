@@ -1,6 +1,8 @@
 import 'dart:io';
 
 import 'package:fa/sandbox/env_factory_io.dart' as app_env;
+import 'package:fa/sandbox/persistent_web_env.dart';
+import 'package:fa/services/app_log.dart';
 import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/project_mount_store.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -128,20 +130,24 @@ void main() {
       if (appSupport.existsSync()) appSupport.deleteSync(recursive: true);
     });
 
-    test('createDesktopEnv builds the env on the app-support directory',
-        () async {
-      final env = await app_env.createDesktopEnv();
-      expect(env.cwd, appSupport.path);
-      expect(env, isA<LocalExecutionEnv>());
-    });
+    test(
+      'createDesktopEnv builds the env on the app-support directory',
+      () async {
+        final env = await app_env.createDesktopEnv();
+        expect(env.cwd, appSupport.path);
+        expect(env, isA<LocalExecutionEnv>());
+      },
+    );
 
-    test('applyStoredMount exposes a granted bookmark as the mounted root',
-        () async {
-      final (mountEnv, stored) = await _mountWithStoredMount();
-      app_env.applyStoredMount(mountEnv, stored, granted: true);
-      expect(mountEnv.mountedRoot, '/proj');
-      expect(mountEnv.mountUnavailable, isNull);
-    });
+    test(
+      'applyStoredMount exposes a granted bookmark as the mounted root',
+      () async {
+        final (mountEnv, stored) = await _mountWithStoredMount();
+        app_env.applyStoredMount(mountEnv, stored, granted: true);
+        expect(mountEnv.mountedRoot, '/proj');
+        expect(mountEnv.mountUnavailable, isNull);
+      },
+    );
 
     test('applyStoredMount surfaces a refused bookmark as stale', () async {
       final (mountEnv, stored) = await _mountWithStoredMount();
@@ -149,24 +155,69 @@ void main() {
       expect(mountEnv.mountedRoot, isNull);
       expect(mountEnv.mountUnavailable, '/proj');
     });
-    test('mountedDesktopEnv without a stored mount is a plain wrapper',
-        () async {
-      final baseEnv =
-          LocalExecutionEnv(cwd: Directory.systemTemp.createTempSync('fah_base_').path);
-      addTearDown(() => Directory(baseEnv.cwd).deleteSync(recursive: true));
-      final env =
-          await app_env.mountedDesktopEnv(baseEnv) as ProjectMountEnv;
-      expect(env.mountedRoot, isNull);
-      expect(env.mountUnavailable, isNull);
-      expect(env.cwd, baseEnv.cwd);
+    test(
+      'mountedDesktopEnv without a stored mount is a plain wrapper',
+      () async {
+        final baseEnv = LocalExecutionEnv(
+          cwd: Directory.systemTemp.createTempSync('fah_base_').path,
+        );
+        addTearDown(() => Directory(baseEnv.cwd).deleteSync(recursive: true));
+        final env = await app_env.mountedDesktopEnv(baseEnv) as ProjectMountEnv;
+        expect(env.mountedRoot, isNull);
+        expect(env.mountUnavailable, isNull);
+        expect(env.cwd, baseEnv.cwd);
+      },
+    );
+  });
+
+  group('createMobileSandboxEnv fallback (issue #640)', () {
+    late Directory appSupport;
+    late Directory documents;
+
+    setUp(() {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      appSupport = Directory.systemTemp.createTempSync('fah_app_support_');
+      documents = Directory.systemTemp.createTempSync('fah_documents_');
+      PathProviderPlatform.instance = _FakePathProviderPlatform(
+        appSupport,
+        documents,
+      );
+      AppLog.reset();
+    });
+
+    tearDown(() {
+      AppLog.reset();
+      for (final dir in [appSupport, documents]) {
+        if (dir.existsSync()) dir.deleteSync(recursive: true);
+      }
+    });
+
+    test('a failing WasiSandboxShell.load falls back to MemoryShell', () async {
+      final env = await app_env.createMobileSandboxEnv(
+        loadShell: () async => throw StateError('PanicException: python.wasm'),
+      );
+      expect(env, isA<PersistentWebExecutionEnv>());
+      // The fallback shell answers basic commands in memory.
+      final r = await env.exec('echo ok');
+      expect(r.valueOrNull!.exitCode, 0);
+      expect(r.valueOrNull!.stdout, contains('ok'));
+    });
+    test('the fallback logs an informational warning line', () async {
+      await app_env.createMobileSandboxEnv(
+        loadShell: () async => throw StateError('PanicException: python.wasm'),
+      );
+      final log = AppLog.dump();
+      expect(log, contains('falling back to MemoryShell'));
+      expect(log, contains('PanicException'));
     });
   });
 }
 
 /// Builds a mount env with a persisted mount via the public save/load API.
 Future<(ProjectMountEnv, ProjectMountStore)> _mountWithStoredMount() async {
-  final baseEnv =
-      LocalExecutionEnv(cwd: Directory.systemTemp.createTempSync('fah_base_').path);
+  final baseEnv = LocalExecutionEnv(
+    cwd: Directory.systemTemp.createTempSync('fah_base_').path,
+  );
   addTearDown(() => Directory(baseEnv.cwd).deleteSync(recursive: true));
   await ProjectMountStore.save(
     baseEnv,
@@ -181,10 +232,15 @@ Future<(ProjectMountEnv, ProjectMountStore)> _mountWithStoredMount() async {
 /// Platform-interface fake: the path_provider method channel is gated by
 /// the host platform, the interface is not.
 final class _FakePathProviderPlatform extends PathProviderPlatform {
-  _FakePathProviderPlatform(this._appSupport);
+  _FakePathProviderPlatform(this._appSupport, [this._documents]);
 
   final Directory _appSupport;
+  final Directory? _documents;
 
   @override
   Future<String?> getApplicationSupportPath() async => _appSupport.path;
+
+  @override
+  Future<String?> getApplicationDocumentsPath() async =>
+      _documents?.path ?? _appSupport.path;
 }

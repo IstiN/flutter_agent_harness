@@ -608,6 +608,11 @@ extension ApprovalCommands on AgentCli {
   String statusProviderLabelForTest() =>
       _statusProviderLabel(_agent.state.model);
 
+  /// Test hook for the status row as the TUI renders it (issue #653 —
+  /// the fold badge must clear at settle, error settles included).
+  @visibleForTesting
+  String statusLineForTest() => _statusLine();
+
   /// Endpoint equality ignoring a trailing slash (saved entries and pinned
   /// chains disagree on it routinely).
   bool _sameEndpoint(String a, String b) {

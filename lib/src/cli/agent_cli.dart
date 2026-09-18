@@ -2361,6 +2361,9 @@ class AgentCli {
         // drop the assertion so an idle agent lets the machine sleep.
         unawaited(runPowerAssertionsSettled());
         _setRunStalled(false);
+        // The fold badge clears at settle whatever the outcome (issue
+        // #438 AC3 «until the turn settles»; #653 — error settles too).
+        _autoFoldCount = 0;
         _settleLeftoverSteering();
         // Waiting-row refresh (issue #450): the busy→idle edge is where
         // the waiting row takes over from the busy row (E3/E4).
@@ -2414,19 +2417,11 @@ class AgentCli {
   /// a mid-run fold and clears when the turn settles.
   int _autoFoldCount = 0;
 
-  /// Pushes a busy-row phase, carrying the fold badge: mid-run the busy
-  /// row is the surface that actually repaints (the idle status row only
-  /// redraws on state changes), so the «[auto-compacted · continuing]»
-  /// badge rides every busy label until the turn settles (issue #438
-  /// AC3). Multiple folds in one run count (E2).
-  void _pushBusyPhase(String phase) {
-    _tuiController?.setBusyPhase(
-      _autoFoldCount == 0
-          ? phase
-          : '$phase [auto-compacted'
-                '${_autoFoldCount > 1 ? ' ×$_autoFoldCount' : ''} · continuing]',
-    );
-  }
+  /// Test seam: every busy-row phase pushed, in order (issue #653 — the
+  /// fold marker must never ride the busy row; see `_pushBusyPhase` in
+  /// agent_cli_compaction.dart, the status row carries the badge).
+  @visibleForTesting
+  final List<String> busyPhasesForTest = [];
 
   /// Whether this CLI instance is inside a headless (`fa "prompt"`, `-p`)
   /// run — guards the REPL-only recovery flows (browser SSO re-auth) from
@@ -2679,9 +2674,6 @@ class AgentCli {
     _hubCompletePanels();
     await _persistMessages();
     await _maybeAutoCompact();
-    // Settle clears the badge: the fold is over, the transcript is final
-    // (issue #438 AC3 — «until the turn settles»).
-    _autoFoldCount = 0;
   }
 
   /// Idle-wake guard: one inbox-triggered run at a time.

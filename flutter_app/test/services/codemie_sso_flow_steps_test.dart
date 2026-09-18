@@ -10,6 +10,7 @@ import 'package:fa/services/codemie_sso_flow.dart';
 import 'package:fa/services/codemie_sso_flow_steps.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
+import 'package:fa_ui/fa_ui.dart' show FaChatMessage;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -456,6 +457,97 @@ void main() {
           jsonEncode(store.connection!.toJson()),
           isNot(contains('SECRET-VALUE')),
         );
+      },
+    );
+
+    test(
+      'issue #623: a successful connect resolves the auth-expired cards '
+      'in the transcript',
+      () async {
+        final env = MemoryExecutionEnv();
+        final registry = await ProviderRegistry.load(env);
+        final service = _RecordingService(env);
+        // The transcript state the card's Authorize tap runs from: a user
+        // turn, the failed run's auth-expired card, TWO of them across a
+        // double expiry (a single-card test can hide a multi-card miss),
+        // and a live assistant reply after the newest card.
+        service.messages.addAll([
+          FaChatMessage(role: 'user', content: 'summarize the doc'),
+          FaChatMessage(
+            role: 'tool',
+            toolName: 'error',
+            isError: true,
+            content: 'older expiry — [[auth-expired:codemie]]',
+          ),
+          FaChatMessage(role: 'assistant', content: 'partial answer'),
+          FaChatMessage(
+            role: 'tool',
+            toolName: 'error',
+            isError: true,
+            content: 'CodeMie session expired — the endpoint answered the '
+                'API call with the SSO login page. [[auth-expired:codemie]]',
+          ),
+        ]);
+
+        await saveCodemieConnection(
+          registry: registry,
+          service: service,
+          lastConnectionStore: LastConnectionStore.inMemory(),
+          orgUrl: 'https://codemie.lab.epam.com',
+          baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+          modelId: 'gpt-x',
+          key: 'codemie_access_token=tok-1',
+        );
+
+        // No auth-expired card survives the successful sign-in.
+        expect(
+          service.messages.where(
+            (m) => authExpiredProvider(m.content) != null,
+          ),
+          isEmpty,
+        );
+        // ONE system note replaces the cards…
+        final notes = service.messages
+            .where(
+              (m) =>
+                  m.role == 'system' &&
+                  m.content.contains('Authorization successful'),
+            )
+            .toList();
+        expect(notes, hasLength(1));
+        // …sitting where the NEWEST card was (right after the live reply,
+        // which shifts up once the older card is dropped).
+        expect(service.messages.indexOf(notes.single), 2);
+        // The surrounding transcript keeps its shape.
+        expect(service.messages[0].role, 'user');
+        expect(service.messages[1].role, 'assistant');
+      },
+    );
+
+    test(
+      'issue #623: a connect with no auth-expired cards in the transcript '
+      'appends nothing',
+      () async {
+        final env = MemoryExecutionEnv();
+        final registry = await ProviderRegistry.load(env);
+        final service = _RecordingService(env);
+        service.messages.addAll([
+          FaChatMessage(role: 'user', content: 'hello'),
+          FaChatMessage(role: 'assistant', content: 'hi!'),
+        ]);
+
+        await saveCodemieConnection(
+          registry: registry,
+          service: service,
+          lastConnectionStore: LastConnectionStore.inMemory(),
+          orgUrl: 'https://codemie.lab.epam.com',
+          baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+          modelId: 'gpt-x',
+          key: 'codemie_access_token=tok-1',
+        );
+
+        // Settings re-logins and first connects must not spam a note.
+        expect(service.messages, hasLength(2));
       },
     );
   });
