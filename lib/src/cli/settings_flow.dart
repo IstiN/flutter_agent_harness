@@ -245,8 +245,9 @@ extension SettingsFlow on AgentCli {
             baseUrl: choice.baseUrl,
             modelId: choice.modelId,
             // The saved custom provider's key authenticates the media
-            // endpoint; without it the tool sends no Authorization header.
-            apiKeyName: choice.savedEntry?.keyName,
+            // endpoint; without it fall back to the host-scoped key.
+            apiKeyName: choice.savedEntry?.keyName ??
+                CustomProviderRegistry.keyNameFor(choice.baseUrl),
           ),
         );
         io.writeln(
