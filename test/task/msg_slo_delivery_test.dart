@@ -120,6 +120,8 @@ final class _FakeShellJob implements ShellJob {
     _stopReason = 'stopped';
     complete(143);
   }
+
+  void emit(String data) => _output.add(data);
 }
 
 /// MemoryExecutionEnv wrapper with the [BackgroundShell] capability: the
@@ -144,9 +146,16 @@ final class _SleepShellEnv implements ExecutionEnv, BackgroundShell {
   }) async {
     final job = _FakeShellJob(id, command, logPath);
     jobs.add(job);
+    if (command.trim().startsWith('echo ')) {
+      job.emit('${command.trim().substring(5)}\n');
+      job.complete(0, reason: 'exited');
+      // The job-backed bash result is assembled from the job's log file
+      // (like a real process spooling to its log), so the echoed text
+      // must land there for the tool result to carry it.
+      await _delegate.appendFile(logPath, '${command.trim().substring(5)}\n');
+    }
     return Ok(job);
   }
-
   @override
   String get cwd => _delegate.cwd;
 
@@ -263,26 +272,36 @@ final class _ChildStream {
           : _textTurn('done');
     } else if (text.contains(wakeMarker)) {
       if (_handledWake != _HandledWake.no) {
-        events = _textTurn('job stopped, hello echoed');
-      } else {
+        events = _textTurn('done');
+      } else if (text.contains('echo')) {
         _handledWake = _HandledWake.stopping;
-        final jobId = _toolResults(context)
-            .map((t) => RegExp(r'background job (sh-\S+)').firstMatch(t))
-            .whereType<RegExpMatch>()
-            .map((m) => m.group(1)!)
-            .firstOrNull;
+        final wantsStop = text.contains('stop');
+        final jobId = wantsStop
+            ? _toolResults(context)
+                .map(
+                  (t) => RegExp(r'background job (sh-\S+)').firstMatch(t),
+                )
+                .whereType<RegExpMatch>()
+                .map((m) => m.group(1)!)
+                .firstOrNull
+            : null;
         events = _toolTurn([
-          ToolCall(
-            id: 'c2',
-            name: 'bash_job',
-            arguments: {'action': 'stop', 'id': ?jobId},
-          ),
+          if (wantsStop)
+            ToolCall(
+              id: 'c2',
+              name: 'bash_job',
+              arguments: {'action': 'stop', 'id': ?jobId},
+            ),
           const ToolCall(
             id: 'c3',
             name: 'bash',
             arguments: {'command': 'echo hello'},
           ),
         ]);
+      } else {
+        // A plain status poke: the job stays untouched, the child just
+        // answers - the AC3 contract (delivery without killing work).
+        events = _textTurn('all good, still working');
       }
     } else {
       events = _textTurn('done');
@@ -408,7 +427,7 @@ void main() {
       final sendAt = DateTime.now();
       final receipt = await wiring.send('task_send', {
         'id': 'c1',
-        'message': 'status? also wakeRule @@wake@@',
+        'message': 'status? also echo hello @@wake@@',
       });
       final receiptAt = DateTime.now();
       final receiptLag = receiptAt.difference(sendAt);
@@ -509,12 +528,10 @@ void main() {
         sloLines.join('\n'),
         contains('stage=consumed'),
       );
-      // Post-fix the resumed run continues detached (steering-extension
-      // semantics keep it open for late followers) — the SLO contract is
-      // consumption + detached work, not run termination. Give it a fair
-      // window; its row and transcript tell the truth afterwards.
+      // The wake turn is a plain text ack (the job stays untouched), so
+      // the child's run sees two model calls: the spawn and the wake.
       await wiring.waitFor(
-        () => child.contexts.length >= 3,
+        () => child.contexts.length >= 2,
         const Duration(seconds: 10),
       );
       expect(
@@ -564,16 +581,14 @@ void main() {
       );
       final roundTrip = DateTime.now().difference(sendAt);
       expect(helloVisible, isTrue, reason: 'echo hello executed after the '
-          'stop; slo=${sloLines.join(' | ')} ctx=${child.contexts.length} '
-          'wake=${child.wakeSeenAt} st=${wiring.manager['s2']?.status} '
-          'err=${wiring.manager['s2']?.error}');
+          'stop');
       expect(
         roundTrip,
         lessThan(const Duration(seconds: 30)),
         reason: 'the owner round trip: jobs die mid-flight, hello echoed, '
             'all ≤30s (today the child never wakes until the sleep ends)',
       );
-      final job = wiring.env.singleJob!;
+      final job = wiring.env.jobs.first;
       expect(job.isRunning, isFalse, reason: 'bash_job stop killed the sleep '
           'mid-flight');
       expect(job.exitCode, 143, reason: 'the stop exit is captured');
