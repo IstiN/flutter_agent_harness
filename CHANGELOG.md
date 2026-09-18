@@ -3800,4 +3800,10 @@
 - fix(597): staged publish self-contained + PR-time staged dry-run + dead-tag fix (#600)
 - fix(611): poll pub.dev post-upload verify up to 11 min instead of failing at ~16s (#612)
 
+## 0.1.414
+
+- fix(613): staged publish tree analyzes clean (staging anchors + hosted dart_tui resolution + dry-run gate) (#617)
+- fix(466): nightly auto-issue leg repo-pinning + green-run sunset (#616)
+- feat(machine): dmtools-agents factory rollout — ai-teammate-author gated (#614)
+
 ## Unreleased
