@@ -75,6 +75,11 @@ final class WindowedSessionStorage
   final int _residentRecordCap;
   final int _residentByteCap;
 
+  /// While true, [_evictToBound] is a no-op — set for the duration of a
+  /// [growOlderUntil] boundary walk so the newest side (the resume's
+  /// tail anchor) cannot slide out mid-walk.
+  bool _suspendEviction = false;
+
   final FileSystem _fs;
   final String _filePath;
   final SessionChunkReader _reader;
@@ -276,6 +281,41 @@ final class WindowedSessionStorage
     }
     _evictToBound(newestSide: true);
     return joined;
+  }
+
+  /// Pages older chunks until [found] matches a record on the active
+  /// branch, the file top is reached, or [maxPages] pass — WITHOUT
+  /// sliding the newest side out: the residency cap is suspended for the
+  /// walk, so a resume keeps the tail anchored while reaching the
+  /// compaction boundary (the CLI resume walks to the newest compaction
+  /// — the old ensure path let [loadOlder] evict the leaf on the first
+  /// chunk, the branch read empty, and every deep-boundary resume fell
+  /// back to a full open: 10s+ on a marathon file).
+  ///
+  /// Returns whether the tail-anchored branch is intact after the walk;
+  /// `false` only on [maxPages] exhaustion (the caller's documented
+  /// full-open fallback). A session without a match pages everything —
+  /// the whole chain is then resident and the walk reports `true`.
+  Future<bool> growOlderUntil(
+    bool Function(SessionRecord record) found, {
+    int maxPages = 512,
+  }) async {
+    _suspendEviction = true;
+    try {
+      var pages = 0;
+      while (pages < maxPages) {
+        final leaf = await getLeafId();
+        if (leaf == null) return true; // genuinely empty session
+        final branch = await getPathToRoot(leaf);
+        if (branch.any(found)) return true;
+        if (!_hasOlder) return true; // paged everything
+        pages++;
+        await loadOlder();
+      }
+      return false;
+    } finally {
+      _suspendEviction = false;
+    }
   }
 
   /// One page-up pass: reads the chunk above the window, indexes it
@@ -660,6 +700,12 @@ final class WindowedSessionStorage
   /// index, the id/label caches — so nothing stays strongly referenced
   /// past residency.
   int _evictToBound({required bool newestSide}) {
+    // Suspended during a boundary walk ([growOlderUntil]): the resume
+    // pages back to the compaction boundary while keeping the tail
+    // anchored — evicting the newest side mid-walk is exactly what slid
+    // the leaf out and turned every deep-boundary resume into a full
+    // open.
+    if (_suspendEviction) return 0;
     var evicted = 0;
     while (_entries.isNotEmpty &&
         (_entries.length > _residentRecordCap ||
