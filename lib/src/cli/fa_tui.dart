@@ -2631,6 +2631,12 @@ final class FaTuiController {
         '-ixon',
         '-ixoff',
         '-icrnl',
+        // VDISCARD (Ctrl+O toggles output discard): when the host left it
+        // enabled the kernel EATS every \x0f before fa reads it — the
+        // Ctrl+O newline fallback (issue #77 AC5) goes silent. Clear it
+        // alongside ICRNL so the whole wire matrix survives default-termios
+        // hosts (ubuntu runner images ship discard on; macOS varies).
+        '-discard',
       ]);
       if (cleared.exitCode != 0) return null;
       return (saved.stdout as String).trim();
