@@ -3834,6 +3834,17 @@
 - feat: resume-timing instrumentation — session-open phases logged (resume_timing lines) (#648)
 - fix(machine): dev runners carry targetRepository so the timer auto-save works (#644)
 
+## 0.1.420
+
+- fix(479): every rendered chrome region pays into the TUI viewport budget (#657)
+- chore: repin factory to job task-list markers + exclude fix (2eaa5e17b) (#651)
+- chore(factory): repin to timer-workingdir-fallback (#645)
+- fix(503): windowed resume keeps the tail anchored while paging to the compaction boundary — the loadOlder loop slid the leaf out of residency on the first chunk, the branch read empty, and every deep-boundary resume fell back to a full open (38s on a 1.4 GB live session); growOlderUntil suspends eviction for the walk (#654)
+- fix(640): lazy interpreter WASM loading + MemoryShell fallback — mobile cold boot no longer black-screens (#656)
+- fix(643): claim-free store copy (en+ru) + Play metadata compliance gate (#652)
+- gh-623 [BUG] After success authorization codemie auth request still presented in the session message (#646)
+- feat: resume-timing caller attribution — full opens log the calling frames (names who bypassed the windowed path) (#649)
+
 ## Unreleased
 
 - feat(622): Android `mobile.*` automation ships as two release flavors —

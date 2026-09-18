@@ -165,31 +165,20 @@ final class Session {
   /// reached (sessions without compaction page everything, as before).
   /// A no-op for full storages. [maxPages] bounds pathological files.
   ///
-  /// Returns whether the TAIL-ANCHORED branch is intact: deep paging
-  /// slides the newest side out of the residency cache, and once the
-  /// leaf is gone [getBranch] reads EMPTY — the resume would silently
-  /// look like a fresh session (pty_resume_equivalence AC6 regression).
-  /// `false` means the caller must fall back to a full open (the
-  /// documented "sessions without compaction degenerate to the full
-  /// load"); a genuinely empty session reports `true`.
+  /// The walk keeps the TAIL ANCHORED (WindowedSessionStorage.
+  /// growOlderUntil suspends the residency eviction): the previous
+  /// loadOlder-based loop slid the newest side out on the first chunk —
+  /// the branch read empty and every deep-boundary resume fell back to
+  /// a full open (10s+ on a 1.4 GB live session). Returns false only on
+  /// [maxPages] exhaustion — the caller's documented full-open fallback;
+  /// a genuinely empty session reports `true`.
   Future<bool> ensureCompactionBoundaryResident({int maxPages = 512}) async {
     final storage = _storage;
     if (storage is! WindowedSessionStorage) return true;
-    var pages = 0;
-    while (pages < maxPages) {
-      final branch = await getBranch();
-      // The window slid past the leaf: paging further cannot bring the
-      // compaction boundary and the leaf into one resident set — report
-      // the loss instead of finishing with an empty branch.
-      if (branch.isEmpty && (await storage.getEntries()).isNotEmpty) {
-        return false;
-      }
-      if (branch.any((r) => r is CompactionRecord)) return true;
-      if (!storage.hasOlder) return true;
-      pages++;
-      await storage.loadOlder();
-    }
-    return (await getBranch()).isNotEmpty;
+    return storage.growOlderUntil(
+      (r) => r is CompactionRecord,
+      maxPages: maxPages,
+    );
   }
 
   Future<String> _append(
