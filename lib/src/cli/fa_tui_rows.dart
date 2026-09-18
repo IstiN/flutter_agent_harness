@@ -246,7 +246,7 @@ extension _TuiRowRenderers on FaTuiModel {
   /// row yields to it (E3) and re-renders on the next waiter change.
   int _writeWaitingRows(StringBuffer b, int row, _FramePlan plan) {
     for (final line in _waitingRowLines().take(plan.waiting)) {
-      b.writeln(line);
+      b.writeln(_dim(_clipToWidth(line)));
       row++;
     }
     return row;
@@ -391,7 +391,8 @@ String _waitingHeadLine(
 ) {
   final head = StringBuffer('⏳ waiting');
   if (jobs.length == 1) {
-    head.write(' · ${jobs.single}');
+    final singleJob = jobs.single.replaceAll(RegExp(r'\s+'), ' ').trim();
+    head.write(' · $singleJob');
   } else if (jobs.length > 1) {
     head.write(' · ${jobs.length} jobs');
   }
@@ -415,9 +416,13 @@ List<String> _waitingDetailLines(
   String Function(int) etaOf,
 ) {
   final details = <String>[
-    if (jobs.length > 1) ...jobs,
+    if (jobs.length > 1)
+      ...jobs.map((j) => j.replaceAll(RegExp(r'\s+'), ' ').trim()),
     if (timers.length > 1)
-      ...timers.map((t) => '${t.preview} · due in ${etaOf(t.dueMs)}'),
+      ...timers.map(
+        (t) =>
+            '${t.preview.replaceAll(RegExp(r'\s+'), ' ').trim()} · due in ${etaOf(t.dueMs)}',
+      ),
   ];
   return [for (final detail in details.take(2)) _dim('  $detail')];
 }
