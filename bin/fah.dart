@@ -235,11 +235,12 @@ Future<void> main(List<String> args) async {
   );
 }
 
-Model _buildModel(CliArgs args) {
+Model _buildModel(CliArgs args, {List<String>? input}) {
   return buildCliDefaultModel(
     args.provider,
     modelId: args.model,
     baseUrl: args.baseUrl,
+    input: input,
   );
 }
 
@@ -1352,7 +1353,7 @@ Future<void> _runApp(List<String> args) async {
           modelId: folderState.modelId,
           baseUrl: folderState.baseUrl,
         )
-      : _buildModel(effective);
+      : _buildModel(effective, input: faPreconfig?.input);
 
   // Initial cube (fa_cube Phase 1): --cube-config path > --cube name > the
   // project `.fah/config.yaml` `cube:` section > the saved user `cube:`
@@ -1485,6 +1486,7 @@ Future<void> _runApp(List<String> args) async {
           modelId: preconfig.modelId,
           baseUrl: preconfig.baseUrl,
           apiKeyName: preconfig.apiKeyEnvVar,
+          input: preconfig.input,
         ),
       ]);
     }

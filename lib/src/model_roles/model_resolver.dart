@@ -171,6 +171,7 @@ final class ModelRolesResolver {
         baseUrl: ref.baseUrl,
         contextWindow: ref.contextWindow,
         maxTokens: ref.maxTokens,
+        input: ref.input,
       ),
       keyRing: ring,
       streamForKey: (apiKey) {

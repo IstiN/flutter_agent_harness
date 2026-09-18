@@ -59,6 +59,7 @@ final class ModelRef {
     this.baseUrl,
     this.contextWindow,
     this.maxTokens,
+    this.input,
   });
 
   /// Parses the string shorthand `provider/modelId`.
@@ -107,6 +108,7 @@ final class ModelRef {
           baseUrl: _optionalString(map, 'baseUrl', role),
           contextWindow: _optionalInt(map, 'contextWindow', role),
           maxTokens: _optionalInt(map, 'maxTokens', role),
+          input: _optionalInput(map, role),
         );
       default:
         throw ConfigException(
@@ -140,6 +142,30 @@ final class ModelRef {
     return value;
   }
 
+  /// The `input` modality list override (`["text","image"]`): an explicit
+  /// declaration wins over the catalog spec's modalities (issue #638 —
+  /// same named-error rules as the `models.custom` yaml field).
+  static List<String>? _optionalInput(YamlMap node, String? role) {
+    final value = node['input'];
+    if (value == null) return null;
+    if (value is! YamlList || value.isEmpty) {
+      throw ConfigException(
+        '"input"${role == null ? '' : ' in role "$role"'} must be a '
+        'non-empty list of "text"/"image"',
+      );
+    }
+    return [
+      for (final entry in value)
+        if (entry == 'text' || entry == 'image')
+          entry as String
+        else
+          throw ConfigException(
+            '"input"${role == null ? '' : ' in role "$role"'} entries must '
+            'be "text" or "image", got: $entry',
+          ),
+    ];
+  }
+
   /// Catalog provider name (e.g. `openrouter`, `openai`, `anthropic`,
   /// `google`); see `provider_catalog.dart`.
   final String provider;
@@ -160,6 +186,9 @@ final class ModelRef {
 
   /// Max-output-token override; the catalog default is used when null.
   final int? maxTokens;
+  /// Input-modality override (`["text","image"]`); the catalog spec's
+  /// modalities are used when null (issue #638).
+  final List<String>? input;
 
   /// The `provider/modelId` display form.
   String get label => '$provider/$modelId';
@@ -172,7 +201,9 @@ final class ModelRef {
     if (apiKeyName != null) buffer.write('apiKeyName: $apiKeyName\n');
     if (baseUrl != null) buffer.write('baseUrl: $baseUrl\n');
     if (contextWindow != null) buffer.write('contextWindow: $contextWindow\n');
-    if (maxTokens != null) buffer.write('maxTokens: $maxTokens\n');
+    if (input != null) {
+      buffer.write('input: [${input!.join(', ')}]\n');
+    }
     return buffer.toString();
   }
 }

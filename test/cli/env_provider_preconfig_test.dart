@@ -485,4 +485,94 @@ void main() {
       );
     });
   });
+
+  group('input modalities (issue #638 AC2)', () {
+    test('input: ["text","image"] parses onto the preconfig', () {
+      final pre = parse(
+        providerType: 'zai',
+        providerConfig:
+            '{"baseUrl":"https://api.z.ai/api/coding/paas/v4",'
+            '"model":"glm-5.3-flash","input":["text","image"]}',
+      )!;
+      expect(pre.input, ['text', 'image']);
+    });
+
+    test('input parses identically through the BASE64 twin', () {
+      final declared =
+          '{"baseUrl":"https://relay.internal/v1","model":"test-model",'
+          '"input":["image"]}';
+      final pre = parse(
+        providerType: 'openai-completions',
+        providerConfigBase64: b64(declared),
+      )!;
+      expect(pre.input, ['image']);
+    });
+
+    test('absent input leaves the preconfig input null (catalog stands)', () {
+      expect(
+        parse(providerType: 'zai', providerConfig: config('zai'))!.input,
+        isNull,
+      );
+    });
+
+    test('an unknown input entry is named, not coerced', () {
+      expect(
+        () => parse(
+          providerType: 'zai',
+          providerConfig:
+              '{"baseUrl":"https://api.z.ai/api/coding/paas/v4",'
+              '"model":"glm-5.3","input":["text","video"]}',
+        ),
+        throwsA(
+          throwsConfig.having(
+            (e) => e.message,
+            'message',
+            allOf(contains('input'), contains('video')),
+          ),
+        ),
+      );
+    });
+
+    test('a non-list input is named', () {
+      expect(
+        () => parse(
+          providerType: 'zai',
+          providerConfig:
+              '{"baseUrl":"https://api.z.ai/api/coding/paas/v4",'
+              '"model":"glm-5.3","input":"text"}',
+        ),
+        throwsA(
+          throwsConfig.having((e) => e.message, 'message', contains('input')),
+        ),
+      );
+    });
+
+    test('an empty input list is named', () {
+      expect(
+        () => parse(
+          providerType: 'zai',
+          providerConfig:
+              '{"baseUrl":"https://api.z.ai/api/coding/paas/v4",'
+              '"model":"glm-5.3","input":[]}',
+        ),
+        throwsA(
+          throwsConfig.having((e) => e.message, 'message', contains('input')),
+        ),
+      );
+    });
+
+    test('a non-string input entry is named', () {
+      expect(
+        () => parse(
+          providerType: 'zai',
+          providerConfig:
+              '{"baseUrl":"https://api.z.ai/api/coding/paas/v4",'
+              '"model":"glm-5.3","input":["text",true]}',
+        ),
+        throwsA(
+          throwsConfig.having((e) => e.message, 'message', contains('input')),
+        ),
+      );
+    });
+  });
 }

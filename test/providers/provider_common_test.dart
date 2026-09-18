@@ -173,4 +173,81 @@ void main() {
       expect(stripAuthExpiredMarker(msg), msg);
     });
   });
+
+  group('text-only image drop notice (issue #638 AC1)', () {
+    tearDown(() => textOnlyImageDropNotice = null);
+
+    UserMessage imageTurn() => UserMessage(
+      content: const [
+        TextContent(text: 'look:'),
+        ImageContent(data: 'aGk=', mimeType: 'image/png'),
+      ],
+      timestamp: DateTime.utc(2026),
+    );
+
+    final textOnly = Model(
+      id: 'glm-5.3',
+      api: 'openai-completions',
+      provider: 'zai',
+      baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+      input: const ['text'],
+      contextWindow: 128000,
+      maxTokens: 16384,
+    );
+
+    test('stripping a text-only model fires the notice with the count', () {
+      var seen = <int>[];
+      textOnlyImageDropNotice = (dropped) => seen.add(dropped);
+
+      final out = downgradeUnsupportedImages([imageTurn()], textOnly);
+
+      expect(seen, [1]);
+      expect(out.single, isA<UserMessage>());
+      final blocks = (out.single as UserMessage).content as List<ContentBlock>;
+      expect(
+        blocks.whereType<ImageContent>(),
+        isEmpty,
+        reason: 'the strip itself still fires',
+      );
+    });
+
+    test('an image-capable model strips nothing and stays silent', () {
+      var fired = false;
+      textOnlyImageDropNotice = (_) => fired = true;
+      final vision = Model(
+        id: 'glm-5.3-flash',
+        api: 'openai-completions',
+        provider: 'zai',
+        baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+        input: const ['text', 'image'],
+        contextWindow: 128000,
+        maxTokens: 16384,
+      );
+
+      final out = downgradeUnsupportedImages([imageTurn()], vision);
+
+      expect(fired, isFalse);
+      final blocks = (out.single as UserMessage).content as List<ContentBlock>;
+      expect(blocks.whereType<ImageContent>(), isNotEmpty);
+    });
+
+    test('a text-only model with no images stays silent', () {
+      var fired = false;
+      textOnlyImageDropNotice = (_) => fired = true;
+
+      downgradeUnsupportedImages(
+        [UserMessage.text('plain', timestamp: DateTime.utc(2026))],
+        textOnly,
+      );
+
+      expect(fired, isFalse);
+    });
+
+    test('an unset hook never throws', () {
+      expect(
+        () => downgradeUnsupportedImages([imageTurn()], textOnly),
+        returnsNormally,
+      );
+    });
+  });
 }
