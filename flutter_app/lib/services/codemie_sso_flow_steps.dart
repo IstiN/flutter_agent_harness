@@ -135,7 +135,13 @@ Future<void> saveCodemieConnection({
   );
   // A null service (first-run onboarding) skips the live reconfigure —
   // the persisted last connection is picked up by the boot auto-connect.
-  if (service != null) await service.reconfigure(config);
+  if (service != null) {
+    await service.reconfigure(config);
+    // Issue #623: the transcript may still show the auth-expired card
+    // this sign-in just fixed — resolve it, or the user is offered a
+    // re-authorize for a session that is already refreshed.
+    service.resolveAuthExpiredCards();
+  }
   await lastConnectionStore.saveFromConfig(config);
 }
 

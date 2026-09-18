@@ -165,3 +165,4 @@ vendor/wasm_run_flutter/android/src/main/jniLibs/
 .dmtools/run-output.txt
 .dmtools/fa-sessions/
 .dmtools/copilot-sessions/
+.dmtools/credential-helper.log
