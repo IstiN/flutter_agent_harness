@@ -449,4 +449,48 @@ void main() {
       expect(config!.apiKey, isEmpty);
     });
   });
+
+  group('add-in send guards (issue #633 AC2)', () {
+    test('an empty model id refuses the send by name — the provider is '
+        'never called', () async {
+      var calls = 0;
+      counting(StreamFunction _) => (model, context, {cancelToken}) {
+        calls++;
+        return _okResponse()(model, context, cancelToken: cancelToken);
+      };
+      // The #633 live trajectory: a send went out with model: "".
+      final service = await AgentService.create(
+        config: _config(_openRouterUrl, ''),
+        env: MemoryExecutionEnv(cwd: '/'),
+        providerRegistry: await _registry(),
+        streamFunction: counting(_okResponse()),
+      );
+      addTearDown(service.dispose);
+
+      await service.sendText('что ты тут видишь?');
+
+      expect(calls, 0, reason: 'no network traffic on an unresolved model');
+      expect(service.error, contains('no model selected'));
+    });
+
+    test('a hosted preset without a key refuses the send at request time',
+        () async {
+      var calls = 0;
+      final service = await AgentService.create(
+        config: _config(_openRouterUrl, 'z-ai/glm-5.3-flash', apiKey: ''),
+        env: MemoryExecutionEnv(cwd: '/'),
+        providerRegistry: await _registry(),
+        streamFunction: (model, context, {cancelToken}) {
+          calls++;
+          return _okResponse()(model, context, cancelToken: cancelToken);
+        },
+      );
+      addTearDown(service.dispose);
+
+      await service.sendText('hi');
+
+      expect(calls, 0, reason: 'no network traffic without a credential');
+      expect(service.error, contains('no API key on this surface'));
+    });
+  });
 }
