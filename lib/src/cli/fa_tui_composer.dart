@@ -47,14 +47,21 @@ extension _TuiComposerLayout on FaTuiModel {
     // (skipping it shifted every later row on scroll). Its row is the
     // `1 /* progress indicator */` inside [mandatory] — the busy row is
     // counted separately (`busy ? 1 : 0`).
-    final promptH = prompt != null ? tuiPromptRowCount(prompt!, width) + 2 : 0;
-    final (inputVisible, inputOffset) = _visibleInputRows(
-      mandatory + promptH,
-      height,
-    );
+    // Prompt mode (ask/approval): the prompt zone REPLACES the input zone
+    // and its bottom rule, and paints its own spacer — the status row is
+    // already inside `mandatory` (issue #479 AC4: the old budget charged
+    // the prompt path for the input window, the never-painted bottom rule
+    // AND the status row twice, so the frame under-filled and left a dead
+    // band above the glass).
+    final inPrompt = prompt != null;
+    final promptH = inPrompt ? tuiPromptRowCount(prompt!, width) + 1 : 0;
+    final (inputVisible, inputOffset) = inPrompt
+        ? (0, 0)
+        : _visibleInputRows(mandatory, height);
     final fixed =
-        mandatory + (busy ? 1 : 0) + _menuReservedLines + promptH +
-        inputVisible;
+        mandatory -
+        (inPrompt ? 1 : 0) /* the input zone's bottom rule never paints */ +
+        (busy ? 1 : 0) + _menuReservedLines + promptH + inputVisible;
     final boardWanted = jobBoardLines.length;
     final waitingWanted = _waitingRowLines().length;
     final scheduledWanted = scheduledCount > 0 ? 1 : 0;
