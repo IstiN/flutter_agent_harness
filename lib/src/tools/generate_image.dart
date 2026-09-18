@@ -95,10 +95,22 @@ Future<MediaEndpoint?> resolveImageGenerationEndpoint(
   // main provider key (that key belongs to a different endpoint — sending
   // it is a credential leak that fails confusingly). Only the slot's named
   // key applies; without one the endpoint is not usable.
+  // Exception: if the override uses the same endpoint host as the main
+  // connection, reusing the main provider key is safe.
   final keyName = override.apiKeyName;
-  final key = (keyName == null || keyName.isEmpty)
+  var key = (keyName == null || keyName.isEmpty)
       ? ''
       : (await resolveKey?.call(keyName)) ?? '';
+  if (key.isEmpty && (keyName == null || keyName.isEmpty)) {
+    final overrideHost = Uri.tryParse(override.baseUrl)?.host.toLowerCase();
+    final mainHost = Uri.tryParse(mainBaseUrl)?.host.toLowerCase();
+    if (overrideHost != null &&
+        overrideHost.isNotEmpty &&
+        overrideHost == mainHost &&
+        mainApiKey.isNotEmpty) {
+      key = mainApiKey;
+    }
+  }
   if (key.isEmpty) {
     throw MediaException(
       'the imageGeneration slot has no resolvable API key'
@@ -135,9 +147,98 @@ abstract final class ImageDialect {
 
 /// Registered image dialects, in precedence order.
 final List<ImageDialect> imageGenerationDialects = [
+  DialImageDialect(),
   MiniMaxImageDialect(),
   OpenAiImageDialect(), // default fallback — must stay last
 ];
+
+/// DIAL image generation (`POST {base}/openai/deployments/{model}/chat/completions`,
+/// `Api-Key: {key}`, reading `custom_content.attachments[0].url`,
+/// downloaded from `{base}/v1/{url}`).
+final class DialImageDialect extends ImageDialect {
+  @override
+  bool matches(MediaEndpoint endpoint) {
+    final host = Uri.tryParse(endpoint.baseUrl)?.host.toLowerCase() ?? '';
+    return host.contains('ai-proxy') ||
+        host.contains('dial') ||
+        host.endsWith('.epam.com');
+  }
+
+  @override
+  Future<({String path, Uint8List bytes, String detail})> generate({
+    required ExecutionEnv env,
+    required MediaEndpoint endpoint,
+    required String prompt,
+    String? size,
+    String? quality,
+    required http.Client client,
+  }) async {
+    final base = endpoint.baseUrl.endsWith('/')
+        ? endpoint.baseUrl.substring(0, endpoint.baseUrl.length - 1)
+        : endpoint.baseUrl;
+    final response = await client.post(
+      Uri.parse('$base/openai/deployments/${endpoint.modelId}/chat/completions'),
+      headers: {
+        'Content-Type': 'application/json',
+        if (endpoint.apiKey.isNotEmpty) 'Api-Key': endpoint.apiKey,
+      },
+      body: jsonEncode({
+        'messages': [
+          {'role': 'user', 'content': prompt},
+        ],
+      }),
+    );
+    if (response.statusCode != 200) {
+      throw MediaException(
+        'image generation failed: HTTP ${response.statusCode}: '
+        '${response.body}',
+      );
+    }
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final choices = data['choices'];
+    if (choices is List && choices.isNotEmpty) {
+      final msg = (choices.first as Map<String, dynamic>)['message'];
+      if (msg is Map<String, dynamic>) {
+        final customContent = msg['custom_content'];
+        if (customContent is Map<String, dynamic>) {
+          final attachments = customContent['attachments'];
+          if (attachments is List && attachments.isNotEmpty) {
+            final att = attachments.first as Map<String, dynamic>;
+            final b64 = att['b64_json'] ?? att['data'];
+            if (b64 is String && b64.isNotEmpty) {
+              final bytes = base64Decode(b64);
+              final path = await _save(env, 'images', 'png', bytes);
+              return (path: path, bytes: bytes, detail: 'saved to $path');
+            }
+            final relUrl = att['url'] as String?;
+            if (relUrl != null && relUrl.isNotEmpty) {
+              final downloadUrl = relUrl.startsWith('http://') ||
+                      relUrl.startsWith('https://')
+                  ? relUrl
+                  : '$base/v1/${relUrl.startsWith('/') ? relUrl.substring(1) : relUrl}';
+              final imgResp = await client.get(
+                Uri.parse(downloadUrl),
+                headers: {
+                  if (endpoint.apiKey.isNotEmpty) 'Api-Key': endpoint.apiKey,
+                },
+              );
+              if (imgResp.statusCode == 200) {
+                final bytes = imgResp.bodyBytes;
+                final path = await _save(env, 'images', 'png', bytes);
+                return (path: path, bytes: bytes, detail: 'saved to $path');
+              }
+              throw MediaException(
+                'failed to download image from DIAL: HTTP ${imgResp.statusCode}: '
+                '${imgResp.body}',
+              );
+            }
+          }
+        }
+      }
+    }
+    throw MediaException('image generation: no image in DIAL response');
+  }
+}
 
 /// OpenAI-compatible image generation (`POST {base}/images/generations`,
 /// `size`, `data[0].b64_json`/`url`).
