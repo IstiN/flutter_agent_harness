@@ -169,6 +169,7 @@ final class JsonlSessionRepo implements SessionRepo {
     required String sessionsRoot,
     this._parseExecutor,
     this._ioRetry = const SessionIoRetryConfig(),
+    this.timingLog,
     this.presenceStore,
     this.processId,
     DateTime Function()? now,
@@ -179,6 +180,10 @@ final class JsonlSessionRepo implements SessionRepo {
   final String _sessionsRootInput;
   String? _sessionsRoot;
   final SessionParseExecutor? _parseExecutor;
+
+  /// Optional resume-timing sink (session-open diagnostics): threaded into
+  /// both storage open paths; `null` keeps opens byte-identical.
+  final SessionTimingLogger? timingLog;
 
   /// Transient-ENOENT retry wiring (issue #427) threaded into every
   /// session-file open/create this repo performs.
@@ -292,6 +297,21 @@ final class JsonlSessionRepo implements SessionRepo {
         code: SessionErrorCode.notFound,
       );
     }
+    // Resume-timing caller attribution: full opens on big sessions are the
+    // expensive kind — the log must name who asked (issue: slow resume
+    // investigation). Windowed opens stay caller-less (they are cheap).
+    if (!windowed && timingLog != null) {
+      final frames = StackTrace.current
+          .toString()
+          .split('\n')
+          .where((l) => !l.contains('session_repo.dart'))
+          .take(3)
+          .map((l) => l.trim())
+          .join(' <- ');
+      timingLog!.call(
+        'resume_timing open-caller file=${metadata.path.split('/').last} $frames',
+      );
+    }
     return Session(
       windowed
           ? await WindowedSessionStorage.open(
@@ -299,12 +319,14 @@ final class JsonlSessionRepo implements SessionRepo {
               metadata.path,
               parseExecutor: _parseExecutor,
               ioRetry: _ioRetry,
+              timingLog: timingLog,
             )
           : await JsonlSessionStorage.open(
               _fs,
               metadata.path,
               parseExecutor: _parseExecutor,
               ioRetry: _ioRetry,
+              timingLog: timingLog,
             ),
     );
   }
