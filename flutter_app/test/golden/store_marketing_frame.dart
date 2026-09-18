@@ -26,11 +26,11 @@ const kStoreCopy = <String, Map<String, (String, String)>>{
   'store_chat': {
     'en': (
       'Your own apps, built by chat',
-      'The first mobile agent harness — describe an app and Fa builds it',
+      'A mobile agent harness — describe an app and Fa builds it',
     ),
     'ru': (
       'Свои приложения — прямо из чата',
-      'Первый мобильный ИИ-агент: опишите приложение, и Fa его соберёт',
+      'Мобильный ИИ-агент: опишите приложение — Fa его соберёт',
     ),
   },
   'store_apps': {
