@@ -4,8 +4,9 @@
 /// The levels answer "where may it touch the disk", the app axis answers
 /// "which commands may it run":
 ///
-/// - **L1** — reads and writes only the current folder; everything outside
-///   is denied. Maximum protection.
+/// - **L1** — writes only inside the current folder; outside reads denied
+///   where the platform can enforce (macOS kernel mode denies system
+///   config and every user home). Maximum protection.
 /// - **L2** — reads everywhere (read-only mounts), writes only inside the
 ///   current folder.
 /// - **L3** — reads and writes everywhere; the current folder is just the
@@ -195,7 +196,9 @@ final class CubePresets {
     final String body;
     switch (level) {
       case 'L1':
-        body = 'reads and writes only the current folder';
+        body =
+            'writes only the current folder; outside reads denied '
+            'where enforceable';
       case 'L2':
         body = 'reads everywhere, writes only the current folder';
       default:

@@ -214,7 +214,9 @@ final class CubeFsPolicy {
     return '/${stack.join('/')}';
   }
 
-  /// Whether [path] equals or lives under [prefix].
+  /// Whether [path] equals or lives under [prefix]. The root prefix
+  /// matches everything (the `$prefix/` join would spell `//` and never
+  /// match, silently voiding a `{path: /, access: …}` mount).
   static bool _within(String path, String prefix) =>
-      path == prefix || path.startsWith('$prefix/');
+      prefix == '/' || path == prefix || path.startsWith('$prefix/');
 }

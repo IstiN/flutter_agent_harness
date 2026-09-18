@@ -164,6 +164,67 @@ void main() {
       );
     });
 
+    test(
+      'a workspace-only spec (L1 shape) confines writes and sensitive reads',
+      () {
+        final profile = MacOsSandboxBackend().buildSandboxProfile(
+          const CubeSpec(
+            name: 'l1-core',
+            filesystem: CubeFsPolicy(workspace: '/Users/agent/proj'),
+          ),
+        );
+        // Writes: blanket deny, the workspace re-allowed on top of it, and
+        // the persistence-free device sinks left writable (2>/dev/null must
+        // keep working).
+        expect(profile, contains('(deny file-write*)'));
+        expect(
+          profile,
+          contains('(allow file-write* (subpath "/Users/agent/proj"))'),
+        );
+        expect(profile, contains('(allow file-write* (subpath "/dev/null"))'));
+        expect(profile, contains('(allow file-write* (subpath "/dev/fd"))'));
+        // Reads: a curated deny set — /etc in both spellings and every home —
+        // with the workspace re-allowed over the /Users deny. A blanket read
+        // deny is impossible: exec needs /bin/bash and /usr/lib/dyld.
+        expect(profile, contains('(deny file-read* (subpath "/etc"))'));
+        expect(profile, contains('(deny file-read* (subpath "/private/etc"))'));
+        expect(profile, contains('(deny file-read* (subpath "/Users"))'));
+        expect(
+          profile,
+          contains('(allow file-read* (subpath "/Users/agent/proj"))'),
+        );
+      },
+    );
+
+    test('a ro-root spec (L2 shape) confines writes, reads stay broad', () {
+      final profile = MacOsSandboxBackend().buildSandboxProfile(
+        const CubeSpec(
+          name: 'l2-core',
+          filesystem: CubeFsPolicy(
+            workspace: '/work',
+            mounts: [CubeMount(path: '/', access: CubePathAccess.readOnly)],
+          ),
+        ),
+      );
+      expect(profile, contains('(deny file-write*)'));
+      expect(profile, isNot(contains('(deny file-read* (subpath "/Users"))')));
+      expect(profile, isNot(contains('(deny file-read* (subpath "/etc"))')));
+    });
+
+    test('a rw-root spec (L3 shape) stays allow-default', () {
+      final profile = MacOsSandboxBackend().buildSandboxProfile(
+        const CubeSpec(
+          name: 'l3-core',
+          filesystem: CubeFsPolicy(
+            workspace: '/work',
+            mounts: [CubeMount(path: '/', access: CubePathAccess.readWrite)],
+          ),
+        ),
+      );
+      expect(profile, isNot(contains('(deny file-write*)')));
+      expect(profile, isNot(contains('(deny file-read* (subpath "/Users"))')));
+    });
+
     test('caller env rides inside the clean environment, caller wins', () {
       const backend = MacOsSandboxBackend(
         envVars: {'FAH_MODE': 'sandboxed', 'SECRET_KEY': 'cube'},
