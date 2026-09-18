@@ -9,6 +9,7 @@
 library;
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:fa/main.dart';
 import 'package:fa/boot/app_boot.dart';
@@ -26,6 +27,10 @@ import 'package:fa/webllm/webllm_types.dart';
 import 'package:fa_browser_agent/fa_browser_agent.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/widgets.dart';
+import 'package:fa/sandbox/env_factory_io.dart';
+import 'package:fa/sandbox/persistent_web_env.dart';
+import 'package:fa/services/app_log.dart';
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -393,4 +398,41 @@ void main() {
       },
     );
   });
+  group('FaAppBoot over the issue-640 mobile fallback env', () {
+    test(
+      'a WasiSandboxShell.load failure still boots storage → routes',
+      () async {
+        final documents = Directory.systemTemp.createTempSync('fah_640_docs');
+        addTearDown(() => documents.deleteSync(recursive: true));
+        PathProviderPlatform.instance = _FakeDocumentsPathProvider(documents);
+        AppLog.reset();
+        addTearDown(AppLog.reset);
+
+        final routes = <BootStores>[];
+        await FaAppBoot(
+          createEnv: () => createMobileSandboxEnv(
+            loadShell: () async =>
+                throw StateError('PanicException: python.wasm'),
+          ),
+          routes: (stores, analytics) async => routes.add(stores),
+        ).run();
+
+        // The boot pipeline ran to completion: the routes stage mounted
+        // (the chat UI renders) over the MemoryShell fallback env.
+        expect(routes, hasLength(1));
+        expect(routes.single.env, isA<PersistentWebExecutionEnv>());
+        expect(AppLog.dump(), contains('falling back to MemoryShell'));
+      },
+    );
+  });
+}
+
+/// Path-provider fake for the mobile fallback boot test: only the
+/// documents directory is read (the sandbox host root).
+final class _FakeDocumentsPathProvider extends PathProviderPlatform {
+  _FakeDocumentsPathProvider(this._documents);
+  final Directory _documents;
+
+  @override
+  Future<String?> getApplicationDocumentsPath() async => _documents.path;
 }

@@ -709,4 +709,80 @@ void main() {
       expect(r.valueOrNull!.stdout, contains('127.0.0.1'));
     });
   });
+
+  group('lazy interpreter loading (issue #640)', () {
+    /// A shell with the eight eager modules only; heavy interpreters are
+    /// compiled through a counting loader. Pass [failure] to make every
+    /// lazy compile throw.
+    WasiSandboxShell lazyShell(
+      List<String> loads, {
+      Object? failure,
+      bool withLoader = true,
+    }) => WasiSandboxShell(
+      coreutils: _SlotModule(rec),
+      rg: _SlotModule(rec),
+      find: _SlotModule(rec),
+      sed: _SlotModule(rec),
+      awk: _SlotModule(rec),
+      tar: _SlotModule(rec),
+      gzip: _SlotModule(rec),
+      zip: _SlotModule(rec),
+      sandboxHostPath: sandbox.path,
+      moduleLoader: withLoader
+          ? (asset) async {
+              if (failure != null) throw failure;
+              loads.add(asset);
+              return _SlotModule(rec);
+            }
+          : null,
+    );
+
+    test('light commands never touch the lazy loader (AC1)', () async {
+      final loads = <String>[];
+      rec.next = _ScriptedInstance();
+      final r = await lazyShell(loads).exec('cat notes.txt');
+      expect(r.isOk, isTrue);
+      expect(loads, isEmpty);
+    });
+
+    test('python -c compiles python.wasm on first use (AC3)', () async {
+      final loads = <String>[];
+      rec.next = _ScriptedInstance();
+      final r = await lazyShell(loads).exec('python3 -c "print(1)"');
+      expect(r.isOk, isTrue);
+      expect(loads, ['python.wasm']);
+      expect(rec.configs.single.args, ['python', '-c', 'print(1)']);
+    });
+
+    test('repeat invocations reuse the compiled module', () async {
+      final loads = <String>[];
+      final sh = lazyShell(loads);
+      rec.next = _ScriptedInstance();
+      await sh.exec('python -c "print(1)"');
+      rec.next = _ScriptedInstance();
+      await sh.exec('python -c "print(2)"');
+      expect(loads, ['python.wasm']);
+      expect(rec.configs, hasLength(2));
+    });
+
+    test(
+      'failed lazy compile degrades to exit 1 + stderr, never a crash',
+      () async {
+        final sh = lazyShell(const [], failure: StateError('PanicException'));
+        final r = await sh.exec('python -c "print(1)"');
+        expect(r.isOk, isTrue);
+        expect(r.valueOrNull!.exitCode, 1);
+        expect(r.valueOrNull!.stderr, contains('failed to load python.wasm'));
+        expect(r.valueOrNull!.stderr, contains('PanicException'));
+      },
+    );
+
+    test('no loader available also fails the command, not the shell', () async {
+      final sh = lazyShell(const [], withLoader: false);
+      final r = await sh.exec('python -c "print(1)"');
+      expect(r.isOk, isTrue);
+      expect(r.valueOrNull!.exitCode, 1);
+      expect(r.valueOrNull!.stderr, contains('no lazy loader'));
+    });
+  });
 }
