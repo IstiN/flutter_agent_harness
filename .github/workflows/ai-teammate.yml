@@ -54,10 +54,11 @@ on:
         required: false
         type: string
 
-permissions:
-  contents: read
-  issues: read
-  pull-requests: read
+# NO permissions block here: the factory's jobs declare their own write
+# scopes, and a reusable workflow cannot RAISE rights above the caller —
+# an explicit read-only block here made every call fail validation with
+# startup_failure (live bisect, 2026-09-18). The repository default
+# (Settings → Actions → Workflow permissions: read and write) governs.
 
 concurrency:
   group: ai-teammate-issue-${{ github.event.issue.number || github.event.inputs.issue }}
