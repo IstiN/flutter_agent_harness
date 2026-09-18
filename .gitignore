@@ -166,3 +166,12 @@ vendor/wasm_run_flutter/android/src/main/jniLibs/
 .dmtools/fa-sessions/
 .dmtools/copilot-sessions/
 .dmtools/credential-helper.log
+
+# Per-job runner materialization (issue #623 rework): the ai/gh-* job runner
+# drops its instruction checkout (factory-agents/, a bare gitlink with no
+# .gitmodules) and its ticket context + report files (input/, outputs/) into
+# the worktree. None of these belong to the repo — keep them untracked so a
+# `git add -A` can never sweep them into a commit.
+factory-agents/
+input/
+outputs/

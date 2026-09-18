@@ -106,6 +106,15 @@ FahChatMessage _toChatMessage(Message message) {
 /// authorize for a session that is already READY. All stale cards are
 /// removed and a single system note lands where the newest one was, so
 /// the transcript reads as resolved instead of stuck.
+///
+/// Both effects are LIVE-VIEW ONLY (issue #623 review): nothing is
+/// persisted, so a transcript rebuild (windowed-history paging, session
+/// reload) drops the note — and never re-renders the cards either
+/// (`_toChatMessage` projects a failed run without an error card). That
+/// is the intended lifetime: the note is a transient "go ahead and
+/// resend" hint whose value expires within the current chat, not a
+/// durable record. If a rebuild-resilient note is ever wanted, persist a
+/// lightweight session record instead of changing this view mutation.
 extension AgentServiceTranscript on AgentService {
   void resolveAuthExpiredCards() {
     final staleIndexes = <int>[
