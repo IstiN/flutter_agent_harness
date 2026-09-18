@@ -43,31 +43,50 @@ function post(port, frame) {
   } catch {}
 }
 
+// Issue #633 E2: Port activity every 25 s keeps the MV3 worker alive
+// through provider streams longer than the idle limit. Test seam: the
+// sandbox can shorten it via FA_KEEPALIVE_MS.
+const KEEPALIVE_MS = Number(globalThis.FA_KEEPALIVE_MS) || 25_000;
+
 /** One bridged fetch. `emit(frame)` streams head/chunks; resolves when the
  *  stream is fully consumed (or rejects only on pre-response failure — the
- *  caller turns everything into one final err frame either way). */
-async function streamFetch(req, emit, signal) {
-  const res = await fetch(req.url, {
-    method: req.method || 'GET',
-    headers: req.headers || {},
-    body: req.bodyB64 != null ? b64ToBytes(req.bodyB64) : undefined,
-    // Provider traffic rides cookies on cookie-auth hosts (CodeMie et al. —
-    // same default as dart/src/fetch_client_web.dart in the SW agent).
-    credentials: req.credentials === 'omit' ? 'omit' : 'include',
-    signal,
-  });
-  emit({ t: 'head', status: res.status, headers: Object.fromEntries(res.headers.entries()) });
-  if (!res.body) {
+ *  caller turns everything into one final err frame either way).
+ *
+ *  Issue #633 E2: a provider that streams for minutes (or pauses >30 s)
+ *  would otherwise let the MV3 service worker idle-kill mid-stream — the
+ *  Port dies, the pane hangs. A keepalive frame every `keepAliveMs` counts
+ *  as Port activity and resets the idle timer; the client ignores the
+ *  frame (unknown frame type), the relay forwards it untouched. */
+async function streamFetch(req, emit, signal, keepAliveMs = KEEPALIVE_MS) {
+  const keepalive = setInterval(
+    () => emit({ t: 'keepalive' }),
+    keepAliveMs,
+  );
+  try {
+    const res = await fetch(req.url, {
+      method: req.method || 'GET',
+      headers: req.headers || {},
+      body: req.bodyB64 != null ? b64ToBytes(req.bodyB64) : undefined,
+      // Provider traffic rides cookies on cookie-auth hosts (CodeMie et al. —
+      // same default as dart/src/fetch_client_web.dart in the SW agent).
+      credentials: req.credentials === 'omit' ? 'omit' : 'include',
+      signal,
+    });
+    emit({ t: 'head', status: res.status, headers: Object.fromEntries(res.headers.entries()) });
+    if (!res.body) {
+      emit({ t: 'end' });
+      return;
+    }
+    const reader = res.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      emit({ t: 'chunk', b64: bufToB64(value) });
+    }
     emit({ t: 'end' });
-    return;
+  } finally {
+    clearInterval(keepalive);
   }
-  const reader = res.body.getReader();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    emit({ t: 'chunk', b64: bufToB64(value) });
-  }
-  emit({ t: 'end' });
 }
 
 /** Port pump: request frame in, head/chunk/end frames out. The port dying

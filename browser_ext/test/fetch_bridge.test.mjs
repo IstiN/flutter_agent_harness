@@ -58,11 +58,15 @@ function bootBridge(fetchImpl) {
     btoa,
     atob,
     AbortController,
+    setInterval,
+    clearInterval,
+    setTimeout,
     fetch: async (url, init) => {
       signals.push(init?.signal);
       return fetchImpl(url, init);
     },
     chrome: { runtime: { onConnect: { addListener: (fn) => (onConnect = fn) } } },
+    FA_KEEPALIVE_MS: 20,
   };
   vm.runInNewContext(src('sw/fetch_bridge.js'), sandbox, { filename: 'fetch_bridge.js' });
   assert.equal(typeof onConnect, 'function', 'fetch_bridge registers its port handler');
@@ -180,6 +184,43 @@ test('E2: upstream fetch failure is one clean err frame, not a hang', async () =
   const frames = relay.frames();
   assert.equal(frames.length, 1);
   assert.match(frames[0].error, /Failed to fetch/);
+});
+
+test('E2 keepalive: a stalling upstream still emits Port activity, then a '
+    + 'clean end', async () => {
+  // An upstream that emits one chunk, then stalls longer than the
+  // keepalive interval: the frames keep flowing (the real SW stays alive),
+  // and the stream still ends cleanly when the upstream resumes.
+  let releaseReader;
+  const stalled = new Promise((resolve) => { releaseReader = resolve; });
+  let reads = 0;
+  const { onConnect } = bootBridge(async () => ({
+    status: 200,
+    headers: { entries: () => Object.entries({}) },
+    body: {
+      getReader: () => ({
+        read: async () => {
+          if (reads++ === 0) {
+            return { done: false, value: new TextEncoder().encode('data: 1\n\n') };
+          }
+          await stalled;
+          return { done: true };
+        },
+      }),
+    },
+  }));
+  const relay = bootRelay(onConnect);
+  relay.fromPage({ __faEmbed: 1, kind: 'stream', reqId: 'r1', req: { url: 'https://slow.host/v1' } });
+  await flush();
+  const before = relay.frames().filter((f) => f.t === 'keepalive').length;
+  await new Promise((r) => setTimeout(r, 60));
+  const during = relay.frames().filter((f) => f.t === 'keepalive').length;
+  releaseReader();
+  await flush();
+  const frames = relay.frames();
+  assert.ok(during > before, 'keepalive frames flowed while upstream stalled');
+  assert.equal(frames.filter((f) => f.t === 'end').length, 1);
+  assert.equal(frames.at(-1).t, 'end', 'stream still ends cleanly');
 });
 
 test('E4: relay port death aborts the upstream fetch', async () => {

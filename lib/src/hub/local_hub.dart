@@ -311,6 +311,12 @@ class LocalHub {
         final ws = await _authorizedUpgrade(request);
         if (ws == null) continue; // 401 already answered
         unawaited(_handle(ws));
+      } else if (request.uri.path == '/relay') {
+        await handleRelayRequest(
+          request,
+          requireCredential: () => bind == 'lan' ? _masterSecret : null,
+          allowedOrigin: relayAllowedOrigin(request.headers.value('origin')),
+        );
       } else {
         request.response.statusCode = 404;
         await request.response.close();
@@ -639,4 +645,135 @@ class HubJoin {
 
   final String agentId;
   final String channel;
+}
+
+/// The CORS answer for a relay request's [origin]: the allowlisted taskpane
+/// origins get their origin echoed back (never `*` — a hostile page must
+/// not be able to read this proxy), anything else gets null (= no CORS
+/// headers = the browser blocks the read).
+// ponytail: exact fa1.dev + localhost dev; extend the list when the pane
+// gains another production origin.
+String? relayAllowedOrigin(String? origin) {
+  if (origin == null) return null;
+  final uri = Uri.tryParse(origin);
+  final host = uri?.host ?? '';
+  const allowedHosts = {'fa1.dev'};
+  final localhost = host == 'localhost' || host.endsWith('.localhost');
+  return (allowedHosts.contains(host) || localhost) ? origin : null;
+}
+
+/// One `POST /relay` call (issue #633): the desktop add-in taskpane has no
+/// extension to carry its provider HTTP, so the pane proxies it through
+/// the local hub, which fetches CORS-free by construction. The body is the
+/// SW-bridge request envelope `{url, method?, headers?, bodyB64?}`; the
+/// upstream answer is streamed back raw (status + content-type + body), so
+/// provider SSE flows through incrementally.
+///
+/// Loopback-bound hubs relay for the taskpane origins (same trust domain
+/// as /healthz); a lan-bound hub demands the master bearer — an open relay
+/// on the LAN would be a fetch oracle.
+Future<void> handleRelayRequest(
+  HttpRequest request, {
+  required String? Function() requireCredential,
+  required String? allowedOrigin,
+}) async {
+  if (request.method == 'OPTIONS') {
+    await _relayPreflight(request, allowedOrigin);
+    return;
+  }
+  final credential = requireCredential();
+  if (credential != null &&
+      request.headers.value('authorization') != 'Bearer $credential') {
+    request.response.statusCode = 401;
+    await request.response.close();
+    return;
+  }
+  final parsed = await _relayEnvelope(request, allowedOrigin);
+  if (parsed == null) return;
+  await _relayForward(request, parsed.$1, parsed.$2, allowedOrigin);
+}
+
+/// CORS grant for a relay response — only when the origin was allowlisted
+/// (never `*`).
+void _relayCors(HttpRequest request, String? allowedOrigin) {
+  if (allowedOrigin == null) return;
+  request.response.headers
+    ..set('Access-Control-Allow-Origin', allowedOrigin)
+    ..set('Vary', 'Origin');
+}
+
+/// OPTIONS preflight: 204 plus the full method/header grant so the
+/// browser sends the real POST.
+Future<void> _relayPreflight(HttpRequest request, String? allowedOrigin) async {
+  request.response.statusCode = 204;
+  _relayCors(request, allowedOrigin);
+  if (allowedOrigin != null) {
+    request.response.headers
+      ..set('Access-Control-Allow-Methods', 'POST, OPTIONS')
+      ..set('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+      ..set('Access-Control-Max-Age', '600');
+  }
+  await request.response.close();
+}
+
+/// Reads and validates the bridge envelope; answers 400 and returns null
+/// when the body is not JSON or the url is missing/non-http(s).
+Future<(Uri, Map<String, dynamic>)?> _relayEnvelope(
+  HttpRequest request,
+  String? allowedOrigin,
+) async {
+  try {
+    final body = await utf8.decoder.bind(request).join();
+    final envelope = (jsonDecode(body) as Map).cast<String, dynamic>();
+    final url = Uri.tryParse('${envelope['url']}') ?? Uri();
+    if (!url.isScheme('https') && !url.isScheme('http')) {
+      throw const FormatException('url must be http(s)');
+    }
+    return (url, envelope);
+  } on FormatException {
+    request.response.statusCode = 400;
+    _relayCors(request, allowedOrigin);
+    request.response.write(
+      '{"error":"expecting {url, method?, headers?, '
+      'bodyB64?} with an http(s) url"}',
+    );
+    await request.response.close();
+    return null;
+  }
+}
+
+/// Proxies the raw upstream response (status + content-type + streamed
+/// body, so SSE rides through incrementally); 502 when unreachable.
+Future<void> _relayForward(
+  HttpRequest request,
+  Uri url,
+  Map<String, dynamic> envelope,
+  String? allowedOrigin,
+) async {
+  final upstream = HttpClient();
+  try {
+    final req = await upstream.openUrl('${envelope['method'] ?? 'POST'}', url);
+    for (final entry in ((envelope['headers'] as Map?) ?? const {}).entries) {
+      req.headers.set('${entry.key}', '${entry.value}');
+    }
+    if (envelope['bodyB64'] is String) {
+      req.add(base64Decode(envelope['bodyB64'] as String));
+    }
+    final res = await req.close();
+    request.response.statusCode = res.statusCode;
+    _relayCors(request, allowedOrigin);
+    final contentType = res.headers.value('content-type');
+    if (contentType != null) {
+      request.response.headers.set('Content-Type', contentType);
+    }
+    await request.response.addStream(res);
+    await request.response.close();
+  } on Object {
+    request.response.statusCode = 502;
+    _relayCors(request, allowedOrigin);
+    request.response.write('{"error":"upstream unreachable"}');
+    await request.response.close();
+  } finally {
+    upstream.close(force: true);
+  }
 }
