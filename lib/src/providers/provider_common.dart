@@ -45,19 +45,30 @@ const undecodableToolImagePlaceholder =
     '(tool image omitted: the model backend could not decode it — the file '
     'may be corrupt or in an unsupported format)';
 
+/// Host-set hook for the text-only strip ([downgradeUnsupportedImages]):
+/// reports how many image blocks the model's declared modalities dropped,
+/// so the run shows a VISIBLE notice instead of silence (issue #638).
+/// Null (the default) keeps the strip silent.
+typedef TextOnlyImageDropNotice = void Function(int droppedCount);
+
+/// The active text-only drop reporter - wired once by the host at boot.
+TextOnlyImageDropNotice? textOnlyImageDropNotice;
+
 /// pi's `replaceImagesWithPlaceholder`: consecutive images collapse into a
 /// single placeholder, and a text block already equal to the placeholder
-/// suppresses a duplicate.
+/// suppresses a duplicate. [onImage] fires once per replaced image block.
 List<ContentBlock> _replaceImagesWithPlaceholder(
   List<ContentBlock> content,
-  String placeholder,
-) {
+  String placeholder, {
+  void Function()? onImage,
+}) {
   final result = <ContentBlock>[];
   var previousWasPlaceholder = false;
   for (final block in content) {
     if (block is ImageContent) {
       if (!previousWasPlaceholder) {
         result.add(TextContent(text: placeholder));
+        onImage?.call();
       }
       previousWasPlaceholder = true;
       continue;
@@ -80,11 +91,15 @@ List<Message> downgradeUnsupportedImages(List<Message> messages, Model model) {
   if (model.input.contains('image')) {
     return messages;
   }
-  return _replaceImages(
+  var dropped = 0;
+  final out = _replaceImages(
     messages,
     nonVisionUserImagePlaceholder,
     nonVisionToolImagePlaceholder,
+    onImage: () => dropped++,
   );
+  if (dropped > 0) textOnlyImageDropNotice?.call(dropped);
+  return out;
 }
 
 /// Replaces EVERY image block with [undecodableUserImagePlaceholder] /
@@ -141,8 +156,9 @@ bool messagesContainImages(List<Message> messages) {
 List<Message> _replaceImages(
   List<Message> messages,
   String userPlaceholder,
-  String toolPlaceholder,
-) {
+  String toolPlaceholder, {
+  void Function()? onImage,
+}) {
   return [
     for (final message in messages)
       if (message is UserMessage && message.content is List<ContentBlock>)
@@ -150,6 +166,7 @@ List<Message> _replaceImages(
           content: _replaceImagesWithPlaceholder(
             message.content as List<ContentBlock>,
             userPlaceholder,
+            onImage: onImage,
           ),
           timestamp: message.timestamp,
         )
@@ -160,6 +177,7 @@ List<Message> _replaceImages(
           content: _replaceImagesWithPlaceholder(
             message.content,
             toolPlaceholder,
+            onImage: onImage,
           ),
           isError: message.isError,
           timestamp: message.timestamp,

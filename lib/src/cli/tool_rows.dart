@@ -82,7 +82,18 @@ final class LaidOutToolRow {
 /// detail absorbs a narrow terminal, ellipsized via [tuiFitWidth] and only
 /// when the budget is genuinely exceeded.
 LaidOutToolRow layoutToolRow(ToolRowSegments s, int width) {
-  final w = width < 1 ? 1 : width;
+  // Unbounded budget (width <= 0): the headless/line-mode log keeps the
+  // FULL command (issue #638 AC3) — only a real viewport clips. Still one
+  // physical line (issue #599).
+  if (width <= 0) {
+    return LaidOutToolRow([
+      if (s.glyph.isNotEmpty) s.glyph,
+      if (s.label.isNotEmpty) s.label,
+      if (s.detail.isNotEmpty) ...['·', _flatten(s.detail)],
+      if (s.elapsed.isNotEmpty) s.elapsed,
+    ]);
+  }
+  final w = width;
   final glyphW = s.glyph.isEmpty ? 0 : tuiTextWidth('${s.glyph} ');
   final elapsedW = s.elapsed.isEmpty ? 0 : tuiTextWidth(' ${s.elapsed}');
   // Degenerate guard: even a label wider than the row stays on one line

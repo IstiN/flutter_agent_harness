@@ -296,4 +296,57 @@ void main() {
 ✗ bash · fatal: not a git repository 0s''');
     });
   });
+
+  group('viewport-width clipping (issue #638 AC3)', () {
+    const longCommand =
+        'python3 -c "import json,sys; data=json.load(open(sys.argv[1])); '
+        'print(json.dumps(data, indent=2, sort_keys=True)); '
+        'print(sum(x*x for x in range(1000)))" /tmp/results.json';
+
+    test('same row at widths 60/120/200: clipped length follows width', () {
+      final widths = <int, int>{};
+      for (final width in const [60, 120, 200]) {
+        final text = layoutToolRow(
+          ToolRowSegments(
+            glyph: '•',
+            label: 'bash',
+            detail: longCommand,
+            elapsed: '1s',
+          ),
+          width,
+        ).join();
+        widths[width] = tuiTextWidth(text);
+        expect(widths[width]!, lessThanOrEqualTo(width));
+      }
+      expect(widths[60]!, lessThan(widths[120]!));
+      expect(widths[120]!, lessThan(widths[200]!));
+    });
+
+    test('unbounded budget (width 0) keeps the FULL command for headless '
+        'logs', () {
+      final text = layoutToolRow(
+        ToolRowSegments(
+          glyph: '•',
+          label: 'bash',
+          detail: longCommand,
+          elapsed: '1s',
+        ),
+        0,
+      ).join();
+      expect(text, contains(longCommand));
+      expect(text.endsWith('1s'), isTrue);
+      // One physical line still holds headless (issue #599).
+      final multi = layoutToolRow(
+        const ToolRowSegments(
+          glyph: '•',
+          label: 'bash',
+          detail: 'one\ntwo\tthree',
+          elapsed: '',
+        ),
+        0,
+      ).join();
+      expect(multi.contains('\n'), isFalse);
+      expect(multi, contains('one two three'));
+    });
+  });
 }

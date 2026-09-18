@@ -192,6 +192,7 @@ class AgentService extends ChangeNotifier
     _activeBaseUrl = _agent.state.model.baseUrl;
     _activeApiKey = '';
     _wireImageDropNotice();
+    _wireTextOnlyImageDropNotice();
     _redactor = redactor;
     _attachRedactor(redactor);
     _attachApproval();
@@ -221,6 +222,14 @@ class AgentService extends ChangeNotifier
         'dropping [Image $index] (key $keyPreview…) '
             '— per-request cap reached',
       );
+    };
+  }
+
+  /// Text-only model image drops must never be silent either (issue #638):
+  /// same AppLog surface as the cap-drop notice above.
+  static void _wireTextOnlyImageDropNotice() {
+    textOnlyImageDropNotice = (dropped) {
+      AppLog.i('images', '$dropped image(s) dropped — model declared text-only');
     };
   }
 
@@ -499,6 +508,7 @@ class AgentService extends ChangeNotifier
        ) {
     maybeCurrent = this;
     _wireImageDropNotice();
+    _wireTextOnlyImageDropNotice();
     _providerKind = config.providerKind;
     _activeBaseUrl = config.baseUrl;
     _activeApiKey = config.apiKey;
