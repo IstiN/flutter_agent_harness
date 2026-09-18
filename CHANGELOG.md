@@ -3806,4 +3806,13 @@
 - fix(466): nightly auto-issue leg repo-pinning + green-run sunset (#616)
 - feat(machine): dmtools-agents factory rollout — ai-teammate-author gated (#614)
 
+## 0.1.416
+
+- chore(factory): repin to dmtools-agents 4bbc817a (FA_VERSION=latest fix) (#626)
+- feat(media): add DialImageDialect and same-host key fallback for image generation (#629)
+- fix(cli): improve secret prompt layout, glass cropping, and waiting busy indicator (#627)
+- fix(cli): sanitize and clip multiline shell job commands in waiting rows and job board (#628)
+- fix(615): waiting row never clears after its job settles (#618)
+- feat(machine): assignment-driven trigger — assign to ai-teammate starts the loop (#625)
+
 ## Unreleased
