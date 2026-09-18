@@ -832,5 +832,16 @@
   "settingsQueueSaved": "Очередь сохранена в {file} — применится со следующего запуска.",
   "settingsQueueSaveFailed": "Не удалось сохранить очередь: {error}",
   "settingsQueueInvalid": "Очередь отклонена: {error}",
-  "themePackImportFailed": "Тема отклонена"
+  "themePackImportFailed": "Тема отклонена",
+  "settingsMobileAutomation": "Автоматизация устройства",
+  "mobileConsentTitle": "Автоматизация устройства",
+  "mobileConsentWhat": "Включив эту функцию, вы разрешаете службе специальных возможностей Fa читать содержимое экрана и выполнять нажатия и ввод текста от вашего имени, чтобы Fa мог управлять приложениями и настройками за вас.",
+  "mobileConsentOffByDefault": "По умолчанию служба выключена — ничего не работает, пока вы не включите её здесь.",
+  "mobileConsentDisableHint": "Отключить её можно в любой момент одним касанием в настройках Fa.",
+  "mobileConsentPrivacy": "Данные не покидают устройство: наружу отправляются только ваши сообщения — напрямую в настроенную модель.",
+  "mobileConsentEnable": "Включить — открыть настройки системы",
+  "mobileConsentDisable": "Выключить",
+  "mobileConsentStatusOn": "Служба специальных возможностей: включена",
+  "mobileConsentStatusOff": "Служба специальных возможностей: выключена",
+  "mobileConsentStoreUnavailable": "Автоматизация устройства недоступна в этой сборке Fa."
 }

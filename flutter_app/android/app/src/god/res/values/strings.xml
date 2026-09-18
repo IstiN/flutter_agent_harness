@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_service_description">Fa uses the accessibility service only when you ask it to automate this device: it reads the current screen to locate UI elements and performs taps, swipes, and text input on your behalf.</string>
+</resources>

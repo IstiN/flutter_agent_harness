@@ -54,6 +54,7 @@ import 'package:fa/services/icloud_sync_tool.dart';
 import 'package:fa/services/live_activity.dart';
 import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/media_tools.dart';
+import 'package:fa/services/mobile/mobile_services.dart';
 import 'package:fa/services/notify_service.dart';
 import 'package:fa/services/notify_tool.dart';
 import 'package:fa/services/office/office_boot.dart';
@@ -750,6 +751,11 @@ class AgentService extends ChangeNotifier
         homePowerTool(createHomeService(), turnOn: false),
         homeSetTool(createHomeService()),
       ],
+      // On-device automation (issue #622): mobile.* over the Android
+      // accessibility/projection/shizuku channels. The store flavor
+      // registers launch/logs only — the capability floor gates the rest
+      // with the honest sideload reason.
+      if (mobilePlatformSupported) ...mobileToolsForFlavor(),
       // Microphone recording (macOS/iOS via the `fah/mic` channel; the
       // tool itself reports a clean note where unsupported). Pairs with
       // transcribe_audio below.

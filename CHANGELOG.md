@@ -3835,3 +3835,27 @@
 - fix(machine): dev runners carry targetRepository so the timer auto-save works (#644)
 
 ## Unreleased
+
+- feat(622): Android `mobile.*` automation ships as two release flavors —
+  `store` (applicationId `dev.fa1.app`, the Play pipeline) and `god`
+  (`dev.fa1.app.god`, sideload only, same release key) — with ONE CI
+  variable driving both the gradle flavor and the `FA_FLAVOR`
+  dart-define so the pair cannot drift. build-mobile.yml grows a
+  store|god APK matrix (both APKs attach to the GitHub release; the Play
+  AAB job is unchanged) plus a store-APK size-delta report against the
+  previous release artifact (UT-CI-1, +10% fail threshold) and a
+  disabled (`if: false`) emulator job pinning the shape for the six
+  channel ITs (IT-flavor-1, IT-floor-1, IT-observe-1, IT-gesture-1,
+  IT-shell-1, IT-consent-1). Tool tiers: store exposes
+  `mobile.launch`/`mobile.logs` (own-app deep links + launcher); god
+  adds `mobile.hierarchy`/`mobile.tap`/`mobile.swipe`/`mobile.text`/
+  `mobile.screenshot` (AccessibilityService + MediaProjection);
+  `mobile.shell` rides an opt-in Shizuku bridge and fails with the named
+  error `Shizuku not running` when absent. Everything is gated through
+  the issue #19 availability floor with the honest reason "requires the
+  god tier (sideload build) — get it at https://fa1.dev/android".
+  Binding threat model: consent screen before accessibility activation,
+  one-tap disable in Settings, redaction on extracted screen text,
+  exec-tier approval + critical patterns on mobile.shell, god never
+  ships to Play. Tier table, sideload + Shizuku steps, consent notes and
+  the manual E2E checklist: docs/android-automation.md.
