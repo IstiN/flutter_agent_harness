@@ -501,7 +501,10 @@ final class _WaitingCoordinator {
   Future<void> push() async {
     final snap = await snapshot();
     _syncHeartbeat(snap);
-    if (snap.isEmpty && lostJobs == 0) return;
+    // The empty push IS the leave event: setWaiting REPLACES the whole
+    // row state, so skipping it when the last waiter resolves strands the
+    // stale `⏳ waiting` row above the composer forever (issue #615).
+    // Always deliver — the empty snapshot included.
     _cli._tuiController?.setWaiting(
       jobs: snap.jobs,
       timers: snap.timers,
