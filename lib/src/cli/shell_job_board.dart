@@ -236,7 +236,10 @@ final class ShellJobBoard {
       );
     }
     for (final card in liveCards.take(_maxLiveRows)) {
-      lines.add('↳ ${card.id} · ${_clipLabel(card.label)}');
+      // No fixed char cap (issue #638 AC3): the TUI frame clips at the
+      // LIVE viewport width and recomputes on resize; the preview stays
+      // one physical line (issue #599).
+      lines.add('↳ ${card.id} · ${shellJobCommandPreview(card.label)}');
     }
     return lines;
   }
@@ -311,11 +314,4 @@ final class ShellJobBoard {
       .map((c) => c.toRecord())
       .toList();
 
-  /// The live row label: first line + `…` (issue #599 — an embedded
-  /// newline would tear one reserved live row into uncounted physical
-  /// rows), then the 48-char width cap.
-  static String _clipLabel(String label) {
-    final preview = shellJobCommandPreview(label);
-    return preview.length <= 48 ? preview : '${preview.substring(0, 47)}…';
-  }
 }

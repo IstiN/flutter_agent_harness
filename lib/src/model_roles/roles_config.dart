@@ -145,8 +145,8 @@ final class ModelRef {
   /// The `input` modality list override (`["text","image"]`): an explicit
   /// declaration wins over the catalog spec's modalities (issue #638 —
   /// same named-error rules as the `models.custom` yaml field).
-  static List<String>? _optionalInput(YamlMap map, String? role) {
-    final value = map['input'];
+  static List<String>? _optionalInput(YamlMap node, String? role) {
+    final value = node['input'];
     if (value == null) return null;
     if (value is! YamlList || value.isEmpty) {
       throw ConfigException(

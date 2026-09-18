@@ -9,6 +9,7 @@ topics: []
 source: "agent"
 accessCount: 0
 importance: 0.72
+level: 2
 tags: ["#note", "#source_agent", "production-hub", "fake-hub", "references"]
 ---
 
