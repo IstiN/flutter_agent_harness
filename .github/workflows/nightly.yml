@@ -390,37 +390,57 @@ jobs:
 
   # Files ONE deduped issue when the scheduled nightly run goes red: the
   # open `nightly-red` issue is searched first and only commented on, so a
-  # persistent failure never spams duplicates.
+  # persistent failure never spams duplicates. A GREEN scheduled run closes
+  # the open issue (the nightly-red tracker is only as good as its sunset).
   auto-issue:
     name: File nightly-red issue
     needs: [full-quality, pty-integration, cli-visual, flutter-app-macos, build-release]
-    if: failure() && github.event_name == 'schedule'
+    if: always() && github.event_name == 'schedule' && !cancelled()
     runs-on: ubuntu-latest
     permissions:
       issues: write
     steps:
+      - name: Close the nightly-red issue on a green run
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          repo="${GITHUB_REPOSITORY}"
+          existing=$(gh issue list --state open --label nightly-red \
+            --json number --jq '.[0].number' --repo "$repo")
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$repo" \
+              --body "Green again: ${GITHUB_SERVER_URL}/${repo}/actions/runs/${GITHUB_RUN_ID} — closing."
+            gh issue close "$existing" --repo "$repo"
+          fi
+
+    steps:
       - name: Create or update the nightly-red issue
+        if: failure()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           date=$(date -u +%F)
           title="Nightly full-matrix red: ${date}"
+          repo="${GITHUB_REPOSITORY}"
           gh label create nightly-red --force \
             --description "Nightly full-quality run is failing" \
-            --color B60205
+            --color B60205 --repo "$repo"
           # Failing job names of this run, plus the run URL.
           failing=$(gh api \
-            "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100" \
+            "repos/$repo/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" \
             --jq '[.jobs[] | select(.conclusion == "failure") | .name] | join(", ")')
           [ -z "$failing" ] && failing="(unknown)"
           body=$(printf 'Nightly full-matrix run is red.\n\nFailing jobs: %s\nRun: %s\n' \
-            "$failing" "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}")
+            "$failing" "${GITHUB_SERVER_URL}/${repo}/actions/runs/${GITHUB_RUN_ID}")
           # Dedup: comment on the existing open nightly-red issue instead of
-          # opening a duplicate.
+          # opening a duplicate. --repo everywhere: this job has no checkout,
+          # bare `gh` invokes git for repo detection and dies with
+          # "not a git repository" (the 2026-09-18 filing-leg failure).
           existing=$(gh issue list --state open --label nightly-red \
-            --json number --jq '.[0].number')
+            --json number --jq '.[0].number' --repo "$repo")
           if [ -n "$existing" ]; then
-            gh issue comment "$existing" --body "$body"
+            gh issue comment "$existing" --body "$body" --repo "$repo"
           else
-            gh issue create --title "$title" --label nightly-red --body "$body" --assignee ai-teammate
+            gh issue create --title "$title" --label nightly-red --body "$body" --assignee ai-teammate --repo "$repo"
           fi
