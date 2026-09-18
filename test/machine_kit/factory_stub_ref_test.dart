@@ -104,17 +104,41 @@ void main() {
     }
   });
 
-  test('author gate: the loop reacts only to ai-teammate artifacts '
-      '(issues AND pull_request triggers carry the author filter)', () {
+  test('assignment gate: the loop starts when a human ASSIGNS an issue to '
+      'ai-teammate (assignee filter on issues, author filter on PRs)', () {
     expect(
-      teammate.contains("github.event.issue.user.login == 'ai-teammate'"),
+      teammate.contains(
+        "contains(github.event.issue.assignees.*.login, 'ai-teammate')",
+      ),
       isTrue,
+      reason: 'issues trigger must key on the ASSIGNEE, not the author',
+    );
+    expect(
+      teammate.contains('types: [assigned, labeled]'),
+      isTrue,
+      reason: 'the `opened` trigger is gone: nothing starts until assigned',
+    );
+    expect(
+      teammate.contains('pull_request:'),
+      isFalse,
+      reason: 'no PR trigger: pull_request runs startup-failed (PRs #624/'
+          '#625) and the loop drives review via SM ticks + issue labels',
     );
     expect(
       teammate.contains(
-        "github.event.pull_request.user.login == 'ai-teammate'",
-      ),
+        "github.event_name == 'workflow_dispatch')",
+      ) ||
+          teammate.contains(
+            "|| github.event_name == 'workflow_dispatch'",
+          ),
       isTrue,
+      reason: 'dispatch runs must reach the factory even with empty gate '
+          'outputs (inputs carry the target) — the gh-623 skip bug',
+    );
+    expect(
+      teammate.contains("github.event.issue.user.login == 'ai-teammate'"),
+      isFalse,
+      reason: 'the old author filter must not linger',
     );
   });
 }
