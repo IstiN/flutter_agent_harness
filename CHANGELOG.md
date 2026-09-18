@@ -3795,4 +3795,9 @@
 - fix(584): publish stage resolves path deps — include vendor/xterm + fa_llm_mock, drop pubspec_overrides (#587)
 - refactor(561): UI+services singles 9 methods 56→24 CRAP (split + cover, ladder 4/4) (#589)
 
+## 0.1.413
+
+- fix(597): staged publish self-contained + PR-time staged dry-run + dead-tag fix (#600)
+- fix(611): poll pub.dev post-upload verify up to 11 min instead of failing at ~16s (#612)
+
 ## Unreleased
