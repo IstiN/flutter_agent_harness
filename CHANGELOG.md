@@ -3829,4 +3829,9 @@
 - fix(632): confine cube bash - SBPL write/read rules, redirect-target checks, loud degradation (#636)
 - chore(factory): repin to c85468de — timer, excludes, flutter, 120-min timeout (#635)
 
+## 0.1.419
+
+- feat: resume-timing instrumentation — session-open phases logged (resume_timing lines) (#648)
+- fix(machine): dev runners carry targetRepository so the timer auto-save works (#644)
+
 ## Unreleased
