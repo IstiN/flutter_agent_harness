@@ -19,7 +19,6 @@ import 'dart:async';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/task/child_session_io.dart';
-import 'package:flutter_agent_harness/src/task/delivery_slo.dart';
 import 'package:test/test.dart';
 
 
@@ -599,4 +598,58 @@ void main() {
       unawaited(spawnDone.catchError((Object _) => throw StateError('gone')));
     },
   );
+
+  test(
+    'AC1: steering the main agent mid foreground wait yields to background, '
+    'is consumed ≤2s at the boundary, and the job keeps running',
+    timeout: const Timeout(Duration(seconds: 90)),
+    () async {
+      deliverySloSink = sloLines.add;
+      final env = _SleepShellEnv(MemoryExecutionEnv(cwd: '/work'));
+      final child = _ChildStream(taskMarker: 'sleepy-work');
+      final agent = Agent(
+        model: _model,
+        streamFunction: child.call,
+        toolRegistry: ToolRegistry(
+          builtinTools(env, shellJobs: ShellJobRegistry(env: env)),
+        ),
+      );
+      final run = agent.prompt('sleepy-work');
+      unawaited(run);
+      // The agent entered its foreground bash (a never-settling job).
+      final jobUp = await _pollFor(
+        () => env.jobs.isNotEmpty,
+        const Duration(seconds: 15),
+      );
+      expect(jobUp, isTrue);
+
+      // The CLI's Ctrl+S handler lands here: queue + notify.
+      final steeredAt = DateTime.now();
+      agent.steer(UserMessage.text('how goes? @@wake@@'));
+
+      final consumedFast = await _pollFor(
+        () =>
+            child.wakeSeenAt != null &&
+            child.wakeSeenAt!.difference(steeredAt) <
+                const Duration(seconds: 2),
+        const Duration(seconds: 10),
+      );
+      expect(consumedFast, isTrue, reason: 'the steering is consumed ≤2s '
+          'after the keystroke, not after the 120s wait');
+      expect(env.jobs.single.isRunning, isTrue, reason: 'the yield moved '
+          'the wait to a background job without killing it');
+      await run;
+      expect(child.contexts.length, 2, reason: 'the wake turn is the ack '
+          'text turn; the run settles right after it');
+    },
+  );
 }
+
+Future<bool> _pollFor(bool Function() condition, Duration timeout) async {
+  final deadline = DateTime.now().add(timeout);
+  while (DateTime.now().isBefore(deadline)) {
+    if (condition()) return true;
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+  }
+  return condition();
+ }
