@@ -41,6 +41,7 @@ import '../session/session_tree.dart';
 import '../types.dart';
 import 'agent_registry.dart';
 import 'child_session_io.dart';
+import 'delivery_slo.dart';
 import 'output_manager.dart';
 import 'parallel.dart';
 import 'subagent.dart';
@@ -272,7 +273,6 @@ final class TaskExecutor {
   /// aborted children take no resume; a missing/unreadable session file is
   /// a named error, never a silently minted new session (E3); a failing
   /// resume (e.g. the provider role is still quota-limited) returns the
-  /// child to failed-resumable with the resolver's error recorded (E2).
   Future<void> resumeChild(String id, String message) async {
     final managerOrNull = subagentManager;
     final (manager, handle) = _assertResumable(
@@ -280,21 +280,49 @@ final class TaskExecutor {
       managerOrNull,
       managerOrNull?[id],
     );
+    // Issue #332: a resume runs inline (no TaskJob), so it gets a cancel
+    // source like a blocking spawn — `task_cancel` / `/tasks cancel` abort
+    // the live resume instead of tombstoning the row over it. Registered
+    // BEFORE the warm-wake window: from here on the row reads running, so
+    // concurrent task_send routes through the inbox instead of racing the
+    // boot.
+    final resumeCancel = CancelTokenSource();
+    _resumesInFlight.add(id);
+    _currentSubagentIds.add(id);
+    _inFlightCancels[id] = resumeCancel;
+    await manager.update(id, status: SubagentStatus.running, clearError: true);
+
+    // Warm wake (issue #647): the message lands in the child's inbox
+    // FIRST (durable, instant), then the resume run's first action drains
+    // the inbox — consumption never waits out the session boot. The
+    // drained mail becomes the prompt with its sender attributed; if the
+    // resume fails the mail goes back to the inbox (at-least-once).
+    await manager.enqueueMessage(
+      id,
+      SubagentMessage(
+        fromId: manager.selfId,
+        text: message,
+        sentAt: DateTime.now().toUtc().toIso8601String(),
+      ),
+    );
+    final mail = await manager.drainMessages(id);
+    final since = mail.isEmpty
+        ? null
+        : DateTime.tryParse(mail.first.sentAt);
+    deliveryStage(id, 'consumed', since: since);
+    final promptText = mail.isEmpty
+        ? message
+        : mail.map((m) => 'from ${m.fromId}: ${m.text}').join('\n');
+
     final session = await _resumeSession(id, handle);
     final prior = await session.buildContextMessages();
     _childSessions[id] = session;
     _childSessionWrites[id] = await _appendedMessageCount(session);
-    _resumesInFlight.add(id);
-    _currentSubagentIds.add(id);
-    // Issue #332: a resume runs inline (no TaskJob), so it gets a cancel
-    // source like a blocking spawn — `task_cancel` / `/tasks cancel` abort
-    // the live resume instead of tombstoning the row over it.
-    final resumeCancel = CancelTokenSource();
-    _inFlightCancels[id] = resumeCancel;
-    await manager.update(id, status: SubagentStatus.running, clearError: true);
+    deliveryStage(id, 'wake', since: since);
     await semaphore.acquire();
     Agent? child;
     void Function()? untrackUsage;
+    StreamSubscription<void>? inboxWakeSub;
     try {
       final definition = _resolveDefinition(handle.agentType);
       final wiring = _resolveChildWiring(definition);
@@ -308,8 +336,15 @@ final class TaskExecutor {
         streamFunction: wiring.stream,
         toolRegistry: _childToolRegistry(definition),
         externalSteeringSource: () => _inboxSteeringMessages(id),
+        externalSteeringProbe: () => manager.hasPendingMessages(id),
       );
-      unawaited(resumeCancel.token.onCancel.then((_) => child!.abort()));
+      final agent = child;
+      inboxWakeSub = manager.events.listen((event) {
+        if (event.handle.id == id && event.message != null) {
+          agent.pokeSteering();
+        }
+      });
+      unawaited(resumeCancel.token.onCancel.then((_) => agent.abort()));
       untrackUsage = _trackChildUsage(id, child, from: prior.length);
       child.state.messages = prior;
       // Issue #383 heartbeat: the same in-flight liveness as a fresh
@@ -326,12 +361,12 @@ final class TaskExecutor {
         id,
         child,
         wiring: wiring,
-        incomingTokens: estimateRequestTokens([UserMessage.text(message)]),
+        incomingTokens: estimateRequestTokens([UserMessage.text(promptText)]),
       );
-      final agent = child;
       agent.prepareNextTurn = (nextTurn) =>
           _compactChildAtBoundary(id, agent, wiring, nextTurn);
-      await child.prompt(message);
+      await child.prompt(promptText);
+      deliveryStage(id, 'reply', since: since);
       resumeCancel.token.throwIfCancelled();
       // The agent loop surfaces provider failures as an error-tagged final
       // assistant message, not a throw — the same check `_run` relies on.
@@ -348,6 +383,7 @@ final class TaskExecutor {
         modelId: wiring.model.id,
       );
     } on CancelledException catch (error) {
+      await _requeueResumeMail(id, manager, mail);
       if (child != null) unawaited(_flushChildTranscript(id, child));
       // A cancelled resume settles failed-resumable (NOT aborted): the
       // child keeps its progress and a later task_resume can continue it.
@@ -358,6 +394,7 @@ final class TaskExecutor {
       );
       throw StateError('resume of "$id" cancelled');
     } on Object catch (error) {
+      await _requeueResumeMail(id, manager, mail);
       if (child != null) unawaited(_flushChildTranscript(id, child));
       if (child != null) _billChildUsage(id, child);
       await _updateSubagentStatus(id, SubagentStatus.failed, error: '$error');
@@ -365,11 +402,37 @@ final class TaskExecutor {
     } finally {
       if (child != null) _billChildUsage(id, child);
       untrackUsage?.call();
+      unawaited(inboxWakeSub?.cancel());
       _usageCursors.remove(id);
       semaphore.release();
       _resumesInFlight.remove(id);
       _currentSubagentIds.remove(id);
       _inFlightCancels.remove(id);
+    }
+  }
+
+  /// Failure-path requeue of warm-wake mail (issue #647): the drained
+  /// messages return to the child's inbox so the next resume still
+  /// delivers them. Fire-and-forget — a fabric hiccup here must not mask
+  /// the original failure.
+  Future<void> _requeueResumeMail(
+    String id,
+    SubagentManager manager,
+    List<SubagentMessage> mail,
+  ) async {
+    for (final m in mail) {
+      try {
+        await manager.enqueueMessage(
+          id,
+          SubagentMessage(
+            fromId: m.fromId,
+            text: m.text,
+            sentAt: m.sentAt,
+          ),
+        );
+      } on Object {
+        // Best-effort by contract.
+      }
     }
   }
 
@@ -581,7 +644,19 @@ final class TaskExecutor {
       externalSteeringSource: subagentManager == null
           ? null
           : () => _inboxSteeringMessages(id),
+      // The delivery SLO (issue #647): inbox mail must soft-yield a long
+      // tool call within 2s. The probe is the slow (cross-process) fallback;
+      // the manager-event subscription below pokes the same path instantly
+      // for same-host mail.
+      externalSteeringProbe: subagentManager == null
+          ? null
+          : () => subagentManager!.hasPendingMessages(id),
     );
+    final inboxWakeSub = subagentManager?.events.listen((event) {
+      if (event.handle.id == id && event.message != null) {
+        child.pokeSteering();
+      }
+    });
     // Issue #383 heartbeat: in-flight liveness - every completed provider
     // response touches the handle, so the parent's digest sees fresh
     // last-activity and live request/token counts while the child runs.
@@ -670,6 +745,7 @@ final class TaskExecutor {
       // parent without waiting on file writes.
       _billChildUsage(id, child);
       untrackUsage?.call();
+      unawaited(inboxWakeSub?.cancel());
       _usageCursors.remove(id);
       unawaited(_flushChildTranscript(id, child));
     }
@@ -855,11 +931,17 @@ final class TaskExecutor {
 
   /// The child's inbox as steering messages (the agent loop polls this at
   /// every turn boundary): each pending inter-agent message becomes a user
-  /// message attributed to its sender, so the transcript reads like a chat.
   Future<List<Message>> _inboxSteeringMessages(String subagentId) async {
     final manager = subagentManager;
     if (manager == null) return const [];
     final queued = await manager.drainMessages(subagentId);
+    if (queued.isNotEmpty) {
+      deliveryStage(
+        subagentId,
+        'consumed',
+        since: DateTime.tryParse(queued.first.sentAt),
+      );
+    }
     return [
       for (final message in queued)
         UserMessage.text('from ${message.fromId}: ${message.text.trim()}'),

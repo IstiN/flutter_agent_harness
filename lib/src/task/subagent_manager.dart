@@ -544,6 +544,13 @@ final class SubagentManager {
   Future<List<AgentMessage>> pendingInbox(String id) async =>
       await messaging?.peek(mailboxOf(id)) ?? const [];
 
+  /// Non-draining pending check (issue #647): the child-loop steering
+  /// probe. Covers the fabric inbox AND the in-memory pending queue —
+  /// the `mail:N` panel count above reads the fabric only.
+  Future<bool> hasPendingMessages(String id) async =>
+      (await pendingInboxCount(id)) > 0 ||
+      (_handles[id]?.pendingMessages.isNotEmpty ?? false);
+
   /// Records the child's explicit `reply` (Phase 3b) on its handle.
   Future<void> recordReply(String id, String text) async {
     final handle = _handles[id];
