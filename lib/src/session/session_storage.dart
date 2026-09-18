@@ -327,6 +327,10 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
   final int _quarantinedEntries;
   int get quarantinedEntries => _quarantinedEntries;
 
+  /// Milliseconds the last [open] spent inside the file lock (read +
+  /// parse + rebuild); the wrapper logs `lock_wait = total - inner`.
+  int _openInnerMs = 0;
+
   /// The header metadata, available synchronously (it is parsed at
   /// construction). Backs [Session.cachedId].
   @override
@@ -345,17 +349,30 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     String filePath, {
     SessionParseExecutor? parseExecutor,
     SessionIoRetryConfig ioRetry = const SessionIoRetryConfig(),
-  }) async => withSessionFileLock(
-    filePath,
-    () => _openLocked(fs, filePath, parseExecutor, ioRetry),
-  );
+    SessionTimingLogger? timingLog,
+  }) async {
+    final sw = Stopwatch()..start();
+  final storage = await withSessionFileLock(
+      filePath,
+      () => _openLocked(fs, filePath, parseExecutor, ioRetry, timingLog),
+    );
+    timingLog?.call(
+      'resume_timing open file=${filePath.split('/').last} '
+      'mode=full lock_wait_ms=${sw.elapsedMilliseconds - storage._openInnerMs} '
+      'total_ms=${sw.elapsedMilliseconds}',
+    );
+    return storage;
+  }
 
   static Future<JsonlSessionStorage> _openLocked(
     FileSystem fs,
     String filePath,
     SessionParseExecutor? parseExecutor,
     SessionIoRetryConfig ioRetry,
+    SessionTimingLogger? timingLog,
   ) async {
+    final totalSw = Stopwatch()..start();
+    var phaseSw = Stopwatch()..start();
     final content = _fsOrThrow(
       // Issue #427: the whole-file read behind an open can momentarily
       // fail with a not-found-shaped error on some hosts; a short capped
@@ -368,12 +385,20 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       ),
       'Failed to read session $filePath',
     );
+    final readMs = phaseSw.elapsedMilliseconds;
+    phaseSw
+      ..reset()
+      ..start();
     final allLines = [
       for (final line in content.split('\n'))
         if (line.trim().isNotEmpty) line,
     ];
     if (allLines.isEmpty) _invalidSession(filePath, 'missing session header');
     final header = parseSessionHeaderLine(allLines.first, filePath);
+    final splitMs = phaseSw.elapsedMilliseconds;
+    phaseSw
+      ..reset()
+      ..start();
     // The body (everything below the header) parses in bounded batches
     // through [parseSessionLines] — inside a background isolate when a
     // [SessionParseExecutor] is injected, inline-batched otherwise
@@ -385,6 +410,10 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       firstLineNumber: 2,
       executor: parseExecutor,
     );
+    final parseMs = phaseSw.elapsedMilliseconds;
+    phaseSw
+      ..reset()
+      ..start();
     final entries = <SessionRecord>[];
     final goodLines = <String>[allLines.first];
     final tornLines = <String>[];
@@ -402,6 +431,7 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       leafId = leafIdAfterSessionRecord(entry);
     }
     var quarantined = 0;
+    var rewriteMs = 0;
     if (tornLines.isNotEmpty) {
       quarantined = tornLines.length;
       // Forensics sidecar first; read-only storage skips both writes and
@@ -409,11 +439,15 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       try {
         await fs.appendFile('$filePath.corrupt', '${tornLines.join('\n')}\n');
         await fs.writeFile(filePath, '${goodLines.join('\n')}\n');
+        rewriteMs = phaseSw.elapsedMilliseconds;
       } on Object {
         // Read-only storage: the in-memory state is still consistent.
       }
     }
-    return JsonlSessionStorage._(
+    phaseSw
+      ..reset()
+      ..start();
+    final storage = JsonlSessionStorage._(
       fs,
       filePath,
       header,
@@ -422,6 +456,16 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       quarantined: quarantined,
       ioRetry: ioRetry,
     );
+    final buildMs = phaseSw.elapsedMilliseconds;
+    storage._openInnerMs = totalSw.elapsedMilliseconds;
+    timingLog?.call(
+      'resume_timing open-detail file=${filePath.split('/').last} mode=full '
+      'bytes=${content.length} read_ms=$readMs split_ms=$splitMs '
+      'parse_ms=$parseMs records=${entries.length} torn=$quarantined '
+      'rewrite_ms=$rewriteMs build_ms=$buildMs '
+      'inner_ms=${storage._openInnerMs}',
+    );
+    return storage;
   }
 
   /// Creates a new session file with just the header line.

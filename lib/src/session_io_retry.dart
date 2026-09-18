@@ -27,6 +27,12 @@ import 'env/execution_env.dart';
 /// `null` keeps retries silent.
 typedef SessionIoRetryLogger = void Function(String message);
 
+/// Host diagnostic sink for resume-open timing lines (`resume_timing …`).
+/// Hosts wire their existing diagnostic log (the CLI's `_logDiagnostic`
+/// → `~/.fah/logs/fa.log`); `null` keeps timing silent. One line per
+/// opened session storage, naming every phase's milliseconds.
+typedef SessionTimingLogger = void Function(String message);
+
 /// The wall-clock sleep between retries. Injectable so tests observe the
 /// backoff schedule without waiting for it.
 Future<void> defaultSessionIoDelay(Duration delay) =>

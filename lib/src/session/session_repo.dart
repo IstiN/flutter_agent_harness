@@ -169,6 +169,7 @@ final class JsonlSessionRepo implements SessionRepo {
     required String sessionsRoot,
     this._parseExecutor,
     this._ioRetry = const SessionIoRetryConfig(),
+    this.timingLog,
     this.presenceStore,
     this.processId,
     DateTime Function()? now,
@@ -179,6 +180,10 @@ final class JsonlSessionRepo implements SessionRepo {
   final String _sessionsRootInput;
   String? _sessionsRoot;
   final SessionParseExecutor? _parseExecutor;
+
+  /// Optional resume-timing sink (session-open diagnostics): threaded into
+  /// both storage open paths; `null` keeps opens byte-identical.
+  final SessionTimingLogger? timingLog;
 
   /// Transient-ENOENT retry wiring (issue #427) threaded into every
   /// session-file open/create this repo performs.
@@ -299,12 +304,14 @@ final class JsonlSessionRepo implements SessionRepo {
               metadata.path,
               parseExecutor: _parseExecutor,
               ioRetry: _ioRetry,
+              timingLog: timingLog,
             )
           : await JsonlSessionStorage.open(
               _fs,
               metadata.path,
               parseExecutor: _parseExecutor,
               ioRetry: _ioRetry,
+              timingLog: timingLog,
             ),
     );
   }

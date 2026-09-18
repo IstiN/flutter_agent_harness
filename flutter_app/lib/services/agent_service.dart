@@ -179,6 +179,9 @@ class AgentService extends ChangeNotifier
            JsonlSessionRepo(
              fs: env,
              sessionsRoot: sessionsRoot,
+             // Resume diagnostics: session-open timings as `resume_timing`
+             // lines in the app debug log (logs/app.log).
+             timingLog: (line) => AppLog.i('resume', line),
              presenceStore: FileSessionPresenceStore(
                env: env,
                root: sessionsRoot,
