@@ -599,5 +599,19 @@ void main() {
       expect(live.single, contains("cat > /tmp/i572.md << 'EOF'"));
       expect(live.single, isNot(contains('heredoc body line')));
     });
+
+    test('the live row label follows the viewport — no fixed 48 stub '
+        '(issue #638 AC3)', () {
+      // 200-char single-line command: the FULL preview survives liveLines
+      // (the TUI frame clips at the live width, recomputed on resize);
+      // only the width clip may shorten it, never a char-count stub.
+      final long = 'python3 -c "print(${List.filled(30, 1).join("+")})" '
+          '// padding-padding-padding-padding-padding-padding-padding';
+      final board = ShellJobBoard()..start(_card('sh-wide', command: long));
+      final live = board.liveLines();
+      expect(live, hasLength(1));
+      expect(live.single.contains('\n'), isFalse);
+      expect(live.single, contains(long));
+    });
   });
 }

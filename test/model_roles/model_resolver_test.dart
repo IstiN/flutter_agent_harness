@@ -1,6 +1,8 @@
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
+import 'package:yaml/yaml.dart';
+
 AssistantMessage _msg(
   Model model, {
   String text = '',
@@ -483,6 +485,64 @@ void main() {
           expect(resolver.resolveRole('default')!.model.provider, 'anthropic');
         },
       );
+
+      test(
+        'the preconfig input modalities reach the pinned chain model (#638)',
+        () {
+          final rolesConfig = ModelRolesConfig(
+            roles: const {
+              'default': [
+                ModelRef(provider: 'anthropic', modelId: 'claude-old'),
+              ],
+            },
+          );
+          final resolver = ModelRolesResolver(
+            config: rolesConfig,
+            secrets: const {'ANTHROPIC_API_KEY': 'a-key'},
+            streamFactory: _neverStream,
+          );
+          const keyVar = 'ZAI_CODE_KEY';
+          resolver.addSecret(keyVar, 'z-key');
+          resolver.setDefaultChain([
+            const ModelRef(
+              provider: 'zai',
+              modelId: 'glm-5.3-flash',
+              baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+              apiKeyName: keyVar,
+              input: ['text', 'image'],
+            ),
+          ]);
+
+          final resolved = resolver.resolveRole('default')!;
+          // Explicit declaration wins over the zai catalog's text-only
+          // spec — the image gate opens (issue #638 AC1).
+          expect(resolved.model.input, ['text', 'image']);
+        },
+      );
+    });
+
+    group('ModelRef.input', () {
+      test('fromYaml parses the modality list and names bad entries', () {
+        final ref = ModelRef.fromYaml(
+          loadYaml(
+            'provider: zai\nmodel: glm-5.3-flash\ninput: [text, image]\n',
+          ),
+        );
+        expect(ref.input, ['text', 'image']);
+
+        expect(
+          () => ModelRef.fromYaml(
+            loadYaml('provider: zai\nmodel: glm-5.3\ninput: [text, video]\n'),
+          ),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              allOf(contains('input'), contains('video')),
+            ),
+          ),
+        );
+      });
     });
   });
 }

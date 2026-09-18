@@ -71,4 +71,26 @@ void main() {
     );
     expect(io.out.toString(), contains('per-request cap reached'));
   });
+
+  test('the text-only image drop notice prints a visible line (issue #638)', () {
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: 'test-key',
+        env: env,
+        sessionRoot: '/sessions',
+        providerKind: 'openai-completions',
+      ),
+      io: io,
+    );
+    cli.wireRunNoticesForTesting();
+
+    textOnlyImageDropNotice?.call(2);
+
+    expect(io.out.toString(), contains('[images] 2 image(s) dropped'));
+    expect(
+      io.out.toString(),
+      contains('model declared text-only'),
+    );
+  });
 }

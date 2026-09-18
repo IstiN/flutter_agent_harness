@@ -420,6 +420,7 @@ Model buildCatalogModel(
   String? baseUrl,
   int? contextWindow,
   int? maxTokens,
+  List<String>? input,
 }) {
   final spec = catalogProvider(provider);
   if (spec == null) {
@@ -435,7 +436,7 @@ Model buildCatalogModel(
     provider: spec.name,
     baseUrl: baseUrl ?? spec.defaultBaseUrl,
     reasoning: spec.reasoning,
-    input: spec.input,
+    input: input ?? spec.input,
     contextWindow: contextWindow ?? spec.contextWindow,
     maxTokens:
         maxTokens ??
@@ -460,6 +461,7 @@ Model buildCliDefaultModel(
   String providerKind, {
   String? modelId,
   String? baseUrl,
+  List<String>? input,
 }) {
   final spec = switch (providerKind) {
     'aiin' => providerCatalog['aiin']!,
@@ -490,7 +492,7 @@ Model buildCliDefaultModel(
     provider: spec.name,
     baseUrl: baseUrl ?? spec.defaultBaseUrl,
     reasoning: spec.reasoning,
-    input: spec.input,
+    input: input ?? spec.input,
     contextWindow: spec.contextWindow,
     maxTokens: maxTokens,
   );

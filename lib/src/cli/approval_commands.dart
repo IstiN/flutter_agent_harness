@@ -1029,9 +1029,10 @@ extension ApprovalCommands on AgentCli {
     );
   }
 
-  /// The row budget: the live TUI width, or the classic 80-column default
-  /// for line mode/headless.
-  int get _rowWidth => _tuiController?.termWidth ?? 80;
+  /// The row budget: the live TUI width, or UNBOUNDED for
+  /// line-mode/headless — the log line carries the FULL command (issue
+  /// #638 AC3); only the real viewport clips.
+  int get _rowWidth => _tuiController?.termWidth ?? 0;
 
   /// Streaming deltas: answer text (with the once-per-message prefix) and —
   /// TUI only — dimmed thinking as the progress signal.
