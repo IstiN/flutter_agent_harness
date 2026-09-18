@@ -30,6 +30,7 @@ final class EnvProviderPreconfig {
     required this.modelId,
     required this.apiKeyEnvVar,
     required this.apiKey,
+    this.input,
   });
 
   /// The catalog spec [parseEnvProviderPreconfig] resolved the type
@@ -58,10 +59,15 @@ final class EnvProviderPreconfig {
   /// twin) wins over any stored key. Empty for legitimate keyless
   /// endpoints.
   final String apiKey;
+
+  /// Declared input modalities (`["text","image"]`) or null when the
+  /// config declares none — the catalog spec's modalities stand (issue
+  /// #638: an explicit declaration wins, silence keeps today's behavior).
+  final List<String>? input;
 }
 
 /// The supported `FA_PROVIDER_CONFIG` keys, in error-message order.
-const _supportedConfigKeys = ['baseUrl', 'model', 'apiKeyEnvVar'];
+const _supportedConfigKeys = ['baseUrl', 'model', 'apiKeyEnvVar', 'input'];
 
 /// The keys an env-declared provider MUST spell out — a missing one is a
 /// misconfiguration, never a silent catalog default.
@@ -108,7 +114,7 @@ EnvProviderPreconfig? parseEnvProviderPreconfig({
   }
   final config = _parseConfig(declared);
   for (final key in _requiredConfigKeys) {
-    if (!config.containsKey(key)) {
+    if (!config.values.containsKey(key)) {
       throw ConfigException(
         'FA_PROVIDER_CONFIG is missing "$key" — an env-declared provider '
         'gets no catalog defaults; required keys: '
@@ -133,7 +139,7 @@ EnvProviderPreconfig? parseEnvProviderPreconfig({
   // means a legitimate keyless boot — no probing of the spec's env names
   // (an unnamed key source is exactly the silent misconfiguration class
   // this parser exists to prevent).
-  final ref = config['apiKeyEnvVar'];
+  final ref = config.values['apiKeyEnvVar'];
   final String? keyVar;
   final String apiKey;
   if (ref == null) {
@@ -161,10 +167,11 @@ EnvProviderPreconfig? parseEnvProviderPreconfig({
   return EnvProviderPreconfig(
     spec: spec,
     name: name,
-    baseUrl: config['baseUrl']!,
-    modelId: config['model']!,
+    baseUrl: config.values['baseUrl']!,
+    modelId: config.values['model']!,
     apiKeyEnvVar: keyVar,
     apiKey: apiKey,
+    input: config.input,
   );
 }
 
@@ -207,9 +214,11 @@ String _decodeBase64(String name, String encoded) {
 }
 
 /// Decodes `FA_PROVIDER_CONFIG`: strict JSON-object parsing — only
-/// [_supportedConfigKeys] allowed, string values only, blanks treated as
-/// absent. The caller guarantees a non-empty declaration.
-Map<String, String> _parseConfig(String raw) {
+/// [_supportedConfigKeys] allowed; string values with blanks treated as
+/// absent, except `input`, a non-empty list of `"text"`/`"image"` (issue
+/// #638 — validated by the same named-error rules as the `models.custom`
+/// yaml field). The caller guarantees a non-empty declaration.
+({Map<String, String> values, List<String>? input}) _parseConfig(String raw) {
   final Object? decoded;
   try {
     decoded = jsonDecode(raw);
@@ -221,7 +230,8 @@ Map<String, String> _parseConfig(String raw) {
       'FA_PROVIDER_CONFIG must be a JSON object, got: $raw',
     );
   }
-  final config = <String, String>{};
+  final values = <String, String>{};
+  List<String>? input;
   for (final entry in decoded.entries) {
     // jsonDecode produces string keys for JSON objects.
     final key = entry.key as String;
@@ -231,15 +241,41 @@ Map<String, String> _parseConfig(String raw) {
         '${_supportedConfigKeys.join(', ')}',
       );
     }
+    if (key == 'input') {
+      input = _parseInputList(entry.value);
+      continue;
+    }
     final value = entry.value;
     if (value is! String) {
       throw ConfigException(
         'FA_PROVIDER_CONFIG key "$key" must be a string, got: $value',
       );
     }
-    if (value.trim().isNotEmpty) config[key] = value;
+    if (value.trim().isNotEmpty) values[key] = value;
   }
-  return config;
+  return (values: values, input: input);
+}
+
+/// The `input` modality list: a non-empty JSON array whose entries are
+/// exactly `"text"` or `"image"` — anything else fails loud naming the
+/// key and the offending entry.
+List<String> _parseInputList(Object? value) {
+  if (value is! List || value.isEmpty) {
+    throw ConfigException(
+      'FA_PROVIDER_CONFIG "input" must be a non-empty list of '
+      '"text"/"image", got: $value',
+    );
+  }
+  return [
+    for (final entry in value)
+      if (entry is String && (entry == 'text' || entry == 'image'))
+        entry
+      else
+        throw ConfigException(
+          'FA_PROVIDER_CONFIG "input" entries must be "text" or "image", '
+          'got: $entry',
+        ),
+  ];
 }
 
 /// The first name among [base], `[base]-2`, `[base]-3`, ... not in
