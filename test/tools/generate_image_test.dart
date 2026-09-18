@@ -380,5 +380,140 @@ void main() {
         );
       },
     );
+
+    test('uses the DIAL dialect for ai-proxy/dial endpoints', () async {
+      http.BaseRequest? seenPostRequest;
+      String? seenPostBody;
+      http.BaseRequest? seenGetRequest;
+
+      final dialClient = http_testing.MockClient((request) async {
+        if (request.method == 'POST') {
+          seenPostRequest = request;
+          seenPostBody = request.body;
+          return http.Response(
+            jsonEncode({
+              'choices': [
+                {
+                  'message': {
+                    'role': 'assistant',
+                    'content': '',
+                    'custom_content': {
+                      'attachments': [
+                        {
+                          'type': 'image/png',
+                          'url': 'files/test/img.png',
+                        },
+                      ],
+                    },
+                  },
+                },
+              ],
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        if (request.method == 'GET') {
+          seenGetRequest = request;
+          return http.Response.bytes(
+            Uint8List.fromList([10, 20, 30]),
+            200,
+            headers: {'content-type': 'image/png'},
+          );
+        }
+        return http.Response('not found', 404);
+      });
+
+      final tool = generateImageTool(
+        env: env,
+        modelsConfig: ModelsConfig(
+          slots: {
+            'imageGeneration': MediaSlotModelConfig(
+              providerKind: 'openai-completions',
+              baseUrl: 'https://ai-proxy.lab.epam.com',
+              modelId: 'gpt-image-2-2026-04-21',
+              apiKeyName: 'DIAL_API_KEY',
+            ),
+          },
+        ),
+        mainBaseUrl: () => 'https://ai-proxy.lab.epam.com',
+        mainModelId: () => 'main-model',
+        mainApiKey: () => 'main-key',
+        resolveKey: (name) async => name == 'DIAL_API_KEY' ? 'dial-key' : null,
+        httpClient: dialClient,
+      );
+
+      final result = await tool.execute({'prompt': 'a dragon'}, null, null);
+      final text = result.content
+          .whereType<TextContent>()
+          .map((b) => b.text)
+          .join();
+      expect(text, contains('saved image to generated/images_'));
+      final image = result.content.whereType<ImageContent>().single;
+      expect(base64Decode(image.data), [10, 20, 30]);
+
+      expect(seenPostRequest!.method, 'POST');
+      expect(
+        seenPostRequest!.url.toString(),
+        'https://ai-proxy.lab.epam.com/openai/deployments/gpt-image-2-2026-04-21/chat/completions',
+      );
+      expect(seenPostRequest!.headers['api-key'], 'dial-key');
+      expect(seenPostBody, contains('a dragon'));
+
+      expect(seenGetRequest!.method, 'GET');
+      expect(
+        seenGetRequest!.url.toString(),
+        'https://ai-proxy.lab.epam.com/v1/files/test/img.png',
+      );
+      expect(seenGetRequest!.headers['api-key'], 'dial-key');
+    });
+
+    test(
+      'slot override with matching host falls back to main key when apiKeyName is omitted',
+      () async {
+        http.BaseRequest? seenRequest;
+        final dialClient = http_testing.MockClient((request) async {
+          seenRequest = request;
+          return http.Response(
+            jsonEncode({
+              'choices': [
+                {
+                  'message': {
+                    'custom_content': {
+                      'attachments': [
+                        {'b64_json': base64Encode([1, 2])},
+                      ],
+                    },
+                  },
+                },
+              ],
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        });
+
+        final tool = generateImageTool(
+          env: env,
+          modelsConfig: ModelsConfig(
+            slots: {
+              'imageGeneration': MediaSlotModelConfig(
+                providerKind: 'openai-completions',
+                baseUrl: 'https://ai-proxy.lab.epam.com',
+                modelId: 'gpt-image-2-2026-04-21',
+              ),
+            },
+          ),
+          mainBaseUrl: () => 'https://ai-proxy.lab.epam.com',
+          mainModelId: () => 'claude-sonnet',
+          mainApiKey: () => 'dial-main-key',
+          httpClient: dialClient,
+        );
+
+        final result = await tool.execute({'prompt': 'a rose'}, null, null);
+        expect(result.content.whereType<ImageContent>(), isNotEmpty);
+        expect(seenRequest!.headers['api-key'], 'dial-main-key');
+      },
+    );
   });
 }
