@@ -71,6 +71,11 @@ Future<void> _bootAndQuit({
     // The first frame renders before the capability queries; the alt-screen
     // enter proves the boot reached the frame renderer.
     await waitForIt(() => frames.text.contains('\x1b[?1049h'));
+    // Force-on arms BSU via the model's synthetic DEC 2026 report (issue
+    // #613: the fork's option-time enable is unavailable to the published
+    // build, so arming lands on the live loop instead of the pre-loop first
+    // paint). Give the loop one turn so a framed frame exists before quit.
+    await Future<void>.delayed(const Duration(milliseconds: 100));
     keys.add([0x03]); // ctrl+c — the TUI's normal-mode quit key.
     await run;
   } finally {

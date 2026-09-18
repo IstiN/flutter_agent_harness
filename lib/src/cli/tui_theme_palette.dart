@@ -1,0 +1,271 @@
+// Vendored from the dart_tui fork (`vendor/dart_tui/lib/src/bubbles/themes.dart`,
+// issue #613): the fork extends the hosted `Theme` with fah's #444 roles
+// (accent2, userMessageBg, tool* — absent from hosted dart_tui), so the
+// published package cannot reference the fork-only fields. fah carries its
+// own palette type instead, renamed `TuiTheme` to avoid clashing with the
+// barrel's `Theme`. Byte-identical role data; keep in sync with the fork.
+import 'package:dart_tui/src/bubbles/style.dart' show Border, RgbColor, Style;
+
+/// A named collection of [Style] presets for common semantic roles.
+///
+/// Use the built-in themes ([catppuccin], [nord], [dracula]) or construct
+/// your own. Component `XxxStyles.defaults` are pre-wired with
+/// [catppuccin] colors so you get beautiful output out of the box — no
+/// configuration required.
+final class TuiTheme {
+  const TuiTheme({
+    required this.name,
+    required this.base,
+    required this.muted,
+    required this.accent,
+    required this.highlight,
+    required this.success,
+    required this.warning,
+    required this.error,
+    required this.border,
+    required this.focusBorder,
+    this.accent2 = const Style(),
+    this.accent2Soft = const Style(),
+    this.userMessageBg = const Style(),
+
+    /// Settled/closed row border (dark, quiet). Unset renders plain —
+    /// never a fallback color (issue #444 role table).
+    this.borderMuted = const Style(),
+
+    /// Tool-row label role (the tool name in `✓ bash · cmd`).
+    this.toolTitle = const Style(),
+
+    /// Tool-row detail/output role (command, path, question text).
+    this.toolOutput = const Style(),
+
+    /// Foreground of echoed user-message lines (readability floor:
+    /// ≥ 7:1 against [userMessageBg] in every built-in palette).
+    this.userMessageText = const Style(),
+
+    /// Successful tool row tint (subtle background).
+    this.toolSuccessBg = const Style(),
+
+    /// Failed tool row tint (subtle background).
+    this.toolErrorBg = const Style(),
+  });
+
+  final String name;
+
+  /// Normal body text.
+  final Style base;
+
+  /// Secondary / dimmed text.
+  final Style muted;
+
+  /// Active item, cursor, selection highlight foreground.
+  final Style accent;
+
+  /// Selected row / active tab background.
+  final Style highlight;
+
+  final Style success;
+  final Style warning;
+  final Style error;
+
+  /// Unfocused container border.
+  final Style border;
+
+  /// Focused container border (accent color).
+  final Style focusBorder;
+
+  /// Second accent (bold) — tool-call markers, sub-headers. Hosts whose
+  /// palette has no second accent leave it unset (renders plain).
+  final Style accent2;
+
+  /// The second accent without bold, for wide/dense spans.
+  final Style accent2Soft;
+
+  /// Background of echoed user message lines.
+  final Style userMessageBg;
+
+  /// Settled/closed row border (dark, quiet).
+  final Style borderMuted;
+
+  /// Tool-row label role (the tool name in `✓ bash · cmd`).
+  final Style toolTitle;
+
+  /// Tool-row detail/output role (command, path, question text).
+  final Style toolOutput;
+
+  /// Foreground of echoed user-message lines.
+  final Style userMessageText;
+
+  /// Successful tool row tint (subtle background).
+  final Style toolSuccessBg;
+
+  /// Failed tool row tint (subtle background).
+  final Style toolErrorBg;
+
+  // ── Built-in themes ──────────────────────────────────────────────────────
+
+  /// Catppuccin Mocha — dark, soft purples. This is the default theme used
+  /// by all component `*.defaults` style constants.
+  static const TuiTheme catppuccin = TuiTheme(
+    name: 'catppuccin',
+    base: Style(
+      foregroundRgb: RgbColor(205, 214, 244), // #CDD6F4 Text
+      backgroundRgb: RgbColor(30, 30, 46), // #1E1E2E Base
+    ),
+    muted: Style(
+      foregroundRgb: RgbColor(166, 173, 200), // #A6ADC8 Subtext0
+      isDim: true,
+    ),
+    accent: Style(
+      foregroundRgb: RgbColor(203, 166, 247), // #CBA6F7 Mauve
+      isBold: true,
+    ),
+    highlight: Style(
+      backgroundRgb: RgbColor(49, 50, 68), // #313244 Surface0
+    ),
+    success: Style(foregroundRgb: RgbColor(166, 227, 161)), // #A6E3A1 Green
+    warning: Style(foregroundRgb: RgbColor(249, 226, 175)), // #F9E2AF Yellow
+    error: Style(foregroundRgb: RgbColor(243, 139, 168)), // #F38BA8 Red
+    border: Style(
+      foregroundRgb: RgbColor(88, 91, 112), // #585B70 Surface2
+      border: Border.rounded,
+    ),
+    focusBorder: Style(
+      foregroundRgb: RgbColor(203, 166, 247), // #CBA6F7 Mauve
+      border: Border.rounded,
+    ),
+    accent2: Style(
+      foregroundRgb: RgbColor(137, 180, 250), // #89B4FA Blue
+      isBold: true,
+    ),
+    accent2Soft: Style(foregroundRgb: RgbColor(137, 180, 250)), // #89B4FA
+    userMessageBg: Style(
+      backgroundRgb: RgbColor(24, 24, 37), // #181825 Mantle
+    ),
+    borderMuted: Style(
+      foregroundRgb: RgbColor(88, 91, 112), // #585B70 Surface2
+      isDim: true,
+    ),
+    toolTitle: Style(
+      foregroundRgb: RgbColor(137, 180, 250), // #89B4FA Blue
+      isBold: true,
+    ),
+    toolOutput: Style(
+      foregroundRgb: RgbColor(166, 173, 200), // #A6ADC8 Subtext0
+      isDim: true,
+    ),
+    userMessageText: Style(foregroundRgb: RgbColor(205, 214, 244)), // Text
+    toolSuccessBg: Style(backgroundRgb: RgbColor(35, 48, 40)),
+    toolErrorBg: Style(backgroundRgb: RgbColor(58, 42, 48)),
+  );
+
+  /// Nord — cool arctic blues.
+  static const TuiTheme nord = TuiTheme(
+    name: 'nord',
+    base: Style(
+      foregroundRgb: RgbColor(236, 239, 244), // #ECEFF4 Nord6
+      backgroundRgb: RgbColor(46, 52, 64), // #2E3440 Nord0
+    ),
+    muted: Style(
+      foregroundRgb: RgbColor(76, 86, 106), // #4C566A Nord3
+      isDim: true,
+    ),
+    accent: Style(
+      foregroundRgb: RgbColor(136, 192, 208), // #88C0D0 Nord8 Frost
+      isBold: true,
+    ),
+    highlight: Style(
+      backgroundRgb: RgbColor(59, 66, 82), // #3B4252 Nord1
+    ),
+    success: Style(foregroundRgb: RgbColor(163, 190, 140)), // #A3BE8C Nord14
+    warning: Style(foregroundRgb: RgbColor(235, 203, 139)), // #EBCB8B Nord13
+    error: Style(foregroundRgb: RgbColor(191, 97, 106)), // #BF616A Nord11
+    border: Style(
+      foregroundRgb: RgbColor(76, 86, 106), // #4C566A Nord3
+      border: Border.box,
+    ),
+    focusBorder: Style(
+      foregroundRgb: RgbColor(136, 192, 208), // #88C0D0 Nord8
+      border: Border.box,
+    ),
+    accent2: Style(
+      foregroundRgb: RgbColor(129, 161, 193), // #81A1C1 Nord9
+      isBold: true,
+    ),
+    accent2Soft: Style(foregroundRgb: RgbColor(129, 161, 193)), // #81A1C1
+    userMessageBg: Style(
+      backgroundRgb: RgbColor(59, 66, 82), // #3B4252 Nord1
+    ),
+    borderMuted: Style(
+      foregroundRgb: RgbColor(76, 86, 106), // #4C566A Nord3
+      isDim: true,
+    ),
+    toolTitle: Style(
+      foregroundRgb: RgbColor(129, 161, 193), // #81A1C1 Nord9
+      isBold: true,
+    ),
+    toolOutput: Style(
+      foregroundRgb: RgbColor(76, 86, 106), // #4C566A Nord3
+      isDim: true,
+    ),
+    userMessageText: Style(foregroundRgb: RgbColor(236, 239, 244)), // Nord6
+    toolSuccessBg: Style(backgroundRgb: RgbColor(51, 61, 56)),
+    toolErrorBg: Style(backgroundRgb: RgbColor(67, 52, 58)),
+  );
+
+  /// Dracula — vivid purples and vibrant accents.
+  static const TuiTheme dracula = TuiTheme(
+    name: 'dracula',
+    base: Style(
+      foregroundRgb: RgbColor(248, 248, 242), // #F8F8F2 Foreground
+      backgroundRgb: RgbColor(40, 42, 54), // #282A36 Background
+    ),
+    muted: Style(
+      foregroundRgb: RgbColor(98, 114, 164), // #6272A4 Comment
+      isDim: true,
+    ),
+    accent: Style(
+      foregroundRgb: RgbColor(189, 147, 249), // #BD93F9 Purple
+      isBold: true,
+    ),
+    highlight: Style(
+      backgroundRgb: RgbColor(68, 71, 90), // #44475A Current Line
+    ),
+    success: Style(foregroundRgb: RgbColor(80, 250, 123)), // #50FA7B Green
+    warning: Style(foregroundRgb: RgbColor(255, 184, 108)), // #FFB86C Orange
+    error: Style(foregroundRgb: RgbColor(255, 85, 85)), // #FF5555 Red
+    border: Style(
+      foregroundRgb: RgbColor(98, 114, 164), // #6272A4 Comment
+      border: Border.rounded,
+    ),
+    focusBorder: Style(
+      foregroundRgb: RgbColor(189, 147, 249), // #BD93F9 Purple
+      border: Border.rounded,
+    ),
+    accent2: Style(
+      foregroundRgb: RgbColor(139, 233, 253), // #8BE9FD Cyan
+      isBold: true,
+    ),
+    accent2Soft: Style(foregroundRgb: RgbColor(139, 233, 253)), // #8BE9FD
+    userMessageBg: Style(
+      backgroundRgb: RgbColor(33, 34, 44), // #21222C
+    ),
+    borderMuted: Style(
+      foregroundRgb: RgbColor(98, 114, 164), // #6272A4 Comment
+      isDim: true,
+    ),
+    toolTitle: Style(
+      foregroundRgb: RgbColor(139, 233, 253), // #8BE9FD Cyan
+      isBold: true,
+    ),
+    toolOutput: Style(
+      foregroundRgb: RgbColor(98, 114, 164), // #6272A4 Comment
+      isDim: true,
+    ),
+    userMessageText: Style(foregroundRgb: RgbColor(248, 248, 242)), // F8F8F2
+    toolSuccessBg: Style(backgroundRgb: RgbColor(40, 56, 46)),
+    toolErrorBg: Style(backgroundRgb: RgbColor(62, 40, 48)),
+  );
+
+  /// Alias for [catppuccin] — the default theme applied to all component styles.
+  static const TuiTheme defaultTheme = catppuccin;
+}

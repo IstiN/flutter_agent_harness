@@ -19,7 +19,8 @@ library;
 
 import 'dart:io' as io;
 
-import 'package:dart_tui/style.dart' show ColorProfile, RgbColor, Style, Theme;
+import 'package:dart_tui/src/bubbles/style.dart' show RgbColor, Style;
+import 'package:dart_tui/src/msg.dart' show ColorProfile;
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/fa_tui.dart';
 import 'package:flutter_agent_harness/src/cli/tui_text_width.dart'
@@ -30,10 +31,10 @@ import 'package:test/test.dart';
 
 /// A theme where every role carries a UNIQUE sentinel color: any escape
 /// a renderer emits is then attributable to exactly one role.
-Theme _sentinel() {
+TuiTheme _sentinel() {
   var n = 0;
   RgbColor next() => RgbColor(10 + ++n * 7, 20 + n * 5, 30 + n * 3);
-  return Theme(
+  return TuiTheme(
     name: 'sentinel',
     base: Style(),
     muted: Style(foregroundRgb: next(), isDim: true),
@@ -57,7 +58,7 @@ Theme _sentinel() {
 }
 
 /// Every individual SGR escape the sentinel theme's roles can emit.
-Set<String> _roleEscapes(Theme t) {
+Set<String> _roleEscapes(TuiTheme t) {
   final escapes = <String>{'\x1b[0m'};
   for (final style in [
     t.base,
