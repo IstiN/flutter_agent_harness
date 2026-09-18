@@ -10,7 +10,8 @@
 /// — then OPEN every PNG (no tofu, no overflow) before committing.
 ///
 /// The five frames tell one continuous story — "your own apps, built by
-/// chat" (the first mobile agent harness):
+/// chat" (a mobile agent harness — banned-claim copy is gated by
+/// test/store_copy_compliance_test.dart, issue #643):
 ///  1. store_chat — THE ASK: the user asks Fa to build a personal weather
 ///     app with a dashboard widget; tool-call tiles write the manifest,
 ///     the app and the widget, then `open_app` opens it.
