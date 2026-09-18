@@ -3821,4 +3821,12 @@
 - fix(machine): wire the autocommit timer into all four runners (#634)
 - fix(machine): runner path overrides — factory-agents/ layout for fa (#631)
 
+## 0.1.418
+
+- --quiet (#641)
+- fix(633): Outlook add-in sends - bridge/hub relay chain + empty-model guard (#639)
+- fix(638): env-preconfig vision (input modalities end-to-end) + viewport-width command clipping (#642)
+- fix(632): confine cube bash - SBPL write/read rules, redirect-target checks, loud degradation (#636)
+- chore(factory): repin to c85468de — timer, excludes, flutter, 120-min timeout (#635)
+
 ## Unreleased
