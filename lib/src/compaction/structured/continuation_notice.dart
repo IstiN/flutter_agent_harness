@@ -30,7 +30,11 @@ String hiddenRecoverablesSummary(
     if (nums.isEmpty) continue;
     final counts = <String, int>{};
     for (final id in hidden.recordIds) {
-      final record = seqs.recordAt(seqs.seqOf(id)!);
+      // Issue #673: after a windowed resume an id may have slid out of the
+      // resident set — no seq. Skip it; the raw `!` here killed the whole
+      // continuation with "Null check operator used on a null value".
+      final seq = seqs.seqOf(id);
+      final record = seq == null ? null : seqs.recordAt(seq);
       if (record == null) continue;
       final kind = markerKindFor(record);
       counts[kind] = (counts[kind] ?? 0) + 1;
