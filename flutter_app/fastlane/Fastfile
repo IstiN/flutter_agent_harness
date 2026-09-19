@@ -768,9 +768,9 @@ platform :android do
   lane :build_release do
     sh("flutter", "pub", "get")
     if ENV["BUILD_NUMBER"]
-      sh("flutter", "build", "appbundle", "--release", "--build-number=#{ENV['BUILD_NUMBER']}")
+      sh("flutter", "build", "appbundle", "--release", "--flavor", "store", "--build-number=#{ENV['BUILD_NUMBER']}")
     else
-      sh("flutter", "build", "appbundle", "--release")
+      sh("flutter", "build", "appbundle", "--release", "--flavor", "store")
     end
     aab = PlayUploadPreflight.default_aab_path(File.expand_path("..", __dir__))
     UI.user_error!("AAB not found at #{aab} after the build") unless File.exist?(aab)
