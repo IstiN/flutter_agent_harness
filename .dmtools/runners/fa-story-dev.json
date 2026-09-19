@@ -7,7 +7,7 @@
       "DEFAULT_TRACKER": "github",
       "AI_AGENT_PROVIDER": "fa",
       "FA_PROVIDER_TYPE": "zai",
-      "FA_PROVIDER_CONFIG": "{\"baseUrl\":\"https://api.z.ai/api/coding/paas/v4\",\"model\":\"glm-5.3-flash\",\"apiKeyEnvVar\":\"ZAI_CODE_KEY\"}"
+      "FA_PROVIDER_CONFIG": "{\"baseUrl\":\"https://api.z.ai/api/coding/paas/v4\",\"model\":\"glm-5.3-flash\",\"apiKeyEnvVar\":\"ZAI_CODE_KEY\",\"input\":[\"text\",\"image\"]}"
     },
     "inputJql": "",
     "cliPromptsByTracker": {
