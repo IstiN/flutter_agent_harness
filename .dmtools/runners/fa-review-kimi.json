@@ -6,8 +6,8 @@
     "envVariables": {
       "AI_AGENT_PROVIDER": "fa",
       "FA_PROVIDER_TYPE": "openai-completions",
-      "FA_PROVIDER_CONFIG": "{\"baseUrl\":\"https://api.kimi.com/coding/v1\",\"model\":\"k3\",\"apiKeyEnvVar\":\"KIMI_REVIEW_KEY\"}",
-      "FA_PROVIDERS_QUEUE": "[{\"provider_type\":\"openai-completions\",\"provider_config\":{\"baseUrl\":\"https://api.kimi.com/coding/v1\",\"model\":\"k3\",\"apiKeyEnv\":\"KIMI_REVIEW_KEY\"}},{\"provider_type\":\"zai\",\"provider_config\":{\"baseUrl\":\"https://api.z.ai/api/coding/paas/v4\",\"model\":\"glm-5.3\",\"apiKeyEnv\":\"ZAI_CODE_KEY\"}}]"
+      "FA_PROVIDER_CONFIG": "{\"baseUrl\":\"https://api.kimi.com/coding/v1\",\"model\":\"k3\",\"apiKeyEnvVar\":\"KIMI_REVIEW_KEY\",\"input\":[\"text\",\"image\"]}",
+      "FA_PROVIDERS_QUEUE": "[{\"provider_type\":\"openai-completions\",\"provider_config\":{\"baseUrl\":\"https://api.kimi.com/coding/v1\",\"model\":\"k3\",\"apiKeyEnv\":\"KIMI_REVIEW_KEY\",\"input\":[\"text\",\"image\"]}},{\"provider_type\":\"zai\",\"provider_config\":{\"baseUrl\":\"https://api.z.ai/api/coding/paas/v4\",\"model\":\"glm-5.3\",\"apiKeyEnv\":\"ZAI_CODE_KEY\",\"input\":[\"text\",\"image\"]}}]"
     },
     "inputJql": "",
     "customParams": {
