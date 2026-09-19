@@ -194,8 +194,8 @@ extension _TuiRowRenderers on FaTuiModel {
     final label = runStalled
         ? 'Stalled…'
         : (prompt != null
-            ? 'Waiting for input…'
-            : (busyPhase.isEmpty ? 'Working…' : busyPhase));
+              ? 'Waiting for input…'
+              : (busyPhase.isEmpty ? 'Working…' : busyPhase));
     final quietSeconds = busyLastEventMs < 0
         ? 0
         : ((DateTime.now().millisecondsSinceEpoch - busyLastEventMs) / 1000)

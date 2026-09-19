@@ -71,7 +71,10 @@ void main() {
       expect(tuiUserMessageBgSgr(), '');
       // Blocks stay (layout), color goes.
       expect(themeSwatchRow(kBuiltInTuiThemes['pi']!), contains('█'));
-      expect(themeSwatchRow(kBuiltInTuiThemes['pi']!), isNot(contains('\x1b[')));
+      expect(
+        themeSwatchRow(kBuiltInTuiThemes['pi']!),
+        isNot(contains('\x1b[')),
+      );
     });
 
     test('detectThemeProfile honors NO_COLOR, dumb terms and COLORTERM', () {
@@ -81,10 +84,7 @@ void main() {
         reason: 'pipes never get styling',
       );
       expect(
-        detectThemeProfile(
-          ansiSupported: true,
-          environment: {'NO_COLOR': '1'},
-        ),
+        detectThemeProfile(ansiSupported: true, environment: {'NO_COLOR': '1'}),
         isNull,
       );
       expect(
@@ -185,8 +185,11 @@ void main() {
         'focusBorder' => theme.focusBorder,
         _ => throw StateError(role),
       };
-      expect(style.foregroundRgb ?? style.backgroundRgb, color,
-          reason: '${theme.name}.$role');
+      expect(
+        style.foregroundRgb ?? style.backgroundRgb,
+        color,
+        reason: '${theme.name}.$role',
+      );
       expect(style.isBold ?? false, bold, reason: '${theme.name}.$role bold');
       expect(style.isDim ?? false, dim, reason: '${theme.name}.$role dim');
     }
@@ -198,7 +201,12 @@ void main() {
       // toolOutput are lightened from #5f6673 — their ported values fail
       // the contrast floors on a dark terminal and on the tints.
       expectRole(theme, 'accent', const RgbColor(0xfe, 0xbc, 0x38), bold: true);
-      expectRole(theme, 'accent2', const RgbColor(0xb2, 0x81, 0xd6), bold: true);
+      expectRole(
+        theme,
+        'accent2',
+        const RgbColor(0xb2, 0x81, 0xd6),
+        bold: true,
+      );
       expectRole(theme, 'muted', const RgbColor(0x86, 0x8d, 0x99), dim: true);
       expectRole(theme, 'highlight', const RgbColor(0x31, 0x36, 0x3f));
       expectRole(theme, 'success', const RgbColor(0x89, 0xd2, 0x81));
@@ -220,7 +228,12 @@ void main() {
     test('pi matches the extracted interactive-mode dark palette', () {
       final theme = kBuiltInTuiThemes['pi']!;
       expectRole(theme, 'accent', const RgbColor(0x8a, 0xbe, 0xb7), bold: true);
-      expectRole(theme, 'accent2', const RgbColor(0x95, 0x75, 0xcd), bold: true);
+      expectRole(
+        theme,
+        'accent2',
+        const RgbColor(0x95, 0x75, 0xcd),
+        bold: true,
+      );
       expectRole(theme, 'error', const RgbColor(0xcc, 0x66, 0x66));
       expectRole(theme, 'userMessageBg', const RgbColor(0x34, 0x35, 0x41));
     });
@@ -255,22 +268,31 @@ void main() {
       // muted: warning/success/focusBorder keep their colors, border keeps
       // its dim flag, and the background roles keep the default surfaces
       // (E3: a partial theme overrides only what it names).
-      expect(theme.warning.foregroundRgb, kDefaultTuiTheme.warning.foregroundRgb);
-      expect(theme.success.foregroundRgb, kDefaultTuiTheme.success.foregroundRgb);
-      expect(theme.focusBorder.foregroundRgb, kDefaultTuiTheme.focusBorder.foregroundRgb);
+      expect(
+        theme.warning.foregroundRgb,
+        kDefaultTuiTheme.warning.foregroundRgb,
+      );
+      expect(
+        theme.success.foregroundRgb,
+        kDefaultTuiTheme.success.foregroundRgb,
+      );
+      expect(
+        theme.focusBorder.foregroundRgb,
+        kDefaultTuiTheme.focusBorder.foregroundRgb,
+      );
       expect(theme.border.isDim ?? false, isTrue);
       expect(
         theme.userMessageBg.backgroundRgb,
         kDefaultTuiTheme.userMessageBg.backgroundRgb,
       );
-      expect(theme.highlight.backgroundRgb, kDefaultTuiTheme.highlight.backgroundRgb);
+      expect(
+        theme.highlight.backgroundRgb,
+        kDefaultTuiTheme.highlight.backgroundRgb,
+      );
       // The named accent2 keeps its default bold; the soft variant
       // follows the same color with bold off.
       expect(theme.accent2.isBold ?? false, isTrue);
-      expect(
-        theme.accent2.foregroundRgb,
-        theme.accent2Soft.foregroundRgb,
-      );
+      expect(theme.accent2.foregroundRgb, theme.accent2Soft.foregroundRgb);
     });
 
     test('a fully-specified theme overrides every role it names', () {
@@ -329,8 +351,8 @@ void main() {
         (path) => path.endsWith('bad.json')
             ? '{"roles": {"accent": "nope"}}'
             : path.endsWith('catppuccin.json')
-                ? '{"roles": {"accent": "#000000"}}'
-                : warm,
+            ? '{"roles": {"accent": "#000000"}}'
+            : warm,
       );
       expect(loaded.themes.keys, const ['warm']);
       expect(
@@ -372,10 +394,7 @@ void main() {
 
     test('themeTableLines lists user themes with the source mark', () {
       FaThemeController.instance.addUserThemes({
-        'moss': parseUserTheme(
-          '{"roles": {"accent": "#00ff88"}}',
-          'moss',
-        ),
+        'moss': parseUserTheme('{"roles": {"accent": "#00ff88"}}', 'moss'),
       });
       final lines = themeTableLines();
       expect(lines.length, kBuiltInTuiThemes.length + 1);
@@ -444,10 +463,7 @@ void main() {
       for (final entry in kBuiltInTuiThemes.entries) {
         final t = entry.value;
         expect(
-          themeColorContrast(
-            fgOf(t.toolTitle)!,
-            bgOf(t.toolErrorBg)!,
-          ),
+          themeColorContrast(fgOf(t.toolTitle)!, bgOf(t.toolErrorBg)!),
           greaterThanOrEqualTo(kThemeSecondaryTextFloor),
           reason: '${entry.key}: toolTitle on toolErrorBg',
         );
@@ -507,8 +523,8 @@ void main() {
           ),
           ToolRowState.failed,
         );
-        final fg = FaThemeController.instance.current.userMessageText
-            .foregroundRgb;
+        final fg =
+            FaThemeController.instance.current.userMessageText.foregroundRgb;
         expect(
           fg,
           isNotNull,
@@ -523,11 +539,10 @@ void main() {
               'screenshot: ohmypi-light toolErrorBg band)',
         );
         expect(
-          themeColorContrast(fg!, FaThemeController
-                  .instance
-                  .current
-                  .toolErrorBg
-                  .backgroundRgb!),
+          themeColorContrast(
+            fg!,
+            FaThemeController.instance.current.toolErrorBg.backgroundRgb!,
+          ),
           greaterThanOrEqualTo(kThemeBodyTextFloor),
           reason: '$name: failed-row text on toolErrorBg',
         );
@@ -602,7 +617,10 @@ void main() {
       expect(themeLuminance(const RgbColor(0, 0, 0)), closeTo(0, 1e-9));
       expect(themeLuminance(const RgbColor(255, 255, 255)), closeTo(1, 1e-9));
       expect(
-        themeColorContrast(const RgbColor(0, 0, 0), const RgbColor(255, 255, 255)),
+        themeColorContrast(
+          const RgbColor(0, 0, 0),
+          const RgbColor(255, 255, 255),
+        ),
         closeTo(21, 0.01),
       );
       // #767676 on white is the canonical 4.54:1 AA boundary pair.
@@ -656,7 +674,9 @@ void main() {
 
   group('theme goldens (AC6)', () {
     // Regenerate with: FA_UPDATE_THEME_GOLDENS=1 dart test test/cli/tui_theme_test.dart
-    final update = io.Platform.environment.containsKey('FA_UPDATE_THEME_GOLDENS');
+    final update = io.Platform.environment.containsKey(
+      'FA_UPDATE_THEME_GOLDENS',
+    );
     const themes = [
       'default',
       'catppuccin',
@@ -679,11 +699,7 @@ void main() {
         'fa deploy --verify',
         '```',
       ]);
-      LaidOutToolRow row(
-        String glyph,
-        String detail, {
-        String elapsed = '',
-      }) =>
+      LaidOutToolRow row(String glyph, String detail, {String elapsed = ''}) =>
           layoutToolRow(
             ToolRowSegments(
               glyph: glyph,

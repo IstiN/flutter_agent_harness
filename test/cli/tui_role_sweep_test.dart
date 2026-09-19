@@ -395,7 +395,7 @@ void main() {
       for (final entry in {...kBuiltInTuiThemes}.entries) {
         expect(
           themeUserMessageContrast(entry.value),
-          greaterThanOrEqualTo(7),
+          greaterThanOrEqualTo(kThemeUserMessageFloor),
           reason:
               '${entry.key}: userMessageText must stay readable on '
               'userMessageBg (issue #444 defect 4)',

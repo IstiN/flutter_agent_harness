@@ -28,8 +28,127 @@ import 'pty_harness.dart';
 void main() {
   group('theme readability scenarios (gh-671)', () {
     for (final theme in const ['dracula', 'nord', 'ohmypi-light']) {
-      test('$theme: success + failure rows keep explicit fg over tints',
-          () async {
+      test(
+        '$theme: success + failure rows keep explicit fg over tints',
+        () async {
+          final mock = _ScriptedMockServer();
+          await mock.start();
+          addTearDown(mock.close);
+          final tempHome = _tempHomeForMock(mock.port);
+          final harness = await FaCliHarness.spawn(
+            extraEnv: {'HOME': tempHome.path, 'OPENAI_API_KEY': 'test-key'},
+          );
+          addTearDown(() async {
+            await harness.close();
+            tempHome.deleteSync(recursive: true);
+          });
+          await harness.waitForBoot();
+
+          // Scenario 1: mid-session theme switch (E1 — the switch repaints
+          // the live session; every LATER row uses the new palette).
+          await harness.runSlashCommand('/theme $theme');
+          await harness.waitForText(
+            'theme: $theme',
+            timeout: const Duration(seconds: 15),
+          );
+
+          // Scenario 2+3: one turn, two tool calls — the first succeeds, the
+          // second fails (exit 7) — then the closing text answer.
+          harness.sendText('run the theme scenarios');
+          harness.sendEnter();
+          await harness.waitForText(
+            'scenario-complete',
+            timeout: const Duration(seconds: 60),
+          );
+
+          final raw = harness.rawOutput;
+          final t = kBuiltInTuiThemes[theme]!;
+          String bg(Style style) {
+            final c = style.backgroundRgb!;
+            return '48;2;${c.r};${c.g};${c.b}';
+          }
+
+          // The tool rows really painted both tints in this palette.
+          expect(
+            raw,
+            contains(bg(t.toolSuccessBg)),
+            reason: '$theme: the done row must tint with toolSuccessBg',
+          );
+          expect(
+            raw,
+            contains(bg(t.toolErrorBg)),
+            reason: '$theme: the failed row must tint with toolErrorBg',
+          );
+
+          // THE accessibility contract: no run of visible text painted over
+          // a theme tint may render without an explicit fg escape active.
+          // The vendor emits fg BEFORE bg inside one SGR prefix run and SGR
+          // state persists across cursor moves, so this is a small state
+          // machine over the raw stream, not a line regex. A run whose
+          // content is only █ blocks / spaces is the theme-table swatch (a
+          // color sample, not text) and is allowed.
+          void assertNoUnstyledRun(Style tint, String role) {
+            final c = tint.backgroundRgb!;
+            final bg = '\x1b[48;2;${c.r};${c.g};${c.b}m';
+            final escape = RegExp(r'\x1b\[[0-9;]*m|\x1b\[[0-9;?]*[A-Za-z]');
+            var hasBg = false;
+            var hasFg = false;
+            final plain = StringBuffer();
+            void flush() {
+              final text = plain.toString();
+              plain.clear();
+              if (!hasBg || hasFg) return;
+              final readable = text
+                  .replaceAll('█', '')
+                  .replaceAll(RegExp(r'\s'), '');
+              if (readable.isEmpty) return;
+              fail(
+                '$theme: $role-tinted run "$text" renders in the terminal '
+                'default fg — invisible on light tints (gh-671 screenshot)',
+              );
+            }
+
+            var pos = 0;
+            for (final m in escape.allMatches(raw)) {
+              plain.write(raw.substring(pos, m.start));
+              pos = m.end;
+              final seq = m[0]!;
+              if (seq == bg) {
+                flush();
+                hasBg = true;
+              } else if (seq.startsWith('\x1b[38;2;') ||
+                  seq.startsWith('\x1b[38;5;')) {
+                flush();
+                hasFg = true;
+              } else if (seq == '\x1b[0m') {
+                flush();
+                hasBg = false;
+                hasFg = false;
+              } else {
+                flush();
+              }
+            }
+            plain.write(raw.substring(pos));
+            flush();
+          }
+
+          assertNoUnstyledRun(t.toolSuccessBg, 'toolSuccessBg');
+          assertNoUnstyledRun(t.toolErrorBg, 'toolErrorBg');
+
+          // The scripted turn really produced both row states: the mock's
+          // third request carries the failure result text.
+          expect(
+            mock.bodies[2],
+            contains('THEME-SCENARIO-FAIL'),
+            reason: 'the failing bash call must have run before the answer',
+          );
+        },
+      );
+    }
+
+    test(
+      'bare /theme opens the picker with the current theme marked',
+      () async {
         final mock = _ScriptedMockServer();
         await mock.start();
         addTearDown(mock.close);
@@ -43,152 +162,37 @@ void main() {
         });
         await harness.waitForBoot();
 
-        // Scenario 1: mid-session theme switch (E1 — the switch repaints
-        // the live session; every LATER row uses the new palette).
-        await harness.runSlashCommand('/theme $theme');
-        await harness.waitForText(
-          'theme: $theme',
+        await harness.runSlashCommand('/theme');
+        await harness.waitForScreen(
+          'Select theme',
           timeout: const Duration(seconds: 15),
         );
-
-        // Scenario 2+3: one turn, two tool calls — the first succeeds, the
-        // second fails (exit 7) — then the closing text answer.
-        harness.sendText('run the theme scenarios');
-        harness.sendEnter();
-        await harness.waitForText(
-          'scenario-complete',
-          timeout: const Duration(seconds: 60),
-        );
-
-        final raw = harness.rawOutput;
-        final t = kBuiltInTuiThemes[theme]!;
-        String bg(Style style) {
-          final c = style.backgroundRgb!;
-          return '48;2;${c.r};${c.g};${c.b}';
-        }
-
-        // The tool rows really painted both tints in this palette.
+        final screen = harness.screenText;
+        // gh-671: the current theme must be VISIBLE as text — the old picker
+        // replaced the current row's swatch with a dim '(current)' string.
+        expect(screen, contains('✓ current'));
+        // Every row still shows its swatch preview.
+        expect(screen, contains('█'));
+        // The picker preselects the current theme (cursor on `default`).
         expect(
-          raw,
-          contains(bg(t.toolSuccessBg)),
-          reason: '$theme: the done row must tint with toolSuccessBg',
+          RegExp(r'▸\s*default').hasMatch(screen),
+          isTrue,
+          reason: 'the picker must open with the cursor on the current theme',
         );
+
+        // Esc dismisses without switching; nothing confirms a switch.
+        harness.sendEscape();
+        await harness.waitForOutput(settleMs: 300);
         expect(
-          raw,
-          contains(bg(t.toolErrorBg)),
-          reason: '$theme: the failed row must tint with toolErrorBg',
+          harness.rawOutput.contains('theme: '),
+          isFalse,
+          reason: 'Esc must close the picker without switching the theme',
         );
 
-        // THE accessibility contract: no run of visible text painted over
-        // a theme tint may render without an explicit fg escape active.
-        // The vendor emits fg BEFORE bg inside one SGR prefix run and SGR
-        // state persists across cursor moves, so this is a small state
-        // machine over the raw stream, not a line regex. A run whose
-        // content is only █ blocks / spaces is the theme-table swatch (a
-        // color sample, not text) and is allowed.
-        void assertNoUnstyledRun(Style tint, String role) {
-          final c = tint.backgroundRgb!;
-          final bg = '\x1b[48;2;${c.r};${c.g};${c.b}m';
-          final escape = RegExp(r'\x1b\[[0-9;]*m|\x1b\[[0-9;?]*[A-Za-z]');
-          var hasBg = false;
-          var hasFg = false;
-          final plain = StringBuffer();
-          void flush() {
-            final text = plain.toString();
-            plain.clear();
-            if (!hasBg || hasFg) return;
-            final readable = text
-                .replaceAll('█', '')
-                .replaceAll(RegExp(r'\s'), '');
-            if (readable.isEmpty) return;
-            fail(
-              '$theme: $role-tinted run "$text" renders in the terminal '
-              'default fg — invisible on light tints (gh-671 screenshot)',
-            );
-          }
-
-          var pos = 0;
-          for (final m in escape.allMatches(raw)) {
-            plain.write(raw.substring(pos, m.start));
-            pos = m.end;
-            final seq = m[0]!;
-            if (seq == bg) {
-              flush();
-              hasBg = true;
-            } else if (seq.startsWith('\x1b[38;2;') ||
-                seq.startsWith('\x1b[38;5;')) {
-              flush();
-              hasFg = true;
-            } else if (seq == '\x1b[0m') {
-              flush();
-              hasBg = false;
-              hasFg = false;
-            } else {
-              flush();
-            }
-          }
-          plain.write(raw.substring(pos));
-          flush();
-        }
-
-        assertNoUnstyledRun(t.toolSuccessBg, 'toolSuccessBg');
-        assertNoUnstyledRun(t.toolErrorBg, 'toolErrorBg');
-
-        // The scripted turn really produced both row states: the mock's
-        // third request carries the failure result text.
-        expect(
-          mock.bodies[2],
-          contains('THEME-SCENARIO-FAIL'),
-          reason: 'the failing bash call must have run before the answer',
-        );
-      });
-    }
-
-    test('bare /theme opens the picker with the current theme marked',
-        () async {
-      final mock = _ScriptedMockServer();
-      await mock.start();
-      addTearDown(mock.close);
-      final tempHome = _tempHomeForMock(mock.port);
-      final harness = await FaCliHarness.spawn(
-        extraEnv: {'HOME': tempHome.path, 'OPENAI_API_KEY': 'test-key'},
-      );
-      addTearDown(() async {
-        await harness.close();
-        tempHome.deleteSync(recursive: true);
-      });
-      await harness.waitForBoot();
-
-      await harness.runSlashCommand('/theme');
-      await harness.waitForScreen(
-        'Select theme',
-        timeout: const Duration(seconds: 15),
-      );
-      final screen = harness.screenText;
-      // gh-671: the current theme must be VISIBLE as text — the old picker
-      // replaced the current row's swatch with a dim '(current)' string.
-      expect(screen, contains('✓ current'));
-      // Every row still shows its swatch preview.
-      expect(screen, contains('█'));
-      // The picker preselects the current theme (cursor on `default`).
-      expect(
-        RegExp(r'▸\s*default').hasMatch(screen),
-        isTrue,
-        reason: 'the picker must open with the cursor on the current theme',
-      );
-
-      // Esc dismisses without switching; nothing confirms a switch.
-      harness.sendEscape();
-      await harness.waitForOutput(settleMs: 300);
-      expect(
-        harness.rawOutput.contains('theme: '),
-        isFalse,
-        reason: 'Esc must close the picker without switching the theme',
-      );
-
-      await harness.runSlashCommand('/exit');
-      await harness.waitForOutput();
-    });
+        await harness.runSlashCommand('/exit');
+        await harness.waitForOutput();
+      },
+    );
   });
 }
 
@@ -245,10 +249,7 @@ final class _ScriptedMockServer {
       );
       final List<String> chunks;
       if (n == 0) {
-        chunks = _toolCallChunks(
-          'call_ok',
-          'echo THEME-SCENARIO-OK',
-        );
+        chunks = _toolCallChunks('call_ok', 'echo THEME-SCENARIO-OK');
       } else if (n == 1) {
         chunks = _toolCallChunks(
           'call_fail',
@@ -301,7 +302,9 @@ final class _ScriptedMockServer {
             'tool_calls': [
               {
                 'index': 0,
-                'function': {'arguments': jsonEncode({'command': command})},
+                'function': {
+                  'arguments': jsonEncode({'command': command}),
+                },
               },
             ],
           },
@@ -323,10 +326,7 @@ final class _ScriptedMockServer {
       'choices': [
         {
           'index': 0,
-          'delta': {
-            'role': 'assistant',
-            'content': 'scenario-complete',
-          },
+          'delta': {'role': 'assistant', 'content': 'scenario-complete'},
           'finish_reason': null,
         },
       ],

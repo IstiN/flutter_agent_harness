@@ -48,7 +48,7 @@ extension ThemeCommands on AgentCli {
     if (!controller.switchTo(name)) {
       io.writeln(
         'unknown theme: $name — available: '
-            '${controller.available().keys.join(', ')}',
+        '${controller.available().keys.join(', ')}',
       );
       return;
     }
@@ -61,8 +61,8 @@ extension ThemeCommands on AgentCli {
         ).set('tui.theme', controller.currentName);
         io.writeln(
           'theme: ${controller.currentName} '
-              '${themeSwatchRow(controller.current)}'
-              ' — saved to ${result.file} (tui.theme)',
+          '${themeSwatchRow(controller.current)}'
+          ' — saved to ${result.file} (tui.theme)',
         );
       } on ConfigException catch (error) {
         io.writeln('theme switched, but saving tui.theme failed: $error');
@@ -70,7 +70,7 @@ extension ThemeCommands on AgentCli {
     } else {
       io.writeln(
         'theme: ${controller.currentName} '
-            '${themeSwatchRow(controller.current)}',
+        '${themeSwatchRow(controller.current)}',
       );
     }
   }
@@ -90,7 +90,7 @@ extension ThemeCommands on AgentCli {
     if (!FaThemeController.instance.switchTo(persisted)) {
       io.writeln(
         'config tui.theme: unknown theme "$persisted" — using default '
-            '(available: ${FaThemeController.instance.available().keys.join(', ')})',
+        '(available: ${FaThemeController.instance.available().keys.join(', ')})',
       );
     }
   }
@@ -104,11 +104,12 @@ extension ThemeCommands on AgentCli {
     if (home == null || home.isEmpty) return;
     final dir = '$home/.fah/themes';
     final listed = await _env.listDir(dir);
-    final names = (listed.valueOrNull ?? const [])
-        .map((entry) => entry.name)
-        .where((name) => name.endsWith('.json'))
-        .toList()
-      ..sort();
+    final names =
+        (listed.valueOrNull ?? const [])
+            .map((entry) => entry.name)
+            .where((name) => name.endsWith('.json'))
+            .toList()
+          ..sort();
     // Pre-read through the FileSystem seam (web-safe); unreadable files
     // drop out here instead of parsing as garbage.
     final readable = <String, String>{};

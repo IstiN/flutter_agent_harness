@@ -379,7 +379,8 @@ Style? _defaultRoleStyle(String role) => switch (role) {
 ) {
   final themes = <String, TuiTheme>{};
   final errors = <String>[];
-  if (homeDir == null || homeDir.isEmpty) return (themes: themes, errors: errors);
+  if (homeDir == null || homeDir.isEmpty)
+    return (themes: themes, errors: errors);
   final dir = '$homeDir/.fah/themes';
   for (final path in listJsonFiles(dir)) {
     final name = path.split('/').last.replaceAll(RegExp(r'\.json$'), '');
@@ -447,7 +448,8 @@ final class FaThemeController {
   Map<String, TuiTheme> available() => {...kBuiltInTuiThemes, ..._userThemes};
 
   /// Installs user themes (boot-time; see [loadUserThemes]).
-  void addUserThemes(Map<String, TuiTheme> themes) => _userThemes.addAll(themes);
+  void addUserThemes(Map<String, TuiTheme> themes) =>
+      _userThemes.addAll(themes);
 
   /// Applies [name] if known; returns whether it resolved. Does not
   /// persist (that is `/theme`'s job).
@@ -691,6 +693,7 @@ List<String> themeTableLines({String? current}) {
           '${kBuiltInTuiThemes.containsKey(entry.key) ? '' : '  (user)'}',
   ];
 }
+
 /// The `/theme` picker rows (gh-671): EVERY theme shows its live swatch
 /// preview, and the session-current theme adds a `✓ current` marker in
 /// the success role — readable text, never a color-only cue. The old

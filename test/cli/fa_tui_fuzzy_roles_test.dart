@@ -52,8 +52,9 @@ void main() {
       'cell of the selected row wears the base role — none unstyled', () {
     var m = build();
     for (final ch in '/co'.split('')) {
-      m = m.update(KeyPressMsg(TeaKey(code: KeyCode.rune, text: ch))).$1
-          as FaTuiModel;
+      m =
+          m.update(KeyPressMsg(TeaKey(code: KeyCode.rune, text: ch))).$1
+              as FaTuiModel;
     }
     final rows = m.view().content.split('\n');
     final selected = rows.firstWhere(
@@ -87,15 +88,24 @@ void main() {
       final nonSpace = RegExp(r'\S').firstMatch(masked);
       if (nonSpace == null) continue;
       final open = seg.indexOf('\x1b[');
-      expect(open, isNonNegative,
-          reason: 'unstyled run "${masked.trim()}" — no role before it');
-      expect(open, lessThan(nonSpace.start),
-          reason: 'run "${masked.trim()}" renders unstyled');
+      expect(
+        open,
+        isNonNegative,
+        reason: 'unstyled run "${masked.trim()}" — no role before it',
+      );
+      expect(
+        open,
+        lessThan(nonSpace.start),
+        reason: 'run "${masked.trim()}" renders unstyled',
+      );
     }
 
     // And the base role IS the selection accent (not merely "any" style).
-    expect(selected.contains(accentOpen), isTrue,
-        reason: 'unmatched cells must wear the selection accent');
+    expect(
+      selected.contains(accentOpen),
+      isTrue,
+      reason: 'unmatched cells must wear the selection accent',
+    );
   });
 
   test('gh-671: a PLAIN selected label wears the accent too (generic '
@@ -111,29 +121,43 @@ void main() {
     });
     controller.switchTo('moss');
     var m = build();
-    m = m.update(OpenPickerMsg('theme', 'Select theme', const [
-      MenuItem(key: 'moss', label: 'moss', description: '███'),
-      MenuItem(key: 'pi', label: 'pi', description: '███'),
-    ])).$1 as FaTuiModel;
+    m =
+        m
+                .update(
+                  OpenPickerMsg('theme', 'Select theme', const [
+                    MenuItem(key: 'moss', label: 'moss', description: '███'),
+                    MenuItem(key: 'pi', label: 'pi', description: '███'),
+                  ]),
+                )
+                .$1
+            as FaTuiModel;
     final rows = m.view().content.split('\n');
     final selected = rows.firstWhere(
       (r) => r.replaceAll(_sgr, '').contains('▸'),
       orElse: () => fail('no selected menu row in the frame'),
     );
     final mossOpen = controller.sgrPrefix(controller.current.accent);
-    expect(selected, contains(mossOpen),
-        reason: 'the selected plain label must wear the selection accent');
+    expect(
+      selected,
+      contains(mossOpen),
+      reason: 'the selected plain label must wear the selection accent',
+    );
     // Every visible run still opens a role — none unstyled (AC2 rule).
     for (final seg in selected.split(reset)) {
       final masked = seg.replaceAllMapped(_sgr, (m) => ' ' * m[0]!.length);
       final nonSpace = RegExp(r'\S').firstMatch(masked);
       if (nonSpace == null) continue;
       final open = seg.indexOf('\x1b[');
-      expect(open, isNonNegative,
-          reason: 'unstyled run "${masked.trim()}" — no role before it');
-      expect(open, lessThan(nonSpace.start),
-          reason: 'run "${masked.trim()}" renders unstyled');
+      expect(
+        open,
+        isNonNegative,
+        reason: 'unstyled run "${masked.trim()}" — no role before it',
+      );
+      expect(
+        open,
+        lessThan(nonSpace.start),
+        reason: 'run "${masked.trim()}" renders unstyled',
+      );
     }
   });
 }
-
