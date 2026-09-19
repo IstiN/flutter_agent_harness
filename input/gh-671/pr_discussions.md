@@ -381,7 +381,63 @@ painted" precondition and keep the SGR state-machine contract.
 
 ---
 
-### Thread 18
+### Thread 18 — `input/gh-671/ticket.json`
+
+**ai-teammate** (2026-09-19):
+🚨 **BLOCKING (5th consecutive state — unchanged at HEAD `c84027ae`)**
+
+Still committed at HEAD: `<<<<<<< Updated upstream` at line 5 of this file
+(invalid JSON, parser-verified), line 15 of `input/gh-671/ticket.md`, and
+line 3 of `input/ticket.md`. The only new commit since the last review is a
+merge of `main` — no new resolution attempt has landed.
+
+Transition history of this defect on the branch: broken → fixed → broken →
+fixed → **broken (current)**. As established in the previous round, this
+cannot converge through in-PR edits because every job workspace is
+re-provisioned with the unmerged merge and the auto-save re-commits it.
+The path out is unchanged:
+
+1. Factory auto-save refuses conflicted state (`git ls-files -u` non-empty
+   → do not stage/commit).
+2. One final cleanup push (resolve + drop job artifacts) immediately before
+   merge, with no further auto-save firing in between.
+
+---
+
+### Thread 19 — `input/gh-671/pr_diff.txt`
+
+**ai-teammate** (2026-09-19):
+🟡 **IMPORTANT (unchanged at HEAD): self-referential runner artifacts still committed**
+
+`input/gh-671/pr_diff.txt` (this PR's own truncated diff), `pr_info.md`, and
+`pr_discussions*` remain on the branch. Dropped once by the rework job,
+re-committed by the next auto-save — the factory re-provisions job inputs
+into every workspace and the auto-save commits them. Until the auto-save
+gains a path filter (`input/` + job `outputs/` excluded on job branches),
+the practical exit for this PR is: drop these files in the final pre-merge
+push and merge before the next auto-save fires.
+
+---
+
+### Thread 20 — `test/integration/theme_readability_pty_test.dart`
+
+**ai-teammate** (2026-09-19):
+🟡 **IMPORTANT (standing): PTY scenario still needs the root-cause fix or a `retry:`**
+
+Status unchanged from the previous round (no new commits to this file): the
+strengthened every-response 400 ms delay improved diagnostics but did not
+cure the flake — it failed 1 of 2 runs last round with the entire
+first-tool-call row pair (running `•` and settled `✓`) absent from the
+transcript. A row never committed to the transcript can never paint, so no
+delay tuning fixes this; it points to a row-loss path in the CLI output
+pipeline under compressed timing (localhost mock + instant `echo`), worth
+its own issue. Until then this scenario will intermittently fail the
+`--tags integration` leg — add `retry:` or soften the "success tint
+painted" precondition and keep the SGR state-machine contract.
+
+---
+
+### Thread 21
 
 **ai-teammate** (2026-09-19):
 ## Automated Code Review — COMMENT
@@ -404,7 +460,7 @@ painted" precondition and keep the SGR state-machine contract.
 
 ---
 
-### Thread 19
+### Thread 22
 
 **ai-teammate** (2026-09-19):
 ## Automated Code Review — BLOCK
@@ -424,7 +480,7 @@ painted" precondition and keep the SGR state-machine contract.
 
 ---
 
-### Thread 20
+### Thread 23
 
 **ai-teammate** (2026-09-19):
 ## Automated Code Review — BLOCK
@@ -446,7 +502,7 @@ painted" precondition and keep the SGR state-machine contract.
 
 ---
 
-### Thread 21
+### Thread 24
 
 **ai-teammate** (2026-09-19):
 ## Automated Code Review — BLOCK
@@ -464,6 +520,25 @@ painted" precondition and keep the SGR state-machine contract.
 1. Factory-side: auto-save guard (`git ls-files -u` non-empty → refuse) + path filter for `input/`/`outputs/`.
 2. Final cleanup push (resolve conflicts, drop artifacts) immediately before merge.
 3. Root-cause the dropped tool-0 rows under compressed timing; add `retry:` to the PTY scenario until then.
+
+---
+
+### Thread 25
+
+**ai-teammate** (2026-09-19):
+## Automated Code Review — BLOCK
+
+**Summary**: No new rework commits since the last review (HEAD only merged `main`); the blocking state is unchanged — conflict markers/invalid JSON are still committed in `input/gh-671/ticket.json` + `ticket.md` + `input/ticket.md`, and the self-referential runner artifacts are still on the branch. The gh-671 code itself remains verified (96 unit tests re-run green at the merged HEAD; all prior code findings resolved).
+
+**Key Issues**:
+- 🚨 Conflict markers / invalid `ticket.json` at HEAD — 5th consecutive broken state; only a factory auto-save guard + final pre-merge cleanup push can end the ping-pong.
+- 🟡 Runner artifacts (`pr_diff.txt`, `pr_info.md`, `pr_discussions*`) still committed.
+- 🟡 PTY scenario flake: standing since last round (entire tool-0 row pair missing in failing runs — root-cause as its own issue or add `retry:`).
+
+**Next Steps**:
+1. Factory-side: auto-save refuses unmerged paths + excludes `input/`/`outputs/` job artifacts.
+2. Final cleanup push immediately before merge.
+3. Root-cause the dropped tool rows or mark the PTY scenario retry-able.
 
 ---
 
@@ -832,6 +907,59 @@ painted" precondition and keep the SGR state-machine contract.
 
 **ai-teammate** (2026-09-19):
 
+🚨 **BLOCKING (5th consecutive state — unchanged at HEAD `c84027ae`)**
+
+Still committed at HEAD: `<<<<<<< Updated upstream` at line 5 of this file
+(invalid JSON, parser-verified), line 15 of `input/gh-671/ticket.md`, and
+line 3 of `input/ticket.md`. The only new commit since the last review is a
+merge of `main` — no new resolution attempt has landed.
+
+Transition history of this defect on the branch: broken → fixed → broken →
+fixed → **broken (current)**. As established in the previous round, this
+cannot converge through in-PR edits because every job workspace is
+re-provisioned with the unmerged merge and the auto-save re-commits it.
+The path out is unchanged:
+
+1. Factory auto-save refuses conflicted state (`git ls-files -u` non-empty
+   → do not stage/commit).
+2. One final cleanup push (resolve + drop job artifacts) immediately before
+   merge, with no further auto-save firing in between.
+
+---
+
+**ai-teammate** (2026-09-19):
+
+🟡 **IMPORTANT (unchanged at HEAD): self-referential runner artifacts still committed**
+
+`input/gh-671/pr_diff.txt` (this PR's own truncated diff), `pr_info.md`, and
+`pr_discussions*` remain on the branch. Dropped once by the rework job,
+re-committed by the next auto-save — the factory re-provisions job inputs
+into every workspace and the auto-save commits them. Until the auto-save
+gains a path filter (`input/` + job `outputs/` excluded on job branches),
+the practical exit for this PR is: drop these files in the final pre-merge
+push and merge before the next auto-save fires.
+
+---
+
+**ai-teammate** (2026-09-19):
+
+🟡 **IMPORTANT (standing): PTY scenario still needs the root-cause fix or a `retry:`**
+
+Status unchanged from the previous round (no new commits to this file): the
+strengthened every-response 400 ms delay improved diagnostics but did not
+cure the flake — it failed 1 of 2 runs last round with the entire
+first-tool-call row pair (running `•` and settled `✓`) absent from the
+transcript. A row never committed to the transcript can never paint, so no
+delay tuning fixes this; it points to a row-loss path in the CLI output
+pipeline under compressed timing (localhost mock + instant `echo`), worth
+its own issue. Until then this scenario will intermittently fail the
+`--tags integration` leg — add `retry:` or soften the "success tint
+painted" precondition and keep the SGR state-machine contract.
+
+---
+
+**ai-teammate** (2026-09-19):
+
 ## Automated Code Review — COMMENT
 
 **Summary**: Solid, well-tested fix for gh-671 — explicit floor-checked foregrounds over tints, the `✓ current` picker marker, 7-theme golden coverage, and a real PTY suite. Verified locally: 95 unit tests pass, `dart format` clean. One important concern: the new PTY test flaked once in three local runs (a painted done-row frame can be coalesced away when the mock answers instantly) — worth de-flaking before it haunts CI.
@@ -909,6 +1037,24 @@ painted" precondition and keep the SGR state-machine contract.
 1. Factory-side: auto-save guard (`git ls-files -u` non-empty → refuse) + path filter for `input/`/`outputs/`.
 2. Final cleanup push (resolve conflicts, drop artifacts) immediately before merge.
 3. Root-cause the dropped tool-0 rows under compressed timing; add `retry:` to the PTY scenario until then.
+
+---
+
+**ai-teammate** (2026-09-19):
+
+## Automated Code Review — BLOCK
+
+**Summary**: No new rework commits since the last review (HEAD only merged `main`); the blocking state is unchanged — conflict markers/invalid JSON are still committed in `input/gh-671/ticket.json` + `ticket.md` + `input/ticket.md`, and the self-referential runner artifacts are still on the branch. The gh-671 code itself remains verified (96 unit tests re-run green at the merged HEAD; all prior code findings resolved).
+
+**Key Issues**:
+- 🚨 Conflict markers / invalid `ticket.json` at HEAD — 5th consecutive broken state; only a factory auto-save guard + final pre-merge cleanup push can end the ping-pong.
+- 🟡 Runner artifacts (`pr_diff.txt`, `pr_info.md`, `pr_discussions*`) still committed.
+- 🟡 PTY scenario flake: standing since last round (entire tool-0 row pair missing in failing runs — root-cause as its own issue or add `retry:`).
+
+**Next Steps**:
+1. Factory-side: auto-save refuses unmerged paths + excludes `input/`/`outputs/` job artifacts.
+2. Final cleanup push immediately before merge.
+3. Root-cause the dropped tool rows or mark the PTY scenario retry-able.
 
 ---
 

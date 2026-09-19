@@ -155,30 +155,30 @@
     },
     {
       "index": 18,
-      "rootCommentId": null,
-      "threadId": null,
-      "path": null,
+      "rootCommentId": 4052887179,
+      "threadId": "PRRT_kwDOTXdlLc6j-xQu",
+      "path": "input/gh-671/ticket.json",
       "line": null,
       "resolved": false,
-      "body": "## Automated Code Review — COMMENT\n\n**Summary**: Solid, well-tested fix for gh-671 — explicit floor-checked foregrounds over tints, the `✓ current` picker marker, 7-theme golden coverage, and a real PTY suite. Verified locally: 95 unit tests pass, `dart format` clean. One important concern: the new PTY test flaked once in three local runs (a painted done-row frame can be coalesced away when the mock answers instantly) — worth de-flaking before it haunts CI.\n\n**Key Issues**:\n- 🟡 `theme_readability_pty_test.dart` — timing-dependent `toolSuccessBg` assertion (observed 1 failure in 2 batch runs; passes in isolation).\n- 🔵 Floor matrix checks `toolTitle` only on `toolErrorBg`, not `toolSuccessBg`.\n- 🔵 Truncated selected picker rows still lose the accent wrap; stale comment at `fa_tui_rows.dart:105`.\n- 🔵 New `curly_braces_in_flow_control_structures` info from a reformat in `tui_theme.dart:383`; stale \"byte-identical\" doc on `kDefaultTuiTheme`.\n\n**Non-inline observations** (unchanged/out-of-diff code):\n- `test/cli/fa_tui_fuzzy_roles_test.dart`'s new test mutates the global `FaThemeController` (`addUserThemes('moss')` + `switchTo`) with no reset/tearDown — fine today (it's the last test in the file), but makes the file order-dependent.\n- Diff noise unrelated to the ticket: 22 `memory/` notes gain `level: 2` frontmatter, `.codegraph/.gitignore` is deleted, and `input/`/`outputs/` runner artifacts are committed. Consistent with the repo's dogfooded-memory convention, but a separate `memory:` commit would keep the PR focused.\n\n**Next Steps**:\n1. De-flake the PTY done-row tint assertion (mock delay or poll for the tint).\n2. Optionally extend the 3:1 label matrix to `toolSuccessBg` and fix the truncated-row selection wrap."
+      "body": "🚨 **BLOCKING (5th consecutive state — unchanged at HEAD `c84027ae`)**\n\nStill committed at HEAD: `<<<<<<< Updated upstream` at line 5 of this file\n(invalid JSON, parser-verified), line 15 of `input/gh-671/ticket.md`, and\nline 3 of `input/ticket.md`. The only new commit since the last review is a\nmerge of `main` — no new resolution attempt has landed.\n\nTransition history of this defect on the branch: broken → fixed → broken →\nfixed → **broken (current)**. As established in the previous round, this\ncannot converge through in-PR edits because every job workspace is\nre-provisioned with the unmerged merge and the auto-save re-commits it.\nThe path out is unchanged:\n\n1. Factory auto-save refuses conflicted state (`git ls-files -u` non-empty\n   → do not stage/commit).\n2. One final cleanup push (resolve + drop job artifacts) immediately before\n   merge, with no further auto-save firing in between."
     },
     {
       "index": 19,
-      "rootCommentId": null,
-      "threadId": null,
-      "path": null,
+      "rootCommentId": 4052887308,
+      "threadId": "PRRT_kwDOTXdlLc6j-xRz",
+      "path": "input/gh-671/pr_diff.txt",
       "line": null,
       "resolved": false,
-      "body": "## Automated Code Review — BLOCK\n\n**Summary**: The gh-671 code itself is unchanged since the last round (95 unit tests re-verified green after the main merge), but the new auto-save commits introduce a blocker: unresolved merge-conflict markers are committed in `input/gh-671/ticket.json` (now invalid JSON), `input/gh-671/ticket.md`, and `input/ticket.md`, and the PR now carries the CI runner's own artifacts — including a self-referential `input/gh-671/pr_diff.txt`.\n\n**Key Issues**:\n- 🚨 Committed conflict markers / invalid JSON in `input/gh-671/ticket.json` (also `ticket.md`, `input/ticket.md`).\n- 🟡 Runner artifacts committed into the PR (`pr_diff.txt`, `pr_info.md`) — self-referential, grows every job run.\n- 🟡 Still open from round 1: flaky PTY `toolSuccessBg` assertion (no code changes this round).\n- 🔵 Still open: 4 suggestions (label floor only on `toolErrorBg`; truncated-row accent wrap; new lint info at `tui_theme.dart:383`; stale \"byte-identical\" doc).\n\n**Next Steps**:\n1. Resolve the committed conflict markers and re-commit (or drop the `input/` artifacts from the PR).\n2. Fix the factory auto-save to not commit job-input artifacts.\n3. De-flake the PTY assertion; optionally address the 4 standing suggestions."
+      "body": "🟡 **IMPORTANT (unchanged at HEAD): self-referential runner artifacts still committed**\n\n`input/gh-671/pr_diff.txt` (this PR's own truncated diff), `pr_info.md`, and\n`pr_discussions*` remain on the branch. Dropped once by the rework job,\nre-committed by the next auto-save — the factory re-provisions job inputs\ninto every workspace and the auto-save commits them. Until the auto-save\ngains a path filter (`input/` + job `outputs/` excluded on job branches),\nthe practical exit for this PR is: drop these files in the final pre-merge\npush and merge before the next auto-save fires."
     },
     {
       "index": 20,
-      "rootCommentId": null,
-      "threadId": null,
-      "path": null,
+      "rootCommentId": 4052887415,
+      "threadId": "PRRT_kwDOTXdlLc6j-xS4",
+      "path": "test/integration/theme_readability_pty_test.dart",
       "line": null,
       "resolved": false,
-      "body": "## Automated Code Review — BLOCK\n\n**Summary**: All code findings from the previous rounds are resolved and verified (see below) — but the latest auto-save (`9911dc07`) regressed the round-2 blocker: conflict markers and invalid JSON are back at HEAD in `input/gh-671/ticket.json`/`ticket.md`/`input/ticket.md`, and the self-referential runner artifacts (`pr_diff.txt`, `pr_info.md`, `pr_discussions*`, review outputs) were re-committed after the rework job removed them.\n\n**Resolved and verified this round** (code is good to merge once the artifacts are cleaned):\n- ✅ PTY de-flake: 400 ms mock delay + `waitForText` polling — suite green 3/3 local runs (previously failed 1-in-3).\n- ✅ `toolTitle` 3:1 floor now enforced on both tints; truncated selected rows keep the accent wrap (new regression test); `curly_braces_in_flow_control_structures` info gone (2 infos = pre-existing baseline); stale \"byte-identical\" doc rewritten; fuzzy test got `addTearDown(controller.reset)`.\n- ✅ 96 unit tests pass; `dart format` clean on all touched files.\n\n**Key Issues**:\n- 🚨 Conflict markers / invalid JSON re-committed at HEAD (regression — the auto-save commits the still-conflicted job workspace).\n- 🟡 Runner artifacts re-added by the same auto-save; the factory auto-save needs a path filter, otherwise every round re-adds them.\n\n**Next Steps**:\n1. Resolve the conflicts in the source workspace, commit, and make the auto-save refuse conflicted/unmerged paths.\n2. Drop `input/gh-671/pr_diff.txt`, `pr_info.md`, `pr_discussions*`, `merge_conflicts.md`, `outputs/pr_review*`, `outputs/review_replies/` from the branch."
+      "body": "🟡 **IMPORTANT (standing): PTY scenario still needs the root-cause fix or a `retry:`**\n\nStatus unchanged from the previous round (no new commits to this file): the\nstrengthened every-response 400 ms delay improved diagnostics but did not\ncure the flake — it failed 1 of 2 runs last round with the entire\nfirst-tool-call row pair (running `•` and settled `✓`) absent from the\ntranscript. A row never committed to the transcript can never paint, so no\ndelay tuning fixes this; it points to a row-loss path in the CLI output\npipeline under compressed timing (localhost mock + instant `echo`), worth\nits own issue. Until then this scenario will intermittently fail the\n`--tags integration` leg — add `retry:` or soften the \"success tint\npainted\" precondition and keep the SGR state-machine contract."
     },
     {
       "index": 21,
@@ -187,7 +187,43 @@
       "path": null,
       "line": null,
       "resolved": false,
+      "body": "## Automated Code Review — COMMENT\n\n**Summary**: Solid, well-tested fix for gh-671 — explicit floor-checked foregrounds over tints, the `✓ current` picker marker, 7-theme golden coverage, and a real PTY suite. Verified locally: 95 unit tests pass, `dart format` clean. One important concern: the new PTY test flaked once in three local runs (a painted done-row frame can be coalesced away when the mock answers instantly) — worth de-flaking before it haunts CI.\n\n**Key Issues**:\n- 🟡 `theme_readability_pty_test.dart` — timing-dependent `toolSuccessBg` assertion (observed 1 failure in 2 batch runs; passes in isolation).\n- 🔵 Floor matrix checks `toolTitle` only on `toolErrorBg`, not `toolSuccessBg`.\n- 🔵 Truncated selected picker rows still lose the accent wrap; stale comment at `fa_tui_rows.dart:105`.\n- 🔵 New `curly_braces_in_flow_control_structures` info from a reformat in `tui_theme.dart:383`; stale \"byte-identical\" doc on `kDefaultTuiTheme`.\n\n**Non-inline observations** (unchanged/out-of-diff code):\n- `test/cli/fa_tui_fuzzy_roles_test.dart`'s new test mutates the global `FaThemeController` (`addUserThemes('moss')` + `switchTo`) with no reset/tearDown — fine today (it's the last test in the file), but makes the file order-dependent.\n- Diff noise unrelated to the ticket: 22 `memory/` notes gain `level: 2` frontmatter, `.codegraph/.gitignore` is deleted, and `input/`/`outputs/` runner artifacts are committed. Consistent with the repo's dogfooded-memory convention, but a separate `memory:` commit would keep the PR focused.\n\n**Next Steps**:\n1. De-flake the PTY done-row tint assertion (mock delay or poll for the tint).\n2. Optionally extend the 3:1 label matrix to `toolSuccessBg` and fix the truncated-row selection wrap."
+    },
+    {
+      "index": 22,
+      "rootCommentId": null,
+      "threadId": null,
+      "path": null,
+      "line": null,
+      "resolved": false,
+      "body": "## Automated Code Review — BLOCK\n\n**Summary**: The gh-671 code itself is unchanged since the last round (95 unit tests re-verified green after the main merge), but the new auto-save commits introduce a blocker: unresolved merge-conflict markers are committed in `input/gh-671/ticket.json` (now invalid JSON), `input/gh-671/ticket.md`, and `input/ticket.md`, and the PR now carries the CI runner's own artifacts — including a self-referential `input/gh-671/pr_diff.txt`.\n\n**Key Issues**:\n- 🚨 Committed conflict markers / invalid JSON in `input/gh-671/ticket.json` (also `ticket.md`, `input/ticket.md`).\n- 🟡 Runner artifacts committed into the PR (`pr_diff.txt`, `pr_info.md`) — self-referential, grows every job run.\n- 🟡 Still open from round 1: flaky PTY `toolSuccessBg` assertion (no code changes this round).\n- 🔵 Still open: 4 suggestions (label floor only on `toolErrorBg`; truncated-row accent wrap; new lint info at `tui_theme.dart:383`; stale \"byte-identical\" doc).\n\n**Next Steps**:\n1. Resolve the committed conflict markers and re-commit (or drop the `input/` artifacts from the PR).\n2. Fix the factory auto-save to not commit job-input artifacts.\n3. De-flake the PTY assertion; optionally address the 4 standing suggestions."
+    },
+    {
+      "index": 23,
+      "rootCommentId": null,
+      "threadId": null,
+      "path": null,
+      "line": null,
+      "resolved": false,
+      "body": "## Automated Code Review — BLOCK\n\n**Summary**: All code findings from the previous rounds are resolved and verified (see below) — but the latest auto-save (`9911dc07`) regressed the round-2 blocker: conflict markers and invalid JSON are back at HEAD in `input/gh-671/ticket.json`/`ticket.md`/`input/ticket.md`, and the self-referential runner artifacts (`pr_diff.txt`, `pr_info.md`, `pr_discussions*`, review outputs) were re-committed after the rework job removed them.\n\n**Resolved and verified this round** (code is good to merge once the artifacts are cleaned):\n- ✅ PTY de-flake: 400 ms mock delay + `waitForText` polling — suite green 3/3 local runs (previously failed 1-in-3).\n- ✅ `toolTitle` 3:1 floor now enforced on both tints; truncated selected rows keep the accent wrap (new regression test); `curly_braces_in_flow_control_structures` info gone (2 infos = pre-existing baseline); stale \"byte-identical\" doc rewritten; fuzzy test got `addTearDown(controller.reset)`.\n- ✅ 96 unit tests pass; `dart format` clean on all touched files.\n\n**Key Issues**:\n- 🚨 Conflict markers / invalid JSON re-committed at HEAD (regression — the auto-save commits the still-conflicted job workspace).\n- 🟡 Runner artifacts re-added by the same auto-save; the factory auto-save needs a path filter, otherwise every round re-adds them.\n\n**Next Steps**:\n1. Resolve the conflicts in the source workspace, commit, and make the auto-save refuse conflicted/unmerged paths.\n2. Drop `input/gh-671/pr_diff.txt`, `pr_info.md`, `pr_discussions*`, `merge_conflicts.md`, `outputs/pr_review*`, `outputs/review_replies/` from the branch."
+    },
+    {
+      "index": 24,
+      "rootCommentId": null,
+      "threadId": null,
+      "path": null,
+      "line": null,
+      "resolved": false,
       "body": "## Automated Code Review — BLOCK\n\n**Summary**: The gh-671 code remains fixed and verified (96 unit tests pass; all round 1–3 code findings resolved), but the branch-level blocker regressed *again during this review*: auto-save `7139f8c8` re-committed conflict markers (ticket.json is invalid JSON at HEAD) and the runner artifacts minutes after the rework job cleaned them. Additionally, the PTY suite flaked again (1/2 runs) despite the strengthened de-flake — the failure mode (the entire first tool-call row pair missing from the transcript) indicates a row-loss path no mock delay can fix.\n\n**Key Issues**:\n- 🚨 Conflict markers / invalid JSON re-committed at HEAD (4th transition of the ping-pong; observed live mid-review). Not fixable by another in-PR edit — the factory auto-save must refuse conflicted state, then one final cleanup push right before merge.\n- 🟡 Runner artifacts (`pr_diff.txt`, `pr_info.md`, `pr_discussions*`) re-committed by the same auto-save.\n- 🟡 PTY suite still flaky: 30s timeout on the dracula success tint; the tool-0 rows never reach the transcript in failing runs — needs a root-cause (own issue) or a `retry:`/softer precondition.\n\n**Resolved & verified this round**: conflict resolution was correct at `05a0a7b1` (ticket.json parsed), artifact cleanup worked until the next auto-save, the every-response delay improved diagnostics (clear timeout + raw tail instead of a bare `contains` miss), and all earlier code fixes (both-tint label floor, truncated-row accent wrap + regression test, lint baseline, doc fix, tearDown) are in place.\n\n**Next Steps**:\n1. Factory-side: auto-save guard (`git ls-files -u` non-empty → refuse) + path filter for `input/`/`outputs/`.\n2. Final cleanup push (resolve conflicts, drop artifacts) immediately before merge.\n3. Root-cause the dropped tool-0 rows under compressed timing; add `retry:` to the PTY scenario until then."
+    },
+    {
+      "index": 25,
+      "rootCommentId": null,
+      "threadId": null,
+      "path": null,
+      "line": null,
+      "resolved": false,
+      "body": "## Automated Code Review — BLOCK\n\n**Summary**: No new rework commits since the last review (HEAD only merged `main`); the blocking state is unchanged — conflict markers/invalid JSON are still committed in `input/gh-671/ticket.json` + `ticket.md` + `input/ticket.md`, and the self-referential runner artifacts are still on the branch. The gh-671 code itself remains verified (96 unit tests re-run green at the merged HEAD; all prior code findings resolved).\n\n**Key Issues**:\n- 🚨 Conflict markers / invalid `ticket.json` at HEAD — 5th consecutive broken state; only a factory auto-save guard + final pre-merge cleanup push can end the ping-pong.\n- 🟡 Runner artifacts (`pr_diff.txt`, `pr_info.md`, `pr_discussions*`) still committed.\n- 🟡 PTY scenario flake: standing since last round (entire tool-0 row pair missing in failing runs — root-cause as its own issue or add `retry:`).\n\n**Next Steps**:\n1. Factory-side: auto-save refuses unmerged paths + excludes `input/`/`outputs/` job artifacts.\n2. Final cleanup push immediately before merge.\n3. Root-cause the dropped tool rows or mark the PTY scenario retry-able."
     }
   ]
 }

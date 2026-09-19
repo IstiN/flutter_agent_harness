@@ -6,11 +6,11 @@
 - **Author**: ai-teammate
 - **Branch**: `ai/gh-671` → `main`
 - **State**: open
-- **Files Changed**: 76
-- **Additions**: +2517
+- **Files Changed**: 81
+- **Additions**: +2857
 - **Deletions**: -172
 - **Created**: 2026-09-19T08:42:02Z
-- **Updated**: 2026-09-19T10:23:02Z
+- **Updated**: 2026-09-19T10:28:25Z
 
 ## PR Description
 
