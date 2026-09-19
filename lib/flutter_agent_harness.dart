@@ -116,6 +116,7 @@ export 'src/redact/redaction_cli.dart';
 export 'src/redact/redaction_hooks.dart';
 export 'src/redact/redaction_pipeline.dart';
 export 'src/redact/redaction_types.dart';
+export 'src/spill/spill.dart';
 export 'src/secrets/secret_redactor.dart';
 export 'src/secrets/secrets_store.dart';
 export 'src/secrets/secure_key_store.dart';
