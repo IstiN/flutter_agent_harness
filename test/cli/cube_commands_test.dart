@@ -99,6 +99,7 @@ spec:
     io.sendLine('/exit');
     await run;
     expect(io.out.toString(), contains('cube: disabled (full host access)'));
+    expect(io.out.toString(), contains('network gate: off'));
   });
 
   test(
@@ -120,7 +121,7 @@ spec:
       expect(out, contains('backend: '));
       expect(out, contains('tools allow: echo, ls'));
       expect(out, contains('network allow: (none — all network denied)'));
-      expect(out, contains('cache:'));
+      expect(out, contains('network gate: on'));
     },
   );
 

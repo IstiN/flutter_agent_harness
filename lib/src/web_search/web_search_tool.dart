@@ -19,6 +19,7 @@ import '../agent/agent_loop.dart' show ToolExecutionResult;
 import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
 import '../cancel_token.dart';
+import '../cube/network_gate.dart';
 import '../secrets/secrets_store.dart';
 import 'fetch_types.dart';
 import 'providers.dart';
@@ -34,6 +35,7 @@ final class WebSearchConfig {
     this.providers = const ['auto'],
     this.secrets,
     this.httpClient,
+    this.networkGate,
     this.timeout = const Duration(seconds: 20),
     this.maxResults = defaultWebSearchCount,
     this.siteHandlers,
@@ -53,6 +55,11 @@ final class WebSearchConfig {
   /// HTTP client override (tests inject a `MockClient`).
   final http.Client? httpClient;
 
+  /// The cube network gate for model-invoked web egress (issue #682).
+  /// Null — no cube — is allow-all: requests ride the unwrapped client,
+  /// byte-identical to pre-gate runs.
+  final CubeNetworkGate? networkGate;
+
   /// Per-request timeout for search and fetch calls.
   final Duration timeout;
 
@@ -69,6 +76,22 @@ final class WebSearchConfig {
 
   /// Output cap for `web_fetch` markdown.
   final int maxFetchChars;
+
+  /// Returns a copy bound to [gate]; `this` when the gate is unchanged.
+  WebSearchConfig withNetworkGate(CubeNetworkGate? gate) {
+    if (gate == networkGate) return this;
+    return WebSearchConfig(
+      providers: providers,
+      secrets: secrets,
+      httpClient: httpClient,
+      networkGate: gate,
+      timeout: timeout,
+      maxResults: maxResults,
+      siteHandlers: siteHandlers,
+      maxFetchBytes: maxFetchBytes,
+      maxFetchChars: maxFetchChars,
+    );
+  }
 
   /// Handlers with the default applied.
   List<WebSiteHandler> get effectiveSiteHandlers =>
@@ -181,15 +204,35 @@ AgentTool webSearchTool({required WebSearchConfig config}) {
           : query;
 
       final secrets = await config.secrets?.readAll() ?? const {};
-      final chain = resolveWebSearchChain(config.providers, secrets: secrets);
-      if (chain.isEmpty) {
+      final resolved = resolveWebSearchChain(
+        config.providers,
+        secrets: secrets,
+      );
+      if (resolved.isEmpty) {
         throw StateError(
           'No web search provider configured. DuckDuckGo needs no key; set '
           'BRAVE_API_KEY or TAVILY_API_KEY for the keyed providers.',
         );
       }
 
-      final client = config.httpClient ?? http.Client();
+      // Q1 (issue #682): search endpoints are gated like any model-invoked
+      // egress. Only providers whose endpoint the live policy allows run;
+      // all denied → the clean `fa_cube[<name>]:` note as a normal tool
+      // result, zero client calls.
+      final gate = config.networkGate;
+      final chain = gate == null
+          ? resolved
+          : resolved
+                .where((provider) => gate.allows(provider.endpoint))
+                .toList();
+      if (chain.isEmpty) {
+        return ToolExecutionResult.text(
+          gate!.denialFor(resolved.first.endpoint)!,
+        );
+      }
+
+      final base = config.httpClient ?? http.Client();
+      final client = gate == null ? base : GatedHttpClient(base, gate);
       try {
         final request = WebSearchRequest(
           query: effectiveQuery,
@@ -200,7 +243,7 @@ AgentTool webSearchTool({required WebSearchConfig config}) {
         );
         return await _executeChain(chain, request, query, cancelToken);
       } finally {
-        if (config.httpClient == null) client.close();
+        if (config.httpClient == null) base.close();
       }
     },
   );
