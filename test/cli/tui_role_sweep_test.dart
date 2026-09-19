@@ -341,8 +341,16 @@ void main() {
         ),
         ToolRowState.done,
       );
+      // gh-671: over the tint the detail renders the toolOutput foreground
+      // WITHOUT the dim flag (SGR 2 halves contrast unpredictably) — the
+      // explicit fg is what keeps it readable.
       expect(done, contains(tuiSgr(c.current.toolSuccessBg)));
-      expect(done, contains(tuiSgr(c.current.toolOutput)));
+      expect(
+        done,
+        contains(
+          tuiSgr(Style(foregroundRgb: c.current.toolOutput.foregroundRgb)),
+        ),
+      );
     });
 
     test('the Fa mark composes exactly two roles', () {
@@ -387,7 +395,7 @@ void main() {
       for (final entry in {...kBuiltInTuiThemes}.entries) {
         expect(
           themeUserMessageContrast(entry.value),
-          greaterThanOrEqualTo(7),
+          greaterThanOrEqualTo(kThemeUserMessageFloor),
           reason:
               '${entry.key}: userMessageText must stay readable on '
               'userMessageBg (issue #444 defect 4)',

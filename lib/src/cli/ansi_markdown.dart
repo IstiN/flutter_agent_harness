@@ -229,17 +229,21 @@ final class AnsiMarkdown {
   /// grapheme clusters, so `padRight` (UTF-16 units) underpads any echo
   /// carrying wide characters and stale cells survive on the right.
   ///
-  /// The background SGR is re-applied from the CURRENT session theme, not
-  /// the stored prefix — a mid-session `/theme` switch repaints the whole
-  /// transcript (issue #279, E1); the stored escape only marks the line as
-  /// a user echo so markdown leaves it alone.
+  /// The background AND text SGR are re-applied from the CURRENT session
+  /// theme, not the stored prefix — a mid-session `/theme` switch repaints
+  /// the whole transcript (issue #279, E1); the stored escape only marks
+  /// the line as a user echo so markdown leaves it alone. The text
+  /// foreground is part of that contract (gh-671): the old path re-rendered
+  /// bg only, so the echo text fell back to the terminal default fg —
+  /// invisible over the light userMessageBg band on light palettes.
   String? _formatPreStyled(String line) {
     if (!line.startsWith('\x1b[48')) return null;
     final visible = line.replaceAll(_ansiRe, '');
     final pad = width - tuiTextWidth(visible);
     final bg = tuiUserMessageBgSgr();
-    if (pad <= 0) return '$bg$visible$_reset';
-    return '$bg$visible${' ' * pad}$_reset';
+    final fg = tuiUserMessageTextSgr();
+    if (pad <= 0) return '$bg$fg$visible$_reset';
+    return '$bg$fg$visible${' ' * pad}$_reset';
   }
 
   /// Code fences swallow everything between the markers verbatim (pi:
