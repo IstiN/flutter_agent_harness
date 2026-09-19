@@ -10,7 +10,7 @@ library;
 
 import 'dart:io' as io;
 
-import 'package:dart_tui/src/bubbles/style.dart' show RgbColor;
+import 'package:dart_tui/src/bubbles/style.dart' show RgbColor, Style;
 import 'package:dart_tui/src/msg.dart' show ColorProfile;
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/tool_rows.dart';
@@ -387,12 +387,248 @@ void main() {
     });
   });
 
+  group('gh-671 readability floors (accessibility)', () {
+    // Every pair the emitters actually paint, per built-in theme, against
+    // the terminal background the palette was designed for. Body/detail
+    // text must clear 4.5:1 (WCAG AA), secondary text and bold labels 3:1,
+    // the user band 7:1 (issue #444).
+    RgbColor? fgOf(Style style) => style.foregroundRgb;
+    RgbColor? bgOf(Style style) => style.backgroundRgb;
+
+    test('reference terminal backgrounds split dark and light palettes', () {
+      expect(
+        themeReferenceTerminalBg(kBuiltInTuiThemes['ohmypi-light']!),
+        const RgbColor(255, 255, 255),
+        reason: 'ohmypi-light is a light-terminal palette',
+      );
+      expect(
+        themeReferenceTerminalBg(kBuiltInTuiThemes['dracula']!),
+        const RgbColor(0x1e, 0x1e, 0x28),
+        reason: 'dark palettes reference a dark terminal',
+      );
+    });
+
+    test('tool-row detail text clears 4.5:1 over both tints', () {
+      for (final entry in kBuiltInTuiThemes.entries) {
+        final t = entry.value;
+        final fg = fgOf(t.toolOutput);
+        expect(
+          fg,
+          isNotNull,
+          reason:
+              '${entry.key}: toolOutput must carry an explicit foreground — '
+              'detail text over a tint can never rely on the terminal default',
+        );
+        for (final (name, tint) in [
+          ('toolSuccessBg', bgOf(t.toolSuccessBg)),
+          ('toolErrorBg', bgOf(t.toolErrorBg)),
+        ]) {
+          expect(
+            themeColorContrast(fg!, tint!),
+            greaterThanOrEqualTo(kThemeBodyTextFloor),
+            reason:
+                '${entry.key}: detail text on $name is '
+                '${themeColorContrast(fg, tint).toStringAsFixed(2)}:1 '
+                '(floor ${kThemeBodyTextFloor}) — unreadable command text '
+                'was the gh-671 screenshot defect',
+          );
+        }
+      }
+    });
+
+    test('tool-row labels and state rails clear 3:1 over their tints', () {
+      for (final entry in kBuiltInTuiThemes.entries) {
+        final t = entry.value;
+        expect(
+          themeColorContrast(
+            fgOf(t.toolTitle)!,
+            bgOf(t.toolErrorBg)!,
+          ),
+          greaterThanOrEqualTo(kThemeSecondaryTextFloor),
+          reason: '${entry.key}: toolTitle on toolErrorBg',
+        );
+        expect(
+          themeColorContrast(fgOf(t.success)!, bgOf(t.toolSuccessBg)!),
+          greaterThanOrEqualTo(kThemeSecondaryTextFloor),
+          reason: '${entry.key}: done rail on toolSuccessBg',
+        );
+        expect(
+          themeColorContrast(fgOf(t.error)!, bgOf(t.toolErrorBg)!),
+          greaterThanOrEqualTo(kThemeSecondaryTextFloor),
+          reason: '${entry.key}: failed rail on toolErrorBg',
+        );
+      }
+    });
+
+    test('muted and accent text stay visible on the reference terminal', () {
+      for (final entry in kBuiltInTuiThemes.entries) {
+        final t = entry.value;
+        final bg = themeReferenceTerminalBg(t);
+        for (final (role, style) in [
+          ('muted', t.muted),
+          ('accent', t.accent),
+          ('accent2', t.accent2),
+          ('success', t.success),
+          ('warning', t.warning),
+          ('error', t.error),
+        ]) {
+          final fg = fgOf(style);
+          if (fg == null) continue; // base/no-fg roles render terminal-default
+          expect(
+            themeColorContrast(fg, bg),
+            greaterThanOrEqualTo(kThemeSecondaryTextFloor),
+            reason:
+                '${entry.key}.$role on the reference terminal is '
+                '${themeColorContrast(fg, bg).toStringAsFixed(2)}:1 '
+                '(floor ${kThemeSecondaryTextFloor}) — "text almost '
+                'invisible" (gh-671)',
+          );
+        }
+      }
+    });
+
+    test('the failed row paints an explicit readable fg, never the terminal '
+        'default', () {
+      for (final name in kBuiltInTuiThemes.keys) {
+        FaThemeController.instance.switchTo(name);
+        final row = tuiToolRow(
+          layoutToolRow(
+            const ToolRowSegments(
+              glyph: '✗',
+              label: 'bash',
+              detail: 'command not found',
+              elapsed: '0s',
+            ),
+            78,
+          ),
+          ToolRowState.failed,
+        );
+        final fg = FaThemeController.instance.current.userMessageText
+            .foregroundRgb;
+        expect(
+          fg,
+          isNotNull,
+          reason: '$name: userMessageText resolves to a color',
+        );
+        expect(
+          row,
+          contains(tuiSgr(Style(foregroundRgb: fg))),
+          reason:
+              '$name: failed-row detail/elapsed must be explicit — the '
+              'terminal default fg is invisible on light tints (gh-671 '
+              'screenshot: ohmypi-light toolErrorBg band)',
+        );
+        expect(
+          themeColorContrast(fg!, FaThemeController
+                  .instance
+                  .current
+                  .toolErrorBg
+                  .backgroundRgb!),
+          greaterThanOrEqualTo(kThemeBodyTextFloor),
+          reason: '$name: failed-row text on toolErrorBg',
+        );
+      }
+    });
+
+    test('tinted segments drop the dim flag (unpredictable contrast)', () {
+      FaThemeController.instance.switchTo('ohmypi-dark');
+      final dimmed = RegExp(r'\x1b\[2m');
+      for (final state in [ToolRowState.done, ToolRowState.failed]) {
+        final row = tuiToolRow(
+          layoutToolRow(
+            const ToolRowSegments(
+              glyph: '✓',
+              label: 'bash',
+              detail: 'deploy --verify',
+              elapsed: '3.2s',
+            ),
+            78,
+          ),
+          state,
+        );
+        expect(
+          dimmed.hasMatch(row),
+          isFalse,
+          reason:
+              '$state: SGR 2 halves contrast unpredictably across terminals; '
+              'text over a theme tint keeps an explicit fg only',
+        );
+      }
+      // Unpainted rows keep the classic dim look over the terminal bg.
+      final settled = tuiToolRow(
+        layoutToolRow(
+          const ToolRowSegments(glyph: '●', label: 'bash', detail: 'x'),
+          78,
+        ),
+        ToolRowState.settled,
+      );
+      expect(dimmed.hasMatch(settled), isTrue);
+    });
+
+    test('themeColorContrast/themeLuminance are the WCAG formulas', () {
+      expect(themeLuminance(const RgbColor(0, 0, 0)), closeTo(0, 1e-9));
+      expect(themeLuminance(const RgbColor(255, 255, 255)), closeTo(1, 1e-9));
+      expect(
+        themeColorContrast(const RgbColor(0, 0, 0), const RgbColor(255, 255, 255)),
+        closeTo(21, 0.01),
+      );
+      // #767676 on white is the canonical 4.54:1 AA boundary pair.
+      expect(
+        themeColorContrast(
+          const RgbColor(0x76, 0x76, 0x76),
+          const RgbColor(255, 255, 255),
+        ),
+        closeTo(4.54, 0.02),
+      );
+    });
+  });
+
+  group('gh-671 /theme picker items', () {
+    test('every row keeps its swatch and the current row is text-marked', () {
+      FaThemeController.instance.switchTo('dracula');
+      final items = themePickerItems(
+        current: FaThemeController.instance.currentName,
+      );
+      expect(items, hasLength(FaThemeController.instance.available().length));
+      // The swatch survives on EVERY row — the old picker REPLACED the
+      // current theme's swatch with a bare '(current)' string.
+      for (final item in items) {
+        expect(item.description, contains('███'), reason: item.label);
+      }
+      final current = items.singleWhere((i) => i.key == 'dracula');
+      expect(current.description, contains('current'));
+      // The marker is colored text (success role), not a color-only cue.
+      expect(current.description, contains(tuiSuccess('✓ current')));
+      expect(
+        items.where((i) => i.description.contains('current')),
+        hasLength(1),
+      );
+    });
+
+    test('the picker preselects the current theme (initialKey contract)', () {
+      FaThemeController.instance.switchTo('nord');
+      final items = themePickerItems(current: 'nord');
+      expect(items.any((i) => i.key == 'nord'), isTrue);
+    });
+
+    test('styling off degrades to plain text', () {
+      FaThemeController.instance.profile = null;
+      final items = themePickerItems(current: 'pi');
+      final current = items.singleWhere((i) => i.key == 'pi');
+      expect(current.description, contains('███'));
+      expect(current.description, contains('✓ current'));
+      expect(current.description, isNot(contains('\x1b[')));
+    });
+  });
+
   group('theme goldens (AC6)', () {
     // Regenerate with: FA_UPDATE_THEME_GOLDENS=1 dart test test/cli/tui_theme_test.dart
     final update = io.Platform.environment.containsKey('FA_UPDATE_THEME_GOLDENS');
     const themes = [
       'default',
       'catppuccin',
+      'nord',
+      'dracula',
       'ohmypi-dark',
       'ohmypi-light',
       'pi',
