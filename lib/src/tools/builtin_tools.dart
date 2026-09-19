@@ -49,6 +49,7 @@ import '../approval/bash_interceptor.dart';
 import '../cancel_token.dart';
 import '../config/config_tool.dart';
 import '../config/config_service.dart';
+import '../cube/network_gate.dart';
 import '../env/execution_env.dart';
 import '../hashline/hashline.dart';
 import '../lsp/lsp_tool.dart';
@@ -104,6 +105,10 @@ const _bashPasswordQuiet = Duration(milliseconds: 250);
 /// registered with it (provider chain resolved from the config; keyless
 /// DuckDuckGo works with all defaults).
 ///
+/// When [networkGate] is provided, it gates every model-invoked web egress
+/// of the web tools (issue #682): `null` — no cube — keeps the requests on
+/// the unwrapped client, byte-identical to pre-gate runs.
+///
 /// When [sqlite] is provided, the `read` tool resolves SQLite database
 /// targets (`data.db:table`); without an engine (e.g. web hosts, where FFI
 /// is unavailable) such reads return a clean "not supported" note.
@@ -129,6 +134,7 @@ List<AgentTool> builtinTools(
   ExecutionEnv env, {
   HashlineSnapshotStore? snapshots,
   WebSearchConfig? webSearch,
+  CubeNetworkGate? networkGate,
   ConfigService? config,
   Model? Function()? model,
   SqliteEngine? sqlite,
@@ -147,8 +153,8 @@ List<AgentTool> builtinTools(
     if (shellJobs != null) bashJobTool(shellJobs),
     if (lsp != null) lspTool(env, config: lsp),
     if (webSearch != null) ...[
-      webSearchTool(config: webSearch),
-      webFetchTool(config: webSearch),
+      webSearchTool(config: webSearch.withNetworkGate(networkGate)),
+      webFetchTool(config: webSearch.withNetworkGate(networkGate)),
     ],
     if (config != null) configTool(config),
     ...?mcp?.tools,

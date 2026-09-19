@@ -15,6 +15,7 @@ import '../agent/agent_loop.dart' show ToolExecutionResult;
 import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
 import '../cancel_token.dart';
+import '../cube/network_gate.dart';
 import 'fetch_types.dart';
 import 'html_markdown.dart';
 import 'html_text.dart';
@@ -60,7 +61,12 @@ Future<ToolExecutionResult> _executeWebFetch(
   final url = (arguments['url'] as String).trim();
   final uri = _parseFetchUri(url);
 
-  final client = config.httpClient ?? http.Client();
+  final gate = config.networkGate;
+  final denial = gate?.denialFor(uri);
+  if (denial != null) return ToolExecutionResult.text(denial);
+
+  final base = config.httpClient ?? http.Client();
+  final client = gate == null ? base : GatedHttpClient(base, gate);
   try {
     final context = WebFetchContext(
       client: client,
@@ -83,7 +89,7 @@ Future<ToolExecutionResult> _executeWebFetch(
     cancelToken?.throwIfCancelled();
     return ToolExecutionResult.text(_renderPage(page, config));
   } finally {
-    if (config.httpClient == null) client.close();
+    if (config.httpClient == null) base.close();
   }
 }
 

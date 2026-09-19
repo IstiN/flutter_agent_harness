@@ -164,6 +164,44 @@ void main() {
     test('non-fetching commands skip the network check', () {
       expect(CubePolicyEngine(spec()).checkCommand('git push').allowed, isTrue);
     });
+
+    test('gh api to a disallowed host is denied like curl', () {
+      final decision = CubePolicyEngine(
+        spec(allow: {'git', 'gh'}),
+      ).checkCommand('gh api https://evil.com/repos');
+      expect(decision.allowed, isFalse);
+      expect(decision.reason, contains("network access to 'evil.com:443'"));
+    });
+
+    test('gh api to an allowed host is permitted', () {
+      final decision = CubePolicyEngine(
+        spec(
+          allow: {'git', 'gh'},
+          networkAllow: [CubeNetworkRule(host: 'api.github.com')],
+        ),
+      ).checkCommand('gh api https://api.github.com/repos');
+      expect(decision.allowed, isTrue);
+    });
+
+    test('gh api explicit port is network-checked', () {
+      final decision = CubePolicyEngine(
+        spec(
+          allow: {'gh'},
+          networkAllow: [
+            CubeNetworkRule(host: 'api.github.com', ports: {443}),
+          ],
+        ),
+      ).checkCommand('gh api http://api.github.com:80/repos');
+      expect(decision.allowed, isFalse);
+      expect(decision.reason, contains('api.github.com:80'));
+    });
+
+    test('gh without the api subcommand skips the network check', () {
+      final decision = CubePolicyEngine(
+        spec(allow: {'gh'}),
+      ).checkCommand('gh repo view');
+      expect(decision.allowed, isTrue);
+    });
   });
   group('redirect targets', () {
     CubeSpec fsSpec({List<CubeMount> mounts = const []}) => CubeSpec(

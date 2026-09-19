@@ -8,6 +8,7 @@
 /// generation only).
 library;
 
+export 'network_gate.dart';
 export 'backends/cube_backend.dart';
 export 'backends/linux_unshare.dart';
 export 'backends/macos_sandbox.dart';
@@ -17,12 +18,12 @@ export 'config/cache_policy.dart';
 export 'config/cube_presets.dart';
 export 'config/cube_settings.dart';
 export 'config/cube_spec.dart';
-export 'registry/cube_registry.dart';
 export 'config/env_policy.dart';
 export 'config/fs_policy.dart';
 export 'config/network_policy.dart';
 export 'config/resource_limits.dart';
 export 'config/tool_policy.dart';
+export 'registry/cube_registry.dart';
 export 'runtime/cache_manager.dart';
 export 'runtime/cube_fs_guard.dart';
 export 'runtime/cube_resolver.dart';
