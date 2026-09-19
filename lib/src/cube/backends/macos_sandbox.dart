@@ -83,7 +83,9 @@ final class MacOsSandboxBackend
     final mounts = spec.filesystem.mounts;
     final buffer = StringBuffer('(version 1)\n(allow default)\n');
     if (!mounts.any(_rootWritesEverywhere)) _denyBlanketWrites(buffer);
-    if (!mounts.any(_rootReadsEverywhere)) _curatedReadDenies(buffer, workspace);
+    if (!mounts.any(_rootReadsEverywhere)) {
+      _curatedReadDenies(buffer, workspace);
+    }
     _allowWorkspaceWrites(buffer, workspace);
     for (final mount in mounts) {
       _mountRules(buffer, mount);
@@ -140,8 +142,25 @@ void _allowWorkspaceWrites(StringBuffer buffer, String workspace) {
   }
 }
 
-/// Per-mount SBPL rules, emitted in both resolved spellings. SBPL resolves
-/// conflicts by specificity: the subpath allow wins.
+/// Per-mount SBPL rules, emitted in both resolved spellings.
+///
+/// P1 (ordering): within an operation class (`file-read*`/`file-write*`) the
+/// kernel applies the LAST matching rule — not the most specific one
+/// (observed on l1-dev: the curated `(deny file-read* (subpath "/Users"))`
+/// beat subpath allows until a LATER allow re-allowed the path; Apple's
+/// shipped docs do not cover conflict resolution — sandbox(7) documents the
+/// facility only — so this ordering is pinned empirically by the profile
+/// tests and the live macOS legs). Rule order is therefore load-bearing:
+/// these mount rules are emitted AFTER `_curatedReadDenies` so an `ro`/`rw`
+/// mount under a denied prefix re-allows it, and within a mount list the
+/// later entry wins per class — the ro+rw twin mounts in l1-dev rely on
+/// exactly that.
+///
+/// A `readWrite` mount is read-write in the kernel as in the Dart guard: it
+/// emits BOTH allows. Emitting only the write allow made rw mounts kernel-
+/// unreadable under a read-denied prefix while the Dart fs guard kept
+/// granting reads — file tools passed, wrapped shells got `Operation not
+/// permitted` (issue #709).
 void _mountRules(StringBuffer buffer, CubeMount mount) {
   for (final path in _resolvedVariants(mount.path)) {
     switch (mount.access) {
@@ -154,7 +173,9 @@ void _mountRules(StringBuffer buffer, CubeMount mount) {
           ..writeln('(deny file-read* (subpath "$path"))')
           ..writeln('(deny file-write* (subpath "$path"))');
       case CubePathAccess.readWrite:
-        buffer.writeln('(allow file-write* (subpath "$path"))');
+        buffer
+          ..writeln('(allow file-read* (subpath "$path"))')
+          ..writeln('(allow file-write* (subpath "$path"))');
     }
   }
 }
@@ -162,6 +183,18 @@ void _mountRules(StringBuffer buffer, CubeMount mount) {
 /// Both SBPL spellings for [path]: itself plus the `/private`-resolved form
 /// when it lives under one of the firmware symlink roots. An already
 /// canonical path maps to itself only.
+///
+/// P2 (literal-path matching + symlink-node traversal): SBPL filters match
+/// the LITERAL path of an operation. Opening `/etc/ssl/cert.pem` must first
+/// read the `/etc` symlink NODE, and a subpath filter on `/etc/ssl` does not
+/// match that node — only the `/private/etc/...` spelling bypasses the
+/// symlink entirely. These variants therefore cover the firmware-symlink
+/// TARGETS, but they cannot and do not cover the symlink node itself: reads
+/// through the `/etc` spelling stay denied (and `realpath`-style walks that
+/// stat each ancestor die on the first denied component, even under an
+/// allowed subpath). Auto-allowing `/etc` readability would be a security
+/// decision, not an emission bug — out of scope for #709, which is why git
+/// over https keeps needing `GIT_SSL_CAINFO=/private/etc/ssl/cert.pem`.
 List<String> _resolvedVariants(String path) {
   const roots = ['/etc', '/tmp', '/var'];
   for (final root in roots) {

@@ -126,6 +126,37 @@ jobs:
               grep -qE '(^lib/src/trajectory/|^packages/fa_ui/lib/src/trajectory/|^lib/src/cli/trajectory_|^bin/fah\.dart$|^test/(integration/)?trajectory/|^flutter_app/lib/services/agent_service(_sessions)?\.dart$)'; then
             echo "perf=true" >> "$GITHUB_OUTPUT"
           fi
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Issue #709: live kernel-mode cube legs. The ubuntu test-core shards can
+  # only prove the SBPL PROFILE TEXT (unit + guard/profile parity) — the
+  # kernel's last-match-wins read/write enforcement of rw mounts under a
+  # read-denied prefix needs a real `sandbox-exec` run, which exists only on
+  # macOS. Both live suites skip with a NAMED reason wherever they cannot
+  # run (no sandbox-exec / already-sandboxed host / HOME outside /Users) —
+  # the skip lands in the job log, never silent; this leg is where they
+  # actually execute.
+  # ─────────────────────────────────────────────────────────────────────────
+  cube-kernel-live:
+    name: Cube kernel live (macOS)
+    runs-on: macos-latest
+    needs: changes
+    if: needs.changes.outputs.core == 'true'
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - run: dart pub get
+
+      - name: dart test cube backends (live kernel legs)
+        run: dart test test/cube/backends
+
   static:
     name: Static gates
     runs-on: ubuntu-latest
