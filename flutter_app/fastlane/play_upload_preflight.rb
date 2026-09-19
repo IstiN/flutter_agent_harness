@@ -10,8 +10,8 @@
 #     testing (the daily leg dispatches PLAY_TRACK=beta);
 #   * service-account JSON key — PLAY_STORE_SERVICE_ACCOUNT_JSON is the
 #     one canonical secret name (#289);
-#   * AAB path — ANDROID_AAB_PATH override or flutter's conventional
-#     build/app/outputs/bundle/release/app-release.aab;
+#   * AAB path — ANDROID_AAB_PATH override or the store-flavor bundle
+#     build/app/outputs/bundle/storeRelease/app-store-release.aab (#622 flavors);
 #   * validate-only (dry-run) mapping — every supply upload skip flag on,
 #     so the lane authenticates and resolves the track without publishing.
 module PlayUploadPreflight
@@ -43,7 +43,9 @@ module PlayUploadPreflight
   end
 
   def default_aab_path(repo_root)
-    File.join(repo_root, "build/app/outputs/bundle/release/app-release.aab")
+    # store-flavor output since #622 added product flavors: a flavor-less
+    # appbundle would land in bundle/release/ and nothing consumes it.
+    File.join(repo_root, "build/app/outputs/bundle/storeRelease/app-store-release.aab")
   end
 
   # AAB to upload; fails loudly (with the env name) when it is missing.

@@ -73,15 +73,16 @@ if $PROGRAM_NAME == __FILE__
 
   assert_raises_named("ANDROID_AAB_PATH") do
     PlayUploadPreflight.aab_path!(
-      { "ANDROID_AAB_PATH" => "/nonexistent/app-release.aab" }, repo_root: repo_root)
+      { "ANDROID_AAB_PATH" => "/nonexistent/app-store-release.aab" }, repo_root: repo_root)
   end
   ok("missing AAB fails loudly, names ANDROID_AAB_PATH")
 
-  # Default path follows flutter build appbundle's conventional location.
+  # Default path follows `flutter build appbundle --flavor store` (store
+  # flavor since #622; the flavor-less bundle/release output is dead).
   default = PlayUploadPreflight.default_aab_path(repo_root)
-  expected = File.join(repo_root, "build/app/outputs/bundle/release/app-release.aab")
+  expected = File.join(repo_root, "build/app/outputs/bundle/storeRelease/app-store-release.aab")
   raise "FAIL: default AAB path #{default} != #{expected}" unless default == expected
-  ok("default AAB path = build/app/outputs/bundle/release/app-release.aab")
+  ok("default AAB path = build/app/outputs/bundle/storeRelease/app-store-release.aab")
 
   # ── validate-only (dry-run) mode ────────────────────────────────────────
   unless PlayUploadPreflight.validate_only?({}) == false
