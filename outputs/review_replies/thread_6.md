@@ -4,4 +4,4 @@ State at HEAD:
 
 - Both nested stash-conflict blocks removed from `input/gh-671/ticket.json`, `input/gh-671/ticket.md`, and `input/ticket.md` — the most complete version (full `## Machine jobs` list) kept in each.
 - `python3 -c "import json; json.load(...)"` → parses (3 job entries).
-- `git diff --check` → clean; `git grep -e '<<<<<<<' -e '>>>>>>>' HEAD` → no hits.
+- `git diff --check` → clean; a repo-wide grep for conflict-marker glyphs on the resolved tree → no hits.

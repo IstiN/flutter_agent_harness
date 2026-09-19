@@ -261,15 +261,18 @@ final class _ScriptedMockServer {
       } else {
         chunks = _textChunks();
       }
-      if (n >= 1) {
-        // De-flake (PR review, 2 rounds): with a localhost mock and instant
-        // `echo` commands, tool call N settles and tool call N+1 starts
-        // within one frame interval, so the TUI can legally coalesce away
-        // the frame where the settled row wears its tint. Delaying each
-        // later response guarantees the settled done/failed frame is
-        // emitted while the TUI idles waiting for the model.
-        await Future<void>.delayed(const Duration(milliseconds: 400));
-      }
+      // De-flake (PR review, 3 rounds): with a localhost mock and instant
+      // `echo` commands, tool call N settles and tool call N+1 starts
+      // within one frame interval, so the TUI can legally coalesce away
+      // the frame where the settled row wears its tint. EVERY scripted
+      // response is delayed — including the first one: with a delay only
+      // on n >= 1 the success row (call 0) still settled with a zero idle
+      // window before request 1 and its tinted done frame was lost
+      // (observed once post-merge: the success tint never reached the raw
+      // stream while the failed row painted fine). The delay before each
+      // response guarantees the previous tool call's settled frame is
+      // emitted while the TUI idles waiting for the model.
+      await Future<void>.delayed(const Duration(milliseconds: 400));
       for (final chunk in chunks) {
         // A blank line terminates each SSE event — without it the decoder
         // concatenates every data line into one unreadable payload.
