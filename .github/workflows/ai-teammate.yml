@@ -37,9 +37,10 @@ on:
   workflow_dispatch:
     inputs:
       issue:
-        description: 'Issue number to run the agent on'
-        required: true
-        type: number
+        description: 'Issue number to run the agent on (empty for PR-anchored runs, #687)'
+        required: false
+        type: string
+        default: ''
       leg:
         description: 'Which leg to run'
         required: true
