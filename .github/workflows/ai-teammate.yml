@@ -26,7 +26,9 @@ name: 'AI Teammate'
 
 run-name: >-
   ${{ github.event_name == 'workflow_dispatch' &&
-      format('▶ {0} (SM) · gh-{1}', github.event.inputs.leg, github.event.inputs.issue) ||
+      (github.event.inputs.pr != '' &&
+       format('▶ {0} (SM) · pr-{1}', github.event.inputs.leg, github.event.inputs.pr) ||
+       format('▶ {0} (SM) · gh-{1}', github.event.inputs.leg, github.event.inputs.issue)) ||
       format('{0} · gh-{1}: {2}',
         github.event.action == 'assigned' && '⚒️ dev (assigned handoff)' || 'machine loop',
         github.event.issue.number, github.event.issue.title) }}
@@ -37,9 +39,10 @@ on:
   workflow_dispatch:
     inputs:
       issue:
-        description: 'Issue number to run the agent on'
-        required: true
-        type: number
+        description: 'Issue number to run the agent on (empty for PR-anchored runs, #687)'
+        required: false
+        type: string
+        default: ''
       leg:
         description: 'Which leg to run'
         required: true
@@ -49,6 +52,11 @@ on:
         description: 'Why this dispatch (audit trail, shown in logs)'
         required: false
         type: string
+      pr:
+        description: 'PR number for PR-anchored review runs (#687) — the SM dispatches review with pr instead of issue'
+        required: false
+        type: string
+        default: ''
 
 # NO permissions block here: the factory's jobs declare their own write
 # scopes, and a reusable workflow cannot RAISE rights above the caller —
@@ -96,8 +104,19 @@ jobs:
               # Assignment-driven loop: a fresh `assigned` event (human
               # handoff) → dev leg; `labeled` (agent:review / agent:rework
               # added by the machine itself while assigned) → guard derives.
+              # POLICY (#693 steering): dev fires ONLY when ai-teammate is
+              # the sole assignee — any human assignee owns the issue and
+              # the machine stands by for reviews instead (review paths:
+              # review-external-once / agent:review on the eventual PR).
               if [ "$ACTION" = "assigned" ]; then
-                echo "leg=dev" >> "$GITHUB_OUTPUT"
+                HUMAN=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}" \
+                  --jq '[.assignees[].login] | map(select(. != "ai-teammate")) | length')
+                if [ "$HUMAN" = "0" ]; then
+                  echo "leg=dev" >> "$GITHUB_OUTPUT"
+                else
+                  echo "leg=" >> "$GITHUB_OUTPUT"
+                  echo "::notice title=machine-standby::issue #${ISSUE_NUMBER} has a human assignee — no dev, review-only"
+                fi
               else
                 echo "leg=" >> "$GITHUB_OUTPUT"
               fi
@@ -115,13 +134,18 @@ jobs:
     # a branch ref executes whatever is at the head at run start). Flip in
     # lockstep with the machine-sm.yml pin — guarded by
     # test/machine_kit/factory_stub_ref_test.dart.
-    uses: IstiN/dmtools-agents/.github/workflows/factory-teammate.yml@f23ef09b23cfe60ed943059f85b83fb23c34ec8a
+    uses: IstiN/dmtools-agents/.github/workflows/factory-teammate.yml@ceddca59606f3e7ff302acb78a40c9ed63d9e3b2
     with:
       # The literal uses-ref: the factory requires it (it cannot derive its
       # own ref — github.workflow_ref in a called workflow is the CALLER's).
-      factory_ref: f23ef09b23cfe60ed943059f85b83fb23c34ec8a
+      factory_ref: ceddca59606f3e7ff302acb78a40c9ed63d9e3b2
       # STRING — number/choice-typed reusable inputs cannot take expressions.
       issue: ${{ needs.gate.outputs.issue || github.event.inputs.issue }}
+      # #687: PR-anchored review (SM dispatches with pr instead of issue).
+      pr: ${{ github.event.inputs.pr || '' }}
+      # #687: machine login via jobParams — branch-independent (the
+      # checked-out PR branch carries no machineAuthor config).
+      machine-author: ${{ vars.MACHINE_AUTHOR || '' }}
       leg: ${{ needs.gate.outputs.leg || github.event.inputs.leg || '' }}
       reason: ${{ github.event.inputs.reason || 'ai-teammate-author gate' }}
     # Explicit mapping — the factory DECLARES SOURCE_GITHUB_TOKEN as a

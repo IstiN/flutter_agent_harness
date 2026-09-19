@@ -3904,4 +3904,12 @@
 
 - fix(cli): hermetic resolveEffectiveCliArgs env + skip missing browser-ext artifact (#681)
 
+## 0.1.427
+
+- fix(#687): stub issue input must accept empty (PR-anchored dispatches) (#697)
+- fix(#693): declare pr dispatch input; human-assigned issues are review-only (#696)
+- feat(#687): PR-owned lifecycle wiring (pin dmtools-agents#442) (#694)
+- fix(cube): gate web tool egress behind the cube network policy (#685)
+- feat(agent): automatic tool-result spilling with symmetric previews (#684)
+
 ## Unreleased
