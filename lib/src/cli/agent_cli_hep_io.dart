@@ -40,3 +40,25 @@ class HepEventsIO implements CliIO {
   @override
   int get rows => inner.rows;
 }
+
+/// Headless structured-output header writes (issues #155/#695): the HEP
+/// `hep_header` frame and the stream-json session line are each the FIRST
+/// stdout line of their mode, emitted the moment the session id exists —
+/// before any agent event can race them. Split into this part (same
+/// library) so [AgentCli.runHeadless] stays under the CRAP gate.
+extension AgentCliHeadlessEvents on AgentCli {
+  /// Writes the header of every structured mode the run carries (at most
+  /// one of [hep]/[streamJson] is non-null in practice — the CLI rejects
+  /// `--output` combined with `--output-format stream-json`).
+  Future<void> _writeHeadlessEventHeaders({
+    HepWriter? hep,
+    StreamJsonWriter? streamJson,
+  }) async {
+    if (hep == null && streamJson == null) return;
+    final sessionId = _session!.cachedId ?? (await _session!.getMetadata()).id;
+    hep?.writeHeader(sessionId: sessionId);
+    // Stream-json mode: the session header carries the run's cwd (pi's
+    // session line shape).
+    streamJson?.writeHeader(sessionId: sessionId, cwd: config.env.cwd);
+  }
+}

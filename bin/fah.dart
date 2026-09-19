@@ -141,6 +141,14 @@ void _writeHepLine(String line) {
   stdout.flush();
 }
 
+/// One stream-json NDJSON line to stdout, flushed immediately (issue
+/// #695): same live-pipe contract as HEP — `| jq` consumers tail the
+/// stream line by line, and jsonEncode output is always single-line.
+void _writeStreamJsonLine(String line) {
+  stdout.writeln(line);
+  stdout.flush();
+}
+
 /// The mime reported when the magic-byte sniff misses — callers treat it
 /// as "not an image" (issue #196 `--attach` passthrough).
 const _unknownAttachMime = 'application/octet-stream';
@@ -1794,6 +1802,13 @@ Future<void> _runApp(List<String> args) async {
   // flowing to their channel. `--attach` files ride the first user
   // message as image blocks.
   final eventsMode = headlessPrompt != null && parsed.output != null;
+  // Stream-json mode (issue #695): `--output-format stream-json` (alias
+  // `--mode json`) turns headless stdout into pi-shaped NDJSON agent
+  // events owned by the StreamJsonWriter — same stdout-exclusivity rule
+  // as HEP events mode: prose writes are dropped (the frames carry them),
+  // diagnostics keep their stderr channel.
+  final streamJsonMode =
+      headlessPrompt != null && parsed.outputFormat == 'stream-json';
   final hep = eventsMode
       ? HepWriter(
           emit: _writeHepLine,
@@ -1802,6 +1817,9 @@ Future<void> _runApp(List<String> args) async {
               ? HepToolArgs.full
               : HepToolArgs.summary,
         )
+      : null;
+  final streamJson = streamJsonMode
+      ? StreamJsonWriter(emit: _writeStreamJsonLine)
       : null;
   final attachedImages = <ImageContent>[];
   final attachReferences = <String>[];
@@ -1824,7 +1842,7 @@ Future<void> _runApp(List<String> args) async {
       );
     }
   }
-  if (eventsMode) {
+  if (eventsMode || streamJsonMode) {
     // Stdout purity: deltas ride frames; diagnostics keep their channel
     // (and still tee to --log-file via the wrapper chain).
     io = HepEventsIO(io);
@@ -2246,6 +2264,7 @@ Future<void> _runApp(List<String> args) async {
           : '$headlessPrompt\n\n${attachReferences.join('\n\n')}',
       images: attachedImages,
       hep: hep,
+      streamJson: streamJson,
       waitForJobs: effective.waitForJobs,
     );
     final int code;
