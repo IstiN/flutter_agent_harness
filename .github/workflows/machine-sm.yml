@@ -29,14 +29,15 @@ on:
 
 jobs:
   sm:
-    # TEST BRANCH for the #687 e2e run (PR IstiN/dmtools-agents#442):
-    # branch ref is fine for manual dispatches; flip to the merge SHA in
-    # lockstep with ai-teammate.yml when #442 merges.
-    uses: IstiN/dmtools-agents/.github/workflows/factory-sm.yml@feat/pr-lifecycle-sm-687
+    # Pinned to the immutable dmtools-agents#442 merge SHA (PR-owned
+    # lifecycle: test once per state, silent updates, pre-merge validation).
+    # Flip in lockstep with ai-teammate.yml — guarded by
+    # test/machine_kit/factory_stub_ref_test.dart.
+    uses: IstiN/dmtools-agents/.github/workflows/factory-sm.yml@5357c97a3e60c47be0a90d1556e44af49cc20b83
     with:
       # The literal uses-ref: the factory requires it (it cannot derive its
       # own ref — github.workflow_ref in a called workflow is the CALLER's).
-      factory_ref: feat/pr-lifecycle-sm-687
+      factory_ref: 5357c97a3e60c47be0a90d1556e44af49cc20b83
       # Manual ticks default to dry; cron ticks run live.
       dryRun: ${{ github.event.inputs.dryRun || 'false' }}
     # Explicit mapping — the factory DECLARES SOURCE_GITHUB_TOKEN as a
