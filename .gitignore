@@ -166,3 +166,6 @@ vendor/wasm_run_flutter/android/src/main/jniLibs/
 .dmtools/fa-sessions/
 .dmtools/copilot-sessions/
 .dmtools/credential-helper.log
+
+# factory runtime clone (checked out by the machine loop, never committed)
+factory-agents/
