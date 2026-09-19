@@ -46,6 +46,7 @@ export 'src/cli/cli_config.dart'
         loadProjectMemoryConfig,
         loadProjectCubeSettings,
         resolveStartupCubeSource;
+export 'src/cli/pi_mode.dart';
 export 'src/cli/cli_help.dart';
 export 'src/cli/hep.dart';
 export 'src/cli/folder_model_state.dart';

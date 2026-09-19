@@ -123,6 +123,11 @@ enum SharedSetting {
   /// CLI (`/providers queue`) and in the app Settings; the env scope is
   /// read-only everywhere.
   providersQueue,
+
+  /// The harness benchmark mode (`agent.mode`: `default` | `pi`, issue
+  /// #679): `fa --pi` runs pi's exact benchmark shape — the 4-tool
+  /// surface, the bare prompt profile, the token-parity gate.
+  harnessMode,
 }
 
 /// Settings that are currently CLI-only.
@@ -191,6 +196,10 @@ const cliOnlySettings = <SharedSetting>{
   // The TUI palette colors a terminal: the app renders through Flutter's
   // own theming stack (separate system by design — issue #279 non-goal).
   SharedSetting.tuiTheme,
+  // The harness benchmark mode (issue #679) presets the CLI REPL boot —
+  // the tool-scope pin and the bare prompt composition run in the CLI
+  // host process (`fa --pi`); the app has no fa benchmark runner.
+  SharedSetting.harnessMode,
 };
 
 /// Settings that are currently app-only.
@@ -214,6 +223,11 @@ const nonYamlSettings = <SharedSetting>{
   // .fah/packages.yaml plugin opt-out — an E4-style whole-section entry
   // that covers the connection, not a yaml key.
   SharedSetting.dapHub,
+  // The harness mode rides the `agent:` top-level section
+  // (`agent.mode`), which the single-owner yaml classification already
+  // assigns to contextWindowCap (issue #394); sub-keys are not top-level
+  // keys, so this setting owns none itself.
+  SharedSetting.harnessMode,
 };
 
 /// User-readable justifications for the [cliOnlySettings] exemptions.
@@ -268,6 +282,10 @@ const cliOnlyJustifications = <SharedSetting, String>{
       'process\'s provider connections; the app has no process-wide '
       'override or roles resolver to re-arm. Configure them in the CLI '
       '(issue #393).',
+  SharedSetting.harnessMode:
+      'The harness benchmark mode presets the CLI REPL boot (the 4-tool '
+      'surface and bare prompt of `fa --pi`, issue #679); the app has no '
+      'fa benchmark runner. Configure it in the CLI.',
 };
 
 /// Top-level yaml keys that are intentionally NOT interactive settings on
@@ -549,6 +567,15 @@ const settingSurfaces = <SharedSetting, SettingSurfaces>{
         'The cap clamps the CLI agent loop and compaction math in the CLI '
         'host process; no app surface runs that loop.',
   ),
+  SharedSetting.harnessMode: SettingSurfaces(
+    macos: false,
+    ios: false,
+    web: false,
+    extensionPanel: false,
+    gapWhy:
+        'The benchmark mode presets the CLI REPL boot (tool scope pin, '
+        'bare prompt composition); no app surface runs the fa REPL.',
+  ),
 };
 
 /// Metadata for each [SharedSetting]: what to search for in each platform's
@@ -710,6 +737,12 @@ const sharedSettingMetadata = <SharedSetting, _SettingMeta>{
     appRef: null, // exempted — lives in the CLI host (see above).
     yamlKeys: ['providerTimeouts', 'retry'],
     description: 'Provider failure resilience (issue #393).',
+  ),
+  SharedSetting.harnessMode: _SettingMeta(
+    cliRef: 'startHarnessModeFlow',
+    appRef: null, // exempted — CLI REPL benchmark boot only (see above).
+    yamlKeys: [], // rides `agent:` — single-owned by contextWindowCap.
+    description: 'Harness benchmark mode preset (issue #679).',
   ),
 };
 
