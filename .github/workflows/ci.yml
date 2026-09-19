@@ -1017,11 +1017,10 @@ jobs:
       # The google-services Gradle plugin (applied unconditionally in
       # android/app/build.gradle.kts) refuses to run without this file.
       # #622 commits a placeholder carrying BOTH flavor clients
-      # (dev.fa1.app + dev.fa1.app.god); keep it whenever present — with
-      # product flavors, `flutter build apk --debug` runs assembleDebug for
-      # EVERY flavor, so a dev.fa1.app-only seed hard-fails
-      # :app:processGodDebugGoogleServices ("No matching client found for
-      # package name 'dev.fa1.app.god'"). Only when the file is missing
+      # (dev.fa1.app + dev.fa1.app.god); keep it whenever present — the
+      # debug-APK smoke pins the store flavor (`--flavor store`, only the
+      # dev.fa1.app client is needed); god compile truth is covered by the
+      # flavor matrix release job. Only when the file is missing
       # (old forks/history) seed the structurally-valid dev.fa1.app
       # placeholder — debug APKs never talk to Firebase with it; the goal
       # here is compile truth (#280).
@@ -1070,7 +1069,7 @@ jobs:
       - run: cd flutter_app && flutter pub get
 
       - name: flutter build apk (debug)
-        run: cd flutter_app && flutter build apk --debug
+        run: cd flutter_app && flutter build apk --debug --flavor store
 
   build-ios:
     name: Build iOS (debug, unsigned)
