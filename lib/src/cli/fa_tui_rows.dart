@@ -113,10 +113,18 @@ extension _TuiRowRenderers on FaTuiModel {
   /// accent after each embedded reset so the selected row keeps one base
   /// role: matched cells accent2Soft, everything else the selection
   /// accent.
+  ///
+  /// A label with NO embedded styling (generic pickers — themes, sessions,
+  /// settings) is wrapped in the accent directly: the old path returned it
+  /// untouched, so the selected row was indicated by the one-cell `▸`
+  /// glyph alone and the label itself rendered in the terminal default —
+  /// invisible in low-contrast palettes (gh-671 "/theme can't see what is
+  /// selected").
   String _rearmSelection(String label) {
     final theme = FaThemeController.instance;
     final open = theme.sgrPrefix(theme.current.accent);
-    if (open.isEmpty || !label.contains('\x1b[0m')) return label;
+    if (open.isEmpty) return label;
+    if (!label.contains('\x1b[0m')) return '$open$label\x1b[0m';
     return label.replaceAll('\x1b[0m', '\x1b[0m$open');
   }
 

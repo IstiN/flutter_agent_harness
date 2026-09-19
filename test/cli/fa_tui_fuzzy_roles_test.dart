@@ -97,5 +97,43 @@ void main() {
     expect(selected.contains(accentOpen), isTrue,
         reason: 'unmatched cells must wear the selection accent');
   });
+
+  test('gh-671: a PLAIN selected label wears the accent too (generic '
+      'pickers)', () {
+    // The /theme picker items are plain labels (no fuzzy spans). The old
+    // _rearmSelection returned them untouched, so the only selection cue
+    // was the one-cell ▸ glyph and the label itself rendered in the
+    // terminal default — "can't see what is selected" in low-contrast
+    // palettes.
+    final controller = FaThemeController.instance;
+    controller.addUserThemes({
+      'moss': parseUserTheme('{"roles": {"accent": "#00ff88"}}', 'moss'),
+    });
+    controller.switchTo('moss');
+    var m = build();
+    m = m.update(OpenPickerMsg('theme', 'Select theme', const [
+      MenuItem(key: 'moss', label: 'moss', description: '███'),
+      MenuItem(key: 'pi', label: 'pi', description: '███'),
+    ])).$1 as FaTuiModel;
+    final rows = m.view().content.split('\n');
+    final selected = rows.firstWhere(
+      (r) => r.replaceAll(_sgr, '').contains('▸'),
+      orElse: () => fail('no selected menu row in the frame'),
+    );
+    final mossOpen = controller.sgrPrefix(controller.current.accent);
+    expect(selected, contains(mossOpen),
+        reason: 'the selected plain label must wear the selection accent');
+    // Every visible run still opens a role — none unstyled (AC2 rule).
+    for (final seg in selected.split(reset)) {
+      final masked = seg.replaceAllMapped(_sgr, (m) => ' ' * m[0]!.length);
+      final nonSpace = RegExp(r'\S').firstMatch(masked);
+      if (nonSpace == null) continue;
+      final open = seg.indexOf('\x1b[');
+      expect(open, isNonNegative,
+          reason: 'unstyled run "${masked.trim()}" — no role before it');
+      expect(open, lessThan(nonSpace.start),
+          reason: 'run "${masked.trim()}" renders unstyled');
+    }
+  });
 }
 
