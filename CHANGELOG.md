@@ -3912,4 +3912,12 @@
 - fix(cube): gate web tool egress behind the cube network policy (#685)
 - feat(agent): automatic tool-result spilling with symmetric previews (#684)
 
+## 0.1.428
+
+- chore: repin factory 4b5b1be (silent-update-behind) (#707)
+- fix(#687): silent token via factory input + repin 1274089 (#703)
+- fix(cli): fit-preserving table column sizing (#686) (#688)
+- feat(#687): machine-author passthrough via vars.MACHINE_AUTHOR + repin ceddca5 (#699)
+- fix(#687): repin factory 40dd6f0 (dup-guard) + pr-aware stub run-name (#698)
+
 ## Unreleased
