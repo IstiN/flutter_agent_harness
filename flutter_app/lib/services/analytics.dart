@@ -207,8 +207,10 @@ final class AppAnalytics {
   /// funnel counts join the site's `appstore_click` events in the same
   /// GA4/Firebase property. Metadata only — never a URL with query
   /// strings, never user ids.
-  void storeReferralTap({required String placement, required String platform}) =>
-      _log('store_referral', {'placement': placement, 'platform': platform});
+  void storeReferralTap({
+    required String placement,
+    required String platform,
+  }) => _log('store_referral', {'placement': placement, 'platform': platform});
 
   /// The in-app Get banner was dismissed (issue #691) — the funnel's
   /// negative signal, countable against the taps.

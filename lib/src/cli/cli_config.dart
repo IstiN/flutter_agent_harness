@@ -263,7 +263,9 @@ final class CliConfig {
           : RedactionConfig.fromYaml(map['redact']),
       // The spills section (issue #678); tolerant by design — unknown
       // keys and mistyped scalars become notes, never boot failures.
-      spills: map['spills'] == null ? null : SpillsConfig.fromYaml(map['spills']),
+      spills: map['spills'] == null
+          ? null
+          : SpillsConfig.fromYaml(map['spills']),
       // Saved custom providers; entry-level errors throw [ConfigException].
       // Entries named after a built-in catalog provider are dropped (issue
       // #221's ghost "openai"): they shadow `/provider <name>` routing and
