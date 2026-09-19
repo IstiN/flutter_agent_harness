@@ -97,6 +97,21 @@ bool _parseTrajectorySection(Object? node) {
   return wireDump;
 }
 
+/// Validates one `agent.mode` value (issue #680): only the
+/// [agentLoadModeLabels] strings are legal, and `default` normalizes to
+/// null so an absent and an explicit-off mode are indistinguishable
+/// downstream.
+String? _parseAgentModeValue(Object? value) {
+  if (value is! String || !agentLoadModeLabels.contains(value)) {
+    throw ConfigException(
+      '"agent.mode" must be one of: ${agentLoadModeLabels.join(', ')}',
+    );
+  }
+  // The default needs no storage: absent == default keeps the written
+  // file minimal (the file's "defaults never written" rule).
+  return value == 'default' ? null : value;
+}
+
 /// Parses the `agent:` section (issues #273/#680): `contextWindowCap`
 /// and `mode` (the tool-load preset, `default|pi|omp`). Strict like every
 /// section: a bad schema throws [ConfigException] at boot.
@@ -125,16 +140,7 @@ bool _parseTrajectorySection(Object? node) {
         }
         cap = value;
       case 'mode':
-        final value = node[key];
-        if (value is! String || !agentLoadModeLabels.contains(value)) {
-          throw ConfigException(
-            '"agent.mode" must be one of: '
-            '${agentLoadModeLabels.join(', ')}',
-          );
-        }
-        // The default needs no storage: absent == default keeps the
-        // written file minimal (the file's "defaults never written" rule).
-        if (value != 'default') mode = value;
+        mode = _parseAgentModeValue(node[key]);
       default:
         throw ConfigException('unknown "agent" key: $key');
     }
@@ -593,6 +599,7 @@ final class CliConfig {
       wireDump: wireDump,
       images: images,
       contextWindowCap: contextWindowCap,
+      agentLoadMode: agentLoadMode,
       powerSleepPrevention: powerSleepPrevention,
       powerHold: powerHold,
       tuiTheme: tuiTheme,
@@ -659,16 +666,7 @@ final class CliConfig {
     buffer.write(_compactionYaml());
     if (wireDump) buffer.write('trajectory:\n  wireDump: true\n');
     if (images != null) buffer.write(_imagesYaml());
-    if (contextWindowCap != null || agentLoadMode != null) {
-      final section = StringBuffer('agent:\n');
-      if (contextWindowCap != null) {
-        section.write('  contextWindowCap: $contextWindowCap\n');
-      }
-      if (agentLoadMode != null) {
-        section.write('  mode: $agentLoadMode\n');
-      }
-      buffer.write(section.toString());
-    }
+    buffer.write(_agentSectionYaml());
     // The subagents heartbeat section (issue #383), only when explicitly
     // configured; defaults are never written so the file stays minimal.
     final subagentsConfig = subagents;
@@ -679,6 +677,20 @@ final class CliConfig {
     buffer.write(_jobsYaml());
     buffer.write(_powerYaml());
     return buffer.toString();
+  }
+
+  /// The `agent:` section, only when a cap or a load mode is persisted;
+  /// defaults are never written so the file stays minimal.
+  String _agentSectionYaml() {
+    if (contextWindowCap == null && agentLoadMode == null) return '';
+    final section = StringBuffer('agent:\n');
+    if (contextWindowCap != null) {
+      section.write('  contextWindowCap: $contextWindowCap\n');
+    }
+    if (agentLoadMode != null) {
+      section.write('  mode: $agentLoadMode\n');
+    }
+    return section.toString();
   }
 
   /// The `jobs:` boot-maintenance section (issue #478), only when
