@@ -1549,6 +1549,11 @@ Future<void> _runApp(List<String> args) async {
   // `redact:` config (null = defaults) BEFORE the secret redactor so the
   // redactor's dual registration feeds the pipeline's registered layer.
   final redactionPipeline = buildRedactionPipeline(effective.redact);
+  // Automatic tool-result spilling (issue #678): the project
+  // `.fah/config.yaml` `spills:` section wins wholesale over the user
+  // one (same merge as the other project sections). Null = absent —
+  // no spill hooks, byte-identical legacy boot.
+  final spillsConfig = loadProjectSpillsConfig(cwd) ?? saved.spills;
   final redactor = buildSecretRedactor(
     roleSecrets: roleSecrets,
     keys: keyCache,
@@ -1848,6 +1853,7 @@ Future<void> _runApp(List<String> args) async {
       apiKey: apiKey,
       providerKind: provider,
       redactionPipeline: redactionPipeline,
+      spills: spillsConfig,
       // Shared by the env config and the presence store below.
       env: cliEnv,
       // fa_cube sandbox profile (Phase 1): clamps fs + shell ops to the

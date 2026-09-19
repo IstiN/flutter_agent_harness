@@ -87,6 +87,11 @@ enum SharedSetting {
   /// `memory.userPath`).
   memoryStores,
 
+  /// The automatic tool-result spilling (`spills:` section, issue #678):
+  /// boot wiring for the CLI host process's agent loop — hook attach +
+  /// boot notes, not an interactive preference on any surface.
+  spillHooks,
+
   /// The layered redaction pipeline's `redact:` section (enabled/blockMode,
   /// per-layer toggles, allowlist regexes, entropy knobs, per-tool policy,
   /// issue #391).
@@ -158,6 +163,11 @@ const cliOnlySettings = <SharedSetting>{
   // the section read-only (memory_config_loader); editing host paths from
   // inside the sandbox would point the CLI at paths the app cannot see.
   SharedSetting.memoryStores,
+
+  // Spilling is boot wiring INSIDE the CLI host process's agent loop
+  // (hook attach + boot notes, issue #678); the app composes its own
+  // agent loop and has no hook chain to attach to. File-tuned section.
+  SharedSetting.spillHooks,
 
   // The redaction pipeline runs inside the CLI host process with the
   // process's registered secrets in memory; the app has no pipeline
@@ -268,6 +278,10 @@ const cliOnlyJustifications = <SharedSetting, String>{
       'process\'s provider connections; the app has no process-wide '
       'override or roles resolver to re-arm. Configure them in the CLI '
       '(issue #393).',
+  SharedSetting.spillHooks:
+      'Spill hooks run inside the CLI host process\'s agent loop (result '
+      '→ redact → size check → spill → preview, issue #678); the app has '
+      'no hook chain to attach to. Configure the section in the file.',
 };
 
 /// Top-level yaml keys that are intentionally NOT interactive settings on
@@ -493,6 +507,15 @@ const settingSurfaces = <SharedSetting, SettingSurfaces>{
         'Memory roots are host filesystem paths; the app resolves them '
         'read-only.',
   ),
+  SharedSetting.spillHooks: SettingSurfaces(
+    macos: false,
+    ios: false,
+    web: false,
+    extensionPanel: false,
+    gapWhy:
+        'Spill hooks live in the CLI host process\'s agent loop; no app '
+        'surface has a hook chain to configure.',
+  ),
   SharedSetting.tuiTheme: SettingSurfaces(
     macos: false,
     ios: false,
@@ -674,6 +697,12 @@ const sharedSettingMetadata = <SharedSetting, _SettingMeta>{
     appRef: null, // exempted — host paths, CLI-only (see above).
     yamlKeys: ['memory'],
     description: 'Long-term memory store locations.',
+  ),
+  SharedSetting.spillHooks: _SettingMeta(
+    cliRef: 'attachSpillWiring',
+    appRef: null, // exempted — hook chain lives in the CLI host (see above).
+    yamlKeys: ['spills'],
+    description: 'Automatic tool-result spilling wiring (issue #678).',
   ),
   SharedSetting.tuiTheme: _SettingMeta(
     cliRef: 'tuiTheme',

@@ -172,6 +172,7 @@ import '../plugins/plugin.dart';
 import '../redact/redaction_cli.dart';
 import '../redact/redaction_hooks.dart';
 import '../redact/redaction_pipeline.dart';
+import '../spill/spill.dart';
 import '../ttsr/ttsr.dart';
 import '../types.dart';
 import '../usage_summary.dart';
@@ -237,6 +238,7 @@ part 'agent_cli_commands.dart';
 part 'agent_cli_ext.dart';
 part 'agent_cli_theme.dart';
 part 'agent_cli_composer.dart';
+part 'agent_cli_spill.dart';
 
 /// The CLI harness: agent + built-in tools + session persistence +
 /// compaction, driven by a [CliIO].
@@ -628,6 +630,7 @@ class AgentCli {
     if (config.redactionPipeline != null) {
       attachRedactionPipeline(_agent, config.redactionPipeline!);
     }
+    attachSpillWiring();
     // Busy-row honesty: name the executing tool ('Running bash…') instead
     // of leaving a stale 'Compacting context…' label over long tool calls.
     attachToolPhaseLabels(_agent, (phase) => _pushBusyPhase(phase));

@@ -851,6 +851,60 @@ prompts:
     });
   });
 
+  group('project spills section', () {
+    late Directory tmp;
+
+    setUp(() {
+      tmp = Directory.systemTemp.createTempSync('fah-config-test-');
+    });
+
+    tearDown(() {
+      tmp.deleteSync(recursive: true);
+    });
+
+    void writeProjectConfig(String yaml) {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync(yaml);
+    }
+
+    test('missing project file loads as null', () {
+      expect(loadProjectSpillsConfig(tmp.path), isNull);
+    });
+
+    test('parses the project spills section', () {
+      writeProjectConfig('spills:\n  enabled: false\n  threshold: 4096\n');
+      final loaded = loadProjectSpillsConfig(tmp.path);
+      expect(loaded?.enabled, isFalse);
+      expect(loaded?.threshold, 4096);
+    });
+
+    test('absent section loads as null', () {
+      writeProjectConfig('provider: anthropic\n');
+      expect(loadProjectSpillsConfig(tmp.path), isNull);
+    });
+
+    test('invalid section falls back to defaults, never throws', () {
+      // Tolerant by design (issue #678 AC11): a typo must not kill a
+      // session, so unlike the strict sections this never rethrows.
+      writeProjectConfig('spills:\n  bogus: 1\n');
+      final loaded = loadProjectSpillsConfig(tmp.path);
+      expect(loaded?.enabled, isTrue);
+      expect(loaded?.threshold, 8192);
+      expect(loaded?.notes, isNotEmpty);
+    });
+
+    test('malformed yaml loads as null', () {
+      writeProjectConfig('not yaml: [unclosed');
+      expect(loadProjectSpillsConfig(tmp.path), isNull);
+    });
+
+    test('non-map yaml doc loads as null', () {
+      writeProjectConfig('just-a-string\n');
+      expect(loadProjectSpillsConfig(tmp.path), isNull);
+    });
+  });
+
   group('save preserves every parsed section (issue #288 drift)', () {
     late Directory tmp;
 

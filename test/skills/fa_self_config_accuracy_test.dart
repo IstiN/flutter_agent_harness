@@ -157,6 +157,10 @@ const _nestedKeySources = <String, String>{
   'fabric.capabilities': 'lib/src/messaging/fabric_config.dart',
   'fabric.capabilities.[].name': 'lib/src/messaging/fabric_config.dart',
   'fabric.capabilities.[].description': 'lib/src/messaging/fabric_config.dart',
+  'spills.enabled': 'lib/src/spill/spill.dart',
+  'spills.threshold': 'lib/src/spill/spill.dart',
+  'spills.headChars': 'lib/src/spill/spill.dart',
+  'spills.tailChars': 'lib/src/spill/spill.dart',
   'subagents.heartbeatMinutes': 'lib/src/task/subagent_heartbeat.dart',
   'subagents.stallMinutes': 'lib/src/task/subagent_heartbeat.dart',
 };
