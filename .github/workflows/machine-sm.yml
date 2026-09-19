@@ -27,6 +27,17 @@ on:
         default: true
 
 
+# The factory's own permissions block cannot raise rights above the
+# caller, and the org default caps the token at read-only — the silent
+# update-branch path (workflow token, updatePullRequestBranch) failed
+# live with "github-actions[bot] does not have permission to update
+# this pull request" until this explicit block lifted the ceiling.
+permissions:
+  contents: read          # checkout target + engine
+  issues: write           # labels + close-issue safety net
+  pull-requests: write    # update-branch + merge
+  actions: write          # workflow_dispatch on the teammate workflow
+
 jobs:
   sm:
     # Pinned to the immutable dmtools-agents#442 merge SHA (PR-owned
