@@ -796,37 +796,56 @@ final class JsonlSessionRepo implements SessionRepo {
       if (!blockMayMatch(text)) {
         // No gate in this block — carry the trailing open fragment; a
         // line may span into a later matching block.
-        final lastNl = text.lastIndexOf('\n');
-        if (lastNl + 1 < text.length) carry.write(text.substring(lastNl + 1));
+        _carryOpenFragment(text, carry);
         continue;
       }
       // Hit-scan inside the matching block: only a real gate occurrence
-      // materializes its line. A line can hit several gates (or one gate
-      // twice) — decode each distinct line once.
-      final scanFrom = firstNl + 1;
-      final decodedLines = <(int, int)>{};
-      for (final gate in gates) {
-        var from = scanFrom;
-        for (;;) {
-          final hit = text.indexOf(gate, from);
-          if (hit < 0) break;
-          from = hit + 1;
-          final lineStart = text.lastIndexOf('\n', hit) + 1;
-          final lineEnd = text.indexOf('\n', hit);
-          if (lineEnd < 0) break; // runs past the block — the carry ends it
-          if (decodedLines.add((lineStart, lineEnd))) {
-            gateLine(text.substring(lineStart, lineEnd));
-          }
-        }
-      }
+      // materializes its line (a line can hit several gates, or one gate
+      // twice — each distinct line decodes once).
+      _scanGateHits(text, gates, firstNl + 1, <(int, int)>{}, gateLine);
       // Carry the trailing open fragment (after the last newline).
-      final lastNl = text.lastIndexOf('\n');
-      if (lastNl + 1 < text.length) carry.write(text.substring(lastNl + 1));
+      _carryOpenFragment(text, carry);
     }
     // A final line without a trailing newline (crash-torn tail): gate and
     // try to decode; a half-written line fails jsonDecode and is skipped.
     if (carry.isNotEmpty) gateLine(carry.toString());
     return records;
+  }
+
+  /// Carries [text]'s fragment after its last newline into [carry]: an
+  /// open line spanning a block boundary continues in a later block.
+  static void _carryOpenFragment(String text, StringBuffer carry) {
+    final lastNl = text.lastIndexOf('\n');
+    if (lastNl + 1 < text.length) carry.write(text.substring(lastNl + 1));
+  }
+
+  /// Hit-scan inside a matching block (see [_readCustomRecordsStreamed]):
+  /// walks every [gates] occurrence from [scanFrom] and materializes only
+  /// the hit lines, deduped through [decodedLines] so a line hitting
+  /// several gates (or one gate twice) decodes exactly once. A hit whose
+  /// line runs past the block's end stops that gate's walk — the caller's
+  /// carry completes it.
+  static void _scanGateHits(
+    String text,
+    List<String> gates,
+    int scanFrom,
+    Set<(int, int)> decodedLines,
+    void Function(String) gateLine,
+  ) {
+    for (final gate in gates) {
+      var from = scanFrom;
+      for (;;) {
+        final hit = text.indexOf(gate, from);
+        if (hit < 0) break;
+        from = hit + 1;
+        final lineStart = text.lastIndexOf('\n', hit) + 1;
+        final lineEnd = text.indexOf('\n', hit);
+        if (lineEnd < 0) break; // runs past the block — the carry ends it
+        if (decodedLines.add((lineStart, lineEnd))) {
+          gateLine(text.substring(lineStart, lineEnd));
+        }
+      }
+    }
   }
 
   /// Longest common prefix of [strings] ('' when empty input).

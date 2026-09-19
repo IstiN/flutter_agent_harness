@@ -544,9 +544,7 @@ extension on AgentCli {
     final budget =
         _effectiveContextWindow -
         CompactionSettings.forWindow(_effectiveContextWindow).reserveTokens;
-    if (!await session.ensureCompactionBoundaryResident(
-      tokenBudget: budget,
-    )) {
+    if (!await session.ensureCompactionBoundaryResident(tokenBudget: budget)) {
       session = await _repo.open(metadata);
     }
     stage('walk');
@@ -648,5 +646,13 @@ extension on AgentCli {
     final session = _session;
     if (session == null) return null;
     return await session.getSessionName() ?? (await session.getMetadata()).id;
+  }
+
+  /// After an interactive run ends, prints the command that picks this
+  /// session back up (kimi prints the resume hint on exit too). Skipped for
+  /// sessions with nothing persisted yet — resuming those is pointless.
+  Future<void> printSessionResumeHint() async {
+    final hint = await sessionResumeHint();
+    if (hint != null) io.writeln(_style.dim(hint));
   }
 }
