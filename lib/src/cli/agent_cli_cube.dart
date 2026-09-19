@@ -50,6 +50,7 @@ extension CubeCommands on AgentCli {
     final spec = _cubeEnv.activeSpec;
     if (spec == null) {
       io.writeln('cube: disabled (full host access)');
+      io.writeln('  network gate: $_networkGateStatus');
       return;
     }
     final description = spec.description;
@@ -71,8 +72,18 @@ extension CubeCommands on AgentCli {
     io.writeln(
       '  network allow: ${hosts.isEmpty ? '(none — all network denied)' : hosts.join(', ')}',
     );
+    io.writeln('  network gate: $_networkGateStatus');
     io.writeln('  cache: ${_cubeCacheLine(spec)}');
   }
+
+  /// The `network gate:` status value (issue #682): `on` under an active
+  /// cube, `off` in passthrough (allow-all), `n/a` when this host runs
+  /// the web tools without a gate.
+  String get _networkGateStatus => _webNetworkGate == null
+      ? 'n/a'
+      : _cubeEnv.activeSpec == null
+      ? 'off'
+      : 'on';
 
   /// `/cube list` — the cube manifests available for this project plus the
   /// built-in security-level presets.

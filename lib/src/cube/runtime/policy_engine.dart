@@ -33,8 +33,9 @@ final class CubePolicyDecision {
 /// The engine splits the line on shell operators (`|`, `||`, `&&`, `;`, `&`,
 /// newlines), extracts `$( ... )` and backtick subshell segments, strips
 /// leading `VAR=value` assignments, and checks every resulting command
-/// against [CubeSpec.tools]. Commands that invoke `curl` or `wget` get an
-/// additional [CubeSpec.network] check on the URLs they reference.
+/// against [CubeSpec.tools]. Commands that invoke `curl` or `wget` — and
+/// `gh api <abs-url>` — get an additional [CubeSpec.network] check on the
+/// URLs they reference.
 ///
 /// Global destruction (`rm -rf /`) is deliberately not special-cased: the
 /// tool allowlist is the mechanism — a cube that does not list `rm` never
@@ -98,13 +99,14 @@ final class CubePolicyEngine {
     );
   }
 
-  /// Checks the network policy when the command fetches URLs via curl/wget.
+  /// Checks the network policy when the command fetches URLs via curl/wget
+  /// or points `gh api` at an absolute URL (issue #682, second tier — the
+  /// same lexical shape as the curl/wget scan: URL operands only, not a
+  /// shell parser).
   CubePolicyDecision _checkNetworkPolicy(List<String> words) {
-    final command = words.first;
-    if (command != 'curl' && command != 'wget') {
-      return const CubePolicyDecision.allowed();
-    }
-    for (final word in words.skip(1)) {
+    final operands = _networkOperands(words);
+    if (operands == null) return const CubePolicyDecision.allowed();
+    for (final word in operands) {
       final match = _urlPattern.firstMatch(word);
       if (match == null) continue;
       final host = match.group(2)!;
@@ -120,6 +122,16 @@ final class CubePolicyEngine {
     }
     return const CubePolicyDecision.allowed();
   }
+
+  /// The URL-bearing operands of the command in [words], or `null` when
+  /// the command is not one the scan covers: `curl`/`wget` take URLs
+  /// anywhere after the program; `gh` only its `api <abs-url>` operands.
+  static Iterable<String>? _networkOperands(List<String> words) =>
+      switch (words.first) {
+        'curl' || 'wget' => words.skip(1),
+        'gh' when words.length > 1 && words[1] == 'api' => words.skip(2),
+        _ => null,
+      };
 
   /// Checks every shell redirection target of [segment] against the
   /// filesystem policy: a write redirect (`>`, `>>`, `<>`, `&>`, `N>`) must

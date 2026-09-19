@@ -79,6 +79,11 @@ final class CubePresets {
     'files.pythonhosted.org',
     'crates.io',
     'static.crates.io',
+    // The `web_search` endpoints (issue #682 Q1: search is gated like any
+    // model-invoked egress, so the L2 preset must allow its providers).
+    'html.duckduckgo.com',
+    'api.search.brave.com',
+    'api.tavily.com',
   ];
 
   /// The basic read/navigate command set of the `core` app axis (plus

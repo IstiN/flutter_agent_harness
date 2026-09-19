@@ -340,6 +340,7 @@ class AgentCli {
       // backend on this host) is a security-relevant downgrade — say so.
       onWarning: (message) => io.writeln(tuiWarning(message)),
     );
+    _webNetworkGate = CubeNetworkGate(() => _cubeEnv.activeSpec);
     _cubeSource = config.cubeSource;
     _coreToolEnv = SessionVarsExecutionEnv(_cubeEnv, _sessionEnvVars);
     final decoratedEnv = _coreToolEnv;
@@ -363,6 +364,10 @@ class AgentCli {
         decoratedEnv,
         snapshots: _snapshotStore,
         webSearch: config.webSearchConfig,
+        // The web-egress gate (issue #682) reads the LIVE spec per call,
+        // so `/cube use` / `/cube off` are honored by the next web tool
+        // call; null spec (no cube) is allow-all.
+        networkGate: _webNetworkGate,
         model: () => _agent.state.model,
         sqlite: config.sqliteEngine,
         lsp: config.lspConfig,
@@ -910,6 +915,11 @@ class AgentCli {
   /// The sandboxed view over [_env]: clamps filesystem and shell operations
   /// to the active cube (`null` = passthrough). `/cube` manages it live.
   late final SandboxedExecutionEnv _cubeEnv;
+
+  /// The web-egress network gate (issue #682) handed to the web tools;
+  /// reads the LIVE cube spec per call. Null only on hosts that build the
+  /// tool set without one (`/cube` status then reports `n/a`).
+  late final CubeNetworkGate? _webNetworkGate;
 
   /// Where the active cube came from — a manifest path or a cube name;
   /// `/cube reload` re-resolves it. Set at boot (config) and by
@@ -2595,12 +2605,8 @@ class AgentCli {
       final prompt = await _overWindowContinuationPrompt();
       await _runPrompt(prompt, isAutoContinue: true);
     } on Object catch (error) {
-      _logDiagnostic(
-        'over-window continuation failed sid=$_logSid: $error',
-      );
-      io.writeln(
-        tuiError('error: compaction continuation failed: $error'),
-      );
+      _logDiagnostic('over-window continuation failed sid=$_logSid: $error');
+      io.writeln(tuiError('error: compaction continuation failed: $error'));
     }
     return true;
   }
