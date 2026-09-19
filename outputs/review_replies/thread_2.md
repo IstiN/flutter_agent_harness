@@ -1,18 +1,16 @@
-# Re: 🔵 SUGGESTION: 3:1 label floor is only checked on `toolErrorBg`, not `toolSuccessBg`
-
-Done, exactly as suggested: the floor matrix in `test/cli/tui_theme_test.dart` ("tool-row labels and state rails clear 3:1 over their tints") now checks `toolTitle` against **both** tints per palette:
+**Fixed.** The 3:1 label-floor matrix in `test/cli/tui_theme_test.dart` now loops `toolTitle` over **both** tints per palette, mirroring the per-tint glyph-rail checks:
 
 ```dart
-for (final (tintName, tint) in [
+for (final (name, tint) in [
   ('toolSuccessBg', bgOf(t.toolSuccessBg)),
   ('toolErrorBg', bgOf(t.toolErrorBg)),
 ]) {
   expect(
     themeColorContrast(fgOf(t.toolTitle)!, tint!),
     greaterThanOrEqualTo(kThemeSecondaryTextFloor),
-    reason: '${entry.key}: toolTitle on $tintName',
+    reason: '${entry.key}: toolTitle on $name',
   );
 }
 ```
 
-All 7 built-ins already clear 3:1 on the success tint, so no palette value changed — the enforcement gap is closed. Suite: `test/cli/tui_theme_test.dart` 41 tests green.
+All 7 built-in palettes clear 3:1 on both tints — the enforcement gap (a palette that passes on the error tint but fails on the success tint) is closed.

@@ -1,9 +1,7 @@
-# Re: 🚨 BLOCKING: unresolved git merge-conflict markers committed to the branch
+**Resolved** — and this round the resolution was committed from a clean workspace, so it sticks (see the round-2 re-post on `input/gh-671/ticket.json` for the root cause).
 
-Resolved. All three files were unmerged (`both added`/`both modified`) in the `main` merge and are now staged without markers:
+State at HEAD:
 
-- `input/gh-671/ticket.json` — kept the description with the full `## Machine jobs` section (dev + both review runs); `json.loads` now passes.
-- `input/gh-671/ticket.md` — same resolution, all three job lines.
-- `input/ticket.md` — same resolution.
-
-`git diff --check` is clean and `grep -r '<<<<<<<'` finds no markers anywhere in `input/`.
+- Both nested stash-conflict blocks removed from `input/gh-671/ticket.json`, `input/gh-671/ticket.md`, and `input/ticket.md` — the most complete version (full `## Machine jobs` list) kept in each.
+- `python3 -c "import json; json.load(...)"` → parses (3 job entries).
+- `git diff --check` → clean; `git grep -e '<<<<<<<' -e '>>>>>>>' HEAD` → no hits.

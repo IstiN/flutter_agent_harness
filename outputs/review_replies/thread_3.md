@@ -1,13 +1,10 @@
-# Re: 🔵 SUGGESTION: truncated selected rows lose the new accent wrap (and the comment above is now stale)
-
-Fixed in `lib/src/cli/fa_tui_rows.dart` (`_menuItemRow`, truncated branch):
+**Fixed** in `lib/src/cli/fa_tui_rows.dart` — the truncated branch of `_menuItemRow` now applies the accent wrap after `_fitWidth`:
 
 ```dart
 final fitted = _fitWidth(plain, termWidth - 2);
 if (selected) return '$prefix${_rearmSelection(fitted)}';
-return '$prefix$fitted';
 ```
 
-The fitted plain text carries no embedded SGR, so `_rearmSelection` now wraps it in the selection accent (the stale "would be a no-op here" comment is replaced — it documents the gh-671 wrap instead).
+The stale comment ("`plain` carries no `\x1b[0m`, so `_rearmSelection` would be a no-op here") is removed — it described exactly the behavior this change introduces.
 
-**TDD:** new test `gh-671: a TRUNCATED selected label wears the accent too` in `test/cli/fa_tui_fuzzy_roles_test.dart` builds the model with `termWidth: 20` and a 22-cell label, then asserts the accent SGR opens *after* the `▸` glyph and *immediately before* the fitted label cells. It failed against the old truncated branch (only the glyph was accented) and passes with the fix.
+Regression test added RED-first in `test/cli/fa_tui_fuzzy_roles_test.dart`: *"gh-671: a TRUNCATED selected label wears the accent too"* — a generic picker at `termWidth: 20` with a 22-cell label asserts the accent SGR opens immediately before the fitted cells (failed before the fix, passes after; verified it fails against the pre-fix renderer).

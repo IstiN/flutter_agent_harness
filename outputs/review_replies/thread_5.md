@@ -1,5 +1,5 @@
-# Re: 🔵 SUGGESTION: `kDefaultTuiTheme`'s "byte-identical" doc promise is now stale
+**Fixed.** `kDefaultTuiTheme`'s doc comment no longer promises byte-identity. It now states the deliberate gh-671 change explicitly:
 
-Fixed — the doc comment on `kDefaultTuiTheme` no longer promises byte-identity:
+> Since gh-671 dim detail text carries an explicit `toolOutput` foreground (the old byte-identical-to-pre-theming invariant is gone) …
 
-> The boot default: the historical site palette (site/styles.css teal + indigo). Since gh-671 dim detail text carries an explicit `toolOutput` foreground (the old byte-identical-to-pre-theming invariant is deliberately broken — see `tui_theme_default.ans`).
+The golden `tui_theme_default.ans` matches the new rendering.

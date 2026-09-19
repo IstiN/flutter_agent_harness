@@ -1,8 +1,6 @@
-# Re: 🟡 IMPORTANT: Flaky assertion — the painted done-row frame can be coalesced away
+**Fixed.** Two-part de-flake in `test/integration/theme_readability_pty_test.dart`:
 
-Fixed with your options 1 + 2 combined (`test/integration/theme_readability_pty_test.dart`):
+1. `_ScriptedMockServer` now delays **400 ms** before answering every chat request with `n >= 1` (the boot-time `/models` turn still answers instantly), so the settled done/failed frame is always emitted while the TUI idles waiting for the model — the run→settle frame-coalescing window this thread describes is closed at the source.
+2. Both tint assertions are now `harness.waitForText(...)` polls (30 s timeout) for the exact tint SGR sequence, instead of post-hoc `contains` on the accumulated stream after `scenario-complete`.
 
-1. **Mock delay between responses** — the scripted mock now sleeps 400 ms before answering requests `n >= 1`, so after each tool call settles the TUI idles a full frame interval before the next call starts. The settled done/failed frame can no longer be coalesced away.
-2. **Poll instead of post-hoc assert** — the two `expect(raw, contains(bg(...)))` assertions are now `harness.waitForText(bg(...), timeout: 30s)` polls of the cumulative stream before `raw` is captured. If a frame were still never painted, the test now fails with a clear timeout + raw tail instead of a bare `contains` miss.
-
-Verified with 20+ consecutive `--tags integration` runs of the suite on this runner after the change — no recurrence of `does not contain '48;2;40;56;46'`.
+The reported failure (`dracula: … does not contain '48;2;40;56;46'`) never recurred across 18 consecutive green `--tags integration` runs after the change, and the round-2 review independently verified the suite 3/3. The "both tints really painted" precondition stays hard (not softened) — with the delay it is deterministic, and it is what guards the SGR state-machine contract from passing vacuously.
