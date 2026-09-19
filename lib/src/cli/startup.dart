@@ -73,6 +73,9 @@ import 'headless_provider_key.dart';
 /// the environment never activates a provider — the model would be an
 /// implicit default, and providers carry none by design. FA_PROVIDER_*
 /// stays: it names the model explicitly.
+/// The environment is injected ([env] is required): the CLI passes
+/// `Platform.environment`, tests pass exactly the map they mean —
+/// resolution never reads ambient process state.
 ///
 /// Returns the effective [CliArgs], the resolved provider kind — the same
 /// value, the explicit record field saves the caller a re-derivation — and
@@ -82,7 +85,7 @@ import 'headless_provider_key.dart';
 resolveEffectiveCliArgs(
   CliArgs parsed,
   CliConfig saved, {
-  Map<String, String>? env,
+  required Map<String, String> env,
 }) {
   const restorableKinds = {
     'openai-completions',
@@ -140,16 +143,15 @@ resolveEffectiveCliArgs(
 EnvProviderPreconfig? faProviderPreconfig(
   CliArgs parsed,
   CliConfig saved, {
-  Map<String, String>? env,
+  required Map<String, String> env,
 }) {
   if (parsed.providerExplicit) return null;
-  final environ = env ?? Platform.environment;
   return parseEnvProviderPreconfig(
-    providerType: environ['FA_PROVIDER_TYPE'],
-    providerName: environ['FA_PROVIDER_NAME'],
-    providerConfig: environ['FA_PROVIDER_CONFIG'],
-    providerConfigBase64: environ['FA_PROVIDER_CONFIG_BASE64'],
-    envVarValue: (name) => environ[name],
+    providerType: env['FA_PROVIDER_TYPE'],
+    providerName: env['FA_PROVIDER_NAME'],
+    providerConfig: env['FA_PROVIDER_CONFIG'],
+    providerConfigBase64: env['FA_PROVIDER_CONFIG_BASE64'],
+    envVarValue: (name) => env[name],
     takenNames: [for (final entry in saved.customProviders) entry.name],
   );
 }
