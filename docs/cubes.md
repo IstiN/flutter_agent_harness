@@ -88,6 +88,13 @@ exactly (case-insensitive), `*` matches everything, `*.domain` matches
 the apex and any subdomain but never `notexample.com`. IP literals match
 exactly. Deny wins; an empty `allow` denies all network.
 
+The policy gates every model-chosen web egress: `web_fetch` checks the
+requested URL before any socket opens (a denial answers with a
+`fa_cube[<name>]: network …` note — a normal tool result, never an
+error event), `web_search` runs only providers whose endpoint the policy
+allows, and redirect hops are re-checked per hop. Without an active cube
+the gate is allow-all and byte-identical to pre-gate behavior.
+
 ### `spec.filesystem`
 
 | Key | Type | Notes |
@@ -171,7 +178,7 @@ Slash commands (line mode):
 | Concern | Dart policy layer | Kernel layer (`backend: kernel`) |
 |---|---|---|
 | Tools | `SandboxedShell` checks every command of a line (subshells included) against the allow/deny sets; a denied command answers exit 127 with an `fa_cube[<name>]:` note. | Process confinement at exec time. |
-| Network | Lexical URL check on `curl`/`wget` arguments only. | Egress control (`--net` when nothing is allowed). |
+| Network | `web_fetch`/`web_search` gated per request against `network:` (denial = `fa_cube[<name>]:` tool note, zero requests; redirect hops re-checked); lexical URL check on `curl`/`wget` and `gh api <abs-url>` operands. | Coarse egress only: `--net` removes all network when nothing is allowed; it is **not** a per-host filter — once any network is allowed, every host is reachable. |
 | Filesystem | `CubeFsGuard` clamps file operations to the fs policy (lexical, per above); `SandboxedShell` additionally path-checks shell **redirect targets** (`>`, `>>`, `<>`, `&>`, `2>`, `<` as a read; `2>&1` exempt). | macOS: SBPL rules (below). Linux: `ro` mounts re-bound read-only. |
 | Environment | Clean base + declared vars (additive; cannot strip inherited vars). | Full environment isolation. |
 | Resources | Timeout clamp per command; disk cap prunes cache entries. | Backend-interpreted caps. |
@@ -206,7 +213,7 @@ platforms (including Windows) currently report a descriptor-only no-op.
   extracted and path-checked (`>`/`>>`/`<>`/`&>`/`N>` as writes, `<` as a
   read, `N>&M` fd duplicates exempt), but quoting inside `$(`, process
   substitution and `eval` indirection are above its ceiling, and the
-  network scan sees only `curl`/`wget` URL arguments — bare-host
+  network scan sees only `curl`/`wget`/`gh api` URL arguments — bare-host
   operands are unchecked. The fs guard resolves symlinks by their
   written form only.
 - **No side-channel guarantees.** Timing, cache and similar side
