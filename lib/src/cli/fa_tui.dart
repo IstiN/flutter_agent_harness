@@ -500,7 +500,17 @@ final class FaTuiModel extends Model {
 
   /// The visible window of menu items (start inclusive, end exclusive).
   (int, int) _menuWindow() {
-    const maxVisible = 6;
+    // Issue #706: the window must fit the glass. The classic fixed
+    // 6-row window plus its title/hint/footer chrome could exceed a
+    // short terminal; the frame then overran and the hard glass guard
+    // cropped the menu's TOP — the title and first items became
+    // selectable-but-invisible while the '↑ more' hint below stayed
+    // painted (list top unreachable). Cap by the rows a terminal can
+    // actually show after the frame's fixed chrome: progress indicator
+    // + frame rules + status (4), one input row, the menu title, both
+    // scroll hints, the models-picker footer. Floor 1 keeps even a
+    // degenerate terminal functional (E3).
+    final maxVisible = (termHeight - 9).clamp(1, 6);
     var start = 0;
     if (menuItems.length > maxVisible) {
       start = (menuSelected - (maxVisible ~/ 2)).clamp(

@@ -1349,8 +1349,14 @@ extension on AgentCli {
     io.writeln('ChatGPT authorized');
     final encoded = credentials.encode();
     final registry = config.customProviders;
+    // Alias resolution on the write path (#706): an existing record of
+    // the SAME auth domain — exact base URL or an alias spelling of the
+    // provider id (`chatgpt` / `chatgpt.com`) — receives this login.
+    // Minting a second record for one domain is how the /model picker
+    // grew twin identities both marked current.
     final existing = registry != null
-        ? _entryForBaseUrl(registry, spec.defaultBaseUrl)
+        ? (_entryForBaseUrl(registry, spec.defaultBaseUrl) ??
+              _entryForCanonicalName(registry, spec.name))
         : null;
     final fallback = existing?.name ?? _codeMieHostName(spec.defaultBaseUrl);
     // A cancel keeps the fallback — the OAuth credentials are already
@@ -1361,6 +1367,10 @@ extension on AgentCli {
             : (await _askConnectProviderName(
                 fallback,
                 sameBaseUrl: spec.defaultBaseUrl,
+                // The alias-resolved record of the same domain may carry
+                // a variant base URL — landing on it is the point of
+                // alias resolution, not a name clash.
+                allowClash: (clash) => clash == existing,
               ))) ??
         fallback;
     // Re-auth stores into the entry's own slot (a legacy entry keeps its
@@ -1388,15 +1398,25 @@ extension on AgentCli {
         : (await _pickChatGptModel(spec, encoded) ?? chatGptCodexDefaultModel);
 
     if (registry != null) {
-      registry.add(
-        CustomProviderEntry(
-          name: name,
-          apiType: spec.name,
-          baseUrl: spec.defaultBaseUrl,
-          modelId: modelId,
-          keyName: keyName,
-        ),
-      );
+      // Re-auth lands ON the existing record (in place — `add` both
+      // re-orders and rejects reserved-named domain ghosts, #706); a new
+      // account name saves a fresh entry.
+      final target = registry.find(name);
+      if (target == null) {
+        registry.add(
+          CustomProviderEntry(
+            name: name,
+            apiType: spec.name,
+            baseUrl: spec.defaultBaseUrl,
+            modelId: modelId,
+            keyName: keyName,
+          ),
+        );
+      } else {
+        target
+          ..modelId = modelId
+          ..keyName = keyName;
+      }
       _activeCustomName = name;
       io.writeln('saved provider $name (listed first in /provider)');
     }
@@ -1846,6 +1866,25 @@ extension on AgentCli {
   ) {
     for (final entry in registry.entries) {
       if (entry.baseUrl == baseUrl) return entry;
+    }
+    return null;
+  }
+
+  /// The first registry entry whose name is an alias spelling of the
+  /// canonical provider id [name] resolves to (#706 write-path alias
+  /// resolution — `chatgpt` and `chatgpt.com` are one auth domain).
+  /// Reserved-named ghosts (`chatgpt`) are skipped: they can never
+  /// receive the login (the name prompt and `add` reject them) and the
+  /// save path drops them — the domain's real record is the target.
+  CustomProviderEntry? _entryForCanonicalName(
+    CustomProviderRegistry registry,
+    String name,
+  ) {
+    for (final entry in registry.entries) {
+      if (isReservedCustomProviderName(entry.name)) continue;
+      if (canonicalProviderName(entry.name) == canonicalProviderName(name)) {
+        return entry;
+      }
     }
     return null;
   }

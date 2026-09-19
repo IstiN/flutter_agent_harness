@@ -1882,7 +1882,10 @@ Future<void> _runApp(List<String> args) async {
       // Saved custom providers (`customProviders:` config section): the
       // picker lists them first, the wizard appends, /model rewrites the
       // active entry's last-used model — all persisted via persistConfig.
-      customProviders: CustomProviderRegistry(saved.customProviders),
+      // The registry folds same-auth-domain duplicates onto one record
+      // (#706); each merge surfaces as a named boot note.
+      customProviders: CustomProviderRegistry(saved.customProviders)
+        ..mergeNotes.forEach(stdout.writeln),
       sessionRoot: sessionRoot,
       // Backend agent mode (issue #155): a graceful SIGTERM/SIGINT
       // cancel leaves a resumable partial transcript.

@@ -130,7 +130,9 @@ extension on AgentCli {
           contextWindow: _resolvedContextWindow(entries[i].$1, entries[i].$2),
           cost: _resolvedPricing(entries[i].$1, entries[i].$2),
           isCurrent:
-              entries[i].$1 == current.provider && entries[i].$2 == current.id,
+              canonicalProviderName(entries[i].$1) ==
+                  canonicalProviderName(current.provider) &&
+              entries[i].$2 == current.id,
         ),
     ];
     return buildModelPickerTable(rows, width);
@@ -183,12 +185,15 @@ extension on AgentCli {
 
   /// The distinct provider names behind the cross-provider candidates, in
   /// menu order: saved entries first, then env-keyed catalog providers,
-  /// the active provider last.
+  /// the active provider last. One identity per auth domain (#706):
+  /// alias spellings (`chatgpt.com` saved entry vs the `chatgpt` catalog
+  /// provider) fold onto the FIRST name — the saved entry, the richer
+  /// switch target — so the picker never lists twin rows for one domain.
   List<String> _modelProviderNames() {
     final seen = <String>{};
     return [
       for (final (provider, _) in _crossProviderCandidates(''))
-        if (seen.add(provider)) provider,
+        if (seen.add(canonicalProviderName(provider))) provider,
     ];
   }
 
@@ -200,6 +205,10 @@ extension on AgentCli {
     final lower = filter.toLowerCase();
     final currentProvider = _agent.state.model.provider;
     final active = _activeCustomName;
+    // One current marker per auth domain (#706): the folded row matches
+    // via the entry name OR the domain — twin spellings no longer mark
+    // two rows current at once.
+    final currentId = canonicalProviderName(currentProvider);
     return [
       for (final name in providers)
         if (_providerMatchesFilter(name, lower))
@@ -208,34 +217,44 @@ extension on AgentCli {
             label: name,
             description:
                 '${_providerModelCount(name)} model(s)'
-                '${name == active || name == currentProvider ? ' · current' : ''}',
+                '${name == active || canonicalProviderName(name) == currentId ? ' · current' : ''}',
           ),
     ];
   }
 
-  /// Whether [name] (or any of its model ids) matches the lowercase
-  /// [filter]; an empty filter matches everything.
+  /// Whether [name] (or any of its domain-twin model ids) matches the
+  /// lowercase [filter]; an empty filter matches everything.
   bool _providerMatchesFilter(String name, String lower) {
     if (lower.isEmpty) return true;
     if (name.toLowerCase().contains(lower)) return true;
-    return _crossProviderCandidates(
-      '',
-    ).any((e) => e.$1 == name && e.$2.toLowerCase().contains(lower));
+    final id = canonicalProviderName(name);
+    return _crossProviderCandidates('').any(
+      (e) =>
+          canonicalProviderName(e.$1) == id &&
+          e.$2.toLowerCase().contains(lower),
+    );
   }
 
   /// The number of cached models for [name] (>= 1 — candidates always
-  /// carry at least the entry's last-used model).
-  int _providerModelCount(String name) =>
-      _crossProviderCandidates('').where((e) => e.$1 == name).length;
+  /// carry at least the entry's last-used model). Domain twins count
+  /// together: a folded row carries the union of its identities' models.
+  int _providerModelCount(String name) {
+    final id = canonicalProviderName(name);
+    return _crossProviderCandidates(
+      '',
+    ).where((e) => canonicalProviderName(e.$1) == id).length;
+  }
 
   /// Step 2 of the two-step model pick: the chosen provider's model list
   /// in a generic picker (`modelProvider`), each row keyed
   /// `provider|model` — the selection routes back through
-  /// [_tuiSelectModel]'s cross-provider switch.
+  /// [_tuiSelectModel]'s cross-provider switch. Domain twins list as one
+  /// (#706): a folded row carries every identity of its auth domain.
   void _openProviderModelPicker(String name) {
+    final id = canonicalProviderName(name);
     final models = [
       for (final entry in _crossProviderCandidates(''))
-        if (entry.$1 == name) entry,
+        if (canonicalProviderName(entry.$1) == id) entry,
     ];
     if (models.isEmpty) return;
     _tuiController?.openPicker(
@@ -457,6 +476,10 @@ extension on AgentCli {
     final registryEntries = _collectRegistryCandidates();
     final envCatalogEntries = _envKeyedCatalogCandidates();
     final activeEntries = _activeProviderFallback();
+    // Domain-twin candidates fold (#706): `chatgpt.com|x` and `chatgpt|x`
+    // are one identity's model — the first (saved-entry) spelling wins,
+    // the active-catalog twin never doubles the row (and its 'current'
+    // marker lands on the folded row via the canonical compare).
     final seen = <String>{};
     final entries = <(String, String)>[
       for (final e in [
@@ -464,7 +487,7 @@ extension on AgentCli {
         ...envCatalogEntries,
         ...activeEntries,
       ])
-        if (seen.add('${e.$1}|${e.$2}')) e,
+        if (seen.add('${canonicalProviderName(e.$1)}|${e.$2}')) e,
     ];
     return _filterCandidates(entries, filter);
   }
