@@ -65,7 +65,8 @@ import '../task/delivery_slo.dart';
 import '../skills/skills.dart';
 import '../skills/skill_renderer.dart';
 import '../prompts/prompts.g.dart'
-    show cliMessagingSectionPrompt, readSqliteSectionPrompt;
+    show cliMessagingSectionPrompt, readSqliteSectionPrompt,
+        cliPiModePrompt;
 import '../prompts/project_context.dart';
 import '../approval/approval.dart';
 import '../approval/approval_hook.dart';
@@ -135,6 +136,7 @@ import '../session/attach/file_attachment.dart';
 import '../config/config_service.dart';
 import 'startup.dart';
 import 'cli_config.dart';
+import 'pi_mode.dart';
 import 'custom_providers.dart';
 import 'folder_model_state.dart';
 import 'provider_flow.dart';
@@ -237,6 +239,7 @@ part 'agent_cli_commands.dart';
 part 'agent_cli_ext.dart';
 part 'agent_cli_theme.dart';
 part 'agent_cli_composer.dart';
+part 'agent_cli_prompt.dart';
 
 /// The CLI harness: agent + built-in tools + session persistence +
 /// compaction, driven by a [CliIO].
@@ -1222,60 +1225,12 @@ class AgentCli {
     }
   }
 
-  /// Rebuilds the agent's system prompt from the active mode (or the
-  /// explicit override) plus the project-context and skills sections
-  /// (pi/kimi-style: appended after the base prompt).
-  void _applyPromptComposition() {
-    _agent.state.systemPrompt = _mcp.composePrompt(
-      config.systemPrompt ?? _currentMode.systemPrompt,
-      contextSection: formatProjectContext(_contextFiles),
-      skillsSection: formatSkillsForPrompt(
-        _skills,
-        touchedPaths: _touchedPaths,
-        cwd: _env.cwd,
-      ),
-      memorySection: _memorySection,
-      messagingSection: _messagingSection(),
-      extSection: _ext.promptSection,
-    );
-  }
-
-  /// The `## Agent messaging` prompt section: the agent's own mailbox in
-  /// the fabric + how discovery/addressing work. Empty until the session
-  /// (and thus the mailbox prefix) exists.
-  String _messagingSection() {
-    final prefix = _subagentManager.mailboxPrefix;
-    if (_subagentManager.messaging == null || prefix.isEmpty) return '';
-    return cliMessagingSectionPrompt.replaceAll(
-      '{{mailbox}}',
-      _subagentManager.mailboxOf(_subagentManager.selfId),
-    );
-  }
 
   /// The cached `<memory>` prompt section (durable facts from past
-  /// sessions). Loaded asynchronously after startup and refreshed on every
-  /// `memory_add` — the prompt composition itself stays synchronous.
+  /// sessions). Loaded asynchronously after startup and refreshed on
+  /// every `memory_add` — the prompt composition itself stays
+  /// synchronous; the composition code lives in agent_cli_prompt.dart.
   var _memorySection = '';
-
-  /// Re-reads the `<memory>` section from the memory stores and recomposes
-  /// the prompt when it changed.
-  /// The runtime `memory:` section (project `.fah/config.yaml` wins over
-  /// the user-level one — the same merge as boot). Re-read on every
-  /// memory operation by the controller's configSource; a broken file
-  /// keeps the last good config (the controller swallows source errors).
-  MemoryConfig? _liveMemoryConfig() {
-    final project = loadProjectMemoryConfig(_env.cwd);
-    if (project != null) return project;
-    final home = config.homeDir;
-    return home == null ? null : loadCliConfig(home).memory;
-  }
-
-  Future<void> _refreshMemorySection() async {
-    final section = await _memory.formatPromptSection();
-    if (section == _memorySection) return;
-    _memorySection = section;
-    _applyPromptComposition();
-  }
 
   /// Reference to the active TUI controller so asynchronous model-list updates
   /// can refresh the picker while it is open.

@@ -40,6 +40,23 @@ extension on AgentCli {
       io.writeln('  $sessionName');
     }
     io.writeln('  ${metadata.path}');
+    // pi benchmark mode (issue #679, experimental design): the boot
+    // prints the initial-context size so cross-mode runs are comparable —
+    // the same chars/4 estimator pi uses (`token_estimation.dart`, ported
+    // from pi-mono) over the composed system prompt plus any restored
+    // messages. Default mode prints nothing (REG byte-parity).
+    if (config.agentMode == 'pi') {
+      final initialTokens =
+          _agent.state.systemPrompt.length ~/ 4 +
+          _agent.state.messages.fold<int>(
+            0,
+            (total, message) => total + estimateTokens(message),
+          );
+      io.writeln(
+        '  pi benchmark: initial context ~$initialTokens tokens '
+        '(chars/4 est.)',
+      );
+    }
   }
 
   /// The banner's key-status line — delegates to [_keyStatusView] (see

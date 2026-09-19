@@ -30,6 +30,7 @@ import '../ttsr/ttsr.dart';
 import '../tools/availability.dart';
 import 'custom_providers.dart';
 import '../task/subagent_heartbeat.dart';
+import 'pi_mode.dart';
 
 /// Parses the `providerTimeouts:` section: provider watchdog overrides
 /// (see [ProviderTimeoutsOverride]). Strict — a bad schema throws
@@ -63,8 +64,9 @@ ProviderTimeoutsOverride? parseProviderTimeouts(Object? node) {
   return ProviderTimeoutsOverride(connect: connect, streamIdle: streamIdle);
 }
 
-/// Parses the `agent:` section (issue #273): `contextWindowCap` — the
-/// owner-side effective context cap. The cap clamps the EFFECTIVE context
+/// Parses the `agent:` section (issues #273/#679): `contextWindowCap` —
+/// the owner-side effective context cap — and `mode` — the harness mode
+/// preset (`default` | `pi`). The cap clamps the EFFECTIVE context
 /// window everywhere it is consumed (compaction thresholds, the ctx
 /// meter/footer, the loop's over-window guard) while the model keeps its
 /// real window. Strict like every section: a bad schema throws
@@ -72,7 +74,8 @@ ProviderTimeoutsOverride? parseProviderTimeouts(Object? node) {
 ///
 /// The cap must stay at or above the compaction reserve (16384 tokens):
 /// the compaction trigger is `window - reserve`, and a smaller cap would
-/// drive that threshold negative.
+/// drive that threshold negative. `mode` normalizes `default` to null so
+/// an absent and an explicit-off mode are indistinguishable downstream.
 /// Parses the `trajectory:` section (issue #385): today only the
 /// `wireDump` boolean. Unknown keys are strict errors (a typo must never
 /// silently skip the opt-in).
@@ -95,32 +98,51 @@ bool _parseTrajectorySection(Object? node) {
   return wireDump;
 }
 
-int? _parseAgentSection(Object? node) {
-  if (node == null) return null;
+/// Validates one `agent.mode` value (issue #679): only the
+/// [harnessModeValues] strings are legal, and `default` normalizes to
+/// null so an absent and an explicit-off mode are indistinguishable
+/// downstream.
+String? _parseAgentModeValue(Object? value) {
+  if (value is! String || !harnessModeValues.contains(value)) {
+    throw ConfigException(
+      'unknown "agent.mode" value: $value '
+      '(expected ${(harnessModeValues.toList()..sort()).join('|')})',
+    );
+  }
+  return value == 'pi' ? 'pi' : null;
+}
+
+({int? contextWindowCap, String? agentMode}) _parseAgentSection(Object? node) {
+  if (node == null) return (contextWindowCap: null, agentMode: null);
   if (node is! YamlMap) {
     throw ConfigException('agent must be a map, got: $node');
   }
   int? cap;
+  String? mode;
   for (final key in node.keys) {
-    if (key != 'contextWindowCap') {
-      throw ConfigException('unknown "agent" key: $key');
+    switch (key) {
+      case 'contextWindowCap':
+        final value = node[key];
+        if (value is! int || value <= 0) {
+          throw ConfigException(
+            '"agent.contextWindowCap" must be a positive integer (tokens)',
+          );
+        }
+        if (value < 16384) {
+          throw ConfigException(
+            '"agent.contextWindowCap" must be at least 16384 — below the '
+            'compaction reserve the compaction trigger threshold would go '
+            'negative',
+          );
+        }
+        cap = value;
+      case 'mode':
+        mode = _parseAgentModeValue(node[key]);
+      default:
+        throw ConfigException('unknown "agent" key: $key');
     }
-    final value = node[key];
-    if (value is! int || value <= 0) {
-      throw ConfigException(
-        '"agent.contextWindowCap" must be a positive integer (tokens)',
-      );
-    }
-    if (value < 16384) {
-      throw ConfigException(
-        '"agent.contextWindowCap" must be at least 16384 — below the '
-        'compaction reserve the compaction trigger threshold would go '
-        'negative',
-      );
-    }
-    cap = value;
   }
-  return cap;
+  return (contextWindowCap: cap, agentMode: mode);
 }
 
 /// Whether a raw `customProviders:` list node is a ghost entry named
@@ -204,6 +226,7 @@ final class CliConfig {
     this.wireDump = false,
     this.images,
     this.contextWindowCap,
+    this.agentMode,
     this.subagents = const SubagentsConfig(),
     this.waiting = const WaitingConfig(),
     this.jobs = const JobsConfig(),
@@ -217,6 +240,9 @@ final class CliConfig {
     // The power section (sleep-prevention level + hold lifecycle) is
     // parsed once, strictly (issues #325/#326).
     final powerSection = parsePowerSection(map['power']);
+    // The agent section (owner-side context cap + harness mode, issues
+    // #273/#679) is strict too.
+    final agentSection = _parseAgentSection(map['agent']);
     return CliConfig(
       providerKind: map['provider'] as String? ?? 'openai-completions',
       modelId: map['model'] as String? ?? 'openai/gpt-4o-mini',
@@ -311,9 +337,8 @@ final class CliConfig {
       images: parseImagesSection(map['images']),
       powerSleepPrevention: powerSection.sleepPrevention,
       powerHold: powerSection.hold,
-      // The agent section (owner-side context cap, issue #273) is strict
-      // too.
-      contextWindowCap: _parseAgentSection(map['agent']),
+      contextWindowCap: agentSection.contextWindowCap,
+      agentMode: agentSection.agentMode,
       // The subagents section (background-subagent heartbeat, issue #383)
       subagents: SubagentsConfig.fromYaml(map['subagents']),
       waiting: WaitingConfig.fromYaml(map['waiting']),
@@ -489,6 +514,11 @@ final class CliConfig {
   /// everywhere it is consumed (compaction thresholds, ctx meter/footer,
   /// the loop guard). `null` = uncapped (the raw model window).
   final int? contextWindowCap;
+
+  /// The parsed harness mode preset (`agent.mode`, issue #679): `'pi'` or
+  /// null (absent or explicit `default`). Resolved against the flag/env
+  /// tiers by the executable via `resolveHarnessMode`.
+  final String? agentMode;
 
   /// The `waiting:` section (issue #450): visible-waiting heartbeat
   /// cadence (`waitHeartbeatMinutes`, 0 = off) and the `--wait-for-jobs`
