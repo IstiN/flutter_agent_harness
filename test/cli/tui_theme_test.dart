@@ -508,7 +508,7 @@ void main() {
             reason:
                 '${entry.key}.$role on the reference terminal is '
                 '${themeColorContrast(fg, bg).toStringAsFixed(2)}:1 '
-                '(floor ${kThemeSecondaryTextFloor}) — "text almost '
+                '(floor $kThemeSecondaryTextFloor) — "text almost '
                 'invisible" (gh-671)',
           );
         }

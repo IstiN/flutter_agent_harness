@@ -201,10 +201,7 @@ void main() {
     );
     final open = controller.sgrPrefix(controller.current.accent);
     // The label is truncated, not dropped.
-    expect(
-      selected.replaceAll(_sgr, ''),
-      contains('a-very-lon'),
-    );
+    expect(selected.replaceAll(_sgr, ''), contains('a-very-lon'));
     // The accent must open right before the FITTED label cells — not only
     // around the ▸ glyph (the pre-fix defect).
     final labelStart = selected.indexOf('a-very-lon');
