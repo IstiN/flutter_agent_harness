@@ -1,0 +1,15 @@
+{
+  "recommendation": "BLOCK",
+  "summary": "New auto-save commits introduced committed merge-conflict markers (ticket.json is invalid JSON) and self-referential CI-runner artifacts (the PR's own pr_diff.txt) — must be cleaned before merge; the gh-671 code is unchanged and still green, with the flaky PTY assertion from round 1 still unaddressed.",
+  "generalComment": "outputs/pr_review_general.md",
+  "inlineComments": [
+    {"path": "input/gh-671/ticket.json", "line": 5, "comment": "outputs/pr_review_comments/comment1.md", "severity": "BLOCKING"},
+    {"path": "input/gh-671/pr_diff.txt", "line": 1, "comment": "outputs/pr_review_comments/comment2.md", "severity": "IMPORTANT"},
+    {"path": "test/integration/theme_readability_pty_test.dart", "line": 73, "comment": "outputs/pr_review_comments/comment3.md", "severity": "IMPORTANT"},
+    {"path": "test/cli/tui_theme_test.dart", "line": 466, "comment": "outputs/pr_review_comments/comment4.md", "severity": "SUGGESTION"},
+    {"path": "lib/src/cli/fa_tui_rows.dart", "line": 126, "comment": "outputs/pr_review_comments/comment5.md", "severity": "SUGGESTION"},
+    {"path": "lib/src/cli/tui_theme.dart", "line": 383, "comment": "outputs/pr_review_comments/comment6.md", "severity": "SUGGESTION"},
+    {"path": "lib/src/cli/tui_theme.dart", "line": 106, "comment": "outputs/pr_review_comments/comment7.md", "severity": "SUGGESTION"}
+  ],
+  "issueCounts": {"blocking": 1, "important": 2, "suggestions": 4}
+}

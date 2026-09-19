@@ -1,0 +1,58 @@
+{
+  "threads": [
+    {
+      "index": 1,
+      "rootCommentId": 4052721952,
+      "threadId": "PRRT_kwDOTXdlLc6j-Vfo",
+      "path": "test/integration/theme_readability_pty_test.dart",
+      "line": null,
+      "resolved": false,
+      "body": "🟡 **IMPORTANT: Flaky assertion — the painted done-row frame can be coalesced away**\n\nThis assertion failed on a batch run of this exact suite on a Linux runner\n(`dracula: the done row must tint with toolSuccessBg — does not contain\n'48;2;40;56;46'`) and passed on re-run, i.e. it is timing-dependent.\n\nMechanism: with a localhost mock and instant `echo` commands, both scripted\ntool calls complete within a frame interval. The tool row can then transition\nrunning → settled without the TUI ever emitting a frame where the row wears\nthe `toolSuccessBg` tint (in the failed run the raw stream contained no\ndone-row paint at all — the final transcript only showed the failed row).\n`rawOutput` is cumulative, so a frame that is never emitted can never\nsatisfy `contains(bg(t.toolSuccessBg))`.\n\nSuggestions to de-flake (any one):\n- add a small delay (e.g. 300–500 ms) between scripted mock responses so the\n  done-row frame is guaranteed to be emitted before the next tool call starts;\n- or wait for the done-row tint with `waitForText`/polling instead of\n  asserting on the accumulated stream after `scenario-complete`;\n- or make the \"both tints really painted\" precondition soft and keep only the\n  SGR state-machine contract (which is vacuously true when a tint never\n  appears).\n\nAs-is this will intermittently fail CI on the `--tags integration` leg."
+    },
+    {
+      "index": 2,
+      "rootCommentId": 4052721998,
+      "threadId": "PRRT_kwDOTXdlLc6j-VgC",
+      "path": "test/cli/tui_theme_test.dart",
+      "line": null,
+      "resolved": false,
+      "body": "🔵 **SUGGESTION: 3:1 label floor is only checked on `toolErrorBg`, not `toolSuccessBg`**\n\n`tuiToolRow` paints the label in `toolTitle` over BOTH tints — done rows use\n`toolSuccessBg`, failed rows `toolErrorBg` — but this matrix only asserts\n`toolTitle` on `toolErrorBg`. A future palette whose `toolTitle` clears 3:1 on\nthe error tint but not the success tint would slip through the floor\nenforcement unnoticed.\n\nExtend the pair list to cover both tints for the label (mirroring how the\nglyph rails are checked per-tint):\n\n```dart\nfor (final (name, tint) in [\n  ('toolSuccessBg', bgOf(t.toolSuccessBg)),\n  ('toolErrorBg', bgOf(t.toolErrorBg)),\n]) {\n  expect(\n    themeColorContrast(fgOf(t.toolTitle)!, tint!),\n    greaterThanOrEqualTo(kThemeSecondaryTextFloor),\n    reason: '${entry.key}: toolTitle on $name',\n  );\n}\n```"
+    },
+    {
+      "index": 3,
+      "rootCommentId": 4052722043,
+      "threadId": "PRRT_kwDOTXdlLc6j-Vgc",
+      "path": "lib/src/cli/fa_tui_rows.dart",
+      "line": null,
+      "resolved": false,
+      "body": "🔵 **SUGGESTION: truncated selected rows lose the new accent wrap (and the comment above is now stale)**\n\nWith this change, a selected plain label wears the selection accent — but only\non the non-truncated path of `_menuItemRow`. The truncated branch\n(`'$prefix${_fitWidth(plain, termWidth - 2)}'`, ~line 106) still renders the\nstripped label without the accent, so a long label in a generic picker\n(themes/sessions/settings) reverts to the \"invisible selection\" behavior this\nPR fixes. The comment there — \"`plain` carries no `\\x1b[0m`, so\n`_rearmSelection` would be a no-op here\" — is also stale after this change\n(plain labels are exactly what now gets wrapped).\n\nConsider applying the accent wrap after `_fitWidth` in the truncated branch\n(e.g. `selected ? '$open${_fitWidth(plain, …)}\\x1b[0m' : …`) and updating the\ncomment."
+    },
+    {
+      "index": 4,
+      "rootCommentId": 4052722120,
+      "threadId": "PRRT_kwDOTXdlLc6j-VhP",
+      "path": "lib/src/cli/tui_theme.dart",
+      "line": null,
+      "resolved": false,
+      "body": "🔵 **SUGGESTION: this reformat introduces a new analyzer info**\n\nSplitting this guard onto two lines without braces trips\n`curly_braces_in_flow_control_structures` — `dart analyze` on this file now\nreports 3 issues vs 2 on `main` (the two pre-existing\n`implementation_imports` infos). The single-line form it replaced was\nlint-clean.\n\nEither keep the one-liner or add braces:\n\n```dart\nif (homeDir == null || homeDir.isEmpty) {\n  return (themes: themes, errors: errors);\n}\n```"
+    },
+    {
+      "index": 5,
+      "rootCommentId": 4052722175,
+      "threadId": "PRRT_kwDOTXdlLc6j-Vhx",
+      "path": "lib/src/cli/tui_theme.dart",
+      "line": null,
+      "resolved": false,
+      "body": "🔵 **SUGGESTION: `kDefaultTuiTheme`'s \"byte-identical\" doc promise is now stale**\n\nThe doc comment on `kDefaultTuiTheme` (line ~75) still claims *\"Truecolor\noutput is byte-identical to the pre-theming CLI.\"* Adding an explicit\n`toolOutput` foreground breaks that invariant on purpose — the regenerated\n`tui_theme_default.ans` golden now emits `38;2;184;194;206` on every dim\ndetail segment. The change itself is right (it is the gh-671 fix), but the\ndoc should stop promising byte-identity, e.g. *\"…the historical site palette;\ndetail text carries an explicit foreground since gh-671.\"*"
+    },
+    {
+      "index": 6,
+      "rootCommentId": null,
+      "threadId": null,
+      "path": null,
+      "line": null,
+      "resolved": false,
+      "body": "## Automated Code Review — COMMENT\n\n**Summary**: Solid, well-tested fix for gh-671 — explicit floor-checked foregrounds over tints, the `✓ current` picker marker, 7-theme golden coverage, and a real PTY suite. Verified locally: 95 unit tests pass, `dart format` clean. One important concern: the new PTY test flaked once in three local runs (a painted done-row frame can be coalesced away when the mock answers instantly) — worth de-flaking before it haunts CI.\n\n**Key Issues**:\n- 🟡 `theme_readability_pty_test.dart` — timing-dependent `toolSuccessBg` assertion (observed 1 failure in 2 batch runs; passes in isolation).\n- 🔵 Floor matrix checks `toolTitle` only on `toolErrorBg`, not `toolSuccessBg`.\n- 🔵 Truncated selected picker rows still lose the accent wrap; stale comment at `fa_tui_rows.dart:105`.\n- 🔵 New `curly_braces_in_flow_control_structures` info from a reformat in `tui_theme.dart:383`; stale \"byte-identical\" doc on `kDefaultTuiTheme`.\n\n**Non-inline observations** (unchanged/out-of-diff code):\n- `test/cli/fa_tui_fuzzy_roles_test.dart`'s new test mutates the global `FaThemeController` (`addUserThemes('moss')` + `switchTo`) with no reset/tearDown — fine today (it's the last test in the file), but makes the file order-dependent.\n- Diff noise unrelated to the ticket: 22 `memory/` notes gain `level: 2` frontmatter, `.codegraph/.gitignore` is deleted, and `input/`/`outputs/` runner artifacts are committed. Consistent with the repo's dogfooded-memory convention, but a separate `memory:` commit would keep the PR focused.\n\n**Next Steps**:\n1. De-flake the PTY done-row tint assertion (mock delay or poll for the tint).\n2. Optionally extend the 3:1 label matrix to `toolSuccessBg` and fix the truncated-row selection wrap."
+    }
+  ]
+}
