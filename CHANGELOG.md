@@ -3852,7 +3852,8 @@
 - perf(503): boundary walk reads single-pass blocks instead of capped chunks — readBefore's doubling window re-decoded its whole buffer per pass (a 396 MB tail-after-compaction walked 10.3s; the linear block walk does it in 3.0s, 3.4x, byte-identical branch semantics); readBlockBefore reads one strip per page with per-page doubling bounded at 64MB/4096 records (#660)
 - fix(653): stale auto-compacted marker on the busy row after the fold finishes (#658)
 
-## Unreleased
+## 0.1.422
+
 
 - feat(622): Android `mobile.*` automation ships as two release flavors —
   `store` (applicationId `dev.fa1.app`, the Play pipeline) and `god`
@@ -3877,3 +3878,5 @@
   exec-tier approval + critical patterns on mobile.shell, god never
   ships to Play. Tier table, sideload + Shizuku steps, consent notes and
   the manual E2E checklist: docs/android-automation.md.
+
+## Unreleased
