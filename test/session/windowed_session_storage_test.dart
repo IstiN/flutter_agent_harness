@@ -983,5 +983,45 @@ void main() {
 
       expect(ok, isFalse);
     });
+
+    test(
+      'token budget stops the walk before the boundary once the resident '
+      'tail already fills the context window (issue #503: resume reads '
+      'only what fits the model window, never the whole file)',
+      () async {
+        const count = 700;
+        const boundary = 100; // deep in the file — must NOT be reached
+        await seedRaw(count, compactionAt: boundary);
+        final windowed = await WindowedSessionStorage.open(
+          fs,
+          path,
+          chunkRecords: 50,
+          residentRecords: 100,
+        );
+        final leafBefore = await windowed.getLeafId();
+
+        // Seeded messages are ~45 chars ≈ 12 tokens each; the 100-record
+        // tail window alone already covers a 1000-token budget, so the
+        // walk must stop without paging at all.
+        final ok = await windowed.growOlderUntil(
+          (r) => r is CompactionRecord,
+          tokenBudget: 1000,
+        );
+
+        expect(ok, isTrue);
+        expect(await windowed.getLeafId(), leafBefore);
+        final branch = await windowed.getPathToRoot(leafBefore!);
+        // Budget stop: the boundary is NOT resident and the file head
+        // was NOT reached (unlike the no-compaction degenerate walk).
+        expect(branch.any((r) => r is CompactionRecord), isFalse);
+        expect(windowed.hasOlder, isTrue);
+        expect(branch.length, lessThan(count));
+        // ...and the resident tail genuinely covers the budget.
+        expect(
+          estimateSessionBranchTokens(branch),
+          greaterThanOrEqualTo(1000),
+        );
+      },
+    );
   });
 }

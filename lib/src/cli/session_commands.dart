@@ -515,6 +515,10 @@ extension on AgentCli {
   }
 
   Future<Session> _loadSession(SessionMetadata metadata) async {
+    final bootSw = Stopwatch()..start();
+    void stage(String name) => _logDiagnostic(
+      'boot_stage $name ms=${bootSw.elapsedMilliseconds} sid=${metadata.id}',
+    );
     // Windowed open (owner directive): the CLI resume used to parse the
     // WHOLE file — 30s boots on marathon sessions. Open from the tail and
     // page back only to the newest compaction boundary; sessions without
@@ -522,14 +526,32 @@ extension on AgentCli {
     // for them. Context stays byte-identical: the compaction transform
     // drops everything before the boundary anyway.
     var session = await _repo.open(metadata, windowed: true);
+    stage('open');
     // A marathon WITHOUT compaction pages past the windowed residency
     // cache — the leaf slides out and the branch would read empty (a
     // resume that looks like a fresh session, pty_resume_equivalence
     // AC6). Fall back to the full open: the documented degenerate path.
-    if (!await session.ensureCompactionBoundaryResident()) {
+    //
+    // Token budget (owner directive, issue #503 round 3): a resume needs
+    // only the tail that fits the model's context window — walking a
+    // marathon file back to the newest compaction parsed ~470MB / 11.5k
+    // records (~10s) on a session whose window holds a fraction of that.
+    // The budget equals the EFFECTIVE window minus the compaction
+    // reserve: enough for the first request plus headroom, everything
+    // older pages in lazily via the scrollback's loadOlder. Sessions
+    // whose tail-after-compaction fits the window behave byte-identically
+    // (the boundary is reached before the budget trips).
+    final budget =
+        _effectiveContextWindow -
+        CompactionSettings.forWindow(_effectiveContextWindow).reserveTokens;
+    if (!await session.ensureCompactionBoundaryResident(
+      tokenBudget: budget,
+    )) {
       session = await _repo.open(metadata);
     }
+    stage('walk');
     final messages = await session.buildContextMessages();
+    stage('context');
     // Loaded usage anchors are generation-time: post-compaction they
     // phantom-report the pre-compaction size (183k on a 27k branch) and
     // fire a no-op compaction on every resume. Re-anchor at chars/4.
@@ -538,7 +560,13 @@ extension on AgentCli {
     // Issue #437: persisted-but-unconsumed steering from a crashed
     // session re-enters the queue and wakes the idle agent (E1: one
     // record, consumed once — restart-safe).
-    await _queueRecoveredSteering(session);
+    // Issue #503: NOT awaited — the scan reads the whole session file
+    // (~1.5s on a 434MB marathon) and its result only arms the idle
+    // wake, so it must not sit on the boot path. Fire-and-forget: the
+    // wake's 2s inbox tick picks up the populated queue when the scan
+    // lands. The method catches its own errors (a broken session must
+    // still boot), so an unawaited future cannot go unhandled.
+    unawaited(_queueRecoveredSteering(session));
     // Adopt the session's original project folder. This matters both when
     // switching mid-run and when the CLI starts with --session: tools like
     // bash/read/edit must operate in the session's directory, not the launch

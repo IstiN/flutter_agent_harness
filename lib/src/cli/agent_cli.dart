@@ -125,6 +125,7 @@ import 'codemie_sso_server.dart';
 import 'openrouter_oauth_server.dart';
 import '../secrets/secure_key_store.dart';
 import '../session/session_record.dart';
+import '../env/session_parse_executor.dart';
 import '../session/session_repo.dart';
 import '../session_io_retry.dart';
 import '../session/attach/file_presence_store.dart';
@@ -1134,6 +1135,7 @@ class AgentCli {
     // running process owns is undeletable from every other surface.
     presenceStore: config.presenceStore,
     processId: config.processId,
+    parseExecutor: config.parseExecutor,
   );
   Session? _session;
 

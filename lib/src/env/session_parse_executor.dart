@@ -27,6 +27,12 @@ const int sessionParseBatchMaxLines = 500;
 /// length only if the cap ever misbehaves.
 const int sessionParseBatchMaxBytes = 4 << 20;
 
+/// Max parse batches in flight on the executor path of
+/// [parseSessionLines] (issue #503): enough to keep the cores busy on a
+/// marathon walk, bounded so concurrent callers (windowed open + listing
+/// fan-out) never spawn an unbounded isolate storm.
+const int maxConcurrentSessionParseBatches = 8;
+
 /// One bounded batch of raw JSONL entry lines (never the header line).
 final class SessionParseBatch {
   const SessionParseBatch({
@@ -105,8 +111,17 @@ SessionParseBatch _batch(
 
 /// Parses [lines] through [executor] — or inline, batch by batch, when it
 /// is null — and returns one slot per line in file order (`null` where a
-/// line was torn/foreign). One await per batch: the inline path yields to
-/// the event loop between batches by construction.
+/// line was torn/foreign).
+///
+/// Inline (web degradation): one await per batch — the event loop
+/// breathes between batches by construction.
+///
+/// Executor path: batches are independent, so they fan out with bounded
+/// concurrency — a marathon session walk parses a strip core-wide
+/// instead of one 4MB batch at a time (issue #503 boot cost: the
+/// sequential await serialized ~2.2s of jsonDecode on a 434MB tail).
+/// Results concatenate in batch order, so the returned list is
+/// byte-identical to the sequential walk.
 Future<List<SessionRecord?>> parseSessionLines(
   List<String> lines, {
   required String filePath,
@@ -119,14 +134,31 @@ Future<List<SessionRecord?>> parseSessionLines(
     filePath: filePath,
     firstLineNumber: firstLineNumber,
   );
-  final records = <SessionRecord?>[];
-  for (final batch in batches) {
-    final result = executor == null
-        ? parseSessionEntryLinesSync(batch)
-        : await executor.parse(batch);
-    records.addAll(result.records);
+  if (executor == null) {
+    final records = <SessionRecord?>[];
+    for (final batch in batches) {
+      records.addAll(parseSessionEntryLinesSync(batch).records);
+    }
+    return records;
   }
-  return records;
+  final results = List<SessionParseResult?>.filled(batches.length, null);
+  var next = 0;
+  Future<void> worker() async {
+    while (next < batches.length) {
+      final i = next++;
+      results[i] = await executor.parse(batches[i]);
+    }
+  }
+
+  await Future.wait([
+    for (
+      var w = 0;
+      w < maxConcurrentSessionParseBatches && w < batches.length;
+      w++
+    )
+      worker(),
+  ]);
+  return [for (final result in results) ...result!.records];
 }
 
 /// Parses one batch right here — the inline executor's body and the
