@@ -132,6 +132,7 @@ void main() {
       final resolved = resolveEffectiveCliArgs(
         const CliArgs(provider: 'anthropic', providerExplicit: true),
         CliConfig(providerKind: 'google'),
+        env: const {},
       );
       expect(resolved.provider, 'anthropic');
       expect(resolved.args.provider, 'anthropic');
@@ -141,6 +142,7 @@ void main() {
       final resolved = resolveEffectiveCliArgs(
         const CliArgs(),
         CliConfig(providerKind: 'minimax'),
+        env: const {},
       );
       expect(resolved.provider, 'minimax');
     });
@@ -149,6 +151,7 @@ void main() {
       final resolved = resolveEffectiveCliArgs(
         const CliArgs(),
         CliConfig(providerKind: 'chatgpt-codex'),
+        env: const {},
       );
       expect(resolved.provider, 'openai-completions');
     });
@@ -161,6 +164,7 @@ void main() {
           baseUrl: 'https://saved.example/api',
           mode: 'architect',
         ),
+        env: const {},
       );
       expect(resolved.args.model, 'saved/model');
       expect(resolved.args.baseUrl, 'https://saved.example/api');
@@ -179,6 +183,7 @@ void main() {
           baseUrl: 'https://saved.example/api',
           mode: 'architect',
         ),
+        env: const {},
       );
       expect(resolved.args.model, 'flag/model');
       expect(resolved.args.baseUrl, 'https://flag.example/api');
