@@ -1645,8 +1645,25 @@ class AgentCli {
   Future<String?> sessionResumeHint() async {
     final session = _session;
     if (session == null || _persistedCount == 0) return null;
-    final name = await session.getSessionName();
-    final id = name ?? (await session.getMetadata()).id;
+    // A windowed marathon resume pages only the tail up to the compaction
+    // boundary: a name written at creation stays OUTSIDE the resident
+    // window, so getSessionName() reads null and the hint degraded to the
+    // raw id (user report after #503 windowing). Probe the file's
+    // head+tail windows — the same bounded quick path `--session NAME`
+    // resolution uses (#369) — before falling back to the id.
+    var name = await session.getSessionName();
+    final metadata = await session.getMetadata();
+    if (name == null) {
+      final repo = _repo;
+      if (repo is JsonlSessionRepo) {
+        try {
+          name = await repo.sessionNameQuick(metadata);
+        } on Object {
+          name = null; // unreadable file at exit: degrade to the id
+        }
+      }
+    }
+    final id = name ?? metadata.id;
     return "resume this session with: fa --session '$id'";
   }
 
