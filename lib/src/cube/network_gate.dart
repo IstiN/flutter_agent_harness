@@ -121,30 +121,37 @@ final class GatedHttpClient extends http.BaseClient {
 
   static const _maxRedirects = 5;
 
-  /// Builds the next-hop request: 301/302/303 replay as GET (body
-  /// dropped), 307/308 keep method and body. Credential headers only
-  /// follow same-host hops.
+  static const _credentialHeaders = ['authorization', 'cookie'];
+
+  /// Whether [statusCode] means the hop replays as a GET with the body
+  /// dropped (as opposed to 307/308, which keep method and body).
+  static bool _replaysAsGet(int statusCode) =>
+      statusCode == 301 || statusCode == 302 || statusCode == 303;
+
+  /// Whether [to] leaves [from]'s origin — a different host or scheme —
+  /// so credentials must not ride along.
+  static bool _isCrossOrigin(Uri from, Uri to) =>
+      from.host != to.host || from.scheme != to.scheme;
+
+  /// Drops `authorization`/`cookie` from [hop] headers.
+  static void _stripCredentials(http.Request hop) => hop.headers.removeWhere(
+    (name, _) => _credentialHeaders.contains(name.toLowerCase()),
+  );
+
+  /// Builds the next-hop request from [previous] toward [target] after a
+  /// [statusCode] redirect.
   http.Request _hopRequest(
     http.BaseRequest previous,
     int statusCode,
     Uri target,
     List<int>? body,
   ) {
-    final redirected =
-        statusCode == 301 || statusCode == 302 || statusCode == 303;
-    final method = redirected ? 'GET' : previous.method;
-    final hop = http.Request(method, target)
+    final replayAsGet = _replaysAsGet(statusCode);
+    final hop = http.Request(replayAsGet ? 'GET' : previous.method, target)
       ..followRedirects = false
       ..headers.addAll(previous.headers);
-    if (target.host != previous.url.host ||
-        target.scheme != previous.url.scheme) {
-      hop.headers.removeWhere(
-        (name, _) =>
-            name.toLowerCase() == 'authorization' ||
-            name.toLowerCase() == 'cookie',
-      );
-    }
-    if (!redirected && body != null && body.isNotEmpty) {
+    if (_isCrossOrigin(previous.url, target)) _stripCredentials(hop);
+    if (!replayAsGet && body != null && body.isNotEmpty) {
       hop.bodyBytes = body;
     }
     return hop;

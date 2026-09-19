@@ -303,5 +303,131 @@ void main() {
       expect(hopHeaders.containsKey('cookie'), isFalse);
       expect(hopHeaders['accept'], 'text/html');
     });
+
+    test('303 downgrades to GET and drops the body', () async {
+      final client = _RecordingClient((request) {
+        if (request.url.path == '/303') {
+          return _status(303, headers: {'location': '/landed'});
+        }
+        return _status(200);
+      });
+      final gated = GatedHttpClient(
+        client,
+        CubeNetworkGate(
+          () => cube(allow: [const CubeNetworkRule(host: '*.example')]),
+        ),
+      );
+      await gated.send(
+        http.Request('POST', Uri.parse('https://a.example/303'))
+          ..body = '{"a":1}',
+      );
+      final hop = client.requests.last as http.Request;
+      expect(hop.method, 'GET');
+      expect(hop.body, isEmpty);
+    });
+
+    test('307 and 308 keep the method and replay the body', () async {
+      final client = _RecordingClient((request) {
+        if (request.url.path == '/307') {
+          return _status(307, headers: {'location': '/landed'});
+        }
+        if (request.url.path == '/308') {
+          return _status(308, headers: {'location': '/landed'});
+        }
+        return _status(200);
+      });
+      final gated = GatedHttpClient(
+        client,
+        CubeNetworkGate(
+          () => cube(allow: [const CubeNetworkRule(host: '*.example')]),
+        ),
+      );
+      await gated.send(
+        http.Request('POST', Uri.parse('https://a.example/307'))
+          ..body = '{"a":1}',
+      );
+      final after307 = client.requests.last as http.Request;
+      expect(after307.method, 'POST');
+      expect(after307.body, '{"a":1}');
+
+      await gated.send(
+        http.Request('PUT', Uri.parse('https://a.example/308'))
+          ..body = 'payload',
+      );
+      final after308 = client.requests.last as http.Request;
+      expect(after308.method, 'PUT');
+      expect(after308.body, 'payload');
+
+      // An empty-body POST replays without a body.
+      await gated.send(
+        http.Request('POST', Uri.parse('https://a.example/307')),
+      );
+      final afterEmpty = client.requests.last as http.Request;
+      expect(afterEmpty.method, 'POST');
+      expect(afterEmpty.body, isEmpty);
+    });
+
+    test('credential headers survive a same-host, same-scheme hop', () async {
+      final client = _RecordingClient((request) {
+        if (request.url.path == '/') {
+          return _status(302, headers: {'location': '/other'});
+        }
+        return _status(200);
+      });
+      final gated = GatedHttpClient(
+        client,
+        CubeNetworkGate(
+          () => cube(allow: [const CubeNetworkRule(host: '*.example')]),
+        ),
+      );
+      await gated.send(
+        http.Request('GET', Uri.parse('https://a.example/'))
+          ..headers['authorization'] = 'Bearer t',
+      );
+      final hop = client.requests.last as http.Request;
+      expect(hop.headers['authorization'], 'Bearer t');
+    });
+
+    test('credential headers drop on a cross-scheme hop (same host)', () async {
+      final client = _RecordingClient((request) {
+        if (request.url.scheme == 'https') {
+          return _status(302, headers: {'location': 'http://a.example/'});
+        }
+        return _status(200);
+      });
+      final gated = GatedHttpClient(
+        client,
+        CubeNetworkGate(
+          () => cube(allow: [const CubeNetworkRule(host: '*.example')]),
+        ),
+      );
+      await gated.send(
+        http.Request('GET', Uri.parse('https://a.example/'))
+          ..headers['authorization'] = 'Bearer t'
+          ..headers['accept'] = 'text/html',
+      );
+      final hop = client.requests.last as http.Request;
+      final hopHeaders = Map<String, String>.from(hop.headers);
+      expect(hopHeaders.containsKey('authorization'), isFalse);
+      expect(hopHeaders['accept'], 'text/html');
+    });
+
+    test('a redirect loop hits the hop ceiling and throws', () async {
+      final client = _RecordingClient(
+        (request) => _status(302, headers: {'location': '/next'}),
+      );
+      final gated = GatedHttpClient(
+        client,
+        CubeNetworkGate(
+          () => cube(allow: [const CubeNetworkRule(host: '*.example')]),
+        ),
+      );
+      await expectLater(
+        gated.send(http.Request('GET', Uri.parse('https://a.example/'))),
+        throwsA(isA<http.ClientException>()),
+      );
+      // The initial request plus exactly _maxRedirects hops hit the wire.
+      expect(client.requests, hasLength(6));
+    });
   });
 }
