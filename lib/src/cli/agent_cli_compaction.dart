@@ -254,8 +254,18 @@ List<String> formatCompactionReport(
     '${auto ? 'auto-compacted' : 'compacted'}$engine$passSuffix',
     'tokens: ${pass.tokensBefore} → ${pass.tokensAfter} '
         '($freed freed · $pct%)',
-    'records: ${pass.hiddenRecords} hidden · '
-        '${pass.summarizedMessages} summarized',
+    // Issue #673 AC3: the local-trim valve frees tokens WITHOUT hiding
+    // session records or folding a summary — a bare "0 hidden · 0
+    // summarized" next to a big freed count cannot describe a real
+    // compaction. Name the in-memory drop so the line is truthful for
+    // BOTH engines.
+    if (pass.droppedMessages > 0)
+      'records: ${pass.droppedMessages} dropped (in-memory) · '
+          '${pass.hiddenRecords} hidden · '
+          '${pass.summarizedMessages} summarized'
+    else
+      'records: ${pass.hiddenRecords} hidden · '
+          '${pass.summarizedMessages} summarized',
     if (summary != null && summary.isNotEmpty) ...[
       'summary:',
       '```',
