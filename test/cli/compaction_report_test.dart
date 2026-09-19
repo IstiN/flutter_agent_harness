@@ -89,6 +89,43 @@ void main() {
         'tokens: 8451 → 8481 (0 freed · 0%)',
       );
     });
+
+    test('a local-trim pass names its in-memory drop (issue #673 AC3)', () {
+      // The incident line — "80% freed / records: 0 hidden · 0
+      // summarized" — cannot describe a real compaction: the local-trim
+      // valve frees tokens by dropping LIVE messages without hiding
+      // session records or folding a summary. The report must say where
+      // the tokens went.
+      final pass = AutoCompactorPass(
+        pass: 1,
+        tokensBefore: 200056,
+        tokensAfter: 40977,
+        fallback: 'local-trim',
+        ok: true,
+        droppedMessages: 312,
+      );
+      expect(formatCompactionReport(pass, auto: true), [
+        'auto-compacted · local-trim',
+        'tokens: 200056 → 40977 (159079 freed · 80%)',
+        'records: 312 dropped (in-memory) · 0 hidden · 0 summarized',
+      ]);
+    });
+    test('a summarizer pass keeps the hidden/summarized-only line', () {
+      final pass = AutoCompactorPass(
+        pass: 1,
+        tokensBefore: 1000,
+        tokensAfter: 100,
+        fallback: 'smol',
+        ok: true,
+        summary: 's',
+        hiddenRecords: 4,
+        summarizedMessages: 2,
+      );
+      expect(
+        formatCompactionReport(pass, auto: false)[2],
+        'records: 4 hidden · 2 summarized',
+      );
+    });
   });
 
   group('manual /compact (UT-report)', () {

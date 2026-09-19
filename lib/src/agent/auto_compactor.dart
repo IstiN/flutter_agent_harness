@@ -48,6 +48,7 @@ final class AutoCompactorPass {
     this.summary,
     this.hiddenRecords = 0,
     this.summarizedMessages = 0,
+    this.droppedMessages = 0,
   });
 
   /// 1-based pass number.
@@ -72,12 +73,17 @@ final class AutoCompactorPass {
   /// The summary text the pass wrote (from the compaction record); `null`
   /// for failed / no-work / local-trim passes.
   final String? summary;
-
   /// Session records hidden behind the compaction boundary.
   final int hiddenRecords;
 
   /// Message records folded into [summary].
   final int summarizedMessages;
+
+  /// Live-context messages dropped by the local-trim fallback (issue #673
+  /// AC3): the trim frees tokens WITHOUT hiding session records or folding
+  /// summaries, so a report showing only hidden/summarized cannot explain
+  /// where the tokens went. 0 for every summarizer pass.
+  final int droppedMessages;
 }
 
 /// Hooks for a host UI to observe progress. Implementations should not
@@ -293,7 +299,7 @@ final class AutoCompactor {
       // recovers.
       final trimmed = _localTrimFallback();
       if (trimmed != null) {
-        state.messages = trimmed;
+        state.messages = trimmed.messages;
         final tokensAfter = _requestTokens();
         hooks.onPass(
           AutoCompactorPass(
@@ -302,6 +308,7 @@ final class AutoCompactor {
             tokensAfter: tokensAfter,
             fallback: 'local-trim',
             ok: true,
+            droppedMessages: trimmed.dropped,
           ),
         );
         hooks.onDone(pass, tokensAfter);
@@ -382,8 +389,7 @@ final class AutoCompactor {
   /// session file keeps every record; the next restart replays the full
   /// transcript and the pre-flight compaction retries the LLM path with a
   /// healthy endpoint. Returns null when there is nothing droppable (the
-  /// budget already covers the whole transcript).
-  List<Message>? _localTrimFallback() {
+  ({List<Message> messages, int dropped})? _localTrimFallback() {
     final messages = state.messages;
     if (messages.isEmpty) return null;
     final budget = settings.keepRecentTokens;
@@ -423,7 +429,7 @@ final class AutoCompactor {
         else
           message,
     ]);
-    return rebuilt.messages;
+    return (messages: rebuilt.messages, dropped: cut);
   }
 
   /// Picks the summarizer for this pass: smol first, main as fallback when
