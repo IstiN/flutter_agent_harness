@@ -1,0 +1,331 @@
+# PR Diff Truncated
+
+Original size: 86565 characters.
+Kept: first 7800 and last 4200 characters.
+
+The full diff is available in the checked-out PR branch. Use `git diff` or CodeGraph for focused source navigation instead of relying only on this file.
+
+```diff
+diff --git a/.codegraph/.gitignore b/.codegraph/.gitignore
+deleted file mode 100644
+index 9de0f169..00000000
+--- a/.codegraph/.gitignore
++++ /dev/null
+@@ -1,16 +0,0 @@
+-# CodeGraph data files
+-# These are local to each machine and should not be committed
+-
+-# Database
+-*.db
+-*.db-wal
+-*.db-shm
+-
+-# Cache
+-cache/
+-
+-# Logs
+-*.log
+-
+-# Hook markers
+-.dirty
+diff --git a/input/gh-671/ticket.json b/input/gh-671/ticket.json
+new file mode 100644
+index 00000000..43280412
+--- /dev/null
++++ b/input/gh-671/ticket.json
+@@ -0,0 +1,7 @@
++{
++  "key": "gh-671",
++  "fields": {
++    "summary": "TUI Theme switcher",
++    "description": "<img width=\"710\" height=\"400\" alt=\"Image\" src=\"https://github.com/user-attachments/assets/86db146e-05ab-4904-b44b-424771f3413a\" />\n\nText almost invisible in the scenarious and second issue when I go to /theme i can't see  what is selected... so probably I did use darcula but not sure... With the issue your task is check via golden or terminal integration test via mocking llm different commands different scenarious to be sure that all styles are properly visible and readyble from accessiblility perspective and cover that via unit tests."
++  }
++}
+\ No newline at end of file
+diff --git a/input/gh-671/ticket.md b/input/gh-671/ticket.md
+new file mode 100644
+index 00000000..9fb23ebd
+--- /dev/null
++++ b/input/gh-671/ticket.md
+@@ -0,0 +1,7 @@
++# gh-671: TUI Theme switcher
++
++## Description
++
++<img width="710" height="400" alt="Image" src="https://github.com/user-attachments/assets/86db146e-05ab-4904-b44b-424771f3413a" />
++
++Text almost invisible in the scenarious and second issue when I go to /theme i can't see  what is selected... so probably I did use darcula but not sure... With the issue your task is check via golden or terminal integration test via mocking llm different commands different scenarious to be sure that all styles are properly visible and readyble from accessiblility perspective and cover that via unit tests.
+diff --git a/input/ticket.md b/input/ticket.md
+index 2cb304e7..3dd86451 100644
+--- a/input/ticket.md
++++ b/input/ticket.md
+@@ -1,4 +1,4 @@
+-[BUG] After success authorization codemie auth request still presented in the session message
+-Here we fixed auth flow for codemie https://github.com/IstiN/flutter_agent_harness/issues/586 but after success authorization it's still in the session and confuse user. 
++TUI Theme switcher
++<img width="710" height="400" alt="Image" src="https://github.com/user-attachments/assets/86db146e-05ab-4904-b44b-424771f3413a" />
+ 
+-<img width="1179" height="2556" alt="Image" src="https://github.com/user-attachments/assets/656a56ad-90b0-426e-9bac-14a2657da2a3" />
++Text almost invisible in the scenarious and second issue when I go to /theme i can't see  what is selected... so probably I did use darcula but not sure... With the issue your task is check via golden or terminal integration test via mocking llm different commands different scenarious to be sure that all styles are properly visible and readyble from accessiblility perspective and cover that via unit tests.
+diff --git a/lib/src/cli/agent_cli_theme.dart b/lib/src/cli/agent_cli_theme.dart
+index 86112e32..c94b76cf 100644
+--- a/lib/src/cli/agent_cli_theme.dart
++++ b/lib/src/cli/agent_cli_theme.dart
+@@ -28,23 +28,14 @@ extension ThemeCommands on AgentCli {
+   }
+ 
+   /// Opens the theme picker with live swatch previews; the current theme is
+-  /// preselected.
++  /// preselected AND text-marked (`✓ current`, gh-671 — the swatch stays on
++  /// every row, the marker is readable text in every palette).
+   void _openThemePicker() {
+     final controller = FaThemeController.instance;
+-    final items = [
+-      for (final entry in controller.available().entries)
+-        MenuItem(
+-          key: entry.key,
+-          label: entry.key,
+-          description: entry.key == controller.currentName
+-              ? '(current)'
+-              : themeSwatchRow(entry.value),
+-        ),
+-    ];
+     _tuiController?.openPicker(
+       'theme',
+       'Select theme',
+-      items,
++      themePickerItems(current: controller.currentName),
+       initialKey: controller.currentName,
+     );
+   }
+@@ -57,7 +48,7 @@ extension ThemeCommands on AgentCli {
+     if (!controller.switchTo(name)) {
+       io.writeln(
+         'unknown theme: $name — available: '
+-            '${controller.available().keys.join(', ')}',
++        '${controller.available().keys.join(', ')}',
+       );
+       return;
+     }
+@@ -70,8 +61,8 @@ extension ThemeCommands on AgentCli {
+         ).set('tui.theme', controller.currentName);
+         io.writeln(
+           'theme: ${controller.currentName} '
+-              '${themeSwatchRow(controller.current)}'
+-              ' — saved to ${result.file} (tui.theme)',
++          '${themeSwatchRow(controller.current)}'
++          ' — saved to ${result.file} (tui.theme)',
+         );
+       } on ConfigException catch (error) {
+         io.writeln('theme switched, but saving tui.theme failed: $error');
+@@ -79,7 +70,7 @@ extension ThemeCommands on AgentCli {
+     } else {
+       io.writeln(
+         'theme: ${controller.currentName} '
+-            '${themeSwatchRow(controller.current)}',
++        '${themeSwatchRow(controller.current)}',
+       );
+     }
+   }
+@@ -99,7 +90,7 @@ extension ThemeCommands on AgentCli {
+     if (!FaThemeController.instance.switchTo(persisted)) {
+       io.writeln(
+         'config tui.theme: unknown theme "$persisted" — using default '
+-            '(available: ${FaThemeController.instance.available().keys.join(', ')})',
++        '(available: ${FaThemeController.instance.available().keys.join(', ')})',
+       );
+     }
+   }
+@@ -113,11 +104,12 @@ extension ThemeCommands on AgentCli {
+     if (home == null || home.isEmpty) return;
+     final dir = '$home/.fah/themes';
+     final listed = await _env.listDir(dir);
+-    final names = (listed.valueOrNull ?? const [])
+-        .map((entry) => entry.name)
+-        .where((name) => name.endsWith('.json'))
+-        .toList()
+-      ..sort();
++    final names =
++        (listed.valueOrNull ?? const [])
++            .map((entry) => entry.name)
++            .where((name) => name.endsWith('.json'))
++            .toList()
++          ..sort();
+     // Pre-read through the FileSystem seam (web-safe); unreadable files
+     // drop out here instead of parsing as garbage.
+     final readable = <String, String>{};
+diff --git a/lib/src/cli/ansi_markdown.dart b/lib/src/cli/ansi_markdown.dart
+index 1d7a8e35..1296d867 100644
+--- a/lib/src/cli/ansi_markdown.dart
++++ b/lib/src/cli/ansi_markdown.dart
+@@ -229,17 +229,21 @@ final class AnsiMarkdown {
+   /// grapheme clusters, so `padRight` (UTF-16 units) underpads any echo
+   /// carrying wide characters and stale cells survive on the right.
+   ///
+-  /// The background SGR is re-applied from the CURRENT session theme, not
+-  /// the stored prefix — a mid-session `/theme` switch repaints the whole
+-  /// transcript (issue #279, E1); the stored escape only marks the line as
+-  /// a user echo so markdown leaves it alone.
++  /// The background AND text SGR are re-applied from the CURRENT session
++  /// theme, not the stored prefix — a mid-session `/theme` switch repaints
++  /// the whole transcript (issue #279, E1); the stored escape only marks
++  /// the line as a user echo so markdown leaves it alone. The text
++  /// foreground is part of that contract (gh-671): the old path re-rendered
++  /// bg only, so the echo text fell back to the terminal default fg —
++  /// invisible over the light userMessageBg band on light palettes.
+   String? _formatPreStyled(String line) {
+     if (!line.startsWith('\x1b[48')) return null;
+     final visible = line.replaceAll(_ansiRe, '');
+     final pad = width - tuiTextWidth(visible);
+     final bg = tuiUserMessageBgSgr();
+
+
+... [74565 characters omitted] ...
+
++    );
++  });
++}
++
++/// A temp HOME pointing the provider at the local mock server. Yolo
++/// approval mode keeps the scripted tool calls unattended.
++Directory _tempHomeForMock(int port) {
++  final tempHome = Directory.systemTemp.createTempSync('fa_theme_test_');
++  File('${tempHome.path}/.fah/config.yaml')
++    ..createSync(recursive: true)
++    ..writeAsStringSync('''
++provider: openai-completions
++model: test-model
++baseUrl: http://127.0.0.1:$port/v1
++mode: code
++approvalMode: yolo
++allowedTools: []
++''');
++  return tempHome;
++}
++
++/// An OpenAI-compatible SSE mock with a scripted response queue:
++/// request 1 → bash `echo THEME-SCENARIO-OK`, request 2 → bash
++/// `echo THEME-SCENARIO-FAIL >&2; exit 7`, every later request → the
++/// plain text answer.
++final class _ScriptedMockServer {
++  HttpServer? _server;
++  final List<String> bodies = [];
++
++  int get port => _server!.port;
++
++  Future<void> start() async {
++    _server = await HttpServer.bind('127.0.0.1', 0);
++    _server!.listen((request) async {
++      // The boot-time model-cache refresh must not consume a scripted
++      // chat turn.
++      if (request.method == 'GET' && request.uri.path.endsWith('/models')) {
++        request.response.headers.contentType = ContentType.json;
++        request.response.write(jsonEncode({'object': 'list', 'data': []}));
++        await request.response.close();
++        return;
++      }
++      if (request.method != 'POST' ||
++          !request.uri.path.endsWith('/chat/completions')) {
++        request.response.statusCode = HttpStatus.notFound;
++        await request.response.close();
++        return;
++      }
++      final body = await utf8.decoder.bind(request).join();
++      bodies.add(body);
++      final n = bodies.length - 1;
++      request.response.headers.contentType = ContentType(
++        'text',
++        'event-stream',
++      );
++      final List<String> chunks;
++      if (n == 0) {
++        chunks = _toolCallChunks('call_ok', 'echo THEME-SCENARIO-OK');
++      } else if (n == 1) {
++        chunks = _toolCallChunks(
++          'call_fail',
++          "echo THEME-SCENARIO-FAIL >&2; exit 7",
++        );
++      } else {
++        chunks = _textChunks();
++      }
++      for (final chunk in chunks) {
++        // A blank line terminates each SSE event — without it the decoder
++        // concatenates every data line into one unreadable payload.
++        request.response.write('data: $chunk\n\n');
++      }
++      request.response.write('data: [DONE]\n\n');
++      await request.response.close();
++    });
++  }
++
++  Future<void> close() async {
++    await _server?.close(force: true);
++  }
++
++  static List<String> _toolCallChunks(String id, String command) => [
++    jsonEncode({
++      'id': 'chatcmpl-t',
++      'object': 'chat.completion.chunk',
++      'choices': [
++        {
++          'index': 0,
++          'delta': {
++            'role': 'assistant',
++            'tool_calls': [
++              {
++                'index': 0,
++                'id': id,
++                'type': 'function',
++                'function': {'name': 'bash', 'arguments': ''},
++              },
++            ],
++          },
++          'finish_reason': null,
++        },
++      ],
++    }),
++    jsonEncode({
++      'choices': [
++        {
++          'index': 0,
++          'delta': {
++            'tool_calls': [
++              {
++                'index': 0,
++                'function': {
++                  'arguments': jsonEncode({'command': command}),
++                },
++              },
++            ],
++          },
++          'finish_reason': null,
++        },
++      ],
++    }),
++    jsonEncode({
++      'choices': [
++        {'index': 0, 'delta': {}, 'finish_reason': 'tool_calls'},
++      ],
++    }),
++  ];
++
++  static List<String> _textChunks() => [
++    jsonEncode({
++      'id': 'chatcmpl-text',
++      'object': 'chat.completion.chunk',
++      'choices': [
++        {
++          'index': 0,
++          'delta': {'role': 'assistant', 'content': 'scenario-complete'},
++          'finish_reason': null,
++        },
++      ],
++    }),
++    jsonEncode({
++      'choices': [
++        {'index': 0, 'delta': {}, 'finish_reason': 'stop'},
++      ],
++    }),
++  ];
++}
+```
