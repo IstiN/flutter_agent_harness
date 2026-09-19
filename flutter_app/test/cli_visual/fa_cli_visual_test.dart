@@ -1223,6 +1223,72 @@ http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
     });
   });
 
+  testWidgets('a [short, long] markdown table renders a real grid with '
+      'short columns intact (issue #686)', (tester) async {
+    // The canned endpoint answers with the report's repro shape: short
+    // labels + one long-text column. The fit-preserving sizing keeps the
+    // first column at its full natural width — every label cell renders
+    // on a single grid row while the text column wraps. (A Dart SSE
+    // server — no python3 dependency, unlike _startAnsweringServer.)
+    const tableReply = 'Готово:\n'
+        '| Гейт | Результат |\n'
+        '|---|---|\n'
+        '| Сьюты форка | +697 passed, вкл. новый fps-тест и дроп-кадровый '
+        'троттлинг рендера |\n'
+        '| fa-сьюты поверх форка | +139 passed |\n';
+    String sse(String content) => 'data: ${jsonEncode({
+          'choices': [
+            {'delta': {'content': content}},
+          ],
+        })}\n\n';
+    final server = (await tester.runAsync(() async {
+      final bound = await HttpServer.bind('127.0.0.1', 18780);
+      bound.listen((request) async {
+        final payload = utf8.encode(
+          '${sse(tableReply)}'
+          '${sse('')}'
+          'data: [DONE]\n\n',
+        ).length;
+        request.response.headers.set(
+          'Content-Type',
+          'text/event-stream',
+        );
+        request.response.headers.set('Content-Length', '$payload');
+        request.response.add(utf8.encode(
+          '${sse(tableReply)}'
+          '${sse('')}'
+          'data: [DONE]\n\n',
+        ));
+        await request.response.close();
+      });
+      return bound;
+    }))!;
+    final tempHome = _tempHomeWithEndpoint('http://127.0.0.1:18780/v1');
+    final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
+
+    harness.sendText('покажи отчёт');
+    await harness.settle(settleMs: 300);
+    harness.sendEnter();
+    await harness.liveWaitForText(
+      'Сьюты форка',
+      timeout: const Duration(seconds: 30),
+    );
+    await harness.screenshot(shotsDir, '109_markdown_table');
+
+    final flat = harness.screenText.replaceAll('\n', ' ');
+    // A real box grid (dim box-drawing separator), never raw pipes.
+    expect(flat, contains('┼'));
+    expect(flat, isNot(contains('|---')));
+    // Both short labels render complete on their own grid rows.
+    expect(flat, contains('Сьюты форка'));
+    expect(flat, contains('fa-сьюты поверх форка'));
+
+    await harness.close();
+    await tester.runAsync(() => server.close(force: true));
+    tempHome.deleteSync(recursive: true);
+  });
+
+
   group('agents hub (issue 277)', () {
     testWidgets('/agents opens the hub overlay; enter drills into the '
         'transcript; esc unwinds', (tester) async {
