@@ -1310,7 +1310,11 @@ Future<void> _runApp(List<String> args) async {
   })
   cliStartup;
   try {
-    cliStartup = resolveEffectiveCliArgs(parsed, saved);
+    cliStartup = resolveEffectiveCliArgs(
+      parsed,
+      saved,
+      env: Platform.environment,
+    );
   } on ConfigException catch (error) {
     _fail(error.message);
   }
