@@ -116,6 +116,7 @@ void main() {
     // terminal default — "can't see what is selected" in low-contrast
     // palettes.
     final controller = FaThemeController.instance;
+    addTearDown(controller.reset);
     controller.addUserThemes({
       'moss': parseUserTheme('{"roles": {"accent": "#00ff88"}}', 'moss'),
     });
@@ -160,4 +161,68 @@ void main() {
       );
     }
   });
+
+  test('gh-671: a TRUNCATED selected label wears the accent too', () {
+    // Narrow terminal: the label does not fit, so `_menuItemRow` renders
+    // the stripped fitted text. The old truncated branch returned it
+    // unwrapped — the selected row lost the accent exactly when the label
+    // was long (generic pickers with long names/paths).
+    var m = FaTuiModel(
+      callbacks: FaTuiCallbacks(
+        onSubmit: (_, {images = const []}) async {},
+        onModelSelected: (_) async {},
+        buildSlashMenu: (_) => const [],
+        buildModelMenu: (_, _) => const [],
+        statusLine: () => 'ready',
+        prompt: 'fa> ',
+      ),
+      isExited: () => false,
+      termWidth: 20,
+      termHeight: 12,
+    );
+    m =
+        m
+                .update(
+                  OpenPickerMsg('theme', 'Select theme', const [
+                    MenuItem(
+                      key: 'a-very-long-theme-name',
+                      label: 'a-very-long-theme-name',
+                      description: '███',
+                    ),
+                    MenuItem(key: 'pi', label: 'pi', description: '███'),
+                  ]),
+                )
+                .$1
+            as FaTuiModel;
+    final rows = m.view().content.split('\n');
+    final selected = rows.firstWhere(
+      (r) => r.replaceAll(_sgr, '').contains('▸'),
+      orElse: () => fail('no selected menu row in the frame'),
+    );
+    final open = controller.sgrPrefix(controller.current.accent);
+    // The label is truncated, not dropped.
+    expect(
+      selected.replaceAll(_sgr, ''),
+      contains('a-very-lon'),
+    );
+    // The accent must open right before the FITTED label cells — not only
+    // around the ▸ glyph (the pre-fix defect).
+    final labelStart = selected.indexOf('a-very-lon');
+    final opensBeforeLabel = [
+      for (final match in RegExp(RegExp.escape(open)).allMatches(selected))
+        if (match.start < labelStart) match.start,
+    ];
+    expect(opensBeforeLabel, isNotEmpty);
+    expect(
+      opensBeforeLabel.last,
+      greaterThan(selected.indexOf('▸')),
+      reason: 'the accent must wrap the fitted label, not only the ▸ glyph',
+    );
+    expect(
+      labelStart - opensBeforeLabel.last,
+      lessThan(open.length + 2),
+      reason: 'the accent SGR must sit immediately before the label text',
+    );
+  });
+}
 }
