@@ -3893,4 +3893,11 @@
 - fix(release): annotated tag created with actions-bot identity — no more empty-ident exit 128 (run 35426119831) (#669)
 - chore(factory): declare input modalities [text,image] in fa runner configs
 
+## 0.1.425
+
+- gh-671 TUI Theme switcher (#674)
+- chore: untrack agent runtime input/outputs + gitignore
+- fix(agent): survive starved hidden ranges on the auto-compact continuation (#677)
+- ci: pin ubuntu-24.04 in the gate + repin factory (f23ef09)
+
 ## Unreleased
