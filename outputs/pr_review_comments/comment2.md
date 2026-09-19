@@ -1,9 +1,12 @@
-🟡 **IMPORTANT (unchanged at HEAD): self-referential runner artifacts still committed**
+🟡 **IMPORTANT (reduced but still present): job artifacts remain committed**
 
-`input/gh-671/pr_diff.txt` (this PR's own truncated diff), `pr_info.md`, and
-`pr_discussions*` remain on the branch. Dropped once by the rework job,
-re-committed by the next auto-save — the factory re-provisions job inputs
-into every workspace and the auto-save commits them. Until the auto-save
-gains a path filter (`input/` + job `outputs/` excluded on job branches),
-the practical exit for this PR is: drop these files in the final pre-merge
-push and merge before the next auto-save fires.
+Progress this round: `pr_diff.txt` and `pr_info.md` are gone and the
+conflict markers are resolved. Still on the branch, though: this file
+(+1060 lines of review-thread dump), `pr_discussions_raw.json`,
+`merge_conflicts.md`, and the previous review round's outputs
+(`outputs/pr_review*`, `outputs/review_replies/`). These are factory job
+inputs/outputs, not gh-671 deliverables — they bloat the diff and, per the
+established ping-pong, will be refreshed by every future job's auto-save.
+
+Same exit as before: the durable fix is the factory auto-save path filter;
+for this PR, drop them in the final pre-merge push.

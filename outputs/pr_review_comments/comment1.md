@@ -1,17 +1,20 @@
-🚨 **BLOCKING (5th consecutive state — unchanged at HEAD `c84027ae`)**
+🟡 **IMPORTANT: reproduced again this round — 3rd observed failure, always the first scenario, always the missing success row**
 
-Still committed at HEAD: `<<<<<<< Updated upstream` at line 5 of this file
-(invalid JSON, parser-verified), line 15 of `input/gh-671/ticket.md`, and
-line 3 of `input/ticket.md`. The only new commit since the last review is a
-merge of `main` — no new resolution attempt has landed.
+This run: `TimeoutException after 0:00:30 waiting for "48;2;40;56;46"`
+(dracula). The failure dump again shows the ENTIRE first-tool-call row pair
+missing from the transcript — no running `• bash · echo THEME-SCENARIO-OK`
+and no settled `✓` row — while tool 1's rows render fine. Failure record
+across rounds: round 1 (1/3 runs), round 4 (1/2), round 6 (1/1) — always
+dracula, i.e. always the FIRST test in the file, which points at a
+cold-start interaction rather than pure paint timing.
 
-Transition history of this defect on the branch: broken → fixed → broken →
-fixed → **broken (current)**. As established in the previous round, this
-cannot converge through in-PR edits because every job workspace is
-re-provisioned with the unmerged merge and the auto-save re-commits it.
-The path out is unchanged:
+Two concrete next steps (beyond the previously suggested `retry:`):
 
-1. Factory auto-save refuses conflicted state (`git ls-files -u` non-empty
-   → do not stage/commit).
-2. One final cleanup push (resolve + drop job artifacts) immediately before
-   merge, with no further auto-save firing in between.
+1. **Localize the drop first**: assert `mock.bodies.length == 3` (or at
+   least that request 1 carried the tool-0 result) before the tint waits,
+   and/or read the session JSONL — this distinguishes "the CLI never
+   executed/reported tool 0" from "the row was written but lost in the TUI
+   output pipeline".
+2. **Absorb the cold start**: run a throwaway warm-up scenario (or make the
+   bare-`/theme` picker test first) so the strict tint assertions never
+   run on the first CLI spawn of the process.
