@@ -20,6 +20,7 @@ import '../prompts/prompt_overrides.dart';
 import '../cube/config/cube_settings.dart';
 import 'waiting_heartbeat.dart';
 import '../providers/provider_common.dart';
+import '../spill/spill.dart';
 import '../skills/skills_access.dart';
 import '../memory_config.dart';
 import '../messaging/fabric_config.dart';
@@ -199,6 +200,7 @@ final class CliConfig {
     this.cube,
     this.tools,
     this.redact,
+    this.spills,
     this.compactionEngine,
     this.compactionJudgeBudgetSeconds,
     this.wireDump = false,
@@ -257,6 +259,9 @@ final class CliConfig {
       redact: map['redact'] == null
           ? null
           : RedactionConfig.fromYaml(map['redact']),
+      // The spills section (issue #678); tolerant by design — unknown
+      // keys and mistyped scalars become notes, never boot failures.
+      spills: map['spills'] == null ? null : SpillsConfig.fromYaml(map['spills']),
       // Saved custom providers; entry-level errors throw [ConfigException].
       // Entries named after a built-in catalog provider are dropped (issue
       // #221's ghost "openai"): they shadow `/provider <name>` routing and
@@ -479,6 +484,12 @@ final class CliConfig {
   /// pipeline assembly happens in the host startup, see
   /// [buildRedactionPipeline]).
   final RedactionConfig? redact;
+
+  /// Optional `spills:` section (issue #678) — automatic tool-result
+  /// spilling thresholds. Tolerant parse; `null` means the section is
+  /// absent (the project scope reads live via [loadProjectSpillsConfig]
+  /// and wins wholesale, like the other project sections).
+  final SpillsConfig? spills;
 
   /// `registry` kill switch + `maxPerRequest` cap. `null` keeps the
   /// defaults (registry on, [defaultMaxImagesPerRequest]).
@@ -903,6 +914,25 @@ CubeSettings? loadProjectCubeSettings(String projectDir) {
     return node == null ? null : CubeSettings.fromYaml(node);
   } on ConfigException {
     rethrow;
+  } on Object {
+    return null;
+  }
+}
+
+/// Loads the PROJECT-level `spills:` section from
+/// `<projectDir>/.fah/config.yaml` (issue #678) — the spilling thresholds
+/// travel with the repo. Project wins wholesale over the user-level
+/// `spills:` section, like the other project sections. Null when the
+/// file or the section is absent; the parse itself is tolerant, so this
+/// never throws.
+SpillsConfig? loadProjectSpillsConfig(String projectDir) {
+  final file = File('$projectDir/.fah/config.yaml');
+  if (!file.existsSync()) return null;
+  try {
+    final doc = loadYaml(file.readAsStringSync());
+    if (doc is! YamlMap) return null;
+    final node = doc['spills'];
+    return node == null ? null : SpillsConfig.fromYaml(node);
   } on Object {
     return null;
   }

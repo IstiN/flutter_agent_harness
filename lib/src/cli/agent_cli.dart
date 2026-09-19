@@ -172,6 +172,7 @@ import '../plugins/plugin.dart';
 import '../redact/redaction_cli.dart';
 import '../redact/redaction_hooks.dart';
 import '../redact/redaction_pipeline.dart';
+import '../spill/spill.dart';
 import '../ttsr/ttsr.dart';
 import '../types.dart';
 import '../usage_summary.dart';
@@ -625,6 +626,22 @@ class AgentCli {
     // masking keeps running alongside (attached lazily on runtime tokens).
     if (config.redactionPipeline != null) {
       attachRedactionPipeline(_agent, config.redactionPipeline!);
+    }
+    // Automatic tool-result spilling (issue #678): attached AFTER the
+    // redaction pipeline so the hook chain runs result → redact → size
+    // check → spill → preview. Null/inactive config = no attach,
+    // byte-identical legacy.
+    final spills = config.spills;
+    if (spills != null && spills.isActive) {
+      attachSpillHooks(
+        _agent,
+        env: _coreToolEnv,
+        sessionId: () => _session?.cachedId,
+        config: spills,
+      );
+      for (final note in spills.notes) {
+        io.writeln('[spills] $note');
+      }
     }
     // Busy-row honesty: name the executing tool ('Running bash…') instead
     // of leaving a stale 'Compacting context…' label over long tool calls.
