@@ -137,9 +137,10 @@ void main() {
   group('runtime switching (AC1/E1)', () {
     test('switchTo repaints the emitters with the new palette only', () {
       expect(FaThemeController.instance.switchTo('ohmypi-dark'), isTrue);
-      // Same structure (bold accent, dim muted), different color.
+      // Same structure (bold accent, dim muted), different color. The
+      // muted value is the gh-671 readability lightening of #5f6673.
       expect(tuiAccent('x'), '\x1b[1m\x1b[38;2;254;188;56mx\x1b[0m');
-      expect(tuiDim('x'), contains('\x1b[38;2;95;102;115m'));
+      expect(tuiDim('x'), contains('\x1b[38;2;134;141;153m'));
       // The reset alias returns to the boot default.
       FaThemeController.instance.reset();
       expect(tuiAccent('x'), '${_legacyAccent}x\x1b[0m');
@@ -193,9 +194,12 @@ void main() {
     test('ohmypi-dark equals its dark.json values, role by role', () {
       final theme = kBuiltInTuiThemes['ohmypi-dark']!;
       // Generated from oh-my-pi packages/coding-agent/src/modes/theme/dark.json.
+      // EXCEPTIONS (gh-671 readability, see tui_theme.dart): muted and
+      // toolOutput are lightened from #5f6673 — their ported values fail
+      // the contrast floors on a dark terminal and on the tints.
       expectRole(theme, 'accent', const RgbColor(0xfe, 0xbc, 0x38), bold: true);
       expectRole(theme, 'accent2', const RgbColor(0xb2, 0x81, 0xd6), bold: true);
-      expectRole(theme, 'muted', const RgbColor(0x5f, 0x66, 0x73), dim: true);
+      expectRole(theme, 'muted', const RgbColor(0x86, 0x8d, 0x99), dim: true);
       expectRole(theme, 'highlight', const RgbColor(0x31, 0x36, 0x3f));
       expectRole(theme, 'success', const RgbColor(0x89, 0xd2, 0x81));
       expectRole(theme, 'warning', const RgbColor(0xe4, 0xc0, 0x0f));

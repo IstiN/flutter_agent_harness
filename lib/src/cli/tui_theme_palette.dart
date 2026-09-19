@@ -3,7 +3,9 @@
 // (accent2, userMessageBg, tool* — absent from hosted dart_tui), so the
 // published package cannot reference the fork-only fields. fah carries its
 // own palette type instead, renamed `TuiTheme` to avoid clashing with the
-// barrel's `Theme`. Byte-identical role data; keep in sync with the fork.
+// barrel's `Theme`. Byte-identical role data EXCEPT the roles tagged
+// `gh-671 readability:` — deliberate contrast-floor adjustments (muted /
+// toolOutput / toolErrorBg for nord and dracula), not upstream drift.
 import 'package:dart_tui/src/bubbles/style.dart' show Border, RgbColor, Style;
 
 /// A named collection of [Style] presets for common semantic roles.
@@ -165,8 +167,10 @@ final class TuiTheme {
       foregroundRgb: RgbColor(236, 239, 244), // #ECEFF4 Nord6
       backgroundRgb: RgbColor(46, 52, 64), // #2E3440 Nord0
     ),
+    // gh-671 readability: Nord3 (#4C566A) is 2.24:1 on a dark terminal —
+    // secondary text lightened to the Nord3/4 midpoint, dim flag kept.
     muted: Style(
-      foregroundRgb: RgbColor(76, 86, 106), // #4C566A Nord3
+      foregroundRgb: RgbColor(135, 146, 168), // #8792A8
       isDim: true,
     ),
     accent: Style(
@@ -203,13 +207,18 @@ final class TuiTheme {
       foregroundRgb: RgbColor(129, 161, 193), // #81A1C1 Nord9
       isBold: true,
     ),
+    // gh-671 readability: Nord3 (#4C566A) is 1.5:1 over the tool tints and
+    // 2.2:1 on a dark terminal — detail text lightened to the Nord3/4
+    // midpoint, dim flag kept for the muted look on unpainted rows.
     toolOutput: Style(
-      foregroundRgb: RgbColor(76, 86, 106), // #4C566A Nord3
+      foregroundRgb: RgbColor(160, 170, 192), // #A0AAC0
       isDim: true,
     ),
     userMessageText: Style(foregroundRgb: RgbColor(236, 239, 244)), // Nord6
     toolSuccessBg: Style(backgroundRgb: RgbColor(51, 61, 56)),
-    toolErrorBg: Style(backgroundRgb: RgbColor(67, 52, 58)),
+    // gh-671 readability: darkened so the #BF616A error rail clears 3:1
+    // (was 2.87:1 on the old tint).
+    toolErrorBg: Style(backgroundRgb: RgbColor(48, 36, 42)),
   );
 
   /// Dracula — vivid purples and vibrant accents.
@@ -257,8 +266,11 @@ final class TuiTheme {
       foregroundRgb: RgbColor(139, 233, 253), // #8BE9FD Cyan
       isBold: true,
     ),
+    // gh-671 readability: Comment (#6272A4) is 2.6:1 over the tool tints —
+    // detail text lightened within the comment-lavender family, dim flag
+    // kept for the muted look on unpainted rows.
     toolOutput: Style(
-      foregroundRgb: RgbColor(98, 114, 164), // #6272A4 Comment
+      foregroundRgb: RgbColor(155, 163, 204), // #9BA3CC
       isDim: true,
     ),
     userMessageText: Style(foregroundRgb: RgbColor(248, 248, 242)), // F8F8F2

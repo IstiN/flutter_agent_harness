@@ -28,23 +28,14 @@ extension ThemeCommands on AgentCli {
   }
 
   /// Opens the theme picker with live swatch previews; the current theme is
-  /// preselected.
+  /// preselected AND text-marked (`✓ current`, gh-671 — the swatch stays on
+  /// every row, the marker is readable text in every palette).
   void _openThemePicker() {
     final controller = FaThemeController.instance;
-    final items = [
-      for (final entry in controller.available().entries)
-        MenuItem(
-          key: entry.key,
-          label: entry.key,
-          description: entry.key == controller.currentName
-              ? '(current)'
-              : themeSwatchRow(entry.value),
-        ),
-    ];
     _tuiController?.openPicker(
       'theme',
       'Select theme',
-      items,
+      themePickerItems(current: controller.currentName),
       initialKey: controller.currentName,
     );
   }
