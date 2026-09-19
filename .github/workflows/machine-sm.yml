@@ -33,7 +33,11 @@ on:
 # live with "github-actions[bot] does not have permission to update
 # this pull request" until this explicit block lifted the ceiling.
 permissions:
-  contents: read          # checkout target + engine
+  # contents: write — update-branch pushes a merge commit onto the PR head
+  # branch; PullRequests: write alone is denied at the refs level (live:
+  # "github-actions[bot] does not have permission to update this pull
+  # request" even with PullRequests: write granted).
+  contents: write         # checkout + silent update-branch pushes
   issues: write           # labels + close-issue safety net
   pull-requests: write    # update-branch + merge
   actions: write          # workflow_dispatch on the teammate workflow
