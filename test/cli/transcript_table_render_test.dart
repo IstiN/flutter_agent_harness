@@ -337,5 +337,106 @@ void main() {
         expectGridsAligned(_Strip.all(f4));
       },
     );
+
+    group('fit-preserving column sizing (issue #686)', () {
+      // The report's shape: short labels + one long-text column. The old
+      // rule floored the short columns at 6 cells and handed the rest to
+      // the text column; the water-filling rule keeps short columns at
+      // their full natural width.
+      const shortLongDoc = [
+        '| Компонент | Состояние | Детали |',
+        '| --- | --- | --- |',
+        '| auth | done | переехала на новый провайдер с полной обратной '
+            'совместимостью |',
+        '| ui | wip | таблицы в транскрипте больше не схлопывают короткие '
+            'колонки в суп |',
+        '| cli | todo | нужен ручной прогон сценария resume |',
+      ];
+
+      test('IT-1: stepped parity over an overflowing 3-column table '
+          '(mid-table prefixes included)', () {
+        expectSteppedParity(shortLongDoc, 60);
+        expectSteppedParity(shortLongDoc, 44, reason: 'narrower terminal ');
+      });
+
+      test('AC1: report repro — short columns render single-line while the '
+          'text column wraps', () {
+        const reportDoc = [
+          '| Гейт | Результат |',
+          '|---|---|',
+          '| Сьюты форка | +697 passed, вкл. новый fps-тест и дроп-кадровый '
+              'троттлинг рендера |',
+          '| fa-сьюты поверх форка | +139 passed |',
+        ];
+        final out = AnsiMarkdown(width: 60).formatAll(reportDoc);
+        final stripped = _Strip.all(out);
+        // Both first-column cells appear COMPLETE on their physical row
+        // (natural [21, 66] at budget 55 → caps [21, 34]): no continuation
+        // rows under the first column.
+        expect(
+          stripped.where((l) => l.contains('Сьюты форка')),
+          hasLength(1),
+          reason: 'Сьюты форка (11 cells) must not wrap',
+        );
+        expect(
+          stripped.where((l) => l.contains('fa-сьюты поверх форка')),
+          hasLength(1),
+          reason: 'fa-сьюты поверх форка (21 cells) must not wrap',
+        );
+        // …while the text column still wraps onto continuations.
+        expect(stripped.where((l) => l.contains('fps-тест')), isNotEmpty);
+        expectGridsAligned(out);
+      });
+
+      test('E3: a single word longer than its cap hard-wraps inside the '
+          'grid, borders stay aligned', () {
+        final doc = [
+          '| id | notes |',
+          '| -- | ----- |',
+          '| a1 | ${'unbreakable' * 10} |',
+          '| b2 | short |',
+        ];
+        final out = AnsiMarkdown(width: 50).formatAll(doc);
+        expectGridsAligned(out);
+        // Nothing lost: the word's tail shows up somewhere.
+        expect(_Strip.all(out).join('\n'), contains('unbreakable'));
+        expectSteppedParity(doc, 50);
+      });
+
+      test('E4: CJK/emoji in the WIDE column — sizing in terminal cells, '
+          'borders aligned', () {
+        final doc = [
+          '| 名前 | 説明 |',
+          '| ---- | ---- |',
+          '| x | 説明が長いセルです、端末の幅をオーバーします 🚀 |',
+          '| y | 中文内容也是长的 🎉 |',
+        ];
+        final out = AnsiMarkdown(width: 44).formatAll(doc);
+        expectGridsAligned(out);
+        expectSteppedParity(doc, 44);
+      });
+
+      test('E6: header + separator only renders a (short) grid', () {
+        final doc = ['| a | b |', '| - | - |'];
+        final out = AnsiMarkdown(width: 60).formatAll(doc);
+        final stripped = _Strip.all(out);
+        expect(stripped.join('\n'), contains('┼'));
+        expectGridsAligned(out);
+        expectSteppedParity(doc, 60);
+      });
+
+      test('E8: escaped pipes degrade to the raw fallback safely', () {
+        final out = AnsiMarkdown(width: 60).formatAll([
+          r'| expr | meaning |',
+          '| ---- | ------- |',
+          r'| `a \| b` | union |',
+        ]);
+        final stripped = _Strip.all(out).join('\n');
+        // Raw markdown, not a broken grid: no box-drawing, no injected
+        // escapes beyond the inline formatting.
+        expect(stripped, isNot(contains('┼')));
+        expect(stripped, contains(r'a \| b'));
+      });
+    });
   });
 }
