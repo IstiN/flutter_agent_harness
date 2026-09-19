@@ -942,6 +942,16 @@ class AgentService extends ChangeNotifier
     SandboxPlatform? platformOverride,
   ]) => _effectiveAgentSystemPrompt(config, redactor, platformOverride);
 
+  /// The composed registry's tool names, in registration order (issue
+  /// #692 AC1 tests): pins the per-host availability floor — surfaces the
+  /// sandbox cannot run (LSP, MCP servers, DAP, checkpoints, the sqlite
+  /// engine) must be ABSENT from the app registry, not merely error at
+  /// call time.
+  @visibleForTesting
+  List<String> get registeredToolNamesForTest => [
+    for (final tool in _agent.state.tools) tool.name,
+  ];
+
   /// Composes redaction hooks onto the agent so secret values never reach
   /// the model, the transcript, or the session files. Attached even for an
   /// empty redactor: `request_secret` grants register values at runtime and
