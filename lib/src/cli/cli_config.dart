@@ -98,9 +98,21 @@ bool _parseTrajectorySection(Object? node) {
   return wireDump;
 }
 
-({int? contextWindowCap, String? agentMode}) _parseAgentSection(
-  Object? node,
-) {
+/// Validates one `agent.mode` value (issue #679): only the
+/// [harnessModeValues] strings are legal, and `default` normalizes to
+/// null so an absent and an explicit-off mode are indistinguishable
+/// downstream.
+String? _parseAgentModeValue(Object? value) {
+  if (value is! String || !harnessModeValues.contains(value)) {
+    throw ConfigException(
+      'unknown "agent.mode" value: $value '
+      '(expected ${(harnessModeValues.toList()..sort()).join('|')})',
+    );
+  }
+  return value == 'pi' ? 'pi' : null;
+}
+
+({int? contextWindowCap, String? agentMode}) _parseAgentSection(Object? node) {
   if (node == null) return (contextWindowCap: null, agentMode: null);
   if (node is! YamlMap) {
     throw ConfigException('agent must be a map, got: $node');
@@ -125,14 +137,7 @@ bool _parseTrajectorySection(Object? node) {
         }
         cap = value;
       case 'mode':
-        final value = node[key];
-        if (value is! String || !harnessModeValues.contains(value)) {
-          throw ConfigException(
-            'unknown "agent.mode" value: $value '
-            '(expected ${(harnessModeValues.toList()..sort()).join('|')})',
-          );
-        }
-        mode = value == 'pi' ? 'pi' : null;
+        mode = _parseAgentModeValue(node[key]);
       default:
         throw ConfigException('unknown "agent" key: $key');
     }
