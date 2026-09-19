@@ -2669,6 +2669,7 @@ extension SettingsFlow on AgentCli {
     io.writeln('tools: ${_toolsStatusLabel()}');
     io.writeln('compaction: ${_compactionStatusLabel()}');
     io.writeln('ttsr: ${_ttsrStatusLabel()}');
+    io.writeln('redact: ${_redactionStatusLabel()}');
     io.writeln('ctx cap: ${_contextCapStatusLabel()}');
     io.writeln('load mode: ${_loadModeStatusLabel()}');
     io.writeln('queue: ${_providersQueueStatusLabel()}');
