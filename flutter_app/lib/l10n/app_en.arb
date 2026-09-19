@@ -903,5 +903,17 @@
   "mobileConsentStatusOff": "Accessibility service: off",
   "@mobileConsentStatusOff": { "description": "Status row when the service is disabled" },
   "mobileConsentStoreUnavailable": "Device automation is not available in this build of Fa.",
-  "@mobileConsentStoreUnavailable": { "description": "Defensive message on store builds, where the consent surface never appears" }
+  "@mobileConsentStoreUnavailable": { "description": "Defensive message on store builds, where the consent surface never appears" },
+  "storeBannerTitle": "Get Fa on the App Store",
+  "@storeBannerTitle": { "description": "In-app Get banner: title" },
+  "storeBannerBody": "The App Store release is paid — it funds development. The TestFlight beta is free forever.",
+  "@storeBannerBody": { "description": "In-app Get banner: paid vs free-forever-beta messaging" },
+  "storeBannerAndroidSoon": "Android: coming soon",
+  "@storeBannerAndroidSoon": { "description": "In-app Get banner: the Android slot while links.play is unset" },
+  "storeBannerCta": "Open the App Store",
+  "@storeBannerCta": { "description": "In-app Get banner: the primary CTA button" },
+  "storeBannerBeta": "or join the free TestFlight beta",
+  "@storeBannerBeta": { "description": "In-app Get banner: the secondary beta link" },
+  "storeBannerDismiss": "Hide banner",
+  "@storeBannerDismiss": { "description": "In-app Get banner: dismiss tooltip/label" }
 }

@@ -2187,4 +2187,24 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String get mobileConsentStoreUnavailable =>
       'Автоматизация устройства недоступна в этой сборке Fa.';
+
+  @override
+  String get storeBannerTitle => 'Fa в App Store';
+
+  @override
+  String get storeBannerBody =>
+      'Релиз в App Store платный — он финансирует разработку. Бета в TestFlight бесплатна навсегда.';
+
+  @override
+  String get storeBannerAndroidSoon => 'Android: скоро';
+
+  @override
+  String get storeBannerCta => 'Открыть в App Store';
+
+  @override
+  String get storeBannerBeta =>
+      'или присоединяйтесь к бесплатной бете в TestFlight';
+
+  @override
+  String get storeBannerDismiss => 'Скрыть';
 }

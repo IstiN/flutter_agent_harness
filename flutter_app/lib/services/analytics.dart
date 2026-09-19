@@ -200,6 +200,21 @@ final class AppAnalytics {
   /// The files browser was opened (from the launcher or chat).
   void filesOpened(String source) => _log('files_opened', {'source': source});
 
+  /// A store-referral surface was tapped (issue #691): the dismissible
+  /// Get banner's App Store CTA or its TestFlight line. [placement]
+  /// identifies the surface (`get_banner` for the in-app banner);
+  /// [platform] carries the platform split (`web`/`macos`/…) so the
+  /// funnel counts join the site's `appstore_click` events in the same
+  /// GA4/Firebase property. Metadata only — never a URL with query
+  /// strings, never user ids.
+  void storeReferralTap({required String placement, required String platform}) =>
+      _log('store_referral', {'placement': placement, 'platform': platform});
+
+  /// The in-app Get banner was dismissed (issue #691) — the funnel's
+  /// negative signal, countable against the taps.
+  void storeBannerDismissed(String platform) =>
+      _log('store_banner_dismissed', {'platform': platform});
+
   static String _bucket(int value, List<int> edges) {
     for (final edge in edges) {
       if (value <= edge) return '<=$edge';

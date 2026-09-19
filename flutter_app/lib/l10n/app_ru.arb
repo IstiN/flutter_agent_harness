@@ -843,5 +843,17 @@
   "mobileConsentDisable": "Выключить",
   "mobileConsentStatusOn": "Служба специальных возможностей: включена",
   "mobileConsentStatusOff": "Служба специальных возможностей: выключена",
-  "mobileConsentStoreUnavailable": "Автоматизация устройства недоступна в этой сборке Fa."
+  "mobileConsentStoreUnavailable": "Автоматизация устройства недоступна в этой сборке Fa.",
+  "storeBannerTitle": "Fa в App Store",
+  "@storeBannerTitle": { "description": "In-app Get banner: title" },
+  "storeBannerBody": "Релиз в App Store платный — он финансирует разработку. Бета в TestFlight бесплатна навсегда.",
+  "@storeBannerBody": { "description": "In-app Get banner: paid vs free-forever-beta messaging" },
+  "storeBannerAndroidSoon": "Android: скоро",
+  "@storeBannerAndroidSoon": { "description": "In-app Get banner: the Android slot while links.play is unset" },
+  "storeBannerCta": "Открыть в App Store",
+  "@storeBannerCta": { "description": "In-app Get banner: the primary CTA button" },
+  "storeBannerBeta": "или присоединяйтесь к бесплатной бете в TestFlight",
+  "@storeBannerBeta": { "description": "In-app Get banner: the secondary beta link" },
+  "storeBannerDismiss": "Скрыть",
+  "@storeBannerDismiss": { "description": "In-app Get banner: dismiss tooltip/label" }
 }

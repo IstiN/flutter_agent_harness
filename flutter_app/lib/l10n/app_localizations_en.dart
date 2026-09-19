@@ -2158,4 +2158,23 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get mobileConsentStoreUnavailable =>
       'Device automation is not available in this build of Fa.';
+
+  @override
+  String get storeBannerTitle => 'Get Fa on the App Store';
+
+  @override
+  String get storeBannerBody =>
+      'The App Store release is paid — it funds development. The TestFlight beta is free forever.';
+
+  @override
+  String get storeBannerAndroidSoon => 'Android: coming soon';
+
+  @override
+  String get storeBannerCta => 'Open the App Store';
+
+  @override
+  String get storeBannerBeta => 'or join the free TestFlight beta';
+
+  @override
+  String get storeBannerDismiss => 'Hide banner';
 }
