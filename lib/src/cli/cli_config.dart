@@ -97,19 +97,18 @@ bool _parseTrajectorySection(Object? node) {
   return wireDump;
 }
 
-/// Validates one `agent.mode` value (issue #680): only the
-/// [agentLoadModeLabels] strings are legal, and `default` normalizes to
+/// Validates one `agent.mode` value (issue #680): the shared rule lives
+/// in [agentLoadModeValidationError] (load_modes.dart) — this parser and
+/// the settings validator (config_service.dart) throw its text as a
+/// ConfigException, so the two cannot drift. `default` normalizes to
 /// null so an absent and an explicit-off mode are indistinguishable
 /// downstream.
 String? _parseAgentModeValue(Object? value) {
-  if (value is! String || !agentLoadModeLabels.contains(value)) {
-    throw ConfigException(
-      '"agent.mode" must be one of: ${agentLoadModeLabels.join(', ')}',
-    );
-  }
+  final error = agentLoadModeValidationError(value);
+  if (error != null) throw ConfigException(error);
   // The default needs no storage: absent == default keeps the written
   // file minimal (the file's "defaults never written" rule).
-  return value == 'default' ? null : value;
+  return value == 'default' ? null : value as String;
 }
 
 /// Parses the `agent:` section (issues #273/#680): `contextWindowCap`
@@ -287,7 +286,9 @@ final class CliConfig {
           : RedactionConfig.fromYaml(map['redact']),
       // The spills section (issue #678); tolerant by design — unknown
       // keys and mistyped scalars become notes, never boot failures.
-      spills: map['spills'] == null ? null : SpillsConfig.fromYaml(map['spills']),
+      spills: map['spills'] == null
+          ? null
+          : SpillsConfig.fromYaml(map['spills']),
       // Saved custom providers; entry-level errors throw [ConfigException].
       // Entries named after a built-in catalog provider are dropped (issue
       // #221's ghost "openai"): they shadow `/provider <name>` routing and

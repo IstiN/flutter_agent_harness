@@ -5,8 +5,10 @@
 /// availability resolution, so the tool enters the registry and the
 /// provider-facing prompt rebuilds.
 ///
-/// Registered only in non-default load modes (`pi`, `omp`); the default
-/// mode never sees it (byte-identical behavior). Pure Dart: no `dart:io`.
+/// Registered only in the omp load mode ([discoveryEnabledByLoadMode]):
+/// pi keeps pi-mono's exact benchmark shape (4 tools, discovery off,
+/// issue #679) and the default mode never sees it (byte-identical
+/// behavior). Pure Dart: no `dart:io`.
 library;
 
 import '../agent/agent_loop.dart';

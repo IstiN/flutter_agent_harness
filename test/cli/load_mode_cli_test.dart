@@ -3,9 +3,8 @@
 /// omp switch (REG), a discoverable call tombstones through the real
 /// loop, a `discover_tools` mount enters the schema mid-session, and the
 /// settings flow round-trips `agent.mode` live (default/pi/omp
-/// coexistence).
+/// coexistence — pi keeps its exact 4-tool shape, no discovery surface).
 library;
-import 'dart:async';
 
 import 'dart:convert';
 
@@ -13,17 +12,6 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
-
-Future<void> _waitForTrue(
-  FutureOr<bool> Function() condition, {
-  String reason = 'condition',
-}) async {
-  for (var i = 0; i < 2000; i++) {
-    if (await condition()) return;
-    await Future<void>.delayed(const Duration(milliseconds: 5));
-  }
-  fail('timed out waiting for $reason');
-}
 
 /// The byte-level wire schema of a captured provider context.
 String _toolsBytes(Context context) {
@@ -76,58 +64,52 @@ void main() {
   });
 
   group('REG: default mode keeps today\'s schema', () {
-    test(
-      'default boot has no discover_tools; omp round-trip restores the '
-      'bytes exactly',
-      () async {
-        final stream = FakeStreamFunction([textTurn('ok')]);
-        final cli = cliFor(stream.call, AgentLoadMode.defaultMode);
-        final run = cli.run();
-        await _waitForTrue(() => io.out.toString().contains('fa>'));
+    test('default boot has no discover_tools; omp round-trip restores the '
+        'bytes exactly', () async {
+      final stream = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(stream.call, AgentLoadMode.defaultMode);
+      final run = cli.run();
+      await waitForIt(() => io.out.toString().contains('fa>'));
 
-        io.sendLine('hello');
-        await _waitForTrue(() => stream.calls >= 1);
-        final bootBytes = _toolsBytes(stream.contexts.first);
-        final bootNames = _toolNames(stream.contexts.first);
-        expect(bootNames, isNot(contains('discover_tools')));
-        expect(bootNames, containsAll(['read', 'write', 'edit', 'bash']));
+      io.sendLine('hello');
+      await waitForIt(() => stream.calls >= 1);
+      final bootBytes = _toolsBytes(stream.contexts.first);
+      final bootNames = _toolNames(stream.contexts.first);
+      expect(bootNames, isNot(contains('discover_tools')));
+      expect(bootNames, containsAll(['read', 'write', 'edit', 'bash']));
 
-        // default → omp → default via the live switch: the final schema
-        // must be byte-identical to the boot schema.
-        for (final pick in ['3', '1']) {
-          final flow = cli.startLoadModeFlow();
-          await _waitForTrue(
-            () => io.out.toString().contains('Load mode (tool schema preset)'),
-          );
-          io.sendLine(pick);
-          await _waitForTrue(() {
-            final current = cli.agent.state.tools.map((t) => t.name).toSet();
-            return pick == '3'
-                ? current.containsAll(['ls', 'task', 'ask', 'discover_tools'])
-                : (!current.contains('discover_tools') &&
+      // default → omp → default via the live switch: the final schema
+      // must be byte-identical to the boot schema.
+      for (final pick in ['3', '1']) {
+        final flow = cli.startLoadModeFlow();
+        await waitForIt(
+          () => io.out.toString().contains('Load mode (tool schema preset)'),
+        );
+        io.sendLine(pick);
+        await waitForIt(() {
+          final current = cli.agent.state.tools.map((t) => t.name).toSet();
+          return pick == '3'
+              ? current.containsAll(['ls', 'task', 'ask', 'discover_tools'])
+              : (!current.contains('discover_tools') &&
                     current.containsAll(bootNames));
-          });
-          io.sendLine('4'); // done
-          await flow;
-        }
+        });
+        io.sendLine('4'); // done
+        await flow;
+      }
 
-        io.sendLine('/exit');
-        await run;
+      io.sendLine('/exit');
+      await run;
 
-        expect(
-          cli.agent.state.tools.map((t) => t.name).toSet(),
-          bootNames,
-        );
-        // Byte-level on the wire schema the provider sees.
-        final stream2 = FakeStreamFunction([textTurn('ok')]);
-        expect(stream2.turns, isNotEmpty, reason: 'fixture sanity');
-        expect(
-          jsonDecode(bootBytes),
-          isNotNull,
-          reason: 'boot schema is valid wire JSON',
-        );
-      },
-    );
+      expect(cli.agent.state.tools.map((t) => t.name).toSet(), bootNames);
+      // Byte-level on the wire schema the provider sees.
+      final stream2 = FakeStreamFunction([textTurn('ok')]);
+      expect(stream2.turns, isNotEmpty, reason: 'fixture sanity');
+      expect(
+        jsonDecode(bootBytes),
+        isNotNull,
+        reason: 'boot schema is valid wire JSON',
+      );
+    });
 
     test('--omp schema differs from default at the byte level', () async {
       Context? defaultContext;
@@ -153,9 +135,9 @@ void main() {
           streamFunction: stream.call,
         );
         final run = cli.run();
-        await _waitForTrue(() => cliIo.out.toString().contains('fa>'));
+        await waitForIt(() => cliIo.out.toString().contains('fa>'));
         cliIo.sendLine('hello');
-        await _waitForTrue(() => stream.calls >= 1, reason: '$mode turn');
+        await waitForIt(() => stream.calls >= 1, reason: '$mode turn');
         cliIo.sendLine('/exit');
         await run;
         cliIo.close();
@@ -171,8 +153,7 @@ void main() {
       // availability id is essential or un-gated (families expand: `task`
       // → task_status/task_observe/…), nothing else.
       final essential = essentialToolIdsByLoadMode[AgentLoadMode.omp]!;
-      final defaultNames =
-          defaultContext.tools!.map((t) => t.name).toSet();
+      final defaultNames = defaultContext.tools!.map((t) => t.name).toSet();
       expect(ompContext.tools!.map((t) => t.name).toSet(), {
         'discover_tools',
         for (final name in defaultNames)
@@ -187,16 +168,14 @@ void main() {
   group('omp session loop (issue #680 L3)', () {
     test('unmounted discoverable tombstones through the real loop', () async {
       final stream = FakeStreamFunction([
-        toolTurn([
-          const ToolCall(id: 'c1', name: 'lsp', arguments: {}),
-        ]),
+        toolTurn([const ToolCall(id: 'c1', name: 'lsp', arguments: {})]),
         textTurn('got it'),
       ]);
       final cli = cliFor(stream.call, AgentLoadMode.omp);
       final run = cli.run();
-      await _waitForTrue(() => io.out.toString().contains('fa>'));
+      await waitForIt(() => io.out.toString().contains('fa>'));
       io.sendLine('use lsp');
-      await _waitForTrue(() => stream.calls >= 2);
+      await waitForIt(() => stream.calls >= 2);
       io.sendLine('/exit');
       await run;
 
@@ -213,175 +192,207 @@ void main() {
       );
     });
 
-    test('discover_tools listing mounts a discoverable into the schema',
-        () async {
-      final contexts = <Context>[];
-      var calls = 0;
-      late final AgentCli cli;
-      final streamFn = (Model model, Context context, {CancelToken? cancelToken}) {
-        contexts.add(
-          Context(
-            systemPrompt: context.systemPrompt,
-            messages: List.of(context.messages),
-            tools: context.tools,
-          ),
-        );
-        final turn = calls++;
-        final events = AssistantMessageEventStream();
-        if (turn == 0) {
-          // First call: list what is discoverable (no arguments).
-          for (final event in toolTurn([
-            const ToolCall(id: 'c1', name: 'discover_tools', arguments: {}),
-          ])) {
-            events.push(event);
-          }
-        } else if (turn == 1) {
-          // Follow-up: mount the first name the listing reported (the
-          // real model flow).
-          final listing = cli.agent.state.messages
-              .whereType<ToolResultMessage>()
-              .map((m) => (m.content.single as TextContent).text)
-              .last;
-          final line = listing
-              .split('\n')
-              .firstWhere((l) => l.startsWith('- '), orElse: () => '');
-          final name = line.isEmpty ? '' : line.substring(2).split(': ')[0];
-          for (final event in toolTurn([
-            ToolCall(id: 'c2', name: 'discover_tools', arguments: {
-              'mount': [name],
-            }),
-          ])) {
-            events.push(event);
-          }
-        } else {
-          for (final event in textTurn('mounted')) {
-            events.push(event);
-          }
-        }
-        events.end();
-        return events;
-      };
-      cli = cliFor(streamFn, AgentLoadMode.omp);
-      final run = cli.run();
-      await _waitForTrue(() => io.out.toString().contains('fa>'));
-      io.sendLine('list and mount');
-      await _waitForTrue(() => calls >= 3);
-      io.sendLine('and now');
-      await _waitForTrue(() => calls >= 4);
-      io.sendLine('/exit');
-      await run;
+    test(
+      'discover_tools listing mounts a discoverable into the schema',
+      () async {
+        final contexts = <Context>[];
+        var calls = 0;
+        late final AgentCli cli;
+        final streamFn =
+            (Model model, Context context, {CancelToken? cancelToken}) {
+              contexts.add(
+                Context(
+                  systemPrompt: context.systemPrompt,
+                  messages: List.of(context.messages),
+                  tools: context.tools,
+                ),
+              );
+              final turn = calls++;
+              final events = AssistantMessageEventStream();
+              if (turn == 0) {
+                // First call: list what is discoverable (no arguments).
+                for (final event in toolTurn([
+                  const ToolCall(
+                    id: 'c1',
+                    name: 'discover_tools',
+                    arguments: {},
+                  ),
+                ])) {
+                  events.push(event);
+                }
+              } else if (turn == 1) {
+                // Follow-up: mount the first name the listing reported (the
+                // real model flow).
+                final listing = cli.agent.state.messages
+                    .whereType<ToolResultMessage>()
+                    .map((m) => (m.content.single as TextContent).text)
+                    .last;
+                final line = listing
+                    .split('\n')
+                    .firstWhere((l) => l.startsWith('- '), orElse: () => '');
+                final name = line.isEmpty
+                    ? ''
+                    : line.substring(2).split(': ')[0];
+                for (final event in toolTurn([
+                  ToolCall(
+                    id: 'c2',
+                    name: 'discover_tools',
+                    arguments: {
+                      'mount': [name],
+                    },
+                  ),
+                ])) {
+                  events.push(event);
+                }
+              } else {
+                for (final event in textTurn('mounted')) {
+                  events.push(event);
+                }
+              }
+              events.end();
+              return events;
+            };
+        cli = cliFor(streamFn, AgentLoadMode.omp);
+        final run = cli.run();
+        await waitForIt(() => io.out.toString().contains('fa>'));
+        io.sendLine('list and mount');
+        await waitForIt(() => calls >= 3);
+        io.sendLine('and now');
+        await waitForIt(() => calls >= 4);
+        io.sendLine('/exit');
+        await run;
 
-      // The listing named a discoverable tool, the mount reported it, and
-      // the schema gained it for the NEXT request (the loop snapshots the
-      // run's tools at run start, so the next run picks the mount up).
-      final listing = cli.agent.state.messages
-          .whereType<ToolResultMessage>()
-          .map((m) => (m.content.single as TextContent).text)
-          .firstWhere((t) => t.startsWith('Discoverable tools'));
-      final mountedName = listing
-          .split('\n')
-          .firstWhere((l) => l.startsWith('- '))
-          .substring(2)
-          .split(': ')[0];
-      expect(contexts[1].tools!.map((t) => t.name), isNot(contains(mountedName)));
-      final mountResult = cli.agent.state.messages
-          .whereType<ToolResultMessage>()
-          .map((m) => (m.content.single as TextContent).text)
-          .firstWhere((t) => t.startsWith('Mounted'));
-      expect(mountResult, contains('Mounted (now in the schema): $mountedName'));
-      expect(
-        cli.agent.state.tools.map((t) => t.name),
-        contains(mountedName),
-      );
-      expect(
-        contexts[3].tools!.map((t) => t.name),
-        contains(mountedName),
-      );
-    });
+        // The listing named a discoverable tool, the mount reported it, and
+        // the schema gained it for the NEXT request (the loop snapshots the
+        // run's tools at run start, so the next run picks the mount up).
+        final listing = cli.agent.state.messages
+            .whereType<ToolResultMessage>()
+            .map((m) => (m.content.single as TextContent).text)
+            .firstWhere((t) => t.startsWith('Discoverable tools'));
+        final mountedName = listing
+            .split('\n')
+            .firstWhere((l) => l.startsWith('- '))
+            .substring(2)
+            .split(': ')[0];
+        expect(
+          contexts[1].tools!.map((t) => t.name),
+          isNot(contains(mountedName)),
+        );
+        final mountResult = cli.agent.state.messages
+            .whereType<ToolResultMessage>()
+            .map((m) => (m.content.single as TextContent).text)
+            .firstWhere((t) => t.startsWith('Mounted'));
+        expect(
+          mountResult,
+          contains('Mounted (now in the schema): $mountedName'),
+        );
+        expect(cli.agent.state.tools.map((t) => t.name), contains(mountedName));
+        expect(contexts[3].tools!.map((t) => t.name), contains(mountedName));
+      },
+    );
   });
 
   group('settings load-mode flow (issue #680 AC3/L4)', () {
-    test('picking omp writes agent.mode and live-applies without restart',
-        () async {
-      final stream = FakeStreamFunction([textTurn('ok')]);
-      final cli = cliFor(stream.call, AgentLoadMode.defaultMode);
-      final run = cli.run();
-      await _waitForTrue(() => io.out.toString().contains('fa>'));
+    test(
+      'picking omp writes agent.mode and live-applies without restart',
+      () async {
+        final stream = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(stream.call, AgentLoadMode.defaultMode);
+        final run = cli.run();
+        await waitForIt(() => io.out.toString().contains('fa>'));
 
-      final flow = cli.startLoadModeFlow();
-      await _waitForTrue(
-        () => io.out.toString().contains('Load mode (tool schema preset)'),
-      );
-      io.sendLine('3'); // omp
-      await _waitForTrue(
-        () => cli.agent.state.tools.any((t) => t.name == 'discover_tools'),
-      );
-      io.sendLine('4'); // done
-      await flow;
-      io.sendLine('/exit');
-      await run;
-
-      final written =
-          (await env.readTextFile('/home/u/.fah/config.yaml')).valueOrNull;
-      expect(written, isNotNull);
-      expect(written, contains('mode: omp'));
-      expect(
-        cli.agent.state.tools.map((t) => t.name).toSet(),
-        containsAll(['read', 'write', 'edit', 'bash', 'ls', 'task', 'ask']),
-      );
-    });
-
-    test('modes coexist: default → omp → pi rebuilds the schema live',
-        () async {
-      final stream = FakeStreamFunction([textTurn('ok')]);
-      final cli = cliFor(stream.call, AgentLoadMode.defaultMode);
-      final run = cli.run();
-      await _waitForTrue(() => io.out.toString().contains('fa>'));
-      Set<String> names() =>
-          cli.agent.state.tools.map((t) => t.name).toSet();
-
-      // default boot: no discover_tools.
-      expect(names(), isNot(contains('discover_tools')));
-
-      for (final (pick, settled) in [
-        (
-          '3',
-          () => names().containsAll(['ls', 'task', 'ask', 'discover_tools']),
-        ),
-        (
-          '2',
-          () =>
-              names().containsAll(['read', 'write', 'edit', 'bash']) &&
-              names().contains('discover_tools') &&
-              !names().contains('ls'),
-        ),
-        (
-          '1',
-          // default: the meta tool is gone and the file base is back
-          // (web_search et al. are capability-absent in this env).
-          () =>
-              !names().contains('discover_tools') &&
-              names().containsAll(['read', 'write', 'edit', 'bash']),
-        ),
-      ]) {
         final flow = cli.startLoadModeFlow();
-        await _waitForTrue(
+        await waitForIt(
           () => io.out.toString().contains('Load mode (tool schema preset)'),
         );
-        io.sendLine(pick);
-        await _waitForTrue(settled, reason: 'switch on pick $pick');
+        io.sendLine('3'); // omp
+        await waitForIt(
+          () => cli.agent.state.tools.any((t) => t.name == 'discover_tools'),
+        );
         io.sendLine('4'); // done
         await flow;
-      }
+        io.sendLine('/exit');
+        await run;
 
-      // The final write is explicit `default` (legal, keeps the file
-      // parseable) and the schema is back to the full set.
-      final written =
-          (await env.readTextFile('/home/u/.fah/config.yaml')).valueOrNull;
-      expect(written, contains('mode: default'));
+        final written = (await env.readTextFile(
+          '/home/u/.fah/config.yaml',
+        )).valueOrNull;
+        expect(written, isNotNull);
+        expect(written, contains('mode: omp'));
+        expect(
+          cli.agent.state.tools.map((t) => t.name).toSet(),
+          containsAll(['read', 'write', 'edit', 'bash', 'ls', 'task', 'ask']),
+        );
+      },
+    );
 
-      io.sendLine('/exit');
-      await run;
-    });
+    test(
+      'modes coexist: default → omp → pi rebuilds the schema live',
+      () async {
+        final stream = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(stream.call, AgentLoadMode.defaultMode);
+        final run = cli.run();
+        await waitForIt(() => io.out.toString().contains('fa>'));
+        Set<String> names() => cli.agent.state.tools.map((t) => t.name).toSet();
+
+        // default boot: no discover_tools.
+        expect(names(), isNot(contains('discover_tools')));
+
+        for (final (pick, settled) in [
+          (
+            '3',
+            () => names().containsAll(['ls', 'task', 'ask', 'discover_tools']),
+          ),
+          (
+            '2',
+            // pi: pi-mono's EXACT benchmark shape (issue #679) — the 4-tool
+            // base, discovery OFF (no discover_tools meta tool), nothing
+            // else in the schema.
+            () =>
+                names().containsAll(['read', 'write', 'edit', 'bash']) &&
+                !names().contains('discover_tools') &&
+                !names().contains('ls'),
+          ),
+          (
+            '1',
+            // default: the meta tool is gone and the base is fully
+            // back — ls/task/ask restored (web_search et al. are
+            // capability-absent in this env). The condition MUST stay
+            // false in the pi state: an instantly-true wait sends done
+            // before the pick is processed, racing the flow's reader.
+            () =>
+                !names().contains('discover_tools') &&
+                names().containsAll([
+                  'read',
+                  'write',
+                  'edit',
+                  'bash',
+                  'ls',
+                  'task',
+                  'ask',
+                ]),
+          ),
+        ]) {
+          final flow = cli.startLoadModeFlow();
+          await waitForIt(
+            () => io.out.toString().contains('Load mode (tool schema preset)'),
+          );
+          io.sendLine(pick);
+          await waitForIt(settled, reason: 'switch on pick $pick');
+          io.sendLine('4'); // done
+          await flow;
+        }
+
+        // The final write is explicit `default` (legal, keeps the file
+        // parseable) and the schema is back to the full set.
+        final written = (await env.readTextFile(
+          '/home/u/.fah/config.yaml',
+        )).valueOrNull;
+        expect(written, contains('mode: default'));
+
+        io.sendLine('/exit');
+        await run;
+      },
+    );
   });
 }

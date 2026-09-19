@@ -40,6 +40,15 @@ void main() {
       }
     });
 
+    test('discovery ships with omp only (pi is #679\'s exact shape)', () {
+      // The review of PR #690 pinned this: pi is pi-mono's exact
+      // benchmark config — 4 tools, discovery OFF — so the meta tool is
+      // omp's alone; the default mode has no demotion to discover.
+      expect(discoveryEnabledByLoadMode[AgentLoadMode.omp], isTrue);
+      expect(discoveryEnabledByLoadMode[AgentLoadMode.pi], isFalse);
+      expect(discoveryEnabledByLoadMode[AgentLoadMode.defaultMode], isFalse);
+    });
+
     test('labels round-trip through agentLoadModeFromLabel', () {
       for (final mode in AgentLoadMode.values) {
         expect(agentLoadModeFromLabel(mode.label), mode);
@@ -79,10 +88,7 @@ void main() {
         AgentLoadMode.pi,
       );
       expect(resolveAgentLoadMode(envMode: 'omp'), AgentLoadMode.omp);
-      expect(
-        resolveAgentLoadMode(configMode: 'omp'),
-        AgentLoadMode.omp,
-      );
+      expect(resolveAgentLoadMode(configMode: 'omp'), AgentLoadMode.omp);
     });
 
     test('empty env label falls through to config (no intent)', () {
@@ -134,7 +140,9 @@ void main() {
     }
 
     test('enabled non-essential ids become discoverable', () {
-      final resolution = resolve(essentialToolIdsByLoadMode[AgentLoadMode.omp]!);
+      final resolution = resolve(
+        essentialToolIdsByLoadMode[AgentLoadMode.omp]!,
+      );
       expect(resolution.discoverableIds, containsAll(['lsp', 'web_search']));
       expect(
         resolution.discoverableIds,
@@ -170,6 +178,86 @@ void main() {
         scopes: const [(ToolScope.session, ToolsConfig())],
       );
       expect(resolution.discoverableIds, isEmpty);
+    });
+  });
+
+  group('MCP family demotion (issue #680 review)', () {
+    ToolAvailabilityResolution resolve(
+      Set<String> essential, {
+      Map<String, bool> tools = const {},
+      Iterable<String> servers = const ['ctx', 'db'],
+    }) {
+      return resolveToolAvailability(
+        capabilities: {
+          for (final id in knownToolIds) id: const ToolCapability.available(),
+        },
+        scopes: [(ToolScope.session, ToolsConfig(tools: tools))],
+        essentialToolIds: essential,
+        mcpServerIds: servers,
+      );
+    }
+
+    test('enabled families become discoverable — mcp__* is in the card', () {
+      final resolution = resolve(
+        essentialToolIdsByLoadMode[AgentLoadMode.omp]!,
+      );
+      expect(resolution.discoverableIds, containsAll(['mcp:ctx', 'mcp:db']));
+    });
+
+    test('no preset (null essential set) demotes no family — REG', () {
+      final resolution = resolveToolAvailability(
+        capabilities: {
+          for (final id in knownToolIds) id: const ToolCapability.available(),
+        },
+        scopes: const [(ToolScope.session, ToolsConfig())],
+        mcpServerIds: const ['ctx'],
+      );
+      expect(resolution.discoverableIds, isNot(contains('mcp:ctx')));
+    });
+
+    test('an explicit per-server on is a standing mount', () {
+      final resolution = resolve(
+        essentialToolIdsByLoadMode[AgentLoadMode.omp]!,
+        tools: {'mcp:ctx': true},
+      );
+      expect(resolution.discoverableIds, isNot(contains('mcp:ctx')));
+      expect(resolution.discoverableIds, contains('mcp:db'));
+    });
+
+    test('an explicit aggregate mcp on exempts every family', () {
+      final resolution = resolve(
+        essentialToolIdsByLoadMode[AgentLoadMode.omp]!,
+        tools: {'mcp': true},
+      );
+      expect(
+        resolution.discoverableIds.where((id) => id.startsWith('mcp:')),
+        isEmpty,
+      );
+    });
+
+    test('a disabled family is not discoverable — off stays off', () {
+      final resolution = resolve(
+        essentialToolIdsByLoadMode[AgentLoadMode.omp]!,
+        tools: {'mcp:ctx': false},
+      );
+      expect(resolution.discoverableIds, isNot(contains('mcp:ctx')));
+      expect(resolution.discoverableIds, contains('mcp:db'));
+    });
+
+    test('the mcp:false kill-switch disables every family', () {
+      final resolution = resolve(
+        essentialToolIdsByLoadMode[AgentLoadMode.omp]!,
+        tools: {'mcp': false, 'mcp:ctx': true},
+      );
+      expect(
+        resolution.discoverableIds.where((id) => id.startsWith('mcp:')),
+        isEmpty,
+      );
+      expect(
+        resolution.mcpServers['ctx'],
+        isFalse,
+        reason: 'the kill-switch forces the declared value off',
+      );
     });
   });
 }

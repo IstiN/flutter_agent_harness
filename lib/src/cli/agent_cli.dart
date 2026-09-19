@@ -1232,10 +1232,7 @@ class AgentCli {
     _mcp.reRegister(_toolRegistry, _agent, _applyPromptComposition);
     // Re-apply the availability decision to the fresh MCP surface (a
     // no-op until the first rebuild produced a resolution).
-    final resolution = _toolGate.resolution;
-    if (resolution != null) {
-      AgentCliTools(this).refilterMcpTools(resolution);
-    }
+    AgentCliTools(this).resyncMcpAvailability();
   }
 
   /// Rebuilds the agent's system prompt from the active mode (or the

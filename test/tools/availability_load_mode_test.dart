@@ -56,6 +56,23 @@ ToolAvailabilityResolution _ompResolution() {
   );
 }
 
+/// An omp resolution with live MCP server families (issue #680 review:
+/// the demotion must cover `mcp:<server>` too — the card lists mcp__*
+/// among the discoverable, and they carry the heaviest schemas).
+ToolAvailabilityResolution _ompResolutionWithMcp(Iterable<String> servers) {
+  return resolveToolAvailability(
+    capabilities: {
+      ...{
+        for (final id in _toolsById.keys) id: const ToolCapability.available(),
+      },
+      'mcp': const ToolCapability.available(),
+    },
+    scopes: const [(ToolScope.session, ToolsConfig())],
+    essentialToolIds: essentialToolIdsByLoadMode[AgentLoadMode.omp],
+    mcpServerIds: servers,
+  );
+}
+
 Agent _agent(ToolRegistry registry) {
   return Agent(
     model: _model,
@@ -82,8 +99,8 @@ String _schemaBytes(ToolRegistry registry) {
 }
 
 void main() {
-  final essentialNames =
-      essentialToolIdsByLoadMode[AgentLoadMode.omp]!.toList()..sort();
+  final essentialNames = essentialToolIdsByLoadMode[AgentLoadMode.omp]!.toList()
+    ..sort();
 
   group('essential-only boot schema (issue #680 L2)', () {
     test('registry holds exactly the omp essentials, byte-level', () {
@@ -132,12 +149,7 @@ void main() {
           return stream;
         },
       );
-      gate.apply(
-        _ompResolution(),
-        registry,
-        agent,
-        rebuildPrompt: () {},
-      );
+      gate.apply(_ompResolution(), registry, agent, rebuildPrompt: () {});
       await agent.prompt('go');
       expect(
         contexts.single.tools!.map((t) => t.name).toList()..sort(),
@@ -147,34 +159,36 @@ void main() {
   });
 
   group('discoverable tombstone (issue #680 L2)', () {
-    test('unmounted call never executes and names the discovery path',
-        () async {
-      final gate = ToolAvailabilityGate(toolsById: _toolsById);
-      final registry = ToolRegistry([
-        for (final tools in _toolsById.values) ...tools,
-      ]);
-      gate.apply(
-        _ompResolution(),
-        registry,
-        _agent(registry),
-        rebuildPrompt: () {},
-      );
-      var innerCalls = 0;
-      final wrapped = gate.wrapExecutor((call, cancelToken, onUpdate) async {
-        innerCalls++;
-        return ToolExecutionResult.text('inner ${call.name}');
-      });
+    test(
+      'unmounted call never executes and names the discovery path',
+      () async {
+        final gate = ToolAvailabilityGate(toolsById: _toolsById);
+        final registry = ToolRegistry([
+          for (final tools in _toolsById.values) ...tools,
+        ]);
+        gate.apply(
+          _ompResolution(),
+          registry,
+          _agent(registry),
+          rebuildPrompt: () {},
+        );
+        var innerCalls = 0;
+        final wrapped = gate.wrapExecutor((call, cancelToken, onUpdate) async {
+          innerCalls++;
+          return ToolExecutionResult.text('inner ${call.name}');
+        });
 
-      final result = await wrapped(_call('c1', 'lsp'), null, null);
+        final result = await wrapped(_call('c1', 'lsp'), null, null);
 
-      expect(innerCalls, 0, reason: 'an unmounted discoverable never runs');
-      expect(result.terminate, isFalse);
-      expect(
-        (result.content.single as TextContent).text,
-        'Tool `lsp` is discoverable and not loaded — call `discover_tools` '
-        'to list available tools, then mount it by name.',
-      );
-    });
+        expect(innerCalls, 0, reason: 'an unmounted discoverable never runs');
+        expect(result.terminate, isFalse);
+        expect(
+          (result.content.single as TextContent).text,
+          'Tool `lsp` is discoverable and not loaded — call `discover_tools` '
+          'to list available tools, then mount it by name.',
+        );
+      },
+    );
   });
 
   group('mid-session mount (issue #680 L2)', () {
@@ -186,19 +200,17 @@ void main() {
           for (final tools in _toolsById.values) ...tools,
         ]);
         final agent = _agent(registry);
-        gate.apply(
-          _ompResolution(),
-          registry,
-          agent,
-          rebuildPrompt: () {},
-        );
+        gate.apply(_ompResolution(), registry, agent, rebuildPrompt: () {});
         expect(registry.contains('lsp'), isFalse);
         expect(gate.discoverableToolNames, containsAll(['lsp', 'web_search']));
 
         var rebuilds = 0;
-        final mounted = gate.mount([
-          'lsp',
-        ], registry, agent, rebuildPrompt: () => rebuilds++);
+        final mounted = gate.mount(
+          ['lsp'],
+          registry,
+          agent,
+          rebuildPrompt: () => rebuilds++,
+        );
 
         expect(mounted, {'lsp'});
         expect(registry.contains('lsp'), isTrue);
@@ -214,46 +226,33 @@ void main() {
         for (final tools in _toolsById.values) ...tools,
       ]);
       final agent = _agent(registry);
-      gate.apply(
-        _ompResolution(),
-        registry,
-        agent,
-        rebuildPrompt: () {},
-      );
+      gate.apply(_ompResolution(), registry, agent, rebuildPrompt: () {});
       gate.mount(['lsp'], registry, agent, rebuildPrompt: () {});
 
-      gate.apply(
-        _ompResolution(),
-        registry,
-        agent,
-        rebuildPrompt: () {},
-      );
+      gate.apply(_ompResolution(), registry, agent, rebuildPrompt: () {});
 
       expect(registry.contains('lsp'), isTrue);
     });
 
-    test('mounted discoverable executes through the wrapped executor',
-        () async {
-      final gate = ToolAvailabilityGate(toolsById: _toolsById);
-      final registry = ToolRegistry([
-        for (final tools in _toolsById.values) ...tools,
-      ]);
-      final agent = _agent(registry);
-      gate.apply(
-        _ompResolution(),
-        registry,
-        agent,
-        rebuildPrompt: () {},
-      );
-      gate.mount(['web_search'], registry, agent, rebuildPrompt: () {});
+    test(
+      'mounted discoverable executes through the wrapped executor',
+      () async {
+        final gate = ToolAvailabilityGate(toolsById: _toolsById);
+        final registry = ToolRegistry([
+          for (final tools in _toolsById.values) ...tools,
+        ]);
+        final agent = _agent(registry);
+        gate.apply(_ompResolution(), registry, agent, rebuildPrompt: () {});
+        gate.mount(['web_search'], registry, agent, rebuildPrompt: () {});
 
-      final wrapped = gate.wrapExecutor(
-        (call, cancelToken, onUpdate) async =>
-            ToolExecutionResult.text('inner ${call.name}'),
-      );
-      final result = await wrapped(_call('c1', 'web_search'), null, null);
-      expect((result.content.single as TextContent).text, 'inner web_search');
-    });
+        final wrapped = gate.wrapExecutor(
+          (call, cancelToken, onUpdate) async =>
+              ToolExecutionResult.text('inner ${call.name}'),
+        );
+        final result = await wrapped(_call('c1', 'web_search'), null, null);
+        expect((result.content.single as TextContent).text, 'inner web_search');
+      },
+    );
 
     test('mount ignores unknown and already-mounted ids', () {
       final gate = ToolAvailabilityGate(toolsById: _toolsById);
@@ -261,12 +260,7 @@ void main() {
         for (final tools in _toolsById.values) ...tools,
       ]);
       final agent = _agent(registry);
-      gate.apply(
-        _ompResolution(),
-        registry,
-        agent,
-        rebuildPrompt: () {},
-      );
+      gate.apply(_ompResolution(), registry, agent, rebuildPrompt: () {});
       gate.mount(['lsp'], registry, agent, rebuildPrompt: () {});
 
       final mounted = gate.mount(
@@ -277,6 +271,102 @@ void main() {
       );
 
       expect(mounted, isEmpty);
+    });
+  });
+
+  group('MCP family demotion (issue #680 review)', () {
+    // The dynamic family surface, as the manager reports it.
+    final ctxTools = [
+      _tool('mcp__ctx__get', 'read a doc\nlonger doc'),
+      _tool('mcp__ctx__put', 'write a doc\nlonger doc'),
+    ];
+
+    /// Boots the gate + registry the way the CLI does: static tools at
+    /// construction, the MCP family noted (names AND instances) and
+    /// registered when its server connects, then the omp resolution
+    /// applied — which must prune the demoted family back out.
+    (ToolAvailabilityGate, ToolRegistry) boot() {
+      // A COPY of the groups map: the gate stores it by reference and
+      // noteFamilyTools writes into it, and the shared `_toolsById`
+      // fixture must stay pristine for the next test (the CLI builds a
+      // fresh groups map per rebuild, same isolation).
+      final gate = ToolAvailabilityGate(
+        toolsById: {
+          for (final entry in _toolsById.entries) entry.key: [...entry.value],
+        },
+      );
+      final registry = ToolRegistry([
+        for (final tools in _toolsById.values) ...tools,
+      ]);
+      gate.noteFamilyTools('mcp:ctx', ctxTools);
+      registry.registerAll(ctxTools);
+      gate.apply(
+        _ompResolutionWithMcp(const ['ctx']),
+        registry,
+        _agent(registry),
+        rebuildPrompt: () {},
+      );
+      return (gate, registry);
+    }
+
+    test('a demoted family is out of the schema but discoverable', () {
+      final (gate, registry) = boot();
+      expect(registry.contains('mcp__ctx__get'), isFalse);
+      expect(registry.contains('mcp__ctx__put'), isFalse);
+      expect(gate.familyVisible('mcp:ctx'), isFalse);
+      expect(
+        gate.discoverableToolNames,
+        containsAll(['mcp__ctx__get', 'mcp__ctx__put']),
+      );
+      // The listing documents dynamic family tools like static ones.
+      expect(gate.discoverableDocs()['mcp__ctx__get'], 'read a doc');
+    });
+
+    test('an unmounted family member tombstones, naming the path', () async {
+      final (gate, _) = boot();
+      final wrapped = gate.wrapExecutor((call, cancelToken, onUpdate) async {
+        return ToolExecutionResult.text('inner ${call.name}');
+      });
+      final result = await wrapped(_call('c1', 'mcp__ctx__get'), null, null);
+      expect(
+        (result.content.single as TextContent).text,
+        'Tool `mcp__ctx__get` is discoverable and not loaded — call '
+        '`discover_tools` to list available tools, then mount it by name.',
+      );
+    });
+
+    test('mounting the family registers its noted tools', () {
+      final (gate, registry) = boot();
+      final agent = _agent(registry);
+      expect(gate.availabilityIdOf('mcp__ctx__get'), 'mcp:ctx');
+
+      final mounted = gate.mount(
+        ['mcp:ctx'],
+        registry,
+        agent,
+        rebuildPrompt: () {},
+      );
+
+      expect(mounted, {'mcp:ctx'});
+      expect(registry.contains('mcp__ctx__get'), isTrue);
+      expect(registry.contains('mcp__ctx__put'), isTrue);
+      expect(gate.familyVisible('mcp:ctx'), isTrue);
+      expect(gate.discoverableToolNames, isNot(contains('mcp__ctx__get')));
+    });
+
+    test('a mounted family member executes through the executor', () async {
+      final (gate, registry) = boot();
+      final agent = _agent(registry);
+      gate.mount(['mcp:ctx'], registry, agent, rebuildPrompt: () {});
+      final wrapped = gate.wrapExecutor(
+        (call, cancelToken, onUpdate) async =>
+            ToolExecutionResult.text('inner ${call.name}'),
+      );
+      final result = await wrapped(_call('c1', 'mcp__ctx__put'), null, null);
+      expect(
+        (result.content.single as TextContent).text,
+        'inner mcp__ctx__put',
+      );
     });
   });
 
@@ -291,12 +381,7 @@ void main() {
         ),
       ]);
       final agent = _agent(registry);
-      gate.apply(
-        _ompResolution(),
-        registry,
-        agent,
-        rebuildPrompt: () {},
-      );
+      gate.apply(_ompResolution(), registry, agent, rebuildPrompt: () {});
 
       final docs = gate.discoverableDocs();
       expect(docs.keys, containsAll(['lsp', 'web_search']));
@@ -314,18 +399,8 @@ void main() {
         for (final tools in _toolsById.values) ...tools,
       ]);
       final agent = _agent(registry);
-      gate.apply(
-        _ompResolution(),
-        registry,
-        agent,
-        rebuildPrompt: () {},
-      );
-      gate.mount(
-        ['lsp', 'web_search'],
-        registry,
-        agent,
-        rebuildPrompt: () {},
-      );
+      gate.apply(_ompResolution(), registry, agent, rebuildPrompt: () {});
+      gate.mount(['lsp', 'web_search'], registry, agent, rebuildPrompt: () {});
 
       final tool = discoverToolsTool(
         discoverableDocs: gate.discoverableDocs,
@@ -344,12 +419,7 @@ void main() {
         for (final tools in _toolsById.values) ...tools,
       ]);
       final agent = _agent(registry);
-      gate.apply(
-        _ompResolution(),
-        registry,
-        agent,
-        rebuildPrompt: () {},
-      );
+      gate.apply(_ompResolution(), registry, agent, rebuildPrompt: () {});
 
       final requested = <String>[];
       final tool = discoverToolsTool(
@@ -359,9 +429,13 @@ void main() {
           return 'Mounted (now in the schema): ${names.join(', ')}';
         },
       );
-      final result = await tool.execute({
-        'mount': ['lsp', '  ', 'web_search'],
-      }, CancelTokenSource().token, null);
+      final result = await tool.execute(
+        {
+          'mount': ['lsp', '  ', 'web_search'],
+        },
+        CancelTokenSource().token,
+        null,
+      );
 
       expect(requested, ['lsp', 'web_search']);
       expect(

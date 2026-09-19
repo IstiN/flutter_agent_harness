@@ -47,60 +47,63 @@ int toolSchemaTokens(List<Tool> tools) {
 }
 
 void main() {
-  test('AC2: fa-omp hello scenario ≤ oh-my-pi (12345-token baseline)',
-      () async {
-    final env = MemoryExecutionEnv(cwd: '/work');
-    final io = FakeCliIO();
-    final stream = FakeStreamFunction([textTurn(helloReply)]);
-    final cli = AgentCli(
-      config: AgentCliConfig(
-        model: testModel,
-        apiKey: 'test-key',
-        env: env,
-        homeDir: '/home/u',
-        sessionRoot: '/sessions',
-        providerKind: 'openai-completions',
-        loadMode: AgentLoadMode.omp,
-      ),
-      io: io,
-      streamFunction: stream.call,
-    );
-    final run = cli.run();
-    for (var i = 0; i < 400; i++) {
-      if (io.out.toString().contains('fa>')) break;
-      await Future<void>.delayed(const Duration(milliseconds: 25));
-    }
-    io.sendLine(helloPrompt);
-    for (var i = 0; i < 400; i++) {
-      if (stream.calls >= 1) break;
-      await Future<void>.delayed(const Duration(milliseconds: 25));
-    }
-    io.sendLine('/exit');
-    await run;
-    io.close();
+  test(
+    'AC2: fa-omp hello scenario ≤ oh-my-pi (12345-token baseline)',
+    () async {
+      final env = MemoryExecutionEnv(cwd: '/work');
+      final io = FakeCliIO();
+      final stream = FakeStreamFunction([textTurn(helloReply)]);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'test-key',
+          env: env,
+          homeDir: '/home/u',
+          sessionRoot: '/sessions',
+          providerKind: 'openai-completions',
+          loadMode: AgentLoadMode.omp,
+        ),
+        io: io,
+        streamFunction: stream.call,
+      );
+      final run = cli.run();
+      await waitForIt(
+        () => io.out.toString().contains('fa>'),
+        reason: 'boot prompt',
+      );
+      io.sendLine(helloPrompt);
+      await waitForIt(() => stream.calls >= 1, reason: 'hello turn');
+      io.sendLine('/exit');
+      await run;
+      io.close();
 
-    final context = stream.contexts.first;
-    final systemPrompt = context.systemPrompt ?? '';
-    final tools = context.tools ?? const [];
+      final context = stream.contexts.first;
+      final systemPrompt = context.systemPrompt ?? '';
+      final tools = context.tools ?? const [];
 
-    // fa-omp accounting: same fragment shapes as the baseline measurement.
-    final faSystemTokens = est(systemPrompt);
-    final faToolTokens = toolSchemaTokens(tools);
-    final faTurnTokens = est(helloPrompt) + est(helloReply);
-    final faTotal = faSystemTokens + faToolTokens + faTurnTokens;
+      // fa-omp accounting: same fragment shapes as the baseline measurement.
+      final faSystemTokens = est(systemPrompt);
+      final faToolTokens = toolSchemaTokens(tools);
+      final faTurnTokens = est(helloPrompt) + est(helloReply);
+      final faTotal = faSystemTokens + faToolTokens + faTurnTokens;
 
-    // oh-my-pi accounting: pinned initial context + the same turn addend
-    // (its scripted hello turn carries the identical message texts).
-    final ompTotal = ompBaselineInitialContextTokens + faTurnTokens;
+      // oh-my-pi accounting: pinned initial context + the same turn addend
+      // (its scripted hello turn carries the identical message texts).
+      final ompTotal = ompBaselineInitialContextTokens + faTurnTokens;
 
-    // The numbers under test — recorded for the PR (issue #680 AC2/L3).
-    // ignore: avoid_print
-    print('fa-omp: system=$faSystemTokens tools=$faToolTokens '
-        'turns=$faTurnTokens total=$faTotal');
-    // ignore: avoid_print
-    print('oh-my-pi baseline: initial=$ompBaselineInitialContextTokens '
-        'turns=$faTurnTokens total=$ompTotal');
+      // The numbers under test — recorded for the PR (issue #680 AC2/L3).
+      // ignore: avoid_print
+      print(
+        'fa-omp: system=$faSystemTokens tools=$faToolTokens '
+        'turns=$faTurnTokens total=$faTotal',
+      );
+      // ignore: avoid_print
+      print(
+        'oh-my-pi baseline: initial=$ompBaselineInitialContextTokens '
+        'turns=$faTurnTokens total=$ompTotal',
+      );
 
-    expect(faTotal, lessThanOrEqualTo(ompTotal));
-  });
+      expect(faTotal, lessThanOrEqualTo(ompTotal));
+    },
+  );
 }

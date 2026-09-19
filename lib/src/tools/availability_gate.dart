@@ -154,6 +154,36 @@ final class ToolAvailabilityGate {
     }
   }
 
+  /// Records the concrete [tools] of a dynamic family [id] (an MCP
+  /// server's live surface): the names for hiding/tombstoning exactly
+  /// like [noteHiddenNames], PLUS the instances — so a load-mode mount
+  /// (issue #680) re-registers them into the schema from [apply] and
+  /// [discoverableDocs] can document them.
+  void noteFamilyTools(String id, List<AgentTool> tools) {
+    noteHiddenNames(id, [for (final tool in tools) tool.name]);
+    // Replace, not append: the fresh list is the server's authoritative
+    // surface (names of dropped tools stay noted for tombstoning, but
+    // only live instances may ever be registered).
+    _toolsById[id] = [...tools];
+  }
+
+  /// The availability id of the tool [name] — static tools and noted
+  /// dynamic family members (`mcp:<server>`) alike, or null when
+  /// unmapped. The name→id half of what [mount] needs (issue #680): the
+  /// model mounts by NAME, the gate mounts ids.
+  String? availabilityIdOf(String name) => _idByName[name];
+
+  /// Whether the dynamic family [id] (an MCP server) is schema-visible
+  /// under the live resolution (issue #680): enabled, and — when the load
+  /// mode demoted it to discoverable — mounted. The MCP re-filter asks
+  /// this before putting a server's tools into the registry: allowed to
+  /// connect is not the same as loaded into the schema.
+  bool familyVisible(String id) {
+    final resolution = _resolution;
+    if (resolution == null) return true;
+    return _visible(resolution, id);
+  }
+
   /// Applies [resolution] to [registry] and [agent]:
   ///
   /// - enabled ids get their not-yet-registered tools registered (the

@@ -21,8 +21,10 @@ enum AgentLoadMode {
   /// No preset: today's behavior, every present tool in the schema.
   defaultMode,
 
-  /// The pi preset (issue #679): 4-tool base, discovery off. Data-only
-  /// here — pi's prompt/flag surface lives on the #679 lane.
+  /// The pi preset (issue #679): 4-tool base, discovery off — pi-mono's
+  /// exact benchmark shape (no `discover_tools` meta tool; that surface
+  /// is omp's). Data-only here — pi's prompt/flag surface lives on the
+  /// #679 lane.
   pi,
 
   /// The omp preset (issue #680, after oh-my-pi's essential set): the
@@ -52,6 +54,27 @@ AgentLoadMode? agentLoadModeFromLabel(String? label) {
 
 /// Every valid label, for error messages and the settings picker.
 const agentLoadModeLabels = ['default', 'pi', 'omp'];
+
+/// Validates one `agent.mode` value (issue #680): null when [value] is a
+/// legal [agentLoadModeLabels] label, else the error text. The single
+/// source shared by the boot parser (`cli_config.dart`) and the settings
+/// validator (`config_service.dart`) — both throw it as a
+/// ConfigException, so the rule cannot drift between the two parsers.
+String? agentLoadModeValidationError(Object? value) {
+  if (value is String && agentLoadModeLabels.contains(value)) return null;
+  return '"agent.mode" must be one of: ${agentLoadModeLabels.join(', ')}';
+}
+
+/// Whether a preset ships the `discover_tools` discovery surface (issue
+/// #680): omp demotes everything non-essential and discovers it back on
+/// demand; pi is pi-mono's exact benchmark shape (issue #679) — 4 tools,
+/// discovery off, no meta tool; the default mode has no demotion at all
+/// (REG) and therefore nothing to discover.
+const discoveryEnabledByLoadMode = <AgentLoadMode, bool>{
+  AgentLoadMode.defaultMode: false,
+  AgentLoadMode.pi: false,
+  AgentLoadMode.omp: true,
+};
 
 /// The availability ids each non-default preset keeps ESSENTIAL (always
 /// in the schema, pinned). Everything else known becomes discoverable.
