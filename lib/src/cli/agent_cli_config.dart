@@ -24,6 +24,7 @@ final class AgentCliConfig {
     this.folderModelStateApplies = true,
     this.presenceStore,
     this.leaseStore,
+    this.parseExecutor,
     this.sessionName,
     this.steeringStaleAfter = const Duration(minutes: 2),
     this.providerKind = 'openai-completions',
@@ -490,6 +491,13 @@ final class AgentCliConfig {
   /// session here so the Fa app (sharing the sessions root) can mark the
   /// session live and attach to it. Null (tests, web) disables presence.
   final SessionPresenceStore? presenceStore;
+
+  /// Off-isolate session record parsing (issue #503 boot cost): the IO
+  /// host injects `IsolateSessionParseExecutor` (exported from
+  /// `lib/io.dart`) so a marathon resume decodes its multi-hundred-MB
+  /// tail core-wide instead of stalling the UI isolate; null (tests,
+  /// web) keeps the inline batched path.
+  final SessionParseExecutor? parseExecutor;
 
   /// Session-ownership leases (issue #428): the store this CLI acquires
   /// its session's `_owner.json` lease through. Null (tests, web)

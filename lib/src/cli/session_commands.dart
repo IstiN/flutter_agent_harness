@@ -538,7 +538,13 @@ extension on AgentCli {
     // Issue #437: persisted-but-unconsumed steering from a crashed
     // session re-enters the queue and wakes the idle agent (E1: one
     // record, consumed once — restart-safe).
-    await _queueRecoveredSteering(session);
+    // Issue #503: NOT awaited — the scan reads the whole session file
+    // (~1.5s on a 434MB marathon) and its result only arms the idle
+    // wake, so it must not sit on the boot path. Fire-and-forget: the
+    // wake's 2s inbox tick picks up the populated queue when the scan
+    // lands. The method catches its own errors (a broken session must
+    // still boot), so an unawaited future cannot go unhandled.
+    unawaited(_queueRecoveredSteering(session));
     // Adopt the session's original project folder. This matters both when
     // switching mid-run and when the CLI starts with --session: tools like
     // bash/read/edit must operate in the session's directory, not the launch

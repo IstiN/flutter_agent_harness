@@ -1840,6 +1840,9 @@ Future<void> _runApp(List<String> args) async {
     version: packageVersion,
     config: AgentCliConfig(
       wakeExecutable: wakeExecutable(),
+      // Marathon-session resume parses its multi-hundred-MB tail off the
+      // UI isolate (issue #503); the isolate executor is IO-only.
+      parseExecutor: const IsolateSessionParseExecutor(),
       model: model,
       apiKey: apiKey,
       providerKind: provider,

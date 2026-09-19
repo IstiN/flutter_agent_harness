@@ -9,6 +9,8 @@ library;
 
 import 'dart:async';
 import 'dart:convert' as json_conv;
+
+import 'package:meta/meta.dart';
 import '../env/execution_env.dart';
 import '../env/session_parse_executor.dart';
 import '../exceptions.dart';
@@ -678,28 +680,188 @@ final class JsonlSessionRepo implements SessionRepo {
   /// cheap substring gate keeps JSON decodes proportional to the match
   /// count, not the file size. Returns [] for a missing/unreadable file:
   /// a broken session must still boot.
+  ///
+  /// Ranged-read hosts stream the file in bounded blocks (issue #503 boot
+  /// cost): the previous whole-file [FileSystem.readTextLines] pass
+  /// materialized a marathon session as one giant string plus a
+  /// per-line list — ~2.7s of read+decode+split on a 434MB file, paid on
+  /// every boot. The streamed path keeps memory flat and UTF-8-decodes
+  /// only lines that pass the byte-level gate (type names are ASCII, so a
+  /// byte scan is exact); line boundaries are found on raw bytes, which
+  /// is UTF-8-safe (`0x0A` never appears inside a multi-byte sequence).
   Future<List<CustomRecord>> readCustomRecordsOfType(
     SessionMetadata metadata,
     Set<String> types,
   ) async {
-    final read = await _fs.readTextLines(metadata.path);
+    final fs = _fs;
+    if (fs case final RangedReadFileSystem ranged) {
+      return _readCustomRecordsStreamed(fs, ranged, metadata, types);
+    }
+    final read = await fs.readTextLines(metadata.path);
     if (read.isErr) return const [];
     final records = <CustomRecord>[];
     for (final line in read.valueOrNull ?? const <String>[]) {
       if (!types.any(line.contains)) continue;
-      final Object? json;
-      try {
-        json = json_conv.jsonDecode(line);
-      } on Object {
-        continue; // torn tail line from a crash — skip.
-      }
-      if (json is! Map) continue;
-      final record = SessionRecord.fromJson(json.cast<String, dynamic>());
-      if (record is CustomRecord && types.contains(record.customType)) {
-        records.add(record);
-      }
+      _decodeCustomRecord(line, types, records);
     }
     return records;
+  }
+
+  /// Scan block size for [_readCustomRecordsStreamed]; tests shrink it to
+  /// exercise the block-seam logic (lines and gates spanning blocks).
+  @visibleForTesting
+  static var debugCustomRecordScanBlockBytes = 8 << 20;
+
+  /// Blocked scan behind [readCustomRecordsOfType]; see its docstring.
+  ///
+  /// Per-block pipeline: `latin1.decode` (byte→char identity memcpy —
+  /// measured 3x cheaper than validating `utf8.decode`, 322ms vs 941ms
+  /// on a 434MB marathon file), then gate-hit scanning via native
+  /// `String.indexOf` — hits are as rare as the records themselves (14
+  /// on that file), so full lines materialize only around an actual hit
+  /// instead of substring-copying every line for a per-line `contains`.
+  /// latin1 is byte-exact for the ASCII gate and line feeds, and
+  /// `latin1.encode` restores a matching line's original bytes for the
+  /// real `utf8.decode` + `jsonDecode` — semantics identical to the
+  /// whole-file path.
+  Future<List<CustomRecord>> _readCustomRecordsStreamed(
+    FileSystem fs,
+    RangedReadFileSystem ranged,
+    SessionMetadata metadata,
+    Set<String> types,
+  ) async {
+    final blockBytes = debugCustomRecordScanBlockBytes;
+    final info = await fs.fileInfo(metadata.path);
+    if (info.isErr) return const [];
+    if (info.valueOrNull!.kind != FileKind.file) return const [];
+    final size = info.valueOrNull!.size;
+    // Gate on the serialized field shape, not the bare type word: a loose
+    // substring gate passes every content line merely MENTIONING the type
+    // (1206 giant tool-result lines on a real marathon session, ~1.5s of
+    // pointless jsonDecode); the field-shaped gate passes the 14 real
+    // records. The writer is our own compact jsonEncode — the no-space
+    // shape is deterministic; the parsed-record check below still decides
+    // correctness, the gate only prunes.
+    final gates = [for (final t in types) '"customType":"$t"'];
+    // Pre-filter probe: the common prefix of all gates (for the boot-time
+    // steering scan that is `"customType":"steering`) collapses the block
+    // pre-filter to ONE contains pass — pure-Dart string search tops out
+    // near 1.3GB/s on this VM, so two passes over a marathon file cost a
+    // visible ~0.7s on their own. Too-short prefixes (degenerate type
+    // sets) fall back to per-gate contains.
+    final probe = _commonPrefix(gates);
+    final useProbe = probe.length >= 6;
+    bool blockMayMatch(String text) =>
+        useProbe ? text.contains(probe) : gates.any(text.contains);
+    final records = <CustomRecord>[];
+    // Open line fragment carried across block boundaries (a line can
+    // exceed one block, e.g. a 32KB message line).
+    final carry = StringBuffer();
+    void gateLine(String line) {
+      if (gates.any(line.contains)) {
+        _decodeCustomRecord(
+          json_conv.utf8.decode(json_conv.latin1.encode(line)),
+          types,
+          records,
+        );
+      }
+    }
+
+    var offset = 0;
+    while (offset < size) {
+      final end = (offset + blockBytes).clamp(0, size);
+      final read = await ranged.readRange(metadata.path, offset, end);
+      if (read.isErr) return const [];
+      final block = read.valueOrNull!;
+      if (block.isEmpty) break;
+      offset = end;
+      final text = json_conv.latin1.decode(block);
+      // Complete the carried open line first, in EVERY path: a gate can
+      // span a block boundary (half in the carry, half in this block's
+      // head), so neither block's own scan sees it whole.
+      final firstNl = text.indexOf('\n');
+      if (firstNl < 0) {
+        carry.write(text); // the whole block is inside one open line
+        continue;
+      }
+      if (carry.isNotEmpty) {
+        gateLine(carry.toString() + text.substring(0, firstNl));
+        carry.clear();
+      }
+      // Block pre-filter: gate hits are as rare as the records themselves
+      // (14 on a real 434MB marathon file), and native `String.contains`
+      // over the block is ~12x faster than an `indexOf` hit-walk
+      // (measured), so most blocks cost two memchr passes and no line
+      // work at all.
+      if (!blockMayMatch(text)) {
+        // No gate in this block — carry the trailing open fragment; a
+        // line may span into a later matching block.
+        final lastNl = text.lastIndexOf('\n');
+        if (lastNl + 1 < text.length) carry.write(text.substring(lastNl + 1));
+        continue;
+      }
+      // Hit-scan inside the matching block: only a real gate occurrence
+      // materializes its line. A line can hit several gates (or one gate
+      // twice) — decode each distinct line once.
+      final scanFrom = firstNl + 1;
+      final decodedLines = <(int, int)>{};
+      for (final gate in gates) {
+        var from = scanFrom;
+        for (;;) {
+          final hit = text.indexOf(gate, from);
+          if (hit < 0) break;
+          from = hit + 1;
+          final lineStart = text.lastIndexOf('\n', hit) + 1;
+          final lineEnd = text.indexOf('\n', hit);
+          if (lineEnd < 0) break; // runs past the block — the carry ends it
+          if (decodedLines.add((lineStart, lineEnd))) {
+            gateLine(text.substring(lineStart, lineEnd));
+          }
+        }
+      }
+      // Carry the trailing open fragment (after the last newline).
+      final lastNl = text.lastIndexOf('\n');
+      if (lastNl + 1 < text.length) carry.write(text.substring(lastNl + 1));
+    }
+    // A final line without a trailing newline (crash-torn tail): gate and
+    // try to decode; a half-written line fails jsonDecode and is skipped.
+    if (carry.isNotEmpty) gateLine(carry.toString());
+    return records;
+  }
+
+  /// Longest common prefix of [strings] ('' when empty input).
+  static String _commonPrefix(List<String> strings) {
+    if (strings.isEmpty) return '';
+    var prefix = strings.first;
+    for (final s in strings.skip(1)) {
+      var i = 0;
+      while (i < prefix.length && i < s.length && prefix[i] == s[i]) {
+        i++;
+      }
+      prefix = prefix.substring(0, i);
+      if (prefix.isEmpty) break;
+    }
+    return prefix;
+  }
+
+  /// Decodes one gated line into [records]; malformed JSON (crash-torn
+  /// tail) and non-matching parsed records are skipped.
+  static void _decodeCustomRecord(
+    String line,
+    Set<String> types,
+    List<CustomRecord> records,
+  ) {
+    final Object? json;
+    try {
+      json = json_conv.jsonDecode(line);
+    } on Object {
+      return; // torn tail line from a crash — skip.
+    }
+    if (json is! Map) return;
+    final record = SessionRecord.fromJson(json.cast<String, dynamic>());
+    if (record is CustomRecord && types.contains(record.customType)) {
+      records.add(record);
+    }
   }
 
   /// Batch form of [sessionNameQuick]: bounded 16-way fan-out, results
