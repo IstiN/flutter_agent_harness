@@ -29,18 +29,22 @@ on:
 
 jobs:
   sm:
-    # Pinned to the immutable SHA the `agents` submodule pins — the branch
-    # head renamed the reusable workflows away from factory/<name>.yml, so
-    # a branch ref would fail every */10 cron tick. Flip in lockstep with
-    # the submodule when dmtools-agents#424 merges.
-    # Guarded by test/machine_kit/factory_stub_ref_test.dart.
-    uses: IstiN/dmtools-agents/.github/workflows/factory-sm.yml@f23ef09b23cfe60ed943059f85b83fb23c34ec8a
+    # Pinned to the immutable dmtools-agents#442 merge SHA (PR-owned
+    # lifecycle: test once per state, silent updates, pre-merge validation).
+    # Flip in lockstep with ai-teammate.yml — guarded by
+    # test/machine_kit/factory_stub_ref_test.dart.
+    uses: IstiN/dmtools-agents/.github/workflows/factory-sm.yml@3cae1d23661d6142d58bcfa9399e72e65f6a3b8d
     with:
       # The literal uses-ref: the factory requires it (it cannot derive its
       # own ref — github.workflow_ref in a called workflow is the CALLER's).
-      factory_ref: f23ef09b23cfe60ed943059f85b83fb23c34ec8a
+      factory_ref: 3cae1d23661d6142d58bcfa9399e72e65f6a3b8d
       # Manual ticks default to dry; cron ticks run live.
       dryRun: ${{ github.event.inputs.dryRun || 'false' }}
+      # #687: one source of truth for the machine login (repo variable).
+      machine-author: ${{ vars.MACHINE_AUTHOR || '' }}
+      # #687: the workflow token — silent branch updates (pushes trigger
+      # no workflows). Input channel: secrets-block mapping arrives empty.
+      silent-token: ${{ github.token }}
     # Explicit mapping — the factory DECLARES SOURCE_GITHUB_TOKEN as a
     # required named secret (plus optional ZAI_CODE_KEY / KIMI_REVIEW_KEY),
     # and `secrets: inherit` does not satisfy required-secret validation at
@@ -49,4 +53,7 @@ jobs:
       # EXACTLY the set factory-sm.yml declares (SOURCE only) — mapping a
       # secret the callee does not declare is rejected at call time
       # (probe H2: +ZAI/KIMI => startup failure; probe I: exact set => green).
+      # NOTE: github.token CANNOT ride this block — GitHub delivers an
+      # empty value when it is mapped through a reusable call's secrets
+      # (live-verified); it rides the silent-token INPUT below instead.
       SOURCE_GITHUB_TOKEN: ${{ secrets.SOURCE_GITHUB_TOKEN }}
