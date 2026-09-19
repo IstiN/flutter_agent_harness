@@ -135,7 +135,19 @@ void main() {
       () async {
         final env = await app_env.createDesktopEnv();
         expect(env.cwd, appSupport.path);
-        expect(env, isA<LocalExecutionEnv>());
+        // Issue #583: on macOS createDesktopEnv layers mountedDesktopEnv
+        // over the app-support base for the optional /project mount, so the
+        // returned env is a ProjectMountEnv — the #568 contract lives in the
+        // wrapped base: the app-support-backed LocalExecutionEnv surfaces
+        // through the wrapper's cwd passthrough with no mount active.
+        if (Platform.isMacOS) {
+          expect(env, isA<ProjectMountEnv>());
+          final wrapper = env as ProjectMountEnv;
+          expect(wrapper.mountedRoot, isNull);
+          expect(wrapper.mountUnavailable, isNull);
+        } else {
+          expect(env, isA<LocalExecutionEnv>());
+        }
       },
     );
 
