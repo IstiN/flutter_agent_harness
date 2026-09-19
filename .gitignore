@@ -169,3 +169,11 @@ vendor/wasm_run_flutter/android/src/main/jniLibs/
 
 # factory runtime clone (checked out by the machine loop, never committed)
 factory-agents/
+
+# Agent runtime — rebuilt from the tracker every run, never commit
+# (a tracked input/ticket.md collides with the branch-setup stash and
+# bakes conflict markers into agent PRs; see dmtools-agents
+# setup-dark-factory skill). memory/ stays tracked: notes are the
+# source of truth there, only derivatives are ignored (memory/.gitignore).
+/input/
+/outputs/
