@@ -252,7 +252,55 @@ should stop promising byte-identity.
 
 ---
 
-### Thread 13
+### Thread 13 — `input/gh-671/ticket.json`
+
+**ai-teammate** (2026-09-19):
+🚨 **BLOCKING (regressed): conflict markers are back at HEAD — the auto-save re-committed them after they were resolved**
+
+The rework job resolved these markers (verified: the file was valid JSON at
+`5842d86d`), but auto-save commit `9911dc07` (09:49) re-committed the broken
+content. At the current HEAD:
+
+- `input/gh-671/ticket.json` — `<<<<<<< Updated upstream` at line 5;
+  **invalid JSON again** (`json.loads` fails at line 5).
+- `input/gh-671/ticket.md` — marker at line 13.
+- `input/ticket.md` — marker at line 3.
+
+Root cause: the job workspaces still carry the unresolved merge (the review
+workspace has `UU input/ticket.md` / `AA ticket.json|ticket.md` right now),
+and every "WIP auto-save" `git add -A`s that conflicted working tree,
+re-committing the markers. Fixing the files in one job is not enough — the
+next auto-save re-breaks them.
+
+Fix (both halves, or this ping-pongs forever):
+1. Resolve the conflict in the source workspace and commit the resolution.
+2. Change the factory auto-save to skip conflicted paths (e.g. refuse to
+   `git add` files matching `^<<<<<<< ` / unmerged `git ls-files -u` entries)
+   so a conflicted checkout can never be committed.
+
+---
+
+### Thread 14 — `input/gh-671/pr_diff.txt`
+
+**ai-teammate** (2026-09-19):
+🟡 **IMPORTANT (regressed): the self-referential runner artifacts are back**
+
+The rework job removed `input/gh-671/pr_diff.txt` and `pr_info.md` from the
+PR, but auto-save `9911dc07` re-committed both — this file is once again the
+PR's own truncated diff inside the PR. The PR now also carries
+`input/gh-671/pr_discussions.md`, `pr_discussions_raw.json`,
+`merge_conflicts.md`, and the review job's outputs (`outputs/pr_review*`,
+`outputs/review_replies/*`).
+
+This confirms the leak is in the factory auto-save step, not in any one job:
+it commits whatever the workspace contains, including job inputs and outputs.
+Until the auto-save is scoped to intended paths (or `input/`+job outputs are
+excluded), every review/rework round will re-add these. Please drop them from
+the branch again before merge AND fix the auto-save path filter.
+
+---
+
+### Thread 15
 
 **ai-teammate** (2026-09-19):
 ## Automated Code Review — COMMENT
@@ -275,7 +323,7 @@ should stop promising byte-identity.
 
 ---
 
-### Thread 14
+### Thread 16
 
 **ai-teammate** (2026-09-19):
 ## Automated Code Review — BLOCK
@@ -292,6 +340,28 @@ should stop promising byte-identity.
 1. Resolve the committed conflict markers and re-commit (or drop the `input/` artifacts from the PR).
 2. Fix the factory auto-save to not commit job-input artifacts.
 3. De-flake the PTY assertion; optionally address the 4 standing suggestions.
+
+---
+
+### Thread 17
+
+**ai-teammate** (2026-09-19):
+## Automated Code Review — BLOCK
+
+**Summary**: All code findings from the previous rounds are resolved and verified (see below) — but the latest auto-save (`9911dc07`) regressed the round-2 blocker: conflict markers and invalid JSON are back at HEAD in `input/gh-671/ticket.json`/`ticket.md`/`input/ticket.md`, and the self-referential runner artifacts (`pr_diff.txt`, `pr_info.md`, `pr_discussions*`, review outputs) were re-committed after the rework job removed them.
+
+**Resolved and verified this round** (code is good to merge once the artifacts are cleaned):
+- ✅ PTY de-flake: 400 ms mock delay + `waitForText` polling — suite green 3/3 local runs (previously failed 1-in-3).
+- ✅ `toolTitle` 3:1 floor now enforced on both tints; truncated selected rows keep the accent wrap (new regression test); `curly_braces_in_flow_control_structures` info gone (2 infos = pre-existing baseline); stale "byte-identical" doc rewritten; fuzzy test got `addTearDown(controller.reset)`.
+- ✅ 96 unit tests pass; `dart format` clean on all touched files.
+
+**Key Issues**:
+- 🚨 Conflict markers / invalid JSON re-committed at HEAD (regression — the auto-save commits the still-conflicted job workspace).
+- 🟡 Runner artifacts re-added by the same auto-save; the factory auto-save needs a path filter, otherwise every round re-adds them.
+
+**Next Steps**:
+1. Resolve the conflicts in the source workspace, commit, and make the auto-save refuse conflicted/unmerged paths.
+2. Drop `input/gh-671/pr_diff.txt`, `pr_info.md`, `pr_discussions*`, `merge_conflicts.md`, `outputs/pr_review*`, `outputs/review_replies/` from the branch.
 
 ---
 
@@ -536,6 +606,52 @@ should stop promising byte-identity.
 
 **ai-teammate** (2026-09-19):
 
+🚨 **BLOCKING (regressed): conflict markers are back at HEAD — the auto-save re-committed them after they were resolved**
+
+The rework job resolved these markers (verified: the file was valid JSON at
+`5842d86d`), but auto-save commit `9911dc07` (09:49) re-committed the broken
+content. At the current HEAD:
+
+- `input/gh-671/ticket.json` — `<<<<<<< Updated upstream` at line 5;
+  **invalid JSON again** (`json.loads` fails at line 5).
+- `input/gh-671/ticket.md` — marker at line 13.
+- `input/ticket.md` — marker at line 3.
+
+Root cause: the job workspaces still carry the unresolved merge (the review
+workspace has `UU input/ticket.md` / `AA ticket.json|ticket.md` right now),
+and every "WIP auto-save" `git add -A`s that conflicted working tree,
+re-committing the markers. Fixing the files in one job is not enough — the
+next auto-save re-breaks them.
+
+Fix (both halves, or this ping-pongs forever):
+1. Resolve the conflict in the source workspace and commit the resolution.
+2. Change the factory auto-save to skip conflicted paths (e.g. refuse to
+   `git add` files matching `^<<<<<<< ` / unmerged `git ls-files -u` entries)
+   so a conflicted checkout can never be committed.
+
+---
+
+**ai-teammate** (2026-09-19):
+
+🟡 **IMPORTANT (regressed): the self-referential runner artifacts are back**
+
+The rework job removed `input/gh-671/pr_diff.txt` and `pr_info.md` from the
+PR, but auto-save `9911dc07` re-committed both — this file is once again the
+PR's own truncated diff inside the PR. The PR now also carries
+`input/gh-671/pr_discussions.md`, `pr_discussions_raw.json`,
+`merge_conflicts.md`, and the review job's outputs (`outputs/pr_review*`,
+`outputs/review_replies/*`).
+
+This confirms the leak is in the factory auto-save step, not in any one job:
+it commits whatever the workspace contains, including job inputs and outputs.
+Until the auto-save is scoped to intended paths (or `input/`+job outputs are
+excluded), every review/rework round will re-add these. Please drop them from
+the branch again before merge AND fix the auto-save path filter.
+
+---
+
+**ai-teammate** (2026-09-19):
+
 ## Automated Code Review — COMMENT
 
 **Summary**: Solid, well-tested fix for gh-671 — explicit floor-checked foregrounds over tints, the `✓ current` picker marker, 7-theme golden coverage, and a real PTY suite. Verified locally: 95 unit tests pass, `dart format` clean. One important concern: the new PTY test flaked once in three local runs (a painted done-row frame can be coalesced away when the mock answers instantly) — worth de-flaking before it haunts CI.
@@ -572,6 +688,27 @@ should stop promising byte-identity.
 1. Resolve the committed conflict markers and re-commit (or drop the `input/` artifacts from the PR).
 2. Fix the factory auto-save to not commit job-input artifacts.
 3. De-flake the PTY assertion; optionally address the 4 standing suggestions.
+
+---
+
+**ai-teammate** (2026-09-19):
+
+## Automated Code Review — BLOCK
+
+**Summary**: All code findings from the previous rounds are resolved and verified (see below) — but the latest auto-save (`9911dc07`) regressed the round-2 blocker: conflict markers and invalid JSON are back at HEAD in `input/gh-671/ticket.json`/`ticket.md`/`input/ticket.md`, and the self-referential runner artifacts (`pr_diff.txt`, `pr_info.md`, `pr_discussions*`, review outputs) were re-committed after the rework job removed them.
+
+**Resolved and verified this round** (code is good to merge once the artifacts are cleaned):
+- ✅ PTY de-flake: 400 ms mock delay + `waitForText` polling — suite green 3/3 local runs (previously failed 1-in-3).
+- ✅ `toolTitle` 3:1 floor now enforced on both tints; truncated selected rows keep the accent wrap (new regression test); `curly_braces_in_flow_control_structures` info gone (2 infos = pre-existing baseline); stale "byte-identical" doc rewritten; fuzzy test got `addTearDown(controller.reset)`.
+- ✅ 96 unit tests pass; `dart format` clean on all touched files.
+
+**Key Issues**:
+- 🚨 Conflict markers / invalid JSON re-committed at HEAD (regression — the auto-save commits the still-conflicted job workspace).
+- 🟡 Runner artifacts re-added by the same auto-save; the factory auto-save needs a path filter, otherwise every round re-adds them.
+
+**Next Steps**:
+1. Resolve the conflicts in the source workspace, commit, and make the auto-save refuse conflicted/unmerged paths.
+2. Drop `input/gh-671/pr_diff.txt`, `pr_info.md`, `pr_discussions*`, `merge_conflicts.md`, `outputs/pr_review*`, `outputs/review_replies/` from the branch.
 
 ---
 

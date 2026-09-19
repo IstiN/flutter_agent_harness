@@ -110,6 +110,24 @@
     },
     {
       "index": 13,
+      "rootCommentId": 4052811426,
+      "threadId": "PRRT_kwDOTXdlLc6j-kiC",
+      "path": "input/gh-671/ticket.json",
+      "line": null,
+      "resolved": false,
+      "body": "🚨 **BLOCKING (regressed): conflict markers are back at HEAD — the auto-save re-committed them after they were resolved**\n\nThe rework job resolved these markers (verified: the file was valid JSON at\n`5842d86d`), but auto-save commit `9911dc07` (09:49) re-committed the broken\ncontent. At the current HEAD:\n\n- `input/gh-671/ticket.json` — `<<<<<<< Updated upstream` at line 5;\n  **invalid JSON again** (`json.loads` fails at line 5).\n- `input/gh-671/ticket.md` — marker at line 13.\n- `input/ticket.md` — marker at line 3.\n\nRoot cause: the job workspaces still carry the unresolved merge (the review\nworkspace has `UU input/ticket.md` / `AA ticket.json|ticket.md` right now),\nand every \"WIP auto-save\" `git add -A`s that conflicted working tree,\nre-committing the markers. Fixing the files in one job is not enough — the\nnext auto-save re-breaks them.\n\nFix (both halves, or this ping-pongs forever):\n1. Resolve the conflict in the source workspace and commit the resolution.\n2. Change the factory auto-save to skip conflicted paths (e.g. refuse to\n   `git add` files matching `^<<<<<<< ` / unmerged `git ls-files -u` entries)\n   so a conflicted checkout can never be committed."
+    },
+    {
+      "index": 14,
+      "rootCommentId": 4052811515,
+      "threadId": "PRRT_kwDOTXdlLc6j-kiu",
+      "path": "input/gh-671/pr_diff.txt",
+      "line": null,
+      "resolved": false,
+      "body": "🟡 **IMPORTANT (regressed): the self-referential runner artifacts are back**\n\nThe rework job removed `input/gh-671/pr_diff.txt` and `pr_info.md` from the\nPR, but auto-save `9911dc07` re-committed both — this file is once again the\nPR's own truncated diff inside the PR. The PR now also carries\n`input/gh-671/pr_discussions.md`, `pr_discussions_raw.json`,\n`merge_conflicts.md`, and the review job's outputs (`outputs/pr_review*`,\n`outputs/review_replies/*`).\n\nThis confirms the leak is in the factory auto-save step, not in any one job:\nit commits whatever the workspace contains, including job inputs and outputs.\nUntil the auto-save is scoped to intended paths (or `input/`+job outputs are\nexcluded), every review/rework round will re-add these. Please drop them from\nthe branch again before merge AND fix the auto-save path filter."
+    },
+    {
+      "index": 15,
       "rootCommentId": null,
       "threadId": null,
       "path": null,
@@ -118,13 +136,22 @@
       "body": "## Automated Code Review — COMMENT\n\n**Summary**: Solid, well-tested fix for gh-671 — explicit floor-checked foregrounds over tints, the `✓ current` picker marker, 7-theme golden coverage, and a real PTY suite. Verified locally: 95 unit tests pass, `dart format` clean. One important concern: the new PTY test flaked once in three local runs (a painted done-row frame can be coalesced away when the mock answers instantly) — worth de-flaking before it haunts CI.\n\n**Key Issues**:\n- 🟡 `theme_readability_pty_test.dart` — timing-dependent `toolSuccessBg` assertion (observed 1 failure in 2 batch runs; passes in isolation).\n- 🔵 Floor matrix checks `toolTitle` only on `toolErrorBg`, not `toolSuccessBg`.\n- 🔵 Truncated selected picker rows still lose the accent wrap; stale comment at `fa_tui_rows.dart:105`.\n- 🔵 New `curly_braces_in_flow_control_structures` info from a reformat in `tui_theme.dart:383`; stale \"byte-identical\" doc on `kDefaultTuiTheme`.\n\n**Non-inline observations** (unchanged/out-of-diff code):\n- `test/cli/fa_tui_fuzzy_roles_test.dart`'s new test mutates the global `FaThemeController` (`addUserThemes('moss')` + `switchTo`) with no reset/tearDown — fine today (it's the last test in the file), but makes the file order-dependent.\n- Diff noise unrelated to the ticket: 22 `memory/` notes gain `level: 2` frontmatter, `.codegraph/.gitignore` is deleted, and `input/`/`outputs/` runner artifacts are committed. Consistent with the repo's dogfooded-memory convention, but a separate `memory:` commit would keep the PR focused.\n\n**Next Steps**:\n1. De-flake the PTY done-row tint assertion (mock delay or poll for the tint).\n2. Optionally extend the 3:1 label matrix to `toolSuccessBg` and fix the truncated-row selection wrap."
     },
     {
-      "index": 14,
+      "index": 16,
       "rootCommentId": null,
       "threadId": null,
       "path": null,
       "line": null,
       "resolved": false,
       "body": "## Automated Code Review — BLOCK\n\n**Summary**: The gh-671 code itself is unchanged since the last round (95 unit tests re-verified green after the main merge), but the new auto-save commits introduce a blocker: unresolved merge-conflict markers are committed in `input/gh-671/ticket.json` (now invalid JSON), `input/gh-671/ticket.md`, and `input/ticket.md`, and the PR now carries the CI runner's own artifacts — including a self-referential `input/gh-671/pr_diff.txt`.\n\n**Key Issues**:\n- 🚨 Committed conflict markers / invalid JSON in `input/gh-671/ticket.json` (also `ticket.md`, `input/ticket.md`).\n- 🟡 Runner artifacts committed into the PR (`pr_diff.txt`, `pr_info.md`) — self-referential, grows every job run.\n- 🟡 Still open from round 1: flaky PTY `toolSuccessBg` assertion (no code changes this round).\n- 🔵 Still open: 4 suggestions (label floor only on `toolErrorBg`; truncated-row accent wrap; new lint info at `tui_theme.dart:383`; stale \"byte-identical\" doc).\n\n**Next Steps**:\n1. Resolve the committed conflict markers and re-commit (or drop the `input/` artifacts from the PR).\n2. Fix the factory auto-save to not commit job-input artifacts.\n3. De-flake the PTY assertion; optionally address the 4 standing suggestions."
+    },
+    {
+      "index": 17,
+      "rootCommentId": null,
+      "threadId": null,
+      "path": null,
+      "line": null,
+      "resolved": false,
+      "body": "## Automated Code Review — BLOCK\n\n**Summary**: All code findings from the previous rounds are resolved and verified (see below) — but the latest auto-save (`9911dc07`) regressed the round-2 blocker: conflict markers and invalid JSON are back at HEAD in `input/gh-671/ticket.json`/`ticket.md`/`input/ticket.md`, and the self-referential runner artifacts (`pr_diff.txt`, `pr_info.md`, `pr_discussions*`, review outputs) were re-committed after the rework job removed them.\n\n**Resolved and verified this round** (code is good to merge once the artifacts are cleaned):\n- ✅ PTY de-flake: 400 ms mock delay + `waitForText` polling — suite green 3/3 local runs (previously failed 1-in-3).\n- ✅ `toolTitle` 3:1 floor now enforced on both tints; truncated selected rows keep the accent wrap (new regression test); `curly_braces_in_flow_control_structures` info gone (2 infos = pre-existing baseline); stale \"byte-identical\" doc rewritten; fuzzy test got `addTearDown(controller.reset)`.\n- ✅ 96 unit tests pass; `dart format` clean on all touched files.\n\n**Key Issues**:\n- 🚨 Conflict markers / invalid JSON re-committed at HEAD (regression — the auto-save commits the still-conflicted job workspace).\n- 🟡 Runner artifacts re-added by the same auto-save; the factory auto-save needs a path filter, otherwise every round re-adds them.\n\n**Next Steps**:\n1. Resolve the conflicts in the source workspace, commit, and make the auto-save refuse conflicted/unmerged paths.\n2. Drop `input/gh-671/pr_diff.txt`, `pr_info.md`, `pr_discussions*`, `merge_conflicts.md`, `outputs/pr_review*`, `outputs/review_replies/` from the branch."
     }
   ]
 }

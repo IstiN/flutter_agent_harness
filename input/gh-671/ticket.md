@@ -10,7 +10,5 @@ Text almost invisible in the scenarious and second issue when I go to /theme i c
 - [x] ▶ dev (fa-story-dev) · [run](https://github.com/IstiN/flutter_agent_harness/actions/runs/35428695247) · started 07:14 · done 08:42 ✅
 - [x] ▶ review (fa-review-kimi) · [run](https://github.com/IstiN/flutter_agent_harness/actions/runs/35432715745) · started 08:43 · done 09:00 ✅
 - [x] ▶ review (fa-review-kimi) · [run](https://github.com/IstiN/flutter_agent_harness/actions/runs/35433490965) · started 09:01 · done 09:06 ✅
-<<<<<<< Updated upstream
-=======
 - [x] ▶ dev (fa-rework-zai) · [run](https://github.com/IstiN/flutter_agent_harness/actions/runs/35433803115) · started 09:09 · done 09:41 ✅
->>>>>>> Stashed changes
+- [x] ▶ review (fa-review-kimi) · [run](https://github.com/IstiN/flutter_agent_harness/actions/runs/35435404764) · started 09:43 · done 09:52 ✅
