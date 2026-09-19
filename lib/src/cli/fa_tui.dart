@@ -702,9 +702,8 @@ final class FaTuiModel extends Model {
   }
 
   @override
-  Cmd? init() => forceSyncUpdates
-      ? () => ModeReportMsg(mode: 2026, value: 1)
-      : null;
+  Cmd? init() =>
+      forceSyncUpdates ? () => ModeReportMsg(mode: 2026, value: 1) : null;
 
   Cmd _scheduleSpinnerTick() {
     return () async {
@@ -2027,7 +2026,11 @@ final class FaTuiModel extends Model {
     // Hub overlay: a full-screen modal frame replaces the whole view.
     if (hub != null) {
       return View(
-        content: renderHubFrame(hub!, width: termWidth, height: _viewportHeight),
+        content: renderHubFrame(
+          hub!,
+          width: termWidth,
+          height: _viewportHeight,
+        ),
         cursor: null,
         mouseMode: _viewMouseMode,
       );
@@ -2465,7 +2468,9 @@ final class FaTuiController {
       // Both work identically against hosted dart_tui and the vendored
       // fork — no fork-only ProgramOptions.
       if (syncOutput == false)
-        withFilter((_, msg) => msg is ModeReportMsg && msg.mode == 2026 ? null : msg),
+        withFilter(
+          (_, msg) => msg is ModeReportMsg && msg.mode == 2026 ? null : msg,
+        ),
       ..._programHookOptions(programHooks),
     ],
   );
@@ -2586,6 +2591,11 @@ final class FaTuiController {
 
   Future<void> run() async {
     var model = _model;
+    // Pre-run output coalesces in the text buffer (issue #503); fold it
+    // into the pending queue as ONE OutputMsg so the drain below pays a
+    // single markdown+wrap pass for the whole boot transcript instead of
+    // one per writeln.
+    _flushOutput();
     for (final msg in _pending) {
       model = model.update(msg).$1 as FaTuiModel;
     }
@@ -2602,6 +2612,7 @@ final class FaTuiController {
       // slow hosts (issue #538: dap integration legs red on Linux CI,
       // green on fast dev machines). Until this point `_send` parks
       // messages in `_pending`; drain them again now.
+      _flushOutput();
       _running = true;
       for (final msg in _pending) {
         model = model.update(msg).$1 as FaTuiModel;
