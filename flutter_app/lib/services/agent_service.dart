@@ -87,6 +87,7 @@ import 'package:fa_office_agent/fa_office_agent.dart'
 import 'package:fa/webllm/webllm_types.dart';
 
 part 'agent_service_compaction.dart';
+part 'agent_service_prompt.dart';
 part 'agent_service_assistant.dart';
 part 'agent_service_events.dart';
 part 'agent_service_sessions.dart';
@@ -927,58 +928,19 @@ class AgentService extends ChangeNotifier
     );
   }
 
-  /// The system prompt plus a secret-name hint (names only, never values).
-  ///
-  /// The `{{commands}}` placeholder is filled from the central sandbox
-  /// registry ([formatSandboxCommandSection]) for the current platform, so
-  /// the model sees exactly the shell commands that exist here.
-  static String _effectiveSystemPrompt(
-    AgentConfig config,
-    SecretRedactor? redactor,
-  ) {
-    final platform = _sandboxPlatform;
-    final commandSection = formatSandboxCommandSection(platform);
-    debugPrint(
-      '[Fa] system prompt platform=$platform, '
-      'commands section ${commandSection.length} chars',
-    );
-    final base = (config.systemPrompt ?? sandboxSystemPrompt).replaceAll(
-      '{{commands}}',
-      commandSection,
-    );
-    final names = redactor?.names ?? const <String>[];
-    final now = DateTime.now();
-    final offset = now.timeZoneOffset;
-    final sign = offset.isNegative ? '-' : '+';
-    final hh = offset.inHours.abs().toString().padLeft(2, '0');
-    final mm = (offset.inMinutes.abs() % 60).toString().padLeft(2, '0');
-    final dated =
-        '$base\n\nCurrent date and time: ${now.toIso8601String()} '
-        '(local device time, UTC$sign$hh:$mm). Use this for any date- or '
-        'time-relative reasoning ("today", "tomorrow", "this week").';
-    if (names.isEmpty) return dated;
-    return '$dated\n\nAvailable secret env vars: ${names.join(', ')} — '
-        'reference them as \$NAME in shell commands; never ask the user for '
-        'their values and never print them.';
-  }
-
-  /// The platform whose commands the system prompt advertises, decided with
-  /// the same signal [createPlatformEnv] uses to pick the [ExecutionEnv]:
-  /// web → android / ios → desktop.
-  static SandboxPlatform get _sandboxPlatform => isWebPlatform
-      ? SandboxPlatform.web
-      : isAndroidPlatform
-      ? SandboxPlatform.android
-      : isIosPlatform
-      ? SandboxPlatform.ios
-      : SandboxPlatform.desktop;
-
-  /// Exposes [_effectiveSystemPrompt] to tests.
+  /// The system prompt composition lives in the
+  /// `agent_service_prompt.dart` part (issue #692 B): `{{commands}}` is
+  /// filled from the central sandbox registry for the current platform,
+  /// sandboxed hosts additionally get the host-profile section, and the
+  /// desktop prompt stays byte-identical. Exposed to tests with an
+  /// optional platform override (host tests otherwise always resolve the
+  /// desktop profile).
   @visibleForTesting
   static String effectiveSystemPromptForTest(
     AgentConfig config,
-    SecretRedactor? redactor,
-  ) => _effectiveSystemPrompt(config, redactor);
+    SecretRedactor? redactor, [
+    SandboxPlatform? platformOverride,
+  ]) => _effectiveAgentSystemPrompt(config, redactor, platformOverride);
 
   /// Composes redaction hooks onto the agent so secret values never reach
   /// the model, the transcript, or the session files. Attached even for an
@@ -1514,7 +1476,7 @@ class AgentService extends ChangeNotifier
   /// The base system prompt plus the skills/context suffix (kept as one
   /// place so model/provider switches preserve the sections).
   String _composeSystemPrompt(AgentConfig config) {
-    final base = _effectiveSystemPrompt(config, _redactor);
+    final base = _effectiveAgentSystemPrompt(config, _redactor);
     final parts = [
       base,
       ?_projectMountNote(),

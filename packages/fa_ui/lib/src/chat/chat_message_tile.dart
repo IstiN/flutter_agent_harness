@@ -214,8 +214,7 @@ class ChatMessageTile extends StatelessWidget {
               // Sandbox paths (`![alt](generated/x.png)`) load through the
               // session env; taps open the fullscreen preview.
               sizedImageBuilder: images.sizedImageBuilder(
-                onImageTap: (bytes) =>
-                    showFahImagePreview(context, [bytes]),
+                onImageTap: (bytes) => showFahImagePreview(context, [bytes]),
               ),
               // Audio/video sandbox links open a small inline-player dialog.
               onTapLink: (text, href, title) =>
@@ -265,9 +264,8 @@ class ChatMessageTile extends StatelessWidget {
         spacing: 6,
         runSpacing: 6,
         children: [
-          for (final (i, thumb) in thumbs.entries
-              .take(_kMaxBubbleThumbs)
-              .indexed)
+          for (final (i, thumb)
+              in thumbs.entries.take(_kMaxBubbleThumbs).indexed)
             GestureDetector(
               onTap: () =>
                   showFahImagePreview(context, gallery, initialIndex: i),
@@ -301,7 +299,8 @@ class ChatMessageTile extends StatelessWidget {
               ),
             ),
           for (final attachment in message.attachments)
-            if (attachment.bytes == null) _attachmentChip(context, palette, attachment, strings),
+            if (attachment.bytes == null)
+              _attachmentChip(context, palette, attachment, strings),
         ],
       ),
     );
@@ -366,7 +365,9 @@ class ChatMessageTile extends StatelessWidget {
     final box = Container(
       width: width > 0 ? width : null,
       height: height > 0 ? height : null,
-      padding: width > 0 ? null : const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      padding: width > 0
+          ? null
+          : const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       alignment: center != null ? Alignment.center : null,
       decoration: BoxDecoration(
         color: palette.panelAlt.withValues(alpha: 0.5),
@@ -375,10 +376,12 @@ class ChatMessageTile extends StatelessWidget {
       ),
       child: center ?? child,
     );
-    return width > 0 ? box : ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 280),
-      child: box,
-    );
+    return width > 0
+        ? box
+        : ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 280),
+            child: box,
+          );
   }
 
   /// The file name of a sandbox attachment path (`uploads/a/b.png` →
@@ -974,6 +977,12 @@ Widget _permissionCard(
 /// An auth-expired card for provider SSO sessions that have expired:
 /// red badge + explanatory text + Authorize button. Mirrors the
 /// permission-denied card pattern.
+///
+/// Issue #692 A: the raw provider error carries CLI-centric recovery text
+/// ("Re-authorize … (CLI: /provider codemie sso)") — dead guidance on an
+/// app host. The card strips the `(CLI: …)` hint; when the host wires
+/// [onAuthorize], the button plus an explicit action line replace it (the
+/// CLI host keeps its own renderer and its own hint — unchanged).
 Widget _authExpiredCard(
   BuildContext context,
   FahColors palette,
@@ -983,7 +992,7 @@ Widget _authExpiredCard(
   FaAuthRecoveryCallback? onAuthorize,
 ) {
   final theme = Theme.of(context);
-  final displayText = stripAuthExpiredMarker(content);
+  final displayText = _authExpiredDisplayText(content);
   return Container(
     margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
     padding: const EdgeInsets.all(16),
@@ -1039,6 +1048,19 @@ Widget _authExpiredCard(
           displayText,
           style: theme.textTheme.bodySmall?.copyWith(color: palette.dim),
         ),
+        // Host action line (issue #692 A): only when the host wired a
+        // recovery action — the button below IS the path, the line says
+        // what to do after it.
+        if (onAuthorize != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            'Tap Authorize to sign in again, then resend your message.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: palette.dim,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
         const SizedBox(height: 16),
         // Authorize button.
         FilledButton.icon(
@@ -1053,6 +1075,16 @@ Widget _authExpiredCard(
       ],
     ),
   );
+}
+
+/// The auth-expired card's body: the raw provider error minus the
+/// `[[auth-expired:…]]` marker and any `(CLI: …)` recovery hint. The CLI
+/// instruction is dead text on app hosts (mobile/desktop/overlay), where
+/// the card's own Authorize button is the actionable path.
+String _authExpiredDisplayText(String content) {
+  var text = stripAuthExpiredMarker(content);
+  text = text.replaceAll(RegExp(r'\s*\(CLI:[^)]*\)'), '');
+  return text.trim();
 }
 
 /// Tool-output block that caps long dumps (file reads, big writes) at a
@@ -1103,7 +1135,6 @@ class _CollapsibleToolOutput extends StatefulWidget {
 }
 
 class _CollapsibleToolOutputState extends State<_CollapsibleToolOutput> {
-
   late bool _expanded = widget.initiallyExpanded;
 
   @override
@@ -1179,9 +1210,7 @@ class _CollapsibleToolOutputState extends State<_CollapsibleToolOutput> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(
-                _expanded
-                    ? Icons.keyboard_arrow_up
-                    : Icons.keyboard_arrow_down,
+                _expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
                 size: 14,
                 color: palette.indigo,
               ),
