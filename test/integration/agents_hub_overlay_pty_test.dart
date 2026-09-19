@@ -58,7 +58,11 @@ allowedTools: []
       harness.sendEnter();
       await harness.waitForText(
         'scout-settled',
-        timeout: const Duration(seconds: 90),
+        // Generous like the boot wait above: the settle chain (child
+        // spawn, its own model turn, the parent re-wake run) first-touches
+        // large JIT units, and a loaded nightly box (sibling test loops,
+        // 2-core runners) can stretch it past a tighter default.
+        timeout: const Duration(seconds: 300),
       );
 
       // Zero overlay pushes since the close: no hub frame, even though
