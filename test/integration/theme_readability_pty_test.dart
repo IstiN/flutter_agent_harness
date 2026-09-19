@@ -20,7 +20,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:dart_tui/src/bubbles/style.dart' show Style;
-import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:test/test.dart';
 
@@ -289,8 +288,8 @@ final class _ScriptedMockServer {
           'delta': {
             'role': 'assistant',
             'content': 'scenario-complete',
-            'finish_reason': null,
           },
+          'finish_reason': null,
         },
       ],
     }),

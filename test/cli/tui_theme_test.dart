@@ -569,6 +569,35 @@ void main() {
       expect(dimmed.hasMatch(settled), isTrue);
     });
 
+    test('the transcript formatter re-renders the echo band with the '
+        'current bg AND fg (gh-671)', () {
+      // The TUI stores the user echo pre-styled; the view-time formatter
+      // repaints it from the CURRENT theme. The old path re-applied only
+      // the background — the text fell back to the terminal default fg,
+      // invisible on the light userMessageBg band (light palettes).
+      final stored = tuiUserMessageLine(' fix the flaky login flow ');
+      final md = TranscriptMarkdown(width: 80);
+      final repainted = md.formatLine(stored);
+      expect(repainted, contains(tuiUserMessageBgSgr()));
+      expect(
+        repainted,
+        contains(tuiUserMessageTextSgr()),
+        reason:
+            'the repainted band must carry the explicit userMessageText '
+            'foreground — bg-only re-renders were the gh-671 echo defect',
+      );
+      // The text survives stripping, padded to the width.
+      expect(
+        repainted.replaceAll(sgr, ''),
+        ' fix the flaky login flow '.padRight(80),
+      );
+      // A mid-session theme switch repaints with the NEW palette (E1).
+      FaThemeController.instance.switchTo('dracula');
+      final repainted2 = TranscriptMarkdown(width: 80).formatLine(stored);
+      expect(repainted2, contains(tuiUserMessageBgSgr()));
+      expect(repainted2, contains(tuiUserMessageTextSgr()));
+    });
+
     test('themeColorContrast/themeLuminance are the WCAG formulas', () {
       expect(themeLuminance(const RgbColor(0, 0, 0)), closeTo(0, 1e-9));
       expect(themeLuminance(const RgbColor(255, 255, 255)), closeTo(1, 1e-9));
