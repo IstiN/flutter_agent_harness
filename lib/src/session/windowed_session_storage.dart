@@ -22,6 +22,7 @@ library;
 
 import 'dart:convert';
 
+import '../compaction/token_estimation.dart';
 import '../env/execution_env.dart';
 import '../exceptions.dart';
 import '../env/session_parse_executor.dart';
@@ -306,9 +307,19 @@ final class WindowedSessionStorage
   /// `false` only on [maxPages] exhaustion (the caller's documented
   /// full-open fallback). A session without a match pages everything —
   /// the whole chain is then resident and the walk reports `true`.
+  ///
+  /// [tokenBudget] (issue #503) adds a second stop condition: once the
+  /// resident branch's estimated CONTEXT tokens reach the budget (only
+  /// context-projecting records count — ledger payloads like
+  /// `model_request_summary` count zero, see [estimateSessionBranchTokens]),
+  /// the walk stops even without a match. A resume needs only what fits
+  /// the model's context window; older history pages in lazily through
+  /// the scrollback's [loadOlder] path. `null` keeps the pure
+  /// match/file-head semantics.
   Future<bool> growOlderUntil(
     bool Function(SessionRecord record) found, {
     int maxPages = 512,
+    int? tokenBudget,
   }) async {
     _suspendEviction = true;
     try {
@@ -320,11 +331,26 @@ final class WindowedSessionStorage
       // tail-after-compaction cost 10s+ in redundant decode alone.
       var blockRecords = _chunkRecords;
       var blockBytes = _chunkBytes;
+      // Incremental token tally: eviction is suspended, so the branch
+      // only ever grows at the FRONT — estimate just the newly paged
+      // prefix per page instead of re-walking the whole branch.
+      var branchTokens = 0;
+      var countedRecords = 0;
       while (pages < maxPages) {
         final leaf = await getLeafId();
         if (leaf == null) return true; // genuinely empty session
         final branch = await getPathToRoot(leaf);
         if (branch.any(found)) return true;
+        if (tokenBudget != null) {
+          final fresh = branch.length - countedRecords;
+          if (fresh > 0) {
+            branchTokens += estimateSessionBranchTokens(
+              branch.sublist(0, fresh),
+            );
+            countedRecords = branch.length;
+            if (branchTokens >= tokenBudget) return true;
+          }
+        }
         if (!_hasOlder) return true; // paged everything
         pages++;
         await _readOlderBlock(blockRecords, blockBytes);
