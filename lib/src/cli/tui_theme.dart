@@ -54,9 +54,28 @@ import 'tui_theme_palette.dart';
 export 'tui_theme_palette.dart';
 import 'package:dart_tui/src/msg.dart' show ColorProfile;
 import 'tool_rows.dart' show LaidOutToolRow, ToolRowState;
+import 'tui_repl.dart' show MenuItem;
+
+// The gh-671 readability contract: floors every built-in palette must
+// clear for the pairs the emitters actually paint. Body/detail text over
+// a theme-painted background clears WCAG AA (4.5:1); secondary text and
+// bold labels over the reference terminal clear 3:1; the user band keeps
+// the issue-#444 7:1 floor.
+
+/// Contrast floor for detail/body text painted over a theme background.
+const double kThemeBodyTextFloor = 4.5;
+
+/// Contrast floor for secondary text (muted) and bold labels on the
+/// reference terminal, and for the non-text state rails over their tints.
+const double kThemeSecondaryTextFloor = 3.0;
+
+/// Contrast floor of the echoed user-message band (issue #444 defect 4).
+const double kThemeUserMessageFloor = 7.0;
 
 /// The boot default: the historical site palette (site/styles.css teal +
-/// indigo). Truecolor output is byte-identical to the pre-theming CLI.
+/// indigo). Since gh-671 dim detail text carries an explicit `toolOutput`
+/// foreground (the old byte-identical-to-pre-theming invariant is
+/// deliberately broken — see `tui_theme_default.ans`).
 const TuiTheme kDefaultTuiTheme = TuiTheme(
   name: 'default',
   base: Style(),
@@ -86,7 +105,9 @@ const TuiTheme kDefaultTuiTheme = TuiTheme(
     foregroundRgb: RgbColor(129, 140, 248), // #818CF8
     isBold: true,
   ),
-  toolOutput: Style(isDim: true),
+  // gh-671: an explicit detail foreground — dim-only text over the dark
+  // tints and the terminal relied on the (unpainted, unknown) default fg.
+  toolOutput: Style(foregroundRgb: RgbColor(0xB8, 0xC2, 0xCE), isDim: true),
   userMessageText: Style(foregroundRgb: RgbColor(0xE8, 0xEE, 0xF7)),
   toolSuccessBg: Style(backgroundRgb: RgbColor(20, 37, 27)),
   toolErrorBg: Style(backgroundRgb: RgbColor(42, 21, 24)),
@@ -108,7 +129,9 @@ const Map<String, TuiTheme> kBuiltInTuiThemes = {
 const TuiTheme _ohmypiDark = TuiTheme(
   name: 'ohmypi-dark',
   base: Style(),
-  muted: Style(foregroundRgb: RgbColor(0x5f, 0x66, 0x73), isDim: true),
+  // gh-671 readability: #5f6673 (their dark.json `dim`) is 2.86:1 on a
+  // dark terminal — lightened one step, same family, dim flag kept.
+  muted: Style(foregroundRgb: RgbColor(0x86, 0x8d, 0x99), isDim: true),
   accent: Style(foregroundRgb: RgbColor(0xfe, 0xbc, 0x38), isBold: true),
   highlight: Style(backgroundRgb: RgbColor(0x31, 0x36, 0x3f)),
   success: Style(foregroundRgb: RgbColor(0x89, 0xd2, 0x81)),
@@ -121,7 +144,9 @@ const TuiTheme _ohmypiDark = TuiTheme(
   userMessageBg: Style(backgroundRgb: RgbColor(0x22, 0x1d, 0x1a)),
   borderMuted: Style(foregroundRgb: RgbColor(0x5f, 0x66, 0x73), isDim: true),
   toolTitle: Style(foregroundRgb: RgbColor(0xb2, 0x81, 0xd6), isBold: true),
-  toolOutput: Style(foregroundRgb: RgbColor(0x5f, 0x66, 0x73), isDim: true),
+  // gh-671 readability: #5f6673 (their dark.json `dim`) is 2.8:1 on a dark
+  // terminal and 2.8:1 on the tints — lightened one step, same family.
+  toolOutput: Style(foregroundRgb: RgbColor(0x86, 0x8d, 0x99), isDim: true),
   userMessageText: Style(foregroundRgb: RgbColor(0xd4, 0xd4, 0xd4)),
   toolSuccessBg: Style(backgroundRgb: RgbColor(0x1a, 0x22, 0x1a)),
   toolErrorBg: Style(backgroundRgb: RgbColor(0x2a, 0x1a, 0x1a)),
@@ -143,7 +168,9 @@ const TuiTheme _ohmypiLight = TuiTheme(
   userMessageBg: Style(backgroundRgb: RgbColor(0xe8, 0xe8, 0xe8)),
   borderMuted: Style(foregroundRgb: RgbColor(0x76, 0x76, 0x76), isDim: true),
   toolTitle: Style(foregroundRgb: RgbColor(0x7e, 0x57, 0xc2), isBold: true),
-  toolOutput: Style(foregroundRgb: RgbColor(0x76, 0x76, 0x76), isDim: true),
+  // gh-671 readability: #767676 is 3.5:1 on the light tints — darkened so
+  // detail text clears AA on the palette's own reference terminal.
+  toolOutput: Style(foregroundRgb: RgbColor(0x56, 0x56, 0x56), isDim: true),
   userMessageText: Style(foregroundRgb: RgbColor(0x22, 0x22, 0x22)),
   toolSuccessBg: Style(backgroundRgb: RgbColor(0xdc, 0xe8, 0xdc)),
   toolErrorBg: Style(backgroundRgb: RgbColor(0xf0, 0xdc, 0xdc)),
@@ -153,7 +180,9 @@ const TuiTheme _ohmypiLight = TuiTheme(
 const TuiTheme _piDark = TuiTheme(
   name: 'pi',
   base: Style(foregroundRgb: RgbColor(0xd4, 0xd4, 0xd4)),
-  muted: Style(foregroundRgb: RgbColor(0x66, 0x66, 0x66), isDim: true),
+  // gh-671 readability: #666666 is 2.88:1 on a dark terminal and 2.4:1 on
+  // the tints — lightened one step, dim flag kept.
+  muted: Style(foregroundRgb: RgbColor(0x98, 0x98, 0x98), isDim: true),
   accent: Style(foregroundRgb: RgbColor(0x8a, 0xbe, 0xb7), isBold: true),
   highlight: Style(backgroundRgb: RgbColor(0x3a, 0x3a, 0x4a)),
   success: Style(foregroundRgb: RgbColor(0xb5, 0xbd, 0x68)),
@@ -166,7 +195,8 @@ const TuiTheme _piDark = TuiTheme(
   userMessageBg: Style(backgroundRgb: RgbColor(0x34, 0x35, 0x41)),
   borderMuted: Style(foregroundRgb: RgbColor(0x4a, 0x4a, 0x4a), isDim: true),
   toolTitle: Style(foregroundRgb: RgbColor(0x95, 0x75, 0xcd), isBold: true),
-  toolOutput: Style(foregroundRgb: RgbColor(0x66, 0x66, 0x66), isDim: true),
+  // gh-671 readability: #666666 is 2.4:1 on the tints — lightened.
+  toolOutput: Style(foregroundRgb: RgbColor(0x98, 0x98, 0x98), isDim: true),
   userMessageText: Style(foregroundRgb: RgbColor(0xd4, 0xd4, 0xd4)),
   toolSuccessBg: Style(backgroundRgb: RgbColor(0x2a, 0x2e, 0x24)),
   toolErrorBg: Style(backgroundRgb: RgbColor(0x36, 0x26, 0x26)),
@@ -351,7 +381,9 @@ Style? _defaultRoleStyle(String role) => switch (role) {
 ) {
   final themes = <String, TuiTheme>{};
   final errors = <String>[];
-  if (homeDir == null || homeDir.isEmpty) return (themes: themes, errors: errors);
+  if (homeDir == null || homeDir.isEmpty) {
+    return (themes: themes, errors: errors);
+  }
   final dir = '$homeDir/.fah/themes';
   for (final path in listJsonFiles(dir)) {
     final name = path.split('/').last.replaceAll(RegExp(r'\.json$'), '');
@@ -419,7 +451,8 @@ final class FaThemeController {
   Map<String, TuiTheme> available() => {...kBuiltInTuiThemes, ..._userThemes};
 
   /// Installs user themes (boot-time; see [loadUserThemes]).
-  void addUserThemes(Map<String, TuiTheme> themes) => _userThemes.addAll(themes);
+  void addUserThemes(Map<String, TuiTheme> themes) =>
+      _userThemes.addAll(themes);
 
   /// Applies [name] if known; returns whether it resolved. Does not
   /// persist (that is `/theme`'s job).
@@ -597,14 +630,33 @@ String tuiToolRow(LaidOutToolRow row, ToolRowState state) {
       c.current.toolErrorBg,
     ),
   };
-  // Failed rows keep the failure text bright (issue #366): the tint
-  // carries the state, the text stays readable.
+  // gh-671: text painted OVER a theme tint always carries an explicit,
+  // floor-checked foreground and drops the dim flag — the terminal
+  // default fg is invisible on light tints (the ohmypi-light failed-row
+  // screenshot), and SGR 2 halves contrast unpredictably across
+  // terminals. Failed rows render [TuiTheme.userMessageText] (the
+  // palette's readable-on-painted-surface text, bright in dark themes —
+  // the issue #366 "keep failure text bright" intent, now
+  // terminal-independent); done rows render the toolOutput foreground
+  // without its dim flag. Unpainted running/settled rows keep the
+  // classic dim look over the terminal's own background.
+  final overTint = state == ToolRowState.done || state == ToolRowState.failed;
+  final toolOutputFg = c.current.toolOutput.foregroundRgb;
+  final failedFg = c.current.userMessageText.foregroundRgb;
   final painted = row.style(
     glyph: (s) => c.tinted(glyph, tint, s),
     label: (s) => c.tinted(c.current.toolTitle, tint, s),
-    dim: (s) => state == ToolRowState.failed
-        ? c.tinted(const Style(), tint, s)
-        : c.tinted(c.current.toolOutput, tint, s),
+    dim: (s) {
+      if (state == ToolRowState.failed) {
+        return failedFg == null
+            ? c.tinted(const Style(), tint, s)
+            : c.tinted(Style(foregroundRgb: failedFg), tint, s);
+      }
+      if (overTint && toolOutputFg != null) {
+        return c.tinted(Style(foregroundRgb: toolOutputFg), tint, s);
+      }
+      return c.tinted(c.current.toolOutput, tint, s);
+    },
   );
   return '${c.border(rail, '│')} $painted';
 }
@@ -643,6 +695,44 @@ List<String> themeTableLines({String? current}) {
           '${themeSwatchRow(entry.value)}'
           '${kBuiltInTuiThemes.containsKey(entry.key) ? '' : '  (user)'}',
   ];
+}
+
+/// The `/theme` picker rows (gh-671): EVERY theme shows its live swatch
+/// preview, and the session-current theme adds a `✓ current` marker in
+/// the success role — readable text, never a color-only cue. The old
+/// picker REPLACED the current theme's swatch with a dim `(current)`
+/// string, so the selection could disappear entirely in low-contrast
+/// palettes. Combine with `openPicker(..., initialKey: current)` — the
+/// cursor starts on the current row.
+List<MenuItem> themePickerItems({String? current}) {
+  final controller = FaThemeController.instance;
+  return [
+    for (final entry in controller.available().entries)
+      MenuItem(
+        key: entry.key,
+        label: entry.key,
+        description: entry.key == current
+            ? '${themeSwatchRow(entry.value)}  ${controller.success('✓ current')}'
+            : themeSwatchRow(entry.value),
+      ),
+  ];
+}
+
+/// WCAG relative luminance of [c] (exported for the accessibility floors).
+double themeLuminance(RgbColor c) => _relativeLuminance(c);
+
+/// WCAG contrast ratio between two colors (1:1–21:1).
+double themeColorContrast(RgbColor a, RgbColor b) => _contrastRatio(a, b);
+
+/// The terminal background [theme] was designed against: light palettes
+/// (a bright userMessageBg) reference a light terminal, dark ones a dark
+/// one (gh-671 floors — muted/accent text is judged on its own home
+/// terminal, the way [themeContrast] already frames base text).
+RgbColor themeReferenceTerminalBg(TuiTheme theme) {
+  final bg = theme.userMessageBg.backgroundRgb ?? const RgbColor(0, 0, 0);
+  return _relativeLuminance(bg) > 0.5
+      ? const RgbColor(0xff, 0xff, 0xff)
+      : const RgbColor(0x1e, 0x1e, 0x28);
 }
 
 /// WCAG-ish sanity floor for E2: base fg must stay readable against the

@@ -28,23 +28,14 @@ extension ThemeCommands on AgentCli {
   }
 
   /// Opens the theme picker with live swatch previews; the current theme is
-  /// preselected.
+  /// preselected AND text-marked (`✓ current`, gh-671 — the swatch stays on
+  /// every row, the marker is readable text in every palette).
   void _openThemePicker() {
     final controller = FaThemeController.instance;
-    final items = [
-      for (final entry in controller.available().entries)
-        MenuItem(
-          key: entry.key,
-          label: entry.key,
-          description: entry.key == controller.currentName
-              ? '(current)'
-              : themeSwatchRow(entry.value),
-        ),
-    ];
     _tuiController?.openPicker(
       'theme',
       'Select theme',
-      items,
+      themePickerItems(current: controller.currentName),
       initialKey: controller.currentName,
     );
   }
@@ -57,7 +48,7 @@ extension ThemeCommands on AgentCli {
     if (!controller.switchTo(name)) {
       io.writeln(
         'unknown theme: $name — available: '
-            '${controller.available().keys.join(', ')}',
+        '${controller.available().keys.join(', ')}',
       );
       return;
     }
@@ -70,8 +61,8 @@ extension ThemeCommands on AgentCli {
         ).set('tui.theme', controller.currentName);
         io.writeln(
           'theme: ${controller.currentName} '
-              '${themeSwatchRow(controller.current)}'
-              ' — saved to ${result.file} (tui.theme)',
+          '${themeSwatchRow(controller.current)}'
+          ' — saved to ${result.file} (tui.theme)',
         );
       } on ConfigException catch (error) {
         io.writeln('theme switched, but saving tui.theme failed: $error');
@@ -79,7 +70,7 @@ extension ThemeCommands on AgentCli {
     } else {
       io.writeln(
         'theme: ${controller.currentName} '
-            '${themeSwatchRow(controller.current)}',
+        '${themeSwatchRow(controller.current)}',
       );
     }
   }
@@ -99,7 +90,7 @@ extension ThemeCommands on AgentCli {
     if (!FaThemeController.instance.switchTo(persisted)) {
       io.writeln(
         'config tui.theme: unknown theme "$persisted" — using default '
-            '(available: ${FaThemeController.instance.available().keys.join(', ')})',
+        '(available: ${FaThemeController.instance.available().keys.join(', ')})',
       );
     }
   }
@@ -113,11 +104,12 @@ extension ThemeCommands on AgentCli {
     if (home == null || home.isEmpty) return;
     final dir = '$home/.fah/themes';
     final listed = await _env.listDir(dir);
-    final names = (listed.valueOrNull ?? const [])
-        .map((entry) => entry.name)
-        .where((name) => name.endsWith('.json'))
-        .toList()
-      ..sort();
+    final names =
+        (listed.valueOrNull ?? const [])
+            .map((entry) => entry.name)
+            .where((name) => name.endsWith('.json'))
+            .toList()
+          ..sort();
     // Pre-read through the FileSystem seam (web-safe); unreadable files
     // drop out here instead of parsing as garbage.
     final readable = <String, String>{};
