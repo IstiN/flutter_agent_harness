@@ -3885,4 +3885,12 @@
 - Nightly red 2/2: 35418633939 — crap4dart pin, cli-visual stable pair, hub_overlay settle (#663)
 - ci(nightly): fix four deterministic nightly-red failures (#662)
 
+## 0.1.424
+
+- chore(factory): repin to the job-marker gap fix (ed77b3c)
+- fix(cli): coalesce pre-run TUI output; exit hint keeps the session name (#503) (#672)
+- chore(factory): repin to node24 actions bump (1818fe62ea748455f8c4090d36239c8c98da76d5)
+- fix(release): annotated tag created with actions-bot identity — no more empty-ident exit 128 (run 35426119831) (#669)
+- chore(factory): declare input modalities [text,image] in fa runner configs
+
 ## Unreleased
