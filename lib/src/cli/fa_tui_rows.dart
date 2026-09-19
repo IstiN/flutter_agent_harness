@@ -101,9 +101,12 @@ extension _TuiRowRenderers on FaTuiModel {
       return '$prefix${item.label}${_dim(desc)}';
     }
     // Truncated rows render stripped: fitting the styled string cut
-    // mid-escape, leaking SGR into the rest of the line. `plain` carries
-    // no `\x1b[0m`, so `_rearmSelection` would be a no-op here.
-    return '$prefix${_fitWidth(plain, termWidth - 2)}';
+    // mid-escape, leaking SGR into the rest of the line. The fitted text is
+    // plain SGR-free, so wrap it in the selection accent first (gh-671) —
+    // a long selected label keeps the selection cue too.
+    final fitted = _fitWidth(plain, termWidth - 2);
+    if (selected) return '$prefix${_rearmSelection(fitted)}';
+    return '$prefix$fitted';
   }
 
   /// A fuzzy-highlighted label embeds per-match `accent2Soft …\x1b[0m`

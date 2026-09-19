@@ -73,7 +73,9 @@ const double kThemeSecondaryTextFloor = 3.0;
 const double kThemeUserMessageFloor = 7.0;
 
 /// The boot default: the historical site palette (site/styles.css teal +
-/// indigo). Truecolor output is byte-identical to the pre-theming CLI.
+/// indigo). Since gh-671 dim detail text carries an explicit `toolOutput`
+/// foreground (the old byte-identical-to-pre-theming invariant is
+/// deliberately broken — see `tui_theme_default.ans`).
 const TuiTheme kDefaultTuiTheme = TuiTheme(
   name: 'default',
   base: Style(),
@@ -379,8 +381,9 @@ Style? _defaultRoleStyle(String role) => switch (role) {
 ) {
   final themes = <String, TuiTheme>{};
   final errors = <String>[];
-  if (homeDir == null || homeDir.isEmpty)
+  if (homeDir == null || homeDir.isEmpty) {
     return (themes: themes, errors: errors);
+  }
   final dir = '$homeDir/.fah/themes';
   for (final path in listJsonFiles(dir)) {
     final name = path.split('/').last.replaceAll(RegExp(r'\.json$'), '');

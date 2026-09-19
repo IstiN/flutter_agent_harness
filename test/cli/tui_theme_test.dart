@@ -452,7 +452,7 @@ void main() {
             reason:
                 '${entry.key}: detail text on $name is '
                 '${themeColorContrast(fg, tint).toStringAsFixed(2)}:1 '
-                '(floor ${kThemeBodyTextFloor}) — unreadable command text '
+                '(floor $kThemeBodyTextFloor) — unreadable command text '
                 'was the gh-671 screenshot defect',
           );
         }
@@ -462,11 +462,19 @@ void main() {
     test('tool-row labels and state rails clear 3:1 over their tints', () {
       for (final entry in kBuiltInTuiThemes.entries) {
         final t = entry.value;
-        expect(
-          themeColorContrast(fgOf(t.toolTitle)!, bgOf(t.toolErrorBg)!),
-          greaterThanOrEqualTo(kThemeSecondaryTextFloor),
-          reason: '${entry.key}: toolTitle on toolErrorBg',
-        );
+        // tuiToolRow paints the label in toolTitle over BOTH tints — done
+        // rows (toolSuccessBg) and failed rows (toolErrorBg) — so the floor
+        // holds per tint (review: only the error tint was checked).
+        for (final (tintName, tint) in [
+          ('toolSuccessBg', bgOf(t.toolSuccessBg)),
+          ('toolErrorBg', bgOf(t.toolErrorBg)),
+        ]) {
+          expect(
+            themeColorContrast(fgOf(t.toolTitle)!, tint!),
+            greaterThanOrEqualTo(kThemeSecondaryTextFloor),
+            reason: '${entry.key}: toolTitle on $tintName',
+          );
+        }
         expect(
           themeColorContrast(fgOf(t.success)!, bgOf(t.toolSuccessBg)!),
           greaterThanOrEqualTo(kThemeSecondaryTextFloor),

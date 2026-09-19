@@ -61,24 +61,27 @@ void main() {
             timeout: const Duration(seconds: 60),
           );
 
-          final raw = harness.rawOutput;
           final t = kBuiltInTuiThemes[theme]!;
           String bg(Style style) {
             final c = style.backgroundRgb!;
             return '48;2;${c.r};${c.g};${c.b}';
           }
 
-          // The tool rows really painted both tints in this palette.
-          expect(
-            raw,
-            contains(bg(t.toolSuccessBg)),
-            reason: '$theme: the done row must tint with toolSuccessBg',
+          // The tool rows really painted both tints in this palette. Poll
+          // the cumulative stream instead of asserting post-hoc: the mock
+          // delay above guarantees the settled frames are emitted, and the
+          // poll turns a never-painted frame into a clear timeout with the
+          // raw tail rather than a bare contains miss (de-flake, review).
+          await harness.waitForText(
+            bg(t.toolSuccessBg),
+            timeout: const Duration(seconds: 30),
           );
-          expect(
-            raw,
-            contains(bg(t.toolErrorBg)),
-            reason: '$theme: the failed row must tint with toolErrorBg',
+          await harness.waitForText(
+            bg(t.toolErrorBg),
+            timeout: const Duration(seconds: 30),
           );
+
+          final raw = harness.rawOutput;
 
           // THE accessibility contract: no run of visible text painted over
           // a theme tint may render without an explicit fg escape active.
@@ -257,6 +260,15 @@ final class _ScriptedMockServer {
         );
       } else {
         chunks = _textChunks();
+      }
+      if (n >= 1) {
+        // De-flake (PR review, 2 rounds): with a localhost mock and instant
+        // `echo` commands, tool call N settles and tool call N+1 starts
+        // within one frame interval, so the TUI can legally coalesce away
+        // the frame where the settled row wears its tint. Delaying each
+        // later response guarantees the settled done/failed frame is
+        // emitted while the TUI idles waiting for the model.
+        await Future<void>.delayed(const Duration(milliseconds: 400));
       }
       for (final chunk in chunks) {
         // A blank line terminates each SSE event — without it the decoder
