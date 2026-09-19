@@ -98,6 +98,7 @@ final class AgentCliConfig {
     this.jsExtensionsEnabled = true,
     this.dapHubState,
     this.runtimeTools,
+    this.loadMode = AgentLoadMode.defaultMode,
     this.onToolsConfigChanged,
     this.onDapHubConfigChanged,
     this.osName,
@@ -311,6 +312,11 @@ final class AgentCliConfig {
   /// runtime, then the builtin capability floor). Null when neither source
   /// declared intent.
   final ToolsConfig? runtimeTools;
+
+  /// The tool-load preset for this boot (issue #680): resolves
+  /// `--omp` > `FA_AGENT_MODE` > `agent.mode`. [AgentLoadMode.defaultMode]
+  /// keeps every present tool in the schema (byte-identical behavior).
+  final AgentLoadMode loadMode;
 
   /// Called when the user changes the GLOBAL `tools:` scope
   /// (`/tools enable|disable <id> global`) so the executable can persist

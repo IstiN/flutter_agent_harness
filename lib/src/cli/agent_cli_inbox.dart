@@ -11,6 +11,18 @@ part of 'agent_cli.dart';
 const Duration _hubDrainTimeout = Duration(seconds: 5);
 
 extension AgentCliMessagingFlow on AgentCli {
+  /// The `## Agent messaging` prompt section: the agent's own mailbox in
+  /// the fabric + how discovery/addressing work. Empty until the session
+  /// (and thus the mailbox prefix) exists.
+  String _messagingSection() {
+    final prefix = _subagentManager.mailboxPrefix;
+    if (_subagentManager.messaging == null || prefix.isEmpty) return '';
+    return cliMessagingSectionPrompt.replaceAll(
+      '{{mailbox}}',
+      _subagentManager.mailboxOf(_subagentManager.selfId),
+    );
+  }
+
   /// The main agent's inbox as steering messages: each pending fabric
   /// message becomes a user message attributed to its sender, so the
   /// transcript reads like a chat between agents. A `user`-kind message
@@ -312,3 +324,4 @@ String mailboxWakeCommand({
 /// the pending mail into the turn; the session file is shared.
 const wakePromptText =
     'You have pending inbox messages; read your inbox and handle them now.';
+

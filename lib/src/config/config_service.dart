@@ -42,6 +42,7 @@ import '../power_config.dart';
 import '../model_roles/model_roles.dart';
 import '../redact/redaction_types.dart';
 import '../tools/availability.dart';
+import '../tools/load_modes.dart';
 import '../task/subagent_heartbeat.dart';
 import '../ttsr/ttsr.dart';
 
@@ -1188,21 +1189,33 @@ void validateAgentSection(Object? node) {
   }
   for (final entry in node.entries) {
     final key = '${entry.key}';
-    if (key != 'contextWindowCap') {
-      throw ConfigException('unknown "agent" key: $key');
-    }
-    final value = entry.value;
-    if (value is! int || value <= 0) {
-      throw ConfigException(
-        '"agent.contextWindowCap" must be a positive integer (tokens)',
-      );
-    }
-    if (value < 16384) {
-      throw ConfigException(
-        '"agent.contextWindowCap" must be at least 16384 — below the '
-        'compaction reserve the compaction trigger threshold would go '
-        'negative',
-      );
+    switch (key) {
+      case 'contextWindowCap':
+        final value = entry.value;
+        if (value is! int || value <= 0) {
+          throw ConfigException(
+            '"agent.contextWindowCap" must be a positive integer (tokens)',
+          );
+        }
+        if (value < 16384) {
+          throw ConfigException(
+            '"agent.contextWindowCap" must be at least 16384 — below the '
+            'compaction reserve the compaction trigger threshold would go '
+            'negative',
+          );
+        }
+      case 'mode':
+        // The tool-load preset (issue #680): `default|pi|omp`. `default`
+        // is legal and explicit — the written file stays parseable.
+        final value = entry.value;
+        if (value is! String || !agentLoadModeLabels.contains(value)) {
+          throw ConfigException(
+            '"agent.mode" must be one of: '
+            '${agentLoadModeLabels.join(', ')}',
+          );
+        }
+      default:
+        throw ConfigException('unknown "agent" key: $key');
     }
   }
 }

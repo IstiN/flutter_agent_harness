@@ -383,11 +383,19 @@ final class ToolAvailabilityResolution {
   /// `mcp: false` kill-switch forces every declared value to `false`.
   final Map<String, bool> mcpServers;
 
+  /// Enabled ids hidden from the schema by the active load mode (issue
+  /// #680): discoverable, mountable on demand through the gate. Empty in
+  /// the default mode (no preset → byte-identical behavior). A discoverable
+  /// id is NOT disabled: [ResolvedToolAvailability.enabled] stays true and
+  /// only the gate's mount state decides visibility.
+  final Set<String> discoverableIds;
+
   /// Creates a resolution.
   const ToolAvailabilityResolution({
     required this.byId,
     this.unknownIds = const {},
     this.mcpServers = const {},
+    this.discoverableIds = const {},
   });
 }
 
@@ -402,6 +410,7 @@ final class ToolAvailabilityResolution {
 ToolAvailabilityResolution resolveToolAvailability({
   required Map<String, ToolCapability> capabilities,
   required List<(ToolScope, ToolsConfig)> scopes,
+  Set<String>? essentialToolIds,
 }) {
   final (:intent, :intentScope, :unknownIds, :mcpServers) = _collectToolIntents(
     scopes,
@@ -417,10 +426,26 @@ ToolAvailabilityResolution resolveToolAvailability({
       mcpServers[server] = false;
     }
   }
+  // Load-mode demotion (issue #680): under a preset, an enabled id
+  // outside the essential set becomes discoverable — UNLESS a scope
+  // explicitly enabled it (`tools: {id: on}` is a standing mount: the
+  // user asked for the tool, the preset only curates the default). The
+  // essential set is pinned: nothing in the scope stack can demote it,
+  // and an explicit `off` still disables it exactly as before.
+  final discoverable = essentialToolIds == null
+      ? const <String>{}
+      : {
+          for (final entry in byId.entries)
+            if (entry.value.enabled &&
+                !essentialToolIds.contains(entry.key) &&
+                intent[entry.key] != true)
+              entry.key,
+        };
   return ToolAvailabilityResolution(
     byId: byId,
     unknownIds: unknownIds,
     mcpServers: mcpServers,
+    discoverableIds: discoverable,
   );
 }
 

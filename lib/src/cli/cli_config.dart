@@ -28,6 +28,7 @@ import '../agent/image_registry.dart';
 import '../power_config.dart';
 import '../ttsr/ttsr.dart';
 import '../tools/availability.dart';
+import '../tools/load_modes.dart';
 import 'custom_providers.dart';
 import '../task/subagent_heartbeat.dart';
 
@@ -95,32 +96,49 @@ bool _parseTrajectorySection(Object? node) {
   return wireDump;
 }
 
-int? _parseAgentSection(Object? node) {
+/// Parses the `agent:` section (issues #273/#680): `contextWindowCap`
+/// and `mode` (the tool-load preset, `default|pi|omp`). Strict like every
+/// section: a bad schema throws [ConfigException] at boot.
+({int? contextWindowCap, String? mode})? _parseAgentSection(Object? node) {
   if (node == null) return null;
   if (node is! YamlMap) {
     throw ConfigException('agent must be a map, got: $node');
   }
   int? cap;
+  String? mode;
   for (final key in node.keys) {
-    if (key != 'contextWindowCap') {
-      throw ConfigException('unknown "agent" key: $key');
+    switch (key) {
+      case 'contextWindowCap':
+        final value = node[key];
+        if (value is! int || value <= 0) {
+          throw ConfigException(
+            '"agent.contextWindowCap" must be a positive integer (tokens)',
+          );
+        }
+        if (value < 16384) {
+          throw ConfigException(
+            '"agent.contextWindowCap" must be at least 16384 — below the '
+            'compaction reserve the compaction trigger threshold would go '
+            'negative',
+          );
+        }
+        cap = value;
+      case 'mode':
+        final value = node[key];
+        if (value is! String || !agentLoadModeLabels.contains(value)) {
+          throw ConfigException(
+            '"agent.mode" must be one of: '
+            '${agentLoadModeLabels.join(', ')}',
+          );
+        }
+        // The default needs no storage: absent == default keeps the
+        // written file minimal (the file's "defaults never written" rule).
+        if (value != 'default') mode = value;
+      default:
+        throw ConfigException('unknown "agent" key: $key');
     }
-    final value = node[key];
-    if (value is! int || value <= 0) {
-      throw ConfigException(
-        '"agent.contextWindowCap" must be a positive integer (tokens)',
-      );
-    }
-    if (value < 16384) {
-      throw ConfigException(
-        '"agent.contextWindowCap" must be at least 16384 — below the '
-        'compaction reserve the compaction trigger threshold would go '
-        'negative',
-      );
-    }
-    cap = value;
   }
-  return cap;
+  return (contextWindowCap: cap, mode: mode);
 }
 
 /// Whether a raw `customProviders:` list node is a ghost entry named
@@ -187,6 +205,8 @@ final class CliConfig {
     this.promptOverrides = const {},
     this.modelRoles,
     this.ttsr,
+    this.contextWindowCap,
+    this.agentLoadMode,
     this.customProviders = const [],
     this.models,
     this.mcp,
@@ -203,7 +223,6 @@ final class CliConfig {
     this.compactionJudgeBudgetSeconds,
     this.wireDump = false,
     this.images,
-    this.contextWindowCap,
     this.subagents = const SubagentsConfig(),
     this.waiting = const WaitingConfig(),
     this.jobs = const JobsConfig(),
@@ -217,6 +236,7 @@ final class CliConfig {
     // The power section (sleep-prevention level + hold lifecycle) is
     // parsed once, strictly (issues #325/#326).
     final powerSection = parsePowerSection(map['power']);
+    final agentSection = _parseAgentSection(map['agent']);
     return CliConfig(
       providerKind: map['provider'] as String? ?? 'openai-completions',
       modelId: map['model'] as String? ?? 'openai/gpt-4o-mini',
@@ -311,9 +331,10 @@ final class CliConfig {
       images: parseImagesSection(map['images']),
       powerSleepPrevention: powerSection.sleepPrevention,
       powerHold: powerSection.hold,
-      // The agent section (owner-side context cap, issue #273) is strict
-      // too.
-      contextWindowCap: _parseAgentSection(map['agent']),
+      // The agent section (owner-side context cap + load mode, issues
+      // #273/#680) is strict too.
+      contextWindowCap: agentSection?.contextWindowCap,
+      agentLoadMode: agentSection?.mode,
       // The subagents section (background-subagent heartbeat, issue #383)
       subagents: SubagentsConfig.fromYaml(map['subagents']),
       waiting: WaitingConfig.fromYaml(map['waiting']),
@@ -490,6 +511,12 @@ final class CliConfig {
   /// the loop guard). `null` = uncapped (the raw model window).
   final int? contextWindowCap;
 
+  /// Tool-load preset from `agent.mode` (`default|pi|omp`, issue #680):
+  /// the curated essential set that boots into the schema; everything
+  /// else stays discoverable. `null` = default mode (no preset,
+  /// byte-identical behavior).
+  final String? agentLoadMode;
+
   /// The `waiting:` section (issue #450): visible-waiting heartbeat
   /// cadence (`waitHeartbeatMinutes`, 0 = off) and the `--wait-for-jobs`
   /// ceiling (`waitCeilingMinutes`, default 30).
@@ -621,8 +648,15 @@ final class CliConfig {
     buffer.write(_compactionYaml());
     if (wireDump) buffer.write('trajectory:\n  wireDump: true\n');
     if (images != null) buffer.write(_imagesYaml());
-    if (contextWindowCap != null) {
-      buffer.write('agent:\n  contextWindowCap: $contextWindowCap\n');
+    if (contextWindowCap != null || agentLoadMode != null) {
+      final section = StringBuffer('agent:\n');
+      if (contextWindowCap != null) {
+        section.write('  contextWindowCap: $contextWindowCap\n');
+      }
+      if (agentLoadMode != null) {
+        section.write('  mode: $agentLoadMode\n');
+      }
+      buffer.write(section.toString());
     }
     // The subagents heartbeat section (issue #383), only when explicitly
     // configured; defaults are never written so the file stays minimal.
