@@ -74,7 +74,11 @@ if [ "$ls_remote_rc" -eq 2 ]; then
   target="${RELEASE_TARGET_SHA:-${GITHUB_SHA:?}}"
   echo "tag $tag missing — creating annotated tag at $target (PAT push, fires tag CI)"
   git fetch origin "$target" --depth=1 2>/dev/null || git fetch origin main --depth=50
-  git tag -a "$tag" -m "Release $tag" "$target"
+  # CI checkout carries no identity; annotate as the actions bot without
+  # touching global config (empty ident → exit 128, run 35426119831).
+  git -c user.name="github-actions[bot]" \
+      -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+      tag -a "$tag" -m "Release $tag" "$target"
   git push "${GH_TOKEN:+https://x-access-token:${GH_TOKEN}@github.com/${repo}.git}" "refs/tags/$tag"
 fi
 
