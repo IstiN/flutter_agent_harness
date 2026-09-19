@@ -33,13 +33,15 @@ jobs:
     # lifecycle: test once per state, silent updates, pre-merge validation).
     # Flip in lockstep with ai-teammate.yml — guarded by
     # test/machine_kit/factory_stub_ref_test.dart.
-    uses: IstiN/dmtools-agents/.github/workflows/factory-sm.yml@40dd6f08410233d78b055a6d2816a22636e8a7db
+    uses: IstiN/dmtools-agents/.github/workflows/factory-sm.yml@ceddca59606f3e7ff302acb78a40c9ed63d9e3b2
     with:
       # The literal uses-ref: the factory requires it (it cannot derive its
       # own ref — github.workflow_ref in a called workflow is the CALLER's).
-      factory_ref: 40dd6f08410233d78b055a6d2816a22636e8a7db
+      factory_ref: ceddca59606f3e7ff302acb78a40c9ed63d9e3b2
       # Manual ticks default to dry; cron ticks run live.
       dryRun: ${{ github.event.inputs.dryRun || 'false' }}
+      # #687: one source of truth for the machine login (repo variable).
+      machine-author: ${{ vars.MACHINE_AUTHOR || '' }}
     # Explicit mapping — the factory DECLARES SOURCE_GITHUB_TOKEN as a
     # required named secret (plus optional ZAI_CODE_KEY / KIMI_REVIEW_KEY),
     # and `secrets: inherit` does not satisfy required-secret validation at
