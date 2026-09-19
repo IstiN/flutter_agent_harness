@@ -3,6 +3,7 @@ package dev.fa1.app.mobile
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.provider.Settings
 

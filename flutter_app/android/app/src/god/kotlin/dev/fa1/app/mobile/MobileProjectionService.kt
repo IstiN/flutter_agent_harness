@@ -75,7 +75,14 @@ class MobileProjectionService : Service() {
 
         val metrics = resources.displayMetrics
         val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        val mediaProjection = manager.getMediaProjection(resultCode, resultData)
+        // getMediaProjection returns null on an invalid/expired consent
+        // token (@Nullable in recent SDKs): nothing to project — stop
+        // cleanly like the missing-intent guard above instead of crashing
+        // the foreground service.
+        val mediaProjection = manager.getMediaProjection(resultCode, resultData) ?: run {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         projection = mediaProjection
         mediaProjection.registerCallback(
             object : MediaProjection.Callback() {

@@ -1,13 +1,14 @@
 package dev.fa1.app.mobile
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
 import android.content.Context
 import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityEvent
-import android.view.GestureDescription
 import android.graphics.Path
 
 /// god-flavor accessibility service (issue #622): serializes the active
@@ -95,6 +96,20 @@ class MobileAccessibilityService : AccessibilityService() {
             node.getChild(i)?.let { appendNode(it, depth + 1, xml, cache) }
         }
         xml.append(indent).append("</node>\n")
+    }
+
+    /// XML attribute value, uiautomator-style: always double-quoted, entities
+    /// escaped; absent attributes print as the literal "null" like the
+    /// platform dumper does.
+    private fun q(value: String?): String {
+        if (value == null) return "\"null\""
+        val escaped = value
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("\"", "&quot;")
+            .replace("'", "&apos;")
+        return "\"$escaped\""
     }
 
     fun tap(elementId: String?, x: Double?, y: Double?): Boolean {
