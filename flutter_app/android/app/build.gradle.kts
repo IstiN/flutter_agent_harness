@@ -35,6 +35,29 @@ android {
         versionName = flutter.versionName
     }
 
+    // ── Flavor tiers (issue #622) ───────────────────────────────────────────
+    // `store` is the Play-safe build (no accessibility/projection/shell
+    // surface); `god` is sideload-only and carries the automation stack.
+    // Release signing comes from the shared `release` build type below, so
+    // both flavors sign with the same upload config — no per-flavor setup.
+    flavorDimensions += "tier"
+    productFlavors {
+        create("store") {
+            dimension = "tier"
+            applicationId = "dev.fa1.app"
+        }
+        create("god") {
+            dimension = "tier"
+            applicationId = "dev.fa1.app.god"
+        }
+    }
+
+    // BuildConfig.FLAVOR drives the mobile-channel provider selection in
+    // MainActivity; AGP 8+ no longer generates BuildConfig by default.
+    buildFeatures {
+        buildConfig = true
+    }
+
     // ── Release signing (issue #289) ────────────────────────────────────────
     // The upload keystore never lives in git. CI decodes it from the
     // ANDROID_KEYSTORE_BASE64 secret into the build dir; a local,
@@ -128,4 +151,6 @@ flutter {
 
 dependencies {
     testImplementation("junit:junit:4.13.2")
+    // Shizuku shell bridge — flavor-scoped so the store APK never links it.
+    "godImplementation"("dev.rikka.shizuku:api:13.1.5")
 }

@@ -2120,4 +2120,42 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get themePackImportFailed => 'Theme pack rejected';
+
+  @override
+  String get settingsMobileAutomation => 'Device automation';
+
+  @override
+  String get mobileConsentTitle => 'Device automation';
+
+  @override
+  String get mobileConsentWhat =>
+      'Enabling this lets the Fa accessibility service read the screen content and perform taps and typing on your behalf, so Fa can drive apps and settings for you.';
+
+  @override
+  String get mobileConsentOffByDefault =>
+      'The service is off by default — nothing runs until you turn it on here.';
+
+  @override
+  String get mobileConsentDisableHint =>
+      'You can disable it any time with one tap in Fa settings.';
+
+  @override
+  String get mobileConsentPrivacy =>
+      'Your data stays on the device: only the messages you exchange are sent inline to the model you configured.';
+
+  @override
+  String get mobileConsentEnable => 'Enable — open system settings';
+
+  @override
+  String get mobileConsentDisable => 'Disable';
+
+  @override
+  String get mobileConsentStatusOn => 'Accessibility service: on';
+
+  @override
+  String get mobileConsentStatusOff => 'Accessibility service: off';
+
+  @override
+  String get mobileConsentStoreUnavailable =>
+      'Device automation is not available in this build of Fa.';
 }

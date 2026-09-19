@@ -65,5 +65,11 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- Issue #622: lets the launch channel enumerate launcher-visible
+             apps on BOTH flavors without QUERY_ALL_PACKAGES (Play audit). -->
+        <intent>
+            <action android:name="android.intent.action.MAIN"/>
+            <category android:name="android.intent.category.LAUNCHER"/>
+        </intent>
     </queries>
 </manifest>

@@ -2147,4 +2147,44 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get themePackImportFailed => 'Тема отклонена';
+
+  @override
+  String get settingsMobileAutomation => 'Автоматизация устройства';
+
+  @override
+  String get mobileConsentTitle => 'Автоматизация устройства';
+
+  @override
+  String get mobileConsentWhat =>
+      'Включив эту функцию, вы разрешаете службе специальных возможностей Fa читать содержимое экрана и выполнять нажатия и ввод текста от вашего имени, чтобы Fa мог управлять приложениями и настройками за вас.';
+
+  @override
+  String get mobileConsentOffByDefault =>
+      'По умолчанию служба выключена — ничего не работает, пока вы не включите её здесь.';
+
+  @override
+  String get mobileConsentDisableHint =>
+      'Отключить её можно в любой момент одним касанием в настройках Fa.';
+
+  @override
+  String get mobileConsentPrivacy =>
+      'Данные не покидают устройство: наружу отправляются только ваши сообщения — напрямую в настроенную модель.';
+
+  @override
+  String get mobileConsentEnable => 'Включить — открыть настройки системы';
+
+  @override
+  String get mobileConsentDisable => 'Выключить';
+
+  @override
+  String get mobileConsentStatusOn =>
+      'Служба специальных возможностей: включена';
+
+  @override
+  String get mobileConsentStatusOff =>
+      'Служба специальных возможностей: выключена';
+
+  @override
+  String get mobileConsentStoreUnavailable =>
+      'Автоматизация устройства недоступна в этой сборке Fa.';
 }

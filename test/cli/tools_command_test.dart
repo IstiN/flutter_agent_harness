@@ -225,7 +225,8 @@ void main() {
       expect(project, contains('read: false'));
 
       // The loop comes back around; flip it back and exit via `done`
-      // (done = knownToolIds.length + 1; the outlook family joined in #327).
+      // (done = knownToolIds.length + 1; families keep joining — outlook
+      // in #327, mobile in #622 — so never hardcode the index).
       await waitForOutput('tools — pick a tool');
       io.sendLine('1'); // read
       await waitForOutput('tools — read');
@@ -236,7 +237,7 @@ void main() {
       expect(offeredTools(cli), contains('read'));
 
       await waitForOutput('tools — pick a tool');
-      io.sendLine('26'); // done (25 known ids — outlook joined in #327)
+      io.sendLine('${knownToolIds.length + 1}'); // done
       await flow;
 
       project = (await env.readTextFile('/work/.fah/config.yaml')).valueOrNull;

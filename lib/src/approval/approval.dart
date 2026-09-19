@@ -314,7 +314,7 @@ final class ApprovalManager {
     required ApprovalTier tier,
     required Map<String, dynamic> arguments,
   }) {
-    if (toolName != bashToolName) return null;
+    if (!criticalCommandToolNames.contains(toolName)) return null;
     final command = arguments['command'];
     final label = command is String ? matchCriticalBashCommand(command) : null;
     if (label == null) return null;

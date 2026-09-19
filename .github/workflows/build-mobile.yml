@@ -308,6 +308,234 @@ jobs:
           echo "Uploading $AAB_PATH to the Play '$PLAY_TRACK' track..."
           ANDROID_AAB_PATH="$AAB_PATH" bundle exec fastlane android upload_only
 
+  build-android-apks:
+    # Issue #622: the flavor matrix. The AAB job above stays the Play
+    # pipeline (store, unchanged); this job builds BOTH release APKs from
+    # ONE variable — FLAVOR drives both the gradle --flavor and the
+    # FA_FLAVOR dart-define (contract: the pair must never drift). god
+    # (applicationId dev.fa1.app.god) is sideload-only and NEVER reaches
+    # Play (binding threat model): it ships as an APK attached to the
+    # GitHub release. store keeps its AAB for Play and additionally gets
+    # an APK for direct installs + the UT-CI-1 size-delta tracking.
+    name: Build Android APK (${{ matrix.flavor }})
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: |
+      github.event.inputs.android_content != 'none' &&
+      github.event.inputs.android_content != '' &&
+      github.event.inputs.android_content != 'metadata_only' &&
+      github.event.inputs.android_content != 'screenshots_only'
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: [store, god]
+    env:
+      FLAVOR: ${{ matrix.flavor }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      # Same placeholder-.env incantation as build-android (issue #368):
+      # .env is a declared Flutter asset and newer flutter validates
+      # assets at build time.
+      - name: Create placeholder .env asset
+        working-directory: flutter_app
+        run: |
+          set -euo pipefail
+          cat > .env << 'EOF'
+          OPENROUTER_API_KEY=
+          MODEL_ID=
+          BASE_URL=
+          HUGGINGFACE_TOKEN=
+          EOF
+
+      - name: Install dependencies
+        working-directory: flutter_app
+        run: flutter pub get
+
+      # Mirrors build-android, gated to the store flavor: the secret file
+      # carries ONLY the dev.fa1.app client, while the god applicationId is
+      # dev.fa1.app.god — overwriting it would hard-fail the google-services
+      # plugin ("No matching client found for package name
+      # 'dev.fa1.app.god'"). god builds with the committed placeholder
+      # google-services.json, which carries both clients.
+      - name: Write google-services.json (Android)
+        env:
+          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+        run: |
+          if [ "$FLAVOR" != "store" ]; then
+            echo "$FLAVOR builds with the committed placeholder google-services.json — the secret file has no dev.fa1.app.god client"
+          elif [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
+            echo "$GOOGLE_SERVICES_JSON_BASE64" | base64 --decode > flutter_app/android/app/google-services.json
+            echo "google-services.json written"
+          else
+            echo "GOOGLE_SERVICES_JSON_BASE64 not set — building with the committed placeholder google-services.json"
+          fi
+
+      # Same release keystore as the AAB job (contract: store and god sign
+      # with the SAME release key — only the applicationId differs), same
+      # strict-signing posture: no silent debug-signed APKs. No Play
+      # service account here — god never touches Play.
+      - name: Build flavor APK
+        working-directory: flutter_app
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_STRICT_RELEASE_SIGNING: 'true'
+        # ONE variable ($FLAVOR, job-level env from the matrix) feeds BOTH
+        # the gradle flavor and the FA_FLAVOR dart-define.
+        run: |
+          set -euo pipefail
+          flutter build apk --release --flavor "$FLAVOR" --dart-define=FA_FLAVOR="$FLAVOR"
+
+      - name: Verify flavor APK
+        run: |
+          set -euo pipefail
+          APK=$(find flutter_app/build/app/outputs -name "app-$FLAVOR-release.apk" -type f | head -1)
+          if [ -z "$APK" ]; then
+            echo "::error::app-$FLAVOR-release.apk not found under flutter_app/build/app/outputs"
+            exit 1
+          fi
+          echo "APK built successfully: $(ls -la "$APK")"
+
+      - name: Store APK size delta vs previous release (UT-CI-1)
+        if: matrix.flavor == 'store'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          APK=$(find flutter_app/build/app/outputs -name "app-store-release.apk" -type f | head -1)
+          SIZE=$(stat -c%s "$APK")
+          echo "store APK size: $SIZE bytes"
+          # UT-CI-1: track the store APK size delta against the previous
+          # release's app-store-release.apk asset. Threshold policy: FAIL
+          # the job when the APK grows more than +10% release-over-release
+          # (engine/asset bloat must be a conscious, changelogged
+          # decision). The enforcement guard stays commented out until the
+          # first flavor release exists to diff against — flip it on then.
+          PREV_SIZE=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=20" \
+            --jq '[.[].assets[] | select(.name == "app-store-release.apk")][0].size // empty' 2>/dev/null || true)
+          if [ -n "$PREV_SIZE" ]; then
+            DELTA=$(python3 -c "print(f'{($SIZE - $PREV_SIZE) / $PREV_SIZE * 100:.1f}')")
+            echo "Previous release store APK: $PREV_SIZE bytes — delta: ${DELTA}%"
+            {
+              echo '### Store APK size (UT-CI-1)'
+              echo "- this release: $SIZE bytes"
+              echo "- previous release: $PREV_SIZE bytes"
+              echo "- delta: ${DELTA}% (fail threshold: +10%)"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No previous release store APK found — baseline recorded (this run: $SIZE bytes)."
+          fi
+          # UT-CI-1 enforcement (enable once a baseline exists):
+          # if [ -n "$DELTA" ] && python3 -c "import sys; sys.exit(0 if float('$DELTA') > 10.0 else 1)"; then
+          #   echo "::error::store APK grew ${DELTA}% vs the previous release (UT-CI-1 threshold +10%)"
+          #   exit 1
+          # fi
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk-${{ matrix.flavor }}
+          path: flutter_app/build/app/outputs/flutter-apk/app-${{ matrix.flavor }}-release.apk
+          retention-days: 14
+
+  test-android-emulator:
+    # Issue #622 (card DoD): emulator CI job shape for the six mobile
+    # channel integration tests (flutter_app/test/integration/
+    # mobile_channel_it.dart, tagged `integration`):
+    #   IT-flavor-1  — release-manifest audit per flavor
+    #   IT-floor-1   — mobile.* availability per tier (issue #19 floor)
+    #   IT-observe-1 — hierarchy + screenshot over the channel
+    #   IT-gesture-1 — tap / swipe / text injection
+    #   IT-shell-1   — Shizuku round-trip (god + opt-in bridge)
+    #   IT-consent-1 — consent flow + one-tap disable
+    # DISABLED with `if: false` until an emulator runner is provisioned —
+    # the hosted pool does not guarantee KVM and a red matrix would gate
+    # every release. When provisioned: add
+    # `needs: [version, build-android-apks]`, flip the `if` below to
+    # `needs.build-android-apks.result == 'success'`, add a
+    # download-artifact step for `android-apk-${{ matrix.flavor }}` before
+    # the emulator boot, and the job goes green as-is. The same ONE-var
+    # rule applies: FLAVOR drives --flavor and FA_FLAVOR.
+    name: Android emulator ITs (${{ matrix.flavor }})
+    runs-on: ubuntu-latest
+    if: false
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: [store, god]
+    env:
+      FLAVOR: ${{ matrix.flavor }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Create placeholder .env asset
+        working-directory: flutter_app
+        run: |
+          set -euo pipefail
+          cat > .env << 'EOF'
+          OPENROUTER_API_KEY=
+          MODEL_ID=
+          BASE_URL=
+          HUGGINGFACE_TOKEN=
+          EOF
+
+      - name: Install dependencies
+        working-directory: flutter_app
+        run: flutter pub get
+
+      - name: Boot emulator
+        run: |
+          set -euo pipefail
+          test -e /dev/kvm || { echo "::error::/dev/kvm missing — the provisioned runner must expose KVM"; exit 1; }
+          echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd \
+            -n fa-it --package "system-images;android-34;google_apis;x86_64" --device pixel_5
+          "$ANDROID_HOME/emulator/emulator" -avd fa-it \
+            -no-window -no-audio -no-boot-anim -no-snapshot -accel on &
+          adb wait-for-device
+          until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; do
+            sleep 5
+          done
+          echo "Emulator booted"
+
+      - name: Install flavor APK
+        run: adb install -r "flutter_app/build/app/outputs/flutter-apk/app-$FLAVOR-release.apk"
+
+      - name: Run mobile channel IT suite
+        working-directory: flutter_app
+        run: flutter test test/integration/mobile_channel_it.dart --tags integration
+
   build-ios:
     name: Build iOS IPA
     needs: version
@@ -668,13 +896,14 @@ jobs:
 
   release-mobile:
     name: Create Mobile GitHub Release
-    needs: [version, build-android, build-ios]
+    needs: [version, build-android, build-android-apks, build-ios]
     runs-on: ubuntu-latest
     # Ceiling for the daily watchers' budget arithmetic (#351).
     timeout-minutes: 15
     if: |
       always() &&
-      (needs.build-android.result == 'success' || needs.build-android.result == 'skipped') &&
+      ((needs.build-android.result == 'success' || needs.build-android.result == 'skipped') ||
+       (needs.build-android-apks.result == 'success' || needs.build-android-apks.result == 'skipped')) &&
       (needs.build-ios.result == 'success' || needs.build-ios.result == 'skipped')
     permissions:
       contents: write
@@ -684,7 +913,7 @@ jobs:
         # metadata_only / screenshots_only) — nothing was built, so there
         # is nothing to download or release. Record it in the job summary
         # and skip every release step instead of failing on `ls artifacts/`.
-        if: needs.build-android.result != 'success' && needs.build-ios.result != 'success'
+        if: needs.build-android.result != 'success' && needs.build-android-apks.result != 'success' && needs.build-ios.result != 'success'
         run: |
           {
             echo '### Nothing to release'
@@ -692,7 +921,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Checkout repository
-        if: needs.build-android.result == 'success' || needs.build-ios.result == 'success'
+        if: needs.build-android.result == 'success' || needs.build-android-apks.result == 'success' || needs.build-ios.result == 'success'
         uses: actions/checkout@v4
         with:
           # Full history: release_notes.sh falls back to "commits since the
@@ -713,12 +942,26 @@ jobs:
           name: android-aab
           path: artifacts/
 
+      - name: Download store APK artifact
+        if: needs.build-android-apks.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk-store
+          path: artifacts/
+
+      - name: Download god APK artifact
+        if: needs.build-android-apks.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk-god
+          path: artifacts/
+
       - name: List downloaded artifacts
-        if: needs.build-android.result == 'success' || needs.build-ios.result == 'success'
+        if: needs.build-android.result == 'success' || needs.build-android-apks.result == 'success' || needs.build-ios.result == 'success'
         run: ls -laR artifacts/
 
       - name: Create or update GitHub Release
-        if: needs.build-android.result == 'success' || needs.build-ios.result == 'success'
+        if: needs.build-android.result == 'success' || needs.build-android-apks.result == 'success' || needs.build-ios.result == 'success'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ needs.version.outputs.tag }}
@@ -728,18 +971,24 @@ jobs:
 
           AAB=$(find artifacts -name "*.aab" -type f | head -1)
           IPA=$(find artifacts -name "*.ipa" -type f | head -1)
+          STORE_APK=$(find artifacts -name "app-store-release.apk" -type f | head -1)
+          GOD_APK=$(find artifacts -name "app-god-release.apk" -type f | head -1)
           echo "AAB: $AAB"
           echo "IPA: $IPA"
+          echo "store APK: $STORE_APK"
+          echo "god APK: $GOD_APK"
 
           ASSETS=()
           [ -n "$AAB" ] && ASSETS+=("$AAB")
           [ -n "$IPA" ] && ASSETS+=("$IPA")
+          [ -n "$STORE_APK" ] && ASSETS+=("$STORE_APK")
+          [ -n "$GOD_APK" ] && ASSETS+=("$GOD_APK")
 
           # Notes come from the CHANGELOG section for this version, with a
           # conventional-commit fallback (issue #282: no more filler
           # bodies); the install hints stay as a footer.
           bash scripts/release_notes.sh "$RELEASE_TAG" > release-notes.md || true
-          printf '\n## Installation\n- **Android**: Download the AAB and upload to Play Store, or use `flutter install`.\n- **iOS**: Download the IPA and upload to TestFlight via Xcode or Transporter.\n- **macOS**: Download the DMG from the macOS build workflow.\n' >> release-notes.md
+          printf '\n## Installation\n- **Android**: Download the AAB and upload to Play Store, or use `flutter install`.\n- **Android god flavor (sideload only)**: install the god APK directly — see https://fa1.dev/android.\n- **iOS**: Download the IPA and upload to TestFlight via Xcode or Transporter.\n- **macOS**: Download the DMG from the macOS build workflow.\n' >> release-notes.md
 
           # Attach-or-create (issue #282 E3 + review of #294): idempotent
           # against the view->create race - a lost race uploads into the
@@ -757,7 +1006,7 @@ jobs:
       - name: Draft lifecycle guard (delete orphaned draft on failure)
         if: >-
           always() && job.status != 'success' &&
-          (needs.build-android.result == 'success' || needs.build-ios.result == 'success')
+          (needs.build-android.result == 'success' || needs.build-android-apks.result == 'success' || needs.build-ios.result == 'success')
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ needs.version.outputs.tag }}

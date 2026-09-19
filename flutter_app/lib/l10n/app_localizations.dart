@@ -3763,6 +3763,72 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Theme pack rejected'**
   String get themePackImportFailed;
+
+  /// Settings tile opening the device-automation consent screen
+  ///
+  /// In en, this message translates to:
+  /// **'Device automation'**
+  String get settingsMobileAutomation;
+
+  /// Title of the device-automation consent screen
+  ///
+  /// In en, this message translates to:
+  /// **'Device automation'**
+  String get mobileConsentTitle;
+
+  /// Consent body: what the accessibility service enables
+  ///
+  /// In en, this message translates to:
+  /// **'Enabling this lets the Fa accessibility service read the screen content and perform taps and typing on your behalf, so Fa can drive apps and settings for you.'**
+  String get mobileConsentWhat;
+
+  /// Consent body: default state
+  ///
+  /// In en, this message translates to:
+  /// **'The service is off by default — nothing runs until you turn it on here.'**
+  String get mobileConsentOffByDefault;
+
+  /// Consent body: one-tap disable promise
+  ///
+  /// In en, this message translates to:
+  /// **'You can disable it any time with one tap in Fa settings.'**
+  String get mobileConsentDisableHint;
+
+  /// Consent body: data-leave-device scope
+  ///
+  /// In en, this message translates to:
+  /// **'Your data stays on the device: only the messages you exchange are sent inline to the model you configured.'**
+  String get mobileConsentPrivacy;
+
+  /// Button sending the user to system accessibility settings
+  ///
+  /// In en, this message translates to:
+  /// **'Enable — open system settings'**
+  String get mobileConsentEnable;
+
+  /// One-tap disable button
+  ///
+  /// In en, this message translates to:
+  /// **'Disable'**
+  String get mobileConsentDisable;
+
+  /// Status row when the service is enabled
+  ///
+  /// In en, this message translates to:
+  /// **'Accessibility service: on'**
+  String get mobileConsentStatusOn;
+
+  /// Status row when the service is disabled
+  ///
+  /// In en, this message translates to:
+  /// **'Accessibility service: off'**
+  String get mobileConsentStatusOff;
+
+  /// Defensive message on store builds, where the consent surface never appears
+  ///
+  /// In en, this message translates to:
+  /// **'Device automation is not available in this build of Fa.'**
+  String get mobileConsentStoreUnavailable;
 }
 
 class _AppLocalizationsDelegate

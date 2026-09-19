@@ -1,0 +1,44 @@
+<!-- god flavor ONLY (issue #622): the on-device automation surface.
+     Merged into the sideload APK by the manifest merger; never present in
+     the store build — UT-manifest-1 (test/manifest_tier_test.dart) audits
+     that this file's symbols stay out of the store baseline. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Full package inventory for the allPackages launch-channel call. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"/>
+    <!-- Screen capture runs as a mediaProjection foreground service. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"/>
+
+    <application>
+        <!-- Reads the active window for dumpHierarchy/tap/text (god flavor).
+             Opt-in: the service only binds when the user enables it in the
+             system accessibility settings. -->
+        <service
+            android:name=".mobile.MobileAccessibilityService"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService"/>
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config"/>
+        </service>
+
+        <!-- Holds the MediaProjection + VirtualDisplay for screenshots. -->
+        <service
+            android:name=".mobile.MobileProjectionService"
+            android:foregroundServiceType="mediaProjection"
+            android:exported="false"/>
+
+        <!-- Shizuku binder hand-off for the shell bridge (rikka.shizuku:api). -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="moe.shizuku.manager.permission.API_V23"/>
+    </application>
+</manifest>

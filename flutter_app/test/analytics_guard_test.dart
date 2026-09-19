@@ -16,6 +16,11 @@ import 'package:test/test.dart';
 
 /// Tracked files that legitimately carry no AppAnalytics call, and why.
 const _documentedExemptions = <String, String>{
+  'lib/ui/screens/mobile_consent_screen.dart':
+      'Accessibility consent surface (issue #622): a privacy-sensitive '
+      'pre-permission screen — deliberately carries no analytics calls '
+      'so nothing about a user\u0027s consent journey is tracked; the '
+      'screen reconciles state locally via MobileControlContract.',
   'lib/ui/screens/onboarding_mockups.dart':
       'Part file of onboarding_screen.dart (pure mockup widgets); the '
       'onboarding analytics (started/completed/skipped/screenOpened) live '

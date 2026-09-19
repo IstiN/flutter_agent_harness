@@ -1,10 +1,14 @@
 package dev.fa1.app
 
+import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import android.view.WindowManager
+import dev.fa1.app.mobile.MobileChannels
+import dev.fa1.app.mobile.MobileProviders
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -87,6 +91,30 @@ class MainActivity : FlutterActivity() {
                 runOnUiThread { result.success(answer) }
             }
         }
+        // ── dev.fa1.app/mobile* (issue #622) ────────────────────────────
+        // Control + launch channels answer on both flavors; automation +
+        // shell need the god providers, which live in src/god and are
+        // absent from the store APK entirely.
+        val mobileProviders = if (BuildConfig.FLAVOR == "god") {
+            // The store variant compiles without src/god, so the god class
+            // is resolved reflectively — on a god build it is always there.
+            try {
+                Class.forName("dev.fa1.app.mobile.GodProviders")
+                    .getConstructor(Context::class.java)
+                    .newInstance(this) as MobileProviders
+            } catch (_: ReflectiveOperationException) {
+                MobileProviders(this)
+            }
+        } else {
+            MobileProviders(this)
+        }
+        MobileChannels.register(messenger, mobileProviders)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        // Projection consent (god flavor) routes through the channel layer.
+        if (MobileChannels.handleActivityResult(requestCode, resultCode, data)) return
+        super.onActivityResult(requestCode, resultCode, data)
     }
 
     // ── fah/keychain ─────────────────────────────────────────────────────

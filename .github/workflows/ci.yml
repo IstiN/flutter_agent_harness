@@ -1016,16 +1016,22 @@ jobs:
 
       # The google-services Gradle plugin (applied unconditionally in
       # android/app/build.gradle.kts) refuses to run without this file.
-      # #299 commits a placeholder (negated in .gitignore) and the release
-      # path overwrites it from GOOGLE_SERVICES_JSON_BASE64; PR legs have no
-      # such secret, so seed the same structurally-valid placeholder with
-      # the #299 release identity (dev.fa1.app) — debug APKs never talk to
-      # Firebase with it; the goal here is compile truth (#280).
+      # #622 commits a placeholder carrying BOTH flavor clients
+      # (dev.fa1.app + dev.fa1.app.god); keep it whenever present — the
+      # debug-APK smoke pins the store flavor (`--flavor store`, only the
+      # dev.fa1.app client is needed); god compile truth is covered by the
+      # flavor matrix release job. Only when the file is missing
+      # (old forks/history) seed the structurally-valid dev.fa1.app
+      # placeholder — debug APKs never talk to Firebase with it; the goal
+      # here is compile truth (#280).
       - name: Create placeholder google-services.json
         working-directory: flutter_app
         run: |
           set -euo pipefail
-          cat > android/app/google-services.json << 'EOF'
+          if [ -f android/app/google-services.json ]; then
+            echo "committed google-services.json present (dev.fa1.app + dev.fa1.app.god) — keeping it"
+          else
+            cat > android/app/google-services.json << 'EOF'
           {
             "project_info": {
               "project_number": "000000000000",
@@ -1056,13 +1062,14 @@ jobs:
             "configuration_version": "1"
           }
           EOF
+          fi
 
       - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
 
       - run: cd flutter_app && flutter pub get
 
       - name: flutter build apk (debug)
-        run: cd flutter_app && flutter build apk --debug
+        run: cd flutter_app && flutter build apk --debug --flavor store
 
   build-ios:
     name: Build iOS (debug, unsigned)

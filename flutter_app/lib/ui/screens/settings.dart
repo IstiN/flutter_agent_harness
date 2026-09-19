@@ -57,6 +57,8 @@ import 'package:fa/transformers_js/transformers_js_service.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/ui/screens/dap_settings_page.dart';
 import 'package:fa/ui/screens/media_slot_picker_page.dart';
+import 'package:fa/services/mobile/mobile_services.dart';
+import 'package:fa/ui/screens/mobile_consent_screen.dart';
 import 'package:fa/ui/screens/models_settings_page.dart';
 import 'package:fa/ui/screens/onboarding_screen.dart';
 import 'package:fa/services/project_mount_env.dart' show SessionCwd;
@@ -2161,6 +2163,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 24),
                 GemmaCacheSection(engine: widget.gemmaEngine),
               ],
+              // Device automation (issue #622): the consent surface exists
+              // only in the god flavor on Android — store builds never
+              // show it.
+              if (mobilePlatformSupported && mobileFlavor == 'god') ...[
+                const MobileAutomationSection(),
+                const SizedBox(height: 24),
+                const Divider(),
+                const SizedBox(height: 16),
+              ],
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),
@@ -2493,6 +2504,48 @@ class OnboardingReplaySection extends StatelessWidget {
             Expanded(
               child: Text(
                 context.l10n.settingsShowOnboarding,
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+            ),
+            Icon(Icons.chevron_right, size: 20, color: colors.dim),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The settings "Device automation" row (issue #622): opens the consent
+/// screen gating the Android accessibility service. The build gates the
+/// entry (god flavor + Android); store builds never show the surface.
+class MobileAutomationSection extends StatelessWidget {
+  const MobileAutomationSection({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () {
+        unawaited(
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (context) => MobileConsentScreen(
+                control: defaultMobileControl,
+              ),
+            ),
+          ),
+        );
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            Icon(Icons.settings_accessibility, size: 20, color: colors.dim),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                context.l10n.settingsMobileAutomation,
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
             ),

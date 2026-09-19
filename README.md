@@ -253,6 +253,22 @@ fa also runs as an Outlook taskpane (approval-gated mail tools on top
 of the same agent core) — install guide and troubleshooting:
 [docs/outlook-addin.md](docs/outlook-addin.md).
 
+## Mobile automation (Android)
+
+Two Android flavors: **store** (Play; `mobile.launch` + `mobile.logs`) and
+**god** (sideload only, same release key, distinct applicationId; adds
+hierarchy / tap / swipe / text / screenshot + opt-in `mobile.shell` over
+Shizuku), gated by the issue #19 availability floor:
+
+| Tier | mobile.* surface |
+|---|---|
+| store | `mobile.launch`, `mobile.logs` |
+| god | + `mobile.hierarchy`, `mobile.tap`, `mobile.swipe`, `mobile.text`, `mobile.screenshot` |
+| god+shizuku | + `mobile.shell` (opt-in bridge; `Shizuku not running` when absent) |
+
+Details — tiers, sideload, Shizuku, consent, security, E2E checklist:
+[docs/android-automation.md](docs/android-automation.md) · [god build](https://fa1.dev/android).
+
 ## Development
 
 ```bash
