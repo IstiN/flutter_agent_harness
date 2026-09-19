@@ -1842,6 +1842,18 @@ Future<void> _runApp(List<String> args) async {
       ? await resolveHidShiftPressed(isMacOS: Platform.isMacOS)
       : null;
 
+  // The harness mode (issue #679): `--pi` wins over `FA_PI_MODE` wins
+  // over the config `agent.mode` (AC3). `saved` is already loaded here;
+  // the wiring consumes the resolved value via `config.agentMode`.
+  // `parseCliArgs` already validated the full list (a flag-like
+  // positional is a usage error), so `contains` is an exact read of the
+  // boolean flag; the parsed [CliArgs] lives in `main`'s scope.
+  final harnessMode = resolveHarnessMode(
+    flag: args.contains('--pi'),
+    env: Platform.environment,
+    configMode: saved.agentMode,
+  );
+
   cli = AgentCli(
     useColor: headlessPrompt == null && stdout.supportsAnsiEscapes,
     environment: Platform.environment,
@@ -1954,6 +1966,7 @@ Future<void> _runApp(List<String> args) async {
           approvalModeFromLabel(saved.approvalMode) ?? ApprovalMode.yolo,
       alwaysAllowTools: saved.allowedTools.toSet(),
       runtimeTools: runtimeTools,
+      agentMode: harnessMode,
       compactionEngine: compactionEngine,
       compactionJudgeBudgetSeconds: compactionJudgeBudgetSeconds,
       wireDump: wireDump,

@@ -45,6 +45,7 @@ import '../spill/spill.dart';
 import '../tools/availability.dart';
 import '../task/subagent_heartbeat.dart';
 import '../ttsr/ttsr.dart';
+import '../cli/pi_mode.dart';
 
 /// Sections the PROJECT file participates in (each wins over the user file).
 const _projectSections = {'memory', 'cube', 'tools', 'compaction'};
@@ -1184,31 +1185,42 @@ void validateProviderTimeoutsSection(Object? node) {
 }
 
 /// The strict `agent:` section validator, shared by `check`, `set` and
-/// the settings flow (issue #394). Mirrors the private boot parser in
-/// `cli_config.dart` (pinned by test): the section takes exactly
-/// `contextWindowCap`, a positive integer at or above the compaction
-/// reserve — a cap below 16384 must never soften that floor.
+/// the settings flow (issues #394/#679). Mirrors the private boot parser
+/// in `cli_config.dart` (pinned by test): the section takes exactly
+/// `contextWindowCap` — a positive integer at or above the compaction
+/// reserve, a cap below 16384 must never soften that floor — and `mode`
+/// — the harness preset `default` | `pi`.
 void validateAgentSection(Object? node) {
   if (node is! YamlMap) {
     throw ConfigException('must be a map, got: $node');
   }
   for (final entry in node.entries) {
     final key = '${entry.key}';
-    if (key != 'contextWindowCap') {
-      throw ConfigException('unknown "agent" key: $key');
-    }
-    final value = entry.value;
-    if (value is! int || value <= 0) {
-      throw ConfigException(
-        '"agent.contextWindowCap" must be a positive integer (tokens)',
-      );
-    }
-    if (value < 16384) {
-      throw ConfigException(
-        '"agent.contextWindowCap" must be at least 16384 — below the '
-        'compaction reserve the compaction trigger threshold would go '
-        'negative',
-      );
+    switch (key) {
+      case 'contextWindowCap':
+        final value = entry.value;
+        if (value is! int || value <= 0) {
+          throw ConfigException(
+            '"agent.contextWindowCap" must be a positive integer (tokens)',
+          );
+        }
+        if (value < 16384) {
+          throw ConfigException(
+            '"agent.contextWindowCap" must be at least 16384 — below the '
+            'compaction reserve the compaction trigger threshold would go '
+            'negative',
+          );
+        }
+      case 'mode':
+        final value = entry.value;
+        if (value is! String || !harnessModeValues.contains(value)) {
+          throw ConfigException(
+            'unknown "agent.mode" value: $value '
+            '(expected ${(harnessModeValues.toList()..sort()).join('|')})',
+          );
+        }
+      default:
+        throw ConfigException('unknown "agent" key: $key');
     }
   }
 }

@@ -104,6 +104,7 @@ final class CliArgs extends CliArgsResult {
     this.output,
     this.attachments = const [],
     this.waitForJobs = false,
+    this.piMode = false,
   }) : super._();
 
   /// `--model <id>`.
@@ -241,6 +242,11 @@ final class CliArgs extends CliArgsResult {
   /// 30). Without it a headless run prints the detach summary and exits.
   final bool waitForJobs;
 
+  /// `--pi`: the pi benchmark mode (issue #679) — 4-tool surface (read,
+  /// write, edit, bash), bare prompt. Wins over `FA_PI_MODE` and the
+  /// config `agent.mode` (AC3: flag > env > config).
+  final bool piMode;
+
   /// Whether this invocation runs a single headless prompt instead of the
   /// interactive REPL.
   bool get isHeadless =>
@@ -274,6 +280,10 @@ CliArgsResult parseCliArgs(List<String> args) {
     if (arg == '--version') return CliArgsVersion(output: _prescanOutput(args));
     if (arg == '--wait-for-jobs') {
       values.waitForJobs = true;
+      continue;
+    }
+    if (arg == '--pi') {
+      values.piMode = true;
       continue;
     }
     final flag = _valueFlags[arg];
@@ -976,6 +986,7 @@ final class _CliArgValues {
   String? transcribeBaseUrl;
   final plugins = <String>[];
   bool waitForJobs = false;
+  bool piMode = false;
   final promptTemplateDirs = <String>[];
   String? mode;
   String? cwd;
@@ -1045,6 +1056,7 @@ final class _CliArgValues {
       positionals: positionals,
       output: output,
       waitForJobs: waitForJobs,
+      piMode: piMode,
       attachments: List.unmodifiable(attachments),
     );
   }

@@ -97,6 +97,10 @@ OPTIONS
                                run (csv: web_search=off,mcp:fs=on); wins
                                over the FA_TOOLS env var and the config
                                tools: section
+  --pi                          pi benchmark mode (issue #679): 4-tool
+                               surface (read/write/edit/bash), bare
+                               prompt; wins over FA_PI_MODE=1 and the
+                               config agent.mode setting
   --log-file <path>            Tee every printed line (assistant text,
                                tool trace, diagnostics) to <path> as it
                                is produced — a live, `tail -f`-able
