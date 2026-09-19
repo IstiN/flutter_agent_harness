@@ -3920,4 +3920,10 @@
 - feat(#687): machine-author passthrough via vars.MACHINE_AUTHOR + repin ceddca5 (#699)
 - fix(#687): repin factory 40dd6f0 (dup-guard) + pr-aware stub run-name (#698)
 
+## 0.1.429
+
+- chore: repin factory 5519dc7 (deterministic merge state + version floor) (#714)
+- chore: repin factory a0feb83 (REST shapes + budget-free localActions) (#711)
+- chore: repin factory 3cae1d2 (REST mergeable_state + direct silent token) (#708)
+
 ## Unreleased
