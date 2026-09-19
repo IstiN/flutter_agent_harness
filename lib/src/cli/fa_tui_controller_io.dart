@@ -17,9 +17,12 @@ extension FaTuiControllerIo on FaTuiController {
         FaTuiController._outputFlushInterval,
         _flushOutput,
       );
-    } else {
-      _flushOutput();
     }
+    // Pre-run: keep buffering — run()'s drain flushes once (issue #503:
+    // per-writeln OutputMsgs made the boot drain run one markdown+wrap
+    // sync per line — 5.7s for a 1913-line marathon resume, painted as a
+    // blank terminal). Ordering is preserved because _send flushes the
+    // buffer ahead of any non-output message.
   }
 
   void _flushOutput() {
