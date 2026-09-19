@@ -300,7 +300,88 @@ the branch again before merge AND fix the auto-save path filter.
 
 ---
 
-### Thread 15
+### Thread 15 — `input/gh-671/ticket.json`
+
+**ai-teammate** (2026-09-19):
+🚨 **BLOCKING (regressed a second time — now observed live): conflict markers are back at HEAD again**
+
+The rework job resolved these (valid JSON at `05a0a7b1`), but the next
+auto-save (`7139f8c8`, 10:17) re-committed the conflicted content **while
+this review was running** — HEAD moved twice mid-review and each auto-save
+re-broke the files. At the current HEAD:
+
+- `input/gh-671/ticket.json` — `<<<<<<< Updated upstream` at line 5, invalid
+  JSON again (parser-verified).
+- `input/gh-671/ticket.md` — marker at line 15.
+- `input/ticket.md` — marker block again.
+
+The thread-13 reply assumed "the resolution is committed from a
+conflict-free workspace so it sticks for this branch" — it does not: every
+job workspace is re-provisioned with the unmerged merge (this review
+workspace still shows `UU input/ticket.md`, `AA ticket.json|ticket.md`), and
+the auto-save `git add -A`s it. This loop has now gone: broken → fixed →
+broken → fixed → **broken**, four transitions in three hours.
+
+No in-PR edit can fix this durably. Required:
+1. Factory auto-save must refuse conflicted state before staging, e.g.
+   `test -z "$(git ls-files -u)" || exit 1`, and never commit files whose
+   staged content contains conflict-marker lines.
+2. Only then: one final cleanup push resolving/dropping these files as the
+   last action before merge.
+
+---
+
+### Thread 16 — `input/gh-671/pr_diff.txt`
+
+**ai-teammate** (2026-09-19):
+🟡 **IMPORTANT (regressed again, same auto-save): runner artifacts re-committed**
+
+The rework job dropped `input/gh-671/pr_diff.txt`, `pr_info.md`,
+`pr_discussions*` and the review outputs at `05a0a7b1`; auto-save
+`7139f8c8` re-committed `pr_diff.txt` (+281), `pr_info.md` (+44) and
+`pr_discussions*` minutes later. The ping-pong is confirmed live: the
+factory re-provisions job inputs into every workspace and the auto-save
+commits whatever it finds.
+
+As the thread-14 reply notes, the durable fix (auto-save path filter /
+`input/`+`outputs/` exclusion on job branches) is factory-pipeline
+configuration and cannot land in this PR. Until it ships, the practical
+exit for THIS PR is: drop these files in the final pre-merge push and merge
+immediately, before the next auto-save fires.
+
+---
+
+### Thread 17 — `test/integration/theme_readability_pty_test.dart`
+
+**ai-teammate** (2026-09-19):
+🟡 **IMPORTANT: still flaky after both de-flake rounds — and the new evidence says no mock delay can fix it**
+
+This round the suite failed 1 of 2 local runs (dracula again — the first
+test in the group): `TimeoutException after 0:00:30: Timed out waiting for
+"48;2;40;56;46" in output`. The stronger fix (400 ms before EVERY scripted
+response) did not cure it.
+
+The failure dump shows something more fundamental than frame coalescing:
+in the failing run the ENTIRE first-tool-call row pair is missing from the
+transcript — no running `• bash · echo THEME-SCENARIO-OK` row and no settled
+`✓` row, while tool 1's rows render fine. A row that is never written to
+the transcript can never be painted, regardless of how long the TUI idles —
+so further delay tuning is a dead end.
+
+This now looks like a row-loss path in the CLI output pipeline under rapid
+back-to-back tool calls (localhost mock + instant `echo` compress two tool
+rounds into a window real LLM traffic never produces). If real, it is a
+(latent, low-impact) product bug, not just test flakiness.
+
+Recommended next step: root-cause where the tool-0 start/end rows go under
+compressed timing (the `io.writeln(tuiToolRow(...))` path through the TUI
+output buffer), tracked as its own issue; for CI stability in the meantime,
+either mark this scenario `retry:` or drop the strict "success tint
+painted" precondition and keep the SGR state-machine contract.
+
+---
+
+### Thread 18
 
 **ai-teammate** (2026-09-19):
 ## Automated Code Review — COMMENT
@@ -323,7 +404,7 @@ the branch again before merge AND fix the auto-save path filter.
 
 ---
 
-### Thread 16
+### Thread 19
 
 **ai-teammate** (2026-09-19):
 ## Automated Code Review — BLOCK
@@ -343,7 +424,7 @@ the branch again before merge AND fix the auto-save path filter.
 
 ---
 
-### Thread 17
+### Thread 20
 
 **ai-teammate** (2026-09-19):
 ## Automated Code Review — BLOCK
@@ -362,6 +443,27 @@ the branch again before merge AND fix the auto-save path filter.
 **Next Steps**:
 1. Resolve the conflicts in the source workspace, commit, and make the auto-save refuse conflicted/unmerged paths.
 2. Drop `input/gh-671/pr_diff.txt`, `pr_info.md`, `pr_discussions*`, `merge_conflicts.md`, `outputs/pr_review*`, `outputs/review_replies/` from the branch.
+
+---
+
+### Thread 21
+
+**ai-teammate** (2026-09-19):
+## Automated Code Review — BLOCK
+
+**Summary**: The gh-671 code remains fixed and verified (96 unit tests pass; all round 1–3 code findings resolved), but the branch-level blocker regressed *again during this review*: auto-save `7139f8c8` re-committed conflict markers (ticket.json is invalid JSON at HEAD) and the runner artifacts minutes after the rework job cleaned them. Additionally, the PTY suite flaked again (1/2 runs) despite the strengthened de-flake — the failure mode (the entire first tool-call row pair missing from the transcript) indicates a row-loss path no mock delay can fix.
+
+**Key Issues**:
+- 🚨 Conflict markers / invalid JSON re-committed at HEAD (4th transition of the ping-pong; observed live mid-review). Not fixable by another in-PR edit — the factory auto-save must refuse conflicted state, then one final cleanup push right before merge.
+- 🟡 Runner artifacts (`pr_diff.txt`, `pr_info.md`, `pr_discussions*`) re-committed by the same auto-save.
+- 🟡 PTY suite still flaky: 30s timeout on the dracula success tint; the tool-0 rows never reach the transcript in failing runs — needs a root-cause (own issue) or a `retry:`/softer precondition.
+
+**Resolved & verified this round**: conflict resolution was correct at `05a0a7b1` (ticket.json parsed), artifact cleanup worked until the next auto-save, the every-response delay improved diagnostics (clear timeout + raw tail instead of a bare `contains` miss), and all earlier code fixes (both-tint label floor, truncated-row accent wrap + regression test, lint baseline, doc fix, tearDown) are in place.
+
+**Next Steps**:
+1. Factory-side: auto-save guard (`git ls-files -u` non-empty → refuse) + path filter for `input/`/`outputs/`.
+2. Final cleanup push (resolve conflicts, drop artifacts) immediately before merge.
+3. Root-cause the dropped tool-0 rows under compressed timing; add `retry:` to the PTY scenario until then.
 
 ---
 
@@ -652,6 +754,84 @@ the branch again before merge AND fix the auto-save path filter.
 
 **ai-teammate** (2026-09-19):
 
+🚨 **BLOCKING (regressed a second time — now observed live): conflict markers are back at HEAD again**
+
+The rework job resolved these (valid JSON at `05a0a7b1`), but the next
+auto-save (`7139f8c8`, 10:17) re-committed the conflicted content **while
+this review was running** — HEAD moved twice mid-review and each auto-save
+re-broke the files. At the current HEAD:
+
+- `input/gh-671/ticket.json` — `<<<<<<< Updated upstream` at line 5, invalid
+  JSON again (parser-verified).
+- `input/gh-671/ticket.md` — marker at line 15.
+- `input/ticket.md` — marker block again.
+
+The thread-13 reply assumed "the resolution is committed from a
+conflict-free workspace so it sticks for this branch" — it does not: every
+job workspace is re-provisioned with the unmerged merge (this review
+workspace still shows `UU input/ticket.md`, `AA ticket.json|ticket.md`), and
+the auto-save `git add -A`s it. This loop has now gone: broken → fixed →
+broken → fixed → **broken**, four transitions in three hours.
+
+No in-PR edit can fix this durably. Required:
+1. Factory auto-save must refuse conflicted state before staging, e.g.
+   `test -z "$(git ls-files -u)" || exit 1`, and never commit files whose
+   staged content contains conflict-marker lines.
+2. Only then: one final cleanup push resolving/dropping these files as the
+   last action before merge.
+
+---
+
+**ai-teammate** (2026-09-19):
+
+🟡 **IMPORTANT (regressed again, same auto-save): runner artifacts re-committed**
+
+The rework job dropped `input/gh-671/pr_diff.txt`, `pr_info.md`,
+`pr_discussions*` and the review outputs at `05a0a7b1`; auto-save
+`7139f8c8` re-committed `pr_diff.txt` (+281), `pr_info.md` (+44) and
+`pr_discussions*` minutes later. The ping-pong is confirmed live: the
+factory re-provisions job inputs into every workspace and the auto-save
+commits whatever it finds.
+
+As the thread-14 reply notes, the durable fix (auto-save path filter /
+`input/`+`outputs/` exclusion on job branches) is factory-pipeline
+configuration and cannot land in this PR. Until it ships, the practical
+exit for THIS PR is: drop these files in the final pre-merge push and merge
+immediately, before the next auto-save fires.
+
+---
+
+**ai-teammate** (2026-09-19):
+
+🟡 **IMPORTANT: still flaky after both de-flake rounds — and the new evidence says no mock delay can fix it**
+
+This round the suite failed 1 of 2 local runs (dracula again — the first
+test in the group): `TimeoutException after 0:00:30: Timed out waiting for
+"48;2;40;56;46" in output`. The stronger fix (400 ms before EVERY scripted
+response) did not cure it.
+
+The failure dump shows something more fundamental than frame coalescing:
+in the failing run the ENTIRE first-tool-call row pair is missing from the
+transcript — no running `• bash · echo THEME-SCENARIO-OK` row and no settled
+`✓` row, while tool 1's rows render fine. A row that is never written to
+the transcript can never be painted, regardless of how long the TUI idles —
+so further delay tuning is a dead end.
+
+This now looks like a row-loss path in the CLI output pipeline under rapid
+back-to-back tool calls (localhost mock + instant `echo` compress two tool
+rounds into a window real LLM traffic never produces). If real, it is a
+(latent, low-impact) product bug, not just test flakiness.
+
+Recommended next step: root-cause where the tool-0 start/end rows go under
+compressed timing (the `io.writeln(tuiToolRow(...))` path through the TUI
+output buffer), tracked as its own issue; for CI stability in the meantime,
+either mark this scenario `retry:` or drop the strict "success tint
+painted" precondition and keep the SGR state-machine contract.
+
+---
+
+**ai-teammate** (2026-09-19):
+
 ## Automated Code Review — COMMENT
 
 **Summary**: Solid, well-tested fix for gh-671 — explicit floor-checked foregrounds over tints, the `✓ current` picker marker, 7-theme golden coverage, and a real PTY suite. Verified locally: 95 unit tests pass, `dart format` clean. One important concern: the new PTY test flaked once in three local runs (a painted done-row frame can be coalesced away when the mock answers instantly) — worth de-flaking before it haunts CI.
@@ -709,6 +889,26 @@ the branch again before merge AND fix the auto-save path filter.
 **Next Steps**:
 1. Resolve the conflicts in the source workspace, commit, and make the auto-save refuse conflicted/unmerged paths.
 2. Drop `input/gh-671/pr_diff.txt`, `pr_info.md`, `pr_discussions*`, `merge_conflicts.md`, `outputs/pr_review*`, `outputs/review_replies/` from the branch.
+
+---
+
+**ai-teammate** (2026-09-19):
+
+## Automated Code Review — BLOCK
+
+**Summary**: The gh-671 code remains fixed and verified (96 unit tests pass; all round 1–3 code findings resolved), but the branch-level blocker regressed *again during this review*: auto-save `7139f8c8` re-committed conflict markers (ticket.json is invalid JSON at HEAD) and the runner artifacts minutes after the rework job cleaned them. Additionally, the PTY suite flaked again (1/2 runs) despite the strengthened de-flake — the failure mode (the entire first tool-call row pair missing from the transcript) indicates a row-loss path no mock delay can fix.
+
+**Key Issues**:
+- 🚨 Conflict markers / invalid JSON re-committed at HEAD (4th transition of the ping-pong; observed live mid-review). Not fixable by another in-PR edit — the factory auto-save must refuse conflicted state, then one final cleanup push right before merge.
+- 🟡 Runner artifacts (`pr_diff.txt`, `pr_info.md`, `pr_discussions*`) re-committed by the same auto-save.
+- 🟡 PTY suite still flaky: 30s timeout on the dracula success tint; the tool-0 rows never reach the transcript in failing runs — needs a root-cause (own issue) or a `retry:`/softer precondition.
+
+**Resolved & verified this round**: conflict resolution was correct at `05a0a7b1` (ticket.json parsed), artifact cleanup worked until the next auto-save, the every-response delay improved diagnostics (clear timeout + raw tail instead of a bare `contains` miss), and all earlier code fixes (both-tint label floor, truncated-row accent wrap + regression test, lint baseline, doc fix, tearDown) are in place.
+
+**Next Steps**:
+1. Factory-side: auto-save guard (`git ls-files -u` non-empty → refuse) + path filter for `input/`/`outputs/`.
+2. Final cleanup push (resolve conflicts, drop artifacts) immediately before merge.
+3. Root-cause the dropped tool-0 rows under compressed timing; add `retry:` to the PTY scenario until then.
 
 ---
 
