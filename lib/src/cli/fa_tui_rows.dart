@@ -101,9 +101,12 @@ extension _TuiRowRenderers on FaTuiModel {
       return '$prefix${item.label}${_dim(desc)}';
     }
     // Truncated rows render stripped: fitting the styled string cut
-    // mid-escape, leaking SGR into the rest of the line. `plain` carries
-    // no `\x1b[0m`, so `_rearmSelection` would be a no-op here.
-    return '$prefix${_fitWidth(plain, termWidth - 2)}';
+    // mid-escape, leaking SGR into the rest of the line. The fitted text is
+    // plain SGR-free, so wrap it in the selection accent first (gh-671) —
+    // a long selected label keeps the selection cue too.
+    final fitted = _fitWidth(plain, termWidth - 2);
+    if (selected) return '$prefix${_rearmSelection(fitted)}';
+    return '$prefix$fitted';
   }
 
   /// A fuzzy-highlighted label embeds per-match `accent2Soft …\x1b[0m`
@@ -113,10 +116,18 @@ extension _TuiRowRenderers on FaTuiModel {
   /// accent after each embedded reset so the selected row keeps one base
   /// role: matched cells accent2Soft, everything else the selection
   /// accent.
+  ///
+  /// A label with NO embedded styling (generic pickers — themes, sessions,
+  /// settings) is wrapped in the accent directly: the old path returned it
+  /// untouched, so the selected row was indicated by the one-cell `▸`
+  /// glyph alone and the label itself rendered in the terminal default —
+  /// invisible in low-contrast palettes (gh-671 "/theme can't see what is
+  /// selected").
   String _rearmSelection(String label) {
     final theme = FaThemeController.instance;
     final open = theme.sgrPrefix(theme.current.accent);
-    if (open.isEmpty || !label.contains('\x1b[0m')) return label;
+    if (open.isEmpty) return label;
+    if (!label.contains('\x1b[0m')) return '$open$label\x1b[0m';
     return label.replaceAll('\x1b[0m', '\x1b[0m$open');
   }
 
@@ -186,8 +197,8 @@ extension _TuiRowRenderers on FaTuiModel {
     final label = runStalled
         ? 'Stalled…'
         : (prompt != null
-            ? 'Waiting for input…'
-            : (busyPhase.isEmpty ? 'Working…' : busyPhase));
+              ? 'Waiting for input…'
+              : (busyPhase.isEmpty ? 'Working…' : busyPhase));
     final quietSeconds = busyLastEventMs < 0
         ? 0
         : ((DateTime.now().millisecondsSinceEpoch - busyLastEventMs) / 1000)

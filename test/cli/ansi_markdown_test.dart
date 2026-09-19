@@ -121,8 +121,9 @@ void main() {
       final stored = '\x1b[2m${'─' * 200}\x1b[0m';
       controller.switchTo('pi');
       final out = AnsiMarkdown(width: 80).formatLine(stored);
-      // pi's muted (dim + #666666), not the bare default faint.
-      expect(out, contains('\x1b[38;2;102;102;102m'));
+      // pi's muted (dim + #989898 — gh-671 readability lightening of
+      // #666666), not the bare default faint.
+      expect(out, contains('\x1b[38;2;152;152;152m'));
     });
 
     group('wrapAnsiLine', () {
