@@ -11,6 +11,15 @@ const String _cubeUsage =
     'usage: /cube [list | use <name-or-path> | off | reload | templates | '
     'install <id> | cache status | cache clear]';
 
+/// The web-egress network gate (issue #682) handed to the web tools;
+/// reads the LIVE cube spec per call. Null only on hosts that build the
+/// tool set without one (`/cube` status then reports `n/a`).
+///
+/// Reads the LIVE spec per call, so `/cube use` / `/cube off` are honored
+/// by the next web tool call; null spec (no cube) is allow-all.
+CubeNetworkGate _initWebNetworkGate(SandboxedExecutionEnv cubeEnv) =>
+    CubeNetworkGate(() => cubeEnv.activeSpec);
+
 /// The `/cube` command family on [AgentCli].
 extension CubeCommands on AgentCli {
   /// Dispatches `/cube` and its subcommands.
@@ -50,6 +59,7 @@ extension CubeCommands on AgentCli {
     final spec = _cubeEnv.activeSpec;
     if (spec == null) {
       io.writeln('cube: disabled (full host access)');
+      io.writeln('  network gate: $_networkGateStatus');
       return;
     }
     final description = spec.description;
@@ -71,8 +81,18 @@ extension CubeCommands on AgentCli {
     io.writeln(
       '  network allow: ${hosts.isEmpty ? '(none — all network denied)' : hosts.join(', ')}',
     );
+    io.writeln('  network gate: $_networkGateStatus');
     io.writeln('  cache: ${_cubeCacheLine(spec)}');
   }
+
+  /// The `network gate:` status value (issue #682): `on` under an active
+  /// cube, `off` in passthrough (allow-all), `n/a` when this host runs
+  /// the web tools without a gate.
+  String get _networkGateStatus => _webNetworkGate == null
+      ? 'n/a'
+      : _cubeEnv.activeSpec == null
+      ? 'off'
+      : 'on';
 
   /// `/cube list` — the cube manifests available for this project plus the
   /// built-in security-level presets.

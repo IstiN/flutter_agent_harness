@@ -76,6 +76,10 @@ abstract interface class WebSearchProvider {
   /// it is keyless (DuckDuckGo).
   String? get apiKeyName;
 
+  /// The endpoint this provider sends searches to — the host the network
+  /// gate (issue #682) checks before any request leaves.
+  Uri get endpoint;
+
   /// Runs one search. Throws [WebSearchException] on failure so the chain
   /// advances to the next provider.
   Future<WebSearchResponse> search(WebSearchRequest request);
@@ -160,6 +164,9 @@ final class DuckDuckGoSearchProvider implements WebSearchProvider {
   String? get apiKeyName {
     return null;
   }
+
+  @override
+  Uri get endpoint => Uri.parse(duckDuckGoHtmlUrl);
 
   @override
   Future<WebSearchResponse> search(WebSearchRequest request) async {
@@ -387,6 +394,9 @@ final class BraveSearchProvider implements WebSearchProvider {
   }
 
   @override
+  Uri get endpoint => Uri.parse(braveSearchUrl);
+
+  @override
   Future<WebSearchResponse> search(WebSearchRequest request) async {
     final apiKey = request.secrets[apiKeyName];
     if (apiKey == null || apiKey.isEmpty) {
@@ -472,6 +482,9 @@ final class TavilySearchProvider implements WebSearchProvider {
   String? get apiKeyName {
     return 'TAVILY_API_KEY';
   }
+
+  @override
+  Uri get endpoint => Uri.parse(tavilySearchUrl);
 
   /// Builds the Tavily request body (omp's `buildRequestBody`, reduced: no
   /// recency/topic mapping — `topic` stays at the default general scope).
