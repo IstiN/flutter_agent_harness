@@ -3879,4 +3879,10 @@
   ships to Play. Tier table, sideload + Shizuku steps, consent notes and
   the manual E2E checklist: docs/android-automation.md.
 
+## 0.1.423
+
+- fix(release): AAB legs pin the store flavor (#665)
+- Nightly red 2/2: 35418633939 — crap4dart pin, cli-visual stable pair, hub_overlay settle (#663)
+- ci(nightly): fix four deterministic nightly-red failures (#662)
+
 ## Unreleased
