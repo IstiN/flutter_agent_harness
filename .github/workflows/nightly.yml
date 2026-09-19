@@ -255,7 +255,7 @@ jobs:
             cmd: flutter build ios --release --no-codesign
           - target: android
             runner: ubuntu-latest
-            cmd: flutter build apk --release
+            cmd: flutter build apk --flavor store --release
           - target: web
             runner: ubuntu-latest
             cmd: flutter build web --release
@@ -404,7 +404,13 @@ jobs:
     if: always() && github.event_name == 'schedule' && !cancelled()
     runs-on: ubuntu-latest
     permissions:
+      # issues: write — file/comment/close the deduped nightly-red issue.
+      # actions: read — the filing leg lists this run's jobs via `gh api
+      # repos/.../actions/runs/$RUN_ID/jobs`; a job-level permissions block
+      # drops every unlisted scope to none, so without this the call 403s
+      # ("Resource not accessible by integration") and no issue is filed.
       issues: write
+      actions: read
     steps:
       - name: Close the nightly-red issue on a green run
         if: success()

@@ -110,6 +110,13 @@ void main() {
         'session', (tester) async {
       final harness = await _pumpLauncher(tester);
       await tester.enterText(find.byType(TextField).last, 'make me a todo app');
+      // On macOS the empty composer's one-action slot holds the mic
+      // (asrPlatformSupported = Platform.isMacOS || isIOS); the send button
+      // only enters the tree on the text-change rebuild and its 180ms
+      // scale+fade swap. On linux the mic is unavailable so the send button
+      // is statically present — this settle is what keeps the tap
+      // deterministic on the macOS leg.
+      await tester.pumpAndSettle();
       // Enter no longer sends (it inserts a newline, #463) — the send
       // button is the explicit path.
       await tester.tap(find.byIcon(Icons.arrow_upward));
