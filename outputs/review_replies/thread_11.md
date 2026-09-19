@@ -1,1 +1,0 @@
-**Fixed.** The `loadUserThemes` guard in `lib/src/cli/tui_theme.dart` uses the braced form; the introduced `curly_braces_in_flow_control_structures` info is gone. `dart analyze` on the touched files reports only the 2 pre-existing `implementation_imports` infos — exact parity with `main`.

@@ -1,7 +1,0 @@
-**Fixed (again, and root-caused for good this round).** Threads 1–5 and 8–12 report the same five findings; all five landed in the previous rework round and were independently verified by the round-2 review ("✅ PTY de-flake … ✅ `toolTitle` 3:1 floor … ✅ truncated selected rows … ✅ analyzer info gone … ✅ stale doc rewritten"). Summary:
-
-- **Flaky PTY assertion** — `_ScriptedMockServer` in `test/integration/theme_readability_pty_test.dart` delays every scripted chat response by 400 ms, and both tint assertions are `waitForText` polls. This round's post-merge run exposed that the round-2 delay started at `n >= 1`, leaving the *first* (success) tool call with a zero idle window — one run lost the success tint exactly as this thread describes. The delay now applies to **every** response (`n >= 0`), closing the settle→next-call race for all three scenarios; dracula re-verified green repeatedly after the change.
-- **3:1 label floor** — enforced on both `toolSuccessBg` and `toolErrorBg` per palette (`test/cli/tui_theme_test.dart`).
-- **Truncated selected rows** — `lib/src/cli/fa_tui_rows.dart` wraps the fitted label: `if (selected) return '$prefix${_rearmSelection(fitted)}'`; RED→GREEN regression test in `test/cli/fa_tui_fuzzy_roles_test.dart`.
-- **Analyzer info** — braced guard in `lib/src/cli/tui_theme.dart`; `dart analyze` back to the 2 pre-existing `implementation_imports` infos.
-- **Stale doc** — `kDefaultTuiTheme` no longer promises byte-identity.

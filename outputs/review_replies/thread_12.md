@@ -1,1 +1,0 @@
-**Fixed.** `kDefaultTuiTheme`'s doc comment in `lib/src/cli/tui_theme.dart` now says the quiet part: *"Since gh-671 dim detail text carries an explicit `toolOutput` foreground (the old byte-identical-to-pre-theming invariant is gone)…"*. The regenerated `tui_theme_default.ans` golden matches the new rendering.
