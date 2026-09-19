@@ -98,7 +98,7 @@ jobs:
 
       - name: CRAP ratchet (threshold pinned in crap4dart.yaml)
         run: |
-          dart pub global activate crap4dart 0.2.1
+          dart pub global activate crap4dart ">=0.9.5"
           dart pub global run crap4dart analyze
 
       - name: Duplication guard (lib/ < 1%)
@@ -180,6 +180,12 @@ jobs:
       - run: touch flutter_app/.env
       - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
       - run: cd flutter_app && flutter pub get
+      # The harness spawns `dart bin/fah.dart` FROM THE REPO ROOT; without
+      # a root package config that resolves package:flutter_agent_harness
+      # to the pub-cache copy (an old published build) and the CLI dies on
+      # compile errors before the first frame. flutter_app's pub get only
+      # writes flutter_app/.dart_tool — the root needs its own.
+      - run: dart pub get
       - name: flutter test test/cli_visual --tags integration
         run: cd flutter_app && flutter test test/cli_visual --tags integration
       - uses: actions/upload-artifact@v4
