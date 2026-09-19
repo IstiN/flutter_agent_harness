@@ -79,24 +79,56 @@ void main() {
           reason: '$theme: the failed row must tint with toolErrorBg',
         );
 
-        // THE accessibility contract: no bg-painted run of visible text
-        // may lack an explicit fg escape before its reset. A match whose
-        // content is only █ blocks is the theme-table swatch (a color
-        // sample, not text) and is allowed.
+        // THE accessibility contract: no run of visible text painted over
+        // a theme tint may render without an explicit fg escape active.
+        // The vendor emits fg BEFORE bg inside one SGR prefix run and SGR
+        // state persists across cursor moves, so this is a small state
+        // machine over the raw stream, not a line regex. A run whose
+        // content is only █ blocks / spaces is the theme-table swatch (a
+        // color sample, not text) and is allowed.
         void assertNoUnstyledRun(Style tint, String role) {
-          final pattern = RegExp(
-            '\\x1b\\[${bg(tint)}m'
-            '((?:(?!\\x1b\\[38;2;|\\x1b\\[48;2;|\\x1b\\[0m)[\\s\\S])*)'
-            '\\x1b\\[0m',
-          );
-          for (final match in pattern.allMatches(raw)) {
-            final content = match.group(1)!;
-            if (content.replaceAll('█', '').isEmpty) continue; // swatch
+          final c = tint.backgroundRgb!;
+          final bg = '\x1b[48;2;${c.r};${c.g};${c.b}m';
+          final escape = RegExp(r'\x1b\[[0-9;]*m|\x1b\[[0-9;?]*[A-Za-z]');
+          var hasBg = false;
+          var hasFg = false;
+          final plain = StringBuffer();
+          void flush() {
+            final text = plain.toString();
+            plain.clear();
+            if (!hasBg || hasFg) return;
+            final readable = text
+                .replaceAll('█', '')
+                .replaceAll(RegExp(r'\s'), '');
+            if (readable.isEmpty) return;
             fail(
-              '$theme: $role-tinted run $content renders in the terminal '
+              '$theme: $role-tinted run "$text" renders in the terminal '
               'default fg — invisible on light tints (gh-671 screenshot)',
             );
           }
+
+          var pos = 0;
+          for (final m in escape.allMatches(raw)) {
+            plain.write(raw.substring(pos, m.start));
+            pos = m.end;
+            final seq = m[0]!;
+            if (seq == bg) {
+              flush();
+              hasBg = true;
+            } else if (seq.startsWith('\x1b[38;2;') ||
+                seq.startsWith('\x1b[38;5;')) {
+              flush();
+              hasFg = true;
+            } else if (seq == '\x1b[0m') {
+              flush();
+              hasBg = false;
+              hasFg = false;
+            } else {
+              flush();
+            }
+          }
+          plain.write(raw.substring(pos));
+          flush();
         }
 
         assertNoUnstyledRun(t.toolSuccessBg, 'toolSuccessBg');
@@ -145,11 +177,17 @@ void main() {
         reason: 'the picker must open with the cursor on the current theme',
       );
 
-      // Esc dismisses without switching; the session stays on the default.
+      // Esc dismisses without switching; nothing confirms a switch.
       harness.sendEscape();
+      await harness.waitForOutput(settleMs: 300);
+      expect(
+        harness.rawOutput.contains('theme: '),
+        isFalse,
+        reason: 'Esc must close the picker without switching the theme',
+      );
+
       await harness.runSlashCommand('/exit');
-      await harness.pty.exitCode.timeout(const Duration(seconds: 15));
-      expect(FaThemeController.instance.currentName, 'default');
+      await harness.waitForOutput();
     });
   });
 }

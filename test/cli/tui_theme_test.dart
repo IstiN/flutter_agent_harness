@@ -577,7 +577,7 @@ void main() {
       // invisible on the light userMessageBg band (light palettes).
       final stored = tuiUserMessageLine(' fix the flaky login flow ');
       final md = TranscriptMarkdown(width: 80);
-      final repainted = md.formatLine(stored);
+      final repainted = md.sync([stored]).single;
       expect(repainted, contains(tuiUserMessageBgSgr()));
       expect(
         repainted,
@@ -588,12 +588,12 @@ void main() {
       );
       // The text survives stripping, padded to the width.
       expect(
-        repainted.replaceAll(sgr, ''),
+        repainted.replaceAll(RegExp(r'\x1b\[[0-9;]*m'), ''),
         ' fix the flaky login flow '.padRight(80),
       );
       // A mid-session theme switch repaints with the NEW palette (E1).
       FaThemeController.instance.switchTo('dracula');
-      final repainted2 = TranscriptMarkdown(width: 80).formatLine(stored);
+      final repainted2 = TranscriptMarkdown(width: 80).sync([stored]).single;
       expect(repainted2, contains(tuiUserMessageBgSgr()));
       expect(repainted2, contains(tuiUserMessageTextSgr()));
     });
