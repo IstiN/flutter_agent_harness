@@ -3845,4 +3845,11 @@
 - gh-623 [BUG] After success authorization codemie auth request still presented in the session message (#646)
 - feat: resume-timing caller attribution — full opens log the calling frames (names who bypassed the windowed path) (#649)
 
+## 0.1.421
+
+- fix(machine): drop accidental factory-agents gitlink; ignore the runtime clone (#655)
+- fix(647): messaging delivery SLO <=2s — warm wake, universal yield, steering/Ctrl+S AC1-AC6 (#661)
+- perf(503): boundary walk reads single-pass blocks instead of capped chunks — readBefore's doubling window re-decoded its whole buffer per pass (a 396 MB tail-after-compaction walked 10.3s; the linear block walk does it in 3.0s, 3.4x, byte-identical branch semantics); readBlockBefore reads one strip per page with per-page doubling bounded at 64MB/4096 records (#660)
+- fix(653): stale auto-compacted marker on the busy row after the fold finishes (#658)
+
 ## Unreleased
