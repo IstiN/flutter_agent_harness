@@ -33,11 +33,11 @@ jobs:
     # lifecycle: test once per state, silent updates, pre-merge validation).
     # Flip in lockstep with ai-teammate.yml — guarded by
     # test/machine_kit/factory_stub_ref_test.dart.
-    uses: IstiN/dmtools-agents/.github/workflows/factory-sm.yml@4b5b1bef64c77d6ac2ffe5bf1af5f6cb1e00c3b9
+    uses: IstiN/dmtools-agents/.github/workflows/factory-sm.yml@3cae1d23661d6142d58bcfa9399e72e65f6a3b8d
     with:
       # The literal uses-ref: the factory requires it (it cannot derive its
       # own ref — github.workflow_ref in a called workflow is the CALLER's).
-      factory_ref: 4b5b1bef64c77d6ac2ffe5bf1af5f6cb1e00c3b9
+      factory_ref: 3cae1d23661d6142d58bcfa9399e72e65f6a3b8d
       # Manual ticks default to dry; cron ticks run live.
       dryRun: ${{ github.event.inputs.dryRun || 'false' }}
       # #687: one source of truth for the machine login (repo variable).
