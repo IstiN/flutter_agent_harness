@@ -2586,6 +2586,11 @@ extension SettingsFlow on AgentCli {
         description: _contextCapStatusLabel(),
       ),
       MenuItem(
+        key: 'load-mode',
+        label: 'Load mode',
+        description: _loadModeStatusLabel(),
+      ),
+      MenuItem(
         key: 'images',
         label: 'Images',
         description: _imagesStatusLabel(),
@@ -2644,6 +2649,7 @@ extension SettingsFlow on AgentCli {
     'providers-queue': () async => _providersSlash(''),
     'redact': startRedactionFlow,
     'context-cap': startContextCapFlow,
+    'load-mode': startLoadModeFlow,
     'memory': startMemoryStoresFlow,
     'images': startImagesFlow,
     'power': startPowerFlow,
@@ -2665,6 +2671,7 @@ extension SettingsFlow on AgentCli {
     io.writeln('ttsr: ${_ttsrStatusLabel()}');
     io.writeln('redact: ${_redactionStatusLabel()}');
     io.writeln('ctx cap: ${_contextCapStatusLabel()}');
+    io.writeln('load mode: ${_loadModeStatusLabel()}');
     io.writeln('queue: ${_providersQueueStatusLabel()}');
     io.writeln('images: ${_imagesStatusLabel()}');
     io.writeln('power: ${_powerStatusLabel()}');
@@ -2673,6 +2680,59 @@ extension SettingsFlow on AgentCli {
       'change via /provider, /model, /approval, /mode, /key, /mcp, /cube, '
       '/tools (agent models: the /settings hub)',
     );
+  }
+
+  /// The settings-hub status line for the load mode (issue #680): the
+  /// live preset's label.
+  String _loadModeStatusLabel() => _liveLoadMode.label;
+
+  /// The load-mode flow (issue #680): pick `default` / `pi` / `omp`, which
+  /// upserts `agent.mode` (validated by [validateAgentSection] — a bad
+  /// value writes NOTHING) and applies LIVE: the pick re-assigns the
+  /// CLI's live preset and rebuilds availability, so the next request's
+  /// schema+prompt reflect it without a restart. The live session keeps
+  /// its boot-time mode if the pick is cancelled.
+  Future<void> startLoadModeFlow() async {
+    for (;;) {
+      final picked = await _pickOption(
+        'Load mode (tool schema preset)',
+        _loadModeMenuOptions(),
+      );
+      if (picked == null || picked == 'done') return;
+      await _applyLoadModePick(picked);
+    }
+  }
+
+  /// The main menu of [startLoadModeFlow]. Pure builder.
+  List<FlowOption> _loadModeMenuOptions() => [
+    for (final mode in AgentLoadMode.values)
+      (mode.label, mode.label, mode == _liveLoadMode ? 'current' : ''),
+    ('done', 'Done', ''),
+  ];
+
+  /// Dispatches one [startLoadModeFlow] menu pick: a mode pick upserts
+  /// the yaml key (next boot picks it up) and, on a successful write,
+  /// live-applies. The persisted value `default` is legal and explicit —
+  /// ponytail: no yaml-key removal machinery for one leaf.
+  Future<void> _applyLoadModePick(String picked) async {
+    final mode = agentLoadModeFromLabel(picked);
+    if (mode == null) return;
+    final wrote = await _upsertConfigYaml(
+      const ['agent', 'mode'],
+      picked,
+      projectScope: false,
+      validate: validateAgentSection,
+    );
+    if (wrote) _applyLoadModeLive(mode);
+  }
+
+  /// Live-applies [mode] (issue #680): re-assigns the CLI's live preset
+  /// and rebuilds availability (which also syncs the `discover_tools`
+  /// meta tool and recomposes the prompt), so the next request's
+  /// schema reflects the switch without a restart.
+  void _applyLoadModeLive(AgentLoadMode mode) {
+    _liveLoadMode = mode;
+    AgentCliTools(this).rebuildToolAvailability();
   }
 }
 

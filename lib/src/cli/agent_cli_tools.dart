@@ -208,6 +208,11 @@ extension AgentCliTools on AgentCli {
     state.session = await _readSessionTools();
     final resolution = resolveToolAvailability(
       capabilities: toolCapabilities(),
+      // Load mode (issue #680): the active preset's essential ids pin the
+      // schema-visible base; everything else resolves discoverable.
+      essentialToolIds: _liveLoadMode == AgentLoadMode.defaultMode
+          ? null
+          : essentialToolIdsByLoadMode[_liveLoadMode],
       scopes: [
         for (final scope in toolScopeStack)
           (
@@ -225,6 +230,7 @@ extension AgentCliTools on AgentCli {
     );
     _warnUnknownToolIds(resolution.unknownIds);
     _swapReadSqliteVariant(resolution);
+    syncDiscoverToolsTool();
     _toolGate.apply(
       resolution,
       _toolRegistry,
@@ -232,6 +238,62 @@ extension AgentCliTools on AgentCli {
       rebuildPrompt: _applyPromptComposition,
     );
     refilterMcpTools(resolution);
+  }
+
+  /// Registers or unregisters the `discover_tools` meta tool (issue
+  /// #680) so the registry matches the LIVE load mode: present in
+  /// non-default modes (pi/omp), absent in the default mode (byte-identical
+  /// behavior). The tool carries no availability id, so it sits outside
+  /// the gate's groups and no resolution can hide it. Called from
+  /// [rebuildToolAvailability], so a mid-session mode switch syncs it.
+  void syncDiscoverToolsTool() {
+    if (_liveLoadMode == AgentLoadMode.defaultMode) {
+      _toolRegistry.unregister('discover_tools');
+      return;
+    }
+    if (_toolRegistry.contains('discover_tools')) return;
+    _toolRegistry.register(
+      discoverToolsTool(
+        discoverableDocs: _toolGate.discoverableDocs,
+        onMount: (names) => _mountDiscoverables(names),
+      ),
+    );
+  }
+
+  /// Mounts discoverable tools by NAME through the gate (the model sees
+  /// names; the gate mounts ids) and reports what mounted, what was
+  /// unknown, and what was already loaded.
+  String _mountDiscoverables(List<String> names) {
+    final before = _toolGate.discoverableToolNames.toSet();
+    final unknown = <String>[];
+    final ids = <String>{};
+    for (final name in names) {
+      final id = toolAvailabilityIdOf(name);
+      if (id == null || !_toolGate.discoverableToolNames.contains(name)) {
+        unknown.add(name);
+      } else {
+        ids.add(id);
+      }
+    }
+    final mountedIds = _toolGate.mount(
+      ids,
+      _toolRegistry,
+      _agent,
+      rebuildPrompt: _applyPromptComposition,
+    );
+    final mountedNames = before
+        .difference(_toolGate.discoverableToolNames.toSet())
+        .toList()
+      ..sort();
+    return [
+      if (mountedNames.isNotEmpty)
+        'Mounted (now in the schema): ${mountedNames.join(', ')}',
+      if (mountedIds.isEmpty && mountedNames.isEmpty)
+        'Nothing mounted — the requested tools were already loaded.',
+      if (unknown.isNotEmpty)
+        'Not discoverable tools: ${unknown.join(', ')} (see the listing '
+        'for valid names).',
+    ].join('\n');
   }
 
   /// Reads [path]; a broken file prints one warning and keeps [cached]
