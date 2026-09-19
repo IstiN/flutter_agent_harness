@@ -25,25 +25,25 @@ import 'package:test/test.dart';
 
 import 'chrome_driver.dart';
 
-/// The compiled embedded agent is a build artifact (gitignored).
-void _requireBuiltAgent() {
-  final agentJs = File('browser_ext/sw/agent.js');
-  if (!agentJs.existsSync()) {
-    fail(
-      'browser_ext/sw/agent.js not found — run scripts/build_browser_ext.sh '
-      'first (the embedded agent is a dart2js build artifact).',
-    );
-  }
-}
-
 HeadlessChrome? _chrome;
 
 /// Non-null once setUpAll succeeded; tests only run after that.
 HeadlessChrome get chrome => _chrome!;
 
 void main() {
+  if (!File('browser_ext/sw/agent.js').existsSync()) {
+    // skip, not fail (issue #675): a runner that never built the extension
+    // must not go red on a missing gitignored artifact.
+    test(
+      'browser_ext/sw/agent.js build artifact',
+      () {},
+      skip:
+          'missing — run scripts/build_browser_ext.sh first (the '
+          'embedded agent is a dart2js build artifact)',
+    );
+    return;
+  }
   setUpAll(() async {
-    _requireBuiltAgent();
     _chrome = await HeadlessChrome.launch();
   });
 
