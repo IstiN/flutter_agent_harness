@@ -3900,4 +3900,8 @@
 - fix(agent): survive starved hidden ranges on the auto-compact continuation (#677)
 - ci: pin ubuntu-24.04 in the gate + repin factory (f23ef09)
 
+## 0.1.426
+
+- fix(cli): hermetic resolveEffectiveCliArgs env + skip missing browser-ext artifact (#681)
+
 ## Unreleased
