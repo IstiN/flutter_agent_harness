@@ -241,7 +241,7 @@ void main() {
     expect(saved.customProviders.single.name, 'local-mock');
     expect(saved.customProviders.single.baseUrl, mockUrl);
     final parsed = parseCliArgs(['-p', 'hi']) as CliArgs;
-    final effective = resolveEffectiveCliArgs(parsed, saved);
+    final effective = resolveEffectiveCliArgs(parsed, saved, env: const {});
     expect(effective.provider, 'openai-completions');
     final model = buildCliDefaultModel(
       effective.provider,
