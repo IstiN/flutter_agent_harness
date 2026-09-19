@@ -85,4 +85,27 @@ void main() {
 
     expect(hiddenRecoverablesSummary(entries), isEmpty);
   });
+
+  test('AC-red: a hidden range whose targets partially slid out of a '
+      'windowed resident set must not crash the continuation', () {
+    // Issue #673: after a windowed marathon resume the resident set is
+    // the tail — a HiddenRangeRecord stays resident while its OLDEST
+    // covered records are evicted. `seqs.seqOf(id)` is then null for the
+    // evicted ids and the raw `!` crashed the whole continuation turn
+    // with "Null check operator used on a null value" right after the
+    // "[context overflowed — auto-compacted; continuing the turn]" line.
+    final entries = <SessionRecord>[
+      // Evicted: r1 was resident when h1 was written, slid out since.
+      hiddenRange('h1', ['r1', 'r2', 'r3']),
+      messageRecord('r2', UserMessage.text('kept one')),
+      messageRecord('r3', UserMessage.text('kept two')),
+    ];
+
+    final line = hiddenRecoverablesSummary(entries);
+
+    // The surviving span still renders (from the ids that remain), the
+    // missing one is skipped, and nothing throws.
+    expect(line, contains('compact_expand'));
+    expect(line, contains('user×2'));
+  });
 }

@@ -2586,10 +2586,22 @@ class AgentCli {
     io.writeln(
       tuiWarning('[context overflowed — auto-compacted; continuing the turn]'),
     );
-    await _runPrompt(
-      await _overWindowContinuationPrompt(),
-      isAutoContinue: true,
-    );
+    // Issue #673 AC4: ANY failure inside the continuation machinery (the
+    // recoverables scan over the resident set, the notice build, the
+    // resumed prompt's pre-flight) surfaces as a NAMED error and leaves
+    // the session resumable — never a bare "Null check operator used on a
+    // null value" line killing the turn.
+    try {
+      final prompt = await _overWindowContinuationPrompt();
+      await _runPrompt(prompt, isAutoContinue: true);
+    } on Object catch (error) {
+      _logDiagnostic(
+        'over-window continuation failed sid=$_logSid: $error',
+      );
+      io.writeln(
+        tuiError('error: compaction continuation failed: $error'),
+      );
+    }
     return true;
   }
 
