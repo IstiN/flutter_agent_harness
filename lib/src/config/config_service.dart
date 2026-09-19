@@ -41,6 +41,7 @@ import '../memory_config.dart';
 import '../power_config.dart';
 import '../model_roles/model_roles.dart';
 import '../redact/redaction_types.dart';
+import '../spill/spill.dart';
 import '../tools/availability.dart';
 import '../task/subagent_heartbeat.dart';
 import '../ttsr/ttsr.dart';
@@ -68,6 +69,7 @@ const configTopLevelKeys = <String>{
   'cube',
   'tools',
   'redact',
+  'spills',
   'compaction',
   'customProviders',
   'models',
@@ -1099,6 +1101,10 @@ final _sectionValidators = <String, void Function(dynamic value, String label)>{
   'cube': (value, _) => CubeSettings.fromYaml(value),
   'mcp': (value, _) => McpConfig.fromYaml(value),
   'redact': (value, _) => validateRedactSection(value),
+  // The spills section (issue #678) parses tolerantly by design —
+  // unknown keys and mistyped scalars become notes on the config, never
+  // schema errors — so the validator never throws.
+  'spills': (value, _) => SpillsConfig.fromYaml(value),
   'tools': (value, _) => ToolsConfig.fromYaml(value),
   'compaction': (value, label) =>
       CompactionEngine.fromSection(value, label: label),
