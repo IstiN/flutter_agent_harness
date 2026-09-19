@@ -238,6 +238,7 @@ part 'agent_cli_commands.dart';
 part 'agent_cli_ext.dart';
 part 'agent_cli_theme.dart';
 part 'agent_cli_composer.dart';
+part 'agent_cli_spill.dart';
 
 /// The CLI harness: agent + built-in tools + session persistence +
 /// compaction, driven by a [CliIO].
@@ -627,22 +628,7 @@ class AgentCli {
     if (config.redactionPipeline != null) {
       attachRedactionPipeline(_agent, config.redactionPipeline!);
     }
-    // Automatic tool-result spilling (issue #678): attached AFTER the
-    // redaction pipeline so the hook chain runs result → redact → size
-    // check → spill → preview. Null/inactive config = no attach,
-    // byte-identical legacy.
-    final spills = config.spills;
-    if (spills != null && spills.isActive) {
-      attachSpillHooks(
-        _agent,
-        env: _coreToolEnv,
-        sessionId: () => _session?.cachedId,
-        config: spills,
-      );
-      for (final note in spills.notes) {
-        io.writeln('[spills] $note');
-      }
-    }
+    attachSpillWiring();
     // Busy-row honesty: name the executing tool ('Running bash…') instead
     // of leaving a stale 'Compacting context…' label over long tool calls.
     attachToolPhaseLabels(_agent, (phase) => _pushBusyPhase(phase));
