@@ -723,13 +723,3 @@ void main() {
     expect(hooks.donePasses, hooks.passes.length);
   });
 }
-run();
-
-    expect(ok, isTrue);
-    expect(hooks.passes, isNotEmpty);
-    // Issue #287: hosts (CLI HEP compaction_end frame, Flutter sheet)
-    // key off onDone — a structured run must close the bracket exactly
-    // like the classic AutoCompactor.run() does.
-    expect(hooks.donePasses, hooks.passes.length);
-  });
-}

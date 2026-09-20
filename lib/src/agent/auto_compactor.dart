@@ -138,7 +138,7 @@ final class AutoCompactor {
     this.baseBackoff = const Duration(seconds: 1),
     this.force = false,
     this.attemptBudget = const Duration(seconds: 300),
-    this.totalBudget = const Duration(minutes: 4),
+    this.totalBudget = const Duration(minutes: 15),
   });
 
   /// The session to compact and to read the projected transcript from.
@@ -211,7 +211,11 @@ final class AutoCompactor {
   /// elapsed time is over the budget, remaining attempts are skipped and
   /// the run falls to the local trim. Bounds pathological combinations
   /// (maxPasses × retries × smol+main) that would otherwise keep the UI
-  /// on the compaction spinner for tens of minutes.
+  /// on the compaction spinner for tens of minutes. Defaults to
+  /// `attemptBudget × maxAttempts` (15 min for the 300s gh-740 M1
+  /// attempt budget) — the total must never be smaller than one attempt,
+  /// or a single full timeout would exhaust it and silently collapse the
+  /// retry ladder to a single attempt.
   final Duration totalBudget;
 
   /// When `true`, skip the [shouldCompact] gate and run the compactor
@@ -718,7 +722,7 @@ class AutoCompactorFactory {
     this.baseBackoff = const Duration(seconds: 1),
     this.force = false,
     this.attemptBudget = const Duration(seconds: 300),
-    this.totalBudget = const Duration(minutes: 4),
+    this.totalBudget = const Duration(minutes: 15),
     this.engine = CompactionEngine.structured,
   });
 
@@ -746,6 +750,9 @@ class AutoCompactorFactory {
   final Duration attemptBudget;
 
   /// Whole-run wall-clock budget, forwarded to the built [AutoCompactor].
+  /// Defaults to 15 min (`attemptBudget × maxAttempts`); see the
+  /// [AutoCompactor.totalBudget] doc for why it must stay in step with
+  /// the per-attempt budget.
   final Duration totalBudget;
 
   /// The live request-size estimate on the same basis the structured
