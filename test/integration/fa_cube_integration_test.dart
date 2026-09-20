@@ -62,8 +62,10 @@ allowedTools: []
       Iterable<String> mounts = const [],
       String? networkAllowHost,
       String? cachePaths,
+      String? backend,
     }) {
       final sections = <String>[
+        if (backend != null) '  backend: $backend',
         '  tools:',
         '    allow: [${allow.join(', ')}]',
         if (mounts.isNotEmpty)
@@ -301,6 +303,86 @@ spec:
 
       expect(result.stdout, contains('cube-config-ok'));
       expect(result.exitCode, 0);
+    });
+
+    test('kernel: nested rw mount survives a broader ro mount declared '
+        'later', () async {
+      // Issue #732, the exact uv break: sandbox-exec resolves a matching
+      // conflict by the LAST matching rule (not the most specific), so the
+      // emitter must sort broad→narrow — a child-first / parent-last
+      // declaration used to let the parent's deny-write kill the nested rw
+      // mount inside the wrapped shell.
+      final server = await MockLlmServer.start();
+      addTearDown(server.stop);
+      Directory('${workspace.path}/data/uv').createSync(recursive: true);
+      final cube = writeCube(
+        'nested-rw',
+        backend: 'kernel',
+        allow: ['echo', 'cat'],
+        mounts: [
+          // Child FIRST, broader ro parent LAST: the adversarial order.
+          'path: ${workspace.path}/data/uv, access: rw',
+          'path: ${workspace.path}, access: ro',
+        ],
+      );
+      server.enqueueToolCall(
+        'bash',
+        '{"command":"echo uv-probe-732 > ${workspace.path}/data/uv/probe.txt '
+            '&& cat ${workspace.path}/data/uv/probe.txt"}',
+      );
+      server.enqueueToolCall(
+        'bash',
+        '{"command":"echo nope > ${workspace.path}/sibling.txt"}',
+      );
+      server.enqueueText('done');
+
+      final result = await runCube(
+        server: server,
+        prompt: 'probe the mounts',
+        cube: cube,
+      );
+
+      expect(
+        result.exitCode,
+        0,
+        reason: 'stdout: ${result.stdout}\nstderr: ${result.stderr}',
+      );
+      // The nested write+read made it through the wrapped shell: on macOS
+      // the sorted profile's child allows land after the broader ro
+      // deny-write; policy/degraded hosts run the plain shell where the
+      // guard allows the rw child. One named gap: on Linux with usable
+      // userns, unshare re-binds the ro parent VFS-wide, so the child
+      // stays kernel-read-only there — a non-SBPL mechanism, out of scope
+      // for #732 (only the guard floor is asserted on such hosts).
+      final unshareUsable =
+          Platform.isLinux &&
+          Process.runSync('unshare', [
+                '--user',
+                '--map-root-user',
+                'true',
+              ]).exitCode ==
+              0;
+      if (unshareUsable) {
+        print(
+          'fa_cube integration: unshare userns usable — the nested-rw '
+          'kernel leg is macOS-scoped (#732); guard floor asserted only',
+        );
+      } else {
+        expect(
+          result.output,
+          contains('uv-probe-732'),
+          reason: 'nested rw mount must survive the later broader ro mount',
+        );
+      }
+      // The ro workspace still refuses sibling writes — the guard's
+      // redirect check denies before the kernel is ever reached, in every
+      // mode and on every host.
+      expect(
+        result.output,
+        contains(
+          "write to '${workspace.path}/sibling.txt' denied by cube 'nested-rw'",
+        ),
+      );
     });
   });
 }

@@ -255,3 +255,9 @@ crashed run.
   under `l1-core` kernel mode on macOS is denied (live-validated by
   `test/cube/backends/macos_sandbox_live_test.dart`, skipped where
   `sandbox-exec` is absent).
+- **SBPL rule ordering (#732) — landed:** the kernel applies the LAST
+  matching rule per operation class (not the most specific), so the macOS
+  profile emits mount rules broad→narrow regardless of yaml declaration
+  order, and `rw` mounts emit both read and write allows. A nested rw
+  mount survives a broader `ro` mount declared after it — the ro+rw
+  twin-mount workaround is obsolete.
