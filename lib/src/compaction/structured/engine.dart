@@ -110,7 +110,7 @@ final class StructuredCompactor {
     this.depthCap = 4,
     this.cancelToken,
     this.budgetSource,
-    this.attemptBudget = const Duration(seconds: 90),
+    this.attemptBudget = const Duration(seconds: 300),
     this.judgeTarget = 'role=default',
   });
 
