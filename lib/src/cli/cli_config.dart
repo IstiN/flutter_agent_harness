@@ -31,6 +31,7 @@ import '../ttsr/ttsr.dart';
 import '../tools/availability.dart';
 import 'custom_providers.dart';
 import '../task/subagent_heartbeat.dart';
+import 'links_config.dart';
 
 /// Parses the `providerTimeouts:` section: provider watchdog overrides
 /// (see [ProviderTimeoutsOverride]). Strict — a bad schema throws
@@ -212,6 +213,7 @@ final class CliConfig {
     this.powerSleepPrevention,
     this.powerHold,
     this.tuiTheme,
+    this.links = const LinksConfig(),
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
@@ -261,7 +263,9 @@ final class CliConfig {
           : RedactionConfig.fromYaml(map['redact']),
       // The spills section (issue #678); tolerant by design — unknown
       // keys and mistyped scalars become notes, never boot failures.
-      spills: map['spills'] == null ? null : SpillsConfig.fromYaml(map['spills']),
+      spills: map['spills'] == null
+          ? null
+          : SpillsConfig.fromYaml(map['spills']),
       // Saved custom providers; entry-level errors throw [ConfigException].
       // Entries named after a built-in catalog provider are dropped (issue
       // #221's ghost "openai"): they shadow `/provider <name>` routing and
@@ -328,6 +332,11 @@ final class CliConfig {
       fabric: map['fabric'] == null
           ? null
           : FabricConfig.fromYaml(map['fabric']),
+      // The links section (issue #691) is strict on shape, tolerant on
+      // unknown keys (notes, never boot failures — AC7).
+      links: map['links'] == null
+          ? const LinksConfig()
+          : LinksConfig.fromYaml(map['links']),
       // The skills section (third-party skills access consent + shell
       // execution toggle) is strict too.
       skillsAccess:
@@ -538,6 +547,11 @@ final class CliConfig {
   /// theme; an unknown name warns at boot and keeps the default.
   final String? tuiTheme;
 
+  /// The `links:` section (issue #691): the single source of truth for
+  /// product/store links — the app banners, the CLI (`fa config get
+  /// links.…`) and the site generator all resolve the same values.
+  final LinksConfig links;
+
   /// Returns a copy with [entries] as the custom-providers list; every
   /// other field carries over. [saveCliConfig] uses it for its
   /// merge-before-write union (issue #221) — keep this field list in sync
@@ -573,6 +587,7 @@ final class CliConfig {
       powerSleepPrevention: powerSleepPrevention,
       powerHold: powerHold,
       tuiTheme: tuiTheme,
+      links: links,
     );
   }
 
@@ -647,8 +662,17 @@ final class CliConfig {
       buffer.write(subagentsConfig.toYaml());
     }
     buffer.write(_jobsYaml());
+    buffer.write(_linksYaml());
     buffer.write(_powerYaml());
     return buffer.toString();
+  }
+
+  /// The `links:` section (issue #691), only when explicitly configured;
+  /// defaults are never written so the file stays minimal.
+  String _linksYaml() {
+    final linksConfig = links;
+    if (linksConfig.isDefault) return '';
+    return linksConfig.toYaml();
   }
 
   /// The `jobs:` boot-maintenance section (issue #478), only when
@@ -1122,6 +1146,10 @@ const _diskPreservedSections = {
   'images',
   'fabric',
   'mcp',
+  // The links section (issue #691) defaults are baked in, so the emitter
+  // omits a default-valued section — the raw block (future keys the
+  // typed renderer does not know yet) survives untouched.
+  'links',
 };
 
 /// Re-attaches the [_diskPreservedSections] blocks of [diskText] to

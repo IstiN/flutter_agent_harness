@@ -53,6 +53,11 @@ List<Object?> _skillYamlDocs(String skill) {
 /// Nested key paths the skill may document → the parser source that reads
 /// them.
 const _nestedKeySources = <String, String>{
+  'links.appstore': 'lib/src/cli/links_config.dart',
+  'links.testflight': 'lib/src/cli/links_config.dart',
+  'links.play': 'lib/src/cli/links_config.dart',
+  'links.site': 'lib/src/cli/links_config.dart',
+  'links.banner': 'lib/src/cli/links_config.dart',
   'providersQueue.[]': 'lib/src/model_roles/providers_queue.dart',
   'providersQueue.[].provider_type': 'lib/src/model_roles/providers_queue.dart',
   'providersQueue.[].provider_config':
