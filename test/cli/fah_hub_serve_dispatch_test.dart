@@ -4,7 +4,11 @@
 /// `runHubCommand` dispatcher. The SIGINT/SIGTERM wiring stays covered
 /// by `test/hub/fah_hub_serve_test.dart`.
 @TestOn('vm')
-@Tags(['io'])
+// Quarantined from the pre-commit gate / CI: these tests bind real
+// loopback ports and flake under the gate's parallel run on macOS
+// (gh-740 M2). `integration` is stacked on `io` — the gate excludes only
+// `integration` (ci_fast_gate.sh, ci.yml), so `io` alone would stay in.
+@Tags(['io', 'integration'])
 library;
 
 import 'dart:io';

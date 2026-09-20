@@ -299,7 +299,7 @@ final class CliConfig {
       // The compaction section (engine selector, issue #148; judge
       // budget knob, issue #541) is strict: a typo throws instead of
       // silently running the classic engine or restoring the default
-      // 90s budget.
+      // 300s budget.
       compactionEngine: CompactionEngine.fromSection(
         map['compaction'],
         label: '~/.fah/config.yaml',
