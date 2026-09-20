@@ -183,12 +183,8 @@ void main() {
       expect(section, isNot(contains('apt-get')));
     });
 
-    test('android and ios prompts carry the TLS/HTTP guidance (issue 337)',
-        () {
-      for (final platform in [
-        SandboxPlatform.android,
-        SandboxPlatform.ios,
-      ]) {
+    test('android and ios prompts carry the TLS/HTTP guidance (issue 337)', () {
+      for (final platform in [SandboxPlatform.android, SandboxPlatform.ios]) {
         final section = formatSandboxCommandSection(platform);
         expect(
           section,
@@ -219,6 +215,73 @@ void main() {
           isNot(contains('{{')),
           reason: '$platform',
         );
+      }
+    });
+  });
+
+  group('sandbox host profile (issue #692 B)', () {
+    test('the iOS profile pins the host reality: platform, WASI, no '
+        'sockets, tool classes', () {
+      final profile = formatSandboxHostProfile(SandboxPlatform.ios);
+      expect(profile, contains('Platform: iOS'));
+      expect(profile, contains('WASI'));
+      expect(profile, contains('no raw sockets'));
+      expect(profile, contains('no OS processes'));
+      // Available tool classes are named so the model stops desktop-style
+      // tool guessing.
+      expect(profile, contains('file tools'));
+      expect(profile, contains('bash'));
+      // Desktop-only surfaces are explicitly called out as absent.
+      expect(profile, contains('LSP'));
+      expect(profile, contains('MCP'));
+    });
+
+    test('mobile profiles carry the WASI failure error catalog', () {
+      for (final platform in [SandboxPlatform.ios, SandboxPlatform.android]) {
+        final profile = formatSandboxHostProfile(platform);
+        // rg's WASI "os error 44" maps to the grep tool.
+        expect(
+          profile,
+          contains('os error'),
+          reason: '$platform error catalog',
+        );
+        expect(profile, contains('grep'), reason: '$platform grep fallback');
+        // A failing/blocked python network call maps to curl / web_fetch.
+        expect(profile, contains('curl'), reason: '$platform curl fallback');
+        expect(
+          profile,
+          contains('web_fetch'),
+          reason: '$platform web_fetch fallback',
+        );
+        // Exit 127 guidance.
+        expect(
+          profile,
+          contains('command not found'),
+          reason: '$platform exit 127 guidance',
+        );
+      }
+    });
+
+    test('the web profile pins the browser reality', () {
+      final profile = formatSandboxHostProfile(SandboxPlatform.web);
+      expect(profile, contains('Platform: web (browser)'));
+      expect(profile, contains('in-memory'));
+    });
+
+    test('desktop has NO host profile — its prompt stays byte-identical '
+        '(issue #692 AC2)', () {
+      expect(formatSandboxHostProfile(SandboxPlatform.desktop), isEmpty);
+    });
+
+    test('the profile section stays small (≤ 1000 chars, issue #692 AC2)', () {
+      for (final platform in SandboxPlatform.values) {
+        final profile = formatSandboxHostProfile(platform);
+        expect(
+          profile.length,
+          lessThanOrEqualTo(1000),
+          reason: '$platform profile is ${profile.length} chars',
+        );
+        expect(profile, isNot(contains('{{')), reason: '$platform');
       }
     });
   });

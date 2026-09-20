@@ -87,6 +87,7 @@ import 'package:fa_office_agent/fa_office_agent.dart'
 import 'package:fa/webllm/webllm_types.dart';
 
 part 'agent_service_compaction.dart';
+part 'agent_service_prompt.dart';
 part 'agent_service_assistant.dart';
 part 'agent_service_events.dart';
 part 'agent_service_sessions.dart';
@@ -94,6 +95,7 @@ part 'agent_service_runs.dart';
 part 'agent_service_connection_guard.dart';
 part 'agent_service_persistence.dart';
 part 'agent_service_transcript.dart';
+part 'agent_service_inbox.dart';
 
 /// A UI-facing chat message.
 
@@ -234,7 +236,10 @@ class AgentService extends ChangeNotifier
   /// same AppLog surface as the cap-drop notice above.
   static void _wireTextOnlyImageDropNotice() {
     textOnlyImageDropNotice = (dropped) {
-      AppLog.i('images', '$dropped image(s) dropped — model declared text-only');
+      AppLog.i(
+        'images',
+        '$dropped image(s) dropped — model declared text-only',
+      );
     };
   }
 
@@ -927,58 +932,29 @@ class AgentService extends ChangeNotifier
     );
   }
 
-  /// The system prompt plus a secret-name hint (names only, never values).
-  ///
-  /// The `{{commands}}` placeholder is filled from the central sandbox
-  /// registry ([formatSandboxCommandSection]) for the current platform, so
-  /// the model sees exactly the shell commands that exist here.
-  static String _effectiveSystemPrompt(
-    AgentConfig config,
-    SecretRedactor? redactor,
-  ) {
-    final platform = _sandboxPlatform;
-    final commandSection = formatSandboxCommandSection(platform);
-    debugPrint(
-      '[Fa] system prompt platform=$platform, '
-      'commands section ${commandSection.length} chars',
-    );
-    final base = (config.systemPrompt ?? sandboxSystemPrompt).replaceAll(
-      '{{commands}}',
-      commandSection,
-    );
-    final names = redactor?.names ?? const <String>[];
-    final now = DateTime.now();
-    final offset = now.timeZoneOffset;
-    final sign = offset.isNegative ? '-' : '+';
-    final hh = offset.inHours.abs().toString().padLeft(2, '0');
-    final mm = (offset.inMinutes.abs() % 60).toString().padLeft(2, '0');
-    final dated =
-        '$base\n\nCurrent date and time: ${now.toIso8601String()} '
-        '(local device time, UTC$sign$hh:$mm). Use this for any date- or '
-        'time-relative reasoning ("today", "tomorrow", "this week").';
-    if (names.isEmpty) return dated;
-    return '$dated\n\nAvailable secret env vars: ${names.join(', ')} — '
-        'reference them as \$NAME in shell commands; never ask the user for '
-        'their values and never print them.';
-  }
-
-  /// The platform whose commands the system prompt advertises, decided with
-  /// the same signal [createPlatformEnv] uses to pick the [ExecutionEnv]:
-  /// web → android / ios → desktop.
-  static SandboxPlatform get _sandboxPlatform => isWebPlatform
-      ? SandboxPlatform.web
-      : isAndroidPlatform
-      ? SandboxPlatform.android
-      : isIosPlatform
-      ? SandboxPlatform.ios
-      : SandboxPlatform.desktop;
-
-  /// Exposes [_effectiveSystemPrompt] to tests.
+  /// The system prompt composition lives in the
+  /// `agent_service_prompt.dart` part (issue #692 B): `{{commands}}` is
+  /// filled from the central sandbox registry for the current platform,
+  /// sandboxed hosts additionally get the host-profile section, and the
+  /// desktop prompt stays byte-identical. Exposed to tests with an
+  /// optional platform override (host tests otherwise always resolve the
+  /// desktop profile).
   @visibleForTesting
   static String effectiveSystemPromptForTest(
     AgentConfig config,
-    SecretRedactor? redactor,
-  ) => _effectiveSystemPrompt(config, redactor);
+    SecretRedactor? redactor, [
+    SandboxPlatform? platformOverride,
+  ]) => _effectiveAgentSystemPrompt(config, redactor, platformOverride);
+
+  /// The composed registry's tool names, in registration order (issue
+  /// #692 AC1 tests): pins the per-host availability floor — surfaces the
+  /// sandbox cannot run (LSP, MCP servers, DAP, checkpoints, the sqlite
+  /// engine) must be ABSENT from the app registry, not merely error at
+  /// call time.
+  @visibleForTesting
+  List<String> get registeredToolNamesForTest => [
+    for (final tool in _agent.state.tools) tool.name,
+  ];
 
   /// Composes redaction hooks onto the agent so secret values never reach
   /// the model, the transcript, or the session files. Attached even for an
@@ -1514,7 +1490,7 @@ class AgentService extends ChangeNotifier
   /// The base system prompt plus the skills/context suffix (kept as one
   /// place so model/provider switches preserve the sections).
   String _composeSystemPrompt(AgentConfig config) {
-    final base = _effectiveSystemPrompt(config, _redactor);
+    final base = _effectiveAgentSystemPrompt(config, _redactor);
     final parts = [
       base,
       ?_projectMountNote(),
@@ -2291,102 +2267,6 @@ class AgentService extends ChangeNotifier
       'filled the window (huge tool outputs, whole files) — use targeted '
       'reads (offset/limit or :A-B selectors) instead.\n'
       '</system-notice>';
-
-  /// Re-addresses the instance's mailboxes and re-arms scheduled-message
-  /// delivery: records that came due under a previous session's mailbox
-  /// surface in the now-active one (start() is an idempotent re-arm +
-  /// drain) instead of stranding in a mailbox nobody drains.
-  void _setMailboxPrefix(String id) {
-    _subagentManager?.mailboxPrefix = id;
-    // Issue #426: child session headers carry `metadata.parent` from the
-    // manager's parentSessionId — pinned empty at construction because
-    // the session id does not exist yet. Assign it here (the moment the
-    // id materializes) so children of THIS session link back to it
-    // instead of being written with `parent: ""`.
-    _subagentManager?.parentSessionId = id;
-    // Lightweight test services (pre-constructed agent) have no fabric.
-    if (_subagentManager == null) return;
-    unawaited(_scheduledMessages.start());
-  }
-
-  void _startInboxWatcher() {
-    if (!enableInboxWatcher) return;
-    _inboxWatchTimer ??= Timer.periodic(const Duration(seconds: 3), (_) {
-      // Every other tick (≈6s): refresh the messaging-fabric heartbeat so
-      // agent_directory reports this instance as live between mails.
-      if (_fabricHeartbeatTick++ % 2 == 0) _touchFabricHeartbeat();
-      // Catch-up sweep: a record whose owning service died before its
-      // timer fired (app restart, sheet dispose) is delivered here into
-      // the live mailboxes so the reminder still surfaces (issue #59).
-      unawaited(_scheduledMessages.deliverDue());
-      unawaited(_wakeOnInboxMail());
-    });
-  }
-
-  /// Best-effort fabric heartbeat; a broken fabric never breaks the watch
-  /// loop.
-  void _touchFabricHeartbeat() {
-    final manager = _subagentManager;
-    final fabric = manager?.messaging;
-    if (fabric == null) return;
-    unawaited(fabric.touch(manager!.mailboxOf(manager.selfId)));
-  }
-
-  /// Called when a background shell job settles: the completion re-enters
-  /// the conversation as a system notice (sendText steers mid-run and
-  /// starts a fresh turn while idle — the same flow as inbox mail). A
-  /// foreground consumer that took the result inline skips the notice —
-  /// the registry settle bookkeeping itself always runs (issue #562).
-  void _onShellJobSettled(ShellJobEntry job) {
-    if (_disposed || !job.notifyOnSettle) return;
-    unawaited(
-      sendText(
-        '<system-notice>\n'
-        'Background shell job ${job.id} finished with exit code '
-        '${job.exitCode}.\n'
-        'Command: ${job.command}\n'
-        'Log: ${job.logPath}\n'
-        'Check the result with bash_job (action: output) or by reading the '
-        'log file, and act on it when the result was awaited.\n'
-        '</system-notice>',
-      ),
-    );
-  }
-
-  Future<void> _wakeOnInboxMail() async {
-    final manager = _subagentManager;
-    if (manager == null || _inboxWakeRunning || _disposed) return;
-    if (isStreaming || _agent.state.isStreaming) return;
-    if (_inboxWakeStreak >= _maxInboxWakeStreak) return;
-    final count = await manager.pendingInboxCount(manager.selfId);
-    if (count == 0) return;
-    _inboxWakeStreak++;
-    _inboxWakeRunning = true;
-    try {
-      await sendText(
-        '<system-notice>New inter-agent mail arrived ($count message(s)) — '
-        'the messages follow below as user messages. Read them and act: '
-        'reply with the agent_message tool to the sender address when a '
-        'response is expected, or just incorporate the information.'
-        '</system-notice>',
-      );
-    } finally {
-      _inboxWakeRunning = false;
-    }
-  }
-
-  /// The main agent's inbox as steering messages: each pending fabric
-  /// message becomes a user message attributed to its sender, so the
-  /// transcript reads like a chat between agents.
-  Future<List<Message>> _mainInboxMessages() async {
-    final manager = _subagentManager;
-    if (manager == null) return const [];
-    final queued = await manager.drainMessages(manager.selfId);
-    return [
-      for (final message in queued)
-        UserMessage.text('from ${message.fromId}: ${message.text.trim()}'),
-    ];
-  }
 
   /// Interactive dynamic messages of this session (issue #102): the host
   /// machinery behind the `dynamic_message` tool. UI reads it for the

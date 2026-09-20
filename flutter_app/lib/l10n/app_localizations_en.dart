@@ -1944,6 +1944,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get dynamicTileError => 'Widget error';
 
   @override
+  String get dynamicTileOverflow =>
+      'This widget is wider than the chat viewport — content on the right is clipped. The agent has been asked to rebuild it to fit.';
+
+  @override
   String get dynamicTileRetry => 'Retry';
 
   @override

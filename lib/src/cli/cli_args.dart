@@ -102,6 +102,7 @@ final class CliArgs extends CliArgsResult {
     this.sessionList,
     this.positionals = const [],
     this.output,
+    this.outputFormat,
     this.attachments = const [],
     this.waitForJobs = false,
   }) : super._();
@@ -230,6 +231,12 @@ final class CliArgs extends CliArgsResult {
   /// `--output <mode>` (issue #155): 'events' (HEP v1 JSONL on stdout) or
   /// 'events=full' (full tool arguments). 'json' only rides `--version`.
   final String? output;
+
+  /// `--output-format <format>` (issue #695): `text` (default) or
+  /// `stream-json` — NDJSON agent events on stdout for headless runs (pi
+  /// `--mode json` / claude-code stream-json parity). `--mode json` is an
+  /// exact alias. Null = text (the flag was absent).
+  final String? outputFormat;
 
   /// `--attach <path>` (repeatable, issue #155): files attached to the
   /// first user message of a headless run as image content blocks.
@@ -874,6 +881,7 @@ const _valueFlags = <String, _ValueFlag>{
   '--compaction-engine': ('--compaction-engine', _setCompactionEngine),
   '--log-file': ('--log-file', _setLogFile),
   '--output': ('--output', _setOutput),
+  '--output-format': ('--output-format', _setOutputFormat),
   '--attach': ('--attach', _addAttachment),
 };
 
@@ -881,6 +889,17 @@ void _setOutput(_CliArgValues v, String value) {
   _validateOutputMode(value);
   v.output = value;
 }
+
+void _setOutputFormat(_CliArgValues v, String value) {
+  if (!_outputFormats.contains(value)) {
+    throw CliArgsException(
+      'unknown --output-format: $value (expected text or stream-json)',
+    );
+  }
+  v.outputFormat = value;
+}
+
+const _outputFormats = {'text', 'stream-json'};
 
 void _addAttachment(_CliArgValues v, String value) => v.attachments.add(value);
 
@@ -931,7 +950,17 @@ void _setTranscribeBaseUrl(_CliArgValues v, String value) =>
 void _addPlugin(_CliArgValues v, String value) => v.plugins.add(value);
 void _addPromptTemplateDir(_CliArgValues v, String value) =>
     v.promptTemplateDirs.add(value);
-void _setMode(_CliArgValues v, String value) => v.mode = value;
+void _setMode(_CliArgValues v, String value) {
+  // `--mode json` (issue #695): the pi-parity alias for
+  // `--output-format stream-json` — it selects the output format, never
+  // the agent mode, so the saved mode still applies.
+  if (value == 'json') {
+    v.outputFormat = 'stream-json';
+    return;
+  }
+  v.mode = value;
+}
+
 void _setCwd(_CliArgValues v, String value) => v.cwd = value;
 void _setSessionRoot(_CliArgValues v, String value) => v.sessionRoot = value;
 void _setSession(_CliArgValues v, String value) => v.session = value;
@@ -990,6 +1019,7 @@ final class _CliArgValues {
   String? promptFile;
   String? logFile;
   String? output;
+  String? outputFormat;
   final attachments = <String>[];
   final positionals = <String>[];
 
@@ -1044,6 +1074,7 @@ final class _CliArgValues {
       prompt: prompt,
       positionals: positionals,
       output: output,
+      outputFormat: outputFormat,
       waitForJobs: waitForJobs,
       attachments: List.unmodifiable(attachments),
     );
@@ -1052,7 +1083,8 @@ final class _CliArgValues {
   /// Backend agent mode flag validation (issue #155), split out of
   /// [finish] to keep its complexity under the repo's CRAP gate:
   /// `--output json` only pairs with `--version`; `--attach` needs a
-  /// prompt to attach to.
+  /// prompt to attach to. Stream-json validation (issue #695): the
+  /// stream needs a headless run, and stdout cannot have two owners.
   void _validateBackendModeFlags() {
     if (output == 'json') {
       throw const CliArgsException(
@@ -1067,6 +1099,20 @@ final class _CliArgValues {
         '--attach applies to headless runs (-p/--prompt or a positional '
         'prompt)',
       );
+    }
+    if (outputFormat == 'stream-json') {
+      if (!hasPrompt) {
+        throw const CliArgsException(
+          '--output-format stream-json (or --mode json) applies to headless '
+          'runs: pass -p/--prompt, --prompt-file or a positional prompt',
+        );
+      }
+      if (output != null) {
+        throw const CliArgsException(
+          'cannot combine --output with --output-format stream-json: '
+          'stdout can carry only one structured stream',
+        );
+      }
     }
   }
 }
