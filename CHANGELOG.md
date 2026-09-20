@@ -3945,4 +3945,8 @@
 - ci: repin factory workflows to dmtools-agents@364a303c — prStatus state-case fix (#730)
 - repin: factory 358eb3e — develop-done source fix (#459) (#728)
 
+## 0.1.434
+
+- ci: repin factory workflows to dmtools-agents@4ca4840 — threads-resolved re-review (#733)
+
 ## Unreleased
