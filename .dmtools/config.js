@@ -5,7 +5,7 @@
 module.exports = {
   // #687: whose login is "the machine" — see dmtools-agents
   // js/common/machineAuthor.js (jobParams override wins over this).
-  machineAuthor: 'vabhzw17eg2qu4m9-bit',
+  machineAuthor: 'ai-teammate',
   sm: {
     runners: {
       bug: '.dmtools/runners/fa-bug-dev.json',
