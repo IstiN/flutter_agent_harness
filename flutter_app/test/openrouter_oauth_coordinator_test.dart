@@ -118,6 +118,103 @@ void main() {
       skip: !Platform.isMacOS,
     );
 
+    group('capture with an injected desktop decision (issue #702)', () {
+      // The physical-platform check reads the real build host, so these
+      // drive the Windows/Linux localhost-server flow through the
+      // injectable predicate instead — on any OS.
+      final uri = Uri.parse(
+        'https://openrouter.ai/auth?code_challenge=abc&state=st',
+      );
+
+      test(
+        'the desktop flow rewrites callback_url to the local server',
+        () async {
+          Uri? launchedUrl;
+          final future = OpenRouterOAuthCoordinator.instance.capture(
+            uri,
+            usesLocalServerCapture: () => true,
+            launchUrl: (url, {required mode}) async {
+              launchedUrl = url;
+              return true;
+            },
+          );
+
+          while (OpenRouterOAuthCoordinator.instance.currentCallbackUrl ==
+              null) {
+            await Future<void>.delayed(const Duration(milliseconds: 10));
+          }
+          final callbackUrl =
+              OpenRouterOAuthCoordinator.instance.currentCallbackUrl!;
+
+          // The browser sees the server URL as callback_url; every other
+          // query parameter survives the rewrite.
+          expect(launchedUrl!.queryParameters['callback_url'], callbackUrl);
+          expect(launchedUrl!.queryParameters['code_challenge'], 'abc');
+          expect(launchedUrl!.queryParameters['state'], 'st');
+
+          final client = HttpClient();
+          try {
+            final request = await client.get(
+              '127.0.0.1',
+              Uri.parse(callbackUrl).port,
+              '/?code=desktop-code',
+            );
+            final response = await request.close();
+            expect(response.statusCode, 200);
+          } finally {
+            client.close();
+          }
+
+          expect(await future, 'desktop-code');
+          expect(
+            OpenRouterOAuthCoordinator.instance.currentCallbackUrl,
+            isNull,
+          );
+        },
+      );
+
+      test(
+        'a failed browser launch completes with null (documented)',
+        () async {
+          final code = await OpenRouterOAuthCoordinator.instance.capture(
+            uri,
+            usesLocalServerCapture: () => true,
+            launchUrl: (_, {required mode}) async => false,
+          );
+
+          expect(code, isNull);
+          // No localhost server is left bound after the failed launch.
+          expect(
+            OpenRouterOAuthCoordinator.instance.currentCallbackUrl,
+            isNull,
+          );
+        },
+      );
+
+      test(
+        'a failed deep-link-platform launch completes with null too',
+        () async {
+          final code = await OpenRouterOAuthCoordinator.instance.capture(
+            uri,
+            usesLocalServerCapture: () => false,
+            launchUrl: (_, {required mode}) async => false,
+          );
+
+          expect(code, isNull);
+        },
+      );
+
+      test('the default decision follows the physical platform', () {
+        // On the test host this is a constant; the assertion pins it to
+        // the dart:io check so an accidental change of the default (e.g.
+        // to a target-platform lookup) cannot slip through unnoticed.
+        expect(
+          OpenRouterOAuthCoordinator.defaultUsesLocalServerCapture(),
+          Platform.isWindows || Platform.isLinux,
+        );
+      });
+    });
+
     test('platformCallbackUrl dispatches per platform', () {
       final coordinator = OpenRouterOAuthCoordinator(
         deepLinkScheme: 'yoclip',
