@@ -67,6 +67,33 @@ void main() {
       expect(loaded.customProviders.single.baseUrl, 'https://x.example.com/v1');
       expect(loaded.customProviders.single.modelId, 'm1');
     });
+    test(
+      'a programmatic save persists the links: section (no silent revert)',
+      () async {
+        // withCustomProviders must carry `links` — its old copy silently
+        // reverted to the default, so any save whose in-memory links
+        // differed from disk (a fresh file, a programmatic save) lost the
+        // section and only disk re-attachment masked it (issue #691).
+        const links = LinksConfig(
+          appstore: 'https://apps.apple.com/us/app/fa-ai-agent/id6793815163',
+          banner: false,
+        );
+        await saveCliConfig(
+          tmp.path,
+          CliConfig(links: links).withCustomProviders([
+            CustomProviderEntry(
+              name: 'p1',
+              apiType: 'openai',
+              baseUrl: 'https://x.example.com/v1',
+              modelId: 'm1',
+            ),
+          ]),
+        );
+        final loaded = loadCliConfig(tmp.path);
+        expect(loaded.links.appstore, links.appstore);
+        expect(loaded.links.banner, isFalse);
+      },
+    );
     test('approval settings default when absent from the file', () {
       final loaded = loadCliConfig(tmp.path);
       expect(loaded.approvalMode, 'yolo');

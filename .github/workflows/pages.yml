@@ -94,6 +94,12 @@ jobs:
         run: |
           mkdir -p build/pages/root
           cp -R site/. build/pages/root/
+          # The App Store frames page (issue #691): the images are the
+          # COMMITTED GOLDENS, copied at deploy — never hand-copied PNGs,
+          # so the site assets cannot drift from the store assets (the
+          # page↔golden set is pinned by test/site/appstore_assets_test.dart).
+          mkdir -p build/pages/root/app-store/img
+          cp flutter_app/test/goldens/store/en/ios/*.png build/pages/root/app-store/img/
           # Only copy the web app if it built successfully.
           if [ -d build/pages/app ]; then
             cp -R build/pages/app build/pages/root/app

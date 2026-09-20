@@ -47,6 +47,14 @@ export 'src/cli/cli_config.dart'
         loadProjectCubeSettings,
         resolveStartupCubeSource;
 export 'src/cli/pi_mode.dart';
+export 'src/cli/links_config.dart'
+    show LinksConfig, defaultAppStoreUrl, defaultSiteUrl, defaultTestFlightUrl;
+export 'src/cli/links_surface.dart'
+    show
+        StoreBannerView,
+        appStoreBlockEndMarker,
+        appStoreBlockStartMarker,
+        renderAppStoreBlockHtml;
 export 'src/cli/cli_help.dart';
 export 'src/cli/hep.dart';
 export 'src/cli/stream_json.dart';

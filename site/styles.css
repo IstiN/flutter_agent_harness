@@ -545,3 +545,59 @@ section {
   line-height: 1.6;
 }
 .faq-item p code { color: var(--text); }
+
+/* ── App Store block (issue #691) — generated section, see
+      scripts/regen_site_store_block.dart — and the store-frames page. ── */
+.store-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 26px 0 18px;
+}
+.btn-store {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.btn-store .sooner {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+  margin-right: 2px;
+}
+.btn-soon {
+  cursor: default;
+  opacity: 0.66;
+}
+.btn-soon:hover { border-color: var(--border-bright); transform: none; }
+.app-store { padding-top: 8px; }
+.store-frames {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 18px;
+  margin: 26px 0 8px;
+}
+.store-frames figure { margin: 0; }
+.store-frames img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: #000;
+}
+.store-frames figcaption {
+  margin-top: 8px;
+  color: var(--dim);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+.store-frames figcaption .frame-kicker {
+  display: block;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
