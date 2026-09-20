@@ -3464,6 +3464,12 @@ abstract class AppLocalizations {
   /// **'Widget error'**
   String get dynamicTileError;
 
+  /// Overflow strip (error colors) on the dynamic-message tile once the canvas detected a viewport overflow (issue #692 C)
+  ///
+  /// In en, this message translates to:
+  /// **'This widget is wider than the chat viewport — content on the right is clipped. The agent has been asked to rebuild it to fit.'**
+  String get dynamicTileOverflow;
+
   /// Retry button on the dynamic-message error tile (issue #102 AC9)
   ///
   /// In en, this message translates to:
