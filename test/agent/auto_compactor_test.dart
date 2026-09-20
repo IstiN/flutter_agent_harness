@@ -537,7 +537,7 @@ void main() {
       smolModel: null,
       hooks: _RecordingHooks(),
     );
-    expect(compactor.attemptBudget, const Duration(seconds: 90));
+    expect(compactor.attemptBudget, const Duration(seconds: 300));
     expect(compactor.totalBudget, const Duration(minutes: 4));
   });
 

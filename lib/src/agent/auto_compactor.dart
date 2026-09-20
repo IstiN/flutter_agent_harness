@@ -114,7 +114,7 @@ abstract class AutoCompactorHooks {
   /// label (`smol=provider/model` / `main=provider/model`), the 1-based
   /// attempt number and the per-attempt budget. Hosts surface this in the
   /// busy row so a slow/dead summarizer endpoint reads as a bounded wait
-  /// ("attempt 1, 90 s cap") instead of a silent hang. Default no-op.
+  /// ("attempt 1, 300 s cap") instead of a silent hang. Default no-op.
   void onAttemptStart(String label, int attempt, Duration budget) {}
 }
 
@@ -137,7 +137,7 @@ final class AutoCompactor {
     this.maxAttempts = 3,
     this.baseBackoff = const Duration(seconds: 1),
     this.force = false,
-    this.attemptBudget = const Duration(seconds: 90),
+    this.attemptBudget = const Duration(seconds: 300),
     this.totalBudget = const Duration(minutes: 4),
   });
 
@@ -199,10 +199,11 @@ final class AutoCompactor {
   /// hangs, but not dribbling keep-alives or a lost completion. When the
   /// budget fires the attempt fails with a [TimeoutException] (not
   /// transient — no retry spin), the pass falls to the next summarizer /
-  /// the local trim, and the turn goes on. 90 s: a summarizer writes a
-  /// bounded summary, and "Compacting context…" must never read as a
-  /// hang (the 0.1.240 default was 10 minutes per attempt — up to 20
-  /// minutes of silent spinner when both summarizers dribbled).
+  /// the local trim, and the turn goes on. 300 s (gh-740 M1, raised from
+  /// 90 s): a summarizer writes a bounded summary, and "Compacting
+  /// context…" must never read as a hang (the 0.1.240 default was 10
+  /// minutes per attempt — up to 20 minutes of silent spinner when both
+  /// summarizers dribbled).
   final Duration attemptBudget;
 
   /// Wall-clock budget for the WHOLE compactor run across all passes,
@@ -716,7 +717,7 @@ class AutoCompactorFactory {
     this.maxAttempts = 3,
     this.baseBackoff = const Duration(seconds: 1),
     this.force = false,
-    this.attemptBudget = const Duration(seconds: 90),
+    this.attemptBudget = const Duration(seconds: 300),
     this.totalBudget = const Duration(minutes: 4),
     this.engine = CompactionEngine.structured,
   });

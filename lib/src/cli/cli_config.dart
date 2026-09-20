@@ -469,7 +469,7 @@ final class CliConfig {
 
   /// Optional `compaction.judgeBudgetSeconds` (issue #541) — the
   /// per-call judge/summarizer budget in seconds. `null` keeps the
-  /// 90s default; the knob exists so owners of giant marathon sessions
+  /// 300s default; the knob exists so owners of giant marathon sessions
   /// can give a slow judge room without touching code.
   final int? compactionJudgeBudgetSeconds;
 
