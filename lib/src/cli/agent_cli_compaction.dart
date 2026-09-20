@@ -394,9 +394,11 @@ extension AgentCliCompactionRun on AgentCli {
           config.liveCompactionEngine ??
           config.compactionEngine ??
           CompactionEngine.structured,
-      // Judge budget knob (issue #541): null keeps the 90s default.
+      // Judge budget knob (issue #541): null keeps the 300s default
+      // (gh-740 M1: raised from 90s — a 262k-token checkpoint on a slow
+      // provider could not be summarized within 90s, bricking sessions).
       attemptBudget: Duration(
-        seconds: config.compactionJudgeBudgetSeconds ?? 90,
+        seconds: config.compactionJudgeBudgetSeconds ?? 300,
       ),
       memoryExtractionHook: (text) async {
         final tui = _tuiController;

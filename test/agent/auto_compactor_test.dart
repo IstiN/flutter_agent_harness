@@ -523,7 +523,7 @@ void main() {
     expect(hooks.passes.single.fallback, isNull);
   });
 
-  test('default budgets are tight — 90 s per attempt, 4 min total', () async {
+  test('default budgets are roomy — 300 s per attempt, 15 min total', () async {
     final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
     final state = AgentState(model: _model, messages: const []);
     final fake = _FakeSummarizer([SummarizationResult.success('S')]);
@@ -537,8 +537,15 @@ void main() {
       smolModel: null,
       hooks: _RecordingHooks(),
     );
-    expect(compactor.attemptBudget, const Duration(seconds: 90));
-    expect(compactor.totalBudget, const Duration(minutes: 4));
+    expect(compactor.attemptBudget, const Duration(seconds: 300));
+    // gh-740 rework: total must stay >= attemptBudget x maxAttempts so a
+    // single full 300s timeout cannot silently collapse the retry ladder
+    // (elapsed >= totalBudget skips every remaining attempt).
+    expect(compactor.totalBudget, const Duration(minutes: 15));
+    expect(
+      compactor.totalBudget,
+      greaterThanOrEqualTo(compactor.attemptBudget * compactor.maxAttempts),
+    );
   });
 
   test('an exhausted total budget skips further summarizer attempts and '
