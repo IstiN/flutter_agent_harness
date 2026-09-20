@@ -3969,4 +3969,11 @@
 - fix(692): iOS sandbox fitness — visible errors, sandbox-aware prompt, viewport-aware widgets, bounded app-state (#704)
 - gh-740 [GOAL] Compaction failure must never brick a session — deterministic trim fallback, decorrelated role chain, trap circuit-breaker (M1 spec: 90s→300s ready) (#743)
 
+## 0.1.438
+
+- feat(691): App Store launch surface — links: config, fa1.dev block + goldens page, Get banners, referral analytics (#700)
+- ci: repin factory to f03fbdf — label-echo dedup (no duplicate legs) (#749)
+- ci: repin factory to 78345a9 — rework policy + auto-approve external + guard AGENT_HANDLE (#748)
+- config(machine): machine author is ai-teammate (the App), not the SOURCE-token login (#747)
+
 ## Unreleased
