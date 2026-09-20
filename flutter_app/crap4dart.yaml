@@ -56,7 +56,18 @@ crap:
   # test/wasm_shell_pipeline_test.dart); the threshold follows the
   # measured new worst: 272.0 → 210.0 (`GemmaService.chatStream`, CC 14
   # at 0% cov — another lane's ladder card). Only down.
-  threshold: 210.0
+  # Descent #12 (issue #701): the 0%-coverage trio went down (_statBuiltin
+  # 156→12.1 @ 91% cov via test/wasm_shell_stat_test.dart, isFaCliInstalled
+  # 110→6 via the extracted faCliProbe seam + test/sessions_root_test.dart,
+  # _showAppMenu 90→9 @ 100% cov via test/apps/apps_panel_menu_test.dart);
+  # the threshold follows the measured new worst: 210.0 → 30.0 (the CC-5
+  # 0%-cov tier: routeExtHostMessage, codemie _createController, attached
+  # _AttachedRow.build, GemmaService.loadModel — the next ladder cards).
+  # Re-measured on the CI pipeline (app-crap-gate run 35479048998): local
+  # lcov is impossible on the agent cube (the flutter coverage collector
+  # canonicalizes source paths and lstat EPERMs through .worktrees). Only
+  # down.
+  threshold: 30.0
 
 coverage:
   # The CI app-crap-gate job merges the two flutter-tests shard reports
