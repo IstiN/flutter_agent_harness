@@ -66,8 +66,7 @@ import '../task/delivery_slo.dart';
 import '../skills/skills.dart';
 import '../skills/skill_renderer.dart';
 import '../prompts/prompts.g.dart'
-    show cliMessagingSectionPrompt, readSqliteSectionPrompt,
-        cliPiModePrompt;
+    show cliMessagingSectionPrompt, readSqliteSectionPrompt, cliPiModePrompt;
 import '../prompts/project_context.dart';
 import '../approval/approval.dart';
 import '../approval/approval_hook.dart';
@@ -148,6 +147,8 @@ import '../trajectory/trajectory_snapshot.dart';
 import 'trajectory_tui.dart';
 import '../tools/availability.dart';
 import '../tools/availability_gate.dart';
+import '../tools/discover_tools_tool.dart';
+import '../tools/load_modes.dart';
 import '../tools/ask_tool.dart';
 import '../tools/request_secret_tool.dart';
 import '../tools/builtin_tools.dart';
@@ -274,6 +275,7 @@ class AgentCli {
     _currentMode = _modes[config.initialMode] ?? _modes['code']!;
     _providerKind = config.providerKind;
     _apiKey = config.apiKey;
+    _liveLoadMode = config.loadMode;
     // The theme emitters' color profile: styled iff this session styles
     // at all (TUI or colored line mode); NO_COLOR / TERM=dumb degrade to
     // plain output (issue #279 AC7).
@@ -1044,6 +1046,11 @@ class AgentCli {
   late final SessionVarsExecutionEnv _coreToolEnv;
   final _ToolsWiringState _toolsWiring = _ToolsWiringState();
 
+  /// The LIVE tool-load preset (issue #680): [AgentCliConfig.loadMode] at
+  /// boot; the settings hub's load-mode flow re-assigns it and rebuilds
+  /// availability, so a mid-session switch recomposes the schema+prompt.
+  AgentLoadMode _liveLoadMode = AgentLoadMode.defaultMode;
+
   /// Long-term memory controller (project + user scope stores). Always
   /// constructed; search is disabled when no LLM provider is injected.
   late final MemoryController _memory;
@@ -1228,12 +1235,8 @@ class AgentCli {
     _mcp.reRegister(_toolRegistry, _agent, _applyPromptComposition);
     // Re-apply the availability decision to the fresh MCP surface (a
     // no-op until the first rebuild produced a resolution).
-    final resolution = _toolGate.resolution;
-    if (resolution != null) {
-      AgentCliTools(this).refilterMcpTools(resolution);
-    }
+    AgentCliTools(this).resyncMcpAvailability();
   }
-
 
   /// The cached `<memory>` prompt section (durable facts from past
   /// sessions). Loaded asynchronously after startup and refreshed on

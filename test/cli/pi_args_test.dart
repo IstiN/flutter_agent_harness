@@ -151,11 +151,15 @@ void main() {
       expect(config.agentMode, isNull);
     });
 
-    test('unknown mode throws at boot', () {
-      expect(
-        () => CliConfig.fromYaml(loadYaml('agent:\n  mode: omp\n') as YamlMap),
-        throwsA(isA<ConfigException>()),
+    test('mode: omp is a load preset, not a harness mode', () {
+      final config = CliConfig.fromYaml(
+        loadYaml('agent:\n  mode: omp\n') as YamlMap,
       );
+      // issue #680 owns the `default|pi|omp` taxonomy: omp is a legal
+      // load preset (the boot resolves it against --omp/FA_AGENT_MODE),
+      // but it carries no pi harness behavior (issue #679).
+      expect(config.agentLoadMode, 'omp');
+      expect(config.agentMode, isNull);
     });
 
     test('agent section with the cap keeps both fields', () {
@@ -176,11 +180,8 @@ void main() {
       validateAgentSection(loadYaml('mode: default\n') as YamlMap);
     });
 
-    test('rejects an unknown mode', () {
-      expect(
-        () => validateAgentSection(loadYaml('mode: omp\n') as YamlMap),
-        throwsA(isA<ConfigException>()),
-      );
+    test('accepts mode omp (the issue #680 load preset)', () {
+      validateAgentSection(loadYaml('mode: omp\n') as YamlMap);
     });
 
     test('rejects a non-string mode', () {

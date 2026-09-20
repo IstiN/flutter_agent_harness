@@ -114,6 +114,11 @@ enum SharedSetting {
   /// meter and the loop's over-window guard (issue #394).
   contextWindowCap,
 
+  /// The tool-load preset (`agent.mode: default|pi|omp`, issue #680):
+  /// the essential/discoverable schema curation (omp after oh-my-pi;
+  /// pi is #679's exact benchmark shape).
+  loadMode,
+
   /// Provider failure resilience: the watchdog timeouts
   /// (`providerTimeouts.connectTimeoutMs`/`streamIdleTimeoutMs`) and the
   /// chain retry policy (`retry:`, issue #393).
@@ -196,6 +201,12 @@ const cliOnlySettings = <SharedSetting>{
   // app has no agent loop to re-cap live (issue #394 is the CLI half —
   // the app keeps consuming the section read-only per #288's umbrella).
   SharedSetting.contextWindowCap,
+  // The load preset re-shapes the CLI agent loop's tool schema LIVE (the
+  // availability-gate rebuild + the discover_tools meta tool, issue
+  // #680); the app composes its own per-surface tool sets and has no
+  // gate to re-apply a preset to (the app keeps consuming agent.mode
+  // read-only per #288's umbrella).
+  SharedSetting.loadMode,
   // The resilience knobs (watchdog timeouts + retry policy) govern the
   // CLI host process's provider connections: the timeouts are published
   // onto a process-wide override and the retry policy rides the roles
@@ -238,6 +249,12 @@ const nonYamlSettings = <SharedSetting>{
   // assigns to contextWindowCap (issue #394); sub-keys are not top-level
   // keys, so this setting owns none itself.
   SharedSetting.harnessMode,
+  // The load mode (agent.mode, issue #680) stores in the yaml but owns
+  // no TOP-LEVEL key: it is a leaf of the agent: section whose key
+  // contextWindowCap already owns (single-owner rule above) — the entry
+  // is here so the completeness gate accepts its empty yamlKeys while
+  // its interactive surface stays parity-tracked.
+  SharedSetting.loadMode,
 };
 
 /// User-readable justifications for the [cliOnlySettings] exemptions.
@@ -278,6 +295,11 @@ const cliOnlyJustifications = <SharedSetting, String>{
       'The context cap feeds the CLI agent loop and compaction math '
       'running in the CLI host process; the app has no agent loop to '
       're-cap live. Configure it in the CLI (issue #394).',
+  SharedSetting.loadMode:
+      'The load preset curates the CLI agent loop\'s tool schema live '
+      '(the availability gate + discover_tools, issue #680); the app '
+      'composes its own per-surface tool sets and has no gate to re-apply '
+      'a preset to. Configure it in the CLI (issue #680).',
   SharedSetting.agentMode:
       'Agent modes are CLI REPL prompt presets; the app composes its own '
       'prompts per surface and has no mode presets to switch.',
@@ -608,6 +630,16 @@ const settingSurfaces = <SharedSetting, SettingSurfaces>{
         'The benchmark mode presets the CLI REPL boot (tool scope pin, '
         'bare prompt composition); no app surface runs the fa REPL.',
   ),
+  SharedSetting.loadMode: SettingSurfaces(
+    macos: false,
+    ios: false,
+    web: false,
+    extensionPanel: false,
+    gapWhy:
+        'The preset curates the CLI agent loop\'s tool schema through the '
+        'availability gate; the app composes its own per-surface tool '
+        'sets with no gate to re-apply a preset to.',
+  ),
 };
 
 /// Metadata for each [SharedSetting]: what to search for in each platform's
@@ -769,6 +801,17 @@ const sharedSettingMetadata = <SharedSetting, _SettingMeta>{
     appRef: null, // exempted — CLI agent loop only (see above).
     yamlKeys: ['agent'],
     description: 'Owner-side context cap (issue #394).',
+  ),
+  SharedSetting.loadMode: _SettingMeta(
+    cliRef: 'startLoadModeFlow',
+    appRef: null, // exempted — no availability gate in the app (see above).
+    // The load mode is the `agent.mode` LEAF of the agent: section: the
+    // top-level `agent` key stays owned by contextWindowCap above (the
+    // completeness gate's single-owner rule) — this entry owns the
+    // interactive surface (the settings-hub flow + /settings line), so
+    // it carries no yaml key of its own (see nonYamlSettings).
+    yamlKeys: [],
+    description: 'Tool-load preset: default | pi | omp (issue #680).',
   ),
   SharedSetting.resiliencePolicy: _SettingMeta(
     cliRef: 'startResilienceFlow',

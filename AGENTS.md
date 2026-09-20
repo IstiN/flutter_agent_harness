@@ -176,6 +176,17 @@ factual: paths, commands, invariants — no essays.
   (hide/restore + prompt rebuild) and tombstones calls to disabled tools.
   CLI surface in `lib/src/cli/agent_cli_tools.dart` (`/tools`, live
   rebuild); docs/tool-availability.md is the user-facing page.
+- `lib/src/tools/load_modes.dart` + `discover_tools_tool.dart` — agent
+  load modes (issue #680): `--omp` > `FA_AGENT_MODE` > `agent.mode`
+  (`default|pi|omp`) pick the tool-LOAD preset — `default` loads every
+  enabled tool; `pi` the 4-tool benchmark base (issue #679, discovery
+  off); `omp` the essential base with everything else discoverable,
+  mounted on demand through the omp-only `discover_tools` meta tool (an
+  explicit `tools: {id: on}` is a standing mount). The gate's
+  `discoveryEnabled` flag keeps the discoverable tombstone from
+  dead-ending on `discover_tools` in modes that don't register it. CLI
+  sync + `/settings` switch in `agent_cli_tools.dart`/`settings_flow.dart`;
+  user-facing docs: docs/tool-availability.md §Load modes.
 - `lib/src/lsp/` — `lsp` tool (diagnostics/definition/references/rename):
   pure-Dart JSON-RPC client over `LspTransport`; `.dart` →
   `dart language-server --protocol=lsp`, projects merge `.fah/lsp.json`;

@@ -106,6 +106,7 @@ final class CliArgs extends CliArgsResult {
     this.attachments = const [],
     this.waitForJobs = false,
     this.piMode = false,
+    this.ompMode = false,
   }) : super._();
 
   /// `--model <id>`.
@@ -254,6 +255,12 @@ final class CliArgs extends CliArgsResult {
   /// config `agent.mode` (AC3: flag > env > config).
   final bool piMode;
 
+  /// `--omp` (issue #680): boot the omp load-mode preset — the curated
+  /// essential tool set in the schema, everything else discoverable.
+  /// Wins over the `FA_AGENT_MODE` env twin and the `agent.mode` config
+  /// (flag > env > config).
+  final bool ompMode;
+
   /// Whether this invocation runs a single headless prompt instead of the
   /// interactive REPL.
   bool get isHeadless =>
@@ -291,6 +298,10 @@ CliArgsResult parseCliArgs(List<String> args) {
     }
     if (arg == '--pi') {
       values.piMode = true;
+      continue;
+    }
+    if (arg == '--omp') {
+      values.ompMode = true;
       continue;
     }
     final flag = _valueFlags[arg];
@@ -1016,6 +1027,7 @@ final class _CliArgValues {
   final plugins = <String>[];
   bool waitForJobs = false;
   bool piMode = false;
+  bool ompMode = false;
   final promptTemplateDirs = <String>[];
   String? mode;
   String? cwd;
@@ -1088,6 +1100,7 @@ final class _CliArgValues {
       outputFormat: outputFormat,
       waitForJobs: waitForJobs,
       piMode: piMode,
+      ompMode: ompMode,
       attachments: List.unmodifiable(attachments),
     );
   }
