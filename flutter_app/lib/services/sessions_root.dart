@@ -1,6 +1,6 @@
 import 'dart:io' show Directory, File, Platform;
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 
 /// The shared Fa App Group identifier used for cross-process storage on macOS.
 const String _kSharedAppGroupId = 'group.dev.fa1.shared';
@@ -86,10 +86,30 @@ List<String> macSessionRootCandidates({
 }
 
 /// Checks whether `fa` CLI or its environment is installed on this macOS machine.
-bool isFaCliInstalled() {
-  if (kIsWeb || !Platform.isMacOS) return false;
-  final home = Platform.environment['HOME'] ?? '';
-  if (Directory('$home/.fah').existsSync()) return true;
+bool isFaCliInstalled() => faCliProbe(
+  isMacOS: !kIsWeb && Platform.isMacOS,
+  home: Platform.environment['HOME'] ?? '',
+  pathEnv: Platform.environment['PATH'] ?? '',
+  pathExists: _pathExists,
+);
+
+bool _pathExists(String path) =>
+    File(path).existsSync() || Directory(path).existsSync();
+
+/// Scriptable core of [isFaCliInstalled] (issue #701): every input — the
+/// platform gate, `HOME`, `PATH` and the exists probe — is injected so the
+/// whole branch matrix is unit-testable on any host, not only macOS.
+/// Probe order mirrors the CLI's install surface: `~/.fah`, the fixed
+/// install locations, then every `PATH` directory (`fa` or `fah`).
+@visibleForTesting
+bool faCliProbe({
+  required bool isMacOS,
+  required String home,
+  required String pathEnv,
+  required bool Function(String path) pathExists,
+}) {
+  if (!isMacOS) return false;
+  if (pathExists('$home/.fah')) return true;
 
   final candidatePaths = [
     '$home/.local/bin/fa',
@@ -100,13 +120,12 @@ bool isFaCliInstalled() {
     '/usr/local/bin/fah',
   ];
   for (final path in candidatePaths) {
-    if (File(path).existsSync()) return true;
+    if (pathExists(path)) return true;
   }
 
-  final envPath = Platform.environment['PATH'] ?? '';
-  for (final dir in envPath.split(':')) {
+  for (final dir in pathEnv.split(':')) {
     if (dir.isEmpty) continue;
-    if (File('$dir/fa').existsSync() || File('$dir/fah').existsSync()) {
+    if (pathExists('$dir/fa') || pathExists('$dir/fah')) {
       return true;
     }
   }
