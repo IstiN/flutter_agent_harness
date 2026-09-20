@@ -1968,6 +1968,10 @@ class AppLocalizationsRu extends AppLocalizations {
   String get dynamicTileError => 'Ошибка виджета';
 
   @override
+  String get dynamicTileOverflow =>
+      'Виджет шире области чата — содержимое справа обрезано. Агента попросили перестроить виджет по ширине.';
+
+  @override
   String get dynamicTileRetry => 'Повторить';
 
   @override

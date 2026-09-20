@@ -395,6 +395,64 @@ class DynamicMessagesService extends ChangeNotifier {
     );
   }
 
+  /// Widget ids whose viewport overflow was already reported (issue #692
+  /// C): the note is one-shot per presentation, so a rebuilt-but-still-
+  /// overflowing tree never loops the agent.
+  final Set<String> _overflowNoted = {};
+
+  /// Set by [dispose] — the overflow note's async notify must not touch a
+  /// disposed notifier.
+  bool _disposed = false;
+
+  /// Whether [noteViewportOverflow] already fired for this widget id (the
+  /// tile renders its warning strip from this).
+  bool overflowNotedFor(String widgetId) => _overflowNoted.contains(widgetId);
+
+  /// Runtime overflow note back to the agent (issue #692 C): the canvas
+  /// detected content painting wider than the viewport. Rides the same
+  /// `_sendText` back-channel as widget events, ONE-SHOT per widget id —
+  /// the model gets told once and rebuilds a fitting widget.
+  void noteViewportOverflow(
+    DynamicMessageDefinition definition,
+    double overflowPx,
+    double viewportWidth,
+  ) {
+    if (!_overflowNoted.add(definition.id)) return;
+    AppLog.i(
+      'widgets',
+      'viewport overflow on ${definition.id}: '
+          '+${overflowPx.round()}px past ${viewportWidth.round()}px',
+    );
+    notifyListeners();
+    unawaited(
+      _sendText(
+        '[widget ${definition.title}] viewport-overflow '
+        '{"overflowPx":${overflowPx.round()},'
+        '"viewportWidth":${viewportWidth.round()}} — this widget paints '
+        'wider than the viewport; rebuild it to fit (constrain rows, wrap, '
+        'or make the wide part horizontally scrollable).',
+      ).then(
+        (_) {
+          if (!_disposed) notifyListeners();
+        },
+        onError: (Object error) {
+          // The back-channel rejected (session gone, agent mid-run): the
+          // agent was never told, so don't burn this widget's one-shot —
+          // roll the id back and drop the strip, or a later rebuild of a
+          // still-overflowing tree would stay silent forever (review:
+          // no silent degradation).
+          _overflowNoted.remove(definition.id);
+          AppLog.i(
+            'widgets',
+            'overflow note for ${definition.id} failed: $error — '
+                'one-shot rolled back, the tile strip is dropped',
+          );
+          if (!_disposed) notifyListeners();
+        },
+      ),
+    );
+  }
+
   /// Graduates a widget into an installed app (one-tap "save as app"):
   /// writes `apps/<appId>/` with its own manifest + the widget's JS and
   /// COPIES the current storage state — the app then runs standalone and
@@ -584,6 +642,7 @@ class DynamicMessagesService extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     for (final timer in _noUiTimers.values) {
       timer.cancel();
     }

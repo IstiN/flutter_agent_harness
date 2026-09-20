@@ -17,7 +17,8 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart'
         AskQuestion,
         MemoryExecutionEnv,
         RequestSecretResult,
-        TrajectorySnapshot;
+        TrajectorySnapshot,
+        authExpiredProvider;
 import 'package:flutter_chat_core/flutter_chat_core.dart';
 import 'package:flutter_chat_ui/flutter_chat_ui.dart';
 
@@ -1142,123 +1143,141 @@ class _FaChatScreenState extends State<FaChatScreen>
       onDragExited: (_) => setState(() => _dropHovering = false),
       onDragDone: _onDropDone,
       child: Column(
-      children: [
-        if (_error case final error?)
-          Material(
-            color: Theme.of(context).colorScheme.errorContainer,
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Row(
-                children: [
-                  Icon(Icons.error, color: Theme.of(context).colorScheme.error),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      error,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.onErrorContainer,
+        children: [
+          // Issue #692 (friendly auth errors): an auth-expired service
+          // error carries the raw CLI recovery hint plus the
+          // `[[auth-expired:…]]` marker — render the friendly localized
+          // banner (with the host's re-authorize action when wired)
+          // instead. Every other error keeps the raw line below.
+          if (_error case final error?)
+            if (authExpiredProvider(error) case final expiredProvider?)
+              _AuthExpiredBanner(
+                strings: strings,
+                error: error,
+                providerId: expiredProvider,
+                onAuthorize: widget.onAuthRecovery,
+              )
+            else
+              Material(
+                color: Theme.of(context).colorScheme.errorContainer,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.error,
+                        color: Theme.of(context).colorScheme.error,
                       ),
-                    ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          error,
+                          style: TextStyle(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onErrorContainer,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
+                ),
+              ),
+          if (_topBannerVisible(historyAbove))
+            _historyPinnedBanner(
+              top: true,
+              label: _topBannerLabel(strings, historyAbove),
+              // An error banner IS the retry surface (round-1 behavior).
+              tappable:
+                  !_historyLoading &&
+                  !(historyAbove == 0 && _historyLoadError == null),
+            ),
+          Expanded(
+            child: NotificationListener<ScrollNotification>(
+              onNotification: (notification) {
+                _trackUserScroll(notification);
+                return false;
+              },
+              child: Chat(
+                currentUserId: 'user',
+                resolveUser: _resolveUser,
+                chatController: _chatController,
+                // With a wallpaper layer the transcript surface paints
+                // transparent so the layer underneath shows through (E2: the
+                // layer itself owns the color fallback when the image is gone).
+                backgroundColor: wallpaper == null
+                    ? null
+                    : const Color(0x00000000),
+                builders: Builders(
+                  textMessageBuilder: _buildTextMessage,
+                  customMessageBuilder: _buildCustomMessage,
+                  chatAnimatedListBuilder: (context, itemBuilder) =>
+                      ChatAnimatedList(
+                        itemBuilder: itemBuilder,
+                        scrollController: _chatScrollController,
+                        // Reversed list (the learn.ai pattern): index 0 is the
+                        // newest message, the list starts AT the bottom — no
+                        // initial scroll-to-end, no jump, or "stuck mid-list"
+                        // on long transcripts. New rows grow upwards, exactly
+                        // like a chat.
+                        reversed: true,
+                        // The initial history load (and big external reloads)
+                        // renders without the per-row insert animation cascade;
+                        // live messages keep the default animation. 1ms instead
+                        // of a true zero: a zero duration leaves the package's
+                        // initial-scroll timer unsettled inside fake_async
+                        // test bindings.
+                        insertAnimationDurationResolver: (_) =>
+                            _suppressInsertAnimations
+                            ? const Duration(milliseconds: 1)
+                            : const Duration(milliseconds: 250),
+                        // The typing indicator lives IN the list (issue #459):
+                        // in a reversed scroll view the bottom sliver renders
+                        // visually LAST — below the newest message, right
+                        // above the composer — scrolling away with the
+                        // content instead of pinning above the input bar.
+                        bottomSliver: _isStreaming
+                            ? const SliverToBoxAdapter(
+                                key: ValueKey('faChatTypingFooter'),
+                                child: FaTypingFooter(),
+                              )
+                            : null,
+                      ),
+                  // While streaming with an empty transcript the footer is the
+                  // only item (E1) — the package's default "No messages yet"
+                  // overlay would stack under it; idle keeps the default.
+                  emptyChatListBuilder: (context) => _isStreaming
+                      ? const SizedBox.shrink()
+                      : const EmptyChatList(),
+                  composerBuilder: (_) => const SizedBox.shrink(),
+                ),
+                theme: Theme.of(context).brightness == Brightness.light
+                    ? buildFahChatThemeLight(
+                        uiTheme: FaUiThemeProvider.of(context),
+                      )
+                    : buildFahChatTheme(uiTheme: FaUiThemeProvider.of(context)),
               ),
             ),
           ),
-        if (_topBannerVisible(historyAbove))
-          _historyPinnedBanner(
-            top: true,
-            label: _topBannerLabel(strings, historyAbove),
-            // An error banner IS the retry surface (round-1 behavior).
-            tappable:
-                !_historyLoading &&
-                !(historyAbove == 0 && _historyLoadError == null),
-          ),
-        Expanded(
-          child: NotificationListener<ScrollNotification>(
-            onNotification: (notification) {
-              _trackUserScroll(notification);
-              return false;
-            },
-            child: Chat(
-              currentUserId: 'user',
-              resolveUser: _resolveUser,
-              chatController: _chatController,
-              // With a wallpaper layer the transcript surface paints
-              // transparent so the layer underneath shows through (E2: the
-              // layer itself owns the color fallback when the image is gone).
-              backgroundColor: wallpaper == null
-                  ? null
-                  : const Color(0x00000000),
-              builders: Builders(
-                textMessageBuilder: _buildTextMessage,
-                customMessageBuilder: _buildCustomMessage,
-                chatAnimatedListBuilder: (context, itemBuilder) =>
-                    ChatAnimatedList(
-                      itemBuilder: itemBuilder,
-                      scrollController: _chatScrollController,
-                      // Reversed list (the learn.ai pattern): index 0 is the
-                      // newest message, the list starts AT the bottom — no
-                      // initial scroll-to-end, no jump, or "stuck mid-list"
-                      // on long transcripts. New rows grow upwards, exactly
-                      // like a chat.
-                      reversed: true,
-                      // The initial history load (and big external reloads)
-                      // renders without the per-row insert animation cascade;
-                      // live messages keep the default animation. 1ms instead
-                      // of a true zero: a zero duration leaves the package's
-                      // initial-scroll timer unsettled inside fake_async
-                      // test bindings.
-                      insertAnimationDurationResolver: (_) =>
-                          _suppressInsertAnimations
-                          ? const Duration(milliseconds: 1)
-                          : const Duration(milliseconds: 250),
-                      // The typing indicator lives IN the list (issue #459):
-                      // in a reversed scroll view the bottom sliver renders
-                      // visually LAST — below the newest message, right
-                      // above the composer — scrolling away with the
-                      // content instead of pinning above the input bar.
-                      bottomSliver: _isStreaming
-                          ? const SliverToBoxAdapter(
-                              key: ValueKey('faChatTypingFooter'),
-                              child: FaTypingFooter(),
-                            )
-                          : null,
-                    ),
-                // While streaming with an empty transcript the footer is the
-                // only item (E1) — the package's default "No messages yet"
-                // overlay would stack under it; idle keeps the default.
-                emptyChatListBuilder: (context) => _isStreaming
-                    ? const SizedBox.shrink()
-                    : const EmptyChatList(),
-                composerBuilder: (_) => const SizedBox.shrink(),
-              ),
-              theme: Theme.of(context).brightness == Brightness.light
-                  ? buildFahChatThemeLight(
-                      uiTheme: FaUiThemeProvider.of(context),
-                    )
-                  : buildFahChatTheme(uiTheme: FaUiThemeProvider.of(context)),
+          if (_buildWidgetOpenChip(context) case final chip?) chip,
+          if (_historyHasNewer)
+            _historyPinnedBanner(
+              top: false,
+              label: _historyLoadError != null
+                  ? strings.chatLoadEarlierFailed
+                  : historyBelow == null || historyBelow <= 0
+                  ? strings.chatLoadNewer
+                  : strings.chatLoadNewerCount('$historyBelow'),
+              tappable: !_historyLoading,
             ),
-          ),
-        ),
-        if (_buildWidgetOpenChip(context) case final chip?) chip,
-        if (_historyHasNewer)
-          _historyPinnedBanner(
-            top: false,
-            label: _historyLoadError != null
-                ? strings.chatLoadEarlierFailed
-                : historyBelow == null || historyBelow <= 0
-                ? strings.chatLoadNewer
-                : strings.chatLoadNewerCount('$historyBelow'),
-            tappable: !_historyLoading,
-          ),
-        composerBuilder != null
-            ? composerBuilder(context, widget.service, _dropBridge)
-            : ChatComposer(
-                service: widget.service,
-                features: widget.features,
-                dropBridge: _dropBridge,
-              ),
-      ],
+          composerBuilder != null
+              ? composerBuilder(context, widget.service, _dropBridge)
+              : ChatComposer(
+                  service: widget.service,
+                  features: widget.features,
+                  dropBridge: _dropBridge,
+                ),
+        ],
       ),
     );
     // The drop highlight rides in a Stack above the body so the border
@@ -1561,6 +1580,80 @@ class _FaChatScreenState extends State<FaChatScreen>
         ),
         textStyle: const WidgetStatePropertyAll(
           TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+        ),
+      ),
+    );
+  }
+}
+
+/// The friendly auth-expired error banner (issue #692): when the
+/// service error carries the `[[auth-expired:<id>]]` marker, the chat's
+/// error line renders this — a localized session-expired notice plus
+/// the cleaned provider message (marker and dead `(CLI: …)` hint
+/// stripped by [authExpiredDisplayText]) and, when the host wired
+/// [FaChatScreen.onAuthRecovery], the re-authorize action — instead of
+/// the raw redirect/CLI text.
+class _AuthExpiredBanner extends StatelessWidget {
+  const _AuthExpiredBanner({
+    required this.strings,
+    required this.error,
+    required this.providerId,
+    required this.onAuthorize,
+  });
+
+  final FaChatStrings strings;
+  final String error;
+  final String providerId;
+  final FaAuthRecoveryCallback? onAuthorize;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final detail = authExpiredDisplayText(error);
+    return Material(
+      color: colors.errorContainer,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            Icon(Icons.key_off, color: colors.error),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    strings.chatAuthExpiredBannerTitle,
+                    style: TextStyle(
+                      color: colors.onErrorContainer,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    strings.chatAuthExpiredBannerBody(providerId),
+                    style: TextStyle(color: colors.onErrorContainer),
+                  ),
+                  if (detail.isNotEmpty)
+                    Text(
+                      detail,
+                      style: TextStyle(
+                        color: colors.onErrorContainer,
+                        fontSize: 12,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            if (onAuthorize != null) ...[
+              const SizedBox(width: 8),
+              FilledButton.tonal(
+                onPressed: () => onAuthorize?.call(providerId),
+                child: Text(strings.chatAuthExpiredBannerAction),
+              ),
+            ],
+          ],
         ),
       ),
     );
