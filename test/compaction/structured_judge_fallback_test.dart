@@ -4,7 +4,7 @@
 
 /// Issue #541 — the structured-compaction judge is not a single point of
 /// failure. Consecutive judge failures (timeout / error) engage a
-/// deterministic judge-less hide, the judge input is bounded so the 90s
+/// deterministic judge-less hide, the judge input is bounded so the 300s
 /// budget stays winnable on giant sessions, and a judge timeout names its
 /// role/model/endpoint/budget instead of dying anonymously.
 library;
