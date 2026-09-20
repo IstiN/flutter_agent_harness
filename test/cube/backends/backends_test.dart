@@ -638,6 +638,119 @@ void main() {
     });
   });
 
+  // Issue #732: SBPL is LAST-match-wins per operation class, so emission
+  // order is load-bearing and must be canonical — broadest path first,
+  // narrowest last, independent of yaml declaration order. The live uv
+  // break: a later, broader `ro /Users/agents/.local` deny-write landed
+  // after the nested rw mount's allow and silently killed it.
+  group('mount emission ordering (issue 732)', () {
+    CubeSpec nested({required bool childFirst}) => CubeSpec(
+      name: 'order-pinning',
+      filesystem: CubeFsPolicy(
+        workspace: '/work',
+        mounts: childFirst
+            ? const [
+                CubeMount(
+                  path: '/work/data/uv',
+                  access: CubePathAccess.readWrite,
+                ),
+                CubeMount(path: '/work', access: CubePathAccess.readOnly),
+              ]
+            : const [
+                CubeMount(path: '/work', access: CubePathAccess.readOnly),
+                CubeMount(
+                  path: '/work/data/uv',
+                  access: CubePathAccess.readWrite,
+                ),
+              ],
+      ),
+    );
+
+    test('declaration order does not change the emitted profile (AC2)', () {
+      final childFirst = MacOsSandboxBackend().buildSandboxProfile(
+        nested(childFirst: true),
+      );
+      final parentFirst = MacOsSandboxBackend().buildSandboxProfile(
+        nested(childFirst: false),
+      );
+      // The kernel resolves conflicts by rule order, so both declaration
+      // orders must compile to the SAME rule sequence: broad → narrow.
+      expect(childFirst, equals(parentFirst));
+    });
+
+    test('the nested rw mount emits after the broader ro deny-write '
+        '(the uv break)', () {
+      // Child declared FIRST, broader ro parent LAST — the adversarial
+      // order that used to make the parent's deny-write the last matching
+      // write rule. The sorted emitter puts the narrowest mount last, so
+      // its read AND write allows win per class.
+      final profile = MacOsSandboxBackend().buildSandboxProfile(
+        nested(childFirst: true),
+      );
+      final parentDeny = profile.indexOf(
+        '(deny file-write* (subpath "/work"))',
+      );
+      final childRead = profile.indexOf(
+        '(allow file-read* (subpath "/work/data/uv"))',
+      );
+      final childWrite = profile.indexOf(
+        '(allow file-write* (subpath "/work/data/uv"))',
+      );
+      expect(parentDeny, greaterThanOrEqualTo(0));
+      expect(
+        childRead,
+        greaterThan(parentDeny),
+        reason: 'rw read allow must outlast the broader ro deny-write',
+      );
+      expect(
+        childWrite,
+        greaterThan(parentDeny),
+        reason: 'rw write allow must outlast the broader ro deny-write',
+      );
+    });
+
+    test('/private-resolved variants stay adjacent, bare spelling first '
+        '(E2)', () {
+      final profile = MacOsSandboxBackend().buildSandboxProfile(
+        CubeSpec(
+          name: 'variants',
+          filesystem: const CubeFsPolicy(
+            workspace: '/work',
+            mounts: [
+              // Child first, ro parent last — the adversarial order again.
+              CubeMount(path: '/etc/ssl', access: CubePathAccess.readWrite),
+              CubeMount(path: '/etc', access: CubePathAccess.readOnly),
+            ],
+          ),
+        ),
+      );
+      final lines = profile.split('\n');
+      int at(String line) {
+        final index = lines.indexOf(line);
+        // A missing line must fail loudly — an absent -1 would slide
+        // through every lessThan below.
+        expect(index, isNonNegative, reason: '$line not emitted');
+        return index;
+      }
+
+      // The sort keys on the declared path, so both spellings of one mount
+      // emit adjacently, variants never interleave across mounts, and the
+      // nested mount's variants land after the parent's.
+      expect(
+        at('(deny file-write* (subpath "/etc"))'),
+        lessThan(at('(deny file-write* (subpath "/private/etc"))')),
+      );
+      expect(
+        at('(deny file-write* (subpath "/private/etc"))'),
+        lessThan(at('(allow file-write* (subpath "/etc/ssl"))')),
+      );
+      expect(
+        at('(allow file-write* (subpath "/etc/ssl"))'),
+        lessThan(at('(allow file-write* (subpath "/private/etc/ssl"))')),
+      );
+    });
+  });
+
   // Issue #709 REG1: the macOS emission fix must not drift the other
   // backends' rule generation — linux re-binds ro mounts only, windows maps
   // limits to Job Object flags, no-op stays a passthrough.
