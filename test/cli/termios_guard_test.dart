@@ -30,6 +30,9 @@ class _FakeTty {
   /// When set, the `stty -a` probe exits non-zero (e.g. no /dev/tty).
   bool failProbe;
 
+  /// When set, the flag-clear call exits non-zero (probe still works).
+  var failClear = false;
+
   final calls = <List<String>>[];
 
   Future<ProcessResult> runner(List<String> args) async {
@@ -42,6 +45,7 @@ class _FakeTty {
       return ProcessResult(0, 0, _renderSttyA(), '');
     }
     if (args.contains('-g')) return ProcessResult(0, 0, 'saved-termios\n', '');
+    if (failClear) return ProcessResult(0, 1, '', 'stty: rejected');
     // Any other call is a flag mutation (the clear list). Bare flag
     // names (add) exist only for hypothetical `stty ixon` calls — no
     // test uses them; `/dev/tty` and device flags are ignored.
@@ -130,6 +134,48 @@ void main() {
       expect(result.checked, isFalse);
     });
 
+    test('never throws: clear failure after drift = silent no-op', () async {
+      final tty = _FakeTty();
+      tty.failClear = true;
+      tty.enabled = {'ixon'};
+      final guard = TermiosGuard(runner: tty.runner, hasTerminal: () => true);
+
+      final result = await guard.reassert();
+      expect(
+        result.checked,
+        isFalse,
+        reason:
+            'the clear exiting non-zero means the state is unknown — '
+            'report unchecked, never a partial drift list',
+      );
+    });
+
+    test('drift without an onDrift sink still re-asserts silently', () async {
+      final tty = _FakeTty();
+      tty.enabled = {'ixon'};
+      final guard = TermiosGuard(runner: tty.runner, hasTerminal: () => true);
+
+      final result = await guard.reassert();
+      expect(result.driftedFlags, ['ixon']);
+      expect(tty.enabled, isEmpty);
+    });
+
+    test('parseTermiosDrift: GNU-style rows (bare = on, dash = off)', () {
+      const gnu =
+          'speed 9600 baud; rows 48; columns 160; line = 0;\n'
+          'intr = ^C; quit = ^\\; start = ^Q; stop = ^S; discard = ^O;\n'
+          '-ignbrk -brkint -ignpar -parmrk -inpck -istrip -inlcr -igncr\n'
+          '-icrnl ixon -ixoff -iuclc -ixany -imaxbel iutf8\n';
+      expect(parseTermiosDrift(gnu), ['ixon']);
+      const clean = '-icrnl -ixon -ixoff -ixany -imaxbel iutf8\n';
+      expect(parseTermiosDrift(clean), isEmpty);
+      const allOn = 'icrnl ixon ixoff ixany\n';
+      expect(
+        parseTermiosDrift(allOn),
+        containsAll(['icrnl', 'ixon', 'ixoff', 'ixany']),
+      );
+    });
+
     test('no terminal (headless host) never spawns stty', () async {
       final tty = _FakeTty();
       final guard = TermiosGuard(runner: tty.runner, hasTerminal: () => false);
@@ -167,6 +213,21 @@ void main() {
       final guard = TermiosGuard(runner: tty.runner, hasTerminal: () => true);
 
       expect(await guard.dumpSettings(), isNull);
+    });
+
+    test('null when the probe exits non-zero (no /dev/tty)', () async {
+      final tty = _FakeTty(failProbe: true);
+      final guard = TermiosGuard(runner: tty.runner, hasTerminal: () => true);
+
+      expect(await guard.dumpSettings(), isNull);
+    });
+
+    test('null without a terminal (headless hosts)', () async {
+      final tty = _FakeTty();
+      final guard = TermiosGuard(runner: tty.runner, hasTerminal: () => false);
+
+      expect(await guard.dumpSettings(), isNull);
+      expect(tty.calls, isEmpty);
     });
   });
 

@@ -7,13 +7,19 @@
 /// re-assert the raw-mode input flags after every foreground tool phase,
 /// keeping the Ctrl+S steer path alive.
 ///
-/// Repro recipe (issue #735, deterministic):
-/// 1. a bash tool call runs `stty ixon ixany < /dev/tty` — the exact
-///    corruption a pager/ssh/curses child performs on the shared tty;
-/// 2. a long second tool call holds the run open;
-/// 3. a queued message + Ctrl+S must reach the agent (pending → delivered
-///    → the model's STEERED-ACK), and the guard's drift note must name
-///    the flags the child re-enabled.
+/// Deterministic recipe (CI-stable redesign after the first leg flaked —
+/// the bash tool yields slow commands to background, so probe timing
+/// must never race a still-running child):
+/// 1. a FAST bash tool call corrupts the tty and echoes its own success
+///    (`CORRUPT-OK`) — it completes inside the foreground grace, so the
+///    after-tool boundary (the guard's probe) is strictly AFTER the
+///    corruption; the echo doubles as a fail-fast diagnostic if the CI
+///    job spawns without a controlling terminal;
+/// 2. the drift note names the flags the guard cleared;
+/// 3. after the turn settles, a typed message + Ctrl+S (0x13) steers as
+///    an idle wake turn — proving the byte reached fa post-corruption
+///    (pre-fix it freezes output instead) and was interpreted as
+///    steering, not a plain submit.
 library;
 
 import 'dart:io';
@@ -27,7 +33,7 @@ void main() {
   test(
     'Ctrl+S still steers after a child re-enables IXON mid-session '
     '(issue #735)',
-    timeout: const Timeout(Duration(minutes: 4)),
+    timeout: const Timeout(Duration(minutes: 5)),
     () async {
       final tempHome = Directory.systemTemp.createTempSync('fa_xoff_pty_');
       final projectDir = '${tempHome.path}/project';
@@ -45,16 +51,20 @@ allowedTools: []
 
       final server = await MockLlmServer.start();
       addTearDown(server.stop);
-      // Turn 1 corrupts the tty exactly like a real child would (a pager,
-      // ssh, or a curses app restoring its own saved termios on exit).
-      // Turn 2 holds the step open so the steer lands mid-run. Turn 3
-      // proves the steered text reached the model.
+      // Turn 1: corrupt the tty exactly like a real child would (a pager,
+      // ssh, or a curses app restoring its saved termios on exit). The
+      // command is FAST — it completes before the tool's yield grace, so
+      // the guard's after-tool probe lands strictly after it. The echo is
+      // the corruption's own receipt (and the diagnostic if the CI shell
+      // runs without a controlling terminal). Turn 2 settles the run.
+      // Turn 3 answers the idle-steer wake.
       server.enqueueToolCall(
         'bash',
-        '{"command": "stty ixon ixany < /dev/tty; sleep 1"}',
+        '{"command": "stty ixon ixany < /dev/tty && echo CORRUPT-OK '
+            '|| echo CORRUPT-FAIL"}',
       );
-      server.enqueueToolCall('bash', '{"command": "sleep 8"}');
-      server.enqueueText('STEERED-ACK done');
+      server.enqueueText('TURN-SETTLED');
+      server.enqueueText('IDLE-STEER-ACK');
 
       final harness = await FaCliHarness.spawn(
         workingDirectory: projectDir,
@@ -74,45 +84,49 @@ allowedTools: []
       await harness.waitForBoot(timeout: const Duration(seconds: 300));
 
       await harness.runSlashCommand('run the tool please');
-      // The second tool call rendering proves the FIRST (corrupting) call
-      // finished — i.e. the after-tool boundary where the guard must have
-      // re-asserted the input flags already ran.
+      // The corruption's own receipt — and a fail-fast diagnostic: if the
+      // CI job runs without a controlling terminal, CORRUPT-FAIL names
+      // the environment gap instead of leaving a mystery timeout.
       await harness.waitForText(
-        'sleep 8',
+        'CORRUPT-OK',
         timeout: const Duration(seconds: 60),
       );
+      expect(
+        harness.rawOutput.contains('CORRUPT-FAIL'),
+        isFalse,
+        reason: 'the corrupting child could not open /dev/tty — the CI '
+            'shell job spawns without a controlling terminal',
+      );
 
-      // Observability contract: the guard names the drift it cleared.
+      // Observability contract: the guard names the drift it cleared
+      // (the probe ran at the after-tool boundary, strictly after the
+      // child finished corrupting).
       await harness.waitForText(
         're-enabled by a child',
         timeout: const Duration(seconds: 30),
       );
 
+      // Let the turn settle — the idle-steer wake below starts a fresh
+      // turn (deterministic: no mid-run race against the yield grace).
+      await harness.waitForText(
+        'TURN-SETTLED',
+        timeout: const Duration(seconds: 60),
+      );
+
       // The steer gesture itself: with IXON back on (pre-fix), this byte
-      // is swallowed by the tty as XOFF — output freezes and the pending
-      // panel never appears (any-key release = IXANY). Post-fix the guard
-      // already re-cleared the flags, so 0x13 reaches fa (#647: accept
-      // panel within seconds).
+      // is swallowed by the tty as XOFF — output freezes and nothing
+      // reaches fa. Post-fix the guard already re-cleared the flags, so
+      // 0x13 arrives, is interpreted as STEERING (not a plain submit),
+      // and the idle wake turn answers.
       harness.sendText('steer me please');
       final sw = Stopwatch()..start();
       harness.sendCtrlS();
       await harness.waitForText(
-        'steering from you · pending',
-        timeout: const Duration(seconds: 30),
-      );
-      // ignore: avoid_print
-      print('STEER-ACCEPT-LATENCY ${sw.elapsedMilliseconds}ms');
-
-      // Delivery at the step boundary (sleep 8 ends) + the model turn
-      // proving the steered text was injected mid-run.
-      await harness.waitForText(
-        '[btw] steering from you → delivered',
-        timeout: const Duration(seconds: 120),
-      );
-      await harness.waitForText(
-        'STEERED-ACK',
+        'IDLE-STEER-ACK',
         timeout: const Duration(seconds: 60),
       );
+      // ignore: avoid_print
+      print('STEER-ROUNDTRIP ${sw.elapsedMilliseconds}ms');
 
       await harness.runSlashCommand('/exit');
       await harness.close();

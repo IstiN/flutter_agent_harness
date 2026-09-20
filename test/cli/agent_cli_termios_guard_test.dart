@@ -221,4 +221,154 @@ void main() {
       }
     },
   );
+
+  test(
+    'hidden /termios command degrades to a hint without a tty (issue #735)',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      // Line mode + FakeCliIO: the guard's default terminal gate is false
+      // (headless host), so the dump is null and the command prints the
+      // explanatory fallback — the /termios dispatch arm and its output
+      // path stay covered on every shard.
+      final io = FakeCliIO();
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'test-key',
+          env: MemoryExecutionEnv(cwd: '/work'),
+          sessionRoot: '/sessions',
+          providerKind: 'openai-completions',
+          skillsAccess: SkillsAccess.granted,
+        ),
+        io: io,
+        streamFunction: FakeStreamFunction([textTurn('ok')]).call,
+      );
+      addTearDown(io.close);
+      // The editor-flow seam (providers_queue_editor_test pattern): drive
+      // the command directly, no REPL loop.
+      await cli.handleLineForTest('/termios');
+      expect(
+        io.out.toString(),
+        contains('no tty available'),
+        reason: 'headless hosts get the fallback hint, not a crash',
+      );
+    },
+  );
+
+  test(
+    'TUI queue drain runs queued follow-ups as separate turns (kimi-cli '
+    'semantics — the _drainTuiQueue leg of the #735 extraction)',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      // Busy run (gated bash) + two queued submits while busy; releasing
+      // the gate settles the turn and the drain loop runs each queued
+      // message as its own model turn — covering the moved
+      // _drainTuiQueue body (drain + runRound wiring).
+      final frames = _FrameSink();
+      final keys = StreamController<List<int>>();
+      final shell = _GateShell();
+      final fake = FakeStreamFunction([
+        toolTurn(const [
+          ToolCall(id: 'q1', name: 'bash', arguments: {'command': 'hold'}),
+        ]),
+        textTurn('first-ack'),
+        // One ack per queued follow-up — the drain loop runs each as its
+        // own model turn.
+        textTurn('ack-one'),
+        textTurn('ack-two'),
+      ]);
+      final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
+      final io = FakeCliIO();
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'test-key',
+          env: env,
+          sessionRoot: '/sessions',
+          providerKind: 'openai-completions',
+          skillsAccess: SkillsAccess.granted,
+          tuiProgramHooks: TuiProgramHooks(
+            input: keys.stream,
+            output: frames,
+            width: 100,
+            height: 30,
+          ),
+        ),
+        io: io,
+        useTui: true,
+        streamFunction: fake.call,
+      );
+      final run = cli.run();
+      addTearDown(() async {
+        await io.close();
+      });
+      try {
+        await waitForIt(
+          () => frames.text.contains('\x1b[?1049h'),
+          reason: 'TUI alt-screen boot',
+        );
+        keys.add(utf8.encode('start\r'));
+        await waitForIt(
+          () => shell.calls >= 1,
+          reason: 'the gated bash call started (run busy)',
+        );
+        // Two submits while busy queue as follow-ups (Enter mid-run).
+        keys.add(utf8.encode('queued one\r'));
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        keys.add(utf8.encode('queued two\r'));
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        shell.release();
+        await waitForIt(
+          () => fake.calls >= 4 && !cli.isBusy,
+          reason: 'the turn settles and both queued messages ran as turns',
+        );
+        // Call 2 is turn 1's post-tool continuation ('first-ack'); the
+        // drain loop then runs each queued message as its own turn.
+        expect(
+          fake.contexts[2].messages.any(
+            (m) =>
+                m is UserMessage && m.content.toString().contains('queued one'),
+          ),
+          isTrue,
+        );
+        expect(
+          fake.contexts[3].messages.any(
+            (m) =>
+                m is UserMessage && m.content.toString().contains('queued two'),
+          ),
+          isTrue,
+        );
+        keys.add([0x03]);
+        await run;
+      } finally {
+        await keys.close();
+      }
+    },
+  );
+}
+
+/// One-gate shell: every exec blocks until [release] (the busy holder for
+/// the queue-drain leg).
+class _GateShell implements Shell {
+  final _gate = Completer<void>();
+  var released = false;
+
+  void release() {
+    if (!released) {
+      released = true;
+      _gate.complete();
+    }
+  }
+
+  @override
+  Future<Result<ShellExecResult, ExecutionError>> exec(
+    String command, {
+    ShellExecOptions? options,
+  }) async {
+    calls++;
+    await _gate.future;
+    return const Ok(ShellExecResult(stdout: '', stderr: '', exitCode: 0));
+  }
+
+  var calls = 0;
 }
