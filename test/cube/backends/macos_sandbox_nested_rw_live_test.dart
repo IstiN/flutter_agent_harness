@@ -23,7 +23,6 @@ import 'package:flutter_agent_harness/src/cube/backends/cube_backend.dart';
 import 'package:flutter_agent_harness/src/cube/backends/macos_sandbox.dart';
 import 'package:flutter_agent_harness/src/cube/config/cube_spec.dart';
 import 'package:flutter_agent_harness/src/cube/config/fs_policy.dart';
-import 'package:flutter_agent_harness/src/cube/config/tool_policy.dart';
 import 'package:test/test.dart';
 
 /// Whether `sandbox-exec` is available on this host.
@@ -63,7 +62,6 @@ void main() {
         final spec = CubeSpec(
           name: 'nested-rw',
           backend: CubeBackendMode.kernel,
-          tools: const CubeToolPolicy(allow: {'head', 'printf'}),
           filesystem: CubeFsPolicy(
             workspace: workspace.path,
             mounts: [

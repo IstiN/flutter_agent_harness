@@ -365,6 +365,11 @@ spec:
       // cube-kernel-live CI job.
       if (Platform.isMacOS) {
         expect(
+          File('${workspace.path}/data/uv/probe.txt').existsSync(),
+          isTrue,
+          reason: 'nested rw mount must survive the later broader ro mount',
+        );
+        expect(
           File('${workspace.path}/data/uv/probe.txt').readAsStringSync(),
           contains('kernel-write-732'),
           reason: 'nested rw mount must survive the later broader ro mount',
