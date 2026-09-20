@@ -318,7 +318,7 @@ spec:
       final cube = writeCube(
         'nested-rw',
         backend: 'kernel',
-        allow: ['echo', 'cat'],
+        allow: ['echo'],
         mounts: [
           // Child FIRST, broader ro parent LAST: the adversarial order.
           'path: ${workspace.path}/data/uv, access: rw',
@@ -327,8 +327,8 @@ spec:
       );
       server.enqueueToolCall(
         'bash',
-        '{"command":"echo uv-probe-732 > ${workspace.path}/data/uv/probe.txt '
-            '&& cat ${workspace.path}/data/uv/probe.txt"}',
+        '{"command":"echo kernel-write-732 > '
+            '${workspace.path}/data/uv/probe.txt"}',
       );
       server.enqueueToolCall(
         'bash',
@@ -347,40 +347,39 @@ spec:
         0,
         reason: 'stdout: ${result.stdout}\nstderr: ${result.stderr}',
       );
-      // The nested write+read made it through the wrapped shell: on macOS
-      // the sorted profile's child allows land after the broader ro
-      // deny-write, so sandbox-exec lets the probe through. The marker is
-      // asserted ONLY on macOS: the Linux kernel backend binds statically
-      // (it enforces=true), so a host without usable user namespaces gets
-      // a clean spawn error instead of a policy degradation, and a host
-      // with them has unshare re-bind the ro parent VFS-wide — either way
-      // the nested child stays kernel-read-only there, a non-SBPL
-      // mechanism out of scope for #732.
+      // The verdict signal is the FILESYSTEM, not the run output: the fa
+      // transcript echoes every tool-call command verbatim and renders no
+      // tool stdout, so no output string can carry the kernel verdict.
+      // Under the old declaration-order emitter the broader ro deny-write
+      // was the last matching macOS kernel rule and this file never
+      // appeared; the sorted emitter lets the nested write through, so
+      // the probe lands INSIDE the rw child mount. Asserted only on
+      // macOS: the Linux kernel backend binds statically (enforces=true),
+      // so a host without usable user namespaces fails the unshare spawn
+      // cleanly (ubuntu CI: /proc/self/uid_map write denied by the
+      // AppArmor userns restriction) and a host with them re-binds the ro
+      // parent VFS-wide — either way no nested write, a non-SBPL
+      // mechanism out of scope for #732. The kernel E2E lives in the
+      // macOS legs: this gate plus
+      // test/cube/backends/macos_sandbox_nested_rw_live_test.dart on the
+      // cube-kernel-live CI job.
       if (Platform.isMacOS) {
         expect(
-          result.output,
-          contains('uv-probe-732'),
+          File('${workspace.path}/data/uv/probe.txt').readAsStringSync(),
+          contains('kernel-write-732'),
           reason: 'nested rw mount must survive the later broader ro mount',
-        );
-      } else {
-        expect(
-          result.output,
-          isNot(contains('uv-probe-732')),
-          reason:
-              'Linux: the nested-rw kernel leg is macOS-scoped (#732) — '
-              'the ro parent is re-bound VFS-wide (or the spawn fails '
-              'cleanly without user namespaces)',
         );
       }
       // The ro workspace still refuses sibling writes — the guard's
       // redirect check denies before the kernel is ever reached, in every
-      // mode and on every host.
+      // mode and on every host; the missing file is the negative proof.
       expect(
         result.output,
         contains(
           "write to '${workspace.path}/sibling.txt' denied by cube 'nested-rw'",
         ),
       );
+      expect(File('${workspace.path}/sibling.txt').existsSync(), isFalse);
     });
   });
 }
