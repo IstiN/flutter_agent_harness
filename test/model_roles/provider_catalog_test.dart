@@ -109,8 +109,7 @@ void main() {
 
     test('buildCliDefaultModel resolves through the table', () {
       expect(
-        buildCliDefaultModel('anthropic', modelId: 'claude-opus-4-5')
-            .maxTokens,
+        buildCliDefaultModel('anthropic', modelId: 'claude-opus-4-5').maxTokens,
         64000,
       );
     });
@@ -118,8 +117,7 @@ void main() {
     test('buildCatalogModel: claude id off the table family keeps the '
         'provider default (#302)', () {
       expect(
-        buildCatalogModel('openrouter', 'anthropic/claude-opus-4.5')
-            .maxTokens,
+        buildCatalogModel('openrouter', 'anthropic/claude-opus-4.5').maxTokens,
         16384,
       );
     });
@@ -161,9 +159,34 @@ void main() {
         ['text', 'image'],
       );
       // Absent override keeps the catalog spec (today's behavior).
+      expect(buildCliDefaultModel('zai', modelId: 'glm-5.3-flash').input, [
+        'text',
+      ]);
+    });
+
+    test('buildCliDefaultModel threads the preconfig thinkingLevel '
+        '(issue #734 rework: the no-roles boot path)', () {
+      // The FA_PROVIDER_* level must reach the fallback/default model when
+      // no roles chain pins it — the boot notice names the level, so the
+      // booted model has to carry it.
       expect(
-        buildCliDefaultModel('zai', modelId: 'glm-5.3-flash').input,
-        ['text'],
+        buildCliDefaultModel(
+          'anthropic',
+          modelId: 'claude-opus-4-5',
+          thinkingLevel: 'max',
+        ).thinkingLevel,
+        // Verbatim pass-through: the rung fold happens at the config parse
+        // boundary (FA_PROVIDER_CONFIG / ModelRef.fromYaml both normalize
+        // xhigh/max → high before a Model is ever built).
+        'max',
+      );
+      // Absent level stays null (byte-identical legacy boot).
+      expect(
+        buildCliDefaultModel(
+          'anthropic',
+          modelId: 'claude-opus-4-5',
+        ).thinkingLevel,
+        isNull,
       );
     });
   });

@@ -227,7 +227,9 @@ PROVIDERS AND API KEYS${_providerSectionSuffix()}
   baseUrl and model are required (no catalog defaults — a missing field
   fails at boot). apiKeyEnvVar is optional: declared, the named var (or
   its _BASE64 twin) must hold the key; omitted, the provider boots
-  keyless and the spec's usual env names are never probed. Every text
+  keyless and the spec's usual env names are never probed. thinkingLevel
+  is optional (minimal|low|medium|high|xhigh|max; xhigh/max fold to high)
+  and requests reasoning from adapters that support it. Every text
   value has a base64 twin (FA_PROVIDER_CONFIG_BASE64,
   <apiKeyEnvVar>_BASE64) for platforms that mangle special characters:
   the plain value wins when both carry the same value; mismatched or
@@ -287,6 +289,8 @@ MODEL ROLES (~/.fah/config.yaml)
           model: gpt-4o
           apiKeyName: OPENAI_API_KEY   # optional; also baseUrl,
                                        # contextWindow, maxTokens
+          thinkingLevel: high          # optional: minimal|low|medium|high|
+                                       # xhigh|max (xhigh/max fold to high)
       smol:
         - openrouter/openai/gpt-4o-mini
     modelOverrides:
