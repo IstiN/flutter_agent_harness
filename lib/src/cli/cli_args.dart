@@ -282,6 +282,25 @@ const Map<String, CliArgsResult Function(List<String>)> _cliSubcommands = {
   'session': _parseSessionArgs,
 };
 
+/// Applies the no-value boolean flags (`--wait-for-jobs`, `--pi`,
+/// `--omp`) to [values]; returns false when [arg] is none of them (the
+/// caller falls through to the value-flag table).
+bool _applyBooleanFlag(_CliArgValues values, String arg) {
+  if (arg == '--wait-for-jobs') {
+    values.waitForJobs = true;
+    return true;
+  }
+  if (arg == '--pi') {
+    values.piMode = true;
+    return true;
+  }
+  if (arg == '--omp') {
+    values.ompMode = true;
+    return true;
+  }
+  return false;
+}
+
 CliArgsResult parseCliArgs(List<String> args) {
   final subcommand = args.isEmpty ? null : _cliSubcommands[args.first];
   if (subcommand != null) {
@@ -292,18 +311,7 @@ CliArgsResult parseCliArgs(List<String> args) {
     final arg = args[i];
     if (const {'--help', '-h'}.contains(arg)) return const CliArgsHelp();
     if (arg == '--version') return CliArgsVersion(output: _prescanOutput(args));
-    if (arg == '--wait-for-jobs') {
-      values.waitForJobs = true;
-      continue;
-    }
-    if (arg == '--pi') {
-      values.piMode = true;
-      continue;
-    }
-    if (arg == '--omp') {
-      values.ompMode = true;
-      continue;
-    }
+    if (_applyBooleanFlag(values, arg)) continue;
     final flag = _valueFlags[arg];
     if (flag != null) {
       final (canonical, apply) = flag;

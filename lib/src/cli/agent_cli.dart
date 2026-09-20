@@ -220,6 +220,7 @@ part 'provider_keys.dart';
 part 'agent_cli_mcp.dart';
 part 'agent_cli_config.dart';
 part 'settings_flow.dart';
+part 'settings_flow_harness_mode.dart';
 part 'agent_commands.dart';
 part 'approval_commands.dart';
 part 'skill_commands.dart';
