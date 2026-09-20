@@ -3949,4 +3949,11 @@
 
 - ci: repin factory workflows to dmtools-agents@4ca4840 — threads-resolved re-review (#733)
 
+## 0.1.435
+
+- fix(702): CRAP descent #13 — auth/loader trio + band top (#724)
+- ci: repin factory to dmtools-agents@5098d93b — in-flight dedup fix + review timer removal (#739)
+- fix(706): /model picker — one ChatGPT identity, reachable list top (#712)
+- config(runners): dev/rework legs get a provider fallback queue; generic runner names (#737)
+
 ## Unreleased
