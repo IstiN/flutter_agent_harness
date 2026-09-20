@@ -106,6 +106,10 @@ extension AgentCliExt on AgentCli {
       _toolRegistry.unregister(name);
     }
     _toolRegistry.registerAll(add);
+    // pi mode (issue #679): extension deltas register straight into the
+    // registry, bypassing the availability refilter — route them through
+    // the same surface sweep so the 4-tool pin holds.
+    _sweepPiSurface();
     _agent.state.tools = _toolRegistry.tools;
   }
 

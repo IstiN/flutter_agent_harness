@@ -1863,11 +1863,11 @@ Future<void> _runApp(List<String> args) async {
   // The harness mode (issue #679): `--pi` wins over `FA_PI_MODE` wins
   // over the config `agent.mode` (AC3). `saved` is already loaded here;
   // the wiring consumes the resolved value via `config.agentMode`.
-  // `parseCliArgs` already validated the full list (a flag-like
-  // positional is a usage error), so `contains` is an exact read of the
-  // boolean flag; the parsed [CliArgs] lives in `main`'s scope.
+  // The parsed [CliArgs.piMode] is the single reader of the flag — a raw
+  // argv scan disagrees when a value flag consumes the token
+  // (`fa --model --pi` parses as `model: '--pi'`, `piMode: false`).
   final harnessMode = resolveHarnessMode(
-    flag: args.contains('--pi'),
+    flag: parsed.piMode,
     env: Platform.environment,
     configMode: saved.agentMode,
   );

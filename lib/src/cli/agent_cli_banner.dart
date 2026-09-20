@@ -45,9 +45,9 @@ extension on AgentCli {
     // the same chars/4 estimator pi uses (`token_estimation.dart`, ported
     // from pi-mono) over the composed system prompt plus any restored
     // messages. Default mode prints nothing (REG byte-parity).
-    if (config.agentMode == 'pi') {
+    if (_piActive) {
       final initialTokens =
-          _agent.state.systemPrompt.length ~/ 4 +
+          estimateStringTokens(_agent.state.systemPrompt) +
           _agent.state.messages.fold<int>(
             0,
             (total, message) => total + estimateTokens(message),

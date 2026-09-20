@@ -323,8 +323,7 @@ extension AgentCliTools on AgentCli {
     // every server is filtered off no matter what the availability
     // resolution says, so a late-arriving server can never widen the run
     // (its tools still tombstone via noteHiddenNames below).
-    final piActive = config.agentMode == 'pi';
-    bool allows(String server) => piActive
+    bool allows(String server) => _piActive
         ? false
         : resolution.mcpServers[server] ??
               (resolution.byId['mcp']?.enabled ?? true);
@@ -346,19 +345,24 @@ extension AgentCliTools on AgentCli {
         }
       }
     }
-    if (piActive) {
-      // The pin is exact: tools registered OUTSIDE the availability
-      // groups (`config`, `task_resume`, `compact_expand`) are not known
-      // ids the gate could hide — sweep the registry back to the 4-tool
-      // surface on every refilter, then sync + recompose as usual.
-      for (final tool in _toolRegistry.tools.toList()) {
-        if (!piToolIds.contains(tool.name)) {
-          _toolRegistry.unregister(tool.name);
-        }
-      }
-    }
+    _sweepPiSurface();
     _agent.state.tools = _toolRegistry.tools;
     _applyPromptComposition();
+  }
+
+  /// The pi surface sweep (issue #679): tools registered OUTSIDE the
+  /// availability groups (`config`, `task_resume`, `compact_expand`) are
+  /// not known ids the gate could hide — sweep the registry back to the
+  /// 4-tool surface. Runs on every MCP refilter AND on JS-extension tool
+  /// deltas (`_syncExtTools` registers straight into the registry and
+  /// would otherwise bypass the pin).
+  void _sweepPiSurface() {
+    if (!_piActive) return;
+    for (final tool in _toolRegistry.tools.toList()) {
+      if (!piToolIds.contains(tool.name)) {
+        _toolRegistry.unregister(tool.name);
+      }
+    }
   }
 
   /// `/tools [enable|disable <id> [global|project|session]|reload]`.

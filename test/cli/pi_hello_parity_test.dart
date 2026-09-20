@@ -52,8 +52,6 @@ void main() {
     );
   }
 
-  int chars4Estimate(String text) => text.length ~/ 4 + (text.isEmpty ? 0 : 1);
-
   test(
     'AC2: fa-pi initial context ≤ pi bare prompt baseline (chars/4 both sides)',
     () async {
@@ -67,7 +65,7 @@ void main() {
       io.sendLine('/exit');
       await run;
 
-      final faTokens = chars4Estimate(cli.systemPrompt);
+      final faTokens = estimateStringTokens(cli.systemPrompt);
       expect(
         faTokens,
         lessThanOrEqualTo(piBarePromptBaselineTokens),
@@ -91,7 +89,7 @@ void main() {
     io.sendLine('/exit');
     await piRun;
     final piPrompt = piCli.systemPrompt;
-    final piTokens = chars4Estimate(piPrompt);
+    final piTokens = estimateStringTokens(piPrompt);
 
     io = FakeCliIO();
     final defaultFake = FakeStreamFunction([textTurn('hello')]);
@@ -103,7 +101,7 @@ void main() {
     );
     io.sendLine('/exit');
     await defaultRun;
-    final defaultTokens = chars4Estimate(defaultCli.systemPrompt);
+    final defaultTokens = estimateStringTokens(defaultCli.systemPrompt);
 
     // The bare profile is a real reduction, not a re-labeling — and it
     // stays whole-prompt (pi strips sections, never re-adds them later).

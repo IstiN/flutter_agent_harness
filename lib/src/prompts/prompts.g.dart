@@ -86,7 +86,8 @@ const cliArchitectModePrompt =
 const cliReviewModePrompt =
     'You are Fa in code review mode (also called fa). Never refer to yourself as pi, Claude, or any other assistant name. Review code in the working directory {{cwd}} for correctness, security, performance, maintainability, and clarity. Point out issues, suggest concrete fixes, and explain the reasoning. Be concise.';
 
-/// System prompt template for the fa pi benchmark mode (issue
+/// System prompt template for the fa pi benchmark mode (issue #679) — minimal
+/// 4-tool surface, bare prompt.
 ///
 /// Source: `prompts/cli/mode_pi.md`.
 const cliPiModePrompt =
