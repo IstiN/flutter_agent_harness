@@ -42,6 +42,7 @@ import '../power_config.dart';
 import '../model_roles/model_roles.dart';
 import '../redact/redaction_types.dart';
 import '../spill/spill.dart';
+import '../cli/links_config.dart';
 import '../tools/availability.dart';
 import '../task/subagent_heartbeat.dart';
 import '../ttsr/ttsr.dart';
@@ -83,6 +84,7 @@ const configTopLevelKeys = <String>{
   'fabric',
   'power',
   'tui',
+  'links',
 
   // The main-model provider queue (issue #418): a top-level section in
   // project/user yaml (and the FA_PROVIDERS_QUEUE env) parsed by the
@@ -1106,6 +1108,9 @@ final _sectionValidators = <String, void Function(dynamic value, String label)>{
   // schema errors — so the validator never throws.
   'spills': (value, _) => SpillsConfig.fromYaml(value),
   'tools': (value, _) => ToolsConfig.fromYaml(value),
+  // The links section (issue #691): strict on shape (a bad value throws,
+  // nothing persists), tolerant on unknown keys (notes, never errors).
+  'links': (value, _) => LinksConfig.fromYaml(value),
   'compaction': (value, label) =>
       CompactionEngine.fromSection(value, label: label),
   'models': (value, _) => ModelsConfig.fromYaml(value),
