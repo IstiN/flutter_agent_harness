@@ -3964,4 +3964,9 @@
 - fix(cube): rw mounts emit file-read* allow in SBPL — kernel reads under read-denied prefixes (#718)
 - ci: repin factory to dmtools-agents@759a811 — prMachineAuthor auto-leg gate (#465) (#741)
 
+## 0.1.437
+
+- fix(692): iOS sandbox fitness — visible errors, sandbox-aware prompt, viewport-aware widgets, bounded app-state (#704)
+- gh-740 [GOAL] Compaction failure must never brick a session — deterministic trim fallback, decorrelated role chain, trap circuit-breaker (M1 spec: 90s→300s ready) (#743)
+
 ## Unreleased
