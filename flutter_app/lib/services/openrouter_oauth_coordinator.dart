@@ -6,7 +6,7 @@ import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart'
-    show defaultTargetPlatform, kIsWeb, TargetPlatform;
+    show defaultTargetPlatform, kIsWeb, TargetPlatform, visibleForTesting;
 import 'package:url_launcher/url_launcher.dart' as url_launcher;
 
 import 'package:fa/services/openrouter_oauth_callback.dart';
@@ -121,7 +121,10 @@ final class OpenRouterOAuthCoordinator {
   /// `callback_url`).
   ///
   /// [launchUrl] is injectable for tests; when omitted the real
-  /// `package:url_launcher` function is used.
+  /// `package:url_launcher` function is used. [usesLocalServerCapture] is
+  /// likewise injectable (it stands in for the physical-platform check,
+  /// which no test override can fake) so host tests on any OS can drive
+  /// the Windows/Linux localhost-server flow.
   ///
   /// Returns `null` if the browser could not be launched, the user cancelled,
   /// or the flow timed out.
@@ -129,14 +132,17 @@ final class OpenRouterOAuthCoordinator {
     Uri authUrl, {
     Future<bool> Function(Uri url, {required url_launcher.LaunchMode mode})?
     launchUrl,
+    bool Function()? usesLocalServerCapture,
   }) async {
     await _reset();
     _completer = Completer<String?>();
     final future = _completer!.future;
 
     final doLaunch = launchUrl ?? url_launcher.launchUrl;
+    final localServerCapture =
+        usesLocalServerCapture ?? defaultUsesLocalServerCapture;
 
-    if (!kIsWeb && (Platform.isWindows || Platform.isLinux)) {
+    if (localServerCapture()) {
       _server = OpenRouterOAuthCallbackServer();
       final server = _server!;
       final callbackUrl = await server.start();
@@ -151,6 +157,11 @@ final class OpenRouterOAuthCoordinator {
         mode: url_launcher.LaunchMode.externalApplication,
       );
       if (!launched) {
+        // The documented contract: null when the browser could not be
+        // launched. Completing (rather than abandoning) the completer
+        // keeps any stray listener from waiting on a future that never
+        // ends.
+        _completer?.complete(null);
         await _reset();
         return future;
       }
@@ -175,11 +186,22 @@ final class OpenRouterOAuthCoordinator {
       );
     }
     if (!launched) {
+      // See the desktop branch above: null, not a pending forever-future.
+      _completer?.complete(null);
       await _reset();
       return future;
     }
     return future;
   }
+
+  /// Whether this host runs the Windows/Linux localhost-server capture.
+  ///
+  /// `Platform.isWindows`/`isLinux` read the physical build host and cannot
+  /// be faked with `debugDefaultTargetPlatformOverride`, so tests inject
+  /// their own decision through [capture]'s `usesLocalServerCapture`.
+  @visibleForTesting
+  static bool defaultUsesLocalServerCapture() =>
+      !kIsWeb && (Platform.isWindows || Platform.isLinux);
 
   /// Completes an in-flight [capture] with [code] (from a deep link or a web
   /// `postMessage`). Passing `null` means the flow was cancelled or errored.

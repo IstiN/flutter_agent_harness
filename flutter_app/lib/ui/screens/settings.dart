@@ -1829,173 +1829,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Show the "Connect a provider" hint only when the registry
-              // has no saved providers — if the user already configured one
-              // (just hasn't applied it yet) the hint is noise. Providers
-              // section below carries its own Add-provider row.
-              if (service == null &&
-                  (widget.registry?.providers.isEmpty ?? true)) ...[
-                _NoServiceSettings(
-                  onAddProvider: () async {
-                    final registry = widget.registry;
-                    if (registry == null) return;
-                    final result = await Navigator.of(context)
-                        .push<ProviderEditorResult>(
-                          MaterialPageRoute(
-                            builder: (_) => ProviderEditorPage(
-                              title: context.l10n.settingsAddProvider,
-                              modelsFetcher: widget.modelsFetcher,
-                            ),
-                          ),
-                        );
-                    if (result == null || result.deleted) return;
-                    final provider = await registry.add(
-                      name: result.name,
-                      baseUrl: result.baseUrl,
-                      modelId: result.modelId,
-                    );
-                    if (result.apiKey.isNotEmpty) {
-                      registry.rememberKey(provider.id, result.apiKey);
-                    }
-                    AppAnalytics.instance.providerSaved('add');
-                  },
-                ),
-                const SizedBox(height: 16),
-                const Divider(),
-                const SizedBox(height: 8),
-              ],
-              ProvidersSection(
-                registry: widget.registry,
-                modelsFetcher: widget.modelsFetcher,
-                openRouterOAuthCallbackUrl:
-                    OpenRouterOAuthCoordinator.instance.platformCallbackUrl,
-                openRouterOAuthCapture:
-                    OpenRouterOAuthCoordinator.instance.capture,
-                onCodeMieSso: () async {
-                  final registry = widget.registry;
-                  if (registry == null) return;
-                  await runCodemieSsoFlow(
-                    context: context,
-                    registry: registry,
-                    service: service,
-                    lastConnectionStore:
-                        widget.lastConnectionStore ??
-                        LastConnectionStore.inMemory(),
-                  );
-                },
-                onChatGptOAuth: () async {
-                  final registry = widget.registry;
-                  if (registry == null) return;
-                  await runChatGptOAuthFlow(
-                    context: context,
-                    registry: registry,
-                    service: service,
-                    lastConnectionStore:
-                        widget.lastConnectionStore ??
-                        LastConnectionStore.inMemory(),
-                  );
-                },
-                onAiinConnect: () async {
-                  final registry = widget.registry;
-                  if (registry == null) return;
-                  await runAiinConnectFlow(
-                    context: context,
-                    registry: registry,
-                    service: service,
-                    lastConnectionStore:
-                        widget.lastConnectionStore ??
-                        LastConnectionStore.inMemory(),
-                  );
-                },
-                onCopilotConnect: () async {
-                  final registry = widget.registry;
-                  if (registry == null) return;
-                  await runCopilotConnectFlow(
-                    context: context,
-                    registry: registry,
-                    service: service,
-                    lastConnectionStore:
-                        widget.lastConnectionStore ??
-                        LastConnectionStore.inMemory(),
-                  );
-                },
-                // CodeMie edit provider → "Re-authenticate": re-run the SSO
-                // flow for that org (the cookie key expires and cannot be
-                // refreshed by re-typing). The flow itself refreshes the
-                // existing provider's key and keeps its model.
-                onProviderReauthenticate: (ctx, provider) async {
-                  final registry = widget.registry;
-                  if (registry == null) return false;
-                  // AIIN entries re-run the AIIN sign-in flow in re-auth
-                  // mode: the hosted browser sign-in (or paste-key) mint a
-                  // fresh key; the entry keeps its name and model.
-                  if (isAiinBaseUrl(provider.baseUrl)) {
-                    return runAiinConnectFlow(
-                      context: ctx,
-                      registry: registry,
-                      service: service,
-                      lastConnectionStore:
-                          widget.lastConnectionStore ??
-                          LastConnectionStore.inMemory(),
-                      reauthenticateFor: provider,
-                    );
-                  }
-                  // Copilot entries re-auth through the GitHub device-code
-                  // flow (the same sheet the connect uses; signing into the
-                  // same account refreshes the entry's key and keeps its
-                  // model). CodeMie entries re-run their SSO flow.
-                  if (isCopilotBaseUrl(provider.baseUrl)) {
-                    return runCopilotConnectFlow(
-                      context: ctx,
-                      registry: registry,
-                      service: service,
-                      lastConnectionStore:
-                          widget.lastConnectionStore ??
-                          LastConnectionStore.inMemory(),
-                    );
-                  }
-                  return runCodemieSsoFlow(
-                    context: ctx,
-                    registry: registry,
-                    service: service,
-                    lastConnectionStore:
-                        widget.lastConnectionStore ??
-                        LastConnectionStore.inMemory(),
-                    orgUrl: codeMieOrgUrl(provider.baseUrl),
-                  );
-                },
-                onDeviceProviders: buildOnDeviceProviderRoutes(
-                  context,
-                  registry: widget.registry,
-                  configStore: onDeviceConfig,
-                  onApply: (config) async {
-                    await service?.reconfigure(config);
-                    await widget.lastConnectionStore?.saveFromConfig(config);
-                  },
-                  webLlmEngine: widget.webLlmEngine,
-                  gemmaEngine: widget.gemmaEngine,
-                  transformersJsEngine: widget.transformersJsEngine,
-                ),
-                // On-device rows appear only for engines the user has
-                // configured before; the rest are discovered via Add
-                // provider (the routes above feed the picker's tiles).
-                onDeviceRowVisible: onDeviceConfig?.isConfigured,
-                onDeviceConnected: (config) async {
-                  final agentConfig = agentConfigFrom(config);
-                  const onDeviceKinds = {
-                    webLlmProviderKind,
-                    gemmaProviderKind,
-                    transformersJsProviderKind,
-                  };
-                  if (onDeviceKinds.contains(agentConfig.providerKind)) {
-                    await onDeviceConfig?.markConfigured(
-                      agentConfig.providerKind,
-                    );
-                  }
-                  await service?.reconfigure(agentConfig);
-                  await widget.lastConnectionStore?.saveFromConfig(agentConfig);
-                },
-              ),
+              ..._noServiceHint(context, service),
+              _providersSection(context, service, onDeviceConfig),
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),
@@ -2004,55 +1839,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               // activeBaseUrl, …). Gate them on a non-null service
               // so the no-service case still surfaces theme / keys /
               // layout / debug logs / onboarding replay below.
-              if (service != null) ...[
-                // Everything model-related (presets, chat model, task
-                // roles, media slots) lives on the dedicated Models page —
-                // the top level stays provider-focused.
-                _ModelsRow(
-                  onTap: () {
-                    // pushFaPage: a centered dialog on wide canvases
-                    // (desktop/tablet), a full-screen page on the phone.
-                    unawaited(
-                      faui.pushFaPage<void>(
-                        context,
-                        ModelsSettingsPage(
-                          service: service,
-                          registry: widget.registry,
-                          lastConnectionStore: widget.lastConnectionStore,
-                          modelsFetcher: widget.modelsFetcher,
-                          taskModelsStore: taskModels,
-                          webLlmEngine: widget.webLlmEngine,
-                          gemmaEngine: widget.gemmaEngine,
-                          transformersJsEngine: widget.transformersJsEngine,
-                        ),
-                      ),
-                    );
-                  },
-                ),
-                const SizedBox(height: 24),
-                const Divider(),
-                const SizedBox(height: 16),
-                // The live subagent tree (CLI `/agents` panel parity):
-                // main + retained children with observe/send.
-                if (service.subagentManager case final manager?) ...[
-                  Text(
-                    'Agents', // l10n:ignore
-                    style: Theme.of(context).textTheme.titleSmall,
-                  ),
-                  const SizedBox(height: 8),
-                  faui.AgentsSection(
-                    manager: manager,
-                    mainDescription:
-                        '${service.agentModelId} · '
-                        '${service.messages.length} messages',
-                    observe: service.observeSubagent,
-                    send: service.sendToSubagent,
-                  ),
-                  const SizedBox(height: 24),
-                  const Divider(),
-                  const SizedBox(height: 16),
-                ],
-              ],
+              if (service != null)
+                ..._modelsAndAgentsSections(service, taskModels),
               const ThemeModeSection(),
               const ThemePacksSection(),
 
@@ -2100,46 +1888,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),
-              if (service != null) ...[
-                ApprovalModeSelector(service: service),
-                const SizedBox(height: 24),
-                const Divider(),
-                const SizedBox(height: 16),
-                // Third-party skills consent — the roots don't exist on
-                // mobile, so the section hides there entirely.
-                if (skillsConsentSurfacesVisible) ...[
-                  SkillsAccessSection(service: service),
-                  const SizedBox(height: 24),
-                  const Divider(),
-                  const SizedBox(height: 16),
-                ],
-                // Capability-gated tools (issue #19): live toggles, every
-                // platform — the tool set exists everywhere.
-                ToolsAvailabilitySection(service: service),
-                const SizedBox(height: 24),
-                const Divider(),
-                const SizedBox(height: 16),
-                // Compaction engine picker (issue #287): structured (2.0)
-                // is the default; classic stays the in-settings rollback.
-                // Resolves/writes the same config layers the per-compaction
-                // loader in AgentService reads, so a flip applies at the
-                // next compaction without a restart.
-                CompactionSection(
-                  projectDir: service.env.sessionCwd,
-                  docsUrl: Uri.parse(
-                    'https://github.com/IstiN/flutter_agent_harness/tree/'
-                    'main/docs',
-                  ),
-                ),
-                const SizedBox(height: 24),
-                const Divider(),
-                const SizedBox(height: 16),
-                // Provider queue editor (issue #418): the ordered
-                // main-model failover chain. Resolves/writes the same
-                // scopes the CLI boot reads, so an edit applies from the
-                // next run; the env queue shows read-only ("env wins").
-                ProviderQueueSection(projectDir: service.env.sessionCwd),
-              ],
+              if (service != null) ..._approvalAndToolsSections(service),
               // Registry-classified CLI-only settings, listed with their
               // reasons — never a silent absence (issue #288 AC4).
               // Deliberately OUTSIDE the `service != null` gate: the
@@ -2151,27 +1900,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const Divider(),
               const SizedBox(height: 16),
               WebLlmCacheSection(engine: widget.webLlmEngine),
-              // The transformers.js section is web-only (its provider is);
-              // the Gemma section hides where its provider is unsupported —
-              // on web the litert-lm path is abandoned in favour of
-              // transformers.js, and on Windows/Linux it is not enabled yet.
-              if (transformersJsProviderSupported) ...[
-                const SizedBox(height: 24),
-                TransformersJsCacheSection(engine: widget.transformersJsEngine),
-              ],
-              if (gemmaProviderSupported) ...[
-                const SizedBox(height: 24),
-                GemmaCacheSection(engine: widget.gemmaEngine),
-              ],
-              // Device automation (issue #622): the consent surface exists
-              // only in the god flavor on Android — store builds never
-              // show it.
-              if (mobilePlatformSupported && mobileFlavor == 'god') ...[
-                const MobileAutomationSection(),
-                const SizedBox(height: 24),
-                const Divider(),
-                const SizedBox(height: 16),
-              ],
+              ..._onDeviceCacheSections(),
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),
@@ -2190,6 +1919,313 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ),
     );
+  }
+
+  /// The connect-a-provider CTA shown only when there is no active
+  /// service AND no saved provider to fall back on — if the user already
+  /// configured one (just hasn't applied it yet) the hint is noise.
+  /// ProvidersSection below carries its own Add-provider row.
+  List<Widget> _noServiceHint(BuildContext context, AgentService? service) {
+    final registry = widget.registry;
+    if (service != null) return const [];
+    if (registry != null && registry.providers.isNotEmpty) return const [];
+    return [
+      _NoServiceSettings(onAddProvider: () => _addProviderFromCta(context)),
+      const SizedBox(height: 16),
+      const Divider(),
+      const SizedBox(height: 8),
+    ];
+  }
+
+  /// The add-provider flow behind the no-service CTA: opens the editor,
+  /// saves the provider, remembers a non-empty key, and reports to
+  /// analytics (issue #702: extracted from build for direct tests).
+  Future<void> _addProviderFromCta(BuildContext context) async {
+    final registry = widget.registry;
+    if (registry == null) return;
+    final result = await Navigator.of(context).push<ProviderEditorResult>(
+      MaterialPageRoute(
+        builder: (_) => ProviderEditorPage(
+          title: context.l10n.settingsAddProvider,
+          modelsFetcher: widget.modelsFetcher,
+        ),
+      ),
+    );
+    if (result == null || result.deleted) return;
+    final provider = await registry.add(
+      name: result.name,
+      baseUrl: result.baseUrl,
+      modelId: result.modelId,
+    );
+    if (result.apiKey.isNotEmpty) {
+      registry.rememberKey(provider.id, result.apiKey);
+    }
+    AppAnalytics.instance.providerSaved('add');
+  }
+
+  /// The shared fallback for connect flows when the host passed no
+  /// last-connection store: an in-memory one keeps the flow shape without
+  /// persisting anything.
+  LastConnectionStore _fallbackConnectionStore() =>
+      widget.lastConnectionStore ?? LastConnectionStore.inMemory();
+
+  /// Re-authentication dispatch for SSO-backed providers in the editor
+  /// (issue #702: extracted from build for direct tests):
+  /// AIIN entries re-run the AIIN sign-in flow in re-auth mode; Copilot
+  /// entries re-auth through the GitHub device-code flow (the same sheet
+  /// the connect uses; signing into the same account refreshes the
+  /// entry's key and keeps its model); CodeMie entries re-run their SSO
+  /// flow (the cookie key expires and cannot be refreshed by re-typing).
+  Future<bool> _reauthenticateProvider(
+    BuildContext context,
+    AgentService? service,
+    CustomProvider provider,
+  ) async {
+    final registry = widget.registry;
+    if (registry == null) return false;
+    if (isAiinBaseUrl(provider.baseUrl)) {
+      return runAiinConnectFlow(
+        context: context,
+        registry: registry,
+        service: service,
+        lastConnectionStore: _fallbackConnectionStore(),
+        reauthenticateFor: provider,
+      );
+    }
+    if (isCopilotBaseUrl(provider.baseUrl)) {
+      return runCopilotConnectFlow(
+        context: context,
+        registry: registry,
+        service: service,
+        lastConnectionStore: _fallbackConnectionStore(),
+      );
+    }
+    return runCodemieSsoFlow(
+      context: context,
+      registry: registry,
+      service: service,
+      lastConnectionStore: _fallbackConnectionStore(),
+      orgUrl: codeMieOrgUrl(provider.baseUrl),
+    );
+  }
+
+  /// The providers block with every sign-in/connect wiring (issue #702:
+  /// extracted from build; the flows themselves live in their services).
+  Widget _providersSection(
+    BuildContext context,
+    AgentService? service,
+    OnDeviceConfigStore? onDeviceConfig,
+  ) {
+    return ProvidersSection(
+      registry: widget.registry,
+      modelsFetcher: widget.modelsFetcher,
+      openRouterOAuthCallbackUrl:
+          OpenRouterOAuthCoordinator.instance.platformCallbackUrl,
+      openRouterOAuthCapture: OpenRouterOAuthCoordinator.instance.capture,
+      onCodeMieSso: () async {
+        final registry = widget.registry;
+        if (registry == null) return;
+        await runCodemieSsoFlow(
+          context: context,
+          registry: registry,
+          service: service,
+          lastConnectionStore: _fallbackConnectionStore(),
+        );
+      },
+      onChatGptOAuth: () async {
+        final registry = widget.registry;
+        if (registry == null) return;
+        await runChatGptOAuthFlow(
+          context: context,
+          registry: registry,
+          service: service,
+          lastConnectionStore: _fallbackConnectionStore(),
+        );
+      },
+      onAiinConnect: () async {
+        final registry = widget.registry;
+        if (registry == null) return;
+        await runAiinConnectFlow(
+          context: context,
+          registry: registry,
+          service: service,
+          lastConnectionStore: _fallbackConnectionStore(),
+        );
+      },
+      onCopilotConnect: () async {
+        final registry = widget.registry;
+        if (registry == null) return;
+        await runCopilotConnectFlow(
+          context: context,
+          registry: registry,
+          service: service,
+          lastConnectionStore: _fallbackConnectionStore(),
+        );
+      },
+      onProviderReauthenticate: (ctx, provider) =>
+          _reauthenticateProvider(ctx, service, provider),
+      onDeviceProviders: buildOnDeviceProviderRoutes(
+        context,
+        registry: widget.registry,
+        configStore: onDeviceConfig,
+        onApply: (config) async {
+          await service?.reconfigure(config);
+          await widget.lastConnectionStore?.saveFromConfig(config);
+        },
+        webLlmEngine: widget.webLlmEngine,
+        gemmaEngine: widget.gemmaEngine,
+        transformersJsEngine: widget.transformersJsEngine,
+      ),
+      // On-device rows appear only for engines the user has configured
+      // before; the rest are discovered via Add provider (the routes
+      // above feed the picker's tiles).
+      onDeviceRowVisible: onDeviceConfig?.isConfigured,
+      onDeviceConnected: (config) async {
+        final agentConfig = agentConfigFrom(config);
+        const onDeviceKinds = {
+          webLlmProviderKind,
+          gemmaProviderKind,
+          transformersJsProviderKind,
+        };
+        if (onDeviceKinds.contains(agentConfig.providerKind)) {
+          await onDeviceConfig?.markConfigured(agentConfig.providerKind);
+        }
+        await service?.reconfigure(agentConfig);
+        await widget.lastConnectionStore?.saveFromConfig(agentConfig);
+      },
+    );
+  }
+
+  /// Model management and the live subagent tree (issue #702: extracted
+  /// from build). Everything model-related (presets, chat model, task
+  /// roles, media slots) lives on the dedicated Models page — the top
+  /// level stays provider-focused.
+  List<Widget> _modelsAndAgentsSections(
+    AgentService service,
+    TaskModelsStore? taskModels,
+  ) {
+    return [
+      _ModelsRow(
+        onTap: () {
+          // pushFaPage: a centered dialog on wide canvases
+          // (desktop/tablet), a full-screen page on the phone.
+          unawaited(
+            faui.pushFaPage<void>(
+              context,
+              ModelsSettingsPage(
+                service: service,
+                registry: widget.registry,
+                lastConnectionStore: widget.lastConnectionStore,
+                modelsFetcher: widget.modelsFetcher,
+                taskModelsStore: taskModels,
+                webLlmEngine: widget.webLlmEngine,
+                gemmaEngine: widget.gemmaEngine,
+                transformersJsEngine: widget.transformersJsEngine,
+              ),
+            ),
+          );
+        },
+      ),
+      const SizedBox(height: 24),
+      const Divider(),
+      const SizedBox(height: 16),
+      // The live subagent tree (CLI `/agents` panel parity):
+      // main + retained children with observe/send.
+      if (service.subagentManager case final manager?) ...[
+        Text(
+          'Agents', // l10n:ignore
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+        const SizedBox(height: 8),
+        faui.AgentsSection(
+          manager: manager,
+          mainDescription:
+              '${service.agentModelId} · '
+              '${service.messages.length} messages',
+          observe: service.observeSubagent,
+          send: service.sendToSubagent,
+        ),
+        const SizedBox(height: 24),
+        const Divider(),
+        const SizedBox(height: 16),
+      ],
+    ];
+  }
+
+  /// The service-gated control sections (issue #702: extracted from
+  /// build): approval mode, skills consent, capability-gated tools, the
+  /// compaction engine picker, and the provider queue editor.
+  List<Widget> _approvalAndToolsSections(AgentService service) {
+    return [
+      ApprovalModeSelector(service: service),
+      const SizedBox(height: 24),
+      const Divider(),
+      const SizedBox(height: 16),
+      // Third-party skills consent — the roots don't exist on
+      // mobile, so the section hides there entirely.
+      if (skillsConsentSurfacesVisible) ...[
+        SkillsAccessSection(service: service),
+        const SizedBox(height: 24),
+        const Divider(),
+        const SizedBox(height: 16),
+      ],
+      // Capability-gated tools (issue #19): live toggles, every
+      // platform — the tool set exists everywhere.
+      ToolsAvailabilitySection(service: service),
+      const SizedBox(height: 24),
+      const Divider(),
+      const SizedBox(height: 16),
+      // Compaction engine picker (issue #287): structured (2.0)
+      // is the default; classic stays the in-settings rollback.
+      // Resolves/writes the same config layers the per-compaction
+      // loader in AgentService reads, so a flip applies at the
+      // next compaction without a restart.
+      CompactionSection(
+        projectDir: service.env.sessionCwd,
+        docsUrl: Uri.parse(
+          'https://github.com/IstiN/flutter_agent_harness/tree/'
+          'main/docs',
+        ),
+      ),
+      const SizedBox(height: 24),
+      const Divider(),
+      const SizedBox(height: 16),
+      // Provider queue editor (issue #418): the ordered
+      // main-model failover chain. Resolves/writes the same
+      // scopes the CLI boot reads, so an edit applies from the
+      // next run; the env queue shows read-only ("env wins").
+      ProviderQueueSection(projectDir: service.env.sessionCwd),
+    ];
+  }
+
+  /// On-device engine cache sections (issue #702: extracted from build).
+  /// The transformers.js section is web-only (its provider is); the Gemma
+  /// section hides where its provider is unsupported — on web the
+  /// litert-lm path is abandoned in favour of transformers.js, and on
+  /// Windows/Linux it is not enabled yet.
+  List<Widget> _onDeviceCacheSections() {
+    return [
+      // The transformers.js section is web-only; Gemma's provider hides
+      // where unsupported (web uses transformers.js; Windows/Linux are
+      // not enabled yet).
+      if (transformersJsProviderSupported) ...[
+        const SizedBox(height: 24),
+        TransformersJsCacheSection(engine: widget.transformersJsEngine),
+      ],
+      if (gemmaProviderSupported) ...[
+        const SizedBox(height: 24),
+        GemmaCacheSection(engine: widget.gemmaEngine),
+      ],
+      // Device automation (issue #622): the consent surface exists
+      // only in the god flavor on Android — store builds never
+      // show it.
+      if (mobilePlatformSupported && mobileFlavor == 'god') ...[
+        const MobileAutomationSection(),
+        const SizedBox(height: 24),
+        const Divider(),
+        const SizedBox(height: 16),
+      ],
+    ];
   }
 }
 
@@ -2530,9 +2566,8 @@ class MobileAutomationSection extends StatelessWidget {
         unawaited(
           Navigator.of(context).push(
             MaterialPageRoute<void>(
-              builder: (context) => MobileConsentScreen(
-                control: defaultMobileControl,
-              ),
+              builder: (context) =>
+                  MobileConsentScreen(control: defaultMobileControl),
             ),
           ),
         );
