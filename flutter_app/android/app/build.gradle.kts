@@ -161,18 +161,15 @@ flutter {
 // files are left untouched, so the task is safe to run on every build.
 val patch16kScript = rootProject.layout.projectDirectory
     .file("../../scripts/patch_elf_16k_alignment.dart")
-tasks.matching { it.name.startsWith("compileFlutterBuild") }.all { compileTask ->
-    val variant = compileTask.name.removePrefix("compileFlutterBuild")
+tasks.matching { it.name.startsWith("compileFlutterBuild") }.all {
+    val variant = name.removePrefix("compileFlutterBuild")
     val variantDir = variant.replaceFirstChar { it.lowercase() }
     val nativeAssetsDir = layout.buildDirectory
         .dir("intermediates/flutter/$variantDir/native_assets/jniLibs")
-    val patchTask = tasks.register(
-        "patch16kNativeLibs$variant",
-        Exec::class.java,
-    ) {
+    val patchTask = tasks.register("patch16kNativeLibs$variant", Exec::class.java) {
         group = "build"
         description = "Patches prebuilt native .so assets for 16 KB page sizes (gh-746)"
-        dependsOn(compileTask)
+        dependsOn(this@all)
         // The dir only exists once the flutter tool staged native assets for
         // this variant; skip rather than fail for variants without any.
         onlyIf("native assets staged") { nativeAssetsDir.get().asFile.exists() }
@@ -190,8 +187,8 @@ tasks.matching { it.name.startsWith("compileFlutterBuild") }.all { compileTask -
             }
         }
     }
-    tasks.matching { it.name == "copyJniLibsflutterBuild$variant" }.all { copyTask ->
-        copyTask.dependsOn(patchTask)
+    tasks.matching { it.name == "copyJniLibsflutterBuild$variant" }.all {
+        dependsOn(patchTask)
     }
 }
 
