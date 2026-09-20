@@ -3976,4 +3976,11 @@
 - ci: repin factory to 78345a9 — rework policy + auto-approve external + guard AGENT_HANDLE (#748)
 - config(machine): machine author is ai-teammate (the App), not the SOURCE-token login (#747)
 
+## 0.1.439
+
+- ci: repin factory to 0c9abdb — review derive + backfill fixes (#751)
+- feat(cli): omp load-modes + settings switch (#690)
+- fix(732): pin SBPL last-match-wins ordering — nested rw mounts survive broader later ro denies (#745)
+- feat(734): optional thinkingLevel in FA_PROVIDER_CONFIG + roles chain entries (#744)
+
 ## Unreleased
