@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:fa/apps/app_state_context.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/apps/js_theme_bridge_host.dart';
 import 'package:flutter/material.dart';
@@ -47,6 +48,7 @@ class FaAppMessage {
     this.appId,
     this.appStateJson,
     this.themeLine,
+    this.viewportLine,
     this.screenshot,
   });
 
@@ -60,6 +62,12 @@ class FaAppMessage {
   /// Compact one-line theme summary (see [jsThemeSummaryLine]) appended to
   /// the agent message so the model never guesses colors.
   final String? themeLine;
+
+  /// One-line viewport summary (logical size, orientation, safe areas —
+  /// see [viewportContextLine], issue #692 C) so generated UI fits the
+  /// real canvas.
+  final String? viewportLine;
+
   final Uint8List? screenshot;
 }
 
@@ -442,12 +450,25 @@ class _JsAppViewState extends State<JsAppView> {
     final state = _engine?.exportedState;
     final screenshot = await _captureScreenshot();
     if (!mounted) return;
+    // Issue #692 C: the agent designs generated UI for THIS canvas —
+    // logical size, orientation and safe areas ride the message.
+    final view = View.of(context);
+    final pixelRatio = view.devicePixelRatio;
+    final logical = view.physicalSize / pixelRatio;
+    final padding = MediaQuery.paddingOf(context);
     final used = await onSend(
       FaAppMessage(
         text: trimmed,
         appId: widget.app.id,
         appStateJson: state == null ? null : jsonEncode(state),
         themeLine: jsThemeSummaryLine(jsThemeMap(context)),
+        viewportLine: viewportContextLine(
+          size: logical,
+          orientation: logical.width >= logical.height
+              ? Orientation.landscape
+              : Orientation.portrait,
+          safeAreas: padding,
+        ),
         screenshot: screenshot,
       ),
     );
