@@ -707,6 +707,10 @@
   "@dynamicTileError": {
     "description": "Title of the expandable error tile for a failed dynamic message (issue #102 AC9)"
   },
+  "dynamicTileOverflow": "Виджет шире области чата — содержимое справа обрезано. Агента попросили перестроить виджет по ширине.",
+  "@dynamicTileOverflow": {
+    "description": "Overflow strip (error colors) on the dynamic-message tile once the canvas detected a viewport overflow (issue #692 C)"
+  },
   "dynamicTileRetry": "Повторить",
   "@dynamicTileRetry": {
     "description": "Retry button on the dynamic-message error tile (issue #102 AC9)"
