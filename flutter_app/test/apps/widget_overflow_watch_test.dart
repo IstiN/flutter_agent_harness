@@ -146,5 +146,35 @@ void main() {
         svc.dispose();
       },
     );
+
+    test(
+      'a failed note does NOT burn the one-shot (rolled back, review fix)',
+      () async {
+        var calls = 0;
+        final sent = <String>[];
+        final svc = service((text) {
+          calls++;
+          if (calls == 1) throw StateError('session gone');
+          sent.add(text);
+        });
+        await svc.present(
+          DynamicMessageRequest(title: def().title, jsSource: def().jsSource),
+        );
+        final definition = svc.widgets.single;
+
+        // The back-channel rejects: the agent was never told, so the
+        // one-shot must roll back and the tile strip must drop.
+        svc.noteViewportOverflow(definition, 96, 393);
+        await Future<void>.delayed(Duration.zero);
+        expect(svc.overflowNotedFor(definition.id), isFalse);
+
+        // A later report of the same widget still reaches the agent.
+        svc.noteViewportOverflow(definition, 96, 393);
+        await Future<void>.delayed(Duration.zero);
+        expect(sent, hasLength(1));
+        expect(svc.overflowNotedFor(definition.id), isTrue);
+        svc.dispose();
+      },
+    );
   });
 }

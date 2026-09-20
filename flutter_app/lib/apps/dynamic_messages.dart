@@ -431,9 +431,25 @@ class DynamicMessagesService extends ChangeNotifier {
         '"viewportWidth":${viewportWidth.round()}} — this widget paints '
         'wider than the viewport; rebuild it to fit (constrain rows, wrap, '
         'or make the wide part horizontally scrollable).',
-      ).then((_) {
-        if (!_disposed) notifyListeners();
-      }, onError: (Object _) {}),
+      ).then(
+        (_) {
+          if (!_disposed) notifyListeners();
+        },
+        onError: (Object error) {
+          // The back-channel rejected (session gone, agent mid-run): the
+          // agent was never told, so don't burn this widget's one-shot —
+          // roll the id back and drop the strip, or a later rebuild of a
+          // still-overflowing tree would stay silent forever (review:
+          // no silent degradation).
+          _overflowNoted.remove(definition.id);
+          AppLog.i(
+            'widgets',
+            'overflow note for ${definition.id} failed: $error — '
+                'one-shot rolled back, the tile strip is dropped',
+          );
+          if (!_disposed) notifyListeners();
+        },
+      ),
     );
   }
 

@@ -709,7 +709,7 @@
   },
   "dynamicTileOverflow": "Виджет шире области чата — содержимое справа обрезано. Агента попросили перестроить виджет по ширине.",
   "@dynamicTileOverflow": {
-    "description": "Amber strip on the dynamic-message tile once the canvas detected a viewport overflow (issue #692 C)"
+    "description": "Overflow strip (error colors) on the dynamic-message tile once the canvas detected a viewport overflow (issue #692 C)"
   },
   "dynamicTileRetry": "Повторить",
   "@dynamicTileRetry": {

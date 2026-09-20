@@ -84,8 +84,8 @@ class _DynamicWidgetTileState extends State<DynamicWidgetTile> {
             children: [
               _titleBar(context, definition),
               // Issue #692 C: once the canvas reported a viewport overflow,
-              // an amber strip says so — the clipping is never silent and
-              // the agent has been told (one-shot note).
+              // an error-colored strip says so — the clipping is never
+              // silent and the agent has been told (one-shot note).
               if (widget.service.overflowNotedFor(definition.id))
                 _overflowStrip(context),
               if (_expanded)
@@ -106,13 +106,9 @@ class _DynamicWidgetTileState extends State<DynamicWidgetTile> {
     return widget.service.byId(id);
   }
 
-  /// The title bar (issues #378+#457 AC2): the primary "open as app
-  /// (without saving)" icon, the chevron, and the ⋮ overflow menu — each
-  /// owning its taps outside the collapse zone. The live status renders
-  /// as a minimal dot (the pill spent header width for near-zero value,
-  /// #457 AC2). The title tap still toggles collapse (#377 contract).
-  /// The amber overflow strip (issue #692 C): the canvas reported content
-  /// wider than the viewport; the agent got a one-shot note.
+  /// The overflow strip (issue #692 C): the canvas reported content
+  /// wider than the viewport; the agent got a one-shot note. Renders in
+  /// the error colors (errorContainer/error) — not an amber tone.
   Widget _overflowStrip(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Container(
@@ -141,6 +137,11 @@ class _DynamicWidgetTileState extends State<DynamicWidgetTile> {
     );
   }
 
+  /// The title bar (issues #378+#457 AC2): the primary "open as app
+  /// (without saving)" icon, the chevron, and the ⋮ overflow menu — each
+  /// owning its taps outside the collapse zone. The live status renders
+  /// as a minimal dot (the pill spent header width for near-zero value,
+  /// #457 AC2). The title tap still toggles collapse (#377 contract).
   Widget _titleBar(BuildContext context, DynamicMessageDefinition definition) {
     final live = widget.service.engineFor(definition.id) != null;
     final bootBroken = widget.service.bootErrorFor(definition.id) != null;
