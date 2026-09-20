@@ -27,13 +27,32 @@ const Map<String, int> defaultThinkingBudgets = {
   'high': 16384,
 };
 
-/// pi's `clampReasoning`: the ladder has no `xhigh`/`max` rung, so they fold
+/// pi's `clampThinkingLevel`: the ladder has no `xhigh`/`max` rung, so they fold
 /// to `high`, the ladder's top. Everything else passes through unchanged,
 /// including `null` (no thinking requested).
 String? clampThinkingLevel(String? level) {
   if (level == 'xhigh' || level == 'max') return 'high';
   return level;
 }
+
+/// The rungs a config surface (issue #734: `FA_PROVIDER_CONFIG`, `roles:`
+/// chain entries) may declare: the ladder plus `xhigh`/`max`, which fold to
+/// `high` exactly like [clampThinkingLevel] — forward-compatible like pi.
+/// This list's order IS the error-message order.
+const List<String> configThinkingLevels = [
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+];
+
+/// Normalizes a config-declared level to its ladder rung: known rungs pass
+/// through [clampThinkingLevel] (`xhigh`/`max` fold to `high`), anything
+/// else returns null for the caller to reject with its own named error.
+String? normalizeConfigThinkingLevel(String level) =>
+    configThinkingLevels.contains(level) ? clampThinkingLevel(level) : null;
 
 /// pi's `thinkingBudgetForLevel`: merged-map lookup on the clamped level.
 ///

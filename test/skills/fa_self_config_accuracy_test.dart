@@ -125,6 +125,7 @@ const _nestedKeySources = <String, String>{
   'roles.*.[].baseUrl': 'lib/src/model_roles/roles_config.dart',
   'roles.*.[].contextWindow': 'lib/src/model_roles/roles_config.dart',
   'roles.*.[].maxTokens': 'lib/src/model_roles/roles_config.dart',
+  'roles.*.[].thinkingLevel': 'lib/src/model_roles/roles_config.dart',
   'modelOverrides.[].path': 'lib/src/model_roles/roles_config.dart',
   'modelOverrides.[].roles': 'lib/src/model_roles/roles_config.dart',
   'modelOverrides.[].roles.*': 'lib/src/model_roles/roles_config.dart',
@@ -138,6 +139,8 @@ const _nestedKeySources = <String, String>{
   'modelOverrides.[].roles.*.[].contextWindow':
       'lib/src/model_roles/roles_config.dart',
   'modelOverrides.[].roles.*.[].maxTokens':
+      'lib/src/model_roles/roles_config.dart',
+  'modelOverrides.[].roles.*.[].thinkingLevel':
       'lib/src/model_roles/roles_config.dart',
   'customProviders.[].name': 'lib/src/cli/custom_providers.dart',
   'customProviders.[].apiType': 'lib/src/cli/custom_providers.dart',
