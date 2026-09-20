@@ -398,6 +398,25 @@ extension CubeCommands on AgentCli {
     await persist();
     io.writeln('cube: saved default ${target ?? '(disabled)'}');
   }
+
+  /// Cube cache restore before the first turn — best-effort (one warning
+  /// line on failure, never a blocker).
+  Future<void> _cubeBootRestore() async {
+    final bootSpec = _cubeEnv.activeSpec;
+    if (bootSpec != null) await _cubeRestoreQuietly(bootSpec);
+  }
+
+  /// Cube cache save mirroring [run]'s exit path (best-effort).
+  Future<void> _cubeCacheSaveQuietly() async {
+    final exitSpec = _cubeEnv.activeSpec;
+    if (exitSpec != null) {
+      try {
+        await CubeCacheManager(_cubeEnv, exitSpec).save();
+      } on Object catch (error) {
+        io.writeln('cube: cache save failed: $error');
+      }
+    }
+  }
 }
 
 /// Picker keys of the settings-hub Cube sandbox flow (cube rows are keyed
