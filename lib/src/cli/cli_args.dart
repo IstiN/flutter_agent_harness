@@ -105,6 +105,7 @@ final class CliArgs extends CliArgsResult {
     this.outputFormat,
     this.attachments = const [],
     this.waitForJobs = false,
+    this.ompMode = false,
   }) : super._();
 
   /// `--model <id>`.
@@ -248,6 +249,12 @@ final class CliArgs extends CliArgsResult {
   /// 30). Without it a headless run prints the detach summary and exits.
   final bool waitForJobs;
 
+  /// `--omp` (issue #680): boot the omp load-mode preset — the curated
+  /// essential tool set in the schema, everything else discoverable.
+  /// Wins over the `FA_AGENT_MODE` env twin and the `agent.mode` config
+  /// (flag > env > config).
+  final bool ompMode;
+
   /// Whether this invocation runs a single headless prompt instead of the
   /// interactive REPL.
   bool get isHeadless =>
@@ -281,6 +288,10 @@ CliArgsResult parseCliArgs(List<String> args) {
     if (arg == '--version') return CliArgsVersion(output: _prescanOutput(args));
     if (arg == '--wait-for-jobs') {
       values.waitForJobs = true;
+      continue;
+    }
+    if (arg == '--omp') {
+      values.ompMode = true;
       continue;
     }
     final flag = _valueFlags[arg];
@@ -1005,6 +1016,7 @@ final class _CliArgValues {
   String? transcribeBaseUrl;
   final plugins = <String>[];
   bool waitForJobs = false;
+  bool ompMode = false;
   final promptTemplateDirs = <String>[];
   String? mode;
   String? cwd;
@@ -1076,6 +1088,7 @@ final class _CliArgValues {
       output: output,
       outputFormat: outputFormat,
       waitForJobs: waitForJobs,
+      ompMode: ompMode,
       attachments: List.unmodifiable(attachments),
     );
   }
