@@ -25,6 +25,7 @@ import 'package:fa/services/github_account_store.dart';
 import 'package:fa/services/image_preview_store.dart';
 import 'package:fa/ui/widgets/github_account_section.dart';
 import 'package:fa/ui/widgets/provider_selection_list.dart';
+import 'package:fa/ui/widgets/store_get_banner.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/approval_ui.dart';
 import 'package:fa/gemma/gemma_cache_section.dart';
@@ -1829,6 +1830,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // The App Store Get banner (issue #691 AC4): web + macOS
+              // only, dismissible (persisted), non-blocking — a card at
+              // the top of the scroll, never an overlay. URLs resolve
+              // from the `links:` config section; `links.banner: false`
+              // mounts nothing (the AC7 regression switch).
+              if (widget.env != null)
+                StoreGetBanner(
+                  env: widget.env!,
+                  showOnPlatform:
+                      kIsWeb || defaultTargetPlatform == TargetPlatform.macOS,
+                ),
               ..._noServiceHint(context, service),
               _providersSection(context, service, onDeviceConfig),
               const SizedBox(height: 24),

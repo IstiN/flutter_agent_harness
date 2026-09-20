@@ -632,3 +632,33 @@ spills:
 ```
 
 Applies at next boot.
+
+## Store & product links
+
+<!-- parity: none (config-only surface; web/macOS app banner reads it too) -->
+
+The `links:` section (issue #691) is the single source of truth for
+product/store links — the App Store banner in the web/macOS apps, the
+CLI, and the fa1.dev site generator all resolve the same values, so a
+link changes in ONE place. Defaults are baked in; only overrides are
+written. Strict parse: a non-map section, a non-URL value, or a
+non-boolean banner is a `ConfigException`; unknown keys become notes,
+never failures:
+
+```yaml
+links:
+  appstore: https://apps.apple.com/us/app/fa-ai-agent/id6793815163
+  testflight: https://testflight.apple.com/join/En1eC9UK
+  site: https://fa1.dev
+  banner: true # false = no in-app App Store banner anywhere
+```
+
+`play:` (the Google Play release) stays ABSENT until the Android release
+is live — every surface renders the Android slot as "coming soon" while
+it is unset.
+
+`banner: false` is the regression switch: the Get surface stays
+byte-identical to the legacy UI. The section is user-file only (like
+`tui:`/`fabric:`) and applies at next boot for the in-app banner; the
+site renders the committed defaults (regen:
+`dart run scripts/regen_site_store_block.dart`).
