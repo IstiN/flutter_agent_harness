@@ -371,9 +371,13 @@ _resolvePlugins(
 String _defaultSessionRoot() {
   final home = _homeDir();
   if (Platform.isMacOS) {
-    final groupDir =
-        '$home/Library/Group Containers/group.dev.fa1.shared/fa/sessions';
-    if (_isDirWritable(groupDir)) {
+    // Share sessions with the app only when macOS materialized its App
+    // Group container (i.e. the entitled app is installed). Probing must
+    // NOT create the container ourselves: under a fake HOME (integration
+    // tests) that would silently relocate the sessions they then read.
+    final container = '$home/Library/Group Containers/group.dev.fa1.shared';
+    final groupDir = '$container/fa/sessions';
+    if (Directory(container).existsSync() && _isDirWritable(groupDir)) {
       return groupDir;
     }
     return '$home/.fah/sessions';

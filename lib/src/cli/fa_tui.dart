@@ -2657,20 +2657,28 @@ final class FaTuiController {
     try {
       final saved = await runner([deviceFlag, '/dev/tty', '-g']);
       if (saved.exitCode != 0) return null;
+      // The critical clears ride one call; a failure here forfeits the
+      // whole sanitize (no point restoring a half-fixed tty).
       final cleared = await runner([
         deviceFlag,
         '/dev/tty',
         '-ixon',
         '-ixoff',
         '-icrnl',
-        // VDISCARD (Ctrl+O toggles output discard): when the host left it
-        // enabled the kernel EATS every \x0f before fa reads it — the
-        // Ctrl+O newline fallback (issue #77 AC5) goes silent. Clear it
-        // alongside ICRNL so the whole wire matrix survives default-termios
-        // hosts (ubuntu runner images ship discard on; macOS varies).
-        '-discard',
       ]);
       if (cleared.exitCode != 0) return null;
+      // VDISCARD (Ctrl+O toggles output discard): when the host left it
+      // enabled the kernel EATS every \x0f before fa reads it — the
+      // Ctrl+O newline fallback (issue #77 AC5) goes silent. GNU stty
+      // clears it as `-discard`; BSD/macOS stty rejects that flag (it
+      // would otherwise fail the combined call above and forfeit the
+      // ICRNL clear too — issue #77 on every macOS default-termios
+      // host), but VDISCARD only fires under IEXTEN there, so `-iexten`
+      // is the equivalent clear. Best-effort either way.
+      final discard = await runner([deviceFlag, '/dev/tty', '-discard']);
+      if (discard.exitCode != 0) {
+        await runner([deviceFlag, '/dev/tty', '-iexten']);
+      }
       return (saved.stdout as String).trim();
     } on ProcessException {
       return null; // no stty on PATH — leave the tty untouched

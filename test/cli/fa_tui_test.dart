@@ -2286,33 +2286,48 @@ void main() {
 
     test('sttySanitizeInput returns trimmed saved termios', () async {
       final calls = <List<String>>[];
-      Future<ProcessResult> runner(List<String> args) async {
-        calls.add(args);
-        if (args.last == '-g') {
-          return ProcessResult(0, 0, 'saved-string\n', '');
-        }
-        return ProcessResult(0, 0, '', '');
-      }
-
       final result = await FaTuiController.sttySanitizeInput(
         '-F',
-        runner: runner,
+        runner: (args) async {
+          calls.add(args);
+          return ProcessResult(0, 0, 'saved-string\n', '');
+        },
       );
-
       expect(result, 'saved-string');
-      expect(calls, hasLength(2));
-      expect(calls.first, ['-F', '/dev/tty', '-g']);
-      expect(calls.last, ['-F', '/dev/tty', '-ixon', '-ixoff', '-icrnl', '-discard']);
+      expect(calls, [
+        ['-F', '/dev/tty', '-g'],
+        ['-F', '/dev/tty', '-ixon', '-ixoff', '-icrnl'],
+        ['-F', '/dev/tty', '-discard'],
+      ]);
     });
 
-    test('sttySanitizeInput returns null when saving fails', () async {
-      Future<ProcessResult> runner(List<String> args) async {
-        return ProcessResult(0, 1, '', 'stty error');
-      }
+    test(
+      'sttySanitizeInput falls back to -iexten when stty rejects -discard',
+      () async {
+        // BSD/macOS stty has no -discard flag (VDISCARD rides IEXTEN
+        // there): the clear must not forfeit the sanitize (issue #77).
+        final calls = <List<String>>[];
+        final result = await FaTuiController.sttySanitizeInput(
+          '-f',
+          runner: (args) async {
+            calls.add(args);
+            return ProcessResult(0, args.last == '-discard' ? 1 : 0, 's', '');
+          },
+        );
+        expect(result, 's');
+        expect(calls, [
+          ['-f', '/dev/tty', '-g'],
+          ['-f', '/dev/tty', '-ixon', '-ixoff', '-icrnl'],
+          ['-f', '/dev/tty', '-discard'],
+          ['-f', '/dev/tty', '-iexten'],
+        ]);
+      },
+    );
 
+    test('sttySanitizeInput returns null when saving fails', () async {
       final result = await FaTuiController.sttySanitizeInput(
         '-F',
-        runner: runner,
+        runner: (args) async => ProcessResult(0, 1, '', 'stty error'),
       );
       expect(result, isNull);
     });
