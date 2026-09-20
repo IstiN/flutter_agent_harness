@@ -11,6 +11,7 @@ import 'package:fa/apps/fa_media_host.dart';
 import 'package:fa/apps/js_app_view.dart' show AppPermissionsDialog;
 import 'package:fa/apps/js_theme.dart';
 import 'package:fa/apps/viewport_reporter.dart';
+import 'package:fa/apps/widget_overflow_watch.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa_ui/fa_ui.dart' show FaChatMessage;
 import 'package:flutter/material.dart';
@@ -82,6 +83,11 @@ class _DynamicWidgetTileState extends State<DynamicWidgetTile> {
             mainAxisSize: MainAxisSize.min,
             children: [
               _titleBar(context, definition),
+              // Issue #692 C: once the canvas reported a viewport overflow,
+              // an error-colored strip says so — the clipping is never
+              // silent and the agent has been told (one-shot note).
+              if (widget.service.overflowNotedFor(definition.id))
+                _overflowStrip(context),
               if (_expanded)
                 DynamicWidgetCanvas(
                   service: widget.service,
@@ -98,6 +104,37 @@ class _DynamicWidgetTileState extends State<DynamicWidgetTile> {
     final id = _widgetId;
     if (id == null) return null;
     return widget.service.byId(id);
+  }
+
+  /// The overflow strip (issue #692 C): the canvas reported content
+  /// wider than the viewport; the agent got a one-shot note. Renders in
+  /// the error colors (errorContainer/error) — not an amber tone.
+  Widget _overflowStrip(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: scheme.errorContainer.withValues(alpha: 0.35),
+        border: Border(
+          top: BorderSide(color: scheme.error.withValues(alpha: 0.4)),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.unfold_more, size: 14, color: scheme.error),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              context.l10n.dynamicTileOverflow,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: scheme.onErrorContainer.withValues(alpha: 0.9),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   /// The title bar (issues #378+#457 AC2): the primary "open as app
@@ -348,7 +385,18 @@ class _DynamicWidgetCanvasState extends State<DynamicWidgetCanvas> {
                     // error tile, never a crash.
                     return _errorTile(context, '$error');
                   }
-                  return body;
+                  // Issue #692 C: the runtime overflow backstop — content
+                  // painting wider than the viewport reports to the
+                  // service, which notes the agent (one-shot per widget).
+                  return WidgetOverflowWatch(
+                    onOverflow: (overflowPx, viewportWidth) =>
+                        widget.service.noteViewportOverflow(
+                          widget.definition,
+                          overflowPx,
+                          viewportWidth,
+                        ),
+                    child: body,
+                  );
                 },
               ),
             ),
