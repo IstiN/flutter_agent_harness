@@ -41,6 +41,12 @@
 #
 # Concurrency overrides: FA_DART_TEST_CONCURRENCY / FA_FLUTTER_TEST_CONCURRENCY
 # (auto-throttled via detect_test_concurrency, same as scripts/pre-commit).
+#
+# CRAP ratchet scoping: in --hook mode the analyze runs over the STAGED
+# lib/bin files only — the ratchet guards what a commit touches, so a
+# pre-existing offender in an untouched file cannot block an unrelated
+# commit. Non-hook runs (and ci.yml's whole-repo `crap4dart analyze`)
+# keep the full-repo view, so nothing escapes the ratchet permanently.
 
 set -euo pipefail
 
@@ -194,6 +200,28 @@ FLUTTER_ANALYZED=0
 
 # ── Stage implementations ───────────────────────────────────────────────────
 stage_size() {
+  # Hook mode scopes the guard to the STAGED Dart files: the guard ratchets
+  # what a commit touches, so a pre-existing oversized file elsewhere (e.g.
+  # flutter_app/lib/services/agent_service.dart, which ci.yml's guard never
+  # measures — it scans lib/test/example only) cannot block an unrelated
+  # commit. Non-hook runs keep the whole-tree scan below.
+  if [ "$HOOK_MODE" -eq 1 ]; then
+    local violations
+    violations=$(git diff --cached --name-only --diff-filter=ACM \
+      | grep '\.dart$' \
+      | grep -vE '\.g\.dart$|\.freezed\.dart$|\.mocks\.dart$|bridge_generated|app_localizations|localizations_' \
+      | while IFS= read -r f; do
+          [ -f "$f" ] || continue
+          lines=$(wc -l < "$f")
+          if [ "$lines" -gt "$MAX_LINES" ]; then echo "$f: $lines lines"; fi
+        done || true)
+    if [ -n "$violations" ]; then
+      echo "❌ QUALITY GATE FAILED — FILE SIZE (max $MAX_LINES lines)" >&2
+      echo "$violations" >&2
+      exit 1
+    fi
+    return 0
+  fi
   # Same find-exec guard as ci.yml / pre-commit: no dart file over MAX_LINES.
   local dirs=""
   local d
@@ -242,10 +270,17 @@ stage_integration_mock() {
   # the `llm` tag and stay in the tag-only smoke job; browser-ext owns its
   # own workflow; perf has the #303 per-PR trajectory gate; `pty` marks
   # child-agent-spawn tests (issue #553) — nightly-only, unbounded boot time.
+  #
+  # TMPDIR normalization (macOS hook parity): several PTY legs assert the
+  # status row still shows `· ctx ` — with macOS's per-user temp root
+  # (/var/folders/<30 chars>/T/...) the temp cwd eats the whole row width
+  # and the assertion fails locally while ubuntu CI (/tmp) is green. Pin
+  # the stage to the same short temp root CI has so hook/CI agree.
   echo "🧪 Running no-key integration legs (MockLlmServer)..."
   local conc="${FA_DART_TEST_CONCURRENCY:-$(detect_test_concurrency)}"
   echo "   concurrency: ${conc:-default}"
-  dart test ${conc:+--concurrency=$conc} test/integration \
+  TMPDIR="${FA_GATE_TMPDIR:-/tmp}" \
+    dart test ${conc:+--concurrency=$conc} test/integration \
     --exclude-tags llm,browser-ext,perf,pty
 }
 
@@ -268,6 +303,25 @@ stage_crap() {
      dart pub global run crap4dart --version >/dev/null 2>&1; then
     echo "🔍 Checking CRAP scores (ratchet pinned in crap4dart.yaml)..."
     # Reuses the fresh coverage/lcov.info produced by the coverage stage.
+    # Hook mode scopes the analysis to the STAGED lib/bin files: the
+    # ratchet guards what a commit touches, so a pre-existing offender in
+    # an untouched file cannot block an unrelated commit. CI keeps the
+    # whole-repo analyze, so nothing escapes the ratchet permanently.
+    local files=""
+    if [ "$HOOK_MODE" -eq 1 ]; then
+      files=$(git diff --cached --name-only --diff-filter=ACM \
+        | grep -E '^(lib|bin)/.*\.dart$' || true)
+      if [ -z "$files" ]; then
+        echo "   no staged lib/bin sources — nothing to ratchet"
+        return 0
+      fi
+      echo "   hook scope: $(echo "$files" | wc -l | tr -d ' ') staged file(s)"
+      if ! dart pub global run crap4dart analyze $files; then
+        echo "❌ QUALITY GATE FAILED — CRAP RATCHET" >&2
+        exit 1
+      fi
+      return 0
+    fi
     if ! dart pub global run crap4dart analyze; then
       echo "❌ QUALITY GATE FAILED — CRAP RATCHET" >&2
       exit 1

@@ -22,6 +22,7 @@ Regenerate snapshots after intentional UI changes:
 """
 
 import os
+import re
 import subprocess
 import sys
 
@@ -30,6 +31,32 @@ APP_DIR = os.path.join(REPO_ROOT, "flutter_app")
 GOLDENS_DIR = os.path.join(APP_DIR, "test", "golden", "goldens")
 GUARD_TEST = os.path.join(APP_DIR, "test", "golden", "golden_guard_test.dart")
 GOLDEN_TESTS_DIR = os.path.join(APP_DIR, "test", "golden")
+
+# Single-line quoted string literal carrying an interpolation (multi-line
+# scanning would mispair on apostrophes inside comments; golden names are
+# always single-line).
+_STRING_LITERAL = re.compile(r"'([^'\n]*\$[^'\n]*)'|\"([^\"\n]*\$[^\"\n]*)\"")
+# Dart interpolation inside a literal: $identifier or ${expression}.
+_INTERPOLATION = re.compile(r"\$[A-Za-z_]\w*|\$\{[^}]*\}")
+
+
+def golden_name_patterns(sources: str) -> list[re.Pattern[str]]:
+    """Regexes for golden names built by string interpolation.
+
+    Tests compose snapshot names like 'chat_header_${width.round()}' or
+    'chat_bubble_1_image_$suffix' — a verbatim substring search can never
+    see the generated PNG stems, so interpolated literals become regexes
+    with each interpolation matching any non-quote run.
+    """
+    patterns = []
+    for match in _STRING_LITERAL.finditer(sources):
+        literal = match.group(1) if match.group(1) is not None else match.group(2)
+        # Substitute BEFORE escaping so re.escape does not mangle the $.
+        regex = re.escape(_INTERPOLATION.sub("\x00", literal)).replace(
+            "\x00", "[^'/]+"
+        )
+        patterns.append(re.compile(f"^{regex}$"))
+    return patterns
 
 
 def fail(msg: str) -> int:
@@ -70,6 +97,7 @@ def find_orphan_snapshots() -> list[str]:
     if not os.path.isdir(GOLDENS_DIR):
         return []
     sources = collect_source_text()
+    patterns = golden_name_patterns(sources)
     orphans = []
     for root, _dirs, files in os.walk(GOLDENS_DIR):
         for name in sorted(files):
@@ -79,6 +107,10 @@ def find_orphan_snapshots() -> list[str]:
             rel = os.path.relpath(full, GOLDENS_DIR).replace(os.sep, "/")
             stem = rel[: -len(".png")]
             if stem in sources:
+                continue
+            # Interpolated names ('foo_$suffix', 'chat_header_${width}'):
+            # the stem matches a source literal's interpolation pattern.
+            if any(pattern.match(stem) for pattern in patterns):
                 continue
             # Dynamic store shots: match on the screen basename.
             if rel.startswith("store/") and stem.rsplit("/", 1)[-1] in sources:
