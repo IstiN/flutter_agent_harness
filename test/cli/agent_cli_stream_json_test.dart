@@ -238,7 +238,10 @@ void main() {
           model: testModel,
           apiKey: 'test-key',
           env: env,
-          sessionRoot: '/sessions',
+          // Inside cwd: MemoryFileSystem.exportSnapshot() walks the cwd
+          // subtree only, so the JSONL must live under /work to be
+          // visible to the record-vs-stream byte-compare below.
+          sessionRoot: '/work/sessions',
           providerKind: 'openai-completions',
           redactionPipeline: pipeline,
         ),
