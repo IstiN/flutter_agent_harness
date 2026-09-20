@@ -70,6 +70,13 @@ int estimateTokens(Message message) {
   return (chars / _charsPerToken).ceil();
 }
 
+/// [estimateTokens] for a bare string — the same chars/4 heuristic, no
+/// per-block structure. The ONE estimator for a system prompt: the boot
+/// banner's pi-mode initial-context line and the parity gate
+/// (`pi_hello_parity_test.dart`) both price a prompt with it, so the
+/// printed and gated numbers agree by construction.
+int estimateStringTokens(String text) => (text.length / _charsPerToken).ceil();
+
 int _assistantChars(List<ContentBlock> content) {
   var chars = 0;
   for (final block in content) {
