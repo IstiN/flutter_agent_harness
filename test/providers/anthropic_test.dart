@@ -1554,6 +1554,31 @@ void main() {
       },
     );
 
+    test(
+      'tiny ceiling clamps the budget to 0 and omits thinking (E2)',
+      () async {
+        // A ceiling at/below the answer floor yields a zero thinking budget —
+        // `budget_tokens: 0` is an invalid request, so no thinking block goes
+        // out at all (never invalid, issue #734 E2).
+        final body = await captureBody(
+          const Model(
+            id: 'claude-sonnet-4-5',
+            api: 'anthropic-messages',
+            provider: 'anthropic',
+            baseUrl: 'https://api.anthropic.com',
+            reasoning: true,
+            input: ['text'],
+            thinkingLevel: 'high',
+            contextWindow: 200000,
+            maxTokens: 1024,
+          ),
+          const AnthropicOptions(apiKey: 'test-key'),
+        );
+        expect(body.containsKey('thinking'), isFalse);
+        expect(body['max_tokens'], 1024);
+      },
+    );
+
     test('xhigh/max-carried levels budget the high rung (AC6)', () async {
       final body = await captureBody(
         const Model(

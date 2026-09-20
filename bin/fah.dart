@@ -243,12 +243,13 @@ Future<void> main(List<String> args) async {
   );
 }
 
-Model _buildModel(CliArgs args, {List<String>? input}) {
+Model _buildModel(CliArgs args, {List<String>? input, String? thinkingLevel}) {
   return buildCliDefaultModel(
     args.provider,
     modelId: args.model,
     baseUrl: args.baseUrl,
     input: input,
+    thinkingLevel: thinkingLevel,
   );
 }
 
@@ -1364,8 +1365,13 @@ Future<void> _runApp(List<String> args) async {
           provider,
           modelId: folderState.modelId,
           baseUrl: folderState.baseUrl,
+          thinkingLevel: faPreconfig?.thinkingLevel,
         )
-      : _buildModel(effective, input: faPreconfig?.input);
+      : _buildModel(
+          effective,
+          input: faPreconfig?.input,
+          thinkingLevel: faPreconfig?.thinkingLevel,
+        );
 
   // Initial cube (fa_cube Phase 1): --cube-config path > --cube name > the
   // project `.fah/config.yaml` `cube:` section > the saved user `cube:`
@@ -1682,14 +1688,17 @@ Future<void> _runApp(List<String> args) async {
       '${preconfig.apiKeyEnvVar ?? 'none (keyless endpoint)'}'
       '${preconfig.thinkingLevel == null ? '' : '; thinkingLevel: ${preconfig.thinkingLevel}'}',
     );
-    // A declared level on an adapter that has no thinking wiring is
-    // carried but never sent — say so once instead of silently ignoring
-    // it (issue #734 E1).
+    // A declared level on an adapter that is not wired to the
+    // config-carried level is carried but never sent — say so once
+    // instead of silently ignoring it (issue #734 E1). Wording covers
+    // both no-thinking adapters (openai-completions) and adapters with
+    // their own thinking options that no config path reaches yet (google).
     if (preconfig.thinkingLevel != null &&
-        preconfig.spec.api != 'anthropic-messages') {
+        preconfig.spec.api != anthropicMessagesApi) {
       io.writeln(
-        'note: the ${preconfig.spec.api} adapter does not send thinking — '
-        'the declared thinkingLevel is carried but unused',
+        'note: the ${preconfig.spec.api} adapter is not wired to the '
+        'config-carried thinkingLevel — the declared level is carried '
+        'but unused',
       );
     }
     if (defaultRoleResolved) {

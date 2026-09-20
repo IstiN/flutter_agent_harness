@@ -461,6 +461,7 @@ Model buildCliDefaultModel(
   String? modelId,
   String? baseUrl,
   List<String>? input,
+  String? thinkingLevel,
 }) {
   final spec = switch (providerKind) {
     'aiin' => providerCatalog['aiin']!,
@@ -492,6 +493,10 @@ Model buildCliDefaultModel(
     baseUrl: baseUrl ?? spec.defaultBaseUrl,
     reasoning: spec.reasoning,
     input: input ?? spec.input,
+    // The FA_PROVIDER_* preconfig level rides the fallback/default model
+    // when no roles chain pins it (issue #734 rework: the boot notice must
+    // never name a level the booted model does not carry).
+    thinkingLevel: thinkingLevel,
     contextWindow: spec.contextWindow,
     maxTokens: maxTokens,
   );

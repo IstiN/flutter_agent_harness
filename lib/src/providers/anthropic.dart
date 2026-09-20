@@ -785,11 +785,18 @@ void _addThinkingParam(
   final enabled = options?.thinkingEnabled ?? (thinkingOn ? true : null);
   if (model.reasoning && enabled != null) {
     if (enabled) {
-      params['thinking'] = {
-        'type': 'enabled',
-        'budget_tokens': options?.thinkingBudgetTokens ?? ladderBudget,
-        'display': options?.thinkingDisplay ?? 'summarized',
-      };
+      final budget = options?.thinkingBudgetTokens ?? ladderBudget;
+      // E2 (issue #734): a ceiling at/below the answer floor clamps the
+      // ladder budget to 0 — `budget_tokens: 0` is an invalid request, so
+      // the thinking block is omitted entirely instead (never invalid;
+      // `max_tokens` still goes out at the clamped ceiling).
+      if (budget > 0) {
+        params['thinking'] = {
+          'type': 'enabled',
+          'budget_tokens': budget,
+          'display': options?.thinkingDisplay ?? 'summarized',
+        };
+      }
     } else {
       params['thinking'] = {'type': 'disabled'};
     }
