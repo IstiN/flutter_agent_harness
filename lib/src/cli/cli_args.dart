@@ -105,6 +105,7 @@ final class CliArgs extends CliArgsResult {
     this.outputFormat,
     this.attachments = const [],
     this.waitForJobs = false,
+    this.piMode = false,
     this.ompMode = false,
   }) : super._();
 
@@ -249,6 +250,11 @@ final class CliArgs extends CliArgsResult {
   /// 30). Without it a headless run prints the detach summary and exits.
   final bool waitForJobs;
 
+  /// `--pi`: the pi benchmark mode (issue #679) — 4-tool surface (read,
+  /// write, edit, bash), bare prompt. Wins over `FA_PI_MODE` and the
+  /// config `agent.mode` (AC3: flag > env > config).
+  final bool piMode;
+
   /// `--omp` (issue #680): boot the omp load-mode preset — the curated
   /// essential tool set in the schema, everything else discoverable.
   /// Wins over the `FA_AGENT_MODE` env twin and the `agent.mode` config
@@ -276,6 +282,25 @@ const Map<String, CliArgsResult Function(List<String>)> _cliSubcommands = {
   'session': _parseSessionArgs,
 };
 
+/// Applies the no-value boolean flags (`--wait-for-jobs`, `--pi`,
+/// `--omp`) to [values]; returns false when [arg] is none of them (the
+/// caller falls through to the value-flag table).
+bool _applyBooleanFlag(_CliArgValues values, String arg) {
+  if (arg == '--wait-for-jobs') {
+    values.waitForJobs = true;
+    return true;
+  }
+  if (arg == '--pi') {
+    values.piMode = true;
+    return true;
+  }
+  if (arg == '--omp') {
+    values.ompMode = true;
+    return true;
+  }
+  return false;
+}
+
 CliArgsResult parseCliArgs(List<String> args) {
   final subcommand = args.isEmpty ? null : _cliSubcommands[args.first];
   if (subcommand != null) {
@@ -286,14 +311,7 @@ CliArgsResult parseCliArgs(List<String> args) {
     final arg = args[i];
     if (const {'--help', '-h'}.contains(arg)) return const CliArgsHelp();
     if (arg == '--version') return CliArgsVersion(output: _prescanOutput(args));
-    if (arg == '--wait-for-jobs') {
-      values.waitForJobs = true;
-      continue;
-    }
-    if (arg == '--omp') {
-      values.ompMode = true;
-      continue;
-    }
+    if (_applyBooleanFlag(values, arg)) continue;
     final flag = _valueFlags[arg];
     if (flag != null) {
       final (canonical, apply) = flag;
@@ -1016,6 +1034,7 @@ final class _CliArgValues {
   String? transcribeBaseUrl;
   final plugins = <String>[];
   bool waitForJobs = false;
+  bool piMode = false;
   bool ompMode = false;
   final promptTemplateDirs = <String>[];
   String? mode;
@@ -1088,6 +1107,7 @@ final class _CliArgValues {
       output: output,
       outputFormat: outputFormat,
       waitForJobs: waitForJobs,
+      piMode: piMode,
       ompMode: ompMode,
       attachments: List.unmodifiable(attachments),
     );

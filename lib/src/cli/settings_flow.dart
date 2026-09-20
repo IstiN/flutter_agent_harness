@@ -246,7 +246,8 @@ extension SettingsFlow on AgentCli {
             modelId: choice.modelId,
             // The saved custom provider's key authenticates the media
             // endpoint; without it fall back to the host-scoped key.
-            apiKeyName: choice.savedEntry?.keyName ??
+            apiKeyName:
+                choice.savedEntry?.keyName ??
                 CustomProviderRegistry.keyNameFor(choice.baseUrl),
           ),
         );
@@ -2586,6 +2587,11 @@ extension SettingsFlow on AgentCli {
         description: _contextCapStatusLabel(),
       ),
       MenuItem(
+        key: 'harness-mode',
+        label: 'Harness mode',
+        description: _harnessModeStatusLabel(),
+      ),
+      MenuItem(
         key: 'load-mode',
         label: 'Load mode',
         description: _loadModeStatusLabel(),
@@ -2649,6 +2655,7 @@ extension SettingsFlow on AgentCli {
     'providers-queue': () async => _providersSlash(''),
     'redact': startRedactionFlow,
     'context-cap': startContextCapFlow,
+    'harness-mode': startHarnessModeFlow,
     'load-mode': startLoadModeFlow,
     'memory': startMemoryStoresFlow,
     'images': startImagesFlow,
@@ -2671,6 +2678,7 @@ extension SettingsFlow on AgentCli {
     io.writeln('ttsr: ${_ttsrStatusLabel()}');
     io.writeln('redact: ${_redactionStatusLabel()}');
     io.writeln('ctx cap: ${_contextCapStatusLabel()}');
+    io.writeln('harness: ${_harnessModeStatusLabel()}');
     io.writeln('load mode: ${_loadModeStatusLabel()}');
     io.writeln('queue: ${_providersQueueStatusLabel()}');
     io.writeln('images: ${_imagesStatusLabel()}');

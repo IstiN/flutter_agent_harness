@@ -228,7 +228,14 @@ extension AgentCliTools on AgentCli {
               ToolScope.global => state.global,
               ToolScope.project => state.project,
               ToolScope.session => state.session,
-              ToolScope.runtime => config.runtimeTools ?? const ToolsConfig(),
+              // pi mode (issue #679): the runtime scope IS the pin —
+              // deepest scope wins per key, so the pi override turns
+              // every non-benchmark tool off and `--tools`/`FA_TOOLS`/
+              // config cannot widen a benchmark run.
+              ToolScope.runtime =>
+                _piActive
+                    ? piToolsOverride()
+                    : config.runtimeTools ?? const ToolsConfig(),
               // Never reached: toolScopeStack carries no builtin floor.
               ToolScope.builtin => const ToolsConfig(),
             },
@@ -393,9 +400,14 @@ extension AgentCliTools on AgentCli {
   /// preset (issue #680) an ENABLED-but-demoted family stays OUT of the
   /// schema until mounted: allowed to connect is not the same as loaded.
   void refilterMcpTools(ToolAvailabilityResolution resolution) {
-    bool allows(String server) =>
-        resolution.mcpServers[server] ??
-        (resolution.byId['mcp']?.enabled ?? true);
+    // pi mode (issue #679): the benchmark surface carries no MCP tools —
+    // every server is filtered off no matter what the availability
+    // resolution says, so a late-arriving server can never widen the run
+    // (its tools still tombstone via noteHiddenNames below).
+    bool allows(String server) => _piActive
+        ? false
+        : resolution.mcpServers[server] ??
+              (resolution.byId['mcp']?.enabled ?? true);
     _mcp.serverFilter = allows;
     final manager = _mcp.manager;
     if (manager != null) {
@@ -418,8 +430,24 @@ extension AgentCliTools on AgentCli {
         }
       }
     }
+    _sweepPiSurface();
     _agent.state.tools = _toolRegistry.tools;
     _applyPromptComposition();
+  }
+
+  /// The pi surface sweep (issue #679): tools registered OUTSIDE the
+  /// availability groups (`config`, `task_resume`, `compact_expand`) are
+  /// not known ids the gate could hide — sweep the registry back to the
+  /// 4-tool surface. Runs on every MCP refilter AND on JS-extension tool
+  /// deltas (`_syncExtTools` registers straight into the registry and
+  /// would otherwise bypass the pin).
+  void _sweepPiSurface() {
+    if (!_piActive) return;
+    for (final tool in _toolRegistry.tools.toList()) {
+      if (!piToolIds.contains(tool.name)) {
+        _toolRegistry.unregister(tool.name);
+      }
+    }
   }
 
   /// Re-applies availability to the fresh MCP surface after a server

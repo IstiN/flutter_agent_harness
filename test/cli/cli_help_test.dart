@@ -15,6 +15,7 @@ void main() {
       '--help',
       '-h',
       '--version',
+      '--pi',
       '--model',
       '--provider',
       '--base-url',

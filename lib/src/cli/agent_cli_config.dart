@@ -99,6 +99,7 @@ final class AgentCliConfig {
     this.jsExtensionsEnabled = true,
     this.dapHubState,
     this.runtimeTools,
+    this.agentMode,
     this.loadMode = AgentLoadMode.defaultMode,
     this.onToolsConfigChanged,
     this.onDapHubConfigChanged,
@@ -316,6 +317,13 @@ final class AgentCliConfig {
   /// runtime, then the builtin capability floor). Null when neither source
   /// declared intent.
   final ToolsConfig? runtimeTools;
+
+  /// The resolved harness mode (issue #679, `pi_mode.dart`): `'pi'` or
+  /// null (default). Resolved by the executable — flag > env > config —
+  /// and consumed by the wiring: the pi runtime tools scope pins the
+  /// surface to read/write/edit/bash and the prompt composition strips
+  /// every optional section.
+  final String? agentMode;
 
   /// The tool-load preset for this boot (issue #680): resolves
   /// `--omp` > `FA_AGENT_MODE` > `agent.mode`. [AgentLoadMode.defaultMode]
