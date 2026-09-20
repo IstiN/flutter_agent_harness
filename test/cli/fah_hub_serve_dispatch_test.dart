@@ -1,22 +1,25 @@
 /// UT for the `fa hub serve` CLI dispatch (issue #304): flag parsing,
-/// secret resolution, the idempotent/bind/success serve paths, and the
+/// secret resolution, the usage-exit dispatch path, and the
 /// graceful-exit seam — the CRAP-ratchet coverage for the split
 /// `runHubCommand` dispatcher. The SIGINT/SIGTERM wiring stays covered
 /// by `test/hub/fah_hub_serve_test.dart`.
+///
+/// The port-binding serve paths (taken-port binds, the live-hub
+/// idempotent no-op, the happy path, the unwritable-pid path) live in
+/// `fah_hub_serve_ports_test.dart` — they bind real loopback ports and
+/// flake under the gate's parallel run on macOS (gh-740 M2), so they
+/// carry `@Tags(['io', 'integration'])` and stay OUT of this
+/// gate-included file. This file must keep covering
+/// `bin/fah_hub_serve.dart`: the CRAP ratchet (crap4dart.yaml) measures
+/// coverage from exactly the gate selector
+/// (`dart test --coverage --exclude-tags integration`).
 @TestOn('vm')
-// Quarantined from the pre-commit gate / CI: these tests bind real
-// loopback ports and flake under the gate's parallel run on macOS
-// (gh-740 M2). `integration` is stacked on `io` — the gate excludes only
-// `integration` (ci_fast_gate.sh, ci.yml), so `io` alone would stay in.
-@Tags(['io', 'integration'])
 library;
 
 import 'dart:io';
 
 import 'package:flutter_agent_harness/io.dart'
     show LocalHub, defaultHubStateFile, readHubState;
-import 'package:flutter_agent_harness/src/hub/dap_local_hub_state.dart'
-    show parseDapLocalHubState;
 import 'package:test/test.dart';
 
 import '../../bin/fah_dap_command.dart' show envHubPidFile;
@@ -36,15 +39,6 @@ void main() {
       tempHome.deleteSync(recursive: true);
     }
   });
-
-  /// A free loopback port (bind-close dance).
-  Future<int> freePort() async {
-    final probe = LocalHub(port: 0);
-    await probe.start();
-    final port = probe.url.port;
-    await probe.stop();
-    return port;
-  }
 
   File stateFileFor() =>
       defaultHubStateFile(home: tempHome.path, environment: const {});
@@ -139,7 +133,7 @@ void main() {
       'nothing stored and no interactive terminal: null, no prompt',
       () async {
         var prompted = 0;
-        final secret = await resolveHubServeSecret(
+        final secret = [REDACTED:Sensitive Value] resolveHubServeSecret(
           File('${tempHome.path}/no-hub.json'),
           environment: const {},
           prompt: (_) async {
@@ -180,122 +174,6 @@ void main() {
       expect(await runHubCommand(const []), 1);
       expect(await runHubCommand(const ['explode']), 1);
     });
-
-    test(
-      'serve against a live hub: idempotent no-op, exit 0, no pid file',
-      () async {
-        final port = await freePort();
-        final hub = LocalHub(port: port, stateFile: stateFileFor());
-        await hub.start();
-        addTearDown(() => hub.stop());
-        final pidFile = File('${tempHome.path}/hub.pid');
-        var loopRan = 0;
-        final code = await runHubCommand(
-          ['serve', '--port', '$port'],
-          home: tempHome.path,
-          environment: {envHubPidFile: pidFile.path},
-          serveLoop: (_, _) async => loopRan++,
-        );
-        expect(code, 0);
-        expect(loopRan, 0, reason: 'the already-running path never serves');
-        expect(pidFile.existsSync(), isFalse);
-      },
-      timeout: timeout,
-    );
-
-    test('serve onto a taken port: bind failure, exit 1', () async {
-      final port = await freePort();
-      final blocker = await ServerSocket.bind('127.0.0.1', port);
-      // A non-HTTP listener: connections die instantly, so the
-      // healthz probe reports down and the bind is what fails.
-      final sub = blocker.listen((socket) => socket.destroy());
-      addTearDown(() async {
-        await sub.cancel();
-        await blocker.close();
-      });
-      final code = await runHubCommand(
-        ['serve', '--port', '$port'],
-        home: tempHome.path,
-        environment: {envHubPidFile: '${tempHome.path}/hub.pid'},
-      );
-      expect(code, 1);
-    }, timeout: timeout);
-
-    test(
-      'serve happy path: hub up + protected, pid state written, exit 0',
-      () async {
-        final port = await freePort();
-        final pidFile = File('${tempHome.path}/hub.pid');
-        LocalHub? served;
-        final code = await runHubCommand(
-          ['serve', '--port', '$port', '--secret', 's3cret'],
-          home: tempHome.path,
-          environment: {envHubPidFile: pidFile.path},
-          serveLoop: (hub, _) async {
-            served = hub;
-            expect(
-              await hubHealthz(port),
-              isTrue,
-              reason: 'the new hub answers /healthz',
-            );
-          },
-        );
-        expect(code, 0);
-        expect(served, isNotNull);
-        expect(served!.isProtected, isTrue);
-        final state = parseDapLocalHubState(pidFile.readAsStringSync());
-        expect(state, isNotNull);
-        expect(state!.port, port);
-        expect(state.pid, pid); // served in-process: the test pid
-        await served!.stop();
-      },
-      timeout: timeout,
-    );
-
-    test('serve onto a taken port with NO injected environment (the '
-        'production wiring): bind failure, exit 1', () async {
-      final port = await freePort();
-      final blocker = await ServerSocket.bind('127.0.0.1', port);
-      final sub = blocker.listen((socket) => socket.destroy());
-      addTearDown(() async {
-        await sub.cancel();
-        await blocker.close();
-      });
-      // No environment/home overrides: the state and pid paths must
-      // still resolve under the injected home (tempHome), never the
-      // real ~/.dap.
-      final code = await runHubCommand([
-        'serve',
-        '--port',
-        '$port',
-      ], home: tempHome.path);
-      expect(code, 1);
-    }, timeout: timeout);
-
-    test(
-      'serve with an unwritable pid path: best-effort pid state, still 0',
-      () async {
-        final port = await freePort();
-        final blocker = File('${tempHome.path}/blocker')
-          ..writeAsStringSync('x');
-        LocalHub? served;
-        final code = await runHubCommand(
-          ['serve', '--port', '$port'],
-          home: tempHome.path,
-          environment: {
-            // A file where the pid directory should be: the pid-state
-            // write fails and must never take the hub down with it.
-            envHubPidFile: '${blocker.path}/hub.pid',
-          },
-          serveLoop: (hub, _) async {
-            served = hub;
-          },
-        );
-        expect(code, 0);
-        await served?.stop();
-      },
-      timeout: timeout,
-    );
   });
 
   group('hubGracefulExit (the seam)', () {
@@ -380,4 +258,15 @@ void main() {
     expect(pidFile.existsSync(), isFalse);
     expect(await hubHealthz(port), isFalse);
   }, timeout: timeout);
+
+  /// A free loopback port (bind-close dance). The port-binding SERVE
+  /// paths live in fah_hub_serve_ports_test.dart; the graceful-exit seam
+  /// above needs short-lived hubs on free ports and is gate-safe.
+  Future<int> freePort() async {
+    final probe = LocalHub(port: 0);
+    await probe.start();
+    final port = probe.url.port;
+    await probe.stop();
+    return port;
+  }
 }

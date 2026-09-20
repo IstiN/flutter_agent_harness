@@ -470,7 +470,11 @@ final class CliConfig {
   /// Optional `compaction.judgeBudgetSeconds` (issue #541) — the
   /// per-call judge/summarizer budget in seconds. `null` keeps the
   /// 300s default; the knob exists so owners of giant marathon sessions
-  /// can give a slow judge room without touching code.
+  /// can give a slow judge room without touching code. NOTE: the knob
+  /// scales only the per-attempt budget — the whole-run `totalBudget`
+  /// (default 15 min) is NOT scaled, so values above 300s shorten the
+  /// retry ladder (the total is exhausted after fewer full-timeout
+  /// attempts).
   final int? compactionJudgeBudgetSeconds;
 
   /// Optional `trajectory:` section (issue #385) — `wireDump: true` opts
