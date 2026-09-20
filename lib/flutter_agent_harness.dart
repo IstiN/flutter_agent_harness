@@ -49,6 +49,7 @@ export 'src/cli/cli_config.dart'
 export 'src/cli/pi_mode.dart';
 export 'src/cli/cli_help.dart';
 export 'src/cli/hep.dart';
+export 'src/cli/stream_json.dart';
 export 'src/cli/folder_model_state.dart';
 export 'src/cli/log_file_tee.dart';
 export 'src/cli/sigint_action.dart';

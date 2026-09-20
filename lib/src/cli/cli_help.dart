@@ -62,12 +62,19 @@ OPTIONS
                                (docs/hep.md; `events=full` adds raw
                                tool-call arguments); `json` pairs with
                                --version. Default: the reply text.
+  --output-format <format>     Headless output format: `text` (default) or
+                               `stream-json` — one JSON agent event per
+                               line on stdout (session header first,
+                               agent_settled last; pi --mode json /
+                               claude-code stream-json parity;
+                               `--mode json` is an alias).
   --model <id>                 Model id (default per provider, see PROVIDERS)
   --provider <kind>            openai-completions | anthropic | google | dial
                                | minimax | zai
                                (default: openai-completions, via OpenRouter)
   --base-url <url>             Override the provider API base URL
   --mode <name>                Initial mode: code | architect | review
+                               (`json` is the stream-json output alias)
   --system-prompt <text>       Override the system prompt for this run
                                (verbatim; beats the config prompts: section
                                and the built-in mode prompts)

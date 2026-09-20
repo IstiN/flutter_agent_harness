@@ -31,6 +31,7 @@ import 'browser_bridge_commands.dart';
 import '../browser/browser_tools.dart';
 import 'headless_prompt.dart';
 import 'hep.dart';
+import 'stream_json.dart';
 import 'key_event.dart';
 import 'key_status.dart';
 import 'provider_error_text.dart';
@@ -1390,13 +1391,6 @@ class AgentCli {
     await printSessionResumeHint();
   }
 
-  /// Cube cache restore before the first turn — best-effort (one warning
-  /// line on failure, never a blocker).
-  Future<void> _cubeBootRestore() async {
-    final bootSpec = _cubeEnv.activeSpec;
-    if (bootSpec != null) await _cubeRestoreQuietly(bootSpec);
-  }
-
   /// Live-session presence: this process now owns the session — the Fa
   /// app (sharing the sessions root) marks it live and can attach. The
   /// heartbeat refreshes on the inbox timer; unregistering happens in
@@ -1491,18 +1485,6 @@ class AgentCli {
       await _refreshModelCache();
     } on Object {
       // Swallowed: see _refreshModelCache.
-    }
-  }
-
-  /// Cube cache save mirroring [run]'s exit path (best-effort).
-  Future<void> _cubeCacheSaveQuietly() async {
-    final exitSpec = _cubeEnv.activeSpec;
-    if (exitSpec != null) {
-      try {
-        await CubeCacheManager(_cubeEnv, exitSpec).save();
-      } on Object catch (error) {
-        io.writeln('cube: cache save failed: $error');
-      }
     }
   }
 
@@ -2044,6 +2026,7 @@ class AgentCli {
     List<ImageContent> images = const [],
     HepWriter? hep,
     bool waitForJobs = false,
+    StreamJsonWriter? streamJson,
   }) async {
     _hep = hep;
     // Cube cache restore, mirroring [run]'s boot (the headless run sees the
@@ -2060,11 +2043,10 @@ class AgentCli {
       io.writeln(viewerBannerText(leaseBlocked, stale: false));
       return 3;
     }
-    if (hep != null) {
-      hep.writeHeader(
-        sessionId: _session!.cachedId ?? (await _session!.getMetadata()).id,
-      );
-    }
+    // HEP (issue #155) + stream-json (issue #695) headers: the FIRST
+    // stdout line of each structured mode, written the moment the
+    // session id exists — before any event can race them.
+    await _writeHeadlessEventHeaders(hep: hep, streamJson: streamJson);
     // Issue #332: rehydrate/settle the subagent registry exactly like the
     // interactive [run] boot. A headless run (a wake run, a restart) used
     // to start from an EMPTY registry, so zombie 'running' rows from the
@@ -2094,6 +2076,13 @@ class AgentCli {
       _onTaskJobCompleted,
     );
     final hepSub = hep == null ? null : _agent.subscribe(hep.handleEvent);
+    // Stream-json subscription (issue #695): like the HEP writer, the
+    // stream writer sees every agent event; its encoder drops the
+    // fa-native ones. Unsubscribed in the finally below so a failed run
+    // never leaks the listener into the next one.
+    final streamJsonSub = streamJson == null
+        ? null
+        : _agent.subscribe(streamJson.handleEvent);
     // Terminal-outcome capture (issue #413): the visible transcript is
     // REBUILT by post-run compaction (checkpoint records replace the
     // assistant turns entirely), so the exit code cannot be derived from
@@ -2155,6 +2144,7 @@ class AgentCli {
       await interruptSub.cancel();
       await taskSub.cancel();
       hepSub?.call();
+      streamJsonSub?.call();
     }
     // The exit code describes the LAST completed turn's terminal outcome
     // (captured from the turn events above) — not the visible transcript,
