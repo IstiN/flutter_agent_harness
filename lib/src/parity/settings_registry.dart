@@ -360,6 +360,15 @@ const fileOnlyConfigKeys = <String, String>{
       'Roles-group member (per-path role pinning), superseded for '
       'interactive use by the roles: chains the agent-models flow edits; '
       'per-path pinning stays file-tuned.',
+
+  // Product/store links (issue #691): routing data read by every
+  // surface (app Get banner, CLI, fa1.dev generator) — no interactive
+  // editor by design; the file is the single source of truth.
+  'links':
+      'Product/store links (issue #691) are routing data every surface '
+      'READS (app Get banner, CLI, fa1.dev generator); the config file '
+      'is the single source of truth and no surface edits it '
+      'interactively.',
 };
 
 /// Which app surfaces carry a shared setting: the Flutter app on macOS,
