@@ -75,7 +75,13 @@ extension AgentCliExt on AgentCli {
       // path as /tools reload — mirrors _onMcpChanged).
       AgentCliTools(this).refilterMcpTools(resolution);
     }
-    host.attachHooks(_agent);
+    // pi mode (issue #679): the benchmark profile carries no JS
+    // extension hook side effects — `beforeToolCall`/`afterToolCall`
+    // hooks (logging, notes, follow-ups) stay off the agent. The tool
+    // surface is already swept; this is the other half of the pin.
+    if (!_piActive) {
+      host.attachHooks(_agent);
+    }
     // v1: fired once after the load completes; extension side effects land
     // through the session bridges (notes append once a session exists).
     await host.sessionStart();

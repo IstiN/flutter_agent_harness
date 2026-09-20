@@ -66,18 +66,6 @@ ProviderTimeoutsOverride? parseProviderTimeouts(Object? node) {
   return ProviderTimeoutsOverride(connect: connect, streamIdle: streamIdle);
 }
 
-/// Parses the `agent:` section (issues #273/#679): `contextWindowCap` —
-/// the owner-side effective context cap — and `mode` — the harness mode
-/// preset (`default` | `pi`). The cap clamps the EFFECTIVE context
-/// window everywhere it is consumed (compaction thresholds, the ctx
-/// meter/footer, the loop's over-window guard) while the model keeps its
-/// real window. Strict like every section: a bad schema throws
-/// [ConfigException] at boot.
-///
-/// The cap must stay at or above the compaction reserve (16384 tokens):
-/// the compaction trigger is `window - reserve`, and a smaller cap would
-/// drive that threshold negative. `mode` normalizes `default` to null so
-/// an absent and an explicit-off mode are indistinguishable downstream.
 /// Parses the `trajectory:` section (issue #385): today only the
 /// `wireDump` boolean. Unknown keys are strict errors (a typo must never
 /// silently skip the opt-in).
@@ -114,6 +102,18 @@ String? _parseAgentModeValue(Object? value) {
   return value == 'pi' ? 'pi' : null;
 }
 
+/// Parses the `agent:` section (issues #273/#679): `contextWindowCap` —
+/// the owner-side effective context cap — and `mode` — the harness mode
+/// preset (`default` | `pi`). The cap clamps the EFFECTIVE context
+/// window everywhere it is consumed (compaction thresholds, the ctx
+/// meter/footer, the loop's over-window guard) while the model keeps its
+/// real window. Strict like every section: a bad schema throws
+/// [ConfigException] at boot.
+///
+/// The cap must stay at or above the compaction reserve (16384 tokens):
+/// the compaction trigger is `window - reserve`, and a smaller cap would
+/// drive that threshold negative. `mode` normalizes `default` to null so
+/// an absent and an explicit-off mode are indistinguishable downstream.
 ({int? contextWindowCap, String? agentMode}) _parseAgentSection(Object? node) {
   if (node == null) return (contextWindowCap: null, agentMode: null);
   if (node is! YamlMap) {
