@@ -643,9 +643,15 @@ class AgentCli {
     // re-enable IXON — Ctrl+S then freezes output as XOFF and never
     // reaches the agent as steering. Re-assert the raw-mode input flags
     // after every foreground tool phase; a drift note names the child.
+    // OWNERSHIP GATE: only the TUI owns raw mode on the session tty. The
+    // interactive line REPL and `fa -p` run cooked — icrnl/ixon are
+    // SUPPOSED to be on there, and clearing them kills Enter (no CR→NL
+    // in canonical mode) with nothing restoring them (PR review
+    // PRRT_kwDOTXdlLc6kMBZH). The gate also covers injected-runner
+    // seams: line-mode tests must observe zero probes.
     _termiosGuard = TermiosGuard(
       runner: config.sttyRunner,
-      hasTerminal: config.sttyRunner != null ? () => true : null,
+      hasTerminal: () => _useTui,
     );
     attachTermiosGuard(_agent, _termiosGuard, onDrift: _noteTermiosDrift);
     _checkpoints = CheckpointRewindController(

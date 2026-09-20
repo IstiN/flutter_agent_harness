@@ -11,6 +11,7 @@ import 'package:dart_tui/dart_tui.dart' hide stripAnsi;
 import 'package:meta/meta.dart';
 
 import 'composer_overlay.dart';
+import 'termios_guard.dart' show kTermiosClearArgs;
 import 'ansi_markdown.dart';
 import 'agent_hub_tui.dart';
 import 'model_picker_table.dart' show modelPickerFooterHint;
@@ -2703,27 +2704,14 @@ final class FaTuiController {
     try {
       final saved = await runner([deviceFlag, '/dev/tty', '-g']);
       if (saved.exitCode != 0) return null;
+      // The raw-mode input-flag family kept clean for fa's lifetime
+      // (issue #735): shared with TermiosGuard so the boot sanitize and
+      // the after-tool re-assert can never drift apart. Why `-ixany` and
+      // the `discard ^-` unbind form: see kTermiosClearArgs.
       final cleared = await runner([
         deviceFlag,
         '/dev/tty',
-        '-ixon',
-        '-ixoff',
-        '-icrnl',
-        // VDISCARD (Ctrl+O toggles output discard): when the host left it
-        // enabled the kernel EATS every \x0f before fa reads it — the
-        // Ctrl+O newline fallback (issue #77 AC5) goes silent. UNBIND the
-        // control character (issue #735: `-discard` is an illegal OPTION —
-        // VDISCARD is a control char, not a toggle — and its rc=1 made the
-        // whole sanitize silently return null); `discard ^-` is the
-        // cross-platform disable form. Clear it alongside ICRNL so the
-        // whole wire matrix survives default-termios hosts (ubuntu runner
-        // images ship discard on; macOS varies).
-        'discard',
-        '^-',
-        // Belt-and-braces (issue #735): with IXANY the kernel resumes
-        // stopped output on ANY byte — the "pressed ↑ and it let go"
-        // signature of a mid-session IXON regression.
-        '-ixany',
+        ...kTermiosClearArgs,
       ]);
       if (cleared.exitCode != 0) return null;
       return (saved.stdout as String).trim();

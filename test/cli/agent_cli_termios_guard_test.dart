@@ -345,6 +345,63 @@ void main() {
       }
     },
   );
+
+  test(
+    'line mode never touches the tty — zero guard probes/clears even '
+    'with an injected runner (PR review PRRT_kwDOTXdlLc6kMBZH)',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      // The interactive line REPL runs COOKED: icrnl/ixon are SUPPOSED to
+      // be on, and clearing them would kill Enter (no CR→NL translation
+      // in canonical mode) with no restore path. The guard is TUI-only —
+      // line mode must not probe the tty even when a stty runner seam is
+      // injected.
+      final tty = _SimTty();
+      final shell = _CorruptingGatedShell(tty);
+      final fake = FakeStreamFunction([
+        toolTurn(const [
+          ToolCall(
+            id: 'c1',
+            name: 'bash',
+            arguments: {'command': 'stty ixon ixany < /dev/tty'},
+          ),
+        ]),
+        textTurn('LINE-MODE-OK'),
+      ]);
+
+      final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
+      final io = FakeCliIO();
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'test-key',
+          env: env,
+          sessionRoot: '/sessions',
+          providerKind: 'openai-completions',
+          skillsAccess: SkillsAccess.granted,
+          sttyRunner: tty.runner,
+        ),
+        io: io,
+        useTui: false,
+        streamFunction: fake.call,
+      );
+
+      final run = cli.run();
+      addTearDown(io.close);
+      io.sendLine('run the tool');
+      await waitForIt(
+        () => fake.calls >= 2 && !cli.isBusy,
+        reason: 'the tool turn ran and settled',
+      );
+      // The tool phase DID run (the corrupting child fired)…
+      expect(tty.events, contains('child:stty-ixon-ixany'));
+      // …but line mode must show ZERO guard probes/clears: the runner
+      // only ever served the tool's child, never an stty probe or clear.
+      expect(tty.events.where((e) => e.startsWith('stty:')), isEmpty);
+      io.sendLine('/exit');
+      await run;
+    },
+  );
 }
 
 /// One-gate shell: every exec blocks until [release] (the busy holder for
