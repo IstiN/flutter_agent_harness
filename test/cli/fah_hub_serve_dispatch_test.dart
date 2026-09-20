@@ -133,7 +133,7 @@ void main() {
       'nothing stored and no interactive terminal: null, no prompt',
       () async {
         var prompted = 0;
-        final secret = [REDACTED:Sensitive Value] resolveHubServeSecret(
+        final secret = await resolveHubServeSecret(
           File('${tempHome.path}/no-hub.json'),
           environment: const {},
           prompt: (_) async {
