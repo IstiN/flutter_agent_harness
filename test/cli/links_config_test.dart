@@ -178,7 +178,7 @@ void main() {
       expect(
         links.toYaml(),
         'links:\n'
-        '  appstore: https://apps.apple.com/us/app/fa/id3\n'
+        '  appstore: "https://apps.apple.com/us/app/fa/id3"\n'
         '  banner: false\n',
       );
     });
@@ -202,6 +202,21 @@ void main() {
       expect(roundTripped.site, original.site);
       expect(roundTripped.banner, original.banner);
       expect(roundTripped.isDefault, isFalse);
+    });
+
+    test('a URL with a space-before-fragment survives the round-trip', () {
+      // Written quoted (a bare ` #` starts a YAML comment — the file
+      // author must quote it too); toYaml must then re-emit it quoted so
+      // the strict round-trip parses back the same string.
+      const url = 'https://ex.com/app #frag';
+      final links = LinksConfig.fromYaml(
+        _section('links:\n  appstore: "$url"\n'),
+      );
+      expect(links.appstore, url);
+      final roundTripped = LinksConfig.fromYaml(
+        loadYaml(links.toYaml())['links'],
+      );
+      expect(roundTripped.appstore, url);
     });
   });
 

@@ -109,23 +109,32 @@ void main() {
     expect(find.byType(Card), findsNothing);
   });
 
-  testWidgets('the CTA tap emits the store-referral analytics event (AC5)', (
-    tester,
-  ) async {
-    final env = MemoryExecutionEnv();
-    await pump(
-      tester,
-      env: env,
-      links: const AppLinksResolution(LinksConfig(), []),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Open the App Store'));
-    await tester.pump();
-    final referral = events.where((e) => e.$1 == 'store_referral').toList();
-    expect(referral, hasLength(1), reason: 'exactly one referral event');
-    expect(referral.first.$2['placement'], 'get_banner');
-    expect(referral.first.$2['platform'], 'macos');
-  });
+  testWidgets(
+    'the CTA taps emit the store-referral event with the target split (AC5)',
+    (tester) async {
+      final env = MemoryExecutionEnv();
+      await pump(
+        tester,
+        env: env,
+        links: const AppLinksResolution(LinksConfig(), []),
+      );
+      await tester.pumpAndSettle();
+      // Paid release tap and free-beta tap must be distinguishable in the
+      // funnel — the same event name, split by `target` (AC5).
+      await tester.tap(find.text('Open the App Store'));
+      await tester.pump();
+      await tester.tap(find.text('or join the free TestFlight beta'));
+      await tester.pump();
+      final referral = events.where((e) => e.$1 == 'store_referral').toList();
+      expect(referral, hasLength(2), reason: 'one event per button');
+      expect(referral[0].$2['placement'], 'get_banner');
+      expect(referral[0].$2['platform'], 'macos');
+      expect(referral[0].$2['target'], 'appstore', reason: 'the paid CTA');
+      expect(referral[1].$2['placement'], 'get_banner');
+      expect(referral[1].$2['platform'], 'macos');
+      expect(referral[1].$2['target'], 'testflight', reason: 'the free beta');
+    },
+  );
 
   testWidgets('dismissal hides the banner and persists across restarts', (
     tester,

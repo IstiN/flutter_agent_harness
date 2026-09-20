@@ -583,6 +583,7 @@ final class CliConfig {
       powerSleepPrevention: powerSleepPrevention,
       powerHold: powerHold,
       tuiTheme: tuiTheme,
+      links: links,
     );
   }
 

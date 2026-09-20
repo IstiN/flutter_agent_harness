@@ -120,11 +120,13 @@ class _StoreGetBannerState extends State<StoreGetBanner> {
                     runSpacing: 4,
                     children: [
                       TextButton(
-                        onPressed: () => _open(_view.appstoreUrl),
+                        onPressed: () =>
+                            _open(_view.appstoreUrl, target: 'appstore'),
                         child: Text(l10n.storeBannerCta),
                       ),
                       TextButton(
-                        onPressed: () => _open(_view.testflightUrl),
+                        onPressed: () =>
+                            _open(_view.testflightUrl, target: 'testflight'),
                         child: Text(l10n.storeBannerBeta),
                       ),
                     ],
@@ -143,10 +145,11 @@ class _StoreGetBannerState extends State<StoreGetBanner> {
     );
   }
 
-  void _open(String url) {
+  void _open(String url, {required String target}) {
     AppAnalytics.instance.storeReferralTap(
       placement: 'get_banner',
       platform: _platform,
+      target: target,
     );
     launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
   }

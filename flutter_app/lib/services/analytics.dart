@@ -203,14 +203,21 @@ final class AppAnalytics {
   /// A store-referral surface was tapped (issue #691): the dismissible
   /// Get banner's App Store CTA or its TestFlight line. [placement]
   /// identifies the surface (`get_banner` for the in-app banner);
-  /// [platform] carries the platform split (`web`/`macos`/…) so the
-  /// funnel counts join the site's `appstore_click` events in the same
-  /// GA4/Firebase property. Metadata only — never a URL with query
+  /// [platform] carries the platform split (`web`/`macos`/…);
+  /// [target] splits the funnel destination (`appstore` for the paid
+  /// release vs `testflight` for the free beta — AC5's countable split)
+  /// so the funnel counts join the site's `appstore_click` events in the
+  /// same GA4/Firebase property. Metadata only — never a URL with query
   /// strings, never user ids.
   void storeReferralTap({
     required String placement,
     required String platform,
-  }) => _log('store_referral', {'placement': placement, 'platform': platform});
+    required String target,
+  }) => _log('store_referral', {
+    'placement': placement,
+    'platform': platform,
+    'target': target,
+  });
 
   /// The in-app Get banner was dismissed (issue #691) — the funnel's
   /// negative signal, countable against the taps.

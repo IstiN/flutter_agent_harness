@@ -119,19 +119,24 @@ final class LinksConfig {
     if (!value.startsWith('https://') && !value.startsWith('http://')) {
       throw ConfigException('"links.$key" must be an http(s) URL, got: $value');
     }
-    return value;
+    return value.trim();
   }
 
   /// Renders the section, only the non-default keys (defaults are never
   /// written — the file stays minimal).
   String toYaml() {
     final buffer = StringBuffer('links:\n');
-    if (appstore != defaultAppStoreUrl) buffer.write('  appstore: $appstore\n');
-    if (testflight != defaultTestFlightUrl) {
-      buffer.write('  testflight: $testflight\n');
+    // URLs are double-quoted: a value like "https://ex/app #frag" (space
+    // before the fragment) parses back truncated if written bare — the
+    // quote keeps the strict round-trip safe for every accepted value.
+    if (appstore != defaultAppStoreUrl) {
+      buffer.write('  appstore: "$appstore"\n');
     }
-    if (play != null) buffer.write('  play: $play\n');
-    if (site != defaultSiteUrl) buffer.write('  site: $site\n');
+    if (testflight != defaultTestFlightUrl) {
+      buffer.write('  testflight: "$testflight"\n');
+    }
+    if (play != null) buffer.write('  play: "$play"\n');
+    if (site != defaultSiteUrl) buffer.write('  site: "$site"\n');
     if (!banner) buffer.write('  banner: false\n');
     return buffer.toString();
   }

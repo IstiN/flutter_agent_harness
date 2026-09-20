@@ -111,6 +111,8 @@ final class StoreBannerView {
 
   /// The Android slot label: the Play CTA while live, the coming-soon
   /// note while `links.play` is unset.
+  // TODO(#691): localize the live-Play label (arb `storeBannerAndroidLive`)
+  // the moment `links.play` goes live — currently hardcoded English.
   String get androidLabel =>
       playUrl == null ? 'Android: coming soon' : 'Also on Google Play';
 
