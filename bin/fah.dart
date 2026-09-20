@@ -1791,6 +1791,21 @@ Future<void> _runApp(List<String> args) async {
     _fail('invalid --tools/FA_TOOLS spec: ${error.message}');
   }
 
+  // The tool-load preset (issue #680): `--omp` wins over the
+  // `FA_AGENT_MODE` env twin, which wins over `agent.mode` config. An
+  // unknown env/config label is a hard startup error — a typo must never
+  // silently boot the default mode.
+  AgentLoadMode loadMode;
+  try {
+    loadMode = resolveAgentLoadMode(
+      flagOmp: effective.ompMode,
+      envMode: Platform.environment['FA_AGENT_MODE'],
+      configMode: saved.agentLoadMode,
+    );
+  } on ArgumentError catch (error) {
+    _fail('invalid load mode: ${error.message}');
+  }
+
   // Per-folder model memory: mirror the active triple into the folder's
   // state file (the LIVE cwd — a resumed session re-points `cliEnv.cwd`),
   // so the next `fa` in that folder restores this model, not the global
@@ -2007,6 +2022,7 @@ Future<void> _runApp(List<String> args) async {
           approvalModeFromLabel(saved.approvalMode) ?? ApprovalMode.yolo,
       alwaysAllowTools: saved.allowedTools.toSet(),
       runtimeTools: runtimeTools,
+      loadMode: loadMode,
       compactionEngine: compactionEngine,
       compactionJudgeBudgetSeconds: compactionJudgeBudgetSeconds,
       wireDump: wireDump,

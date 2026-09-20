@@ -44,6 +44,7 @@ import '../redact/redaction_types.dart';
 import '../spill/spill.dart';
 import '../cli/links_config.dart';
 import '../tools/availability.dart';
+import '../tools/load_modes.dart';
 import '../task/subagent_heartbeat.dart';
 import '../ttsr/ttsr.dart';
 
@@ -1189,31 +1190,43 @@ void validateProviderTimeoutsSection(Object? node) {
 }
 
 /// The strict `agent:` section validator, shared by `check`, `set` and
-/// the settings flow (issue #394). Mirrors the private boot parser in
-/// `cli_config.dart` (pinned by test): the section takes exactly
-/// `contextWindowCap`, a positive integer at or above the compaction
-/// reserve — a cap below 16384 must never soften that floor.
+/// the settings flow (issues #394/#680). Mirrors the private boot parser
+/// in `cli_config.dart` (pinned by test): the section takes exactly
+/// `contextWindowCap` (a positive integer at or above the compaction
+/// reserve — a cap below 16384 must never soften that floor) and `mode`
+/// (the load preset `default|pi|omp`, validated by the shared
+/// [agentLoadModeValidationError] rule).
 void validateAgentSection(Object? node) {
   if (node is! YamlMap) {
     throw ConfigException('must be a map, got: $node');
   }
   for (final entry in node.entries) {
     final key = '${entry.key}';
-    if (key != 'contextWindowCap') {
-      throw ConfigException('unknown "agent" key: $key');
-    }
-    final value = entry.value;
-    if (value is! int || value <= 0) {
-      throw ConfigException(
-        '"agent.contextWindowCap" must be a positive integer (tokens)',
-      );
-    }
-    if (value < 16384) {
-      throw ConfigException(
-        '"agent.contextWindowCap" must be at least 16384 — below the '
-        'compaction reserve the compaction trigger threshold would go '
-        'negative',
-      );
+    switch (key) {
+      case 'contextWindowCap':
+        final value = entry.value;
+        if (value is! int || value <= 0) {
+          throw ConfigException(
+            '"agent.contextWindowCap" must be a positive integer (tokens)',
+          );
+        }
+        if (value < 16384) {
+          throw ConfigException(
+            '"agent.contextWindowCap" must be at least 16384 — below the '
+            'compaction reserve the compaction trigger threshold would go '
+            'negative',
+          );
+        }
+      case 'mode':
+        // The tool-load preset (issue #680): `default|pi|omp`, validated
+        // by the shared rule in load_modes.dart (the same one the boot
+        // parser in cli_config.dart applies — one source, no drift).
+        // `default` is legal and explicit — the written file stays
+        // parseable.
+        final error = agentLoadModeValidationError(entry.value);
+        if (error != null) throw ConfigException(error);
+      default:
+        throw ConfigException('unknown "agent" key: $key');
     }
   }
 }
