@@ -111,6 +111,46 @@ extension AgentCliSteering on AgentCli {
     _startRun(attributed);
   }
 
+  /// Steers every queued TUI message into the running agent.
+  Future<void> _steerTuiMessages(List<String> messages) async {
+    for (final message in messages) {
+      _steerResolved(message);
+    }
+  }
+
+  /// Drains queued messages one-by-one as separate turns (kimi-cli
+  /// semantics) — the loop itself is [drainQueueRounds]; an Esc abort
+  /// discards the queue instead of starting new work.
+  Future<void> _drainTuiQueue(FaTuiController controller) => drainQueueRounds(
+    drain: controller.drainQueue,
+    runRound: (queued) => runQueuedTurns(
+      queued: queued,
+      handle: _handleLine,
+      settled: () => _settled,
+      abortRequested: () => _abortRequested,
+    ),
+    abortRequested: () => _abortRequested,
+    onDropped: (dropped) {
+      io.writeln('queued message(s) dropped:');
+      for (final text in dropped) {
+        final elided = text.length <= 80 ? text : '${text.substring(0, 80)}…';
+        io.writeln('  • ${elided.replaceAll('\n', ' ')}');
+      }
+    },
+  );
+
+  /// One dim transcript note per drift the [TermiosGuard] cleared (issue
+  /// #735): names the flags a child re-enabled — the trail that says
+  /// WHICH tool corrupted the tty.
+  void _noteTermiosDrift(List<String> drifted) {
+    io.writeln(
+      tuiDim(
+        'tty: ${drifted.join(', ')} re-enabled by a child process — '
+        'cleared (Ctrl+S steering safe)',
+      ),
+    );
+  }
+
   /// Persists an idle-steer record, then marks it delivered (the run
   /// that [text] started IS the delivery — no FIFO, no boundary wait).
   Future<void> _persistIdleSteering(
