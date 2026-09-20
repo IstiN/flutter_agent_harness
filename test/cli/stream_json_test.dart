@@ -351,7 +351,10 @@ void main() {
       expect(json['type'], 'tool_execution_update');
       expect(json['toolCallId'], 't1');
       expect(json['toolName'], 'read');
-      expect(json['args'], {'path': 'a.txt'});
+      // pi's shape: partialResult only — the args already went out with
+      // tool_execution_start under the same toolCallId; re-sending them
+      // would grow the stream quadratically on chatty updates.
+      expect(json.containsKey('args'), isFalse);
       expect((json['partialResult'] as Map)['content'], [
         const TextContent(text: 'half').toJson(),
       ]);
@@ -497,6 +500,68 @@ void main() {
       }
     });
 
+    test('every AssistantMessageEvent subtype is serialized (count '
+        'tripwire, AC2)', () {
+      final message = assistant();
+      const call = ToolCall(id: 't1', name: 'read', arguments: {});
+      // Every concrete AssistantMessageEvent subtype, one sample each.
+      // The count tripwire below breaks when a NEW subtype joins the
+      // sealed hierarchy, forcing a wire shape here — the encoder's
+      // defaulted switches cannot force it at compile time, and without
+      // this the new subtype would hit an untriaged default arm (a
+      // contained-throw warning line) instead of its intended shape.
+      final samples = <AssistantMessageEvent>[
+        StartEvent(partial: message),
+        TextStartEvent(contentIndex: 0, partial: message),
+        TextDeltaEvent(contentIndex: 0, delta: 'x', partial: message),
+        TextEndEvent(contentIndex: 0, content: 'x', partial: message),
+        ThinkingStartEvent(contentIndex: 0, partial: message),
+        ThinkingDeltaEvent(contentIndex: 0, delta: 'x', partial: message),
+        ThinkingEndEvent(contentIndex: 0, content: 'x', partial: message),
+        ToolCallStartEvent(contentIndex: 0, partial: message),
+        ToolCallDeltaEvent(contentIndex: 0, delta: '{', partial: message),
+        ToolCallEndEvent(contentIndex: 0, toolCall: call, partial: message),
+        DoneEvent(reason: StopReason.stop, message: message),
+        ErrorEvent(reason: StopReason.error, error: message),
+      ];
+      // Tripwire: exactly the sealed hierarchy's current size (mirror
+      // of the AgentEvent hasLength(13) one). A new subtype must be
+      // added above AND given its wire shape below — this count is
+      // what makes the omission visible.
+      expect(samples, hasLength(12));
+      const wireTypes = <String, String>{
+        'StartEvent': 'start',
+        'TextStartEvent': 'text_start',
+        'TextDeltaEvent': 'text_delta',
+        'TextEndEvent': 'text_end',
+        'ThinkingStartEvent': 'thinking_start',
+        'ThinkingDeltaEvent': 'thinking_delta',
+        'ThinkingEndEvent': 'thinking_end',
+        'ToolCallStartEvent': 'toolcall_start',
+        'ToolCallDeltaEvent': 'toolcall_delta',
+        'ToolCallEndEvent': 'toolcall_end',
+        'DoneEvent': 'done',
+        'ErrorEvent': 'error',
+      };
+      for (final event in samples) {
+        final name = event.runtimeType.toString();
+        final line = streamJsonEventLine(
+          MessageUpdateEvent(message: message, assistantMessageEvent: event),
+        );
+        expect(line, isNotNull, reason: '$name must serialize');
+        final inner =
+            (jsonDecode(line!) as Map<String, dynamic>)['assistantMessageEvent']
+                as Map<String, dynamic>;
+        expect(
+          inner['type'],
+          wireTypes[name],
+          reason:
+              '$name must map to its ${wireTypes[name]} wire shape, not the '
+              'untriaged-default degrade path',
+        );
+      }
+    });
+
     test('filtered wire names never appear as event types', () {
       const detail = TrajectoryRequestDetail(
         messageCount: 1,
@@ -546,6 +611,51 @@ void main() {
       );
       writer.handleEvent(const AgentSettledEvent(), null);
       expect(lines, ['{"type":"agent_start"}', '{"type":"agent_settled"}']);
+    });
+
+    test('a projection hiccup degrades to a warning line, never a throw '
+        '(graceful degrade)', () async {
+      final lines = <String>[];
+      final writer = StreamJsonWriter(emit: lines.add);
+      // Same class of failure as an untriaged AssistantMessageEvent
+      // subtype reaching a default arm: an unencodable value inside the
+      // event (a non-finite provider-reported cost) makes the mapping
+      // throw. The writer must contain it — the run streams on with a
+      // skippable `warning` line (the header's `version` contract),
+      // never a dead run.
+      const usage = Usage(
+        input: 10,
+        output: 5,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 15,
+        cost: UsageCost(total: double.nan),
+      );
+      final message = assistant(usage: usage);
+      await writer.handleEvent(
+        MessageUpdateEvent(
+          message: message,
+          assistantMessageEvent: TextDeltaEvent(
+            contentIndex: 0,
+            delta: 'x',
+            partial: message,
+          ),
+        ),
+        null,
+      );
+      await writer.handleEvent(const AgentSettledEvent(), null);
+      expect(lines, hasLength(2));
+      final warning = jsonDecode(lines.first) as Map<String, dynamic>;
+      expect(warning['type'], 'warning');
+      expect(warning['eventType'], 'MessageUpdateEvent');
+      expect(
+        (warning['message'] as String),
+        contains('stream-json projection failed'),
+      );
+      expect(
+        jsonDecode(lines.last) as Map<String, dynamic>,
+        containsPair('type', 'agent_settled'),
+      );
     });
   });
 }

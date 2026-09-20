@@ -58,7 +58,10 @@ extension AgentCliHeadlessEvents on AgentCli {
     final sessionId = _session!.cachedId ?? (await _session!.getMetadata()).id;
     hep?.writeHeader(sessionId: sessionId);
     // Stream-json mode: the session header carries the run's cwd (pi's
-    // session line shape).
-    streamJson?.writeHeader(sessionId: sessionId, cwd: config.env.cwd);
+    // session line shape). `_env.cwd`, not `config.env.cwd`: the run
+    // operates on the CwdOverrideEnv abstraction (session switching
+    // mutates it), so the header reports the effective cwd, not the
+    // delegate's original.
+    streamJson?.writeHeader(sessionId: sessionId, cwd: _env.cwd);
   }
 }

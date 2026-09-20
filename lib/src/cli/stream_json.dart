@@ -22,9 +22,12 @@
 ///   visibility stays with the TUI, `fa trajectory`, and the session
 ///   ledger. The dispatch mirrors the HEP writer's defaulted family
 ///   switches (CRAP gate); the sealed-set triage is enforced by the
-///   encoder test, which enumerates every [AgentEvent] subtype with a
-///   count tripwire, so a new event subtype cannot slip into (or
-///   silently vanish from) the stream unnoticed.
+///   encoder test, which enumerates every [AgentEvent] AND every
+///   [AssistantMessageEvent] subtype with count tripwires, so a new
+///   subtype cannot slip into (or silently vanish from) the stream
+///   unnoticed — and if one still slips past CI,
+///   [StreamJsonWriter.handleEvent] degrades it to a `warning` line
+///   instead of letting the throw kill the run.
 ///
 /// Redaction rides free: the loop finalizes tool results through the
 /// `afterToolCall` hook BEFORE emitting [ToolExecutionEndEvent], and the
@@ -143,14 +146,16 @@ Map<String, dynamic>? _toolExecutionEventJson(
   ToolExecutionUpdateEvent(
     :final toolCallId,
     :final toolName,
-    :final args,
     :final partialResult,
   ) =>
     {
       'type': 'tool_execution_update',
       'toolCallId': toolCallId,
       'toolName': toolName,
-      'args': _sanitize(args),
+      // pi's shape: `partialResult` only — the args already went out
+      // with `tool_execution_start` under the same `toolCallId`, so
+      // re-sending them would grow the stream quadratically on chatty
+      // partial updates with large payloads.
       'partialResult': _toolResultJson(partialResult),
     },
   ToolExecutionEndEvent(
@@ -201,8 +206,29 @@ class StreamJsonWriter {
 
   /// Handles one agent event (AgentListener shape); filtered events
   /// emit nothing.
+  ///
+  /// Graceful degrade: a projection hiccup — an [AssistantMessageEvent]
+  /// subtype this encoder version has not triaged (the default arms
+  /// below throw for it) or a value `jsonEncode` cannot express (e.g. a
+  /// non-finite provider-reported cost) — must never kill a live
+  /// headless run; an unawaited-listener throw propagates into the
+  /// agent loop and turns the whole run into `stopReason: error`. It
+  /// degrades to a `warning` line instead: the header's `version` is
+  /// the wire's compatibility contract (consumers skip event `type`s
+  /// they do not know), so the run streams on with the gap visible,
+  /// while the encoder test's subtype-count tripwire keeps new subtypes
+  /// loud at build time.
   Future<void> handleEvent(AgentEvent event, CancelToken? cancelToken) async {
-    final line = streamJsonEventLine(event);
+    String? line;
+    try {
+      line = streamJsonEventLine(event);
+    } on Object catch (error) {
+      line = jsonEncode({
+        'type': 'warning',
+        'eventType': event.runtimeType.toString(),
+        'message': 'stream-json projection failed: $error',
+      });
+    }
     if (line != null) _emit(line);
   }
 }
@@ -214,7 +240,11 @@ class StreamJsonWriter {
 ///
 /// Split into text/thinking vs tool-call/terminal family switches (CRAP
 /// gate); the encoder test enumerates every [AssistantMessageEvent]
-/// subtype so a new one cannot slip through unserialized.
+/// subtype with a count tripwire (same shape as the [AgentEvent] triage
+/// test), so a new one cannot slip through unserialized — and if one
+/// still reaches an untriaged default arm at runtime,
+/// [StreamJsonWriter.handleEvent] degrades to a warning line instead of
+/// letting the throw kill the run.
 Map<String, dynamic> _assistantMessageEventJson(AssistantMessageEvent event) =>
     event is StartEvent ||
         event is TextStartEvent ||
@@ -262,8 +292,10 @@ Map<String, dynamic> _textStreamEventJson(AssistantMessageEvent event) {
       };
     default:
       // Unreachable via the router above; a new AssistantMessageEvent
-      // subtype lands here and fails loudly instead of serializing
-      // wrong data.
+      // subtype lands here and throws rather than serializing wrong
+      // data. [StreamJsonWriter.handleEvent] contains the throw (a
+      // warning line, never a dead run), and the encoder test's
+      // subtype-count tripwire surfaces it at build time.
       throw StateError('untriaged AssistantMessageEvent: ${event.runtimeType}');
   }
 }
@@ -306,8 +338,10 @@ Map<String, dynamic> _callStreamEventJson(AssistantMessageEvent event) {
       };
     default:
       // Unreachable via the router above; a new AssistantMessageEvent
-      // subtype lands here and fails loudly instead of serializing
-      // wrong data.
+      // subtype lands here and throws rather than serializing wrong
+      // data. [StreamJsonWriter.handleEvent] contains the throw (a
+      // warning line, never a dead run), and the encoder test's
+      // subtype-count tripwire surfaces it at build time.
       throw StateError('untriaged AssistantMessageEvent: ${event.runtimeType}');
   }
 }
