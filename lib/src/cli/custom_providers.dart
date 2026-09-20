@@ -150,6 +150,23 @@ final class CustomProviderEntry {
 bool isReservedCustomProviderName(String name) =>
     providerCatalog.containsKey(name.toLowerCase());
 
+/// Auth-domain aliases (#706): several spellings can name the SAME
+/// provider account — the ChatGPT OAuth flow derives `chatgpt.com` from
+/// the endpoint host while the catalog provider is `chatgpt`, so one
+/// auth domain ended up with two picker identities, both marked current.
+/// The map folds an alias spelling onto its canonical id; entries keep
+/// their registry name (switching, key slots), identities canonicalize.
+const Map<String, String> providerNameAliases = {'chatgpt.com': 'chatgpt'};
+
+/// The canonical provider identity of [name]: alias spellings fold onto
+/// their canonical id (case-insensitive); unknown names map to
+/// themselves (lowercased). One auth domain — one identity, across the
+/// registry, the picker rows, and the current marker.
+String canonicalProviderName(String name) {
+  final lower = name.trim().toLowerCase();
+  return providerNameAliases[lower] ?? lower;
+}
+
 /// The pattern a typed saved-provider name must match: starts with a
 /// letter or digit, then letters/digits/`. _ + -`. Anything else either
 /// breaks `/provider <name>` argument routing (spaces, slashes) or is a
@@ -158,8 +175,7 @@ bool isReservedCustomProviderName(String name) =>
 /// `:` stay legal — the aiin connect names entries by account email and
 /// [CustomProviderRegistry.deriveName] appends `:port` to non-default
 /// ports; the yaml quoting writer is the backstop for both.
-final _usableProviderNamePattern =
-    RegExp(r'^[A-Za-z0-9][A-Za-z0-9._+:@-]*$');
+final _usableProviderNamePattern = RegExp(r'^[A-Za-z0-9][A-Za-z0-9._+:@-]*$');
 
 /// Whether [name] is a usable saved-provider name; the name prompts
 /// re-prompt otherwise. Empty answers never reach this — they take the
@@ -191,18 +207,93 @@ List<CustomProviderEntry> mergeCustomProviderEntries(
 /// The live list of saved custom providers (shared by the CLI, which
 /// mutates it, and the executable, which persists it).
 final class CustomProviderRegistry {
-  /// Creates a registry over [entries] (a live, mutable list).
+  /// Creates a registry over [entries] (a live, mutable list). Same-auth-
+  /// domain records (alias spellings of one canonical id, #706 — e.g. a
+  /// hand-edited `chatgpt` ghost next to the OAuth-minted `chatgpt.com`)
+  /// merge onto ONE record: fields the survivor lacks are inherited from
+  /// the twin (union — nothing dropped), conflicts keep the survivor's
+  /// value, and a note lands in [mergeNotes]. A reserved-named ghost
+  /// (e.g. `chatgpt`, which would shadow `/provider` routing) never
+  /// survives — the non-reserved twin wins even when it came later.
   CustomProviderRegistry(List<CustomProviderEntry> entries)
-    : entries = List.of(entries);
+    : this._loaded(_mergeOnLoad(entries));
+
+  CustomProviderRegistry._loaded(
+    ({List<CustomProviderEntry> entries, List<String> notes}) loaded,
+  ) : entries = loaded.entries,
+      mergeNotes = loaded.notes;
 
   /// All saved entries, in insertion order.
   final List<CustomProviderEntry> entries;
 
-  /// Finds an entry by [name] (case-insensitive), or null.
+  /// Human-readable notes from the load-time same-domain merge (#706).
+  /// Each note names the record that was folded and the record that
+  /// actually survived (a ghost-first load swaps both — see
+  /// [_mergeOnLoad]).
+  final List<String> mergeNotes;
+
+  /// The load-time merge result: one record per canonical identity; a
+  /// reserved-named ghost (e.g. `chatgpt`, which would shadow
+  /// `/provider` routing) yields to a non-reserved twin of the same
+  /// domain even when the ghost came first. The merge and its notes are
+  /// ONE pass over the source, so every note names the record that
+  /// actually survives — a ghost-first load keeps `chatgpt.com` and the
+  /// note must say so, not the ghost it displaced.
+  static ({List<CustomProviderEntry> entries, List<String> notes}) _mergeOnLoad(
+    List<CustomProviderEntry> source,
+  ) {
+    final survivors = <String, CustomProviderEntry>{};
+    final order = <String>[];
+    final notes = <String>[];
+    for (final entry in source) {
+      final id = canonicalProviderName(entry.name);
+      final existing = survivors[id];
+      if (existing == null) {
+        survivors[id] = entry;
+        order.add(id);
+        continue;
+      }
+      // Ghost-first takeover: a reserved-named survivor can never
+      // receive logins (name prompts and `add` reject it) nor survive a
+      // merged write, so the non-reserved twin becomes the survivor.
+      final ghostFirst =
+          isReservedCustomProviderName(existing.name) &&
+          !isReservedCustomProviderName(entry.name);
+      final survivor = ghostFirst ? entry : existing;
+      final twin = ghostFirst ? existing : entry;
+      _unionOnto(survivor, twin);
+      survivors[id] = survivor;
+      notes.add(
+        'merged duplicate provider record "${twin.name}" onto '
+        '"${survivor.name}" (same auth domain)',
+      );
+    }
+    return (entries: [for (final id in order) survivors[id]!], notes: notes);
+  }
+
+  /// Folds [twin]'s missing fields into [survivor] (union; survivor's
+  /// own values win conflicts). Returns [survivor].
+  static CustomProviderEntry _unionOnto(
+    CustomProviderEntry survivor,
+    CustomProviderEntry twin,
+  ) {
+    if (survivor.keyName == null && twin.keyName != null) {
+      survivor.keyName = twin.keyName;
+    }
+    return survivor;
+  }
+
+  /// Finds an entry by [name] (case-insensitive), or null. Alias
+  /// spellings resolve onto the canonical record: `find('chatgpt.com')`
+  /// and `find('chatgpt')` both land on the one same-domain entry.
   CustomProviderEntry? find(String name) {
     final lower = name.toLowerCase();
     for (final entry in entries) {
       if (entry.name.toLowerCase() == lower) return entry;
+    }
+    final canonical = canonicalProviderName(name);
+    for (final entry in entries) {
+      if (canonicalProviderName(entry.name) == canonical) return entry;
     }
     return null;
   }

@@ -44,15 +44,15 @@ permissions:
 
 jobs:
   sm:
-    # Pinned to the immutable dmtools-agents#442 merge SHA (PR-owned
-    # lifecycle: test once per state, silent updates, pre-merge validation).
+    # Pinned to the immutable dmtools-agents#466 merge SHA (in-flight guard
+    # target-repo fix + armed-PR review guards; supersedes #465).
     # Flip in lockstep with ai-teammate.yml — guarded by
     # test/machine_kit/factory_stub_ref_test.dart.
-    uses: IstiN/dmtools-agents/.github/workflows/factory-sm.yml@4ca4840671963319c8cebf12fda0055964281a39
+    uses: IstiN/dmtools-agents/.github/workflows/factory-sm.yml@082311d06f817de723c8444112ea96742318e0bf
     with:
       # The literal uses-ref: the factory requires it (it cannot derive its
       # own ref — github.workflow_ref in a called workflow is the CALLER's).
-      factory_ref: 4ca4840671963319c8cebf12fda0055964281a39
+      factory_ref: 082311d06f817de723c8444112ea96742318e0bf
       # Manual ticks default to dry; cron ticks run live.
       dryRun: ${{ github.event.inputs.dryRun || 'false' }}
       # #687: one source of truth for the machine login (repo variable).

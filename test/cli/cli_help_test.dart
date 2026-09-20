@@ -36,6 +36,7 @@ void main() {
       '--log-file',
       '--attach',
       '--output',
+      '--output-format',
       '--prompt',
       '-p',
       '--prompt-file',

@@ -87,4 +87,68 @@ void main() {
       expect(allSessionRoots('/work/sessions'), ['/work/sessions']);
     }, skip: Platform.isMacOS ? 'macOS lists extra candidates' : null);
   });
+
+  // issue #701 CRAP descent #12: faCliProbe's full branch matrix — the
+  // platform gate, ~/.fah, the fixed install locations and every PATH
+  // dir — driven through the injected seam (faCliProbe) so it runs
+  // identically on every CI host; the IO shell (isFaCliInstalled)
+  // stays a one-liner over Platform/environment.
+  group('faCliProbe (isFaCliInstalled core)', () {
+    bool probe(
+      Set<String> existing, {
+      bool isMacOS = true,
+      String home = '/h',
+      String pathEnv = '',
+    }) => faCliProbe(
+      isMacOS: isMacOS,
+      home: home,
+      pathEnv: pathEnv,
+      pathExists: existing.contains,
+    );
+
+    test('off macOS nothing counts as installed', () {
+      expect(probe({'/h/.fah'}, isMacOS: false), isFalse);
+      expect(probe({'/opt/homebrew/bin/fa'}, isMacOS: false), isFalse);
+    });
+
+    test('~/.fah alone counts as installed', () {
+      expect(probe({'/h/.fah'}), isTrue);
+    });
+
+    test('every fixed candidate path is probed', () {
+      for (final p in [
+        '/h/.local/bin/fa',
+        '/h/.local/bin/fah',
+        '/opt/homebrew/bin/fa',
+        '/opt/homebrew/bin/fah',
+        '/usr/local/bin/fa',
+        '/usr/local/bin/fah',
+      ]) {
+        expect(probe({p}), isTrue, reason: p);
+      }
+    });
+
+    test('a fa binary in the first PATH directory counts', () {
+      expect(probe({'/usr/bin/fa'}, pathEnv: '/usr/bin:/bin'), isTrue);
+    });
+
+    test('a fah binary in a later PATH directory counts', () {
+      expect(probe({'/bin/fah'}, pathEnv: '/usr/bin:/bin'), isTrue);
+    });
+
+    test('empty PATH segments are skipped, not probed', () {
+      expect(probe(const {}, pathEnv: '::/usr/bin::'), isFalse);
+    });
+
+    test('nothing anywhere means not installed', () {
+      expect(probe(const {}), isFalse);
+    });
+
+    test('unrelated files never satisfy the probe', () {
+      expect(
+        probe({'/h/.local/bin/other', '/opt/homebrew/bin/other'}),
+        isFalse,
+      );
+    });
+  });
 }
