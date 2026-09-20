@@ -161,6 +161,7 @@ const coreToolFamilies = <String, Set<String>>{
     'outlook.read_attachment',
     'outlook.insert_draft_body',
   },
+
   /// On-device automation (issue #622). Three ids over one tool contract:
   /// the tier decides which pass the capability floor — store keeps
   /// launch/logs, god adds the accessibility surface and the Shizuku
@@ -383,11 +384,21 @@ final class ToolAvailabilityResolution {
   /// `mcp: false` kill-switch forces every declared value to `false`.
   final Map<String, bool> mcpServers;
 
+  /// Enabled ids hidden from the schema by the active load mode (issue
+  /// #680): discoverable, mountable on demand through the gate. Static
+  /// tool ids and `mcp:<server>` family ids alike — the card's
+  /// discoverable set explicitly includes mcp__*. Empty in the default
+  /// mode (no preset → byte-identical behavior). A discoverable id is NOT
+  /// disabled: [ResolvedToolAvailability.enabled] stays true and only the
+  /// gate's mount state decides visibility.
+  final Set<String> discoverableIds;
+
   /// Creates a resolution.
   const ToolAvailabilityResolution({
     required this.byId,
     this.unknownIds = const {},
     this.mcpServers = const {},
+    this.discoverableIds = const {},
   });
 }
 
@@ -399,9 +410,19 @@ final class ToolAvailabilityResolution {
 /// even when a scope force-enables them. Present capabilities are on by
 /// default and only config can turn them off. Unknown ids are collected in
 /// [ToolAvailabilityResolution.unknownIds] without failing.
+///
+/// [essentialToolIds] is the active load-mode preset (issue #680): when
+/// set, every ENABLED id outside it — static tool ids AND enabled
+/// `mcp:<server>` families — demotes to discoverable (see
+/// [ToolAvailabilityResolution.discoverableIds]). [mcpServerIds] names
+/// the live MCP servers (the manager's connected set): servers no scope
+/// declares are enabled by default, so the resolver cannot see them
+/// without this — they demote like everyone else.
 ToolAvailabilityResolution resolveToolAvailability({
   required Map<String, ToolCapability> capabilities,
   required List<(ToolScope, ToolsConfig)> scopes,
+  Set<String>? essentialToolIds,
+  Iterable<String> mcpServerIds = const [],
 }) {
   final (:intent, :intentScope, :unknownIds, :mcpServers) = _collectToolIntents(
     scopes,
@@ -417,10 +438,39 @@ ToolAvailabilityResolution resolveToolAvailability({
       mcpServers[server] = false;
     }
   }
+  // Load-mode demotion (issue #680): under a preset, an enabled id
+  // outside the essential set becomes discoverable — UNLESS a scope
+  // explicitly enabled it (`tools: {id: on}` is a standing mount: the
+  // user asked for the tool, the preset only curates the default). The
+  // essential set is pinned: nothing in the scope stack can demote it,
+  // and an explicit `off` still disables it exactly as before.
+  final discoverable = essentialToolIds == null
+      ? const <String>{}
+      : {
+          for (final entry in byId.entries)
+            if (entry.value.enabled &&
+                !essentialToolIds.contains(entry.key) &&
+                intent[entry.key] != true)
+              entry.key,
+          // MCP families demote too (issue #680 — the card lists mcp__*
+          // among the discoverable): the heaviest tool schemas are the
+          // feature's whole point. The same standing-mount rule applies:
+          // an explicit per-server `tools: {mcp:<server>: on}` or an
+          // aggregate `tools: {mcp: on}` keeps the family in the schema.
+          // Presets never carry mcp ids, and a disabled family (declared
+          // off, or the mcp:false kill-switch above) fails the enabled
+          // check — disable stays disable, not demotion.
+          if (intent['mcp'] != true)
+            for (final server in {...mcpServerIds, ...mcpServers.keys})
+              if ((mcpServers[server] ?? byId['mcp']?.enabled ?? true) &&
+                  mcpServers[server] != true)
+                'mcp:$server',
+        };
   return ToolAvailabilityResolution(
     byId: byId,
     unknownIds: unknownIds,
     mcpServers: mcpServers,
+    discoverableIds: discoverable,
   );
 }
 

@@ -208,6 +208,18 @@ extension AgentCliTools on AgentCli {
     state.session = await _readSessionTools();
     final resolution = resolveToolAvailability(
       capabilities: toolCapabilities(),
+      // Load mode (issue #680): the active preset's essential ids pin the
+      // schema-visible base; everything else resolves discoverable —
+      // enabled MCP families included (they carry the heaviest schemas,
+      // and the card lists mcp__* among the discoverable).
+      essentialToolIds: _liveLoadMode == AgentLoadMode.defaultMode
+          ? null
+          : essentialToolIdsByLoadMode[_liveLoadMode],
+      mcpServerIds: [
+        for (final server
+            in _mcp.manager?.toolsByServer.keys ?? const <String>[])
+          server,
+      ],
       scopes: [
         for (final scope in toolScopeStack)
           (
@@ -225,6 +237,7 @@ extension AgentCliTools on AgentCli {
     );
     _warnUnknownToolIds(resolution.unknownIds);
     _swapReadSqliteVariant(resolution);
+    syncDiscoverToolsTool();
     _toolGate.apply(
       resolution,
       _toolRegistry,
@@ -232,6 +245,72 @@ extension AgentCliTools on AgentCli {
       rebuildPrompt: _applyPromptComposition,
     );
     refilterMcpTools(resolution);
+  }
+
+  /// Registers or unregisters the `discover_tools` meta tool (issue
+  /// #680) so the registry matches the LIVE load mode: present only in
+  /// omp ([discoveryEnabledByLoadMode] — pi is pi-mono's exact benchmark
+  /// shape, discovery off, issue #679; the default mode has no demotion
+  /// and stays byte-identical). The tool carries no availability id, so
+  /// it sits outside the gate's groups and no resolution can hide it.
+  /// Called from [rebuildToolAvailability], so a mid-session mode switch
+  /// syncs it.
+  void syncDiscoverToolsTool() {
+    // The gate's tombstone pointer follows the live mode too (issue #680
+    // review): only a registered discovery surface may be named in the
+    // discoverable tombstone.
+    _toolGate.discoveryEnabled =
+        discoveryEnabledByLoadMode[_liveLoadMode] == true;
+    if (discoveryEnabledByLoadMode[_liveLoadMode] != true) {
+      _toolRegistry.unregister('discover_tools');
+      return;
+    }
+    if (_toolRegistry.contains('discover_tools')) return;
+    _toolRegistry.register(
+      discoverToolsTool(
+        discoverableDocs: _toolGate.discoverableDocs,
+        onMount: (names) => _mountDiscoverables(names),
+      ),
+    );
+  }
+
+  /// Mounts discoverable tools by NAME through the gate (the model sees
+  /// names; the gate mounts ids) and reports what mounted, what was
+  /// unknown, and what was already loaded. The name→id lookup goes
+  /// through the gate's live map FIRST: dynamic MCP family members
+  /// (`mcp__server__tool` names) live there (noted by the re-filter), and
+  /// a mount of an mcp family re-registers its noted tools through the
+  /// gate's apply — no manager round-trip.
+  String _mountDiscoverables(List<String> names) {
+    final before = _toolGate.discoverableToolNames.toSet();
+    final unknown = <String>[];
+    final ids = <String>{};
+    for (final name in names) {
+      final id = _toolGate.availabilityIdOf(name) ?? toolAvailabilityIdOf(name);
+      if (id == null || !_toolGate.discoverableToolNames.contains(name)) {
+        unknown.add(name);
+      } else {
+        ids.add(id);
+      }
+    }
+    final mountedIds = _toolGate.mount(
+      ids,
+      _toolRegistry,
+      _agent,
+      rebuildPrompt: _applyPromptComposition,
+    );
+    final mountedNames =
+        before.difference(_toolGate.discoverableToolNames.toSet()).toList()
+          ..sort();
+    return [
+      if (mountedNames.isNotEmpty)
+        'Mounted (now in the schema): ${mountedNames.join(', ')}',
+      if (mountedIds.isEmpty && mountedNames.isEmpty)
+        'Nothing mounted — the requested tools were already loaded.',
+      if (unknown.isNotEmpty)
+        'Not discoverable tools: ${unknown.join(', ')} (see the listing '
+            'for valid names).',
+    ].join('\n');
   }
 
   /// Reads [path]; a broken file prints one warning and keeps [cached]
@@ -310,7 +389,9 @@ extension AgentCliTools on AgentCli {
   /// Re-filters the dynamic MCP surface against [resolution]: disabled
   /// servers get their tools unregistered (and their names noted so the
   /// gate tombstones them), re-enabled servers get their tools registered
-  /// straight from the manager — no server restart (AC13).
+  /// straight from the manager — no server restart (AC13). Under a load
+  /// preset (issue #680) an ENABLED-but-demoted family stays OUT of the
+  /// schema until mounted: allowed to connect is not the same as loaded.
   void refilterMcpTools(ToolAvailabilityResolution resolution) {
     bool allows(String server) =>
         resolution.mcpServers[server] ??
@@ -319,22 +400,42 @@ extension AgentCliTools on AgentCli {
     final manager = _mcp.manager;
     if (manager != null) {
       for (final entry in manager.toolsByServer.entries) {
-        final names = entry.value.map((tool) => tool.name).toList();
-        _toolGate.noteHiddenNames('mcp:${entry.key}', names);
-        if (allows(entry.key)) {
+        final tools = entry.value;
+        // Note names AND instances: the gate's hiding/tombstoning, the
+        // discover_tools listing/docs, and a later mount all read them.
+        _toolGate.noteFamilyTools('mcp:${entry.key}', tools);
+        final show =
+            allows(entry.key) && _toolGate.familyVisible('mcp:${entry.key}');
+        if (show) {
           _toolRegistry.registerAll([
-            for (final tool in entry.value)
+            for (final tool in tools)
               if (!_toolRegistry.contains(tool.name)) tool,
           ]);
         } else {
-          for (final name in names) {
-            _toolRegistry.unregister(name);
+          for (final tool in tools) {
+            _toolRegistry.unregister(tool.name);
           }
         }
       }
     }
     _agent.state.tools = _toolRegistry.tools;
     _applyPromptComposition();
+  }
+
+  /// Re-applies availability to the fresh MCP surface after a server
+  /// connect/fail/drop: the default mode re-filters through the standing
+  /// resolution (cheap — byte-identical REG); under a load preset the
+  /// late server must RE-RESOLVE (issue #680): the demotion covers the
+  /// live server set, so the fresh family enters discoverableIds instead
+  /// of leaking its schemas into every request.
+  void resyncMcpAvailability() {
+    final resolution = _toolGate.resolution;
+    if (resolution == null) return;
+    if (_liveLoadMode == AgentLoadMode.defaultMode) {
+      refilterMcpTools(resolution);
+    } else {
+      unawaited(rebuildToolAvailability());
+    }
   }
 
   /// `/tools [enable|disable <id> [global|project|session]|reload]`.
