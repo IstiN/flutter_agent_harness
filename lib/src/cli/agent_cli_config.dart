@@ -152,8 +152,11 @@ final class AgentCliConfig {
 
   /// Per-call judge/summarizer budget seconds (`compaction.
   /// judgeBudgetSeconds`, issue #541), resolved by the host from the
-  /// user config. `null` keeps the 90s default — the knob exists for
-  /// giant marathon sessions whose judge cannot answer within 90s.
+  /// user config. `null` keeps the 300s default — the knob exists for
+  /// giant marathon sessions whose judge cannot answer within 300s.
+  /// NOTE: the knob scales only the per-attempt budget — the
+  /// whole-run `totalBudget` (default 15 min) is NOT scaled, so values
+  /// above 300s shorten the retry ladder.
   final int? compactionJudgeBudgetSeconds;
 
   /// The `subagents:` section (issue #383): heartbeat cadence and stall
