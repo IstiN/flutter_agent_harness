@@ -349,29 +349,27 @@ spec:
       );
       // The nested write+read made it through the wrapped shell: on macOS
       // the sorted profile's child allows land after the broader ro
-      // deny-write; policy/degraded hosts run the plain shell where the
-      // guard allows the rw child. One named gap: on Linux with usable
-      // userns, unshare re-binds the ro parent VFS-wide, so the child
-      // stays kernel-read-only there — a non-SBPL mechanism, out of scope
-      // for #732 (only the guard floor is asserted on such hosts).
-      final unshareUsable =
-          Platform.isLinux &&
-          Process.runSync('unshare', [
-                '--user',
-                '--map-root-user',
-                'true',
-              ]).exitCode ==
-              0;
-      if (unshareUsable) {
-        print(
-          'fa_cube integration: unshare userns usable — the nested-rw '
-          'kernel leg is macOS-scoped (#732); guard floor asserted only',
-        );
-      } else {
+      // deny-write, so sandbox-exec lets the probe through. The marker is
+      // asserted ONLY on macOS: the Linux kernel backend binds statically
+      // (it enforces=true), so a host without usable user namespaces gets
+      // a clean spawn error instead of a policy degradation, and a host
+      // with them has unshare re-bind the ro parent VFS-wide — either way
+      // the nested child stays kernel-read-only there, a non-SBPL
+      // mechanism out of scope for #732.
+      if (Platform.isMacOS) {
         expect(
           result.output,
           contains('uv-probe-732'),
           reason: 'nested rw mount must survive the later broader ro mount',
+        );
+      } else {
+        expect(
+          result.output,
+          isNot(contains('uv-probe-732')),
+          reason:
+              'Linux: the nested-rw kernel leg is macOS-scoped (#732) — '
+              'the ro parent is re-bound VFS-wide (or the spawn fails '
+              'cleanly without user namespaces)',
         );
       }
       // The ro workspace still refuses sibling writes — the guard's

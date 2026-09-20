@@ -258,6 +258,8 @@ crashed run.
 - **SBPL rule ordering (#732) — landed:** the kernel applies the LAST
   matching rule per operation class (not the most specific), so the macOS
   profile emits mount rules broad→narrow regardless of yaml declaration
-  order, and `rw` mounts emit both read and write allows. A nested rw
-  mount survives a broader `ro` mount declared after it — the ro+rw
-  twin-mount workaround is obsolete.
+  order, and `rw` mounts emit both read and write allows. On macOS/SBPL a
+  nested rw mount survives a broader `ro` mount declared after it — the
+  ro+rw twin-mount workaround is obsolete. (Linux `unshare` re-binds a
+  `ro` mount VFS-wide, so its kernel nesting is coarse; there the Dart
+  guard's longest-prefix verdict has no kernel counterpart.)

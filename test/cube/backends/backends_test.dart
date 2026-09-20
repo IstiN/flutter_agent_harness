@@ -725,7 +725,14 @@ void main() {
         ),
       );
       final lines = profile.split('\n');
-      int at(String line) => lines.indexOf(line);
+      int at(String line) {
+        final index = lines.indexOf(line);
+        // A missing line must fail loudly — an absent -1 would slide
+        // through every lessThan below.
+        expect(index, isNonNegative, reason: '$line not emitted');
+        return index;
+      }
+
       // The sort keys on the declared path, so both spellings of one mount
       // emit adjacently, variants never interleave across mounts, and the
       // nested mount's variants land after the parent's.
