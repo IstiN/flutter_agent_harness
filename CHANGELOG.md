@@ -3956,4 +3956,12 @@
 - fix(706): /model picker — one ChatGPT identity, reachable list top (#712)
 - config(runners): dev/rework legs get a provider fallback queue; generic runner names (#737)
 
+## 0.1.436
+
+- fix(#701): cover the 0%-coverage CRAP trio (stat builtin, isFaCliInstalled, apps panel menu) (#720)
+- fix(#695): stream-json output for headless fa runs (--output-format stream-json / --mode json) (#719)
+- ci: repin factory to dmtools-agents@082311d — sm duplicate-dispatch fixes (#466) (#742)
+- fix(cube): rw mounts emit file-read* allow in SBPL — kernel reads under read-denied prefixes (#718)
+- ci: repin factory to dmtools-agents@759a811 — prMachineAuthor auto-leg gate (#465) (#741)
+
 ## Unreleased
