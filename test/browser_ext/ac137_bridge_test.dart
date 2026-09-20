@@ -34,17 +34,6 @@ import 'package:test/test.dart';
 
 import 'chrome_driver.dart';
 
-/// The compiled embedded agent is a build artifact (gitignored).
-void _requireBuiltAgent() {
-  final agentJs = File('browser_ext/sw/agent.js');
-  if (!agentJs.existsSync()) {
-    fail(
-      'browser_ext/sw/agent.js is missing — run '
-      '`bash scripts/build_browser_ext.sh` first',
-    );
-  }
-}
-
 /// Manifest permissions as a set (comments stripped — jsonDecode is not
 /// lenient, Chrome's parser is).
 Set<String> _manifestPermissions([String? extensionPath]) {
@@ -53,9 +42,7 @@ Set<String> _manifestPermissions([String? extensionPath]) {
   ).readAsStringSync();
   final json = source.replaceAll(RegExp(r'^\s*//.*$', multiLine: true), '');
   final manifest = jsonDecode(json) as Map<String, dynamic>;
-  return {
-    for (final p in manifest['permissions'] as List) p as String,
-  };
+  return {for (final p in manifest['permissions'] as List) p as String};
 }
 
 String _repoRoot() {
@@ -119,25 +106,29 @@ Set<String> _rootsOf(String permission) {
 Future<Map<String, dynamic>> bridgeCatalog(
   HeadlessChrome chrome, [
   String? ns,
-]) async => (await evaluateInServiceWorker(
-    chrome,
-    ns == null
-        ? 'globalThis.faAgentV2.bridgeCatalog()'
-        : 'globalThis.faAgentV2.bridgeCatalog(${jsonEncode(ns)})',
-    awaitPromise: true,
-  ))! as Map<String, dynamic>;
+]) async =>
+    (await evaluateInServiceWorker(
+          chrome,
+          ns == null
+              ? 'globalThis.faAgentV2.bridgeCatalog()'
+              : 'globalThis.faAgentV2.bridgeCatalog(${jsonEncode(ns)})',
+          awaitPromise: true,
+        ))!
+        as Map<String, dynamic>;
 
 /// `faAgentV2.bridgeCall(path, args)` → the raw envelope.
 Future<Map<String, dynamic>> bridgeCall(
   HeadlessChrome chrome,
   String path,
   List<Object?> args,
-) async => (await evaluateInServiceWorker(
-    chrome,
-    'globalThis.faAgentV2.bridgeCall(${jsonEncode(path)}, '
-    '${jsonEncode(args)})',
-    awaitPromise: true,
-  ))! as Map<String, dynamic>;
+) async =>
+    (await evaluateInServiceWorker(
+          chrome,
+          'globalThis.faAgentV2.bridgeCall(${jsonEncode(path)}, '
+          '${jsonEncode(args)})',
+          awaitPromise: true,
+        ))!
+        as Map<String, dynamic>;
 
 HeadlessChrome? _chrome;
 
@@ -145,8 +136,17 @@ HeadlessChrome? _chrome;
 HeadlessChrome get chrome => _chrome!;
 
 void main() {
+  if (!File('browser_ext/sw/agent.js').existsSync()) {
+    // skip, not fail (issue #675): a runner that never built the extension
+    // must not go red on a missing gitignored artifact.
+    test(
+      'browser_ext/sw/agent.js build artifact',
+      () {},
+      skip: 'missing — run `bash scripts/build_browser_ext.sh` first',
+    );
+    return;
+  }
   setUpAll(() async {
-    _requireBuiltAgent();
     _chrome = await HeadlessChrome.launch();
   });
 
@@ -157,20 +157,38 @@ void main() {
     // Tier 1 (issue #137): `commands` and `omnibox` are manifest KEYS, not
     // permission entries — checked as JSON keys below.
     const tier1 = {
-      'browsingData', 'clipboardRead', 'clipboardWrite', 'contentSettings',
-      'declarativeNetRequest', 'fontSettings', 'privacy', 'readingList',
-      'search', 'tabGroups', 'tts', 'webRequest',
+      'browsingData',
+      'clipboardRead',
+      'clipboardWrite',
+      'contentSettings',
+      'declarativeNetRequest',
+      'fontSettings',
+      'privacy',
+      'readingList',
+      'search',
+      'tabGroups',
+      'tts',
+      'webRequest',
     };
     const tier2 = {'nativeMessaging', 'proxy', 'tabCapture', 'management'};
-    expect(declared.containsAll(tier1), isTrue,
-        reason: 'missing Tier-1: ${tier1.difference(declared)}');
-    expect(declared.containsAll(tier2), isTrue,
-        reason: 'missing Tier-2: ${tier2.difference(declared)}');
-    final manifest = jsonDecode(
-      File('browser_ext/manifest.json')
-          .readAsStringSync()
-          .replaceAll(RegExp(r'^\s*//.*$', multiLine: true), ''),
-    ) as Map<String, dynamic>;
+    expect(
+      declared.containsAll(tier1),
+      isTrue,
+      reason: 'missing Tier-1: ${tier1.difference(declared)}',
+    );
+    expect(
+      declared.containsAll(tier2),
+      isTrue,
+      reason: 'missing Tier-2: ${tier2.difference(declared)}',
+    );
+    final manifest =
+        jsonDecode(
+              File('browser_ext/manifest.json').readAsStringSync().replaceAll(
+                RegExp(r'^\s*//.*$', multiLine: true),
+                '',
+              ),
+            )
+            as Map<String, dynamic>;
     expect(manifest.containsKey('commands'), isTrue);
     expect(manifest.containsKey('omnibox'), isTrue);
   });
@@ -189,30 +207,34 @@ void main() {
     );
   });
 
-  test('AC2: catalog equals the manifest-granted namespaces (both ways)',
-      () async {
-    final catalog = (await bridgeCatalog(chrome))['namespaces'] as List;
-    final roots = {for (final n in catalog) n as String};
-    final expectedRoots = <String>{
-      for (final p in _manifestPermissions()) ..._rootsOf(p),
-      ..._alwaysPresentNamespaces,
-    };
+  test(
+    'AC2: catalog equals the manifest-granted namespaces (both ways)',
+    () async {
+      final catalog = (await bridgeCatalog(chrome))['namespaces'] as List;
+      final roots = {for (final n in catalog) n as String};
+      final expectedRoots = <String>{
+        for (final p in _manifestPermissions()) ..._rootsOf(p),
+        ..._alwaysPresentNamespaces,
+      };
 
-    // reflection ⊆ declared ∪ always-present, and the converse: the
-    // catalog is EXACTLY what this manifest + browser materialize.
-    expect(
-      roots.difference(expectedRoots),
-      isEmpty,
-      reason: 'catalog advertises undeclared namespaces: '
-          '${roots.difference(expectedRoots)}',
-    );
-    expect(
-      expectedRoots.difference(roots),
-      isEmpty,
-      reason: 'declared permissions absent from the catalog: '
-          '${expectedRoots.difference(roots)}',
-    );
-  });
+      // reflection ⊆ declared ∪ always-present, and the converse: the
+      // catalog is EXACTLY what this manifest + browser materialize.
+      expect(
+        roots.difference(expectedRoots),
+        isEmpty,
+        reason:
+            'catalog advertises undeclared namespaces: '
+            '${roots.difference(expectedRoots)}',
+      );
+      expect(
+        expectedRoots.difference(roots),
+        isEmpty,
+        reason:
+            'declared permissions absent from the catalog: '
+            '${expectedRoots.difference(roots)}',
+      );
+    },
+  );
 
   test('AC2: a namespace query lists methods + arity + events', () async {
     final detail = await bridgeCatalog(chrome, 'tabs');
@@ -224,18 +246,22 @@ void main() {
     expect((detail['events'] as List), contains('onUpdated'));
   });
 
-  test('AC3: read path end-to-end — chrome.idle.queryState (no curated tool)',
-      () async {
-    final envelope = await bridgeCall(chrome, 'idle.queryState', [60]);
-    expect(envelope['ok'], isTrue,
-        reason: 'bridge call failed: ${envelope['error']}');
-    // queryState's result is the state STRING ("active"/"locked"), not a
-    // map — the seam returns it verbatim.
-    expect(envelope['result'], anyOf('active', 'locked'));
-  });
+  test(
+    'AC3: read path end-to-end — chrome.idle.queryState (no curated tool)',
+    () async {
+      final envelope = await bridgeCall(chrome, 'idle.queryState', [60]);
+      expect(
+        envelope['ok'],
+        isTrue,
+        reason: 'bridge call failed: ${envelope['error']}',
+      );
+      // queryState's result is the state STRING ("active"/"locked"), not a
+      // map — the seam returns it verbatim.
+      expect(envelope['result'], anyOf('active', 'locked'));
+    },
+  );
 
-  test('AC6: a bad method path is a structured error, never a throw',
-      () async {
+  test('AC6: a bad method path is a structured error, never a throw', () async {
     final envelope = await bridgeCall(chrome, 'tabs.definitelyNotAMethod', []);
     expect(envelope['ok'], isFalse);
     expect((envelope['error'] as Map)['code'], 'api_missing');
@@ -276,13 +302,15 @@ void main() {
       deleteDirBestEffort(trimmedRoot);
     });
 
-    test('catalog hides the trimmed namespace (truthful by construction)',
-        () async {
-      final catalog = (await bridgeCatalog(trimmed!))['namespaces'] as List;
-      final roots = {for (final n in catalog) n as String};
-      expect(roots.contains('history'), isFalse);
-      expect(roots.contains('bookmarks'), isTrue); // sibling survived
-    });
+    test(
+      'catalog hides the trimmed namespace (truthful by construction)',
+      () async {
+        final catalog = (await bridgeCatalog(trimmed!))['namespaces'] as List;
+        final roots = {for (final n in catalog) n as String};
+        expect(roots.contains('history'), isFalse);
+        expect(roots.contains('bookmarks'), isTrue); // sibling survived
+      },
+    );
 
     test('a call on the ungranted namespace errors as data (AC6)', () async {
       final envelope = await bridgeCall(trimmed!, 'history.search', [
@@ -294,8 +322,11 @@ void main() {
 
     test('the still-granted sibling keeps working', () async {
       final envelope = await bridgeCall(trimmed!, 'bookmarks.search', ['']);
-      expect(envelope['ok'], isTrue,
-          reason: 'bridge call failed: ${envelope['error']}');
+      expect(
+        envelope['ok'],
+        isTrue,
+        reason: 'bridge call failed: ${envelope['error']}',
+      );
     });
   });
 }

@@ -56,17 +56,18 @@ keys, verify after every edit, and report what changed and when it applies.
 | File | Scope | Notes |
 |---|---|---|
 | `~/.fah/config.yaml` | user (global) | main settings file; loaded by `loadCliConfig` |
-| `<project>/.fah/config.yaml` | project | only the `memory:`, `cube:`, `tools:` sections are read from here — each wins over the user file |
+| `<project>/.fah/config.yaml` | project | only the `memory:`, `cube:`, `tools:`, `spills:` sections are read from here — each wins over the user file |
 | `<project>/.fah/rules.yaml` | project | TTSR stream rules; project rules win name clashes over the `ttsr:` section |
 | `<project>/.fah/lsp.json` | project | LSP server map |
 | `<project>/.fah/packages.yaml` | project | plugin configuration |
 | `~/.dap/config.json` | user | DAP hub identity/channels (written by the `/settings` hub flow, not YAML) |
 
-Project precedence is per section, not per file: `memory:`, `cube:` and
-`tools:` are loaded separately from the project file
-(`loadProjectMemoryConfig`, `loadProjectCubeSettings`, `loadProjectToolsConfig`)
-and win over the same section in `~/.fah/config.yaml`. All other sections are
-read from the user file only.
+Project precedence is per section, not per file: `memory:`, `cube:`,
+`tools:` and `spills:` are loaded separately from the project file
+(`loadProjectMemoryConfig`, `loadProjectCubeSettings`,
+`loadProjectToolsConfig`, `loadProjectSpillsConfig`) and win over the
+same section in `~/.fah/config.yaml`. All other sections are read from
+the user file only.
 
 Project sections are strict: a present-but-invalid section throws
 `ConfigException` at startup. A project `.fah/` that does not exist yet is
@@ -599,6 +600,7 @@ docs/dap.md; never hand-edit the DAP files while a hub client is running.
   `provider:` (and `baseUrl:`) in the user file — global scope is the
   default for these keys; report next-boot application and the `/provider`
   equivalent.
+
 - `add custom provider Y and switch to it` → Provider & keys: `config` op
   `get customProviders`, `config` op `set customProviders <extended JSON
   list>` (see the config-tool section), then `set provider openai-completions`,
@@ -610,3 +612,23 @@ docs/dap.md; never hand-edit the DAP files while a hub client is running.
 - `configure cube backend Z` → Cubes: `config` op `set` for the `cube:`
   keys (project file for a repo default) and reference the manifest in
   `.fah/cubes/`.
+
+## Tool-result spilling
+
+<!-- parity: none (boot config only) -->
+
+Oversized tool results spill to `.fah/spills/<sessionId>/<n>.txt` and the
+session keeps a bounded preview + path + size stats (issue #678). Tolerant
+parse: unknown keys and mistyped scalars surface as `[spills]` notes at
+boot, never boot failures. `enabled: false` or `threshold: 0` = legacy
+behavior (nothing spills):
+
+```yaml
+spills:
+  enabled: true # kill switch; false = byte-identical legacy
+  threshold: 8192 # chars above which a tool result spills
+  headChars: 2000 # preview head bound (chars)
+  tailChars: 2000 # preview tail bound (chars)
+```
+
+Applies at next boot.

@@ -330,6 +330,32 @@ jobs:
       - name: dart test test/integration (excluding llm, browser-ext, perf, pty)
         run: dart test test/integration --exclude-tags llm,browser-ext,perf,pty
 
+  # Issue #675: the suite must be immune to a hostile ambient env — the
+  # dmtools ai-teammate runner exports FA_PROVIDER_TYPE / FA_PROVIDER_CONFIG /
+  # FAH_PROVIDER, which used to decide test fate through the args resolver.
+  # Run the non-integration suite under the same hostile env so any
+  # ambient-env read that leaks back into resolution regresses loudly.
+  hostile-env:
+    name: Hostile ambient env
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      FA_PROVIDER_TYPE: zai
+      FA_PROVIDER_CONFIG: '{"baseUrl":"https://api.z.ai/api/coding/paas/v4","model":"glm-5.3-flash","apiKeyEnvVar":"ZAI_CODE_KEY"}'
+      FAH_PROVIDER: zai
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - run: dart pub get
+      - name: dart test under hostile ambient env
+        run: dart test --exclude-tags integration
+
   coverage-gate:
     name: Coverage ratchet
     runs-on: ubuntu-latest
@@ -1312,7 +1338,7 @@ jobs:
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, cli-visual-settings, build-web, build-android, build-ios, build-macos, integration-mock]
+    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, cli-visual-settings, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env]
     if: always()
     timeout-minutes: 5
     permissions:
@@ -1321,6 +1347,7 @@ jobs:
       - name: Report leg results
         run: |
           echo "static        = ${{ needs.static.result }}"
+          echo "hostile-env   = ${{ needs.hostile-env.result }}"
           echo "test-core     = ${{ needs.test-core.result }}"
           echo "coverage-gate = ${{ needs.coverage-gate.result }}"
           echo "guards        = ${{ needs.guards.result }}"
@@ -1335,7 +1362,8 @@ jobs:
                    "${{ needs.coverage-gate.result }}" "${{ needs.guards.result }}" \
                    "${{ needs.flutter-tests.result }}" "${{ needs.app-crap-gate.result }}" \
                    "${{ needs.test-faui.result }}" "${{ needs.perf-gate.result }}" \
-                   "${{ needs.integration-mock.result }}"; do
+                   "${{ needs.integration-mock.result }}" \
+                   "${{ needs.hostile-env.result }}"; do
             if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then
               echo "Quality gate FAILED (a leg is $r)"
               exit 1

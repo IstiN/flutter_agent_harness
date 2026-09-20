@@ -54,6 +54,7 @@ final class AgentCliConfig {
     this.ttsr,
     this.memoryConfig,
     this.redactionPipeline,
+    this.spills,
     this.modelsConfig,
     this.onModelsConfigChanged,
     this.onModelChanged,
@@ -353,6 +354,11 @@ final class AgentCliConfig {
   /// storage path overrides (git-backed project memory). Null = the
   /// historical `.fah/memory` layout.
   final MemoryConfig? memoryConfig;
+
+  /// The resolved `spills:` section (issue #678) — project yaml wins over
+  /// the user one, wholesale. Null or inactive (`enabled: false` /
+  /// `threshold: 0`) = no spill hooks attached, byte-identical legacy.
+  final SpillsConfig? spills;
 
   /// The live models config (the `models:` section of `~/.fah/config.yaml`),
   /// shared with the executable: `/models set`/`/models remove` mutate its

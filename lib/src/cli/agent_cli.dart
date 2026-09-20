@@ -173,6 +173,7 @@ import '../plugins/plugin.dart';
 import '../redact/redaction_cli.dart';
 import '../redact/redaction_hooks.dart';
 import '../redact/redaction_pipeline.dart';
+import '../spill/spill.dart';
 import '../ttsr/ttsr.dart';
 import '../types.dart';
 import '../usage_summary.dart';
@@ -238,6 +239,7 @@ part 'agent_cli_commands.dart';
 part 'agent_cli_ext.dart';
 part 'agent_cli_theme.dart';
 part 'agent_cli_composer.dart';
+part 'agent_cli_spill.dart';
 
 /// The CLI harness: agent + built-in tools + session persistence +
 /// compaction, driven by a [CliIO].
@@ -341,6 +343,7 @@ class AgentCli {
       // backend on this host) is a security-relevant downgrade — say so.
       onWarning: (message) => io.writeln(tuiWarning(message)),
     );
+    _webNetworkGate = _initWebNetworkGate(_cubeEnv);
     _cubeSource = config.cubeSource;
     _coreToolEnv = SessionVarsExecutionEnv(_cubeEnv, _sessionEnvVars);
     final decoratedEnv = _coreToolEnv;
@@ -364,6 +367,7 @@ class AgentCli {
         decoratedEnv,
         snapshots: _snapshotStore,
         webSearch: config.webSearchConfig,
+        networkGate: _webNetworkGate,
         model: () => _agent.state.model,
         sqlite: config.sqliteEngine,
         lsp: config.lspConfig,
@@ -627,6 +631,7 @@ class AgentCli {
     if (config.redactionPipeline != null) {
       attachRedactionPipeline(_agent, config.redactionPipeline!);
     }
+    attachSpillWiring();
     // Busy-row honesty: name the executing tool ('Running bash…') instead
     // of leaving a stale 'Compacting context…' label over long tool calls.
     attachToolPhaseLabels(_agent, (phase) => _pushBusyPhase(phase));
@@ -911,6 +916,9 @@ class AgentCli {
   /// The sandboxed view over [_env]: clamps filesystem and shell operations
   /// to the active cube (`null` = passthrough). `/cube` manages it live.
   late final SandboxedExecutionEnv _cubeEnv;
+
+  /// Web-egress gate for the web tools; see [_initWebNetworkGate].
+  late final CubeNetworkGate? _webNetworkGate;
 
   /// Where the active cube came from — a manifest path or a cube name;
   /// `/cube reload` re-resolves it. Set at boot (config) and by
@@ -2597,12 +2605,8 @@ class AgentCli {
       final prompt = await _overWindowContinuationPrompt();
       await _runPrompt(prompt, isAutoContinue: true);
     } on Object catch (error) {
-      _logDiagnostic(
-        'over-window continuation failed sid=$_logSid: $error',
-      );
-      io.writeln(
-        tuiError('error: compaction continuation failed: $error'),
-      );
+      _logDiagnostic('over-window continuation failed sid=$_logSid: $error');
+      io.writeln(tuiError('error: compaction continuation failed: $error'));
     }
     return true;
   }

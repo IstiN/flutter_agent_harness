@@ -23,6 +23,8 @@
 /// horizontal rules capped at 80 columns.
 library;
 
+import 'package:meta/meta.dart';
+
 import 'tui_text_width.dart' show tuiTextWidth;
 import 'tui_theme.dart';
 
@@ -412,7 +414,7 @@ final class AnsiMarkdown {
     // Grid overhead: ' cell ' per column plus the ' │ ' joiners between
     // columns plus the single leading/trailing space.
     final overhead = (columnCount - 1) * 3 + 2;
-    final caps = _columnCaps(widths, width - overhead);
+    final caps = columnCaps(widths, width - overhead);
     if (caps == null) {
       // Degenerate budget — a tiny terminal or very many columns: even the
       // minimum column width would not produce a readable grid. Raw rows.
@@ -457,42 +459,116 @@ final class AnsiMarkdown {
   /// Caps natural column widths into the available frame [budget]
   /// (terminal width minus joiner/padding overhead).
   ///
-  /// Returns null when even the floor does not fit (degenerate — the caller
-  /// falls back to raw). Columns that fit naturally keep their width; the
-  /// overflow budget is shared by the remaining columns, weighted by how
-  /// much they need and distributed deterministically (widest-first, unit
-  /// leftovers repaid in the same order).
-  static List<int>? _columnCaps(List<int> natural, int budget) {
+  /// Fit-preserving water-filling — the share rule an HTML auto table
+  /// layout uses. Every column may claim an equal fair share of the
+  /// budget; columns whose natural width fits that share keep it in
+  /// FULL, and the freed budget is re-shared among the rest until only
+  /// oversized columns remain. Those then split the pool proportionally
+  /// to their natural width, floored at [_minColumnWidth]. A short
+  /// column therefore never wraps while a long-text column still has
+  /// slack above its natural width — the defect this rule replaced
+  /// (issue #686): the spare budget was weighted by need-beyond-floor,
+  /// letting one long column out-vote every cheap column.
+  ///
+  /// Returns null when even the floor does not fit (degenerate — the
+  /// caller falls back to raw). Caps never stretch a column past its
+  /// natural width, and the result is deterministic: integer rounding
+  /// leftovers are repaid widest-first, ties left-to-right.
+  @visibleForTesting
+  static List<int>? columnCaps(List<int> natural, int budget) {
     if (budget < natural.length * _minColumnWidth) return null;
     final sumNatural = natural.fold<int>(0, (a, b) => a + b);
     if (sumNatural <= budget) return List.of(natural);
 
-    final floorSum = natural.length * _minColumnWidth;
-    final wantTotal = sumNatural - floorSum; // > 0 past the fit check above
-    var spare = budget - floorSum; // >= 0 likewise
-    final order = [for (var c = 0; c < natural.length; c++) c]
-      ..sort((a, b) => natural[b].compareTo(natural[a]));
-    final caps = List<int>.filled(natural.length, _minColumnWidth);
-    for (final c in order) {
-      if (spare <= 0) break;
-      final want = natural[c] - _minColumnWidth;
-      if (want <= 0) continue;
-      var grant = (spare * want) ~/ wantTotal;
-      if (grant > spare) grant = spare;
-      caps[c] += grant;
-      spare -= grant;
+    final caps = List<int>.filled(natural.length, 0);
+    var pool = budget;
+    var pending = [for (var c = 0; c < natural.length; c++) c];
+    while (pending.isNotEmpty) {
+      final fair = pool ~/ pending.length;
+      final fitted = [
+        for (final c in pending)
+          if (natural[c] <= fair) c,
+      ];
+      if (fitted.isEmpty) break;
+      for (final c in fitted) {
+        caps[c] = natural[c];
+        pool -= natural[c];
+      }
+      final fittedSet = Set.of(fitted);
+      pending = [
+        for (final c in pending)
+          if (!fittedSet.contains(c)) c,
+      ];
     }
-    // Repay integer-flooring losses widest-first while budget remains.
+    _shareOversized(caps, pending, natural, pool);
+    return caps;
+  }
+
+  /// Splits [pool] among the still-uncapped [pending] columns
+  /// proportionally to natural width, floored at [_minColumnWidth], and
+  /// settles the integer rounding widest-first (ties left-to-right):
+  /// truncation leftovers are repaid up to the natural width, over-budget
+  /// floor clamps are reclaimed down to the floor.
+  static void _shareOversized(
+    List<int> caps,
+    List<int> pending,
+    List<int> natural,
+    int pool,
+  ) {
+    if (pending.isEmpty) return;
+    final sumNat = pending.fold<int>(0, (a, c) => a + natural[c]);
+    var used = 0;
+    for (final c in pending) {
+      final grant = pool * natural[c] ~/ sumNat;
+      caps[c] = grant < _minColumnWidth ? _minColumnWidth : grant;
+      used += caps[c];
+    }
+    // Widest first, ties left-to-right — one deterministic order for
+    // both settlement directions.
+    final order = [...pending]
+      ..sort((a, b) {
+        final byWidth = natural[b].compareTo(natural[a]);
+        return byWidth != 0 ? byWidth : a.compareTo(b);
+      });
+    final over = used - pool;
+    if (over > 0) used -= _reclaimOverdraft(caps, order, over);
+    _repayLeftover(caps, order, natural, pool - used);
+  }
+
+  /// Takes back an over-budget floor clamp from the widest columns,
+  /// down to the floor — the only way a proportional split can exceed
+  /// the pool.
+  static int _reclaimOverdraft(List<int> caps, List<int> order, int over) {
+    var remaining = over;
     for (final c in order) {
-      if (spare <= 0) break;
-      final missing = natural[c] - caps[c];
-      if (missing > 0) {
-        final grant = missing < spare ? missing : spare;
-        caps[c] += grant;
-        spare -= grant;
+      if (remaining <= 0) break;
+      final reclaimable = caps[c] - _minColumnWidth;
+      if (reclaimable > 0) {
+        final take = reclaimable < remaining ? reclaimable : remaining;
+        caps[c] -= take;
+        remaining -= take;
       }
     }
-    return caps;
+    return over - remaining;
+  }
+
+  /// Repays truncation leftovers to the widest columns, up to each
+  /// column's natural width (caps never stretch a column).
+  static void _repayLeftover(
+    List<int> caps,
+    List<int> order,
+    List<int> natural,
+    int left,
+  ) {
+    for (final c in order) {
+      if (left <= 0) break;
+      final room = natural[c] - caps[c];
+      if (room > 0) {
+        final give = room < left ? room : left;
+        caps[c] += give;
+        left -= give;
+      }
+    }
   }
 
   /// Emits the grid rows: padded cells joined by dim `│`, the separator row
