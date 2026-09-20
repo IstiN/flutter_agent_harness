@@ -575,4 +575,100 @@ void main() {
       );
     });
   });
+
+  group('thinkingLevel (issue #734)', () {
+    test('a declared rung parses onto the preconfig', () {
+      final pre = parse(
+        providerType: 'anthropic',
+        providerConfig:
+            '{"baseUrl":"https://api.anthropic.com","model":"claude-x",'
+            '"thinkingLevel":"low"}',
+      )!;
+      expect(pre.thinkingLevel, 'low');
+    });
+
+    test('absent thinkingLevel leaves the field null (legacy boot)', () {
+      expect(
+        parse(
+          providerType: 'zai',
+          providerConfig: config('zai'),
+        )!.thinkingLevel,
+        isNull,
+      );
+    });
+
+    test('xhigh and max are accepted and normalize to high', () {
+      expect(
+        parse(
+          providerType: 'anthropic',
+          providerConfig:
+              '{"baseUrl":"https://api.anthropic.com","model":"claude-x",'
+              '"thinkingLevel":"max"}',
+        )!.thinkingLevel,
+        'high',
+      );
+      expect(
+        parse(
+          providerType: 'anthropic',
+          providerConfig:
+              '{"baseUrl":"https://api.anthropic.com","model":"claude-x",'
+              '"thinkingLevel":"xhigh"}',
+        )!.thinkingLevel,
+        'high',
+      );
+    });
+
+    test('an off-ladder value fails loud naming the ladder', () {
+      expect(
+        () => parse(
+          providerType: 'anthropic',
+          providerConfig:
+              '{"baseUrl":"https://api.anthropic.com","model":"claude-x",'
+              '"thinkingLevel":"ultra"}',
+        ),
+        throwsA(
+          throwsConfig.having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('thinkingLevel'),
+              contains('ultra'),
+              contains('minimal, low, medium, high, xhigh, max'),
+            ),
+          ),
+        ),
+      );
+    });
+
+    test('a non-string thinkingLevel is named', () {
+      expect(
+        () => parse(
+          providerType: 'anthropic',
+          providerConfig:
+              '{"baseUrl":"https://api.anthropic.com","model":"claude-x",'
+              '"thinkingLevel":5}',
+        ),
+        throwsA(
+          throwsConfig.having(
+            (e) => e.message,
+            'message',
+            allOf(contains('thinkingLevel'), contains('5')),
+          ),
+        ),
+      );
+    });
+
+    test('thinkingLevel parses identically through the BASE64 twin', () {
+      final declared =
+          '{"baseUrl":"https://api.anthropic.com","model":"claude-x",'
+          '"thinkingLevel":"max"}';
+      expect(
+        parse(
+          providerType: 'anthropic',
+          providerConfigBase64: b64(declared),
+        )!.thinkingLevel,
+        'high',
+      );
+    });
+  });
 }
