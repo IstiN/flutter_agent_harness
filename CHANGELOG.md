@@ -3939,4 +3939,10 @@
 
 - repin: factory a0e3a47 — machine-loop dead-end fixes (#458) (#725)
 
+## 0.1.433
+
+- ci: repin factory workflows to dmtools-agents@55b95fed — stale-verdict re-review (#731)
+- ci: repin factory workflows to dmtools-agents@364a303c — prStatus state-case fix (#730)
+- repin: factory 358eb3e — develop-done source fix (#459) (#728)
+
 ## Unreleased
