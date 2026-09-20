@@ -72,6 +72,7 @@ abstract class FaChatStrings {
   String get chatOpenWidgetAsAppDismiss;
   String get chatLoadNewer;
   String chatLoadNewerCount(String count);
+
   /// The `+N lines` hint on a collapsed tool-output card (issue #458).
   String chatClampHint(int lines);
   String get chatShowMore;
@@ -125,7 +126,18 @@ abstract class FaChatStrings {
   /// The overflow tile label when a bubble shows fewer thumbs than the
   /// message carries: `+N more` opens the gallery at the first hidden one.
   String chatMoreAttachments(int count);
- }
+
+  /// The auth-expired banner title (issue #692: the chat's error banner
+  /// replaces the raw provider error — CLI hint + marker — with this).
+  String get chatAuthExpiredBannerTitle;
+
+  /// The auth-expired banner body; [provider] is the expired provider's
+  /// id (from the `[[auth-expired:…]]` marker).
+  String chatAuthExpiredBannerBody(String provider);
+
+  /// The auth-expired banner's re-authorize button label.
+  String get chatAuthExpiredBannerAction;
+}
 
 /// Built-in English chat strings.
 class FaChatStringsEn extends FaChatStrings {
@@ -310,6 +322,14 @@ class FaChatStringsEn extends FaChatStrings {
   String get chatImageUnavailable => '[image unavailable]';
   @override
   String chatMoreAttachments(int count) => '+$count more';
+  @override
+  String get chatAuthExpiredBannerTitle => 'Session expired';
+  @override
+  String chatAuthExpiredBannerBody(String provider) =>
+      'Your $provider session has expired. Sign in again, then resend '
+      'your message.';
+  @override
+  String get chatAuthExpiredBannerAction => 'Authorize';
 }
 
 /// Built-in Russian chat strings.
@@ -390,6 +410,7 @@ class FaChatStringsRu extends FaChatStrings {
         : 'строк';
     return '+$lines $word';
   }
+
   @override
   String chatAttachmentCap(int skipped) =>
       'Лимит вложений — $kMaxPendingAttachments, пропущено $skipped.';
@@ -507,6 +528,14 @@ class FaChatStringsRu extends FaChatStrings {
   String get chatImageUnavailable => '[изображение недоступно]';
   @override
   String chatMoreAttachments(int count) => '+$count ещё';
+  @override
+  String get chatAuthExpiredBannerTitle => 'Сессия истекла';
+  @override
+  String chatAuthExpiredBannerBody(String provider) =>
+      'Сессия $provider истекла. Войдите заново и отправьте сообщение '
+      'ещё раз.';
+  @override
+  String get chatAuthExpiredBannerAction => 'Авторизоваться';
 }
 
 /// Installs a custom [FaChatStrings] implementation above the chat.

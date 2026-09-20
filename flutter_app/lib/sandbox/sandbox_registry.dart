@@ -475,6 +475,69 @@ const _androidCommands = <SandboxCommand>[
 // Prompt section rendering
 // ---------------------------------------------------------------------------
 
+/// The per-platform host-profile section of the Fa system prompt (issue
+/// #692 B): pins the runtime reality the model otherwise guesses
+/// desktop-style — host platform, sandbox kind, what does NOT exist
+/// (processes, sockets), the available tool classes, and the first-aid
+/// mapping for the WASI failure shapes the mobile sandbox actually
+/// produces.
+///
+/// Desktop returns the EMPTY string: the desktop prompt stays
+/// byte-identical (issue #692 AC2) — the host shell needs no pinning.
+String formatSandboxHostProfile(SandboxPlatform platform) => switch (platform) {
+  SandboxPlatform.ios => _iosHostProfile,
+  SandboxPlatform.android => _androidHostProfile,
+  SandboxPlatform.web => _webHostProfile,
+  SandboxPlatform.desktop => '',
+};
+
+const String _iosHostProfile =
+    '## Host profile\n'
+    '- Platform: iOS (mobile app). Your shell and files run inside a WASI '
+    'sandbox, not on the phone OS: no OS processes, no raw sockets, no '
+    'python ssl module. The writable workspace is the sandbox root /.\n'
+    '- Available tool classes here: file tools (read/write/edit/ls), '
+    'sandboxed bash, web_search/web_fetch, ask/request_secret, chat '
+    'widgets and JS apps, and the device bridges the OS grants '
+    '(calendar/contacts/health/home/mic/notifications). Desktop-only '
+    'surfaces (LSP, MCP, DAP, sqlite engine, checkpoints) are NOT '
+    'registered.\n'
+    '- $_mobileFailureFirstAid';
+
+const String _androidHostProfile =
+    '## Host profile\n'
+    '- Platform: Android (mobile app). Your shell and files run inside a '
+    'WASI sandbox, not on the device OS: no OS processes, no raw sockets, '
+    'no python ssl module. The writable workspace is the sandbox root /.\n'
+    '- Available tool classes here: file tools (read/write/edit/ls), '
+    'sandboxed bash, web_search/web_fetch, ask/request_secret, chat '
+    'widgets and JS apps, and the device bridges the OS grants (mobile '
+    'automation, mic, notifications). Desktop-only surfaces (LSP, MCP, '
+    'DAP, sqlite engine, checkpoints) are NOT registered.\n'
+    '- $_mobileFailureFirstAid';
+
+/// The WASI failure → fallback mapping shared by the mobile host profiles
+/// (the error catalog of issue #692 B).
+const String _mobileFailureFirstAid =
+    'WASI failure first aid: a tool failing with an IO/os error (e.g. rg '
+    '"os error 44") → use the grep tool or coreutils grep; a python '
+    'network call failing or timing out → use curl or the web_fetch tool; '
+    'exit 127 "command not found" → the command does not exist here, '
+    're-check the shell list above.';
+
+const String _webHostProfile =
+    '## Host profile\n'
+    '- Platform: web (browser). Your shell is a Dart reimplementation over '
+    'an in-memory filesystem: no OS processes, no raw TCP (browsers '
+    'cannot), no real filesystem outside the sandbox.\n'
+    '- Available tool classes here: file tools (read/write/edit/ls), the '
+    'in-memory shell, web_search/web_fetch, ask/request_secret, chat '
+    'widgets and JS apps. Desktop-only surfaces (LSP, MCP, DAP, sqlite '
+    'engine, checkpoints) are NOT registered.\n'
+    '- Failure first aid: remote git clone/fetch is blocked by CORS → work '
+    'on local files; "command not found" (exit 127) → the command does '
+    'not exist here, re-check the shell list above.';
+
 /// Shell-grammar commands covered by the "cd and exported variables persist"
 /// bullet rather than the `core utilities:` line.
 const _shellStateCommands = {
@@ -548,8 +611,7 @@ String formatSandboxCommandSection(SandboxPlatform platform) {
       'root / is your writable workspace.',
     )
     ..write('- NOT available: ${_notAvailable(platform)}');
-  if (platform == SandboxPlatform.android ||
-      platform == SandboxPlatform.ios) {
+  if (platform == SandboxPlatform.android || platform == SandboxPlatform.ios) {
     buffer
       ..writeln()
       ..writeln(
@@ -561,7 +623,8 @@ String formatSandboxCommandSection(SandboxPlatform platform) {
       )
       ..write(
         '- Recommended HTTP path: `curl` (JSON bodies: `-d @file` or '
-        "`--data-raw '...'" '`), or python urllib/requests.',
+        "`--data-raw '...'"
+        '`), or python urllib/requests.',
       );
   }
   return buffer.toString();
