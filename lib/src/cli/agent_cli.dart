@@ -203,6 +203,7 @@ import 'scripted_test_stream.dart';
 import 'tui_replay.dart';
 import 'tui_repl.dart';
 import 'tui_theme.dart';
+import 'termios_guard.dart';
 
 export '../model_roles/provider_catalog.dart' show providerStreamFunction;
 
@@ -634,6 +635,15 @@ class AgentCli {
     // Busy-row honesty: name the executing tool ('Running bash…') instead
     // of leaving a stale 'Compacting context…' label over long tool calls.
     attachToolPhaseLabels(_agent, (phase) => _pushBusyPhase(phase));
+    // Issue #735: tool children share the session tty and can silently
+    // re-enable IXON — Ctrl+S then freezes output as XOFF and never
+    // reaches the agent as steering. Re-assert the raw-mode input flags
+    // after every foreground tool phase; a drift note names the child.
+    _termiosGuard = TermiosGuard(
+      runner: config.sttyRunner,
+      hasTerminal: config.sttyRunner != null ? () => true : null,
+    );
+    attachTermiosGuard(_agent, _termiosGuard, onDrift: _noteTermiosDrift);
     _checkpoints = CheckpointRewindController(
       agent: _agent,
       sink: CheckpointSessionSink(
@@ -911,6 +921,12 @@ class AgentCli {
   /// steer-yielded foreground commands); settle notifications are injected
   /// like task-job completions.
   late final ShellJobRegistry _shellJobs;
+
+  /// Issue #735: re-asserts the raw-mode tty input flags after every
+  /// foreground tool phase (children sharing the tty can re-enable IXON,
+  /// which eats Ctrl+S as XOFF and freezes output). Never throws; no-ops
+  /// without a terminal. Exposed for the hidden `/termios` command.
+  late final TermiosGuard _termiosGuard;
 
   /// The sandboxed view over [_env]: clamps filesystem and shell operations
   /// to the active cube (`null` = passthrough). `/cube` manages it live.
@@ -1748,6 +1764,7 @@ class AgentCli {
     controller = FaTuiController(
       mouseCapture: config.tuiMouseCapture,
       syncOutput: config.tuiSyncOutput,
+      sttyRunner: config.sttyRunner,
       callbacks: FaTuiCallbacks(
         onSubmit: (line, {images = const []}) =>
             _handleTuiSubmit(controller, line, images),
@@ -1788,6 +1805,18 @@ class AgentCli {
     for (final message in messages) {
       _steerResolved(message);
     }
+  }
+
+  /// One dim transcript note per drift the [TermiosGuard] cleared (issue
+  /// #735): names the flags a child re-enabled — the trail that says
+  /// WHICH tool corrupted the tty.
+  void _noteTermiosDrift(List<String> drifted) {
+    io.writeln(
+      tuiDim(
+        'tty: ${drifted.join(', ')} re-enabled by a child process — '
+        'cleared (Ctrl+S steering safe)',
+      ),
+    );
   }
 
   /// Whether [trimmed] names an existing file with its first token

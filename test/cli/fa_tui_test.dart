@@ -2302,7 +2302,17 @@ void main() {
       expect(result, 'saved-string');
       expect(calls, hasLength(2));
       expect(calls.first, ['-F', '/dev/tty', '-g']);
-      expect(calls.last, ['-F', '/dev/tty', '-ixon', '-ixoff', '-icrnl', '-discard']);
+      expect(calls.last, [
+        '-F',
+        '/dev/tty',
+        '-ixon',
+        '-ixoff',
+        '-icrnl',
+        '-discard',
+        // Belt-and-braces IXANY clear (issue #735): any-key resume is the
+        // tell-tale of a mid-session IXON regression.
+        '-ixany',
+      ]);
     });
 
     test('sttySanitizeInput returns null when saving fails', () async {
