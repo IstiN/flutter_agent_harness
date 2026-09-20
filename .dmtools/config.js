@@ -10,8 +10,8 @@ module.exports = {
     runners: {
       bug: '.dmtools/runners/fa-bug-dev.json',
       story: '.dmtools/runners/fa-story-dev.json',
-      review: '.dmtools/runners/fa-review-kimi.json',
-      rework: '.dmtools/runners/fa-rework-zai.json'
+      review: '.dmtools/runners/fa-review.json',
+      rework: '.dmtools/runners/fa-rework.json'
     }
   }
 };
