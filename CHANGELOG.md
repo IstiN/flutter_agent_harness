@@ -3920,4 +3920,19 @@
 - feat(#687): machine-author passthrough via vars.MACHINE_AUTHOR + repin ceddca5 (#699)
 - fix(#687): repin factory 40dd6f0 (dup-guard) + pr-aware stub run-name (#698)
 
+## 0.1.429
+
+- chore: repin factory 5519dc7 (deterministic merge state + version floor) (#714)
+- chore: repin factory a0feb83 (REST shapes + budget-free localActions) (#711)
+- chore: repin factory 3cae1d2 (REST mergeable_state + direct silent token) (#708)
+
+## 0.1.430
+
+- chore: repin factory 24082c9 (token-URL silent push) (#723)
+- chore: repin factory 05315d42640a15d04c65e67d686828ebb2b5b398 (target-repo silent update) (#722)
+- chore: repin factory 5e275aa (git-merge silent update) (#721)
+- chore: repin factory 19d60ef (update-branch PUT) (#717)
+- chore: repin factory f1073c5 (REST update-branch) (#716)
+- fix(sm): contents:write — update-branch pushes onto the head branch (#715)
+
 ## Unreleased
