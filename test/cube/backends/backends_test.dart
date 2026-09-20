@@ -436,4 +436,249 @@ void main() {
       expect(backend.describe(), contains('no-op'));
     });
   });
+
+  // Issue #709: an rw mount under a read-denied prefix must be kernel-
+  // readable, not only kernel-writable — the SBPL emission has to match the
+  // Dart fs guard's readWrite = read AND write.
+  group('rw mount emission (issue 709)', () {
+    test('an rw mount under a read-denied prefix allows reads AND writes '
+        '(UT1)', () {
+      final profile = MacOsSandboxBackend().buildSandboxProfile(
+        CubeSpec(
+          name: 'l1-dev',
+          filesystem: const CubeFsPolicy(
+            mounts: [
+              CubeMount(
+                path: '/Users/agents/.pub-cache',
+                access: CubePathAccess.readWrite,
+              ),
+              CubeMount(path: '/etc/ssl', access: CubePathAccess.readWrite),
+            ],
+          ),
+        ),
+        workspaceRoot: '/Users/agents/proj',
+      );
+
+      // The blanket read denies stay — the fix re-allows over them, it does
+      // not loosen the curated read confinement.
+      expect(profile, contains('(deny file-read* (subpath "/Users"))'));
+      expect(profile, contains('(deny file-read* (subpath "/etc"))'));
+
+      // Each rw mount emits BOTH allows, in both resolved spellings: rw is
+      // read+write in the kernel exactly as in the Dart guard.
+      for (final path in [
+        '/Users/agents/.pub-cache',
+        '/etc/ssl',
+        '/private/etc/ssl',
+      ]) {
+        expect(profile, contains('(allow file-read* (subpath "$path"))'));
+        expect(profile, contains('(allow file-write* (subpath "$path"))'));
+      }
+
+      // Ordering is load-bearing: the kernel applies the LAST matching rule
+      // per operation class (P1), so the mount's read allow must come after
+      // the blanket /Users deny it re-allows over.
+      final denyAt = profile.indexOf('(deny file-read* (subpath "/Users"))');
+      final allowAt = profile.indexOf(
+        '(allow file-read* (subpath "/Users/agents/.pub-cache"))',
+      );
+      expect(denyAt, greaterThanOrEqualTo(0));
+      expect(allowAt, greaterThan(denyAt));
+    });
+
+    test('ro and deny mounts emit byte-identical rule sets (UT2)', () {
+      // The rw fix must not perturb ro/deny emission (AC4): the exact
+      // per-mount lines, in order, in both spellings, stay frozen.
+      final profile = MacOsSandboxBackend().buildSandboxProfile(
+        CubeSpec(
+          name: 'test-cube',
+          filesystem: const CubeFsPolicy(
+            mounts: [
+              CubeMount(path: '/usr/share', access: CubePathAccess.readOnly),
+              CubeMount(path: '/etc/secrets', access: CubePathAccess.deny),
+            ],
+          ),
+        ),
+        workspaceRoot: '/real/cwd',
+      );
+      expect(
+        profile
+            .split('\n')
+            .where(
+              (l) => l.contains('/usr/share') || l.contains('/etc/secrets'),
+            )
+            .toList(),
+        [
+          '(allow file-read* (subpath "/usr/share"))',
+          '(deny file-write* (subpath "/usr/share"))',
+          '(deny file-read* (subpath "/etc/secrets"))',
+          '(deny file-write* (subpath "/etc/secrets"))',
+          '(deny file-read* (subpath "/private/etc/secrets"))',
+          '(deny file-write* (subpath "/private/etc/secrets"))',
+        ],
+      );
+    });
+
+    test('an rw mount on the denied prefix root itself wins by order (E1)', () {
+      final profile = MacOsSandboxBackend().buildSandboxProfile(
+        CubeSpec(
+          name: 'l1-open-home',
+          filesystem: const CubeFsPolicy(
+            mounts: [
+              CubeMount(path: '/Users', access: CubePathAccess.readWrite),
+            ],
+          ),
+        ),
+        workspaceRoot: '/work',
+      );
+      // The curated deny is still emitted (no root-read mount), and the
+      // mount's own allows land after it: last match wins, so /Users itself
+      // becomes read+write while /etc stays confined.
+      expect(profile, contains('(deny file-read* (subpath "/Users"))'));
+      expect(
+        profile.indexOf('(allow file-read* (subpath "/Users"))'),
+        greaterThan(profile.indexOf('(deny file-read* (subpath "/Users"))')),
+      );
+      expect(profile, contains('(allow file-write* (subpath "/Users"))'));
+      expect(profile, contains('(deny file-read* (subpath "/etc"))'));
+    });
+
+    test('ro+rw twin mounts stay deterministic: last entry wins per class '
+        '(E2)', () {
+      // The l1-dev twin stopgap (.fah/cubes/l1-dev.yaml) keeps working after
+      // the fix: the ro twin's deny-write is emitted first, the rw twin's
+      // allows after it — per P1 the allows hold, deterministically, because
+      // mount-list order fixes rule order.
+      const twin = '/Users/agents/.pub-cache';
+      final profile = MacOsSandboxBackend().buildSandboxProfile(
+        CubeSpec(
+          name: 'l1-dev',
+          filesystem: const CubeFsPolicy(
+            mounts: [
+              CubeMount(path: twin, access: CubePathAccess.readOnly),
+              CubeMount(path: twin, access: CubePathAccess.readWrite),
+            ],
+          ),
+        ),
+        workspaceRoot: '/Users/agents/proj',
+      );
+      final denyWriteAt = profile.indexOf(
+        '(deny file-write* (subpath "$twin"))',
+      );
+      final allowWriteAt = profile.indexOf(
+        '(allow file-write* (subpath "$twin"))',
+      );
+      expect(denyWriteAt, greaterThanOrEqualTo(0));
+      expect(allowWriteAt, greaterThan(denyWriteAt));
+      // One deny-write (ro twin) and one allow-write (rw twin) — no
+      // duplicate emission, no dropped twin.
+      expect(
+        RegExp(
+          r'\(deny file-write\* \(subpath "/Users/agents/\.pub-cache"\)\)',
+        ).allMatches(profile),
+        hasLength(1),
+      );
+      expect(
+        RegExp(
+          r'\(allow file-write\* \(subpath "/Users/agents/\.pub-cache"\)\)',
+        ).allMatches(profile),
+        hasLength(1),
+      );
+      // Both twins contribute their read allow; the path stays readable.
+      expect(
+        RegExp(
+          r'\(allow file-read\* \(subpath "/Users/agents/\.pub-cache"\)\)',
+        ).allMatches(profile),
+        hasLength(2),
+      );
+    });
+
+    test('a nested deny child emits AFTER its broader parent (E4)', () {
+      // PR #718 review finding #1: the guard resolves mounts longest-
+      // prefix-wins, but list-order emission let a parent declared after a
+      // deny child land its allows LAST — kernel-re-allowing the child the
+      // guard denies (the `[deny ~/.ssh, rw ~]` shape). The deepest-last
+      // emission sort must put every child after all of its ancestors.
+      final profile = MacOsSandboxBackend().buildSandboxProfile(
+        CubeSpec(
+          name: 'l1-nested',
+          filesystem: const CubeFsPolicy(
+            mounts: [
+              // Declared first, deepest — the exact adversarial order.
+              CubeMount(
+                path: '/Users/agents/.ssh',
+                access: CubePathAccess.deny,
+              ),
+              CubeMount(
+                path: '/Users/agents',
+                access: CubePathAccess.readWrite,
+              ),
+            ],
+          ),
+        ),
+        workspaceRoot: '/work',
+      );
+      for (final op in ['read', 'write']) {
+        final denyAt = profile.indexOf(
+          '(deny file-$op* (subpath "/Users/agents/.ssh"))',
+        );
+        final parentAt = profile.indexOf(
+          '(allow file-$op* (subpath "/Users/agents"))',
+        );
+        expect(denyAt, greaterThanOrEqualTo(0), reason: 'deny $op missing');
+        expect(parentAt, greaterThanOrEqualTo(0), reason: 'parent $op');
+        // The child's deny is the LAST match under last-match-wins — the
+        // kernel verdict equals the guard's longest-prefix verdict: deny.
+        expect(
+          denyAt,
+          greaterThan(parentAt),
+          reason: 'deny child $op rule must emit after the rw parent',
+        );
+      }
+    });
+  });
+
+  // Issue #709 REG1: the macOS emission fix must not drift the other
+  // backends' rule generation — linux re-binds ro mounts only, windows maps
+  // limits to Job Object flags, no-op stays a passthrough.
+  group('REG1: non-macOS backends unchanged (issue 709)', () {
+    test(
+      'linux unshare re-binds ro mounts only; an rw mount binds nothing',
+      () {
+        final wrapped = LinuxUnshareBackend(
+          spec: CubeSpec(
+            name: 'test-cube',
+            filesystem: const CubeFsPolicy(
+              mounts: [
+                CubeMount(path: '/Users/ro', access: CubePathAccess.readOnly),
+                CubeMount(path: '/Users/rw', access: CubePathAccess.readWrite),
+              ],
+            ),
+          ),
+          workspaceRoot: '/real/cwd',
+          tmpdir: '/real/cwd/.fah/tmp',
+        ).wrapCommand('git status', profilePath: '/p.sb');
+        // ro: re-bound read-only. rw: no bind at all (reads are unconfined in
+        // the namespace; writes flow from the mount's host writability).
+        expect(wrapped, contains('mount --bind'));
+        expect(wrapped, contains('remount,ro,bind'));
+        expect(wrapped, contains('/Users/ro'));
+        expect(wrapped, isNot(contains('/Users/rw')));
+      },
+    );
+
+    test('windows descriptor and no-op passthrough are untouched', () {
+      final descriptor = WindowsJobBackend.buildJobDescriptor(
+        const CubeResourceLimits(memoryBytes: 512 * 1024 * 1024),
+      );
+      expect((descriptor['flags'] as int) & 0x100, 0x100);
+      expect(descriptor['processMemoryLimitBytes'], 512 * 1024 * 1024);
+      const noOp = NoOpCubeBackend();
+      expect(
+        noOp.wrapCommand('git status', profilePath: '/x.sb'),
+        'git status',
+      );
+      expect(noOp.enforces, isFalse);
+    });
+  });
 }
