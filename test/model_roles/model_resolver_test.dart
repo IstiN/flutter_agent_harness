@@ -300,6 +300,51 @@ void main() {
       expect(plan.model.id, 'claude-main');
     });
 
+    test('chain entries carry thinkingLevel onto the built model (IT-1)', () {
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: const {
+            'default': [
+              ModelRef(
+                provider: 'anthropic',
+                modelId: 'claude-main',
+                thinkingLevel: 'high',
+              ),
+            ],
+            'smol': [ModelRef(provider: 'anthropic', modelId: 'claude-smol')],
+          },
+        ),
+        secrets: const {'ANTHROPIC_API_KEY': 'a-key'},
+        streamFactory: _neverStream,
+      );
+      // The declared entry carries its level…
+      expect(resolver.chainFor('default')!.single.model.thinkingLevel, 'high');
+      // …an undeclared entry stays null (legacy shape, AC5).
+      expect(resolver.chainFor('smol')!.single.model.thinkingLevel, isNull);
+    });
+
+    test(
+      'an unset role inherits the default chain INCLUDING its level (E3)',
+      () {
+        final resolver = ModelRolesResolver(
+          config: ModelRolesConfig(
+            roles: const {
+              'default': [
+                ModelRef(
+                  provider: 'anthropic',
+                  modelId: 'claude-main',
+                  thinkingLevel: 'medium',
+                ),
+              ],
+            },
+          ),
+          secrets: const {'ANTHROPIC_API_KEY': 'a-key'},
+          streamFactory: _neverStream,
+        );
+        expect(resolver.chainFor('plan')!.single.model.thinkingLevel, 'medium');
+      },
+    );
+
     test('applyToAgent runs the agent through the role chain', () async {
       final good = buildCatalogModel('openai', 'gpt-backup');
       final main = buildCatalogModel('anthropic', 'claude-main');

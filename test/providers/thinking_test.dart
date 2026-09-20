@@ -27,6 +27,37 @@ void main() {
     });
   });
 
+  group('normalizeConfigThinkingLevel (issue #734)', () {
+    test('known rungs pass through unchanged', () {
+      expect(normalizeConfigThinkingLevel('minimal'), 'minimal');
+      expect(normalizeConfigThinkingLevel('low'), 'low');
+      expect(normalizeConfigThinkingLevel('medium'), 'medium');
+      expect(normalizeConfigThinkingLevel('high'), 'high');
+    });
+
+    test('xhigh and max fold to high', () {
+      expect(normalizeConfigThinkingLevel('xhigh'), 'high');
+      expect(normalizeConfigThinkingLevel('max'), 'high');
+    });
+
+    test('unknown values return null for the caller to reject', () {
+      expect(normalizeConfigThinkingLevel('ultra'), isNull);
+      expect(normalizeConfigThinkingLevel('HIGH'), isNull);
+      expect(normalizeConfigThinkingLevel(''), isNull);
+    });
+
+    test('the config rung list names the ladder in order', () {
+      expect(configThinkingLevels, [
+        'minimal',
+        'low',
+        'medium',
+        'high',
+        'xhigh',
+        'max',
+      ]);
+    });
+  });
+
   group('thinkingBudgetForLevel', () {
     test('ladder values are exact', () {
       expect(thinkingBudgetForLevel('minimal'), 1024);
@@ -80,7 +111,11 @@ void main() {
           modelMaxTokens: cap,
           level: level,
         );
-        expect(got.maxTokens, wantMax, reason: 'base=$base cap=$cap level=$level');
+        expect(
+          got.maxTokens,
+          wantMax,
+          reason: 'base=$base cap=$cap level=$level',
+        );
         expect(
           got.thinkingBudget,
           wantBudget,

@@ -229,6 +229,8 @@ roles:                         # intent → ordered fallback chain
     - provider: openai         # or a map entry:
       model: gpt-4o
       apiKeyName: OPENAI_API_KEY   # optional; also baseUrl, contextWindow, maxTokens
+      thinkingLevel: high       # optional: minimal|low|medium|high|xhigh|max
+                                # (xhigh/max fold to high) — reasoning request
   smol: [openrouter/openai/gpt-4o-mini]   # roles: default, smol, slow, plan, subagent, memory
 modelOverrides:                # scope chains to path prefixes
   - path: ~/work/acme

@@ -325,11 +325,7 @@ const _modelOutputCeilings = <String, Map<String, int>>{
     '4.6': 128000,
     '5.0': 128000,
   },
-  'haiku': {
-    '3.0': 4096,
-    '3.5': 8192,
-    '4.5': 64000,
-  },
+  'haiku': {'3.0': 4096, '3.5': 8192, '4.5': 64000},
 };
 
 /// Conservative fallback for a Claude model the table cannot pin (kimi-code's
@@ -380,8 +376,9 @@ int? resolveModelMaxOutputTokens(String modelId, {required String api}) {
     major = int.parse(after);
     minor = match.group(3) == null ? 0 : int.parse(match.group(3)!);
   } else {
-    final before = RegExp(r'(\d{1,2})(?:[.-](\d{1,2}))?(?=-|$)')
-        .firstMatch(id.substring(0, match.start));
+    final before = RegExp(
+      r'(\d{1,2})(?:[.-](\d{1,2}))?(?=-|$)',
+    ).firstMatch(id.substring(0, match.start));
     if (before == null) return _unknownClaudeOutputCeiling;
     major = int.parse(before.group(1)!);
     minor = before.group(2) == null ? 0 : int.parse(before.group(2)!);
@@ -421,6 +418,7 @@ Model buildCatalogModel(
   int? contextWindow,
   int? maxTokens,
   List<String>? input,
+  String? thinkingLevel,
 }) {
   final spec = catalogProvider(provider);
   if (spec == null) {
@@ -437,6 +435,7 @@ Model buildCatalogModel(
     baseUrl: baseUrl ?? spec.defaultBaseUrl,
     reasoning: spec.reasoning,
     input: input ?? spec.input,
+    thinkingLevel: thinkingLevel,
     contextWindow: contextWindow ?? spec.contextWindow,
     maxTokens:
         maxTokens ??
@@ -578,7 +577,10 @@ final class _CatalogStreamFunction {
     final effectiveSessionId = routing?.sessionId ?? _sessionId?.call();
     final effectiveRetention = routing?.cacheRetention ?? _cacheRetention;
     return switch (_kind) {
-      'openai-completions' || 'minimax' || 'zai' || 'aiin' => streamOpenAICompletions(
+      'openai-completions' ||
+      'minimax' ||
+      'zai' ||
+      'aiin' => streamOpenAICompletions(
         model,
         context,
         OpenAICompletionsOptions(

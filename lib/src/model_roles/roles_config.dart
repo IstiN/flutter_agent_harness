@@ -25,6 +25,7 @@ library;
 import 'package:yaml/yaml.dart';
 
 import '../exceptions.dart';
+import '../providers/thinking.dart';
 
 /// The model roles supported by [ModelRolesConfig], in declaration order.
 ///
@@ -60,6 +61,7 @@ final class ModelRef {
     this.contextWindow,
     this.maxTokens,
     this.input,
+    this.thinkingLevel,
   });
 
   /// Parses the string shorthand `provider/modelId`.
@@ -109,6 +111,7 @@ final class ModelRef {
           contextWindow: _optionalInt(map, 'contextWindow', role),
           maxTokens: _optionalInt(map, 'maxTokens', role),
           input: _optionalInput(map, role),
+          thinkingLevel: _optionalThinkingLevel(map, role),
         );
       default:
         throw ConfigException(
@@ -166,6 +169,26 @@ final class ModelRef {
     ];
   }
 
+  /// The thinking-level rung override (issue #734): one of
+  /// [configThinkingLevels]; `xhigh`/`max` are accepted and normalize to
+  /// `high` (the same fold the wire clamp applies), anything else fails
+  /// loud naming the ladder.
+  static String? _optionalThinkingLevel(YamlMap map, String? role) {
+    final value = map['thinkingLevel'];
+    if (value == null) return null;
+    if (value is! String) {
+      throw ConfigException(
+        '"thinkingLevel"${role == null ? '' : ' in role "$role"'} must be '
+        'one of ${configThinkingLevels.join(', ')}, got: $value',
+      );
+    }
+    return normalizeConfigThinkingLevel(value.trim()) ??
+        (throw ConfigException(
+          '"thinkingLevel"${role == null ? '' : ' in role "$role"'} must be '
+          'one of ${configThinkingLevels.join(', ')}, got: $value',
+        ));
+  }
+
   /// Catalog provider name (e.g. `openrouter`, `openai`, `anthropic`,
   /// `google`); see `provider_catalog.dart`.
   final String provider;
@@ -186,9 +209,15 @@ final class ModelRef {
 
   /// Max-output-token override; the catalog default is used when null.
   final int? maxTokens;
+
   /// Input-modality override (`["text","image"]`); the catalog spec's
   /// modalities are used when null (issue #638).
   final List<String>? input;
+
+  /// Thinking-level override (`minimal…max`, `xhigh`/`max` normalize to
+  /// `high`); the adapter default (no thinking) is used when null
+  /// (issue #734).
+  final String? thinkingLevel;
 
   /// The `provider/modelId` display form.
   String get label => '$provider/$modelId';
@@ -201,6 +230,10 @@ final class ModelRef {
     if (apiKeyName != null) buffer.write('apiKeyName: $apiKeyName\n');
     if (baseUrl != null) buffer.write('baseUrl: $baseUrl\n');
     if (contextWindow != null) buffer.write('contextWindow: $contextWindow\n');
+    if (maxTokens != null) buffer.write('maxTokens: $maxTokens\n');
+    if (thinkingLevel != null) {
+      buffer.write('thinkingLevel: $thinkingLevel\n');
+    }
     if (input != null) {
       buffer.write('input: [${input!.join(', ')}]\n');
     }

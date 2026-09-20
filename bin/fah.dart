@@ -1499,6 +1499,7 @@ Future<void> _runApp(List<String> args) async {
           baseUrl: preconfig.baseUrl,
           apiKeyName: preconfig.apiKeyEnvVar,
           input: preconfig.input,
+          thinkingLevel: preconfig.thinkingLevel,
         ),
       ]);
     }
@@ -1678,8 +1679,19 @@ Future<void> _runApp(List<String> args) async {
     io.writeln(
       'note: provider ${preconfig.name} (${preconfig.spec.name}) '
       'from FA_PROVIDER_* env — key: '
-      '${preconfig.apiKeyEnvVar ?? 'none (keyless endpoint)'}',
+      '${preconfig.apiKeyEnvVar ?? 'none (keyless endpoint)'}'
+      '${preconfig.thinkingLevel == null ? '' : '; thinkingLevel: ${preconfig.thinkingLevel}'}',
     );
+    // A declared level on an adapter that has no thinking wiring is
+    // carried but never sent — say so once instead of silently ignoring
+    // it (issue #734 E1).
+    if (preconfig.thinkingLevel != null &&
+        preconfig.spec.api != 'anthropic-messages') {
+      io.writeln(
+        'note: the ${preconfig.spec.api} adapter does not send thinking — '
+        'the declared thinkingLevel is carried but unused',
+      );
+    }
     if (defaultRoleResolved) {
       io.writeln(
         preconfig.apiKeyEnvVar == null
