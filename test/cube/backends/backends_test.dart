@@ -592,6 +592,50 @@ void main() {
         hasLength(2),
       );
     });
+
+    test('a nested deny child emits AFTER its broader parent (E4)', () {
+      // PR #718 review finding #1: the guard resolves mounts longest-
+      // prefix-wins, but list-order emission let a parent declared after a
+      // deny child land its allows LAST — kernel-re-allowing the child the
+      // guard denies (the `[deny ~/.ssh, rw ~]` shape). The deepest-last
+      // emission sort must put every child after all of its ancestors.
+      final profile = MacOsSandboxBackend().buildSandboxProfile(
+        CubeSpec(
+          name: 'l1-nested',
+          filesystem: const CubeFsPolicy(
+            mounts: [
+              // Declared first, deepest — the exact adversarial order.
+              CubeMount(
+                path: '/Users/agents/.ssh',
+                access: CubePathAccess.deny,
+              ),
+              CubeMount(
+                path: '/Users/agents',
+                access: CubePathAccess.readWrite,
+              ),
+            ],
+          ),
+        ),
+        workspaceRoot: '/work',
+      );
+      for (final op in ['read', 'write']) {
+        final denyAt = profile.indexOf(
+          '(deny file-$op* (subpath "/Users/agents/.ssh"))',
+        );
+        final parentAt = profile.indexOf(
+          '(allow file-$op* (subpath "/Users/agents"))',
+        );
+        expect(denyAt, greaterThanOrEqualTo(0), reason: 'deny $op missing');
+        expect(parentAt, greaterThanOrEqualTo(0), reason: 'parent $op');
+        // The child's deny is the LAST match under last-match-wins — the
+        // kernel verdict equals the guard's longest-prefix verdict: deny.
+        expect(
+          denyAt,
+          greaterThan(parentAt),
+          reason: 'deny child $op rule must emit after the rw parent',
+        );
+      }
+    });
   });
 
   // Issue #709 REG1: the macOS emission fix must not drift the other

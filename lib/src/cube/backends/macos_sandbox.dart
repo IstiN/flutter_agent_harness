@@ -87,7 +87,7 @@ final class MacOsSandboxBackend
       _curatedReadDenies(buffer, workspace);
     }
     _allowWorkspaceWrites(buffer, workspace);
-    for (final mount in mounts) {
+    for (final mount in _deepestLast(mounts)) {
       _mountRules(buffer, mount);
     }
     buffer.writeln(
@@ -142,6 +142,30 @@ void _allowWorkspaceWrites(StringBuffer buffer, String workspace) {
   }
 }
 
+/// Mounts re-ordered deepest-path-LAST (stable), for the emission loop.
+///
+/// P1 makes rule order load-bearing within the mount block too: the kernel
+/// applies the LAST matching rule per operation class, while the Dart guard
+/// resolves mounts longest-prefix-wins — emitting the list verbatim let a
+/// broad `ro`/`rw` parent declared after a `deny` child land its allows
+/// last, kernel-re-allowing the child the guard denies (the `[deny ~/.ssh,
+/// rw ~]` shape from the PR #718 review). Ascending path length restores
+/// parity: a proper prefix is always shorter, so every ancestor emits
+/// before its descendant and the most specific mount is the last match.
+/// Ties break by original index (List.sort is NOT stable): equal paths
+/// keep profile order, which the ro+rw twin mounts rely on — the rw twin
+/// must stay after its ro twin so its allows win per class (E2).
+List<CubeMount> _deepestLast(List<CubeMount> mounts) {
+  final indexed = [for (var i = 0; i < mounts.length; i++) (i, mounts[i])];
+  int byDeepestLast((int, CubeMount) a, (int, CubeMount) b) {
+    final byLength = a.$2.path.length.compareTo(b.$2.path.length);
+    return byLength != 0 ? byLength : a.$1.compareTo(b.$1);
+  }
+
+  indexed.sort(byDeepestLast);
+  return [for (final (_, mount) in indexed) mount];
+}
+
 /// Per-mount SBPL rules, emitted in both resolved spellings.
 ///
 /// P1 (ordering): within an operation class (`file-read*`/`file-write*`) the
@@ -152,9 +176,11 @@ void _allowWorkspaceWrites(StringBuffer buffer, String workspace) {
 /// facility only — so this ordering is pinned empirically by the profile
 /// tests and the live macOS legs). Rule order is therefore load-bearing:
 /// these mount rules are emitted AFTER `_curatedReadDenies` so an `ro`/`rw`
-/// mount under a denied prefix re-allows it, and within a mount list the
-/// later entry wins per class — the ro+rw twin mounts in l1-dev rely on
-/// exactly that.
+/// mount under a denied prefix re-allows it, and WITHIN the mount block the
+/// `_deepestLast` order decides — the deeper (longest) path emits last and
+/// wins per class, matching the guard's longest-prefix resolution; the
+/// ro+rw twin mounts in l1-dev rely on the index tiebreak keeping the rw
+/// twin after its ro twin.
 ///
 /// A `readWrite` mount is read-write in the kernel as in the Dart guard: it
 /// emits BOTH allows. Emitting only the write allow made rw mounts kernel-

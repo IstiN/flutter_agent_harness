@@ -63,7 +63,11 @@ bool _profileAllows(
 void main() {
   // The l1 shape: workspace under the read-denied /Users prefix, one mount
   // per access level beside it (also under /Users, so every mount tests the
-  // re-allow-over-deny ordering, not just the rw one).
+  // re-allow-over-deny ordering, not just the rw one). The /private/etc/ssl
+  // mount backs the E3 firmware case: a mount at a firmware-symlink target,
+  // judged by the guard and replayed by the profile at the resolved
+  // spelling (the literal /etc spelling cannot traverse the symlink node —
+  // P2 — and stays denied by both).
   const workspace = '/Users/agents/proj';
   final spec = CubeSpec(
     name: 'l1-dev',
@@ -79,6 +83,7 @@ void main() {
           access: CubePathAccess.readWrite,
         ),
         CubeMount(path: '/Users/agents/vault', access: CubePathAccess.deny),
+        CubeMount(path: '/private/etc/ssl', access: CubePathAccess.readOnly),
       ],
     ),
   );
@@ -98,6 +103,9 @@ void main() {
     // /private spelling bypasses the symlink node.
     ('unmapped firmware-literal path', '/etc/hosts'),
     ('firmware mount via /private spelling', '/private/etc/ssl/cert.pem'),
+    // The same mount through the literal spelling: denied by the guard
+    // (no mount matches that written form) and by the kernel alike.
+    ('firmware mount via literal spelling', '/etc/ssl/cert.pem'),
   ];
 
   for (final (label, probe) in cases) {
@@ -112,6 +120,54 @@ void main() {
         _profileAllows(profile, write: true, probe: probe),
         guard.write,
         reason: 'write parity broke at $probe',
+      );
+    });
+  }
+
+  // PR #718 review finding #1: the guard resolves mounts longest-prefix-
+  // wins, but list-order emission let a broad parent declared after a
+  // child land its rules LAST — kernel-re-allowing a `deny` child the
+  // guard denies (the `[deny ~/.ssh, rw ~]` shape). With the deepest-last
+  // emission sort the child is again the last match, so guard and kernel
+  // agree at every depth of the nest.
+  final nested = CubeSpec(
+    name: 'l1-nested',
+    filesystem: const CubeFsPolicy(
+      workspace: workspace,
+      mounts: [
+        // Declared first and deepest — the exact adversarial order.
+        CubeMount(path: '/Users/agents/.ssh', access: CubePathAccess.deny),
+        CubeMount(path: '/Users/agents', access: CubePathAccess.readWrite),
+        CubeMount(
+          path: '/Users/agents/ro-enclave',
+          access: CubePathAccess.readOnly,
+        ),
+      ],
+    ),
+  );
+  final nestedProfile = const MacOsSandboxBackend().buildSandboxProfile(
+    nested,
+    workspaceRoot: workspace,
+  );
+
+  final nestedCases = <(String, String)>[
+    ('deny child inside the rw parent', '/Users/agents/.ssh/id_rsa'),
+    ('ro child inside the rw parent', '/Users/agents/ro-enclave/x.yaml'),
+    ('rw parent outside its children', '/Users/agents/elsewhere/z.txt'),
+  ];
+
+  for (final (label, probe) in nestedCases) {
+    test('guard and profile agree at a $label ($probe)', () {
+      final guard = _guardAllows(nested.filesystem, probe);
+      expect(
+        _profileAllows(nestedProfile, write: false, probe: probe),
+        guard.read,
+        reason: 'nested read parity broke at $probe',
+      );
+      expect(
+        _profileAllows(nestedProfile, write: true, probe: probe),
+        guard.write,
+        reason: 'nested write parity broke at $probe',
       );
     });
   }

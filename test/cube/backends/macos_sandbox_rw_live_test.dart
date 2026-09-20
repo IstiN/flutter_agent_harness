@@ -49,7 +49,9 @@ final String? _homeUnderUsers = () {
 /// Whether the host can stage the fixture OUTSIDE any sandbox: write then
 /// read back a probe file under `/Users`. A host that is itself sandboxed
 /// (an fa cube session) fails here — its outer deny cannot be lifted by the
-/// test's inner profile, so the legs would be confounded, not failed.
+/// test's inner profile, so the legs would be confounded, not failed. The
+/// probe file is removed even on failure (finally) — a host that lets the
+/// write through but not the read-back must not be littered with probes.
 final bool _canStage = () {
   if (_homeUnderUsers == null) return false;
   final probe = File(
@@ -57,11 +59,15 @@ final bool _canStage = () {
   );
   try {
     probe.writeAsStringSync('probe');
-    final readBack = probe.readAsStringSync();
-    probe.deleteSync();
-    return readBack == 'probe';
+    return probe.readAsStringSync() == 'probe';
   } catch (_) {
     return false;
+  } finally {
+    try {
+      if (probe.existsSync()) probe.deleteSync();
+    } catch (_) {
+      // Unremovable probe: nothing the skip decision can do about it.
+    }
   }
 }();
 
