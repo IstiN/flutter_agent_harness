@@ -256,6 +256,11 @@ extension AgentCliTools on AgentCli {
   /// Called from [rebuildToolAvailability], so a mid-session mode switch
   /// syncs it.
   void syncDiscoverToolsTool() {
+    // The gate's tombstone pointer follows the live mode too (issue #680
+    // review): only a registered discovery surface may be named in the
+    // discoverable tombstone.
+    _toolGate.discoveryEnabled =
+        discoveryEnabledByLoadMode[_liveLoadMode] == true;
     if (discoveryEnabledByLoadMode[_liveLoadMode] != true) {
       _toolRegistry.unregister('discover_tools');
       return;

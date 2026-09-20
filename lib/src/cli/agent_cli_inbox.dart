@@ -324,4 +324,3 @@ String mailboxWakeCommand({
 /// the pending mail into the turn; the session file is shared.
 const wakePromptText =
     'You have pending inbox messages; read your inbox and handle them now.';
-

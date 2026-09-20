@@ -178,6 +178,8 @@ void main() {
           return ToolExecutionResult.text('inner ${call.name}');
         });
 
+        // omp boots the discovery surface, so the tombstone names it.
+        gate.discoveryEnabled = true;
         final result = await wrapped(_call('c1', 'lsp'), null, null);
 
         expect(innerCalls, 0, reason: 'an unmounted discoverable never runs');
@@ -186,6 +188,21 @@ void main() {
           (result.content.single as TextContent).text,
           'Tool `lsp` is discoverable and not loaded — call `discover_tools` '
           'to list available tools, then mount it by name.',
+        );
+
+        // Discovery off (pi's shape, issue #679): the pointer must be
+        // the /settings load-mode switch, never the `discover_tools`
+        // tool that mode does not register (issue #680 review — the
+        // dead-end tombstone).
+        gate.discoveryEnabled = false;
+        final piResult = await wrapped(_call('c2', 'lsp'), null, null);
+        expect(innerCalls, 0);
+        expect(
+          (piResult.content.single as TextContent).text,
+          'Tool `lsp` is discoverable and not loaded in this mode — this '
+          'mode ships no `discover_tools` surface; ask the user to switch '
+          'the load mode via /settings (agent.mode) — see '
+          'docs/tool-availability.md §Load modes.',
         );
       },
     );
@@ -295,6 +312,8 @@ void main() {
           for (final entry in _toolsById.entries) entry.key: [...entry.value],
         },
       );
+      // omp boots with the discovery surface live.
+      gate.discoveryEnabled = true;
       final registry = ToolRegistry([
         for (final tools in _toolsById.values) ...tools,
       ]);

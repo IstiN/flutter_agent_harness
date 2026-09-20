@@ -54,6 +54,16 @@ final class ToolAvailabilityGate {
   /// The last resolution passed to [apply]; `null` before the first apply.
   ToolAvailabilityResolution? get resolution => _resolution;
 
+  /// Whether the `discover_tools` discovery surface is live for the
+  /// current boot ([discoveryEnabledByLoadMode]: omp only — pi keeps
+  /// pi-mono's exact benchmark shape with discovery off, issue #679).
+  /// The wiring sets it with the load mode (so a mid-session /settings
+  /// switch updates it): the discoverable tombstone may point at
+  /// `discover_tools` only while the tool is actually registered —
+  /// otherwise it points at the load-mode switch instead of dead-ending
+  /// on a tool the mode never shipped (issue #680 review).
+  bool discoveryEnabled = false;
+
   /// Names of all currently disabled tools: the static tools of disabled
   /// ids plus dynamically noted ([noteHiddenNames]) names of disabled
   /// families. Empty before the first apply.
@@ -237,11 +247,20 @@ final class ToolAvailabilityGate {
           !_mounted.contains(id)) {
         // Discoverable tombstone (issue #680): names the discovery path
         // instead of the plain off-reason — the tool exists, it is just
-        // not loaded in this mode.
+        // not loaded in this mode. The pointer follows the live mode:
+        // `discover_tools` only while that surface is registered (omp);
+        // modes without it (pi, discovery off) point at the /settings
+        // load-mode switch and the docs instead of a dead-end tool name.
         return ToolExecutionResult.text(
-          'Tool `${toolCall.name}` is discoverable and not loaded — call '
-          '`discover_tools` to list available tools, then mount it by '
-          'name.',
+          discoveryEnabled
+              ? 'Tool `${toolCall.name}` is discoverable and not loaded — '
+                    'call `discover_tools` to list available tools, then '
+                    'mount it by name.'
+              : 'Tool `${toolCall.name}` is discoverable and not loaded '
+                    'in this mode — this mode ships no `discover_tools` '
+                    'surface; ask the user to switch the load mode via '
+                    '/settings (agent.mode) — see docs/tool-availability.md '
+                    '§Load modes.',
         );
       }
       return inner(toolCall, cancelToken, onUpdate);
