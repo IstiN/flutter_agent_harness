@@ -675,16 +675,25 @@ Map<String, dynamic> _buildParams(
   _ResolvedCompat compat,
 ) {
   final cacheControl = _getCacheControl(options, compat);
-  // The ladder only applies when thinking is actually requested; pi's
-  // StreamOptions default the level to 'minimal' once thinking is enabled.
-  final thinkingLevel =
-      (options?.thinkingEnabled == true)
-          ? (options!.thinkingLevel ?? 'minimal')
-          : null;
+  // Thinking is requested when the options enable it (pi's StreamOptions
+  // then default the level to 'minimal') or when options are silent and the
+  // model carries a config-declared level (roles entry / env preconfig →
+  // Model.thinkingLevel, issue #734). An explicit
+  // options.thinkingEnabled: false always wins. Non-reasoning models never
+  // request thinking — a declared level rides along unsent, so the wire
+  // payload stays byte-identical to before (AC: no level anywhere → no
+  // change at all).
+  final thinkingOn =
+      model.reasoning &&
+      options?.thinkingEnabled != false &&
+      (options?.thinkingEnabled == true || model.thinkingLevel != null);
+  final effectiveLevel = options?.thinkingEnabled == true
+      ? (options!.thinkingLevel ?? model.thinkingLevel ?? 'minimal')
+      : model.thinkingLevel;
   final adjusted = adjustMaxTokensForThinking(
     baseMaxTokens: options?.maxTokens,
     modelMaxTokens: model.maxTokens,
-    level: thinkingLevel,
+    level: thinkingOn ? effectiveLevel : null,
   );
   final params = <String, dynamic>{
     'model': model.id,
@@ -698,9 +707,15 @@ Map<String, dynamic> _buildParams(
   };
 
   _addSystemParam(params, context, cacheControl);
-  _addTemperatureParam(params, options, compat);
+  _addTemperatureParam(params, options, compat, thinkingOn: thinkingOn);
   _addToolsParam(params, context, compat, cacheControl);
-  _addThinkingParam(params, model, options, adjusted.thinkingBudget);
+  _addThinkingParam(
+    params,
+    model,
+    options,
+    adjusted.thinkingBudget,
+    thinkingOn: thinkingOn,
+  );
   _addToolChoiceParam(params, options);
 
   return params;
@@ -725,12 +740,13 @@ void _addSystemParam(
 void _addTemperatureParam(
   Map<String, dynamic> params,
   AnthropicOptions? options,
-  _ResolvedCompat compat,
-) {
-  // Temperature is incompatible with extended thinking.
-  if (options?.temperature != null &&
-      options?.thinkingEnabled != true &&
-      compat.supportsTemperature) {
+  _ResolvedCompat compat, {
+  required bool thinkingOn,
+}) {
+  // Temperature is incompatible with extended thinking — an options enable
+  // or a config-carried level (with options silent) turns it off.
+  final thinking = options?.thinkingEnabled == true || thinkingOn;
+  if (options?.temperature != null && !thinking && compat.supportsTemperature) {
     params['temperature'] = options!.temperature;
   }
 }
@@ -755,21 +771,32 @@ void _addToolsParam(
 /// [_buildParams] via [adjustMaxTokensForThinking]; an explicit
 /// [AnthropicOptions.thinkingBudgetTokens] wins over it (enabled + no level
 /// + no explicit budget still sends 1024, the ladder's minimal rung —
-/// byte-identical to the old hard default). pi's adaptive-thinking branch
-/// (forceAdaptiveThinking, output_config effort) is still not ported.
+/// byte-identical to the old hard default). [thinkingOn] carries the
+/// config-carried-level decision from [_buildParams] (issue #734): options
+/// silent + a model level → enabled at that level. pi's adaptive-thinking
+/// branch (forceAdaptiveThinking, output_config effort) is still not ported.
 void _addThinkingParam(
   Map<String, dynamic> params,
   Model model,
   AnthropicOptions? options,
-  int ladderBudget,
-) {
-  if (model.reasoning && options?.thinkingEnabled != null) {
-    if (options!.thinkingEnabled!) {
-      params['thinking'] = {
-        'type': 'enabled',
-        'budget_tokens': options.thinkingBudgetTokens ?? ladderBudget,
-        'display': options.thinkingDisplay ?? 'summarized',
-      };
+  int ladderBudget, {
+  required bool thinkingOn,
+}) {
+  final enabled = options?.thinkingEnabled ?? (thinkingOn ? true : null);
+  if (model.reasoning && enabled != null) {
+    if (enabled) {
+      final budget = options?.thinkingBudgetTokens ?? ladderBudget;
+      // E2 (issue #734): a ceiling at/below the answer floor clamps the
+      // ladder budget to 0 — `budget_tokens: 0` is an invalid request, so
+      // the thinking block is omitted entirely instead (never invalid;
+      // `max_tokens` still goes out at the clamped ceiling).
+      if (budget > 0) {
+        params['thinking'] = {
+          'type': 'enabled',
+          'budget_tokens': budget,
+          'display': options?.thinkingDisplay ?? 'summarized',
+        };
+      }
     } else {
       params['thinking'] = {'type': 'disabled'};
     }
