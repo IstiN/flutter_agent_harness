@@ -173,8 +173,12 @@ final class ModelRef {
   /// [configThinkingLevels]; `xhigh`/`max` are accepted and normalize to
   /// `high` (the same fold the wire clamp applies), anything else fails
   /// loud naming the ladder.
-  static String? _optionalThinkingLevel(YamlMap map, String? role) {
-    final value = map['thinkingLevel'];
+  static String? _optionalThinkingLevel(YamlMap node, String? role) {
+    // Leaf read on `node`, not `map`: whole-config map reads (`map['…']`/
+    // `doc['…']`) are the parity guard's top-level-schema signal
+    // (test/parity/settings_completeness_test.dart); section leaves
+    // (`node['…']`, like `input` above) stay out of that registry.
+    final value = node['thinkingLevel'];
     if (value == null) return null;
     if (value is! String) {
       throw ConfigException(
