@@ -4,6 +4,7 @@
 /// `runHubCommand` dispatcher. The SIGINT/SIGTERM wiring stays covered
 /// by `test/hub/fah_hub_serve_test.dart`.
 @TestOn('vm')
+@Tags(['io'])
 library;
 
 import 'dart:io';
