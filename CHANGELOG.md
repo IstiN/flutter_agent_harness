@@ -3935,4 +3935,8 @@
 - chore: repin factory f1073c5 (REST update-branch) (#716)
 - fix(sm): contents:write — update-branch pushes onto the head branch (#715)
 
+## 0.1.432
+
+- repin: factory a0e3a47 — machine-loop dead-end fixes (#458) (#725)
+
 ## Unreleased
