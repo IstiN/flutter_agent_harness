@@ -1638,16 +1638,6 @@ class AgentCli {
     }
   }
 
-  /// After an interactive run ends, prints the command that picks this
-  /// session back up (kimi prints the resume hint on exit too). Skipped for
-  /// sessions with nothing persisted yet — resuming those is pointless.
-  /// Also called from the top-level idle-SIGINT path in `bin/fah.dart`,
-  /// which exits 130 without returning from [run].
-  Future<void> printSessionResumeHint() async {
-    final hint = await sessionResumeHint();
-    if (hint != null) io.writeln(_style.dim(hint));
-  }
-
   /// The `fa --session …` resume line, or null when nothing was persisted.
   /// Separate from [printSessionResumeHint] so non-REPL callers (the SIGINT
   /// exit path) can print it to the REAL stdout after the TUI is gone —
