@@ -148,22 +148,29 @@ void main() {
 
       expect(outcome.patched, isFalse);
       expect(outcome.error, isNotNull);
-      expect(outcome.error, contains('congruent'));
+      expect(outcome.error, contains('congruence'));
       expect(file.readAsBytesSync(), image);
     });
 
-    test('segment offset below 16 KB fails loudly even when congruent', () {
+    test('congruent segment at a sub-16 KB file offset patches with a '
+        'warning (DSP-blob shape)', () {
+      // The Qualcomm QNN Skel layout: vaddr ≡ offset (mod 0x4000) but the
+      // file offset itself is only 4 KB-strided. Never kernel-mmap'd (the
+      // QNN runtime parses and pushes the image to the Hexagon DSP), so the
+      // patch is sound — but the outcome must carry the caveat loudly.
       final image = buildElf(elf64: true, loads: [
         (0, 0, 0x1000),
-        (0x1000, 0x1000, 0x1000), // p_offset 0x1000 is not 16 KB-aligned
+        (0x1000, 0x1000, 0x1000),
       ]);
       final file = writeSo(image);
 
       final outcome = patcher.patchFile(file);
 
-      expect(outcome.patched, isFalse);
-      expect(outcome.error, contains('congruent'));
-      expect(file.readAsBytesSync(), image);
+      expect(outcome.error, isNull);
+      expect(outcome.patched, isTrue);
+      expect(outcome.warnings, hasLength(1));
+      expect(outcome.warnings.single, contains('not 16 KB-aligned'));
+      expect(loadAlign(file.readAsBytesSync(), 1, true), 0x4000);
     });
   });
 
@@ -193,7 +200,7 @@ void main() {
       final outcome = patcher.patchFile(file);
 
       expect(outcome.patched, isFalse);
-      expect(outcome.error, contains('congruent'));
+      expect(outcome.error, contains('congruence'));
       expect(file.readAsBytesSync(), image);
     });
   });

@@ -14,9 +14,17 @@
 /// page size grows — so for those blobs we patch the ELF program headers
 /// in place instead of relinking proprietary binaries we cannot rebuild.
 ///
-/// A blob that fails the congruence check genuinely needs a real relink;
-/// writing a bigger `p_align` there would produce an unloadable binary, so
-/// such files are reported loudly and the tool exits non-zero.
+/// A blob that violates the ELF congruence rule (`p_vaddr - p_offset` not a
+/// multiple of 0x4000) genuinely needs a real relink; writing a bigger
+/// `p_align` there would produce an unloadable binary, so such files are
+/// rejected loudly and the tool exits non-zero. Blobs that ARE congruent but
+/// sit their segments at file offsets below 16 KB (the Qualcomm QNN HTP
+/// `Skel` DSP libraries do this) can never be kernel-mmap'd on 16 KB devices
+/// — but they are not kernel-mapped at all, they are parsed and pushed to the
+/// Hexagon DSP by the QNN runtime, and on 4 KB devices the declared p_align
+/// changes nothing about how they load. For those, the patch is what Play's
+/// static gate (and only that gate) needs, and the outcome carries a warning
+/// saying so.
 ///
 /// Usage:
 ///
@@ -50,23 +58,32 @@ final class PatchOutcome {
   final bool alreadyAligned;
 
   /// Why the file could not be patched (not an ELF image, truncated,
-  /// unsupported layout, or LOAD segments that are not 16 KB-congruent).
-  /// Null on success.
+  /// unsupported layout, or LOAD segments that violate the ELF congruence
+  /// rule). Null on success.
   final String? error;
+
+  /// Non-fatal notes about a patched file — e.g. segments whose file offsets
+  /// are not 16 KB-aligned (fine for DSP-parsed blobs, never kernel-mmap'd,
+  /// but such a blob would still fail to map on a 16 KB-page device if
+  /// anything ever dlopen'd it).
+  final List<String> warnings;
 
   const PatchOutcome({
     required this.path,
     required this.patched,
     required this.alreadyAligned,
     this.error,
+    this.warnings = const [],
   });
 
   @override
-  String toString() => error != null
-      ? 'FAIL  $path: $error'
-      : patched
-          ? 'PATCH $path (p_align -> 0x$_page16kHex)'
-          : 'OK    $path (already 16 KB-aligned)';
+  String toString() {
+    if (error != null) return 'FAIL  $path: $error';
+    final warn = warnings.isEmpty ? '' : ' (warning: ${warnings.join('; ')})';
+    return patched
+        ? 'PATCH $path (p_align -> 0x$_page16kHex)$warn'
+        : 'OK    $path (already 16 KB-aligned)';
+  }
 
   static const _page16kHex = '4000';
 }
@@ -98,11 +115,11 @@ PatchOutcome patchFile(File file) {
       return PatchOutcome(path: path, patched: false, alreadyAligned: true);
     }
 
-    // Raising p_align is only loadable when every segment can actually be
-    // mapped at 16 KB granularity.
+    // Raising p_align is only ELF-valid when every segment keeps the
+    // congruence rule p_vaddr ≡ p_offset (mod 0x4000); without that, the
+    // patched image is malformed for ANY loader.
     final incongruent = loads.where(
-      (l) =>
-          l.offset % _page16k != 0 || (l.vaddr - l.offset) % _page16k != 0,
+      (l) => (l.vaddr - l.offset) % _page16k != 0,
     );
     if (incongruent.isNotEmpty) {
       final l = incongruent.first;
@@ -111,12 +128,27 @@ PatchOutcome patchFile(File file) {
         patched: false,
         alreadyAligned: false,
         error:
-            'LOAD segment at file offset 0x${l.offset.toRadixString(16)} is '
-            'not 16 KB-congruent (p_vaddr - p_offset = '
-            '0x${(l.vaddr - l.offset).toRadixString(16)}) — needs a real '
-            'relink with -Wl,-z,max-page-size=16384, refusing to patch',
+            'LOAD segment at file offset 0x${l.offset.toRadixString(16)} '
+            'breaks the ELF congruence rule (p_vaddr - p_offset = '
+            '0x${(l.vaddr - l.offset).toRadixString(16)}, not a multiple of '
+            '0x4000) — needs a real relink with '
+            '-Wl,-z,max-page-size=16384, refusing to patch',
       );
     }
+
+    // Segments at file offsets below 16 KB cannot be kernel-mmap'd on 16 KB
+    // devices. For DSP-parsed blobs (Qualcomm QNN Skel) that is irrelevant;
+    // for anything bionic would dlopen the file would already fail there
+    // unpatched — surface it as a warning either way.
+    final offsetWarnings = loads
+        .where((l) => l.offset % _page16k != 0)
+        .map(
+          (l) =>
+              'LOAD segment at file offset 0x${l.offset.toRadixString(16)} '
+              'is not 16 KB-aligned; patched for the static Play gate, but '
+              'the blob cannot be kernel-mmaped on 16 KB-page devices',
+        )
+        .toList();
 
     // Rewrite p_align for every LOAD segment (congruent ones may declare
     // anything ≥ 0x4000 already; keep them and only lift the sub-16 KB ones)
@@ -133,7 +165,12 @@ PatchOutcome patchFile(File file) {
       }
     }
     file.writeAsBytesSync(image);
-    return PatchOutcome(path: path, patched: true, alreadyAligned: false);
+    return PatchOutcome(
+      path: path,
+      patched: true,
+      alreadyAligned: false,
+      warnings: offsetWarnings,
+    );
   } on PathNotFoundException {
     return PatchOutcome(
       path: path,
