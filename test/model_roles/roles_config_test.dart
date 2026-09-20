@@ -200,6 +200,7 @@ roles:
       baseUrl: https://proxy.example/v1
       contextWindow: 128000
       maxTokens: 4096
+      thinkingLevel: high
   smol:
     - provider: openrouter
       model: openai/gpt-4o-mini
@@ -220,11 +221,78 @@ retry:
       final second = ModelRolesConfig.fromYaml(_yaml(first.toYaml()));
       expect(second.toYaml(), first.toYaml());
       expect(second.roles['default']![1].apiKeyName, 'OPENAI_API_KEY');
+      // Issue #734: the config → write → read loop is lossless for the
+      // overrides a chain entry carries.
+      expect(second.roles['default']![1].maxTokens, 4096);
+      expect(second.roles['default']![1].thinkingLevel, 'high');
       expect(
         second.pathOverrides.single.roles['default']!.single.provider,
         'anthropic',
       );
       expect(second.retry.retriesPerEntry, 3);
+    });
+
+    test('thinkingLevel (issue #734)', () {
+      // A declared rung parses onto the reference.
+      final ref = ModelRef.fromYaml(
+        _yaml('provider: openai\nmodel: gpt-4o\nthinkingLevel: low\n'),
+      );
+      expect(ref.thinkingLevel, 'low');
+
+      // An undeclared level stays null — the string shorthand has no field.
+      expect(ModelRef.parse('anthropic/claude-sonnet-4').thinkingLevel, isNull);
+      expect(
+        ModelRef.fromYaml(
+          _yaml('provider: openai\nmodel: gpt-4o\n'),
+        ).thinkingLevel,
+        isNull,
+      );
+
+      // xhigh/max are accepted and normalize to high (the clamp fold).
+      expect(
+        ModelRef.fromYaml(
+          _yaml('provider: openai\nmodel: gpt-4o\nthinkingLevel: max\n'),
+        ).thinkingLevel,
+        'high',
+      );
+      expect(
+        ModelRef.fromYaml(
+          _yaml('provider: openai\nmodel: gpt-4o\nthinkingLevel: xhigh\n'),
+        ).thinkingLevel,
+        'high',
+      );
+
+      // An off-ladder value fails loud naming the role and the ladder.
+      expect(
+        () => ModelRef.fromYaml(
+          _yaml('provider: openai\nmodel: gpt-4o\nthinkingLevel: ultra\n'),
+          role: 'default',
+        ),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('role "default"'),
+              contains('ultra'),
+              contains('minimal, low, medium, high, xhigh, max'),
+            ),
+          ),
+        ),
+      );
+      expect(
+        () => ModelRef.fromYaml(
+          _yaml('provider: openai\nmodel: gpt-4o\nthinkingLevel: 3\n'),
+        ),
+        throwsA(isA<ConfigException>()),
+      );
+
+      // toYaml emits the field only when set.
+      expect(ref.toYaml(), contains('thinkingLevel: low\n'));
+      expect(
+        ModelRef.fromYaml(_yaml('provider: openai\nmodel: gpt-4o\n')).toYaml(),
+        isNot(contains('thinkingLevel')),
+      );
     });
   });
 
