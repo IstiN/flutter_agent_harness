@@ -43,6 +43,17 @@ void main() {
   File stateFileFor() =>
       defaultHubStateFile(home: tempHome.path, environment: const {});
 
+  /// A free loopback port (bind-close dance). The port-binding SERVE
+  /// paths live in fah_hub_serve_ports_test.dart; the graceful-exit seam
+  /// above needs short-lived hubs on free ports and is gate-safe.
+  Future<int> freePort() async {
+    final probe = LocalHub(port: 0);
+    await probe.start();
+    final port = probe.url.port;
+    await probe.stop();
+    return port;
+  }
+
   group('parseFlagValues / parseHubServeSpec', () {
     test('collapses --flag value pairs; later duplicates win', () {
       expect(parseFlagValues(const ['--port', '9000', '--secret', 's']), {
@@ -258,15 +269,4 @@ void main() {
     expect(pidFile.existsSync(), isFalse);
     expect(await hubHealthz(port), isFalse);
   }, timeout: timeout);
-
-  /// A free loopback port (bind-close dance). The port-binding SERVE
-  /// paths live in fah_hub_serve_ports_test.dart; the graceful-exit seam
-  /// above needs short-lived hubs on free ports and is gate-safe.
-  Future<int> freePort() async {
-    final probe = LocalHub(port: 0);
-    await probe.start();
-    final port = probe.url.port;
-    await probe.stop();
-    return port;
-  }
 }
