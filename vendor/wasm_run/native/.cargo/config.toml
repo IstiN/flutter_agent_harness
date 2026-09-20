@@ -2,6 +2,11 @@
 # minSdk 21 (mirrors android/build.gradle's minSdkVersion). The 16 KB
 # max-page-size flag makes every LOAD segment 0x4000-aligned so Play's
 # 16 KB page-size gate passes (gh-746).
+#
+# The absolute paths below match the GitHub ubuntu-latest image
+# (ANDROID_HOME=/usr/local/lib/android/sdk). On other hosts set the
+# CARGO_TARGET_<TRIPLE>_LINKER / CC_<triple> / AR_<triple> environment
+# variables — they take precedence over this file — or adjust the paths.
 
 [target.aarch64-linux-android]
 linker = "/usr/local/lib/android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang"
@@ -15,7 +20,7 @@ rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
 linker = "/usr/local/lib/android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android21-clang"
 rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
 
-# cc-rs needs explicit CC/CXX for the cross targets (it otherwise probes a
+# cc-rs needs explicit CC/CXX/AR for the cross targets (it otherwise probes a
 # bare `<target>-clang` that does not exist in the NDK).
 [env]
 CC_aarch64_linux_android = "/usr/local/lib/android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang"

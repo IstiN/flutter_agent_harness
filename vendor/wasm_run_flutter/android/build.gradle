@@ -46,21 +46,31 @@ android {
 
     defaultConfig {
         // NDK r28+ requires minSdk >= 21 (CXX1110); 21 also matches the app's
-    // flutter_launcher_icons min_sdk_android (issue #289).
-    minSdkVersion 21
-
-        externalNativeBuild {
-            cmake {
-                // Play's 16 KB page-size gate (issue #289 DoD item 1): the
-                // arm64-v8a libwasm_run_dart.so must be linked with a 16 KB
-                // max page size (LOAD segment align >= 0x4000) or Play
-                // rejects updates targeting API 35+ and the device degrades
-                // to page-size compat mode. CMakeLists.txt appends this flag
-                // to CMAKE_SHARED_LINKER_FLAGS only when
-                // ANDROID_ABI == arm64-v8a; the other ABIs keep the
-                // toolchain default page size.
-                arguments "-DWASM_RUN_ARM64_LINKER_FLAGS=-Wl,-z,max-page-size=16384"
-            }
-        }
+        // flutter_launcher_icons min_sdk_android (issue #289). The committed
+        // src/main/jniLibs binaries are built against the API 21 sysroot.
+        minSdkVersion 21
     }
 }
+
+// The Android .so binaries under src/main/jniLibs/ are COMMITTED, not built
+// here — they are cross-compiled from the vendored Rust source in
+// ../wasm_run/native with NDK r28 and -Wl,-z,max-page-size=16384 so every
+// LOAD segment is 16 KB-aligned (gh-746: Play rejects 4 KB-aligned native
+// libraries; the old CMakeLists "fix" passed the flag to a configure script
+// that downloaded prebuilt upstream binaries and compiled nothing — the
+// flag never reached a linker). To rebuild after changing the Rust source:
+//
+//   cd vendor/wasm_run/native
+//   rustup target add aarch64-linux-android armv7-linux-androideabi \
+//       x86_64-linux-android
+//   cargo build --release --target aarch64-linux-android
+//   cargo build --release --target armv7-linux-androideabi
+//   cargo build --release --target x86_64-linux-android
+//   cp target/<triple>/release/libwasm_run_dart.so \
+//       ../wasm_run_flutter/android/src/main/jniLibs/<abi>/
+//
+// (The NDK toolchain paths and the 16 KB linker flag live in
+// vendor/wasm_run/native/.cargo/config.toml.)
+//
+// x86 (i686) is intentionally not shipped: Flutter no longer targets it, so
+// no variant of this app packages an x86 APK.

@@ -149,6 +149,52 @@ flutter {
     source = "../.."
 }
 
+// ── 16 KB page-size gate for prebuilt native assets (gh-746) ─────────────
+// flutter_gemma's LiteRT-LM native bundle ships Qualcomm QNN HTP Skel
+// libraries whose ELF LOAD segments declare a 4 KB alignment; Google Play
+// rejects uploads containing such libraries. The flutter tool stages native
+// assets under build/intermediates/flutter/<variant>/native_assets/jniLibs
+// during compileFlutterBuild<Variant>, and copyJniLibsflutterBuild<Variant>
+// syncs them into the APK afterwards — the patch task runs in between and
+// lifts every congruent LOAD segment's p_align to 16 KB (loud failure when a
+// future blob needs a real relink instead). Idempotent: already-aligned
+// files are left untouched, so the task is safe to run on every build.
+val patch16kScript = rootProject.layout.projectDirectory
+    .file("../../scripts/patch_elf_16k_alignment.dart")
+tasks.matching { it.name.startsWith("compileFlutterBuild") }.all { compileTask ->
+    val variant = compileTask.name.removePrefix("compileFlutterBuild")
+    val variantDir = variant.replaceFirstChar { it.lowercase() }
+    val nativeAssetsDir = layout.buildDirectory
+        .dir("intermediates/flutter/$variantDir/native_assets/jniLibs")
+    val patchTask = tasks.register(
+        "patch16kNativeLibs$variant",
+        Exec::class.java,
+    ) {
+        group = "build"
+        description = "Patches prebuilt native .so assets for 16 KB page sizes (gh-746)"
+        dependsOn(compileTask)
+        // The dir only exists once the flutter tool staged native assets for
+        // this variant; skip rather than fail for variants without any.
+        onlyIf("native assets staged") { nativeAssetsDir.get().asFile.exists() }
+        executable = System.getenv("DART") ?: "dart"
+        args(
+            patch16kScript.asFile.absolutePath,
+            nativeAssetsDir.get().asFile.absolutePath,
+        )
+        doFirst {
+            if (!patch16kScript.asFile.exists()) {
+                throw GradleException(
+                    "16 KB patch script not found: ${patch16kScript.asFile} " +
+                        "(run the build from the repo checkout, not an android-only export)",
+                )
+            }
+        }
+    }
+    tasks.matching { it.name == "copyJniLibsflutterBuild$variant" }.all { copyTask ->
+        copyTask.dependsOn(patchTask)
+    }
+}
+
 dependencies {
     testImplementation("junit:junit:4.13.2")
     // Shizuku shell bridge — flavor-scoped so the store APK never links it.

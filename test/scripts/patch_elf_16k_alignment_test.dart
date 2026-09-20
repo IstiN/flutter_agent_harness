@@ -43,9 +43,12 @@ void main() {
     final bd = ByteData.sublistView(image);
     image
       ..[0] = 0x7f
-      ..[1] = 0x45 // 'E'
-      ..[2] = 0x4c // 'L'
-      ..[3] = 0x46 // 'F'
+      ..[1] =
+          0x45 // 'E'
+      ..[2] =
+          0x4c // 'L'
+      ..[3] =
+          0x46 // 'F'
       ..[4] = elf64 ? 2 : 1
       ..[5] = 1; // EI_DATA = LSB
     void phdr(int index, int type, int offset, int vaddr, int align) {
@@ -100,10 +103,10 @@ void main() {
     test('two congruent 4 KB-aligned LOADs are raised to 16 KB', () {
       // Mirrors the QNN Skel layout: file offsets and vaddrs sit on 16 KB
       // boundaries; only the declared p_align is still 4 KB.
-      final image = buildElf(elf64: true, loads: [
-        (0, 0, 0x1000),
-        (0xa3c000, 0xa3c000, 0x1000),
-      ]);
+      final image = buildElf(
+        elf64: true,
+        loads: [(0, 0, 0x1000), (0xa3c000, 0xa3c000, 0x1000)],
+      );
       final file = writeSo(image);
 
       final outcome = patcher.patchFile(file);
@@ -123,10 +126,10 @@ void main() {
     });
 
     test('already 16 KB-aligned file is a no-op', () {
-      final image = buildElf(elf64: true, loads: [
-        (0, 0, 0x4000),
-        (0xa3c000, 0xa3c000, 0x10000),
-      ]);
+      final image = buildElf(
+        elf64: true,
+        loads: [(0, 0, 0x4000), (0xa3c000, 0xa3c000, 0x10000)],
+      );
       final file = writeSo(image);
 
       final outcome = patcher.patchFile(file);
@@ -138,10 +141,13 @@ void main() {
     });
 
     test('non-congruent vaddr/offset diff fails loudly, bytes untouched', () {
-      final image = buildElf(elf64: true, loads: [
-        (0, 0, 0x1000),
-        (0x23e0b0, 0x23f0b0, 0x1000), // diff 0x1000 — not 16 KB-congruent
-      ]);
+      final image = buildElf(
+        elf64: true,
+        loads: [
+          (0, 0, 0x1000),
+          (0x23e0b0, 0x23f0b0, 0x1000), // diff 0x1000 — not 16 KB-congruent
+        ],
+      );
       final file = writeSo(image);
 
       final outcome = patcher.patchFile(file);
@@ -158,10 +164,10 @@ void main() {
       // file offset itself is only 4 KB-strided. Never kernel-mmap'd (the
       // QNN runtime parses and pushes the image to the Hexagon DSP), so the
       // patch is sound — but the outcome must carry the caveat loudly.
-      final image = buildElf(elf64: true, loads: [
-        (0, 0, 0x1000),
-        (0x1000, 0x1000, 0x1000),
-      ]);
+      final image = buildElf(
+        elf64: true,
+        loads: [(0, 0, 0x1000), (0x1000, 0x1000, 0x1000)],
+      );
       final file = writeSo(image);
 
       final outcome = patcher.patchFile(file);
@@ -176,10 +182,10 @@ void main() {
 
   group('ELF32', () {
     test('two congruent LOADs are raised to 16 KB', () {
-      final image = buildElf(elf64: false, loads: [
-        (0, 0, 0x1000),
-        (0xa3c000, 0xa3c000, 0x1000),
-      ]);
+      final image = buildElf(
+        elf64: false,
+        loads: [(0, 0, 0x1000), (0xa3c000, 0xa3c000, 0x1000)],
+      );
       final file = writeSo(image);
 
       final outcome = patcher.patchFile(file);
@@ -192,9 +198,7 @@ void main() {
     });
 
     test('non-congruent LOAD fails loudly', () {
-      final image = buildElf(elf64: false, loads: [
-        (0x2000, 0x3000, 0x1000),
-      ]);
+      final image = buildElf(elf64: false, loads: [(0x2000, 0x3000, 0x1000)]);
       final file = writeSo(image);
 
       final outcome = patcher.patchFile(file);
@@ -266,10 +270,7 @@ void main() {
     });
 
     test('a failing file is reported but does not stop the scan', () {
-      writeSo(
-        buildElf(elf64: true, loads: [(0, 0, 0x1000)]),
-        name: 'liba.so',
-      );
+      writeSo(buildElf(elf64: true, loads: [(0, 0, 0x1000)]), name: 'liba.so');
       writeSo(
         buildElf(elf64: true, loads: [(0x1000, 0x2000, 0x1000)]),
         name: 'libb.so',
@@ -278,8 +279,10 @@ void main() {
       final outcomes = patcher.patchPath(tempDir.path);
 
       expect(outcomes, hasLength(2));
-      expect(outcomes.firstWhere((o) => o.path.endsWith('liba.so')).patched,
-          isTrue);
+      expect(
+        outcomes.firstWhere((o) => o.path.endsWith('liba.so')).patched,
+        isTrue,
+      );
       final bad = outcomes.firstWhere((o) => o.path.endsWith('libb.so'));
       expect(bad.patched, isFalse);
       expect(bad.error, isNotNull);
