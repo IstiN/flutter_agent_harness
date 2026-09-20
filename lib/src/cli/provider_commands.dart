@@ -526,8 +526,11 @@ extension on AgentCli {
       io.writeln('usage: /provider <name> [baseUrl] [token]');
       return;
     }
-    // A saved custom provider name resolves before the catalog (registry
-    // names can never collide with catalog names by construction).
+    // A saved custom provider name resolves before the catalog. Reserved
+    // catalog names are enforced away from the registry (rejected at
+    // `add` and the name prompts, dropped at load and merged writes —
+    // #221/#706), so a saved name never shadows a catalog route; alias
+    // spellings (`chatgpt.com`) resolve onto their canonical record.
     final saved = args.length == 1
         ? config.customProviders?.find(args[0])
         : null;
@@ -1351,12 +1354,19 @@ extension on AgentCli {
     final registry = config.customProviders;
     // Alias resolution on the write path (#706): an existing record of
     // the SAME auth domain — exact base URL or an alias spelling of the
-    // provider id (`chatgpt` / `chatgpt.com`) — receives this login.
-    // Minting a second record for one domain is how the /model picker
-    // grew twin identities both marked current.
+    // provider id (`chatgpt` / `chatgpt.com`) constrained to this
+    // backend's dialect or endpoint — receives this login. Minting a
+    // second record for one domain is how the /model picker grew twin
+    // identities both marked current; a same-named entry on another
+    // backend (proxy) is NOT this domain and never receives the blob.
     final existing = registry != null
         ? (_entryForBaseUrl(registry, spec.defaultBaseUrl) ??
-              _entryForCanonicalName(registry, spec.name))
+              _entryForCanonicalName(
+                registry,
+                spec.name,
+                apiType: spec.name,
+                baseUrl: spec.defaultBaseUrl,
+              ))
         : null;
     final fallback = existing?.name ?? _codeMieHostName(spec.defaultBaseUrl);
     // A cancel keeps the fallback — the OAuth credentials are already
@@ -1876,15 +1886,30 @@ extension on AgentCli {
   /// Reserved-named ghosts (`chatgpt`) are skipped: they can never
   /// receive the login (the name prompt and `add` reject them) and the
   /// save path drops them — the domain's real record is the target.
+  ///
+  /// The match is constrained to the same auth domain ([apiType] /
+  /// [baseUrl] of the flow landing on it): a same-NAMED entry on a
+  /// different backend — e.g. a proxy named `chatgpt.com` because its
+  /// host is — must not receive this login. Landing in place would
+  /// overwrite its key slot with the OAuth blob while it keeps its own
+  /// dialect and endpoint, bricking the entry. Either the adapter
+  /// dialect matches (the entry was minted by this backend's flow, its
+  /// base URL may be a legacy spelling — landing is the point) or the
+  /// endpoint is the flow's own default base URL. An entry matching
+  /// neither is a different domain despite the name: no match, and the
+  /// flow mints a fresh record instead.
   CustomProviderEntry? _entryForCanonicalName(
     CustomProviderRegistry registry,
-    String name,
-  ) {
+    String name, {
+    required String apiType,
+    required String baseUrl,
+  }) {
     for (final entry in registry.entries) {
       if (isReservedCustomProviderName(entry.name)) continue;
-      if (canonicalProviderName(entry.name) == canonicalProviderName(name)) {
-        return entry;
+      if (canonicalProviderName(entry.name) != canonicalProviderName(name)) {
+        continue;
       }
+      if (entry.apiType == apiType || entry.baseUrl == baseUrl) return entry;
     }
     return null;
   }

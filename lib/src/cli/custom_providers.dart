@@ -216,24 +216,35 @@ final class CustomProviderRegistry {
   /// (e.g. `chatgpt`, which would shadow `/provider` routing) never
   /// survives — the non-reserved twin wins even when it came later.
   CustomProviderRegistry(List<CustomProviderEntry> entries)
-    : entries = _mergedOnLoad(entries),
-      mergeNotes = _loadMergeNotes(entries);
+    : this._loaded(_mergeOnLoad(entries));
+
+  CustomProviderRegistry._loaded(
+    ({List<CustomProviderEntry> entries, List<String> notes}) loaded,
+  ) : entries = loaded.entries,
+      mergeNotes = loaded.notes;
 
   /// All saved entries, in insertion order.
   final List<CustomProviderEntry> entries;
 
   /// Human-readable notes from the load-time same-domain merge (#706).
+  /// Each note names the record that was folded and the record that
+  /// actually survived (a ghost-first load swaps both — see
+  /// [_mergeOnLoad]).
   final List<String> mergeNotes;
 
   /// The load-time merge result: one record per canonical identity; a
   /// reserved-named ghost (e.g. `chatgpt`, which would shadow
   /// `/provider` routing) yields to a non-reserved twin of the same
-  /// domain even when the ghost came first.
-  static List<CustomProviderEntry> _mergedOnLoad(
+  /// domain even when the ghost came first. The merge and its notes are
+  /// ONE pass over the source, so every note names the record that
+  /// actually survives — a ghost-first load keeps `chatgpt.com` and the
+  /// note must say so, not the ghost it displaced.
+  static ({List<CustomProviderEntry> entries, List<String> notes}) _mergeOnLoad(
     List<CustomProviderEntry> source,
   ) {
     final survivors = <String, CustomProviderEntry>{};
     final order = <String>[];
+    final notes = <String>[];
     for (final entry in source) {
       final id = canonicalProviderName(entry.name);
       final existing = survivors[id];
@@ -242,14 +253,22 @@ final class CustomProviderRegistry {
         order.add(id);
         continue;
       }
-      if (isReservedCustomProviderName(existing.name) &&
-          !isReservedCustomProviderName(entry.name)) {
-        survivors[id] = _unionOnto(entry, existing);
-      } else {
-        _unionOnto(existing, entry);
-      }
+      // Ghost-first takeover: a reserved-named survivor can never
+      // receive logins (name prompts and `add` reject it) nor survive a
+      // merged write, so the non-reserved twin becomes the survivor.
+      final ghostFirst =
+          isReservedCustomProviderName(existing.name) &&
+          !isReservedCustomProviderName(entry.name);
+      final survivor = ghostFirst ? entry : existing;
+      final twin = ghostFirst ? existing : entry;
+      _unionOnto(survivor, twin);
+      survivors[id] = survivor;
+      notes.add(
+        'merged duplicate provider record "${twin.name}" onto '
+        '"${survivor.name}" (same auth domain)',
+      );
     }
-    return [for (final id in order) survivors[id]!];
+    return (entries: [for (final id in order) survivors[id]!], notes: notes);
   }
 
   /// Folds [twin]'s missing fields into [survivor] (union; survivor's
@@ -262,24 +281,6 @@ final class CustomProviderRegistry {
       survivor.keyName = twin.keyName;
     }
     return survivor;
-  }
-
-  static List<String> _loadMergeNotes(List<CustomProviderEntry> source) {
-    final notes = <String>[];
-    final seen = <String, String>{};
-    for (final entry in source) {
-      final id = canonicalProviderName(entry.name);
-      final first = seen[id];
-      if (first != null) {
-        notes.add(
-          'merged duplicate provider record "${entry.name}" onto "$first" '
-          '(same auth domain)',
-        );
-      } else {
-        seen[id] = entry.name;
-      }
-    }
-    return notes;
   }
 
   /// Finds an entry by [name] (case-insensitive), or null. Alias

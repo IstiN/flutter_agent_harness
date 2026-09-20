@@ -505,12 +505,27 @@ final class FaTuiModel extends Model {
     // short terminal; the frame then overran and the hard glass guard
     // cropped the menu's TOP — the title and first items became
     // selectable-but-invisible while the '↑ more' hint below stayed
-    // painted (list top unreachable). Cap by the rows a terminal can
-    // actually show after the frame's fixed chrome: progress indicator
-    // + frame rules + status (4), one input row, the menu title, both
-    // scroll hints, the models-picker footer. Floor 1 keeps even a
-    // degenerate terminal functional (E3).
-    final maxVisible = (termHeight - 9).clamp(1, 6);
+    // painted (list top unreachable). The cap starts from the classic
+    // reserve (progress indicator + frame rules + status = 4, one input
+    // row, the menu title, both scroll hints, the models-picker footer)
+    // and then shrinks until the rows the window will ACTUALLY render —
+    // counted by the same [_menuLines] math [_menuReservedLines] uses —
+    // fit under the 5 fixed chrome rows: a fixed reserve cannot know
+    // the group-header rows the slash menu interleaves (#275), and
+    // ignoring them let grouped menus reopen the top-crop. Floor 1
+    // keeps even a degenerate terminal functional (E3).
+    var maxVisible = (termHeight - 9).clamp(1, 6);
+    while (maxVisible > 1) {
+      final (start, end) = _windowFor(maxVisible);
+      if (5 + _menuLines(start, end) <= termHeight) break;
+      maxVisible--;
+    }
+    return _windowFor(maxVisible);
+  }
+
+  /// The item window a [maxVisible]-row cap would show (the pure half
+  /// of [_menuWindow]; the cap loop re-evaluates it as it shrinks).
+  (int, int) _windowFor(int maxVisible) {
     var start = 0;
     if (menuItems.length > maxVisible) {
       start = (menuSelected - (maxVisible ~/ 2)).clamp(
@@ -529,6 +544,14 @@ final class FaTuiModel extends Model {
   int get _menuReservedLines {
     if (!menuOpen || menuItems.isEmpty) return 0;
     final (start, end) = _menuWindow();
+    return _menuLines(start, end);
+  }
+
+  /// Lines the window `[start, end)` renders: title + items + group
+  /// headers + '↑/↓ more' hints + the models-picker footer. The cap in
+  /// [_menuWindow] and the frame-height budget both pay THIS number, so
+  /// a window that fits the budget here cannot overrun the glass.
+  int _menuLines(int start, int end) {
     var lines = 1 + (end - start); // title + items
     lines += _groupHeadersIn(start, end); // section headers
     if (start > 0) lines++; // '↑ more'

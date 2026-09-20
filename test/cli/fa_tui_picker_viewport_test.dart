@@ -80,4 +80,70 @@ void main() {
       expect(frame, contains('model-5'));
     });
   });
+
+  group('grouped picker window pays for its header rows (#706)', () {
+    // The slash menu interleaves '── group ──' header rows between the
+    // items (#275). A window cap that reserves a FIXED chrome budget
+    // cannot know how many headers its window will paint: on a short
+    // terminal the frame overran the glass and the top crop ate the
+    // title and first items again. The cap must shrink to the rows the
+    // window actually renders (title + items + headers + hints).
+    FaTuiModel groupedPickerModel({required int termHeight, int count = 12}) {
+      final items = [
+        for (var i = 0; i < count; i++)
+          MenuItem(
+            key: 'model-$i',
+            label: 'model-$i',
+            group: 'g${i ~/ 2}', // a header every 2 items
+          ),
+      ];
+      final model = FaTuiModel(
+        callbacks: FaTuiCallbacks(
+          onSubmit: (line, {images = const []}) async {},
+          onModelSelected: (id) async {},
+          buildSlashMenu: (prefix) => const [],
+          buildModelMenu: (filter, _) => items,
+          statusLine: () => '/work · 0tok',
+          prompt: 'fa> ',
+        ),
+        isExited: () => false,
+        termHeight: termHeight,
+      );
+      return model.update(OpenPickerMsg('generic', 'Pick one', items)).$1
+          as FaTuiModel;
+    }
+
+    test('the title and first row stay on the glass when headers crowd', () {
+      // 15 rows, 12 items in 6 groups: the classic fixed reserve sizes a
+      // 6-item window (5 chrome + title + 6 items + 3 headers + '↓ more'
+      // = 16 rows) — one row over the glass, and with no history padding
+      // the top crop eats the menu title. The header-aware cap shrinks
+      // the window to 5 items so everything painted fits.
+      final frame = groupedPickerModel(termHeight: 15).view().content;
+      expect(frame, contains('[Pick one]'));
+      expect(frame, contains('model-0'));
+      // The header row itself is painted too — the window really fit.
+      expect(frame, contains('── g0 ──'));
+    });
+
+    test('selection walks the whole list on the glass', () {
+      var model = groupedPickerModel(termHeight: 15);
+      for (var i = 0; i < 12; i++) {
+        expect(
+          model.view().content,
+          contains('model-$i'),
+          reason: 'selected row $i must be on the glass',
+        );
+        model = press(model, const TeaKey(code: KeyCode.down));
+      }
+    });
+
+    test('a terminal tall enough for headers keeps the 6-row window', () {
+      // 24 rows hold 5 chrome + title + 6 items + 3 headers + '↓ more'
+      // with room to spare — no squeeze, legacy window preserved.
+      final frame = groupedPickerModel(termHeight: 24).view().content;
+      expect(frame, contains('model-5'));
+      expect(frame, contains('↓ more'));
+    });
+  });
 }
