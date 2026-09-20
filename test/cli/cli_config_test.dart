@@ -799,6 +799,38 @@ prompts:
         );
       });
 
+      test('parses agent.mode = pi (issue #679)', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  mode: pi\n');
+        final loaded = loadCliConfig(tmp.path);
+        expect(loaded.agentMode, 'pi');
+      });
+
+      test('agent.mode = default normalizes to null', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  mode: default\n');
+        final loaded = loadCliConfig(tmp.path);
+        expect(loaded.agentMode, isNull);
+      });
+
+      test('rejects an unknown agent.mode value', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  mode: turbo\n');
+        expect(
+          () => loadCliConfig(tmp.path),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              contains('"agent.mode" must be one of'),
+            ),
+          ),
+        );
+      });
+
       test('toYaml persists the cap for the round-trip', () {
         final file = File('${tmp.path}/.fah/config.yaml');
         file.createSync(recursive: true);

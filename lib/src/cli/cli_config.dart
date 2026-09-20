@@ -66,16 +66,6 @@ ProviderTimeoutsOverride? parseProviderTimeouts(Object? node) {
   return ProviderTimeoutsOverride(connect: connect, streamIdle: streamIdle);
 }
 
-/// Parses the `agent:` section (issue #273): `contextWindowCap` — the
-/// owner-side effective context cap. The cap clamps the EFFECTIVE context
-/// window everywhere it is consumed (compaction thresholds, the ctx
-/// meter/footer, the loop's over-window guard) while the model keeps its
-/// real window. Strict like every section: a bad schema throws
-/// [ConfigException] at boot.
-///
-/// The cap must stay at or above the compaction reserve (16384 tokens):
-/// the compaction trigger is `window - reserve`, and a smaller cap would
-/// drive that threshold negative.
 /// Parses the `trajectory:` section (issue #385): today only the
 /// `wireDump` boolean. Unknown keys are strict errors (a typo must never
 /// silently skip the opt-in).
@@ -98,12 +88,13 @@ bool _parseTrajectorySection(Object? node) {
   return wireDump;
 }
 
-/// Validates one `agent.mode` value (issue #680): the shared rule lives
-/// in [agentLoadModeValidationError] (load_modes.dart) — this parser and
-/// the settings validator (config_service.dart) throw its text as a
-/// ConfigException, so the two cannot drift. `default` normalizes to
-/// null so an absent and an explicit-off mode are indistinguishable
-/// downstream.
+/// Validates one `agent.mode` value (issues #679/#680): the shared rule
+/// lives in [agentLoadModeValidationError] (load_modes.dart) — this
+/// parser and the settings validator (config_service.dart) throw its
+/// text as a ConfigException, so the two cannot drift. The label set is
+/// `default|pi|omp` (issue #680 owns the taxonomy; issue #679 owns pi's
+/// behavior). `default` normalizes to null so an absent and an
+/// explicit-off mode are indistinguishable downstream.
 String? _parseAgentModeValue(Object? value) {
   final error = agentLoadModeValidationError(value);
   if (error != null) throw ConfigException(error);
@@ -112,10 +103,27 @@ String? _parseAgentModeValue(Object? value) {
   return value == 'default' ? null : value as String;
 }
 
-/// Parses the `agent:` section (issues #273/#680): `contextWindowCap`
-/// and `mode` (the tool-load preset, `default|pi|omp`). Strict like every
-/// section: a bad schema throws [ConfigException] at boot.
-({int? contextWindowCap, String? mode})? _parseAgentSection(Object? node) {
+/// Parses the `agent:` section (issues #273/#679/#680):
+/// `contextWindowCap` — the owner-side effective context cap — and
+/// `mode` — the `default|pi|omp` preset label. The cap clamps the
+/// EFFECTIVE context window everywhere it is consumed (compaction
+/// thresholds, the ctx meter/footer, the loop's over-window guard) while
+/// the model keeps its real window. Strict like every section: a bad
+/// schema throws [ConfigException] at boot.
+///
+/// The cap must stay at or above the compaction reserve (16384 tokens):
+/// the compaction trigger is `window - reserve`, and a smaller cap would
+/// drive that threshold negative.
+///
+/// The label lands on [CliConfig.agentLoadMode] verbatim (the boot
+/// re-resolves it against `--omp`/`FA_AGENT_MODE`) and, when it is
+/// `pi`, also on [CliConfig.agentMode] — the harness-behavior tier
+/// (issue #679: bare prompt, 4-tool sweep, boot print) the executable
+/// re-resolves through its flag > env > config ladder. `omp` carries no
+/// harness behavior, so it never reaches that ladder.
+({int? contextWindowCap, String? mode, String? agentMode})? _parseAgentSection(
+  Object? node,
+) {
   if (node == null) return null;
   if (node is! YamlMap) {
     throw ConfigException('agent must be a map, got: $node');
@@ -145,7 +153,11 @@ String? _parseAgentModeValue(Object? value) {
         throw ConfigException('unknown "agent" key: $key');
     }
   }
-  return (contextWindowCap: cap, mode: mode);
+  return (
+    contextWindowCap: cap,
+    mode: mode,
+    agentMode: mode == 'pi' ? 'pi' : null,
+  );
 }
 
 /// Whether a raw `customProviders:` list node is a ghost entry named
@@ -231,6 +243,7 @@ final class CliConfig {
     this.compactionJudgeBudgetSeconds,
     this.wireDump = false,
     this.images,
+    this.agentMode,
     this.subagents = const SubagentsConfig(),
     this.waiting = const WaitingConfig(),
     this.jobs = const JobsConfig(),
@@ -345,9 +358,10 @@ final class CliConfig {
       images: parseImagesSection(map['images']),
       powerSleepPrevention: powerSection.sleepPrevention,
       powerHold: powerSection.hold,
-      // The agent section (owner-side context cap + load mode, issues
-      // #273/#680) is strict too.
+      // The agent section (owner-side context cap + mode, issues
+      // #273/#679/#680) is strict too.
       contextWindowCap: agentSection?.contextWindowCap,
+      agentMode: agentSection?.agentMode,
       agentLoadMode: agentSection?.mode,
       // The subagents section (background-subagent heartbeat, issue #383)
       subagents: SubagentsConfig.fromYaml(map['subagents']),
@@ -539,6 +553,11 @@ final class CliConfig {
   /// everywhere it is consumed (compaction thresholds, ctx meter/footer,
   /// the loop guard). `null` = uncapped (the raw model window).
   final int? contextWindowCap;
+
+  /// The parsed harness mode preset (`agent.mode`, issue #679): `'pi'` or
+  /// null (absent or explicit `default`). Resolved against the flag/env
+  /// tiers by the executable via `resolveHarnessMode`.
+  final String? agentMode;
 
   /// Tool-load preset from `agent.mode` (`default|pi|omp`, issue #680):
   /// the curated essential set that boots into the schema; everything
