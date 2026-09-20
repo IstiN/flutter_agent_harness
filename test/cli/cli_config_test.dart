@@ -809,6 +809,77 @@ prompts:
           contains('agent:\n  contextWindowCap: 256000'),
         );
       });
+
+      test('rejects a non-map agent section', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent: 256000\n');
+        expect(
+          () => loadCliConfig(tmp.path),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              contains('agent must be a map'),
+            ),
+          ),
+        );
+      });
+
+      test('parses agent.mode = omp and persists it back', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  mode: omp\n');
+        final loaded = loadCliConfig(tmp.path);
+        expect(loaded.agentLoadMode, 'omp');
+        expect(
+          loaded.withCustomProviders(loaded.customProviders).toYaml(),
+          contains('agent:\n  mode: omp\n'),
+        );
+      });
+
+      test('parses agent.mode = pi', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  mode: pi\n');
+        expect(loadCliConfig(tmp.path).agentLoadMode, 'pi');
+      });
+
+      test('agent.mode = default normalizes to null', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  mode: default\n');
+        expect(loadCliConfig(tmp.path).agentLoadMode, isNull);
+      });
+
+      test('rejects an unknown agent.mode value', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  mode: turbo\n');
+        expect(
+          () => loadCliConfig(tmp.path),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              contains('"agent.mode" must be one of'),
+            ),
+          ),
+        );
+      });
+
+      test('toYaml persists cap and mode together for the round-trip', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync(
+          'agent:\n  contextWindowCap: 256000\n  mode: omp\n',
+        );
+        final loaded = loadCliConfig(tmp.path);
+        expect(
+          loaded.withCustomProviders(loaded.customProviders).toYaml(),
+          contains('agent:\n  contextWindowCap: 256000\n  mode: omp\n'),
+        );
+      });
     });
   });
 
