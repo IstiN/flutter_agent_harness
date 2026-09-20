@@ -167,8 +167,21 @@ Future<String?> _orPromptHubSecret(
 
 /// Whether the one-time password prompt applies: an interactive
 /// terminal (a detached hub has none) and no recorded choice yet.
-bool hubSecretPromptApplies(File stateFile) =>
-    stdin.hasTerminal && !stateFile.existsSync();
+///
+/// `stdin.hasTerminal` is true even when stdin is `/dev/null` (a
+/// character device — e.g. inside git hooks or detached spawns), but
+/// such a "terminal" cannot answer a hidden prompt: `echoMode` throws
+/// `StdinException` there. Probe it so the prompt never fires (and
+/// never crashes) without a real terminal.
+bool hubSecretPromptApplies(File stateFile) {
+  if (stateFile.existsSync() || !stdin.hasTerminal) return false;
+  try {
+    stdin.echoMode;
+    return true;
+  } on StdinException {
+    return false;
+  }
+}
 
 /// Serves the hub: idempotent against a live one, pid-state
 /// bookkeeping for `fa dap stop`, then the serve loop ([serveLoop] is

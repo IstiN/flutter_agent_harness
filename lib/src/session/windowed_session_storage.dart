@@ -331,24 +331,23 @@ final class WindowedSessionStorage
       // tail-after-compaction cost 10s+ in redundant decode alone.
       var blockRecords = _chunkRecords;
       var blockBytes = _chunkBytes;
-      // Incremental token tally: eviction is suspended, so the branch
-      // only ever grows at the FRONT — estimate just the newly paged
-      // prefix per page instead of re-walking the whole branch.
-      var branchTokens = 0;
-      var countedRecords = 0;
       while (pages < maxPages) {
         final leaf = await getLeafId();
         if (leaf == null) return true; // genuinely empty session
         final branch = await getPathToRoot(leaf);
         if (branch.any(found)) return true;
         if (tokenBudget != null) {
-          final fresh = branch.length - countedRecords;
-          if (fresh > 0) {
-            branchTokens += estimateSessionBranchTokens(
-              branch.sublist(0, fresh),
-            );
-            countedRecords = branch.length;
-            if (branchTokens >= tokenBudget) return true;
+          // Projection-aware whole-branch estimate (issue #503 round 3b):
+          // hidden/covered records project as one-line markers or nothing
+          // at all, so the raw tally overshot the real context by ~8x on
+          // structured-compaction marathons and tripped the budget far
+          // too early (under-filled resume window). A whole-branch
+          // recompute per page is a chars/4 fold — negligible next to the
+          // page's decode — and unlike an incremental prefix tally it
+          // sees the hiding markers, which sit LATER on the branch than
+          // the records they hide.
+          if (estimateProjectedBranchTokens(branch) >= tokenBudget) {
+            return true;
           }
         }
         if (!_hasOlder) return true; // paged everything
@@ -384,6 +383,12 @@ final class WindowedSessionStorage
       top,
       maxRecords: maxRecords,
       maxBytes: maxBytes,
+      // Issue #503 round 3b: the walk crosses hundreds of ~0.75 MB
+      // `model_request_summary` ledger payloads that count zero context
+      // tokens — decode them header-only (data stubbed to null). The
+      // ingest and scrollback paths keep full fidelity; a shallow-parsed
+      // record only loses its Request-tab detail, never chain integrity.
+      shallowGiantCustoms: true,
     );
     if (chunk.isEmpty) {
       // Mirrors _readOlderChunk: an empty read above the window ends the

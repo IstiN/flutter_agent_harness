@@ -921,9 +921,7 @@ void main() {
         final leafBefore = await windowed.getLeafId();
         expect(leafBefore, 'e${count - 1}');
 
-        final ok = await windowed.growOlderUntil(
-          (r) => r is CompactionRecord,
-        );
+        final ok = await windowed.growOlderUntil((r) => r is CompactionRecord);
 
         expect(ok, isTrue);
         expect(await windowed.getLeafId(), leafBefore);
@@ -932,39 +930,32 @@ void main() {
         expect(branch.last.id, leafBefore);
         expect(branch.any((r) => r is CompactionRecord), isTrue);
         // The boundary itself is resident: the resume context starts here.
-        final boundaryRecord = branch.firstWhere(
-          (r) => r is CompactionRecord,
-        );
+        final boundaryRecord = branch.firstWhere((r) => r is CompactionRecord);
         expect(boundaryRecord.id, 'c$boundary');
       },
     );
 
-    test(
-      'session without compaction pages to the file head and keeps the '
-      'whole chain (no full-open fallback needed)',
-      () async {
-        const count = 700;
-        await seedRaw(count);
-        final windowed = await WindowedSessionStorage.open(
-          fs,
-          path,
-          chunkRecords: 50,
-          residentRecords: 100,
-        );
-        final leafBefore = await windowed.getLeafId();
+    test('session without compaction pages to the file head and keeps the '
+        'whole chain (no full-open fallback needed)', () async {
+      const count = 700;
+      await seedRaw(count);
+      final windowed = await WindowedSessionStorage.open(
+        fs,
+        path,
+        chunkRecords: 50,
+        residentRecords: 100,
+      );
+      final leafBefore = await windowed.getLeafId();
 
-        final ok = await windowed.growOlderUntil(
-          (r) => r is CompactionRecord,
-        );
+      final ok = await windowed.growOlderUntil((r) => r is CompactionRecord);
 
-        expect(ok, isTrue);
-        expect(windowed.hasOlder, isFalse);
-        final branch = await windowed.getPathToRoot(leafBefore!);
-        expect(branch.first.id, 'e0');
-        expect(branch.last.id, leafBefore);
-        expect(branch, hasLength(count));
-      },
-    );
+      expect(ok, isTrue);
+      expect(windowed.hasOlder, isFalse);
+      final branch = await windowed.getPathToRoot(leafBefore!);
+      expect(branch.first.id, 'e0');
+      expect(branch.last.id, leafBefore);
+      expect(branch, hasLength(count));
+    });
 
     test('maxPages exhaustion reports false (fallback preserved)', () async {
       const count = 1200;
@@ -984,42 +975,169 @@ void main() {
       expect(ok, isFalse);
     });
 
+    test('token budget stops the walk before the boundary once the resident '
+        'tail already fills the context window (issue #503: resume reads '
+        'only what fits the model window, never the whole file)', () async {
+      const count = 700;
+      const boundary = 100; // deep in the file — must NOT be reached
+      await seedRaw(count, compactionAt: boundary);
+      final windowed = await WindowedSessionStorage.open(
+        fs,
+        path,
+        chunkRecords: 50,
+        residentRecords: 100,
+      );
+      final leafBefore = await windowed.getLeafId();
+
+      // Seeded messages are ~45 chars ≈ 12 tokens each; the 100-record
+      // tail window alone already covers a 1000-token budget, so the
+      // walk must stop without paging at all.
+      final ok = await windowed.growOlderUntil(
+        (r) => r is CompactionRecord,
+        tokenBudget: 1000,
+      );
+
+      expect(ok, isTrue);
+      expect(await windowed.getLeafId(), leafBefore);
+      final branch = await windowed.getPathToRoot(leafBefore!);
+      // Budget stop: the boundary is NOT resident and the file head
+      // was NOT reached (unlike the no-compaction degenerate walk).
+      expect(branch.any((r) => r is CompactionRecord), isFalse);
+      expect(windowed.hasOlder, isTrue);
+      expect(branch.length, lessThan(count));
+      // ...and the resident tail genuinely covers the budget.
+      expect(estimateSessionBranchTokens(branch), greaterThanOrEqualTo(1000));
+    });
+
     test(
-      'token budget stops the walk before the boundary once the resident '
-      'tail already fills the context window (issue #503: resume reads '
-      'only what fits the model window, never the whole file)',
+      'walk pages giant model_request_summary records header-only: chain '
+      'stays intact, walked customs lose data, tail window keeps it '
+      '(issue #503 round 3b — 467 × 0.75MB monsters were the 9.3s walk)',
       () async {
-        const count = 700;
-        const boundary = 100; // deep in the file — must NOT be reached
-        await seedRaw(count, compactionAt: boundary);
+        const iso = '2026-01-01T00:00:00.000Z';
+        const monster = 200 * 1024;
+        final buffer = StringBuffer(
+          '{"type":"session","version":3,"id":"big","timestamp":"$iso",'
+          '"cwd":"/work"}\n',
+        );
+        // 200 messages, a giant custom after every 10th — all chained.
+        var prev = 'null';
+        for (var i = 0; i < 200; i++) {
+          buffer.write(
+            '{"type":"message","id":"e$i","parentId":$prev,'
+            '"timestamp":"$iso","message":{"role":"user","content":'
+            '[{"type":"text","text":"message $i body"}]}}\n',
+          );
+          prev = '"e$i"';
+          if (i % 10 == 9) {
+            buffer.write(
+              '{"type":"custom","id":"m$i","parentId":$prev,'
+              '"timestamp":"$iso","customType":"model_request_summary",'
+              '"data":{"blob":"${'x' * monster}"}}\n',
+            );
+            prev = '"m$i"';
+          }
+        }
+        await fs.writeFile(path, buffer.toString());
         final windowed = await WindowedSessionStorage.open(
           fs,
           path,
           chunkRecords: 50,
-          residentRecords: 100,
+          residentRecords: 400,
         );
-        final leafBefore = await windowed.getLeafId();
+        final leaf = (await windowed.getLeafId())!;
 
-        // Seeded messages are ~45 chars ≈ 12 tokens each; the 100-record
-        // tail window alone already covers a 1000-token budget, so the
-        // walk must stop without paging at all.
+        // Walk to the file top (predicate that never fires, no budget).
+        final ok = await windowed.growOlderUntil((r) => false);
+        expect(ok, isTrue);
+        expect(windowed.hasOlder, isFalse);
+
+        final branch = await windowed.getPathToRoot(leaf);
+        // Chain intact: every message AND monster present, in order.
+        expect(branch.whereType<MessageRecord>(), hasLength(200));
+        expect(branch.whereType<CustomRecord>(), hasLength(20));
+        // The initial tail window (opened via the full-fidelity path)
+        // keeps data; records paged by the walk are header-only.
+        final customs = branch.whereType<CustomRecord>().toList();
+        final walked = customs.take(customs.length - 5);
+        final tailWindow = customs.skip(customs.length - 5);
+        for (final c in walked) {
+          expect(c.data, isNull, reason: 'walked ${c.id} must be shallow');
+        }
+        for (final c in tailWindow) {
+          expect(
+            c.data,
+            isNotNull,
+            reason: 'tail-window ${c.id} keeps full fidelity',
+          );
+        }
+      },
+    );
+
+    test(
+      'budget walk with a hidden_range hiding most messages does NOT trip '
+      'early: the projected estimate sees markers, so the walk reaches '
+      'the deep compaction boundary (issue #503 round 3b — raw estimate '
+      'overshot the projection ~8x and under-filled the resume window)',
+      () async {
+        const iso = '2026-01-01T00:00:00.000Z';
+        final body = 'y' * 400; // ≈100 tokens per message
+        final buffer = StringBuffer(
+          '{"type":"session","version":3,"id":"big","timestamp":"$iso",'
+          '"cwd":"/work"}\n',
+        );
+        // Compaction boundary deep at index 100.
+        buffer.write(
+          '{"type":"message","id":"e0","parentId":null,'
+          '"timestamp":"$iso","message":{"role":"user","content":'
+          '[{"type":"text","text":"$body"}]}}\n',
+        );
+        for (var i = 1; i < 700; i++) {
+          if (i == 100) {
+            buffer.write(
+              '{"type":"compaction","id":"c100","parentId":"e99",'
+              '"timestamp":"$iso","summary":"compacted prefix",'
+              '"firstKeptEntryId":"e100","tokensBefore":12345}\n',
+            );
+          }
+          buffer.write(
+            '{"type":"message","id":"e$i","parentId":'
+            '"${i == 100 ? 'c100' : 'e${i - 1}'}",'
+            '"timestamp":"$iso","message":{"role":"user","content":'
+            '[{"type":"text","text":"$body"}]}}\n',
+          );
+        }
+        // Hidden range at the tail covers e100..e600 — the structured
+        // compaction marker sits NEWER than the records it hides.
+        final hiddenIds = [for (var i = 100; i <= 600; i++) '"e$i"'].join(',');
+        buffer.write(
+          '{"type":"hidden_range","id":"h0","parentId":"e699",'
+          '"timestamp":"$iso","recordIds":[$hiddenIds]}\n',
+        );
+        await fs.writeFile(path, buffer.toString());
+        final windowed = await WindowedSessionStorage.open(
+          fs,
+          path,
+          chunkRecords: 50,
+          residentRecords: 800,
+        );
+        final leaf = (await windowed.getLeafId())!;
+
+        // Raw tally of the tail alone: 100 records × ~100 tokens ≈ 10k —
+        // a 30k budget would trip ~300 records short of the boundary
+        // under the raw estimator. Projected: 501 hidden × 10 (markers)
+        // + 199 visible × 100 ≈ 25k — under budget, walk continues.
         final ok = await windowed.growOlderUntil(
           (r) => r is CompactionRecord,
-          tokenBudget: 1000,
+          tokenBudget: 30000,
         );
 
         expect(ok, isTrue);
-        expect(await windowed.getLeafId(), leafBefore);
-        final branch = await windowed.getPathToRoot(leafBefore!);
-        // Budget stop: the boundary is NOT resident and the file head
-        // was NOT reached (unlike the no-compaction degenerate walk).
-        expect(branch.any((r) => r is CompactionRecord), isFalse);
-        expect(windowed.hasOlder, isTrue);
-        expect(branch.length, lessThan(count));
-        // ...and the resident tail genuinely covers the budget.
+        final branch = await windowed.getPathToRoot(leaf);
         expect(
-          estimateSessionBranchTokens(branch),
-          greaterThanOrEqualTo(1000),
+          branch.any((r) => r is CompactionRecord),
+          isTrue,
+          reason: 'the walk must reach the deep boundary, not trip early',
         );
       },
     );

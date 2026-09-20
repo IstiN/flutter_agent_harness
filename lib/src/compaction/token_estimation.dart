@@ -113,12 +113,100 @@ int estimateSessionBranchTokens(List<SessionRecord> branch) {
   for (final record in branch) {
     tokens += switch (record) {
       MessageRecord(:final message) => estimateTokens(message),
-      CustomMessageRecord(:final content, :final timestamp) =>
-        estimateTokens(UserMessage(content: content, timestamp: timestamp)),
+      CustomMessageRecord(:final content, :final timestamp) => estimateTokens(
+        UserMessage(content: content, timestamp: timestamp),
+      ),
       CompactionRecord(:final summary) =>
         (summary.length / _charsPerToken).ceil(),
       BranchSummaryRecord(:final summary) =>
         (summary.length / _charsPerToken).ceil(),
+      _ => 0,
+    };
+  }
+  return tokens;
+}
+
+/// Estimated token cost of the one-line marker a hidden record renders as
+/// in the structured projection (`[3:hidden·tool_result·4.2k]` ≈ 30–40
+/// chars).
+const _hiddenMarkerTokens = 10;
+
+/// Projection-aware variant of [estimateSessionBranchTokens] (issue #503
+/// round 3b): counts what `Session.buildContextMessages` would ACTUALLY
+/// project, not the raw branch. Three adjustments over the raw tally:
+///
+/// 1. **Classic transform** — everything before the last
+///    [CompactionRecord.firstKeptEntryId] is dropped (the summary replaces
+///    it).
+/// 2. **Structured hiding** — a record id in any [HiddenRangeRecord] on
+///    the branch renders as a one-line marker, not its full content.
+/// 3. **Checkpoints** — records covered by a [CompactCheckpointRecord]
+///    (including flattened inner checkpoints, D4) count zero; the
+///    checkpoint's own text counts once.
+///
+/// On a structured-compaction marathon the raw estimate overshoots the
+/// real projected context by an order of magnitude (hundreds of hidden
+/// tool results), which tripped the resume walk's token budget far too
+/// early and resumed with a badly under-filled window.
+int estimateProjectedBranchTokens(List<SessionRecord> branch) {
+  // Classic transform: the last compaction drops its prefix (mirrors
+  // SessionTree._applyCompactionTransform: kept = [compaction] +
+  // path[firstKept..compactionIndex) + path(compactionIndex..]). The
+  // summary record itself survives and REPLACES the dropped span.
+  var kept = branch;
+  for (var i = branch.length - 1; i >= 0; i--) {
+    final record = branch[i];
+    if (record is CompactionRecord) {
+      final cut = branch.indexWhere((r) => r.id == record.firstKeptEntryId);
+      final foundKept = cut >= 0 && cut < i;
+      kept = [
+        record,
+        if (foundKept) ...branch.sublist(cut, i),
+        ...branch.sublist(i + 1),
+      ];
+      break;
+    }
+  }
+  // Structured state over the kept region (mirrors buildStructuredViewState;
+  // re-implemented here because projection.dart already imports this
+  // library — importing back would be circular).
+  final hidden = <String>{};
+  final covered = <String>{};
+  for (final record in kept) {
+    switch (record) {
+      case HiddenRangeRecord(:final recordIds):
+        hidden.addAll(recordIds);
+      case CompactCheckpointRecord(
+        :final coversRecordIds,
+        :final firstRecordId,
+        :final lastRecordId,
+      ):
+        covered
+          ..addAll(coversRecordIds)
+          ..add(firstRecordId)
+          ..add(lastRecordId);
+      default:
+        break;
+    }
+  }
+  var tokens = 0;
+  for (final record in kept) {
+    if (covered.contains(record.id)) continue;
+    if (hidden.contains(record.id)) {
+      tokens += _hiddenMarkerTokens;
+      continue;
+    }
+    tokens += switch (record) {
+      MessageRecord(:final message) => estimateTokens(message),
+      CustomMessageRecord(:final content, :final timestamp) => estimateTokens(
+        UserMessage(content: content, timestamp: timestamp),
+      ),
+      CompactionRecord(:final summary) =>
+        (summary.length / _charsPerToken).ceil(),
+      BranchSummaryRecord(:final summary) =>
+        (summary.length / _charsPerToken).ceil(),
+      CompactCheckpointRecord(:final text) =>
+        (text.length / _charsPerToken).ceil(),
       _ => 0,
     };
   }

@@ -15,7 +15,8 @@
 /// from `package:flutter_agent_harness/io.dart`).
 library;
 
-import '../session/session_storage.dart' show parseSessionEntryLine;
+import '../session/session_storage.dart'
+    show parseSessionEntryLine, parseShallowCustomRecord;
 import '../session/session_record.dart';
 
 /// Max lines per parse transfer.
@@ -39,6 +40,7 @@ final class SessionParseBatch {
     required this.filePath,
     required this.firstLineNumber,
     required this.lines,
+    this.shallowGiantCustoms = false,
   });
 
   /// Session file path — error-text context only, never re-read.
@@ -49,6 +51,14 @@ final class SessionParseBatch {
 
   /// Raw JSONL lines, file order.
   final List<String> lines;
+
+  /// Issue #503 round 3b: when true, giant `custom` records (the
+  /// ~0.75 MB `model_request_summary` ledger payloads) decode HEADER-ONLY
+  /// — id/parentId/timestamp/customType — with `data` stubbed to null,
+  /// skipping a full jsonDecode + isolate transfer that yields zero
+  /// context tokens. Only the resume boundary walk sets this; the
+  /// ingest/live-tail paths keep full fidelity. Plain data, isolate-safe.
+  final bool shallowGiantCustoms;
 }
 
 /// Per-line parse outcomes, parallel to [SessionParseBatch.lines].
@@ -76,6 +86,7 @@ List<SessionParseBatch> splitSessionParseBatches(
   List<String> lines, {
   required String filePath,
   required int firstLineNumber,
+  bool shallowGiantCustoms = false,
 }) {
   final batches = <SessionParseBatch>[];
   var start = 0;
@@ -85,14 +96,32 @@ List<SessionParseBatch> splitSessionParseBatches(
     if (i > start &&
         (i - start >= sessionParseBatchMaxLines ||
             weight + lineWeight > sessionParseBatchMaxBytes)) {
-      batches.add(_batch(lines, start, i, filePath, firstLineNumber));
+      batches.add(
+        _batch(
+          lines,
+          start,
+          i,
+          filePath,
+          firstLineNumber,
+          shallowGiantCustoms: shallowGiantCustoms,
+        ),
+      );
       start = i;
       weight = 0;
     }
     weight += lineWeight;
   }
   if (start < lines.length) {
-    batches.add(_batch(lines, start, lines.length, filePath, firstLineNumber));
+    batches.add(
+      _batch(
+        lines,
+        start,
+        lines.length,
+        filePath,
+        firstLineNumber,
+        shallowGiantCustoms: shallowGiantCustoms,
+      ),
+    );
   }
   return batches;
 }
@@ -102,11 +131,13 @@ SessionParseBatch _batch(
   int start,
   int end,
   String filePath,
-  int firstLineNumber,
-) => SessionParseBatch(
+  int firstLineNumber, {
+  bool shallowGiantCustoms = false,
+}) => SessionParseBatch(
   filePath: filePath,
   firstLineNumber: firstLineNumber + start,
   lines: lines.sublist(start, end),
+  shallowGiantCustoms: shallowGiantCustoms,
 );
 
 /// Parses [lines] through [executor] — or inline, batch by batch, when it
@@ -127,12 +158,14 @@ Future<List<SessionRecord?>> parseSessionLines(
   required String filePath,
   required int firstLineNumber,
   SessionParseExecutor? executor,
+  bool shallowGiantCustoms = false,
 }) async {
   if (lines.isEmpty) return const <SessionRecord?>[];
   final batches = splitSessionParseBatches(
     lines,
     filePath: filePath,
     firstLineNumber: firstLineNumber,
+    shallowGiantCustoms: shallowGiantCustoms,
   );
   if (executor == null) {
     final records = <SessionRecord?>[];
@@ -172,11 +205,20 @@ SessionParseResult parseSessionEntryLinesSync(SessionParseBatch batch) {
   );
   for (var i = 0; i < batch.lines.length; i++) {
     try {
-      records[i] = parseSessionEntryLine(
-        batch.lines[i],
-        batch.filePath,
-        batch.firstLineNumber + i,
-      );
+      // Issue #503 round 3b: the resume boundary walk parses giant
+      // `custom` ledger payloads header-only (data stubbed to null) —
+      // they count zero context tokens, so the full decode was pure
+      // cost. Falls back to the full decode on any shape mismatch.
+      final shallow = batch.shallowGiantCustoms
+          ? parseShallowCustomRecord(batch.lines[i])
+          : null;
+      records[i] =
+          shallow ??
+          parseSessionEntryLine(
+            batch.lines[i],
+            batch.filePath,
+            batch.firstLineNumber + i,
+          );
     } on Object {
       records[i] = null; // torn/foreign line: data, not an error
     }

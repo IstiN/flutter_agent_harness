@@ -167,7 +167,10 @@ void main() {
       const image = ImageContent(data: 'AAAA', mimeType: 'image/png');
       final messages = [
         UserMessage(
-          content: [TextContent(text: 'a' * 40), image],
+          content: [
+            TextContent(text: 'a' * 40),
+            image,
+          ],
           timestamp: DateTime.utc(2026),
         ),
         UserMessage(
@@ -197,33 +200,37 @@ void main() {
       expect(estimateContextTokens(messages).tokens, (2 * 4800 / 4).ceil());
     });
 
-    test('trailing repeats of anchor-era images stay cheap (issue #195 F5)',
-        () {
-      const usage = Usage(
-        input: 5000,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 5000,
-        cost: UsageCost(),
-      );
-      final messages = [
-        UserMessage(
-          content: [const ImageContent(data: 'AAAA', mimeType: 'image/png')],
-          timestamp: DateTime.utc(2026),
-        ),
-        _assistant(content: [TextContent(text: 'b' * 40)], usage: usage),
-        UserMessage(
-          content: [const ImageContent(data: 'AAAA', mimeType: 'image/png')],
-          timestamp: DateTime.utc(2026),
-        ),
-      ];
-      // The trailing repeat estimates as the note, not a second image.
-      expect(estimateContextTokens(messages).trailingTokens, 8);
-    });
+    test(
+      'trailing repeats of anchor-era images stay cheap (issue #195 F5)',
+      () {
+        const usage = Usage(
+          input: 5000,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 5000,
+          cost: UsageCost(),
+        );
+        final messages = [
+          UserMessage(
+            content: [const ImageContent(data: 'AAAA', mimeType: 'image/png')],
+            timestamp: DateTime.utc(2026),
+          ),
+          _assistant(
+            content: [TextContent(text: 'b' * 40)],
+            usage: usage,
+          ),
+          UserMessage(
+            content: [const ImageContent(data: 'AAAA', mimeType: 'image/png')],
+            timestamp: DateTime.utc(2026),
+          ),
+        ];
+        // The trailing repeat estimates as the note, not a second image.
+        expect(estimateContextTokens(messages).trailingTokens, 8);
+      },
+    );
 
-    test('the content key matches the registry (drift pin, issue #195 F5)',
-        () {
+    test('the content key matches the registry (drift pin, issue #195 F5)', () {
       const image = ImageContent(data: 'AAAA', mimeType: 'image/png');
       expect(estimationImageKey(image), imageContentKey(image));
     });
@@ -247,10 +254,7 @@ void main() {
       final tool = Tool(
         name: 'read',
         description: 'd' * 20,
-        parameters: const {
-          'type': 'object',
-          'properties': <String, dynamic>{},
-        },
+        parameters: const {'type': 'object', 'properties': <String, dynamic>{}},
       );
       final chars =
           100 + 'read'.length + 20 + jsonEncode(tool.parameters).length;
@@ -267,22 +271,28 @@ void main() {
   });
 
   group('estimateRequestTokens (the meter/guard shared basis)', () {
-    test('an unanchored transcript adds the system prompt and tool schemas',
-        () {
-      // 25 transcript tokens; the request additionally carries the system
-      // prompt and the tool schemas, which the transcript-only estimate
-      // silently drops (the resumed-session ctx-meter bug).
-      final messages = [UserMessage.text('a' * 100)];
-      final tools = [
-        Tool(name: 't', description: 'd' * 36, parameters: const {}),
-      ];
-      final overhead = estimateRequestOverheadTokens('s' * 100, tools);
-      expect(overhead, greaterThan(0));
-      expect(
-        estimateRequestTokens(messages, systemPrompt: 's' * 100, tools: tools),
-        25 + overhead,
-      );
-    });
+    test(
+      'an unanchored transcript adds the system prompt and tool schemas',
+      () {
+        // 25 transcript tokens; the request additionally carries the system
+        // prompt and the tool schemas, which the transcript-only estimate
+        // silently drops (the resumed-session ctx-meter bug).
+        final messages = [UserMessage.text('a' * 100)];
+        final tools = [
+          Tool(name: 't', description: 'd' * 36, parameters: const {}),
+        ];
+        final overhead = estimateRequestOverheadTokens('s' * 100, tools);
+        expect(overhead, greaterThan(0));
+        expect(
+          estimateRequestTokens(
+            messages,
+            systemPrompt: 's' * 100,
+            tools: tools,
+          ),
+          25 + overhead,
+        );
+      },
+    );
 
     test('an anchored transcript does NOT add overhead — provider usage '
         'already prices the system prompt and tools', () {
@@ -368,6 +378,104 @@ void main() {
       ]);
       expect(anchored.lastUsageIndex, 0);
       expect(anchored.tokens, 120);
+    });
+  });
+
+  group('estimateProjectedBranchTokens (issue #503 round 3b)', () {
+    MessageRecord msg(String id, String? parent, String text) => MessageRecord(
+      id: id,
+      parentId: parent,
+      timestamp: DateTime.utc(2026),
+      message: UserMessage.text(text),
+    );
+
+    test('equals the raw estimate when no structured records exist', () {
+      final branch = [msg('e0', null, 'a' * 100), msg('e1', 'e0', 'b' * 40)];
+      expect(
+        estimateProjectedBranchTokens(branch),
+        estimateSessionBranchTokens(branch),
+      );
+    });
+
+    test('hidden records count as one-line markers, not full content', () {
+      final branch = [
+        msg('e0', null, 'a' * 100), // 25 tokens, visible
+        msg('e1', 'e0', 'x' * 40000), // 10000 tokens raw — hidden
+        msg('e2', 'e1', 'b' * 40), // 10 tokens, visible
+        HiddenRangeRecord(
+          id: 'h0',
+          parentId: 'e2',
+          timestamp: DateTime.utc(2026),
+          recordIds: const ['e1'],
+        ),
+      ];
+      final projected = estimateProjectedBranchTokens(branch);
+      expect(projected, lessThan(25 + 10 + 40)); // markers are tiny
+      expect(projected, greaterThanOrEqualTo(35)); // visible ones still count
+    });
+
+    test('covered records count zero; the checkpoint text is counted once', () {
+      final branch = [
+        msg('e0', null, 'a' * 100), // 25, visible
+        msg('e1', 'e0', 'x' * 40000), // covered → 0
+        msg('e2', 'e1', 'y' * 40000), // covered → 0
+        CompactCheckpointRecord(
+          id: 'k0',
+          parentId: 'e2',
+          timestamp: DateTime.utc(2026),
+          firstRecordId: 'e1',
+          lastRecordId: 'e2',
+          text: 's' * 200, // 50 tokens
+          coversRecordIds: const ['e1', 'e2'],
+          flattenedRecordIds: const [],
+        ),
+      ];
+      expect(estimateProjectedBranchTokens(branch), 25 + 50);
+    });
+
+    test('a checkpoint covered by a later checkpoint is skipped (D4)', () {
+      final branch = [
+        msg('e0', null, 'x' * 40000),
+        CompactCheckpointRecord(
+          id: 'k0',
+          parentId: 'e0',
+          timestamp: DateTime.utc(2026),
+          firstRecordId: 'e0',
+          lastRecordId: 'e0',
+          text: 'inner' * 100,
+          coversRecordIds: const ['e0'],
+          flattenedRecordIds: const [],
+        ),
+        msg('e1', 'k0', 'y' * 40000),
+        CompactCheckpointRecord(
+          id: 'k1',
+          parentId: 'e1',
+          timestamp: DateTime.utc(2026),
+          firstRecordId: 'e0',
+          lastRecordId: 'e1',
+          text: 'o' * 80, // 20 tokens — the outer text wins
+          coversRecordIds: const ['e0', 'k0', 'e1'],
+          flattenedRecordIds: const ['k0'],
+        ),
+      ];
+      expect(estimateProjectedBranchTokens(branch), 20);
+    });
+
+    test('classic transform drops everything before firstKeptEntryId', () {
+      final branch = [
+        msg('e0', null, 'x' * 40000), // dropped by the transform
+        msg('e1', 'e0', 'y' * 40000), // dropped
+        CompactionRecord(
+          id: 'c0',
+          parentId: 'e1',
+          timestamp: DateTime.utc(2026),
+          summary: 's' * 200, // 50 tokens
+          firstKeptEntryId: 'e2',
+          tokensBefore: 99999,
+        ),
+        msg('e2', 'c0', 'a' * 100), // 25, kept
+      ];
+      expect(estimateProjectedBranchTokens(branch), 50 + 25);
     });
   });
 
