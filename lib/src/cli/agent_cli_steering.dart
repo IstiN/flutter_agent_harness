@@ -423,9 +423,20 @@ extension AgentCliSteering on AgentCli {
 
   /// Load-time hook: scans the session and queues any recovered
   /// steering for the idle wake (panels render as pending).
+  ///
+  /// The scan is fire-and-forget (off the load critical path), so a
+  /// `/resume` session switch can land mid-scan: publishing A's results
+  /// into B's `_recoveredSteering` would deliver A's steering into B's
+  /// run and write A's `steering_consumed` markers into B's file. The
+  /// identity check drops stale results; the empty-scan branch clears a
+  /// previous session's leftover instead of leaving it reachable.
   Future<void> _queueRecoveredSteering(Session session) async {
     final recovered = await _recoverSessionSteering(session);
-    if (recovered.isEmpty) return;
+    if (!identical(session, _session)) return; // switched away mid-scan
+    if (recovered.isEmpty) {
+      _recoveredSteering = null;
+      return;
+    }
     _recoveredSteering = [
       for (final item in recovered)
         (
