@@ -10,11 +10,13 @@
 /// Deterministic recipe (CI-stable redesign after the first leg flaked —
 /// the bash tool yields slow commands to background, so probe timing
 /// must never race a still-running child):
-/// 1. a FAST bash tool call corrupts the tty and echoes its own success
-///    (`CORRUPT-OK`) — it completes inside the foreground grace, so the
-///    after-tool boundary (the guard's probe) is strictly AFTER the
-///    corruption; the echo doubles as a fail-fast diagnostic if the CI
-///    job spawns without a controlling terminal;
+/// 1. a FAST bash tool call corrupts the session tty and writes its own
+///    receipt (`CORRUPT-OK`) to that tty — it completes inside the
+///    foreground grace, so the after-tool boundary (the guard's probe) is
+///    strictly AFTER the corruption; the receipt doubles as a fail-fast
+///    diagnostic (CORRUPT-FAIL) if the child cannot reach the session tty.
+///    Both receipts are runtime-built (`CORRUPT-$o`) so the transcript's
+///    own echo of the command can never match the test's waits;
 /// 2. the drift note names the flags the guard cleared;
 /// 3. after the turn settles, a typed message + Ctrl+S (0x13) steers as
 ///    an idle wake turn — proving the byte reached fa post-corruption
@@ -54,14 +56,24 @@ allowedTools: []
       // Turn 1: corrupt the tty exactly like a real child would (a pager,
       // ssh, or a curses app restoring its saved termios on exit). The
       // command is FAST — it completes before the tool's yield grace, so
-      // the guard's after-tool probe lands strictly after it. The echo is
-      // the corruption's own receipt (and the diagnostic if the CI shell
-      // runs without a controlling terminal). Turn 2 settles the run.
-      // Turn 3 answers the idle-steer wake.
+      // the guard's after-tool probe lands strictly after it.
+      // The bash tool runs foreground commands as shell jobs, and on Linux
+      // jobs start under `setsid` (issue #517 group-kill semantics) — the
+      // child has NO controlling terminal, so `< /dev/tty` fails there
+      // while working on setsid-less macOS. A real misbehaving child can
+      // find the session tty through the process tree, so the corruptor
+      // does exactly that; the receipt is written to that tty (NOT stdout,
+      // which the job log captures) so it lands in the PTY stream.
+      // Receipt tokens are BUILT at runtime (`CORRUPT-$o`) — the literal
+      // text must never appear inside the command string, because the TUI
+      // echoes the command into the transcript and `rawOutput` contains
+      // that echo: a literal token would self-confirm the wait and
+      // self-trip the failure guard before the child even ran.
       server.enqueueToolCall(
         'bash',
-        '{"command": "stty ixon ixany < /dev/tty && echo CORRUPT-OK '
-            '|| echo CORRUPT-FAIL"}',
+        '{"command": "o=OK; f=FAIL; t=/dev/\$(ps -o tty= -p \$PPID | xargs); '
+            'if stty ixon ixany < \$t; then echo CORRUPT-\$o > \$t; '
+            'else echo CORRUPT-\$f > \$t; fi"}',
       );
       server.enqueueText('TURN-SETTLED');
       server.enqueueText('IDLE-STEER-ACK');
@@ -85,8 +97,9 @@ allowedTools: []
 
       await harness.runSlashCommand('run the tool please');
       // The corruption's own receipt — and a fail-fast diagnostic: if the
-      // CI job runs without a controlling terminal, CORRUPT-FAIL names
-      // the environment gap instead of leaving a mystery timeout.
+      // corrupting child cannot reach the session tty (e.g. no tty in the
+      // process tree), CORRUPT-FAIL names the gap instead of leaving a
+      // mystery timeout on the drift note below.
       await harness.waitForText(
         'CORRUPT-OK',
         timeout: const Duration(seconds: 60),
@@ -94,8 +107,10 @@ allowedTools: []
       expect(
         harness.rawOutput.contains('CORRUPT-FAIL'),
         isFalse,
-        reason: 'the corrupting child could not open /dev/tty — the CI '
-            'shell job spawns without a controlling terminal',
+        reason:
+            'the corrupting child could not reach the session tty — '
+            'see the bash job card in rawOutput for the child\'s stty '
+            'error',
       );
 
       // Observability contract: the guard names the drift it cleared

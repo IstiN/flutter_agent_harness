@@ -32,7 +32,17 @@ typedef SttyRunner = Future<ProcessResult> Function(List<String> args);
 /// The input-flag family fa keeps cleared for the TUI's lifetime.
 /// `-ixany` is belt-and-braces: with IXANY the kernel resumes stopped
 /// output on ANY byte — the issue's "pressed ↑ and it let go" signature.
-const kTermiosClearArgs = ['-ixon', '-ixoff', '-icrnl', '-discard', '-ixany'];
+/// VDISCARD is a control CHARACTER, not a toggle: `stty -discard` is an
+/// illegal option on every platform (the whole family silently no-oped —
+/// the true #735 root cause), the cross-platform unbind is `discard ^-`.
+const kTermiosClearArgs = [
+  '-ixon',
+  '-ixoff',
+  '-icrnl',
+  'discard',
+  '^-',
+  '-ixany',
+];
 
 /// Toggle flags parsed from `stty -a` for drift detection. `discard` is
 /// deliberately absent: in `stty -a` output it is a CONTROL CHARACTER

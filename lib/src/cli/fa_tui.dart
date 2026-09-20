@@ -2678,10 +2678,15 @@ final class FaTuiController {
         '-icrnl',
         // VDISCARD (Ctrl+O toggles output discard): when the host left it
         // enabled the kernel EATS every \x0f before fa reads it — the
-        // Ctrl+O newline fallback (issue #77 AC5) goes silent. Clear it
-        // alongside ICRNL so the whole wire matrix survives default-termios
-        // hosts (ubuntu runner images ship discard on; macOS varies).
-        '-discard',
+        // Ctrl+O newline fallback (issue #77 AC5) goes silent. UNBIND the
+        // control character (issue #735: `-discard` is an illegal OPTION —
+        // VDISCARD is a control char, not a toggle — and its rc=1 made the
+        // whole sanitize silently return null); `discard ^-` is the
+        // cross-platform disable form. Clear it alongside ICRNL so the
+        // whole wire matrix survives default-termios hosts (ubuntu runner
+        // images ship discard on; macOS varies).
+        'discard',
+        '^-',
         // Belt-and-braces (issue #735): with IXANY the kernel resumes
         // stopped output on ANY byte — the "pressed ↑ and it let go"
         // signature of a mid-session IXON regression.

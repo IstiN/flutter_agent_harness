@@ -180,7 +180,7 @@ void main() {
           tty.events,
           containsAllInOrder([
             'child:stty-ixon-ixany',
-            'stty:-ixon -ixoff -icrnl -discard -ixany',
+            'stty:-ixon -ixoff -icrnl discard ^- -ixany',
           ]),
         );
         await waitForIt(

@@ -2308,7 +2308,8 @@ void main() {
         '-ixon',
         '-ixoff',
         '-icrnl',
-        '-discard',
+        'discard',
+        '^-',
         // Belt-and-braces IXANY clear (issue #735): any-key resume is the
         // tell-tale of a mid-session IXON regression.
         '-ixany',
