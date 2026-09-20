@@ -992,7 +992,7 @@ Widget _authExpiredCard(
   FaAuthRecoveryCallback? onAuthorize,
 ) {
   final theme = Theme.of(context);
-  final displayText = _authExpiredDisplayText(content);
+  final displayText = authExpiredDisplayText(content);
   return Container(
     margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
     padding: const EdgeInsets.all(16),
@@ -1077,11 +1077,12 @@ Widget _authExpiredCard(
   );
 }
 
-/// The auth-expired card's body: the raw provider error minus the
-/// `[[auth-expired:…]]` marker and any `(CLI: …)` recovery hint. The CLI
-/// instruction is dead text on app hosts (mobile/desktop/overlay), where
-/// the card's own Authorize button is the actionable path.
-String _authExpiredDisplayText(String content) {
+/// The auth-expired surface body (card AND the chat's error banner,
+/// issue #692): the raw provider error minus the `[[auth-expired:…]]`
+/// marker and any `(CLI: …)` recovery hint. The CLI instruction is dead
+/// text on app hosts (mobile/desktop/overlay), where the surface's own
+/// Authorize button is the actionable path.
+String authExpiredDisplayText(String content) {
   var text = stripAuthExpiredMarker(content);
   text = text.replaceAll(RegExp(r'\s*\(CLI:[^)]*\)'), '');
   return text.trim();

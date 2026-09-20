@@ -76,6 +76,69 @@ void main() {
       const json = '{"a":1,"b":2}';
       expect(formatAppStateContext(json, budget: 5), contains('folded'));
     });
+
+    test('the fold budgets the note it actually emits — omission suffix '
+        'included (review fix)', () {
+      // Around the fold boundary the fit check must account for the
+      // note that is ACTUALLY emitted: with keys omitted it carries the
+      // ", N key(s) omitted for the budget" suffix (~33 B). Checking a
+      // suffix-less stand-in let the emitted fold overflow the budget.
+      // The sweep starts above the ~200-B floor where the fold note
+      // alone still fits — below it the announcement (never silent)
+      // IS the whole output.
+      final json = jsonEncode({
+        'alpha': 'x' * 80,
+        'beta': 'y' * 80,
+        'gamma': 'z' * 80,
+      });
+      for (var budget = 205; budget < 340; budget++) {
+        final folded = formatAppStateContext(json, budget: budget);
+        expect(
+          utf8len(folded),
+          lessThanOrEqualTo(budget),
+          reason:
+              'budget $budget overflowed: ${utf8len(folded)} bytes:\n'
+              '$folded',
+        );
+      }
+    });
+
+    test('a partial fold says how many keys are shown', () {
+      final json = jsonEncode({
+        'alpha': 'x' * 100,
+        'beta': 'y' * 100,
+        'gamma': 'z' * 100,
+      });
+      // A budget that fits the first key line + suffix note but not all
+      // three: the note must count what is shown.
+      final folded = formatAppStateContext(json, budget: 320);
+      expect(utf8len(folded), lessThanOrEqualTo(320));
+      expect(folded, contains('alpha'));
+      expect(folded, contains('top-level keys shown'));
+      expect(folded, contains('of 3'));
+      expect(folded, contains('key(s) omitted'));
+    });
+
+    test('a single-key state folds to that key with no omission clause', () {
+      final json = jsonEncode({'only': 'v' * 9000});
+      final folded = formatAppStateContext(json);
+      expect(utf8len(folded), lessThanOrEqualTo(appStateContextMaxBytes));
+      // The one top-level key IS shown, so the "keys shown" claim is
+      // truthful and nothing is listed as omitted.
+      expect(folded, contains('only'));
+      expect(folded, contains('top-level keys shown'));
+      expect(folded, isNot(contains('omitted')));
+    });
+
+    test('a fold where not even the first key fits claims no keys shown', () {
+      // With a budget too small for ANY key line, zero keys are listed —
+      // the note wording must not claim "top-level keys shown" then.
+      final json = jsonEncode({'first': 'a' * 150, 'second': 'b' * 150});
+      final folded = formatAppStateContext(json, budget: 220);
+      expect(folded, isNot(contains('keys shown')));
+      expect(folded, contains('no top-level key fits'));
+      expect(folded, contains('key(s) omitted'));
+    });
   });
 
   group('viewportContextLine (issue #692 C)', () {

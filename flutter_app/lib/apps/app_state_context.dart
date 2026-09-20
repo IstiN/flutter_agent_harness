@@ -56,16 +56,33 @@ String formatAppStateContext(
   final entries = decoded.entries.toList();
   final buffer = StringBuffer();
   // The fold note (announced, never silent); the per-key omission count
-  // fills in after the loop.
-  String noteFor(int skipped) =>
-      '(app state folded: full JSON is $bytes bytes over the '
-      '$budget-byte budget — top-level keys shown'
-      '${skipped > 0 ? ', $skipped key(s) omitted for the budget' : ''}; '
-      'ask the user or read the app storage for full values)';
+  // fills in after the loop. The wording stays truthful when not even
+  // the first key fits (zero keys listed — the note must not claim keys
+  // are shown then).
+  String noteFor(int skipped) {
+    final shown = entries.length - skipped;
+    final keysClause = shown == 0
+        ? 'no top-level key fits the remaining budget'
+        : 'top-level keys shown'
+              '${skipped > 0 ? ' ($shown of ${entries.length})' : ''}';
+    return '(app state folded: full JSON is $bytes bytes over the '
+        '$budget-byte budget — $keysClause'
+        '${skipped > 0 ? ', $skipped key(s) omitted for the budget' : ''}; '
+        'ask the user or read the app storage for full values)';
+  }
+
   var skipped = 0;
   for (var i = 0; i < entries.length; i++) {
     final line = '  ${entries[i].key}: ${_describe(entries[i].value)}';
-    if (utf8.encode('$buffer$line\n${noteFor(0)}').length > budget) {
+    // Budget the note that would ACTUALLY be emitted if the fold stops
+    // here: no omission suffix on the very last key (nothing after it to
+    // omit), the suffix included otherwise. Checking the suffix-less
+    // noteFor(0) stand-in let the emitted note overflow the budget by
+    // the suffix length (~33 B).
+    final noteOnBreak = noteFor(
+      i == entries.length - 1 ? 0 : entries.length - i,
+    );
+    if (utf8.encode('$buffer$line\n$noteOnBreak').length > budget) {
       skipped = entries.length - i;
       break;
     }
