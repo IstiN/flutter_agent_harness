@@ -18,14 +18,11 @@ import 'package:test/test.dart';
 /// Simulated tty: a set of enabled flags plus a log of every stty argv.
 /// Models the machine a child corrupts (`stty ixon ixany < /dev/tty`).
 class _FakeTty {
-  _FakeTty({
-    this.enabled = const {},
-    this.failAll = false,
-    this.failProbe = false,
-  });
+  _FakeTty({this.failAll = false, this.failProbe = false});
 
   /// Flags currently ON (bare names); everything else reads as `-flag`.
-  Set<String> enabled;
+  /// Starts cleared (the post-boot state); tests corrupt it in place.
+  var enabled = <String>{};
 
   /// When set, every runner call throws like a missing stty binary.
   bool failAll;
