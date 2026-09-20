@@ -141,8 +141,51 @@ final class GemmaService implements GemmaEngineApi {
   Future<void> loadModel(GemmaModelPreset preset) async {
     _requireAvailable();
     await _ensureInitialized();
-    if (_loadedPreset?.id == preset.id && _model != null) return;
-    if (kIsWeb) {
+    final previous = _model;
+    final model = await runModelLoad(
+      preset: preset,
+      isWeb: kIsWeb,
+      loadedPresetId: _loadedPreset?.id,
+      loadedModel: previous,
+      webReinstall: installModel,
+      clearLoadedState: () {
+        _model = null;
+        _loadedPreset = null;
+      },
+      closeLoadedModel: () => previous!.close(),
+      activate: (p) => FlutterGemma.getActiveModel(
+        maxTokens: p.contextWindow,
+        preferredBackend: PreferredBackend.gpu,
+      ),
+      emit: _progress.add,
+    );
+    if (model == null) return;
+    _model = model;
+    _loadedPreset = preset;
+  }
+
+  /// The [loadModel] decision flow with every plugin touch-point injected,
+  /// so host tests can drive the real branching without the native LiteRT
+  /// engine (issue #702): the idempotent skip, the web re-registration,
+  /// closing the previous engine, the progress pulse, and the activation.
+  ///
+  /// Returns the activated model for the caller to commit, or null when
+  /// [loadedPresetId] already matches [preset] and that model is live —
+  /// the caller keeps its current state in that case.
+  @visibleForTesting
+  static Future<InferenceModel?> runModelLoad({
+    required GemmaModelPreset preset,
+    required bool isWeb,
+    required String? loadedPresetId,
+    required InferenceModel? loadedModel,
+    required Future<void> Function(GemmaModelPreset preset) webReinstall,
+    required void Function() clearLoadedState,
+    required Future<void> Function() closeLoadedModel,
+    required Future<InferenceModel> Function(GemmaModelPreset preset) activate,
+    required void Function(GemmaProgress event) emit,
+  }) async {
+    if (loadedPresetId == preset.id && loadedModel != null) return null;
+    if (isWeb) {
       // The plugin's web URL registry is in-memory: after a page reload the
       // `opfs://` registration is gone and `getActiveModel` would fall back
       // to the raw https URL, making the engine re-download the weights.
@@ -150,18 +193,12 @@ final class GemmaService implements GemmaEngineApi {
       // browser's cache (no download, no token needed) and re-marks the
       // model active. On mobile the active identity + files survive a
       // restart natively, so this stays web-only.
-      await installModel(preset);
+      await webReinstall(preset);
     }
-    final previous = _model;
-    _model = null;
-    _loadedPreset = null;
-    if (previous != null) await previous.close();
-    _progress.add(const GemmaProgress(text: 'Loading model into memory…'));
-    _model = await FlutterGemma.getActiveModel(
-      maxTokens: preset.contextWindow,
-      preferredBackend: PreferredBackend.gpu,
-    );
-    _loadedPreset = preset;
+    clearLoadedState();
+    if (loadedModel != null) await closeLoadedModel();
+    emit(const GemmaProgress(text: 'Loading model into memory…'));
+    return activate(preset);
   }
 
   @override
