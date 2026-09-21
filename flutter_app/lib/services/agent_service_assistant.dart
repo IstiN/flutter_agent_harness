@@ -52,10 +52,26 @@ extension AgentServiceAssistant on AgentService {
       }
     }
     final target = _currentAssistantMessage;
+    // Issue #692 F — content-or-error invariant: an assistant row with no
+    // visible content and no error state must be structurally impossible.
+    // Tool-call-only rounds (the row would be an invisible bubble between
+    // tool tiles) and error/aborted stops (the error tile below IS the
+    // visible answer) add NO assistant row at all.
+    final skipAssistantRow =
+        text.trim().isEmpty &&
+        (hasToolCalls ||
+            message.stopReason == StopReason.error ||
+            message.stopReason == StopReason.aborted);
     if (target == null) {
-      messages.add(FahChatMessage(role: 'assistant', content: text));
-    } else {
+      if (!skipAssistantRow) {
+        messages.add(FahChatMessage(role: 'assistant', content: text));
+      }
+    } else if (text.trim().isNotEmpty) {
       target.content = text;
+    } else if (target.content.trim().isEmpty) {
+      // Defensive: a streamed-but-empty target (empty deltas, aborted
+      // run) must not linger as an invisible bubble either.
+      messages.remove(target);
     }
     _currentAssistantMessage = null;
     final thinkingTarget = _currentThinkingMessage;

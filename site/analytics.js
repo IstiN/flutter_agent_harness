@@ -16,6 +16,7 @@
     try {
       var url = new URL(href, window.location.origin);
       var h = url.hostname;
+      if (h === 'apps.apple.com') return 'appstore_click';
       if (h === 'testflight.apple.com') return 'testflight_click';
       if (h === 'github.com' && url.pathname.indexOf('/IstiN') === 0) return 'github_click';
       if (h === 'pub.dev') return 'pubdev_click';
@@ -39,7 +40,20 @@
     var href = el.getAttribute('href') || '';
     var named = linkEvent(href);
     if (named) {
-      track(named, { location: el.className || 'link' });
+      // Store-referral funnel (issue #691): store badge/link taps fire
+      // appstore_click / testflight_click split by the new `placement`
+      // dimension (appstore/testflight/play), added only when the badge
+      // carries data-store-referral. `location` keeps its original
+      // element-className semantics — existing GA4 reports segmented by
+      // location stay continuous across this deploy. The counts view is
+      // the GA4 Events report on appstore_click / testflight_click
+      // split by placement + timestamp; the native app reports
+      // store_referral with platform + target params into the same
+      // property, so site vs app splits join in one place.
+      track(named, {
+        location: el.className || 'link',
+        placement: el.getAttribute('data-store-referral') || undefined,
+      });
       return;
     }
     // The web demo full-screen links (frame bar + install card).

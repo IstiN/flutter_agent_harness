@@ -5,13 +5,13 @@
 module.exports = {
   // #687: whose login is "the machine" — see dmtools-agents
   // js/common/machineAuthor.js (jobParams override wins over this).
-  machineAuthor: 'vabhzw17eg2qu4m9-bit',
+  machineAuthor: 'ai-teammate',
   sm: {
     runners: {
       bug: '.dmtools/runners/fa-bug-dev.json',
       story: '.dmtools/runners/fa-story-dev.json',
-      review: '.dmtools/runners/fa-review-kimi.json',
-      rework: '.dmtools/runners/fa-rework-zai.json'
+      review: '.dmtools/runners/fa-review.json',
+      rework: '.dmtools/runners/fa-rework.json'
     }
   }
 };

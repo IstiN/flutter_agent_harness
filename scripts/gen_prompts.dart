@@ -114,6 +114,11 @@ const rootSpecs = <PromptSpec>[
     requiredToken: '{{cwd}}',
   ),
   PromptSpec(
+    source: 'prompts/cli/mode_pi.md',
+    constName: 'cliPiModePrompt',
+    requiredToken: '{{cwd}}',
+  ),
+  PromptSpec(
     source: 'prompts/cli/messaging_section.md',
     constName: 'cliMessagingSectionPrompt',
     requiredToken: '{{mailbox}}',

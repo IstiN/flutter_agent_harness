@@ -152,7 +152,7 @@ resolve_scope() {
         case "$g" in
           all) add_stages "$ALL_STAGES"; APP_IN_SCOPE=1 ;;
           core) add_stages "size analyze test-core coverage crap dup dupx" ;;
-          core) add_stages "size analyze test-core coverage crap dup dupx" ;;
+          app) add_stages "size analyze dup dupx flutter"; APP_IN_SCOPE=1 ;;
           integ) add_stages "size analyze test-core coverage crap dup dupx integration-mock" ;;
           docs) add_stages "size analyze" ;;
         esac

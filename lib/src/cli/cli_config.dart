@@ -29,8 +29,10 @@ import '../agent/image_registry.dart';
 import '../power_config.dart';
 import '../ttsr/ttsr.dart';
 import '../tools/availability.dart';
+import '../tools/load_modes.dart';
 import 'custom_providers.dart';
 import '../task/subagent_heartbeat.dart';
+import 'links_config.dart';
 
 /// Parses the `providerTimeouts:` section: provider watchdog overrides
 /// (see [ProviderTimeoutsOverride]). Strict — a bad schema throws
@@ -64,16 +66,6 @@ ProviderTimeoutsOverride? parseProviderTimeouts(Object? node) {
   return ProviderTimeoutsOverride(connect: connect, streamIdle: streamIdle);
 }
 
-/// Parses the `agent:` section (issue #273): `contextWindowCap` — the
-/// owner-side effective context cap. The cap clamps the EFFECTIVE context
-/// window everywhere it is consumed (compaction thresholds, the ctx
-/// meter/footer, the loop's over-window guard) while the model keeps its
-/// real window. Strict like every section: a bad schema throws
-/// [ConfigException] at boot.
-///
-/// The cap must stay at or above the compaction reserve (16384 tokens):
-/// the compaction trigger is `window - reserve`, and a smaller cap would
-/// drive that threshold negative.
 /// Parses the `trajectory:` section (issue #385): today only the
 /// `wireDump` boolean. Unknown keys are strict errors (a typo must never
 /// silently skip the opt-in).
@@ -96,32 +88,76 @@ bool _parseTrajectorySection(Object? node) {
   return wireDump;
 }
 
-int? _parseAgentSection(Object? node) {
+/// Validates one `agent.mode` value (issues #679/#680): the shared rule
+/// lives in [agentLoadModeValidationError] (load_modes.dart) — this
+/// parser and the settings validator (config_service.dart) throw its
+/// text as a ConfigException, so the two cannot drift. The label set is
+/// `default|pi|omp` (issue #680 owns the taxonomy; issue #679 owns pi's
+/// behavior). `default` normalizes to null so an absent and an
+/// explicit-off mode are indistinguishable downstream.
+String? _parseAgentModeValue(Object? value) {
+  final error = agentLoadModeValidationError(value);
+  if (error != null) throw ConfigException(error);
+  // The default needs no storage: absent == default keeps the written
+  // file minimal (the file's "defaults never written" rule).
+  return value == 'default' ? null : value as String;
+}
+
+/// Parses the `agent:` section (issues #273/#679/#680):
+/// `contextWindowCap` — the owner-side effective context cap — and
+/// `mode` — the `default|pi|omp` preset label. The cap clamps the
+/// EFFECTIVE context window everywhere it is consumed (compaction
+/// thresholds, the ctx meter/footer, the loop's over-window guard) while
+/// the model keeps its real window. Strict like every section: a bad
+/// schema throws [ConfigException] at boot.
+///
+/// The cap must stay at or above the compaction reserve (16384 tokens):
+/// the compaction trigger is `window - reserve`, and a smaller cap would
+/// drive that threshold negative.
+///
+/// The label lands on [CliConfig.agentLoadMode] verbatim (the boot
+/// re-resolves it against `--omp`/`FA_AGENT_MODE`) and, when it is
+/// `pi`, also on [CliConfig.agentMode] — the harness-behavior tier
+/// (issue #679: bare prompt, 4-tool sweep, boot print) the executable
+/// re-resolves through its flag > env > config ladder. `omp` carries no
+/// harness behavior, so it never reaches that ladder.
+({int? contextWindowCap, String? mode, String? agentMode})? _parseAgentSection(
+  Object? node,
+) {
   if (node == null) return null;
   if (node is! YamlMap) {
     throw ConfigException('agent must be a map, got: $node');
   }
   int? cap;
+  String? mode;
   for (final key in node.keys) {
-    if (key != 'contextWindowCap') {
-      throw ConfigException('unknown "agent" key: $key');
+    switch (key) {
+      case 'contextWindowCap':
+        final value = node[key];
+        if (value is! int || value <= 0) {
+          throw ConfigException(
+            '"agent.contextWindowCap" must be a positive integer (tokens)',
+          );
+        }
+        if (value < 16384) {
+          throw ConfigException(
+            '"agent.contextWindowCap" must be at least 16384 — below the '
+            'compaction reserve the compaction trigger threshold would go '
+            'negative',
+          );
+        }
+        cap = value;
+      case 'mode':
+        mode = _parseAgentModeValue(node[key]);
+      default:
+        throw ConfigException('unknown "agent" key: $key');
     }
-    final value = node[key];
-    if (value is! int || value <= 0) {
-      throw ConfigException(
-        '"agent.contextWindowCap" must be a positive integer (tokens)',
-      );
-    }
-    if (value < 16384) {
-      throw ConfigException(
-        '"agent.contextWindowCap" must be at least 16384 — below the '
-        'compaction reserve the compaction trigger threshold would go '
-        'negative',
-      );
-    }
-    cap = value;
   }
-  return cap;
+  return (
+    contextWindowCap: cap,
+    mode: mode,
+    agentMode: mode == 'pi' ? 'pi' : null,
+  );
 }
 
 /// Whether a raw `customProviders:` list node is a ghost entry named
@@ -188,6 +224,8 @@ final class CliConfig {
     this.promptOverrides = const {},
     this.modelRoles,
     this.ttsr,
+    this.contextWindowCap,
+    this.agentLoadMode,
     this.customProviders = const [],
     this.models,
     this.mcp,
@@ -205,13 +243,14 @@ final class CliConfig {
     this.compactionJudgeBudgetSeconds,
     this.wireDump = false,
     this.images,
-    this.contextWindowCap,
+    this.agentMode,
     this.subagents = const SubagentsConfig(),
     this.waiting = const WaitingConfig(),
     this.jobs = const JobsConfig(),
     this.powerSleepPrevention,
     this.powerHold,
     this.tuiTheme,
+    this.links = const LinksConfig(),
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
@@ -219,6 +258,7 @@ final class CliConfig {
     // The power section (sleep-prevention level + hold lifecycle) is
     // parsed once, strictly (issues #325/#326).
     final powerSection = parsePowerSection(map['power']);
+    final agentSection = _parseAgentSection(map['agent']);
     return CliConfig(
       providerKind: map['provider'] as String? ?? 'openai-completions',
       modelId: map['model'] as String? ?? 'openai/gpt-4o-mini',
@@ -261,7 +301,9 @@ final class CliConfig {
           : RedactionConfig.fromYaml(map['redact']),
       // The spills section (issue #678); tolerant by design — unknown
       // keys and mistyped scalars become notes, never boot failures.
-      spills: map['spills'] == null ? null : SpillsConfig.fromYaml(map['spills']),
+      spills: map['spills'] == null
+          ? null
+          : SpillsConfig.fromYaml(map['spills']),
       // Saved custom providers; entry-level errors throw [ConfigException].
       // Entries named after a built-in catalog provider are dropped (issue
       // #221's ghost "openai"): they shadow `/provider <name>` routing and
@@ -299,7 +341,7 @@ final class CliConfig {
       // The compaction section (engine selector, issue #148; judge
       // budget knob, issue #541) is strict: a typo throws instead of
       // silently running the classic engine or restoring the default
-      // 90s budget.
+      // 300s budget.
       compactionEngine: CompactionEngine.fromSection(
         map['compaction'],
         label: '~/.fah/config.yaml',
@@ -316,9 +358,11 @@ final class CliConfig {
       images: parseImagesSection(map['images']),
       powerSleepPrevention: powerSection.sleepPrevention,
       powerHold: powerSection.hold,
-      // The agent section (owner-side context cap, issue #273) is strict
-      // too.
-      contextWindowCap: _parseAgentSection(map['agent']),
+      // The agent section (owner-side context cap + mode, issues
+      // #273/#679/#680) is strict too.
+      contextWindowCap: agentSection?.contextWindowCap,
+      agentMode: agentSection?.agentMode,
+      agentLoadMode: agentSection?.mode,
       // The subagents section (background-subagent heartbeat, issue #383)
       subagents: SubagentsConfig.fromYaml(map['subagents']),
       waiting: WaitingConfig.fromYaml(map['waiting']),
@@ -328,6 +372,11 @@ final class CliConfig {
       fabric: map['fabric'] == null
           ? null
           : FabricConfig.fromYaml(map['fabric']),
+      // The links section (issue #691) is strict on shape, tolerant on
+      // unknown keys (notes, never boot failures — AC7).
+      links: map['links'] == null
+          ? const LinksConfig()
+          : LinksConfig.fromYaml(map['links']),
       // The skills section (third-party skills access consent + shell
       // execution toggle) is strict too.
       skillsAccess:
@@ -469,8 +518,12 @@ final class CliConfig {
 
   /// Optional `compaction.judgeBudgetSeconds` (issue #541) — the
   /// per-call judge/summarizer budget in seconds. `null` keeps the
-  /// 90s default; the knob exists so owners of giant marathon sessions
-  /// can give a slow judge room without touching code.
+  /// 300s default; the knob exists so owners of giant marathon sessions
+  /// can give a slow judge room without touching code. NOTE: the knob
+  /// scales only the per-attempt budget — the whole-run `totalBudget`
+  /// (default 15 min) is NOT scaled, so values above 300s shorten the
+  /// retry ladder (the total is exhausted after fewer full-timeout
+  /// attempts).
   final int? compactionJudgeBudgetSeconds;
 
   /// Optional `trajectory:` section (issue #385) — `wireDump: true` opts
@@ -500,6 +553,17 @@ final class CliConfig {
   /// everywhere it is consumed (compaction thresholds, ctx meter/footer,
   /// the loop guard). `null` = uncapped (the raw model window).
   final int? contextWindowCap;
+
+  /// The parsed harness mode preset (`agent.mode`, issue #679): `'pi'` or
+  /// null (absent or explicit `default`). Resolved against the flag/env
+  /// tiers by the executable via `resolveHarnessMode`.
+  final String? agentMode;
+
+  /// Tool-load preset from `agent.mode` (`default|pi|omp`, issue #680):
+  /// the curated essential set that boots into the schema; everything
+  /// else stays discoverable. `null` = default mode (no preset,
+  /// byte-identical behavior).
+  final String? agentLoadMode;
 
   /// The `waiting:` section (issue #450): visible-waiting heartbeat
   /// cadence (`waitHeartbeatMinutes`, 0 = off) and the `--wait-for-jobs`
@@ -534,6 +598,11 @@ final class CliConfig {
   /// theme; an unknown name warns at boot and keeps the default.
   final String? tuiTheme;
 
+  /// The `links:` section (issue #691): the single source of truth for
+  /// product/store links — the app banners, the CLI (`fa config get
+  /// links.…`) and the site generator all resolve the same values.
+  final LinksConfig links;
+
   /// Returns a copy with [entries] as the custom-providers list; every
   /// other field carries over. [saveCliConfig] uses it for its
   /// merge-before-write union (issue #221) — keep this field list in sync
@@ -566,9 +635,11 @@ final class CliConfig {
       wireDump: wireDump,
       images: images,
       contextWindowCap: contextWindowCap,
+      agentLoadMode: agentLoadMode,
       powerSleepPrevention: powerSleepPrevention,
       powerHold: powerHold,
       tuiTheme: tuiTheme,
+      links: links,
     );
   }
 
@@ -632,9 +703,7 @@ final class CliConfig {
     buffer.write(_compactionYaml());
     if (wireDump) buffer.write('trajectory:\n  wireDump: true\n');
     if (images != null) buffer.write(_imagesYaml());
-    if (contextWindowCap != null) {
-      buffer.write('agent:\n  contextWindowCap: $contextWindowCap\n');
-    }
+    buffer.write(_agentSectionYaml());
     // The subagents heartbeat section (issue #383), only when explicitly
     // configured; defaults are never written so the file stays minimal.
     final subagentsConfig = subagents;
@@ -643,8 +712,31 @@ final class CliConfig {
       buffer.write(subagentsConfig.toYaml());
     }
     buffer.write(_jobsYaml());
+    buffer.write(_linksYaml());
     buffer.write(_powerYaml());
     return buffer.toString();
+  }
+
+  /// The `agent:` section, only when a cap or a load mode is persisted;
+  /// defaults are never written so the file stays minimal.
+  String _agentSectionYaml() {
+    if (contextWindowCap == null && agentLoadMode == null) return '';
+    final section = StringBuffer('agent:\n');
+    if (contextWindowCap != null) {
+      section.write('  contextWindowCap: $contextWindowCap\n');
+    }
+    if (agentLoadMode != null) {
+      section.write('  mode: $agentLoadMode\n');
+    }
+    return section.toString();
+  }
+
+  /// The `links:` section (issue #691), only when explicitly configured;
+  /// defaults are never written so the file stays minimal.
+  String _linksYaml() {
+    final linksConfig = links;
+    if (linksConfig.isDefault) return '';
+    return linksConfig.toYaml();
   }
 
   /// The `jobs:` boot-maintenance section (issue #478), only when
@@ -1118,6 +1210,10 @@ const _diskPreservedSections = {
   'images',
   'fabric',
   'mcp',
+  // The links section (issue #691) defaults are baked in, so the emitter
+  // omits a default-valued section — the raw block (future keys the
+  // typed renderer does not know yet) survives untouched.
+  'links',
 };
 
 /// Re-attaches the [_diskPreservedSections] blocks of [diskText] to

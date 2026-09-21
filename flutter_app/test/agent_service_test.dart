@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show MethodChannel;
+import 'package:fa/prompts.g.dart';
+import 'package:fa/sandbox/sandbox_registry.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:fa/sandbox/memory_shell.dart';
@@ -565,11 +567,14 @@ void main() {
       await service.sendText('boom');
       await service.waitForIdle();
 
-      // Exactly one failed assistant turn (no duplicated failure events),
-      // the banner carries the provider's message, and the run state has
-      // settled so the composer is unblocked.
+      // Exactly one failed turn (no duplicated failure events): with the
+      // issue #692 F invariant the error records NO assistant row — the
+      // error tile is the visible record — the banner carries the
+      // provider's message, and the run state has settled so the composer
+      // is unblocked.
+      expect(service.messages.where((m) => m.role == 'assistant'), isEmpty);
       expect(
-        service.messages.where((m) => m.role == 'assistant'),
+        service.messages.where((m) => m.isError && m.toolName == 'error'),
         hasLength(1),
       );
       expect(service.error, contains('400: bad request'));
@@ -969,10 +974,12 @@ void main() {
       // content. A blank answer after the tool turn is retried ONCE by the
       // loop (degenerate-empty retry), so the transcript carries the tool
       // call plus BOTH blank attempts, each rendered as the placeholder.
+      // The tool-call round itself records NO assistant row (issue #692 F:
+      // a row with no content and no error state is impossible).
       final assistantMessages = service.messages
           .where((m) => m.role == 'assistant')
           .toList();
-      expect(assistantMessages, hasLength(3));
+      expect(assistantMessages, hasLength(2));
       expect(
         assistantMessages.where((m) => m.content == emptyResponsePlaceholder),
         hasLength(2),
@@ -1568,10 +1575,10 @@ void main() {
         // Issue #461: the reference becomes a chip; the visible text is
         // just the caption.
         expect(service.messages[0].content, 'summarize it');
-        expect(
-          service.messages[0].attachments.single,
-          (bytes: null, path: 'uploads/notes.txt'),
-        );
+        expect(service.messages[0].attachments.single, (
+          bytes: null,
+          path: 'uploads/notes.txt',
+        ));
       },
     );
 
@@ -1610,7 +1617,10 @@ void main() {
       );
       await service.waitForIdle();
 
-      expect(service.messages[0].attachments.where((a) => a.bytes != null), isNotEmpty);
+      expect(
+        service.messages[0].attachments.where((a) => a.bytes != null),
+        isNotEmpty,
+      );
       final userMessage = captured!.messages.whereType<UserMessage>().last;
       final blocks = userMessage.content as List<ContentBlock>;
       final images = blocks.whereType<ImageContent>().toList();
@@ -1763,10 +1773,10 @@ void main() {
       // Text-only on-device backends get the path, never ImageContent.
       // The record has no image bytes — the bubble renders the
       // `[image unavailable]` placeholder (issue #461 AC3).
-      expect(
-        service.messages[0].attachments.single,
-        (bytes: null, path: 'uploads/pic.png'),
-      );
+      expect(service.messages[0].attachments.single, (
+        bytes: null,
+        path: 'uploads/pic.png',
+      ));
       // No caption: the agent-facing reference is stripped and there is
       // nothing else to show.
       expect(service.messages[0].content, isEmpty);
@@ -1883,6 +1893,193 @@ void main() {
       expect(prompt, contains('time-relative reasoning'));
       final year = DateTime.now().year.toString();
       expect(prompt, contains(year));
+    });
+
+    test('sandboxed hosts append the host profile after the base prompt '
+        '(issue #692 B)', () {
+      for (final platform in [
+        SandboxPlatform.ios,
+        SandboxPlatform.android,
+        SandboxPlatform.web,
+      ]) {
+        final prompt = AgentService.effectiveSystemPromptForTest(
+          config(),
+          null,
+          platform,
+        );
+        expect(prompt, contains('## Host profile'), reason: '$platform');
+        // The profile rides AFTER the sandbox base block, before the date
+        // suffix.
+        expect(
+          prompt.indexOf('Coding workflow'),
+          lessThan(prompt.indexOf('## Host profile')),
+          reason: '$platform',
+        );
+        expect(
+          prompt.indexOf('## Host profile'),
+          lessThan(prompt.indexOf('Current date and time')),
+          reason: '$platform',
+        );
+      }
+    });
+
+    test('the desktop prompt is byte-identical to the pre-profile formula '
+        '(issue #692 AC2)', () {
+      // The exact pre-#692 desktop composition: base + date suffix, no
+      // host profile, no extra separators.
+      final commandSection = formatSandboxCommandSection(
+        SandboxPlatform.desktop,
+      );
+      final base = sandboxSystemPrompt.replaceAll(
+        '{{commands}}',
+        commandSection,
+      );
+      final now = DateTime.now();
+      final offset = now.timeZoneOffset;
+      final sign = offset.isNegative ? '-' : '+';
+      final hh = offset.inHours.abs().toString().padLeft(2, '0');
+      final mm = (offset.inMinutes.abs() % 60).toString().padLeft(2, '0');
+      final expected =
+          '$base\n\nCurrent date and time: ${now.toIso8601String()} '
+          '(local device time, UTC$sign$hh:$mm). Use this for any date- or '
+          'time-relative reasoning ("today", "tomorrow", "this week").';
+      final prompt = AgentService.effectiveSystemPromptForTest(
+        config(),
+        null,
+        SandboxPlatform.desktop,
+      );
+      // Neutralize the live timestamp (captured a hair later than the
+      // reconstruction above) — the byte-identity claim is about the rest.
+      final stamp = RegExp(
+        'Current date and time: [^(]+',
+      ).firstMatch(prompt)!.group(0)!;
+      expect(
+        prompt.replaceFirst(stamp, '<stamp>'),
+        expected.replaceFirst(
+          RegExp('Current date and time: [^(]+'),
+          '<stamp>',
+        ),
+      );
+      expect(prompt, isNot(contains('## Host profile')));
+    });
+  });
+
+  group('content-or-error invariant (issue #692 F)', () {
+    AgentTool echoTool() => AgentTool(
+      name: 'echo',
+      description: 'Echoes the input back.',
+      parameters: const {
+        'type': 'object',
+        'properties': {
+          'x': {'type': 'string'},
+        },
+        'required': ['x'],
+      },
+      execute: (arguments, cancelToken, onUpdate) async {
+        return ToolExecutionResult.text('echo: ${arguments['x']}');
+      },
+    );
+
+    // Every assistant row in the transcript must carry visible content —
+    // an empty answer with no error state is the bug the iOS trajectory
+    // showed three times (t5/t6/final): invisible bubbles the user reads
+    // as "no reply".
+    List<String> emptyAssistantContents(AgentService service) => [
+      for (final message in service.messages)
+        if (message.role == 'assistant' && message.content.trim().isEmpty)
+          message.content,
+    ];
+
+    test('a tool-call-only round leaves NO empty assistant message', () async {
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: _createAgent(
+          _toolThenText('echo: hi', 'done'),
+          tools: [echoTool()],
+        ),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      await service.initialize();
+
+      await service.sendText('run the tool');
+      await service.waitForIdle();
+
+      expect(emptyAssistantContents(service), isEmpty);
+      final assistant = service.messages
+          .where((m) => m.role == 'assistant')
+          .toList();
+      expect(assistant, hasLength(1));
+      expect(assistant.single.content, 'done');
+    });
+
+    test('an errored turn with no streamed text leaves NO empty assistant '
+        'message — the error tile is the answer', () async {
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: _createAgent(
+          _errorStream('CodeMie session expired — re-auth needed'),
+        ),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      await service.initialize();
+
+      await service.sendText('hello');
+      await service.waitForIdle();
+
+      expect(emptyAssistantContents(service), isEmpty);
+      expect(service.messages.where((m) => m.role == 'assistant'), isEmpty);
+      final errors = service.messages.where((m) => m.isError).toList();
+      expect(errors, isNotEmpty);
+      expect(errors.last.content, contains('CodeMie session expired'));
+    });
+
+    test('an aborted run leaves NO empty assistant message', () async {
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: _createAgent(_hungResponse()),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      await service.initialize();
+
+      unawaited(service.sendText('hang'));
+      for (var i = 0; i < 100 && service.messages.isEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      service.abort();
+      await service.waitForIdle();
+
+      expect(emptyAssistantContents(service), isEmpty);
+    });
+
+    test('an auth-expired error stays a VISIBLE actionable transcript row '
+        '(issue #692 A)', () async {
+      final env = MemoryExecutionEnv();
+      const message =
+          'CodeMie session expired — the endpoint answered the API call '
+          'with the SSO login page instead of the event stream. '
+          'Re-authorize to refresh the session (CLI: /provider codemie '
+          'sso). [[auth-expired:codemie]]';
+      final service = AgentService(
+        agent: _createAgent(_errorStream(message)),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      await service.initialize();
+
+      await service.sendText('как лечится цистит');
+      await service.waitForIdle();
+
+      // No invisible bubble next to the error (the iOS lie) …
+      expect(emptyAssistantContents(service), isEmpty);
+      // … and the error row itself carries the auth-expired marker the
+      // shared renderer turns into the recovery card.
+      final errors = service.messages.where((m) => m.isError).toList();
+      expect(errors, isNotEmpty);
+      expect(authExpiredProvider(errors.last.content), 'codemie');
+      expect(service.error, isNotNull);
     });
   });
 

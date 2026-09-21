@@ -53,6 +53,11 @@ List<Object?> _skillYamlDocs(String skill) {
 /// Nested key paths the skill may document → the parser source that reads
 /// them.
 const _nestedKeySources = <String, String>{
+  'links.appstore': 'lib/src/cli/links_config.dart',
+  'links.testflight': 'lib/src/cli/links_config.dart',
+  'links.play': 'lib/src/cli/links_config.dart',
+  'links.site': 'lib/src/cli/links_config.dart',
+  'links.banner': 'lib/src/cli/links_config.dart',
   'providersQueue.[]': 'lib/src/model_roles/providers_queue.dart',
   'providersQueue.[].provider_type': 'lib/src/model_roles/providers_queue.dart',
   'providersQueue.[].provider_config':
@@ -120,6 +125,7 @@ const _nestedKeySources = <String, String>{
   'roles.*.[].baseUrl': 'lib/src/model_roles/roles_config.dart',
   'roles.*.[].contextWindow': 'lib/src/model_roles/roles_config.dart',
   'roles.*.[].maxTokens': 'lib/src/model_roles/roles_config.dart',
+  'roles.*.[].thinkingLevel': 'lib/src/model_roles/roles_config.dart',
   'modelOverrides.[].path': 'lib/src/model_roles/roles_config.dart',
   'modelOverrides.[].roles': 'lib/src/model_roles/roles_config.dart',
   'modelOverrides.[].roles.*': 'lib/src/model_roles/roles_config.dart',
@@ -133,6 +139,8 @@ const _nestedKeySources = <String, String>{
   'modelOverrides.[].roles.*.[].contextWindow':
       'lib/src/model_roles/roles_config.dart',
   'modelOverrides.[].roles.*.[].maxTokens':
+      'lib/src/model_roles/roles_config.dart',
+  'modelOverrides.[].roles.*.[].thinkingLevel':
       'lib/src/model_roles/roles_config.dart',
   'customProviders.[].name': 'lib/src/cli/custom_providers.dart',
   'customProviders.[].apiType': 'lib/src/cli/custom_providers.dart',

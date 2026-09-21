@@ -31,6 +31,10 @@ final class ToolAvailabilityGate {
   /// Prefix of dynamic MCP family ids (`mcp:<server>`).
   static const _mcpFamilyPrefix = 'mcp:';
 
+  /// Discoverable ids (issue #680) mounted this session by the
+  /// `discover_tools` meta tool. Session-scoped by design (no GC —
+  /// the card's non-goal); re-applying a resolution never clears it.
+  final _mounted = <String>{};
   final Map<String, List<AgentTool>> _toolsById;
   final _namesById = <String, Set<String>>{};
   final _idByName = <String, String>{};
@@ -50,6 +54,16 @@ final class ToolAvailabilityGate {
   /// The last resolution passed to [apply]; `null` before the first apply.
   ToolAvailabilityResolution? get resolution => _resolution;
 
+  /// Whether the `discover_tools` discovery surface is live for the
+  /// current boot ([discoveryEnabledByLoadMode]: omp only — pi keeps
+  /// pi-mono's exact benchmark shape with discovery off, issue #679).
+  /// The wiring sets it with the load mode (so a mid-session /settings
+  /// switch updates it): the discoverable tombstone may point at
+  /// `discover_tools` only while the tool is actually registered —
+  /// otherwise it points at the load-mode switch instead of dead-ending
+  /// on a tool the mode never shipped (issue #680 review).
+  bool discoveryEnabled = false;
+
   /// Names of all currently disabled tools: the static tools of disabled
   /// ids plus dynamically noted ([noteHiddenNames]) names of disabled
   /// families. Empty before the first apply.
@@ -60,6 +74,66 @@ final class ToolAvailabilityGate {
       for (final MapEntry(key: id, value: names) in _namesById.entries)
         if (!_enabled(resolution, id)) ...names,
     ]..sort();
+  }
+
+  /// Whether [id] is schema-visible under [resolution] given the
+  /// session's mounts: enabled, and — when the resolution marks it
+  /// discoverable (load mode, issue #680) — mounted.
+  bool _visible(ToolAvailabilityResolution resolution, String id) =>
+      _enabled(resolution, id) &&
+      !(resolution.discoverableIds.contains(id) && !_mounted.contains(id));
+
+  /// Names of the tools currently discoverable-and-unmounted, sorted:
+  /// the `discover_tools` listing source (issue #680).
+  List<String> get discoverableToolNames {
+    final resolution = _resolution;
+    if (resolution == null) return const [];
+    return [
+      for (final id in resolution.discoverableIds)
+        if (!_mounted.contains(id)) ...?_namesById[id],
+    ]..sort();
+  }
+
+  /// One-line doc per discoverable-and-unmounted tool name, from the
+  /// original tool instances' description first line (issue #680).
+  Map<String, String> discoverableDocs() {
+    final resolution = _resolution;
+    if (resolution == null) return const {};
+    final docs = <String, String>{};
+    for (final id in resolution.discoverableIds) {
+      if (_mounted.contains(id)) continue;
+      for (final tool in _toolsById[id] ?? const <AgentTool>[]) {
+        final description = tool.description;
+        docs[tool.name] = description.contains('\n')
+            ? description.substring(0, description.indexOf('\n')).trim()
+            : description.trim();
+      }
+    }
+    return docs;
+  }
+
+  /// Mounts discoverable [ids] (unknown or already-mounted ids are
+  /// ignored) and re-applies the current resolution so the tools enter
+  /// the schema and the provider-facing prompt rebuilds (issue #680).
+  /// Returns the ids that actually mounted.
+  Set<String> mount(
+    Iterable<String> ids,
+    ToolRegistry registry,
+    Agent agent, {
+    required void Function() rebuildPrompt,
+  }) {
+    final resolution = _resolution;
+    if (resolution == null) return const {};
+    final mountedNow = <String>{};
+    for (final id in ids) {
+      if (resolution.discoverableIds.contains(id) && _mounted.add(id)) {
+        mountedNow.add(id);
+      }
+    }
+    if (mountedNow.isNotEmpty) {
+      apply(resolution, registry, agent, rebuildPrompt: rebuildPrompt);
+    }
+    return mountedNow;
   }
 
   /// Whether [id] is enabled under [resolution]: the per-id decision when
@@ -90,6 +164,36 @@ final class ToolAvailabilityGate {
     }
   }
 
+  /// Records the concrete [tools] of a dynamic family [id] (an MCP
+  /// server's live surface): the names for hiding/tombstoning exactly
+  /// like [noteHiddenNames], PLUS the instances — so a load-mode mount
+  /// (issue #680) re-registers them into the schema from [apply] and
+  /// [discoverableDocs] can document them.
+  void noteFamilyTools(String id, List<AgentTool> tools) {
+    noteHiddenNames(id, [for (final tool in tools) tool.name]);
+    // Replace, not append: the fresh list is the server's authoritative
+    // surface (names of dropped tools stay noted for tombstoning, but
+    // only live instances may ever be registered).
+    _toolsById[id] = [...tools];
+  }
+
+  /// The availability id of the tool [name] — static tools and noted
+  /// dynamic family members (`mcp:<server>`) alike, or null when
+  /// unmapped. The name→id half of what [mount] needs (issue #680): the
+  /// model mounts by NAME, the gate mounts ids.
+  String? availabilityIdOf(String name) => _idByName[name];
+
+  /// Whether the dynamic family [id] (an MCP server) is schema-visible
+  /// under the live resolution (issue #680): enabled, and — when the load
+  /// mode demoted it to discoverable — mounted. The MCP re-filter asks
+  /// this before putting a server's tools into the registry: allowed to
+  /// connect is not the same as loaded into the schema.
+  bool familyVisible(String id) {
+    final resolution = _resolution;
+    if (resolution == null) return true;
+    return _visible(resolution, id);
+  }
+
   /// Applies [resolution] to [registry] and [agent]:
   ///
   /// - enabled ids get their not-yet-registered tools registered (the
@@ -109,7 +213,7 @@ final class ToolAvailabilityGate {
   }) {
     _resolution = resolution;
     for (final MapEntry(key: id, value: names) in _namesById.entries) {
-      if (_enabled(resolution, id)) {
+      if (_visible(resolution, id)) {
         for (final tool in _toolsById[id] ?? const <AgentTool>[]) {
           if (!registry.contains(tool.name)) registry.register(tool);
         }
@@ -135,6 +239,28 @@ final class ToolAvailabilityGate {
           'Tool `${toolCall.name}` is disabled '
           '(`${_disabledReason(resolution, id)}`) — ask the user to enable '
           'it via /tools or settings.',
+        );
+      }
+      if (id != null &&
+          resolution != null &&
+          resolution.discoverableIds.contains(id) &&
+          !_mounted.contains(id)) {
+        // Discoverable tombstone (issue #680): names the discovery path
+        // instead of the plain off-reason — the tool exists, it is just
+        // not loaded in this mode. The pointer follows the live mode:
+        // `discover_tools` only while that surface is registered (omp);
+        // modes without it (pi, discovery off) point at the /settings
+        // load-mode switch and the docs instead of a dead-end tool name.
+        return ToolExecutionResult.text(
+          discoveryEnabled
+              ? 'Tool `${toolCall.name}` is discoverable and not loaded — '
+                    'call `discover_tools` to list available tools, then '
+                    'mount it by name.'
+              : 'Tool `${toolCall.name}` is discoverable and not loaded '
+                    'in this mode — this mode ships no `discover_tools` '
+                    'surface; ask the user to switch the load mode via '
+                    '/settings (agent.mode) — see docs/tool-availability.md '
+                    '§Load modes.',
         );
       }
       return inner(toolCall, cancelToken, onUpdate);

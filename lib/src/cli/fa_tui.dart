@@ -11,6 +11,7 @@ import 'package:dart_tui/dart_tui.dart' hide stripAnsi;
 import 'package:meta/meta.dart';
 
 import 'composer_overlay.dart';
+import 'termios_guard.dart' show kTermiosClearArgs;
 import 'ansi_markdown.dart';
 import 'agent_hub_tui.dart';
 import 'model_picker_table.dart' show modelPickerFooterHint;
@@ -19,6 +20,7 @@ import 'tui_editor.dart';
 import 'tui_hit_regions.dart';
 import 'tui_prompt.dart';
 import 'tui_theme.dart';
+import 'termios_guard.dart' show SttyRunner;
 import 'tui_repl.dart' show MenuItem, QueuedMessage, TuiProgramHooks, stripAnsi;
 import 'system_notice_render.dart';
 import 'tui_text_width.dart'
@@ -500,7 +502,32 @@ final class FaTuiModel extends Model {
 
   /// The visible window of menu items (start inclusive, end exclusive).
   (int, int) _menuWindow() {
-    const maxVisible = 6;
+    // Issue #706: the window must fit the glass. The classic fixed
+    // 6-row window plus its title/hint/footer chrome could exceed a
+    // short terminal; the frame then overran and the hard glass guard
+    // cropped the menu's TOP — the title and first items became
+    // selectable-but-invisible while the '↑ more' hint below stayed
+    // painted (list top unreachable). The cap starts from the classic
+    // reserve (progress indicator + frame rules + status = 4, one input
+    // row, the menu title, both scroll hints, the models-picker footer)
+    // and then shrinks until the rows the window will ACTUALLY render —
+    // counted by the same [_menuLines] math [_menuReservedLines] uses —
+    // fit under the 5 fixed chrome rows: a fixed reserve cannot know
+    // the group-header rows the slash menu interleaves (#275), and
+    // ignoring them let grouped menus reopen the top-crop. Floor 1
+    // keeps even a degenerate terminal functional (E3).
+    var maxVisible = (termHeight - 9).clamp(1, 6);
+    while (maxVisible > 1) {
+      final (start, end) = _windowFor(maxVisible);
+      if (5 + _menuLines(start, end) <= termHeight) break;
+      maxVisible--;
+    }
+    return _windowFor(maxVisible);
+  }
+
+  /// The item window a [maxVisible]-row cap would show (the pure half
+  /// of [_menuWindow]; the cap loop re-evaluates it as it shrinks).
+  (int, int) _windowFor(int maxVisible) {
     var start = 0;
     if (menuItems.length > maxVisible) {
       start = (menuSelected - (maxVisible ~/ 2)).clamp(
@@ -519,6 +546,14 @@ final class FaTuiModel extends Model {
   int get _menuReservedLines {
     if (!menuOpen || menuItems.isEmpty) return 0;
     final (start, end) = _menuWindow();
+    return _menuLines(start, end);
+  }
+
+  /// Lines the window `[start, end)` renders: title + items + group
+  /// headers + '↑/↓ more' hints + the models-picker footer. The cap in
+  /// [_menuWindow] and the frame-height budget both pay THIS number, so
+  /// a window that fits the budget here cannot overrun the glass.
+  int _menuLines(int start, int end) {
     var lines = 1 + (end - start); // title + items
     lines += _groupHeadersIn(start, end); // section headers
     if (start > 0) lines++; // '↑ more'
@@ -2422,6 +2457,7 @@ final class FaTuiController {
     this.programHooks,
     this.mouseCapture = true,
     this.syncOutput,
+    this.sttyRunner,
   });
 
   final FaTuiCallbacks callbacks;
@@ -2440,6 +2476,12 @@ final class FaTuiController {
   /// Headless test hooks (scripted key bytes, captured frames) — null in
   /// production, where the program reads stdin and renders to stdout.
   final TuiProgramHooks? programHooks;
+
+  /// Injected `stty` runner for the boot-time input-flag sanitize — same
+  /// seam as [sttySanitizeInput]'s runner. Tests model the tty with it
+  /// (issue #735); null in production uses the real subprocess. When set,
+  /// the no-tty gate is skipped: the injected runner IS the tty.
+  final SttyRunner? sttyRunner;
 
   late final FaTuiModel _model = FaTuiModel(
     callbacks: callbacks,
@@ -2633,12 +2675,17 @@ final class FaTuiController {
   /// ESC LF before fa reads it, killing the alt+enter decode). Clear both
   /// for the TUI's lifetime; returns the saved termios string for
   /// [_restoreTermios], or null when there is no tty to fix.
-  static Future<String?> _sanitizeTermiosInput() async {
-    if (Platform.isWindows) return null;
-    if (!stdin.hasTerminal) return null;
+  Future<String?> _sanitizeTermiosInput() async {
+    // An injected runner (issue #735 tests) models the tty — skip the
+    // real-host gates; the runner is the terminal.
+    final injected = sttyRunner;
+    if (injected == null) {
+      if (Platform.isWindows) return null;
+      if (!stdin.hasTerminal) return null;
+    }
     return sttySanitizeInput(
       sttyDeviceFlag(),
-      runner: (args) => Process.run('stty', args),
+      runner: injected ?? ((args) => Process.run('stty', args)),
     );
   }
 
@@ -2657,18 +2704,14 @@ final class FaTuiController {
     try {
       final saved = await runner([deviceFlag, '/dev/tty', '-g']);
       if (saved.exitCode != 0) return null;
+      // The raw-mode input-flag family kept clean for fa's lifetime
+      // (issue #735): shared with TermiosGuard so the boot sanitize and
+      // the after-tool re-assert can never drift apart. Why `-ixany` and
+      // the `discard ^-` unbind form: see kTermiosClearArgs.
       final cleared = await runner([
         deviceFlag,
         '/dev/tty',
-        '-ixon',
-        '-ixoff',
-        '-icrnl',
-        // VDISCARD (Ctrl+O toggles output discard): when the host left it
-        // enabled the kernel EATS every \x0f before fa reads it — the
-        // Ctrl+O newline fallback (issue #77 AC5) goes silent. Clear it
-        // alongside ICRNL so the whole wire matrix survives default-termios
-        // hosts (ubuntu runner images ship discard on; macOS varies).
-        '-discard',
+        ...kTermiosClearArgs,
       ]);
       if (cleared.exitCode != 0) return null;
       return (saved.stdout as String).trim();

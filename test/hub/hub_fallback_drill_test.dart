@@ -15,7 +15,6 @@
 library;
 
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
@@ -29,22 +28,26 @@ Duration testBackoff(int attempt) => const Duration(milliseconds: 5);
 
 /// Transport gate: [allow] = false keeps a dropped link down (deterministic
 /// kill — no races against the reconnect timer).
+///
+/// [portOverride] repoints dials at the live hub's port: every hub in this
+/// drill binds `:0` (kernel-assigned), so the replacement hub after a kill
+/// lands on a fresh port instead of rebinding the freed one. Rebinding a
+/// freed port races the OTHER suites of the shard — a concurrent
+/// neighbor's `:0` bind can be handed the just-freed port and hold it for
+/// its whole test, failing the restart bind with EADDRINUSE (errno 98;
+/// seen twice on CI, ports 41663 and 39459). The repo's dial url is fixed
+/// at construction, and this gate is the one test-owned hop on the dial
+/// path, so the port rewrite lives here.
 class GatedTransport implements HubTransport {
   bool allow = true;
+  int? portOverride;
 
   @override
   Future<HubSocket> connect(Uri url) async {
     if (!allow) throw StateError('gate closed');
-    return const IoHubTransport().connect(url);
+    final target = portOverride == null ? url : url.replace(port: portOverride);
+    return const IoHubTransport().connect(target);
   }
-}
-
-/// Grabs a free loopback port for the fixed-port hub restart.
-Future<int> freePort() async {
-  final socket = await ServerSocket.bind('127.0.0.1', 0);
-  final port = socket.port;
-  await socket.close();
-  return port;
 }
 
 Future<void> waitUntil(
@@ -100,15 +103,9 @@ AgentMessage mail(String id, String to, String text) => AgentMessage(
 );
 
 void main() {
-  late int port;
-
-  setUp(() async {
-    port = await freePort();
-  });
-
   test('AC6 E2E-drill: kill mid-conversation, file carries on, restart '
       'drains with zero loss/dupe and order preserved', () async {
-    final hub = FakeHub(port: port);
+    final hub = FakeHub();
     await hub.start();
     addTearDown(hub.stop);
     final url = hub.url;
@@ -142,10 +139,12 @@ void main() {
     // The copies sit in A's file inbox (the offline carrier).
     expect((await a.file.peek(bId)).map((m) => m.id), ['M2', 'M3']);
 
-    // --- Phase 3: hub restarts on the SAME port; both sides rejoin -------
-    final restarted = FakeHub(port: port);
+    // --- Phase 3: hub restarts; both sides rejoin ------------------------
+    final restarted = FakeHub();
     await restarted.start();
     addTearDown(restarted.stop);
+    a.gate.portOverride = restarted.url.port;
+    b.gate.portOverride = restarted.url.port;
     a.gate.allow = true;
     b.gate.allow = true;
     await waitUntil(() => a.hub.isConnected && b.hub.isConnected);
@@ -155,15 +154,17 @@ void main() {
     await a.fabric.peek('main');
     await waitUntil(
       () async =>
-          (await b.fabric.peek('main')).where((m) => m.id.startsWith('M')).length >= 2,
+          (await b.fabric.peek(
+            'main',
+          )).where((m) => m.id.startsWith('M')).length >=
+          2,
     );
     final drained = await b.fabric.drain('main');
     final forwarded = drained.where((m) => m.id.startsWith('M')).toList();
-    expect(
-      forwarded.map((m) => m.id),
-      ['M2', 'M3'],
-      reason: 'order preserved through file carry + forward',
-    );
+    expect(forwarded.map((m) => m.id), [
+      'M2',
+      'M3',
+    ], reason: 'order preserved through file carry + forward');
     // Settle: no dupes arrive afterwards.
     await Future<void>.delayed(const Duration(milliseconds: 300));
     expect(
@@ -176,7 +177,7 @@ void main() {
 
   test('AC2 UT-fallback: hub down → file inbox; hub back → drains once; '
       'inbound mail sent while suspended flushes on rejoin', () async {
-    final hub = FakeHub(port: port);
+    final hub = FakeHub();
     await hub.start();
     addTearDown(hub.stop);
     final url = hub.url;
@@ -197,9 +198,11 @@ void main() {
     expect((await a.file.peek(bId)).single.id, 'K1');
 
     // Restart + rejoin: the flush forwards exactly once.
-    final restarted = FakeHub(port: port);
+    final restarted = FakeHub();
     await restarted.start();
     addTearDown(restarted.stop);
+    a.gate.portOverride = restarted.url.port;
+    b.gate.portOverride = restarted.url.port;
     a.gate.allow = true;
     b.gate.allow = true;
     await waitUntil(() => a.hub.isConnected && b.hub.isConnected);
@@ -207,8 +210,10 @@ void main() {
     await waitUntil(
       () async => (await b.fabric.peek('main')).any((m) => m.id == 'K1'),
     );
-    expect((await b.fabric.drain('main')).where((m) => m.id == 'K1'),
-        hasLength(1));
+    expect(
+      (await b.fabric.drain('main')).where((m) => m.id == 'K1'),
+      hasLength(1),
+    );
     await Future<void>.delayed(const Duration(milliseconds: 200));
     expect(
       (await b.fabric.drain('main')).where((m) => m.id == 'K1'),
@@ -224,8 +229,7 @@ void main() {
     await a.hub.start();
     await waitUntil(() => a.hub.isConnected);
     await waitUntil(
-      () async =>
-          (await a.fabric.peek('main')).any((m) => m.id == 'S1'),
+      () async => (await a.fabric.peek('main')).any((m) => m.id == 'S1'),
     );
     expect((await a.fabric.drain('main')).single.id, 'S1');
   });

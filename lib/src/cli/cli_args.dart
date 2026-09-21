@@ -102,8 +102,11 @@ final class CliArgs extends CliArgsResult {
     this.sessionList,
     this.positionals = const [],
     this.output,
+    this.outputFormat,
     this.attachments = const [],
     this.waitForJobs = false,
+    this.piMode = false,
+    this.ompMode = false,
   }) : super._();
 
   /// `--model <id>`.
@@ -231,6 +234,12 @@ final class CliArgs extends CliArgsResult {
   /// 'events=full' (full tool arguments). 'json' only rides `--version`.
   final String? output;
 
+  /// `--output-format <format>` (issue #695): `text` (default) or
+  /// `stream-json` — NDJSON agent events on stdout for headless runs (pi
+  /// `--mode json` / claude-code stream-json parity). `--mode json` is an
+  /// exact alias. Null = text (the flag was absent).
+  final String? outputFormat;
+
   /// `--attach <path>` (repeatable, issue #155): files attached to the
   /// first user message of a headless run as image content blocks.
   final List<String> attachments;
@@ -240,6 +249,17 @@ final class CliArgs extends CliArgsResult {
   /// delivers (bounded by the `waiting.waitCeilingMinutes` config, default
   /// 30). Without it a headless run prints the detach summary and exits.
   final bool waitForJobs;
+
+  /// `--pi`: the pi benchmark mode (issue #679) — 4-tool surface (read,
+  /// write, edit, bash), bare prompt. Wins over `FA_PI_MODE` and the
+  /// config `agent.mode` (AC3: flag > env > config).
+  final bool piMode;
+
+  /// `--omp` (issue #680): boot the omp load-mode preset — the curated
+  /// essential tool set in the schema, everything else discoverable.
+  /// Wins over the `FA_AGENT_MODE` env twin and the `agent.mode` config
+  /// (flag > env > config).
+  final bool ompMode;
 
   /// Whether this invocation runs a single headless prompt instead of the
   /// interactive REPL.
@@ -262,6 +282,25 @@ const Map<String, CliArgsResult Function(List<String>)> _cliSubcommands = {
   'session': _parseSessionArgs,
 };
 
+/// Applies the no-value boolean flags (`--wait-for-jobs`, `--pi`,
+/// `--omp`) to [values]; returns false when [arg] is none of them (the
+/// caller falls through to the value-flag table).
+bool _applyBooleanFlag(_CliArgValues values, String arg) {
+  if (arg == '--wait-for-jobs') {
+    values.waitForJobs = true;
+    return true;
+  }
+  if (arg == '--pi') {
+    values.piMode = true;
+    return true;
+  }
+  if (arg == '--omp') {
+    values.ompMode = true;
+    return true;
+  }
+  return false;
+}
+
 CliArgsResult parseCliArgs(List<String> args) {
   final subcommand = args.isEmpty ? null : _cliSubcommands[args.first];
   if (subcommand != null) {
@@ -272,10 +311,7 @@ CliArgsResult parseCliArgs(List<String> args) {
     final arg = args[i];
     if (const {'--help', '-h'}.contains(arg)) return const CliArgsHelp();
     if (arg == '--version') return CliArgsVersion(output: _prescanOutput(args));
-    if (arg == '--wait-for-jobs') {
-      values.waitForJobs = true;
-      continue;
-    }
+    if (_applyBooleanFlag(values, arg)) continue;
     final flag = _valueFlags[arg];
     if (flag != null) {
       final (canonical, apply) = flag;
@@ -874,6 +910,7 @@ const _valueFlags = <String, _ValueFlag>{
   '--compaction-engine': ('--compaction-engine', _setCompactionEngine),
   '--log-file': ('--log-file', _setLogFile),
   '--output': ('--output', _setOutput),
+  '--output-format': ('--output-format', _setOutputFormat),
   '--attach': ('--attach', _addAttachment),
 };
 
@@ -881,6 +918,17 @@ void _setOutput(_CliArgValues v, String value) {
   _validateOutputMode(value);
   v.output = value;
 }
+
+void _setOutputFormat(_CliArgValues v, String value) {
+  if (!_outputFormats.contains(value)) {
+    throw CliArgsException(
+      'unknown --output-format: $value (expected text or stream-json)',
+    );
+  }
+  v.outputFormat = value;
+}
+
+const _outputFormats = {'text', 'stream-json'};
 
 void _addAttachment(_CliArgValues v, String value) => v.attachments.add(value);
 
@@ -931,7 +979,17 @@ void _setTranscribeBaseUrl(_CliArgValues v, String value) =>
 void _addPlugin(_CliArgValues v, String value) => v.plugins.add(value);
 void _addPromptTemplateDir(_CliArgValues v, String value) =>
     v.promptTemplateDirs.add(value);
-void _setMode(_CliArgValues v, String value) => v.mode = value;
+void _setMode(_CliArgValues v, String value) {
+  // `--mode json` (issue #695): the pi-parity alias for
+  // `--output-format stream-json` — it selects the output format, never
+  // the agent mode, so the saved mode still applies.
+  if (value == 'json') {
+    v.outputFormat = 'stream-json';
+    return;
+  }
+  v.mode = value;
+}
+
 void _setCwd(_CliArgValues v, String value) => v.cwd = value;
 void _setSessionRoot(_CliArgValues v, String value) => v.sessionRoot = value;
 void _setSession(_CliArgValues v, String value) => v.session = value;
@@ -976,6 +1034,8 @@ final class _CliArgValues {
   String? transcribeBaseUrl;
   final plugins = <String>[];
   bool waitForJobs = false;
+  bool piMode = false;
+  bool ompMode = false;
   final promptTemplateDirs = <String>[];
   String? mode;
   String? cwd;
@@ -990,6 +1050,7 @@ final class _CliArgValues {
   String? promptFile;
   String? logFile;
   String? output;
+  String? outputFormat;
   final attachments = <String>[];
   final positionals = <String>[];
 
@@ -1044,7 +1105,10 @@ final class _CliArgValues {
       prompt: prompt,
       positionals: positionals,
       output: output,
+      outputFormat: outputFormat,
       waitForJobs: waitForJobs,
+      piMode: piMode,
+      ompMode: ompMode,
       attachments: List.unmodifiable(attachments),
     );
   }
@@ -1052,7 +1116,8 @@ final class _CliArgValues {
   /// Backend agent mode flag validation (issue #155), split out of
   /// [finish] to keep its complexity under the repo's CRAP gate:
   /// `--output json` only pairs with `--version`; `--attach` needs a
-  /// prompt to attach to.
+  /// prompt to attach to. Stream-json validation (issue #695): the
+  /// stream needs a headless run, and stdout cannot have two owners.
   void _validateBackendModeFlags() {
     if (output == 'json') {
       throw const CliArgsException(
@@ -1067,6 +1132,20 @@ final class _CliArgValues {
         '--attach applies to headless runs (-p/--prompt or a positional '
         'prompt)',
       );
+    }
+    if (outputFormat == 'stream-json') {
+      if (!hasPrompt) {
+        throw const CliArgsException(
+          '--output-format stream-json (or --mode json) applies to headless '
+          'runs: pass -p/--prompt, --prompt-file or a positional prompt',
+        );
+      }
+      if (output != null) {
+        throw const CliArgsException(
+          'cannot combine --output with --output-format stream-json: '
+          'stdout can carry only one structured stream',
+        );
+      }
     }
   }
 }

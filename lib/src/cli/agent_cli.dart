@@ -31,6 +31,7 @@ import 'browser_bridge_commands.dart';
 import '../browser/browser_tools.dart';
 import 'headless_prompt.dart';
 import 'hep.dart';
+import 'stream_json.dart';
 import 'key_event.dart';
 import 'key_status.dart';
 import 'provider_error_text.dart';
@@ -65,7 +66,7 @@ import '../task/delivery_slo.dart';
 import '../skills/skills.dart';
 import '../skills/skill_renderer.dart';
 import '../prompts/prompts.g.dart'
-    show cliMessagingSectionPrompt, readSqliteSectionPrompt;
+    show cliMessagingSectionPrompt, readSqliteSectionPrompt, cliPiModePrompt;
 import '../prompts/project_context.dart';
 import '../approval/approval.dart';
 import '../approval/approval_hook.dart';
@@ -135,6 +136,7 @@ import '../session/attach/file_attachment.dart';
 import '../config/config_service.dart';
 import 'startup.dart';
 import 'cli_config.dart';
+import 'pi_mode.dart';
 import 'custom_providers.dart';
 import 'folder_model_state.dart';
 import 'provider_flow.dart';
@@ -145,6 +147,8 @@ import '../trajectory/trajectory_snapshot.dart';
 import 'trajectory_tui.dart';
 import '../tools/availability.dart';
 import '../tools/availability_gate.dart';
+import '../tools/discover_tools_tool.dart';
+import '../tools/load_modes.dart';
 import '../tools/ask_tool.dart';
 import '../tools/request_secret_tool.dart';
 import '../tools/builtin_tools.dart';
@@ -203,6 +207,7 @@ import 'scripted_test_stream.dart';
 import 'tui_replay.dart';
 import 'tui_repl.dart';
 import 'tui_theme.dart';
+import 'termios_guard.dart';
 
 export '../model_roles/provider_catalog.dart' show providerStreamFunction;
 
@@ -216,6 +221,7 @@ part 'provider_keys.dart';
 part 'agent_cli_mcp.dart';
 part 'agent_cli_config.dart';
 part 'settings_flow.dart';
+part 'settings_flow_harness_mode.dart';
 part 'agent_commands.dart';
 part 'approval_commands.dart';
 part 'skill_commands.dart';
@@ -239,6 +245,7 @@ part 'agent_cli_ext.dart';
 part 'agent_cli_theme.dart';
 part 'agent_cli_composer.dart';
 part 'agent_cli_spill.dart';
+part 'agent_cli_prompt.dart';
 
 /// The CLI harness: agent + built-in tools + session persistence +
 /// compaction, driven by a [CliIO].
@@ -270,6 +277,7 @@ class AgentCli {
     _currentMode = _modes[config.initialMode] ?? _modes['code']!;
     _providerKind = config.providerKind;
     _apiKey = config.apiKey;
+    _liveLoadMode = config.loadMode;
     // The theme emitters' color profile: styled iff this session styles
     // at all (TUI or colored line mode); NO_COLOR / TERM=dumb degrade to
     // plain output (issue #279 AC7).
@@ -634,6 +642,21 @@ class AgentCli {
     // Busy-row honesty: name the executing tool ('Running bash…') instead
     // of leaving a stale 'Compacting context…' label over long tool calls.
     attachToolPhaseLabels(_agent, (phase) => _pushBusyPhase(phase));
+    // Issue #735: tool children share the session tty and can silently
+    // re-enable IXON — Ctrl+S then freezes output as XOFF and never
+    // reaches the agent as steering. Re-assert the raw-mode input flags
+    // after every foreground tool phase; a drift note names the child.
+    // OWNERSHIP GATE: only the TUI owns raw mode on the session tty. The
+    // interactive line REPL and `fa -p` run cooked — icrnl/ixon are
+    // SUPPOSED to be on there, and clearing them kills Enter (no CR→NL
+    // in canonical mode) with nothing restoring them (PR review
+    // PRRT_kwDOTXdlLc6kMBZH). The gate also covers injected-runner
+    // seams: line-mode tests must observe zero probes.
+    _termiosGuard = TermiosGuard(
+      runner: config.sttyRunner,
+      hasTerminal: () => _useTui,
+    );
+    attachTermiosGuard(_agent, _termiosGuard, onDrift: _noteTermiosDrift);
     _checkpoints = CheckpointRewindController(
       agent: _agent,
       sink: CheckpointSessionSink(
@@ -912,6 +935,12 @@ class AgentCli {
   /// like task-job completions.
   late final ShellJobRegistry _shellJobs;
 
+  /// Issue #735: re-asserts the raw-mode tty input flags after every
+  /// foreground tool phase (children sharing the tty can re-enable IXON,
+  /// which eats Ctrl+S as XOFF and freezes output). Never throws; no-ops
+  /// without a terminal. Exposed for the hidden `/termios` command.
+  late final TermiosGuard _termiosGuard;
+
   /// The sandboxed view over [_env]: clamps filesystem and shell operations
   /// to the active cube (`null` = passthrough). `/cube` manages it live.
   late final SandboxedExecutionEnv _cubeEnv;
@@ -1039,6 +1068,11 @@ class AgentCli {
   late final HashlineSnapshotStore _snapshotStore;
   late final SessionVarsExecutionEnv _coreToolEnv;
   final _ToolsWiringState _toolsWiring = _ToolsWiringState();
+
+  /// The LIVE tool-load preset (issue #680): [AgentCliConfig.loadMode] at
+  /// boot; the settings hub's load-mode flow re-assigns it and rebuilds
+  /// availability, so a mid-session switch recomposes the schema+prompt.
+  AgentLoadMode _liveLoadMode = AgentLoadMode.defaultMode;
 
   /// Long-term memory controller (project + user scope stores). Always
   /// constructed; search is disabled when no LLM provider is injected.
@@ -1224,66 +1258,14 @@ class AgentCli {
     _mcp.reRegister(_toolRegistry, _agent, _applyPromptComposition);
     // Re-apply the availability decision to the fresh MCP surface (a
     // no-op until the first rebuild produced a resolution).
-    final resolution = _toolGate.resolution;
-    if (resolution != null) {
-      AgentCliTools(this).refilterMcpTools(resolution);
-    }
-  }
-
-  /// Rebuilds the agent's system prompt from the active mode (or the
-  /// explicit override) plus the project-context and skills sections
-  /// (pi/kimi-style: appended after the base prompt).
-  void _applyPromptComposition() {
-    _agent.state.systemPrompt = _mcp.composePrompt(
-      config.systemPrompt ?? _currentMode.systemPrompt,
-      contextSection: formatProjectContext(_contextFiles),
-      skillsSection: formatSkillsForPrompt(
-        _skills,
-        touchedPaths: _touchedPaths,
-        cwd: _env.cwd,
-      ),
-      memorySection: _memorySection,
-      messagingSection: _messagingSection(),
-      extSection: _ext.promptSection,
-    );
-  }
-
-  /// The `## Agent messaging` prompt section: the agent's own mailbox in
-  /// the fabric + how discovery/addressing work. Empty until the session
-  /// (and thus the mailbox prefix) exists.
-  String _messagingSection() {
-    final prefix = _subagentManager.mailboxPrefix;
-    if (_subagentManager.messaging == null || prefix.isEmpty) return '';
-    return cliMessagingSectionPrompt.replaceAll(
-      '{{mailbox}}',
-      _subagentManager.mailboxOf(_subagentManager.selfId),
-    );
+    AgentCliTools(this).resyncMcpAvailability();
   }
 
   /// The cached `<memory>` prompt section (durable facts from past
-  /// sessions). Loaded asynchronously after startup and refreshed on every
-  /// `memory_add` — the prompt composition itself stays synchronous.
+  /// sessions). Loaded asynchronously after startup and refreshed on
+  /// every `memory_add` — the prompt composition itself stays
+  /// synchronous; the composition code lives in agent_cli_prompt.dart.
   var _memorySection = '';
-
-  /// Re-reads the `<memory>` section from the memory stores and recomposes
-  /// the prompt when it changed.
-  /// The runtime `memory:` section (project `.fah/config.yaml` wins over
-  /// the user-level one — the same merge as boot). Re-read on every
-  /// memory operation by the controller's configSource; a broken file
-  /// keeps the last good config (the controller swallows source errors).
-  MemoryConfig? _liveMemoryConfig() {
-    final project = loadProjectMemoryConfig(_env.cwd);
-    if (project != null) return project;
-    final home = config.homeDir;
-    return home == null ? null : loadCliConfig(home).memory;
-  }
-
-  Future<void> _refreshMemorySection() async {
-    final section = await _memory.formatPromptSection();
-    if (section == _memorySection) return;
-    _memorySection = section;
-    _applyPromptComposition();
-  }
 
   /// Reference to the active TUI controller so asynchronous model-list updates
   /// can refresh the picker while it is open.
@@ -1435,13 +1417,6 @@ class AgentCli {
     await printSessionResumeHint();
   }
 
-  /// Cube cache restore before the first turn — best-effort (one warning
-  /// line on failure, never a blocker).
-  Future<void> _cubeBootRestore() async {
-    final bootSpec = _cubeEnv.activeSpec;
-    if (bootSpec != null) await _cubeRestoreQuietly(bootSpec);
-  }
-
   /// Live-session presence: this process now owns the session — the Fa
   /// app (sharing the sessions root) marks it live and can attach. The
   /// heartbeat refreshes on the inbox timer; unregistering happens in
@@ -1536,18 +1511,6 @@ class AgentCli {
       await _refreshModelCache();
     } on Object {
       // Swallowed: see _refreshModelCache.
-    }
-  }
-
-  /// Cube cache save mirroring [run]'s exit path (best-effort).
-  Future<void> _cubeCacheSaveQuietly() async {
-    final exitSpec = _cubeEnv.activeSpec;
-    if (exitSpec != null) {
-      try {
-        await CubeCacheManager(_cubeEnv, exitSpec).save();
-      } on Object catch (error) {
-        io.writeln('cube: cache save failed: $error');
-      }
     }
   }
 
@@ -1748,6 +1711,7 @@ class AgentCli {
     controller = FaTuiController(
       mouseCapture: config.tuiMouseCapture,
       syncOutput: config.tuiSyncOutput,
+      sttyRunner: config.sttyRunner,
       callbacks: FaTuiCallbacks(
         onSubmit: (line, {images = const []}) =>
             _handleTuiSubmit(controller, line, images),
@@ -1783,13 +1747,6 @@ class AgentCli {
     return controller;
   }
 
-  /// Steers every queued TUI message into the running agent.
-  Future<void> _steerTuiMessages(List<String> messages) async {
-    for (final message in messages) {
-      _steerResolved(message);
-    }
-  }
-
   /// Whether [trimmed] names an existing file with its first token
   /// (`/abs/path`, `~/…`, `./…`, `../…` + more path segments): such a
   /// line is an attachment message, never a slash command.
@@ -1810,27 +1767,6 @@ class AgentCli {
       _replayRestoredHistory(_agent.state.messages, resumedLabel);
     }
   }
-
-  /// Drains queued messages one-by-one as separate turns (kimi-cli
-  /// semantics) — the loop itself is [drainQueueRounds]; an Esc abort
-  /// discards the queue instead of starting new work.
-  Future<void> _drainTuiQueue(FaTuiController controller) => drainQueueRounds(
-    drain: controller.drainQueue,
-    runRound: (queued) => runQueuedTurns(
-      queued: queued,
-      handle: _handleLine,
-      settled: () => _settled,
-      abortRequested: () => _abortRequested,
-    ),
-    abortRequested: () => _abortRequested,
-    onDropped: (dropped) {
-      io.writeln('queued message(s) dropped:');
-      for (final text in dropped) {
-        final elided = text.length <= 80 ? text : '${text.substring(0, 80)}…';
-        io.writeln('  • ${elided.replaceAll('\n', ' ')}');
-      }
-    },
-  );
 
   List<MenuItem> _buildSlashMenu(String prefix) => buildSlashMenuItems(
     prefix,
@@ -2089,6 +2025,7 @@ class AgentCli {
     List<ImageContent> images = const [],
     HepWriter? hep,
     bool waitForJobs = false,
+    StreamJsonWriter? streamJson,
   }) async {
     _hep = hep;
     // Cube cache restore, mirroring [run]'s boot (the headless run sees the
@@ -2105,11 +2042,10 @@ class AgentCli {
       io.writeln(viewerBannerText(leaseBlocked, stale: false));
       return 3;
     }
-    if (hep != null) {
-      hep.writeHeader(
-        sessionId: _session!.cachedId ?? (await _session!.getMetadata()).id,
-      );
-    }
+    // HEP (issue #155) + stream-json (issue #695) headers: the FIRST
+    // stdout line of each structured mode, written the moment the
+    // session id exists — before any event can race them.
+    await _writeHeadlessEventHeaders(hep: hep, streamJson: streamJson);
     // Issue #332: rehydrate/settle the subagent registry exactly like the
     // interactive [run] boot. A headless run (a wake run, a restart) used
     // to start from an EMPTY registry, so zombie 'running' rows from the
@@ -2139,6 +2075,13 @@ class AgentCli {
       _onTaskJobCompleted,
     );
     final hepSub = hep == null ? null : _agent.subscribe(hep.handleEvent);
+    // Stream-json subscription (issue #695): like the HEP writer, the
+    // stream writer sees every agent event; its encoder drops the
+    // fa-native ones. Unsubscribed in the finally below so a failed run
+    // never leaks the listener into the next one.
+    final streamJsonSub = streamJson == null
+        ? null
+        : _agent.subscribe(streamJson.handleEvent);
     // Terminal-outcome capture (issue #413): the visible transcript is
     // REBUILT by post-run compaction (checkpoint records replace the
     // assistant turns entirely), so the exit code cannot be derived from
@@ -2200,6 +2143,7 @@ class AgentCli {
       await interruptSub.cancel();
       await taskSub.cancel();
       hepSub?.call();
+      streamJsonSub?.call();
     }
     // The exit code describes the LAST completed turn's terminal outcome
     // (captured from the turn events above) — not the visible transcript,

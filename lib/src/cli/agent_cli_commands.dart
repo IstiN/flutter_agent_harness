@@ -36,6 +36,9 @@ final _infoCommandHandlers = <String, Future<void> Function(AgentCli, String)>{
   '/terminal-setup': (cli, rest) async => cli._printTerminalSetup(),
   '/ext': (cli, rest) async => cli._extSlash(rest),
   '/power': (cli, rest) async => cli._powerSlash(),
+  // Hidden (issue #735): not in the slash menu — a diagnostics dump of
+  // the live tty's termios state for steering-freeze triage.
+  '/termios': (cli, rest) async => cli._printTermiosDump(),
   '/restart': (cli, rest) async => cli.restartRunForTest(),
 };
 
@@ -200,6 +203,14 @@ extension SlashCommandDispatch on AgentCli {
     for (final line in terminalSetupLines(env ?? (name) => null)) {
       io.writeln(line);
     }
+  }
+
+  /// `/termios` (hidden, issue #735): dumps the live tty's `stty -a` —
+  /// after a Ctrl+S freeze this shows in one keystroke whether a child
+  /// left `ixon`/`ixany` on. Null dump = no tty to inspect.
+  Future<void> _printTermiosDump() async {
+    final dump = await _termiosGuard.dumpSettings();
+    io.writeln(dump ?? 'no tty available (stty missing or no /dev/tty)');
   }
 
   /// `/memory [maintain]` — Phase 2 memory surface: stats by default,

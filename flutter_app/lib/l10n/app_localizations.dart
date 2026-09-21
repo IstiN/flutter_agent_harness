@@ -3464,6 +3464,12 @@ abstract class AppLocalizations {
   /// **'Widget error'**
   String get dynamicTileError;
 
+  /// Overflow strip (error colors) on the dynamic-message tile once the canvas detected a viewport overflow (issue #692 C)
+  ///
+  /// In en, this message translates to:
+  /// **'This widget is wider than the chat viewport — content on the right is clipped. The agent has been asked to rebuild it to fit.'**
+  String get dynamicTileOverflow;
+
   /// Retry button on the dynamic-message error tile (issue #102 AC9)
   ///
   /// In en, this message translates to:
@@ -3829,6 +3835,42 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Device automation is not available in this build of Fa.'**
   String get mobileConsentStoreUnavailable;
+
+  /// In-app Get banner: title
+  ///
+  /// In en, this message translates to:
+  /// **'Get Fa on the App Store'**
+  String get storeBannerTitle;
+
+  /// In-app Get banner: paid vs free-forever-beta messaging
+  ///
+  /// In en, this message translates to:
+  /// **'The App Store release is paid — it funds development. The TestFlight beta is free forever.'**
+  String get storeBannerBody;
+
+  /// In-app Get banner: the Android slot while links.play is unset
+  ///
+  /// In en, this message translates to:
+  /// **'Android: coming soon'**
+  String get storeBannerAndroidSoon;
+
+  /// In-app Get banner: the primary CTA button
+  ///
+  /// In en, this message translates to:
+  /// **'Open the App Store'**
+  String get storeBannerCta;
+
+  /// In-app Get banner: the secondary beta link
+  ///
+  /// In en, this message translates to:
+  /// **'or join the free TestFlight beta'**
+  String get storeBannerBeta;
+
+  /// In-app Get banner: dismiss tooltip/label
+  ///
+  /// In en, this message translates to:
+  /// **'Hide banner'**
+  String get storeBannerDismiss;
 }
 
 class _AppLocalizationsDelegate

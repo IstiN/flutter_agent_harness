@@ -62,12 +62,19 @@ OPTIONS
                                (docs/hep.md; `events=full` adds raw
                                tool-call arguments); `json` pairs with
                                --version. Default: the reply text.
+  --output-format <format>     Headless output format: `text` (default) or
+                               `stream-json` — one JSON agent event per
+                               line on stdout (session header first,
+                               agent_settled last; pi --mode json /
+                               claude-code stream-json parity;
+                               `--mode json` is an alias).
   --model <id>                 Model id (default per provider, see PROVIDERS)
   --provider <kind>            openai-completions | anthropic | google | dial
                                | minimax | zai
                                (default: openai-completions, via OpenRouter)
   --base-url <url>             Override the provider API base URL
   --mode <name>                Initial mode: code | architect | review
+                               (`json` is the stream-json output alias)
   --system-prompt <text>       Override the system prompt for this run
                                (verbatim; beats the config prompts: section
                                and the built-in mode prompts)
@@ -97,6 +104,10 @@ OPTIONS
                                run (csv: web_search=off,mcp:fs=on); wins
                                over the FA_TOOLS env var and the config
                                tools: section
+  --pi                          pi benchmark mode (issue #679): 4-tool
+                               surface (read/write/edit/bash), bare
+                               prompt; wins over FA_PI_MODE=1 and the
+                               config agent.mode setting
   --log-file <path>            Tee every printed line (assistant text,
                                tool trace, diagnostics) to <path> as it
                                is produced — a live, `tail -f`-able
@@ -216,7 +227,9 @@ PROVIDERS AND API KEYS${_providerSectionSuffix()}
   baseUrl and model are required (no catalog defaults — a missing field
   fails at boot). apiKeyEnvVar is optional: declared, the named var (or
   its _BASE64 twin) must hold the key; omitted, the provider boots
-  keyless and the spec's usual env names are never probed. Every text
+  keyless and the spec's usual env names are never probed. thinkingLevel
+  is optional (minimal|low|medium|high|xhigh|max; xhigh/max fold to high)
+  and requests reasoning from adapters that support it. Every text
   value has a base64 twin (FA_PROVIDER_CONFIG_BASE64,
   <apiKeyEnvVar>_BASE64) for platforms that mangle special characters:
   the plain value wins when both carry the same value; mismatched or
@@ -276,6 +289,8 @@ MODEL ROLES (~/.fah/config.yaml)
           model: gpt-4o
           apiKeyName: OPENAI_API_KEY   # optional; also baseUrl,
                                        # contextWindow, maxTokens
+          thinkingLevel: high          # optional: minimal|low|medium|high|
+                                       # xhigh|max (xhigh/max fold to high)
       smol:
         - openrouter/openai/gpt-4o-mini
     modelOverrides:

@@ -18,6 +18,7 @@ import 'dart:convert';
 
 import '../exceptions.dart';
 import '../model_roles/provider_catalog.dart';
+import '../providers/thinking.dart';
 
 /// One resolved `FA_PROVIDER_*` preconfig: the catalog spec the type maps
 /// to plus the boot-ready name/endpoint/model/key tuple.
@@ -31,6 +32,7 @@ final class EnvProviderPreconfig {
     required this.apiKeyEnvVar,
     required this.apiKey,
     this.input,
+    this.thinkingLevel,
   });
 
   /// The catalog spec [parseEnvProviderPreconfig] resolved the type
@@ -64,10 +66,22 @@ final class EnvProviderPreconfig {
   /// config declares none — the catalog spec's modalities stand (issue
   /// #638: an explicit declaration wins, silence keeps today's behavior).
   final List<String>? input;
+
+  /// The declared thinking level, normalized to its ladder rung
+  /// (`xhigh`/`max` fold to `high`), or null when undeclared — no
+  /// thinking requested and the boot behaves byte-identically to before
+  /// (issue #734).
+  final String? thinkingLevel;
 }
 
 /// The supported `FA_PROVIDER_CONFIG` keys, in error-message order.
-const _supportedConfigKeys = ['baseUrl', 'model', 'apiKeyEnvVar', 'input'];
+const _supportedConfigKeys = [
+  'baseUrl',
+  'model',
+  'apiKeyEnvVar',
+  'input',
+  'thinkingLevel',
+];
 
 /// The keys an env-declared provider MUST spell out — a missing one is a
 /// misconfiguration, never a silent catalog default.
@@ -172,6 +186,7 @@ EnvProviderPreconfig? parseEnvProviderPreconfig({
     apiKeyEnvVar: keyVar,
     apiKey: apiKey,
     input: config.input,
+    thinkingLevel: config.thinkingLevel,
   );
 }
 
@@ -218,7 +233,8 @@ String _decodeBase64(String name, String encoded) {
 /// absent, except `input`, a non-empty list of `"text"`/`"image"` (issue
 /// #638 — validated by the same named-error rules as the `models.custom`
 /// yaml field). The caller guarantees a non-empty declaration.
-({Map<String, String> values, List<String>? input}) _parseConfig(String raw) {
+({Map<String, String> values, List<String>? input, String? thinkingLevel})
+_parseConfig(String raw) {
   final Object? decoded;
   try {
     decoded = jsonDecode(raw);
@@ -232,6 +248,7 @@ String _decodeBase64(String name, String encoded) {
   }
   final values = <String, String>{};
   List<String>? input;
+  String? thinkingLevel;
   for (final entry in decoded.entries) {
     // jsonDecode produces string keys for JSON objects.
     final key = entry.key as String;
@@ -245,6 +262,10 @@ String _decodeBase64(String name, String encoded) {
       input = _parseInputList(entry.value);
       continue;
     }
+    if (key == 'thinkingLevel') {
+      thinkingLevel = _parseThinkingLevel(entry.value);
+      continue;
+    }
     final value = entry.value;
     if (value is! String) {
       throw ConfigException(
@@ -253,7 +274,7 @@ String _decodeBase64(String name, String encoded) {
     }
     if (value.trim().isNotEmpty) values[key] = value;
   }
-  return (values: values, input: input);
+  return (values: values, input: input, thinkingLevel: thinkingLevel);
 }
 
 /// The `input` modality list: a non-empty JSON array whose entries are
@@ -276,6 +297,26 @@ List<String> _parseInputList(Object? value) {
           'got: $entry',
         ),
   ];
+}
+
+/// The `thinkingLevel` rung (issue #734): one of [configThinkingLevels] —
+/// `xhigh`/`max` are accepted and normalize to `high`, anything else fails
+/// loud naming the ladder. A blank string is absent, like every other text
+/// value.
+String? _parseThinkingLevel(Object? value) {
+  if (value is! String) {
+    throw ConfigException(
+      'FA_PROVIDER_CONFIG "thinkingLevel" must be one of '
+      '${configThinkingLevels.join(', ')}, got: $value',
+    );
+  }
+  final trimmed = value.trim();
+  if (trimmed.isEmpty) return null;
+  return normalizeConfigThinkingLevel(trimmed) ??
+      (throw ConfigException(
+        'FA_PROVIDER_CONFIG "thinkingLevel" must be one of '
+        '${configThinkingLevels.join(', ')}, got: $value',
+      ));
 }
 
 /// The first name among [base], `[base]-2`, `[base]-3`, ... not in

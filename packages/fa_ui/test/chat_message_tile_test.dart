@@ -88,7 +88,6 @@ void main() {
     );
   });
 
-
   /// A real 2×2 PNG (76 bytes) — Image.memory must decode for the golden
   /// surface; garbage bytes would throw on the test event loop.
   final Uint8List tinyPngBytes = base64Decode(
@@ -104,9 +103,7 @@ void main() {
           message: FaChatMessage(
             role: 'user',
             content: 'what is this?',
-            attachments: [
-              (bytes: tinyPngBytes, path: 'uploads/swatch.png'),
-            ],
+            attachments: [(bytes: tinyPngBytes, path: 'uploads/swatch.png')],
           ),
           images: images(),
         ),
@@ -120,10 +117,7 @@ void main() {
     // the record's bytes.
     expect(provider, isA<ResizeImage>());
     expect((provider as ResizeImage).imageProvider, isA<MemoryImage>());
-    expect(
-      (provider.imageProvider as MemoryImage).bytes,
-      same(tinyPngBytes),
-    );
+    expect((provider.imageProvider as MemoryImage).bytes, same(tinyPngBytes));
     expect(find.text('what is this?'), findsOneWidget);
     expect(find.textContaining('[attached file'), findsNothing);
   });
@@ -146,10 +140,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(
-      find.text('[image unavailable] · photo.png'),
-      findsOneWidget,
-    );
+    expect(find.text('[image unavailable] · photo.png'), findsOneWidget);
     expect(find.byIcon(Icons.image_not_supported_outlined), findsOneWidget);
     expect(find.text('report.pdf'), findsOneWidget);
     expect(find.byIcon(Icons.insert_drive_file_outlined), findsOneWidget);
@@ -166,10 +157,7 @@ void main() {
             content: 'a lot',
             attachments: [
               for (var i = 1; i <= 10; i++)
-                (
-                  bytes: tinyPngBytes,
-                  path: 'uploads/pic$i.png',
-                ),
+                (bytes: tinyPngBytes, path: 'uploads/pic$i.png'),
             ],
           ),
           images: images(),
@@ -261,6 +249,68 @@ void main() {
 
       // The human-readable part is still shown.
       expect(find.textContaining('CodeMie session expired'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'auth-expired card never shows the CLI re-auth hint (issue #692 A)',
+    (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          ChatMessageTile(
+            message: FaChatMessage(
+              role: 'tool',
+              content:
+                  'CodeMie session expired — the endpoint answered the API '
+                  'call with the SSO login page instead of the event stream '
+                  '(the dead session cookie was silently redirected). '
+                  'Re-authorize to refresh the session (CLI: /provider '
+                  'codemie sso). [[auth-expired:codemie]]',
+              toolName: 'error',
+              isError: true,
+            ),
+            images: images(),
+            onAuthRecovery: (_) {},
+          ),
+        ),
+      );
+
+      // The CLI-only guidance ("CLI: /provider codemie sso") is dead text
+      // on an app host — the card must not render it.
+      expect(find.textContaining('CLI:'), findsNothing);
+      expect(find.textContaining('/provider'), findsNothing);
+
+      // The host action line replaces it.
+      expect(find.textContaining('Authorize'), findsWidgets);
+      expect(find.textContaining('sign in again'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'auth-expired card without a recovery callback keeps the explanation '
+    'but still drops the CLI hint',
+    (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          ChatMessageTile(
+            message: FaChatMessage(
+              role: 'tool',
+              content:
+                  'CodeMie session expired — re-authorize to refresh the '
+                  'session (CLI: /provider codemie sso). '
+                  '[[auth-expired:codemie]]',
+              toolName: 'error',
+              isError: true,
+            ),
+            images: images(),
+          ),
+        ),
+      );
+
+      expect(find.textContaining('CLI:'), findsNothing);
+      expect(find.textContaining('CodeMie session expired'), findsOneWidget);
+      // No callback wired: no action line.
+      expect(find.textContaining('sign in again'), findsNothing);
     },
   );
 
@@ -429,7 +479,11 @@ void main() {
     ChatMessageTile tile() => ChatMessageTile(
       // 8 lines: clamped, yet two expanded cards still fit the test
       // viewport — this test is about per-card state, not the cap.
-      message: FaChatMessage(role: 'tool', content: output(8), toolName: 'bash'),
+      message: FaChatMessage(
+        role: 'tool',
+        content: output(8),
+        toolName: 'bash',
+      ),
       images: images(),
     );
     await tester.pumpWidget(wrap(Column(children: [tile(), tile()])));
@@ -479,9 +533,7 @@ void main() {
       ChatMessageTile(
         message: FaChatMessage(
           role: 'tool',
-          content: [
-            for (var i = 1; i <= 40; i++) 'output line $i',
-          ].join('\n'),
+          content: [for (var i = 1; i <= 40; i++) 'output line $i'].join('\n'),
           toolName: 'bash',
           isError: isError,
         ),
@@ -538,5 +590,4 @@ void main() {
     await tester.pump();
     expect(find.text('x' * 2000), findsOneWidget);
   });
-
 }

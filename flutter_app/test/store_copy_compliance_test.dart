@@ -28,6 +28,8 @@ library;
 
 import 'dart:io';
 
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show LinksConfig, renderAppStoreBlockHtml;
 import 'package:flutter_test/flutter_test.dart';
 
 import 'golden/play_feature_graphic.dart';
@@ -38,8 +40,7 @@ import 'golden/store_marketing_frame.dart';
 ///
 /// Explicit letter classes instead of `\b`: ECMAScript `\w` is ASCII-only,
 /// so `\b` never fires around Cyrillic.
-const _banned =
-    'first|best|top|leading|most|#1|№1|первый|лучший|самый';
+const _banned = 'first|best|top|leading|most|#1|№1|первый|лучший|самый';
 
 final _bannedPhrase = RegExp(
   '(?<![A-Za-zА-Яа-яЁё0-9])(?:$_banned)(?![A-Za-zА-Яа-яЁё0-9])',
@@ -78,7 +79,10 @@ const _listingFiles = [
 
 void main() {
   test('sanity: the gate bans plain claims and spares the compound', () {
-    expect(bannedPhraseViolations('The first mobile agent harness'), isNotEmpty);
+    expect(
+      bannedPhraseViolations('The first mobile agent harness'),
+      isNotEmpty,
+    );
     expect(bannedPhraseViolations('Первый мобильный ИИ-агент'), isNotEmpty);
     expect(bannedPhraseViolations('privacy-first analytics'), isEmpty);
     expect(
@@ -114,6 +118,36 @@ void main() {
         final path = 'fastlane/metadata/android/$locale/$file';
         _scan(path, locale, File(path).readAsStringSync(), problems);
       }
+    }
+    expect(problems, isEmpty);
+  });
+
+  // Issue #691: the store-referral surfaces (in-app Get banner strings,
+  // the site App Store block, the store-frames page) are store marketing
+  // too — the compliance list applies to them exactly like to the store
+  // listings.
+  test('Get banner + fa1.dev store surfaces are claim-free (issue #691)', () {
+    final problems = <String>[];
+    for (final arb in ['lib/l10n/app_en.arb', 'lib/l10n/app_ru.arb']) {
+      final text = File(arb).readAsStringSync();
+      // Only the banner's own keys — one long JSON blob per line would
+      // smear context across unrelated strings.
+      for (final line in text.split('\n')) {
+        if (line.trimLeft().startsWith('"storeBanner')) {
+          _scan('$arb storeBanner*', arb, line, problems);
+        }
+      }
+    }
+    final block = renderAppStoreBlockHtml(const LinksConfig());
+    _scan('site app-store block', 'en', block, problems);
+    final framesPage = File('../site/app-store/index.html');
+    if (framesPage.existsSync()) {
+      _scan(
+        'site app-store page',
+        'en',
+        framesPage.readAsStringSync(),
+        problems,
+      );
     }
     expect(problems, isEmpty);
   });

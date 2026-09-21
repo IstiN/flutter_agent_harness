@@ -3912,4 +3912,93 @@
 - fix(cube): gate web tool egress behind the cube network policy (#685)
 - feat(agent): automatic tool-result spilling with symmetric previews (#684)
 
+## 0.1.428
+
+- chore: repin factory 4b5b1be (silent-update-behind) (#707)
+- fix(#687): silent token via factory input + repin 1274089 (#703)
+- fix(cli): fit-preserving table column sizing (#686) (#688)
+- feat(#687): machine-author passthrough via vars.MACHINE_AUTHOR + repin ceddca5 (#699)
+- fix(#687): repin factory 40dd6f0 (dup-guard) + pr-aware stub run-name (#698)
+
+## 0.1.429
+
+- chore: repin factory 5519dc7 (deterministic merge state + version floor) (#714)
+- chore: repin factory a0feb83 (REST shapes + budget-free localActions) (#711)
+- chore: repin factory 3cae1d2 (REST mergeable_state + direct silent token) (#708)
+
+## 0.1.430
+
+- chore: repin factory 24082c9 (token-URL silent push) (#723)
+- chore: repin factory 05315d42640a15d04c65e67d686828ebb2b5b398 (target-repo silent update) (#722)
+- chore: repin factory 5e275aa (git-merge silent update) (#721)
+- chore: repin factory 19d60ef (update-branch PUT) (#717)
+- chore: repin factory f1073c5 (REST update-branch) (#716)
+- fix(sm): contents:write — update-branch pushes onto the head branch (#715)
+
+## 0.1.432
+
+- repin: factory a0e3a47 — machine-loop dead-end fixes (#458) (#725)
+
+## 0.1.433
+
+- ci: repin factory workflows to dmtools-agents@55b95fed — stale-verdict re-review (#731)
+- ci: repin factory workflows to dmtools-agents@364a303c — prStatus state-case fix (#730)
+- repin: factory 358eb3e — develop-done source fix (#459) (#728)
+
+## 0.1.434
+
+- ci: repin factory workflows to dmtools-agents@4ca4840 — threads-resolved re-review (#733)
+
+## 0.1.435
+
+- fix(702): CRAP descent #13 — auth/loader trio + band top (#724)
+- ci: repin factory to dmtools-agents@5098d93b — in-flight dedup fix + review timer removal (#739)
+- fix(706): /model picker — one ChatGPT identity, reachable list top (#712)
+- config(runners): dev/rework legs get a provider fallback queue; generic runner names (#737)
+
+## 0.1.436
+
+- fix(#701): cover the 0%-coverage CRAP trio (stat builtin, isFaCliInstalled, apps panel menu) (#720)
+- fix(#695): stream-json output for headless fa runs (--output-format stream-json / --mode json) (#719)
+- ci: repin factory to dmtools-agents@082311d — sm duplicate-dispatch fixes (#466) (#742)
+- fix(cube): rw mounts emit file-read* allow in SBPL — kernel reads under read-denied prefixes (#718)
+- ci: repin factory to dmtools-agents@759a811 — prMachineAuthor auto-leg gate (#465) (#741)
+
+## 0.1.437
+
+- fix(692): iOS sandbox fitness — visible errors, sandbox-aware prompt, viewport-aware widgets, bounded app-state (#704)
+- gh-740 [GOAL] Compaction failure must never brick a session — deterministic trim fallback, decorrelated role chain, trap circuit-breaker (M1 spec: 90s→300s ready) (#743)
+
+## 0.1.438
+
+- feat(691): App Store launch surface — links: config, fa1.dev block + goldens page, Get banners, referral analytics (#700)
+- ci: repin factory to f03fbdf — label-echo dedup (no duplicate legs) (#749)
+- ci: repin factory to 78345a9 — rework policy + auto-approve external + guard AGENT_HANDLE (#748)
+- config(machine): machine author is ai-teammate (the App), not the SOURCE-token login (#747)
+
+## 0.1.439
+
+- ci: repin factory to 0c9abdb — review derive + backfill fixes (#751)
+- feat(cli): omp load-modes + settings switch (#690)
+- fix(732): pin SBPL last-match-wins ordering — nested rw mounts survive broader later ro denies (#745)
+- feat(734): optional thinkingLevel in FA_PROVIDER_CONFIG + roles chain entries (#744)
+
+## 0.1.440
+
+- feat(cli): pi mode — pi's exact benchmark config (4 tools, bare prompt, token parity) (#689)
+
+## 0.1.441
+
+- fix(735): TermiosGuard — re-assert raw-mode tty flags after tool phases so Ctrl+S steering survives IXON re-enable (#738)
+
+## 0.1.443
+
+- chore: repin factory to bd763b3 (#474) (#754)
+- chore(coverage): CLI terminal-test baseline 8.0 -> 12.17 (ratchet up)
+
+## 0.1.444
+
+- chore: repin factory to 554cfb0 (#476) (#757)
+- chore: repin factory to 8d83bf4 (fail_validation unarm + branch fallback) (#755)
+
 ## Unreleased

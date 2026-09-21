@@ -268,14 +268,19 @@ class FakeSecureKeyStore implements SecureKeyStore {
   Future<void> delete(String name) async => map.remove(name);
 }
 
-Future<void> waitForIt(bool Function() condition, {String? reason}) async {
+Future<void> waitForIt(
+  FutureOr<bool> Function() condition, {
+  String? reason,
+}) async {
   // Generous budget: startup discovery + prompt composition must finish
   // within this window even on a LOADED machine (coverage instrumentation
   // roughly doubles run time; parallel builds/other projects' test runners
   // eat the rest). 25s of polling; the condition is checked every 5ms so
   // tests still finish as soon as the awaited state actually appears.
+  // Async conditions are awaited (polling a Future beats a silent
+  // fall-through on timeout — the failure must name the wait).
   for (var i = 0; i < 5000; i++) {
-    if (condition()) return;
+    if (await condition()) return;
     await Future<void>.delayed(const Duration(milliseconds: 5));
   }
   fail('timed out waiting: ${reason ?? 'condition'}');

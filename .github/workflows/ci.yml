@@ -126,6 +126,45 @@ jobs:
               grep -qE '(^lib/src/trajectory/|^packages/fa_ui/lib/src/trajectory/|^lib/src/cli/trajectory_|^bin/fah\.dart$|^test/(integration/)?trajectory/|^flutter_app/lib/services/agent_service(_sessions)?\.dart$)'; then
             echo "perf=true" >> "$GITHUB_OUTPUT"
           fi
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Issue #709: live kernel-mode cube legs. The ubuntu test-core shards can
+  # only prove the SBPL PROFILE TEXT (unit + guard/profile parity) — the
+  # kernel's last-match-wins read/write enforcement of rw mounts under a
+  # read-denied prefix needs a real `sandbox-exec` run, which exists only on
+  # macOS. Both live suites skip with a NAMED reason wherever they cannot
+  # run (no sandbox-exec / already-sandboxed host / HOME outside /Users) —
+  # the skip lands in the job log, never silent; this leg is where they
+  # actually execute. The leg is a real gate input: `quality-gate` NEEDS it
+  # and fails the merge when it fails (a skip — a diff with no core paths —
+  # passes, like every other optional leg).
+  #
+  # Skip condition note (PR #718 review): gating on `core` covers
+  # `shared`-only diffs too — the classifier maps a shared/unknown path to
+  # ALL nine stages, `test-core` among them, so `core=true` falls out and
+  # this leg runs; only docs-only diffs (or non-PR context mismatches)
+  # skip it.
+  # ─────────────────────────────────────────────────────────────────────────
+  cube-kernel-live:
+    name: Cube kernel live (macOS)
+    runs-on: macos-latest
+    needs: changes
+    if: needs.changes.outputs.core == 'true'
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - run: dart pub get
+
+      - name: dart test cube backends (live kernel legs)
+        run: dart test test/cube/backends
+
   static:
     name: Static gates
     runs-on: ubuntu-latest
@@ -1338,7 +1377,7 @@ jobs:
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, cli-visual-settings, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env]
+    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env]
     if: always()
     timeout-minutes: 5
     permissions:
@@ -1355,6 +1394,7 @@ jobs:
           echo "test-faui     = ${{ needs.test-faui.result }}"
           echo "app-crap-gate = ${{ needs.app-crap-gate.result }}"
           echo "perf-gate     = ${{ needs.perf-gate.result }}"
+          echo "cube-live     = ${{ needs.cube-kernel-live.result }}"
           echo "integ-mock    = ${{ needs.integration-mock.result }}"
       - name: Fail on any real failure
         run: |
@@ -1362,6 +1402,7 @@ jobs:
                    "${{ needs.coverage-gate.result }}" "${{ needs.guards.result }}" \
                    "${{ needs.flutter-tests.result }}" "${{ needs.app-crap-gate.result }}" \
                    "${{ needs.test-faui.result }}" "${{ needs.perf-gate.result }}" \
+                   "${{ needs.cube-kernel-live.result }}" \
                    "${{ needs.integration-mock.result }}" \
                    "${{ needs.hostile-env.result }}"; do
             if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then

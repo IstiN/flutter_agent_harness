@@ -6,6 +6,7 @@
 /// openai-completions adapter is ported; pricing tiers and the full compat
 /// matrix arrive with later providers.
 library;
+
 import 'dart:math' show min;
 
 import 'types.dart';
@@ -98,6 +99,7 @@ final class Model {
     required this.baseUrl,
     this.reasoning = false,
     this.input = const ['text'],
+    this.thinkingLevel,
     this.cost = const ModelCost(),
     required this.contextWindow,
     required this.maxTokens,
@@ -128,6 +130,12 @@ final class Model {
 
   /// Input modalities the model accepts: `text` and/or `image`.
   final List<String> input;
+
+  /// The config-declared thinking level (`minimal…max`, issue #734) riding
+  /// this model from a roles chain entry or the env preconfig; null when
+  /// undeclared — the adapter options' own level (e.g.
+  /// `AnthropicOptions.thinkingLevel`) stays the explicit override.
+  final String? thinkingLevel;
 
   /// Pricing used for inline cost accounting.
   final ModelCost cost;

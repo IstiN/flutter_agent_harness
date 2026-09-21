@@ -67,6 +67,33 @@ void main() {
       expect(loaded.customProviders.single.baseUrl, 'https://x.example.com/v1');
       expect(loaded.customProviders.single.modelId, 'm1');
     });
+    test(
+      'a programmatic save persists the links: section (no silent revert)',
+      () async {
+        // withCustomProviders must carry `links` — its old copy silently
+        // reverted to the default, so any save whose in-memory links
+        // differed from disk (a fresh file, a programmatic save) lost the
+        // section and only disk re-attachment masked it (issue #691).
+        const links = LinksConfig(
+          appstore: 'https://apps.apple.com/us/app/fa-ai-agent/id6793815163',
+          banner: false,
+        );
+        await saveCliConfig(
+          tmp.path,
+          CliConfig(links: links).withCustomProviders([
+            CustomProviderEntry(
+              name: 'p1',
+              apiType: 'openai',
+              baseUrl: 'https://x.example.com/v1',
+              modelId: 'm1',
+            ),
+          ]),
+        );
+        final loaded = loadCliConfig(tmp.path);
+        expect(loaded.links.appstore, links.appstore);
+        expect(loaded.links.banner, isFalse);
+      },
+    );
     test('approval settings default when absent from the file', () {
       final loaded = loadCliConfig(tmp.path);
       expect(loaded.approvalMode, 'yolo');
@@ -772,6 +799,38 @@ prompts:
         );
       });
 
+      test('parses agent.mode = pi (issue #679)', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  mode: pi\n');
+        final loaded = loadCliConfig(tmp.path);
+        expect(loaded.agentMode, 'pi');
+      });
+
+      test('agent.mode = default normalizes to null', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  mode: default\n');
+        final loaded = loadCliConfig(tmp.path);
+        expect(loaded.agentMode, isNull);
+      });
+
+      test('rejects an unknown agent.mode value', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  mode: turbo\n');
+        expect(
+          () => loadCliConfig(tmp.path),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              contains('"agent.mode" must be one of'),
+            ),
+          ),
+        );
+      });
+
       test('toYaml persists the cap for the round-trip', () {
         final file = File('${tmp.path}/.fah/config.yaml');
         file.createSync(recursive: true);
@@ -780,6 +839,77 @@ prompts:
         expect(
           loaded.withCustomProviders(loaded.customProviders).toYaml(),
           contains('agent:\n  contextWindowCap: 256000'),
+        );
+      });
+
+      test('rejects a non-map agent section', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent: 256000\n');
+        expect(
+          () => loadCliConfig(tmp.path),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              contains('agent must be a map'),
+            ),
+          ),
+        );
+      });
+
+      test('parses agent.mode = omp and persists it back', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  mode: omp\n');
+        final loaded = loadCliConfig(tmp.path);
+        expect(loaded.agentLoadMode, 'omp');
+        expect(
+          loaded.withCustomProviders(loaded.customProviders).toYaml(),
+          contains('agent:\n  mode: omp\n'),
+        );
+      });
+
+      test('parses agent.mode = pi', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  mode: pi\n');
+        expect(loadCliConfig(tmp.path).agentLoadMode, 'pi');
+      });
+
+      test('agent.mode = default normalizes to null', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  mode: default\n');
+        expect(loadCliConfig(tmp.path).agentLoadMode, isNull);
+      });
+
+      test('rejects an unknown agent.mode value', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  mode: turbo\n');
+        expect(
+          () => loadCliConfig(tmp.path),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              contains('"agent.mode" must be one of'),
+            ),
+          ),
+        );
+      });
+
+      test('toYaml persists cap and mode together for the round-trip', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync(
+          'agent:\n  contextWindowCap: 256000\n  mode: omp\n',
+        );
+        final loaded = loadCliConfig(tmp.path);
+        expect(
+          loaded.withCustomProviders(loaded.customProviders).toYaml(),
+          contains('agent:\n  contextWindowCap: 256000\n  mode: omp\n'),
         );
       });
     });

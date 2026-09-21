@@ -172,6 +172,7 @@ final class ModelRolesResolver {
         contextWindow: ref.contextWindow,
         maxTokens: ref.maxTokens,
         input: ref.input,
+        thinkingLevel: ref.thinkingLevel,
       ),
       keyRing: ring,
       streamForKey: (apiKey) {

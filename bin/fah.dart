@@ -141,6 +141,14 @@ void _writeHepLine(String line) {
   stdout.flush();
 }
 
+/// One stream-json NDJSON line to stdout, flushed immediately (issue
+/// #695): same live-pipe contract as HEP — `| jq` consumers tail the
+/// stream line by line, and jsonEncode output is always single-line.
+void _writeStreamJsonLine(String line) {
+  stdout.writeln(line);
+  stdout.flush();
+}
+
 /// The mime reported when the magic-byte sniff misses — callers treat it
 /// as "not an image" (issue #196 `--attach` passthrough).
 const _unknownAttachMime = 'application/octet-stream';
@@ -235,12 +243,13 @@ Future<void> main(List<String> args) async {
   );
 }
 
-Model _buildModel(CliArgs args, {List<String>? input}) {
+Model _buildModel(CliArgs args, {List<String>? input, String? thinkingLevel}) {
   return buildCliDefaultModel(
     args.provider,
     modelId: args.model,
     baseUrl: args.baseUrl,
     input: input,
+    thinkingLevel: thinkingLevel,
   );
 }
 
@@ -1356,8 +1365,13 @@ Future<void> _runApp(List<String> args) async {
           provider,
           modelId: folderState.modelId,
           baseUrl: folderState.baseUrl,
+          thinkingLevel: faPreconfig?.thinkingLevel,
         )
-      : _buildModel(effective, input: faPreconfig?.input);
+      : _buildModel(
+          effective,
+          input: faPreconfig?.input,
+          thinkingLevel: faPreconfig?.thinkingLevel,
+        );
 
   // Initial cube (fa_cube Phase 1): --cube-config path > --cube name > the
   // project `.fah/config.yaml` `cube:` section > the saved user `cube:`
@@ -1491,6 +1505,7 @@ Future<void> _runApp(List<String> args) async {
           baseUrl: preconfig.baseUrl,
           apiKeyName: preconfig.apiKeyEnvVar,
           input: preconfig.input,
+          thinkingLevel: preconfig.thinkingLevel,
         ),
       ]);
     }
@@ -1670,8 +1685,22 @@ Future<void> _runApp(List<String> args) async {
     io.writeln(
       'note: provider ${preconfig.name} (${preconfig.spec.name}) '
       'from FA_PROVIDER_* env — key: '
-      '${preconfig.apiKeyEnvVar ?? 'none (keyless endpoint)'}',
+      '${preconfig.apiKeyEnvVar ?? 'none (keyless endpoint)'}'
+      '${preconfig.thinkingLevel == null ? '' : '; thinkingLevel: ${preconfig.thinkingLevel}'}',
     );
+    // A declared level on an adapter that is not wired to the
+    // config-carried level is carried but never sent — say so once
+    // instead of silently ignoring it (issue #734 E1). Wording covers
+    // both no-thinking adapters (openai-completions) and adapters with
+    // their own thinking options that no config path reaches yet (google).
+    if (preconfig.thinkingLevel != null &&
+        preconfig.spec.api != anthropicMessagesApi) {
+      io.writeln(
+        'note: the ${preconfig.spec.api} adapter is not wired to the '
+        'config-carried thinkingLevel — the declared level is carried '
+        'but unused',
+      );
+    }
     if (defaultRoleResolved) {
       io.writeln(
         preconfig.apiKeyEnvVar == null
@@ -1758,6 +1787,21 @@ Future<void> _runApp(List<String> args) async {
     _fail('invalid --tools/FA_TOOLS spec: ${error.message}');
   }
 
+  // The tool-load preset (issue #680): `--omp` wins over the
+  // `FA_AGENT_MODE` env twin, which wins over `agent.mode` config. An
+  // unknown env/config label is a hard startup error — a typo must never
+  // silently boot the default mode.
+  AgentLoadMode loadMode;
+  try {
+    loadMode = resolveAgentLoadMode(
+      flagOmp: effective.ompMode,
+      envMode: Platform.environment['FA_AGENT_MODE'],
+      configMode: saved.agentLoadMode,
+    );
+  } on ArgumentError catch (error) {
+    _fail('invalid load mode: ${error.message}');
+  }
+
   // Per-folder model memory: mirror the active triple into the folder's
   // state file (the LIVE cwd — a resumed session re-points `cliEnv.cwd`),
   // so the next `fa` in that folder restores this model, not the global
@@ -1794,6 +1838,13 @@ Future<void> _runApp(List<String> args) async {
   // flowing to their channel. `--attach` files ride the first user
   // message as image blocks.
   final eventsMode = headlessPrompt != null && parsed.output != null;
+  // Stream-json mode (issue #695): `--output-format stream-json` (alias
+  // `--mode json`) turns headless stdout into pi-shaped NDJSON agent
+  // events owned by the StreamJsonWriter — same stdout-exclusivity rule
+  // as HEP events mode: prose writes are dropped (the frames carry them),
+  // diagnostics keep their stderr channel.
+  final streamJsonMode =
+      headlessPrompt != null && parsed.outputFormat == 'stream-json';
   final hep = eventsMode
       ? HepWriter(
           emit: _writeHepLine,
@@ -1802,6 +1853,9 @@ Future<void> _runApp(List<String> args) async {
               ? HepToolArgs.full
               : HepToolArgs.summary,
         )
+      : null;
+  final streamJson = streamJsonMode
+      ? StreamJsonWriter(emit: _writeStreamJsonLine)
       : null;
   final attachedImages = <ImageContent>[];
   final attachReferences = <String>[];
@@ -1824,7 +1878,7 @@ Future<void> _runApp(List<String> args) async {
       );
     }
   }
-  if (eventsMode) {
+  if (eventsMode || streamJsonMode) {
     // Stdout purity: deltas ride frames; diagnostics keep their channel
     // (and still tee to --log-file via the wrapper chain).
     io = HepEventsIO(io);
@@ -1841,6 +1895,18 @@ Future<void> _runApp(List<String> args) async {
   final hidShiftPressed = useTui
       ? await resolveHidShiftPressed(isMacOS: Platform.isMacOS)
       : null;
+
+  // The harness mode (issue #679): `--pi` wins over `FA_PI_MODE` wins
+  // over the config `agent.mode` (AC3). `saved` is already loaded here;
+  // the wiring consumes the resolved value via `config.agentMode`.
+  // The parsed [CliArgs.piMode] is the single reader of the flag — a raw
+  // argv scan disagrees when a value flag consumes the token
+  // (`fa --model --pi` parses as `model: '--pi'`, `piMode: false`).
+  final harnessMode = resolveHarnessMode(
+    flag: parsed.piMode,
+    env: Platform.environment,
+    configMode: saved.agentMode,
+  );
 
   cli = AgentCli(
     useColor: headlessPrompt == null && stdout.supportsAnsiEscapes,
@@ -1882,7 +1948,14 @@ Future<void> _runApp(List<String> args) async {
       // Saved custom providers (`customProviders:` config section): the
       // picker lists them first, the wizard appends, /model rewrites the
       // active entry's last-used model — all persisted via persistConfig.
-      customProviders: CustomProviderRegistry(saved.customProviders),
+      // The registry folds same-auth-domain duplicates onto one record
+      // (#706); each merge surfaces as a named boot note. stderr, never
+      // stdout: in --output events mode stdout is the strict-JSONL HEP
+      // stream, and headless answers read it too — a plain-text note
+      // there corrupts the channel (same rule as [CliIO.writeln]'s
+      // headless branch).
+      customProviders: CustomProviderRegistry(saved.customProviders)
+        ..mergeNotes.forEach(stderr.writeln),
       sessionRoot: sessionRoot,
       // Backend agent mode (issue #155): a graceful SIGTERM/SIGINT
       // cancel leaves a resumable partial transcript.
@@ -1954,6 +2027,8 @@ Future<void> _runApp(List<String> args) async {
           approvalModeFromLabel(saved.approvalMode) ?? ApprovalMode.yolo,
       alwaysAllowTools: saved.allowedTools.toSet(),
       runtimeTools: runtimeTools,
+      agentMode: harnessMode,
+      loadMode: loadMode,
       compactionEngine: compactionEngine,
       compactionJudgeBudgetSeconds: compactionJudgeBudgetSeconds,
       wireDump: wireDump,
@@ -2246,6 +2321,7 @@ Future<void> _runApp(List<String> args) async {
           : '$headlessPrompt\n\n${attachReferences.join('\n\n')}',
       images: attachedImages,
       hep: hep,
+      streamJson: streamJson,
       waitForJobs: effective.waitForJobs,
     );
     final int code;

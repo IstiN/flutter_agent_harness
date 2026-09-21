@@ -75,6 +75,7 @@ final class AgentCliConfig {
     this.powerRunner,
     this.tuiTheme,
     this.tuiProgramHooks,
+    this.sttyRunner,
     this.openRouterOAuthExchangeFn,
     this.chatGptOAuthExchangeFn,
     this.aiinConnectFn,
@@ -99,6 +100,8 @@ final class AgentCliConfig {
     this.jsExtensionsEnabled = true,
     this.dapHubState,
     this.runtimeTools,
+    this.agentMode,
+    this.loadMode = AgentLoadMode.defaultMode,
     this.onToolsConfigChanged,
     this.onDapHubConfigChanged,
     this.osName,
@@ -152,8 +155,11 @@ final class AgentCliConfig {
 
   /// Per-call judge/summarizer budget seconds (`compaction.
   /// judgeBudgetSeconds`, issue #541), resolved by the host from the
-  /// user config. `null` keeps the 90s default — the knob exists for
-  /// giant marathon sessions whose judge cannot answer within 90s.
+  /// user config. `null` keeps the 300s default — the knob exists for
+  /// giant marathon sessions whose judge cannot answer within 300s.
+  /// NOTE: the knob scales only the per-attempt budget — the
+  /// whole-run `totalBudget` (default 15 min) is NOT scaled, so values
+  /// above 300s shorten the retry ladder.
   final int? compactionJudgeBudgetSeconds;
 
   /// The `subagents:` section (issue #383): heartbeat cadence and stall
@@ -313,6 +319,18 @@ final class AgentCliConfig {
   /// declared intent.
   final ToolsConfig? runtimeTools;
 
+  /// The resolved harness mode (issue #679, `pi_mode.dart`): `'pi'` or
+  /// null (default). Resolved by the executable — flag > env > config —
+  /// and consumed by the wiring: the pi runtime tools scope pins the
+  /// surface to read/write/edit/bash and the prompt composition strips
+  /// every optional section.
+  final String? agentMode;
+
+  /// The tool-load preset for this boot (issue #680): resolves
+  /// `--omp` > `FA_AGENT_MODE` > `agent.mode`. [AgentLoadMode.defaultMode]
+  /// keeps every present tool in the schema (byte-identical behavior).
+  final AgentLoadMode loadMode;
+
   /// Called when the user changes the GLOBAL `tools:` scope
   /// (`/tools enable|disable <id> global`) so the executable can persist
   /// the CLI's live global view (`globalTools`). Null keeps the change
@@ -463,6 +481,13 @@ final class AgentCliConfig {
   /// the TUI controller — null in production, where the dart_tui program
   /// reads stdin and renders to the real terminal.
   final TuiProgramHooks? tuiProgramHooks;
+
+  /// Injected `stty` runner (issue #735): routes BOTH the TUI's boot-time
+  /// termios sanitize and the TermiosGuard's post-tool-phase re-asserts
+  /// through a fake — headless tests model the tty with it. Null in
+  /// production (real `stty` subprocesses; the guard no-ops without a
+  /// terminal, so non-TUI hosts are unaffected).
+  final SttyRunner? sttyRunner;
 
   /// The model to run. `/model <id>` swaps the id at runtime.
   final Model model;

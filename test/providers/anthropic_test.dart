@@ -1425,104 +1425,260 @@ void main() {
     });
   });
 
-    group('thinking ladder wiring', () {
-      /// Captures the request body [streamAnthropic] sends for [model].
-      Future<Map<String, dynamic>> captureBody(
-        Model model,
-        AnthropicOptions options,
-      ) async {
-        Map<String, dynamic>? capturedBody;
-        final client = http_testing.MockClient.streaming((request, body) async {
-          capturedBody =
-              jsonDecode(await body.bytesToString()) as Map<String, dynamic>;
-          return http.StreamedResponse(
-            Stream.value(utf8.encode(sseBody([messageStart(), messageStop]))),
-            200,
-          );
-        });
-        final stream = streamAnthropic(model, simpleContext(), options, client);
-        await stream.result;
-        return capturedBody!;
-      }
-
-      test('reasoning model + thinkingEnabled rides the minimal rung', () async {
-        final body = await captureBody(
-          reasoningModel,
-          const AnthropicOptions(apiKey: 'test-key', thinkingEnabled: true),
+  group('thinking ladder wiring', () {
+    /// Captures the request body [streamAnthropic] sends for [model].
+    Future<Map<String, dynamic>> captureBody(
+      Model model,
+      AnthropicOptions options,
+    ) async {
+      Map<String, dynamic>? capturedBody;
+      final client = http_testing.MockClient.streaming((request, body) async {
+        capturedBody =
+            jsonDecode(await body.bytesToString()) as Map<String, dynamic>;
+        return http.StreamedResponse(
+          Stream.value(utf8.encode(sseBody([messageStart(), messageStop]))),
+          200,
         );
-        expect(body['thinking'], {
-          'type': 'enabled',
-          'budget_tokens': 1024,
-          'display': 'summarized',
-        });
-        expect(body['max_tokens'], 64000);
       });
+      final stream = streamAnthropic(model, simpleContext(), options, client);
+      await stream.result;
+      return capturedBody!;
+    }
 
-      test('thinkingLevel high sends the 16384 rung', () async {
-        final body = await captureBody(
-          reasoningModel,
-          const AnthropicOptions(
-            apiKey: 'test-key',
-            thinkingEnabled: true,
-            thinkingLevel: 'high',
-          ),
-        );
-        expect(body['max_tokens'], 64000);
-        expect(body['thinking']['budget_tokens'], 16384);
+    test('reasoning model + thinkingEnabled rides the minimal rung', () async {
+      final body = await captureBody(
+        reasoningModel,
+        const AnthropicOptions(apiKey: 'test-key', thinkingEnabled: true),
+      );
+      expect(body['thinking'], {
+        'type': 'enabled',
+        'budget_tokens': 1024,
+        'display': 'summarized',
       });
+      expect(body['max_tokens'], 64000);
+    });
 
-      test('small cap clamps the budget to leave answer room', () async {
+    test('thinkingLevel high sends the 16384 rung', () async {
+      final body = await captureBody(
+        reasoningModel,
+        const AnthropicOptions(
+          apiKey: 'test-key',
+          thinkingEnabled: true,
+          thinkingLevel: 'high',
+        ),
+      );
+      expect(body['max_tokens'], 64000);
+      expect(body['thinking']['budget_tokens'], 16384);
+    });
+
+    test('small cap clamps the budget to leave answer room', () async {
+      final body = await captureBody(
+        Model(
+          id: 'claude-sonnet-4-5',
+          api: 'anthropic-messages',
+          provider: 'anthropic',
+          baseUrl: 'https://api.anthropic.com',
+          reasoning: true,
+          input: const ['text', 'image'],
+          contextWindow: 200000,
+          maxTokens: 8192,
+        ),
+        const AnthropicOptions(
+          apiKey: 'test-key',
+          maxTokens: 4096,
+          thinkingEnabled: true,
+          thinkingLevel: 'high',
+        ),
+      );
+      expect(body['max_tokens'], 8192);
+      expect(body['thinking']['budget_tokens'], 7168);
+    });
+
+    test('explicit thinkingBudgetTokens wins over the ladder', () async {
+      final body = await captureBody(
+        reasoningModel,
+        const AnthropicOptions(
+          apiKey: 'test-key',
+          thinkingEnabled: true,
+          thinkingBudgetTokens: 2048,
+        ),
+      );
+      expect(body['max_tokens'], 64000);
+      expect(body['thinking']['budget_tokens'], 2048);
+    });
+
+    test('non-reasoning model never sends thinking', () async {
+      final body = await captureBody(
+        testModel,
+        const AnthropicOptions(apiKey: 'test-key', thinkingEnabled: true),
+      );
+      expect(body.containsKey('thinking'), isFalse);
+      expect(body['max_tokens'], 8192);
+    });
+
+    test('bare options keep the catalog path byte-identical', () async {
+      final body = await captureBody(
+        reasoningModel,
+        const AnthropicOptions(apiKey: 'test-key'),
+      );
+      expect(body['max_tokens'], 64000);
+      expect(body.containsKey('thinking'), isFalse);
+    });
+
+    test(
+      'config-carried level (Model.thinkingLevel) enables thinking (AC3)',
+      () async {
         final body = await captureBody(
-          Model(
+          const Model(
             id: 'claude-sonnet-4-5',
             api: 'anthropic-messages',
             provider: 'anthropic',
             baseUrl: 'https://api.anthropic.com',
             reasoning: true,
-            input: const ['text', 'image'],
+            input: ['text'],
+            thinkingLevel: 'high',
+            contextWindow: 200000,
+            maxTokens: 64000,
+          ),
+          const AnthropicOptions(apiKey: 'test-key'),
+        );
+        expect(body['thinking'], {
+          'type': 'enabled',
+          'budget_tokens': 16384,
+          'display': 'summarized',
+        });
+        // Thinking fits INSIDE max_tokens: the answer ceiling is unchanged.
+        expect(body['max_tokens'], 64000);
+        // Temperature was not set; nothing else moved (AC5 shape).
+        expect(body.containsKey('temperature'), isFalse);
+      },
+    );
+
+    test(
+      'tiny ceiling clamps the budget to 0 and omits thinking (E2)',
+      () async {
+        // A ceiling at/below the answer floor yields a zero thinking budget —
+        // `budget_tokens: 0` is an invalid request, so no thinking block goes
+        // out at all (never invalid, issue #734 E2).
+        final body = await captureBody(
+          const Model(
+            id: 'claude-sonnet-4-5',
+            api: 'anthropic-messages',
+            provider: 'anthropic',
+            baseUrl: 'https://api.anthropic.com',
+            reasoning: true,
+            input: ['text'],
+            thinkingLevel: 'high',
+            contextWindow: 200000,
+            maxTokens: 1024,
+          ),
+          const AnthropicOptions(apiKey: 'test-key'),
+        );
+        expect(body.containsKey('thinking'), isFalse);
+        expect(body['max_tokens'], 1024);
+      },
+    );
+
+    test('xhigh/max-carried levels budget the high rung (AC6)', () async {
+      final body = await captureBody(
+        const Model(
+          id: 'claude-sonnet-4-5',
+          api: 'anthropic-messages',
+          provider: 'anthropic',
+          baseUrl: 'https://api.anthropic.com',
+          reasoning: true,
+          input: ['text'],
+          thinkingLevel: 'max',
+          contextWindow: 200000,
+          maxTokens: 64000,
+        ),
+        const AnthropicOptions(apiKey: 'test-key'),
+      );
+      expect(body['thinking']['budget_tokens'], 16384);
+    });
+
+    test(
+      'level + tiny ceiling clamps the budget to leave the answer floor (E2)',
+      () async {
+        final body = await captureBody(
+          const Model(
+            id: 'claude-sonnet-4-5',
+            api: 'anthropic-messages',
+            provider: 'anthropic',
+            baseUrl: 'https://api.anthropic.com',
+            reasoning: true,
+            input: ['text'],
+            thinkingLevel: 'high',
+            contextWindow: 200000,
+            maxTokens: 2048,
+          ),
+          const AnthropicOptions(apiKey: 'test-key'),
+        );
+        expect(body['max_tokens'], 2048);
+        expect(body['thinking']['budget_tokens'], 1024);
+      },
+    );
+
+    test('options level wins over the config-carried one', () async {
+      final body = await captureBody(
+        const Model(
+          id: 'claude-sonnet-4-5',
+          api: 'anthropic-messages',
+          provider: 'anthropic',
+          baseUrl: 'https://api.anthropic.com',
+          reasoning: true,
+          input: ['text'],
+          thinkingLevel: 'high',
+          contextWindow: 200000,
+          maxTokens: 64000,
+        ),
+        const AnthropicOptions(
+          apiKey: 'test-key',
+          thinkingEnabled: true,
+          thinkingLevel: 'low',
+        ),
+      );
+      expect(body['thinking']['budget_tokens'], 2048);
+    });
+
+    test('explicit options disable beats the config-carried level', () async {
+      final body = await captureBody(
+        const Model(
+          id: 'claude-sonnet-4-5',
+          api: 'anthropic-messages',
+          provider: 'anthropic',
+          baseUrl: 'https://api.anthropic.com',
+          reasoning: true,
+          input: ['text'],
+          thinkingLevel: 'high',
+          contextWindow: 200000,
+          maxTokens: 64000,
+        ),
+        const AnthropicOptions(apiKey: 'test-key', thinkingEnabled: false),
+      );
+      expect(body['thinking'], {'type': 'disabled'});
+      expect(body['max_tokens'], 64000);
+    });
+
+    test(
+      'level on a non-reasoning model is carried but never sent (E1)',
+      () async {
+        final body = await captureBody(
+          const Model(
+            id: 'text-only',
+            api: 'anthropic-messages',
+            provider: 'anthropic',
+            baseUrl: 'https://api.anthropic.com',
+            input: ['text'],
+            thinkingLevel: 'high',
             contextWindow: 200000,
             maxTokens: 8192,
           ),
-          const AnthropicOptions(
-            apiKey: 'test-key',
-            maxTokens: 4096,
-            thinkingEnabled: true,
-            thinkingLevel: 'high',
-          ),
-        );
-        expect(body['max_tokens'], 8192);
-        expect(body['thinking']['budget_tokens'], 7168);
-      });
-
-      test('explicit thinkingBudgetTokens wins over the ladder', () async {
-        final body = await captureBody(
-          reasoningModel,
-          const AnthropicOptions(
-            apiKey: 'test-key',
-            thinkingEnabled: true,
-            thinkingBudgetTokens: 2048,
-          ),
-        );
-        expect(body['max_tokens'], 64000);
-        expect(body['thinking']['budget_tokens'], 2048);
-      });
-
-      test('non-reasoning model never sends thinking', () async {
-        final body = await captureBody(
-          testModel,
-          const AnthropicOptions(apiKey: 'test-key', thinkingEnabled: true),
-        );
-        expect(body.containsKey('thinking'), isFalse);
-        expect(body['max_tokens'], 8192);
-      });
-
-      test('bare options keep the catalog path byte-identical', () async {
-        final body = await captureBody(
-          reasoningModel,
           const AnthropicOptions(apiKey: 'test-key'),
         );
-        expect(body['max_tokens'], 64000);
         expect(body.containsKey('thinking'), isFalse);
-      });
-    });
+        expect(body['max_tokens'], 8192);
+      },
+    );
+  });
 }

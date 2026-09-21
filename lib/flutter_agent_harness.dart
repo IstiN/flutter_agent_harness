@@ -46,8 +46,18 @@ export 'src/cli/cli_config.dart'
         loadProjectMemoryConfig,
         loadProjectCubeSettings,
         resolveStartupCubeSource;
+export 'src/cli/pi_mode.dart';
+export 'src/cli/links_config.dart'
+    show LinksConfig, defaultAppStoreUrl, defaultSiteUrl, defaultTestFlightUrl;
+export 'src/cli/links_surface.dart'
+    show
+        StoreBannerView,
+        appStoreBlockEndMarker,
+        appStoreBlockStartMarker,
+        renderAppStoreBlockHtml;
 export 'src/cli/cli_help.dart';
 export 'src/cli/hep.dart';
+export 'src/cli/stream_json.dart';
 export 'src/cli/folder_model_state.dart';
 export 'src/cli/log_file_tee.dart';
 export 'src/cli/sigint_action.dart';
@@ -157,6 +167,8 @@ export 'src/task/subagent_tools.dart';
 export 'src/tools/ask_tool.dart';
 export 'src/tools/availability.dart';
 export 'src/tools/availability_gate.dart';
+export 'src/tools/discover_tools_tool.dart';
+export 'src/tools/load_modes.dart';
 export 'src/tools/archive_reader.dart';
 export 'src/tools/builtin_tools.dart';
 export 'src/tools/checkpoint_tool.dart';

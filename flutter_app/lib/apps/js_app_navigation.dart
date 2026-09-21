@@ -6,6 +6,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
+import 'package:fa/apps/app_state_context.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_view.dart';
 import 'package:fa/services/agent_service.dart';
@@ -119,7 +120,16 @@ Future<AgentService?> forwardAppMessageToAgent(
   final buffer = StringBuffer(message.text);
   final stateJson = message.appStateJson;
   if (stateJson != null) {
-    buffer.write('\n\nCurrent app state:\n```json\n$stateJson\n```');
+    // Issue #692 D: the state block is budgeted (8 KiB default) — an
+    // oversized export folds to keys + previews instead of an 82 KB user
+    // message; the fold is announced in the block itself.
+    final bounded = formatAppStateContext(stateJson);
+    final fence = identical(bounded, stateJson) ? 'json' : '';
+    buffer.write('\n\nCurrent app state:\n```$fence\n$bounded\n```');
+  }
+  final viewportLine = message.viewportLine;
+  if (viewportLine != null) {
+    buffer.write('\n$viewportLine');
   }
   final themeLine = message.themeLine;
   if (themeLine != null) {

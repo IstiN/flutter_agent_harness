@@ -7,7 +7,9 @@ floor, the deepest scope that mentions a tool wins, and a live gate
 applies the merged decision. Disabling a tool unregisters it (the prompt
 no longer offers it) and a late call answers a tombstone note instead of
 executing. Config can only turn a present tool OFF: a tool the platform
-cannot provide stays off no matter what any scope asks.
+cannot provide stays off no matter what any scope asks. Load modes
+(issue #680) are the orthogonal axis — how much of the ENABLED set is
+loaded into the schema at boot (see **Load modes** below).
 
 ## A full example
 
@@ -94,6 +96,69 @@ Hard rules the stack cannot override:
   scopes (deepest wins), then the aggregate kill-switch forces every
   declared server to `false` — and servers no scope declared also follow
   the aggregate decision.
+
+## Load modes
+
+**Load modes** (issue #680) decide how much of the available tool set is
+LOADED into the provider-facing schema at boot — after oh-my-pi's
+`essential-tools` model: a curated base loads, everything else stays
+**discoverable** (enabled but out of the schema until mounted on demand).
+A mode never disables anything: every enabled tool stays enabled, and
+`tools:` scopes resolve exactly as above — the preset only picks which
+enabled ids sit in the prompt from the start.
+
+| Mode | Schema at boot | Everything else |
+|---|---|---|
+| `default` | Every enabled tool — no preset, byte-identical to pre-#680 behavior. | — |
+| `pi` | `read`, `write`, `edit`, `bash` (pi-mono's exact benchmark shape, issue #679). | Discoverable, **discovery off** — no `discover_tools`; switch modes to load more. |
+| `omp` | `read`, `write`, `edit`, `bash`, `ls`, `task`, `ask`. | Discoverable, **discovery on** — listed/mounted via `discover_tools`. |
+
+Three surfaces pick the mode, deepest wins (issue #680 AC3): the
+`--omp` flag (boots the omp preset outright), the `FA_AGENT_MODE` env
+twin (`default|pi|omp`, for Docker/headless hosts that cannot pass
+flags), and the `agent.mode` config key (any scope file, same labels).
+An unknown label from env or config is a hard startup error — a typo
+must never silently boot the default mode. The CLI `/settings` "Load
+mode" picker switches live: it writes `agent.mode` and re-applies
+without a restart.
+
+Demotion rules (what a preset pushes to discoverable):
+
+- Every ENABLED id outside the preset's essential set — static tool ids
+  and `mcp:<server>` families alike (MCP schemas are the heaviest; the
+  card lists `mcp__*` among the discoverable).
+- An explicit `tools: {id: on}` in any scope is a **standing mount**:
+  the id loads even under a preset (the user asked for the tool; the
+  preset only curates the default). Per-server `tools: {mcp:<server>: on}`
+  and the aggregate `tools: {mcp: on}` keep MCP families loaded the same
+  way.
+- An explicit `off` still disables — disable is disable, never demotion;
+  the essential set itself is pinned (nothing in the scope stack can
+  demote it).
+
+### The `discover_tools` surface
+
+`discover_tools` is the discovery meta tool of the omp mode — registered
+ONLY in omp (`discoveryEnabledByLoadMode`; the availability rebuild
+syncs it, so a mid-session `/settings` mode switch registers or
+unregisters it live). It carries no availability id, so it sits outside
+the `tools:` scope stack — no config can hide it. Pi keeps pi-mono's
+exact four-tool shape with discovery off (issue #679), and the default
+mode never sees it.
+
+Called with no arguments it lists every discoverable-and-unmounted tool
+with a one-line doc; with `mount: [names]` it loads those tools into the
+schema for the rest of the session (a mount is session-scoped and
+survives availability re-applies — nothing unmounts automatically; there
+is deliberately no GC). Mounting re-applies the availability resolution,
+so the tool enters the registry and the prompt rebuilds.
+
+A call to a discoverable tool that is not mounted never executes: the
+executor answers a tombstone that follows the live mode — while the
+discovery surface is registered (omp) it says to call `discover_tools`
+and mount by name; in a mode without it (pi) it points at the
+`/settings` load-mode switch (`agent.mode`) and this page instead of a
+tool that mode never shipped.
 
 ## Runtime
 

@@ -25,6 +25,19 @@ final bool _liveMacOs =
     Platform.isMacOS &&
     Process.runSync('which', ['sandbox-exec']).exitCode == 0;
 
+/// Whether the HOST itself already sandboxes reads (e.g. an fa cube
+/// session): nested sandbox profiles intersect, so the profile under test
+/// cannot re-allow what the outer profile denies — the live legs need a
+/// clean host (CI macOS leg or a developer machine).
+final bool _hostAlreadySandboxed = () {
+  try {
+    File('/etc/hosts').readAsStringSync();
+    return false;
+  } catch (_) {
+    return true;
+  }
+}();
+
 void main() {
   group(
     'macOS kernel mode live',
@@ -87,8 +100,12 @@ void main() {
         expect(result.exitCode, 0, reason: result.stderr.toString());
       });
     },
-    skip: _liveMacOs
-        ? false
-        : 'live macOS kernel mode: sandbox-exec not on this host',
+    skip: !_liveMacOs
+        ? 'live macOS kernel mode: sandbox-exec not on this host'
+        : _hostAlreadySandboxed
+        ? 'live macOS kernel mode: host is itself sandboxed (nested '
+              'sandbox profiles intersect — an inner allow cannot lift an '
+              'outer deny)'
+        : false,
   );
 }
