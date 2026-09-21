@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>&gt;_Fa blog</title>
+<meta name="description" content="Build notes from >_Fa — the cross-platform AI agent harness in Dart.">
+<meta name="theme-color" content="#070a10">
+<link rel="icon" href="../favicon.svg?v=2" type="image/svg+xml">
+<meta property="og:site_name" content=">_Fa">
+<meta property="og:type" content="article">
+<meta property="og:image" content="https://fa1.dev/og-image.png?v=2">
+<link rel="stylesheet" href="../styles.css?v=2">
+<link rel="stylesheet" href="blog.css?v=1">
+<script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
+</head>
+<body>
+<div class="bg" aria-hidden="true"></div>
+
+<header class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="../">
+      <span class="brand-mark" aria-hidden="true">&gt;_</span>
+      <span class="brand-name">Fa</span>
+      <span class="brand-sub">fa1.dev</span>
+    </a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="../#demo">Demo</a>
+      <a href="../#install">Install</a>
+      <a href="../#features">Features</a>
+      <a href="../widgets/">Widgets</a>
+      <a href="./">Blog</a>
+    </nav>
+    <nav class="nav-ext" aria-label="Project links">
+      <a href="https://github.com/IstiN/flutter_agent_harness" rel="noopener">GitHub</a>
+      <a href="https://pub.dev/packages/flutter_agent_harness" rel="noopener">pub.dev</a>
+    </nav>
+  </div>
+</header>
+
+<main class="blog-wrap">
+  <p><a class="back-link" href="./">← all posts</a></p>
+  <article id="post">Loading…</article>
+</main>
+
+<script>
+const slug = new URLSearchParams(location.search).get('p');
+const article = document.getElementById('post');
+
+if (!slug || !/^[a-z0-9-]+$/.test(slug)) {
+  article.textContent = 'Post not found.';
+} else {
+  fetch('posts/' + slug + '.md')
+    .then(r => { if (!r.ok) throw new Error(r.status); return r.text(); })
+    .then(render)
+    .catch(() => { article.textContent = 'Post not found.'; });
+}
+
+function render(md) {
+  const { meta, body } = splitFrontmatter(md);
+
+  document.title = (meta.title || '> Fa blog') + ' — >_Fa blog';
+  setMeta('og:title', meta.title);
+  setMeta('og:description', meta.description);
+  if (meta.cover) setMeta('og:image', 'https://fa1.dev/blog/posts/' + meta.cover);
+
+  let html = '';
+  if (meta.cover) html += '<img class="post-cover" src="posts/' + meta.cover + '" alt="">';
+  html += '<div class="post-meta">' + esc(meta.date || '') +
+    (meta.author ? ' · ' + esc(meta.author) : '') +
+    (meta.linkedin ? ' · <a href="' + esc(meta.linkedin) + '" rel="noopener">also on LinkedIn ↗</a>' : '') +
+    '</div>';
+  if (meta.video) html += videoEmbed(meta.video);
+  html += marked.parse(body);
+  article.innerHTML = html;
+  article.className = 'post-body';
+  // Fix relative image paths (assets/… lives under posts/).
+  article.querySelectorAll('img').forEach(img => {
+    const src = img.getAttribute('src');
+    if (src && !/^(https?:)?\//.test(src)) img.src = 'posts/' + src;
+  });
+}
+
+function splitFrontmatter(md) {
+  const meta = {};
+  if (!md.startsWith('---\n')) return { meta, body: md };
+  const end = md.indexOf('\n---', 4);
+  if (end < 0) return { meta, body: md };
+  for (const line of md.slice(4, end).split('\n')) {
+    const i = line.indexOf(':');
+    if (i > 0) meta[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+  }
+  return { meta, body: md.slice(md.indexOf('\n', end + 1) + 1).trim() };
+}
+
+function videoEmbed(url) {
+  const yt = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)/);
+  if (yt) return '<div class="post-video"><iframe src="https://www.youtube.com/embed/' + yt[1] + '" allowfullscreen></iframe></div>';
+  if (/\.(mp4|webm|mov)$/.test(url)) return '<div class="post-video"><video src="' + esc(url) + '" controls></video></div>';
+  return '<p><a href="' + esc(url) + '" rel="noopener">🎬 Watch the video ↗</a></p>';
+}
+
+function setMeta(prop, content) {
+  if (!content) return;
+  let el = document.querySelector('meta[property="' + prop + '"]');
+  if (!el) { el = document.createElement('meta'); el.setAttribute('property', prop); document.head.appendChild(el); }
+  el.setAttribute('content', content);
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+</script>
+</body>
+</html>
