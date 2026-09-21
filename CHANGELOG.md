@@ -4006,4 +4006,9 @@
 - fix(cli): cut marathon-session boot cost round 2 (issue #503) (#676)
 - gh-752 Boarding screens in Apps disable swipping (#753)
 
+## 0.1.446
+
+- fix(726): resilient iOS pub get + advancing TestFlight marketing version (#764)
+- gh-746 Android Play Store Error (#750)
+
 ## Unreleased
