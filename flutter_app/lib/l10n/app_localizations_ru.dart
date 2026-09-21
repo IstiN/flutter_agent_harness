@@ -2106,26 +2106,6 @@ class AppLocalizationsRu extends AppLocalizations {
   String get settingsQueueAddTitle => 'Новая запись очереди';
 
   @override
-  String get settingsQueueKind =>
-      'Тип провайдера (например openai-completions)';
-
-  @override
-  String get settingsQueueModel => 'Модель (например moonshotai/Kimi-K2.6)';
-
-  @override
-  String get settingsQueueApiKeyEnv =>
-      'ENV с API-ключом (например KIMI_API_KEY)';
-
-  @override
-  String get settingsQueueBaseUrl => 'Base URL (необязательно)';
-
-  @override
-  String get settingsQueueCancel => 'Отмена';
-
-  @override
-  String get settingsQueueAddAction => 'Добавить';
-
-  @override
   String get settingsQueueMoveUp => 'Выше';
 
   @override
@@ -2142,11 +2122,6 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String settingsQueueSaveFailed(String error) {
     return 'Не удалось сохранить очередь: $error';
-  }
-
-  @override
-  String settingsQueueInvalid(String error) {
-    return 'Очередь отклонена: $error';
   }
 
   @override

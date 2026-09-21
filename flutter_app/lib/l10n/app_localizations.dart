@@ -3686,47 +3686,11 @@ abstract class AppLocalizations {
   /// **'Add entry'**
   String get settingsQueueAdd;
 
-  /// Title of the add-entry dialog (issue #418)
+  /// Title of the queue provider/model picker (issue #418, two-step flow #693)
   ///
   /// In en, this message translates to:
   /// **'Add queue entry'**
   String get settingsQueueAddTitle;
-
-  /// Field: provider_type (issue #418)
-  ///
-  /// In en, this message translates to:
-  /// **'Provider type (e.g. openai-completions)'**
-  String get settingsQueueKind;
-
-  /// Field: model (issue #418)
-  ///
-  /// In en, this message translates to:
-  /// **'Model (e.g. moonshotai/Kimi-K2.6)'**
-  String get settingsQueueModel;
-
-  /// Field: apiKeyEnv (issue #418)
-  ///
-  /// In en, this message translates to:
-  /// **'API key env var (e.g. KIMI_API_KEY)'**
-  String get settingsQueueApiKeyEnv;
-
-  /// Field: optional baseUrl (issue #418)
-  ///
-  /// In en, this message translates to:
-  /// **'Base URL (optional)'**
-  String get settingsQueueBaseUrl;
-
-  /// Dialog cancel button (issue #418)
-  ///
-  /// In en, this message translates to:
-  /// **'Cancel'**
-  String get settingsQueueCancel;
-
-  /// Dialog confirm button (issue #418)
-  ///
-  /// In en, this message translates to:
-  /// **'Add'**
-  String get settingsQueueAddAction;
 
   /// Reorder tooltip (issue #418)
   ///
@@ -3757,12 +3721,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Could not save the queue: {error}'**
   String settingsQueueSaveFailed(String error);
-
-  /// No description provided for @settingsQueueInvalid.
-  ///
-  /// In en, this message translates to:
-  /// **'Provider queue rejected: {error}'**
-  String settingsQueueInvalid(String error);
 
   /// No description provided for @themePackImportFailed.
   ///

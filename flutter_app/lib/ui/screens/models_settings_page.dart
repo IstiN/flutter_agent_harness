@@ -8,6 +8,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/ondevice_config_store.dart';
+import 'package:fa/services/project_mount_env.dart' show SessionCwd;
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/task_models_store.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
@@ -22,8 +23,9 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// The Models settings page: everything model-related in one place —
 /// the swipeable presets, the main chat model, the per-task-role overrides
-/// (quick/subagents) and the media slots. Opened from the "Models" row on
-/// the settings screen so the top level stays provider-focused.
+/// (quick/subagents), the provider-queue chain and the media slots. Opened
+/// from the "Models" row on the settings screen so the top level stays
+/// provider-focused.
 class ModelsSettingsPage extends StatefulWidget {
   const ModelsSettingsPage({
     super.key,
@@ -35,6 +37,7 @@ class ModelsSettingsPage extends StatefulWidget {
     this.webLlmEngine,
     this.gemmaEngine,
     this.transformersJsEngine,
+    this.queueSection,
   });
 
   /// The live service the chat-model flow reconfigures and the role/media
@@ -59,6 +62,12 @@ class ModelsSettingsPage extends StatefulWidget {
   final WebLlmEngineApi? webLlmEngine;
   final GemmaEngineApi? gemmaEngine;
   final TransformersJsEngineApi? transformersJsEngine;
+
+  /// The provider-queue editor (issue #693) — the ordered main-model
+  /// failover chain joined the Models group. Overrides it (goldens/tests
+  /// inject a deterministic section); null builds the real one against
+  /// the session's config scopes.
+  final Widget? queueSection;
 
   @override
   State<ModelsSettingsPage> createState() => _ModelsSettingsPageState();
@@ -118,6 +127,18 @@ class _ModelsSettingsPageState extends State<ModelsSettingsPage> {
                 const Divider(),
                 const SizedBox(height: 16),
               ],
+              // The provider-queue editor (issue #693): the ordered
+              // main-model failover chain picked with the SAME two-step
+              // provider→model flow as the roles above.
+              widget.queueSection ??
+                  ProviderQueueSection(
+                    projectDir: widget.service.env.sessionCwd,
+                    registry: widget.registry,
+                    modelsFetcher: widget.modelsFetcher,
+                  ),
+              const SizedBox(height: 24),
+              const Divider(),
+              const SizedBox(height: 16),
               MediaModelsSection(
                 service: widget.service,
                 registry: widget.registry,

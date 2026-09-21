@@ -644,6 +644,8 @@ class ProviderQueueSection extends StatefulWidget {
     this.resolve,
     this.write,
     this.supported = appProviderQueueConfigSupported,
+    this.registry,
+    this.modelsFetcher,
   });
 
   /// The session's project directory — the `.fah/config.yaml` layer the
@@ -665,6 +667,14 @@ class ProviderQueueSection extends StatefulWidget {
 
   /// Whether this platform can persist the queue (false on web).
   final bool supported;
+
+  /// The user-added providers the two-step picker lists (issue #693);
+  /// null falls back to a non-persisting in-memory registry.
+  final ProviderRegistry? registry;
+
+  /// `/models` fetch override (tests), forwarded to the picker's model
+  /// page.
+  final ModelsEndpointFetcher? modelsFetcher;
 
   @override
   State<ProviderQueueSection> createState() => _ProviderQueueSectionState();
@@ -740,12 +750,84 @@ class _ProviderQueueSectionState extends State<ProviderQueueSection> {
   }
 
   Future<void> _addEntry() async {
-    final entry = await showDialog<ProviderQueueEntry>(
-      context: context,
-      builder: (context) => const _QueueEntryDialog(),
-    );
+    final entry = await _pickEntry(title: context.l10n.settingsQueueAddTitle);
     if (entry == null) return;
     _save([...?_resolution?.entries, entry]);
+  }
+
+  Future<void> _editEntry(int index) async {
+    final entries = _resolution?.entries;
+    if (entries == null || index >= entries.length) return;
+    final entry = await _pickEntry(
+      initial: entries[index],
+      title: context.l10n.settingsQueueTitle,
+    );
+    if (entry == null) return;
+    _save([
+      for (var i = 0; i < entries.length; i++)
+        if (i == index) entry else entries[i],
+    ]);
+  }
+
+  /// The shared two-step provider→model flow (the SAME pages the quick /
+  /// subagents model rows push, issue #693): [MediaSlotProviderPickerPage]
+  /// (connected providers + add provider) → [MediaSlotModelPage] (the
+  /// endpoint's model list, free-text entry kept). Returns the picked
+  /// entry, or null when the user backed out or the pick does not map to
+  /// a queue kind (the strict entry constructor — surfaced verbatim).
+  Future<ProviderQueueEntry?> _pickEntry({
+    ProviderQueueEntry? initial,
+    required String title,
+  }) async {
+    final result = await faui.pushFaPage<MediaSlotEditorResult>(
+      context,
+      MediaSlotProviderPickerPage(
+        // The generic provider→model flow: no voice field, no capability
+        // chips, and the saved kind maps each endpoint to its real adapter.
+        slot: null,
+        title: title,
+        initial: initial == null
+            ? null
+            : MediaSlotOverride(
+                providerKind: initial.providerType,
+                baseUrl: initial.baseUrl ?? '',
+                modelId: initial.model,
+                apiKeyName: initial.apiKeyEnv,
+              ),
+        registry: widget.registry,
+        modelsFetcher: widget.modelsFetcher,
+        // A queue entry boots only with a resolvable key: connected
+        // providers only (the roles precedent).
+        connectedOnly: true,
+        // A queue entry IS a concrete provider — "same as main connection"
+        // (the clear result) would make the entry pointless.
+        allowMainConnection: false,
+      ),
+    );
+    final override = result?.override;
+    if (result == null || result.cleared || override == null) return null;
+    try {
+      return ProviderQueueEntry(
+        providerType: override.providerKind,
+        model: override.modelId,
+        baseUrl: override.baseUrl.isEmpty ? null : override.baseUrl,
+        apiKeyEnv: override.apiKeyName,
+        // Overrides the picker does not touch ride along; a re-picked
+        // entry is explicit from here on (a ref entry's ref is dropped).
+        contextWindow: initial?.contextWindow,
+        maxTokens: initial?.maxTokens,
+      );
+    } on ArgumentError catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(context.l10n.settingsQueueSaveFailed('$error')),
+            duration: const Duration(seconds: 6),
+          ),
+        );
+      }
+      return null;
+    }
   }
 
   @override
@@ -790,6 +872,7 @@ class _ProviderQueueSectionState extends State<ProviderQueueSection> {
               index: index,
               entry: entry,
               enabled: !envWins,
+              onEdit: () => _editEntry(index),
               onMoveUp: index == 0
                   ? null
                   : () => _save([
@@ -841,13 +924,16 @@ class _ProviderQueueSectionState extends State<ProviderQueueSection> {
   }
 }
 
-/// One queue row: position, provider type, model, key env — with
-/// reorder/remove actions disabled when the env scope owns the queue.
+/// One queue row: position, the picked model over the provider summary —
+/// a button-style row (issue #693) opening the shared two-step
+/// provider→model picker, with edit/reorder/remove disabled when the env
+/// scope owns the queue.
 class _QueueEntryTile extends StatelessWidget {
   const _QueueEntryTile({
     required this.index,
     required this.entry,
     required this.enabled,
+    this.onEdit,
     this.onMoveUp,
     this.onMoveDown,
     this.onRemove,
@@ -856,6 +942,7 @@ class _QueueEntryTile extends StatelessWidget {
   final int index;
   final ProviderQueueEntry entry;
   final bool enabled;
+  final VoidCallback? onEdit;
   final VoidCallback? onMoveUp;
   final VoidCallback? onMoveDown;
   final VoidCallback? onRemove;
@@ -863,6 +950,11 @@ class _QueueEntryTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final subtitle = [
+      entry.providerType,
+      if (entry.baseUrl != null) faui.providerHostOf(entry.baseUrl!),
+      if (entry.apiKeyEnv != null) '\$${entry.apiKeyEnv}',
+    ].join(' · ');
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: Row(
@@ -875,10 +967,40 @@ class _QueueEntryTile extends StatelessWidget {
             ),
           ),
           Expanded(
-            child: Text(
-              '${entry.providerType} · ${entry.model}'
-              '${entry.baseUrl == null ? '' : ' · ${entry.baseUrl}'}'
-              '${entry.apiKeyEnv == null ? '' : ' · \$${entry.apiKeyEnv}'}',
+            child: InkWell(
+              onTap: enabled ? onEdit : null,
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.cloud_outlined,
+                      size: 20,
+                      color: theme.colorScheme.primary,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(entry.model),
+                          Text(
+                            subtitle,
+                            style: theme.textTheme.bodySmall,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(
+                      Icons.chevron_right,
+                      size: 18,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
           IconButton(
@@ -898,111 +1020,6 @@ class _QueueEntryTile extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-/// The add-entry dialog: provider type, model, key env, optional base URL.
-/// Validation runs through the REAL parser — the dialog only returns an
-/// entry [parseProviderQueueJsonText] accepts.
-class _QueueEntryDialog extends StatefulWidget {
-  const _QueueEntryDialog();
-
-  @override
-  State<_QueueEntryDialog> createState() => _QueueEntryDialogState();
-}
-
-class _QueueEntryDialogState extends State<_QueueEntryDialog> {
-  final _kind = TextEditingController();
-  final _model = TextEditingController();
-  final _key = TextEditingController();
-  final _url = TextEditingController();
-  String? _error;
-
-  @override
-  void dispose() {
-    _kind.dispose();
-    _model.dispose();
-    _key.dispose();
-    _url.dispose();
-    super.dispose();
-  }
-
-  void _submit() {
-    final json = [
-      {
-        'provider_type': _kind.text.trim(),
-        'provider_config': {
-          'model': _model.text.trim(),
-          if (_key.text.trim().isNotEmpty) 'apiKeyEnv': _key.text.trim(),
-          if (_url.text.trim().isNotEmpty) 'baseUrl': _url.text.trim(),
-        },
-      },
-    ];
-    try {
-      final parsed = parseProviderQueueJsonText(jsonEncode(json));
-      final parsedEntries = parsed.entries;
-      if (parsedEntries.isEmpty) {
-        setState(() => _error = context.l10n.settingsQueueInvalid('empty'));
-        return;
-      }
-      Navigator.of(context).pop(parsedEntries.single);
-    } on Object catch (error) {
-      setState(() => _error = context.l10n.settingsQueueInvalid('$error'));
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(context.l10n.settingsQueueAddTitle),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: _kind,
-            decoration: InputDecoration(
-              labelText: context.l10n.settingsQueueKind,
-            ),
-          ),
-          TextField(
-            controller: _model,
-            decoration: InputDecoration(
-              labelText: context.l10n.settingsQueueModel,
-            ),
-          ),
-          TextField(
-            controller: _key,
-            decoration: InputDecoration(
-              labelText: context.l10n.settingsQueueApiKeyEnv,
-            ),
-          ),
-          TextField(
-            controller: _url,
-            decoration: InputDecoration(
-              labelText: context.l10n.settingsQueueBaseUrl,
-            ),
-          ),
-          if (_error != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Text(
-                _error!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
-            ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(context.l10n.settingsQueueCancel),
-        ),
-        FilledButton(
-          onPressed: _submit,
-          child: Text(context.l10n.settingsQueueAddAction),
-        ),
-      ],
     );
   }
 }
