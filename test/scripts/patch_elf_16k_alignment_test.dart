@@ -239,6 +239,100 @@ void main() {
       expect(outcome.patched, isFalse);
       expect(outcome.error, contains('endian'));
     });
+
+    test('wrapped e_phoff (0xFFFF…FFFF reads back as -1) fails with a '
+        'clean error instead of throwing RangeError', () {
+      // Regression (review round 1): Dart ints are signed 64-bit, so
+      // getUint64 hands back -1 for e_phoff = 0xFFFFFFFFFFFFFFFF and the
+      // naive `phoff + phnum * phentsize > length` check wrapped below the
+      // length — the header passed validation and the phdr read at offset
+      // -1 threw an uncaught RangeError despite the "never throws" contract.
+      final image = Uint8List(0x3a);
+      final bd = ByteData.sublistView(image);
+      image
+        ..[0] = 0x7f
+        ..[1] = 0x45
+        ..[2] = 0x4c
+        ..[3] = 0x46
+        ..[4] = 2 // ELF64
+        ..[5] = 1; // LSB
+      bd.setUint64(0x20, 0xFFFFFFFFFFFFFFFF, Endian.little); // e_phoff
+      bd.setUint16(0x36, 56, Endian.little); // e_phentsize
+      bd.setUint16(0x38, 1, Endian.little); // e_phnum
+      final file = writeSo(image);
+
+      final outcome = patcher.patchFile(file);
+
+      expect(outcome.patched, isFalse);
+      expect(outcome.error, isNotNull);
+      expect(file.readAsBytesSync(), image);
+    });
+
+    test('huge positive e_phoff (addition overflow) fails with a clean '
+        'error instead of throwing RangeError', () {
+      // 0x7FFFFFFFFFFFFFFF + 56 overflows signed 64-bit back to negative,
+      // so the naive sum-based bounds check also passed this header.
+      final image = Uint8List(0x3a);
+      final bd = ByteData.sublistView(image);
+      image
+        ..[0] = 0x7f
+        ..[1] = 0x45
+        ..[2] = 0x4c
+        ..[3] = 0x46
+        ..[4] = 2
+        ..[5] = 1;
+      bd.setUint64(0x20, 0x7FFFFFFFFFFFFFFF, Endian.little);
+      bd.setUint16(0x36, 56, Endian.little);
+      bd.setUint16(0x38, 1, Endian.little);
+      final file = writeSo(image);
+
+      final outcome = patcher.patchFile(file);
+
+      expect(outcome.patched, isFalse);
+      expect(outcome.error, isNotNull);
+      expect(file.readAsBytesSync(), image);
+    });
+  });
+
+  group('check-only mode', () {
+    test('reports a 4 KB-aligned blob without modifying it', () {
+      final image = buildElf(elf64: true, loads: [(0, 0, 0x1000)]);
+      final file = writeSo(image);
+
+      final outcome = patcher.patchFile(file, checkOnly: true);
+
+      expect(outcome.patched, isFalse);
+      expect(outcome.alreadyAligned, isFalse);
+      expect(outcome.error, contains('16 KB'));
+      expect(file.readAsBytesSync(), image);
+    });
+
+    test('passes an already-aligned blob', () {
+      final image = buildElf(elf64: true, loads: [(0, 0, 0x4000)]);
+      final file = writeSo(image);
+
+      final outcome = patcher.patchFile(file, checkOnly: true);
+
+      expect(outcome.error, isNull);
+      expect(outcome.alreadyAligned, isTrue);
+      expect(file.readAsBytesSync(), image);
+    });
+
+    test('patchPath check-only reports but never touches', () {
+      writeSo(buildElf(elf64: true, loads: [(0, 0, 0x1000)]), name: 'a.so');
+      writeSo(buildElf(elf64: true, loads: [(0, 0, 0x4000)]), name: 'b.so');
+
+      final outcomes = patcher.patchPath(tempDir.path, checkOnly: true);
+
+      expect(outcomes, hasLength(2));
+      expect(outcomes.where((o) => o.error != null), hasLength(1));
+      expect(
+        outcomes.where((o) => o.error == null && o.alreadyAligned),
+        hasLength(1),
+      );
+      // Nothing was patched in check-only mode.
+      expect(outcomes.every((o) => !o.patched), isTrue);
+    });
   });
 
   group('directory scan', () {

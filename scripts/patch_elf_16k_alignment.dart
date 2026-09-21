@@ -29,8 +29,11 @@
 /// Usage:
 ///
 /// ```sh
-/// dart scripts/patch_elf_16k_alignment.dart <file-or-dir>...
+/// dart scripts/patch_elf_16k_alignment.dart [--check] <file-or-dir>...
 /// ```
+///
+/// `--check` verifies without modifying: exit code 1 when any scanned file
+/// declares a sub-16 KB LOAD alignment.
 ///
 /// Directories are scanned recursively for `*.so` files. Exit code is 0
 /// when every scanned file is (or became) 16 KB-aligned; 1 otherwise.
@@ -91,7 +94,11 @@ final class PatchOutcome {
 /// Patch a single ELF file in place. Never throws — malformed or
 /// non-congruent files come back as a [PatchOutcome] with [PatchOutcome.error]
 /// set and their bytes untouched.
-PatchOutcome patchFile(File file) {
+///
+/// With [checkOnly] the file is verified but never modified: a blob whose
+/// LOAD segments declare a sub-16 KB alignment comes back with an error
+/// outcome (used by CI to re-check the packaged artifact, gh-746).
+PatchOutcome patchFile(File file, {bool checkOnly = false}) {
   final path = file.absolute.path;
   try {
     final image = file.readAsBytesSync();
@@ -113,6 +120,20 @@ PatchOutcome patchFile(File file) {
     final needsPatch = loads.any((l) => l.align % _page16k != 0);
     if (!needsPatch) {
       return PatchOutcome(path: path, patched: false, alreadyAligned: true);
+    }
+    if (checkOnly) {
+      // Verify-only mode: report the sub-16 KB alignment without touching
+      // the bytes.
+      final l = loads.firstWhere((s) => s.align % _page16k != 0);
+      return PatchOutcome(
+        path: path,
+        patched: false,
+        alreadyAligned: false,
+        error:
+            'LOAD segment at file offset 0x${l.offset.toRadixString(16)} '
+            'declares p_align 0x${l.align.toRadixString(16)} (below the '
+            '16 KB page size Play requires)',
+      );
     }
 
     // Raising p_align is only ELF-valid when every segment keeps the
@@ -185,14 +206,25 @@ PatchOutcome patchFile(File file) {
       alreadyAligned: false,
       error: 'I/O error: ${e.message}',
     );
+  } on RangeError {
+    // Defense in depth: the bounds check in _loadSegments is wrap-safe, but
+    // the "never throws" contract is unconditional — a future parse change
+    // must still surface as a clean FAIL line, not a stack trace.
+    return PatchOutcome(
+      path: path,
+      patched: false,
+      alreadyAligned: false,
+      error: 'malformed ELF (out-of-bounds header read)',
+    );
   }
 }
 
 /// Patch every `.so` file under [path] (recursive when it is a directory).
-List<PatchOutcome> patchPath(String path) {
+/// With [checkOnly], files are verified but never modified.
+List<PatchOutcome> patchPath(String path, {bool checkOnly = false}) {
   final entity = FileSystemEntity.typeSync(path);
   if (entity == FileSystemEntityType.file) {
-    return [patchFile(File(path))];
+    return [patchFile(File(path), checkOnly: checkOnly)];
   }
   if (entity == FileSystemEntityType.directory) {
     final outcomes = <PatchOutcome>[];
@@ -200,7 +232,7 @@ List<PatchOutcome> patchPath(String path) {
         .listSync(recursive: true)
         .whereType<File>()
         .where((f) => f.path.endsWith('.so'))
-        .map(patchFile)
+        .map((f) => patchFile(f, checkOnly: checkOnly))
         .forEach(outcomes.add);
     return outcomes;
   }
@@ -269,7 +301,12 @@ List<_LoadSegment>? _loadSegments(Uint8List image) {
     return null; // PN_XNUM: real count lives in section headers; not a shape
     // any Android shared library takes.
   }
-  if (phoff + phnum * phentsize > image.length) return null;
+  // Wrap-safe bounds check (review round 1): Dart ints are signed 64-bit,
+  // so a hostile e_phoff of 0xFFFF…FFFF reads back as -1 and
+  // `phoff + phnum * phentsize` wraps below the length; a huge positive
+  // e_phoff overflows the addition the same way. Subtract from the length
+  // instead — that direction can never wrap for phoff >= 0.
+  if (phoff < 0 || phnum * phentsize > image.length - phoff) return null;
 
   final loads = <_LoadSegment>[];
   for (var i = 0; i < phnum; i++) {
@@ -300,18 +337,25 @@ List<_LoadSegment>? _loadSegments(Uint8List image) {
   return loads;
 }
 
-/// CLI entry: `dart scripts/patch_elf_16k_alignment.dart <file-or-dir>...`.
+/// CLI entry:
+/// `dart scripts/patch_elf_16k_alignment.dart [--check] <file-or-dir>...`.
+///
+/// With `--check` the files are only verified (nothing is written) and the
+/// exit code is non-zero when any LOAD segment declares a sub-16 KB
+/// alignment — CI uses this to re-check the packaged artifact (gh-746).
 void main(List<String> args) {
+  final checkOnly = args.remove('--check');
   if (args.isEmpty) {
     stderr.writeln(
-      'usage: dart scripts/patch_elf_16k_alignment.dart <file-or-dir>...',
+      'usage: dart scripts/patch_elf_16k_alignment.dart [--check] '
+      '<file-or-dir>...',
     );
     exitCode = 64;
     return;
   }
   final outcomes = <PatchOutcome>[];
   for (final arg in args) {
-    outcomes.addAll(patchPath(arg));
+    outcomes.addAll(patchPath(arg, checkOnly: checkOnly));
   }
   for (final outcome in outcomes) {
     stdout.writeln(outcome);
