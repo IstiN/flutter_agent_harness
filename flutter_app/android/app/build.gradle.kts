@@ -186,13 +186,14 @@ tasks.matching { it.name.startsWith("compileFlutterBuild") }.all {
             patch16kScript.asFile.absolutePath,
             nativeAssetsDir.get().asFile.absolutePath,
         )
-        // The patch is in place, so the task's inputs are also its outputs;
-        // declaring the inputs (plus a permissive up-to-date spec) lets
-        // Gradle skip the JIT run when the staged libs did not change.
-        inputs.dir(nativeAssetsDir)
-            .withPropertyName("nativeAssets")
-            .optional()
-        outputs.upToDateWhen { true }
+        // No inputs/outputs up-to-date optimization on purpose: the patch
+        // mutates its input dir in place, and compileFlutterBuild re-stages
+        // the ORIGINAL 4 KB blobs whenever it re-runs — Gradle's pre-action
+        // input snapshot then matches the freshly restaged pre-patch bytes
+        // and would happily skip the patch (verified: UP-TO-DATE with 4 KB
+        // Skel blobs on disk). An unsound skip is exactly the silent
+        // regression this gate exists to prevent, so the task runs on every
+        // build; the JIT run is idempotent and cheap.
         doFirst {
             if (!patch16kScript.asFile.exists()) {
                 throw GradleException(
