@@ -145,6 +145,12 @@ void main() {
       expect(await timedOut.waitForCode(), isNull);
       expect(sw.elapsed, greaterThan(const Duration(milliseconds: 40)));
       expect(timedOut.callbackUrl, isNull);
+      // The timeout closes the socket asynchronously (`unawaited(close())`
+      // in the timer callback), so the release is only observable after
+      // awaiting close() — rebinding any earlier races the release and
+      // flakes under CI load with "the shared flag to bind()" (observed on
+      // the pre-merge validation run).
+      await timedOut.close();
       // The port is released: a bind on the same port succeeds.
       await HttpServer.bind(
         InternetAddress.loopbackIPv4,
