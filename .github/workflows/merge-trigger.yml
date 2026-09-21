@@ -19,9 +19,9 @@
 #   branch protection on main with required checks + strict (the machine
 #   only merges CLEAN PRs, so protection defines what "ready" means).
 #   No secrets needed: github.token is sufficient (merge + issues + PR write).
-#   Recommended: PAT_TOKEN so auto-update-prs re-runs CI on updated branches
-#   (github.token pushes do not trigger workflows) — without it, PRs updated
-#   after a main push wait for any later commit before they can go CLEAN.
+#   Branch freshness is the SM's job (silent-update-behind); CI on the refreshed
+#   head is re-dispatched by the SM (dispatch-only CI — pushes fire no
+#   workflows; auto-update-prs.yml is retired).
 
 name: Merge Trigger
 
@@ -110,7 +110,7 @@ jobs:
                 fi
                 ;;
               MERGEABLE:BEHIND)
-                skipped=$((skipped+1)); echo "⏳ behind main — auto-update-prs will refresh it"
+                skipped=$((skipped+1)); echo "⏳ behind main — the SM (silent-update-behind) refreshes it, then re-dispatches CI"
                 ;;
               MERGEABLE:BLOCKED|MERGEABLE:UNSTABLE)
                 skipped=$((skipped+1)); echo "⏳ required checks not green yet"

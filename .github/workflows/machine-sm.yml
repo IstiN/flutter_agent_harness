@@ -44,15 +44,16 @@ permissions:
 
 jobs:
   sm:
-    # Pinned to the immutable dmtools-agents#466 merge SHA (in-flight guard
-    # target-repo fix + armed-PR review guards; supersedes #465).
+    # Pinned to the immutable dmtools-agents#477 merge SHA (dispatch-only
+    # CI + sticky approval latches — the SM is the only CI trigger, no
+    # re-review after the first approval; supersedes #466).
     # Flip in lockstep with ai-teammate.yml — guarded by
     # test/machine_kit/factory_stub_ref_test.dart.
-    uses: IstiN/dmtools-agents/.github/workflows/factory-sm.yml@554cfb0b0cd0fc760bc4df17d7542e9ac80cecb4
+    uses: IstiN/dmtools-agents/.github/workflows/factory-sm.yml@6becee71771ba6477189224e292ee458d4af90dc
     with:
       # The literal uses-ref: the factory requires it (it cannot derive its
       # own ref — github.workflow_ref in a called workflow is the CALLER's).
-      factory_ref: 554cfb0b0cd0fc760bc4df17d7542e9ac80cecb4
+      factory_ref: 6becee71771ba6477189224e292ee458d4af90dc
       # Manual ticks default to dry; cron ticks run live.
       dryRun: ${{ github.event.inputs.dryRun || 'false' }}
       # #687: one source of truth for the machine login (repo variable).
@@ -60,6 +61,9 @@ jobs:
       # #687: the workflow token — silent branch updates (pushes trigger
       # no workflows). Input channel: secrets-block mapping arrives empty.
       silent-token: ${{ github.token }}
+      # Dispatch-only CI: this repo's CI file (the SM dispatches it on PR
+      # heads; default 'quality.yml' fits dmtools-dart, not this repo).
+      ci-workflow: ci.yml
     # Explicit mapping — the factory DECLARES SOURCE_GITHUB_TOKEN as a
     # required named secret (plus optional ZAI_CODE_KEY / KIMI_REVIEW_KEY),
     # and `secrets: inherit` does not satisfy required-secret validation at
