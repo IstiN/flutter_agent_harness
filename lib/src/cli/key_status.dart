@@ -76,7 +76,9 @@ final class KeyStatusRenderer {
   /// explicit `/provider` token has no env var to name and reads as
   /// "provided" — the value is never printed.
   String? keyStatusLine(Model model) {
-    final spec = catalogProvider(rolesDriven ? model.provider : providerKind);
+    final spec = resolveCliProviderSpec(
+      rolesDriven ? model.provider : providerKind,
+    );
     final names = spec?.apiKeyEnvNames;
     if (names == null || names.isEmpty) return null;
     // An explicit /provider token (or a saved custom entry's key) IS the
@@ -224,7 +226,7 @@ final class KeyStatusRenderer {
       return ' — roles mode reads keys from the environment only; check '
           'the chain env vars in ~/.fah/config.yaml';
     }
-    final spec = catalogProvider(providerKind);
+    final spec = resolveCliProviderSpec(providerKind);
     if (spec == null || spec.apiKeyEnvNames.isEmpty) {
       return ' — check the credentials for $baseUrl';
     }

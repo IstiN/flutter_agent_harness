@@ -73,7 +73,8 @@ extension on AgentCli {
     final model = _agent.state.model;
     final spec = entry != null
         ? entry.spec
-        : (catalogProvider(model.provider) ?? providerCatalog['openai']!);
+        : (resolveCliProviderSpec(model.provider) ??
+              providerCatalog['openai']!);
     _startProviderFlow(
       initialType: entry?.apiType ?? spec.name,
       initialBaseUrl: entry?.baseUrl ?? model.baseUrl,
@@ -215,7 +216,9 @@ extension on AgentCli {
     if (providerName == 'dial') {
       return _fetchDialModelsAndFeatures(baseUrl, apiKey: key);
     }
-    if (providerName == 'chatgpt') {
+    // Identity by kind, not a name literal (issue #772): the branch fires
+    // for the catalog name AND the adapter kind.
+    if (resolveCliProviderSpec(providerName)?.kind == 'chatgpt-codex') {
       final (ids, _, _) = await fetchModelsForEndpoint(
         baseUrl,
         apiKey: key,
@@ -1751,7 +1754,9 @@ extension on AgentCli {
   /// provider name against the catalog and switches with the optional
   /// endpoint/token args.
   Future<void> _switchToCatalogProvider(List<String> args) async {
-    final spec = catalogProvider(args[0]);
+    // Both identifiers route (issue #772): the friendly name (`chatgpt`)
+    // and the adapter kind (`chatgpt-codex`) resolve to the same entry.
+    final spec = resolveCliProviderSpec(args[0]);
     if (spec == null) {
       io.writeln(
         'unknown provider: ${args[0]} — supported providers: '
@@ -2318,7 +2323,9 @@ extension on AgentCli {
   /// immediately when it serves the active provider (roles mode applies it
   /// on the next start).
   void _applySavedKeyToActiveProvider(String name, String value) {
-    final spec = catalogProvider(_providerKind);
+    // _providerKind is the adapter KIND (`chatgpt-codex`) — the seam
+    // resolves both identifiers (issue #772).
+    final spec = resolveCliProviderSpec(_providerKind);
     if (config.modelRolesResolver != null) {
       io.writeln('  takes effect on the next start (roles mode)');
     } else if (spec != null && spec.apiKeyEnvNames.contains(name)) {

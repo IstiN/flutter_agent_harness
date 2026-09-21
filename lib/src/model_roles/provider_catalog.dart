@@ -487,6 +487,29 @@ ProviderSpec? resolveCliProviderSpec(String kind, {String? baseUrl}) {
   return null;
 }
 
+/// The canonical PERSISTED identity for a provider id (issue #772): the
+/// catalog entry's adapter [ProviderSpec.kind]. Config files
+/// (`provider:`, folder model state, handoffs) carry the kind — the name
+/// (`chatgpt`) is display/command sugar that resolves here, in ONE place.
+///
+/// Only UNIQUE-kind entries canonicalize: when several catalog entries
+/// share one kind (`openai-completions` is openrouter/openai/kimi/codemie),
+/// the kind is coarser than the saved name and the name stays (the endpoint
+/// base URL carries the identity there). A kind owned by exactly one entry
+/// (`chatgpt-codex` → `chatgpt`) folds its name-shaped spellings onto the
+/// kind. Alias spellings (`chatgpt.com`) fold first via
+/// [canonicalProviderName] at the config boundary. Unknown ids return
+/// unchanged — the boot boundary warns and degrades (issue #760), it never
+/// rewrites a value it cannot resolve.
+String canonicalProviderKind(String id) {
+  final spec = resolveCliProviderSpec(id);
+  if (spec == null) return id;
+  for (final other in providerCatalog.values) {
+    if (other.kind == spec.kind && other.name != spec.name) return id;
+  }
+  return spec.kind;
+}
+
 /// Builds the legacy single [Model] the `fah` executable runs when no roles
 /// are configured (`--provider`/`--model`/`--base-url` flags).
 ///

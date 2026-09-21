@@ -37,6 +37,7 @@ void main() {
     modelsFetcher,
     String? Function(String name)? envVarValue,
     ExchangeFn? chatGptOAuthExchangeFn,
+    Future<void> Function(String kind, String key)? onProviderChanged,
   }) {
     return AgentCli(
       config: AgentCliConfig(
@@ -50,6 +51,7 @@ void main() {
         customProviders: customProviders,
         providerKind: 'openai-completions',
         chatGptOAuthExchangeFn: chatGptOAuthExchangeFn,
+        onProviderChanged: onProviderChanged,
       ),
       io: io,
       streamFunction: streamFunction,
@@ -346,5 +348,36 @@ void main() {
         );
       },
     );
+  });
+
+  group('kind-form /provider switch (issue #772)', () {
+    test('/provider accepts the adapter KIND, not just the name', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final changes = <(String, String)>[];
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        onProviderChanged: (kind, key) async => changes.add((kind, key)),
+      );
+      final run = cli.run();
+
+      io.sendLine('/provider chatgpt-codex');
+      await waitForIt(
+        () => io.out.toString().contains('switched provider to chatgpt'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      final output = io.out.toString();
+      expect(output, isNot(contains('unknown provider')));
+      // The name/kind split holds end to end: the session kind is the
+      // adapter kind, the model identity stays the catalog name.
+      expect(cli.providerKind, 'chatgpt-codex');
+      expect(cli.agent.state.model.provider, 'chatgpt');
+      expect(cli.agent.state.model.api, 'responses');
+      expect(cli.agent.state.model.baseUrl, 'https://chatgpt.com/backend-api/codex');
+      expect(changes, hasLength(1));
+      expect(changes.single.$1, 'chatgpt-codex');
+    });
   });
 }

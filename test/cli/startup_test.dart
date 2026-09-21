@@ -172,6 +172,26 @@ void main() {
       expect(resolved.unknownSavedProvider, isNull);
     });
 
+    test('app-written and CLI-written configs restore identically '
+        '(issue #772 AC1)', () {
+      // The app persists the kind (`chatgpt-codex`); old CLI versions
+      // persisted the name (`chatgpt`). Both must land on ONE identity.
+      final fromName = resolveEffectiveCliArgs(
+        const CliArgs(),
+        CliConfig(providerKind: 'chatgpt', modelId: 'gpt-5-codex'),
+        env: const {},
+      );
+      final fromKind = resolveEffectiveCliArgs(
+        const CliArgs(),
+        CliConfig(providerKind: 'chatgpt-codex', modelId: 'gpt-5-codex'),
+        env: const {},
+      );
+      expect(fromName.provider, 'chatgpt-codex');
+      expect(fromName.provider, fromKind.provider);
+      expect(fromName.unknownSavedProvider, isNull);
+      expect(fromKind.unknownSavedProvider, isNull);
+    });
+
     test('a saved kind no version knows degrades to the parsed default '
         'and is reported (gh-760 AC2)', () {
       final resolved = resolveEffectiveCliArgs(

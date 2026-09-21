@@ -616,7 +616,7 @@ extension on AgentCli {
       );
       return;
     }
-    final spec = catalogProvider(built.provider)!;
+    final spec = resolveCliProviderSpec(built.provider)!;
     final key = _providerKeyFor(spec, built.baseUrl) ?? '';
     _providerKind = state.providerKind;
     _apiKey = key;

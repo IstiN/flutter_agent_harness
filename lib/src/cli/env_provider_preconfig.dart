@@ -105,8 +105,11 @@ EnvProviderPreconfig? parseEnvProviderPreconfig({
   required Iterable<String> takenNames,
 }) {
   if (providerType == null || providerType.trim().isEmpty) return null;
-  final spec = catalogProvider(providerType);
-  if (spec == null) {
+  // Resolution goes through the one both-identifier seam (issue #772);
+  // the FA_PROVIDERS build filter still gates the resolved entry —
+  // `catalogProvider` used to fuse the two, the seam must not.
+  final spec = resolveCliProviderSpec(providerType);
+  if (spec == null || !providerEnabledInBuild(spec.name)) {
     throw ConfigException(
       'unknown FA_PROVIDER_TYPE "$providerType" — supported providers: '
       '${enabledProviderNames().join(', ')}',

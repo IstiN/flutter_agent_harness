@@ -82,7 +82,7 @@ final class CustomModelDefinition {
     }
 
     final provider = required('provider');
-    if (catalogProvider(provider) == null) {
+    if (resolveCliProviderSpec(provider) == null) {
       throw ConfigException(
         'unknown provider "$provider" in $where — supported providers: '
         '${enabledProviderNames().join(', ')}',

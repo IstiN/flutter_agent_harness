@@ -138,13 +138,15 @@ extension on AgentCli {
     return buildModelPickerTable(rows, width);
   }
 
-  /// The catalog kind a provider name resolves to: the catalog name
-  /// itself, else a saved registry entry's api type, else null.
+  /// The catalog kind a provider id resolves to (issue #772: the KIND,
+  /// never the name — the remote catalog keys by adapter kind), else a
+  /// saved registry entry's resolved kind, else null.
   String? _catalogKindForProviderName(String name) {
-    if (catalogProvider(name) != null) return name;
+    final spec = resolveCliProviderSpec(name);
+    if (spec != null) return spec.kind;
     final registry = config.customProviders;
     for (final entry in registry?.entries ?? const <CustomProviderEntry>[]) {
-      if (entry.name == name) return entry.apiType;
+      if (entry.name == name) return resolveCliProviderSpec(entry.apiType)?.kind;
     }
     return null;
   }
@@ -523,7 +525,8 @@ extension on AgentCli {
   /// merged: providers carry no default model by design.
   List<String> _envCatalogSeedModels(ProviderSpec spec) {
     final merged = <String>[
-      ...remoteCatalogEnrichment.chatFallbackFor(spec.name),
+      // The remote catalog keys by adapter KIND (issue #772).
+      ...remoteCatalogEnrichment.chatFallbackFor(spec.kind),
     ];
     final seen = <String>{};
     return [
@@ -578,11 +581,14 @@ extension on AgentCli {
     return unique;
   }
 
-  /// The providerKind of a saved entry — `apiType` (the registry field
-  /// the `provider` column maps to) is what catalogProvider() expects.
+  /// The adapter KIND of a saved entry (issue #772): `apiType` (the
+  /// registry field the `provider` column maps to) resolves through the
+  /// catalog seam — name- or kind-shaped — to the kind the remote
+  /// catalog keys by.
   String? _providerKindForEntry(dynamic entry) {
     try {
-      return entry.apiType as String?;
+      final apiType = entry.apiType;
+      return apiType is String ? resolveCliProviderSpec(apiType)?.kind : null;
     } on Object {
       return null;
     }
@@ -608,7 +614,7 @@ extension on AgentCli {
     } else {
       final hardcoded = _knownModels[activeProvider];
       final catalogSeeds = remoteCatalogEnrichment.chatFallbackFor(
-        activeProvider,
+        resolveCliProviderSpec(activeProvider)?.kind,
       );
       if (hardcoded != null) {
         known = hardcoded;
