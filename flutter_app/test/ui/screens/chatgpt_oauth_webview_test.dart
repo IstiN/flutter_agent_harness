@@ -11,6 +11,8 @@ import 'package:webview_flutter_platform_interface/webview_flutter_platform_inte
 
 import 'package:fa/ui/screens/chatgpt_oauth_webview.dart';
 
+import '../../fake_webview_platform.dart';
+
 const _authorizeUrl =
     'https://auth.openai.com/oauth/authorize'
     '?response_type=code&client_id=app_EMoamEEZ73f0CkXaXp7hrann'
@@ -18,129 +20,19 @@ const _authorizeUrl =
     '&code_challenge=abc&state=st-1';
 const _expectedState = 'st-1';
 
-/// Captures every event the page's [NavigationDelegate] registers with the
-/// platform, so tests can fire them like the native WebView would.
-final class _CapturedDelegateEvents {
-  NavigationRequestCallback? onNavigationRequest;
-  PageEventCallback? onPageStarted;
-  PageEventCallback? onPageFinished;
-  WebResourceErrorCallback? onWebResourceError;
-}
-
-/// Minimal fake webview platform (same pattern as the CodeMie page tests):
-/// a real [WebViewController] builds against it, and the delegate events
-/// the page registers are captured for tests to fire on demand.
-final class _FakeWebViewPlatform extends WebViewPlatform {
-  final _FakePlatformWebViewController controller =
-      _FakePlatformWebViewController();
-  final _CapturedDelegateEvents events = _CapturedDelegateEvents();
-
-  @override
-  PlatformWebViewController createPlatformWebViewController(
-    PlatformWebViewControllerCreationParams params,
-  ) => controller;
-
-  @override
-  PlatformNavigationDelegate createPlatformNavigationDelegate(
-    PlatformNavigationDelegateCreationParams params,
-  ) => _FakePlatformNavigationDelegate(events);
-
-  @override
-  PlatformWebViewWidget createPlatformWebViewWidget(
-    PlatformWebViewWidgetCreationParams params,
-  ) => _FakePlatformWebViewWidget(params);
-}
-
-final class _FakePlatformWebViewController extends PlatformWebViewController {
-  _FakePlatformWebViewController()
-    : super.implementation(const PlatformWebViewControllerCreationParams());
-
-  JavaScriptMode? javaScriptMode;
-  Uri? loadedUri;
-  String bodyText = '';
-
-  @override
-  Future<void> setJavaScriptMode(JavaScriptMode mode) async {
-    javaScriptMode = mode;
-  }
-
-  @override
-  Future<void> setPlatformNavigationDelegate(
-    PlatformNavigationDelegate handler,
-  ) async {}
-
-  @override
-  Future<void> loadRequest(LoadRequestParams params) async {
-    loadedUri = params.uri;
-  }
-
-  @override
-  Future<Object> runJavaScriptReturningResult(String javaScript) async =>
-      bodyText;
-}
-
-final class _FakePlatformNavigationDelegate extends PlatformNavigationDelegate {
-  _FakePlatformNavigationDelegate(this.events)
-    : super.implementation(const PlatformNavigationDelegateCreationParams());
-
-  final _CapturedDelegateEvents events;
-
-  @override
-  Future<void> setOnNavigationRequest(
-    NavigationRequestCallback callback,
-  ) async {
-    events.onNavigationRequest = callback;
-  }
-
-  @override
-  Future<void> setOnPageStarted(PageEventCallback callback) async {
-    events.onPageStarted = callback;
-  }
-
-  @override
-  Future<void> setOnPageFinished(PageEventCallback callback) async {
-    events.onPageFinished = callback;
-  }
-
-  @override
-  Future<void> setOnWebResourceError(WebResourceErrorCallback callback) async {
-    events.onWebResourceError = callback;
-  }
-}
-
-final class _FakePlatformWebViewWidget extends PlatformWebViewWidget {
-  _FakePlatformWebViewWidget(super.params) : super.implementation();
-
-  @override
-  Widget build(BuildContext context) =>
-      const SizedBox(key: Key('fake-webview'));
-}
-
-/// Records the page's route at push time so tests can await its
-/// [Route.popped] future — the value the page pops with (the code on
-/// success, null on cancel/timeout).
-final class _PopRecorder extends NavigatorObserver {
-  Route<dynamic>? route;
-
-  @override
-  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
-    this.route = route;
-  }
-}
-
 void main() {
-  late _FakeWebViewPlatform platform;
+  late FakeWebViewPlatform platform;
 
   setUp(() {
-    platform = _FakeWebViewPlatform();
+    platform = FakeWebViewPlatform();
     WebViewPlatform.instance = platform;
   });
 
-  Future<_PopRecorder> pumpPage(
+  Future<PopRecorder> pumpPage(
     WidgetTester tester, {
     Duration timeout = const Duration(minutes: 5),
   }) async {
-    final recorder = _PopRecorder();
+    final recorder = PopRecorder();
     await tester.pumpWidget(
       MaterialApp(
         home: Navigator(
@@ -353,6 +245,28 @@ void main() {
         ),
       );
       expect(await popped.future, 'c-good');
+    });
+
+    testWidgets('a fresh page navigation clears the stale banner (re-arm)', (
+      tester,
+    ) async {
+      await pumpPage(tester);
+
+      platform.events.onWebResourceError?.call(
+        const WebResourceError(
+          errorCode: -1,
+          description: 'net::ERR_DEAD',
+          isForMainFrame: true,
+        ),
+      );
+      await tester.pump();
+      expect(find.textContaining('ERR_DEAD'), findsOneWidget);
+
+      // A new page start (a retry navigation) re-arms the flow: the old
+      // error must not sit over the next page.
+      platform.events.onPageStarted?.call('https://auth.openai.com/log-in');
+      await tester.pump();
+      expect(find.textContaining('ERR_DEAD'), findsNothing);
     });
 
     testWidgets('an OAuth error redirect shows the named banner', (

@@ -1,9 +1,9 @@
-import 'dart:async';
+// l10n:ignore-file - OAuth flow screens - en-only by design
 
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:fa/services/analytics.dart';
-import 'package:fa/ui/widgets/wide_layout_shell.dart';
+import 'package:fa/ui/screens/oauth_webview_scaffold.dart';
 
 /// The loopback redirect decision for [url] (issue #773): a hit to
 /// `<loopback>/auth/callback` is auth.openai.com bouncing the
@@ -58,6 +58,15 @@ NavigationDecision chatGptNavigationDecision(
 /// E3): Google refuses OAuth inside WKWebView-class browsers ("This browser
 /// or app may not be secure" / `disallowed_useragent`). Null when the page
 /// text does not match the block.
+///
+/// Best-effort by nature: the phrases are Google's **English** copy, so a
+/// localized block page (the interstitial follows the Google account
+/// locale, not the app locale) does not match and the user hits the raw
+/// wall instead of the named banner. `disallowed_useragent` still fires on
+/// every locale (it is a debug/code string in the served HTML). The banner
+/// itself never blocks anything — password sign-in stays available either
+/// way — so this stays an English-sniff heuristic rather than a locale
+/// matrix.
 @visibleForTesting
 String? chatGptGoogleBlockMessage(String pageText) =>
     pageText.contains('may not be secure') ||
@@ -66,6 +75,20 @@ String? chatGptGoogleBlockMessage(String pageText) =>
           'ChatGPT email and password instead, or use the desktop app for '
           'Google sign-in.'
     : null;
+
+/// Best-effort detection of Google's embedded-WebView OAuth block (E3):
+/// the block page has no distinctive URL, only body text.
+Future<void> _sniffGoogleBlock(OAuthWebViewOps<String> ops) async {
+  try {
+    final body = await ops.controller.runJavaScriptReturningResult(
+      "(document.body && document.body.innerText) || ''",
+    );
+    final message = chatGptGoogleBlockMessage(body.toString());
+    if (message != null) ops.showError(message);
+  } on Object {
+    // The sniff is cosmetic; a platform quirk must not break the flow.
+  }
+}
 
 /// A full-screen WebView that walks the user through the ChatGPT (Codex
 /// OAuth client) sign-in and intercepts the loopback redirect — the
@@ -107,139 +130,25 @@ class ChatGptOAuthWebViewPage extends StatefulWidget {
 }
 
 class _ChatGptOAuthWebViewPageState extends State<ChatGptOAuthWebViewPage> {
-  late final WebViewController _controller;
-  var _loading = true;
-  var _errorMessage = '';
-  Timer? _timeoutTimer;
-  bool _completed = false;
-
   @override
   void initState() {
     super.initState();
     AppAnalytics.instance.screenOpened('chatgpt_signin');
-    _controller = _createController();
-    _timeoutTimer = Timer(widget.timeout, _onTimeout);
-  }
-
-  /// Builds the WebView controller: unrestricted JS, the navigation
-  /// delegate (loopback-callback interception, loading/error surfacing,
-  /// the Google-block sniff) and the authorize URL load.
-  WebViewController _createController() {
-    final authorizeUrl = widget.authorizeUrl;
-    return WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onNavigationRequest: _onNavigationRequest,
-          onPageStarted: (_) {
-            if (mounted) setState(() => _loading = true);
-          },
-          onPageFinished: _onPageFinished,
-          onWebResourceError: (error) {
-            // Ignore sub-frame errors (ads, favicons); only surface
-            // main-frame failures that would leave the user stuck.
-            if (error.isForMainFrame == true && mounted) {
-              setState(() => _errorMessage = error.description);
-            }
-          },
-        ),
-      )
-      ..loadRequest(Uri.parse(authorizeUrl));
-  }
-
-  @override
-  void dispose() {
-    _timeoutTimer?.cancel();
-    super.dispose();
-  }
-
-  NavigationDecision _onNavigationRequest(NavigationRequest request) =>
-      chatGptNavigationDecision(
-        request.url,
-        expectedState: widget.expectedState,
-        onCode: _completeWithCode,
-        onError: _showError,
-      );
-
-  /// Best-effort detection of Google's embedded-WebView OAuth block (E3):
-  /// the block page has no distinctive URL, only body text.
-  Future<void> _onPageFinished(String url) async {
-    if (mounted) setState(() => _loading = false);
-    if (_completed || !mounted) return;
-    try {
-      final body = await _controller.runJavaScriptReturningResult(
-        "(document.body && document.body.innerText) || ''",
-      );
-      final message = chatGptGoogleBlockMessage(body.toString());
-      if (message != null && mounted && !_completed) {
-        setState(() => _errorMessage = message);
-      }
-    } on Object {
-      // The sniff is cosmetic; a platform quirk must not break the flow.
-    }
-  }
-
-  void _showError(String message) {
-    if (mounted && !_completed) setState(() => _errorMessage = message);
-  }
-
-  Future<void> _completeWithCode(String code) async {
-    if (_completed) return;
-    _completed = true;
-    _timeoutTimer?.cancel();
-    if (mounted) Navigator.of(context).pop(code);
-  }
-
-  void _onTimeout() {
-    if (!_completed && mounted) {
-      _completed = true;
-      Navigator.of(context).pop(null);
-    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Scaffold(
-      appBar: faAppBar(
-        title: const Text(
-          'ChatGPT Sign In',
-        ), // l10n:ignore — proper noun, fallback-only screen
-        actions: [
-          if (_loading)
-            const Padding(
-              padding: EdgeInsets.all(14),
-              child: SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            ),
-        ],
+    return OAuthWebViewScaffold<String>(
+      title: 'ChatGPT Sign In', // l10n:ignore — proper noun
+      initialUrl: widget.authorizeUrl,
+      timeout: widget.timeout,
+      onNavigationRequest: (request, ops) => chatGptNavigationDecision(
+        request.url,
+        expectedState: widget.expectedState,
+        onCode: ops.popWith,
+        onError: ops.showError,
       ),
-      body: Stack(
-        children: [
-          WebViewWidget(controller: _controller),
-          if (_errorMessage.isNotEmpty)
-            Positioned(
-              left: 16,
-              right: 16,
-              bottom: 16,
-              child: Material(
-                elevation: 4,
-                borderRadius: BorderRadius.circular(12),
-                color: theme.colorScheme.errorContainer,
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Text(
-                    _errorMessage,
-                    style: TextStyle(color: theme.colorScheme.onErrorContainer),
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
+      onPageFinished: (url, ops) => _sniffGoogleBlock(ops),
     );
   }
 }
