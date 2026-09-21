@@ -39,12 +39,10 @@ void main() {
     });
 
     test('strips controls from window titles', () {
-      renderer.render(
-        View(
-          content: 'value',
-          windowTitle: 'safe\x07\x1b]2;owned\x07\x9c\x7fevil',
-        ),
-      );
+      renderer.render(View(
+        content: 'value',
+        windowTitle: 'safe\x07\x1b]2;owned\x07\x9c\x7fevil',
+      ));
 
       expect(buf.toString(), contains('\x1b]0;safe]2;ownedevil\x07'));
       expect(buf.toString(), isNot(contains('\x1b]2;owned')));
@@ -74,18 +72,16 @@ void main() {
     });
 
     test('applies cursor position, shape, blink, and color', () {
-      renderer.render(
-        View(
-          content: 'value',
-          cursor: const Cursor(
-            x: 4,
-            y: 2,
-            color: 0x12abef,
-            shape: CursorShape.underline,
-            blink: false,
-          ),
+      renderer.render(View(
+        content: 'value',
+        cursor: const Cursor(
+          x: 4,
+          y: 2,
+          color: 0x12abef,
+          shape: CursorShape.underline,
+          blink: false,
         ),
-      );
+      ));
 
       final output = buf.toString();
       expect(output, contains('\x1b[4 q'));
@@ -115,21 +111,22 @@ void main() {
       expect(buf.toString(), isEmpty);
 
       renderer.render(newView('value'));
-      expect(buf.toString(), equals('\x1b]110\x07\x1b]111\x07\x1b]9;4;0\x07'));
+      expect(
+        buf.toString(),
+        equals('\x1b]110\x07\x1b]111\x07\x1b]9;4;0\x07'),
+      );
     });
 
     test('release resets active terminal colors and progress', () {
-      renderer.render(
-        View(
-          content: 'value',
-          foregroundColor: 0x123456,
-          backgroundColor: 0xabcdef,
-          progressBar: const ProgressBar(
-            state: ProgressBarState.error,
-            value: 30,
-          ),
+      renderer.render(View(
+        content: 'value',
+        foregroundColor: 0x123456,
+        backgroundColor: 0xabcdef,
+        progressBar: const ProgressBar(
+          state: ProgressBarState.error,
+          value: 30,
         ),
-      );
+      ));
       buf.clear();
 
       renderer.release();
@@ -159,14 +156,12 @@ void main() {
       renderer.render(enhanced);
       expect(buf.toString(), isEmpty);
 
-      renderer.render(
-        View(
-          content: 'value',
-          keyboardEnhancements: const KeyboardEnhancements(
-            reportAlternateKeys: true,
-          ),
+      renderer.render(View(
+        content: 'value',
+        keyboardEnhancements: const KeyboardEnhancements(
+          reportAlternateKeys: true,
         ),
-      );
+      ));
       expect(buf.toString(), equals('\x1b[>4;2m\x1b[=5;1u\x1b[?u'));
 
       buf.clear();
@@ -220,18 +215,14 @@ void main() {
     });
 
     test('repaints unchanged text when only its hyperlink changes', () {
-      renderer.render(
-        newView(
-          const Style(hyperlinkUrl: 'https://one.example').render('same'),
-        ),
-      );
+      renderer.render(newView(
+        const Style(hyperlinkUrl: 'https://one.example').render('same'),
+      ));
       buf.clear();
 
-      renderer.render(
-        newView(
-          const Style(hyperlinkUrl: 'https://two.example').render('same'),
-        ),
-      );
+      renderer.render(newView(
+        const Style(hyperlinkUrl: 'https://two.example').render('same'),
+      ));
 
       expect(buf.toString(), contains('https://two.example'));
       expect(buf.toString(), contains('same'));
@@ -331,8 +322,9 @@ void main() {
           const Style(foregroundRgb: RgbColor(0, 255, 0)).render('g4');
       final prev =
           [for (var i = 0; i < 10; i++) i == 4 ? styled : 'row-$i'].join('\n');
-      final next =
-          [for (var i = 1; i <= 10; i++) i == 4 ? styled : 'row-$i'].join('\n');
+      final next = [
+        for (var i = 1; i <= 10; i++) i == 4 ? styled : 'row-$i',
+      ].join('\n');
       renderer.render(newView(prev));
       buf.clear();
       renderer.render(newView(next));
@@ -400,10 +392,8 @@ void main() {
       renderer.render(newView(prev));
       buf.clear();
       renderer.render(newView(next));
-      expect(
-        buf.toString(),
-        '\x1b[1S\x1b[10;1Hrow-10\x1b[K\x1b[3;1Hspinner\x1b[K',
-      );
+      expect(buf.toString(),
+          '\x1b[1S\x1b[10;1Hrow-10\x1b[K\x1b[3;1Hspinner\x1b[K');
     });
 
     test('E2: without sync negotiation no 2026 escapes ever appear', () {
@@ -463,12 +453,9 @@ void main() {
       buf.clear();
       renderer.render(newView(next));
       final out = buf.toString();
-      expect(
-        RegExp(r'\x1b\[[0-9]*S').hasMatch(out),
-        isFalse,
-        reason: 'row 0 is static — a whole-screen scroll would push the '
-            'pinned prompt into the terminal scrollback (#761)',
-      );
+      expect(RegExp(r'\x1b\[[0-9]*S').hasMatch(out), isFalse,
+          reason: 'row 0 is static — a whole-screen scroll would push the '
+              'pinned prompt into the terminal scrollback (#761)');
       // The frame still converges: surgical cell diffs repaint the shifted
       // history in place (last char of each row + the fresh tail row).
       expect(
@@ -490,19 +477,13 @@ void main() {
       buf.clear();
       renderer.render(newView(next));
       final out = buf.toString();
-      expect(
-        RegExp(r'\x1b\[[0-9]*T').hasMatch(out),
-        isFalse,
-        reason: 'the last row is static — a whole-screen scroll would '
-            'discard it (#761)',
-      );
+      expect(RegExp(r'\x1b\[[0-9]*T').hasMatch(out), isFalse,
+          reason: 'the last row is static — a whole-screen scroll would '
+              'discard it (#761)');
       expect(out, startsWith('\x1b[1;5Hnew'));
       expect(out, endsWith('\x1b[10;5H8'));
-      expect(
-        out.contains(footer),
-        isFalse,
-        reason: 'the static footer is unchanged — it must not be repainted',
-      );
+      expect(out.contains(footer), isFalse,
+          reason: 'the static footer is unchanged — it must not be repainted');
     });
 
     test('blank static top row keeps the scroll fast path', () {
@@ -540,19 +521,16 @@ void main() {
       );
     });
 
-    test(
-      'overlay transition onto a shared ambiguous row repaints it whole',
-      () {
-        // The /settings → Edit/Delete picker shape: both rows start with ▸
-        // and share cells ('t', 'provider') with the old row.
-        renderer.render(newView('▸ test-provider'));
-        buf.clear();
-        renderer.render(newView('▸ Edit provider'));
-        // The new label must arrive as contiguous bytes — screen-scraping
-        // consumers (PTY harnesses, tmux panes) read the byte stream.
-        expect(buf.toString(), contains('Edit provider'));
-      },
-    );
+    test('overlay transition onto a shared ambiguous row repaints it whole', () {
+      // The /settings → Edit/Delete picker shape: both rows start with ▸
+      // and share cells ('t', 'provider') with the old row.
+      renderer.render(newView('▸ test-provider'));
+      buf.clear();
+      renderer.render(newView('▸ Edit provider'));
+      // The new label must arrive as contiguous bytes — screen-scraping
+      // consumers (PTY harnesses, tmux panes) read the byte stream.
+      expect(buf.toString(), contains('Edit provider'));
+    });
 
     test('bytes converge on a wcwidth (ambiguous=1) terminal', () {
       renderer.render(newView('▸ test-provider'));
@@ -590,35 +568,25 @@ void main() {
 
       final output = buf.toString();
       expect(output, contains('Edit provider'));
-      expect(
-        _sgrOpenAtEnd(output),
-        isFalse,
-        reason: 'frame must end with every SGR attribute off',
-      );
+      expect(_sgrOpenAtEnd(output), isFalse,
+          reason: 'frame must end with every SGR attribute off');
     });
 
     test('repaint under a hyperlinked surgical write closes OSC 8', () {
-      renderer.render(
-        newView(
-          '${const Style(hyperlinkUrl: 'https://log.example').render('⠋ working')}\n'
-          '▸ provider',
-        ),
-      );
+      renderer.render(newView(
+        '${const Style(hyperlinkUrl: 'https://log.example').render('⠋ working')}\n'
+        '▸ provider',
+      ));
       buf.clear();
-      renderer.render(
-        newView(
-          '${const Style(hyperlinkUrl: 'https://log.example').render('⠙ working')}\n'
-          'Edit provider',
-        ),
-      );
+      renderer.render(newView(
+        '${const Style(hyperlinkUrl: 'https://log.example').render('⠙ working')}\n'
+        'Edit provider',
+      ));
 
       final output = buf.toString();
       expect(output, contains('Edit provider'));
-      expect(
-        _osc8OpenAtEnd(output),
-        isFalse,
-        reason: 'frame must end with no OSC 8 hyperlink open',
-      );
+      expect(_osc8OpenAtEnd(output), isFalse,
+          reason: 'frame must end with no OSC 8 hyperlink open');
     });
   });
 }

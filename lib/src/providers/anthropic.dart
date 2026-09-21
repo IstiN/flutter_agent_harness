@@ -1061,8 +1061,8 @@ Map<String, dynamic>? _convertThinkingBlock(
   }
   final signature =
       !foreignAuthor &&
-          block.thinkingSignature != null &&
-          block.thinkingSignature!.trim().isNotEmpty
+      block.thinkingSignature != null &&
+      block.thinkingSignature!.trim().isNotEmpty
       ? block.thinkingSignature
       : null;
   final hasSignature = signature != null && signature.trim().isNotEmpty;

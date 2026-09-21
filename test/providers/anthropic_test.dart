@@ -1462,44 +1462,43 @@ void main() {
       return capturedBody!;
     }
 
-    test('thinking authored by another provider degrades to text, never '
-        'replays its foreign signature', () async {
-      final body = await captureBody(
-        Context(
-          messages: [
-            UserMessage.text('hi', timestamp: DateTime.utc(2026)),
-            assistantFrom('responses', 'chatgpt', 'gpt-5-codex', const [
-              ThinkingContent(
-                thinking: 'responses reasoning',
-                thinkingSignature: 'resp_encrypted',
-              ),
-            ]),
-            assistantFrom(
-              'anthropic-messages',
-              'anthropic',
-              'claude-sonnet-4-5',
-              const [
+    test(
+      'thinking authored by another provider degrades to text, never '
+      'replays its foreign signature',
+      () async {
+        final body = await captureBody(
+          Context(
+            messages: [
+              UserMessage.text('hi', timestamp: DateTime.utc(2026)),
+              assistantFrom('responses', 'chatgpt', 'gpt-5-codex', const [
+                ThinkingContent(
+                  thinking: 'responses reasoning',
+                  thinkingSignature: 'resp_encrypted',
+                ),
+              ]),
+              assistantFrom('anthropic-messages', 'anthropic',
+                  'claude-sonnet-4-5', const [
                 ThinkingContent(
                   thinking: 'native reasoning',
                   thinkingSignature: 'native-sig',
                 ),
-              ],
-            ),
-          ],
-        ),
-      );
+              ]),
+            ],
+          ),
+        );
 
-      final messages = body['messages'] as List;
-      // The foreign record's thinking degrades to plain text: its
-      // signature is an OpenAI token Anthropic would hard-400 on.
-      final foreign = (messages[1] as Map)['content'] as List;
-      expect((foreign.single as Map)['type'], 'text');
-      expect((foreign.single as Map)['text'], 'responses reasoning');
-      // The native record keeps its signed thinking block untouched.
-      final native = (messages[2] as Map)['content'] as List;
-      expect((native.single as Map)['type'], 'thinking');
-      expect((native.single as Map)['signature'], 'native-sig');
-    });
+        final messages = body['messages'] as List;
+        // The foreign record's thinking degrades to plain text: its
+        // signature is an OpenAI token Anthropic would hard-400 on.
+        final foreign = (messages[1] as Map)['content'] as List;
+        expect((foreign.single as Map)['type'], 'text');
+        expect((foreign.single as Map)['text'], 'responses reasoning');
+        // The native record keeps its signed thinking block untouched.
+        final native = (messages[2] as Map)['content'] as List;
+        expect((native.single as Map)['type'], 'thinking');
+        expect((native.single as Map)['signature'], 'native-sig');
+      },
+    );
 
     test('redacted thinking from another provider degrades to text', () async {
       final body = await captureBody(

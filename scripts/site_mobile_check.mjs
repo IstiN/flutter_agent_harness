@@ -29,6 +29,8 @@
 //   CHROMIUM_PATH=/usr/bin/chromium node scripts/site_mobile_check.mjs   (system browser)
 //   node scripts/site_mobile_check.mjs --update-goldens                  (re-bake AC5 goldens,
 //     same convention as `flutter test --update-goldens` for the store shots)
+//     ⚠️ bake ONLY with the pinned Playwright Chromium (no CHROMIUM_PATH):
+//     CI byte-compares against that browser; system-Chromium goldens fail.
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -139,14 +141,24 @@ async function startServer() {
     if (!bound) {
       bound = await new Promise((resolve) => {
         let buf = '';
-        proc.stderr.on('data', (d) => {
+        const onData = (d) => {
+          if (bound) return; // banner seen — handler is detached below anyway
           buf += String(d);
           const m = buf.match(/http:\/\/127\.0\.0\.1:(\d+)/);
-          if (m) resolve(Number(m[1]));
-        });
+          if (m) {
+            bound = Number(m[1]);
+            resolve(bound);
+          }
+        };
+        proc.stderr.on('data', onData);
         setTimeout(() => resolve(0), 3000);
       });
     }
+    // Drain from here on (port-0 mode detaches the banner parser first):
+    // http.server logs every request to stderr — an unread pipe fills
+    // (~64KB), blocks the server's writes and times out all pages.
+    proc.stderr.removeAllListeners('data');
+    proc.stderr.resume();
     if (bound && await waitReady(bound)) return { proc, base: `http://127.0.0.1:${bound}` };
     try { proc.kill(); } catch { /* already gone */ }
   }
@@ -363,6 +375,13 @@ async function main() {
   // Full-page 1280px captures of index/privacy against committed goldens.
   // Animations neutralized (reduced-motion context: the site renders the
   // terminal reel statically, reveals render visible, the caret is frozen).
+  // Goldens are only valid for the PINNED Playwright Chromium CI runs —
+  // system-Chromium captures rasterize the font stacks differently; baking
+  // under CHROMIUM_PATH is refused above.
+  if (process.env.CHROMIUM_PATH) {
+    console.log('  note CHROMIUM_PATH set — golden byte-compares are only guaranteed '
+      + 'against the pinned Playwright Chromium; expect REG diffs here.');
+  }
   console.log('AC5/REG-D1 — desktop screenshot goldens');
   {
     for (const p of ['index.html', 'privacy.html']) {
@@ -375,6 +394,16 @@ async function main() {
       const actual = await page.screenshot({ fullPage: true, animations: 'disabled' });
       await ctx.close();
       if (UPDATE_GOLDENS) {
+        if (process.env.CHROMIUM_PATH) {
+          console.error(
+            'REFUSING to re-bake goldens under CHROMIUM_PATH: CI byte-compares\n' +
+            'against the pinned Playwright Chromium (no CHROMIUM_PATH). System\n' +
+            'Chromium rasterizes the site\'s system font stacks differently and\n' +
+            'would bake goldens that fail the leg. Install the pinned browser\n' +
+            '(`npm i playwright@1.49.1 && npx playwright install chromium`) and\n' +
+            're-run --update-goldens without CHROMIUM_PATH.');
+          process.exit(2);
+        }
         mkdirSync(GOLDENS, { recursive: true });
         writeFileSync(goldenPath, actual);
         console.log(`  ok   golden re-baked: ${path.relative(root, goldenPath)} (${actual.length} bytes)`);
@@ -395,7 +424,7 @@ async function main() {
         writeFileSync(path.join(SHOTS, `REG-${p.replace(/\//g, '_')}@1280x800.png`), actual);
       }
       ok(`${p} desktop golden byte-compare (${expected.length} bytes)`, same,
-        same ? '' : `differs from ${path.relative(root, goldenPath)} — if the desktop change is intended, re-bake with --update-goldens`);
+        same ? '' : `differs from ${path.relative(root, goldenPath)} — if the desktop change is intended, re-bake with --update-goldens (pinned Playwright Chromium, NO CHROMIUM_PATH)`);
     }
   }
 

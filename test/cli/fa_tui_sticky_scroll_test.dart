@@ -62,12 +62,8 @@ void main() {
     }
 
     // Guard against a vacuous pass: the echo must actually be pinned now.
-    final rows = model
-        .view()
-        .content
-        .split('\n')
-        .map((l) => l.replaceAll(ansi, ''))
-        .toList();
+    final rows =
+        model.view().content.split('\n').map((l) => l.replaceAll(ansi, '')).toList();
     expect(rows.first, '─' * 80, reason: 'sticky echo pins the frame top');
     expect(rows[1], contains('explain the scrollback bug'));
 
@@ -89,8 +85,7 @@ void main() {
     expect(
       RegExp(r'\x1b\[[0-9]*S').hasMatch(out),
       isFalse,
-      reason:
-          'row 0 stays pinned while streaming — a whole-screen scroll '
+      reason: 'row 0 stays pinned while streaming — a whole-screen scroll '
           'would push the prompt echo into the terminal scrollback (#761)',
     );
 
@@ -99,11 +94,8 @@ void main() {
     // pinned prompt (pre-fix, one scrolled-off copy per frame).
     final replay = _replay(out, rows: 80, cols: 80);
     expect(replay.screen, contains('answer line 39'));
-    expect(
-      replay.scrollback,
-      isNot(contains('explain the scrollback bug')),
-      reason: 'the sticky echo must stay pinned, never scroll off',
-    );
+    expect(replay.scrollback, isNot(contains('explain the scrollback bug')),
+        reason: 'the sticky echo must stay pinned, never scroll off');
   });
 }
 
@@ -166,22 +158,16 @@ _Replay _replay(String bytes, {required int rows, required int cols}) {
       continue;
     }
     // SGR, mode sets, OSC 8 and any other escape run is layout-neutral.
-    final osc = RegExp(
-      r'\x1b\][^\x07\x1b]*(\x07|\x1b\\)',
-    ).matchAsPrefix(bytes, i);
+    final osc = RegExp(r'\x1b\][^\x07\x1b]*(\x07|\x1b\\)').matchAsPrefix(bytes, i);
     if (osc != null) {
       i = osc.end;
       continue;
     }
-    final esc = RegExp(
-      r'\x1b(\[[0-9;?<>=]*[A-Za-z]|.)',
-    ).matchAsPrefix(bytes, i);
+    final esc = RegExp(r'\x1b(\[[0-9;?<>=]*[A-Za-z]|.)').matchAsPrefix(bytes, i);
     i = esc?.end ?? i + 1;
   }
-  return _Replay(
-    screen.map((row) => row.join().trimRight()).join('\n'),
-    scrollback.join('\n'),
-  );
+  return _Replay(screen.map((row) => row.join().trimRight()).join('\n'),
+      scrollback.join('\n'));
 }
 
 /// Minimal [IOSink] over a [StringBuffer] capturing what the renderer would
