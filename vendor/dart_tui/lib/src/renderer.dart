@@ -730,6 +730,11 @@ final class CellRenderer implements TeaRenderer {
   /// off. The pure-shift case (no mismatches) is still preferred and keeps
   /// the headline budget: 1 op + k fresh rows.
   ///
+  /// A candidate whose leading edge row (top for +k, bottom for -k) is
+  /// static AND non-blank is rejected outright: the screen did not globally
+  /// scroll, and the op would push that pinned row into the terminal
+  /// scrollback (#761) — the frame degrades to the cell diff.
+  ///
   /// Returns null when no shift is worth taking → cell diff.
   ///
   /// Additionally requires the grid to be as tall as the tallest grid ever
@@ -779,6 +784,19 @@ final class CellRenderer implements TeaRenderer {
       }
     }
     if (best.k == 0) return null;
+    // Static-edge invariant (#761): a scroll op shifts the PHYSICAL screen,
+    // pushing the leading edge row (top for `CSI S`, bottom for `CSI T`)
+    // into the terminal's native scrollback. If that edge row is identical
+    // AND non-blank across frames, the frame is a history shift under
+    // pinned chrome (fa_tui's sticky echo at row 0, composer at the
+    // bottom) — not a global scroll — and the op would eject a copy of the
+    // pinned row into the scrollback every frame. Reject the candidate and
+    // let the cell diff repaint the shifted rows in place. A blank edge
+    // scrolls without a visible trace, so it keeps the fast path.
+    final edge = best.up ? 0 : rows - 1;
+    if (_rowsEqual(prev[edge], next[edge]) && _rowHasContent(prev[edge])) {
+      return null;
+    }
     final k = best.k;
     final mismatches = <int>[];
     if (best.up) {
@@ -799,6 +817,16 @@ final class CellRenderer implements TeaRenderer {
       if (a[i] != b[i]) return false;
     }
     return true;
+  }
+
+  /// Whether [row] paints any non-blank column. Blank (all-space) rows are
+  /// padding — they scroll into the scrollback without a visible trace and
+  /// never count as pinned chrome (#761).
+  bool _rowHasContent(List<_Cell> row) {
+    for (final cell in row) {
+      if (!cell.isContinuation && cell.char != ' ') return true;
+    }
+    return false;
   }
 
   /// Whether any cell's grapheme has a heuristic (ambiguous/emoji) width —

@@ -23,6 +23,7 @@
 library;
 
 import 'dart:async';
+import 'dart:math' show max;
 
 import '../../agent/agent.dart' show AgentState;
 import '../../cancel_token.dart' show CancelToken, CancelTokenSource;
@@ -108,6 +109,7 @@ final class StructuredCompactor {
     this.maxCheckpointPasses = 4,
     this.protectLastN = 8,
     this.depthCap = 4,
+    this.summarizerWindow,
     this.cancelToken,
     this.budgetSource,
     this.attemptBudget = const Duration(seconds: 300),
@@ -149,6 +151,14 @@ final class StructuredCompactor {
 
   /// Maximum checkpoint nesting depth before flattening.
   final int depthCap;
+
+  /// The summarizer model's own context window (issue #729) — the smol
+  /// role's when it differs from the main model's. `null` falls back to
+  /// [window]; when set, a checkpoint prompt that would not fit the
+  /// summarizer's payload budget is summarized CHUNK-WISE (each chunk's
+  /// summary threaded into the next as a `<folded-checkpoint>`), so no
+  /// summarization request ever exceeds the summarizer's window.
+  final int? summarizerWindow;
 
   /// Cancellation for the LLM calls.
   final CancelToken? cancelToken;
@@ -677,32 +687,116 @@ final class StructuredCompactor {
       messages,
       recordIds: [for (final record in rangeRecords) record.id],
     );
-    final prompt = StringBuffer()
-      ..writeln('<conversation>')
-      ..writeln(serializeConversation(messages))
-      ..writeln('</conversation>')
-      ..writeln(
-        '<covers>The checkpoint replaces these expand ids: '
-        '$coversRanges. List them in your summary.</covers>',
+    // Identity map for chunk-scoped open asks (#729 E2): the whole-range
+    // ask lines are #81-uncapped, so riding them in every chunk's envelope
+    // can exceed the budget on its own. Each chunk carries only its own
+    // asks; earlier ones survive through the threaded fold, which the
+    // `<covers>` instruction tells to restate them.
+    final askIdOf = <Message, String>{
+      for (final record in rangeRecords)
+        if (record.message.role == 'user') record.message: record.id,
+    };
+    List<String> asksFor(List<Message> chunk) => userRequestCandidateLines(
+      [for (final m in chunk) if (askIdOf.containsKey(m)) m],
+      recordIds: [for (final m in chunk) if (askIdOf.containsKey(m)) askIdOf[m]!],
+    );
+
+    String build(String conversation, List<String> asks, String? priorFold) {
+      final prompt = StringBuffer()
+        ..writeln('<conversation>')
+        ..writeln(conversation)
+        ..writeln('</conversation>')
+        ..writeln(
+          '<covers>The checkpoint replaces these expand ids: '
+          '$coversRanges. List them in your summary.</covers>',
+        );
+      if (asks.isNotEmpty) {
+        prompt
+          ..writeln('<open-user-requests>')
+          ..writeln(asks.join('\n'))
+          ..writeln('</open-user-requests>');
+      }
+      for (final folded in flattened) {
+        prompt
+          ..writeln('<folded-checkpoint>')
+          ..writeln(folded.text)
+          ..writeln('</folded-checkpoint>');
+      }
+      if (priorFold != null) {
+        // Issue #729 chunked fold: the running summary of the chunks
+        // summarized so far rides the same folded-checkpoint envelope the
+        // depth-cap flattening uses.
+        prompt
+          ..writeln('<folded-checkpoint>')
+          ..writeln(priorFold)
+          ..writeln('</folded-checkpoint>');
+      }
+      prompt.writeln(checkpointPrompt);
+      return prompt.toString();
+    }
+
+    final budget = summarizerWindow == null
+        ? null
+        : summarizationPayloadBudget(summarizerWindow!, settings);
+    var prompt = build(serializeConversation(messages), openAsks, null);
+    if (budget != null && estimateStringTokens(prompt) > budget) {
+      // Issue #729: the dropped region does not fit the summarizer's
+      // window — summarize chunk-wise and thread each chunk's summary into
+      // the next, so the request that finally lands is bounded even when
+      // the whole checkpoint range is not.
+      return _chunkedFold(
+        messages,
+        build: build,
+        asksFor: asksFor,
+        budget: budget,
       );
-    if (openAsks.isNotEmpty) {
-      prompt
-        ..writeln('<open-user-requests>')
-        ..writeln(openAsks.join('\n'))
-        ..writeln('</open-user-requests>');
     }
-    for (final folded in flattened) {
-      prompt
-        ..writeln('<folded-checkpoint>')
-        ..writeln(folded.text)
-        ..writeln('</folded-checkpoint>');
+    final text = await _callSummarizer(prompt);
+    return text;
+  }
+
+  /// The #729 chunked fold: splits [messages] into budget-sized chunks and
+  /// folds them chunk-wise — each chunk's summary rides the next prompt via
+  /// [priorFold] (`<folded-checkpoint>`), the last fold becomes the range
+  /// summary. A summarizer failure mid-fold is failure-safe (`null`).
+  Future<String?> _chunkedFold(
+    List<Message> messages, {
+    required String Function(String conversation, List<String> asks,
+        String? priorFold) build,
+    required List<String> Function(List<Message> chunk) asksFor,
+    required int budget,
+  }) async {
+    var priorFold = '';
+    final chunks = chunkSummarizableMessages(
+      messages,
+      max(budget - _checkpointEnvelopeReserveTokens, 256),
+    );
+    for (final chunk in chunks) {
+      var conversation = serializeConversation(chunk);
+      final empty = build('', const [], priorFold.isEmpty ? null : priorFold);
+      final envelopeChars = empty.length - 1; // minus writeln('')'s newline
+      conversation = truncateForSummaryBudget(
+        conversation,
+        budgetTokens: budget,
+        envelopeChars: envelopeChars,
+      );
+      final text = await _callSummarizer(
+        build(conversation, asksFor(chunk), priorFold.isEmpty ? null : priorFold),
+      );
+      if (text == null) return null;
+      priorFold = text;
     }
-    prompt.writeln(checkpointPrompt);
+    return priorFold;
+  }
+
+  /// One summarizer call under the attempt budget (issue #515). Returns
+  /// the trimmed summary text, `null` on failure-safety (empty/failed).
+  Future<String?> _callSummarizer(String prompt) async {
     try {
       final result =
           await summarize(
             SummarizationRequest(
-              prompt: prompt.toString(),
+              prompt: prompt,
               cancelToken: _effectiveToken,
             ),
           ).timeout(
@@ -727,6 +821,12 @@ final class StructuredCompactor {
     }
   }
 }
+
+/// Envelope reserve for a chunked checkpoint prompt (issue #729): tags,
+/// covers line, open asks, folded checkpoints and the instruction tail.
+/// The exact per-chunk fit is enforced by the measured envelope truncation
+/// in [_summarizeRange]; this only sizes the chunk plan.
+const _checkpointEnvelopeReserveTokens = 2048;
 
 /// Applies the classic compaction cut to a branch path: everything before
 /// the LAST [CompactionRecord]'s first-kept entry drops away, the

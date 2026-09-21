@@ -1,4 +1,7 @@
-# Build outputs (NDK/CMake download of prebuilt wasm_run binaries).
+# Build outputs. The prebuilt wasm_run Android binaries are COMMITTED under
+# src/main/jniLibs/ (gh-746: rebuilt from ../wasm_run/native with NDK r28's
+# -Wl,-z,max-page-size=16384 so Play's 16 KB page-size gate passes — the
+# upstream wasm_run-v0.1.0 release binaries are 4 KB-aligned and must never
+# come back via a CMake download).
 .cxx/
-src/main/jniLibs/
 *.tar.gz

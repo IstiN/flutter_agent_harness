@@ -239,6 +239,15 @@ jobs:
             https://github.com/google/bundletool/releases/download/1.17.0/bundletool-all-1.17.0.jar
           java -jar /tmp/bundletool.jar validate --bundle "$AAB_PATH"
           echo "✅ bundletool validate green"
+          # 16 KB page-size gate (gh-746, review round 1): re-check every
+          # native lib in the PACKAGED bundle. The build-time patch task
+          # only sees the staged native_assets dir — this verifies what
+          # actually ships, so a future Flutter staging-layout change that
+          # silently un-wires the gate fails here instead of at Play upload.
+          TMP_LIBS="$(mktemp -d)"
+          unzip -o -q "$AAB_PATH" 'lib/*' -d "$TMP_LIBS"
+          dart scripts/patch_elf_16k_alignment.dart --check "$TMP_LIBS"
+          echo "✅ 16 KB alignment check green"
 
       - name: Upload AAB Artifact
         uses: actions/upload-artifact@v4
@@ -593,9 +602,29 @@ jobs:
           echo "/opt/homebrew/opt/ruby/bin" >> $GITHUB_PATH
           echo "/opt/homebrew/bin" >> $GITHUB_PATH
 
+      # Issue #726 (run 35491603044): pub re-fetches the moving `ref: master`
+      # git deps (dart_git) on every resolve — pubspec.lock is untracked —
+      # and one flaky TCP connect to github.com:443 ("Failed to connect
+      # ... after 11155 ms") failed the whole leg with no retry. Bounded
+      # retry with backoff; GIT_TERMINAL_PROMPT=0 fails fast on auth prompts
+      # instead of hanging the self-hosted runner.
       - name: Install Flutter dependencies
         working-directory: flutter_app
-        run: flutter pub get
+        env:
+          GIT_TERMINAL_PROMPT: '0'
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if flutter pub get; then
+              exit 0
+            fi
+            if [ "$attempt" = 3 ]; then
+              echo "::error::flutter pub get failed after 3 attempts — the runner's network to pub.dev/github.com is unhealthy"
+              exit 1
+            fi
+            echo "::warning::flutter pub get failed (attempt $attempt/3) — retrying in 15s"
+            sleep 15
+          done
 
       # The workspace is re-cloned every run, which wipes Pods/ and forces a
       # full pod install. Cache it keyed by the lockfile; $HOME-level caches
@@ -732,6 +761,13 @@ jobs:
         working-directory: flutter_app
         env:
           BUILD_NUMBER: ${{ github.run_number }}
+          # Issue #726 (run 35564638018): ASC closed the 1.0.0 train once a
+          # 1.0.0 build was approved (error 90186) and rejects new builds
+          # whose CFBundleShortVersionString is not higher than the
+          # previously approved version (error 90062) — pubspec pins 1.0.0,
+          # so the daily train stalled forever. Ship the derived next-tag
+          # version (e.g. 0.1.446), which strictly increases.
+          BUILD_NAME: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
           export PATH="/opt/homebrew/opt/ruby/bin:/opt/homebrew/bin:$PATH"
@@ -884,6 +920,10 @@ jobs:
           BETA_APP_FEEDBACK_EMAIL: ${{ vars.BETA_APP_FEEDBACK_EMAIL }}
           BETA_REVIEW_CONTACT_EMAIL: ${{ vars.BETA_REVIEW_CONTACT_EMAIL }}
           BETA_REVIEW_CONTACT_PHONE: ${{ vars.BETA_REVIEW_CONTACT_PHONE }}
+          # Must match the IPA's marketing version (BUILD_NAME of the build
+          # job, issue #726) — verify_external_distribution! selects the
+          # uploaded build by app version.
+          BUILD_NAME: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
           if [ -z "${APP_STORE_CONNECT_KEY_CONTENT:-}" ]; then

@@ -128,14 +128,47 @@ void main() {
     });
   });
 
-  group('owner cap math (issue #273)', () {
-    test('effectiveContextWindow clamps the model window', () {
+  group('owner cap math (issues #273/#729)', () {
+    test('effectiveContextWindow clamps down below the catalog window', () {
       expect(effectiveContextWindow(1000000, 256000), 256000);
-      // At or above the model window the cap is a no-op.
-      expect(effectiveContextWindow(100000, 256000), 100000);
       // Absent (or non-positive) cap = the raw window, byte-identical.
       expect(effectiveContextWindow(100000, null), 100000);
       expect(effectiveContextWindow(100000, 0), 100000);
+    });
+
+    test(
+      'UT-W1: a cap above the catalog window RAISES the effective window '
+      '(issue #729)',
+      () {
+        // The repro: a glm endpoint serving ~1M under a 200k catalog id —
+        // the owner override raises the meter/threshold/guard basis to the
+        // served truth instead of falsely overflowing at 200k.
+        expect(effectiveContextWindow(200000, 1000000), 1000000);
+        expect(effectiveContextWindow(200000, 200001), 200001);
+        // The raise composes with the clamp-down: the override wins in
+        // whichever direction it points.
+        expect(effectiveContextWindow(200000, 16384), 16384);
+      },
+    );
+
+    test('UT-W1: the raise feeds the compaction threshold and trigger', () {
+      // At the raised basis a 347k-token branch is UNDER the trigger; at
+      // the raw catalog window it is over. Same estimator, same settings
+      // rule — only the effective window differs.
+      final raised = effectiveContextWindow(200000, 1000000);
+      final raw = effectiveContextWindow(200000, null);
+      expect(
+        shouldCompact(
+          347000,
+          raised,
+          CompactionSettings.forWindow(raised),
+        ),
+        isFalse,
+      );
+      expect(
+        shouldCompact(347000, raw, CompactionSettings.forWindow(raw)),
+        isTrue,
+      );
     });
 
     test('the compaction threshold rides the capped window', () {
@@ -155,6 +188,167 @@ void main() {
         isFalse,
       );
     });
+  });
+
+  group('fit-the-window compaction payloads (issue #729)', () {
+    // The repro basis: a 200k window with the default reserve leaves a
+    // 183644-token payload budget.
+    final budget = summarizationPayloadBudget(
+      200000,
+      CompactionSettings.forWindow(200000),
+    );
+
+    /// A ~1000-token user message (4000 chars of serialized text).
+    UserMessage fat(String tag) => UserMessage.text('$tag${'a' * 4000}');
+
+    /// A recording fake summarizer that always succeeds with [text].
+    ({SummarizeFn call, List<String> prompts}) recorder(String text) {
+      final prompts = <String>[];
+      Future<SummarizationResult> call(SummarizationRequest request) async {
+        prompts.add(request.prompt);
+        return SummarizationResult.success(text);
+      }
+      return (call: call, prompts: prompts);
+    }
+
+    test('UT-C1: the chunk planner bounds a 347k region to the budget', () {
+      // 347 fat messages ≈ 347k tokens — the over-window resume's dropped
+      // region. Every planned chunk's serialized text must estimate under
+      // the payload budget, and the chunks must cover the region in order.
+      final messages = [for (var i = 0; i < 347; i++) fat('u$i-')];
+      expect(
+        estimateStringTokens(serializeConversation(messages)),
+        greaterThan(200000),
+      ); // genuinely over-window
+
+      final chunks = chunkSummarizableMessages(messages, budget - 4096);
+      expect(chunks, hasLength(greaterThan(1)));
+      for (final chunk in chunks) {
+        expect(
+          estimateStringTokens(serializeConversation(chunk)),
+          lessThanOrEqualTo(budget),
+        );
+      }
+      // Order preserved, nothing lost: the flatten of the chunks is the
+      // original sequence, message for message.
+      expect(
+        [for (final chunk in chunks) ...chunk],
+        equals(messages),
+      );
+    });
+
+    test('UT-C1: a single message bigger than the budget is one chunk', () {
+      final giant = UserMessage.text('g' * (budget * 4 + 8000));
+      final chunks = chunkSummarizableMessages([fat('u'), giant], budget);
+      expect(chunks, hasLength(2));
+      expect(chunks[1], hasLength(1));
+    });
+
+    test('summarizationPayloadBudget floors at half the window', () {
+      // A tiny summarizer window under a big main window's reserve must
+      // still leave room to summarize into, never go negative.
+      expect(
+        summarizationPayloadBudget(
+          8192,
+          const CompactionSettings(
+            enabled: true,
+            reserveTokens: 16384,
+            keepRecentTokens: 20000,
+          ),
+        ),
+        4096,
+      );
+    });
+
+    test(
+      'IT-C1: an over-budget region is summarized chunk-wise; every '
+      'outbound prompt stays under the payload budget',
+      () async {
+        final fake = recorder('FOLD');
+        final messages = [for (var i = 0; i < 347; i++) fat('u$i-')];
+
+        final summary = await generateSummary(
+          messages,
+          summarize: fake.call,
+          maxPromptTokens: budget,
+        );
+
+        expect(summary, 'FOLD');
+        expect(fake.prompts, hasLength(greaterThan(1)));
+        // The #729 invariant: every recorded outbound prompt fits the
+        // summarizer's window minus the reserve.
+        for (final prompt in fake.prompts) {
+          expect(
+            estimateStringTokens(prompt),
+            lessThanOrEqualTo(budget),
+            reason: 'outbound payload exceeded the budget',
+          );
+        }
+        // The fold: chunk 0 uses the summary prompt, later chunks the
+        // update prompt threading the running summary.
+        expect(fake.prompts.first, isNot(contains('<previous-checkpoint>')));
+        for (var i = 1; i < fake.prompts.length; i++) {
+          expect(fake.prompts[i], contains('<previous-checkpoint>'));
+        }
+      },
+    );
+
+    test('under-budget payloads ride the legacy prompt byte-identically',
+        () async {
+      final fake = recorder('S');
+      final legacy = <String>[];
+      final messages = [fat('u1'), fat('u2')];
+
+      final bounded = await generateSummary(
+        messages,
+        summarize: fake.call,
+        maxPromptTokens: budget,
+      );
+      final unbounded = await generateSummary(
+        messages,
+        summarize: (request) async {
+          legacy.add(request.prompt);
+          return SummarizationResult.success('S');
+        },
+      );
+
+      expect(fake.prompts, hasLength(1)); // one call, no chunking
+      expect(legacy.single, fake.prompts.single);
+      expect(bounded, 'S');
+      expect(unbounded, 'S');
+    });
+
+    test(
+      'a single message bigger than the whole budget is truncated with an '
+      'explicit note, and the prompt still fits',
+      () async {
+        final fake = recorder('S');
+        // A giant ASSISTANT message: no candidate line (#81 keeps user
+        // asks uncapped), so the fit helper is what bounds the payload.
+        final giant = AssistantMessage(
+          content: [TextContent(text: 'g' * (budget * 4 + 8000))],
+          api: 'openai-completions',
+          provider: 'openrouter',
+          model: 'm1',
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.utc(2026),
+        );
+
+        final summary = await generateSummary(
+          [giant],
+          summarize: fake.call,
+          maxPromptTokens: budget,
+        );
+
+        expect(summary, 'S');
+        expect(
+          estimateStringTokens(fake.prompts.single),
+          lessThanOrEqualTo(budget),
+        );
+        expect(fake.prompts.single, contains('more characters truncated'));
+      },
+    );
   });
 
   group('findCutPoint', () {

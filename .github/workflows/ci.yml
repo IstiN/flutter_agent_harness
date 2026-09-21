@@ -163,6 +163,17 @@ jobs:
 
       - run: dart pub get
 
+      # Content-addressed native-assets hook downloads (sqlite3 et al) are
+      # hash-verified on reuse — cache them so a GitHub release-asset
+      # brownout (504 bodies hashed as mismatches, 2026-09-21) can't
+      # re-break every job that re-downloads.
+      - name: Native-assets hook cache
+        uses: actions/cache@v4
+        with:
+          path: .dart_tool/hooks_runner/shared
+          key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
+
       - name: dart test cube backends (live kernel legs)
         run: dart test test/cube/backends
 
@@ -301,6 +312,14 @@ jobs:
       - run: dart pub get
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
 
+      - name: Native-assets hook cache
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+        uses: actions/cache@v4
+        with:
+          path: .dart_tool/hooks_runner/shared
+          key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
+
       # Duration-balanced shards (issue #177 AC3): scripts/test_shards.json
       # maps test FILES to shards (file-level units — test/cli alone was
       # half the suite's runtime and undivisible as a dir-unit); rebalanced
@@ -367,6 +386,14 @@ jobs:
         with:
           sdk: stable
       - run: dart pub get
+
+      - name: Native-assets hook cache
+        uses: actions/cache@v4
+        with:
+          path: .dart_tool/hooks_runner/shared
+          key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
+
       - name: dart test test/integration (excluding llm, browser-ext, perf, pty)
         run: dart test test/integration --exclude-tags llm,browser-ext,perf,pty
 
@@ -393,6 +420,14 @@ jobs:
         with:
           sdk: stable
       - run: dart pub get
+
+      - name: Native-assets hook cache
+        uses: actions/cache@v4
+        with:
+          path: .dart_tool/hooks_runner/shared
+          key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
+
       - name: dart test under hostile ambient env
         run: dart test --exclude-tags integration
 
@@ -487,6 +522,14 @@ jobs:
       # PR no dart SDK is set up, so an unconditional pub get dies with 127.
       - run: dart pub get
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+
+      - name: Native-assets hook cache
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+        uses: actions/cache@v4
+        with:
+          path: .dart_tool/hooks_runner/shared
+          key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
 
       - uses: actions/download-artifact@v4
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
@@ -1435,6 +1478,14 @@ jobs:
         with:
           sdk: stable
       - run: dart pub get
+
+      - name: Native-assets hook cache
+        uses: actions/cache@v4
+        with:
+          path: .dart_tool/hooks_runner/shared
+          key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
+
       - name: dart test --tags perf
         run: dart test --tags perf
 
@@ -1573,6 +1624,12 @@ jobs:
       # creds). The 50-file integration suite itself runs per-PR now
       # (integration-mock + nightly pty-integration): tag CI no longer
       # gates releases on it, publish waits on this smoke instead.
+      - name: Native-assets hook cache
+        uses: actions/cache@v4
+        with:
+          path: .dart_tool/hooks_runner/shared
+          key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
       - name: dart test --tags "integration && llm"
         run: dart test --tags "integration && llm"
 
@@ -1589,6 +1646,14 @@ jobs:
         with:
           sdk: stable
       - run: dart pub get
+
+      - name: Native-assets hook cache
+        uses: actions/cache@v4
+        with:
+          path: .dart_tool/hooks_runner/shared
+          key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Install quickjs-ng
         run: |
           curl -fsSL -o "$RUNNER_TEMP/qjs" \
@@ -1799,6 +1864,13 @@ jobs:
 
       - run: dart pub get
 
+      - name: Native-assets hook cache
+        uses: actions/cache@v4
+        with:
+          path: .dart_tool/hooks_runner/shared
+          key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Build CLI bundle
         shell: bash
         run: |
@@ -1997,6 +2069,13 @@ jobs:
           restore-keys: pub-${{ runner.os }}-
 
       - run: dart pub get
+
+      - name: Native-assets hook cache
+        uses: actions/cache@v4
+        with:
+          path: .dart_tool/hooks_runner/shared
+          key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Build CLI bundle
         shell: bash
