@@ -12,9 +12,13 @@ name: Site mobile
 #   AC2      header disclosure menu: tap/Esc/backdrop, aria-expanded,
 #            all 10 links reachable, sticky bar height constant
 #   AC3      every header anchor jump lands with the heading visible
+#   AC5/REG  desktop 1280px full-page screenshots byte-compare against the
+#            committed goldens (test/site/goldens/site-mobile/) — a red REG
+#            blocks merge (REG-D1); re-bake intended changes with
+#            `node scripts/site_mobile_check.mjs --update-goldens`
 #   E2-E6    landscape fit, rotate auto-close, reduced-motion, no-JS degrade
 # Serves site/ with a plain `python3 -m http.server` — the no-server static
-# case. Screenshot goldens upload as an artifact for review/diffing.
+# case. Viewport screenshots upload as an artifact for review/diffing.
 on:
   push:
     branches: [main]
@@ -29,6 +33,12 @@ on:
       - 'scripts/site_mobile_check.mjs'
       - '.github/workflows/site-mobile.yml'
   workflow_dispatch:
+
+# Least privilege: this job only reads the checkout (CodeQL alert #38 —
+# without this block GITHUB_TOKEN inherits the repo default, which here is
+# read-write, while the job runs `npm i playwright` supply-chain code).
+permissions:
+  contents: read
 
 jobs:
   site-mobile:

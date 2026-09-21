@@ -165,7 +165,7 @@
   });
 
   if (nav && navToggle && navMenu) {
-    navToggle.hidden = false; // CSS decides visibility (html.js + ≤640px)
+    navToggle.hidden = false; // CSS decides visibility (html.js + ≤960px)
     function setMenu(open) {
       if (open) { nav.setAttribute('data-open', ''); }
       else { nav.removeAttribute('data-open'); }
@@ -182,11 +182,12 @@
         navToggle.focus();
       }
     });
-    // Backdrop (a tap anywhere outside the header) closes too.
+    // Backdrop (a tap anywhere outside the header) closes too. Pointer
+    // dismissal: leave focus where the user put it — only the keyboard
+    // path (Esc) returns focus to the toggle.
     document.addEventListener('click', function (e) {
       if (nav.hasAttribute('data-open') && !nav.contains(e.target)) {
         setMenu(false);
-        navToggle.focus();
       }
     });
     // Choosing a menu entry dismisses the panel.

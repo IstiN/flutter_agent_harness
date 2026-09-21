@@ -198,11 +198,15 @@ a:hover { text-decoration: underline; }
     order: 0;
   }
   html.js .nav-menu a { display: block; padding: 9px 4px; font-size: 1rem; }
+  /* No-JS fallback (E6): the wrapped rows wrap instead of overflowing —
+     across the WHOLE collapse band, not only ≤640px: the 11-link row fits
+     from ~945px, so a no-JS 641–960px viewport would otherwise keep the
+     pre-existing mid-width overflow this file set out to fix. */
+  html:not(.js) .nav-inner { flex-wrap: wrap; }
+  html:not(.js) .nav-links { flex-wrap: wrap; row-gap: 6px; }
 }
 
 @media (max-width: 640px) {
-  /* No-JS fallback (E6): the wrapped rows wrap instead of overflowing. */
-  html:not(.js) .nav-links { flex-wrap: wrap; row-gap: 6px; }
   /* Long inline code (install commands, one-line snippets) may wrap on
      phones; desktop keeps nowrap — the row has room up there. */
   code { white-space: pre-wrap; overflow-wrap: break-word; }

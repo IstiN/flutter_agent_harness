@@ -6,23 +6,32 @@
 //   AC1/AC4  every inventory page has documentElement.scrollWidth <= innerWidth
 //            at 360x640, 390x844, 768x1024, 641x800 and 1280x800 (desktop);
 //   AC2      header collapses into a disclosure menu: tap/Esc open-close,
-//            aria-expanded/aria-controls, all 10 links reachable, sticky bar
-//            height constant while open;
+//            aria-expanded/aria-controls, every header link reachable, sticky
+//            bar height constant while open, Esc (not backdrop tap) refocuses;
 //   AC3      every header anchor jump lands with the section heading visible
 //            (not under the header) at 360px and at desktop width;
+//   AC5/REG  desktop 1280px full-page screenshots byte-compare against the
+//            committed goldens in test/site/goldens/site-mobile/ (REG-D1);
 //   E2/E3/E5 landscape panel fits, rotate-to-desktop auto-closes,
 //            prefers-reduced-motion keeps the menu functional;
 //   E6       no-JS degrades to the wrapped-links layout, never a dead button.
 //
+// Link counts are read from the page, never hard-coded: the header link set
+// is content (main added a Blog link in #758 and the leg went red exactly
+// because of a stale `=== 10`). The floor of 10 is the ticket's stated
+// inventory; a cross-mode equality (menu vs wrapped) catches vanished links.
+//
 // Serves site/ with a plain `python3 -m http.server` fixture — the no-server
-// static case. Screenshot goldens land in $SHOTS_DIR (CI artifact) when set.
+// static case. Viewport screenshots land in $SHOTS_DIR (CI artifact) when set.
 //
 // Usage:
 //   node scripts/site_mobile_check.mjs            (CI: npm i playwright@1.49.1 + install chromium)
 //   CHROMIUM_PATH=/usr/bin/chromium node scripts/site_mobile_check.mjs   (system browser)
+//   node scripts/site_mobile_check.mjs --update-goldens                  (re-bake AC5 goldens,
+//     same convention as `flutter test --update-goldens` for the store shots)
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -34,9 +43,9 @@ try {
   ({ chromium } = require('playwright-core'));
 }
 
+const UPDATE_GOLDENS = process.argv.includes('--update-goldens');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const PORT = Number(process.env.SITE_CHECK_PORT || 8937);
-const BASE = `http://127.0.0.1:${PORT}`;
+const GOLDENS = path.join(root, 'test', 'site', 'goldens', 'site-mobile');
 const SHOTS = process.env.SHOTS_DIR || '';
 const PAGES = [
   'index.html',
@@ -54,6 +63,9 @@ const VIEWPORTS = [
   [641, 800],
   [1280, 800],
 ];
+// The menu collapse breakpoint is 960px (measured: the 11-link row fits
+// from ~945px). Keep this in sync with site/styles.css.
+const MENU_MAX_WIDTH = 960;
 
 let failures = 0;
 let checks = 0;
@@ -81,14 +93,70 @@ async function launch() {
   });
 }
 
+// Wait for the smooth scroll started by an anchor click to come to rest —
+// removes the fixed-sleep flake class on loaded CI runners.
+async function waitScrollSettled(page, budgetMs = 2500) {
+  let last = -1;
+  let same = 0;
+  const t0 = Date.now();
+  while (Date.now() - t0 < budgetMs) {
+    const y = await page.evaluate(() => Math.round(window.scrollY));
+    if (y === last) {
+      same++;
+      if (same >= 2) return;
+    } else {
+      same = 0;
+    }
+    last = y;
+    await page.waitForTimeout(100);
+  }
+}
+
+// python3 -m http.server readiness poll — a fixed sleep raced the port bind
+// on loaded runners and failed the whole leg with a navigation error.
+async function waitReady(port, budgetMs = 5000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < budgetMs) {
+    try {
+      const r = await fetch(`http://127.0.0.1:${port}/index.html`);
+      if (r.ok) return true;
+    } catch { /* not bound yet */ }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return false;
+}
+
+// Preferred port first; if it is taken (stale server on a dev box), fall
+// back to an OS-assigned port parsed from http.server's own banner.
+async function startServer() {
+  const candidates = [Number(process.env.SITE_CHECK_PORT || 8937), 0];
+  for (const port of candidates) {
+    const proc = spawn(
+      'python3', ['-m', 'http.server', String(port), '--bind', '127.0.0.1'],
+      { cwd: path.join(root, 'site'), stdio: ['ignore', 'ignore', 'pipe'] },
+    );
+    let bound = port;
+    if (!bound) {
+      bound = await new Promise((resolve) => {
+        let buf = '';
+        proc.stderr.on('data', (d) => {
+          buf += String(d);
+          const m = buf.match(/http:\/\/127\.0\.0\.1:(\d+)/);
+          if (m) resolve(Number(m[1]));
+        });
+        setTimeout(() => resolve(0), 3000);
+      });
+    }
+    if (bound && await waitReady(bound)) return { proc, base: `http://127.0.0.1:${bound}` };
+    try { proc.kill(); } catch { /* already gone */ }
+  }
+  throw new Error('static site server failed to start');
+}
+
 async function main() {
-  const server = spawn('python3', ['-m', 'http.server', String(PORT), '--bind', '127.0.0.1'], {
-    cwd: path.join(root, 'site'),
-    stdio: 'ignore',
-  });
+  const { proc: server, base: BASE } = await startServer();
   const cleanup = () => { try { server.kill(); } catch { /* already gone */ } };
   process.on('exit', cleanup);
-  await new Promise((r) => setTimeout(r, 900));
 
   const browser = await launch();
 
@@ -114,13 +182,14 @@ async function main() {
     await ctx.close();
   }
 
-  // ── AC2: disclosure menu — tap/Esc, a11y, 10 links, constant bar height ──
+  // ── AC2: disclosure menu — tap/Esc, a11y, all links, constant bar height ─
+  let menuLinkCount = 0;
   console.log('AC2 — header disclosure menu');
   {
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
-    // Collapsed menu mode also covers the 641-960 band: the 843px link row
-    // only fits from ~892px (measured), so 768 renders the burger too.
+    // Collapsed menu mode also covers the 641-960 band: the link row only
+    // fits from ~945px (measured), so 768 renders the burger too.
     for (const [w, h] of [[360, 640], [390, 844], [768, 1024]]) {
       await page.setViewportSize({ width: w, height: h });
       await page.goto(`${BASE}/index.html`, { waitUntil: 'load' });
@@ -144,9 +213,15 @@ async function main() {
         Math.round(document.querySelector('.nav').getBoundingClientRect().height));
       ok(`@${w} sticky bar height constant while open`, barOpen === barBefore,
         `${barBefore} -> ${barOpen}`);
-      const links = page.locator('#nav-menu a');
-      ok(`@${w} all 10 links reachable`, (await links.count()) === 10 &&
-        (await links.first().isVisible()) && (await links.last().isVisible()));
+      // Every header link must be reachable; count is content-driven
+      // (>= 10 = the ticket's stated inventory: 8 sections + 2 external),
+      // so adding a nav link on main cannot go red again.
+      const linkInfos = await page.$$eval('#nav-menu a', (as) =>
+        as.map((a) => ({ href: a.getAttribute('href') || '', vis: a.offsetParent !== null })));
+      menuLinkCount = linkInfos.length;
+      ok(`@${w} all header links reachable (found ${menuLinkCount})`,
+        menuLinkCount >= 10 &&
+        linkInfos.every((l) => l.href.length > 0 && l.vis));
       await shot(page, `menu-open@${w}x${h}`);
 
       // Landscape guard (E2): panel must not eat the viewport.
@@ -164,25 +239,28 @@ async function main() {
       await page.setViewportSize({ width: w, height: h });
       await page.waitForTimeout(120);
 
-      // Esc closes and returns focus to the toggle.
+      // Esc closes and returns focus to the toggle (keyboard dismissal).
       await page.keyboard.press('Escape');
       await page.waitForTimeout(120);
       ok(`@${w} Esc closes`, (await toggle.getAttribute('aria-expanded')) === 'false');
       ok(`@${w} Esc returns focus to toggle`,
         await page.evaluate(() => document.activeElement === document.querySelector('.nav-toggle')));
 
-      // Backdrop (click outside the header) closes.
+      // Backdrop (click outside the header) closes — pointer dismissal must
+      // NOT yank focus to the toggle (touch users never asked for it).
       await toggle.click();
       await page.waitForTimeout(120);
       await page.mouse.click(Math.round(w / 2), h - 40);
       await page.waitForTimeout(120);
       ok(`@${w} backdrop closes`, (await toggle.getAttribute('aria-expanded')) === 'false');
+      ok(`@${w} backdrop leaves focus alone`,
+        await page.evaluate(() => document.activeElement !== document.querySelector('.nav-toggle')));
 
       // Tapping a menu link closes the menu and lands on the section.
       await toggle.click();
       await page.waitForTimeout(120);
       await page.locator('#nav-menu a[href="#faq"]').click();
-      await page.waitForTimeout(900); // smooth scroll
+      await waitScrollSettled(page);
       ok(`@${w} link tap closes menu`, (await toggle.getAttribute('aria-expanded')) === 'false');
       ok(`@${w} link tap navigates`, page.url().includes('#faq'));
 
@@ -219,19 +297,24 @@ async function main() {
     }
     await ctxR.close();
 
-    // E6: no-JS — wrapped links stay, never a dead button.
+    // E6: no-JS — wrapped links stay, never a dead button. Checked at 360px
+    // AND in the 641-960 band (the no-JS wrap guard spans the whole
+    // collapse range; the mid-width row would otherwise overflow there).
     const ctxN = await browser.newContext({ javaScriptEnabled: false });
     const pageN = await ctxN.newPage();
-    await pageN.setViewportSize({ width: 360, height: 640 });
-    await pageN.goto(`${BASE}/index.html`, { waitUntil: 'load' });
-    ok('E6 no-JS: no visible toggle', !(await pageN.locator('.nav-toggle').isVisible()));
-    ok('E6 no-JS: all 10 links visible (wrapped)',
-      (await pageN.locator('.nav-links a').count()) === 8 &&
-      (await pageN.locator('.nav-ext a').count()) === 2 &&
-      (await pageN.locator('.nav-links a').first().isVisible()));
-    const noscroll = await pageN.evaluate(() =>
-      document.documentElement.scrollWidth <= window.innerWidth);
-    ok('E6 no-JS: no horizontal page scroll', noscroll);
+    for (const [w, h] of [[360, 640], [768, 1024]]) {
+      await pageN.setViewportSize({ width: w, height: h });
+      await pageN.goto(`${BASE}/index.html`, { waitUntil: 'load' });
+      ok(`E6 no-JS @${w}: no visible toggle`, !(await pageN.locator('.nav-toggle').isVisible()));
+      const wrapped = await pageN.$$eval('.nav-links a, .nav-ext a', (as) =>
+        as.map((a) => ({ vis: a.offsetParent !== null, w: Math.round(a.getBoundingClientRect().width) })));
+      ok(`E6 no-JS @${w}: all ${wrapped.length} links visible (wrapped)`,
+        wrapped.length === menuLinkCount && wrapped.length >= 10 &&
+        wrapped.every((l) => l.vis && l.w > 0));
+      const noscroll = await pageN.evaluate(() =>
+        document.documentElement.scrollWidth <= window.innerWidth);
+      ok(`E6 no-JS @${w}: no horizontal page scroll`, noscroll);
+    }
     await ctxN.close();
   }
 
@@ -248,7 +331,7 @@ async function main() {
         as.map((a) => a.getAttribute('href')));
       for (const href of hrefs) {
         await page.evaluate(() => window.scrollTo(0, 0));
-        const collapsed = w < 641; // menu breakpoint (measured: row fits above 640)
+        const collapsed = w <= MENU_MAX_WIDTH; // menu collapse breakpoint (measured: 960px)
         if (collapsed) {
           // Close the menu first if a previous iteration left it open.
           if ((await page.locator('.nav-toggle').getAttribute('aria-expanded')) === 'true') {
@@ -261,7 +344,7 @@ async function main() {
         } else {
           await page.click(`.nav-links a[href="${href}"]`);
         }
-        await page.waitForTimeout(w < 640 ? 1100 : 900); // smooth scroll
+        await waitScrollSettled(page);
         const r = await page.evaluate((sel) => {
           const sec = document.querySelector(sel);
           const head = sec.querySelector('h1,h2') || sec;
@@ -274,6 +357,46 @@ async function main() {
       }
     }
     await ctx.close();
+  }
+
+  // ── AC5/REG-D1: desktop goldens byte-compare ─────────────────────────────
+  // Full-page 1280px captures of index/privacy against committed goldens.
+  // Animations neutralized (reduced-motion context: the site renders the
+  // terminal reel statically, reveals render visible, the caret is frozen).
+  console.log('AC5/REG-D1 — desktop screenshot goldens');
+  {
+    for (const p of ['index.html', 'privacy.html']) {
+      const goldenPath = path.join(GOLDENS, `${p.replace(/[/.]/g, '_')}.png`);
+      const ctx = await browser.newContext({ reducedMotion: 'reduce' });
+      const page = await ctx.newPage();
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await page.goto(`${BASE}/${p}`, { waitUntil: 'load' });
+      await page.waitForTimeout(500);
+      const actual = await page.screenshot({ fullPage: true, animations: 'disabled' });
+      await ctx.close();
+      if (UPDATE_GOLDENS) {
+        mkdirSync(GOLDENS, { recursive: true });
+        writeFileSync(goldenPath, actual);
+        console.log(`  ok   golden re-baked: ${path.relative(root, goldenPath)} (${actual.length} bytes)`);
+        checks++;
+        continue;
+      }
+      let expected;
+      try {
+        expected = readFileSync(goldenPath);
+      } catch {
+        ok(`${p} desktop golden byte-compare`, false,
+          `golden missing: ${path.relative(root, goldenPath)} — re-bake with --update-goldens`);
+        continue;
+      }
+      const same = expected.equals(actual);
+      if (!same && SHOTS) {
+        mkdirSync(SHOTS, { recursive: true });
+        writeFileSync(path.join(SHOTS, `REG-${p.replace(/\//g, '_')}@1280x800.png`), actual);
+      }
+      ok(`${p} desktop golden byte-compare (${expected.length} bytes)`, same,
+        same ? '' : `differs from ${path.relative(root, goldenPath)} — if the desktop change is intended, re-bake with --update-goldens`);
+    }
   }
 
   await browser.close();
