@@ -153,6 +153,7 @@ final class SessionChunkReader {
     int anchorOffset, {
     int maxRecords = defaultChunkRecords,
     int maxBytes = defaultChunkBytes,
+    bool shallowGiantCustoms = false,
   }) async {
     final info = await stat();
     if (info == null) {
@@ -172,7 +173,10 @@ final class SessionChunkReader {
         );
     if (limit <= 0) return chunk(const [], false);
     final (lines, reachedTop) = await _readStripLines(limit, maxBytes);
-    var entries = await _parseAllLines(lines);
+    var entries = await _parseAllLines(
+      lines,
+      shallowGiantCustoms: shallowGiantCustoms,
+    );
     var hasOlder = !reachedTop;
     if (entries.length > maxRecords) {
       entries = entries.sublist(entries.length - maxRecords);
@@ -901,15 +905,31 @@ final class SessionChunkReader {
 
   /// Parses lines oldest-first through the executor, skipping torn ones.
   Future<List<SessionChunkEntry>> _parseAllLines(
-    List<(int offset, Uint8List bytes)> lines,
-  ) async {
-    final decoded = _decodeLines(lines);
+    List<(int offset, Uint8List bytes)> lines, {
+    bool shallowGiantCustoms = false,
+  }) async {
+    final decoded = _decodeLines(
+      lines,
+      shallowGiantCustoms: shallowGiantCustoms,
+    );
     if (decoded.isEmpty) return const [];
     final parsed = await parseSessionLines(
-      [for (final (_, text, _) in decoded) text],
+      [
+        for (final (_, text, _) in decoded)
+          // Byte-level truncation in _decodeLines handles the canonical
+          // shape; this string-level pass catches any line the byte twin
+          // declined (defense in depth, cheap on short lines).
+          if (shallowGiantCustoms &&
+              text.length >= shallowCustomRecordThreshold &&
+              text.startsWith('{"type":"custom"'))
+            shallowCustomHeader(text) ?? text
+          else
+            text,
+      ],
       filePath: path,
       firstLineNumber: decoded.first.$1,
       executor: parseExecutor,
+      shallowGiantCustoms: shallowGiantCustoms,
     );
     return [
       for (var i = 0; i < parsed.length; i++)
@@ -925,19 +945,62 @@ final class SessionChunkReader {
   /// Strict-UTF8 decodes candidate lines, dropping empty or undecodable
   /// ones — the same skip semantics the inline parser had, applied BEFORE
   /// any executor transfer. Returns (offset, text, byteWeight) triples.
+  ///
+  /// With [shallowGiantCustoms], giant `custom` lines are truncated to
+  /// their JSON header at the BYTE level (issue #503 round 3b): UTF-8
+  /// decoding ~350 MB of `model_request_summary` payloads was the bulk of
+  /// the boundary walk even after the isolate transfer was avoided. The
+  /// byteWeight still reports the full line so chunk byte budgets stay
+  /// honest.
   static List<(int, String, int)> _decodeLines(
-    List<(int offset, Uint8List bytes)> lines,
-  ) {
+    List<(int offset, Uint8List bytes)> lines, {
+    bool shallowGiantCustoms = false,
+  }) {
     final decoded = <(int, String, int)>[];
     for (final (offset, raw) in lines) {
       if (raw.isEmpty) continue;
       try {
-        decoded.add((offset, utf8.decode(raw), raw.length));
+        final truncated = shallowGiantCustoms ? _truncateGiantCustom(raw) : raw;
+        decoded.add((offset, utf8.decode(truncated), raw.length));
       } on Object {
         continue;
       }
     }
     return decoded;
+  }
+
+  /// Byte-level twin of [shallowCustomHeader]: when [raw] is a giant
+  /// `custom` record line in canonical writer order, returns the bytes up
+  /// to `,"data":` plus a closing brace. Anything else passes through
+  /// untouched (the string-level fallback in the parse path then decides).
+  static Uint8List _truncateGiantCustom(Uint8List raw) {
+    if (raw.length < shallowCustomRecordThreshold) return raw;
+    const prefix = '{"type":"custom"';
+    const dataMarker = ',"data":';
+    const customTypeMarker = ',"customType":';
+    int needleAt(List<int> haystack, String needle, int from) {
+      final codes = needle.codeUnits;
+      outer:
+      for (var i = from; i <= haystack.length - codes.length; i++) {
+        for (var j = 0; j < codes.length; j++) {
+          if (haystack[i + j] != codes[j]) continue outer;
+        }
+        return i;
+      }
+      return -1;
+    }
+
+    if (needleAt(raw, prefix, 0) != 0) return raw;
+    final dataAt = needleAt(raw, dataMarker, prefix.length);
+    if (dataAt < 0) return raw;
+    if (needleAt(raw, customTypeMarker, prefix.length) < 0 ||
+        needleAt(raw, customTypeMarker, prefix.length) > dataAt) {
+      return raw; // foreign field order — keep the full line
+    }
+    final header = Uint8List(dataAt + 1)
+      ..setRange(0, dataAt, raw)
+      ..[dataAt] = 0x7d; // '}'
+    return header;
   }
 
   static int _bytesOf(List<SessionChunkEntry> entries) =>

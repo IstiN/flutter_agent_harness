@@ -93,6 +93,7 @@ final class FlutterSessionManager extends ChangeNotifier {
     JsonlSessionRepo? repo,
     this.maxSessionLoadBytes = defaultMaxSessionLoadBytes,
     this.leaseStore,
+    this.includeSharedSessionRoots = true,
     SubagentParentResolver? parentResolver,
   }) : _repo =
            repo ??
@@ -134,6 +135,13 @@ final class FlutterSessionManager extends ChangeNotifier {
   /// The ownership-lease store (from the shared env); null disables
   /// enforcement (tests, web) — the app then behaves exactly as before.
   final FileSessionLeaseStore? leaseStore;
+
+  /// Whether the persisted-session listing merges the shared macOS App
+  /// Group root with [sessionsRoot]. Tests pass false to stay hermetic —
+  /// a dev box that really has the App Group container otherwise leaks
+  /// its production sessions into the listing (AgentService has the same
+  /// flag for the same reason).
+  final bool includeSharedSessionRoots;
 
   /// The sidecar path of the lease this manager holds, if driving leased.
   String? _heldLeasePath;
@@ -257,7 +265,9 @@ final class FlutterSessionManager extends ChangeNotifier {
   /// The local listing: the default repo, or a merge across every session
   /// root (macOS App Group + fallback) when more than one exists.
   Future<List<SessionMetadata>> _listAcrossRoots() {
-    final roots = allSessionRoots(sessionsRoot);
+    final roots = includeSharedSessionRoots
+        ? allSessionRoots(sessionsRoot)
+        : <String>[sessionsRoot];
     if (roots.length <= 1) return _repo.list();
     return mergeSessionsAcrossRoots(
       roots: roots,

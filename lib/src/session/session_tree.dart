@@ -161,7 +161,8 @@ final class Session {
   /// compaction record is resident — the "open from the end, up to the
   /// compaction" resume (owner directive): a marathon session opens in
   /// O(tail-after-compaction) instead of parsing gigabytes. Stops when
-  /// the active branch carries a [CompactionRecord] or the file start is
+  /// the active branch carries a [CompactionRecord], when [tokenBudget]
+  /// is already covered by the resident tail, or when the file start is
   /// reached (sessions without compaction page everything, as before).
   /// A no-op for full storages. [maxPages] bounds pathological files.
   ///
@@ -172,12 +173,22 @@ final class Session {
   /// a full open (10s+ on a 1.4 GB live session). Returns false only on
   /// [maxPages] exhaustion — the caller's documented full-open fallback;
   /// a genuinely empty session reports `true`.
-  Future<bool> ensureCompactionBoundaryResident({int maxPages = 512}) async {
+  ///
+  /// [tokenBudget] (issue #503) stops the walk as soon as the resident
+  /// tail's estimated context tokens cover the model's window — a resume
+  /// needs only what fits the context, and older history pages in lazily
+  /// through the scrollback's loadOlder path. `null` walks to the
+  /// boundary/file head as before.
+  Future<bool> ensureCompactionBoundaryResident({
+    int maxPages = 512,
+    int? tokenBudget,
+  }) async {
     final storage = _storage;
     if (storage is! WindowedSessionStorage) return true;
     return storage.growOlderUntil(
       (r) => r is CompactionRecord,
       maxPages: maxPages,
+      tokenBudget: tokenBudget,
     );
   }
 
