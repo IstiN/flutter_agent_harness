@@ -809,6 +809,17 @@ void main() {
       final good = loadYaml('agent:\n  contextWindowCap: 256000\n') as YamlMap;
       expect(() => CliConfig.fromYaml(good), returnsNormally);
     });
+
+    test('agent validation agrees on the #729 raise path too', () {
+      // A cap above the catalog window is the raise override: both the
+      // shared validator and the boot parser accept it identically.
+      final raised =
+          loadYaml('agent:\n  contextWindowCap: 1000000\n') as YamlMap;
+      final agentNode = raised['agent'] as YamlMap;
+      expect(() => validateAgentSection(agentNode), returnsNormally);
+      expect(() => CliConfig.fromYaml(raised), returnsNormally);
+      expect(CliConfig.fromYaml(raised).contextWindowCap, 1000000);
+    });
   });
   group('host capability (AC11)', () {
     // The real web/iOS-container shape: no home directory (the global scope

@@ -243,9 +243,23 @@ void main() {
           timeout: const Duration(seconds: 20),
         );
         // The stopped-state row is gone; the rest of the menu is intact.
+        // Anchor each label on the PAINTED screen before asserting: raw
+        // echo satisfies waitForText one frame ahead of the full menu
+        // paint, and an immediate screenText read can observe a partially
+        // painted frame (#550 family — reddened the pre-merge validation
+        // run with the header + Stop DAP row visible but the remaining
+        // rows not yet drawn).
         expect(harness.screenText, isNot(contains('Start DAP locally')));
-        for (final option in dapMenuOptions(hubRunning: true)) {
-          expect(harness.screenText, contains(option.$2));
+        for (final label in dapMenuOptions(hubRunning: true).map((o) => o.$2)) {
+          // Anchor each label on the PAINTED screen before asserting
+          // (#550 family): raw echo satisfies waitForText one frame
+          // ahead of the full menu paint, and an immediate screenText
+          // read can observe a partially painted frame.
+          await harness.waitForScreen(
+            label,
+            timeout: const Duration(seconds: 20),
+          );
+          expect(harness.screenText, contains(label));
         }
 
         await harness.runSlashCommand('/exit');

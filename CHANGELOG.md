@@ -4006,4 +4006,15 @@
 - fix(cli): cut marathon-session boot cost round 2 (issue #503) (#676)
 - gh-752 Boarding screens in Apps disable swipping (#753)
 
+## 0.1.446
+
+- fix(726): resilient iOS pub get + advancing TestFlight marketing version (#764)
+- gh-746 Android Play Store Error (#750)
+
+## 0.1.447
+
+- Fixes #705: provider-switch-safe sessions — top-level function_call items, sanitize-on-switch, recovery (#765)
+- feat(blog): fa1.dev blog — first post (40B tokens article) (#758)
+- fix(#761): never emit whole-screen CSI S/T when the leading edge row is static (#766)
+
 ## Unreleased

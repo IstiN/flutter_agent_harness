@@ -53,6 +53,166 @@ AssistantMessageEventStream streamChatGptCodex(
   return events;
 }
 
+/// Converts harness history into Responses API `input` items (issue #705).
+///
+/// Wire grammar (the invariant this converter owns): assistant tool calls
+/// serialize as TOP-LEVEL `function_call` items and tool results as
+/// top-level `function_call_output` items — never as message content-part
+/// slots. The message content-part enum admits only
+/// `input_text`/`output_text`/`input_image`; a nested `function_call` is a
+/// hard 400 (`Invalid value: 'function_call'`) that repeats on EVERY replay,
+/// bricking a session switched from another provider mid-flight.
+///
+/// Sanitize-on-switch: the conversion is total and runs statelessly on every
+/// request (image-registry precedent), so a history authored by any other
+/// provider re-shapes to valid responses items, and a session poisoned under
+/// the previous converter un-bricks on the first post-fix turn with no
+/// manual JSONL surgery. Unconvertible records degrade instead of emitting
+/// grammar-invalid items: an assistant record with no text and no tool calls
+/// (thinking/image-only from another provider) is skipped; a tool result
+/// with no text (image-only) degrades its output to
+/// [responsesOmittedToolResultNote].
+List<Map<String, dynamic>> responsesInputItems(List<Message> messages) => [
+  for (final message in messages) ..._inputItemsFor(message),
+];
+
+/// The note text that replaces a tool result with no convertible content
+/// once history is re-shaped for the responses wire (issue #705).
+const responsesOmittedToolResultNote =
+    '(earlier tool result omitted after provider switch)';
+
+List<Map<String, dynamic>> _inputItemsFor(Message message) {
+  if (message is UserMessage) {
+    return [
+      {'role': 'user', 'content': _userInputContent(message.content)},
+    ];
+  }
+  if (message is ToolResultMessage) {
+    return [_functionCallOutputItem(message)];
+  }
+  final assistant = message as AssistantMessage;
+  final textParts = [
+    for (final item in assistant.content)
+      if (item is TextContent) {'type': 'output_text', 'text': item.text},
+  ];
+  final functionCalls = [
+    for (final item in assistant.content)
+      if (item is ToolCall)
+        {
+          'type': 'function_call',
+          'call_id': item.id,
+          'name': item.name,
+          'arguments': jsonEncode(item.arguments),
+        },
+  ];
+  // A record with no convertible blocks (thinking/image-only, authored by
+  // another provider) is skipped rather than emitted as a content-less
+  // message item — the pre-fix shape that hard-400s on replay.
+  if (textParts.isEmpty && functionCalls.isEmpty) return const [];
+  return [
+    if (textParts.isNotEmpty) {'role': 'assistant', 'content': textParts},
+    ...functionCalls,
+  ];
+}
+
+Map<String, dynamic> _functionCallOutputItem(ToolResultMessage message) {
+  final output = [
+    for (final item in message.content)
+      if (item is TextContent) {'type': 'input_text', 'text': item.text},
+  ];
+  return {
+    'type': 'function_call_output',
+    'call_id': message.toolCallId,
+    // An image-only or empty result still answers its call: degrade to the
+    // named note instead of an empty output array.
+    'output': output.isEmpty
+        ? [
+            {'type': 'input_text', 'text': responsesOmittedToolResultNote},
+          ]
+        : output,
+  };
+}
+
+List<Map<String, dynamic>> _userInputContent(Object content) =>
+    switch (content) {
+      String text => [
+        {'type': 'input_text', 'text': text},
+      ],
+      List<ContentBlock> blocks => [
+        for (final block in blocks)
+          if (block is TextContent) {'type': 'input_text', 'text': block.text},
+      ],
+      _ => const [],
+    };
+
+/// Describes the first Responses item/content-grammar violation in a
+/// converted `input` list, or null when the payload is valid (issue #705).
+///
+/// This is the assertion half of sanitize-on-switch: the converter above is
+/// expected to always produce valid items, so a non-null result names the
+/// exact outbound record behind a grammar-shaped provider 400 (E5) instead
+/// of leaving a bare body to decode. Content parts are checked against the
+/// union of per-role part types (`input_text`/`input_image`/`output_text`);
+/// the poison class is a type outside that set, not a role mixup.
+String? firstResponsesGrammarViolation(List<Map<String, dynamic>> input) {
+  for (var i = 0; i < input.length; i++) {
+    final violation = _inputItemViolation(input[i]);
+    if (violation != null) return 'input item $i: $violation';
+  }
+  return null;
+}
+
+/// The grammar violation of one converted input item, or null.
+String? _inputItemViolation(Map<String, dynamic> item) {
+  final type = item['type'] as String? ?? 'message';
+  switch (type) {
+    case 'message':
+      return _messageItemViolation(item);
+    case 'function_call':
+      return item['call_id'] is String && item['name'] is String
+          ? null
+          : 'function_call is missing call_id/name';
+    case 'function_call_output':
+      return item['call_id'] is String && item['output'] is List
+          ? null
+          : 'function_call_output is missing call_id/output';
+    default:
+      return "unknown item type '$type'";
+  }
+}
+
+/// The grammar violation of a message item's content list, or null.
+String? _messageItemViolation(Map<String, dynamic> item) {
+  final content = item['content'];
+  if (content is! List) return 'message content is not a list';
+  for (final part in content) {
+    final partType = part is Map ? part['type'] : null;
+    if (partType is! String) return 'message has a malformed content part';
+    if (!_messageContentPartTypes.contains(partType)) {
+      return "content part type '$partType' is not a valid message content "
+          'part';
+    }
+  }
+  return null;
+}
+
+/// The content part types the Responses API admits inside a message item.
+const _messageContentPartTypes = {'input_text', 'output_text', 'input_image'};
+
+/// Body markers of the Responses item/content-grammar rejection family,
+/// matched case-insensitively against 400 bodies (issue #705 E5).
+const _grammarRejectionSignatures = [
+  'invalid value',
+  'content part',
+  'input item',
+];
+
+/// Whether a 400 [body] looks like a Responses grammar rejection.
+bool _looksLikeGrammarRejection(String body) {
+  final normalized = body.toLowerCase();
+  return _grammarRejectionSignatures.any(normalized.contains);
+}
+
 final class _ChatGptCodexSession {
   _ChatGptCodexSession(
     this.model,
@@ -219,11 +379,32 @@ final class _ChatGptCodexSession {
         message = 'rate limited; resets at $resets\n$body';
       }
     }
+    // Issue #705 E5: a grammar-shaped 400 never stays bare — name the
+    // suspect outbound item and the recovery path, so a session that still
+    // fails after sanitize reports WHY instead of looping on a raw 400.
+    if (response.statusCode == 400 && _looksLikeGrammarRejection(body)) {
+      message = '$message\n${_grammarRejectionAnnotation()}';
+    }
     return ProviderHttpError(
       response.statusCode,
       message,
       retryAfter: parseRetryAfter(response.headers['retry-after']),
     );
+  }
+
+  /// Names the suspect outbound item behind a grammar rejection plus the
+  /// recovery hint. Sanitize already re-shapes history on every request, so
+  /// a rejection here is a converter gap — the validator says which record.
+  String _grammarRejectionAnnotation() {
+    final input = responsesInputItems(
+      downgradeUnsupportedImages(context.messages, model),
+    );
+    final violation = firstResponsesGrammarViolation(input);
+    final suspect = violation ?? 'first of ${input.length} converted items';
+    return '[fa] The Responses API rejected the outbound item/content '
+        'grammar ($suspect). Outbound history is re-sanitized for the '
+        'responses wire on every request; if this repeats, run /compact or '
+        'start a fresh session.';
   }
 
   Map<String, dynamic> _requestBody() => {
@@ -233,10 +414,9 @@ final class _ChatGptCodexSession {
     'store': false,
     if (context.systemPrompt?.isNotEmpty ?? false)
       'instructions': context.systemPrompt,
-    'input': [
-      for (final message in downgradeUnsupportedImages(context.messages, model))
-        _inputItem(message),
-    ],
+    'input': responsesInputItems(
+      downgradeUnsupportedImages(context.messages, model),
+    ),
     if (context.tools?.isNotEmpty ?? false)
       'tools': [
         for (final tool in context.tools!)
@@ -247,49 +427,6 @@ final class _ChatGptCodexSession {
             'parameters': tool.parameters,
           },
       ],
-  };
-
-  Map<String, dynamic> _inputItem(Message message) {
-    if (message is UserMessage) {
-      return {'role': 'user', 'content': _inputContent(message.content)};
-    }
-    if (message is ToolResultMessage) {
-      return {
-        'type': 'function_call_output',
-        'call_id': message.toolCallId,
-        'output': [
-          for (final item in message.content)
-            if (item is TextContent) {'type': 'input_text', 'text': item.text},
-        ],
-      };
-    }
-    final assistant = message as AssistantMessage;
-    return {
-      'role': 'assistant',
-      'content': [
-        for (final item in assistant.content)
-          if (item is TextContent)
-            {'type': 'output_text', 'text': item.text}
-          else if (item is ToolCall)
-            {
-              'type': 'function_call',
-              'call_id': item.id,
-              'name': item.name,
-              'arguments': jsonEncode(item.arguments),
-            },
-      ],
-    };
-  }
-
-  List<Map<String, dynamic>> _inputContent(Object content) => switch (content) {
-    String text => [
-      {'type': 'input_text', 'text': text},
-    ],
-    List<ContentBlock> blocks => [
-      for (final block in blocks)
-        if (block is TextContent) {'type': 'input_text', 'text': block.text},
-    ],
-    _ => const [],
   };
 
   void _handleEvent(String? event, String data) {

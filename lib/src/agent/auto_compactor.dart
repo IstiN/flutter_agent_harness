@@ -73,6 +73,7 @@ final class AutoCompactorPass {
   /// The summary text the pass wrote (from the compaction record); `null`
   /// for failed / no-work / local-trim passes.
   final String? summary;
+
   /// Session records hidden behind the compaction boundary.
   final int hiddenRecords;
 
@@ -228,8 +229,19 @@ final class AutoCompactor {
   /// reset / closed sockets. Hard refusals (rate limit, 429, content
   /// filter, auth) fail fast.
   static final _transient = RegExp(
-    '(?:5\\d\\d|connection\\s+(?:closed|reset|aborted|refused)|'
-    'socket\\s+exception|stream\\s+closed)',
+    r'(?:5\d\d|connection\s+(?:closed|reset|aborted|refused)|'
+    r'socket\s+exception|stream\s+closed)',
+    caseSensitive: false,
+  );
+
+  /// Overflow-classified failures (issue #729): the request itself cannot
+  /// fit the endpoint's window — a deterministic 400 (occasionally wrapped
+  /// in a 5xx). Never retried; routes straight to the next summarizer /
+  /// the local trim.
+  static final _overflow = RegExp(
+    '(?:context length|context window|maximum context|prompt is too long|'
+    'too many tokens|input length|exceed[s]? the (?:model )?(?:maximum|context)|'
+    'reduce the (?:length|size))',
     caseSensitive: false,
   );
 
@@ -465,6 +477,9 @@ final class AutoCompactor {
         summarize: summary,
         pass: pass,
         clock: clock,
+        // E1 (#729): chunk sizing uses the SUMMARIZER's window, never the
+        // main model's — a smaller smol role gets smaller chunks.
+        summarizerWindow: smolModel?.contextWindow,
       );
       if (smolOk.ok) {
         return (
@@ -482,6 +497,7 @@ final class AutoCompactor {
         summarize: mainSummary,
         pass: pass,
         clock: clock,
+        summarizerWindow: window,
       );
       if (mainOk.ok) {
         return (
@@ -511,6 +527,7 @@ final class AutoCompactor {
       summarize: mainSummary,
       pass: pass,
       clock: clock,
+      summarizerWindow: window,
     );
     if (mainOk.ok) {
       return (
@@ -556,6 +573,7 @@ final class AutoCompactor {
     required SummarizeFn summarize,
     required int pass,
     required Stopwatch clock,
+    required int? summarizerWindow,
   }) async {
     if (smolModel == null) {
       // Resolved via the main chain only — skip the label-based attempt.
@@ -582,6 +600,9 @@ final class AutoCompactor {
           settings: settings,
           prompts: prompts,
           memoryExtractionHook: memoryExtractionHook,
+          // Issue #729: bound this summarizer's outbound payloads to its
+          // own window — chunked summarization inside the pass.
+          summarizerWindow: summarizerWindow,
         );
         // Issue #515: the budget kill must abort the underlying request,
         // not abandon it — an endpoint that accepts and never answers
@@ -625,8 +646,15 @@ final class AutoCompactor {
           summarizedMessages: summarized,
         );
       } catch (error) {
-        final isTransient = _transient.hasMatch(error.toString());
-        if (attempt >= maxAttempts || !isTransient) {
+        final errorText = error.toString();
+        final isTransient = _transient.hasMatch(errorText);
+        // Issue #729 AC2: an overflow-classified failure is DETERMINISTIC —
+        // the payload cannot fit this endpoint no matter how often it is
+        // retried. Route immediately to the next summarizer / the local
+        // trim with ZERO backoff retries, even when the provider wraps the
+        // 400 in a transient-shaped message.
+        final isOverflow = _overflow.hasMatch(errorText);
+        if (isOverflow || attempt >= maxAttempts || !isTransient) {
           return (
             ok: false,
             error: error,
@@ -816,6 +844,10 @@ class AutoCompactorFactory {
         cancelToken: budgetSource.token,
       ),
       summarize: streamFunctionSummarizer(smolStream, smolModel),
+      // Issue #729: the checkpoint payloads are bounded by the
+      // SUMMARIZER's window (the smol role when configured), not the main
+      // model's.
+      summarizerWindow: (sources.smolModel ?? sources.mainModel).contextWindow,
       checkpointPrompt: prompts.structuredCheckpoint,
       hooks: adapter ?? _StructuredHooksAdapter(hooks),
       budgetSource: budgetSource,
