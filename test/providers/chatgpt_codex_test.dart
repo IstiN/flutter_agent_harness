@@ -816,6 +816,53 @@ void main() {
       );
       expect(firstResponsesGrammarViolation(const []), isNull);
     });
+
+    test('grammar validator covers every invalid item shape', () {
+      String? violation(Map<String, dynamic> item) =>
+          firstResponsesGrammarViolation([item]);
+
+      expect(
+        violation({
+          'role': 'assistant',
+          'content': 'not-a-list',
+        }),
+        contains('content is not a list'),
+      );
+      expect(
+        violation({
+          'role': 'assistant',
+          'content': [
+            {'no_type': true},
+          ],
+        }),
+        contains('malformed content part'),
+      );
+      expect(
+        violation({'type': 'function_call', 'name': 'bash'}),
+        contains('function_call is missing call_id/name'),
+      );
+      expect(
+        violation({
+          'type': 'function_call_output',
+          'call_id': 'call_1',
+          'output': 'not-a-list',
+        }),
+        contains('function_call_output is missing call_id/output'),
+      );
+      expect(
+        violation({'type': 'reasoning', 'summary': []}),
+        contains("unknown item type 'reasoning'"),
+      );
+      expect(
+        violation({
+          'role': 'assistant',
+          'content': [
+            {'type': 'input_image', 'image_url': 'x'},
+          ],
+        }),
+        isNull,
+      );
+    });
   });
 
   group('sse event coverage', () {

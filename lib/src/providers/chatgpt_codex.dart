@@ -156,34 +156,41 @@ List<Map<String, dynamic>> _userInputContent(Object content) =>
 /// the poison class is a type outside that set, not a role mixup.
 String? firstResponsesGrammarViolation(List<Map<String, dynamic>> input) {
   for (var i = 0; i < input.length; i++) {
-    final item = input[i];
-    final type = item['type'] as String? ?? 'message';
-    switch (type) {
-      case 'message':
-        final content = item['content'];
-        if (content is! List) {
-          return 'input item $i (message): content is not a list';
-        }
-        for (final part in content) {
-          if (part is! Map || part['type'] is! String) {
-            return 'input item $i (message): malformed content part';
-          }
-          if (!_messageContentPartTypes.contains(part['type'])) {
-            return 'input item $i (message): content part type '
-                "'${part['type']}' is not a valid message content part";
-          }
-        }
-      case 'function_call':
-        if (item['call_id'] is! String || item['name'] is! String) {
-          return 'input item $i (function_call): missing call_id/name';
-        }
-      case 'function_call_output':
-        if (item['call_id'] is! String || item['output'] is! List) {
-          return 'input item $i (function_call_output): '
-              'missing call_id/output';
-        }
-      default:
-        return "input item $i: unknown item type '$type'";
+    final violation = _inputItemViolation(input[i]);
+    if (violation != null) return 'input item $i: $violation';
+  }
+  return null;
+}
+
+/// The grammar violation of one converted input item, or null.
+String? _inputItemViolation(Map<String, dynamic> item) {
+  final type = item['type'] as String? ?? 'message';
+  switch (type) {
+    case 'message':
+      return _messageItemViolation(item);
+    case 'function_call':
+      return item['call_id'] is String && item['name'] is String
+          ? null
+          : 'function_call is missing call_id/name';
+    case 'function_call_output':
+      return item['call_id'] is String && item['output'] is List
+          ? null
+          : 'function_call_output is missing call_id/output';
+    default:
+      return "unknown item type '$type'";
+  }
+}
+
+/// The grammar violation of a message item's content list, or null.
+String? _messageItemViolation(Map<String, dynamic> item) {
+  final content = item['content'];
+  if (content is! List) return 'message content is not a list';
+  for (final part in content) {
+    final partType = part is Map ? part['type'] : null;
+    if (partType is! String) return 'message has a malformed content part';
+    if (!_messageContentPartTypes.contains(partType)) {
+      return "content part type '$partType' is not a valid message content "
+          'part';
     }
   }
   return null;
