@@ -147,13 +147,52 @@ void main() {
       expect(resolved.provider, 'minimax');
     });
 
-    test('a saved non-restorable kind keeps the parsed default', () {
+    test('a saved chatgpt-codex kind is restored (gh-760 AC1)', () {
+      // The app writes `provider: chatgpt-codex` into the shared config;
+      // the boot path must resolve it to the codex catalog entry.
       final resolved = resolveEffectiveCliArgs(
         const CliArgs(),
-        CliConfig(providerKind: 'chatgpt-codex'),
+        CliConfig(providerKind: 'chatgpt-codex', modelId: 'gpt-5-codex'),
+        env: const {},
+      );
+      expect(resolved.provider, 'chatgpt-codex');
+      expect(resolved.unknownSavedProvider, isNull);
+    });
+
+    test('a saved kind no version knows degrades to the parsed default '
+        'and is reported (gh-760 AC2)', () {
+      final resolved = resolveEffectiveCliArgs(
+        const CliArgs(),
+        CliConfig(providerKind: 'from-the-future'),
         env: const {},
       );
       expect(resolved.provider, 'openai-completions');
+      expect(resolved.unknownSavedProvider, 'from-the-future');
+    });
+
+    test('an unknown saved kind is not reported when a declaration '
+        'overrides it', () {
+      final explicit = resolveEffectiveCliArgs(
+        const CliArgs(provider: 'anthropic', providerExplicit: true),
+        CliConfig(providerKind: 'from-the-future'),
+        env: const {},
+      );
+      expect(explicit.provider, 'anthropic');
+      expect(explicit.unknownSavedProvider, isNull);
+      final preconfig = resolveEffectiveCliArgs(
+        const CliArgs(),
+        CliConfig(providerKind: 'from-the-future'),
+        env: const {
+          'FA_PROVIDER_TYPE': 'openai-completions',
+          'FA_PROVIDER_NAME': 'local',
+          'FA_PROVIDER_CONFIG':
+              '{"baseUrl":"http://localhost:8080/v1","model":"qwen3",'
+              '"apiKeyEnvVar":"LOCAL_KEY"}',
+          'LOCAL_KEY': 'sk-test',
+        },
+      );
+      expect(preconfig.provider, 'openai-completions');
+      expect(preconfig.unknownSavedProvider, isNull);
     });
 
     test('model, baseUrl and mode fall back to the saved config', () {

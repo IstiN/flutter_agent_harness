@@ -449,11 +449,42 @@ Model buildCatalogModel(
 /// list). Silent defaults chose paid flagships over free tiers behind the
 /// user's back (zai's `glm-5.3` vs `glm-5.3-flash` — real spend nobody
 /// ordered), so the mechanism was removed, not re-seeded.
+///
+/// Resolves a CLI provider [kind] or catalog name to its [ProviderSpec]
+/// for the legacy single-model boot path. The lookup is catalog-driven:
+/// every [providerCatalog] entry is reachable by its name AND its adapter
+/// kind, so a catalog addition can never again leave the boot switch
+/// behind and brick the CLI with `ConfigException: unknown provider`
+/// (issue #760 — the app wrote `provider: chatgpt-codex`, the hand-maint-
+/// ained switch did not know the kind). Returns `null` for ids no version
+/// knows; the config boundary degrades those (warn + fallback) instead of
+/// throwing.
+///
+/// Historical behavior preserved: `openai-completions`/`openrouter` with
+/// a custom [baseUrl] resolve to the `openai` spec (the model reports
+/// provider `openai` instead of `openrouter`); without one, `openrouter`.
+ProviderSpec? resolveCliProviderSpec(String kind, {String? baseUrl}) {
+  final key = kind.trim();
+  if (key == 'openai-completions' || key == 'openrouter') {
+    return baseUrl == null
+        ? providerCatalog['openrouter']
+        : providerCatalog['openai'];
+  }
+  final byName = providerCatalog[key.toLowerCase()];
+  if (byName != null) return byName;
+  // A kind that is not itself a catalog name (e.g. `chatgpt-codex`).
+  for (final spec in providerCatalog.values) {
+    if (spec.kind == key) return spec;
+  }
+  return null;
+}
+
 /// Builds the legacy single [Model] the `fah` executable runs when no roles
 /// are configured (`--provider`/`--model`/`--base-url` flags).
 ///
-/// Historical behavior preserved: `openai-completions` with a custom
-/// [baseUrl] reports provider `openai` instead of `openrouter`.
+/// Resolves through [resolveCliProviderSpec] — every catalog name and kind
+/// builds; an id no version knows throws [ConfigException] (direct API
+/// callers get the loud error, the boot config boundary degrades it).
 /// `maxTokens` resolves like [buildCatalogModel]: ceiling table
 /// ([resolveModelMaxOutputTokens]) first, provider spec default on a miss.
 Model buildCliDefaultModel(
@@ -463,20 +494,10 @@ Model buildCliDefaultModel(
   List<String>? input,
   String? thinkingLevel,
 }) {
-  final spec = switch (providerKind) {
-    'aiin' => providerCatalog['aiin']!,
-    'anthropic' => providerCatalog['anthropic']!,
-    'google' => providerCatalog['google']!,
-    'dial' => providerCatalog['dial']!,
-    'minimax' => providerCatalog['minimax']!,
-    'zai' => providerCatalog['zai']!,
-    'copilot' => providerCatalog['copilot']!,
-    'openai-completions' || 'openrouter' =>
-      baseUrl == null
-          ? providerCatalog['openrouter']!
-          : providerCatalog['openai']!,
-    _ => throw ConfigException('unknown provider: $providerKind'),
-  };
+  final spec = resolveCliProviderSpec(providerKind, baseUrl: baseUrl);
+  if (spec == null) {
+    throw ConfigException('unknown provider: $providerKind');
+  }
 
   final id = modelId;
   if (id == null) {

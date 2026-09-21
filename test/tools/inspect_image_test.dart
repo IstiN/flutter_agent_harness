@@ -120,6 +120,30 @@ void main() {
       );
     });
 
+    test('refuses the chatgpt-codex kind with a named error (gh-760 sweep)',
+        () async {
+      // The Codex Responses adapter has no vision wire; the old `_ =>`
+      // fallback silently misrouted this kind's vision calls to
+      // api.openai.com. Refuse loudly instead.
+      await env.writeBinaryFile('/work/shot.png', _makePng());
+      final config = InspectImageConfig(
+        modelId: 'gpt-5-codex',
+        apiKey: 'test-key',
+        providerKind: 'chatgpt-codex',
+      );
+      final tool = inspectImageTool(env, config);
+      expect(
+        tool.execute({'path': '/work/shot.png'}, null, null),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            allOf([contains('chatgpt-codex'), contains('vision')]),
+          ),
+        ),
+      );
+    });
+
     test('throws when the vision model returns an error event', () async {
       await env.writeBinaryFile('/work/shot.png', _makePng());
       final client = http_testing.MockClient.streaming((

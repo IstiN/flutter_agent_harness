@@ -257,7 +257,8 @@ void main() {
       );
     });
 
-    test('unknown providers in a chain throw ConfigException', () {
+    test('unknown providers in a chain are skipped with a named reason '
+        '(gh-760 E3)', () {
       final resolver = ModelRolesResolver(
         config: ModelRolesConfig(
           roles: const {
@@ -267,9 +268,74 @@ void main() {
         secrets: const {},
         streamFactory: _neverStream,
       );
+      // Degrade, never brick: the unknown entry is skipped like a
+      // missing-key entry (reported in skippedEntries) — the throw only
+      // fires because nothing usable remains, and names the reasons.
       expect(
         () => resolver.chainFor('default'),
-        throwsA(isA<ConfigException>()),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('no usable chain entry'),
+          ),
+        ),
+      );
+      expect(
+        resolver.skippedEntries['default']!.join(' '),
+        contains('unknown provider'),
+      );
+    });
+
+    test('a chain with an unknown provider falls back to its known '
+        'entries (gh-760 E3)', () {
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: const {
+            'default': [
+              ModelRef(provider: 'from-the-future', modelId: 'x'),
+              ModelRef(provider: 'anthropic', modelId: 'claude-smol'),
+            ],
+          },
+        ),
+        secrets: const {'ANTHROPIC_API_KEY': 'a-key'},
+        streamFactory: _neverStream,
+      );
+      final entries = resolver.chainFor('default');
+      expect(entries, hasLength(1));
+      expect(entries!.single.model.provider, 'anthropic');
+      expect(
+        resolver.skippedEntries['default']!.join(' '),
+        contains('unknown provider'),
+      );
+    });
+
+    test('a chain whose entries are all unknown providers reports the '
+        'reasons in the no-usable-entry error', () {
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: const {
+            'default': [
+              ModelRef(provider: 'bogus', modelId: 'x'),
+              ModelRef(provider: 'also-bogus', modelId: 'y'),
+            ],
+          },
+        ),
+        secrets: const {},
+        streamFactory: _neverStream,
+      );
+      expect(
+        () => resolver.chainFor('default'),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            allOf([
+              contains('no usable chain entry'),
+              contains('unknown provider'),
+            ]),
+          ),
+        ),
       );
     });
 

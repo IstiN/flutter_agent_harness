@@ -148,10 +148,12 @@ final class ModelRolesResolver {
   ChainEntry? _buildEntry(ModelRef ref, List<String> skipped) {
     final spec = catalogProvider(ref.provider);
     if (spec == null) {
-      throw ConfigException(
-        'unknown provider "${ref.provider}" — supported providers: '
-        '${enabledProviderNames().join(', ')}',
-      );
+      // gh-760: degrade, never brick. An entry whose provider no version
+      // knows (a config written by a newer app/CLI) skips like a
+      // missing-key entry — reported in skippedEntries, never thrown —
+      // so the remaining known entries carry the role.
+      skipped.add('${ref.label} (unknown provider: ${ref.provider})');
+      return null;
     }
     final keyBase = _keyBaseName(ref, spec);
     if (keyBase == null) {
