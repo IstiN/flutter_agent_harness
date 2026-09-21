@@ -510,6 +510,47 @@ bool shouldCompact(
 }
 
 // ---------------------------------------------------------------------------
+// Fit-the-window summarization payloads (issue #729)
+// ---------------------------------------------------------------------------
+
+/// The outbound-payload budget (in estimated tokens) for a summarizer whose
+/// model window is [summarizerWindow]: the window minus the settings'
+/// reserve (which prices the summary prompt and its output), floored at
+/// half the window so a summarizer window smaller than the reserve (a tiny
+/// smol role under a big main window's settings) still leaves room to
+/// summarize into. Every compaction request's estimated payload must stay
+/// at or under this — the invariant asserted in tests on the recorded
+/// outbound prompts.
+int summarizationPayloadBudget(int summarizerWindow, CompactionSettings settings) =>
+    max(summarizerWindow - settings.reserveTokens, summarizerWindow ~/ 2);
+
+/// Splits [messages] into consecutive chunks whose serialized conversation
+/// text estimates under [budgetTokens] (issue #729). Order is preserved and
+/// the chunks concatenate back to the whole region; a single message bigger
+/// than the budget becomes its own oversized chunk — the prompt builder
+/// truncates it with an explicit note, since chunking cannot split it.
+List<List<Message>> chunkSummarizableMessages(
+  List<Message> messages,
+  int budgetTokens,
+) {
+  final chunks = <List<Message>>[];
+  var current = <Message>[];
+  var currentTokens = 0;
+  for (final message in messages) {
+    final tokens = estimateStringTokens(serializeConversation([message]));
+    if (current.isNotEmpty && currentTokens + tokens > budgetTokens) {
+      chunks.add(current);
+      current = <Message>[];
+      currentTokens = 0;
+    }
+    current.add(message);
+    currentTokens += tokens;
+  }
+  if (current.isNotEmpty) chunks.add(current);
+  return chunks;
+}
+
+// ---------------------------------------------------------------------------
 // Cut point selection
 // ---------------------------------------------------------------------------
 
@@ -819,6 +860,16 @@ Future<String> _runSummarization({
 /// `Additional focus:` when [customInstructions] is given). Throws
 /// [CompactionException] on failure — callers must treat compaction as
 /// failure-safe and leave history untouched.
+///
+/// [maxPromptTokens] (issue #729) bounds the outbound payload: when the
+/// built prompt estimates over it, the region is summarized CHUNK-WISE —
+/// each chunk under [maxPromptTokens], every chunk's summary threaded into
+/// the next as `<previous-checkpoint>` (the existing iterative-update
+/// mechanism; the first chunk uses the plain summary prompt, later chunks
+/// the update prompt) — and the last fold is returned. A single message
+/// bigger than the budget is truncated with an explicit note. Under the
+/// budget (and when `null`) the prompt is byte-identical to the unbounded
+/// path.
 Future<String> generateSummary(
   List<Message> messages, {
   required SummarizeFn summarize,
@@ -827,36 +878,127 @@ Future<String> generateSummary(
   CancelToken? cancelToken,
   CompactionPrompts prompts = defaultCompactionPrompts,
   String? userRequestCandidates,
-}) {
+  int? maxPromptTokens,
+}) async {
   var basePrompt = previousSummary != null
       ? prompts.summaryUpdate
       : prompts.summary;
   if (customInstructions != null) {
     basePrompt = '$basePrompt\n\nAdditional focus: $customInstructions';
   }
+  String build(
+    String conversation,
+    String? candidates,
+    String? prior,
+    String instructions,
+  ) {
+    final prompt = StringBuffer()
+      ..write('<conversation>\n')
+      ..write(conversation)
+      ..write('\n</conversation>\n\n');
+    if (candidates != null) {
+      prompt
+        ..write(candidates)
+        ..write('\n\n');
+    }
+    if (prior != null) {
+      prompt.write('<previous-checkpoint>\n$prior\n</previous-checkpoint>\n\n');
+    }
+    prompt.write(instructions);
+    return prompt.toString();
+  }
+
+  final full = build(
+    serializeConversation(messages),
+    userRequestCandidates ?? userRequestCandidatesBlock(messages),
+    previousSummary,
+    basePrompt,
+  );
+  if (maxPromptTokens == null ||
+      estimateStringTokens(full) <= maxPromptTokens) {
+    return _runSummarization(
+      prompt: full,
+      summarize: summarize,
+      cancelToken: cancelToken,
+      failureLabel: 'Summarization failed',
+    );
+  }
+
+  // Over the payload budget (#729): chunk the region, fold chunk-wise.
+  // Each chunk carries only its own request candidates (the whole-range
+  // block would ride every chunk and re-inflate the payload); the record
+  // `<id>` pointers degrade to date-only on this path.
+  var prior = previousSummary;
+  var fold = '';
+  final chunks = chunkSummarizableMessages(
+    messages,
+    max(maxPromptTokens - _chunkEnvelopeReserveTokens, 256),
+  );
+  for (var i = 0; i < chunks.length; i++) {
+    final candidates = userRequestCandidatesBlock(chunks[i]);
+    final instructions = i == 0 ? basePrompt : prompts.summaryUpdate;
+    final conversation = truncateForSummaryBudget(
+      serializeConversation(chunks[i]),
+      budgetTokens: maxPromptTokens,
+      envelopeChars: _summaryEnvelopeChars(
+        candidates: candidates,
+        prior: prior,
+        instructions: instructions,
+      ),
+    );
+    fold = await _runSummarization(
+      prompt: build(conversation, candidates, prior, instructions),
+      summarize: summarize,
+      cancelToken: cancelToken,
+      failureLabel: 'Summarization failed',
+    );
+    prior = fold;
+  }
+  return fold;
+}
+
+/// Prompt overhead reserved per chunk before the conversation text: tags,
+/// candidates, the previous-checkpoint block and the instruction tail.
+/// The exact fit is enforced by [truncateForSummaryBudget]; this only
+/// sizes the chunk plan.
+const _chunkEnvelopeReserveTokens = 4096;
+
+/// Upper bound on the `\n\n[... N more characters truncated]` note that
+/// [_truncateForSummary] appends (10-digit count ≈ 45 chars), reserved so
+/// the annotated text still fits the budget.
+const _truncateNoteChars = 48;
+
+/// Truncates serialized conversation text so a prompt of [envelopeChars]
+/// (everything around the conversation, measured) plus the text estimates
+/// under [budgetTokens], with an explicit truncation note (never silent).
+/// Shared by the classic and structured engines (issue #729).
+String truncateForSummaryBudget(
+  String conversation, {
+  required int budgetTokens,
+  required int envelopeChars,
+}) {
+  final maxChars =
+      max(budgetTokens * 4 - envelopeChars - _truncateNoteChars, 1024);
+  return _truncateForSummary(conversation, maxChars);
+}
+
+int _summaryEnvelopeChars({
+  required String? candidates,
+  required String? prior,
+  required String instructions,
+}) {
   final prompt = StringBuffer()
-    ..write('<conversation>\n')
-    ..write(serializeConversation(messages))
-    ..write('\n</conversation>\n\n');
-  final candidates =
-      userRequestCandidates ?? userRequestCandidatesBlock(messages);
+    ..write('<conversation>\n\n</conversation>\n\n');
   if (candidates != null) {
     prompt
       ..write(candidates)
       ..write('\n\n');
   }
-  if (previousSummary != null) {
-    prompt.write(
-      '<previous-checkpoint>\n$previousSummary\n</previous-checkpoint>\n\n',
-    );
+  if (prior != null) {
+    prompt.write('<previous-checkpoint>\n$prior\n</previous-checkpoint>\n\n');
   }
-  prompt.write(basePrompt);
-  return _runSummarization(
-    prompt: prompt.toString(),
-    summarize: summarize,
-    cancelToken: cancelToken,
-    failureLabel: 'Summarization failed',
-  );
+  prompt.write(instructions);
+  return prompt.length;
 }
 
 Future<String> _generateTurnPrefixSummary(
@@ -864,10 +1006,29 @@ Future<String> _generateTurnPrefixSummary(
   required SummarizeFn summarize,
   CancelToken? cancelToken,
   CompactionPrompts prompts = defaultCompactionPrompts,
+  int? maxPromptTokens,
 }) {
-  final prompt =
-      '<conversation>\n${serializeConversation(messages)}\n</conversation>\n\n'
+  var conversation = serializeConversation(messages);
+  var prompt =
+      '<conversation>\n$conversation\n</conversation>\n\n'
       '${prompts.turnPrefix}';
+  if (maxPromptTokens != null &&
+      estimateStringTokens(prompt) > maxPromptTokens) {
+    // Issue #729: the split-turn prefix never rides an over-window
+    // request either — a turn prefix bigger than the summarizer's whole
+    // payload budget is truncated head-first with the explicit note (one
+    // call, bounded, lossy where chunking has no update prompt to fold
+    // into).
+    final envelopeChars = prompt.length - conversation.length;
+    conversation = truncateForSummaryBudget(
+      conversation,
+      budgetTokens: maxPromptTokens,
+      envelopeChars: envelopeChars,
+    );
+    prompt =
+        '<conversation>\n$conversation\n</conversation>\n\n'
+        '${prompts.turnPrefix}';
+  }
   return _runSummarization(
     prompt: prompt,
     summarize: summarize,
@@ -1058,6 +1219,7 @@ final class CompactionManager {
     this.settings = defaultCompactionSettings,
     this.prompts = defaultCompactionPrompts,
     this.memoryExtractionHook,
+    this.summarizerWindow,
   });
 
   /// The summary LLM call used for every summarization.
@@ -1074,6 +1236,19 @@ final class CompactionManager {
   /// summarized span's text, so durable facts can be extracted into the
   /// long-term memory store. Failures are swallowed (never block compaction).
   final Future<void> Function(String summarizedText)? memoryExtractionHook;
+
+  /// The summarizer model's own context window (issue #729) — the smol
+  /// role's when it differs from the main model's. `null` leaves the
+  /// summarization payloads unbounded (legacy behavior); when set, every
+  /// outbound summary request is chunked/truncated to
+  /// [summarizationPayloadBudget] so it fits the summarizer's window.
+  final int? summarizerWindow;
+
+  /// The outbound payload budget for [summarizerWindow], or `null` when
+  /// unbounded.
+  int? get _maxPromptTokens => summarizerWindow == null
+      ? null
+      : summarizationPayloadBudget(summarizerWindow!, settings);
 
   /// Prepare session branch records for compaction, or return `null` when
   /// compaction is not applicable (empty branch, or the last entry is already
@@ -1162,6 +1337,7 @@ final class CompactionManager {
       preparation.messagesToSummarize,
       recordIds: preparation.summarizableRecordIds,
     );
+    final maxPromptTokens = _maxPromptTokens;
     String summary;
 
     if (preparation.isSplitTurn && preparation.turnPrefixMessages.isNotEmpty) {
@@ -1174,6 +1350,7 @@ final class CompactionManager {
               cancelToken: cancelToken,
               prompts: prompts,
               userRequestCandidates: userRequests,
+              maxPromptTokens: maxPromptTokens,
             )
           : 'No prior history.';
       final turnPrefix = await _generateTurnPrefixSummary(
@@ -1181,6 +1358,7 @@ final class CompactionManager {
         summarize: summarize,
         cancelToken: cancelToken,
         prompts: prompts,
+        maxPromptTokens: maxPromptTokens,
       );
       summary =
           '$history\n\n---\n\n**Turn Context (split turn):**\n\n$turnPrefix';
@@ -1193,6 +1371,7 @@ final class CompactionManager {
         cancelToken: cancelToken,
         prompts: prompts,
         userRequestCandidates: userRequests,
+        maxPromptTokens: maxPromptTokens,
       );
     }
 

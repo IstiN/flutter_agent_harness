@@ -148,10 +148,12 @@ final class AgentCliConfig {
   /// (classic remains the explicit rollback choice).
   final CompactionEngine? compactionEngine;
 
-  /// Owner-side effective context cap (`agent.contextWindowCap`, issue
-  /// #273), threaded into the [Agent] (loop guard) and into every consumer
-  /// of the effective window (compaction thresholds, ctx meter/footer).
-  /// `null` = uncapped.
+  /// Owner-side effective context override (`agent.contextWindowCap`,
+  /// issues #273/#729), threaded into the [Agent] (loop guard) and into
+  /// every consumer of the effective window (compaction thresholds, ctx
+  /// meter/footer). Below the catalog window it clamps down; above it,
+  /// it raises the effective window to the served truth. `null` =
+  /// uncapped.
   final int? contextWindowCap;
 
   /// Per-call judge/summarizer budget seconds (`compaction.
