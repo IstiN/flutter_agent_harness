@@ -194,7 +194,7 @@
       if (e.target.closest('a')) { setMenu(false); }
     });
     // Rotating past the breakpoint auto-closes — no stale overlay (E3).
-    var menuMq = window.matchMedia('(min-width: 641px)');
+    var menuMq = window.matchMedia('(min-width: 961px)');
     function onMenuMq() { if (menuMq.matches) { setMenu(false); } }
     if (menuMq.addEventListener) { menuMq.addEventListener('change', onMenuMq); }
     else if (menuMq.addListener) { menuMq.addListener(onMenuMq); } // old Safari

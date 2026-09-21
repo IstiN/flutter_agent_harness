@@ -132,12 +132,16 @@ a:hover { text-decoration: underline; }
 .nav .brand { color: var(--text); }
 
 /* ── Mobile disclosure menu (gh-756) ────────────────────────────────────
-   Below 640px — measured: the 10-link row needs ≤539px, so it fits above
-   640 — the links collapse behind a ☰ toggle (JS only handles Esc /
+   Below 960px the links collapse behind a ☰ toggle (JS only handles Esc /
    backdrop / focus / aria; open-close itself is CSS via [data-open]).
-   The toggle exists only under html.js AND the 640px breakpoint; the
+   The breakpoint is MEASURED, not guessed: the 10-link row is 843px wide
+   + 48px padding, i.e. it only fits from ~892px — at 641-891 it squeezed
+   and overflowed (the audit's "mid-width overflow"). 960 is the site's
+   existing named breakpoint, so the collapse lands there.
+   The toggle exists only under html.js AND the 960px breakpoint; the
    `hidden` attribute keeps it gone with no CSS or no JS (E6: the no-JS
-   fallback is the wrapped-links layout below, never a dead button). */
+   fallback is the wrapped-links layout at ≤640px below, never a dead
+   button). */
 .nav-menu { display: contents; }
 .nav-toggle {
   display: none; /* CSS-gated everywhere; the media query below re-shows it */
@@ -158,9 +162,12 @@ a:hover { text-decoration: underline; }
 .nav-toggle[aria-expanded="true"] .icon-open { display: none; }
 .nav-toggle[aria-expanded="true"] .icon-close { display: inline; }
 
-@media (max-width: 640px) {
+@media (max-width: 960px) {
   html.js .nav-inner { flex-wrap: nowrap; gap: 14px; padding: 12px 18px; }
   html.js .nav-toggle { display: inline-flex; margin-left: auto; }
+  /* Conscious brand-sub decision (audit #3): it hides in the collapsed
+     header, and now the collapse starts at 960, not 640. */
+  html.js .brand-sub { display: none; }
   /* Absolutely positioned under the sticky bar: the bar itself never
      changes height while the menu is open (AC2). Capped at viewport
      height so landscape phones keep most of the screen (E2). */
@@ -191,6 +198,9 @@ a:hover { text-decoration: underline; }
     order: 0;
   }
   html.js .nav-menu a { display: block; padding: 9px 4px; font-size: 1rem; }
+}
+
+@media (max-width: 640px) {
   /* No-JS fallback (E6): the wrapped rows wrap instead of overflowing. */
   html:not(.js) .nav-links { flex-wrap: wrap; row-gap: 6px; }
   /* Long inline code (install commands, one-line snippets) may wrap on
