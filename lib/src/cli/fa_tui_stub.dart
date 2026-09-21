@@ -17,6 +17,7 @@ library;
 
 import 'agent_hub_tui.dart';
 import 'paste_image.dart';
+import 'termios_guard.dart' show SttyRunner;
 import 'tui_prompt.dart';
 import 'tui_repl.dart' show MenuItem, TuiProgramHooks;
 
@@ -77,6 +78,7 @@ final class FaTuiController {
     TuiProgramHooks? programHooks,
     bool mouseCapture = true,
     bool? syncOutput,
+    SttyRunner? sttyRunner,
   });
 
   final FaTuiCallbacks callbacks;

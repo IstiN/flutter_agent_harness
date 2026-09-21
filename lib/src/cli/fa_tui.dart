@@ -11,6 +11,7 @@ import 'package:dart_tui/dart_tui.dart' hide stripAnsi;
 import 'package:meta/meta.dart';
 
 import 'composer_overlay.dart';
+import 'termios_guard.dart' show kTermiosClearArgs;
 import 'ansi_markdown.dart';
 import 'agent_hub_tui.dart';
 import 'model_picker_table.dart' show modelPickerFooterHint;
@@ -19,6 +20,7 @@ import 'tui_editor.dart';
 import 'tui_hit_regions.dart';
 import 'tui_prompt.dart';
 import 'tui_theme.dart';
+import 'termios_guard.dart' show SttyRunner;
 import 'tui_repl.dart' show MenuItem, QueuedMessage, TuiProgramHooks, stripAnsi;
 import 'system_notice_render.dart';
 import 'tui_text_width.dart'
@@ -2455,6 +2457,7 @@ final class FaTuiController {
     this.programHooks,
     this.mouseCapture = true,
     this.syncOutput,
+    this.sttyRunner,
   });
 
   final FaTuiCallbacks callbacks;
@@ -2473,6 +2476,12 @@ final class FaTuiController {
   /// Headless test hooks (scripted key bytes, captured frames) — null in
   /// production, where the program reads stdin and renders to stdout.
   final TuiProgramHooks? programHooks;
+
+  /// Injected `stty` runner for the boot-time input-flag sanitize — same
+  /// seam as [sttySanitizeInput]'s runner. Tests model the tty with it
+  /// (issue #735); null in production uses the real subprocess. When set,
+  /// the no-tty gate is skipped: the injected runner IS the tty.
+  final SttyRunner? sttyRunner;
 
   late final FaTuiModel _model = FaTuiModel(
     callbacks: callbacks,
@@ -2666,12 +2675,17 @@ final class FaTuiController {
   /// ESC LF before fa reads it, killing the alt+enter decode). Clear both
   /// for the TUI's lifetime; returns the saved termios string for
   /// [_restoreTermios], or null when there is no tty to fix.
-  static Future<String?> _sanitizeTermiosInput() async {
-    if (Platform.isWindows) return null;
-    if (!stdin.hasTerminal) return null;
+  Future<String?> _sanitizeTermiosInput() async {
+    // An injected runner (issue #735 tests) models the tty — skip the
+    // real-host gates; the runner is the terminal.
+    final injected = sttyRunner;
+    if (injected == null) {
+      if (Platform.isWindows) return null;
+      if (!stdin.hasTerminal) return null;
+    }
     return sttySanitizeInput(
       sttyDeviceFlag(),
-      runner: (args) => Process.run('stty', args),
+      runner: injected ?? ((args) => Process.run('stty', args)),
     );
   }
 
@@ -2690,18 +2704,14 @@ final class FaTuiController {
     try {
       final saved = await runner([deviceFlag, '/dev/tty', '-g']);
       if (saved.exitCode != 0) return null;
+      // The raw-mode input-flag family kept clean for fa's lifetime
+      // (issue #735): shared with TermiosGuard so the boot sanitize and
+      // the after-tool re-assert can never drift apart. Why `-ixany` and
+      // the `discard ^-` unbind form: see kTermiosClearArgs.
       final cleared = await runner([
         deviceFlag,
         '/dev/tty',
-        '-ixon',
-        '-ixoff',
-        '-icrnl',
-        // VDISCARD (Ctrl+O toggles output discard): when the host left it
-        // enabled the kernel EATS every \x0f before fa reads it — the
-        // Ctrl+O newline fallback (issue #77 AC5) goes silent. Clear it
-        // alongside ICRNL so the whole wire matrix survives default-termios
-        // hosts (ubuntu runner images ship discard on; macOS varies).
-        '-discard',
+        ...kTermiosClearArgs,
       ]);
       if (cleared.exitCode != 0) return null;
       return (saved.stdout as String).trim();

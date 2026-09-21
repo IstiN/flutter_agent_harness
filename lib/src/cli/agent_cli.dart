@@ -207,6 +207,7 @@ import 'scripted_test_stream.dart';
 import 'tui_replay.dart';
 import 'tui_repl.dart';
 import 'tui_theme.dart';
+import 'termios_guard.dart';
 
 export '../model_roles/provider_catalog.dart' show providerStreamFunction;
 
@@ -641,6 +642,21 @@ class AgentCli {
     // Busy-row honesty: name the executing tool ('Running bash…') instead
     // of leaving a stale 'Compacting context…' label over long tool calls.
     attachToolPhaseLabels(_agent, (phase) => _pushBusyPhase(phase));
+    // Issue #735: tool children share the session tty and can silently
+    // re-enable IXON — Ctrl+S then freezes output as XOFF and never
+    // reaches the agent as steering. Re-assert the raw-mode input flags
+    // after every foreground tool phase; a drift note names the child.
+    // OWNERSHIP GATE: only the TUI owns raw mode on the session tty. The
+    // interactive line REPL and `fa -p` run cooked — icrnl/ixon are
+    // SUPPOSED to be on there, and clearing them kills Enter (no CR→NL
+    // in canonical mode) with nothing restoring them (PR review
+    // PRRT_kwDOTXdlLc6kMBZH). The gate also covers injected-runner
+    // seams: line-mode tests must observe zero probes.
+    _termiosGuard = TermiosGuard(
+      runner: config.sttyRunner,
+      hasTerminal: () => _useTui,
+    );
+    attachTermiosGuard(_agent, _termiosGuard, onDrift: _noteTermiosDrift);
     _checkpoints = CheckpointRewindController(
       agent: _agent,
       sink: CheckpointSessionSink(
@@ -918,6 +934,12 @@ class AgentCli {
   /// steer-yielded foreground commands); settle notifications are injected
   /// like task-job completions.
   late final ShellJobRegistry _shellJobs;
+
+  /// Issue #735: re-asserts the raw-mode tty input flags after every
+  /// foreground tool phase (children sharing the tty can re-enable IXON,
+  /// which eats Ctrl+S as XOFF and freezes output). Never throws; no-ops
+  /// without a terminal. Exposed for the hidden `/termios` command.
+  late final TermiosGuard _termiosGuard;
 
   /// The sandboxed view over [_env]: clamps filesystem and shell operations
   /// to the active cube (`null` = passthrough). `/cube` manages it live.
@@ -1689,6 +1711,7 @@ class AgentCli {
     controller = FaTuiController(
       mouseCapture: config.tuiMouseCapture,
       syncOutput: config.tuiSyncOutput,
+      sttyRunner: config.sttyRunner,
       callbacks: FaTuiCallbacks(
         onSubmit: (line, {images = const []}) =>
             _handleTuiSubmit(controller, line, images),
@@ -1724,13 +1747,6 @@ class AgentCli {
     return controller;
   }
 
-  /// Steers every queued TUI message into the running agent.
-  Future<void> _steerTuiMessages(List<String> messages) async {
-    for (final message in messages) {
-      _steerResolved(message);
-    }
-  }
-
   /// Whether [trimmed] names an existing file with its first token
   /// (`/abs/path`, `~/…`, `./…`, `../…` + more path segments): such a
   /// line is an attachment message, never a slash command.
@@ -1751,27 +1767,6 @@ class AgentCli {
       _replayRestoredHistory(_agent.state.messages, resumedLabel);
     }
   }
-
-  /// Drains queued messages one-by-one as separate turns (kimi-cli
-  /// semantics) — the loop itself is [drainQueueRounds]; an Esc abort
-  /// discards the queue instead of starting new work.
-  Future<void> _drainTuiQueue(FaTuiController controller) => drainQueueRounds(
-    drain: controller.drainQueue,
-    runRound: (queued) => runQueuedTurns(
-      queued: queued,
-      handle: _handleLine,
-      settled: () => _settled,
-      abortRequested: () => _abortRequested,
-    ),
-    abortRequested: () => _abortRequested,
-    onDropped: (dropped) {
-      io.writeln('queued message(s) dropped:');
-      for (final text in dropped) {
-        final elided = text.length <= 80 ? text : '${text.substring(0, 80)}…';
-        io.writeln('  • ${elided.replaceAll('\n', ' ')}');
-      }
-    },
-  );
 
   List<MenuItem> _buildSlashMenu(String prefix) => buildSlashMenuItems(
     prefix,
