@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:fa/services/analytics.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
 
 /// The loopback redirect decision for [url] (issue #773): a hit to
@@ -115,6 +116,7 @@ class _ChatGptOAuthWebViewPageState extends State<ChatGptOAuthWebViewPage> {
   @override
   void initState() {
     super.initState();
+    AppAnalytics.instance.screenOpened('chatgpt_signin');
     _controller = _createController();
     _timeoutTimer = Timer(widget.timeout, _onTimeout);
   }
