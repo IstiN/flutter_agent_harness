@@ -906,10 +906,12 @@ void main() {
         lessThan(tester.getTopLeft(agents).dy),
       );
 
-      // The row pushes the dedicated page with every model surface.
+      // The row pushes the dedicated page with every model surface —
+      // including the provider-queue editor (issue #693).
       await tester.tap(models);
       await pumpN();
       expect(find.byType(ModelsSettingsPage), findsOneWidget);
+      expect(find.byType(ProviderQueueSection), findsOneWidget);
       expect(find.text('Model presets'), findsOneWidget);
       expect(find.text('Default chat model'), findsOneWidget);
       expect(find.text('Media models'), findsOneWidget);
