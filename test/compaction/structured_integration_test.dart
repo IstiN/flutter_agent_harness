@@ -1555,6 +1555,52 @@ void main() {
         expect(after, lessThan(before));
       },
     );
+
+    test('a mid-fold summarizer failure stops the fold (failure-safe)',
+        () async {
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
+      for (var i = 0; i < 6; i++) {
+        await session.appendMessage(
+          UserMessage.text('ask $i ${'a' * 3000}'),
+        );
+        await session.appendMessage(
+          _assistant(
+            'step $i',
+            calls: [ToolCall(id: 'c$i', name: 'read', arguments: {})],
+          ),
+        );
+        await session.appendMessage(
+          _result('c$i', 'read', 'payload $i ${'x' * 4000}'),
+        );
+        await session.appendMessage(_assistant('analysis $i findings'));
+      }
+
+      final prompts = <String>[];
+      final compactor = StructuredCompactor(
+        session: session,
+        state: stateFor(await session.buildContextMessages()),
+        window: 8000,
+        settings: _settings,
+        judge: (ledger) async => null,
+        summarize: (request) async {
+          prompts.add(request.prompt);
+          if (prompts.length == 2) {
+            return SummarizationResult.failure('boom');
+          }
+          return SummarizationResult.success('fold ${prompts.length}');
+        },
+        checkpointPrompt: 'P',
+        summarizerWindow: 4000,
+      );
+      final ok = await compactor.run();
+
+      // The fold aborted at chunk 2 — failure-safe: no further chunk
+      // summarizer calls, no crash, and the run reports no success.
+      expect(prompts.length, 2);
+      expect(ok, isFalse);
+    });
   });
 }
 

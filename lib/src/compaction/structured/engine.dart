@@ -744,33 +744,49 @@ final class StructuredCompactor {
       // window — summarize chunk-wise and thread each chunk's summary into
       // the next, so the request that finally lands is bounded even when
       // the whole checkpoint range is not.
-      var priorFold = '';
-      final chunks = chunkSummarizableMessages(
+      return _chunkedFold(
         messages,
-        max(budget - _checkpointEnvelopeReserveTokens, 256),
+        build: build,
+        asksFor: asksFor,
+        budget: budget,
       );
-      for (final chunk in chunks) {
-        var conversation = serializeConversation(chunk);
-        final empty = build('', const [], priorFold.isEmpty ? null : priorFold);
-        final envelopeChars = empty.length - 1; // minus writeln('')'s newline
-        conversation = truncateForSummaryBudget(
-          conversation,
-          budgetTokens: budget,
-          envelopeChars: envelopeChars,
-        );
-        prompt = build(
-          conversation,
-          asksFor(chunk),
-          priorFold.isEmpty ? null : priorFold,
-        );
-        final text = await _callSummarizer(prompt);
-        if (text == null) return null;
-        priorFold = text;
-      }
-      return priorFold;
     }
     final text = await _callSummarizer(prompt);
     return text;
+  }
+
+  /// The #729 chunked fold: splits [messages] into budget-sized chunks and
+  /// folds them chunk-wise — each chunk's summary rides the next prompt via
+  /// [priorFold] (`<folded-checkpoint>`), the last fold becomes the range
+  /// summary. A summarizer failure mid-fold is failure-safe (`null`).
+  Future<String?> _chunkedFold(
+    List<Message> messages, {
+    required String Function(String conversation, List<String> asks,
+        String? priorFold) build,
+    required List<String> Function(List<Message> chunk) asksFor,
+    required int budget,
+  }) async {
+    var priorFold = '';
+    final chunks = chunkSummarizableMessages(
+      messages,
+      max(budget - _checkpointEnvelopeReserveTokens, 256),
+    );
+    for (final chunk in chunks) {
+      var conversation = serializeConversation(chunk);
+      final empty = build('', const [], priorFold.isEmpty ? null : priorFold);
+      final envelopeChars = empty.length - 1; // minus writeln('')'s newline
+      conversation = truncateForSummaryBudget(
+        conversation,
+        budgetTokens: budget,
+        envelopeChars: envelopeChars,
+      );
+      final text = await _callSummarizer(
+        build(conversation, asksFor(chunk), priorFold.isEmpty ? null : priorFold),
+      );
+      if (text == null) return null;
+      priorFold = text;
+    }
+    return priorFold;
   }
 
   /// One summarizer call under the attempt budget (issue #515). Returns
