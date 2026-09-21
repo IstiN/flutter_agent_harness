@@ -18,12 +18,18 @@
 /// - E3: a `roles:` chain referencing the unknown provider degrades to
 ///   the legacy single-model path with a named warning — never a boot
 ///   throw.
+/// - Review-blocker regressions: persisted catalog NAMES (`provider:
+///   openai`, `provider: chatgpt`) and a name-carrying folder model state
+///   must normalize to the resolved adapter kind — the raw name reaching
+///   `providerStreamFunction` bricked the boot with
+///   `ConfigException: Unknown provider kind` + crash.log.
 library;
 
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:fa_llm_mock/fa_llm_mock.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
 import 'fa_cube_headless_helper.dart';
