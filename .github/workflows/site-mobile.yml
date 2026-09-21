@@ -19,6 +19,11 @@ name: Site mobile
 #   E2-E6    landscape fit, rotate auto-close, reduced-motion, no-JS degrade
 # Serves site/ with a plain `python3 -m http.server` — the no-server static
 # case. Viewport screenshots upload as an artifact for review/diffing.
+#
+# Golden rule: the REG goldens are only byte-valid for THIS pinned Playwright
+# Chromium — never re-bake them via CHROMIUM_PATH/<system browser> (the
+# script refuses that; system Chromium rasterizes the font stacks
+# differently).
 on:
   push:
     branches: [main]
