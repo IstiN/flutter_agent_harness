@@ -313,5 +313,34 @@ void main() {
       expect(await reopened.ensureCompactionBoundaryResident(), isTrue);
       expect((await reopened.getBranch()).length, 1);
     });
+
+    test(
+      'tokenBudget stops the walk once the resident tail fills the model '
+      'window — no boundary, no file head (issue #503: resume reads only '
+      'what fits the context window; older history pages in on scroll)',
+      () async {
+        final session = await newSession();
+        for (var i = 0; i < 800; i++) {
+          await session.appendMessage(UserMessage.text('m$i'));
+        }
+        final meta = await session.getMetadata();
+        final reopened = await repo.open(meta, windowed: true);
+
+        final intact = await reopened.ensureCompactionBoundaryResident(
+          tokenBudget: 50,
+        );
+
+        expect(intact, isTrue);
+        final branch = await reopened.getBranch();
+        // The walk stopped long before the file head: the tiny budget is
+        // covered by the tail window alone.
+        expect(branch.length, lessThan(800));
+        expect(branch.last.id, await reopened.getLeafId());
+        // Context projects the resident tail as-is (no compaction record
+        // in the branch — the raw recent messages ARE the context).
+        final messages = await reopened.buildContextMessages();
+        expect(messages, hasLength(branch.length));
+      },
+    );
   });
 }

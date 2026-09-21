@@ -562,8 +562,12 @@ Future<void> expectNewline(FaCliHarness harness, String rawKey) async {
   await harness.waitForOutput(settleMs: 300);
   harness.sendText(cd);
   await harness.waitForOutput(settleMs: 300);
-  final abRow = harness.viewportLines.indexWhere((l) => l.contains(ab));
-  final cdRow = harness.viewportLines.indexWhere((l) => l.contains(cd));
+  // Search from the END of the viewport: the composer re-renders in
+  // place as it grows, so a stale earlier frame (with cd already typed
+  // but the newline not yet rendered) can sit ABOVE the current one —
+  // first-match indexWhere would pin cd to that ghost row.
+  final abRow = harness.viewportLines.lastIndexWhere((l) => l.contains(ab));
+  final cdRow = harness.viewportLines.lastIndexWhere((l) => l.contains(cd));
   expect(
     abRow,
     greaterThanOrEqualTo(0),
