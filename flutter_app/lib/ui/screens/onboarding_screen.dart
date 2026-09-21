@@ -200,6 +200,13 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             Expanded(
               child: PageView(
                 controller: _pc,
+                // A fling must not bypass the mandatory provider step —
+                // it would reach "Open Fa" without a provider. The step is
+                // button-driven only while the gate is up. The gate blocks
+                // GESTURE scrolling only (drag/fling/wheel); semantics
+                // scroll actions and programmatic jumps are intentionally
+                // not vetoed — it is a UX guardrail, not a hard boundary.
+                physics: gated ? const NeverScrollableScrollPhysics() : null,
                 onPageChanged: (p) => setState(() => _page = p),
                 children: [
                   _P1(wide: wide),
