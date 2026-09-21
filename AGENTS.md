@@ -230,13 +230,22 @@ factual: paths, commands, invariants — no essays.
   `MediaModelsStore` + strict yaml slot entry) and `models_config.dart`
   (the `models:` section — per-slot media overrides + named custom model
   definitions `/model <name>` resolves; mutable like the custom-provider
-  registry, persisted by the host). Owner context cap (issue #273):
-  `agent:`/`contextWindowCap` in `~/.fah/config.yaml` (strict section,
-  minimum 16384 = the compaction reserve) clamps the EFFECTIVE context
-  window via `effectiveContextWindow` (model.dart) for the compaction
-  thresholds, the CLI ctx meter/footer and the loop's over-window guard;
-  uncapped runs are byte-identical. Threaded: CliConfig → AgentCliConfig
-  (bin/fah.dart) → Agent → AgentLoopConfig.
+  registry, persisted by the host). Owner context override (issues
+  #273/#729): `agent:`/`contextWindowCap` in `~/.fah/config.yaml` (strict
+  section, minimum 16384 = the compaction reserve) SETS the EFFECTIVE
+  context window via `effectiveContextWindow` (model.dart) for the
+  compaction thresholds, the CLI ctx meter/footer and the loop's over-window
+  guard — clamped down below the catalog window; raised above it to the
+  served truth (a custom provider whose catalog entry under-reports, e.g. a
+  glm endpoint serving ~1M under a 200k catalog id). Uncapped runs are
+  byte-identical. Threaded: CliConfig → AgentCliConfig (bin/fah.dart) →
+  Agent → AgentLoopConfig. Compaction payloads (#729): every summarization
+  request is bounded to `summarizationPayloadBudget(summarizerWindow)` —
+  chunked summarization (chunk → `<previous-checkpoint>`/`<folded-checkpoint>`
+  fold) when the dropped region exceeds it, explicit truncation note for a
+  single oversized message; the smol summarizer's own window governs (never
+  the main model's); overflow-classified compaction failures route straight
+  to the next summarizer/local trim with zero backoff retries.
 - `lib/src/ttsr/` — time-traveling stream rules: regex matched against
   streaming deltas; on match abort, inject rule bodies as hidden
   `<system-interrupt>` message, retry after 50ms. Persisted via

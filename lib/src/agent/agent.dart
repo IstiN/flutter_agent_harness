@@ -265,9 +265,11 @@ class Agent {
   /// Adjusts context/model between turns. See [PrepareNextTurnHook].
   PrepareNextTurnHook? prepareNextTurn;
 
-  /// Owner-side effective context cap (`agent.contextWindowCap`, issue
-  /// #273), threaded into every [AgentLoopConfig] the agent builds so the
-  /// loop's over-window guard trips at the capped window. `null` = the raw
+  /// Owner-side effective context override (`agent.contextWindowCap`,
+  /// issues #273/#729), threaded into every [AgentLoopConfig] the agent
+  /// builds so the loop's over-window guard trips at the overridden
+  /// window — clamped down under the catalog value, raised above it when
+  /// the endpoint serves more than the catalog reports. `null` = the raw
   /// model window.
   final int? contextWindowCap;
 
