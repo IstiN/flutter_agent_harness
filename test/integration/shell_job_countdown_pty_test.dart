@@ -133,18 +133,23 @@ void main() {
         timeout: const Duration(seconds: 60),
       );
       // Frame repaints re-emit notices into the raw stream — the start/
-      // finish proof is the set of DISTINCT settled job ids, not the
-      // raw match count.
-      final settledIds = _settleNotice
+      // finish proof is the set of DISTINCT settled job numbers, not the
+      // raw match count. Match on the NUMBER PREFIX, never the full id:
+      // a repaint can interleave cursor-move escapes mid-id (observed
+      // under CI load: `sh-10-…xqo<esc>[11;29H5<esc>[11;31H exited(0)`),
+      // and a fragmented re-emit would otherwise inflate the distinct-id
+      // set with a corrupt entry. The number is the first token written,
+      // so it survives any such fragmentation.
+      final settledNumbers = _settleNotice
           .allMatches(drained)
-          .map((m) => m.group(1)!)
+          .map((m) => m.group(1)!.split('-').first)
           .toSet();
       expect(
-        settledIds.length,
-        10,
+        settledNumbers,
+        {for (var i = 1; i <= 10; i++) '$i'},
         reason:
             'ten background bash commands must start and finish: '
-            '$settledIds',
+            '$settledNumbers',
       );
 
       // ── THE DRAIN: `0 running`, one terminal card, no live row ────────
