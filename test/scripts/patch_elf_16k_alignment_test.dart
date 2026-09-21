@@ -254,7 +254,8 @@ void main() {
         ..[1] = 0x45
         ..[2] = 0x4c
         ..[3] = 0x46
-        ..[4] = 2 // ELF64
+        ..[4] =
+            2 // ELF64
         ..[5] = 1; // LSB
       bd.setUint64(0x20, 0xFFFFFFFFFFFFFFFF, Endian.little); // e_phoff
       bd.setUint16(0x36, 56, Endian.little); // e_phentsize
