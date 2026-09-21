@@ -76,7 +76,9 @@ allowedTools: []
       // The user opens the hub: bare /agents still opens (AC5) and the
       // tree carries the spawned child — the live feature still works.
       await harness.runSlashCommand('/agents');
-      await harness.waitForText('agents hub');
+      // Anchor on the painted screen: raw echo satisfies waitForText a
+      // frame ahead of the full hub tree paint (#550 family).
+      await harness.waitForScreen('agents hub');
       expect(harness.screenText, contains('scout'));
 
       harness.sendCtrlC();
