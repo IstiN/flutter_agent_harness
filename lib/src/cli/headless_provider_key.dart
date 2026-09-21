@@ -18,10 +18,22 @@ import 'custom_providers.dart';
 List<String> apiKeyEnvNames(String provider) => switch (provider) {
   'vision' => const ['VISION_API_KEY'],
   'transcribe' => const ['TRANSCRIBE_API_KEY'],
-  _ =>
-    providerCatalog[provider]?.apiKeyEnvNames ??
-        const ['OPENROUTER_API_KEY', 'OPENAI_API_KEY'],
+  _ => _keySpec(provider)?.apiKeyEnvNames ?? const ['OPENROUTER_API_KEY', 'OPENAI_API_KEY'],
 };
+
+/// The catalog spec for a provider name OR adapter kind. The kind fallback
+/// matters since the restored boot provider can be a kind that is not
+/// itself a catalog name — `chatgpt-codex` → the `chatgpt` spec (gh-760),
+/// so its key resolves from `CHATGPT_OAUTH_CREDENTIALS`. Null for ids no
+/// version knows.
+ProviderSpec? _keySpec(String provider) {
+  final byName = catalogProvider(provider);
+  if (byName != null) return byName;
+  for (final spec in providerCatalog.values) {
+    if (spec.kind == provider) return spec;
+  }
+  return null;
+}
 
 /// Resolves [provider]'s API key headlessly. On the catalog spec's DEFAULT
 /// endpoint: a genuine environment value of the catalog env names, then
@@ -43,7 +55,7 @@ String? optionalProviderApiKey(
 }) {
   final environment = env ?? Platform.environment;
   final names = apiKeyEnvNames(provider);
-  final spec = catalogProvider(provider);
+  final spec = _keySpec(provider);
   final customEndpoint =
       spec != null && baseUrl != null && baseUrl != spec.defaultBaseUrl;
   if (!customEndpoint) {
