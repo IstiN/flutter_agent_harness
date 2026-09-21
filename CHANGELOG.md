@@ -4001,4 +4001,9 @@
 - chore: repin factory to 554cfb0 (#476) (#757)
 - chore: repin factory to 8d83bf4 (fail_validation unarm + branch fallback) (#755)
 
+## 0.1.445
+
+- fix(cli): cut marathon-session boot cost round 2 (issue #503) (#676)
+- gh-752 Boarding screens in Apps disable swipping (#753)
+
 ## Unreleased
