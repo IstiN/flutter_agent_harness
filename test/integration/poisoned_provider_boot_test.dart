@@ -179,6 +179,15 @@ Future<FaResult> runFaHeadlessRaw({
     environment: {
       ...childEnv,
       'OPENAI_API_KEY': 'mock',
+      // The ambient FA_* injection fills missing vars only — explicit
+      // blanks neutralize the preconfig/queue/log-file (blank reads as
+      // unset at every consumer) so the boot resolves from the fixture.
+      'FA_PROVIDER_TYPE': '',
+      'FA_PROVIDER_NAME': '',
+      'FA_PROVIDER_CONFIG': '',
+      'FA_PROVIDER_CONFIG_BASE64': '',
+      'FA_PROVIDERS_QUEUE': '',
+      'FA_LOG_FILE': '',
       ...env,
       ...extraEnv,
     },
