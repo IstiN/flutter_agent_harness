@@ -457,10 +457,12 @@ final class AgentLoopConfig {
   /// by the next run (whose own wake caps apply). Default: 20.
   final int maxSteeringTurns;
 
-  /// Owner-side effective context cap (`agent.contextWindowCap`, issue
-  /// #273). The over-window guard measures the outgoing request against
-  /// [effectiveContextWindow] of the model window — a 1M-window model run
-  /// under a 256k owner cap trips the guard at 256k, not 1M. `null` =
+  /// Owner-side effective context override (`agent.contextWindowCap`,
+  /// issues #273/#729). The over-window guard measures the outgoing
+  /// request against [effectiveContextWindow] — a 1M-window model run
+  /// under a 256k owner cap trips the guard at 256k, not 1M, and a
+  /// 200k-catalog model whose endpoint serves ~1M runs at the raised cap
+  /// instead of falsely overflowing at the catalog value. `null` =
   /// uncapped: the raw model window, byte-identical to the pre-cap loop.
   final int? contextWindowCap;
 

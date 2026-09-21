@@ -748,6 +748,17 @@ prompts:
         expect(loaded.contextWindowCap, 256000);
       });
 
+      test('UT-W3 (#729): parses a cap ABOVE the catalog window', () {
+        // The raise path: the strict validation intentionally permits a
+        // cap above the catalog window — the override sets the effective
+        // window in whichever direction it points.
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  contextWindowCap: 1000000\n');
+        final loaded = loadCliConfig(tmp.path);
+        expect(loaded.contextWindowCap, 1000000);
+      });
+
       test('rejects an unknown agent key', () {
         final file = File('${tmp.path}/.fah/config.yaml');
         file.createSync(recursive: true);
