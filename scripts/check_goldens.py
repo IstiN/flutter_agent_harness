@@ -51,6 +51,11 @@ def golden_name_patterns(sources: str) -> list[re.Pattern[str]]:
     patterns = []
     for match in _STRING_LITERAL.finditer(sources):
         literal = match.group(1) if match.group(1) is not None else match.group(2)
+        # A pure-interpolation literal ('$suffix') would degrade to a
+        # match-everything pattern and whitelist every root-level golden
+        # stem — skip literals without a usable literal anchor.
+        if len(_INTERPOLATION.sub("", literal).strip()) < 3:
+            continue
         # Substitute BEFORE escaping so re.escape does not mangle the $.
         regex = re.escape(_INTERPOLATION.sub("\x00", literal)).replace(
             "\x00", "[^'/]+"
