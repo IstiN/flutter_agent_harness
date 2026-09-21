@@ -270,6 +270,60 @@ void main() {
       expect(find.text('Choose how Fa thinks.'), findsOneWidget);
     });
 
+    testWidgets('swiping cannot bypass the mandatory provider step', (
+      tester,
+    ) async {
+      await _pumpOnboarding(
+        tester,
+        initialPage: 1,
+        registry: ProviderRegistry.inMemory(),
+        lastConnectionStore: LastConnectionStore.inMemory(),
+      );
+      await tester.pumpAndSettle();
+
+      // A forward fling must not get past the provider page: the user
+      // would reach "Open Fa" and authorize without a provider/model.
+      await tester.fling(find.byType(PageView), const Offset(-400, 0), 1000);
+      await tester.pumpAndSettle();
+      expect(find.text('Choose how Fa thinks.'), findsOneWidget);
+      expect(find.text('Give access only when it helps.'), findsNothing);
+
+      // A backward fling stays put too — the step is button-driven only.
+      await tester.fling(find.byType(PageView), const Offset(400, 0), 1000);
+      await tester.pumpAndSettle();
+      expect(find.text('Choose how Fa thinks.'), findsOneWidget);
+    });
+
+    testWidgets('swiping is enabled again once the provider is configured', (
+      tester,
+    ) async {
+      final registry = ProviderRegistry.inMemory();
+      final lastConnection = LastConnectionStore.inMemory();
+      await _pumpOnboarding(
+        tester,
+        initialPage: 1,
+        registry: registry,
+        lastConnectionStore: lastConnection,
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('OpenRouter'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.widgetWithText(TextField, 'API key (optional)'),
+        'sk-or-test',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
+      // The flow auto-advanced to the permissions page.
+      expect(find.text('Give access only when it helps.'), findsOneWidget);
+
+      // The gate is past: swiping works again.
+      await tester.fling(find.byType(PageView), const Offset(-400, 0), 1000);
+      await tester.pumpAndSettle();
+      expect(find.text('Your sandbox is ready.'), findsOneWidget);
+    });
+
     testWidgets('a key-based preset opens the editor and persists the '
         'provider', (tester) async {
       final registry = ProviderRegistry.inMemory();
