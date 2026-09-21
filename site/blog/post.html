@@ -65,7 +65,9 @@ function render(md) {
   if (meta.cover) setMeta('og:image', 'https://fa1.dev/blog/posts/' + meta.cover);
 
   let html = '';
-  if (meta.cover) html += '<img class="post-cover" src="posts/' + meta.cover + '" alt="">';
+  // Cover from frontmatter — unless the body already embeds it.
+  if (meta.cover && !body.includes('](' + meta.cover + ')'))
+    html += '<img class="post-cover" src="posts/' + meta.cover + '" alt="">';
   html += '<div class="post-meta">' + esc(meta.date || '') +
     (meta.author ? ' · ' + esc(meta.author) : '') +
     (meta.linkedin ? ' · <a href="' + esc(meta.linkedin) + '" rel="noopener">also on LinkedIn ↗</a>' : '') +
@@ -77,7 +79,7 @@ function render(md) {
   // Fix relative image paths (assets/… lives under posts/).
   article.querySelectorAll('img').forEach(img => {
     const src = img.getAttribute('src');
-    if (src && !/^(https?:)?\//.test(src)) img.src = 'posts/' + src;
+    if (src && !/^(https?:)?\//.test(src) && !src.startsWith('posts/')) img.src = 'posts/' + src;
   });
 }
 
