@@ -23,6 +23,17 @@ bool isAllowedChatgptHost(String host) {
       _allowedChatgptHostSuffixes.any(normalized.endsWith);
 }
 
+/// Whether [baseUrl] addresses the ChatGPT Codex backend: an allow-listed
+/// ChatGPT host serving the `/backend-api/codex` path family. This is the
+/// URL half of the codex model-list dialect's dispatch match (the identity
+/// half is the `chatgpt`/`chatgpt-codex` provider hint) — shared by the
+/// core dispatch and every picker's hint mapping.
+bool isChatGptCodexEndpoint(String baseUrl) {
+  final uri = Uri.parse(baseUrl);
+  return isAllowedChatgptHost(uri.host) &&
+      uri.path.startsWith('/backend-api/codex');
+}
+
 const _cloudflareCookieNames = {
   '__cf_bm',
   '__cflb',

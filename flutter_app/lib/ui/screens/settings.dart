@@ -245,6 +245,10 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   Map<String, int> _endpointMaxTokens = const {};
   var _modelsLoading = false;
 
+  /// Whether the model list answered from the bundled offline catalog (the
+  /// live fetch failed) — drives the field's provenance note.
+  var _fromBundledCatalog = false;
+
   /// Stale-response guard: bumped per fetch, only the latest applies.
   var _modelsFetchGeneration = 0;
   Timer? _modelsFetchDebounce;
@@ -330,24 +334,38 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     });
   }
 
-  /// Fetches `<baseUrl>/models` (OpenAI shape) for the model field's quick
-  /// select. Silent on failure — free-text entry always works, the field
-  /// just loses its suggestions.
+  /// Fetches the endpoint's model list for the model field's quick select
+  /// through the core [fetchModelsForEndpoint] dispatch (hinted by
+  /// [faui.modelsDispatchHintFor]: DIAL deployments, the CodeMie marker,
+  /// the bundled Codex catalog, the Copilot token exchange, else plain
+  /// OpenAI `/models`). The [AgentSettingsForm.modelsFetcher] override
+  /// (tests) wins. Silent on failure — free-text entry always works, the
+  /// field just loses its suggestions; a bundled-catalog answer shows the
+  /// provenance note.
   Future<void> _fetchEndpointModels() async {
     if (_isOnDevice || _isGemma || _isTransformersJs) return;
     final baseUrl = _urlController.text.trim();
     if (baseUrl.isEmpty) return;
     final generation = ++_modelsFetchGeneration;
     if (mounted) setState(() => _modelsLoading = true);
+    var fromBundledCatalog = false;
     try {
       final key = _keyController.text.trim();
-      final fetch = widget.modelsFetcher ?? defaultModelsEndpointFetcher;
-      final (ids, windows, caps) = await fetch(baseUrl, apiKey: key);
+      final override = widget.modelsFetcher;
+      final (ids, windows, caps) = override != null
+          ? await override(baseUrl, apiKey: key)
+          : await fetchModelsForEndpoint(
+              baseUrl,
+              apiKey: key,
+              provider: faui.modelsDispatchHintFor(baseUrl),
+              onBundledFallback: () => fromBundledCatalog = true,
+            );
       if (!mounted || generation != _modelsFetchGeneration) return;
       setState(() {
         _endpointModels = ids;
         _endpointContextWindows = windows;
         _endpointMaxTokens = caps;
+        _fromBundledCatalog = fromBundledCatalog;
       });
       AppAnalytics.instance.modelsFetchResult(ids.length);
     } on Object {
@@ -356,6 +374,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           _endpointModels = const [];
           _endpointContextWindows = const {};
           _endpointMaxTokens = const {};
+          _fromBundledCatalog = false;
         });
       }
     } finally {
@@ -1096,6 +1115,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
               focusNode: _modelFocusNode,
               models: _endpointModels,
               loading: _modelsLoading,
+              fromBundledCatalog: _fromBundledCatalog,
             ),
             CheckboxListTile(
               value: _vision,

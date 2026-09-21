@@ -393,6 +393,10 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
   List<String> _endpointModels = const [];
   var _modelsLoading = false;
 
+  /// Whether the list answered from the bundled offline catalog (the live
+  /// fetch failed) — drives the picker's provenance note.
+  var _fromBundledCatalog = false;
+
   String? _error;
 
   /// The provider kind for a save: DIAL endpoints get 'dial' (their own
@@ -408,6 +412,7 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
     final preset = ProviderPreset.fromBaseUrl(baseUrl);
     if (preset == ProviderPreset.dial) return 'dial';
     if (baseUrl.contains('generativelanguage.googleapis.com')) return 'google';
+    if (isChatGptCodexEndpoint(baseUrl)) return 'chatgpt-codex';
     return 'openai-completions';
   }
 
@@ -470,14 +475,15 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
   /// Fetches the endpoint's model list for the picker: the injected
   /// [MediaSlotModelPage.modelsFetcher] override (tests, host codemie
   /// wiring) wins; otherwise the core [fetchModelsForEndpoint] dispatch
-  /// handles the DIAL deployments endpoint, the CodeMie marker, and the
-  /// Copilot token exchange itself (see [modelsDispatchHintFor]).
-  /// Silent on failure — free-text entry always works, the picker just
-  /// shows the manual-entry note.
+  /// handles the DIAL deployments endpoint, the CodeMie marker, the
+  /// bundled Codex catalog, and the Copilot token exchange itself (see
+  /// [modelsDispatchHintFor]). Silent on failure — free-text entry always
+  /// works; a bundled-catalog answer shows the provenance note.
   Future<void> _fetchEndpointModels() async {
     final baseUrl = _baseUrl;
     if (baseUrl.isEmpty) return;
     setState(() => _modelsLoading = true);
+    var fromBundledCatalog = false;
     try {
       final key =
           widget.apiKeyOverride ??
@@ -493,11 +499,20 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
               baseUrl,
               apiKey: key,
               provider: modelsDispatchHintFor(baseUrl),
+              onBundledFallback: () => fromBundledCatalog = true,
             );
       if (!mounted) return;
-      setState(() => _endpointModels = ids);
+      setState(() {
+        _endpointModels = ids;
+        _fromBundledCatalog = fromBundledCatalog;
+      });
     } on Object {
-      if (mounted) setState(() => _endpointModels = const []);
+      if (mounted) {
+        setState(() {
+          _endpointModels = const [];
+          _fromBundledCatalog = false;
+        });
+      }
     } finally {
       if (mounted) setState(() => _modelsLoading = false);
     }
@@ -597,6 +612,7 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
                 controller: _modelController,
                 models: _endpointModels,
                 loading: _modelsLoading,
+                fromBundledCatalog: _fromBundledCatalog,
               ),
               if (widget.slot == MediaSlot.audioTts) ...[
                 const SizedBox(height: 16),
