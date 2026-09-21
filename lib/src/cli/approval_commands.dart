@@ -1039,15 +1039,23 @@ extension ApprovalCommands on AgentCli {
   /// #638 AC3); only the real viewport clips.
   int get _rowWidth => _tuiController?.termWidth ?? 0;
 
-  /// Streaming deltas: answer text (with the once-per-message prefix) and —
-  /// TUI only — dimmed thinking as the progress signal.
+  /// Streaming deltas: answer text and — TUI only — dimmed thinking as the
+  /// progress signal. The TUI streams raw into its history (rendered at
+  /// view time); non-TUI surfaces buffer the answer and render it through
+  /// the markdown policy at message end (issue #774): line mode and
+  /// headless cannot repaint, so a half-streamed table or fence would
+  /// print raw mid-flight — the whole message renders once, correctly.
   void _onMessageUpdate(AssistantMessageEvent assistantMessageEvent) {
     if (assistantMessageEvent is TextDeltaEvent) {
-      // The answer text starts on its own line after the dimmed
-      // thinking block.
-      if (_streamedThinking && !_streamedText) io.write('\n');
-      _writeAssistantPrefix();
-      io.write(assistantMessageEvent.delta);
+      if (_useTui) {
+        // The answer text starts on its own line after the dimmed
+        // thinking block.
+        if (_streamedThinking && !_streamedText) io.write('\n');
+        _writeAssistantPrefix();
+        io.write(assistantMessageEvent.delta);
+      } else {
+        _assistantText.write(assistantMessageEvent.delta);
+      }
       _streamedText = true;
     } else if (assistantMessageEvent is ThinkingDeltaEvent && _useTui) {
       // Reasoning models stream long thinking before any text; showing
@@ -1066,13 +1074,24 @@ extension ApprovalCommands on AgentCli {
   /// End of an assistant message: flush the stream newline, then report the
   /// stop reason (errors, aborts, silent truncations, empty responses).
   void _onAssistantMessageEnd(AssistantMessage message) {
-    if (_streamedText || _streamedThinking) {
-      // The trailing newline of the streamed text belongs to the
-      // primary channel (write), not to diagnostics (writeln) — a
-      // headless host routes only writeln to stderr.
+    if (_useTui) {
+      if (_streamedText || _streamedThinking) {
+        // The trailing newline of the streamed text belongs to the
+        // primary channel (write), not to diagnostics (writeln) — a
+        // headless host routes only writeln to stderr.
+        io.write('\n');
+        _streamedText = false;
+        _streamedThinking = false;
+      }
+    } else if (_streamedText) {
+      // The rendered message lands on the primary channel (write), not
+      // diagnostics (writeln) — a headless host routes only writeln to
+      // stderr, keeping write the only stdout content. Raw mode passes
+      // the text through byte-identically (issue #774 AC3).
+      io.write(_markdownSurface.render(_assistantText.toString()));
       io.write('\n');
+      _assistantText.clear();
       _streamedText = false;
-      _streamedThinking = false;
     }
     switch (message.stopReason) {
       case StopReason.error:

@@ -26,6 +26,7 @@ import '../hashline/hashline.dart';
 import '../agent/agent.dart';
 import '../dap/dap_hub_snapshot.dart';
 import 'agent_event_handler.dart';
+import 'ansi_markdown.dart';
 import 'path_candidates.dart';
 import 'browser_bridge_commands.dart';
 import '../browser/browser_tools.dart';
@@ -263,10 +264,13 @@ class AgentCli {
     bool useTui = false,
     this._version = '0.0.0',
     this.environment = const {},
+    MarkdownSurface? markdownSurface,
     DateTime Function()? waitingClock,
     Future<void> Function(Duration)? waitingSleep,
   }) : io = useTui && io.supportsRawMode ? _TuiCliIO(io) : io,
        _style = _Style(enabled: useColor),
+       _markdownSurface =
+           markdownSurface ?? const MarkdownSurface(),
        _waitingClock = waitingClock ?? DateTime.now,
        _waitingSleep =
            waitingSleep ?? ((Duration d) => Future<void>.delayed(d)),
@@ -1087,6 +1091,16 @@ class AgentCli {
   final _Style _style;
   final bool _useTui;
   final String _version;
+
+  /// The markdown→terminal policy every non-TUI surface renders assistant
+  /// text through at message end (issue #774). Defaults to raw
+  /// passthrough; bin/fah resolves TTY/color/width for the real surfaces.
+  final MarkdownSurface _markdownSurface;
+
+  /// The streamed answer of the current assistant message on non-TUI
+  /// surfaces (issue #774): line mode and headless cannot repaint, so the
+  /// message buffers here and renders once, whole, at message end.
+  final StringBuffer _assistantText = StringBuffer();
 
   /// Whether the default role resolved and drives the agent (roles mode).
   /// The banner's key-status line reads env var names from the live model's

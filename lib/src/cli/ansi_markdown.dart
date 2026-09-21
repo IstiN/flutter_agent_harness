@@ -1175,3 +1175,123 @@ final class TranscriptMarkdown {
     _expose(r, src);
   }
 }
+/// How [MarkdownSurface.render] emits assistant markdown.
+enum MarkdownSurfaceMode {
+  /// ANSI-rendered: an interactive terminal with color.
+  ansi,
+
+  /// Structure without SGR: a TTY under `NO_COLOR` / `TERM=dumb` — the
+  /// same renderer with escapes stripped, layout (bullets, indents, table
+  /// grids, heading emphasis) kept, zero escape bytes.
+  plain,
+
+  /// Byte-identical raw passthrough: pipes, redirects, `--no-format` /
+  /// `FA_NO_FORMAT` — scripts and files never receive ANSI.
+  raw,
+}
+
+/// The one-place markdown→terminal policy (issue #774): every human-read
+/// CLI surface renders assistant markdown through [render] — the line-mode
+/// REPL and headless runs directly; the TUI through its incremental
+/// [TranscriptMarkdown] engine, which shares the same [AnsiMarkdown]
+/// grammar. No surface formats on its own.
+final class MarkdownSurface {
+  /// Creates a policy in an explicit [mode]. The default is [raw] —
+  /// byte-identical to the pre-#774 behavior, so a host that does not
+  /// resolve a surface keeps today's output.
+  const MarkdownSurface({this.mode = MarkdownSurfaceMode.raw, this.width = 80});
+
+  /// Resolves the policy from host-detected surface facts: a pipe/redirect
+  /// or a `--no-format`/`FA_NO_FORMAT` request renders raw; `NO_COLOR` /
+  /// `TERM=dumb` on a TTY renders plain; a color terminal renders ANSI.
+  factory MarkdownSurface.resolving({
+    required bool tty,
+    required bool color,
+    bool format = true,
+    int width = 80,
+  }) => MarkdownSurface(
+    mode: !format || !tty
+        ? MarkdownSurfaceMode.raw
+        : color
+        ? MarkdownSurfaceMode.ansi
+        : MarkdownSurfaceMode.plain,
+    width: width,
+  );
+
+  final MarkdownSurfaceMode mode;
+
+  /// Wrap/table-fit width. Per surface: the TUI feeds its viewport width
+  /// to [TranscriptMarkdown], line mode the terminal width, headless the
+  /// stdout terminal width (a piped headless run is raw, so the width is
+  /// never applied to a file).
+  final int width;
+
+  /// Renders one COMPLETE assistant text (a whole message — never a
+  /// streaming delta). Every call owns a fresh [AnsiMarkdown], so
+  /// cross-line state cannot leak between messages: an unclosed fence at
+  /// end-of-stream renders as a code block and the next message renders
+  /// formatted (issue #774 AC6).
+  String render(String text) => switch (mode) {
+    MarkdownSurfaceMode.raw => text,
+    MarkdownSurfaceMode.ansi => _renderWhole(text),
+    MarkdownSurfaceMode.plain => _renderWhole(
+      text,
+    ).replaceAll(AnsiMarkdown.ansiSgrPattern, ''),
+  };
+
+  String _renderWhole(String text) =>
+      AnsiMarkdown(width: width)
+          .formatAll(resolveSetextHeadings(text.split('\n')))
+          .join('\n');
+}
+
+/// Rewrites setext heading pairs (`paragraph` + `===`/`---` underline) to
+/// their ATX equivalents (`# paragraph`), so the whole-message render
+/// path parses both heading grammars with one engine (issue #774 AC5).
+///
+/// The streaming engine is deliberately untouched: its zero-lookahead
+/// commit contract is what keeps the TUI's per-flush cost O(delta), and a
+/// held paragraph line would invalidate that (the perf tests pin it). So
+/// setext coverage lives HERE — the one-place policy layer used by
+/// line-mode and headless — not in TranscriptMarkdown; the TUI transcript
+/// keeps rendering a bare `---` line as a horizontal rule (pre-existing,
+/// documented engine behavior).
+///
+/// A `---` with no preceding paragraph line stays a horizontal rule;
+/// pairs inside fences are left alone; blank lines end a paragraph.
+List<String> resolveSetextHeadings(List<String> lines) {
+  final out = List<String>.of(lines);
+  var inFence = false;
+  for (var i = 0; i < out.length - 1; i++) {
+    if (AnsiMarkdown._fenceRe.hasMatch(out[i])) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    final level = _setextUnderline1Re.hasMatch(out[i + 1])
+        ? 1
+        : _setextUnderline2Re.hasMatch(out[i + 1])
+        ? 2
+        : 0;
+    if (level == 0 || !_canOpenSetext(out[i])) continue;
+    out[i] = '${'#' * level} ${out[i]}';
+    out.removeAt(i + 1);
+  }
+  return out;
+}
+
+/// Whether [line] can open a setext heading: a plain paragraph line —
+/// not blank and not any other block form (fence, ATX heading, quote,
+/// bullet, thematic break).
+bool _canOpenSetext(String line) {
+  if (line.isEmpty) return false;
+  if (AnsiMarkdown._fenceRe.hasMatch(line)) return false;
+  if (AnsiMarkdown._headerRe.hasMatch(line)) return false;
+  if (AnsiMarkdown._hrRe.hasMatch(line)) return false;
+  if (AnsiMarkdown._quoteRe.hasMatch(line)) return false;
+  if (AnsiMarkdown._bulletRe.hasMatch(line)) return false;
+  return true;
+}
+
+final _setextUnderline1Re = RegExp(r'^ {0,3}=+ *$');
+final _setextUnderline2Re = RegExp(r'^ {0,3}-+ *$');

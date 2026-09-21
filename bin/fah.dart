@@ -30,9 +30,11 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
+import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/ext_cli.dart';
 import 'package:flutter_agent_harness/src/cli/session_tree.dart';
 import 'package:flutter_agent_harness/src/cli/trajectory_tui.dart';
+import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:flutter_agent_harness/src/prompts/prompts.g.dart';
 import 'package:yaml/yaml.dart' as yaml;
 // The ONLY place the core CLI imports the hub client package: downstream
@@ -1917,6 +1919,24 @@ Future<void> _runApp(List<String> args) async {
     environment: Platform.environment,
     useTui: useTui,
     version: packageVersion,
+    // Markdown parity (issue #774): every non-TUI surface renders
+    // assistant markdown through ONE policy. tty = stdout is a terminal
+    // (pipes stay byte-identical raw); color folds NO_COLOR/TERM=dumb
+    // into plain; --no-format / FA_NO_FORMAT force raw; width is the
+    // stdout terminal width (80 when piped — irrelevant in raw mode).
+    markdownSurface: MarkdownSurface.resolving(
+      tty: stdout.supportsAnsiEscapes,
+      color:
+          detectThemeProfile(
+            ansiSupported: stdout.supportsAnsiEscapes,
+            environment: Platform.environment,
+          ) !=
+          null,
+      format:
+          !parsed.noFormat &&
+          !Platform.environment.containsKey('FA_NO_FORMAT'),
+      width: io.columns,
+    ),
     config: AgentCliConfig(
       wakeExecutable: wakeExecutable(),
       // Marathon-session resume parses its multi-hundred-MB tail off the

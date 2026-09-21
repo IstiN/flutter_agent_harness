@@ -373,4 +373,122 @@ void main() {
       });
     });
   });
+
+  group('setext headings via MarkdownSurface (issue #774 AC5)', () {
+    const surface = MarkdownSurface(mode: MarkdownSurfaceMode.plain);
+
+    test('paragraph + === renders as h1, underline gone', () {
+      final out = surface.render('Title\n===\n');
+      expect(out, contains('Title'));
+      expect(out.contains('==='), isFalse);
+    });
+
+    test('paragraph + --- renders as h2, not a horizontal rule', () {
+      final out = surface.render('Title\n---\n');
+      expect(out, contains('Title'));
+      expect(out.contains('─'), isFalse);
+    });
+
+    test('a standalone --- stays a horizontal rule', () {
+      expect(surface.render('---\n'), contains('─'));
+    });
+
+    test('a --- after the pair closed stays a horizontal rule', () {
+      expect(surface.render('Title\n===\n\n---\n'), contains('─'));
+    });
+
+    test('plain paragraphs render one line each', () {
+      expect(
+        surface.render('first para\nsecond para\n'),
+        'first para\nsecond para\n',
+      );
+    });
+
+    test('setext is inert inside a fence', () {
+      final out = surface.render('```\nTitle\n===\n```\n');
+      expect(out, contains('Title'));
+      expect(out, contains('==='));
+    });
+
+    test('bullets and quotes never become headings', () {
+      expect(surface.render('- item\n---\n'), contains('─'));
+      expect(surface.render('> quoted\n---\n'), contains('─'));
+    });
+
+    test('ATX and setext render byte-identically (ansi)', () {
+      final ansi = MarkdownSurface(mode: MarkdownSurfaceMode.ansi);
+      expect(ansi.render('Title\n===\n'), ansi.render('# Title\n'));
+      expect(ansi.render('Sub\n---\n'), ansi.render('## Sub\n'));
+    });
+  });
+
+  group('MarkdownSurface (issue #774)', () {
+    // The owner-reported repro input: heading + list + table + fence.
+    const repro =
+        '# Plan\n\n- **step** one\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n'
+        '```dart\nvar x = 1;\n```\n';
+
+    test('ansi mode renders every pinned construct', () {
+      final out = MarkdownSurface(
+        mode: MarkdownSurfaceMode.ansi,
+      ).render(repro);
+      expect(out, contains('\x1b[4mPlan')); // h1: bold+underline, # stripped
+      expect(out, isNot(contains('# Plan')));
+      expect(out, contains('•')); // bullet list
+      expect(out, contains('\x1b[1mstep')); // inline bold
+      expect(out, contains('│')); // table grid
+      expect(out, contains('  var x = 1;')); // fence content indented
+    });
+
+    test('plain mode keeps structure with zero escape bytes (AC4)', () {
+      final out = MarkdownSurface(
+        mode: MarkdownSurfaceMode.plain,
+      ).render(repro);
+      expect(out.contains('\x1b'), isFalse); // byte-scan: no SGR at all
+      expect(out, contains('Plan'));
+      expect(out, isNot(contains('# Plan'))); // heading layout kept
+      expect(out, contains('•'));
+      expect(out, contains('│'));
+      expect(out, contains('  var x = 1;'));
+    });
+
+    test('raw mode is byte-identical passthrough (AC3)', () {
+      expect(
+        MarkdownSurface(mode: MarkdownSurfaceMode.raw).render(repro),
+        repro,
+      );
+    });
+
+    test('resolving maps surface facts to modes', () {
+      expect(
+        MarkdownSurface.resolving(tty: true, color: true).mode,
+        MarkdownSurfaceMode.ansi,
+      );
+      expect(
+        MarkdownSurface.resolving(tty: true, color: false).mode,
+        MarkdownSurfaceMode.plain,
+      );
+      expect(
+        MarkdownSurface.resolving(tty: false, color: true).mode,
+        MarkdownSurfaceMode.raw,
+      );
+      // --no-format / FA_NO_FORMAT forces raw even on a color TTY.
+      expect(
+        MarkdownSurface.resolving(tty: true, color: true, format: false).mode,
+        MarkdownSurfaceMode.raw,
+      );
+    });
+
+    test('fence state resets per message; the next one renders (AC6)', () {
+      final surface = MarkdownSurface(mode: MarkdownSurfaceMode.ansi);
+      // Unclosed fence at end-of-stream: content renders as a code block.
+      final first = surface.render('```dart\nfinal x = 1;');
+      expect(first, contains('```dart'));
+      expect(first, contains('  final x = 1;'));
+      // The NEXT message renders formatted — no leaked fence state.
+      final second = surface.render('- **fresh** item');
+      expect(second, contains('•'));
+      expect(second, contains('\x1b[1mfresh\x1b[0m'));
+    });
+  });
 }
