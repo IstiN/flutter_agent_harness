@@ -102,6 +102,10 @@ elegant — but "agents that render their own UI and replay their own
 execution" is not as new as the hype cycle says. Some of us just shipped it
 quietly, in Dart.
 
+![recipe-1](assets/recipe-1.png)
+
+![>_Fa — releases shipped by the factory](assets/recipe-2.png)
+
 ## The client IS the computer (no server required)
 
 Most "agents" are chatbots with a backend: the harness runs on someone's
@@ -134,6 +138,9 @@ Actions log — same binary, same config (/provider, /model, /approval — one
 command each), no human in the loop. The harness reviews its own pull
 requests.
 
+
+![sdk-first](assets/sdk-first.png)
+
 ## iOS & Android: your phone is now an agent host
 
 **Feature:** >_Fa shipped to the
@@ -151,6 +158,9 @@ build in it is yours. You can provide access to your smart home, calendar,
 health... build apps what you only want.... and then share in
 [widgets store](https://fa1.dev/widgets/).
 
+
+![ios](assets/ios.png)
+
 ## Web: the agent runs in your browser tab, not on my server
 
 **Feature:** open [fa1.dev](https://fa1.dev), bring your own key, and the
@@ -160,6 +170,9 @@ compiled to WASM.
 **Benefit:** nothing leaves your machine. No accounts, no token middleman, no
 "your data may be used for training". It is the cheapest way on the internet
 to find out whether an agent harness is real or a landing page.
+
+
+![web](assets/web.png)
 
 ## Chrome extension: this is not Playwright
 
@@ -174,6 +187,9 @@ it sees what you see, reads the page you are looking at, and acts with the
 full session you are already logged into. You don't script it — you talk to
 it.
 
+
+![extension](assets/extension.png)
+
 ## Agents that talk to each other
 
 **Feature:** every >_Fa agent — CLI, app, CI runner — has an inbox on a
@@ -184,6 +200,9 @@ agent_message delivers; cross-machine peers route through an A2A gateway.
 message the agent on your build server. A review agent on a GitHub runner can
 ask your local agent to reproduce a bug — and get an answer. Steering a
 running agent from another device is a text message, not an ssh session.
+
+
+![messaging](assets/messaging.png)
 
 ## Git-backed memory: the repo IS the memory
 
@@ -201,6 +220,9 @@ past mistakes marked as solved — instead of a blank stare. Memory survives
 model switches, machine switches, and context compaction, because it was
 never in the context to begin with.
 
+
+![memory](assets/memory.png)
+
 ## Trajectory & runtime widgets: the agent shows its work
 
 **Feature:** every >_Fa run projects into a trajectory — an inspectable
@@ -214,6 +236,9 @@ on the fly: dashboards, charts, controls.
 You see exactly which tool call ate three minutes and where the tokens went.
 And when the answer is data, you get a UI — not a wall of markdown tables
 pretending to be a chart.
+
+
+![trajectory](assets/trajectory.png)
 
 ## Cubes: the sandbox is a YAML file, out of the box
 
@@ -233,6 +258,9 @@ env -i environment.
 run a third-party skill, with the blast radius agreed in advance — in 20
 lines of YAML. "The agent may read this repo and reach api.github.com:443,
 nothing else" is a file, not a promise.
+
+
+![cubes](assets/cubes.png)
 
 ## Sessions you can fork like git branches
 
@@ -265,6 +293,9 @@ release manager. But make no mistake: the quality control is there, it is
 relentless, and it is the most expensive line item. The difference is that it
 scales with tokens, not headcount. Now challenge is to accept 200 features
 during weekend.
+
+
+![quality](assets/quality.png)
 
 ## The twist: what I actually paid
 
