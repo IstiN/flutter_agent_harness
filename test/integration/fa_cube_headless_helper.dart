@@ -42,6 +42,14 @@ Future<FaResult> runFaHeadless({
   Map<String, String> env = const {},
   Duration timeout = const Duration(minutes: 2),
 }) async {
+  // Scrub the ambient FA_* environment (a developer/CI shell may export
+  // FA_PROVIDER_*/FA_PROVIDERS_QUEUE/FA_LOG_FILE/...): those are
+  // boot-resolution inputs, and an inherited preconfig or queue would
+  // hijack the run away from the explicit flags below. Blank values read
+  // as unset at every consumer, so the explicit blanks keep the override
+  // minimal where the injection re-adds missing vars.
+  final childEnv = Map<String, String>.of(Platform.environment)
+    ..removeWhere((key, _) => key.startsWith('FA_'));
   final result = await Process.run(
     'dart',
     [
@@ -61,7 +69,17 @@ Future<FaResult> runFaHeadless({
       prompt,
     ],
     workingDirectory: Directory.current.path,
-    environment: {'OPENAI_API_KEY': 'mock', ...env},
+    environment: {
+      ...childEnv,
+      'OPENAI_API_KEY': 'mock',
+      'FA_PROVIDER_TYPE': '',
+      'FA_PROVIDER_NAME': '',
+      'FA_PROVIDER_CONFIG': '',
+      'FA_PROVIDER_CONFIG_BASE64': '',
+      'FA_PROVIDERS_QUEUE': '',
+      'FA_LOG_FILE': '',
+      ...env,
+    },
     stdoutEncoding: utf8,
     stderrEncoding: utf8,
   ).timeout(timeout);
