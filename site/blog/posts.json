@@ -1,0 +1,12 @@
+[
+  {
+    "slug": "2026-09-20-we-burned-40-billion-tokens",
+    "title": "We burned 40 billion tokens (~$20k) building a harness. Am I crazy?",
+    "date": "2026-09-20",
+    "description": "40,000,000,000 tokens. 3 months of work. Zero lines of code written by a human. The honest receipt for building >_Fa — a cross-platform AI agent harness — money, features, and what it actually cost.",
+    "author": "Uladimir Klyshevich",
+    "cover": "assets/40b-cover.png",
+    "linkedin": "https://www.linkedin.com/pulse/we-burned-40-billion-tokens-20k-building-harness-am-i-klyshevich-ku8of/",
+    "tags": "[fa, agents, dogfooding, tokenomics]"
+  }
+]

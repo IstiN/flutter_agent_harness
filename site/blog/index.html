@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>&gt;_Fa blog — building an agent harness in public</title>
+<meta name="description" content="Build notes, tokenomics and honest fuckups from >_Fa — the cross-platform AI agent harness in Dart. CLI, iOS, Android, web, Chrome extension, Outlook add-in.">
+<meta name="theme-color" content="#070a10">
+<link rel="canonical" href="https://fa1.dev/blog/">
+<link rel="icon" href="../favicon.svg?v=2" type="image/svg+xml">
+<meta property="og:type" content="blog">
+<meta property="og:site_name" content=">_Fa">
+<meta property="og:title" content=">_Fa blog — building an agent harness in public">
+<meta property="og:description" content="Build notes, tokenomics and honest fuckups from the cross-platform AI agent harness in Dart.">
+<meta property="og:url" content="https://fa1.dev/blog/">
+<meta property="og:image" content="https://fa1.dev/og-image.png?v=2">
+<link rel="stylesheet" href="../styles.css?v=2">
+<link rel="stylesheet" href="blog.css?v=1">
+</head>
+<body>
+<div class="bg" aria-hidden="true"></div>
+
+<header class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="../">
+      <span class="brand-mark" aria-hidden="true">&gt;_</span>
+      <span class="brand-name">Fa</span>
+      <span class="brand-sub">fa1.dev</span>
+    </a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="../#demo">Demo</a>
+      <a href="../#install">Install</a>
+      <a href="../#features">Features</a>
+      <a href="../widgets/">Widgets</a>
+      <a href="./" aria-current="page">Blog</a>
+    </nav>
+    <nav class="nav-ext" aria-label="Project links">
+      <a href="https://github.com/IstiN/flutter_agent_harness" rel="noopener">GitHub</a>
+      <a href="https://pub.dev/packages/flutter_agent_harness" rel="noopener">pub.dev</a>
+    </nav>
+  </div>
+</header>
+
+<main class="blog-wrap">
+  <h1 class="blog-title"><span class="prompt">&gt;_</span>Fa blog</h1>
+  <p class="blog-sub">Build notes, tokenomics and honest fuckups from the harness that builds itself.</p>
+  <div id="posts">Loading…</div>
+</main>
+
+<script>
+fetch('posts.json')
+  .then(r => r.json())
+  .then(posts => {
+    const root = document.getElementById('posts');
+    if (!posts.length) { root.textContent = 'No posts yet.'; return; }
+    root.innerHTML = '';
+    for (const p of posts) {
+      const a = document.createElement('a');
+      a.className = 'post-card';
+      a.href = 'post.html?p=' + encodeURIComponent(p.slug);
+      a.innerHTML =
+        (p.cover ? '<img src="posts/' + p.cover + '" alt="" loading="lazy">' : '') +
+        '<h2></h2>' +
+        '<div class="meta">' + esc(p.date) + (p.author ? ' · ' + esc(p.author) : '') + '</div>' +
+        '<p></p>';
+      a.querySelector('h2').textContent = p.title;
+      a.querySelector('p').textContent = p.description;
+      root.appendChild(a);
+    }
+  })
+  .catch(() => { document.getElementById('posts').textContent = 'Failed to load posts.'; });
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+</script>
+</body>
+</html>
