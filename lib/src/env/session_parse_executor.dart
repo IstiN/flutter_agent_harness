@@ -15,7 +15,8 @@
 /// from `package:flutter_agent_harness/io.dart`).
 library;
 
-import '../session/session_storage.dart' show parseSessionEntryLine;
+import '../session/session_storage.dart'
+    show parseSessionEntryLine, parseShallowCustomRecord;
 import '../session/session_record.dart';
 
 /// Max lines per parse transfer.
@@ -27,12 +28,19 @@ const int sessionParseBatchMaxLines = 500;
 /// length only if the cap ever misbehaves.
 const int sessionParseBatchMaxBytes = 4 << 20;
 
+/// Max parse batches in flight on the executor path of
+/// [parseSessionLines] (issue #503): enough to keep the cores busy on a
+/// marathon walk, bounded so concurrent callers (windowed open + listing
+/// fan-out) never spawn an unbounded isolate storm.
+const int maxConcurrentSessionParseBatches = 8;
+
 /// One bounded batch of raw JSONL entry lines (never the header line).
 final class SessionParseBatch {
   const SessionParseBatch({
     required this.filePath,
     required this.firstLineNumber,
     required this.lines,
+    this.shallowGiantCustoms = false,
   });
 
   /// Session file path — error-text context only, never re-read.
@@ -43,6 +51,14 @@ final class SessionParseBatch {
 
   /// Raw JSONL lines, file order.
   final List<String> lines;
+
+  /// Issue #503 round 3b: when true, giant `custom` records (the
+  /// ~0.75 MB `model_request_summary` ledger payloads) decode HEADER-ONLY
+  /// — id/parentId/timestamp/customType — with `data` stubbed to null,
+  /// skipping a full jsonDecode + isolate transfer that yields zero
+  /// context tokens. Only the resume boundary walk sets this; the
+  /// ingest/live-tail paths keep full fidelity. Plain data, isolate-safe.
+  final bool shallowGiantCustoms;
 }
 
 /// Per-line parse outcomes, parallel to [SessionParseBatch.lines].
@@ -70,6 +86,7 @@ List<SessionParseBatch> splitSessionParseBatches(
   List<String> lines, {
   required String filePath,
   required int firstLineNumber,
+  bool shallowGiantCustoms = false,
 }) {
   final batches = <SessionParseBatch>[];
   var start = 0;
@@ -79,14 +96,32 @@ List<SessionParseBatch> splitSessionParseBatches(
     if (i > start &&
         (i - start >= sessionParseBatchMaxLines ||
             weight + lineWeight > sessionParseBatchMaxBytes)) {
-      batches.add(_batch(lines, start, i, filePath, firstLineNumber));
+      batches.add(
+        _batch(
+          lines,
+          start,
+          i,
+          filePath,
+          firstLineNumber,
+          shallowGiantCustoms: shallowGiantCustoms,
+        ),
+      );
       start = i;
       weight = 0;
     }
     weight += lineWeight;
   }
   if (start < lines.length) {
-    batches.add(_batch(lines, start, lines.length, filePath, firstLineNumber));
+    batches.add(
+      _batch(
+        lines,
+        start,
+        lines.length,
+        filePath,
+        firstLineNumber,
+        shallowGiantCustoms: shallowGiantCustoms,
+      ),
+    );
   }
   return batches;
 }
@@ -96,37 +131,67 @@ SessionParseBatch _batch(
   int start,
   int end,
   String filePath,
-  int firstLineNumber,
-) => SessionParseBatch(
+  int firstLineNumber, {
+  bool shallowGiantCustoms = false,
+}) => SessionParseBatch(
   filePath: filePath,
   firstLineNumber: firstLineNumber + start,
   lines: lines.sublist(start, end),
+  shallowGiantCustoms: shallowGiantCustoms,
 );
 
 /// Parses [lines] through [executor] — or inline, batch by batch, when it
 /// is null — and returns one slot per line in file order (`null` where a
-/// line was torn/foreign). One await per batch: the inline path yields to
-/// the event loop between batches by construction.
+/// line was torn/foreign).
+///
+/// Inline (web degradation): one await per batch — the event loop
+/// breathes between batches by construction.
+///
+/// Executor path: batches are independent, so they fan out with bounded
+/// concurrency — a marathon session walk parses a strip core-wide
+/// instead of one 4MB batch at a time (issue #503 boot cost: the
+/// sequential await serialized ~2.2s of jsonDecode on a 434MB tail).
+/// Results concatenate in batch order, so the returned list is
+/// byte-identical to the sequential walk.
 Future<List<SessionRecord?>> parseSessionLines(
   List<String> lines, {
   required String filePath,
   required int firstLineNumber,
   SessionParseExecutor? executor,
+  bool shallowGiantCustoms = false,
 }) async {
   if (lines.isEmpty) return const <SessionRecord?>[];
   final batches = splitSessionParseBatches(
     lines,
     filePath: filePath,
     firstLineNumber: firstLineNumber,
+    shallowGiantCustoms: shallowGiantCustoms,
   );
-  final records = <SessionRecord?>[];
-  for (final batch in batches) {
-    final result = executor == null
-        ? parseSessionEntryLinesSync(batch)
-        : await executor.parse(batch);
-    records.addAll(result.records);
+  if (executor == null) {
+    final records = <SessionRecord?>[];
+    for (final batch in batches) {
+      records.addAll(parseSessionEntryLinesSync(batch).records);
+    }
+    return records;
   }
-  return records;
+  final results = List<SessionParseResult?>.filled(batches.length, null);
+  var next = 0;
+  Future<void> worker() async {
+    while (next < batches.length) {
+      final i = next++;
+      results[i] = await executor.parse(batches[i]);
+    }
+  }
+
+  await Future.wait([
+    for (
+      var w = 0;
+      w < maxConcurrentSessionParseBatches && w < batches.length;
+      w++
+    )
+      worker(),
+  ]);
+  return [for (final result in results) ...result!.records];
 }
 
 /// Parses one batch right here — the inline executor's body and the
@@ -140,11 +205,20 @@ SessionParseResult parseSessionEntryLinesSync(SessionParseBatch batch) {
   );
   for (var i = 0; i < batch.lines.length; i++) {
     try {
-      records[i] = parseSessionEntryLine(
-        batch.lines[i],
-        batch.filePath,
-        batch.firstLineNumber + i,
-      );
+      // Issue #503 round 3b: the resume boundary walk parses giant
+      // `custom` ledger payloads header-only (data stubbed to null) —
+      // they count zero context tokens, so the full decode was pure
+      // cost. Falls back to the full decode on any shape mismatch.
+      final shallow = batch.shallowGiantCustoms
+          ? parseShallowCustomRecord(batch.lines[i])
+          : null;
+      records[i] =
+          shallow ??
+          parseSessionEntryLine(
+            batch.lines[i],
+            batch.filePath,
+            batch.firstLineNumber + i,
+          );
     } on Object {
       records[i] = null; // torn/foreign line: data, not an error
     }
