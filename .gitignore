@@ -151,11 +151,12 @@ packages/fa_ui/test/trajectory/golden/failures/
 # GOOGLE_SERVICES_JSON_BASE64 secret when present (issue #289).
 !flutter_app/android/app/google-services.json
 
-# wasm_run_flutter android build artifacts (NDK/CMake output + the
-# downloaded runtime tarball the plugin gradle extracts into jniLibs).
+# wasm_run_flutter android build artifacts. The prebuilt runtime binaries
+# under src/main/jniLibs/ are COMMITTED (gh-746: rebuilt from the vendored
+# Rust source with NDK r28's 16 KB max page size — never re-ignore them, the
+# upstream download path that populated this dir is gone).
 vendor/wasm_run_flutter/android/.cxx/
 vendor/wasm_run_flutter/android/*.tar.gz
-vendor/wasm_run_flutter/android/src/main/jniLibs/
 
 # AI-machine loop workspace artifacts — regenerated per run; the committed
 # .dmtools/config.js and .dmtools/runners/*.json MUST stay visible, so the

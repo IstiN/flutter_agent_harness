@@ -145,20 +145,17 @@ void main() {
       expect(await timedOut.waitForCode(), isNull);
       expect(sw.elapsed, greaterThan(const Duration(milliseconds: 40)));
       expect(timedOut.callbackUrl, isNull);
-      // The port is released: a bind on the same port succeeds. The
-      // server close is async — retry a few times so a slow CI runner
-      // does not flake on the kernel still holding the socket.
-      final port = Uri.parse(url2).port;
-      HttpServer? rebound;
-      for (var attempt = 0; attempt < 10 && rebound == null; attempt++) {
-        try {
-          rebound = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
-        } on SocketException {
-          await Future<void>.delayed(const Duration(milliseconds: 50));
-        }
-      }
-      expect(rebound, isNotNull, reason: 'port $port still held after close');
-      await rebound!.close();
+      // The timeout closes the socket asynchronously (`unawaited(close())`
+      // in the timer callback), so the release is only observable after
+      // awaiting close() — rebinding any earlier races the release and
+      // flakes under CI load with "the shared flag to bind()" (observed on
+      // the pre-merge validation run).
+      await timedOut.close();
+      // The port is released: a bind on the same port succeeds.
+      await HttpServer.bind(
+        InternetAddress.loopbackIPv4,
+        Uri.parse(url2).port,
+      ).then((s) => s.close());
     });
 
     test('starting again rebinds and closes the previous socket', () async {
