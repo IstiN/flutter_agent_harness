@@ -865,6 +865,10 @@ Object _convertContentBlocks(List<ContentBlock> content) {
   return blocks;
 }
 
+/// The api dialect this adapter serves; a record authored by any other
+/// dialect carries opaque foreign signatures (issue #705 E2).
+const _anthropicMessagesApi = 'anthropic-messages';
+
 List<Map<String, dynamic>> _convertMessages(
   List<Message> messages, {
   Map<String, dynamic>? cacheControl,
@@ -909,6 +913,7 @@ int _convertMessageAt(
     final converted = _convertAssistantMessage(
       message,
       allowEmptySignature: allowEmptySignature,
+      foreignAuthor: message.api != _anthropicMessagesApi,
     );
     if (converted != null) {
       params.add(converted);
@@ -976,14 +981,27 @@ List<Map<String, dynamic>> _convertUserContentBlocks(
 
 /// Converts an [AssistantMessage] to Anthropic format, or returns `null`
 /// when nothing convertible remains (the caller then skips it).
+///
+/// [foreignAuthor] marks a record authored by a different API dialect
+/// (issue #705 E2): its thinking signatures are the other provider's opaque
+/// tokens, which Anthropic rejects with an invalid-signature 400 on every
+/// replay. The signature is treated as absent so the block degrades through
+/// the standard missing-signature path — the same same-provider rule the
+/// Google adapter applies to thought signatures.
 Map<String, dynamic>? _convertAssistantMessage(
   AssistantMessage message, {
   required bool allowEmptySignature,
+  bool foreignAuthor = false,
 }) {
   final blocks = <Map<String, dynamic>>[];
 
   for (final block in message.content) {
-    _addAssistantBlock(blocks, block, allowEmptySignature: allowEmptySignature);
+    _addAssistantBlock(
+      blocks,
+      block,
+      allowEmptySignature: allowEmptySignature,
+      foreignAuthor: foreignAuthor,
+    );
   }
   if (blocks.isEmpty) {
     return null;
@@ -997,6 +1015,7 @@ void _addAssistantBlock(
   List<Map<String, dynamic>> blocks,
   ContentBlock block, {
   required bool allowEmptySignature,
+  bool foreignAuthor = false,
 }) {
   switch (block) {
     case TextContent():
@@ -1008,6 +1027,7 @@ void _addAssistantBlock(
       final converted = _convertThinkingBlock(
         block,
         allowEmptySignature: allowEmptySignature,
+        foreignAuthor: foreignAuthor,
       );
       if (converted != null) {
         blocks.add(converted);
@@ -1030,12 +1050,21 @@ void _addAssistantBlock(
 Map<String, dynamic>? _convertThinkingBlock(
   ThinkingContent block, {
   required bool allowEmptySignature,
+  bool foreignAuthor = false,
 }) {
   // Redacted thinking: pass the opaque payload back as redacted_thinking.
-  if (block.redacted) {
+  // A foreign author's redacted payload is the other provider's encrypted
+  // token — Anthropic cannot verify it, so it degrades like any foreign
+  // signature below.
+  if (block.redacted && !foreignAuthor) {
     return {'type': 'redacted_thinking', 'data': block.thinkingSignature};
   }
-  final signature = block.thinkingSignature;
+  final signature =
+      !foreignAuthor &&
+      block.thinkingSignature != null &&
+      block.thinkingSignature!.trim().isNotEmpty
+      ? block.thinkingSignature
+      : null;
   final hasSignature = signature != null && signature.trim().isNotEmpty;
   if (block.thinking.trim().isEmpty && !hasSignature) {
     return null;
