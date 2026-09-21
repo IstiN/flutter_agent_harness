@@ -22,7 +22,17 @@
 
 * { box-sizing: border-box; }
 
-html { scroll-behavior: smooth; }
+html {
+  scroll-behavior: smooth;
+  /* Anchor-landing clearance under the sticky header (gh-756). main.js
+     re-measures the live header height and overrides this inline; the
+     static value is the no-JS fallback (the wrapped mobile header is
+     taller). */
+  scroll-padding-top: 64px;
+}
+@media (max-width: 640px) {
+  html { scroll-padding-top: 140px; }
+}
 
 body {
   margin: 0;
@@ -120,6 +130,73 @@ a:hover { text-decoration: underline; }
 .nav a { color: var(--dim); font-size: 0.92rem; }
 .nav a:hover { color: var(--text); text-decoration: none; }
 .nav .brand { color: var(--text); }
+
+/* ── Mobile disclosure menu (gh-756) ────────────────────────────────────
+   Below 640px — measured: the 10-link row needs ≤539px, so it fits above
+   640 — the links collapse behind a ☰ toggle (JS only handles Esc /
+   backdrop / focus / aria; open-close itself is CSS via [data-open]).
+   The toggle exists only under html.js AND the 640px breakpoint; the
+   `hidden` attribute keeps it gone with no CSS or no JS (E6: the no-JS
+   fallback is the wrapped-links layout below, never a dead button). */
+.nav-menu { display: contents; }
+.nav-toggle {
+  display: none; /* CSS-gated everywhere; the media query below re-shows it */
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+  background: rgba(148, 163, 184, 0.08);
+  border: 1px solid var(--border-bright);
+  border-radius: 9px;
+  cursor: pointer;
+}
+.nav-toggle:hover { border-color: var(--accent); }
+.nav-toggle .icon-close { display: none; }
+.nav-toggle[aria-expanded="true"] .icon-open { display: none; }
+.nav-toggle[aria-expanded="true"] .icon-close { display: inline; }
+
+@media (max-width: 640px) {
+  html.js .nav-inner { flex-wrap: nowrap; gap: 14px; padding: 12px 18px; }
+  html.js .nav-toggle { display: inline-flex; margin-left: auto; }
+  /* Absolutely positioned under the sticky bar: the bar itself never
+     changes height while the menu is open (AC2). Capped at viewport
+     height so landscape phones keep most of the screen (E2). */
+  html.js .nav-menu {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    flex-direction: column;
+    gap: 12px;
+    padding: 10px 18px 16px;
+    background: rgba(7, 10, 16, 0.96);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(28, 38, 55, 0.7);
+    max-height: calc(100vh - 100%);
+    max-height: calc(100dvh - 100%);
+    overflow-y: auto;
+  }
+  html.js .nav[data-open] .nav-menu { display: flex; }
+  html.js .nav-menu .nav-links,
+  html.js .nav-menu .nav-ext {
+    flex-direction: column;
+    gap: 2px;
+    margin: 0;
+    width: auto;
+    order: 0;
+  }
+  html.js .nav-menu a { display: block; padding: 9px 4px; font-size: 1rem; }
+  /* No-JS fallback (E6): the wrapped rows wrap instead of overflowing. */
+  html:not(.js) .nav-links { flex-wrap: wrap; row-gap: 6px; }
+  /* Long inline code (install commands, one-line snippets) may wrap on
+     phones; desktop keeps nowrap — the row has room up there. */
+  code { white-space: pre-wrap; overflow-wrap: break-word; }
+}
 
 /* ── Layout ──────────────────────────────────────────────────────────── */
 main { display: block; }
@@ -475,7 +552,7 @@ section {
   font-size: 0.88rem;
 }
 .footer p { margin: 0; }
-.footer nav { display: flex; gap: 20px; }
+.footer nav { display: flex; flex-wrap: wrap; gap: 10px 20px; }
 .footer a { color: var(--dim); }
 .footer a:hover { color: var(--text); }
 

@@ -23,6 +23,12 @@
 <link rel="canonical" href="https://fa1.dev/">
 <link rel="icon" href="favicon.svg?v=2" type="image/svg+xml">
 
+<!-- Progressive-enhancement flag for the mobile disclosure menu (gh-756):
+     CSS only collapses the header into the ☰ menu when JS is available;
+     without it the header keeps the wrapped-links layout (E6). Runs before
+     the body renders to avoid any flash. -->
+<script>document.documentElement.classList.add('js');</script>
+
 <!-- Open Graph -->
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Fa">
@@ -201,20 +207,27 @@
       <span class="brand-name">Fa</span>
       <span class="brand-sub">fa1.dev</span>
     </a>
-    <nav class="nav-links" aria-label="Sections">
-      <a href="#demo">Demo</a>
-      <a href="#install">Install</a>
-      <a href="#features">Features</a>
-      <a href="#platforms">Platforms</a>
-      <a href="#addons">Add-ons</a>
-      <a href="./widgets/">Widgets</a>
-      <a href="#byok">BYOK</a>
-      <a href="#faq">FAQ</a>
-    </nav>
-    <nav class="nav-ext" aria-label="Project links">
-      <a href="https://github.com/IstiN/flutter_agent_harness" rel="noopener">GitHub</a>
-      <a href="https://pub.dev/packages/flutter_agent_harness" rel="noopener">pub.dev</a>
-    </nav>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="nav-menu" hidden>
+      <span class="icon-open" aria-hidden="true">☰</span>
+      <span class="icon-close" aria-hidden="true">✕</span>
+      <span class="nav-toggle-text">Menu</span>
+    </button>
+    <div class="nav-menu" id="nav-menu">
+      <nav class="nav-links" aria-label="Sections">
+        <a href="#demo">Demo</a>
+        <a href="#install">Install</a>
+        <a href="#features">Features</a>
+        <a href="#platforms">Platforms</a>
+        <a href="#addons">Add-ons</a>
+        <a href="./widgets/">Widgets</a>
+        <a href="#byok">BYOK</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+      <nav class="nav-ext" aria-label="Project links">
+        <a href="https://github.com/IstiN/flutter_agent_harness" rel="noopener">GitHub</a>
+        <a href="https://pub.dev/packages/flutter_agent_harness" rel="noopener">pub.dev</a>
+      </nav>
+    </div>
   </div>
 </header>
 

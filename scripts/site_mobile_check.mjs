@@ -204,12 +204,17 @@ async function main() {
     const pageR = await ctxR.newPage();
     await pageR.setViewportSize({ width: 360, height: 640 });
     await pageR.goto(`${BASE}/index.html`, { waitUntil: 'load' });
-    await pageR.locator('.nav-toggle').click();
-    await pageR.waitForTimeout(80);
-    ok('E5 reduced-motion: menu opens', (await pageR.locator('.nav-toggle').getAttribute('aria-expanded')) === 'true');
-    await pageR.keyboard.press('Escape');
-    await pageR.waitForTimeout(80);
-    ok('E5 reduced-motion: Esc closes', (await pageR.locator('.nav-toggle').getAttribute('aria-expanded')) === 'false');
+    const rToggle = pageR.locator('.nav-toggle');
+    if (await rToggle.count() === 0) {
+      ok('E5 reduced-motion: menu opens', false, 'no .nav-toggle in DOM');
+    } else {
+      await rToggle.click();
+      await pageR.waitForTimeout(80);
+      ok('E5 reduced-motion: menu opens', (await rToggle.getAttribute('aria-expanded')) === 'true');
+      await pageR.keyboard.press('Escape');
+      await pageR.waitForTimeout(80);
+      ok('E5 reduced-motion: Esc closes', (await rToggle.getAttribute('aria-expanded')) === 'false');
+    }
     await ctxR.close();
 
     // E6: no-JS — wrapped links stay, never a dead button.
