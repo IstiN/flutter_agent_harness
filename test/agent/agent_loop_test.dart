@@ -187,6 +187,43 @@ void main() {
       expect(assistant.errorMessage, contains(contextWindowExhaustedMarker));
       expect(assistant.errorMessage, contains('effective window is 100'));
     });
+    test('IT-W2 (#729): a cap above the catalog window raises the guard '
+        'basis — an over-catalog branch keeps flowing', () async {
+      // The repro: a 200k-catalog model whose endpoint serves ~1M. With
+      // the owner override raised to 1M, a 347k branch (the #729 resume)
+      // no longer trips the guard at the catalog value.
+      final catalog200k = const Model(
+        id: 'glm-catalog',
+        api: 'test-api',
+        provider: 'test-provider',
+        baseUrl: 'https://example.test',
+        contextWindow: 200000,
+        maxTokens: 4096,
+      );
+      final fake = _FakeStreamFunction([_textTurn('ok')]);
+      final prompt = UserMessage.text('x' * 800);
+      final stream = agentLoop(
+        prompts: [prompt],
+        context: const Context(messages: []),
+        config: AgentLoopConfig(
+          model: catalog200k,
+          contextWindowCap: 1000000,
+        ),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
+      );
+
+      final messages = await stream.result as List<dynamic>;
+      // The provider was actually called: no false over-window stop.
+      expect(fake.calls, 1);
+      final assistant = messages.whereType<AssistantMessage>().single;
+      expect(assistant.stopReason, isNot(StopReason.error));
+      expect(
+        assistant.errorMessage,
+        isNull,
+        reason: 'the raised cap must keep the over-catalog branch flowing',
+      );
+    });
     test('the over-window guard counts the system prompt and tool schemas '
         'when no usage anchor covers them', () async {
       final tinyWindow = const Model(

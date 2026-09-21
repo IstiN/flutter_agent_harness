@@ -104,12 +104,14 @@ String? _parseAgentModeValue(Object? value) {
 }
 
 /// Parses the `agent:` section (issues #273/#679/#680):
-/// `contextWindowCap` — the owner-side effective context cap — and
-/// `mode` — the `default|pi|omp` preset label. The cap clamps the
-/// EFFECTIVE context window everywhere it is consumed (compaction
-/// thresholds, the ctx meter/footer, the loop's over-window guard) while
-/// the model keeps its real window. Strict like every section: a bad
-/// schema throws [ConfigException] at boot.
+/// `contextWindowCap` — the owner-side effective context override — and
+/// `mode` — the `default|pi|omp` preset label. The cap SETS the EFFECTIVE
+/// context window everywhere it is consumed (compaction thresholds, the
+/// ctx meter/footer, the loop's over-window guard) while the model keeps
+/// its real window: below the catalog window it clamps down; above it, it
+/// raises the effective window to the served truth (issue #729 — a custom
+/// provider whose catalog entry under-reports). Strict like every section:
+/// a bad schema throws [ConfigException] at boot.
 ///
 /// The cap must stay at or above the compaction reserve (16384 tokens):
 /// the compaction trigger is `window - reserve`, and a smaller cap would
@@ -548,10 +550,12 @@ final class CliConfig {
   /// defaults (registry on, [defaultMaxImagesPerRequest]).
   final ImageRegistryConfig? images;
 
-  /// Owner-side effective context cap from the `agent:` section
-  /// (`contextWindowCap`, issue #273): clamps the EFFECTIVE context window
-  /// everywhere it is consumed (compaction thresholds, ctx meter/footer,
-  /// the loop guard). `null` = uncapped (the raw model window).
+  /// Owner-side effective context override from the `agent:` section
+  /// (`contextWindowCap`, issues #273/#729): sets the EFFECTIVE context
+  /// window everywhere it is consumed (compaction thresholds, ctx
+  /// meter/footer, the loop guard) — clamped down below the catalog
+  /// window, raised above it to the served truth. `null` = uncapped (the
+  /// raw model window).
   final int? contextWindowCap;
 
   /// The parsed harness mode preset (`agent.mode`, issue #679): `'pi'` or
