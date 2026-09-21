@@ -4026,4 +4026,10 @@
 - chore(ci): cache native-assets hook downloads — ride out GitHub release-asset 504s (#768)
 - fix(729): over-window resume — raised-window override + window-bounded compaction payloads (#767)
 
+## 0.1.449
+
+- chore: pin factory b105bfd1bc1d93539b561f1957e6e97466a8fe4a (conflict-rework)
+- chore: pin factory a92d91cd2ceb3787c80982542844d03aa6ade73f (prStatus BLOCKED fix)
+- chore(machine): pin factory to d6c45fb — guest PRs never get a rework arm
+
 ## Unreleased
