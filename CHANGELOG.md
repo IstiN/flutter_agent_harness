@@ -3991,4 +3991,9 @@
 
 - fix(735): TermiosGuard — re-assert raw-mode tty flags after tool phases so Ctrl+S steering survives IXON re-enable (#738)
 
+## 0.1.443
+
+- chore: repin factory to bd763b3 (#474) (#754)
+- chore(coverage): CLI terminal-test baseline 8.0 -> 12.17 (ratchet up)
+
 ## Unreleased
