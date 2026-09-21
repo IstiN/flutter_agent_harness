@@ -3983,4 +3983,8 @@
 - fix(732): pin SBPL last-match-wins ordering — nested rw mounts survive broader later ro denies (#745)
 - feat(734): optional thinkingLevel in FA_PROVIDER_CONFIG + roles chain entries (#744)
 
+## 0.1.440
+
+- feat(cli): pi mode — pi's exact benchmark config (4 tools, bare prompt, token parity) (#689)
+
 ## Unreleased
