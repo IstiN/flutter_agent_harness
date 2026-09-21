@@ -150,6 +150,94 @@ roles:
       expect(result.stderr, contains('unknown provider'));
       expect(result.stdout, contains('fallback reply'));
     });
+
+    test('BLOCKING regression: a persisted catalog NAME (provider: openai) '
+        'boots and completes a turn on its adapter kind', () async {
+      // gh-760 review blocker: the raw saved NAME reaching
+      // providerStreamFunction bricked the boot with
+      // `ConfigException: Unknown provider kind: openai` + crash.log.
+      // The restore must land on the resolved spec's KIND.
+      writeConfig('''
+provider: openai
+model: mock-model
+baseUrl: ${server.baseUrl}
+mode: code
+approvalMode: yolo
+''');
+
+      final result = await runFa('say something');
+
+      expect(result.exitCode, 0, reason: result.output);
+      expect(result.output, isNot(contains('Unknown provider kind')));
+      expect(
+        File('${tempHome.path}/.fah/crash.log').existsSync(),
+        isFalse,
+        reason: result.output,
+      );
+      // The turn completed on the resolved kind (openai-completions) via
+      // the mock endpoint.
+      expect(result.stdout, contains('fallback reply'));
+    });
+
+    test('BLOCKING regression: the name form of the ticket provider '
+        '(provider: chatgpt) no longer bricks the boot', () async {
+      writeConfig('''
+provider: chatgpt
+model: gpt-5-codex
+baseUrl: ${server.baseUrl}
+mode: code
+approvalMode: yolo
+''');
+
+      final result = await runFa(
+        'say something',
+        extraEnv: const {'CHATGPT_OAUTH_CREDENTIALS': 'dummy-creds'},
+      );
+
+      expect(result.output, isNot(contains('Unknown provider kind')));
+      expect(
+        File('${tempHome.path}/.fah/crash.log').existsSync(),
+        isFalse,
+        reason: result.output,
+      );
+    });
+
+    test('folder model state carrying a catalog NAME normalizes to the '
+        'adapter kind instead of bricking the boot', () async {
+      // The state file is CLI-written with kinds, but it lives in the
+      // same shared-config family — a name-carrying file must normalize
+      // (or be ignored with a warning), never leak the raw name into the
+      // stream factory.
+      writeConfig('''
+provider: openai-completions
+model: mock-model
+baseUrl: ${server.baseUrl}
+mode: code
+approvalMode: yolo
+''');
+      final stateDir = Directory(
+        '${tempHome.path}/.fah/sessions/${encodeSessionCwd(workspace.path)}',
+      )..createSync(recursive: true);
+      File('${stateDir.path}/model-state.json').writeAsStringSync(
+        jsonEncode({
+          'providerKind': 'chatgpt',
+          'modelId': 'gpt-5-codex',
+          'baseUrl': null,
+        }),
+      );
+
+      final result = await runFa(
+        'say something',
+        extraEnv: const {'CHATGPT_OAUTH_CREDENTIALS': 'dummy-creds'},
+      );
+
+      expect(result.output, isNot(contains('Unknown provider kind')));
+      expect(
+        File('${tempHome.path}/.fah/crash.log').existsSync(),
+        isFalse,
+        reason: result.output,
+      );
+    });
   });
 }
 
