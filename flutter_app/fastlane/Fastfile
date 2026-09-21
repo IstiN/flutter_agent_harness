@@ -362,9 +362,16 @@ platform :ios do
       increment_build_number(xcodeproj: "ios/Runner.xcodeproj")
     end
 
+    # Issue #726 (run 35564638018): ASC closes a version train once a build
+    # of it was approved (90186) and rejects submissions not higher than the
+    # previously approved version (90062) — with pubspec pinned at 1.0.0 the
+    # daily TestFlight upload can never land again. BUILD_NAME comes from
+    # build-mobile.yml (the derived next-tag version, strictly increasing);
+    # unset = legacy manual flow, keep the pubspec version.
+    build_name_args = ENV["BUILD_NAME"] ? ["--build-name", ENV["BUILD_NAME"]] : []
     sh("xcrun simctl list > /dev/null 2>&1 || true")
     sh("xcrun simctl boot 'iPhone 16' 2>/dev/null || xcrun simctl boot 'iPhone 15' 2>/dev/null || true")
-    sh("flutter", "build", "ios", "--release", "--no-codesign")
+    sh("flutter", "build", "ios", "--release", "--no-codesign", *build_name_args)
 
     build_app(
       workspace: "ios/Runner.xcworkspace",
@@ -420,7 +427,9 @@ platform :ios do
       uses_non_exempt_encryption: false
     )
 
-    verify_external_distribution!(bundle_id: bundle_id, group: group, app_version: store_pubspec_version)
+    # Select the uploaded build by the marketing version it actually ships
+    # (BUILD_NAME when the build lane set it, issue #726; pubspec otherwise).
+    verify_external_distribution!(bundle_id: bundle_id, group: group, app_version: ENV["BUILD_NAME"] || store_pubspec_version)
   end
 
   desc "Submit the version's latest processed TestFlight build to App Store review (release-appstore.yml)"
