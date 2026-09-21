@@ -58,10 +58,7 @@ void main() {
       '● auto-compacted',
       timeout: const Duration(seconds: 60),
     );
-    await harness.waitForText(
-      foldBadge,
-      timeout: const Duration(seconds: 30),
-    );
+    await harness.waitForText(foldBadge, timeout: const Duration(seconds: 30));
 
     // Settled: the badge clears from the status row (the receipt stays).
     await harness.waitForText(
