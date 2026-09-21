@@ -3987,4 +3987,8 @@
 
 - feat(cli): pi mode — pi's exact benchmark config (4 tools, bare prompt, token parity) (#689)
 
+## 0.1.441
+
+- fix(735): TermiosGuard — re-assert raw-mode tty flags after tool phases so Ctrl+S steering survives IXON re-enable (#738)
+
 ## Unreleased
