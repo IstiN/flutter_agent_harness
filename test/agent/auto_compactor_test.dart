@@ -383,48 +383,46 @@ void main() {
     expect(state.messages.length, lessThan(12));
   });
 
-  test(
-    'a transient 5xx failure is retried before the local trim (the '
-    'transient regex is the retry contract, issue #729 AC2 boundary)',
-    () async {
-      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
-      for (var i = 0; i < 12; i++) {
-        await session.appendMessage(UserMessage.text('u$i${'a' * 400}'));
-      }
-      final state = AgentState(
-        model: _model,
-        messages: await session.buildContextMessages(),
+  test('a transient 5xx failure is retried before the local trim (the '
+      'transient regex is the retry contract, issue #729 AC2 boundary)',
+      () async {
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+    for (var i = 0; i < 12; i++) {
+      await session.appendMessage(UserMessage.text('u$i${'a' * 400}'));
+    }
+    final state = AgentState(
+      model: _model,
+      messages: await session.buildContextMessages(),
+    );
+
+    // A bare 5xx with NO overflow wording stays transient-classified:
+    // the retry ladder runs to its cap before the trim takes over.
+    var calls = 0;
+    Future<SummarizationResult> flaky5xx(SummarizationRequest request) async {
+      calls++;
+      throw const CompactionException(
+        'Summarization failed: 502 bad gateway',
       );
+    }
 
-      // A bare 5xx with NO overflow wording stays transient-classified:
-      // the retry ladder runs to its cap before the trim takes over.
-      var calls = 0;
-      Future<SummarizationResult> flaky5xx(SummarizationRequest request) async {
-        calls++;
-        throw const CompactionException(
-          'Summarization failed: 502 bad gateway',
-        );
-      }
+    final hooks = _RecordingHooks();
+    final ok = await AutoCompactor(
+      session: session,
+      state: state,
+      window: 1000,
+      settings: settings,
+      summary: flaky5xx,
+      mainSummary: flaky5xx,
+      smolModel: null,
+      hooks: hooks,
+      baseBackoff: Duration.zero,
+    ).run();
 
-      final hooks = _RecordingHooks();
-      final ok = await AutoCompactor(
-        session: session,
-        state: state,
-        window: 1000,
-        settings: settings,
-        summary: flaky5xx,
-        mainSummary: flaky5xx,
-        smolModel: null,
-        hooks: hooks,
-        baseBackoff: Duration.zero,
-      ).run();
-
-      expect(ok, isTrue, reason: 'the local trim bounds the context');
-      expect(calls, 3); // maxAttempts
-      final pass = hooks.passes.last;
-      expect(pass.fallback, 'local-trim');
-    },
-  );
+    expect(ok, isTrue, reason: 'the local trim bounds the context');
+    expect(calls, 3); // maxAttempts
+    final pass = hooks.passes.last;
+    expect(pass.fallback, 'local-trim');
+  });
 
   test('local trim never leaves an orphaned tool result (Kimi 400 '
       'tool_call_id wedge)', () async {

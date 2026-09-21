@@ -172,7 +172,10 @@ void main() {
       final stream = agentLoop(
         prompts: [prompt],
         context: const Context(messages: []),
-        config: AgentLoopConfig(model: bigWindowModel, contextWindowCap: 100),
+        config: AgentLoopConfig(
+          model: bigWindowModel,
+          contextWindowCap: 100,
+        ),
         streamFunction: fake.call,
         toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
       );
@@ -202,7 +205,10 @@ void main() {
       final stream = agentLoop(
         prompts: [prompt],
         context: const Context(messages: []),
-        config: AgentLoopConfig(model: catalog200k, contextWindowCap: 1000000),
+        config: AgentLoopConfig(
+          model: catalog200k,
+          contextWindowCap: 1000000,
+        ),
         streamFunction: fake.call,
         toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
       );

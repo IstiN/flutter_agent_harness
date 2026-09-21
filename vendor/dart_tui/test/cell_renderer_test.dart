@@ -521,8 +521,7 @@ void main() {
       );
     });
 
-    test('overlay transition onto a shared ambiguous row repaints it whole',
-        () {
+    test('overlay transition onto a shared ambiguous row repaints it whole', () {
       // The /settings → Edit/Delete picker shape: both rows start with ▸
       // and share cells ('t', 'provider') with the old row.
       renderer.render(newView('▸ test-provider'));

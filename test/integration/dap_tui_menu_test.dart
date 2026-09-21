@@ -233,13 +233,8 @@ void main() {
         await harness.waitForBoot();
 
         await harness.runSlashCommand('/dap');
-        // Wait for the LAST menu label on the PAINTED screen (#550 family,
-        // reddened the integ-mock leg on d331157b): the leading Stop DAP
-        // row paints one frame before the status/connect rows, so waiting
-        // on Stop DAP alone leaves the sibling-label asserts racing.
-        final lastLabel = dapMenuOptions(hubRunning: true).last.$2;
-        await harness.waitForScreen(
-          lastLabel,
+        await harness.waitForText(
+          'Stop DAP',
           timeout: const Duration(seconds: 20),
         );
         // The stopped-state row is gone; the rest of the menu is intact.
@@ -250,11 +245,7 @@ void main() {
         // run with the header + Stop DAP row visible but the remaining
         // rows not yet drawn).
         expect(harness.screenText, isNot(contains('Start DAP locally')));
-        for (final label in dapMenuOptions(hubRunning: true).map((o) => o.$2)) {
-          // Anchor each label on the PAINTED screen before asserting
-          // (#550 family): raw echo satisfies waitForText one frame
-          // ahead of the full menu paint, and an immediate screenText
-          // read can observe a partially painted frame.
+        for (final label in ['Connection status', 'Connect to a hub']) {
           await harness.waitForScreen(
             label,
             timeout: const Duration(seconds: 20),

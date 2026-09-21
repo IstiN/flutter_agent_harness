@@ -360,7 +360,6 @@ bool isSyntheticUserText(String text) =>
     _systemNoticePattern.hasMatch(text) ||
     _branchSummaryPattern.hasMatch(text) ||
     _agentMailPattern.hasMatch(text);
-
 /// Flattens a user-message content (plain text or content blocks) to text.
 String _userMessageText(Object content) {
   if (content is String) return content;
@@ -522,10 +521,8 @@ bool shouldCompact(
 /// summarize into. Every compaction request's estimated payload must stay
 /// at or under this — the invariant asserted in tests on the recorded
 /// outbound prompts.
-int summarizationPayloadBudget(
-  int summarizerWindow,
-  CompactionSettings settings,
-) => max(summarizerWindow - settings.reserveTokens, summarizerWindow ~/ 2);
+int summarizationPayloadBudget(int summarizerWindow, CompactionSettings settings) =>
+    max(summarizerWindow - settings.reserveTokens, summarizerWindow ~/ 2);
 
 /// Splits [messages] into consecutive chunks whose serialized conversation
 /// text estimates under [budgetTokens] (issue #729). Order is preserved and
@@ -980,10 +977,8 @@ String truncateForSummaryBudget(
   required int budgetTokens,
   required int envelopeChars,
 }) {
-  final maxChars = max(
-    budgetTokens * 4 - envelopeChars - _truncateNoteChars,
-    1024,
-  );
+  final maxChars =
+      max(budgetTokens * 4 - envelopeChars - _truncateNoteChars, 1024);
   return _truncateForSummary(conversation, maxChars);
 }
 
@@ -992,7 +987,8 @@ int _summaryEnvelopeChars({
   required String? prior,
   required String instructions,
 }) {
-  final prompt = StringBuffer()..write('<conversation>\n\n</conversation>\n\n');
+  final prompt = StringBuffer()
+    ..write('<conversation>\n\n</conversation>\n\n');
   if (candidates != null) {
     prompt
       ..write(candidates)

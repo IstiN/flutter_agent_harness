@@ -542,7 +542,9 @@ void main() {
         ToolResultMessage(
           toolCallId: 'call_42',
           toolName: 'bash',
-          content: const [ImageContent(data: 'aGk=', mimeType: 'image/png')],
+          content: const [
+            ImageContent(data: 'aGk=', mimeType: 'image/png'),
+          ],
           isError: false,
           timestamp: DateTime.utc(2026),
         ),
@@ -552,115 +554,125 @@ void main() {
       ],
     );
 
-    test('gemini-authored history switches to responses without a 400 and '
-        're-shapes tool calls to top-level items', () async {
-      Map<String, dynamic>? sentBody;
-      final client = http_testing.MockClient.streaming((
-        request,
-        requestBody,
-      ) async {
-        sentBody =
+    test(
+      'gemini-authored history switches to responses without a 400 and '
+      're-shapes tool calls to top-level items',
+      () async {
+        Map<String, dynamic>? sentBody;
+        final client = http_testing.MockClient.streaming((
+          request,
+          requestBody,
+        ) async {
+          sentBody =
+              jsonDecode(await requestBody.bytesToString())
+                  as Map<String, dynamic>;
+          return sseResponse(
+            sseChunk({
+              'type': 'response.completed',
+              'response': {'id': 'r', 'model': 'gpt-5-codex'},
+            }),
+          );
+        });
+
+        final events = await streamChatGptCodex(
+          visionModel,
+          switchedHistory(),
+          credentials: credentials.encode(),
+          client: client,
+        ).toList();
+
+        // The switch turn completes; no provider 400.
+        expect(events.last, isA<DoneEvent>());
+
+        final input = (sentBody!['input'] as List).cast<Map<String, dynamic>>();
+        // user → gemini assistant(text+call) → function_call → output.
+        expect(input, hasLength(4));
+        expect(
+          (input[1]['content'] as List).single,
+          containsPair('type', 'output_text'),
+        );
+        final toolCall = input[2];
+        expect(toolCall['type'], 'function_call');
+        expect(toolCall['call_id'], 'call_42');
+        expect(toolCall['name'], 'bash');
+        // The thinking block rides no wire slot (dropped, not nested).
+        expect(
+          input.every(
+            (item) =>
+                item['type'] != 'message' ||
+                (item['content'] as List).every(
+                  (part) => (part as Map)['type'] != 'thinking',
+                ),
+          ),
+          isTrue,
+        );
+        // Thinking-only assistant record: skipped, not an empty message.
+        expect(
+          input.any((item) => item['role'] == 'assistant' &&
+              (item['content'] as List).isEmpty),
+          isFalse,
+        );
+        expect(firstResponsesGrammarViolation(input), isNull);
+      },
+    );
+
+    test(
+      'image-only tool result degrades to the named note and the following '
+      'turn also succeeds',
+      () async {
+        final bodies = <Map<String, dynamic>>[];
+        final client = http_testing.MockClient.streaming((
+          request,
+          requestBody,
+        ) async {
+          bodies.add(
             jsonDecode(await requestBody.bytesToString())
-                as Map<String, dynamic>;
-        return sseResponse(
-          sseChunk({
-            'type': 'response.completed',
-            'response': {'id': 'r', 'model': 'gpt-5-codex'},
-          }),
+                as Map<String, dynamic>,
+          );
+          return sseResponse(
+            sseChunk({
+              'type': 'response.completed',
+              'response': {'id': 'r', 'model': 'gpt-5-codex'},
+            }),
+          );
+        });
+
+        final first = await streamChatGptCodex(
+          visionModel,
+          switchedHistory(),
+          credentials: credentials.encode(),
+          client: client,
+        ).toList();
+        expect(first.last, isA<DoneEvent>());
+
+        final output = (((bodies[0]['input'] as List)[3])
+            as Map<String, dynamic>)['output'] as List;
+        expect(
+          (output.single as Map)['text'],
+          responsesOmittedToolResultNote,
         );
-      });
 
-      final events = await streamChatGptCodex(
-        visionModel,
-        switchedHistory(),
-        credentials: credentials.encode(),
-        client: client,
-      ).toList();
-
-      // The switch turn completes; no provider 400.
-      expect(events.last, isA<DoneEvent>());
-
-      final input = (sentBody!['input'] as List).cast<Map<String, dynamic>>();
-      // user → gemini assistant(text+call) → function_call → output.
-      expect(input, hasLength(4));
-      expect(
-        (input[1]['content'] as List).single,
-        containsPair('type', 'output_text'),
-      );
-      final toolCall = input[2];
-      expect(toolCall['type'], 'function_call');
-      expect(toolCall['call_id'], 'call_42');
-      expect(toolCall['name'], 'bash');
-      // The thinking block rides no wire slot (dropped, not nested).
-      expect(
-        input.every(
-          (item) =>
-              item['type'] != 'message' ||
-              (item['content'] as List).every(
-                (part) => (part as Map)['type'] != 'thinking',
-              ),
-        ),
-        isTrue,
-      );
-      // Thinking-only assistant record: skipped, not an empty message.
-      expect(
-        input.any(
-          (item) =>
-              item['role'] == 'assistant' && (item['content'] as List).isEmpty,
-        ),
-        isFalse,
-      );
-      expect(firstResponsesGrammarViolation(input), isNull);
-    });
-
-    test('image-only tool result degrades to the named note and the following '
-        'turn also succeeds', () async {
-      final bodies = <Map<String, dynamic>>[];
-      final client = http_testing.MockClient.streaming((
-        request,
-        requestBody,
-      ) async {
-        bodies.add(
-          jsonDecode(await requestBody.bytesToString()) as Map<String, dynamic>,
+        // The FOLLOWING turn (history + the first turn's answer) succeeds
+        // too — the degraded record never re-poisons the session.
+        final answer = (first.last as DoneEvent).message;
+        final secondContext = Context(
+          messages: [
+            ...switchedHistory().messages,
+            answer,
+          ],
         );
-        return sseResponse(
-          sseChunk({
-            'type': 'response.completed',
-            'response': {'id': 'r', 'model': 'gpt-5-codex'},
-          }),
-        );
-      });
-
-      final first = await streamChatGptCodex(
-        visionModel,
-        switchedHistory(),
-        credentials: credentials.encode(),
-        client: client,
-      ).toList();
-      expect(first.last, isA<DoneEvent>());
-
-      final output =
-          (((bodies[0]['input'] as List)[3]) as Map<String, dynamic>)['output']
-              as List;
-      expect((output.single as Map)['text'], responsesOmittedToolResultNote);
-
-      // The FOLLOWING turn (history + the first turn's answer) succeeds
-      // too — the degraded record never re-poisons the session.
-      final answer = (first.last as DoneEvent).message;
-      final secondContext = Context(
-        messages: [...switchedHistory().messages, answer],
-      );
-      final second = await streamChatGptCodex(
-        visionModel,
-        secondContext,
-        credentials: credentials.encode(),
-        client: client,
-      ).toList();
-      expect(second.last, isA<DoneEvent>());
-      final secondInput = (bodies[1]['input'] as List)
-          .cast<Map<String, dynamic>>();
-      expect(firstResponsesGrammarViolation(secondInput), isNull);
-    });
+        final second = await streamChatGptCodex(
+          visionModel,
+          secondContext,
+          credentials: credentials.encode(),
+          client: client,
+        ).toList();
+        expect(second.last, isA<DoneEvent>());
+        final secondInput =
+            (bodies[1]['input'] as List).cast<Map<String, dynamic>>();
+        expect(firstResponsesGrammarViolation(secondInput), isNull);
+      },
+    );
 
     test('converter matrix: google/anthropic/completions records convert to '
         'grammar-valid responses items', () {
@@ -670,7 +682,10 @@ void main() {
       final histories = {
         'google-generative-ai': [
           geminiAssistant([
-            const ThinkingContent(thinking: 'hmm', thinkingSignature: 'c2ln'),
+            const ThinkingContent(
+              thinking: 'hmm',
+              thinkingSignature: 'c2ln',
+            ),
             ToolCall(
               id: 'gemini-2.5:fc1',
               name: 'bash',
@@ -736,10 +751,11 @@ void main() {
           );
         }
         expect(
-          firstResponsesGrammarViolation(input.cast<Map<String, dynamic>>()),
+          firstResponsesGrammarViolation(
+            input.cast<Map<String, dynamic>>(),
+          ),
           isNull,
-          reason:
-              'history authored by $api must convert to valid responses '
+          reason: 'history authored by $api must convert to valid responses '
               'items',
         );
       });
@@ -806,7 +822,10 @@ void main() {
           firstResponsesGrammarViolation([item]);
 
       expect(
-        violation({'role': 'assistant', 'content': 'not-a-list'}),
+        violation({
+          'role': 'assistant',
+          'content': 'not-a-list',
+        }),
         contains('content is not a list'),
       );
       expect(

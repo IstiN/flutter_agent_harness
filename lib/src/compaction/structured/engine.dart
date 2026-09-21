@@ -697,14 +697,8 @@ final class StructuredCompactor {
         if (record.message.role == 'user') record.message: record.id,
     };
     List<String> asksFor(List<Message> chunk) => userRequestCandidateLines(
-      [
-        for (final m in chunk)
-          if (askIdOf.containsKey(m)) m,
-      ],
-      recordIds: [
-        for (final m in chunk)
-          if (askIdOf.containsKey(m)) askIdOf[m]!,
-      ],
+      [for (final m in chunk) if (askIdOf.containsKey(m)) m],
+      recordIds: [for (final m in chunk) if (askIdOf.containsKey(m)) askIdOf[m]!],
     );
 
     String build(String conversation, List<String> asks, String? priorFold) {
@@ -767,12 +761,8 @@ final class StructuredCompactor {
   /// summary. A summarizer failure mid-fold is failure-safe (`null`).
   Future<String?> _chunkedFold(
     List<Message> messages, {
-    required String Function(
-      String conversation,
-      List<String> asks,
-      String? priorFold,
-    )
-    build,
+    required String Function(String conversation, List<String> asks,
+        String? priorFold) build,
     required List<String> Function(List<Message> chunk) asksFor,
     required int budget,
   }) async {
@@ -791,11 +781,7 @@ final class StructuredCompactor {
         envelopeChars: envelopeChars,
       );
       final text = await _callSummarizer(
-        build(
-          conversation,
-          asksFor(chunk),
-          priorFold.isEmpty ? null : priorFold,
-        ),
+        build(conversation, asksFor(chunk), priorFold.isEmpty ? null : priorFold),
       );
       if (text == null) return null;
       priorFold = text;
@@ -809,7 +795,10 @@ final class StructuredCompactor {
     try {
       final result =
           await summarize(
-            SummarizationRequest(prompt: prompt, cancelToken: _effectiveToken),
+            SummarizationRequest(
+              prompt: prompt,
+              cancelToken: _effectiveToken,
+            ),
           ).timeout(
             attemptBudget,
             onTimeout: () {

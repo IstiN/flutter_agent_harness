@@ -73,7 +73,6 @@ final class AutoCompactorPass {
   /// The summary text the pass wrote (from the compaction record); `null`
   /// for failed / no-work / local-trim passes.
   final String? summary;
-
   /// Session records hidden behind the compaction boundary.
   final int hiddenRecords;
 

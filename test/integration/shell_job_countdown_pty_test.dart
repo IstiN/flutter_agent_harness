@@ -64,122 +64,125 @@ final _liveBoard = RegExp(r'Background jobs \(10\) · (\d+) running');
 final _stuckRunning = RegExp(r'[1-9]\d* running');
 
 void main() {
-  test('ten background bash jobs start, count down on camera, drain to '
-      '0 running (#573 review)', () async {
-    final home = await Directory.systemTemp.createTemp('fa_573_home_');
-    final project = await Directory.systemTemp.createTemp('fa_573_proj_');
-    addTearDown(() => home.delete(recursive: true));
-    addTearDown(() => project.delete(recursive: true));
-    final turnsFile = File('${home.path}/fa_573_turns.json')
-      ..writeAsStringSync(jsonEncode(_turns));
+  test(
+    'ten background bash jobs start, count down on camera, drain to '
+    '0 running (#573 review)',
+    () async {
+      final home = await Directory.systemTemp.createTemp('fa_573_home_');
+      final project = await Directory.systemTemp.createTemp('fa_573_proj_');
+      addTearDown(() => home.delete(recursive: true));
+      addTearDown(() => project.delete(recursive: true));
+      final turnsFile = File('${home.path}/fa_573_turns.json')
+        ..writeAsStringSync(jsonEncode(_turns));
 
-    final harness = await FaCliHarness.spawn(
-      workingDirectory: project.path,
-      extraEnv: {
-        'HOME': home.path,
-        'FA_TEST_STREAM_SCRIPT': turnsFile.path,
-        'FA_PROVIDER_TYPE': 'openai',
-        'FA_PROVIDER_CONFIG': jsonEncode({
-          'baseUrl': 'http://127.0.0.1:9', // never dialed — the script
-          'model': 'pty-scripted',
-        }),
-      },
-      args: ['--session', 'pty573-countdown'],
-      columns: 80,
-      rows: 24,
-    );
-    addTearDown(harness.close);
-    await harness.waitForBoot();
+      final harness = await FaCliHarness.spawn(
+        workingDirectory: project.path,
+        extraEnv: {
+          'HOME': home.path,
+          'FA_TEST_STREAM_SCRIPT': turnsFile.path,
+          'FA_PROVIDER_TYPE': 'openai',
+          'FA_PROVIDER_CONFIG': jsonEncode({
+            'baseUrl': 'http://127.0.0.1:9', // never dialed — the script
+            'model': 'pty-scripted',
+          }),
+        },
+        args: ['--session', 'pty573-countdown'],
+        columns: 80,
+        rows: 24,
+      );
+      addTearDown(harness.close);
+      await harness.waitForBoot();
 
-    // ── all ten START: the live board peaks at `10 running` ───────────
-    harness.sendText('run the countdown');
-    harness.sendEnter();
-    await harness.waitForScreen(
-      _allRunning,
-      timeout: const Duration(seconds: 60),
-    );
-    await harness.waitForOutput(settleMs: 200);
-    final peak = harness.viewportLines;
-    expectComposerReserved(peak, 80);
-    _writeShot(harness, '300_shell_job_countdown_10_running');
+      // ── all ten START: the live board peaks at `10 running` ───────────
+      harness.sendText('run the countdown');
+      harness.sendEnter();
+      await harness.waitForScreen(
+        _allRunning,
+        timeout: const Duration(seconds: 60),
+      );
+      await harness.waitForOutput(settleMs: 200);
+      final peak = harness.viewportLines;
+      expectComposerReserved(peak, 80);
+      _writeShot(harness, '300_shell_job_countdown_10_running');
 
-    // ── MID-FLIGHT SCREEN: the count strictly between 10 and 0 ────────
-    final deadline = DateTime.now().add(const Duration(seconds: 60));
-    int? mid;
-    while (DateTime.now().isBefore(deadline)) {
-      final match = _liveBoard.firstMatch(harness.screenText);
-      final count = match == null ? null : int.parse(match.group(1)!);
-      if (count != null && count >= 1 && count <= 9) {
-        mid = count;
-        break;
+      // ── MID-FLIGHT SCREEN: the count strictly between 10 and 0 ────────
+      final deadline = DateTime.now().add(const Duration(seconds: 60));
+      int? mid;
+      while (DateTime.now().isBefore(deadline)) {
+        final match = _liveBoard.firstMatch(harness.screenText);
+        final count = match == null ? null : int.parse(match.group(1)!);
+        if (count != null && count >= 1 && count <= 9) {
+          mid = count;
+          break;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 50));
       }
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-    }
-    expect(
-      mid,
-      isNotNull,
-      reason:
-          'the board must be photographed mid-countdown — every '
-          'frame showed 10 or 0 running:\n${harness.screenText}',
-    );
-    await harness.waitForOutput(settleMs: 200);
-    expectComposerReserved(harness.viewportLines, 80);
-    _writeShot(harness, '301_shell_job_countdown_mid_$mid');
+      expect(
+        mid,
+        isNotNull,
+        reason: 'the board must be photographed mid-countdown — every '
+            'frame showed 10 or 0 running:\n${harness.screenText}',
+      );
+      await harness.waitForOutput(settleMs: 200);
+      expectComposerReserved(harness.viewportLines, 80);
+      _writeShot(harness, '301_shell_job_countdown_mid_$mid');
 
-    // ── all ten FINISH: one settle notice per job, exactly ────────────
-    final drained = await harness.waitForOutput(
-      settleMs: 500,
-      timeout: const Duration(seconds: 60),
-    );
-    // Frame repaints re-emit notices into the raw stream — the start/
-    // finish proof is the set of DISTINCT settled job numbers, not the
-    // raw match count. Match on the NUMBER PREFIX, never the full id:
-    // a repaint can interleave cursor-move escapes mid-id (observed
-    // under CI load: `sh-10-…xqo<esc>[11;29H5<esc>[11;31H exited(0)`),
-    // and a fragmented re-emit would otherwise inflate the distinct-id
-    // set with a corrupt entry. The number is the first token written,
-    // so it survives any such fragmentation.
-    final settledNumbers = _settleNotice
-        .allMatches(drained)
-        .map((m) => m.group(1)!.split('-').first)
-        .toSet();
-    expect(
-      settledNumbers,
-      {for (var i = 1; i <= 10; i++) '$i'},
-      reason:
-          'ten background bash commands must start and finish: '
-          '$settledNumbers',
-    );
+      // ── all ten FINISH: one settle notice per job, exactly ────────────
+      final drained = await harness.waitForOutput(
+        settleMs: 500,
+        timeout: const Duration(seconds: 60),
+      );
+      // Frame repaints re-emit notices into the raw stream — the start/
+      // finish proof is the set of DISTINCT settled job numbers, not the
+      // raw match count. Match on the NUMBER PREFIX, never the full id:
+      // a repaint can interleave cursor-move escapes mid-id (observed
+      // under CI load: `sh-10-…xqo<esc>[11;29H5<esc>[11;31H exited(0)`),
+      // and a fragmented re-emit would otherwise inflate the distinct-id
+      // set with a corrupt entry. The number is the first token written,
+      // so it survives any such fragmentation.
+      final settledNumbers = _settleNotice
+          .allMatches(drained)
+          .map((m) => m.group(1)!.split('-').first)
+          .toSet();
+      expect(
+        settledNumbers,
+        {for (var i = 1; i <= 10; i++) '$i'},
+        reason:
+            'ten background bash commands must start and finish: '
+            '$settledNumbers',
+      );
 
-    // ── THE DRAIN: `0 running`, one terminal card, no live row ────────
-    await harness.waitForScreen(
-      '0 running',
-      timeout: const Duration(seconds: 30),
-    );
-    await harness.waitForOutput(settleMs: 300);
-    final after = harness.viewportLines;
-    expectComposerReserved(after, 80);
-    _writeShot(harness, '302_shell_job_countdown_0_running');
-    final screen = after.join('\n');
-    expect(
-      screen,
-      contains('Background jobs (10) · 0 running · 10 done · 0 lost'),
-      reason:
-          'the settled collapsed turn hands ONE terminal summary '
-          'card to the transcript, drained:\n$screen',
-    );
-    expect(
-      _stuckRunning.allMatches(screen),
-      isEmpty,
-      reason: 'no live job remains — the count drained to zero:\n$screen',
-    );
+      // ── THE DRAIN: `0 running`, one terminal card, no live row ────────
+      await harness.waitForScreen(
+        '0 running',
+        timeout: const Duration(seconds: 30),
+      );
+      await harness.waitForOutput(settleMs: 300);
+      final after = harness.viewportLines;
+      expectComposerReserved(after, 80);
+      _writeShot(harness, '302_shell_job_countdown_0_running');
+      final screen = after.join('\n');
+      expect(
+        screen,
+        contains(
+          'Background jobs (10) · 0 running · 10 done · 0 lost',
+        ),
+        reason: 'the settled collapsed turn hands ONE terminal summary '
+            'card to the transcript, drained:\n$screen',
+      );
+      expect(
+        _stuckRunning.allMatches(screen),
+        isEmpty,
+        reason: 'no live job remains — the count drained to zero:\n$screen',
+      );
 
-    await harness.runSlashCommand('/exit');
-    await harness.pty.exitCode.timeout(
-      const Duration(seconds: 15),
-      onTimeout: () => -1,
-    );
-  });
+      await harness.runSlashCommand('/exit');
+      await harness.pty.exitCode.timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => -1,
+      );
+    },
+  );
 }
 
 /// The composer's reserved bottom rows: the full-width rule directly above

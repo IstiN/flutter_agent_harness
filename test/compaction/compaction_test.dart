@@ -136,17 +136,20 @@ void main() {
       expect(effectiveContextWindow(100000, 0), 100000);
     });
 
-    test('UT-W1: a cap above the catalog window RAISES the effective window '
-        '(issue #729)', () {
-      // The repro: a glm endpoint serving ~1M under a 200k catalog id —
-      // the owner override raises the meter/threshold/guard basis to the
-      // served truth instead of falsely overflowing at 200k.
-      expect(effectiveContextWindow(200000, 1000000), 1000000);
-      expect(effectiveContextWindow(200000, 200001), 200001);
-      // The raise composes with the clamp-down: the override wins in
-      // whichever direction it points.
-      expect(effectiveContextWindow(200000, 16384), 16384);
-    });
+    test(
+      'UT-W1: a cap above the catalog window RAISES the effective window '
+      '(issue #729)',
+      () {
+        // The repro: a glm endpoint serving ~1M under a 200k catalog id —
+        // the owner override raises the meter/threshold/guard basis to the
+        // served truth instead of falsely overflowing at 200k.
+        expect(effectiveContextWindow(200000, 1000000), 1000000);
+        expect(effectiveContextWindow(200000, 200001), 200001);
+        // The raise composes with the clamp-down: the override wins in
+        // whichever direction it points.
+        expect(effectiveContextWindow(200000, 16384), 16384);
+      },
+    );
 
     test('UT-W1: the raise feeds the compaction threshold and trigger', () {
       // At the raised basis a 347k-token branch is UNDER the trigger; at
@@ -155,7 +158,11 @@ void main() {
       final raised = effectiveContextWindow(200000, 1000000);
       final raw = effectiveContextWindow(200000, null);
       expect(
-        shouldCompact(347000, raised, CompactionSettings.forWindow(raised)),
+        shouldCompact(
+          347000,
+          raised,
+          CompactionSettings.forWindow(raised),
+        ),
         isFalse,
       );
       expect(
@@ -201,7 +208,6 @@ void main() {
         prompts.add(request.prompt);
         return SummarizationResult.success(text);
       }
-
       return (call: call, prompts: prompts);
     }
 
@@ -225,7 +231,10 @@ void main() {
       }
       // Order preserved, nothing lost: the flatten of the chunks is the
       // original sequence, message for message.
-      expect([for (final chunk in chunks) ...chunk], equals(messages));
+      expect(
+        [for (final chunk in chunks) ...chunk],
+        equals(messages),
+      );
     });
 
     test('UT-C1: a single message bigger than the budget is one chunk', () {
@@ -251,91 +260,95 @@ void main() {
       );
     });
 
-    test('IT-C1: an over-budget region is summarized chunk-wise; every '
-        'outbound prompt stays under the payload budget', () async {
-      final fake = recorder('FOLD');
-      final messages = [for (var i = 0; i < 347; i++) fat('u$i-')];
-
-      final summary = await generateSummary(
-        messages,
-        summarize: fake.call,
-        maxPromptTokens: budget,
-      );
-
-      expect(summary, 'FOLD');
-      expect(fake.prompts, hasLength(greaterThan(1)));
-      // The #729 invariant: every recorded outbound prompt fits the
-      // summarizer's window minus the reserve.
-      for (final prompt in fake.prompts) {
-        expect(
-          estimateStringTokens(prompt),
-          lessThanOrEqualTo(budget),
-          reason: 'outbound payload exceeded the budget',
-        );
-      }
-      // The fold: chunk 0 uses the summary prompt, later chunks the
-      // update prompt threading the running summary.
-      expect(fake.prompts.first, isNot(contains('<previous-checkpoint>')));
-      for (var i = 1; i < fake.prompts.length; i++) {
-        expect(fake.prompts[i], contains('<previous-checkpoint>'));
-      }
-    });
-
     test(
-      'under-budget payloads ride the legacy prompt byte-identically',
+      'IT-C1: an over-budget region is summarized chunk-wise; every '
+      'outbound prompt stays under the payload budget',
       () async {
-        final fake = recorder('S');
-        final legacy = <String>[];
-        final messages = [fat('u1'), fat('u2')];
+        final fake = recorder('FOLD');
+        final messages = [for (var i = 0; i < 347; i++) fat('u$i-')];
 
-        final bounded = await generateSummary(
+        final summary = await generateSummary(
           messages,
           summarize: fake.call,
           maxPromptTokens: budget,
         );
-        final unbounded = await generateSummary(
-          messages,
-          summarize: (request) async {
-            legacy.add(request.prompt);
-            return SummarizationResult.success('S');
-          },
-        );
 
-        expect(fake.prompts, hasLength(1)); // one call, no chunking
-        expect(legacy.single, fake.prompts.single);
-        expect(bounded, 'S');
-        expect(unbounded, 'S');
+        expect(summary, 'FOLD');
+        expect(fake.prompts, hasLength(greaterThan(1)));
+        // The #729 invariant: every recorded outbound prompt fits the
+        // summarizer's window minus the reserve.
+        for (final prompt in fake.prompts) {
+          expect(
+            estimateStringTokens(prompt),
+            lessThanOrEqualTo(budget),
+            reason: 'outbound payload exceeded the budget',
+          );
+        }
+        // The fold: chunk 0 uses the summary prompt, later chunks the
+        // update prompt threading the running summary.
+        expect(fake.prompts.first, isNot(contains('<previous-checkpoint>')));
+        for (var i = 1; i < fake.prompts.length; i++) {
+          expect(fake.prompts[i], contains('<previous-checkpoint>'));
+        }
       },
     );
 
-    test('a single message bigger than the whole budget is truncated with an '
-        'explicit note, and the prompt still fits', () async {
+    test('under-budget payloads ride the legacy prompt byte-identically',
+        () async {
       final fake = recorder('S');
-      // A giant ASSISTANT message: no candidate line (#81 keeps user
-      // asks uncapped), so the fit helper is what bounds the payload.
-      final giant = AssistantMessage(
-        content: [TextContent(text: 'g' * (budget * 4 + 8000))],
-        api: 'openai-completions',
-        provider: 'openrouter',
-        model: 'm1',
-        usage: Usage.zero,
-        stopReason: StopReason.stop,
-        timestamp: DateTime.utc(2026),
-      );
+      final legacy = <String>[];
+      final messages = [fat('u1'), fat('u2')];
 
-      final summary = await generateSummary(
-        [giant],
+      final bounded = await generateSummary(
+        messages,
         summarize: fake.call,
         maxPromptTokens: budget,
       );
-
-      expect(summary, 'S');
-      expect(
-        estimateStringTokens(fake.prompts.single),
-        lessThanOrEqualTo(budget),
+      final unbounded = await generateSummary(
+        messages,
+        summarize: (request) async {
+          legacy.add(request.prompt);
+          return SummarizationResult.success('S');
+        },
       );
-      expect(fake.prompts.single, contains('more characters truncated'));
+
+      expect(fake.prompts, hasLength(1)); // one call, no chunking
+      expect(legacy.single, fake.prompts.single);
+      expect(bounded, 'S');
+      expect(unbounded, 'S');
     });
+
+    test(
+      'a single message bigger than the whole budget is truncated with an '
+      'explicit note, and the prompt still fits',
+      () async {
+        final fake = recorder('S');
+        // A giant ASSISTANT message: no candidate line (#81 keeps user
+        // asks uncapped), so the fit helper is what bounds the payload.
+        final giant = AssistantMessage(
+          content: [TextContent(text: 'g' * (budget * 4 + 8000))],
+          api: 'openai-completions',
+          provider: 'openrouter',
+          model: 'm1',
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.utc(2026),
+        );
+
+        final summary = await generateSummary(
+          [giant],
+          summarize: fake.call,
+          maxPromptTokens: budget,
+        );
+
+        expect(summary, 'S');
+        expect(
+          estimateStringTokens(fake.prompts.single),
+          lessThanOrEqualTo(budget),
+        );
+        expect(fake.prompts.single, contains('more characters truncated'));
+      },
+    );
   });
 
   group('findCutPoint', () {
