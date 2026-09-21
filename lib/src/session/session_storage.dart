@@ -216,6 +216,62 @@ SessionHeader parseSessionHeaderLine(String line, String filePath) {
   }
 }
 
+/// Header-only decode for giant `custom` records (issue #503 round 3b).
+///
+/// The resume boundary walk crosses hundreds of `model_request_summary`
+/// ledger payloads (~0.75 MB each) that count ZERO context tokens; a full
+/// jsonDecode + isolate transfer per record dominated the walk. The
+/// canonical writer order is `type,id,parentId,timestamp,customType,data`,
+/// so when the line is huge and starts as a `custom` record we decode only
+/// the prefix up to `,"data":` and stub `data` to null. Any deviation —
+/// foreign field order, missing data key, malformed prefix — falls back
+/// (returns null) so the caller does a full decode. `custom_message`
+/// records project into context and are NEVER shallow-parsed (their type
+/// string differs, so the prefix test already excludes them).
+SessionRecord? parseShallowCustomRecord(String line) {
+  if (line.length < shallowCustomRecordThreshold) return null;
+  if (!line.startsWith('{"type":"custom"')) return null;
+  final header = shallowCustomHeader(line);
+  if (header == null) return null;
+  try {
+    final decoded = jsonDecode(header);
+    if (decoded is! Map<String, dynamic>) return null;
+    if (decoded['type'] != 'custom') return null;
+    if (decoded['id'] is! String) return null;
+    if (decoded['timestamp'] is! String) return null;
+    if (decoded['customType'] is! String) return null;
+    return CustomRecord(
+      id: decoded['id'] as String,
+      parentId: decoded['parentId'] as String?,
+      timestamp: DateTime.parse(decoded['timestamp'] as String),
+      customType: decoded['customType'] as String,
+      data: null,
+    );
+  } on Object {
+    return null; // malformed prefix — the caller falls back to full decode
+  }
+}
+
+/// Size gate for the shallow custom path (64 KiB) — smaller lines decode
+/// whole, the header extraction is not worth it.
+const shallowCustomRecordThreshold = 64 << 10;
+
+/// Extracts the JSON header (everything up to `,"data":`) of a giant
+/// `custom` record line as a parseable JSON object with `data` omitted —
+/// or null when the line does not match the canonical writer order
+/// (`customType` must precede `data`). Pre-truncating with this BEFORE the
+/// batch parse keeps the ~0.75 MB payloads out of the isolate transfer
+/// entirely (issue #503 round 3b): the truncated header decodes as a
+/// [CustomRecord] with `data: null` through the normal path.
+String? shallowCustomHeader(String line) {
+  final dataIndex = line.indexOf(',"data":');
+  if (dataIndex < 0) return null;
+  // Canonical writer order has customType before data; a foreign order
+  // (data first) must keep the full line so no field is lost.
+  if (!line.substring(0, dataIndex).contains(',"customType":')) return null;
+  return '${line.substring(0, dataIndex)}}';
+}
+
 /// Parses one JSONL entry line into its [SessionRecord].
 ///
 /// Public for the windowed reader (`session_chunk_reader.dart`). Throws
@@ -352,7 +408,7 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     SessionTimingLogger? timingLog,
   }) async {
     final sw = Stopwatch()..start();
-  final storage = await withSessionFileLock(
+    final storage = await withSessionFileLock(
       filePath,
       () => _openLocked(fs, filePath, parseExecutor, ioRetry, timingLog),
     );

@@ -22,6 +22,7 @@ library;
 
 import 'dart:convert';
 
+import '../compaction/token_estimation.dart';
 import '../env/execution_env.dart';
 import '../exceptions.dart';
 import '../env/session_parse_executor.dart';
@@ -306,9 +307,19 @@ final class WindowedSessionStorage
   /// `false` only on [maxPages] exhaustion (the caller's documented
   /// full-open fallback). A session without a match pages everything —
   /// the whole chain is then resident and the walk reports `true`.
+  ///
+  /// [tokenBudget] (issue #503) adds a second stop condition: once the
+  /// resident branch's estimated CONTEXT tokens reach the budget (only
+  /// context-projecting records count — ledger payloads like
+  /// `model_request_summary` count zero, see [estimateSessionBranchTokens]),
+  /// the walk stops even without a match. A resume needs only what fits
+  /// the model's context window; older history pages in lazily through
+  /// the scrollback's [loadOlder] path. `null` keeps the pure
+  /// match/file-head semantics.
   Future<bool> growOlderUntil(
     bool Function(SessionRecord record) found, {
     int maxPages = 512,
+    int? tokenBudget,
   }) async {
     _suspendEviction = true;
     try {
@@ -325,6 +336,20 @@ final class WindowedSessionStorage
         if (leaf == null) return true; // genuinely empty session
         final branch = await getPathToRoot(leaf);
         if (branch.any(found)) return true;
+        if (tokenBudget != null) {
+          // Projection-aware whole-branch estimate (issue #503 round 3b):
+          // hidden/covered records project as one-line markers or nothing
+          // at all, so the raw tally overshot the real context by ~8x on
+          // structured-compaction marathons and tripped the budget far
+          // too early (under-filled resume window). A whole-branch
+          // recompute per page is a chars/4 fold — negligible next to the
+          // page's decode — and unlike an incremental prefix tally it
+          // sees the hiding markers, which sit LATER on the branch than
+          // the records they hide.
+          if (estimateProjectedBranchTokens(branch) >= tokenBudget) {
+            return true;
+          }
+        }
         if (!_hasOlder) return true; // paged everything
         pages++;
         await _readOlderBlock(blockRecords, blockBytes);
@@ -358,6 +383,12 @@ final class WindowedSessionStorage
       top,
       maxRecords: maxRecords,
       maxBytes: maxBytes,
+      // Issue #503 round 3b: the walk crosses hundreds of ~0.75 MB
+      // `model_request_summary` ledger payloads that count zero context
+      // tokens — decode them header-only (data stubbed to null). The
+      // ingest and scrollback paths keep full fidelity; a shallow-parsed
+      // record only loses its Request-tab detail, never chain integrity.
+      shallowGiantCustoms: true,
     );
     if (chunk.isEmpty) {
       // Mirrors _readOlderChunk: an empty read above the window ends the
