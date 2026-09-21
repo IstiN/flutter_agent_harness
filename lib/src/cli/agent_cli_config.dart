@@ -75,6 +75,7 @@ final class AgentCliConfig {
     this.powerRunner,
     this.tuiTheme,
     this.tuiProgramHooks,
+    this.sttyRunner,
     this.openRouterOAuthExchangeFn,
     this.chatGptOAuthExchangeFn,
     this.aiinConnectFn,
@@ -480,6 +481,13 @@ final class AgentCliConfig {
   /// the TUI controller — null in production, where the dart_tui program
   /// reads stdin and renders to the real terminal.
   final TuiProgramHooks? tuiProgramHooks;
+
+  /// Injected `stty` runner (issue #735): routes BOTH the TUI's boot-time
+  /// termios sanitize and the TermiosGuard's post-tool-phase re-asserts
+  /// through a fake — headless tests model the tty with it. Null in
+  /// production (real `stty` subprocesses; the guard no-ops without a
+  /// terminal, so non-TUI hosts are unaffected).
+  final SttyRunner? sttyRunner;
 
   /// The model to run. `/model <id>` swaps the id at runtime.
   final Model model;
