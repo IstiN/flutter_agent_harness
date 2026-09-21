@@ -126,6 +126,7 @@ import 'codemie_sso_server.dart';
 import 'openrouter_oauth_server.dart';
 import '../secrets/secure_key_store.dart';
 import '../session/session_record.dart';
+import '../env/session_parse_executor.dart';
 import '../session/session_repo.dart';
 import '../session_io_retry.dart';
 import '../session/attach/file_presence_store.dart';
@@ -1168,6 +1169,7 @@ class AgentCli {
     // running process owns is undeletable from every other surface.
     presenceStore: config.presenceStore,
     processId: config.processId,
+    parseExecutor: config.parseExecutor,
   );
   Session? _session;
 
@@ -1597,16 +1599,6 @@ class AgentCli {
       // would print a redundant one.
       if (!isBusy && !_providerFlowActive) _writeIdlePrompt();
     }
-  }
-
-  /// After an interactive run ends, prints the command that picks this
-  /// session back up (kimi prints the resume hint on exit too). Skipped for
-  /// sessions with nothing persisted yet — resuming those is pointless.
-  /// Also called from the top-level idle-SIGINT path in `bin/fah.dart`,
-  /// which exits 130 without returning from [run].
-  Future<void> printSessionResumeHint() async {
-    final hint = await sessionResumeHint();
-    if (hint != null) io.writeln(_style.dim(hint));
   }
 
   /// The `fa --session …` resume line, or null when nothing was persisted.

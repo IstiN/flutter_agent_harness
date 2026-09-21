@@ -104,6 +104,25 @@ AgentService _service(String cwd, FileSystem fs) {
   );
 }
 
+/// Deletes a temp dir tolerantly: on a loaded box a session file can
+/// still be flushing when teardown runs, and macOS reports ENOTEMPTY for
+/// a directory whose last entry disappears mid-delete — retry briefly
+/// instead of failing a green test on cleanup.
+Future<void> _deleteTmpDir(io.Directory tmp) async {
+  Object? lastError;
+  for (var attempt = 0; attempt < 5; attempt++) {
+    try {
+      await tmp.delete(recursive: true);
+      return;
+    } on io.FileSystemException catch (e) {
+      lastError = e;
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+  }
+  // ignore: only_throw_errors
+  throw lastError!;
+}
+
 void main() {
   setUpAll(() async {
     await initializeDateFormatting('en');
@@ -111,172 +130,169 @@ void main() {
 
   // AC1 UT-oversized-windowed: openSession routes an over-budget file
   // through the windowed loader — tail window in memory, zero bulk reads.
-  test(
-    'UT-oversized-windowed: openSession on an over-budget file opens '
-    'the tail window with zero bulk reads',
-    () async {
-      final tmp = await io.Directory.systemTemp.createTemp('fa_381_open');
-      addTearDown(() => tmp.delete(recursive: true));
-      await io.File('${tmp.path}/big.jsonl')
-          .writeAsString(_sessionBody('big', 300));
-      final counting = CountingFileSystem(LocalFileSystem(cwd: tmp.path));
-      final service = _service(tmp.path, counting);
-      addTearDown(service.dispose);
-      await service.initialize();
+  test('UT-oversized-windowed: openSession on an over-budget file opens '
+      'the tail window with zero bulk reads', () async {
+    final tmp = await io.Directory.systemTemp.createTemp('fa_381_open');
+    addTearDown(() => _deleteTmpDir(tmp));
+    await io.File(
+      '${tmp.path}/big.jsonl',
+    ).writeAsString(_sessionBody('big', 300));
+    final counting = CountingFileSystem(LocalFileSystem(cwd: tmp.path));
+    final service = _service(tmp.path, counting);
+    addTearDown(service.dispose);
+    await service.initialize();
 
-      final manager = FlutterSessionManager(
-        env: LocalExecutionEnv(cwd: tmp.path),
-        sessionsRoot: tmp.path,
-        repo: JsonlSessionRepo(fs: counting, sessionsRoot: tmp.path),
-        // Far below the 300-record file: every open must take the
-        // windowed route.
-        maxSessionLoadBytes: 1024,
-      );
-      final metadata = (await manager.listPersistedSessions()).single;
-      expect(metadata.sizeBytes, greaterThan(1024));
-      // Count only the OPEN path: list bookkeeping may bulk-read headers.
-      counting
-        ..bulkBytes = 0
-        ..rangedBytes = 0;
+    final manager = FlutterSessionManager(
+      env: LocalExecutionEnv(cwd: tmp.path),
+      sessionsRoot: tmp.path,
+      repo: JsonlSessionRepo(fs: counting, sessionsRoot: tmp.path),
+      // Far below the 300-record file: every open must take the
+      // windowed route.
+      maxSessionLoadBytes: 1024,
+      // Hermetic: a dev box with a real macOS App Group sessions dir
+      // would otherwise merge those sessions into the listing.
+      includeSharedSessionRoots: false,
+    );
+    final metadata = (await manager.listPersistedSessions()).single;
+    expect(metadata.sizeBytes, greaterThan(1024));
+    // Count only the OPEN path: list bookkeeping may bulk-read headers.
+    counting
+      ..bulkBytes = 0
+      ..rangedBytes = 0;
 
-      // The old gate threw SessionTooLargeException right here.
-      final managed = await manager.openSession(
-        metadata,
-        config: _config,
-        serviceFactory: () async => service,
-      );
+    // The old gate threw SessionTooLargeException right here.
+    final managed = await manager.openSession(
+      metadata,
+      config: _config,
+      serviceFactory: () async => service,
+    );
 
-      // The window is the newest chunk (200 records), read via ranged
-      // reads; the whole file never crossed the filesystem.
-      expect(managed.service.messages, hasLength(200));
-      expect(managed.service.messages.last.content, contains('message 299'));
-      expect(counting.rangedBytes, greaterThan(0));
-      expect(counting.bulkBytes, 0);
-    },
-  );
+    // The window is the newest chunk (200 records), read via ranged
+    // reads; the whole file never crossed the filesystem.
+    expect(managed.service.messages, hasLength(200));
+    expect(managed.service.messages.last.content, contains('message 299'));
+    expect(counting.rangedBytes, greaterThan(0));
+    expect(counting.bulkBytes, 0);
+  });
 
   // AC2 UT-fallback-guard: a failed windowed open of an over-budget file
   // must NOT degrade to the full open — the freeze guard survives exactly
   // for that path. (The fault fixture is the windowed suite's torn-read:
   // the ranged-read path dies, the windowed open fails.)
-  test(
-    'UT-fallback-guard: over-budget windowed-open failure refuses the '
-    'full open (SessionTooLargeException, zero bulk reads)',
-    () async {
-      final tmp = await io.Directory.systemTemp.createTemp('fa_381_guard');
-      addTearDown(() => tmp.delete(recursive: true));
-      await io.File('${tmp.path}/big.jsonl')
-          .writeAsString(_sessionBody('big', 300));
-      final flaky = FlakyFileSystem(LocalFileSystem(cwd: tmp.path));
-      flaky.failNextReadRange = true;
-      final service = _service(tmp.path, flaky);
-      addTearDown(service.dispose);
-      await service.initialize();
+  test('UT-fallback-guard: over-budget windowed-open failure refuses the '
+      'full open (SessionTooLargeException, zero bulk reads)', () async {
+    final tmp = await io.Directory.systemTemp.createTemp('fa_381_guard');
+    addTearDown(() => _deleteTmpDir(tmp));
+    await io.File(
+      '${tmp.path}/big.jsonl',
+    ).writeAsString(_sessionBody('big', 300));
+    final flaky = FlakyFileSystem(LocalFileSystem(cwd: tmp.path));
+    flaky.failNextReadRange = true;
+    final service = _service(tmp.path, flaky);
+    addTearDown(service.dispose);
+    await service.initialize();
 
-      final manager = FlutterSessionManager(
-        env: LocalExecutionEnv(cwd: tmp.path),
-        sessionsRoot: tmp.path,
-        repo: JsonlSessionRepo(fs: flaky, sessionsRoot: tmp.path),
-        maxSessionLoadBytes: 1024,
-      );
-      final metadata = (await manager.listPersistedSessions()).single;
-      flaky.bulkBytes = 0;
+    final manager = FlutterSessionManager(
+      env: LocalExecutionEnv(cwd: tmp.path),
+      sessionsRoot: tmp.path,
+      repo: JsonlSessionRepo(fs: flaky, sessionsRoot: tmp.path),
+      maxSessionLoadBytes: 1024,
+      includeSharedSessionRoots: false,
+    );
+    final metadata = (await manager.listPersistedSessions()).single;
+    flaky.bulkBytes = 0;
 
-      await expectLater(
-        manager.openSession(
-          metadata,
-          config: _config,
-          serviceFactory: () async => service,
-        ),
-        throwsA(isA<SessionTooLargeException>()),
-      );
-      expect(
-        flaky.bulkBytes,
-        0,
-        reason: 'the full-open fallback must never whole-file read an '
-            'over-budget session',
-      );
-    },
-  );
+    await expectLater(
+      manager.openSession(
+        metadata,
+        config: _config,
+        serviceFactory: () async => service,
+      ),
+      throwsA(isA<SessionTooLargeException>()),
+    );
+    expect(
+      flaky.bulkBytes,
+      0,
+      reason:
+          'the full-open fallback must never whole-file read an '
+          'over-budget session',
+    );
+  });
 
   // AC3 UT-under-budget-unchanged: under-budget sessions keep today's
   // behavior — windowed first, and the full-open fallback still saves a
   // failed windowed open (the compatibility path, byte-identical route).
-  test(
-    'UT-under-budget-unchanged: a small session still falls back to the '
-    'full open and loads completely',
-    () async {
-      final tmp = await io.Directory.systemTemp.createTemp('fa_381_small');
-      addTearDown(() => tmp.delete(recursive: true));
-      await io.File('${tmp.path}/small.jsonl')
-          .writeAsString(_sessionBody('small', 5));
-      final flaky = FlakyFileSystem(LocalFileSystem(cwd: tmp.path));
-      flaky.failNextReadRange = true;
-      final service = _service(tmp.path, flaky);
-      addTearDown(service.dispose);
-      await service.initialize();
+  test('UT-under-budget-unchanged: a small session still falls back to the '
+      'full open and loads completely', () async {
+    final tmp = await io.Directory.systemTemp.createTemp('fa_381_small');
+    addTearDown(() => _deleteTmpDir(tmp));
+    await io.File(
+      '${tmp.path}/small.jsonl',
+    ).writeAsString(_sessionBody('small', 5));
+    final flaky = FlakyFileSystem(LocalFileSystem(cwd: tmp.path));
+    flaky.failNextReadRange = true;
+    final service = _service(tmp.path, flaky);
+    addTearDown(service.dispose);
+    await service.initialize();
 
-      final manager = FlutterSessionManager(
-        env: LocalExecutionEnv(cwd: tmp.path),
-        sessionsRoot: tmp.path,
-        repo: JsonlSessionRepo(fs: flaky, sessionsRoot: tmp.path),
-      );
-      final metadata = (await manager.listPersistedSessions()).single;
-      flaky.bulkBytes = 0;
+    final manager = FlutterSessionManager(
+      env: LocalExecutionEnv(cwd: tmp.path),
+      sessionsRoot: tmp.path,
+      repo: JsonlSessionRepo(fs: flaky, sessionsRoot: tmp.path),
+      includeSharedSessionRoots: false,
+    );
+    final metadata = (await manager.listPersistedSessions()).single;
+    flaky.bulkBytes = 0;
 
-      // Default budget: the file is under it. The ranged-read path dies
-      // (same fault the windowed suite uses) — the full open saves the
-      // session exactly as before #381.
-      final managed = await manager.openSession(
-        metadata,
-        config: _config,
-        serviceFactory: () async => service,
-      );
+    // Default budget: the file is under it. The ranged-read path dies
+    // (same fault the windowed suite uses) — the full open saves the
+    // session exactly as before #381.
+    final managed = await manager.openSession(
+      metadata,
+      config: _config,
+      serviceFactory: () async => service,
+    );
 
-      expect(managed.service.messages, hasLength(5));
-      expect(flaky.bulkBytes, greaterThan(0));
-    },
-  );
+    expect(managed.service.messages, hasLength(5));
+    expect(flaky.bulkBytes, greaterThan(0));
+  });
 
   // AC4 UT-boot-toast (manager half): boot skips the oversized last-active
   // and records it for the UI notice instead of silently swapping.
-  test(
-    'UT-boot-skipped: an oversized last-active session is not resumed at '
-    'boot; the skip is surfaced on the manager',
-    () async {
-      final env = MemoryExecutionEnv();
-      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
-      await env.writeFile('/sessions/giant.jsonl', _sessionBody('giant', 50));
-      await env.writeFile(
-        '/sessions/${FlutterSessionManager.lastActiveFile}',
-        '{"version":1,"id":"giant"}',
-      );
-      final manager = FlutterSessionManager(
+  test('UT-boot-skipped: an oversized last-active session is not resumed at '
+      'boot; the skip is surfaced on the manager', () async {
+    final env = MemoryExecutionEnv();
+    final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+    await env.writeFile('/sessions/giant.jsonl', _sessionBody('giant', 50));
+    await env.writeFile(
+      '/sessions/${FlutterSessionManager.lastActiveFile}',
+      '{"version":1,"id":"giant"}',
+    );
+    final manager = FlutterSessionManager(
+      env: env,
+      sessionsRoot: '/sessions',
+      repo: repo,
+      maxSessionLoadBytes: 1024,
+    );
+
+    final booted = await manager.createOrResumeSession(
+      config: _config,
+      createFactory: () async => AgentService(
+        agent: _createAgent(),
         env: env,
         sessionsRoot: '/sessions',
-        repo: repo,
-        maxSessionLoadBytes: 1024,
-      );
-
-      final booted = await manager.createOrResumeSession(
         config: _config,
-        createFactory: () async => AgentService(
-          agent: _createAgent(),
-          env: env,
-          sessionsRoot: '/sessions',
-          config: _config,
-          watchExternalSessions: false,
-        ),
-        openFactory: () async => throw StateError('must not open the giant'),
-      );
+        watchExternalSessions: false,
+      ),
+      openFactory: () async => throw StateError('must not open the giant'),
+    );
 
-      // A fresh session, not the giant; the skip is on the manager for
-      // the shell notice.
-      expect(booted.id, isNot('giant'));
-      expect(manager.bootSkippedOversize?.id, 'giant');
-      expect(manager.bootSkippedOversize?.sizeBytes, greaterThan(1024));
-    },
-  );
+    // A fresh session, not the giant; the skip is on the manager for
+    // the shell notice.
+    expect(booted.id, isNot('giant'));
+    expect(manager.bootSkippedOversize?.id, 'giant');
+    expect(manager.bootSkippedOversize?.sizeBytes, greaterThan(1024));
+  });
 
   // AC4 UT-boot-toast (UI half): the notice names the skipped session and
   // its size; tapping the action hands the metadata to the shell's open
@@ -399,67 +415,64 @@ void main() {
   // AC5 E2E (window + paging half): the real chat surface over the
   // opened giant — only the tail window loaded, and "Load earlier" pages
   // up through the file.
-  testWidgets(
-    'E2E-windowed-chat: the opened giant shows the tail window; Load '
-    'earlier pages up through the file',
-    (tester) async {
-      final env = MemoryExecutionEnv();
-      await env.writeFile('/sessions/giant.jsonl', _sessionBody('giant', 300));
-      final service = AgentService(
-        agent: _createAgent(),
-        env: env,
-        sessionsRoot: '/sessions',
-        config: _config,
-        watchExternalSessions: false,
-      );
-      final manager = FlutterSessionManager(
-        env: env,
-        sessionsRoot: '/sessions',
-        maxSessionLoadBytes: 1024,
-      )..addSession('live-a', service);
-      final metadata = await service.listSessions();
-      await manager.openSession(
-        metadata.first,
-        config: _config,
-        serviceFactory: () async => service.clone(),
-      );
+  testWidgets('E2E-windowed-chat: the opened giant shows the tail window; Load '
+      'earlier pages up through the file', (tester) async {
+    final env = MemoryExecutionEnv();
+    await env.writeFile('/sessions/giant.jsonl', _sessionBody('giant', 300));
+    final service = AgentService(
+      agent: _createAgent(),
+      env: env,
+      sessionsRoot: '/sessions',
+      config: _config,
+      watchExternalSessions: false,
+    );
+    final manager = FlutterSessionManager(
+      env: env,
+      sessionsRoot: '/sessions',
+      maxSessionLoadBytes: 1024,
+    )..addSession('live-a', service);
+    final metadata = await service.listSessions();
+    await manager.openSession(
+      metadata.first,
+      config: _config,
+      serviceFactory: () async => service.clone(),
+    );
 
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: buildFahTheme(),
-          localizationsDelegates: AppLocalizations.localizationsDelegates,
-          supportedLocales: AppLocalizations.supportedLocales,
-          home: ChatScreen(manager: manager),
-        ),
-      );
-      await tester.pumpAndSettle();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFahTheme(),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: ChatScreen(manager: manager),
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      // The window is visible: newest records rendered, head not loaded.
-      expect(find.textContaining('message 299'), findsOneWidget);
-      expect(find.textContaining('message 0 '), findsNothing);
-      // The composer is live (interactive chat, not a loading shell).
-      expect(find.byType(ChatComposer), findsOneWidget);
+    // The window is visible: newest records rendered, head not loaded.
+    expect(find.textContaining('message 299'), findsOneWidget);
+    expect(find.textContaining('message 0 '), findsNothing);
+    // The composer is live (interactive chat, not a loading shell).
+    expect(find.byType(ChatComposer), findsOneWidget);
 
-      // "Load earlier" pages up: one chunk covers the remaining 100
-      // records, so the head lands in the view. The list opens scrolled
-      // to the tail - bring the pinned banner on-screen first.
-      await tester.scrollUntilVisible(
-        find.textContaining('Load earlier').first,
-        -100,
-        scrollable: find.byType(Scrollable).first,
-        maxScrolls: 20,
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.textContaining('Load earlier').first);
-      await tester.pumpAndSettle();
-      // The head decoded into the service (300 = full file); the pinned
-      // "Load earlier" banner turned into its terminal state in place.
-      expect(manager.active!.service.messages, hasLength(300));
-      expect(manager.active!.service.historyAboveCount, 0);
-      expect(find.textContaining('Load earlier'), findsNothing);
-      expect(find.textContaining('Beginning of session'), findsOneWidget);
-    },
-  );
+    // "Load earlier" pages up: one chunk covers the remaining 100
+    // records, so the head lands in the view. The list opens scrolled
+    // to the tail - bring the pinned banner on-screen first.
+    await tester.scrollUntilVisible(
+      find.textContaining('Load earlier').first,
+      -100,
+      scrollable: find.byType(Scrollable).first,
+      maxScrolls: 20,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('Load earlier').first);
+    await tester.pumpAndSettle();
+    // The head decoded into the service (300 = full file); the pinned
+    // "Load earlier" banner turned into its terminal state in place.
+    expect(manager.active!.service.messages, hasLength(300));
+    expect(manager.active!.service.historyAboveCount, 0);
+    expect(find.textContaining('Load earlier'), findsNothing);
+    expect(find.textContaining('Beginning of session'), findsOneWidget);
+  });
 }
 
 /// Fake [AsrApi] — widget tests never touch the real method channel (the
