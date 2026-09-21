@@ -2081,24 +2081,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsQueueAddTitle => 'Add queue entry';
 
   @override
-  String get settingsQueueKind => 'Provider type (e.g. openai-completions)';
-
-  @override
-  String get settingsQueueModel => 'Model (e.g. moonshotai/Kimi-K2.6)';
-
-  @override
-  String get settingsQueueApiKeyEnv => 'API key env var (e.g. KIMI_API_KEY)';
-
-  @override
-  String get settingsQueueBaseUrl => 'Base URL (optional)';
-
-  @override
-  String get settingsQueueCancel => 'Cancel';
-
-  @override
-  String get settingsQueueAddAction => 'Add';
-
-  @override
   String get settingsQueueMoveUp => 'Move up';
 
   @override
@@ -2115,11 +2097,6 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String settingsQueueSaveFailed(String error) {
     return 'Could not save the queue: $error';
-  }
-
-  @override
-  String settingsQueueInvalid(String error) {
-    return 'Provider queue rejected: $error';
   }
 
   @override
