@@ -159,8 +159,19 @@ flutter {
 // lifts every congruent LOAD segment's p_align to 16 KB (loud failure when a
 // future blob needs a real relink instead). Idempotent: already-aligned
 // files are left untouched, so the task is safe to run on every build.
+//
+// When the staging dir is absent the task logs a LOUD warning and no-ops
+// instead of skipping silently (review round 1): the path is an internal
+// Flutter Gradle-plugin detail, and a silent skip would let a future layout
+// change ship 4 KB-aligned blobs again — resurfacing the Play rejection at
+// upload time with no signal in the build log.
 val patch16kScript = rootProject.layout.projectDirectory
     .file("../../scripts/patch_elf_16k_alignment.dart")
+// Gradle's Exec does not resolve batch-file wrappers: on Windows the Dart
+// SDK ships dart.bat, so a bare "dart" fails with "cannot run program".
+val dartExe = System.getenv("DART")
+    ?: if (System.getProperty("os.name").orEmpty()
+            .startsWith("Windows", ignoreCase = true)) "dart.bat" else "dart"
 tasks.matching { it.name.startsWith("compileFlutterBuild") }.all {
     val variant = name.removePrefix("compileFlutterBuild")
     val variantDir = variant.replaceFirstChar { it.lowercase() }
@@ -170,20 +181,39 @@ tasks.matching { it.name.startsWith("compileFlutterBuild") }.all {
         group = "build"
         description = "Patches prebuilt native .so assets for 16 KB page sizes (gh-746)"
         dependsOn(this@all)
-        // The dir only exists once the flutter tool staged native assets for
-        // this variant; skip rather than fail for variants without any.
-        onlyIf("native assets staged") { nativeAssetsDir.get().asFile.exists() }
-        executable = System.getenv("DART") ?: "dart"
+        executable = dartExe
         args(
             patch16kScript.asFile.absolutePath,
             nativeAssetsDir.get().asFile.absolutePath,
         )
+        // The patch is in place, so the task's inputs are also its outputs;
+        // declaring the inputs (plus a permissive up-to-date spec) lets
+        // Gradle skip the JIT run when the staged libs did not change.
+        inputs.dir(nativeAssetsDir)
+            .withPropertyName("nativeAssets")
+            .optional()
+        outputs.upToDateWhen { true }
         doFirst {
             if (!patch16kScript.asFile.exists()) {
                 throw GradleException(
                     "16 KB patch script not found: ${patch16kScript.asFile} " +
                         "(run the build from the repo checkout, not an android-only export)",
                 )
+            }
+            if (!nativeAssetsDir.get().asFile.isDirectory) {
+                logger.warn(
+                    "[gh-746] $name: no native assets staged at " +
+                        "${nativeAssetsDir.get().asFile} — nothing to patch. " +
+                        "Expected when this variant ships no native assets; " +
+                        "but if it should (QNN Skel etc.), the Flutter " +
+                        "staging layout changed and the 16 KB gate is no " +
+                        "longer patching those blobs (Play would reject " +
+                        "the upload).",
+                )
+                // Skip without failing the build: swap in a portable no-op
+                // (the resolved Dart executable, --version) for the patch
+                // command line.
+                commandLine = listOf(dartExe, "--version")
             }
         }
     }

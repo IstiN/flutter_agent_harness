@@ -344,8 +344,9 @@ List<_LoadSegment>? _loadSegments(Uint8List image) {
 /// exit code is non-zero when any LOAD segment declares a sub-16 KB
 /// alignment — CI uses this to re-check the packaged artifact (gh-746).
 void main(List<String> args) {
-  final checkOnly = args.remove('--check');
-  if (args.isEmpty) {
+  final checkOnly = args.contains('--check');
+  final paths = args.where((a) => a != '--check').toList();
+  if (paths.isEmpty) {
     stderr.writeln(
       'usage: dart scripts/patch_elf_16k_alignment.dart [--check] '
       '<file-or-dir>...',
@@ -354,7 +355,7 @@ void main(List<String> args) {
     return;
   }
   final outcomes = <PatchOutcome>[];
-  for (final arg in args) {
+  for (final arg in paths) {
     outcomes.addAll(patchPath(arg, checkOnly: checkOnly));
   }
   for (final outcome in outcomes) {

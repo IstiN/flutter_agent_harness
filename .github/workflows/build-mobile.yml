@@ -239,6 +239,15 @@ jobs:
             https://github.com/google/bundletool/releases/download/1.17.0/bundletool-all-1.17.0.jar
           java -jar /tmp/bundletool.jar validate --bundle "$AAB_PATH"
           echo "✅ bundletool validate green"
+          # 16 KB page-size gate (gh-746, review round 1): re-check every
+          # native lib in the PACKAGED bundle. The build-time patch task
+          # only sees the staged native_assets dir — this verifies what
+          # actually ships, so a future Flutter staging-layout change that
+          # silently un-wires the gate fails here instead of at Play upload.
+          TMP_LIBS="$(mktemp -d)"
+          unzip -o -q "$AAB_PATH" 'lib/*' -d "$TMP_LIBS"
+          dart scripts/patch_elf_16k_alignment.dart --check "$TMP_LIBS"
+          echo "✅ 16 KB alignment check green"
 
       - name: Upload AAB Artifact
         uses: actions/upload-artifact@v4
