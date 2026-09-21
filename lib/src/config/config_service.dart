@@ -1193,8 +1193,9 @@ void validateProviderTimeoutsSection(Object? node) {
 /// the settings flow (issues #394/#680). Mirrors the private boot parser
 /// in `cli_config.dart` (pinned by test): the section takes exactly
 /// `contextWindowCap` (a positive integer at or above the compaction
-/// reserve — a cap below 16384 must never soften that floor) and `mode`
-/// (the load preset `default|pi|omp`, validated by the shared
+/// reserve — a cap below 16384 must never soften that floor; a cap above
+/// the catalog window is the #729 raise path and validates unchanged) and
+/// `mode` (the load preset `default|pi|omp`, validated by the shared
 /// [agentLoadModeValidationError] rule).
 void validateAgentSection(Object? node) {
   if (node is! YamlMap) {

@@ -1490,6 +1490,118 @@ void main() {
       );
     });
   });
+
+  group('#729 — fit-the-window payloads', () {
+    test(
+      'AC1: a region over the summarizer window is folded chunk-wise; '
+      'every checkpoint prompt fits the summarizer window',
+      () async {
+        final session = await repo.create(
+          JsonlSessionCreateOptions(cwd: '/work'),
+        );
+        // ~11k estimated tokens of region against a summarizer window of
+        // 4000 (payload budget 2000 after the reserve): one prompt cannot
+        // carry it, so the fold must chunk.
+        for (var i = 0; i < 6; i++) {
+          await session.appendMessage(
+            UserMessage.text('ask $i ${'a' * 3000}'),
+          );
+          await session.appendMessage(
+            _assistant(
+              'step $i',
+              calls: [ToolCall(id: 'c$i', name: 'read', arguments: {})],
+            ),
+          );
+          await session.appendMessage(
+            _result('c$i', 'read', 'payload $i ${'x' * 4000}'),
+          );
+          await session.appendMessage(_assistant('analysis $i findings'));
+        }
+        final before = (await session.buildContextMessages()).length;
+
+        final prompts = <String>[];
+        final compactor = StructuredCompactor(
+          session: session,
+          state: stateFor(await session.buildContextMessages()),
+          window: 8000,
+          settings: _settings,
+          judge: (ledger) async => null,
+          summarize: (request) async {
+            prompts.add(request.prompt);
+            return SummarizationResult.success('fold ${prompts.length}');
+          },
+          checkpointPrompt: 'P',
+          summarizerWindow: 4000,
+        );
+        await compactor.run();
+
+        final budget = summarizationPayloadBudget(4000, _settings);
+        expect(prompts.length, greaterThan(1));
+        for (var i = 0; i < prompts.length; i++) {
+          expect(
+            estimateStringTokens(prompts[i]),
+            lessThanOrEqualTo(budget),
+            reason: 'chunk $i prompt exceeded the summarizer budget',
+          );
+        }
+        // The fold: every chunk after the first threads the running
+        // summary via the structured folded-checkpoint envelope.
+        expect(
+          prompts.skip(1).every((p) => p.contains('<folded-checkpoint>')),
+          isTrue,
+        );
+        // The compaction actually landed: the projected context shrank.
+        final after = (await session.buildContextMessages()).length;
+        expect(after, lessThan(before));
+      },
+    );
+
+    test('a mid-fold summarizer failure stops the fold (failure-safe)',
+        () async {
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
+      for (var i = 0; i < 6; i++) {
+        await session.appendMessage(
+          UserMessage.text('ask $i ${'a' * 3000}'),
+        );
+        await session.appendMessage(
+          _assistant(
+            'step $i',
+            calls: [ToolCall(id: 'c$i', name: 'read', arguments: {})],
+          ),
+        );
+        await session.appendMessage(
+          _result('c$i', 'read', 'payload $i ${'x' * 4000}'),
+        );
+        await session.appendMessage(_assistant('analysis $i findings'));
+      }
+
+      final prompts = <String>[];
+      final compactor = StructuredCompactor(
+        session: session,
+        state: stateFor(await session.buildContextMessages()),
+        window: 8000,
+        settings: _settings,
+        judge: (ledger) async => null,
+        summarize: (request) async {
+          prompts.add(request.prompt);
+          if (prompts.length == 2) {
+            return SummarizationResult.failure('boom');
+          }
+          return SummarizationResult.success('fold ${prompts.length}');
+        },
+        checkpointPrompt: 'P',
+        summarizerWindow: 4000,
+      );
+      final ok = await compactor.run();
+
+      // The fold aborted at chunk 2 — failure-safe: no further chunk
+      // summarizer calls, no crash, and the run reports no success.
+      expect(prompts.length, 2);
+      expect(ok, isFalse);
+    });
+  });
 }
 
 class _NoopHooks implements AutoCompactorHooks {

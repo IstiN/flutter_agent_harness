@@ -7,8 +7,6 @@
 /// matrix arrive with later providers.
 library;
 
-import 'dart:math' show min;
-
 import 'types.dart';
 
 /// Per-million-token pricing for a model, in USD.
@@ -154,15 +152,19 @@ final class Model {
   final OpenAICompletionsCompat? compat;
 }
 
-/// The effective context window: [contextWindow] clamped to [cap] when an
-/// owner cap is configured (`agent.contextWindowCap`, issue #273) and
-/// positive; a `null`/non-positive cap leaves the window untouched, so
-/// uncapped runs behave byte-identically to before. Every consumer of the
-/// EFFECTIVE window — the compaction thresholds, the ctx meter/footer, the
-/// loop's over-window guard — computes through this (one clamp point, not
-/// one per consumer).
+/// The effective context window: the owner override ([cap],
+/// `agent.contextWindowCap`, issues #273/#729) when configured and
+/// positive; a `null`/non-positive cap leaves the raw window, so uncapped
+/// runs behave byte-identically to before. A cap below the catalog window
+/// clamps down (owner budget guard); a cap above it RAISES the effective
+/// window to the served truth — a resumed branch can legitimately outgrow
+/// the catalog entry (cross-model resume, failed end-of-session compaction)
+/// when the endpoint actually serves more than the catalog reports. Every
+/// consumer of the EFFECTIVE window — the compaction thresholds, the ctx
+/// meter/footer, the loop's over-window guard — computes through this (one
+/// override point, not one per consumer).
 int effectiveContextWindow(int contextWindow, int? cap) =>
-    cap == null || cap <= 0 ? contextWindow : min(contextWindow, cap);
+    cap == null || cap <= 0 ? contextWindow : cap;
 
 /// Fills in [Usage.cost] from the model's [ModelCost] rates.
 ///
