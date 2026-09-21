@@ -4,11 +4,12 @@ on:
   push:
     branches: [main]
     tags: ['v*']
-  pull_request:
-    branches: [main]
-  # Manual escape hatch: GitHub never runs pull_request workflows on a
-  # CONFLICTING PR (no merge commit to run against) — dispatch gates on the
-  # PR branch directly: gh workflow run ci.yml --ref <branch>.
+  # Dispatch-only CI on PR heads (2026-09 machine-loop redesign): pushes
+  # fire NO CI — the SM (machine-sm.yml → factory-sm) is the only trigger.
+  # It dispatches this workflow on the PR head when validation is due
+  # (validate-fresh / validate-armed rules), so intermediate dev/rework
+  # pushes and silent branch updates are free. Required checks still
+  # match: the dispatched run registers its check runs on the head SHA.
   workflow_dispatch:
   # Any release publication (API `gh release create`, web UI, or a pushed
   # annotated tag) builds + attaches the binaries matrix. Pushed tags also

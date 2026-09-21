@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
@@ -2110,8 +2109,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   /// Model management and the live subagent tree (issue #702: extracted
   /// from build). Everything model-related (presets, chat model, task
-  /// roles, media slots) lives on the dedicated Models page — the top
-  /// level stays provider-focused.
+  /// roles, the provider queue, media slots) lives on the dedicated
+  /// Models page — the top level stays provider-focused.
   List<Widget> _modelsAndAgentsSections(
     AgentService service,
     TaskModelsStore? taskModels,
@@ -2165,8 +2164,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   /// The service-gated control sections (issue #702: extracted from
-  /// build): approval mode, skills consent, capability-gated tools, the
-  /// compaction engine picker, and the provider queue editor.
+  /// build): approval mode, skills consent, capability-gated tools, and
+  /// the compaction engine picker. The provider queue editor lives on the
+  /// Models page (issue #693).
   List<Widget> _approvalAndToolsSections(AgentService service) {
     return [
       ApprovalModeSelector(service: service),
@@ -2202,11 +2202,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       const SizedBox(height: 24),
       const Divider(),
       const SizedBox(height: 16),
-      // Provider queue editor (issue #418): the ordered
-      // main-model failover chain. Resolves/writes the same
-      // scopes the CLI boot reads, so an edit applies from the
-      // next run; the env queue shows read-only ("env wins").
-      ProviderQueueSection(projectDir: service.env.sessionCwd),
     ];
   }
 
@@ -2242,8 +2237,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
 }
 
 /// The settings "Models" row: opens the dedicated [ModelsSettingsPage]
-/// (presets, chat model, task roles, media slots) so the top level stays
-/// provider-focused.
+/// (presets, chat model, task roles, the provider queue, media slots) so
+/// the top level stays provider-focused.
 class _ModelsRow extends StatelessWidget {
   const _ModelsRow({required this.onTap});
 

@@ -186,7 +186,9 @@ void main() {
       expect(find.byType(ApprovalModeSelector), findsOneWidget);
       expect(find.byType(ToolsAvailabilitySection), findsOneWidget);
       expect(find.byType(CompactionSection), findsOneWidget);
-      expect(find.byType(ProviderQueueSection), findsOneWidget);
+      // The provider-queue editor lives on the Models page (issue #693),
+      // not at the top level anymore.
+      expect(find.byType(ProviderQueueSection), findsNothing);
     });
   });
 
