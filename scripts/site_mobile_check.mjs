@@ -119,7 +119,9 @@ async function main() {
   {
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
-    for (const [w, h] of [[360, 640], [390, 844]]) {
+    // Collapsed menu mode also covers the 641-960 band: the 843px link row
+    // only fits from ~892px (measured), so 768 renders the burger too.
+    for (const [w, h] of [[360, 640], [390, 844], [768, 1024]]) {
       await page.setViewportSize({ width: w, height: h });
       await page.goto(`${BASE}/index.html`, { waitUntil: 'load' });
       await page.waitForTimeout(200);
