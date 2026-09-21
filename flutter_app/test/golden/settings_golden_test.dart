@@ -438,14 +438,26 @@ void main() {
             service: service,
             registry: ProviderRegistry.inMemory(),
             taskModelsStore: TaskModelsStore.inMemory(),
+            // The provider-queue editor (issue #693) with deterministic
+            // fakes — the real resolver would read the host's config.
+            queueSection: ProviderQueueSection(
+              projectDir: '/tmp/proj',
+              resolve: ({projectDir, homeDir}) => ProviderQueueResolution(
+                scope: ProviderQueueScope.project,
+                entries: _queueFixtureEntries,
+                notices: const [],
+              ),
+              write: (entries, {required layer, projectDir, homeDir}) async =>
+                  '/tmp/proj/.fah/config.yaml',
+            ),
           ),
         ),
       );
       await tester.pumpAndSettle();
 
       // The dedicated Models page: presets carousel, the default chat
-      // model row, the task-role rows and the media slots (image slot
-      // overridden).
+      // model row, the task-role rows, the provider-queue chain and the
+      // media slots (image slot overridden).
       await expectGolden(tester, 'settings_models_page');
     });
 
@@ -843,23 +855,27 @@ class _FakeDapHubService implements DapHubService {
   }) async {}
 }
 
+/// The deterministic queue fixture shared by the section goldens and the
+/// models-page golden (both render the same two entries).
+final List<ProviderQueueEntry> _queueFixtureEntries = [
+  ProviderQueueEntry(
+    providerType: 'openai-completions',
+    model: 'moonshotai/Kimi-K2.6',
+    baseUrl: 'https://gate.test/v1',
+    apiKeyEnv: 'KIMI_API_KEY',
+  ),
+  ProviderQueueEntry(
+    providerType: 'anthropic',
+    model: 'claude-sonnet-4',
+    apiKeyEnv: 'ANTHROPIC_API_KEY',
+  ),
+];
+
 /// Provider-queue section goldens (issue #418, settings_sections.dart): the editable project-scope
 /// queue and the read-only env-wins queue, each in en and ru. Deterministic
 /// fakes — no config file is read or written.
 void _queueGoldenSection() {
-  final queueEntries = <ProviderQueueEntry>[
-    ProviderQueueEntry(
-      providerType: 'openai-completions',
-      model: 'moonshotai/Kimi-K2.6',
-      baseUrl: 'https://gate.test/v1',
-      apiKeyEnv: 'KIMI_API_KEY',
-    ),
-    ProviderQueueEntry(
-      providerType: 'anthropic',
-      model: 'claude-sonnet-4',
-      apiKeyEnv: 'ANTHROPIC_API_KEY',
-    ),
-  ];
+  final queueEntries = _queueFixtureEntries;
   final editable = ProviderQueueResolution(
     scope: ProviderQueueScope.project,
     entries: queueEntries,
