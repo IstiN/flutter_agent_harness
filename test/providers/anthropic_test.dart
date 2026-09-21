@@ -96,6 +96,21 @@ final reasoningModel = Model(
 Context simpleContext() =>
     Context(messages: [UserMessage.text('hi', timestamp: DateTime.utc(2026))]);
 
+AssistantMessage assistantFrom(
+  String api,
+  String provider,
+  String model,
+  List<ContentBlock> content,
+) => AssistantMessage(
+  content: content,
+  api: api,
+  provider: provider,
+  model: model,
+  usage: Usage.zero,
+  stopReason: StopReason.stop,
+  timestamp: DateTime.utc(2026),
+);
+
 void main() {
   group('streamAnthropic', () {
     test('streams text with live partial accumulation', () async {
@@ -1422,6 +1437,91 @@ void main() {
       await stream.result;
 
       expect(capturedBody!['max_tokens'], 42);
+    });
+  });
+
+  group('provider switch sanitize (#705 E2)', () {
+    /// Captures the request body [streamAnthropic] sends for [messages].
+    Future<Map<String, dynamic>> captureBody(Context context) async {
+      Map<String, dynamic>? capturedBody;
+      final client = http_testing.MockClient.streaming((request, body) async {
+        capturedBody =
+            jsonDecode(await body.bytesToString()) as Map<String, dynamic>;
+        return http.StreamedResponse(
+          Stream.value(utf8.encode(sseBody([messageStart(), messageStop]))),
+          200,
+        );
+      });
+      final stream = streamAnthropic(
+        testModel,
+        context,
+        const AnthropicOptions(apiKey: 'test-key'),
+        client,
+      );
+      await stream.result;
+      return capturedBody!;
+    }
+
+    test(
+      'thinking authored by another provider degrades to text, never '
+      'replays its foreign signature',
+      () async {
+        final body = await captureBody(
+          Context(
+            messages: [
+              UserMessage.text('hi', timestamp: DateTime.utc(2026)),
+              assistantFrom('responses', 'chatgpt', 'gpt-5-codex', const [
+                ThinkingContent(
+                  thinking: 'responses reasoning',
+                  thinkingSignature: 'resp_encrypted',
+                ),
+              ]),
+              assistantFrom('anthropic-messages', 'anthropic',
+                  'claude-sonnet-4-5', const [
+                ThinkingContent(
+                  thinking: 'native reasoning',
+                  thinkingSignature: 'native-sig',
+                ),
+              ]),
+            ],
+          ),
+        );
+
+        final messages = body['messages'] as List;
+        // The foreign record's thinking degrades to plain text: its
+        // signature is an OpenAI token Anthropic would hard-400 on.
+        final foreign = (messages[1] as Map)['content'] as List;
+        expect((foreign.single as Map)['type'], 'text');
+        expect((foreign.single as Map)['text'], 'responses reasoning');
+        // The native record keeps its signed thinking block untouched.
+        final native = (messages[2] as Map)['content'] as List;
+        expect((native.single as Map)['type'], 'thinking');
+        expect((native.single as Map)['signature'], 'native-sig');
+      },
+    );
+
+    test('redacted thinking from another provider degrades to text', () async {
+      final body = await captureBody(
+        Context(
+          messages: [
+            UserMessage.text('hi', timestamp: DateTime.utc(2026)),
+            assistantFrom('responses', 'chatgpt', 'gpt-5-codex', const [
+              ThinkingContent(
+                thinking: '',
+                thinkingSignature: 'foreign_encrypted',
+                redacted: true,
+              ),
+              TextContent(text: 'the answer'),
+            ]),
+          ],
+        ),
+      );
+
+      final content = ((body['messages'] as List)[1] as Map)['content'] as List;
+      // No redacted_thinking block rides the foreign payload; the empty
+      // thinking drops, the text survives.
+      expect(content, hasLength(1));
+      expect((content.single as Map)['type'], 'text');
     });
   });
 
