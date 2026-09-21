@@ -421,6 +421,84 @@ void main() {
     });
   });
 
+  // #761: Fa's TUI pins the user prompt to row 0 while a run streams
+  // (_writeStickyEcho) and keeps composer chrome at the bottom. History
+  // advancing beneath static chrome matched the tolerant scroll detector,
+  // and the whole-screen CSI S pushed a copy of the pinned row into the
+  // terminal's native scrollback every frame while direct-addressed middle
+  // rows never reached it. A static contentful leading edge proves the
+  // frame is not a global scroll — the op must not fire.
+  group('CellRenderer static-edge scroll inhibition (#761)', () {
+    late StringBuffer buf;
+    late _StringSink sink;
+    late CellRenderer renderer;
+
+    setUp(() {
+      buf = StringBuffer();
+      sink = _StringSink(buf);
+      renderer = CellRenderer(
+        output: sink,
+        logSink: null,
+        defaultAltScreen: false,
+        defaultHideCursor: false,
+      );
+    });
+
+    test('static sticky top row inhibits whole-screen CSI S', () {
+      final sticky = '❯ explain the renderer';
+      final prev = [sticky, for (var i = 0; i < 10; i++) 'row-$i'].join('\n');
+      // History shifts up one row under the pinned prompt.
+      final next = [sticky, for (var i = 1; i <= 10; i++) 'row-$i'].join('\n');
+      renderer.render(newView(prev));
+      buf.clear();
+      renderer.render(newView(next));
+      final out = buf.toString();
+      expect(RegExp(r'\x1b\[[0-9]*S').hasMatch(out), isFalse,
+          reason: 'row 0 is static — a whole-screen scroll would push the '
+              'pinned prompt into the terminal scrollback (#761)');
+      // The frame still converges: surgical cell diffs repaint the shifted
+      // history in place (last char of each row + the fresh tail row).
+      expect(
+        out,
+        '\x1b[2;5H1\x1b[3;5H2\x1b[4;5H3\x1b[5;5H4\x1b[6;5H5'
+        '\x1b[7;5H6\x1b[8;5H7\x1b[9;5H8\x1b[10;5H9\x1b[11;5H10',
+      );
+    });
+
+    test('static bottom row inhibits whole-screen CSI T', () {
+      const footer = '⏎ send · ctrl+c quit';
+      final prev = [for (var i = 0; i < 10; i++) 'row-$i', footer].join('\n');
+      final next = [
+        'row-new',
+        for (var i = 0; i < 9; i++) 'row-$i',
+        footer,
+      ].join('\n');
+      renderer.render(newView(prev));
+      buf.clear();
+      renderer.render(newView(next));
+      final out = buf.toString();
+      expect(RegExp(r'\x1b\[[0-9]*T').hasMatch(out), isFalse,
+          reason: 'the last row is static — a whole-screen scroll would '
+              'discard it (#761)');
+      expect(out, startsWith('\x1b[1;5Hnew'));
+      expect(out, endsWith('\x1b[10;5H8'));
+      expect(out.contains(footer), isFalse,
+          reason: 'the static footer is unchanged — it must not be repainted');
+    });
+
+    test('blank static top row keeps the scroll fast path', () {
+      // A blank row scrolls into the scrollback without a visible trace,
+      // so blank padding never counts as pinned chrome (non-goal: whole-
+      // screen paged scrolling when the screen genuinely shifts).
+      final prev = ['', '', 'a', 'b', 'c'].join('\n');
+      final next = ['', 'a', 'b', 'c', 'd'].join('\n');
+      renderer.render(newView(prev));
+      buf.clear();
+      renderer.render(newView(next));
+      expect(buf.toString(), '\x1b[1S\x1b[5;1Hd\x1b[K');
+    });
+  });
+
   // #342: East-Asian-AMBIGUOUS glyphs (▸ U+25B8, ✓ U+2713, … emoji-range
   // clusters without VS16) measure 2 cells by dart_tui's emoji heuristics
   // but 1 cell on wcwidth-based terminals (the PTY harness's vendored
