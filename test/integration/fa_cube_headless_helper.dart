@@ -26,6 +26,28 @@ final class FaResult {
   String get output => '$stdout\n$stderr';
 }
 
+/// The ambient environment minus every boot input a test must control:
+/// `FA_*` (the preconfig/queue/log-file family) and credential-shaped vars
+/// (`*_API_KEY`/`*_TOKEN`/`*_SECRET`/`*_KEY`/`*_CREDENTIALS`). A developer
+/// or CI shell exports REAL provider keys, and an inherited key would
+/// silently point a catalog provider at its real paid endpoint instead of
+/// the mock (gh-760 review). Tests inject exactly the credentials they
+/// mean by layering them over the scrubbed map.
+Map<String, String> scrubbedChildEnv() {
+  bool ambient(String key) {
+    final upper = key.toUpperCase();
+    return key.startsWith('FA_') ||
+        upper.endsWith('_API_KEY') ||
+        upper.endsWith('_TOKEN') ||
+        upper.endsWith('_SECRET') ||
+        upper.endsWith('_KEY') ||
+        upper.endsWith('_CREDENTIALS');
+  }
+
+  return Map<String, String>.of(Platform.environment)
+    ..removeWhere((key, _) => ambient(key));
+}
+
 /// Runs one headless prompt against the CLI.
 ///
 /// [workspace] is passed as `--cwd` (cube manifests, cache and session cwd
@@ -48,8 +70,6 @@ Future<FaResult> runFaHeadless({
   // hijack the run away from the explicit flags below. Blank values read
   // as unset at every consumer, so the explicit blanks keep the override
   // minimal where the injection re-adds missing vars.
-  final childEnv = Map<String, String>.of(Platform.environment)
-    ..removeWhere((key, _) => key.startsWith('FA_'));
   final result = await Process.run(
     'dart',
     [
@@ -70,7 +90,7 @@ Future<FaResult> runFaHeadless({
     ],
     workingDirectory: Directory.current.path,
     environment: {
-      ...childEnv,
+      ...scrubbedChildEnv(),
       'OPENAI_API_KEY': 'mock',
       'FA_PROVIDER_TYPE': '',
       'FA_PROVIDER_NAME': '',

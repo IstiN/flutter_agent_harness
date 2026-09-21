@@ -67,7 +67,11 @@ import 'headless_provider_key.dart';
 ///
 /// The saved kind restores whenever it resolves through the catalog
 /// ([resolveCliProviderSpec] — every catalog name AND adapter kind,
-/// `chatgpt-codex` included; coverage by construction, issue #760). A
+/// `chatgpt-codex` included; coverage by construction, issue #760) and
+/// restores AS THE RESOLVED SPEC'S KIND: a saved catalog *name* (`openai`,
+/// `chatgpt`) resolves to its adapter kind here, because everything
+/// downstream (`AgentCliConfig.providerKind` → `providerStreamFunction`)
+/// speaks kinds only. A
 /// saved id NO version knows must never brick the boot: it is reported
 /// back as [unknownSavedProvider] and the parsed default (a known
 /// provider) takes over — the executable prints the loud named warning
@@ -100,15 +104,17 @@ resolveEffectiveCliArgs(
   required Map<String, String> env,
 }) {
   final faPreconfig = faProviderPreconfig(parsed, saved, env: env);
-  final savedRestorable = resolveCliProviderSpec(saved.providerKind) != null;
+  // gh-760 (review): restore the RESOLVED spec's kind, never the raw saved
+  // string — the saved id may be a catalog NAME, and the raw name reaching
+  // AgentCliConfig.providerKind bricks the boot at providerStreamFunction.
+  final savedSpec = resolveCliProviderSpec(saved.providerKind);
   final provider = parsed.providerExplicit
       ? parsed.provider
-      : faPreconfig?.spec.kind ??
-            (savedRestorable ? saved.providerKind : parsed.provider);
+      : faPreconfig?.spec.kind ?? (savedSpec?.kind ?? parsed.provider);
   final unknownSavedProvider =
-      savedRestorable || parsed.providerExplicit || faPreconfig != null
-      ? null
-      : saved.providerKind;
+      savedSpec == null && !parsed.providerExplicit && faPreconfig == null
+      ? saved.providerKind
+      : null;
   final modelId = parsed.model ?? faPreconfig?.modelId ?? saved.modelId;
   final baseUrl = parsed.baseUrl ?? faPreconfig?.baseUrl ?? saved.baseUrl;
   final effective = CliArgs(

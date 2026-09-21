@@ -162,18 +162,17 @@ Future<FaResult> runFaHeadlessRaw({
   Map<String, String> extraEnv = const {},
   Duration timeout = const Duration(minutes: 2),
 }) async {
-  // Scrub the ambient FA_* environment (the developer's/CI's own provider
-  // preconfig, queue, log file, ...) so the boot resolves ONLY from the
-  // poisoned config fixture — an inherited FA_PROVIDER_* declaration would
+  // Scrub the ambient environment (the developer's/CI's own provider
+  // preconfig, queue, log file, and any REAL provider keys — see
+  // [scrubbedChildEnv]) so the boot resolves ONLY from the poisoned
+  // config fixture — an inherited FA_PROVIDER_* declaration would
   // legitimately override it and defeat the test.
-  final childEnv = Map<String, String>.of(Platform.environment)
-    ..removeWhere((key, _) => key.startsWith('FA_'));
   final result = await Process.run(
     'dart',
     ['run', 'bin/fah.dart', '--cwd', workspace.path, '-p', prompt],
     workingDirectory: Directory.current.path,
     environment: {
-      ...childEnv,
+      ...scrubbedChildEnv(),
       'OPENAI_API_KEY': 'mock',
       // The ambient FA_* injection fills missing vars only — explicit
       // blanks neutralize the preconfig/queue/log-file (blank reads as

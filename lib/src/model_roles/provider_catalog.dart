@@ -463,6 +463,14 @@ Model buildCatalogModel(
 /// Historical behavior preserved: `openai-completions`/`openrouter` with
 /// a custom [baseUrl] resolve to the `openai` spec (the model reports
 /// provider `openai` instead of `openrouter`); without one, `openrouter`.
+///
+/// Intentionally NOT honoring the build-time provider filter
+/// (`FA_PROVIDERS`): the boot restore path must judge every persisted id
+/// against the full catalog — a disabled-in-this-build saved provider
+/// restores and boots (the wire adapters stay in the binary) instead of
+/// degrading to the fallback warning. The user-facing surfaces (pickers,
+/// roles, `/provider`, key collection) keep the filter via
+/// [catalogProvider].
 ProviderSpec? resolveCliProviderSpec(String kind, {String? baseUrl}) {
   final key = kind.trim();
   if (key == 'openai-completions' || key == 'openrouter') {

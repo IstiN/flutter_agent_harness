@@ -27,7 +27,9 @@ List<String> apiKeyEnvNames(String provider) => switch (provider) {
 /// matters since the restored boot provider can be a kind that is not
 /// itself a catalog name — `chatgpt-codex` → the `chatgpt` spec (gh-760),
 /// so its key resolves from `CHATGPT_OAUTH_CREDENTIALS`. Null for ids no
-/// version knows.
+/// version knows. Intentionally NOT honoring the build-time provider
+/// filter: the boot-restored provider's key must resolve in every build
+/// (see [resolveCliProviderSpec] for the restore path's filter stance).
 ProviderSpec? _keySpec(String provider) {
   final byName = catalogProvider(provider);
   if (byName != null) return byName;

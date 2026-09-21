@@ -233,14 +233,19 @@ void main() {
         await harness.waitForBoot();
 
         await harness.runSlashCommand('/dap');
-        await harness.waitForText(
-          'Stop DAP',
+        // Wait for the LAST menu label on the PAINTED screen (#550 family,
+        // reddened the integ-mock leg on d331157b): the leading Stop DAP
+        // row paints one frame before the status/connect rows, so waiting
+        // on Stop DAP alone leaves the sibling-label asserts racing.
+        final lastLabel = dapMenuOptions(hubRunning: true).last.$2;
+        await harness.waitForScreen(
+          lastLabel,
           timeout: const Duration(seconds: 20),
         );
         // The stopped-state row is gone; the rest of the menu is intact.
         expect(harness.screenText, isNot(contains('Start DAP locally')));
-        for (final label in ['Connection status', 'Connect to a hub']) {
-          expect(harness.screenText, contains(label));
+        for (final option in dapMenuOptions(hubRunning: true)) {
+          expect(harness.screenText, contains(option.$2));
         }
 
         await harness.runSlashCommand('/exit');

@@ -339,6 +339,65 @@ void main() {
       );
     });
 
+    test('all-unknown-provider chains throw the DEGRADE subtype (gh-760 '
+        'review)', () {
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: const {
+            'default': [ModelRef(provider: 'from-the-future', modelId: 'x')],
+          },
+        ),
+        secrets: const {},
+        streamFactory: _neverStream,
+      );
+      expect(
+        () => resolver.chainFor('default'),
+        throwsA(isA<UnknownProviderRoleException>()),
+      );
+    });
+
+    test('a KNOWN provider missing its key stays a plain ConfigException '
+        '(gh-760 review: current-version misconfiguration hard-fails, '
+        'the boot does NOT degrade it)', () {
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: const {
+            'default': [
+              ModelRef(provider: 'anthropic', modelId: 'claude-smol'),
+            ],
+          },
+        ),
+        secrets: const {},
+        streamFactory: _neverStream,
+      );
+      try {
+        resolver.chainFor('default');
+        fail('expected chainFor to throw');
+      } on UnknownProviderRoleException {
+        fail('missing keys on a KNOWN provider is not version skew — '
+            'it must stay a plain ConfigException');
+      } on ConfigException {
+        // Expected: the pre-#760 loud failure the boot maps to _fail.
+      }
+    });
+
+    test('a roles entry naming an adapter KIND resolves (gh-760 review)', () {
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: const {
+            'default': [
+              ModelRef(provider: 'chatgpt-codex', modelId: 'gpt-5-codex'),
+            ],
+          },
+        ),
+        secrets: const {'CHATGPT_OAUTH_CREDENTIALS': 'creds'},
+        streamFactory: _neverStream,
+      );
+      final entries = resolver.chainFor('default');
+      expect(entries, hasLength(1));
+      expect(entries!.single.model.provider, 'chatgpt');
+    });
+
     test('resolveRole is null when neither role nor default is configured', () {
       final resolver = ModelRolesResolver(
         config: ModelRolesConfig(

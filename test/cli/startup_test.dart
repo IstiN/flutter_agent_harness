@@ -159,6 +159,19 @@ void main() {
       expect(resolved.unknownSavedProvider, isNull);
     });
 
+    test('a saved catalog NAME restores as its adapter KIND (gh-760 '
+        'review)', () {
+      // `openai` is a catalog name whose adapter kind differs; restoring
+      // the raw string bricks the boot at providerStreamFunction.
+      final resolved = resolveEffectiveCliArgs(
+        const CliArgs(),
+        CliConfig(providerKind: 'openai', modelId: 'gpt-5'),
+        env: const {},
+      );
+      expect(resolved.provider, resolveCliProviderSpec('openai')!.kind);
+      expect(resolved.unknownSavedProvider, isNull);
+    });
+
     test('a saved kind no version knows degrades to the parsed default '
         'and is reported (gh-760 AC2)', () {
       final resolved = resolveEffectiveCliArgs(

@@ -1378,10 +1378,13 @@ Future<void> _runApp(List<String> args) async {
   // gh-760: the folder state is written by the same shared-config family
   // — validate its provider kind the same way. An unrecognizable kind
   // gets a named warning and the state file is ignored (never a boot
-  // throw); every catalog name/kind resolves by construction.
-  final folderStateUsable =
-      applyFolderState &&
-      resolveCliProviderSpec(folderState.providerKind) != null;
+  // throw); every catalog name/kind resolves by construction. The restore
+  // takes the RESOLVED spec's KIND (review): a state file carrying a
+  // catalog name must not leak the raw name into the stream factory.
+  final folderSpec = applyFolderState
+      ? resolveCliProviderSpec(folderState.providerKind)
+      : null;
+  final folderStateUsable = applyFolderState && folderSpec != null;
   if (applyFolderState && !folderStateUsable) {
     stderr.writeln(
       'warning: saved folder model state names unknown provider '
@@ -1392,7 +1395,7 @@ Future<void> _runApp(List<String> args) async {
   }
   final applyFolderModel = applyFolderState && folderStateUsable;
   if (applyFolderModel) {
-    provider = folderState.providerKind;
+    provider = folderSpec.kind;
   }
   final baseUrl = applyFolderModel ? folderState.baseUrl : effective.baseUrl;
 
@@ -1547,19 +1550,24 @@ Future<void> _runApp(List<String> args) async {
     }
     try {
       defaultRoleResolved = rolesResolver.resolveRole(defaultModelRole) != null;
-    } on ConfigException catch (error) {
-      // gh-760: degrade, never brick. A roles chain whose entries resolve
-      // to nothing (unknown providers a newer version wrote, missing keys)
-      // must not make the binary unstartable — warn on stderr with the
-      // reasons and fall back to the legacy single-model path. Unknown-
-      // provider entries were already skipped with named reasons by the
-      // resolver; the throw only fires when no usable entry remains.
+    } on UnknownProviderRoleException catch (error) {
+      // gh-760: degrade, never brick. The chain names providers NO version
+      // knows (a config written by a newer app/CLI version) — warn on
+      // stderr with the reasons and fall back to the legacy single-model
+      // path. Unknown-provider entries were already skipped with named
+      // reasons by the resolver; the throw only fires when no usable
+      // entry remains.
       stderr.writeln(
         'warning: model roles config is unusable (${error.message}) — '
         'falling back to the configured single provider/model',
       );
       rolesResolver = null;
       defaultRoleResolved = false;
+    } on ConfigException catch (error) {
+      // A CURRENT-version misconfiguration (e.g. every entry of a KNOWN
+      // provider missing its key) keeps the pre-#760 contract: a loud
+      // boot failure — never a silently-ignored roles config.
+      _fail('invalid model roles config: ${error.message}');
     }
   }
   late final String apiKey;

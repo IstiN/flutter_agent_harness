@@ -12,6 +12,7 @@
 library;
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/io.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -24,6 +25,29 @@ void main() {
       for (final key in keys) {
         final model = buildCliDefaultModel(key, modelId: 'coverage-probe');
         expect(model.provider, isNotEmpty, reason: 'kind $key resolved');
+      }
+    });
+
+    test('every catalog id restores as a STREAMABLE adapter kind (REG-C1, '
+        'gh-760 review)', () {
+      // Name resolution alone is not enough: a saved id restoring as a raw
+      // catalog NAME (openai, chatgpt) bricks the boot at
+      // providerStreamFunction, which accepts adapter kinds only. The full
+      // restore chain must land every catalog id on a kind the factory
+      // knows.
+      for (final spec in providerCatalog.values) {
+        for (final id in [spec.name, spec.kind]) {
+          final resolved = resolveEffectiveCliArgs(
+            const CliArgs(),
+            CliConfig(providerKind: id, modelId: 'probe'),
+            env: const {},
+          );
+          expect(
+            () => providerStreamFunction(resolved.provider, 'k'),
+            returnsNormally,
+            reason: 'saved id $id restores as streamable kind',
+          );
+        }
       }
     });
 

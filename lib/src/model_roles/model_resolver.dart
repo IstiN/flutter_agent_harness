@@ -28,6 +28,17 @@ import 'key_rotation.dart';
 import 'roles_config.dart';
 import 'provider_catalog.dart';
 
+/// gh-760 (review): the role's chain has NO usable entry AND the skip
+/// reasons include unknown providers — a config written by a newer
+/// app/CLI version. The boot boundary degrades exactly THIS case to the
+/// legacy single-model path; a chain whose known providers merely miss
+/// their keys throws plain [ConfigException] (a current-version
+/// misconfiguration stays a loud boot failure, the pre-#760 contract).
+final class UnknownProviderRoleException extends ConfigException {
+  /// Creates the exception with the joined skip reasons.
+  const UnknownProviderRoleException(super.message);
+}
+
 /// Builds per-role fallback chains from configuration and secrets.
 final class ModelRolesResolver {
   /// Creates a resolver over [config] and a snapshot of [secrets]
@@ -138,21 +149,34 @@ final class ModelRolesResolver {
       if (entry != null) entries.add(entry);
     }
     if (entries.isEmpty) {
-      throw ConfigException(
-        'role "$role" has no usable chain entry: ${skipped.join('; ')}',
-      );
+      final message =
+          'role "$role" has no usable chain entry: ${skipped.join('; ')}';
+      // gh-760: degrade, never brick — but only the version-skew shape.
+      // Unknown providers (a newer app/CLI wrote the config) throw the
+      // dedicated subtype the boot boundary degrades on; known providers
+      // missing keys stay a plain ConfigException (loud boot failure).
+      throw skipped.any((reason) => reason.contains(_unknownProviderReason))
+          ? UnknownProviderRoleException(message)
+          : ConfigException(message);
     }
     return entries;
   }
 
+  /// The skip-reason fragment identifying an id no version knows; shared
+  /// by [_buildEntry] and the `chainFor` throw classification.
+  static const _unknownProviderReason = 'unknown provider';
+
   ChainEntry? _buildEntry(ModelRef ref, List<String> skipped) {
-    final spec = catalogProvider(ref.provider);
+    // gh-760 (review): resolve by catalog name AND adapter kind — a roles
+    // entry written as a kind (`chatgpt-codex`, exactly what the app
+    // writes) is KNOWN to this version and must not be skipped as unknown.
+    final spec = catalogProvider(ref.provider) ?? _kindProvider(ref.provider);
     if (spec == null) {
       // gh-760: degrade, never brick. An entry whose provider no version
       // knows (a config written by a newer app/CLI) skips like a
       // missing-key entry — reported in skippedEntries, never thrown —
       // so the remaining known entries carry the role.
-      skipped.add('${ref.label} (unknown provider: ${ref.provider})');
+      skipped.add('${ref.label} ($_unknownProviderReason: ${ref.provider})');
       return null;
     }
     final keyBase = _keyBaseName(ref, spec);
@@ -167,8 +191,10 @@ final class ModelRolesResolver {
       () => ApiKeyRing.fromSecrets(_secrets, keyBase, now: _now)!,
     );
     return ChainEntry(
+      // Build from the RESOLVED spec's name: a kind-named ref
+      // (`chatgpt-codex`) is not itself a catalog key.
       model: buildCatalogModel(
-        ref.provider,
+        spec.name,
         ref.modelId,
         baseUrl: ref.baseUrl,
         contextWindow: ref.contextWindow,
@@ -194,6 +220,16 @@ final class ModelRolesResolver {
         };
       },
     );
+  }
+
+  /// The catalog spec whose ADAPTER KIND is [id] (e.g. `chatgpt-codex` →
+  /// the `chatgpt` spec), honoring the build filter like
+  /// [catalogProvider]. Null when no enabled provider carries the kind.
+  ProviderSpec? _kindProvider(String id) {
+    for (final spec in providerCatalog.values) {
+      if (spec.kind == id && providerEnabledInBuild(spec.name)) return spec;
+    }
+    return null;
   }
 
   /// The key base name for [ref]: its explicit `apiKeyName`, else the first
