@@ -3996,4 +3996,9 @@
 - chore: repin factory to bd763b3 (#474) (#754)
 - chore(coverage): CLI terminal-test baseline 8.0 -> 12.17 (ratchet up)
 
+## 0.1.444
+
+- chore: repin factory to 554cfb0 (#476) (#757)
+- chore: repin factory to 8d83bf4 (fail_validation unarm + branch fallback) (#755)
+
 ## Unreleased
