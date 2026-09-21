@@ -70,11 +70,7 @@ final class _CursorRendererState {
   int _lastRow = -1;
   int _lastCol = -1;
 
-  void apply(
-    IOSink output,
-    Cursor? cursor, {
-    bool forceHome = false,
-  }) {
+  void apply(IOSink output, Cursor? cursor, {bool forceHome = false}) {
     if (cursor == null) {
       reset(output);
       return;
@@ -334,13 +330,18 @@ final class AnsiRenderer implements TeaRenderer {
 
 /// A single terminal cell with its active rendering state.
 final class _Cell {
-  const _Cell(this.char, this.attrs,
-      [this.hyperlink = '', this.layoutUnstable = false])
-      : isContinuation = false;
+  const _Cell(
+    this.char,
+    this.attrs, [
+    this.hyperlink = '',
+    this.layoutUnstable = false,
+  ]) : isContinuation = false;
 
-  const _Cell.continuation(this.attrs,
-      [this.hyperlink = '', this.layoutUnstable = false])
-      : char = '',
+  const _Cell.continuation(
+    this.attrs, [
+    this.hyperlink = '',
+    this.layoutUnstable = false,
+  ])  : char = '',
         isContinuation = true;
 
   final String char; // one grapheme cluster (may be multi-byte)
@@ -730,6 +731,11 @@ final class CellRenderer implements TeaRenderer {
   /// off. The pure-shift case (no mismatches) is still preferred and keeps
   /// the headline budget: 1 op + k fresh rows.
   ///
+  /// A candidate whose leading edge row (top for +k, bottom for -k) is
+  /// static AND non-blank is rejected outright: the screen did not globally
+  /// scroll, and the op would push that pinned row into the terminal
+  /// scrollback (#761) — the frame degrades to the cell diff.
+  ///
   /// Returns null when no shift is worth taking → cell diff.
   ///
   /// Additionally requires the grid to be as tall as the tallest grid ever
@@ -741,7 +747,9 @@ final class CellRenderer implements TeaRenderer {
   // viewport); per-k early exit once the mismatch budget is blown. Row
   // hashing only if this ever shows up in a profile.
   ({int k, List<int> repaint})? _detectScrollShift(
-      List<List<_Cell>> prev, List<List<_Cell>> next) {
+    List<List<_Cell>> prev,
+    List<List<_Cell>> next,
+  ) {
     final rows = prev.length;
     if (rows < 2 || rows != next.length || rows != _maxRows) return null;
     const maxK = 40;
@@ -779,6 +787,19 @@ final class CellRenderer implements TeaRenderer {
       }
     }
     if (best.k == 0) return null;
+    // Static-edge invariant (#761): a scroll op shifts the PHYSICAL screen,
+    // pushing the leading edge row (top for `CSI S`, bottom for `CSI T`)
+    // into the terminal's native scrollback. If that edge row is identical
+    // AND non-blank across frames, the frame is a history shift under
+    // pinned chrome (fa_tui's sticky echo at row 0, composer at the
+    // bottom) — not a global scroll — and the op would eject a copy of the
+    // pinned row into the scrollback every frame. Reject the candidate and
+    // let the cell diff repaint the shifted rows in place. A blank edge
+    // scrolls without a visible trace, so it keeps the fast path.
+    final edge = best.up ? 0 : rows - 1;
+    if (_rowsEqual(prev[edge], next[edge]) && _rowHasContent(prev[edge])) {
+      return null;
+    }
     final k = best.k;
     final mismatches = <int>[];
     if (best.up) {
@@ -801,6 +822,16 @@ final class CellRenderer implements TeaRenderer {
     return true;
   }
 
+  /// Whether [row] paints any non-blank column. Blank (all-space) rows are
+  /// padding — they scroll into the scrollback without a visible trace and
+  /// never count as pinned chrome (#761).
+  bool _rowHasContent(List<_Cell> row) {
+    for (final cell in row) {
+      if (!cell.isContinuation && cell.char != ' ') return true;
+    }
+    return false;
+  }
+
   /// Whether any cell's grapheme has a heuristic (ambiguous/emoji) width —
   /// such rows must be repainted whole instead of surgically diffed (#342).
   bool _hasUnstableLayout(List<_Cell> row) {
@@ -815,10 +846,11 @@ final class CellRenderer implements TeaRenderer {
   /// becomes 1 op + k rows instead of a whole-screen repaint. The [shift]'s
   /// mismatched overlap rows (live chrome that changed across the shift) are
   /// repainted too, so the physical screen converges to [next] exactly.
-  void _emitScrollFrame(
-      {required int k,
-      required List<int> repaint,
-      required List<List<_Cell>> next}) {
+  void _emitScrollFrame({
+    required int k,
+    required List<int> repaint,
+    required List<List<_Cell>> next,
+  }) {
     _output.write(k > 0 ? '\x1b[${k}S' : '\x1b[${-k}T');
     final from = k > 0 ? next.length - k : 0;
     final to = k > 0 ? next.length : -k;
