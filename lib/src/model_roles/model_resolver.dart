@@ -144,8 +144,16 @@ final class ModelRolesResolver {
     if (refs == null) return null;
     final skipped = skippedEntries[role] = <String>[];
     final entries = <ChainEntry>[];
+    // Typed version-skew marker (gh-760 review): classification NEVER
+    // substring-matches the human-readable skip reasons — those embed
+    // user-controlled text (provider/modelId labels).
+    var sawUnknownProvider = false;
     for (final ref in refs) {
-      final entry = _buildEntry(ref, skipped);
+      final entry = _buildEntry(
+        ref,
+        skipped,
+        onUnknownProvider: () => sawUnknownProvider = true,
+      );
       if (entry != null) entries.add(entry);
     }
     if (entries.isEmpty) {
@@ -155,18 +163,18 @@ final class ModelRolesResolver {
       // Unknown providers (a newer app/CLI wrote the config) throw the
       // dedicated subtype the boot boundary degrades on; known providers
       // missing keys stay a plain ConfigException (loud boot failure).
-      throw skipped.any((reason) => reason.contains(_unknownProviderReason))
+      throw sawUnknownProvider
           ? UnknownProviderRoleException(message)
           : ConfigException(message);
     }
     return entries;
   }
 
-  /// The skip-reason fragment identifying an id no version knows; shared
-  /// by [_buildEntry] and the `chainFor` throw classification.
-  static const _unknownProviderReason = 'unknown provider';
-
-  ChainEntry? _buildEntry(ModelRef ref, List<String> skipped) {
+  ChainEntry? _buildEntry(
+    ModelRef ref,
+    List<String> skipped, {
+    required void Function() onUnknownProvider,
+  }) {
     // gh-760 (review): resolve by catalog name AND adapter kind — a roles
     // entry written as a kind (`chatgpt-codex`, exactly what the app
     // writes) is KNOWN to this version and must not be skipped as unknown.
@@ -176,7 +184,8 @@ final class ModelRolesResolver {
       // knows (a config written by a newer app/CLI) skips like a
       // missing-key entry — reported in skippedEntries, never thrown —
       // so the remaining known entries carry the role.
-      skipped.add('${ref.label} ($_unknownProviderReason: ${ref.provider})');
+      skipped.add('${ref.label} (unknown provider: ${ref.provider})');
+      onUnknownProvider();
       return null;
     }
     final keyBase = _keyBaseName(ref, spec);

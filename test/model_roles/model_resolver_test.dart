@@ -381,6 +381,31 @@ void main() {
       }
     });
 
+    test('a model id CONTAINING the marker words is not misclassified as '
+        'version skew (gh-760 review: typed classification, no substring '
+        'matching)', () {
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: const {
+            'default': [
+              ModelRef(provider: 'anthropic', modelId: 'unknown provider test'),
+            ],
+          },
+        ),
+        secrets: const {},
+        streamFactory: _neverStream,
+      );
+      try {
+        resolver.chainFor('default');
+        fail('expected chainFor to throw');
+      } on UnknownProviderRoleException {
+        fail('the skip reason embedding a user-controlled model id must '
+            'not classify a known provider as version skew');
+      } on ConfigException {
+        // Expected.
+      }
+    });
+
     test('a roles entry naming an adapter KIND resolves (gh-760 review)', () {
       final resolver = ModelRolesResolver(
         config: ModelRolesConfig(
