@@ -104,11 +104,11 @@ resolveEffectiveCliArgs(
   final provider = parsed.providerExplicit
       ? parsed.provider
       : faPreconfig?.spec.kind ??
-          (savedRestorable ? saved.providerKind : parsed.provider);
+            (savedRestorable ? saved.providerKind : parsed.provider);
   final unknownSavedProvider =
       savedRestorable || parsed.providerExplicit || faPreconfig != null
-          ? null
-          : saved.providerKind;
+      ? null
+      : saved.providerKind;
   final modelId = parsed.model ?? faPreconfig?.modelId ?? saved.modelId;
   final baseUrl = parsed.baseUrl ?? faPreconfig?.baseUrl ?? saved.baseUrl;
   final effective = CliArgs(

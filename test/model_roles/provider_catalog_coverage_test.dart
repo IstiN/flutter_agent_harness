@@ -58,10 +58,7 @@ void main() {
     });
 
     test('the openai-completions legacy baseUrl behavior is preserved', () {
-      final plain = buildCliDefaultModel(
-        'openai-completions',
-        modelId: 'm',
-      );
+      final plain = buildCliDefaultModel('openai-completions', modelId: 'm');
       expect(plain.provider, 'openrouter');
       final custom = buildCliDefaultModel(
         'openai-completions',

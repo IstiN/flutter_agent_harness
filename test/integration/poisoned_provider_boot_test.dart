@@ -57,7 +57,10 @@ responses:
         ..writeAsStringSync(body);
     }
 
-    Future<FaResult> runFa(String prompt, {Map<String, String> extraEnv = const {}}) {
+    Future<FaResult> runFa(
+      String prompt, {
+      Map<String, String> extraEnv = const {},
+    }) {
       return runFaHeadlessRaw(
         workspace: workspace,
         prompt: prompt,
@@ -167,14 +170,7 @@ Future<FaResult> runFaHeadlessRaw({
     ..removeWhere((key, _) => key.startsWith('FA_'));
   final result = await Process.run(
     'dart',
-    [
-      'run',
-      'bin/fah.dart',
-      '--cwd',
-      workspace.path,
-      '-p',
-      prompt,
-    ],
+    ['run', 'bin/fah.dart', '--cwd', workspace.path, '-p', prompt],
     workingDirectory: Directory.current.path,
     environment: {
       ...childEnv,

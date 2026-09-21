@@ -18,7 +18,9 @@ import 'custom_providers.dart';
 List<String> apiKeyEnvNames(String provider) => switch (provider) {
   'vision' => const ['VISION_API_KEY'],
   'transcribe' => const ['TRANSCRIBE_API_KEY'],
-  _ => _keySpec(provider)?.apiKeyEnvNames ?? const ['OPENROUTER_API_KEY', 'OPENAI_API_KEY'],
+  _ =>
+    _keySpec(provider)?.apiKeyEnvNames ??
+        const ['OPENROUTER_API_KEY', 'OPENAI_API_KEY'],
 };
 
 /// The catalog spec for a provider name OR adapter kind. The kind fallback
