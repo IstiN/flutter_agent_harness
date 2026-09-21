@@ -15,6 +15,14 @@ import 'package:test/test.dart';
 import 'pty_harness.dart';
 
 void main() {
+  // The fold badge carries an optional multiplicity suffix: a slow CI
+  // runner can fold twice before the continuation turn streams, rendering
+  // «[auto-compacted ×2 · continuing]» — waiting on the exact single-fold
+  // string then times out even though the badge is on screen (observed on
+  // the pre-merge validation run: 30 s TimeoutException with the ×2 badge
+  // visible in the captured screen). Match both forms.
+  final foldBadge = RegExp(r'\[auto-compacted( ×\d+)? · continuing\]');
+
   test('a mid-run fold badges the status row until the turn settles', () async {
     final mock = _FoldingMock();
     await mock.start();
@@ -51,7 +59,7 @@ void main() {
       timeout: const Duration(seconds: 60),
     );
     await harness.waitForText(
-      '[auto-compacted · continuing]',
+      foldBadge,
       timeout: const Duration(seconds: 30),
     );
 
@@ -66,7 +74,7 @@ void main() {
     );
     expect(
       harness.screenText,
-      isNot(contains('[auto-compacted · continuing]')),
+      isNot(contains(foldBadge)),
       reason: 'the badge must clear when the turn settles',
     );
 
@@ -80,7 +88,7 @@ void main() {
     );
     expect(
       harness.screenText,
-      isNot(contains('[auto-compacted · continuing]')),
+      isNot(contains(foldBadge)),
       reason: 'a fresh run without folds must never badge',
     );
   });
