@@ -91,5 +91,28 @@ void main() {
       );
       expect(custom.provider, 'openai');
     });
+
+    test('ids are canonicalized at the seam: trim + case-fold on names '
+        'AND kinds (gh-760 review)', () {
+      // The persisted id comes from surfaces the CLI does not control; the
+      // lookup must not depend on the caller's spelling.
+      for (final id in [' chatgpt-codex ', 'CHATGPT-CODEX', 'ChatGpt']) {
+        expect(
+          resolveCliProviderSpec(id)?.name,
+          'chatgpt',
+          reason: 'id "$id" resolves canonically',
+        );
+      }
+      expect(resolveCliProviderSpec(' OPENAI ')!.kind, 'openai-completions');
+      expect(resolveCliProviderSpec('   '), isNull);
+    });
+
+    test('only the chatgpt spec is endpoint-locked (gh-760 review)', () {
+      final locked = [
+        for (final spec in providerCatalog.values)
+          if (spec.endpointLocked) spec.name,
+      ];
+      expect(locked, ['chatgpt']);
+    });
   });
 }

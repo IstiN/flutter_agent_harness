@@ -59,4 +59,41 @@ void main() {
       expect(key, isNull);
     },
   );
+
+  test('the chatgpt-codex KIND resolves key names through the chatgpt spec '
+      '(gh-760 review)', () {
+    // gh-760: the restored boot provider is the kind; the key layer must
+    // map it to the catalog spec's OAuth credential slot.
+    expect(apiKeyEnvNames('chatgpt-codex'), ['CHATGPT_OAUTH_CREDENTIALS']);
+    expect(apiKeyEnvNames('CHATGPT-CODEX'), ['CHATGPT_OAUTH_CREDENTIALS']);
+    expect(apiKeyEnvNames('chatgpt'), ['CHATGPT_OAUTH_CREDENTIALS']);
+  });
+
+  test('codex env creds resolve on the DEFAULT endpoint, never on a '
+      'foreign one (gh-760 review)', () {
+    final keys = SecureKeyCache(FakeSecureKeyStore());
+
+    // The spec default (chatgpt.com): the env OAuth creds are the key.
+    expect(
+      optionalProviderApiKey(
+        'chatgpt-codex',
+        keys,
+        env: const {'CHATGPT_OAUTH_CREDENTIALS': 'dummy-creds'},
+      ),
+      'dummy-creds',
+    );
+    // A foreign baseUrl is a custom endpoint: the catalog env names
+    // describe the default endpoint and must never hijack it (#40) —
+    // null, even with the env var present (the boot pair-guard degrades
+    // this shape before the key gate).
+    expect(
+      optionalProviderApiKey(
+        'chatgpt-codex',
+        keys,
+        baseUrl: 'https://openrouter.ai/api/v1',
+        env: const {'CHATGPT_OAUTH_CREDENTIALS': 'dummy-creds'},
+      ),
+      isNull,
+    );
+  });
 }

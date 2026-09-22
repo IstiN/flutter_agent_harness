@@ -90,13 +90,17 @@ import 'headless_provider_key.dart';
 /// Returns the effective [CliArgs], the resolved provider kind — the same
 /// value, the explicit record field saves the caller a re-derivation — the
 /// `FA_PROVIDER_*` declaration when one is active (the caller needs it
-/// for the roles pinning, the key decision and the extra redaction), and
-/// the saved provider id when it was unrecognizable (null otherwise).
+/// for the roles pinning, the key decision and the extra redaction), the
+/// saved provider id when it was unrecognizable, and the saved provider id
+/// when the persisted provider/baseUrl pair was unservable (endpoint-locked
+/// kind, foreign baseUrl — the caller degrades it with a named warning).
+/// Both report fields are null otherwise.
 ({
   CliArgs args,
   String provider,
   EnvProviderPreconfig? faPreconfig,
   String? unknownSavedProvider,
+  String? incompatibleSavedEndpoint,
 })
 resolveEffectiveCliArgs(
   CliArgs parsed,
@@ -107,13 +111,32 @@ resolveEffectiveCliArgs(
   // gh-760 (review): restore the RESOLVED spec's kind, never the raw saved
   // string — the saved id may be a catalog NAME, and the raw name reaching
   // AgentCliConfig.providerKind bricks the boot at providerStreamFunction.
-  final savedSpec = resolveCliProviderSpec(saved.providerKind);
+  // A blank saved value is UNSET, not unknown: no version-skew warning for
+  // a hand-edit artifact (gh-760 review).
+  final savedRaw = saved.providerKind.trim();
+  final savedSpec = savedRaw.isEmpty ? null : resolveCliProviderSpec(savedRaw);
+  // gh-760 (review): a persisted provider/baseUrl PAIR can be unservable —
+  // an endpoint-locked kind (chatgpt-codex speaks the OAuth Codex wire on
+  // chatgpt.com ONLY) pointed at a stale foreign baseUrl (a partial write
+  // keeping the previous config's endpoint). Restoring it would die at the
+  // key gate with self-contradictory guidance, so the pair is rejected as
+  // a unit: the saved restore degrades like an unknown id — loud warning,
+  // parsed-default provider, config untouched.
+  final endpointConflict =
+      savedSpec != null &&
+      savedSpec.endpointLocked &&
+      saved.baseUrl != savedSpec.defaultBaseUrl;
+  final restoredKind = endpointConflict ? null : savedSpec?.kind;
   final provider = parsed.providerExplicit
       ? parsed.provider
-      : faPreconfig?.spec.kind ?? (savedSpec?.kind ?? parsed.provider);
+      : faPreconfig?.spec.kind ?? restoredKind ?? parsed.provider;
   final unknownSavedProvider =
-      savedSpec == null && !parsed.providerExplicit && faPreconfig == null
-      ? saved.providerKind
+      savedSpec == null && savedRaw.isNotEmpty && !parsed.providerExplicit && faPreconfig == null
+      ? savedRaw
+      : null;
+  final incompatibleSavedEndpoint =
+      endpointConflict && !parsed.providerExplicit && faPreconfig == null
+      ? savedRaw
       : null;
   final modelId = parsed.model ?? faPreconfig?.modelId ?? saved.modelId;
   final baseUrl = parsed.baseUrl ?? faPreconfig?.baseUrl ?? saved.baseUrl;
@@ -139,6 +162,7 @@ resolveEffectiveCliArgs(
     provider: provider,
     faPreconfig: faPreconfig,
     unknownSavedProvider: unknownSavedProvider,
+    incompatibleSavedEndpoint: incompatibleSavedEndpoint,
   );
 }
 

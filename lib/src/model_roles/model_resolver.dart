@@ -233,10 +233,13 @@ final class ModelRolesResolver {
 
   /// The catalog spec whose ADAPTER KIND is [id] (e.g. `chatgpt-codex` →
   /// the `chatgpt` spec), honoring the build filter like
-  /// [catalogProvider]. Null when no enabled provider carries the kind.
+  /// [catalogProvider]. The id is canonicalized like
+  /// [resolveCliProviderSpec] (trim + case-fold). Null when no enabled
+  /// provider carries the kind.
   ProviderSpec? _kindProvider(String id) {
+    final key = id.trim().toLowerCase();
     for (final spec in providerCatalog.values) {
-      if (spec.kind == id && providerEnabledInBuild(spec.name)) return spec;
+      if (spec.kind == key && providerEnabledInBuild(spec.name)) return spec;
     }
     return null;
   }

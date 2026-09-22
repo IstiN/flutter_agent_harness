@@ -149,14 +149,22 @@ void main() {
 
     test('a saved chatgpt-codex kind is restored (gh-760 AC1)', () {
       // The app writes `provider: chatgpt-codex` into the shared config;
-      // the boot path must resolve it to the codex catalog entry.
+      // the boot path must resolve it to the codex catalog entry. The
+      // servable shape carries the codex endpoint (CliConfig defaults an
+      // absent baseUrl to the openrouter one — that PAIR degrades, see the
+      // endpoint-lock tests below).
       final resolved = resolveEffectiveCliArgs(
         const CliArgs(),
-        CliConfig(providerKind: 'chatgpt-codex', modelId: 'gpt-5-codex'),
+        CliConfig(
+          providerKind: 'chatgpt-codex',
+          modelId: 'gpt-5-codex',
+          baseUrl: 'https://chatgpt.com/backend-api/codex',
+        ),
         env: const {},
       );
       expect(resolved.provider, 'chatgpt-codex');
       expect(resolved.unknownSavedProvider, isNull);
+      expect(resolved.incompatibleSavedEndpoint, isNull);
     });
 
     test('a saved catalog NAME restores as its adapter KIND (gh-760 '
@@ -181,6 +189,78 @@ void main() {
       );
       expect(resolved.provider, 'openai-completions');
       expect(resolved.unknownSavedProvider, 'from-the-future');
+    });
+
+    test('a BLANK saved provider is unset, not unknown (gh-760 review)',
+        () {
+      // `provider: ""` is a hand-edit artifact — pre-#760 it silently took
+      // the default; it must not wear the version-skew warning.
+      final resolved = resolveEffectiveCliArgs(
+        const CliArgs(),
+        CliConfig(providerKind: '  '),
+        env: const {},
+      );
+      expect(resolved.provider, 'openai-completions');
+      expect(resolved.unknownSavedProvider, isNull);
+    });
+
+    test('an endpoint-locked kind over a foreign saved baseUrl degrades '
+        'as a PAIR (gh-760 review)', () {
+      // The realistic partial write: provider overwritten on an existing
+      // config, stale baseUrl kept. Codex speaks the OAuth wire on
+      // chatgpt.com only — restoring it over the mock/openrouter endpoint
+      // would die at the key gate with self-contradictory guidance.
+      final resolved = resolveEffectiveCliArgs(
+        const CliArgs(),
+        CliConfig(
+          providerKind: 'chatgpt-codex',
+          modelId: 'gpt-5-codex',
+          baseUrl: 'https://openrouter.ai/api/v1',
+        ),
+        env: const {},
+      );
+      expect(resolved.provider, 'openai-completions');
+      expect(resolved.unknownSavedProvider, isNull);
+      expect(resolved.incompatibleSavedEndpoint, 'chatgpt-codex');
+      // The same for the catalog NAME form.
+      final byName = resolveEffectiveCliArgs(
+        const CliArgs(),
+        CliConfig(
+          providerKind: 'chatgpt',
+          modelId: 'gpt-5-codex',
+          baseUrl: 'http://127.0.0.1:9/v1',
+        ),
+        env: const {},
+      );
+      expect(byName.provider, 'openai-completions');
+      expect(byName.incompatibleSavedEndpoint, 'chatgpt');
+    });
+
+    test('an endpoint-locked kind on its OWN endpoint restores (gh-760 '
+        'review)', () {
+      final ownBase = resolveEffectiveCliArgs(
+        const CliArgs(),
+        CliConfig(
+          providerKind: 'chatgpt-codex',
+          modelId: 'gpt-5-codex',
+          baseUrl: resolveCliProviderSpec('chatgpt-codex')!.defaultBaseUrl,
+        ),
+        env: const {},
+      );
+      expect(ownBase.provider, 'chatgpt-codex');
+      expect(ownBase.incompatibleSavedEndpoint, isNull);
+      // An explicit --provider is full manual control: no pair judgement.
+      final explicit = resolveEffectiveCliArgs(
+        const CliArgs(
+          provider: 'chatgpt-codex',
+          providerExplicit: true,
+          baseUrl: 'http://127.0.0.1:9/v1',
+        ),
+        CliConfig(),
+        env: const {},
+      );
+      expect(explicit.provider, 'chatgpt-codex');
+      expect(explicit.incompatibleSavedEndpoint, isNull);
     });
 
     test('an unknown saved kind is not reported when a declaration '
