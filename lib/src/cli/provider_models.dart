@@ -1052,10 +1052,7 @@ extension on AgentCli {
     // and never via a reachable `!` (issue #772 review).
     final spec = resolveCliProviderSpec(def.provider, honorBuildFilter: true);
     if (spec == null) {
-      io.writeln(
-        'unknown provider: ${def.provider} — supported providers: '
-        '${enabledProviderNames().join(', ')}',
-      );
+      io.writeln(_unknownProviderMessage(def.provider));
       return;
     }
     final rolesResolver = config.modelRolesResolver;

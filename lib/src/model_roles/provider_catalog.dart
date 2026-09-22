@@ -472,6 +472,7 @@ Model buildCatalogModel(
 /// validation) pass `honorBuildFilter: true` — the filter the
 /// [catalogProvider] lookups used to apply — instead of re-wiring
 /// [providerEnabledInBuild] by hand.
+
 /// The legacy `openai-completions`/`openrouter` default-endpoint rule
 /// (gh-760 historical behavior): the model reports provider `openai`
 /// instead of `openrouter` on a custom base URL.

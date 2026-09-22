@@ -1750,6 +1750,20 @@ extension on AgentCli {
     return host;
   }
 
+/// The shared refusal wording for a provider id no enabled catalog entry
+/// names (issue #772): the enabled names, plus the kinds that add
+/// information (`chatgpt-codex`), so a kind-shaped typo is discoverable.
+/// One constant for the `/provider` and `/model` refusals.
+String _unknownProviderMessage(String id) {
+  final kinds = [
+    for (final name in enabledProviderNames())
+      if (canonicalProviderKind(name) != name) canonicalProviderKind(name),
+  ];
+  return 'unknown provider: $id — supported providers: '
+      '${enabledProviderNames().join(', ')}'
+      '${kinds.isEmpty ? '' : ' — kinds accepted too: ${kinds.join(', ')}'}';
+}
+
   /// The catalog-switch branch of [_handleProviderCommand]: resolves the
   /// provider name against the catalog and switches with the optional
   /// endpoint/token args.
@@ -1760,15 +1774,7 @@ extension on AgentCli {
     // still gates it (as the old catalogProvider lookup did).
     final spec = resolveCliProviderSpec(args[0], honorBuildFilter: true);
     if (spec == null) {
-      final kinds = [
-        for (final name in enabledProviderNames())
-          if (canonicalProviderKind(name) != name) canonicalProviderKind(name),
-      ];
-      io.writeln(
-        'unknown provider: ${args[0]} — supported providers: '
-        '${enabledProviderNames().join(', ')}'
-        '${kinds.isEmpty ? '' : ' — kinds accepted too: ${kinds.join(', ')}'}',
-      );
+      io.writeln(_unknownProviderMessage(args[0]));
       return;
     }
     _activeCustomName = null;
