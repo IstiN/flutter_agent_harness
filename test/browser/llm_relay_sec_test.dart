@@ -112,25 +112,19 @@ Future<List<BridgeFrame>> _handle(
         relayOpenAiCompletion(relayRequest, onDelta, client: client),
     resolveTarget: _resolver,
   );
-  await glue.handle(
-    _llmReqFrame(request),
-    (frame) async => sent.add(frame),
-  );
+  await glue.handle(_llmReqFrame(request), (frame) async => sent.add(frame));
   return sent;
 }
 
 void main() {
   group('resolveLlmRelayTarget — the SEC-01 server-side resolution', () {
-    test(
-      'a named provider resolves endpoint AND key from the SAME record',
-      () {
-        final target = _resolver(_req(_recordZai, provider: 'zai'));
-        expect(target, isNotNull);
-        expect(target!.rejected, isFalse);
-        expect(target.baseUrl, _recordZai);
-        expect(target.key, 'sk-zai-secret');
-      },
-    );
+    test('a named provider resolves endpoint AND key from the SAME record', () {
+      final target = _resolver(_req(_recordZai, provider: 'zai'));
+      expect(target, isNotNull);
+      expect(target!.rejected, isFalse);
+      expect(target.baseUrl, _recordZai);
+      expect(target.key, 'sk-zai-secret');
+    });
 
     test('a named provider with a client-chosen baseUrl is rejected', () {
       final target = _resolver(_req(_attacker, provider: 'zai'));
@@ -148,8 +142,7 @@ void main() {
       expect(_resolver(_req(_attacker)), isNull);
     });
 
-    test('a keyless record resolves with a null key (frame glue rejects)',
-        () {
+    test('a keyless record resolves with a null key (frame glue rejects)', () {
       final target = _resolver(
         _req('https://lan.example/v1', provider: 'lanbox'),
       );
@@ -165,20 +158,19 @@ void main() {
       test('provider=X + baseUrl=attacker → zero outbound requests + named '
           'error', () async {
         final client = _CountingClient();
-        final frames = await _handle(
-          _req(_attacker, provider: 'zai'),
-          client,
+        final frames = await _handle(_req(_attacker, provider: 'zai'), client);
+        expect(
+          client.requests,
+          isEmpty,
+          reason: 'the rejection must happen BEFORE any network call',
         );
-        expect(client.requests, isEmpty,
-            reason: 'the rejection must happen BEFORE any network call');
         expect(frames, hasLength(1));
         expect(frames.single.op, BridgeOps.llmRes);
         expect(frames.single.fields['error'], contains('zai'));
         expect(frames.single.fields['error'], contains('attacker.example'));
       });
 
-      test('unknown provider → zero outbound requests + named error',
-          () async {
+      test('unknown provider → zero outbound requests + named error', () async {
         final client = _CountingClient();
         final frames = await _handle(
           _req(_recordZai, provider: 'ghost'),
@@ -207,10 +199,7 @@ void main() {
       'the record baseUrl is used verbatim with the record key attached',
       () async {
         final client = _CountingClient();
-        final frames = await _handle(
-          _req(_recordZai, provider: 'zai'),
-          client,
-        );
+        final frames = await _handle(_req(_recordZai, provider: 'zai'), client);
         expect(client.requests, hasLength(1));
         expect(
           client.requests.single.url.toString(),
@@ -237,21 +226,23 @@ void main() {
       );
     });
 
-    test('the anonymous mode is relayed keyless — never a stored key',
-        () async {
-      final client = _CountingClient();
-      // Anonymous requests to the record baseUrl AND to the attacker both
-      // go out WITHOUT an Authorization header.
-      for (final url in [_recordZai, _attacker]) {
-        final frames = await _handle(_req(url), client);
-        expect(frames.last.fields['done'], isTrue);
-      }
-      expect(client.requests, hasLength(2));
-      expect(
-        client.requests.map((r) => r.headers['authorization']),
-        everyElement(isNull),
-      );
-    });
+    test(
+      'the anonymous mode is relayed keyless — never a stored key',
+      () async {
+        final client = _CountingClient();
+        // Anonymous requests to the record baseUrl AND to the attacker both
+        // go out WITHOUT an Authorization header.
+        for (final url in [_recordZai, _attacker]) {
+          final frames = await _handle(_req(url), client);
+          expect(frames.last.fields['done'], isTrue);
+        }
+        expect(client.requests, hasLength(2));
+        expect(
+          client.requests.map((r) => r.headers['authorization']),
+          everyElement(isNull),
+        );
+      },
+    );
   });
 
   group('SEC-01 AC3 — cross-origin redirect strips the relayed auth', () {
@@ -268,10 +259,7 @@ void main() {
           }
           return http.StreamedResponse(Stream.value(utf8.encode('')), 200);
         });
-        final frames = await _handle(
-          _req(_recordZai, provider: 'zai'),
-          client,
-        );
+        final frames = await _handle(_req(_recordZai, provider: 'zai'), client);
         // Exactly ONE request left: the original. The attacker host never
         // saw anything.
         expect(client.requests, hasLength(1));
@@ -298,51 +286,58 @@ void main() {
       'anonymous+attacker': (_req(_attacker), 1, false),
     };
 
-    test(
-      'property over all fixtures: a Bearer only ever rides to a stored '
-      'record baseUrl',
-      () async {
-        final recordBaseUrls = _records.map((e) => e.baseUrl).toSet();
-        final client = _CountingClient();
-        for (final entry in fixtures.entries) {
-          final (request, allowedRequests, errorExpected) = entry.value;
-          final before = client.requests.length;
-          final frames = await _handle(request, client);
-          final made = client.requests.length - before;
-          expect(made, allowedRequests,
-              reason: '${entry.key}: $made requests left the machine');
-          final error = frames
-              .where((f) => f.fields['error'] != null)
-              .map((f) => f.fields['error'])
-              .join();
-          expect(error.isNotEmpty, errorExpected,
-              reason: '${entry.key}: error frame presence');
-          if (made > 0) {
-            expect(frames.last.fields['done'], isTrue,
-                reason: '${entry.key}: relays must finish with done');
-          }
-        }
-        // The AC4 property over every request the whole matrix produced.
-        for (final request in client.requests) {
-          final auth = request.headers['authorization'];
-          if (auth != null && auth.startsWith('Bearer ')) {
-            expect(
-              recordBaseUrls.any(request.url.toString().startsWith),
-              isTrue,
-              reason: 'a Bearer left for "${request.url}" — not a stored '
-                  'record baseUrl',
-            );
-          }
-        }
-        // The attacker address, wherever it appears, never saw a key.
-        final attackerHits = client.requests
-            .where((r) => r.url.host.endsWith('attacker.example'))
-            .toList();
+    test('property over all fixtures: a Bearer only ever rides to a stored '
+        'record baseUrl', () async {
+      final recordBaseUrls = _records.map((e) => e.baseUrl).toSet();
+      final client = _CountingClient();
+      for (final entry in fixtures.entries) {
+        final (request, allowedRequests, errorExpected) = entry.value;
+        final before = client.requests.length;
+        final frames = await _handle(request, client);
+        final made = client.requests.length - before;
         expect(
-          attackerHits.map((r) => r.headers['authorization']),
-          everyElement(isNull),
+          made,
+          allowedRequests,
+          reason: '${entry.key}: $made requests left the machine',
         );
-      },
-    );
+        final error = frames
+            .where((f) => f.fields['error'] != null)
+            .map((f) => f.fields['error'])
+            .join();
+        expect(
+          error.isNotEmpty,
+          errorExpected,
+          reason: '${entry.key}: error frame presence',
+        );
+        if (made > 0) {
+          expect(
+            frames.last.fields['done'],
+            isTrue,
+            reason: '${entry.key}: relays must finish with done',
+          );
+        }
+      }
+      // The AC4 property over every request the whole matrix produced.
+      for (final request in client.requests) {
+        final auth = request.headers['authorization'];
+        if (auth != null && auth.startsWith('Bearer ')) {
+          expect(
+            recordBaseUrls.any(request.url.toString().startsWith),
+            isTrue,
+            reason:
+                'a Bearer left for "${request.url}" — not a stored '
+                'record baseUrl',
+          );
+        }
+      }
+      // The attacker address, wherever it appears, never saw a key.
+      final attackerHits = client.requests
+          .where((r) => r.url.host.endsWith('attacker.example'))
+          .toList();
+      expect(
+        attackerHits.map((r) => r.headers['authorization']),
+        everyElement(isNull),
+      );
+    });
   });
 }

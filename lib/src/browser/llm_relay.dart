@@ -81,7 +81,7 @@ final class LlmRelayRequest {
 /// goes and WITH WHAT key — both decided from the server's own records,
 /// never from client fields.
 final class LlmRelayTarget {
-  const LlmRelayTarget({required this.baseUrl, this.key});
+  const LlmRelayTarget({required this.baseUrl, this.key}) : error = null;
 
   /// A named rejection: the request never leaves the machine.
   const LlmRelayTarget.reject(this.error) : baseUrl = '', key = null;

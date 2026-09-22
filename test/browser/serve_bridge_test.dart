@@ -609,8 +609,7 @@ void main() {
     });
 
     test('llmReq naming its provider streams llmRes deltas then done; the '
-        'key is injected server-side and never appears in any frame',
-        () async {
+        'key is injected server-side and never appears in any frame', () async {
       final seenKeys = <String?>[];
       final seenUrls = <String>[];
       server = await spin(
@@ -813,16 +812,13 @@ void main() {
         'v': 1,
         'id': '2-sec3',
         'op': 'llmReq',
-        'req': {
-          'baseUrl': entry.baseUrl,
-          'model': 'glm-4.6',
-          'messages': [],
-        },
+        'req': {'baseUrl': entry.baseUrl, 'model': 'glm-4.6', 'messages': []},
       });
       final done = await client.next();
       expect(done['done'], isTrue);
-      expect(seenKeys, [isNull],
-          reason: 'anonymous mode never attaches a stored key');
+      expect(seenKeys, [
+        isNull,
+      ], reason: 'anonymous mode never attaches a stored key');
       await client.close();
     });
 

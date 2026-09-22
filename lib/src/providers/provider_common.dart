@@ -518,8 +518,7 @@ String? _formatAuthRedirect(ProviderHttpError error) {
 /// hops mirrors the common client default.
 const int _maxProviderRedirects = 5;
 
-bool _isRedirectStatus(int statusCode) =>
-    statusCode >= 300 && statusCode < 400;
+bool _isRedirectStatus(int statusCode) => statusCode >= 300 && statusCode < 400;
 
 /// The absolute redirect target, or null when [statusCode] is not a
 /// redirect or the `Location` header is absent/unparseable.
@@ -549,8 +548,7 @@ http.Request _reissue(http.Request previous, Uri target) {
     ..followRedirects = false
     ..headers.addAll({
       for (final entry in previous.headers.entries)
-        if (entry.key.toLowerCase() != 'content-length')
-          entry.key: entry.value,
+        if (entry.key.toLowerCase() != 'content-length') entry.key: entry.value,
     })
     ..bodyBytes = previous.bodyBytes;
 }
@@ -578,7 +576,7 @@ Future<http.StreamedResponse> sendProviderRequest(
 ) async {
   request.followRedirects = false;
   var current = request;
-  for (var redirects = 0;; redirects++) {
+  for (var redirects = 0; ; redirects++) {
     final response = await _sendWatched(httpClient, current, cancelToken);
     final location = response.headers['location'];
     final target = _redirectTarget(current.url, response.statusCode, location);

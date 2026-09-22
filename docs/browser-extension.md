@@ -434,6 +434,17 @@ Carried over from v1, still true:
 - **Store-listing redaction** — screenshots for a CWS listing must come
   from a scratch profile (the panel displays token/key fields and the
   event log).
+- **The relay trust boundary (SEC-01)** — a paired relay client chooses
+  WHAT (provider id); the bridge alone decides WHERE (endpoint) and WITH
+  WHAT (key). A named provider resolves endpoint AND key from the same
+  saved record: the client's `baseUrl` must byte-equal the record's
+  (checked BEFORE any network call), an unknown name is a named
+  rejection, and the anonymous mode is relayed with NO stored key. The
+  same rule lives in the shared HTTP layer: `sendProviderRequest`
+  disables client auto-follow, so a cross-origin 3xx never re-sends
+  `Authorization` to the redirect target (same-origin hops are followed
+  verbatim; anything crossing origins fails). Any future relay-ish
+  surface gets the same split by construction.
 
 ## Advanced: desktop bridge (v1 machinery, optional)
 
@@ -644,9 +655,12 @@ registry, `ApprovalManager`, JSONL session persistence, auto-compaction.
   - **proxy** (default): keys never leave the CLI. The registry stores
     metadata only; a keyless synced entry routes its LLM calls through
     the bridge `llmReq`/`llmRes` relay, which injects auth server-side
-    (UT-S1: a proxy push never puts key bytes in storage). Bridge down
-    = the stream ends with a clean `desktop link is down` error (E26);
-    local/fake providers keep working and nothing hangs.
+    (UT-S1: a proxy push never puts key bytes in storage). The relay
+    request names the provider (WHAT); the server takes the endpoint and
+    key from its own record (SEC-01 trust boundary — see Security
+    model). Bridge down = the stream ends with a clean
+    `desktop link is down` error (E26); local/fake providers keep
+    working and nothing hangs.
   - **copy** (`/browser connect --copy-keys`): each key rides ONCE in
     the sync frame, is stored with its entry, and the extension acks by
     echoing the sync frame id — the ack wipes the server's staged copy.
