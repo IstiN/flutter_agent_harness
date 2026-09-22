@@ -56,6 +56,76 @@ void main() {
       expect(reloaded.providers[1].name, 'Beta');
     });
 
+    test(
+      'the connect-flow identity kind round-trips; plain entries stay null',
+      () async {
+        final env = MemoryExecutionEnv();
+        final registry = await ProviderRegistry.load(env);
+        await registry.add(
+          name: 'ChatGPT Codex',
+          baseUrl: chatGptCodexBaseUrl,
+          modelId: 'gpt-5.6-sol',
+          kind: 'chatgpt-codex',
+        );
+        await registry.add(
+          name: 'Plain',
+          baseUrl: 'https://api.openai.com/v1',
+          modelId: 'gpt-4.1',
+        );
+
+        final reloaded = await ProviderRegistry.load(env);
+        expect(reloaded.providers[0].kind, 'chatgpt-codex');
+        expect(reloaded.providers[1].kind, isNull);
+        // JSON stays lean: no kind key for identity-less entries.
+        final raw = (await env.readTextFile(
+          '${env.cwd}/providers.json',
+        )).valueOrNull!;
+        final stored = jsonDecode(raw) as Map<String, dynamic>;
+        final plain =
+            (stored['providers'] as List).last as Map<String, dynamic>;
+        expect(plain.containsKey('kind'), isFalse);
+      },
+    );
+
+    test('every entry rebuild path preserves the identity kind', () async {
+      final env = MemoryExecutionEnv();
+      final registry = await ProviderRegistry.load(env);
+      final codex = await registry.add(
+        name: 'ChatGPT Codex',
+        baseUrl: chatGptCodexBaseUrl,
+        modelId: 'gpt-5.6-sol',
+        kind: 'chatgpt-codex',
+      );
+
+      // The settings/section edit paths rebuild the entry by hand and hand
+      // it to `update` — a rebuild that drops `kind` would silently demote
+      // the entry back to URL-shape dispatch guessing.
+      await registry.update(
+        CustomProvider(
+          id: codex.id,
+          name: codex.name,
+          baseUrl: 'https://relay.example.net/codex-proxy',
+          modelId: codex.modelId,
+          provenance: codex.provenance,
+          requiresKey: codex.requiresKey,
+          kind: codex.kind,
+        ),
+      );
+      var reloaded = await ProviderRegistry.load(env);
+      expect(reloaded.providers.single.kind, 'chatgpt-codex');
+      expect(
+        reloaded.providers.single.baseUrl,
+        'https://relay.example.net/codex-proxy',
+      );
+
+      // `rememberKey`'s requiresKey flip rebuilds the entry in place.
+      reloaded.rememberKey(reloaded.providers.single.id, 'blob');
+      expect(reloaded.providers.single.kind, 'chatgpt-codex');
+      expect(reloaded.providers.single.requiresKey, isTrue);
+      reloaded = await ProviderRegistry.load(env);
+      expect(reloaded.providers.single.kind, 'chatgpt-codex');
+    });
+
     test('the registry file lives at the sandbox root', () async {
       final env = MemoryExecutionEnv();
       final registry = await ProviderRegistry.load(env);
@@ -351,6 +421,32 @@ void main() {
         keychain: const KeychainStore(),
       );
       expect(reloaded.keyFor(copilot.id), 'gh-token');
+    });
+
+    test('the load-time requiresKey upgrade rebuild preserves kind', () async {
+      // A pre-marker entry (requiresKey false in the file) whose key IS in
+      // the Keychain hits the upgrade rebuild on boot — the rebuilt entry
+      // must keep the identity kind or the codex entry silently demotes to
+      // URL-shape dispatch guessing after the first restart.
+      final env = MemoryExecutionEnv();
+      final seed = await ProviderRegistry.load(env);
+      await seed.add(
+        name: 'ChatGPT Codex',
+        baseUrl: chatGptCodexBaseUrl,
+        modelId: 'gpt-5.6-sol',
+        kind: 'chatgpt-codex',
+      );
+      // Key exists in the Keychain, but the file entry predates the
+      // keyed marker (requiresKey false).
+      backend['FA_KEY_CHATGPT_COM'] = 'blob';
+
+      final reloaded = await ProviderRegistry.load(
+        env,
+        keychain: const KeychainStore(),
+      );
+      expect(reloaded.providers.single.requiresKey, isTrue);
+      expect(reloaded.providers.single.kind, 'chatgpt-codex');
+      expect(reloaded.keyFor(reloaded.providers.single.id), 'blob');
     });
 
     test('remove deletes the provider and its Keychain slot', () async {

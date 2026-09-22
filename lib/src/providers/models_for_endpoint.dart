@@ -20,11 +20,26 @@ import 'dial.dart';
 import 'models_endpoint.dart';
 import 'remote_catalog.dart';
 
+/// The [fetchModelsForEndpoint] `provider` hints the dialects match on.
+/// Connect flows persist these on registry entries (`CustomProvider.kind`)
+/// so identity survives URL edits; [modelsDispatchHintFor]-style URL
+/// mappers return the same values.
+const String chatgptCodexDispatchHint = 'chatgpt-codex';
+const String copilotDispatchHint = 'copilot';
+const String dialDispatchHint = 'dial';
+
 /// One provider's "how to list models" implementation. Each dialect
 /// encapsulates its own detection (does this endpoint belong to me?) and
 /// its own fetch (what URL, what auth, what shape the response has, how
 /// to normalise ids). Pickers never see the internals — they just call
 /// [fetchModelsForEndpoint] which delegates.
+///
+/// The [ModelListDialect.fetch] `onBundledFallback` parameter is optional
+/// for dialects without a bundled offline catalog: keep it in the
+/// override's signature and simply ignore it — only dialects that answer
+/// from a bundled catalog when the live fetch fails ever invoke it.
+/// (Adding the parameter is a breaking change for out-of-tree
+/// implementers; called out in CHANGELOG.md.)
 abstract final class ModelListDialect {
   /// Whether this dialect handles [baseUrl] (optionally with the
   /// provider's hint from the caller).
@@ -32,11 +47,14 @@ abstract final class ModelListDialect {
 
   /// Fetches the model list. Implementations must answer an empty
   /// [ModelsEndpointInfo] on any error — the manual-entry fallback in
-  /// the pickers depends on it.
+  /// the pickers depends on it. A dialect that answers from a bundled
+  /// catalog because the live fetch failed (the Codex catalog today)
+  /// invokes [onBundledFallback] so pickers can surface the provenance.
   Future<ModelsEndpointInfo> fetch(
     String baseUrl,
     String apiKey, {
     http.Client? client,
+    void Function()? onBundledFallback,
   });
 }
 
@@ -53,19 +71,39 @@ final List<ModelListDialect> modelListDialects = [
 
 /// Fetches the model list of [baseUrl], picking the wire dialect by
 /// registration order. Any failure answers an empty info — callers always
-/// keep their manual-entry fallback.
+/// keep their manual-entry fallback. When a dialect answers from its
+/// bundled catalog instead of the live endpoint ([onBundledFallback]), the
+/// picker can surface the provenance (the bundled-catalog note).
 Future<ModelsEndpointInfo> fetchModelsForEndpoint(
   String baseUrl, {
   required String apiKey,
   String? provider,
   http.Client? client,
+  void Function()? onBundledFallback,
 }) async {
+  final effectiveClient = client ?? _dispatchHttpClientForTesting;
   for (final dialect in modelListDialects) {
     if (dialect.matches(baseUrl, provider)) {
-      return dialect.fetch(baseUrl, apiKey, client: client);
+      return dialect.fetch(
+        baseUrl,
+        apiKey,
+        client: effectiveClient,
+        onBundledFallback: onBundledFallback,
+      );
     }
   }
   return (const <String>[], const <String, int>{}, const <String, int>{});
+}
+
+http.Client? _dispatchHttpClientForTesting;
+
+/// Test seam — routes every dialect's HTTP through [client] so widget
+/// tests can pump the production dispatch path (no [ModelsEndpointFetcher]
+/// override, real routing) without network. Null restores the per-dialect
+/// default. Not part of the public API.
+@visibleForTesting
+void setModelsDispatchClientForTesting(http.Client? client) {
+  _dispatchHttpClientForTesting = client;
 }
 
 // ── CodeMie (LiteLLM-shaped /llm_models over a cookie/token) ───────────
@@ -80,6 +118,7 @@ final class _CodeMieDialect extends ModelListDialect {
     String baseUrl,
     String apiKey, {
     http.Client? client,
+    void Function()? onBundledFallback,
   }) async {
     try {
       final ids = await fetchCodeMieModels(baseUrl, apiKey, client: client);
@@ -94,13 +133,15 @@ final class _CodeMieDialect extends ModelListDialect {
 
 final class _DialDialect extends ModelListDialect {
   @override
-  bool matches(String baseUrl, String? provider) => provider == 'dial';
+  bool matches(String baseUrl, String? provider) =>
+      provider == dialDispatchHint;
 
   @override
   Future<ModelsEndpointInfo> fetch(
     String baseUrl,
     String apiKey, {
     http.Client? client,
+    void Function()? onBundledFallback,
   }) async {
     try {
       final (ids, _, windows, maxTokens) = await fetchDialModelsInfo(
@@ -120,10 +161,12 @@ final class _DialDialect extends ModelListDialect {
 final class _CodexDialect extends ModelListDialect {
   @override
   bool matches(String baseUrl, String? provider) {
-    if (provider == 'chatgpt' || provider == 'chatgpt-codex') return true;
-    final uri = Uri.parse(baseUrl);
-    return isAllowedChatgptHost(uri.host) &&
-        uri.path.startsWith('/backend-api/codex');
+    // Identity first — a codex entry stays on the codex wire even when
+    // its baseUrl was edited (proxy, path prefix).
+    if (provider == chatgptCodexDispatchHint || provider == 'chatgpt') {
+      return true;
+    }
+    return isChatGptCodexEndpoint(baseUrl);
   }
 
   @override
@@ -131,6 +174,7 @@ final class _CodexDialect extends ModelListDialect {
     String baseUrl,
     String apiKey, {
     http.Client? client,
+    void Function()? onBundledFallback,
   }) async {
     final codexClient = client ?? http.Client();
     final ownsClient = client == null;
@@ -139,15 +183,22 @@ final class _CodexDialect extends ModelListDialect {
       final response = await codexClient
           .get(uri, headers: _headers(apiKey))
           .timeout(const Duration(seconds: 15));
-      if (response.statusCode != 200) return _bundled();
+      if (response.statusCode != 200) {
+        onBundledFallback?.call();
+        return _bundled();
+      }
       final ids = _idsFrom(response.body);
-      if (ids.isEmpty) return _bundled();
+      if (ids.isEmpty) {
+        onBundledFallback?.call();
+        return _bundled();
+      }
       return (
         ids,
         _knownLimits(ids, chatGptCodexContextWindows),
         _knownLimits(ids, chatGptCodexMaxTokens),
       );
     } on Object {
+      onBundledFallback?.call();
       return _bundled();
     } finally {
       if (ownsClient) codexClient.close();
@@ -218,6 +269,7 @@ final class _GoogleDialect extends ModelListDialect {
     String baseUrl,
     String apiKey, {
     http.Client? client,
+    void Function()? onBundledFallback,
   }) async {
     // x-goog-api-key header (NOT Bearer); response is
     // {"models": [{"name": "models/gemini-…"}]} — strip the prefix.
@@ -261,13 +313,14 @@ final class _GoogleDialect extends ModelListDialect {
 final class _CopilotDialect extends ModelListDialect {
   @override
   bool matches(String baseUrl, String? provider) =>
-      provider == 'copilot' || isCopilotBaseUrl(baseUrl);
+      provider == copilotDispatchHint || isCopilotBaseUrl(baseUrl);
 
   @override
   Future<ModelsEndpointInfo> fetch(
     String baseUrl,
     String apiKey, {
     http.Client? client,
+    void Function()? onBundledFallback,
   }) async {
     final gClient = client ?? http.Client();
     final gOwnsClient = client == null;
@@ -368,6 +421,7 @@ final class _OpenAiCompatibleDialect extends ModelListDialect {
     String baseUrl,
     String apiKey, {
     http.Client? client,
+    void Function()? onBundledFallback,
   }) async {
     final httpClient = client ?? http.Client();
     final ownsClient = client == null;
