@@ -19,9 +19,19 @@ List<String> apiKeyEnvNames(String provider) => switch (provider) {
   'vision' => const ['VISION_API_KEY'],
   'transcribe' => const ['TRANSCRIBE_API_KEY'],
   _ =>
-    providerCatalog[provider]?.apiKeyEnvNames ??
+    _keySpec(provider)?.apiKeyEnvNames ??
         const ['OPENROUTER_API_KEY', 'OPENAI_API_KEY'],
 };
+
+/// The catalog spec for a provider name OR adapter kind, via
+/// [resolveCliProviderSpec] — the ONE both-identifier lookup (issue #772).
+/// The kind leg matters since the restored boot provider can be a kind
+/// that is not itself a catalog name — `chatgpt-codex` → the `chatgpt`
+/// spec, so its key resolves from `CHATGPT_OAUTH_CREDENTIALS`. Null for
+/// ids no version knows. Intentionally NOT honoring the build-time
+/// provider filter: the boot-restored provider's key must resolve in
+/// every build (the seam's restore-path filter stance).
+ProviderSpec? _keySpec(String provider) => resolveCliProviderSpec(provider);
 
 /// Resolves [provider]'s API key headlessly. On the catalog spec's DEFAULT
 /// endpoint: a genuine environment value of the catalog env names, then
@@ -43,7 +53,7 @@ String? optionalProviderApiKey(
 }) {
   final environment = env ?? Platform.environment;
   final names = apiKeyEnvNames(provider);
-  final spec = catalogProvider(provider);
+  final spec = _keySpec(provider);
   final customEndpoint =
       spec != null && baseUrl != null && baseUrl != spec.defaultBaseUrl;
   if (!customEndpoint) {

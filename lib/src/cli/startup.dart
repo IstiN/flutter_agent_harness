@@ -63,9 +63,19 @@ import 'headless_provider_key.dart';
 /// Provider/model restoration. Precedence: an explicit `--provider` flag
 /// (full manual control, preconfigs disabled) > the `FA_PROVIDER_*` env
 /// declaration ([faProviderPreconfig]) > the saved `provider:` (the
-/// persisted /provider switch) > the parsed default. Only kinds the legacy
-/// single-model path can build are restored (chatgpt-codex keeps the
-/// openai-completions default; its OAuth flow re-establishes on demand).
+/// persisted /provider switch) > the parsed default.
+///
+/// The saved kind restores whenever it resolves through the catalog
+/// ([resolveCliProviderSpec] — every catalog name AND adapter kind,
+/// `chatgpt-codex` included; coverage by construction, issue #760) and
+/// restores AS THE RESOLVED SPEC'S KIND: a saved catalog *name* (`openai`,
+/// `chatgpt`) resolves to its adapter kind here, because everything
+/// downstream (`AgentCliConfig.providerKind` → `providerStreamFunction`)
+/// speaks kinds only. A
+/// saved id NO version knows must never brick the boot: it is reported
+/// back as [unknownSavedProvider] and the parsed default (a known
+/// provider) takes over — the executable prints the loud named warning
+/// (bad value, file, fallback taken) and keeps booting.
 ///
 /// The preconfig supplies model/baseUrl too, so the saved restore never
 /// leaks through while it is active (--model/--base-url flags still
@@ -78,30 +88,33 @@ import 'headless_provider_key.dart';
 /// resolution never reads ambient process state.
 ///
 /// Returns the effective [CliArgs], the resolved provider kind — the same
-/// value, the explicit record field saves the caller a re-derivation — and
-/// the `FA_PROVIDER_*` declaration when one is active (the caller needs it
-/// for the roles pinning, the key decision and the extra redaction).
-({CliArgs args, String provider, EnvProviderPreconfig? faPreconfig})
+/// value, the explicit record field saves the caller a re-derivation — the
+/// `FA_PROVIDER_*` declaration when one is active (the caller needs it
+/// for the roles pinning, the key decision and the extra redaction), and
+/// the saved provider id when it was unrecognizable (null otherwise).
+({
+  CliArgs args,
+  String provider,
+  EnvProviderPreconfig? faPreconfig,
+  String? unknownSavedProvider,
+})
 resolveEffectiveCliArgs(
   CliArgs parsed,
   CliConfig saved, {
   required Map<String, String> env,
 }) {
-  const restorableKinds = {
-    'openai-completions',
-    'anthropic',
-    'google',
-    'dial',
-    'minimax',
-    'zai',
-  };
   final faPreconfig = faProviderPreconfig(parsed, saved, env: env);
+  // gh-760 (review): restore the RESOLVED spec's kind, never the raw saved
+  // string — the saved id may be a catalog NAME, and the raw name reaching
+  // AgentCliConfig.providerKind bricks the boot at providerStreamFunction.
+  final savedSpec = resolveCliProviderSpec(saved.providerKind);
   final provider = parsed.providerExplicit
       ? parsed.provider
-      : faPreconfig?.spec.kind ??
-            (restorableKinds.contains(saved.providerKind)
-                ? saved.providerKind
-                : parsed.provider);
+      : faPreconfig?.spec.kind ?? (savedSpec?.kind ?? parsed.provider);
+  final unknownSavedProvider =
+      savedSpec == null && !parsed.providerExplicit && faPreconfig == null
+      ? saved.providerKind
+      : null;
   final modelId = parsed.model ?? faPreconfig?.modelId ?? saved.modelId;
   final baseUrl = parsed.baseUrl ?? faPreconfig?.baseUrl ?? saved.baseUrl;
   final effective = CliArgs(
@@ -121,7 +134,12 @@ resolveEffectiveCliArgs(
     sessionRoot: parsed.sessionRoot,
     session: parsed.session,
   );
-  return (args: effective, provider: provider, faPreconfig: faPreconfig);
+  return (
+    args: effective,
+    provider: provider,
+    faPreconfig: faPreconfig,
+    unknownSavedProvider: unknownSavedProvider,
+  );
 }
 
 /// The explicit `FA_PROVIDER_*` env preconfig (Docker/headless):
