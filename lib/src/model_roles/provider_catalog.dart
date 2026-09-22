@@ -472,6 +472,29 @@ Model buildCatalogModel(
 /// validation) pass `honorBuildFilter: true` — the filter the
 /// [catalogProvider] lookups used to apply — instead of re-wiring
 /// [providerEnabledInBuild] by hand.
+/// The legacy `openai-completions`/`openrouter` default-endpoint rule
+/// (gh-760 historical behavior): the model reports provider `openai`
+/// instead of `openrouter` on a custom base URL.
+ProviderSpec? _legacyOpenAiSpec(String? baseUrl) =>
+    baseUrl == null ? providerCatalog['openrouter'] : providerCatalog['openai'];
+
+/// The kind scan: the entry whose ADAPTER KIND is [key] — a kind that is
+/// not itself a catalog name (e.g. `chatgpt-codex`).
+ProviderSpec? _kindScan(String key) {
+  for (final spec in providerCatalog.values) {
+    if (spec.kind == key) return spec;
+  }
+  return null;
+}
+
+/// The FA_PROVIDERS gate for resolved specs: a [honorBuildFilter] lookup
+/// yields null when the resolved entry is disabled in this build.
+ProviderSpec? _applyBuildFilter(ProviderSpec? spec, bool honorBuildFilter) {
+  if (spec == null) return null;
+  if (honorBuildFilter && !providerEnabledInBuild(spec.name)) return null;
+  return spec;
+}
+
 ProviderSpec? resolveCliProviderSpec(
   String kind, {
   String? baseUrl,
@@ -482,29 +505,12 @@ ProviderSpec? resolveCliProviderSpec(
   // accept case variants identically.
   final key = kind.trim().toLowerCase();
   if (key == 'openai-completions' || key == 'openrouter') {
-    final spec =
-        baseUrl == null ? providerCatalog['openrouter'] : providerCatalog['openai'];
-    if (spec == null ||
-        (honorBuildFilter && !providerEnabledInBuild(spec.name))) {
-      return null;
-    }
-    return spec;
+    return _applyBuildFilter(_legacyOpenAiSpec(baseUrl), honorBuildFilter);
   }
-  final byName = providerCatalog[key];
-  if (byName != null) {
-    return honorBuildFilter && !providerEnabledInBuild(byName.name)
-        ? null
-        : byName;
-  }
-  // A kind that is not itself a catalog name (e.g. `chatgpt-codex`).
-  for (final spec in providerCatalog.values) {
-    if (spec.kind == key) {
-      return honorBuildFilter && !providerEnabledInBuild(spec.name)
-          ? null
-          : spec;
-    }
-  }
-  return null;
+  return _applyBuildFilter(
+    providerCatalog[key] ?? _kindScan(key),
+    honorBuildFilter,
+  );
 }
 
 /// The canonical PERSISTED identity for a provider id (issue #772): the
