@@ -4047,4 +4047,13 @@
 - chore: pin factory 1eebd58c — merge-bot concurrency fix (factory #487) (#787)
 - feat(machine): merge bot stub — event-driven merge fast path (factory a7a1b13) (#784)
 
+## 1.0.454
+
+- chore: pin factory 46cf243 — owner FIFO (notMergeState array) (#821)
+- chore: pin factory f0198b1 — bot CI-run fallback; stub listens to 'CI' + passes ci.yml (#820)
+- chore: pin factory d21899e — mergeBot rollup fallback (#762 fix) (#819)
+- chore: pin factory 4d8537b — mutex serial validation (strict FIFO) (#816)
+- Fixes #774: markdown renders on every CLI surface - one MarkdownSurface policy (#778)
+- chore: pin factory af38761 — unarm BEHIND-only (deadlock fix #488) + lockstep (#799)
+
 ## Unreleased
