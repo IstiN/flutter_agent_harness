@@ -248,7 +248,12 @@ crashed run.
   immediately before every wrapped exec (restaged atomically on
   mismatch). Enforcement artifacts never live under the workspace: the
   profile itself grants workspace writes, so a prisoner could otherwise
-  rewrite its own prison. Windows remains descriptor-only. A wrapper that
+  rewrite its own prison. The staging location is trust-checked at bind
+  time and kernel mode is refused (clean `fa_cube[<name>]:` error, no
+  exec) when it cannot be proven guest-unwritable — a `homeDir` inside
+  or relative to the workspace, or a spec mount granting read-write over
+  the staging directory (`~`/`/` mounts). Windows remains
+  descriptor-only. A wrapper that
   is missing from PATH or refuses the sandbox surfaces as a clean
   `fa_cube[<name>]:` spawn error, in foreground execs and background jobs
   alike.

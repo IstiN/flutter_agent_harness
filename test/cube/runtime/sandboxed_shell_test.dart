@@ -214,21 +214,6 @@ void main() {
           kernelSpec(),
           kernelSpec(networkAllowed: true),
           CubeSpec(
-            name: 'root-rw',
-            backend: CubeBackendMode.kernel,
-            tools: const CubeToolPolicy(allow: {'git'}),
-            filesystem: const CubeFsPolicy(
-              workspace: '/work',
-              mounts: [CubeMount(path: '/', access: CubePathAccess.readWrite)],
-            ),
-            resources: const CubeResourceLimits(
-              timeout: Duration(minutes: 5),
-            ),
-            env: const CubeEnvPolicy(
-              vars: [CubeEnvValue(name: 'K', value: 'v')],
-            ),
-          ),
-          CubeSpec(
             name: 'mixed-mounts',
             backend: CubeBackendMode.kernel,
             tools: const CubeToolPolicy(allow: {'git'}),
@@ -273,6 +258,70 @@ void main() {
       },
     );
 
+    test('REG: a spec mounting the staging area read-write is refused, '
+        'never staged', () async {
+      // `~`-rw and `/`-rw mounts both make the profile prisoner-writable
+      // (the repository-authored spec is the attacker vehicle here).
+      final base = kernelSpec();
+      final specs = [
+        (
+          'home-rw',
+          CubeSpec(
+            name: base.name,
+            backend: base.backend,
+            tools: base.tools,
+            network: base.network,
+            filesystem: const CubeFsPolicy(
+              workspace: '/work',
+              mounts: [CubeMount(path: '~', access: CubePathAccess.readWrite)],
+            ),
+          ),
+          '/home/tester',
+          '/home/tester/.fah/cube-profiles',
+        ),
+        (
+          'root-rw',
+          CubeSpec(
+            name: base.name,
+            backend: base.backend,
+            tools: base.tools,
+            network: base.network,
+            filesystem: const CubeFsPolicy(
+              workspace: '/work',
+              mounts: [CubeMount(path: '/', access: CubePathAccess.readWrite)],
+            ),
+          ),
+          '/home/tester',
+          '/home/tester/.fah/cube-profiles',
+        ),
+      ];
+      for (final (label, spec, home, staging) in specs) {
+        for (final cwd in const ['/work', '/Users/dev/project']) {
+          final inner = _RecordingShell();
+          final fs = _RenamingFs()..cwd = cwd;
+          final shell = SandboxedShell(
+            inner,
+            spec,
+            fs: fs,
+            os: 'macos',
+            homeDir: home,
+          );
+          final error = (await shell.exec('git status')).errorOrNull;
+          expect(error, isNotNull, reason: '$label @$cwd must be refused');
+          expect(
+            error!.message,
+            contains(
+              'profile staging directory <$staging> is '
+              'guest-writable under the spec mounts',
+            ),
+            reason: '$label @$cwd',
+          );
+          expect(inner.commands, isEmpty, reason: '$label @$cwd');
+          expect(fs.writes, isEmpty, reason: '$label @$cwd');
+        }
+      }
+    });
+
     test(
       'a pre-seeded profile in the old in-workspace location is inert',
       () async {
@@ -292,7 +341,10 @@ void main() {
         await shell.exec('git status');
         final profilePath = _stagedPath(fs);
         expect(profilePath, startsWith('/home/.fah/cube-profiles/'));
-        expect(inner.commands.single, contains("sandbox-exec -f '$profilePath'"));
+        expect(
+          inner.commands.single,
+          contains("sandbox-exec -f '$profilePath'"),
+        );
         // The old-location file is never read, trusted or passed to exec.
         expect(inner.commands.single, isNot(contains(oldPath)));
         expect(fs.writes.keys, isNot(contains(oldPath)));
@@ -506,8 +558,14 @@ void main() {
           );
           final error = (await shell.exec('git status')).errorOrNull;
           expect(error, isNotNull, reason: 'home $home must be refused');
-          expect(error!.message, contains('is inside the guest-writable '
-              'workspace </work>'), reason: 'home $home must be refused');
+          expect(
+            error!.message,
+            contains(
+              'is inside the guest-writable '
+              'workspace </work>',
+            ),
+            reason: 'home $home must be refused',
+          );
           expect(inner.commands, isEmpty, reason: 'home $home');
           expect(fs.writes, isEmpty, reason: 'home $home');
         }
@@ -534,28 +592,25 @@ void main() {
         );
       });
 
-      test(
-        'kernel staging refuses background preparation when the fs cannot '
-        'atomically restage',
-        () async {
-          final inner = _RecordingShell();
-          final shell = SandboxedShell(
-            inner,
-            kernelSpec(),
-            fs: _FakeFs(), // no rename capability
-            os: 'macos',
-            homeDir: '/home',
-          );
-          final note = await shell.startupFailure();
-          expect(note, isNotNull);
-          expect(note, startsWith('fa_cube[test-cube]: kernel backend '));
-          // One error shape everywhere: the probe note and the staging
-          // error render identically.
-          expect(note, shell.kernelError(shell.kernelStagingError!));
-          expect(await shell.prepare('git status'), isNull);
-          expect(inner.commands, isEmpty);
-        },
-      );
+      test('kernel staging refuses background preparation when the fs cannot '
+          'atomically restage', () async {
+        final inner = _RecordingShell();
+        final shell = SandboxedShell(
+          inner,
+          kernelSpec(),
+          fs: _FakeFs(), // no rename capability
+          os: 'macos',
+          homeDir: '/home',
+        );
+        final note = await shell.startupFailure();
+        expect(note, isNotNull);
+        expect(note, startsWith('fa_cube[test-cube]: kernel backend '));
+        // One error shape everywhere: the probe note and the staging
+        // error render identically.
+        expect(note, shell.kernelError(shell.kernelStagingError!));
+        expect(await shell.prepare('git status'), isNull);
+        expect(inner.commands, isEmpty);
+      });
     });
 
     test(
@@ -583,7 +638,10 @@ void main() {
           ]),
         );
         expect(fs.removed, isNot(contains(profilePath)));
-        expect(inner.commands.single, contains("sandbox-exec -f '$profilePath'"));
+        expect(
+          inner.commands.single,
+          contains("sandbox-exec -f '$profilePath'"),
+        );
         // Swept once, not per exec.
         await shell.exec('git log');
         expect(fs.removed, hasLength(2));
@@ -815,8 +873,8 @@ class _FakeFs implements FileSystem {
   @override
   Future<Result<String, FileError>> readTextFile(String path) async =>
       files.containsKey(path)
-          ? Ok(files[path]!)
-          : const Err(FileError(FileErrorCode.notFound, 'missing'));
+      ? Ok(files[path]!)
+      : const Err(FileError(FileErrorCode.notFound, 'missing'));
 
   @override
   Future<Result<String, FileError>> absolutePath(String path) async =>
@@ -865,8 +923,7 @@ class _FakeFs implements FileSystem {
     final prefix = path.endsWith('/') ? path : '$path/';
     return Ok([
       for (final p in files.keys)
-        if (p.startsWith(prefix) &&
-            !p.substring(prefix.length).contains('/'))
+        if (p.startsWith(prefix) && !p.substring(prefix.length).contains('/'))
           FileInfo(
             name: p.substring(prefix.length),
             path: p,

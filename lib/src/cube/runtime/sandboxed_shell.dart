@@ -32,6 +32,7 @@ import 'package:crypto/crypto.dart';
 
 import '../backends/cube_backend.dart';
 import '../config/cube_spec.dart';
+import '../config/fs_policy.dart';
 import '../../env/execution_env.dart';
 import 'policy_engine.dart';
 
@@ -77,6 +78,26 @@ String? stagingOutsideWorkspace(String stagingDir, String workspaceRoot) {
         'guest-writable workspace <$workspaceRoot>';
   }
   return null;
+}
+
+/// The full SEC-02 staging trust check for one spec binding: the
+/// staging location must be provably outside the guest-writable
+/// workspace *and* not writable by the guest through the spec's own
+/// mounts (`~`- or `/`-rw mounts would let the repository rewrite the
+/// enforcement profile). Returns the refusal note, or `null` when the
+/// location is trustworthy.
+String? stagingViolation(
+  CubeSpec spec,
+  String stagingDir, {
+  required String homeDir,
+  required String workspaceRoot,
+}) {
+  return stagingOutsideWorkspace(stagingDir, workspaceRoot) ??
+      (spec.filesystem.accessFor(stagingDir, homeDir: homeDir) ==
+              CubePathAccess.readWrite
+          ? 'profile staging directory <$stagingDir> is guest-writable '
+                'under the spec mounts'
+          : null);
 }
 
 /// A [Shell] whose commands are gated by a cube's policies.
@@ -278,7 +299,12 @@ final class SandboxedShell implements Shell {
       fs: fs,
       profilePath: '$stagingDir/$name.sb',
       profileContent: content,
-      blockedNote: stagingOutsideWorkspace(stagingDir, fs.cwd),
+      blockedNote: stagingViolation(
+        spec,
+        stagingDir,
+        homeDir: home,
+        workspaceRoot: fs.cwd,
+      ),
     );
   }
 
@@ -448,8 +474,7 @@ final class _KernelRun {
     final tmp = '$profilePath.${identityHashCode(this)}-${_tmpSeq++}.tmp';
     final write = await fs.writeFile(tmp, profileContent);
     if (write.isErr) {
-      stagingError =
-          'profile staging failed: ${write.errorOrNull!.message}';
+      stagingError = 'profile staging failed: ${write.errorOrNull!.message}';
       return false;
     }
     final rename = await (fs as RenamableFileSystem).renamePath(
@@ -457,8 +482,7 @@ final class _KernelRun {
       profilePath,
     );
     if (rename.isErr) {
-      stagingError =
-          'profile staging failed: ${rename.errorOrNull!.message}';
+      stagingError = 'profile staging failed: ${rename.errorOrNull!.message}';
       return false;
     }
     return true;
