@@ -343,6 +343,9 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
           name: _nameController.text.trim(),
           baseUrl: _urlController.text.trim(),
           modelId: _modelController.text.trim(),
+          // The transient preview inherits the edited entry's identity so
+          // the picker dispatches by kind even on a URL being edited.
+          kind: widget.initial?.kind,
         ),
         registry: widget.registry,
         initialModel: _modelController.text.trim(),
