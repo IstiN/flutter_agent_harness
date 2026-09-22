@@ -4055,4 +4055,11 @@
 
 - test(550-family): /dap menu leg anchors on the painted screen (Stop DAP races sibling rows) (#776)
 
+## 1.0.453
+
+- fix(release): unstick nightly publish legs (testflight version, play AAB lib check) (#797)
+- fix(ci): factory_ref echo follows the pinned factory ref (unstick main) (#788)
+- chore: pin factory 1eebd58c — merge-bot concurrency fix (factory #487) (#787)
+- feat(machine): merge bot stub — event-driven merge fast path (factory a7a1b13) (#784)
+
 ## Unreleased
