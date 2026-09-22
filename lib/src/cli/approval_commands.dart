@@ -1023,6 +1023,19 @@ extension ApprovalCommands on AgentCli {
       home: config.homeDir,
     );
     _toolStarts[toolCallId] = (DateTime.now(), detail);
+    // TUI chrome (issue #807): the phase-tinted card replaces the compact
+    // row — omp's card grammar keeps fa's detail extraction. Line mode and
+    // headless keep the legacy row byte-identically.
+    if (_useTui && tuiChromeEnabled) {
+      io.writeln(
+        tuiToolCard(
+          ToolCardSegments(title: toolName, description: detail),
+          TuiCardPhase.running,
+          _rowWidth,
+        ).join('\n'),
+      );
+      return;
+    }
     io.writeln(
       tuiToolRow(
         layoutToolRow(
@@ -1186,6 +1199,24 @@ extension ApprovalCommands on AgentCli {
           .map((block) => block.text)
           .join();
       detail = text.split('\n').first;
+    }
+    // TUI chrome (issue #807): the settled card carries the phase tint
+    // (success/error), the elapsed meta, and — on failure — the bright
+    // first line of the failure text as the news. Line mode and headless
+    // keep the legacy row byte-identically.
+    if (_useTui && tuiChromeEnabled) {
+      io.writeln(
+        tuiToolCard(
+          ToolCardSegments(
+            title: toolName,
+            description: detail,
+            meta: elapsed.isEmpty ? const [] : [elapsed],
+          ),
+          isError ? TuiCardPhase.error : TuiCardPhase.success,
+          _rowWidth,
+        ).join('\n'),
+      );
+      return;
     }
     io.writeln(
       tuiToolRow(

@@ -4,6 +4,7 @@ import '../session/session_tree.dart'
 import '../types.dart';
 import 'system_notice_render.dart';
 import 'tool_rows.dart';
+import 'tui_chrome.dart';
 import 'tui_theme.dart';
 
 /// The restored-transcript renderer (issue #446): ONE pipeline for live and
@@ -111,6 +112,10 @@ List<String> _replayUserTui(
     return [dim('─' * width), dim(line), ''];
   }
   if (needsSystemNoticeRewrite(text)) return renderSystemNoticeLines(text);
+  // Chrome mode (issue #807): the SAME builder the live submit echo uses —
+  // resume replay produces identical chrome (issue #807 AC4.5). Legacy
+  // mode keeps the rule + bare backgrounded rows.
+  if (tuiChromeEnabled) return [...tuiUserBubble(text.split('\n')), ''];
   final bg = tuiUserMessageBgSgr();
   const reset = '\x1b[0m';
   return [

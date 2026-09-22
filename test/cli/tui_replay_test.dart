@@ -242,10 +242,16 @@ void main() {
         width: 10,
         dim: dim,
       );
+      // Issue #807 chrome: the same bubble band rows the live echo emits
+      // (blank top, leading-space content rows, blank bottom, trailing
+      // blank).
+      const fg = '\x1b[38;2;232;238;247m';
+      const bg = '\x1b[48;2;30;34;42m';
       expect(lines, [
-        '<d>──────────</d>',
-        '\x1b[48;2;30;34;42mhello\x1b[0m',
-        '\x1b[48;2;30;34;42mworld\x1b[0m',
+        '$bg$fg\x1b[0m',
+        '$bg$fg hello\x1b[0m',
+        '$bg$fg world\x1b[0m',
+        '$bg$fg\x1b[0m',
         '',
       ]);
     });

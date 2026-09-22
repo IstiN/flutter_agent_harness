@@ -209,6 +209,7 @@ import 'scripted_test_stream.dart';
 import 'tui_replay.dart';
 import 'tui_repl.dart';
 import 'tui_theme.dart';
+import 'tui_chrome.dart';
 import 'termios_guard.dart';
 
 export '../model_roles/provider_catalog.dart' show providerStreamFunction;

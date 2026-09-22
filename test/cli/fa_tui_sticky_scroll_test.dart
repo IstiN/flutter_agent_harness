@@ -64,7 +64,8 @@ void main() {
     // Guard against a vacuous pass: the echo must actually be pinned now.
     final rows =
         model.view().content.split('\n').map((l) => l.replaceAll(ansi, '')).toList();
-    expect(rows.first, '─' * 80, reason: 'sticky echo pins the frame top');
+    expect(rows.first.trim(), isEmpty,
+        reason: 'sticky echo pins the bubble band top (issue #807 chrome)');
     expect(rows[1], contains('explain the scrollback bug'));
 
     // Feed eleven consecutive streaming frames through the real renderer.

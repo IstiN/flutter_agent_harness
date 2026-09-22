@@ -237,12 +237,15 @@ void main() {
       model.termWidth,
     );
     expect(
-      lines[hello - 1].replaceAll(RegExp(r'\x1b\[[0-9;]*[A-Za-z]'), ''),
-      '─' * model.termWidth,
+      lines[hello - 1].replaceAll(RegExp(r'\x1b\[[0-9;]*[A-Za-z]'), '').trim(),
+      '',
+    ); // band-top pad row (issue #807 chrome).
+    // Band-bottom pad row, then one visible blank line after the user
+    // message (issue #807 chrome).
+    expect(
+      lines[hello + 1].replaceAll(RegExp(r'\x1b\[[0-9;]*[A-Za-z]'), '').trim(),
+      '',
     );
-    // Two trailing blanks: one consumed by the answer's first line, one
-    // left visible as the empty line after the user message.
-    expect(lines[hello + 1], '');
     expect(lines[hello + 2], '');
     expect(lines.join('\n'), isNot(contains('fa> hello')));
   });
@@ -776,8 +779,9 @@ void main() {
       '',
     );
     final rows = stripped.split('\n');
-    // The pinned echo sits at the top: rule, then the first input line.
-    expect(rows[0], '─' * 80);
+    // The pinned echo sits at the top: bubble band top, then the first
+    // input line (issue #807 chrome).
+    expect(rows[0].trim(), isEmpty);
     expect(rows[1], contains('hello'));
 
     // Going idle unpins the echo.
@@ -1508,9 +1512,10 @@ void main() {
         model = result.$1 as FaTuiModel;
         await result.$2?.call();
         model = send(model, BusyMsg(true));
-        // A few streamed lines: the echo still fits inside the viewport, so
-        // no pinned duplicate may render.
-        for (var i = 0; i < 3; i++) {
+        // One streamed line: the echo still fits inside the viewport (the
+        // #807 bubble band is 2 rows taller than the old rule), so no
+        // pinned duplicate may render.
+        for (var i = 0; i < 1; i++) {
           model = send(model, OutputMsg('line $i', newline: true));
         }
         final ansi = RegExp(r'\x1b\[[0-9;]*m');
