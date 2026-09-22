@@ -266,7 +266,10 @@ approvalMode: yolo
       );
       expect(
         result.stderr,
-        contains('saved provider "chatgpt" only works with its own '
+        // #772 canonicalizes the saved NAME at load (`chatgpt` ->
+        // `chatgpt-codex`), so the pair guard reports the persisted KIND;
+        // the load note above names the name->kind mapping.
+        contains('saved provider "chatgpt-codex" only works with its own '
             'default endpoint'),
         reason: result.output,
       );
