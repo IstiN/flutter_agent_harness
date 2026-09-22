@@ -31,6 +31,7 @@ void main() {
 
   AgentCli cliFor({
     bool useColor = false,
+    bool useTui = false,
     Map<String, String> environment = const {},
     String? homeDir = '/home',
     String? tuiTheme,
@@ -49,6 +50,7 @@ void main() {
       io: io,
       streamFunction: FakeStreamFunction(const []).call,
       useColor: useColor,
+      useTui: useTui,
       environment: environment,
     );
   }
@@ -141,6 +143,41 @@ void main() {
     cliFor(tuiTheme: 'pi');
     await cliThemeSettle();
     expect(FaThemeController.instance.currentName, 'pi');
+  });
+
+  test('TUI boot without tui.theme: COLORFGBG light resolves ohmypi-light',
+      () async {
+    cliFor(useTui: true, environment: const {'COLORFGBG': '0;15'});
+    await cliThemeSettle();
+    expect(FaThemeController.instance.currentName, 'ohmypi-light');
+    expect(FaThemeController.instance.autoLightDarkArmed, isTrue);
+  });
+
+  test('TUI boot auto tier: dark COLORFGBG keeps the default palette',
+      () async {
+    cliFor(useTui: true, environment: const {'COLORFGBG': '15;0'});
+    await cliThemeSettle();
+    expect(FaThemeController.instance.currentName, kDefaultTuiTheme.name);
+    // Still armed: a later OSC 11 reply may upgrade to light.
+    expect(FaThemeController.instance.autoLightDarkArmed, isTrue);
+  });
+
+  test('line mode never runs the auto tier (byte-unchanged)', () async {
+    cliFor(environment: const {'COLORFGBG': '0;15'});
+    await cliThemeSettle();
+    expect(FaThemeController.instance.currentName, kDefaultTuiTheme.name);
+    expect(FaThemeController.instance.autoLightDarkArmed, isFalse);
+  });
+
+  test('boot: an explicit tui.theme outranks COLORFGBG and disarms', () async {
+    cliFor(
+      useTui: true,
+      tuiTheme: 'nord',
+      environment: const {'COLORFGBG': '0;15'},
+    );
+    await cliThemeSettle();
+    expect(FaThemeController.instance.currentName, 'nord');
+    expect(FaThemeController.instance.autoLightDarkArmed, isFalse);
   });
 
   test('user themes load at boot: a persisted user theme applies (AC4)',
