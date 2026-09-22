@@ -723,6 +723,7 @@ Future<void> handleRelayRequest(
     return;
   }
   if (origin != null && allowedOrigin == null) {
+    request.response.headers.set(HttpHeaders.connectionHeader, 'close');
     request.response.statusCode = 403;
     request.response.write('{"error":"origin not allowed"}');
     await request.response.close();
@@ -731,6 +732,7 @@ Future<void> handleRelayRequest(
   final parsed = await _relayEnvelope(request, allowedOrigin);
   if (parsed == null) return;
   if (!relayDestinationAllowed(parsed.$1, allowAnyHost: allowAnyHost)) {
+    request.response.headers.set(HttpHeaders.connectionHeader, 'close');
     request.response.statusCode = 403;
     _relayCors(request, allowedOrigin);
     request.response.write('{"error":"destination not allowed"}');
@@ -831,6 +833,7 @@ Future<(Uri, Map<String, dynamic>)?> _relayEnvelope(
     }
     return (url, envelope);
   } on FormatException {
+    request.response.headers.set(HttpHeaders.connectionHeader, 'close');
     request.response.statusCode = 400;
     _relayCors(request, allowedOrigin);
     request.response.write(
@@ -854,7 +857,13 @@ Map<String, String> _relayHopHeaders(
     for (final entry in ((envelope['headers'] as Map?) ?? const {}).entries)
       '${entry.key}': '${entry.value}',
   };
-  if (current.host.toLowerCase() != original.host.toLowerCase()) {
+  // Credentials also die on a scheme downgrade: https -> http on the
+  // SAME host hands the bearer to plaintext (issue #792 review).
+  final hostChanged =
+      current.host.toLowerCase() != original.host.toLowerCase();
+  final schemeDowngraded =
+      original.scheme == 'https' && current.scheme == 'http';
+  if (hostChanged || schemeDowngraded) {
     headers.removeWhere(
       (name, _) {
         final lower = name.toLowerCase();
@@ -893,6 +902,8 @@ Future<void> _relayReject(
   String error,
   String? allowedOrigin,
 ) async {
+  // Keep-alive pools must not reuse a rejected socket.
+  request.response.headers.set(HttpHeaders.connectionHeader, 'close');
   request.response.statusCode = status;
   _relayCors(request, allowedOrigin);
   request.response.write('{"error":"$error"}');

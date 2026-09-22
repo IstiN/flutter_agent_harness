@@ -667,17 +667,37 @@ class DapHubController {
       if (!file.parent.existsSync()) {
         file.parent.createSync(recursive: true);
       }
-      file.writeAsStringSync(
+      // Read-modify-write (issue #792 review): the child process owns
+      // the relaySecret — by the time the spawner tidies the pid file,
+      // the child may have persisted its EPHEMERAL relay bearer there.
+      // Clobbering it with null breaks every pairing client; carry the
+      // existing value forward instead.
+      final previous = _readPidState();
+      _writeSecretFile0600(
+        file,
         renderDapLocalHubState((
           pid: pid,
           port: port,
           startedAt: DateTime.now().toUtc().toIso8601String(),
-          relaySecret: null,
+          relaySecret: previous?.relaySecret,
         )),
       );
     } on Object {
       // Best-effort: the probe remains the source of truth for "running".
     }
+  }
+
+  // Writes [body] to [file] at mode 0600 with no world-readable window
+  // (issue #792 review): the empty file is created first, restricted,
+  // and only then does the content land. dart:io has no creation-mode
+  // API, so the shell chmod is the earliest restriction point.
+  void _writeSecretFile0600(File file, String body) {
+    if (!file.parent.existsSync()) {
+      file.parent.createSync(recursive: true);
+    }
+    file.writeAsStringSync('', mode: FileMode.write, flush: true);
+    Process.runSync('chmod', ['600', file.path]);
+    file.writeAsStringSync(body, mode: FileMode.write, flush: true);
   }
 
   void _clearPidState() {

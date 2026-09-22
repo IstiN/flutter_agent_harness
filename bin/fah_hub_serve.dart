@@ -101,11 +101,18 @@ typedef HubServeSpec = ({
 });
 
 /// Collapses `--flag value` pairs; later duplicates win (the same
-/// sequential-overwrite shape the hand-rolled loop had).
-Map<String, String> parseFlagValues(List<String> args) {
+/// sequential-overwrite shape the hand-rolled loop had). Flags in
+/// [boolFlags] are bare — they never consume the token after them
+/// (`--relay-allow-any-host --bind lan` must not eat `--bind`).
+Map<String, String> parseFlagValues(
+  List<String> args, {
+  Set<String> boolFlags = const {},
+}) {
   final values = <String, String>{};
-  for (var i = 0; i + 1 < args.length; i++) {
+  for (var i = 0; i < args.length; i++) {
     if (!args[i].startsWith('--')) continue;
+    if (boolFlags.contains(args[i])) continue;
+    if (i + 1 >= args.length) break;
     values[args[i]] = args[i + 1];
     i++;
   }
@@ -116,7 +123,10 @@ Map<String, String> parseFlagValues(List<String> args) {
 /// flags are ignored, as before. `--relay-allow-any-host` is a bare
 /// boolean flag (issue #792).
 HubServeSpec parseHubServeSpec(List<String> flags) {
-  final values = parseFlagValues(flags);
+  final values = parseFlagValues(
+    flags,
+    boolFlags: const {'--relay-allow-any-host'},
+  );
   return (
     port: int.tryParse(values['--port'] ?? '') ?? defaultHubServePort,
     flagSecret: values['--secret'],
@@ -245,7 +255,15 @@ Future<int> hubServe(
   // CLI instance (not just the spawner) exactly once, with no zombie
   // pid — the serve loop owns the cleanup on a graceful exit. On an
   // open hub it also carries the ephemeral relay bearer (issue #792).
-  _writePidState(pidFile, pid, spec.port, relaySecret: hub.relaySecret);
+  // Only a REAL relay secret goes in the pid file: a protected hub's
+  // master secret must never leave the 0600 state file (issue #792
+  // review).
+  _writePidState(
+    pidFile,
+    pid,
+    spec.port,
+    relaySecret: hub.isProtected ? null : hub.relaySecret,
+  );
   stdout.writeln(
     'DAP hub on ${hub.url}${hub.isProtected ? ' (password-protected)' : ''}',
   );
@@ -376,26 +394,32 @@ void _writePidState(
   String? relaySecret,
 }) {
   try {
-    if (!pidFile.parent.existsSync()) {
-      pidFile.parent.createSync(recursive: true);
-    }
-    // 0600: the file can carry the ephemeral relay bearer now (issue
-    // #792) — same rule as the hub state file.
-    pidFile.writeAsStringSync(
+    _writeSecretFile0600(
+      pidFile,
       renderDapLocalHubState((
         pid: pid,
         port: port,
         startedAt: DateTime.now().toUtc().toIso8601String(),
         relaySecret: relaySecret,
       )),
-      mode: FileMode.write,
-      flush: true,
     );
-    Process.runSync('chmod', ['600', pidFile.path]);
   } on Object {
     // Best-effort: `fa dap stop` still works via its own probe.
   }
 }
+// Writes [body] to [file] at mode 0600 with no world-readable window
+// (issue #792 review): the empty file is created first, restricted,
+// and only then does the content land. dart:io has no creation-mode
+// API, so the shell chmod is the earliest restriction point.
+void _writeSecretFile0600(File file, String body) {
+  if (!file.parent.existsSync()) {
+    file.parent.createSync(recursive: true);
+  }
+  file.writeAsStringSync('', mode: FileMode.write, flush: true);
+  Process.runSync('chmod', ['600', file.path]);
+  file.writeAsStringSync(body, mode: FileMode.write, flush: true);
+}
+
 
 void _clearPidState(File pidFile) {
   try {

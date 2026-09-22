@@ -29,12 +29,16 @@ String dapHubPidFileFor(String home) =>
     '${home.endsWith('/') ? home : '$home/'}.dap/hub.pid';
 
 /// Renders [state] as the file body (pretty JSON, trailing newline).
-String renderDapLocalHubState(DapLocalHubState state) {
-  final secret = state.relaySecret;
-  return '{\n  "pid": ${state.pid},\n  "port": ${state.port},\n'
-      '  "startedAt": ${state.startedAt.isEmpty ? 'null' : '"${state.startedAt}"'},\n'
-      '  "relaySecret": ${secret == null ? 'null' : '"$secret"'}\n}\n';
-}
+/// Built through [JsonEncoder.withIndent] — the fields are escaped
+/// properly (a relay secret carrying quotes or backslashes cannot
+/// corrupt the file).
+String renderDapLocalHubState(DapLocalHubState state) =>
+    '${const JsonEncoder.withIndent('  ').convert({
+      'pid': state.pid,
+      'port': state.port,
+      'startedAt': state.startedAt.isEmpty ? null : state.startedAt,
+      'relaySecret': state.relaySecret,
+    })}\n';
 
 /// Parses a pid/state file body; null when [content] is missing, invalid
 /// JSON, or lacks a usable `pid`/`port` (E4: a bad file is no state —

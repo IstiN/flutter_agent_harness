@@ -46,6 +46,16 @@ EmbedHttpClient Function()? installOfficeHttpBridgeImpl() {
 
 /// The err-frame text of a transport that died under us (SW restart,
 /// invalidated extension context) — retryable with a fresh handshake.
+/// The hub relay refused the pane's credential (or none was
+/// configured) — distinct from a transport death: retrying is
+/// pointless, the operator must update the token.
+final class _HubRelayUnauthorized implements Exception {
+  _HubRelayUnauthorized(this.raw);
+  final String raw;
+  @override
+  String toString() => raw;
+}
+
 final class _BridgeDead implements Exception {
   _BridgeDead(this.raw);
   final String raw;
@@ -117,7 +127,20 @@ final class EmbedHttpClient extends http.BaseClient {
         }
       }
     }
-    if (await hubUp) return _hubSend(request);
+    if (await hubUp) {
+      try {
+        return await _hubSend(request);
+      } on _HubRelayUnauthorized {
+        // Fail closed loudly (issue #792): the hub refused our
+        // credential — a stale or missing token must surface, not
+        // silently degrade to a transport that cannot reach providers.
+        throw StateError(
+          'hub relay rejected the pane credential — update the relay '
+          'bearer from `fa hub serve` output '
+          '(relay: ... Bearer <secret>)',
+        );
+      }
+    }
     return _directSend(request);
   }
 
@@ -189,7 +212,14 @@ final class EmbedHttpClient extends http.BaseClient {
 
   /// The desktop path: the request rides the hub's /relay mount, the
   /// upstream answer (status + content-type + body) streams back raw.
+  /// The relay is fail-closed (issue #792) — the bearer is mandatory;
+  /// without one the transport is skipped ([_HubRelayUnauthorized]
+  /// would be the guaranteed answer).
   Future<http.StreamedResponse> _hubSend(http.BaseRequest request) async {
+    final token = officeHubRelayToken;
+    if (token == null || token.isEmpty) {
+      throw _HubRelayUnauthorized('no bearer configured');
+    }
     final controller = web.AbortController();
     return _sendViaFetch(
       request,
@@ -203,6 +233,7 @@ final class EmbedHttpClient extends http.BaseClient {
       }),
       contentType: 'application/json',
       controller: controller,
+      bearer: token,
     );
   }
 
@@ -230,16 +261,21 @@ final class EmbedHttpClient extends http.BaseClient {
     required String? body,
     required String? contentType,
     web.AbortController? controller,
+    String? bearer,
   }) async {
     final init = <String, Object?>{
       'method': request.method,
       'headers': {
         'content-type': ?contentType,
+        'authorization': ?bearer == null ? null : 'Bearer $bearer',
       },
       'body': ?body,
       'signal': ?controller?.signal,
     };
     final response = await _fetch(url, init.jsify()! as web.RequestInit);
+    if (response.status == 401 && bearer != null) {
+      throw _HubRelayUnauthorized('relay answered 401');
+    }
     return http.StreamedResponse(
       _pump(
         response.body!,

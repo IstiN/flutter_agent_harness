@@ -101,6 +101,39 @@ void main() {
       expect(hubLanSecretRefusal(bind: 'lan', secret: null), isNotNull);
     });
 
+    test('REG: fail closed over the wire — a null credential answers '
+        '401, never proxies (issue #792 AC5)', () async {
+      // The exact shape the old hub answered `null` on (loopback skip):
+      // the decision seam returning null MUST refuse, on the wire.
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      unawaited(
+        server.forEach((request) async {
+          await handleRelayRequest(
+            request,
+            requireCredential: () => null,
+            origin: request.headers.value('origin'),
+            allowAnyHost: true,
+          );
+        }),
+      );
+      final client = HttpClient();
+      final req = await client.postUrl(
+        Uri.parse('http://127.0.0.1:${server.port}/relay'),
+      );
+      req.headers.set('Origin', 'https://fa1.dev');
+      final res = await req.close();
+      expect(res.statusCode, 401);
+      expect(
+        res.headers.value('connection'),
+        'close',
+        reason: 'rejected sockets must not be pooled',
+      );
+      await res.drain<void>();
+      client.close();
+      expect(upstreamHits, 0, reason: 'refused, not skipped');
+    });
+
     test('AC3: metadata / loopback / private destinations are denied '
         'before any outbound attempt', () async {
       await hub.stop();
@@ -116,6 +149,7 @@ void main() {
       ]) {
         final res = await post(hub.relaySecret!, body: envelope(dest));
         expect(res.statusCode, 403, reason: dest);
+        expect(res.headers.value('connection'), 'close', reason: dest);
       }
       expect(upstreamHits, 0);
     });

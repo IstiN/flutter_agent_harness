@@ -303,6 +303,7 @@ void main() {
     );
     expect(capped.statusCode, 502);
     expect(cappedBody, contains('too many redirects'));
+    expect(capped.headers.value('connection'), 'close');
   });
 
   test('a cross-host redirect drops credentials and 303 demotes the '
@@ -358,6 +359,7 @@ void main() {
     );
     expect(res.statusCode, 403);
     expect(body, contains('origin not allowed'));
+    expect(res.headers.value('connection'), 'close');
     expect(upstreamRequests, isEmpty);
   });
 

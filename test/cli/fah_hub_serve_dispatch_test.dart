@@ -69,6 +69,22 @@ void main() {
       expect(parseFlagValues(const ['x', '--port']), isEmpty);
     });
 
+    test('bare boolean flags never consume the next flag (issue #792 '
+        'review: --relay-allow-any-host --bind lan)', () {
+      expect(
+        parseFlagValues(
+          const ['--relay-allow-any-host', '--bind', 'lan'],
+          boolFlags: const {'--relay-allow-any-host'},
+        ),
+        {'--bind': 'lan'},
+      );
+      final spec = parseHubServeSpec(
+        const ['--relay-allow-any-host', '--bind', 'lan'],
+      );
+      expect(spec.flagBind, 'lan');
+      expect(spec.relayAllowAnyHost, isTrue);
+    });
+
     test('port: a bad value keeps the default; secret passes through', () {
       expect(parseHubServeSpec(const []), (
         port: defaultHubServePort,

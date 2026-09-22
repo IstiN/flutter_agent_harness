@@ -21,6 +21,22 @@ void main() {
     });
   });
 
+  test('renderDapLocalHubState escapes hostile secrets (issue #792 '
+      'review)', () {
+    const state = (
+      pid: 7,
+      port: 8787,
+      startedAt: '2026-09-23T00:00:00Z',
+      relaySecret: 'a"b\\c\nd',
+    );
+    final rendered = renderDapLocalHubState(state);
+    final parsed = parseDapLocalHubState(rendered);
+    expect(parsed, isNotNull);
+    expect(parsed!.relaySecret, 'a"b\\c\nd');
+    expect(rendered.contains('a"b'), isFalse,
+        reason: 'the quote is escaped in the file body');
+  });
+
   group('parseDapLocalHubState', () {
     test('round-trips a rendered state', () {
       final state = (
