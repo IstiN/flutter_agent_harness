@@ -244,8 +244,20 @@ jobs:
           # only sees the staged native_assets dir — this verifies what
           # actually ships, so a future Flutter staging-layout change that
           # silently un-wires the gate fails here instead of at Play upload.
+          # AAB layout: native libs live at base/lib/<abi>/*.so — the old
+          # 'lib/*' glob is the APK layout and matched nothing, so unzip
+          # exited 11 and set -e killed the leg (gh-786). The gate owns its
+          # verdict: it checks what matched and prints a named pass/fail
+          # instead of riding unzip's exit code.
           TMP_LIBS="$(mktemp -d)"
-          unzip -o -q "$AAB_PATH" 'lib/*' -d "$TMP_LIBS"
+          unzip -o -q "$AAB_PATH" 'base/lib/*' -d "$TMP_LIBS" || true
+          LIB_COUNT=$(find "$TMP_LIBS" -type f -name '*.so' | wc -l)
+          if [ "$LIB_COUNT" -eq 0 ]; then
+            echo "::error::expected native libs at base/lib/*/*.so in the AAB, found none — packaging regression (gh-786)"
+            exit 1
+          fi
+          echo "Native libs in the bundle: $LIB_COUNT"
+          find "$TMP_LIBS" -type f -name '*.so' | sed "s|$TMP_LIBS/||"
           dart scripts/patch_elf_16k_alignment.dart --check "$TMP_LIBS"
           echo "✅ 16 KB alignment check green"
 
