@@ -283,13 +283,16 @@ class AgentCli {
     _providerKind = config.providerKind;
     _apiKey = config.apiKey;
     _liveLoadMode = config.loadMode;
-    // The theme emitters' color profile: styled iff this session styles
-    // at all (TUI or colored line mode); NO_COLOR / TERM=dumb degrade to
-    // plain output (issue #279 AC7).
-    FaThemeController.instance.profile = detectThemeProfile(
-      ansiSupported: useTui || useColor,
-      environment: environment,
-    );
+    // The theme emitters' color profile: the surface's pinned palette
+    // (the host's single resolution, issue #774) wins; otherwise styled
+    // iff this session styles at all (TUI or colored line mode), with
+    // NO_COLOR / TERM=dumb degrading to plain output (issue #279 AC7).
+    FaThemeController.instance.profile =
+        _markdownSurface.profile ??
+        detectThemeProfile(
+          ansiSupported: useTui || useColor,
+          environment: environment,
+        );
     // Boot theme: async — user themes load through the FileSystem seam
     // before the persisted name resolves (issue #279 AC4); fire-and-forget
     // keeps the constructor sync.

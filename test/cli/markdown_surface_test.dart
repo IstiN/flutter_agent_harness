@@ -3,10 +3,18 @@
 /// Pins the per-surface routing through the ONE [MarkdownSurface] policy:
 /// headless-to-TTY and the line-mode REPL render (AC2), piped/redirected
 /// output stays byte-identical raw (AC3), `NO_COLOR`-style degrades render
-/// structure with zero escape bytes (AC4), and markdown inside tool
-/// results stays raw data (E7). Deterministic: fake [CliIO], no PTY.
+/// structure with zero escape bytes (AC4), raw pipes stream deltas live
+/// while styled modes buffer to message end (review #778), and the theme
+/// palette resolves once and rides the surface. Deterministic: fake
+/// [CliIO], no PTY.
+library;
+
+import 'dart:async';
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
+import 'package:flutter_agent_harness/src/cli/tui_theme.dart'
+    show ColorProfile, FaThemeController;
 import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
@@ -76,6 +84,7 @@ void main() {
         tty: true,
         color: true,
         width: 80,
+        profile: ColorProfile.trueColor,
       );
       final code = await _headlessCli(
         io,
@@ -142,6 +151,7 @@ void main() {
         tty: true,
         color: true,
         width: 80,
+        profile: ColorProfile.trueColor,
       );
       final fake = FakeStreamFunction([textTurn(_repro)]);
       final cli = AgentCli(
@@ -170,6 +180,166 @@ void main() {
       expect(out, contains('•'));
       expect(out, contains('│'));
       await io.close();
+    });
+  });
+
+  /// A stream function whose first delta lands before the message ends:
+  /// [gate] releases the second delta and the DoneEvent.
+  StreamFunction gatedStream(Completer<void> gate, String full) {
+    return (model, context, {cancelToken}) {
+      AssistantMessage partialOf(String text) => testAssistant(
+        content: [TextContent(text: text)],
+      );
+      final stream = AssistantMessageEventStream()
+        ..push(StartEvent(partial: testAssistant()))
+        ..push(TextStartEvent(contentIndex: 0, partial: testAssistant()))
+        ..push(
+          TextDeltaEvent(
+            contentIndex: 0,
+            delta: 'hel',
+            partial: partialOf('hel'),
+          ),
+        );
+      unawaited(
+        gate.future.then((_) {
+          stream
+            ..push(
+              TextDeltaEvent(
+                contentIndex: 0,
+                delta: 'lo there',
+                partial: partialOf(full),
+              ),
+            )
+            ..push(
+              DoneEvent(reason: StopReason.stop, message: partialOf(full)),
+            )
+            ..end();
+        }),
+      );
+      return stream;
+    };
+  }
+
+  group('streaming mode split (review #778)', () {
+    test('raw mode streams deltas live — no per-message buffering', () async {
+      final io = _HeadlessIO();
+      final gate = Completer<void>();
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'test-key',
+          env: MemoryExecutionEnv(cwd: '/work'),
+          sessionRoot: '/sessions',
+        ),
+        io: io,
+        streamFunction: gatedStream(gate, 'hello there'),
+        // Default const surface = raw passthrough.
+      );
+
+      final run = cli.runHeadless('hi');
+      // The first delta is on stdout BEFORE the message ends: pipes get
+      // live bytes again.
+      await waitForIt(() => io.out.toString() == 'hel');
+      gate.complete();
+      expect(await run, 0);
+      // And the full stream is byte-identical to the pre-#774 output —
+      // no re-render, no doubled text.
+      expect(io.out.toString(), 'hello there\n');
+    });
+
+    test('ansi mode buffers and renders once at message end', () async {
+      final io = _HeadlessIO();
+      final gate = Completer<void>();
+      final surface = MarkdownSurface.resolving(
+        tty: true,
+        color: true,
+        width: 80,
+        profile: ColorProfile.trueColor,
+      );
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'test-key',
+          env: MemoryExecutionEnv(cwd: '/work'),
+          sessionRoot: '/sessions',
+        ),
+        io: io,
+        streamFunction: gatedStream(gate, 'hello there'),
+        markdownSurface: surface,
+      );
+
+      final run = cli.runHeadless('hi');
+      // Deltas are consumed but buffered: nothing on stdout mid-message.
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      expect(io.out.toString(), isEmpty);
+      gate.complete();
+      expect(await run, 0);
+      expect(io.out.toString(), '${surface.render('hello there')}\n');
+    });
+  });
+
+  group('FA_NO_FORMAT env parse (review #778)', () {
+    test('truthy values count as forced-raw, case/trim tolerant', () {
+      for (final value in ['1', 'true', 'TRUE', ' yes ', 'on', 'On']) {
+        expect(isTruthyEnvValue(value), isTrue, reason: value);
+      }
+    });
+
+    test('falsy and absent values never force raw', () {
+      for (final value in ['0', 'false', 'FALSE', '', 'no', 'off', null]) {
+        expect(isTruthyEnvValue(value), isFalse, reason: '$value');
+      }
+    });
+  });
+
+  group('theme palette wiring (review #778)', () {
+    test('the surface palette is the single CLI resolution', () {
+      AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'test-key',
+          env: MemoryExecutionEnv(cwd: '/work'),
+          sessionRoot: '/sessions',
+        ),
+        io: _HeadlessIO(),
+        markdownSurface: MarkdownSurface(
+          mode: MarkdownSurfaceMode.ansi,
+          profile: ColorProfile.trueColor,
+        ),
+      );
+      expect(FaThemeController.instance.profile, ColorProfile.trueColor);
+    });
+
+    test('a plain palette pins plain; no palette falls back to detection',
+        () {
+      AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'test-key',
+          env: MemoryExecutionEnv(cwd: '/work'),
+          sessionRoot: '/sessions',
+        ),
+        io: _HeadlessIO(),
+        markdownSurface: MarkdownSurface(
+          mode: MarkdownSurfaceMode.ansi,
+          profile: ColorProfile.ansi256,
+        ),
+      );
+      expect(FaThemeController.instance.profile, ColorProfile.ansi256);
+
+      // Null profile: the constructor's own detection with no styling
+      // inputs (headless, uncolored) degrades to null — pre-#774 rule.
+      AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'test-key',
+          env: MemoryExecutionEnv(cwd: '/work'),
+          sessionRoot: '/sessions',
+        ),
+        io: _HeadlessIO(),
+        markdownSurface: const MarkdownSurface(),
+      );
+      expect(FaThemeController.instance.profile, isNull);
     });
   });
 }

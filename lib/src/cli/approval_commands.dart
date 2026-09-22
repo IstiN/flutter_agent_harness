@@ -1040,14 +1040,18 @@ extension ApprovalCommands on AgentCli {
   int get _rowWidth => _tuiController?.termWidth ?? 0;
 
   /// Streaming deltas: answer text and — TUI only — dimmed thinking as the
-  /// progress signal. The TUI streams raw into its history (rendered at
-  /// view time); non-TUI surfaces buffer the answer and render it through
-  /// the markdown policy at message end (issue #774): line mode and
+  /// progress signal. Where the answer goes depends on the surface: the
+  /// TUI streams raw into its history (rendered at view time); raw-mode
+  /// passthrough streams deltas live (byte-identical output AND live);
+  /// the styled modes (ansi/plain) buffer the answer and render it through
+  /// the markdown policy at message end (issue #774) — line mode and
   /// headless cannot repaint, so a half-streamed table or fence would
-  /// print raw mid-flight — the whole message renders once, correctly.
+  /// print raw mid-flight; the whole message renders once, correctly.
+  bool get _buffersAnswer => _markdownSurface.mode != MarkdownSurfaceMode.raw;
+
   void _onMessageUpdate(AssistantMessageEvent assistantMessageEvent) {
     if (assistantMessageEvent is TextDeltaEvent) {
-      if (_useTui) {
+      if (_useTui || !_buffersAnswer) {
         // The answer text starts on its own line after the dimmed
         // thinking block.
         if (_streamedThinking && !_streamedText) io.write('\n');
@@ -1074,7 +1078,7 @@ extension ApprovalCommands on AgentCli {
   /// End of an assistant message: flush the stream newline, then report the
   /// stop reason (errors, aborts, silent truncations, empty responses).
   void _onAssistantMessageEnd(AssistantMessage message) {
-    if (_useTui) {
+    if (_useTui || !_buffersAnswer) {
       if (_streamedText || _streamedThinking) {
         // The trailing newline of the streamed text belongs to the
         // primary channel (write), not to diagnostics (writeln) — a
@@ -1086,8 +1090,8 @@ extension ApprovalCommands on AgentCli {
     } else if (_streamedText) {
       // The rendered message lands on the primary channel (write), not
       // diagnostics (writeln) — a headless host routes only writeln to
-      // stderr, keeping write the only stdout content. Raw mode passes
-      // the text through byte-identically (issue #774 AC3).
+      // stderr, keeping write the only stdout content. Raw mode streams
+      // deltas live above, so this branch only runs for ansi/plain.
       io.write(_markdownSurface.render(_assistantText.toString()));
       io.write('\n');
       _assistantText.clear();

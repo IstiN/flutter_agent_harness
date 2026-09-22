@@ -1198,8 +1198,15 @@ enum MarkdownSurfaceMode {
 final class MarkdownSurface {
   /// Creates a policy in an explicit [mode]. The default is [raw] —
   /// byte-identical to the pre-#774 behavior, so a host that does not
-  /// resolve a surface keeps today's output.
-  const MarkdownSurface({this.mode = MarkdownSurfaceMode.raw, this.width = 80});
+  /// resolve a surface keeps today's output. [profile] pins the theme
+  /// palette the engine emits (null = leave the process-wide profile
+  /// alone); hosts resolve it once and thread the SAME value here and
+  /// into their CLI styling.
+  const MarkdownSurface({
+    this.mode = MarkdownSurfaceMode.raw,
+    this.width = 80,
+    this.profile,
+  });
 
   /// Resolves the policy from host-detected surface facts: a pipe/redirect
   /// or a `--no-format`/`FA_NO_FORMAT` request renders raw; `NO_COLOR` /
@@ -1209,6 +1216,7 @@ final class MarkdownSurface {
     required bool color,
     bool format = true,
     int width = 80,
+    ColorProfile? profile,
   }) => MarkdownSurface(
     mode: !format || !tty
         ? MarkdownSurfaceMode.raw
@@ -1216,15 +1224,19 @@ final class MarkdownSurface {
         ? MarkdownSurfaceMode.ansi
         : MarkdownSurfaceMode.plain,
     width: width,
+    profile: profile,
   );
 
   final MarkdownSurfaceMode mode;
 
-  /// Wrap/table-fit width. Per surface: the TUI feeds its viewport width
-  /// to [TranscriptMarkdown], line mode the terminal width, headless the
-  /// stdout terminal width (a piped headless run is raw, so the width is
-  /// never applied to a file).
+  /// Wrap/table-fit width, resolved at construction and frozen: line mode
+  /// and headless are one-shot renders per message, so a mid-session
+  /// terminal resize applies to the NEXT process (the TUI, the only
+  /// repaintable surface, re-renders at the live viewport width).
   final int width;
+
+  /// The theme palette [AnsiMarkdown] emits in [ansi]/[plain] passes.
+  final ColorProfile? profile;
 
   /// Renders one COMPLETE assistant text (a whole message — never a
   /// streaming delta). Every call owns a fresh [AnsiMarkdown], so
@@ -1234,15 +1246,21 @@ final class MarkdownSurface {
   String render(String text) => switch (mode) {
     MarkdownSurfaceMode.raw => text,
     MarkdownSurfaceMode.ansi => _renderWhole(text),
-    MarkdownSurfaceMode.plain => _renderWhole(
-      text,
-    ).replaceAll(AnsiMarkdown.ansiSgrPattern, ''),
+    MarkdownSurfaceMode.plain => _renderWhole(text).replaceAll(
+      _ansiEscapeRe,
+      '',
+    ),
   };
 
-  String _renderWhole(String text) =>
-      AnsiMarkdown(width: width)
-          .formatAll(resolveSetextHeadings(text.split('\n')))
-          .join('\n');
+  String _renderWhole(String text) {
+    // Pin the palette this surface was constructed with — the host's
+    // single theme resolution — so the engine's SGR getters emit it.
+    final resolved = profile;
+    if (resolved != null) FaThemeController.instance.profile = resolved;
+    return AnsiMarkdown(width: width)
+        .formatAll(resolveSetextHeadings(text.split('\n')))
+        .join('\n');
+  }
 }
 
 /// Rewrites setext heading pairs (`paragraph` + `===`/`---` underline) to
@@ -1274,17 +1292,31 @@ List<String> resolveSetextHeadings(List<String> lines) {
         ? 2
         : 0;
     if (level == 0 || !_canOpenSetext(out[i])) continue;
-    out[i] = '${'#' * level} ${out[i]}';
-    out.removeAt(i + 1);
+    // CommonMark: the WHOLE contiguous paragraph above the underline
+    // becomes the heading, not just its last line — otherwise the first
+    // lines keep paragraph styling while the last gains heading emphasis.
+    final start = _paragraphStart(out, i);
+    out[start] = '${'#' * level} ${out.sublist(start, i + 1).join(' ')}';
+    out.removeRange(start + 1, i + 2);
+    i = start - 1;
   }
   return out;
 }
 
+/// First line of the contiguous plain-paragraph run ending at [i].
+int _paragraphStart(List<String> out, int i) {
+  var start = i;
+  while (start > 0 && _canOpenSetext(out[start - 1])) {
+    start--;
+  }
+  return start;
+}
+
 /// Whether [line] can open a setext heading: a plain paragraph line —
 /// not blank and not any other block form (fence, ATX heading, quote,
-/// bullet, thematic break).
+/// bullet, thematic break). A whitespace-only line counts as blank.
 bool _canOpenSetext(String line) {
-  if (line.isEmpty) return false;
+  if (line.trim().isEmpty) return false;
   if (AnsiMarkdown._fenceRe.hasMatch(line)) return false;
   if (AnsiMarkdown._headerRe.hasMatch(line)) return false;
   if (AnsiMarkdown._hrRe.hasMatch(line)) return false;
@@ -1295,3 +1327,19 @@ bool _canOpenSetext(String line) {
 
 final _setextUnderline1Re = RegExp(r'^ {0,3}=+ *$');
 final _setextUnderline2Re = RegExp(r'^ {0,3}-+ *$');
+
+/// Every ANSI escape shape renderer output or model text can carry: CSI
+/// sequences (SGR, cursor movement, erasing) and OSC strings (e.g.
+/// `\x1b]8;;url\x1b\\` hyperlinks), BEL- or ST-terminated. [plain] mode
+/// strips these so its zero-escape-byte contract holds for model noise
+/// the renderer itself never emits.
+final _ansiEscapeRe = RegExp(
+  r'\x1b(?:\[[0-9;?]*[A-Za-z]|\][^\x07\x1b]*(?:\x07|\x1b\\))',
+);
+
+/// Whether an `FA_*` boolean env value counts as ON — the repo-wide
+/// truthy convention (`FA_PI_MODE`): `'1'/'true'/'yes'/'on'`,
+/// case-insensitive, trimmed; any other value (including `0`, `false`,
+/// `""`) is OFF.
+bool isTruthyEnvValue(String? value) =>
+    const {'1', 'true', 'yes', 'on'}.contains(value?.trim().toLowerCase());

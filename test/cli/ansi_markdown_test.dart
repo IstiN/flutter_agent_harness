@@ -1,4 +1,3 @@
-import 'package:dart_tui/src/msg.dart' show ColorProfile;
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:flutter_agent_harness/src/cli/tui_text_width.dart';
@@ -408,6 +407,28 @@ void main() {
       final out = surface.render('```\nTitle\n===\n```\n');
       expect(out, contains('Title'));
       expect(out, contains('==='));
+    });
+
+    test('a whitespace-only line is blank — the --- stays a rule', () {
+      final out = surface.render('Title\n  \n---\n');
+      expect(out, contains('Title'));
+      expect(out, contains('─'));
+      expect(out.contains('---'), isFalse);
+    });
+
+    test('a multi-line paragraph becomes ONE heading (CommonMark)', () {
+      final out = surface.render('one\ntwo\n===\n');
+      expect(out, contains('one two'));
+      // 'one' no longer ends its own paragraph line.
+      expect(out.contains('one\n'), isFalse);
+    });
+
+    test('plain mode strips non-SGR escapes too (OSC hyperlinks)', () {
+      const noisy = 'see \x1b]8;;https://x.example\x1b\\docs\x1b]8;;\x1b\\ '
+          'and \x1b[?25lraw';
+      final out = surface.render(noisy);
+      expect(out.contains('\x1b'), isFalse);
+      expect(out, contains('see docs and raw'));
     });
 
     test('bullets and quotes never become headings', () {

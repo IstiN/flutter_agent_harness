@@ -1914,6 +1914,14 @@ Future<void> _runApp(List<String> args) async {
     configMode: saved.agentMode,
   );
 
+  // The ONE theme resolution for the process (issue #774 review): the
+  // same profile drives the CLI styling and the markdown surface, so the
+  // two can never diverge (NO_COLOR / TERM=dumb fold to null here).
+  final themeProfile = detectThemeProfile(
+    ansiSupported: stdout.supportsAnsiEscapes,
+    environment: Platform.environment,
+  );
+
   cli = AgentCli(
     useColor: headlessPrompt == null && stdout.supportsAnsiEscapes,
     environment: Platform.environment,
@@ -1922,20 +1930,19 @@ Future<void> _runApp(List<String> args) async {
     // Markdown parity (issue #774): every non-TUI surface renders
     // assistant markdown through ONE policy. tty = stdout is a terminal
     // (pipes stay byte-identical raw); color folds NO_COLOR/TERM=dumb
-    // into plain; --no-format / FA_NO_FORMAT force raw; width is the
-    // stdout terminal width (80 when piped — irrelevant in raw mode).
+    // into plain; --no-format / FA_NO_FORMAT (truthy values, like
+    // FA_PI_MODE) force raw; width is the stdout terminal width at
+    // process start (80 when piped — irrelevant in raw mode); the
+    // resolved palette rides along so the surface cannot disagree with
+    // the CLI styling.
     markdownSurface: MarkdownSurface.resolving(
       tty: stdout.supportsAnsiEscapes,
-      color:
-          detectThemeProfile(
-            ansiSupported: stdout.supportsAnsiEscapes,
-            environment: Platform.environment,
-          ) !=
-          null,
+      color: themeProfile != null,
       format:
           !parsed.noFormat &&
-          !Platform.environment.containsKey('FA_NO_FORMAT'),
+          !isTruthyEnvValue(Platform.environment['FA_NO_FORMAT']),
       width: io.columns,
+      profile: themeProfile,
     ),
     config: AgentCliConfig(
       wakeExecutable: wakeExecutable(),

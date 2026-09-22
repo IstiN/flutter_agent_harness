@@ -625,4 +625,17 @@ void main() {
       );
     });
   });
+
+  group('parseCliArgs --no-format (issue #774)', () {
+    test('parses as the raw-markdown switch', () {
+      final args = parseCliArgs(const ['--no-format', '-p', 'hi']) as CliArgs;
+      expect(args.noFormat, isTrue);
+      expect(args.isHeadless, isTrue);
+    });
+
+    test('defaults to false', () {
+      final args = parseCliArgs(const ['-p', 'hi']) as CliArgs;
+      expect(args.noFormat, isFalse);
+    });
+  });
 }
