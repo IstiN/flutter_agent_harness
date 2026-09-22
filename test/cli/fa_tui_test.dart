@@ -2792,34 +2792,6 @@ void main() {
     });
   });
 
-  group('OSC 11 background probe drives the auto tier (issue #804)', () {
-    setUp(() {
-      FaThemeController.instance
-        ..reset()
-        ..profile = ColorProfile.trueColor;
-    });
-
-    test('a light terminal reply flips the boot-dark palette mid-session',
-        () {
-      // Boot armed dark (COLORFGBG said dark); the vendored program's OSC
-      // 11 probe reports a white background through the model update.
-      FaThemeController.instance.armAutoLightDark(colorfgbg: '15;0');
-      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
-      model =
-          model.update(BackgroundColorMsg(0xffffff)).$1 as FaTuiModel;
-      expect(FaThemeController.instance.currentName, 'ohmypi-light');
-      // A dark reply swaps back to the default palette.
-      model =
-          model.update(BackgroundColorMsg(0x121212)).$1 as FaTuiModel;
-      expect(FaThemeController.instance.currentName, kDefaultTuiTheme.name);
-    });
-
-    test('a dark reply on a dark boot changes nothing', () {
-      FaThemeController.instance.armAutoLightDark(colorfgbg: '15;0');
-      final model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
-      final (next, _) = model.update(BackgroundColorMsg(0x121212));
-      expect(FaThemeController.instance.currentName, kDefaultTuiTheme.name);
-      expect(next, same(model), reason: 'no swap, no cache reset');
-    });
-  });
+  // The OSC 11 background-probe tier tests live in
+  // fa_tui_emitters_test.dart (2800-line static gate).
 }
