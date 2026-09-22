@@ -32,6 +32,7 @@ final class CustomProvider {
     required this.modelId,
     this.requiresKey = false,
     this.provenance = localProviderProvenance,
+    this.kind,
   });
 
   /// Restores a definition from its JSON form (see [toJson]). Entries
@@ -43,6 +44,7 @@ final class CustomProvider {
     modelId: json['modelId'] as String,
     requiresKey: json['requiresKey'] == true,
     provenance: (json['provenance'] as String?) ?? localProviderProvenance,
+    kind: json['kind'] as String?,
   );
 
   /// Stable unique id (assigned by the registry at add time).
@@ -68,6 +70,13 @@ final class CustomProvider {
   /// seed (`synced-from-cli@<host>`). Drives the panel's provenance badge.
   final String provenance;
 
+  /// The entry's provider identity, saved by the connect flow that created
+  /// it (`chatgpt-codex`, `copilot`, `dial`) — the model-list dispatch's
+  /// identity hint beats URL-shape matching, so a codex entry whose URL was
+  /// later edited/proxied stays on the codex wire. Null for plain
+  /// OpenAI-shaped entries (URL matching is the only signal there).
+  final String? kind;
+
   /// JSON form persisted in the registry file.
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -76,6 +85,7 @@ final class CustomProvider {
     'modelId': modelId,
     if (requiresKey) 'requiresKey': true,
     'provenance': provenance,
+    if (kind != null) 'kind': kind,
   };
 
   /// Identity is the [id], so edited copies match dropdown selections made
@@ -225,6 +235,7 @@ class ProviderRegistry extends ChangeNotifier {
           modelId: provider.modelId,
           provenance: provider.provenance,
           requiresKey: key.isNotEmpty,
+          kind: provider.kind,
         );
         // The marker rides providers.json — persist the flip (best
         // effort, fire-and-forget like every save).
@@ -252,6 +263,7 @@ class ProviderRegistry extends ChangeNotifier {
     required String name,
     required String baseUrl,
     required String modelId,
+    String? kind,
   }) async {
     var remembered = '';
     if (_useKeychain) {
@@ -264,6 +276,7 @@ class ProviderRegistry extends ChangeNotifier {
       baseUrl: baseUrl,
       modelId: modelId,
       requiresKey: remembered.isNotEmpty,
+      kind: kind,
     );
     _providers.add(provider);
     if (remembered.isNotEmpty) {
@@ -386,6 +399,7 @@ class ProviderRegistry extends ChangeNotifier {
               modelId: provider.modelId,
               provenance: provider.provenance,
               requiresKey: true,
+              kind: provider.kind,
             );
             markerUpgraded = true;
           }

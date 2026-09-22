@@ -39,6 +39,7 @@ final class ProviderSpec {
     this.reasoning = true,
     this.input = const ['text', 'image'],
     this.visible = true,
+    this.endpointLocked = false,
   });
 
   /// Canonical provider name (e.g. `openrouter`, `anthropic`).
@@ -74,6 +75,15 @@ final class ProviderSpec {
 
   /// Whether this provider shows in the CLI/app provider pickers.
   final bool visible;
+
+  /// The wire serves ONLY this spec's own [defaultBaseUrl]: the credentials
+  /// are account-scoped (OAuth) and the endpoint dialect is not spoken by
+  /// other hosts (`chatgpt-codex` — the Codex Responses wire on
+  /// chatgpt.com). A persisted provider/baseUrl PAIR pointing an
+  /// endpoint-locked kind elsewhere is not servable; the boot restore
+  /// degrades the pair (loud warning + fallback) instead of refusing to
+  /// boot or mis-resolving keys (gh-760 review).
+  final bool endpointLocked;
 }
 
 /// The built-in provider table.
@@ -135,6 +145,10 @@ const providerCatalog = <String, ProviderSpec>{
     apiKeyEnvNames: ['CHATGPT_OAUTH_CREDENTIALS'],
     contextWindow: 128000,
     maxTokens: 16384,
+    // OAuth account creds + the Codex Responses wire exist only on
+    // chatgpt.com; a persisted pair pointing the kind at another host is
+    // not servable (the boot restore degrades it).
+    endpointLocked: true,
   ),
 
   'copilot': ProviderSpec(

@@ -70,6 +70,8 @@ import 'package:fa/webllm/webllm_service.dart';
 import 'package:fa/webllm/webllm_types.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
 
+import 'endpoint_models_controller.dart';
+
 export 'package:fa_ui/fa_ui.dart'
     show ProviderPreset, ModelIdAutocompleteField, OpenRouterOAuthButton;
 part 'settings_sections.dart';
@@ -234,20 +236,9 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   /// (a localhost server is started lazily by the coordinator).
   String? _oauthCallbackUrl;
 
-  /// The endpoint's `/models` ids feeding the model field's quick select.
-  /// Free text always stays valid (the field is a [RawAutocomplete]).
-  List<String> _endpointModels = const [];
-
-  /// Endpoint-reported per-model limits (see [parseModelsResponse]),
-  /// applied to the [AgentConfig] at connect — same source of truth as the
-  /// CLI's auto-correction instead of the hardcoded defaults.
-  Map<String, int> _endpointContextWindows = const {};
-  Map<String, int> _endpointMaxTokens = const {};
-  var _modelsLoading = false;
-
-  /// Stale-response guard: bumped per fetch, only the latest applies.
-  var _modelsFetchGeneration = 0;
-  Timer? _modelsFetchDebounce;
+  /// The endpoint model quick-select (fetched list, limits, provenance,
+  /// debounce + stale guard) — extracted into its own controller.
+  late EndpointModelsController _models;
 
   /// The model field's focus node (drives the quick-select overlay).
   final FocusNode _modelFocusNode = FocusNode();
@@ -306,11 +297,27 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     }
     // The endpoint's model list feeds the model field's quick select;
     // endpoint/key edits refetch (debounced).
-    _urlController.addListener(_scheduleModelsFetch);
-    _keyController.addListener(_scheduleModelsFetch);
-    _scheduleModelsFetch();
+    _models = EndpointModelsController(
+      mutate: (fn) {
+        if (mounted) setState(fn);
+      },
+      baseUrl: () => _urlController.text,
+      apiKey: () => _keyController.text,
+      identityKind: () => _selectionKind,
+      fetchEnabled: () => !_isOnDevice && !_isGemma && !_isTransformersJs,
+      overrideFetcher: () => widget.modelsFetcher,
+    );
+    _urlController.addListener(_models.schedule);
+    _keyController.addListener(_models.schedule);
+    _models.schedule();
     _oauthCallbackUrl = OpenRouterOAuthCoordinator.instance.platformCallbackUrl;
   }
+
+  /// The selected registry entry's persisted identity ([CustomProvider.kind],
+  /// saved by the connect flow) — the dispatch hint prefers it over URL
+  /// matching. Null for hosted presets and free-typed endpoints.
+  String? get _selectionKind =>
+      _selection is CustomProvider ? (_selection as CustomProvider).kind : null;
 
   void _onModelIdChanged() {
     if (_visionOverridden) return;
@@ -322,53 +329,10 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     if (suggested != _vision) setState(() => _vision = suggested);
   }
 
-  /// Debounced refetch of the endpoint's model list for the quick select.
-  void _scheduleModelsFetch() {
-    _modelsFetchDebounce?.cancel();
-    _modelsFetchDebounce = Timer(const Duration(milliseconds: 400), () {
-      unawaited(_fetchEndpointModels());
-    });
-  }
-
-  /// Fetches `<baseUrl>/models` (OpenAI shape) for the model field's quick
-  /// select. Silent on failure — free-text entry always works, the field
-  /// just loses its suggestions.
-  Future<void> _fetchEndpointModels() async {
-    if (_isOnDevice || _isGemma || _isTransformersJs) return;
-    final baseUrl = _urlController.text.trim();
-    if (baseUrl.isEmpty) return;
-    final generation = ++_modelsFetchGeneration;
-    if (mounted) setState(() => _modelsLoading = true);
-    try {
-      final key = _keyController.text.trim();
-      final fetch = widget.modelsFetcher ?? defaultModelsEndpointFetcher;
-      final (ids, windows, caps) = await fetch(baseUrl, apiKey: key);
-      if (!mounted || generation != _modelsFetchGeneration) return;
-      setState(() {
-        _endpointModels = ids;
-        _endpointContextWindows = windows;
-        _endpointMaxTokens = caps;
-      });
-      AppAnalytics.instance.modelsFetchResult(ids.length);
-    } on Object {
-      if (mounted && generation == _modelsFetchGeneration) {
-        setState(() {
-          _endpointModels = const [];
-          _endpointContextWindows = const {};
-          _endpointMaxTokens = const {};
-        });
-      }
-    } finally {
-      if (mounted && generation == _modelsFetchGeneration) {
-        setState(() => _modelsLoading = false);
-      }
-    }
-  }
-
   @override
   void dispose() {
     _gemmaVerifyTimer?.cancel();
-    _modelsFetchDebounce?.cancel();
+    _models.dispose();
     _modelFocusNode.dispose();
     _registry.removeListener(_onRegistryChanged);
     _keyController.dispose();
@@ -717,6 +681,11 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
       name: result.name,
       baseUrl: result.baseUrl,
       modelId: result.modelId,
+      // Identity rides the rebuild: editing a codex entry's URL must not
+      // silently drop it back to URL-shape dispatch guessing.
+      provenance: target.provenance,
+      requiresKey: target.requiresKey,
+      kind: target.kind,
     );
     await _registry.update(updated);
     if (result.apiKey.isNotEmpty) {
@@ -762,7 +731,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     });
     try {
       AppAnalytics.instance.modelPickedFromSuggestions(
-        fromSuggestions: _endpointModels.contains(model),
+        fromSuggestions: _models.models.contains(model),
       );
       await widget.onConnect(
         AgentConfig(
@@ -772,9 +741,8 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           apiKey: key,
           // Endpoint-reported limits (the /models quick-select fetch) win
           // over the shared fallbacks — same correction as the CLI.
-          contextWindow:
-              _endpointContextWindows[model] ?? fallbackContextWindow,
-          maxTokens: _endpointMaxTokens[model] ?? fallbackMaxTokens,
+          contextWindow: _models.contextWindows[model] ?? fallbackContextWindow,
+          maxTokens: _models.maxTokens[model] ?? fallbackMaxTokens,
           supportsImages: _vision,
         ),
       );
@@ -1094,8 +1062,9 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
             ModelIdAutocompleteField(
               controller: _modelController,
               focusNode: _modelFocusNode,
-              models: _endpointModels,
-              loading: _modelsLoading,
+              models: _models.models,
+              loading: _models.loading,
+              fromBundledCatalog: _models.fromBundledCatalog,
             ),
             CheckboxListTile(
               value: _vision,
