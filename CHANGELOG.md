@@ -4032,4 +4032,8 @@
 - chore: pin factory a92d91cd2ceb3787c80982542844d03aa6ade73f (prStatus BLOCKED fix)
 - chore(machine): pin factory to d6c45fb — guest PRs never get a rework arm
 
+## 0.1.450
+
+- chore: pin factory f0e962a79acfd0f10c29550840bf03e34d9b8a8b (sticky-approval rework fix)
+
 ## Unreleased
