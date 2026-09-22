@@ -249,27 +249,36 @@ Future<int> hubServe(
   stdout.writeln(
     'DAP hub on ${hub.url}${hub.isProtected ? ' (password-protected)' : ''}',
   );
-  if (!hub.isProtected && hub.relaySecret != null) {
-    stdout.writeln(
-      'relay: POST http://127.0.0.1:${hub.url.port}/relay with '
-      'Authorization: Bearer ${hub.relaySecret} (ephemeral — '
-      'persists in $pidFile until restart)',
-    );
-  }
-  if (spec.flagBind == 'lan') {
-    // The pairing surface (issue #402 AC4): a LAN peer enters one of
-    // these URLs (plus the password) by hand — no scanning magic.
-    for (final interface in await NetworkInterface.list()) {
-      for (final addr in interface.addresses) {
-        if (addr.type != InternetAddressType.IPv4 || addr.isLoopback) continue;
-        stdout.writeln(
-          'LAN: ws://${addr.address}:${hub.url.port}/ws${hub.isProtected ? ' + password' : ''}',
-        );
-      }
-    }
-  }
+  _printRelayHint(hub, pidFile);
+  if (spec.flagBind == 'lan') await _printLanPeerUrls(hub);
   await (serveLoop ?? _serveUntilKilled)(hub, pidFile);
   return 0;
+}
+
+/// The ephemeral relay bearer hint (issue #792): a secretless loopback
+/// start minted a per-serve relay secret — the operator needs it once
+/// to configure the taskpane.
+void _printRelayHint(LocalHub hub, File pidFile) {
+  if (hub.isProtected || hub.relaySecret == null) return;
+  stdout.writeln(
+    'relay: POST http://127.0.0.1:${hub.url.port}/relay with '
+    'Authorization: Bearer ${hub.relaySecret} (ephemeral — '
+    'persists in $pidFile until restart)',
+  );
+}
+
+/// The pairing surface (issue #402 AC4): a LAN peer enters one of
+/// these URLs (plus the password) by hand — no scanning magic.
+Future<void> _printLanPeerUrls(LocalHub hub) async {
+  for (final interface in await NetworkInterface.list()) {
+    for (final addr in interface.addresses) {
+      if (addr.type != InternetAddressType.IPv4 || addr.isLoopback) continue;
+      stdout.writeln(
+        'LAN: ws://${addr.address}:${hub.url.port}/ws'
+        '${hub.isProtected ? ' + password' : ''}',
+      );
+    }
+  }
 }
 
 /// The graceful-termination wiring: SIGINT (Ctrl-C) is watched on every
