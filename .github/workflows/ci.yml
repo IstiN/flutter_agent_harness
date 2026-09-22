@@ -2112,7 +2112,7 @@ jobs:
       # gh-814 r2: the trust-anchor drift gate below diffs the secret's public
       # key against the PEM embedded in site/install.sh — that file must be
       # present, so the signing job checks out the site/ tree.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Collect release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
