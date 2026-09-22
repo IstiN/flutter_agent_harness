@@ -28,9 +28,17 @@ const piModeEnvVar = 'FA_PI_MODE';
 /// with issue #680 (it shares the same settings slot).
 const harnessModeValues = <String>{'default', 'pi'};
 
-/// Truthy env values accepted for [piModeEnvVar] (mirrors the executable's
-/// `_envTruthy` set; pure Dart so the resolver stays testable).
+/// Truthy env values accepted for FA_* boolean switches (mirrors the
+/// executable's `_envTruthy` set; pure Dart so resolvers stay testable).
 const _truthyEnvValues = {'1', 'true', 'yes', 'on'};
+
+/// Whether an `FA_*` boolean env value counts as ON — the repo-wide
+/// truthy convention (introduced for [piModeEnvVar]): `'1'/'true'/'yes'/
+/// 'on'`, case-insensitive, trimmed; any other value (including `0`,
+/// `false`, `""`) is OFF. ONE helper for every FA_* switch (issue #778
+/// round 2): FA_PI_MODE and FA_NO_FORMAT must never diverge.
+bool isTruthyEnvValue(String? value) =>
+    _truthyEnvValues.contains(value?.trim().toLowerCase());
 
 /// Resolves the active harness mode: `--pi` flag > `FA_PI_MODE` env >
 /// config `agent.mode` (issue #679 AC3).
@@ -48,8 +56,7 @@ String? resolveHarnessMode({
   String? configMode,
 }) {
   if (flag ?? false) return 'pi';
-  final envValue = env[piModeEnvVar]?.trim().toLowerCase();
-  if (envValue != null && _truthyEnvValues.contains(envValue)) return 'pi';
+  if (isTruthyEnvValue(env[piModeEnvVar])) return 'pi';
   if (configMode == null) return null;
   if (!harnessModeValues.contains(configMode)) {
     throw ConfigException(
