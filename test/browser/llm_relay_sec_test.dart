@@ -20,6 +20,7 @@ import 'package:test/test.dart';
 
 const _recordZai = 'https://api.z.ai/api/paas/v4';
 const _recordOr = 'https://openrouter.ai/api/v1';
+const _recordClaude = 'https://anthropic.example/v1';
 const _attacker = 'https://attacker.example/v1';
 
 /// The saved-provider table the server resolves against.
@@ -39,6 +40,13 @@ final List<CustomProviderEntry> _records = [
     keyName: 'FA_KEY_SEC_OR',
   ),
   CustomProviderEntry(
+    name: 'claude',
+    apiType: 'anthropic',
+    baseUrl: _recordClaude,
+    modelId: 'claude-x',
+    keyName: 'FA_KEY_SEC_CLAUDE',
+  ),
+  CustomProviderEntry(
     name: 'lanbox',
     apiType: 'openai',
     baseUrl: 'https://lan.example/v1',
@@ -50,6 +58,7 @@ final List<CustomProviderEntry> _records = [
 String? _resolveKey(CustomProviderEntry entry) => switch (entry.name) {
   'zai' => 'sk-zai-secret',
   'orai' => 'sk-or-secret',
+  'claude' => 'sk-claude-secret',
   _ => null,
 };
 
@@ -142,6 +151,27 @@ void main() {
       expect(_resolver(_req(_attacker)), isNull);
     });
 
+    test('an unnamed request to a KEYED saved record gets the migration '
+        'hint (legacy clients named no provider)', () {
+      final target = _resolver(_req(_recordZai));
+      expect(target!.rejected, isTrue);
+      expect(target.error, contains('re-pair'));
+    });
+
+    test('an unnamed request to a KEYLESS saved record stays an anonymous '
+        'relay (local endpoints keep working)', () {
+      expect(_resolver(_req('https://lan.example/v1')), isNull);
+    });
+
+    test('a named non-openai record is rejected with a named dialect error', () {
+      final target = _resolver(
+        _req(_recordClaude, provider: 'claude'),
+      );
+      expect(target!.rejected, isTrue);
+      expect(target.error, contains('claude'));
+      expect(target.error, contains('anthropic'));
+    });
+
     test('a keyless record resolves with a null key (frame glue rejects)', () {
       final target = _resolver(
         _req('https://lan.example/v1', provider: 'lanbox'),
@@ -230,17 +260,42 @@ void main() {
       'the anonymous mode is relayed keyless — never a stored key',
       () async {
         final client = _CountingClient();
-        // Anonymous requests to the record baseUrl AND to the attacker both
-        // go out WITHOUT an Authorization header.
-        for (final url in [_recordZai, _attacker]) {
-          final frames = await _handle(_req(url), client);
-          expect(frames.last.fields['done'], isTrue);
-        }
-        expect(client.requests, hasLength(2));
+        // Anonymous requests go out WITHOUT an Authorization header — but
+        // a keyed saved record answers the migration hint instead of a
+        // raw 401 (legacy clients name no provider).
+        final frames = await _handle(_req(_attacker), client);
+        expect(frames.last.fields['done'], isTrue);
+        expect(client.requests, hasLength(1));
         expect(
           client.requests.map((r) => r.headers['authorization']),
           everyElement(isNull),
         );
+      },
+    );
+
+    test(
+      'an unnamed request aimed at a keyed saved record answers the '
+      'migration hint with zero outbound requests',
+      () async {
+        final client = _CountingClient();
+        final frames = await _handle(_req(_recordZai), client);
+        expect(client.requests, isEmpty);
+        expect(frames.single.fields['error'], contains('re-pair'));
+      },
+    );
+
+    test(
+      'a named non-openai record never sends its key with an '
+      'openai-shaped request',
+      () async {
+        final client = _CountingClient();
+        final frames = await _handle(
+          _req(_recordClaude, provider: 'claude'),
+          client,
+        );
+        expect(client.requests, isEmpty);
+        expect(frames.single.fields['error'], contains('claude'));
+        expect(frames.single.fields['error'], contains('dialect'));
       },
     );
   });
@@ -275,6 +330,11 @@ void main() {
     final fixtures = <String, (LlmRelayRequest, int, bool)>{
       'named+record': (_req(_recordZai, provider: 'zai'), 1, false),
       'named+attacker': (_req(_attacker, provider: 'zai'), 0, true),
+      'named+dialect-mismatch': (
+        _req(_recordClaude, provider: 'claude'),
+        0,
+        true,
+      ),
       'second-record': (_req(_recordOr, provider: 'orai'), 1, false),
       'unknown-provider': (_req(_recordZai, provider: 'ghost'), 0, true),
       'keyless-record': (
@@ -282,13 +342,39 @@ void main() {
         0,
         true,
       ),
-      'anonymous+record': (_req(_recordZai), 1, false),
+      'anonymous+record': (_req(_recordZai), 0, true),
+      'anonymous+keyless-record': (_req('https://lan.example/v1'), 1, false),
       'anonymous+attacker': (_req(_attacker), 1, false),
     };
 
+    /// Origin of a URL with the implicit port made explicit — the AC4
+    /// matcher compares origins and record paths, NOT raw strings: a
+    /// record baseUrl is a string PREFIX of both
+    /// `https://api.z.ai/api/paas/v4@evil.example/…` (userinfo trick —
+    /// different host) and `…/v4.evil.example/…` (same host, foreign
+    /// path), so a prefix check would let both through.
+    (String, String, int) _originOf(Uri u) => (
+      u.scheme.toLowerCase(),
+      u.host.toLowerCase(),
+      u.port != 0 ? u.port : (u.scheme == 'https' ? 443 : 80),
+    );
+
+    final recordTargets = [
+      for (final e in _records)
+        (
+          origin: _originOf(Uri.parse(e.baseUrl)),
+          path: Uri.parse(e.baseUrl).path,
+        ),
+    ];
+
+    bool goesToRecordTarget(http.BaseRequest r) => recordTargets.any(
+      (t) =>
+          _originOf(r.url) == t.origin &&
+          (r.url.path == t.path || r.url.path.startsWith('${t.path}/')),
+    );
+
     test('property over all fixtures: a Bearer only ever rides to a stored '
-        'record baseUrl', () async {
-      final recordBaseUrls = _records.map((e) => e.baseUrl).toSet();
+        'record origin', () async {
       final client = _CountingClient();
       for (final entry in fixtures.entries) {
         final (request, allowedRequests, errorExpected) = entry.value;
@@ -322,11 +408,11 @@ void main() {
         final auth = request.headers['authorization'];
         if (auth != null && auth.startsWith('Bearer ')) {
           expect(
-            recordBaseUrls.any(request.url.toString().startsWith),
+            goesToRecordTarget(request),
             isTrue,
             reason:
                 'a Bearer left for "${request.url}" — not a stored '
-                'record baseUrl',
+                'record origin',
           );
         }
       }
@@ -337,6 +423,24 @@ void main() {
       expect(
         attackerHits.map((r) => r.headers['authorization']),
         everyElement(isNull),
+      );
+      // Tripwire sharpness: both lookalikes are string prefixes of the
+      // record baseUrl (the old matcher accepted them) yet neither is a
+      // record target — the userinfo trick crosses the origin, the path
+      // trick crosses the path boundary.
+      final userinfoTrick = Uri.parse('$_recordZai@evil.example/v1/x');
+      final pathTrick = Uri.parse('$_recordZai.evil.example/v1/x');
+      expect('$_recordZai@evil.example'.startsWith(_recordZai), isTrue);
+      expect('$_recordZai.evil.example'.startsWith(_recordZai), isTrue);
+      expect(goesToRecordTarget(http.Request('POST', userinfoTrick)), isFalse);
+      expect(goesToRecordTarget(http.Request('POST', pathTrick)), isFalse);
+      // …while the genuine keyed call (record path + /chat/completions)
+      // still passes.
+      expect(
+        goesToRecordTarget(
+          http.Request('POST', Uri.parse('$_recordZai/chat/completions')),
+        ),
+        isTrue,
       );
     });
   });

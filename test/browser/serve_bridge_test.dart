@@ -797,14 +797,14 @@ void main() {
       await client.close();
     });
 
-    test('an anonymous llmReq (no provider) is relayed with NO key — even '
-        'to a saved record baseUrl', () async {
-      final seenKeys = <String?>[];
+    test('an anonymous llmReq aimed at a keyed saved record answers the '
+        'migration hint; the relay is NEVER invoked', () async {
+      var relayCalls = 0;
       server = await spin(
         providers: [entry],
         keys: await keyCache({'FA_KEY_TEST_ZAI': secret}),
         llmRelay: (request, onDelta) async {
-          seenKeys.add(request.key);
+          relayCalls++;
         },
       );
       final client = await connectPlain();
@@ -814,16 +814,20 @@ void main() {
         'op': 'llmReq',
         'req': {'baseUrl': entry.baseUrl, 'model': 'glm-4.6', 'messages': []},
       });
-      final done = await client.next();
-      expect(done['done'], isTrue);
-      expect(seenKeys, [
-        isNull,
-      ], reason: 'anonymous mode never attaches a stored key');
+      final error = await client.next();
+      expect(error['op'], 'llmRes');
+      // Legacy-client migration: fails safe — no key can attach either way,
+      // but the extension gets an actionable hint instead of a raw 401.
+      expect(error['error'], contains('re-pair'));
+      expect(relayCalls, isZero);
+      for (final frame in client.frames) {
+        expect(jsonEncode(frame), isNot(contains(secret)));
+      }
       await client.close();
     });
 
-    test('a client-supplied baseUrl matching no record and no provider '
-        'never triggers a key lookup', () async {
+    test('a client-supplied baseUrl matching no record and no provider is '
+        'relayed keyless (no key lookup)', () async {
       final seenKeys = <String?>[];
       server = await spin(
         providers: [entry],

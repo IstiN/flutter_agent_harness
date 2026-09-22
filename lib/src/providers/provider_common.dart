@@ -542,15 +542,19 @@ bool _sameOrigin(Uri a, Uri b) {
 }
 
 /// Re-issues [previous] at [target] for a same-origin redirect hop:
-/// method, body and headers ride along (credentials stay on-origin).
-http.Request _reissue(http.Request previous, Uri target) {
-  return http.Request(previous.method, target)
+/// method, body and headers ride along (credentials stay on-origin) —
+/// except `303 See Other`, which RFC 9110 (and dart:io's prior
+/// auto-follow on this path) downgrades to a body-less GET.
+http.Request _reissue(http.Request previous, Uri target, int statusCode) {
+  final switchToGet = statusCode == 303;
+  final reissued = http.Request(switchToGet ? 'GET' : previous.method, target)
     ..followRedirects = false
     ..headers.addAll({
       for (final entry in previous.headers.entries)
         if (entry.key.toLowerCase() != 'content-length') entry.key: entry.value,
-    })
-    ..bodyBytes = previous.bodyBytes;
+    });
+  if (!switchToGet) reissued.bodyBytes = previous.bodyBytes;
+  return reissued;
 }
 
 /// Sends [request], racing [cancelToken] (abort wins), and validates the
@@ -593,7 +597,7 @@ Future<http.StreamedResponse> sendProviderRequest(
     }
     // Consume the (tiny) redirect body so the connection can be reused.
     await response.stream.drain<void>();
-    current = _reissue(current, target);
+    current = _reissue(current, target, response.statusCode);
   }
 }
 

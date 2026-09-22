@@ -120,19 +120,43 @@ typedef LlmRelayResolver = LlmRelayTarget? Function(LlmRelayRequest request);
 /// the key lookup): a named provider resolves endpoint AND key from the
 /// SAME record — a client `baseUrl` that is not byte-equal to the record's
 /// is a rejection checked BEFORE any network call; an unknown name is a
-/// named rejection; no name at all → null (anonymous, keyless).
+/// named rejection; a non-openai record is rejected by dialect (the relay
+/// transport speaks openai-completions only); no name at all → null
+/// (anonymous, keyless) — unless the unnamed baseUrl byte-matches a KEYED
+/// saved record, which answers a migration hint instead (legacy clients
+/// named no provider; the old URL-keyed branch served them, and a raw
+/// endpoint 401 is not actionable).
 LlmRelayTarget? resolveLlmRelayTarget(
   LlmRelayRequest request, {
   required Iterable<CustomProviderEntry> providers,
   String? Function(CustomProviderEntry entry)? resolveKey,
 }) {
   final name = request.provider;
-  if (name == null) return null;
+  if (name == null) {
+    // Narrow path: the key lookup only runs when the baseUrl byte-matches
+    // a saved record (never per unnamed frame).
+    final keyedRecord = providers.any(
+      (e) => e.baseUrl == request.baseUrl && (resolveKey?.call(e) != null),
+    );
+    if (keyedRecord) {
+      return LlmRelayTarget.reject(
+        'keyless relay to a saved provider - update the extension / '
+        're-pair (/browser connect) so llmReq names its provider',
+      );
+    }
+    return null;
+  }
   final entry = providers.where((e) => e.name == name).firstOrNull;
   if (entry == null) {
     return LlmRelayTarget.reject(
       'unknown provider "$name" - re-pair (/browser connect) to refresh '
       'the provider list',
+    );
+  }
+  if (entry.apiType != 'openai') {
+    return LlmRelayTarget.reject(
+      'provider "$name" uses the "${entry.apiType}" dialect - the relay '
+      'speaks openai-completions only',
     );
   }
   // Byte-equality BEFORE any network call: a client-chosen baseUrl can
