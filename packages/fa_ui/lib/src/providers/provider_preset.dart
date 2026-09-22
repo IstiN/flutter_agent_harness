@@ -165,12 +165,24 @@ bool _isDialBaseUrl(String url) => url.contains('ai-proxy.lab.epam.com');
 /// DIAL deployments, the bundled ChatGPT Codex catalog, and Copilot (the
 /// GitHub→Copilot token exchange) each have a dedicated wire dialect;
 /// everything else probes the generic OpenAI `/models` (null hint). The
-/// single mapping every model picker passes as the `provider:` argument.
+/// single mapping every model picker passes as the `provider:` argument —
+/// identity-shaped hints beat URL-shape guessing, so a codex endpoint
+/// stays on the codex wire even when its URL is edited.
 String? modelsDispatchHintFor(String baseUrl) {
-  if (_isDialBaseUrl(baseUrl)) return 'dial';
-  if (harness.isCopilotBaseUrl(baseUrl)) return 'copilot';
+  if (_isDialBaseUrl(baseUrl)) return harness.dialDispatchHint;
+  if (harness.isCopilotBaseUrl(baseUrl)) return harness.copilotDispatchHint;
+  if (harness.isChatGptCodexEndpoint(baseUrl)) {
+    return harness.chatgptCodexDispatchHint;
+  }
   return null;
 }
+
+/// The dispatch hint for a picker selection backed by a registry entry: a
+/// persisted identity ([CustomProvider.kind], saved by the connect flow)
+/// wins over URL-shape matching. Null for free-typed endpoints — the URL
+/// is the only signal there.
+String? modelsDispatchHintForEntry(String? kind, String baseUrl) =>
+    kind ?? modelsDispatchHintFor(baseUrl);
 
 /// The hosted endpoint presets listed by the Providers section, the
 /// default-chat-model picker, and the media slot editor (the ad-hoc

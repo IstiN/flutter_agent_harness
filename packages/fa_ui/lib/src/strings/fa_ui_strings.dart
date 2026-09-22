@@ -189,6 +189,10 @@ abstract class FaUiStrings {
   /// The model picker's note when the endpoint listed no models.
   String get modelPickerNoEndpointModels;
 
+  /// The model picker's note when the list answers from the bundled
+  /// offline catalog because the live fetch failed (the Codex catalog).
+  String get modelPickerBundledCatalogNote;
+
   /// The "Same as main connection" media slot row.
   String get mediaModelsMainConnection;
 
@@ -446,6 +450,9 @@ class FaUiStringsEn extends FaUiStrings {
   String get modelPickerNoEndpointModels =>
       'The endpoint listed no models — type the id manually';
   @override
+  String get modelPickerBundledCatalogNote =>
+      'Live list unavailable — showing the bundled catalog';
+  @override
   String get mediaModelsMainConnection => 'Main connection';
   @override
   String get mediaModelsCapabilitiesNote =>
@@ -675,6 +682,9 @@ class FaUiStringsRu extends FaUiStrings {
   @override
   String get modelPickerNoEndpointModels =>
       'Эндпоинт не вернул модели — введите ID вручную';
+  @override
+  String get modelPickerBundledCatalogNote =>
+      'Живой список недоступен — показан встроенный каталог';
   @override
   String get mediaModelsMainConnection => 'Основное подключение';
   @override

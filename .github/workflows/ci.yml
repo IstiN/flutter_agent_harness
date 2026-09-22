@@ -1,3 +1,8 @@
+# Runner split (2026-09-22): PURE-DART jobs -> ubuntu-24.04-arm (public repo:
+# free, SEPARATE capacity pool from the x64 queue). Flutter jobs stay x64 —
+# Flutter ships NO official linux-arm64 SDK (stable 3.47.5 manifest is x64
+# only; subosito/flutter-action fails 'version: any architecture: arm64').
+# cube-kernel-live -> self-hosted M5 (fa-m5-1, user LaunchAgent).
 name: CI
 
 on:
@@ -58,7 +63,7 @@ concurrency:
 jobs:
   changes:
     name: Classify changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 5
     permissions:
       contents: read
@@ -148,7 +153,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────────
   cube-kernel-live:
     name: Cube kernel live (macOS)
-    runs-on: macos-latest
+    runs-on: [self-hosted, macos-m5]
     needs: changes
     if: needs.changes.outputs.core == 'true'
     timeout-minutes: 10
@@ -274,7 +279,7 @@ jobs:
     # out-of-scope PRs at 27 green checks. The scope fastpass below
     # green-skips the real steps in seconds instead.
     name: Core tests (shard ${{ matrix.shard }}/4)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     needs: changes
     permissions:
       contents: read
@@ -374,7 +379,7 @@ jobs:
   # this leg) — they stay in nightly's pty-integration job.
   integration-mock:
     name: Integration tests (mock LLM)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     needs: changes
     timeout-minutes: 25
     permissions:
@@ -433,7 +438,7 @@ jobs:
 
   coverage-gate:
     name: Coverage ratchet
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     needs: [changes, test-core]
     timeout-minutes: 5
     permissions:
@@ -487,7 +492,7 @@ jobs:
 
   guards:
     name: CRAP + duplication
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     needs: [changes, test-core]
     timeout-minutes: 6
     permissions:
@@ -688,7 +693,7 @@ jobs:
   # flutter-analyze so a warm leg pair reuses downloads.
   flutter-tests:
     name: Flutter app tests (shard ${{ matrix.shard }}/2)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     needs: changes
     if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
     # End-of-run drain can stall minutes under shared-runner load while
@@ -704,11 +709,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-
+      # arm64: no official linux-arm64 release tarball (x64-only manifest) —
+      # subosito/flutter-action cannot fetch stable here. Bootstrap via git
+      # clone instead: flutter_tools pulls the official arm64 Dart SDK itself.
+      - name: Flutter SDK (arm64 git bootstrap)
+        shell: bash
+        run: |
+          git clone --depth 1 -b stable https://github.com/flutter/flutter.git "$HOME/flutter"
+          echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/flutter/bin:$PATH"
+          flutter --version
+          flutter precache
       - name: Pub cache
         uses: actions/cache@v4
         with:

@@ -27,6 +27,7 @@ import 'package:meta/meta.dart';
 
 import 'tui_text_width.dart' show tuiTextWidth;
 import 'tui_theme.dart';
+import 'pi_mode.dart' show isTruthyEnvValue;
 
 /// Lightweight inline renderer for streaming reasoning: bold (`**x**`),
 /// italic (`*x*`), inline code (`` `x` ``). Skips block constructs
@@ -1175,3 +1176,199 @@ final class TranscriptMarkdown {
     _expose(r, src);
   }
 }
+/// How [MarkdownSurface.render] emits assistant markdown.
+enum MarkdownSurfaceMode {
+  /// ANSI-rendered: an interactive terminal with color.
+  ansi,
+
+  /// Structure without SGR: a TTY under `NO_COLOR` / `TERM=dumb` — the
+  /// same renderer with escapes stripped, layout (bullets, indents, table
+  /// grids, heading emphasis) kept, zero escape bytes.
+  plain,
+
+  /// Byte-identical raw passthrough: pipes, redirects, `--no-format` /
+  /// `FA_NO_FORMAT` — scripts and files never receive ANSI.
+  raw,
+}
+
+/// The one-place markdown→terminal policy (issue #774): every human-read
+/// CLI surface renders assistant markdown through [render] — the line-mode
+/// REPL and headless runs directly; the TUI through its incremental
+/// [TranscriptMarkdown] engine, which shares the same [AnsiMarkdown]
+/// grammar. No surface formats on its own.
+final class MarkdownSurface {
+  /// Creates a policy in an explicit [mode]. The default is [raw] —
+  /// byte-identical to the pre-#774 behavior, so a host that does not
+  /// resolve a surface keeps today's output. [profile] RECORDS the host's
+  /// single theme resolution (issue #774) for consumers — AgentCli pins
+  /// `FaThemeController.instance` (the palette the engine reads) from it
+  /// and aligns its styling; render() itself never writes globals.
+  const MarkdownSurface({
+    this.mode = MarkdownSurfaceMode.raw,
+    this.width = 80,
+    this.profile,
+  });
+
+  /// Resolves the policy from host-detected surface facts: a pipe/redirect
+  /// or a `--no-format`/`FA_NO_FORMAT` request renders raw; `NO_COLOR` /
+  /// `TERM=dumb` on a TTY renders plain; a color terminal renders ANSI.
+  factory MarkdownSurface.resolving({
+    required bool tty,
+    required bool color,
+    bool format = true,
+    int width = 80,
+    ColorProfile? profile,
+  }) => MarkdownSurface(
+    mode: !format || !tty
+        ? MarkdownSurfaceMode.raw
+        : color
+        ? MarkdownSurfaceMode.ansi
+        : MarkdownSurfaceMode.plain,
+    width: width,
+    profile: profile,
+  );
+
+  final MarkdownSurfaceMode mode;
+
+  /// Wrap/table-fit width, resolved at construction and frozen: line mode
+  /// and headless are one-shot renders per message, so a mid-session
+  /// terminal resize applies to the NEXT process (the TUI, the only
+  /// repaintable surface, re-renders at the live viewport width).
+  final int width;
+
+  /// The theme palette [AnsiMarkdown] emits in [ansi]/[plain] passes.
+  final ColorProfile? profile;
+
+  /// Renders one COMPLETE assistant text (a whole message — never a
+  /// streaming delta). Every call owns a fresh [AnsiMarkdown], so
+  /// cross-line state cannot leak between messages: an unclosed fence at
+  /// end-of-stream renders as a code block and the next message renders
+  /// formatted (issue #774 AC6).
+  String render(String text) => switch (mode) {
+    MarkdownSurfaceMode.raw => text,
+    MarkdownSurfaceMode.ansi => _renderWhole(text),
+    MarkdownSurfaceMode.plain => _renderWhole(text).replaceAll(
+      _ansiEscapeRe,
+      '',
+    ),
+  };
+
+  String _renderWhole(String text) {
+    // Palette discipline (issue #778 round 2): the policy NEVER writes
+    // process globals. The engine reads FaThemeController.instance, which
+    // the HOST pins once (bin/fah.dart resolves the surface; AgentCli's
+    // constructor pins the controller from surface.profile) — render()
+    // only formats.
+    return AnsiMarkdown(width: width)
+        .formatAll(resolveSetextHeadings(text.split('\n')))
+        .join('\n');
+  }
+}
+
+/// The host's ONE markdown-surface resolution for the process (issue
+/// #774): terminal capability + environment + the `--no-format` flag →
+/// the [MarkdownSurface] every non-TUI surface routes assistant text
+/// through. Kept pure (facts as parameters, no `dart:io`) so the exact
+/// production resolution is unit-testable (issue #778 round 2); the
+/// executable calls it with `stdout.supportsAnsiEscapes` /
+/// `Platform.environment` / `parsed.noFormat` / `io.columns`.
+///
+/// [ansiSupported] is `stdout.supportsAnsiEscapes`: false means piped or
+/// redirected, so the surface is [MarkdownSurfaceMode.raw] regardless of
+/// environment. A terminal degrades per [MarkdownSurface.resolving]
+/// (`NO_COLOR` / `TERM=dumb` → plain). The resolved profile rides on the
+/// surface ([MarkdownSurface.profile]) so the host's CLI styling can
+/// align with the SAME source of truth (`useColor := profile != null`).
+MarkdownSurface resolveMarkdownSurface({
+  required bool ansiSupported,
+  Map<String, String> environment = const {},
+  bool noFormatFlag = false,
+  int width = 80,
+}) {
+  final profile = detectThemeProfile(
+    ansiSupported: ansiSupported,
+    environment: environment,
+  );
+  return MarkdownSurface.resolving(
+    tty: ansiSupported,
+    color: profile != null,
+    format:
+        !noFormatFlag && !isTruthyEnvValue(environment['FA_NO_FORMAT']),
+    width: width,
+    profile: profile,
+  );
+}
+
+/// Rewrites setext heading pairs (`paragraph` + `===`/`---` underline) to
+/// their ATX equivalents (`# paragraph`), so the whole-message render
+/// path parses both heading grammars with one engine (issue #774 AC5).
+///
+/// The streaming engine is deliberately untouched: its zero-lookahead
+/// commit contract is what keeps the TUI's per-flush cost O(delta), and a
+/// held paragraph line would invalidate that (the perf tests pin it). So
+/// setext coverage lives HERE — the one-place policy layer used by
+/// line-mode and headless — not in TranscriptMarkdown; the TUI transcript
+/// keeps rendering a bare `---` line as a horizontal rule (pre-existing,
+/// documented engine behavior).
+///
+/// A `---` with no preceding paragraph line stays a horizontal rule;
+/// pairs inside fences are left alone; blank lines end a paragraph.
+List<String> resolveSetextHeadings(List<String> lines) {
+  final out = List<String>.of(lines);
+  var inFence = false;
+  for (var i = 0; i < out.length - 1; i++) {
+    if (AnsiMarkdown._fenceRe.hasMatch(out[i])) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    final level = _setextUnderline1Re.hasMatch(out[i + 1])
+        ? 1
+        : _setextUnderline2Re.hasMatch(out[i + 1])
+        ? 2
+        : 0;
+    if (level == 0 || !_canOpenSetext(out[i])) continue;
+    // CommonMark: the WHOLE contiguous paragraph above the underline
+    // becomes the heading, not just its last line — otherwise the first
+    // lines keep paragraph styling while the last gains heading emphasis.
+    final start = _paragraphStart(out, i);
+    out[start] = '${'#' * level} ${out.sublist(start, i + 1).join(' ')}';
+    out.removeRange(start + 1, i + 2);
+    i = start - 1;
+  }
+  return out;
+}
+
+/// First line of the contiguous plain-paragraph run ending at [i].
+int _paragraphStart(List<String> out, int i) {
+  var start = i;
+  while (start > 0 && _canOpenSetext(out[start - 1])) {
+    start--;
+  }
+  return start;
+}
+
+/// Whether [line] can open a setext heading: a plain paragraph line —
+/// not blank and not any other block form (fence, ATX heading, quote,
+/// bullet, thematic break). A whitespace-only line counts as blank.
+bool _canOpenSetext(String line) {
+  if (line.trim().isEmpty) return false;
+  if (AnsiMarkdown._fenceRe.hasMatch(line)) return false;
+  if (AnsiMarkdown._headerRe.hasMatch(line)) return false;
+  if (AnsiMarkdown._hrRe.hasMatch(line)) return false;
+  if (AnsiMarkdown._quoteRe.hasMatch(line)) return false;
+  if (AnsiMarkdown._bulletRe.hasMatch(line)) return false;
+  return true;
+}
+
+final _setextUnderline1Re = RegExp(r'^ {0,3}=+ *$');
+final _setextUnderline2Re = RegExp(r'^ {0,3}-+ *$');
+
+/// Every ANSI escape shape renderer output or model text can carry: CSI
+/// sequences (SGR, cursor movement, erasing) and OSC strings (e.g.
+/// `\x1b]8;;url\x1b\\` hyperlinks), BEL- or ST-terminated. [plain] mode
+/// strips these so its zero-escape-byte contract holds for model noise
+/// the renderer itself never emits.
+final _ansiEscapeRe = RegExp(
+  r'\x1b(?:\[[0-9;?]*[A-Za-z]|\][^\x07\x1b]*(?:\x07|\x1b\\))',
+);

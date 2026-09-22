@@ -36,24 +36,37 @@ String _chunk(Object? delta) =>
 
 void main() {
   group('relayOpenAiCompletion', () {
-    test('needs an injected key', () {
-      expect(
-        () => relayOpenAiCompletion(
+    test(
+      'a keyless request (anonymous mode) posts WITHOUT an auth header',
+      () async {
+        http.BaseRequest? seen;
+        String? body;
+        final client = http_testing.MockClient.streaming((request, bodyStream) {
+          seen = request;
+          return bodyStream.bytesToString().then((b) {
+            body = b;
+            return http.StreamedResponse(Stream.value(utf8.encode('')), 200);
+          });
+        });
+        final deltas = <String>[];
+        await relayOpenAiCompletion(
           _request()..key = null,
-          (_) {},
-          client: _sseClient(''),
-        ),
-        throwsStateError,
-      );
-      expect(
-        () => relayOpenAiCompletion(
-          _request()..key = '',
-          (_) {},
-          client: _sseClient(''),
-        ),
-        throwsStateError,
-      );
-    });
+          deltas.add,
+          client: client,
+        );
+        // SEC-01: the anonymous relay never attaches a stored key — the
+        // transport simply sends no Authorization header at all.
+        expect(seen!.headers.containsKey('authorization'), isFalse);
+        expect(jsonDecode(body!) as Map<String, dynamic>, {
+          'model': 'glm-4.6',
+          'messages': [
+            {'role': 'user', 'content': 'hi'},
+          ],
+          'stream': true,
+        });
+        expect(deltas, isEmpty);
+      },
+    );
 
     test('posts the streaming call to <baseUrl>/chat/completions', () async {
       http.BaseRequest? seen;

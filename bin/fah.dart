@@ -30,6 +30,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
+import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/ext_cli.dart';
 import 'package:flutter_agent_harness/src/cli/session_tree.dart';
 import 'package:flutter_agent_harness/src/cli/trajectory_tui.dart';
@@ -1320,6 +1321,8 @@ Future<void> _runApp(List<String> args) async {
     CliArgs args,
     String provider,
     EnvProviderPreconfig? faPreconfig,
+    String? unknownSavedProvider,
+    String? incompatibleSavedEndpoint,
   })
   cliStartup;
   try {
@@ -1334,6 +1337,34 @@ Future<void> _runApp(List<String> args) async {
   final effective = cliStartup.args;
   var provider = cliStartup.provider;
   final faPreconfig = cliStartup.faPreconfig;
+
+  // gh-760: a persisted provider id no version knows must never brick the
+  // boot. The config is shared with surfaces the CLI does not control
+  // (the app, the extension, older/newer versions); the bad value gets a
+  // loud named warning here (value, file, fallback taken, likely version
+  // skew) and the known fallback provider takes over. The config file is
+  // NOT modified — warn, don't mutate.
+  if (cliStartup.unknownSavedProvider case final unknown?) {
+    stderr.writeln(
+      'warning: unknown provider "$unknown" in $home/.fah/config.yaml - '
+      'written by a newer app/CLI version? falling back to '
+      '"$provider" (the config was not modified; run /provider or edit '
+      'the file to switch)',
+    );
+  }
+  // gh-760 (review): a persisted provider/baseUrl PAIR an endpoint-locked
+  // kind cannot serve (codex pointed at a stale foreign endpoint by a
+  // partial write) degrades like an unknown id - the key gate would
+  // otherwise refuse the boot with self-contradictory guidance.
+  if (cliStartup.incompatibleSavedEndpoint case final conflict?) {
+    stderr.writeln(
+      'warning: saved provider "$conflict" only works with its own '
+      'default endpoint - the saved baseUrl "${effective.baseUrl}" in '
+      '$home/.fah/config.yaml is not servable by it; falling back to '
+      '"$provider" (the config was not modified; run /provider or edit '
+      'the file to switch)',
+    );
+  }
 
   final cwd = effective.cwd ?? Directory.current.path;
   final sessionRoot = effective.sessionRoot ?? _defaultSessionRoot();
@@ -1359,12 +1390,49 @@ Future<void> _runApp(List<String> args) async {
         baseUrlExplicit: parsed.baseUrl != null,
         hasProviderPreconfig: faPreconfig != null,
       );
-  if (applyFolderState) {
-    provider = folderState.providerKind;
+  // gh-760: the folder state is written by the same shared-config family
+  // — validate its provider kind the same way. An unrecognizable kind
+  // gets a named warning and the state file is ignored (never a boot
+  // throw); every catalog name/kind resolves by construction. The restore
+  // takes the RESOLVED spec's KIND (review): a state file carrying a
+  // catalog name must not leak the raw name into the stream factory.
+  final folderSpec = applyFolderState
+      ? resolveCliProviderSpec(folderState.providerKind)
+      : null;
+  final state = folderState;
+  // gh-760 (review): the same provider/baseUrl PAIR judgement as the saved
+  // config restore — an endpoint-locked kind over a foreign state baseUrl
+  // is not servable; the state file is ignored with a named warning.
+  final folderEndpointConflict =
+      state != null &&
+      folderSpec != null &&
+      folderSpec.endpointLocked &&
+      state.baseUrl != null &&
+      state.baseUrl != folderSpec.defaultBaseUrl;
+  final folderStateUsable =
+      applyFolderState && folderSpec != null && !folderEndpointConflict;
+  if (state != null && applyFolderState && !folderStateUsable) {
+    stderr.writeln(
+      folderEndpointConflict
+          ? 'warning: saved folder model state pairs '
+              '"${state.providerKind}" with a foreign baseUrl '
+              '"${state.baseUrl}" - the kind only works with its '
+              'own default endpoint '
+              '(${folderModelStatePath(sessionsRoot: sessionRoot, cwd: cwd)})'
+              ' — ignoring it and keeping "$provider"'
+          : 'warning: saved folder model state names unknown provider '
+              '"${state.providerKind}" '
+              '(${folderModelStatePath(sessionsRoot: sessionRoot, cwd: cwd)}) — '
+              'ignoring it and keeping "$provider"',
+    );
   }
-  final baseUrl = applyFolderState ? folderState.baseUrl : effective.baseUrl;
+  final applyFolderModel = applyFolderState && folderStateUsable;
+  if (applyFolderModel) {
+    provider = folderSpec.kind;
+  }
+  final baseUrl = applyFolderModel ? folderState.baseUrl : effective.baseUrl;
 
-  final model = applyFolderState
+  final model = applyFolderModel
       ? buildCliDefaultModel(
           provider,
           modelId: folderState.modelId,
@@ -1515,7 +1583,26 @@ Future<void> _runApp(List<String> args) async {
     }
     try {
       defaultRoleResolved = rolesResolver.resolveRole(defaultModelRole) != null;
+    } on UnknownProviderRoleException catch (error) {
+      // gh-760: degrade, never brick. The chain names providers NO version
+      // knows (a config written by a newer app/CLI version) — warn on
+      // stderr with the reasons and fall back to the legacy single-model
+      // path. Unknown-provider entries were already skipped with named
+      // reasons by the resolver; the throw only fires when no usable
+      // entry remains. The drop is whole-resolver BY DESIGN (gh-760
+      // review): the per-turn main-model path re-enters chainFor, so a
+      // half-alive resolver would move the failure to mid-session; the
+      // aux roles ride guarded best-effort paths either way.
+      stderr.writeln(
+        'warning: model roles config is unusable (${error.message}) — '
+        'falling back to the configured single provider/model',
+      );
+      rolesResolver = null;
+      defaultRoleResolved = false;
     } on ConfigException catch (error) {
+      // A CURRENT-version misconfiguration (e.g. every entry of a KNOWN
+      // provider missing its key) keeps the pre-#760 contract: a loud
+      // boot failure — never a silently-ignored roles config.
       _fail('invalid model roles config: ${error.message}');
     }
   }
@@ -1912,11 +1999,33 @@ Future<void> _runApp(List<String> args) async {
     configMode: saved.agentMode,
   );
 
+  // The ONE markdown-surface resolution for the process (issue #774):
+  // the same resolution pins the palette the markdown engine and the CLI
+  // styling emit, so the two can never diverge (NO_COLOR / TERM=dumb
+  // fold to null here).
+  final markdownSurface = resolveMarkdownSurface(
+    ansiSupported: stdout.supportsAnsiEscapes,
+    environment: Platform.environment,
+    noFormatFlag: parsed.noFormat,
+    width: io.columns,
+  );
+
   cli = AgentCli(
-    useColor: headlessPrompt == null && stdout.supportsAnsiEscapes,
+    // Same source of truth as the palette (issue #778 round 2): chrome
+    // (status line, keyhints, warnings) styles iff the resolved theme
+    // profile exists — NO_COLOR / TERM=dumb degrade the whole session,
+    // not just the markdown.
+    useColor: headlessPrompt == null && markdownSurface.profile != null,
     environment: Platform.environment,
     useTui: useTui,
     version: packageVersion,
+    // Markdown parity (issue #774): every non-TUI surface renders
+    // assistant markdown through ONE policy — resolveMarkdownSurface
+    // above (pipes stay byte-identical raw; NO_COLOR / TERM=dumb degrade
+    // to plain; --no-format / FA_NO_FORMAT (truthy values, like
+    // FA_PI_MODE) force raw; width is the stdout terminal width at
+    // process start, irrelevant in raw mode).
+    markdownSurface: markdownSurface,
     config: AgentCliConfig(
       wakeExecutable: wakeExecutable(),
       // Marathon-session resume parses its multi-hundred-MB tail off the

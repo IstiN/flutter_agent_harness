@@ -39,6 +39,7 @@ final class ProviderSpec {
     this.reasoning = true,
     this.input = const ['text', 'image'],
     this.visible = true,
+    this.endpointLocked = false,
   });
 
   /// Canonical provider name (e.g. `openrouter`, `anthropic`).
@@ -74,6 +75,15 @@ final class ProviderSpec {
 
   /// Whether this provider shows in the CLI/app provider pickers.
   final bool visible;
+
+  /// The wire serves ONLY this spec's own [defaultBaseUrl]: the credentials
+  /// are account-scoped (OAuth) and the endpoint dialect is not spoken by
+  /// other hosts (`chatgpt-codex` — the Codex Responses wire on
+  /// chatgpt.com). A persisted provider/baseUrl PAIR pointing an
+  /// endpoint-locked kind elsewhere is not servable; the boot restore
+  /// degrades the pair (loud warning + fallback) instead of refusing to
+  /// boot or mis-resolving keys (gh-760 review).
+  final bool endpointLocked;
 }
 
 /// The built-in provider table.
@@ -135,6 +145,10 @@ const providerCatalog = <String, ProviderSpec>{
     apiKeyEnvNames: ['CHATGPT_OAUTH_CREDENTIALS'],
     contextWindow: 128000,
     maxTokens: 16384,
+    // OAuth account creds + the Codex Responses wire exist only on
+    // chatgpt.com; a persisted pair pointing the kind at another host is
+    // not servable (the boot restore degrades it).
+    endpointLocked: true,
   ),
 
   'copilot': ProviderSpec(
@@ -449,11 +463,100 @@ Model buildCatalogModel(
 /// list). Silent defaults chose paid flagships over free tiers behind the
 /// user's back (zai's `glm-5.3` vs `glm-5.3-flash` — real spend nobody
 /// ordered), so the mechanism was removed, not re-seeded.
+///
+/// Resolves a CLI provider [kind] or catalog name to its [ProviderSpec]
+/// for the legacy single-model boot path. The lookup is catalog-driven:
+/// every [providerCatalog] entry is reachable by its name AND its adapter
+/// kind, so a catalog addition can never again leave the boot switch
+/// behind and brick the CLI with `ConfigException: unknown provider`
+/// (issue #760 — the app wrote `provider: chatgpt-codex`, the hand-maint-
+/// ained switch did not know the kind). Returns `null` for ids no version
+/// knows; the config boundary degrades those (warn + fallback) instead of
+/// throwing.
+///
+/// Historical behavior preserved: `openai-completions`/`openrouter` with
+/// a custom [baseUrl] resolve to the `openai` spec (the model reports
+/// provider `openai` instead of `openrouter`); without one, `openrouter`.
+///
+/// Intentionally filter-less by default: the boot restore path must judge
+/// every persisted id against the full catalog — a disabled-in-this-build
+/// saved provider restores and boots (the wire adapters stay in the
+/// binary) instead of degrading to the fallback warning. User-facing
+/// surfaces (pickers, roles, `/provider`, key collection, `models:`
+/// validation) pass `honorBuildFilter: true` — the filter the
+/// [catalogProvider] lookups used to apply — instead of re-wiring
+/// [providerEnabledInBuild] by hand.
+
+/// The legacy `openai-completions`/`openrouter` default-endpoint rule
+/// (gh-760 historical behavior): the model reports provider `openai`
+/// instead of `openrouter` on a custom base URL.
+ProviderSpec? _legacyOpenAiSpec(String? baseUrl) =>
+    baseUrl == null ? providerCatalog['openrouter'] : providerCatalog['openai'];
+
+/// The kind scan: the entry whose ADAPTER KIND is [key] — a kind that is
+/// not itself a catalog name (e.g. `chatgpt-codex`).
+ProviderSpec? _kindScan(String key) {
+  for (final spec in providerCatalog.values) {
+    if (spec.kind == key) return spec;
+  }
+  return null;
+}
+
+/// The FA_PROVIDERS gate for resolved specs: a [honorBuildFilter] lookup
+/// yields null when the resolved entry is disabled in this build.
+ProviderSpec? _applyBuildFilter(ProviderSpec? spec, bool honorBuildFilter) {
+  if (spec == null) return null;
+  if (honorBuildFilter && !providerEnabledInBuild(spec.name)) return null;
+  return spec;
+}
+
+ProviderSpec? resolveCliProviderSpec(
+  String kind, {
+  String? baseUrl,
+  bool honorBuildFilter = false,
+}) {
+  // Uniform normalization: names AND kinds are lowercase in the catalog,
+  // so the literal special-case, the name leg, and the kind leg all
+  // accept case variants identically.
+  final key = kind.trim().toLowerCase();
+  if (key == 'openai-completions' || key == 'openrouter') {
+    return _applyBuildFilter(_legacyOpenAiSpec(baseUrl), honorBuildFilter);
+  }
+  return _applyBuildFilter(
+    providerCatalog[key] ?? _kindScan(key),
+    honorBuildFilter,
+  );
+}
+
+/// The canonical PERSISTED identity for a provider id (issue #772): the
+/// catalog entry's adapter [ProviderSpec.kind]. Config files
+/// (`provider:`, folder model state, handoffs) carry the kind — the name
+/// (`chatgpt`) is display/command sugar that resolves here, in ONE place.
+///
+/// Only UNIQUE-kind entries canonicalize: when several catalog entries
+/// share one kind (`openai-completions` is openrouter/openai/kimi/codemie),
+/// the kind is coarser than the saved name and the name stays (the endpoint
+/// base URL carries the identity there). A kind owned by exactly one entry
+/// (`chatgpt-codex` → `chatgpt`) folds its name-shaped spellings onto the
+/// kind. Alias spellings (`chatgpt.com`) fold first via
+/// [canonicalProviderName] at the config boundary. Unknown ids return
+/// unchanged — the boot boundary warns and degrades (issue #760), it never
+/// rewrites a value it cannot resolve.
+String canonicalProviderKind(String id) {
+  final spec = resolveCliProviderSpec(id);
+  if (spec == null) return id;
+  for (final other in providerCatalog.values) {
+    if (other.kind == spec.kind && other.name != spec.name) return id;
+  }
+  return spec.kind;
+}
+
 /// Builds the legacy single [Model] the `fah` executable runs when no roles
 /// are configured (`--provider`/`--model`/`--base-url` flags).
 ///
-/// Historical behavior preserved: `openai-completions` with a custom
-/// [baseUrl] reports provider `openai` instead of `openrouter`.
+/// Resolves through [resolveCliProviderSpec] — every catalog name and kind
+/// builds; an id no version knows throws [ConfigException] (direct API
+/// callers get the loud error, the boot config boundary degrades it).
 /// `maxTokens` resolves like [buildCatalogModel]: ceiling table
 /// ([resolveModelMaxOutputTokens]) first, provider spec default on a miss.
 Model buildCliDefaultModel(
@@ -463,20 +566,10 @@ Model buildCliDefaultModel(
   List<String>? input,
   String? thinkingLevel,
 }) {
-  final spec = switch (providerKind) {
-    'aiin' => providerCatalog['aiin']!,
-    'anthropic' => providerCatalog['anthropic']!,
-    'google' => providerCatalog['google']!,
-    'dial' => providerCatalog['dial']!,
-    'minimax' => providerCatalog['minimax']!,
-    'zai' => providerCatalog['zai']!,
-    'copilot' => providerCatalog['copilot']!,
-    'openai-completions' || 'openrouter' =>
-      baseUrl == null
-          ? providerCatalog['openrouter']!
-          : providerCatalog['openai']!,
-    _ => throw ConfigException('unknown provider: $providerKind'),
-  };
+  final spec = resolveCliProviderSpec(providerKind, baseUrl: baseUrl);
+  if (spec == null) {
+    throw ConfigException('unknown provider: $providerKind');
+  }
 
   final id = modelId;
   if (id == null) {

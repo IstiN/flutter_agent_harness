@@ -138,8 +138,10 @@ final class CustomProviderEntry {
     };
   }
 
-  /// The catalog spec backing this entry's adapter dialect.
-  ProviderSpec get spec => providerCatalog[apiType]!;
+  /// The catalog spec backing this entry's adapter dialect — via
+  /// [resolveCliProviderSpec] so a kind-shaped `apiType` (`chatgpt-codex`,
+  /// issue #772) resolves like the name-shaped convention.
+  ProviderSpec get spec => resolveCliProviderSpec(apiType)!;
 }
 
 /// Whether [name] is reserved for a built-in catalog provider
