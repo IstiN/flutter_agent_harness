@@ -1321,6 +1321,7 @@ Future<void> _runApp(List<String> args) async {
     CliArgs args,
     String provider,
     EnvProviderPreconfig? faPreconfig,
+    String? unknownSavedProvider,
   })
   cliStartup;
   try {
@@ -1335,6 +1336,21 @@ Future<void> _runApp(List<String> args) async {
   final effective = cliStartup.args;
   var provider = cliStartup.provider;
   final faPreconfig = cliStartup.faPreconfig;
+
+  // gh-760: a persisted provider id no version knows must never brick the
+  // boot. The config is shared with surfaces the CLI does not control
+  // (the app, the extension, older/newer versions); the bad value gets a
+  // loud named warning here (value, file, fallback taken, likely version
+  // skew) and the known fallback provider takes over. The config file is
+  // NOT modified — warn, don't mutate.
+  if (cliStartup.unknownSavedProvider case final unknown?) {
+    stderr.writeln(
+      'warning: unknown provider "$unknown" in $home/.fah/config.yaml — '
+      'written by a newer app/CLI version? falling back to '
+      '"$provider" (the config was not modified; run /provider or edit '
+      'the file to switch)',
+    );
+  }
 
   final cwd = effective.cwd ?? Directory.current.path;
   final sessionRoot = effective.sessionRoot ?? _defaultSessionRoot();
@@ -1360,12 +1376,31 @@ Future<void> _runApp(List<String> args) async {
         baseUrlExplicit: parsed.baseUrl != null,
         hasProviderPreconfig: faPreconfig != null,
       );
-  if (applyFolderState) {
-    provider = folderState.providerKind;
+  // gh-760: the folder state is written by the same shared-config family
+  // — validate its provider kind the same way. An unrecognizable kind
+  // gets a named warning and the state file is ignored (never a boot
+  // throw); every catalog name/kind resolves by construction. The restore
+  // takes the RESOLVED spec's KIND (review): a state file carrying a
+  // catalog name must not leak the raw name into the stream factory.
+  final folderSpec = applyFolderState
+      ? resolveCliProviderSpec(folderState.providerKind)
+      : null;
+  final folderStateUsable = applyFolderState && folderSpec != null;
+  if (applyFolderState && !folderStateUsable) {
+    stderr.writeln(
+      'warning: saved folder model state names unknown provider '
+      '"${folderState.providerKind}" '
+      '(${folderModelStatePath(sessionsRoot: sessionRoot, cwd: cwd)}) — '
+      'ignoring it and keeping "$provider"',
+    );
   }
-  final baseUrl = applyFolderState ? folderState.baseUrl : effective.baseUrl;
+  final applyFolderModel = applyFolderState && folderStateUsable;
+  if (applyFolderModel) {
+    provider = folderSpec.kind;
+  }
+  final baseUrl = applyFolderModel ? folderState.baseUrl : effective.baseUrl;
 
-  final model = applyFolderState
+  final model = applyFolderModel
       ? buildCliDefaultModel(
           provider,
           modelId: folderState.modelId,
@@ -1516,7 +1551,23 @@ Future<void> _runApp(List<String> args) async {
     }
     try {
       defaultRoleResolved = rolesResolver.resolveRole(defaultModelRole) != null;
+    } on UnknownProviderRoleException catch (error) {
+      // gh-760: degrade, never brick. The chain names providers NO version
+      // knows (a config written by a newer app/CLI version) — warn on
+      // stderr with the reasons and fall back to the legacy single-model
+      // path. Unknown-provider entries were already skipped with named
+      // reasons by the resolver; the throw only fires when no usable
+      // entry remains.
+      stderr.writeln(
+        'warning: model roles config is unusable (${error.message}) — '
+        'falling back to the configured single provider/model',
+      );
+      rolesResolver = null;
+      defaultRoleResolved = false;
     } on ConfigException catch (error) {
+      // A CURRENT-version misconfiguration (e.g. every entry of a KNOWN
+      // provider missing its key) keeps the pre-#760 contract: a loud
+      // boot failure — never a silently-ignored roles config.
       _fail('invalid model roles config: ${error.message}');
     }
   }

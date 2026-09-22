@@ -4056,4 +4056,9 @@
 - Fixes #774: markdown renders on every CLI surface - one MarkdownSurface policy (#778)
 - chore: pin factory af38761 — unarm BEHIND-only (deadlock fix #488) + lockstep (#799)
 
+## 1.0.455
+
+- chore: pin factory fec4d87 — CANCELLED≠red + bot BLOCKED-race (#762) (#824)
+- chore: pin factory dff2d08 — mergeBot fallback scoped (#762) (#822)
+
 ## Unreleased

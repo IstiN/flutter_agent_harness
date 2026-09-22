@@ -262,7 +262,11 @@ final class CliConfig {
     final powerSection = parsePowerSection(map['power']);
     final agentSection = _parseAgentSection(map['agent']);
     return CliConfig(
-      providerKind: map['provider'] as String? ?? 'openai-completions',
+      // Issue #772: the persisted provider identity is the catalog KIND.
+      // Old name-shaped values (`chatgpt`, `chatgpt.com`) canonicalize on
+      // load — the file itself is rewritten only on the next save.
+      providerKind: _canonicalSavedProvider(map['provider']) ??
+          'openai-completions',
       modelId: map['model'] as String? ?? 'openai/gpt-4o-mini',
       baseUrl: map['baseUrl'] as String? ?? 'https://openrouter.ai/api/v1',
       mode: map['mode'] as String? ?? 'code',
@@ -942,6 +946,7 @@ CliConfig loadCliConfig(String homeDir) {
     final doc = loadYaml(content);
     if (doc is YamlMap) {
       final config = CliConfig.fromYaml(doc);
+      _warnCanonicalizedProvider(doc, config);
       _warnDroppedGhostProviders(doc, config);
       return config;
     }
@@ -951,6 +956,46 @@ CliConfig loadCliConfig(String homeDir) {
     // Ignore corrupt config and fall back to defaults.
   }
   return CliConfig();
+}
+
+/// The saved `provider:` value, canonicalized to the catalog kind
+/// (issue #772): old name-shaped spellings (`chatgpt`, `chatgpt.com`)
+/// fold onto `chatgpt-codex` on LOAD — the file is rewritten only on the
+/// next save. Absent stays null (the default applies); an id no version
+/// knows returns unchanged so the boot boundary keeps its
+/// warn-and-degrade stance (issue #760, forward-compat E2).
+String? _canonicalSavedProvider(Object? raw) {
+  if (raw is! String) return null;
+  return canonicalProviderKind(canonicalProviderName(raw));
+}
+
+/// Note for the kind canonicalization (issue #772, E1): a saved
+/// name-shaped `provider:` (`chatgpt`, `chatgpt.com`) loads as the catalog
+/// kind (`chatgpt-codex`). The note prints on EVERY load until the next
+/// save persists the kind into the file — boot never mutates the config
+/// (no de-dup state; it self-extinguishes after the first save).
+void _warnCanonicalizedProvider(YamlMap doc, CliConfig config) {
+  final raw = doc['provider'];
+  if (raw == null) {
+    return;
+  }
+  if (raw is! String) {
+    // Type-invalid value (e.g. `provider: 123`): degrades to the default —
+    // say so instead of swallowing it silently (the
+    // _warnDroppedGhostProviders named-note precedent).
+    stderr.writeln(
+      "note: provider '$raw' is not a string — ignoring it; the default "
+      "'${config.providerKind}' applies (issue #772)",
+    );
+    return;
+  }
+  if (raw.trim().toLowerCase() == config.providerKind) {
+    return;
+  }
+  stderr.writeln(
+    "note: provider '$raw' loads as kind '${config.providerKind}' — the "
+    'next config save persists the kind (issue #772)',
+  );
 }
 
 /// Loud note for the ghost cleanup (issue #221): entries named after
