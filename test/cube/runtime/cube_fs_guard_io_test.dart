@@ -129,5 +129,41 @@ void main() {
       expect((await guard.writeFile('real.txt', 'x')).isOk, isTrue);
       expect((await guard.exists('real.txt')).getOrThrow(), isTrue);
     });
+
+    test('hostile inputs: probe never throws, guard denies, loops terminate', () async {
+      final probe = const LocalCubeFsProbe();
+
+      // (a) A component over NAME_MAX: dart:io maps stat errors to
+      // notFound, so the probe reports "not a link" — the same verdict the
+      // opener's own ENAMETOOLONG forces (same-uid threat model: the run
+      // cannot see through what it cannot open). Never throws.
+      expect(
+        probe.linkTarget('${ws.path}/${'a' * 400}'),
+        (isLink: false, target: null),
+      );
+
+      // (b) A directory with every permission revoked: lstat inside maps
+      // to notFound (lexical floor) and the actual open fails at the OS —
+      // the observable contract is a permissionDenied write, whatever
+      // layer denies it.
+      final jail = Directory('${ws.path}/jail')..createSync();
+      Link('${jail.path}/link').createSync('${root.path}/outside');
+      final chmod = await Process.run('chmod', ['000', jail.path]);
+      expect(chmod.exitCode, 0);
+      addTearDown(() => Process.run('chmod', ['755', jail.path]));
+      final result = await guard.writeFile('jail/link/evil', 'x');
+      expect(result.isErr, isTrue);
+      expect(result.errorOrNull!.code, FileErrorCode.permissionDenied);
+
+      // (c) A self-referential link: resolvable indirections terminate at
+      // the fixed chain depth — deny, not spin.
+      Link('${ws.path}/loop').createSync('loop');
+      final loopRead = await guard.readTextFile('loop/f');
+      expect(loopRead.isErr, isTrue);
+      expect(loopRead.errorOrNull!.code, FileErrorCode.notFound);
+      final loopWrite = await guard.writeFile('loop/f', 'x');
+      expect(loopWrite.isErr, isTrue);
+      expect(loopWrite.errorOrNull!.code, FileErrorCode.permissionDenied);
+    });
   }, skip: skip);
 }

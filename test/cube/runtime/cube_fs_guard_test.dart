@@ -1,6 +1,8 @@
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
+import '../fake_fs_probe.dart';
+
 CubeSpec spec({
   String workspace = '/workspace',
   List<CubeMount> mounts = const [],
@@ -174,12 +176,12 @@ void main() {
     // their symlink targets. The MemoryExecutionEnv delegate holds real
     // (virtual) files, so "the same file via an allowed path still works"
     // is provable end to end.
-    late _Probe probe;
+    late FakeFsProbe probe;
     late MemoryExecutionEnv delegate;
     late CubeFsGuard guard;
 
     setUp(() {
-      probe = _Probe();
+      probe = FakeFsProbe();
       delegate = MemoryExecutionEnv(cwd: '/work');
       guard = CubeFsGuard(
         delegate,
@@ -259,21 +261,4 @@ void main() {
       expect((await lexical.writeFile('/work/ok', 'x')).isOk, isTrue);
     });
   });
-}
-
-/// Fake [CubeFsProbe]: [links] maps a path to its symlink target; paths in
-/// [unreadable] are indirections that cannot be read (Windows reparse
-/// points) — the fail-closed case.
-class _Probe implements CubeFsProbe {
-  final Map<String, String> links = {};
-  final Set<String> unreadable = {};
-
-  @override
-  CubeLinkTarget linkTarget(String path) {
-    if (unreadable.contains(path)) return (isLink: true, target: null);
-    final target = links[path];
-    return target == null
-        ? (isLink: false, target: null)
-        : (isLink: true, target: target);
-  }
 }

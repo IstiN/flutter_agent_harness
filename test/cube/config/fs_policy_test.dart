@@ -9,25 +9,7 @@ import 'package:flutter_agent_harness/src/exceptions.dart';
 import 'package:test/test.dart';
 import 'package:yaml/yaml.dart';
 
-/// Fake probe: [links] maps a path to its verbatim symlink target; paths in
-/// [unreadable] are indirections that cannot be read (Windows reparse
-/// points) — the fail-closed case.
-class _FakeProbe implements CubeFsProbe {
-  _FakeProbe({Map<String, String> links = const {}, this.unreadable = const {}})
-    : links = Map.of(links);
-
-  final Map<String, String> links;
-  final Set<String> unreadable;
-
-  @override
-  CubeLinkTarget linkTarget(String path) {
-    if (unreadable.contains(path)) return (isLink: true, target: null);
-    final target = links[path];
-    return target == null
-        ? (isLink: false, target: null)
-        : (isLink: true, target: target);
-  }
-}
+import '../fake_fs_probe.dart';
 
 void main() {
   CubeFsPolicy parse(String yaml) => CubeFsPolicy.fromYaml(loadYaml(yaml));
@@ -201,7 +183,7 @@ mounts:
   group('CubeFsPolicy.accessFor with a probe (resolving mode)', () {
     test('judges the target, not the written form', () {
       const policy = CubeFsPolicy();
-      final probe = _FakeProbe(links: {'/workspace/l': '/etc'});
+      final probe = FakeFsProbe(links: {'/workspace/l': '/etc'});
       // Lexically /workspace/l/passwd reads as workspace-internal.
       expect(policy.accessFor('/workspace/l/passwd'), CubePathAccess.readWrite);
       expect(
@@ -212,7 +194,7 @@ mounts:
 
     test('denies symlink chains a -> b -> outside', () {
       const policy = CubeFsPolicy();
-      final probe = _FakeProbe(links: {
+      final probe = FakeFsProbe(links: {
         '/workspace/a': 'b',
         '/workspace/b': '/etc',
       });
@@ -224,7 +206,7 @@ mounts:
 
     test('allows a link inside the workspace (legitimate use)', () {
       const policy = CubeFsPolicy();
-      final probe = _FakeProbe(links: {
+      final probe = FakeFsProbe(links: {
         '/workspace/l': 'sub',
         '/workspace/sub/deep': '../other',
       });
@@ -241,7 +223,7 @@ mounts:
 
     test('denies .. climbing above the root after resolution', () {
       const policy = CubeFsPolicy();
-      final probe = _FakeProbe(links: {'/workspace/l': 'sub/deep'});
+      final probe = FakeFsProbe(links: {'/workspace/l': 'sub/deep'});
       // Resolves to /workspace/sub/deep, then four .. climb past the root.
       expect(
         policy.accessFor('/workspace/l/../../../etc/passwd', probe: probe),
@@ -252,7 +234,7 @@ mounts:
     test('applies .. to the resolved prefix, like the kernel', () {
       // l -> /workspace/sub/deep: l/../.. is /workspace, NOT /workspace/sub.
       const policy = CubeFsPolicy();
-      final probe = _FakeProbe(links: {'/workspace/l': '/workspace/sub/deep'});
+      final probe = FakeFsProbe(links: {'/workspace/l': '/workspace/sub/deep'});
       expect(
         policy.accessFor('/workspace/l/../../secrets', probe: probe),
         CubePathAccess.readWrite,
@@ -261,7 +243,7 @@ mounts:
       // landing at /etc/config (ro mount) — lexical collapse would have
       // said /workspace/config (workspace rw). The kernel opens the former.
       final ro = parse('mounts: [{path: /etc, access: ro}]');
-      final probe2 = _FakeProbe(links: {'/workspace/alt': '/etc/ssh'});
+      final probe2 = FakeFsProbe(links: {'/workspace/alt': '/etc/ssh'});
       expect(
         ro.accessFor('/workspace/alt/../config', probe: probe2),
         CubePathAccess.readOnly,
@@ -270,7 +252,7 @@ mounts:
 
     test('honors mounts on the resolved target', () {
       final policy = parse('mounts: [{path: /data, access: ro}]');
-      final probe = _FakeProbe(links: {'/workspace/l': '/data/pub'});
+      final probe = FakeFsProbe(links: {'/workspace/l': '/data/pub'});
       expect(
         policy.accessFor('/workspace/l/f', probe: probe),
         CubePathAccess.readOnly,
@@ -280,7 +262,7 @@ mounts:
       final policy2 = parse(
         'mounts: [{path: /data, access: deny}, {path: /data/pub, access: rw}]',
       );
-      final probe2 = _FakeProbe(links: {'/workspace/l': '/data'});
+      final probe2 = FakeFsProbe(links: {'/workspace/l': '/data'});
       expect(
         policy2.accessFor('/workspace/l/pub/f', probe: probe2),
         CubePathAccess.readWrite,
@@ -292,13 +274,13 @@ mounts:
       // /var -> /private/var must not split the verdict from the mounts'
       // spelling (the guard judges the written root, like the mounts do).
       const policy = CubeFsPolicy(workspace: '/var/folders/ws');
-      final probe = _FakeProbe(links: {'/var': '/private/var'});
+      final probe = FakeFsProbe(links: {'/var': '/private/var'});
       expect(
         policy.accessFor('/var/folders/ws/file', probe: probe),
         CubePathAccess.readWrite,
       );
       // A link BELOW the root is still resolved and denied.
-      final probe2 = _FakeProbe(links: {
+      final probe2 = FakeFsProbe(links: {
         '/var': '/private/var',
         '/var/folders/ws/l': '/etc',
       });
@@ -310,11 +292,32 @@ mounts:
 
     test('unreadable indirection (reparse point) fails closed', () {
       const policy = CubeFsPolicy();
-      final probe = _FakeProbe(unreadable: {'/workspace/junction'});
+      final probe = FakeFsProbe(unreadable: {'/workspace/junction'});
       expect(
         policy.accessFor('/workspace/junction/file', probe: probe),
         CubePathAccess.deny,
       );
+    });
+
+    test('relative paths resolve against a custom workspace in both modes', () {
+      // The lexical fallback used to hardcode /workspace; both modes must
+      // agree on the policy's actual workspace.
+      const policy = CubeFsPolicy(workspace: '/data/ws');
+      expect(policy.accessFor('sub/f'), CubePathAccess.readWrite);
+      expect(policy.accessFor('../../etc/passwd'), CubePathAccess.deny);
+
+      final probe = FakeFsProbe();
+      expect(policy.accessFor('sub/f', probe: probe), CubePathAccess.readWrite);
+      expect(
+        policy.accessFor('../../etc/passwd', probe: probe),
+        CubePathAccess.deny,
+      );
+      final (:access, :resolved) = policy.accessForResolved(
+        'sub/f',
+        probe: probe,
+      );
+      expect(access, CubePathAccess.readWrite);
+      expect(resolved, '/data/ws/sub/f');
     });
 
     test('denies chains past the fixed depth', () {
@@ -322,7 +325,7 @@ mounts:
       final links = <String, String>{
         for (var i = 0; i < 12; i++) '/workspace/l$i': 'l${i + 1}',
       };
-      final probe = _FakeProbe(links: links);
+      final probe = FakeFsProbe(links: links);
       expect(
         policy.accessFor('/workspace/l0/f', probe: probe),
         CubePathAccess.deny,
@@ -331,7 +334,7 @@ mounts:
 
     test('resolves ~ heads against the home and probes only below it', () {
       final policy = parse('mounts: [{path: "~", access: ro}]');
-      final probe = _FakeProbe(links: {'/home/dev/l': '/etc'});
+      final probe = FakeFsProbe(links: {'/home/dev/l': '/etc'});
       expect(
         policy.accessFor('~/l/passwd', homeDir: '/home/dev', probe: probe),
         CubePathAccess.deny,
@@ -344,7 +347,7 @@ mounts:
 
     test('accessForResolved reports the canonical path to open', () {
       const policy = CubeFsPolicy();
-      final probe = _FakeProbe(links: {'/workspace/l': 'sub'});
+      final probe = FakeFsProbe(links: {'/workspace/l': 'sub'});
       final (:access, :resolved) = policy.accessForResolved(
         '/workspace/l/f',
         probe: probe,

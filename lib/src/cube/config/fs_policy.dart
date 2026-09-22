@@ -334,7 +334,9 @@ final class CubeFsPolicy {
 
   /// Lexically resolves [raw] to a normalized absolute path, or `null` when
   /// it cannot resolve (`~` without [homeDir], or `..` above the root).
-  static String? _resolve(String raw, {String? homeDir}) {
+  /// Relative paths resolve against the policy's workspace — the same base
+  /// the resolving mode's [_splitHead] uses.
+  String? _resolve(String raw, {String? homeDir}) {
     final path = raw.trim();
     if (path.isEmpty) return null;
     final home = homeDir?.trim();
@@ -346,9 +348,11 @@ final class CubeFsPolicy {
     } else if (path.startsWith('/')) {
       target = path;
     } else {
-      // Relative path: the sandbox working directory is the workspace, so
-      // resolve against it (workspace is validated absolute at parse time).
-      target = '/workspace/$path';
+      // Relative path: the sandbox working directory is the workspace
+      // (validated absolute at parse time).
+      final ws = _resolve(workspace, homeDir: homeDir);
+      if (ws == null) return null;
+      target = '$ws/$path';
     }
     return _normalize(target);
   }

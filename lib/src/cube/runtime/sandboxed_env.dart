@@ -183,6 +183,7 @@ final class SandboxedExecutionEnv implements ExecutionEnv, BackgroundShell {
       spec,
       homeDir: _homeDir,
       workspaceRoot: _delegate.cwd,
+      pathProbe: _pathProbe,
     );
   }
 
