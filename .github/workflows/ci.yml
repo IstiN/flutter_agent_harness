@@ -1,7 +1,8 @@
-# Runner split (2026-09-22): light/medium jobs -> ubuntu-24.04-arm (public repo:
-# free, SEPARATE capacity pool from the x64 queue that was the bottleneck);
-# cube-kernel-live -> self-hosted M5 (fa-m5-1, user LaunchAgent); remaining
-# x64 jobs (hostile-env, release binaries) stay on ubuntu-latest.
+# Runner split (2026-09-22): PURE-DART jobs -> ubuntu-24.04-arm (public repo:
+# free, SEPARATE capacity pool from the x64 queue). Flutter jobs stay x64 —
+# Flutter ships NO official linux-arm64 SDK (stable 3.47.5 manifest is x64
+# only; subosito/flutter-action fails 'version: any architecture: arm64').
+# cube-kernel-live -> self-hosted M5 (fa-m5-1, user LaunchAgent).
 name: CI
 
 on:
@@ -183,7 +184,7 @@ jobs:
 
   static:
     name: Static gates
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-latest
     needs: changes
     timeout-minutes: 8
     permissions:
@@ -640,7 +641,7 @@ jobs:
   # sharded test legs, each leg no longer waits for it.
   flutter-analyze:
     name: Flutter app analyze (ubuntu)
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
     timeout-minutes: 8
@@ -708,11 +709,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-
+      # arm64: no official linux-arm64 release tarball (x64-only manifest) —
+      # subosito/flutter-action cannot fetch stable here. Bootstrap via git
+      # clone instead: flutter_tools pulls the official arm64 Dart SDK itself.
+      - name: Flutter SDK (arm64 git bootstrap)
+        shell: bash
+        run: |
+          git clone --depth 1 -b stable https://github.com/flutter/flutter.git "$HOME/flutter"
+          echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/flutter/bin:$PATH"
+          flutter --version
+          flutter precache
       - name: Pub cache
         uses: actions/cache@v4
         with:
