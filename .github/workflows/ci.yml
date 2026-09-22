@@ -1,3 +1,7 @@
+# Runner split (2026-09-22): light/medium jobs -> ubuntu-24.04-arm (public repo:
+# free, SEPARATE capacity pool from the x64 queue that was the bottleneck);
+# cube-kernel-live -> self-hosted M5 (fa-m5-1, user LaunchAgent); remaining
+# x64 jobs (hostile-env, release binaries) stay on ubuntu-latest.
 name: CI
 
 on:
@@ -58,7 +62,7 @@ concurrency:
 jobs:
   changes:
     name: Classify changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 5
     permissions:
       contents: read
@@ -148,7 +152,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────────
   cube-kernel-live:
     name: Cube kernel live (macOS)
-    runs-on: macos-latest
+    runs-on: [self-hosted, macos-m5]
     needs: changes
     if: needs.changes.outputs.core == 'true'
     timeout-minutes: 10
@@ -179,7 +183,7 @@ jobs:
 
   static:
     name: Static gates
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     needs: changes
     timeout-minutes: 8
     permissions:
@@ -274,7 +278,7 @@ jobs:
     # out-of-scope PRs at 27 green checks. The scope fastpass below
     # green-skips the real steps in seconds instead.
     name: Core tests (shard ${{ matrix.shard }}/4)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     needs: changes
     permissions:
       contents: read
@@ -374,7 +378,7 @@ jobs:
   # this leg) — they stay in nightly's pty-integration job.
   integration-mock:
     name: Integration tests (mock LLM)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     needs: changes
     timeout-minutes: 25
     permissions:
@@ -433,7 +437,7 @@ jobs:
 
   coverage-gate:
     name: Coverage ratchet
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     needs: [changes, test-core]
     timeout-minutes: 5
     permissions:
@@ -487,7 +491,7 @@ jobs:
 
   guards:
     name: CRAP + duplication
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     needs: [changes, test-core]
     timeout-minutes: 6
     permissions:
@@ -636,7 +640,7 @@ jobs:
   # sharded test legs, each leg no longer waits for it.
   flutter-analyze:
     name: Flutter app analyze (ubuntu)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     needs: changes
     if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
     timeout-minutes: 8
@@ -688,7 +692,7 @@ jobs:
   # flutter-analyze so a warm leg pair reuses downloads.
   flutter-tests:
     name: Flutter app tests (shard ${{ matrix.shard }}/2)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     needs: changes
     if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
     # End-of-run drain can stall minutes under shared-runner load while
