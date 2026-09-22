@@ -138,7 +138,7 @@ jobs:
     with:
       # The literal uses-ref: the factory requires it (it cannot derive its
       # own ref — github.workflow_ref in a called workflow is the CALLER's).
-      factory_ref: f0e962a79acfd0f10c29550840bf03e34d9b8a8b
+      factory_ref: 1eebd58c205f2e0674494fe5667bd217f9614679
       # STRING — number/choice-typed reusable inputs cannot take expressions.
       issue: ${{ needs.gate.outputs.issue || github.event.inputs.issue }}
       # #687: PR-anchored review (SM dispatches with pr instead of issue).
