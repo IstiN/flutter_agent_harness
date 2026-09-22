@@ -368,6 +368,38 @@ void main() {
       expect(registry.keyFor(provider.id), 'sk-acme-kept');
     });
 
+    testWidgets('edit provider: a persisted identity kind survives the '
+        'URL edit', (tester) async {
+      final registry = ProviderRegistry.inMemory();
+      final provider = await registry.add(
+        name: 'ChatGPT Codex',
+        baseUrl: chatGptCodexBaseUrl,
+        modelId: 'gpt-5.6-sol',
+        kind: 'chatgpt-codex',
+      );
+      registry.rememberKey(provider.id, 'blob');
+      await _pump(
+        tester,
+        ProvidersSection(registry: registry, modelsFetcher: _someModels),
+      );
+
+      await tester.tap(find.text('ChatGPT Codex'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ProviderEditorPage), findsOneWidget);
+      await tester.enterText(
+        _editorField('Base URL'),
+        'https://relay.example.net/codex-proxy',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
+
+      expect(registry.providers.single.kind, 'chatgpt-codex');
+      expect(
+        registry.providers.single.baseUrl,
+        'https://relay.example.net/codex-proxy',
+      );
+    });
+
     testWidgets('edit provider: delete goes through the editor page', (
       tester,
     ) async {
