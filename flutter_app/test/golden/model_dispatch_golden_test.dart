@@ -12,6 +12,8 @@ library;
 /// Generate with `flutter test test/golden --update-goldens`; review the
 /// PNG by eye before committing.
 
+import 'dart:io';
+
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -33,6 +35,18 @@ void main() {
 
   testWidgets('a stale codex provider lists the bundled catalog with the '
       'provenance note', (tester) async {
+    // Pixel goldens are macOS-canonical (host-locked on purpose — every
+    // CI leg excludes test/golden, and the pinned-font migration that
+    // would make snapshots portable is a tracked follow-up). Skip
+    // elsewhere so a Linux checkout doesn't show a red that is not the
+    // code's fault.
+    if (!Platform.isMacOS) {
+      markTestSkipped(
+        'pixel goldens are host-locked to macOS in this repo — run on a '
+        'Mac or regenerate with --update-goldens there',
+      );
+      return;
+    }
     final registry = ProviderRegistry.inMemory();
     final provider = await registry.add(
       name: 'ChatGPT Codex',

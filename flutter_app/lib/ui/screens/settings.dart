@@ -63,14 +63,14 @@ import 'package:fa/ui/screens/models_settings_page.dart';
 import 'package:fa/ui/screens/onboarding_screen.dart';
 import 'package:fa/services/project_mount_env.dart' show SessionCwd;
 import 'package:url_launcher/url_launcher.dart';
-
-import 'endpoint_models_controller.dart';
 import 'package:fa/ui/screens/provider_editor_page.dart';
 import 'package:fa/ui/screens/providers_section.dart';
 import 'package:fa/webllm/webllm_cache_section.dart';
 import 'package:fa/webllm/webllm_service.dart';
 import 'package:fa/webllm/webllm_types.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
+
+import 'endpoint_models_controller.dart';
 
 export 'package:fa_ui/fa_ui.dart'
     show ProviderPreset, ModelIdAutocompleteField, OpenRouterOAuthButton;

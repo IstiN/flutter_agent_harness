@@ -77,13 +77,10 @@ void main() {
         expect(reloaded.providers[0].kind, 'chatgpt-codex');
         expect(reloaded.providers[1].kind, isNull);
         // JSON stays lean: no kind key for identity-less entries.
-        final stored =
-            jsonDecode(
-                  (await env.readTextFile(
-                    '${env.cwd}/providers.json',
-                  )).valueOrNull!,
-                )
-                as Map<String, dynamic>;
+        final raw = (await env.readTextFile(
+          '${env.cwd}/providers.json',
+        )).valueOrNull!;
+        final stored = jsonDecode(raw) as Map<String, dynamic>;
         final plain =
             (stored['providers'] as List).last as Map<String, dynamic>;
         expect(plain.containsKey('kind'), isFalse);

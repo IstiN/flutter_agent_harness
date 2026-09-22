@@ -1,6 +1,6 @@
 /// One shared "which models does this endpoint serve" dispatch for every
 /// model picker (CLI settings flows, the app's chat/media/agent model
-/// pages). Each wire dialect is its own class - add a new provider by
+/// pages). Each wire dialect is its own class — add a new provider by
 /// implementing [ModelListDialect] and registering it in
 /// [modelListDialects], never by adding a branch here.
 library;
@@ -31,7 +31,7 @@ const String dialDispatchHint = 'dial';
 /// One provider's "how to list models" implementation. Each dialect
 /// encapsulates its own detection (does this endpoint belong to me?) and
 /// its own fetch (what URL, what auth, what shape the response has, how
-/// to normalise ids). Pickers never see the internals - they just call
+/// to normalise ids). Pickers never see the internals — they just call
 /// [fetchModelsForEndpoint] which delegates.
 ///
 /// The [ModelListDialect.fetch] `onBundledFallback` parameter is optional
