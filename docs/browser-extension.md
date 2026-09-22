@@ -439,8 +439,11 @@ Carried over from v1, still true:
   WHAT (key). A named provider resolves endpoint AND key from the same
   saved record: the client's `baseUrl` must byte-equal the record's
   (checked BEFORE any network call), an unknown name is a named
-  rejection, a non-openai record is rejected by dialect (the relay
-  speaks openai-completions only), and an unnamed request aimed at a
+  rejection, and a record whose catalog wire dialect is not
+  openai-completions is rejected by dialect — the saved `apiType` is a
+  catalog NAME (`kimi`/`zai`/`openrouter`/`minimax`/`aiin`/`dial`/
+  `copilot` all forward keyed), while `anthropic`/`google`/`chatgpt`
+  (responses) reject. An unnamed request aimed at a
   keyed saved record answers a migration hint instead of a raw 401
   (re-pair so `llmReq` names its provider). The same rule lives in the
   shared HTTP layer: `sendProviderRequest` disables client auto-follow,

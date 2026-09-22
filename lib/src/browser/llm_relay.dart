@@ -26,6 +26,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../cli/custom_providers.dart';
+import '../model_roles/provider_catalog.dart';
 import '../providers/provider_common.dart';
 import '../sse_decoder.dart';
 import 'bridge_protocol.dart';
@@ -120,12 +121,14 @@ typedef LlmRelayResolver = LlmRelayTarget? Function(LlmRelayRequest request);
 /// the key lookup): a named provider resolves endpoint AND key from the
 /// SAME record — a client `baseUrl` that is not byte-equal to the record's
 /// is a rejection checked BEFORE any network call; an unknown name is a
-/// named rejection; a non-openai record is rejected by dialect (the relay
-/// transport speaks openai-completions only); no name at all → null
-/// (anonymous, keyless) — unless the unnamed baseUrl byte-matches a KEYED
-/// saved record, which answers a migration hint instead (legacy clients
-/// named no provider; the old URL-keyed branch served them, and a raw
-/// endpoint 401 is not actionable).
+/// named rejection; a record whose catalog wire dialect is not
+/// openai-completions is rejected by dialect (the saved apiType is a
+/// catalog NAME — kimi/zai/openrouter/… forward keyed — while anthropic/
+/// google/chatgpt-responses reject); no name at all → null (anonymous,
+/// keyless) — unless the unnamed baseUrl byte-matches a KEYED saved
+/// record, which answers a migration hint instead (legacy clients named
+/// no provider; the old URL-keyed branch served them, and a raw endpoint
+/// 401 is not actionable).
 LlmRelayTarget? resolveLlmRelayTarget(
   LlmRelayRequest request, {
   required Iterable<CustomProviderEntry> providers,
@@ -153,10 +156,17 @@ LlmRelayTarget? resolveLlmRelayTarget(
       'the provider list',
     );
   }
-  if (entry.apiType != 'openai') {
+  // The saved apiType selects the catalog spec; the spec's `api` field is
+  // the wire dialect — kimi/zai/openrouter/minimax/aiin/dial/copilot/
+  // codemie are all openai-completions and the relay forwards them keyed
+  // (they are exactly what `/provider kimi` et al. save); only genuinely
+  // foreign dialects (anthropic, google, chatgpt responses, unknown
+  // names) reject.
+  final dialect = providerCatalog[entry.apiType]?.api;
+  if (dialect != 'openai-completions') {
     return LlmRelayTarget.reject(
       'provider "$name" uses the "${entry.apiType}" dialect - the relay '
-      'speaks openai-completions only',
+      'forwards openai-completions endpoints only',
     );
   }
   // Byte-equality BEFORE any network call: a client-chosen baseUrl can
@@ -263,9 +273,11 @@ final class BridgeLlmRelay {
 /// for the anonymous mode), SSE deltas forwarded per chunk.
 ///
 /// ponytail: openai-completions dialect only (the default custom-provider
-/// norm — openai/openrouter/zai/minimax/aiin/kimi endpoints); other
-/// apiTypes answer with a clean llmRes error until a second dialect is
-/// actually needed.
+/// norm — openai/openrouter/zai/minimax/aiin/kimi endpoints; the catalog
+/// gate in [resolveLlmRelayTarget] enforces it by wire dialect, so
+/// brand-typed catalog names forward while anthropic/google/chatgpt-
+/// responses reject); other wire dialects answer with a clean llmRes
+/// error until a second dialect is actually needed.
 Future<void> relayOpenAiCompletion(
   LlmRelayRequest request,
   void Function(String delta) onDelta, {

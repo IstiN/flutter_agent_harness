@@ -21,6 +21,7 @@ import 'package:test/test.dart';
 const _recordZai = 'https://api.z.ai/api/paas/v4';
 const _recordOr = 'https://openrouter.ai/api/v1';
 const _recordClaude = 'https://anthropic.example/v1';
+const _recordKimi = 'https://api.moonshot.ai/v1';
 const _attacker = 'https://attacker.example/v1';
 
 /// The saved-provider table the server resolves against.
@@ -46,6 +47,24 @@ final List<CustomProviderEntry> _records = [
     modelId: 'claude-x',
     keyName: 'FA_KEY_SEC_CLAUDE',
   ),
+  // The CLI's brand flows save entries under their CATALOG name
+  // (`/provider kimi` → apiType 'kimi', likewise openrouter/minimax/aiin/
+  // zai/dial/copilot) — all openai-completions wire dialects the relay
+  // forwards. The suite must model that shape, not only apiType 'openai'.
+  CustomProviderEntry(
+    name: 'kimi-work',
+    apiType: 'kimi',
+    baseUrl: _recordKimi,
+    modelId: 'kimi-k2',
+    keyName: 'FA_KEY_SEC_KIMI',
+  ),
+  CustomProviderEntry(
+    name: 'gpt-acct',
+    apiType: 'chatgpt',
+    baseUrl: 'https://chatgpt.com/backend-api/codex',
+    modelId: 'gpt-5',
+    keyName: 'FA_KEY_SEC_GPT',
+  ),
   CustomProviderEntry(
     name: 'lanbox',
     apiType: 'openai',
@@ -59,6 +78,8 @@ String? _resolveKey(CustomProviderEntry entry) => switch (entry.name) {
   'zai' => 'sk-zai-secret',
   'orai' => 'sk-or-secret',
   'claude' => 'sk-claude-secret',
+  'kimi-work' => 'sk-kimi-secret',
+  'gpt-acct' => 'sk-gpt-secret',
   _ => null,
 };
 
@@ -163,15 +184,27 @@ void main() {
       expect(_resolver(_req('https://lan.example/v1')), isNull);
     });
 
-    test(
-      'a named non-openai record is rejected with a named dialect error',
-      () {
-        final target = _resolver(_req(_recordClaude, provider: 'claude'));
-        expect(target!.rejected, isTrue);
-        expect(target.error, contains('claude'));
-        expect(target.error, contains('anthropic'));
-      },
-    );
+    test('a brand-typed openai-completions record (apiType kimi) resolves '
+        'endpoint AND key — catalog names are not foreign dialects', () {
+      final target = _resolver(_req(_recordKimi, provider: 'kimi-work'));
+      expect(target, isNotNull);
+      expect(target!.rejected, isFalse);
+      expect(target.baseUrl, _recordKimi);
+      expect(target.key, 'sk-kimi-secret');
+    });
+
+    test('genuinely foreign dialects (anthropic, chatgpt responses) reject '
+        'with a named dialect error', () {
+      for (final (name, url) in [
+        ('claude', _recordClaude),
+        ('gpt-acct', 'https://chatgpt.com/backend-api/codex'),
+      ]) {
+        final target = _resolver(_req(url, provider: name));
+        expect(target!.rejected, isTrue, reason: name);
+        expect(target.error, contains(name), reason: name);
+        expect(target.error, contains('dialect'), reason: name);
+      }
+    });
 
     test('a keyless record resolves with a null key (frame glue rejects)', () {
       final target = _resolver(
@@ -282,6 +315,25 @@ void main() {
       expect(frames.single.fields['error'], contains('re-pair'));
     });
 
+    test('a brand-typed kimi record relays with its key — one openai-'
+        'completions request, done frame', () async {
+      final client = _CountingClient();
+      final frames = await _handle(
+        _req(_recordKimi, provider: 'kimi-work'),
+        client,
+      );
+      expect(client.requests, hasLength(1));
+      expect(
+        client.requests.single.url.toString(),
+        '$_recordKimi/chat/completions',
+      );
+      expect(
+        client.requests.single.headers['authorization'],
+        'Bearer sk-kimi-secret',
+      );
+      expect(frames.last.fields['done'], isTrue);
+    });
+
     test('a named non-openai record never sends its key with an '
         'openai-shaped request', () async {
       final client = _CountingClient();
@@ -330,6 +382,14 @@ void main() {
         0,
         true,
       ),
+      'named+chatgpt-responses': (
+        _req('https://chatgpt.com/backend-api/codex', provider: 'gpt-acct'),
+        0,
+        true,
+      ),
+      // Brand-typed catalog name (what /provider kimi actually saves):
+      // an openai-completions wire dialect the relay forwards keyed.
+      'named+kimi-brand': (_req(_recordKimi, provider: 'kimi-work'), 1, false),
       'second-record': (_req(_recordOr, provider: 'orai'), 1, false),
       'unknown-provider': (_req(_recordZai, provider: 'ghost'), 0, true),
       'keyless-record': (
