@@ -237,6 +237,11 @@ final class CubeFsPolicy {
     return '/${stack.join('/')}';
   }
 
+  /// The path split into non-empty components — the one tokenizer every
+  /// branch of [_splitHead] shares.
+  static List<String> _components(String path) =>
+      path.split('/')..removeWhere((segment) => segment.isEmpty);
+
   /// The trusted head of [raw] plus its own untrusted components. The head
   /// is the longest configured root (~-expanded home, workspace, or the
   /// longest matching mount — normalized, no links involved) that lexically
@@ -251,34 +256,36 @@ final class CubeFsPolicy {
     final hasHome = home != null && home.isNotEmpty;
     if (path == '~' || path.startsWith('~/')) {
       if (!hasHome) return null;
-      return (
-        home.split('/')..removeWhere((segment) => segment.isEmpty),
-        path.substring(2).split('/'),
-      );
+      return (_components(home), _components(path.substring(2)));
     }
     if (path.startsWith('/')) {
-      var head = const <String>[];
-      var bestLength = -1;
-      final roots = [workspace, ...mounts.map((mount) => mount.path)];
-      for (final root in roots) {
-        final base = _resolve(root, homeDir: homeDir);
-        if (base != null && _within(path, base) && base.length > bestLength) {
-          bestLength = base.length;
-          head = base.split('/')..removeWhere((segment) => segment.isEmpty);
-        }
-      }
-      final components = path.split('/')
-        ..removeWhere((segment) => segment.isEmpty);
-      return (head, components.sublist(head.length));
+      return _splitAbsoluteHead(path, homeDir: homeDir);
     }
     // Relative path: the sandbox working directory is the workspace, so
     // resolve against it (workspace is validated absolute at parse time).
     final ws = _resolve(workspace, homeDir: homeDir);
     if (ws == null) return null;
-    return (
-      ws.split('/')..removeWhere((segment) => segment.isEmpty),
-      path.split('/'),
-    );
+    return (_components(ws), _components(path));
+  }
+
+  /// The absolute-path branch of [_splitHead]: find the longest configured
+  /// root (workspace or mount) that lexically prefixes [path] — that prefix
+  /// is the trusted head — and return it with the remaining components.
+  (List<String>, List<String>) _splitAbsoluteHead(
+    String path, {
+    String? homeDir,
+  }) {
+    var head = const <String>[];
+    var bestLength = -1;
+    final roots = [workspace, ...mounts.map((mount) => mount.path)];
+    for (final root in roots) {
+      final base = _resolve(root, homeDir: homeDir);
+      if (base != null && _within(path, base) && base.length > bestLength) {
+        bestLength = base.length;
+        head = _components(base);
+      }
+    }
+    return (head, _components(path).sublist(head.length));
   }
 
   /// The longest-mount-else-workspace verdict for a fully resolved [target].
