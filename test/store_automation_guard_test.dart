@@ -445,8 +445,20 @@ void main() {
       final steps = ((yaml['jobs'] as Map)['build-ios'] as Map)['steps']
           as Iterable;
       final names = steps.map((s) => (s as Map)['name']).toList();
+      // gh-800 r2: a DELETED tripwire must fail loudly. indexOf returns -1
+      // for a missing step and -1 < anything, so the order assertion below
+      // silently passed a gutted workflow — assert presence first.
+      final floorIndex = names.indexOf('Assert TestFlight version floor');
       expect(
-        names.indexOf('Assert TestFlight version floor'),
+        floorIndex,
+        greaterThanOrEqualTo(0),
+        reason:
+            "the 'Assert TestFlight version floor' step must EXIST — "
+            'deleting it re-opens gh-785 and must trip this guard '
+            'explicitly, never slip through index arithmetic',
+      );
+      expect(
+        floorIndex,
         lessThan(names.indexOf('Install Flutter dependencies')),
         reason:
             'the version-floor pre-check must run BEFORE any build '

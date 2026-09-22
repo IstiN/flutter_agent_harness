@@ -340,6 +340,12 @@ platform :ios do
       approved = app.get_app_store_versions(filter: { platform: Spaceship::ConnectAPI::Platform::IOS }).map do |v|
         { "state" => v.app_store_state, "version" => v.version_string }
       end
+    rescue FastlaneCore::Interface::FastlaneError
+      # gh-800 r2: deterministic lane errors (missing ASC app, missing
+      # TestFlight group, any UI.user_error!) are NOT transient — re-raise
+      # immediately instead of retrying them and mislabeling the failure
+      # "App Store Connect unreachable".
+      raise
     rescue StandardError => e
       retry if tries < 2
       UI.user_error!("[gh-798] version-floor pre-check: App Store Connect unreachable after one retry (#{e.class}: #{e.message.to_s[0, 200]}) — failing closed: cannot verify the version floor, refusing to build")

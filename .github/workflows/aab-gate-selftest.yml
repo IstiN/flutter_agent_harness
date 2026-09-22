@@ -81,7 +81,10 @@ jobs:
             echo "::error::gate must FAIL on a bundle WITHOUT native libs (gh-798 AC3b) — native libs are expected in the store bundle"
             exit 1
           fi
-          cat "$OUT"
+          # Replay the output as PROOF of the named verdict — but strip the
+          # ::error:: command marker first, so the EXPECTED failure does not
+          # paint a red annotation onto this (green) run (gh-800 r2).
+          sed 's/::error::/[expected-failure proof, annotation stripped] /' "$OUT"
           grep -q "expected native libs at base/lib/\*/\*\.so" "$OUT" || {
             echo "::error::gate failed WITHOUT its named verdict — regressed to an inherited/unlabeled exit code (the exact gh-786 class)"
             exit 1
