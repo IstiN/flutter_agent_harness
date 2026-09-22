@@ -82,7 +82,11 @@ final class CustomModelDefinition {
     }
 
     final provider = required('provider');
-    if (catalogProvider(provider) == null) {
+    // Load-time validation mirrors the switch-time resolution exactly
+    // (both identifiers, FA_PROVIDERS filter) — a kind-shaped or
+    // filtered-out entry fails HERE with the enabled list, never later
+    // at `/model` (issue #772 review).
+    if (resolveCliProviderSpec(provider, honorBuildFilter: true) == null) {
       throw ConfigException(
         'unknown provider "$provider" in $where — supported providers: '
         '${enabledProviderNames().join(', ')}',

@@ -1432,4 +1432,79 @@ memory:
       );
     });
   });
+
+  group('saved provider canonicalization (issue #772)', () {
+    CliConfig configOf(String yaml) => CliConfig.fromYaml(
+          loadYaml(yaml) as YamlMap,
+        );
+
+    test('the CLI-written name-shape loads as the kind (AC1)', () {
+      expect(
+        configOf('provider: chatgpt\nmodel: gpt-5\n').providerKind,
+        'chatgpt-codex',
+      );
+    });
+
+    test('the app-written kind-shape loads unchanged (AC1)', () {
+      expect(
+        configOf('provider: chatgpt-codex\nmodel: gpt-5\n').providerKind,
+        'chatgpt-codex',
+      );
+    });
+
+    test('the alias spelling canonicalizes too (E1)', () {
+      expect(
+        configOf('provider: chatgpt.com\nmodel: gpt-5\n').providerKind,
+        'chatgpt-codex',
+      );
+    });
+
+    test('both shapes boot identically (AC1)', () {
+      final fromName = configOf('provider: chatgpt\nmodel: gpt-5\n');
+      final fromKind = configOf('provider: chatgpt-codex\nmodel: gpt-5\n');
+      expect(fromName.providerKind, fromKind.providerKind);
+    });
+
+    test('shared-kind names stay — the baseUrl carries that identity', () {
+      expect(
+        configOf('provider: openrouter\n').providerKind,
+        'openrouter',
+      );
+      expect(configOf('provider: openai\n').providerKind, 'openai');
+      expect(configOf('provider: kimi\n').providerKind, 'kimi');
+    });
+
+    test('a kind-id no version knows stays verbatim (E2, warn-dont-mutate)',
+        () {
+      expect(
+        configOf('provider: from-the-future\n').providerKind,
+        'from-the-future',
+      );
+    });
+
+    test('an absent provider keeps the default', () {
+      expect(configOf('mode: code\n').providerKind, 'openai-completions');
+    });
+
+    test('a type-invalid provider value degrades to the default', () {
+      // `provider: 123` used to throw a cast error; now it degrades with
+      // a named note (stderr) instead of silently swallowing the key.
+      final config = CliConfig.fromYaml(loadYaml('provider: 123\n') as YamlMap);
+      expect(config.providerKind, 'openai-completions');
+    });
+
+    test('the next save persists the kind (write-back on save only)',
+        () async {
+      final tmp = Directory.systemTemp.createTempSync('fah-canonical-');
+      addTearDown(() => tmp.deleteSync(recursive: true));
+      final file = File('${tmp.path}/.fah/config.yaml')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('provider: chatgpt\nmodel: gpt-5\n');
+      final loaded = loadCliConfig(tmp.path);
+      expect(loaded.providerKind, 'chatgpt-codex');
+      expect(file.readAsStringSync(), contains('provider: chatgpt'));
+      await saveCliConfig(tmp.path, loaded);
+      expect(file.readAsStringSync(), contains('provider: chatgpt-codex'));
+    });
+  });
 }
