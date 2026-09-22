@@ -1890,7 +1890,6 @@ final class FaTuiModel extends Model {
     final images = keepAttachments
         ? const <TuiImageAttachment>[]
         : List<TuiImageAttachment>.of(attachments);
-    final rule = _dim('─' * termWidth);
     // Empty submits (guided-flow "keep the default" answers) skip the
     // message echo — an empty backgrounded block would read as a glitch.
     if (inputText.isEmpty) {
@@ -1902,33 +1901,14 @@ final class FaTuiModel extends Model {
           menuTokenStart: -1,
           attachments: keepAttachments ? null : const [],
         ),
-        () async {
-          await callbacks.onSubmit(text, images: images);
-          return null;
-        },
+        _submitCmd(text, images),
       );
     }
     final echoed = _echoAppend(outputLines, inputText);
     // Shell-style input history: plain messages only (no slash/bang
     // commands), consecutive duplicates collapsed, capped at 100.
     final history = _recordInputHistory(inputHistory, text);
-    // The pinned echo for long answers (Copilot-style): the first input
-    // line, truncated to the width with an ellipsis marking any remainder
-    // — a multi-line message or one simply longer than a row (a bare long
-    // line previously got visually cut without any marker). The ellipsis
-    // is stored PLAIN: the sticky formatter paints it with the current
-    // theme at emit time; a baked dim SGR would freeze the old palette
-    // after a mid-session /theme switch (issue #279 E1).
-    final firstLine = inputText.split('\n').first;
-    final fits = firstLine.length <= termWidth - 3 || termWidth <= 3;
-    final shown = fits ? firstLine : firstLine.substring(0, termWidth - 3);
-    final more = inputText.contains('\n') || !fits ? ' …' : '';
-    // Chrome mode pins the bubble's leading band rows (issue #807); the
-    // echo grows by the second band row. Pinned rows are pre-styled bubble
-    // rows, so the sticky painter re-themes them like any echo line.
-    final sticky = tuiChromeEnabled
-        ? [tuiUserMessageLine(''), tuiUserMessageLine(' $shown$more')]
-        : [rule, '${tuiUserMessageLine(shown)}$more'];
+    final (sticky, stickyEchoLineCount) = _pinnedEcho(inputText);
     final cleared = copyWith(
       inputText: '',
       cursor: 0,
@@ -1940,8 +1920,7 @@ final class FaTuiModel extends Model {
       menuTokenStart: -1,
       stickyLines: sticky,
       stickyIndex: outputLines.length,
-      stickyEchoLineCount: (tuiChromeEnabled ? 3 : 2) +
-          inputText.split('\n').length,
+      stickyEchoLineCount: stickyEchoLineCount,
       attachments: keepAttachments ? null : const [],
     );
     return (
@@ -1952,11 +1931,36 @@ final class FaTuiModel extends Model {
         scrollOffset: cleared._scrollBottom(cleared._wrappedLines()),
         followTail: true,
       ),
+      _submitCmd(text, images),
+    );
+  }
+
+  /// The host-submit command both submit shapes end with.
+  Cmd _submitCmd(String text, List<TuiImageAttachment> images) =>
       () async {
         await callbacks.onSubmit(text, images: images);
         return null;
-      },
-    );
+      };
+
+  /// The pinned echo for long answers (Copilot-style) and its echo-line
+  /// count: the first input line, truncated to the width with an ellipsis
+  /// marking any remainder — a multi-line message or one simply longer
+  /// than a row (a bare long line previously got visually cut without any
+  /// marker). The ellipsis is stored PLAIN: the sticky formatter paints it
+  /// with the current theme at emit time; a baked dim SGR would freeze the
+  /// old palette after a mid-session /theme switch (issue #279 E1).
+  /// Chrome mode pins the bubble's leading band rows (issue #807); the
+  /// echo grows by the second band row. Pinned rows are pre-styled bubble
+  /// rows, so the sticky painter re-themes them like any echo line.
+  (List<String>, int) _pinnedEcho(String text) {
+    final firstLine = text.split('\n').first;
+    final fits = firstLine.length <= termWidth - 3 || termWidth <= 3;
+    final shown = fits ? firstLine : firstLine.substring(0, termWidth - 3);
+    final more = text.contains('\n') || !fits ? ' …' : '';
+    final sticky = tuiChromeEnabled
+        ? [tuiUserMessageLine(''), tuiUserMessageLine(' $shown$more')]
+        : [_dim('─' * termWidth), '${tuiUserMessageLine(shown)}$more'];
+    return (sticky, (tuiChromeEnabled ? 3 : 2) + text.split('\n').length);
   }
 
   /// The input history after recording [text]: plain messages only (no
