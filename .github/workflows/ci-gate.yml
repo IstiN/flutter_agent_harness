@@ -14,8 +14,12 @@
 # expensive matrix still runs ONLY when the SM dispatches it.
 #
 # Failure modes: SM broken / never dispatches -> the waiter times out
-# after 44 min and the mirrors go red (human signal). Dispatched run
-# red -> mirrors red. Draft PRs skip the waiter entirely.
+# after 85 min and the mirrors go red (human signal). Dispatched run
+# red -> mirrors red. Cancelled/skipped dispatched runs are concurrency
+# debris, never a verdict: the selection only honors terminal
+# success/failure conclusions and keeps polling. A cancelled WAITER
+# (re-run debris) leaves the mirrors skipped — the superseding attempt
+# owns the verdict. Draft PRs skip the waiter AND the mirrors.
 
 name: 'SM CI Gate'
 
@@ -36,7 +40,7 @@ jobs:
     name: 'sm-validation (waits for the SM-dispatched CI run)'
     if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     outputs:
       conclusion: ${{ steps.wait.outputs.conclusion }}
     steps:
@@ -46,25 +50,36 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          deadline=$((SECONDS + 2640))   # 44 min — the SM ticks every 10
+          deadline=$((SECONDS + 5100))   # 85 min — slow self-hosted pool +
+                                         # SM tick (10 min) must not outlive
+                                         # the waiter (44 min flapped)
           while [ "$SECONDS" -lt "$deadline" ]; do
-            c="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?event=workflow_dispatch&head_sha=${SHA}&per_page=1" \
-                  --jq '.workflow_runs[0].conclusion' 2>/dev/null || true)"
+            # Newest-first over the last 30 dispatched runs for this head.
+            # Cancelled/skipped runs are concurrency-wave debris: skipped
+            # over, never a verdict. The newest non-debris run must be
+            # terminal before a verdict is reported (an in-flight rerun
+            # outranks any older green/red); its conclusion then wins.
+            c="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?event=workflow_dispatch&head_sha=${SHA}&per_page=30" \
+                  --jq '.workflow_runs
+                        | map(select(.conclusion != "cancelled" and .conclusion != "skipped"))
+                        | if length == 0 then ""
+                          else (if .[0].status != "completed" then ""
+                                else .[0].conclusion end) end' 2>/dev/null || true)"
             case "$c" in
-              success|failure|cancelled|timed_out|action_required|startup_failure)
+              success|failure|timed_out|startup_failure|action_required)
                 echo "conclusion=$c" >> "$GITHUB_OUTPUT"
                 echo "SM-dispatched CI run concluded: $c"
                 exit 0 ;;
               *) sleep 30 ;;
             esac
           done
-          echo "::error::SM-dispatched validation did not conclude within 44 min (SM tick broken or queue stalled)"
+          echo "::error::SM-dispatched validation did not conclude within 85 min (SM tick broken or queue stalled)"
           exit 1
 
   quality-gate:
     name: Quality gate
     needs: sm-validation
-    if: always()
+    if: ${{ !cancelled() && needs.sm-validation.result != 'cancelled' && needs.sm-validation.result != 'skipped' }}
     runs-on: ubuntu-latest
     steps:
       - name: Mirror the SM validation verdict
@@ -76,7 +91,7 @@ jobs:
   quickjs-integration:
     name: JS engine integration (quickjs-ng)
     needs: sm-validation
-    if: always()
+    if: ${{ !cancelled() && needs.sm-validation.result != 'cancelled' && needs.sm-validation.result != 'skipped' }}
     runs-on: ubuntu-latest
     steps:
       - name: Mirror the SM validation verdict
@@ -88,7 +103,7 @@ jobs:
   binaries-smoke:
     name: Binaries smoke gate
     needs: sm-validation
-    if: always()
+    if: ${{ !cancelled() && needs.sm-validation.result != 'cancelled' && needs.sm-validation.result != 'skipped' }}
     runs-on: ubuntu-latest
     steps:
       - name: Mirror the SM validation verdict
