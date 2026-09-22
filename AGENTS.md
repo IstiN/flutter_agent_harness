@@ -1577,7 +1577,10 @@ in `lib/src/parity/settings_registry.dart` with a comment explaining WHY.
 - Commit subjects: `type(scope): ...` (`feat:`, `fix:`, `fix(example):`,
   `ci:`, `test(providers):`, `refactor(prompts):`).
 - Every push to `main` auto-releases a patch to pub.dev
-  (`scripts/auto_release.sh` via `ci.yml`) — intended.
+  (`scripts/auto_release.sh` via `ci.yml`) — intended. The version scheme is
+  `1.0.<counter>` (gh-785: App Store Connect approved 1.0.0 and enforces a
+  monotonic `CFBundleShortVersionString`, so the pre-promotion `0.1.<counter>`
+  train can never upload again); the core and app pubspecs bump in lockstep.
 - CLI binaries build per tag (`ci.yml` `binaries` job), attach to the
   GitHub Release (`fa-<os>-<arch>[.exe]`); `installer-smoke` verifies
   installers.
