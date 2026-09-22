@@ -12,6 +12,8 @@ import 'package:fa/services/session_keys_store.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _testModel = Model(
@@ -66,7 +68,9 @@ ChatGptOAuthCredentials _credentials(String email) => ChatGptOAuthCredentials(
 );
 
 /// Pumps a 'go' button that launches the flow with in-memory stores and a
-/// canned OAuth result (no browser, no callback server).
+/// canned OAuth result (no browser, no callback server). The [iosFn] /
+/// [pushWebView] / [exchangeFn] seams switch the flow onto its iOS WebView
+/// hop (the injected flowFn must then stay unused).
 Future<(Future<bool>, _RecordingService, ProviderRegistry)> _launch(
   WidgetTester tester, {
   ProviderRegistry? registry,
@@ -74,6 +78,9 @@ Future<(Future<bool>, _RecordingService, ProviderRegistry)> _launch(
   ChatGptOAuthCredentials? credentials,
   bool platformSupported = true,
   Future<ChatGptOAuthCredentials?> Function()? flowFn,
+  bool Function()? iosFn,
+  ChatGptCodeExchange? exchangeFn,
+  Future<String?> Function(BuildContext, Uri, String)? pushWebView,
 }) async {
   final resolvedRegistry = registry ?? ProviderRegistry.inMemory();
   final service = _RecordingService(MemoryExecutionEnv());
@@ -91,7 +98,12 @@ Future<(Future<bool>, _RecordingService, ProviderRegistry)> _launch(
                 lastConnectionStore: LastConnectionStore.inMemory(),
                 sessionKeysStore: keys ?? SessionKeysStore.inMemory(),
                 platformSupportedFn: () => platformSupported,
-                chatGptOAuthFlowFn: flowFn ?? () async => credentials,
+                chatGptOAuthFlowFn: iosFn != null
+                    ? null
+                    : flowFn ?? () async => credentials,
+                iosFn: iosFn,
+                exchangeFn: exchangeFn,
+                pushWebView: pushWebView,
               );
             },
             child: const Text('go'),
@@ -283,8 +295,8 @@ void main() {
     expect(service.reconfigured, isNull);
     expect(
       find.text(
-        'ChatGPT sign-in is not yet available on iOS. '
-        'Use OpenAI with an API key instead.',
+        'ChatGPT sign-in ships on macOS and iOS. '
+        'Use OpenAI with an API key on this platform.',
       ),
       findsOneWidget,
     );
@@ -330,5 +342,181 @@ void main() {
       _credentials('alice@example.com').encode(),
     );
     expect(keys.valueOf('FA_KEY_CHATGPT_COM_ALICE_EXAMPLE_COM'), isNull);
+  });
+
+  group('the iOS WebView hop (issue #773)', () {
+    // The loopback redirect the webview intercepts; the port is never bound.
+    const redirectUri = 'http://localhost:1455/auth/callback';
+
+    testWidgets('an iOS-shaped run lands the same entry, key slot and '
+        'service reconfigure as the macOS flow', (tester) async {
+      Uri? authorizeUrl;
+      final keys = SessionKeysStore.inMemory();
+      final (done, service, registry) = await _launch(
+        tester,
+        keys: keys,
+        iosFn: () => true,
+        pushWebView: (context, url, state) async {
+          authorizeUrl = url;
+          return 'code-1';
+        },
+        exchangeFn:
+            ({
+              required String code,
+              required String redirectUri,
+              required String codeVerifier,
+            }) async {
+              expect(code, 'code-1');
+              expect(redirectUri, 'http://localhost:1455/auth/callback');
+              return _credentials('alice@example.com');
+            },
+      );
+      expect(await done, isTrue);
+
+      // The SAME assertions the macOS flow tests make (shared tail).
+      final entry = registry.providers.single;
+      expect(entry.name, 'alice@example.com');
+      expect(entry.baseUrl, chatGptCodexBaseUrl);
+      expect(
+        registry.keyFor(entry.id),
+        _credentials('alice@example.com').encode(),
+      );
+      expect(
+        keys.valueOf('FA_KEY_CHATGPT_COM_ALICE_EXAMPLE_COM'),
+        _credentials('alice@example.com').encode(),
+      );
+      expect(service.reconfigured, isNotNull);
+      expect(service.reconfigured!.providerKind, 'chatgpt-codex');
+      expect(service.reconfigured!.baseUrl, chatGptCodexBaseUrl);
+      expect(authorizeUrl, isNotNull);
+    });
+
+    testWidgets('the authorize URL is the harness PKCE request with a '
+        'loopback redirect', (tester) async {
+      Uri? authorizeUrl;
+      String? expectedState;
+      await _launch(
+        tester,
+        iosFn: () => true,
+        pushWebView: (context, url, state) async {
+          authorizeUrl = url;
+          expectedState = state;
+          return null; // cancel right away — the URL asserts carry the test
+        },
+      );
+
+      expect(authorizeUrl!.host, 'auth.openai.com');
+      expect(authorizeUrl!.path, '/oauth/authorize');
+      final query = authorizeUrl!.queryParameters;
+      expect(query['response_type'], 'code');
+      expect(query['client_id'], chatGptOAuthClientId);
+      expect(query['redirect_uri'], redirectUri);
+      expect(query['code_challenge_method'], 'S256');
+      expect(query['state'], expectedState);
+      // A real S256 challenge: unpadded base64url of a SHA-256 digest.
+      expect(query['code_challenge'], hasLength(43));
+      expect(query['code_challenge'], isNot(contains('=')));
+    });
+
+    testWidgets('the intercepted code completes the real token exchange '
+        'over a MockClient', (tester) async {
+      Uri? authorizeUrl;
+      http.Request? tokenRequest;
+      final keys = SessionKeysStore.inMemory();
+      final (done, service, registry) = await _launch(
+        tester,
+        keys: keys,
+        iosFn: () => true,
+        pushWebView: (context, url, state) async {
+          authorizeUrl = url;
+          return 'code-1';
+        },
+        exchangeFn:
+            ({
+              required String code,
+              required String redirectUri,
+              required String codeVerifier,
+            }) => exchangeChatGptAuthorizationCode(
+              code: code,
+              redirectUri: redirectUri,
+              codeVerifier: codeVerifier,
+              client: MockClient((request) async {
+                tokenRequest = request;
+                return http.Response(
+                  jsonEncode({
+                    'access_token': 'at-1',
+                    'refresh_token': 'rt-1',
+                    'id_token': _idToken({
+                      'email': 'alice@example.com',
+                      'chatgpt_account_id': 'acc-1',
+                    }),
+                    'expires_in': 3600,
+                  }),
+                  200,
+                );
+              }),
+            ),
+      );
+      expect(await done, isTrue);
+
+      // The exchange posts the intercepted code to the token endpoint with
+      // the SAME loopback redirect and the verifier matching the challenge
+      // the authorize URL carried.
+      expect(
+        tokenRequest!.url.toString(),
+        'https://auth.openai.com/oauth/token',
+      );
+      final body = Uri(query: tokenRequest!.body).queryParameters;
+      expect(body['grant_type'], 'authorization_code');
+      expect(body['code'], 'code-1');
+      expect(body['redirect_uri'], redirectUri);
+      expect(body['client_id'], chatGptOAuthClientId);
+      expect(
+        authorizeUrl!.queryParameters['code_challenge'],
+        generateChatGptPkceChallenge(body['code_verifier']!),
+      );
+
+      // The exchanged credentials flow into the shared save tail.
+      expect(registry.providers.single.name, 'alice@example.com');
+      expect(service.reconfigured, isNotNull);
+    });
+
+    testWidgets('a cancelled WebView hop saves nothing', (tester) async {
+      final (done, service, registry) = await _launch(
+        tester,
+        iosFn: () => true,
+        pushWebView: (context, url, state) async => null,
+      );
+      expect(await done, isFalse);
+      expect(registry.providers, isEmpty);
+      expect(service.reconfigured, isNull);
+      expect(find.textContaining('token exchange'), findsNothing);
+    });
+
+    testWidgets('an exchange failure surfaces a named error and saves '
+        'nothing', (tester) async {
+      final (done, service, registry) = await _launch(
+        tester,
+        iosFn: () => true,
+        pushWebView: (context, url, state) async => 'code-1',
+        exchangeFn:
+            ({
+              required String code,
+              required String redirectUri,
+              required String codeVerifier,
+            }) async =>
+                throw const ConfigException('authorization code expired (400)'),
+      );
+      await done;
+      await tester.pump(); // let the snackbar animate in
+
+      expect(registry.providers, isEmpty);
+      expect(service.reconfigured, isNull);
+      expect(
+        find.textContaining('ChatGPT sign-in failed at the token exchange'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('authorization code expired'), findsOneWidget);
+    });
   });
 }
