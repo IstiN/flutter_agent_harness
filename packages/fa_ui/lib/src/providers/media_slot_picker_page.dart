@@ -4,7 +4,6 @@
 
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
@@ -19,18 +18,7 @@ import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/stores/session_keys_store.dart';
 import 'package:fa_ui/src/utils/page_presentation.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
-import 'package:fa_ui/src/utils/vision_models.dart';
 import 'package:fa_ui/src/widgets/model_list_picker.dart';
-
-/// The production [ModelsEndpointFetcher] shared by the settings form and
-/// the media slot picker: the openai-compatible branch of the core
-/// [fetchModelsForEndpoint] dispatch (GETs `<baseUrl>/models`, bearer key
-/// when present, shared parser for ids/windows/caps). Failures return empty
-/// info — free-text model entry keeps working.
-Future<ModelsEndpointInfo> defaultModelsEndpointFetcher(
-  String baseUrl, {
-  required String apiKey,
-}) => fetchModelsForEndpoint(baseUrl, apiKey: apiKey);
 
 /// The outcome of the media slot flow ([MediaSlotProviderPickerPage] →
 /// [MediaSlotModelPage]): either a [override] to save or [cleared] (remove
@@ -377,8 +365,8 @@ class MediaSlotModelPage extends StatefulWidget {
   /// [resolveProviderKey].
   final String? apiKeyOverride;
 
-  /// `/models` fetch override (tests); defaults to the production HTTP
-  /// fetch + shared parser ([defaultModelsEndpointFetcher]).
+  /// `/models` fetch override (tests); production goes through the core
+  /// [fetchModelsForEndpoint] dispatch directly.
   final ModelsEndpointFetcher? modelsFetcher;
 
   @override
@@ -393,6 +381,10 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
   List<String> _endpointModels = const [];
   var _modelsLoading = false;
 
+  /// Whether the list answered from the bundled offline catalog (the live
+  /// fetch failed) — drives the picker's provenance note.
+  var _fromBundledCatalog = false;
+
   String? _error;
 
   /// The provider kind for a save: DIAL endpoints get 'dial' (their own
@@ -402,12 +394,21 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
   /// openai-completions. Media-slot saves always speak the OpenAI dialect;
   /// the generic role flow (slot == null) maps each endpoint to its real
   /// adapter so role runs use the same wire as the chat path.
+  ///
+  /// Identity first: a persisted entry kind ([_entryKind], e.g.
+  /// 'chatgpt-codex' after OAuth) wins over every URL-shape check below,
+  /// so an edited/proxied codex URL still saves — and dispatches — as its
+  /// real kind; URL shape only classifies entries without a persisted
+  /// kind.
   String _mediaSlotProviderKind(String? slot, String baseUrl) {
     if (slot != null) return 'openai-completions';
+    final kind = _entryKind;
+    if (kind != null) return kind;
     if (isCopilotBaseUrl(baseUrl)) return 'copilot';
     final preset = ProviderPreset.fromBaseUrl(baseUrl);
     if (preset == ProviderPreset.dial) return 'dial';
     if (baseUrl.contains('generativelanguage.googleapis.com')) return 'google';
+    if (isChatGptCodexEndpoint(baseUrl)) return 'chatgpt-codex';
     return 'openai-completions';
   }
 
@@ -434,6 +435,13 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
     ProviderPreset preset => preset.baseUrl ?? '',
     CustomProvider custom => custom.baseUrl,
     _ => '',
+  };
+
+  /// The source entry's persisted identity ([CustomProvider.kind]) — wins
+  /// over URL matching in the fetch hint and the generic-role save path.
+  String? get _entryKind => switch (widget.provider) {
+    CustomProvider custom => custom.kind,
+    _ => null,
   };
 
   void _onModelChanged() => setState(() {});
@@ -470,14 +478,15 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
   /// Fetches the endpoint's model list for the picker: the injected
   /// [MediaSlotModelPage.modelsFetcher] override (tests, host codemie
   /// wiring) wins; otherwise the core [fetchModelsForEndpoint] dispatch
-  /// handles the DIAL deployments endpoint, the CodeMie marker, and the
-  /// Copilot token exchange itself (see [modelsDispatchHintFor]).
-  /// Silent on failure — free-text entry always works, the picker just
-  /// shows the manual-entry note.
+  /// handles the DIAL deployments endpoint, the CodeMie marker, the
+  /// bundled Codex catalog, and the Copilot token exchange itself (see
+  /// [modelsDispatchHintFor]). Silent on failure — free-text entry always
+  /// works; a bundled-catalog answer shows the provenance note.
   Future<void> _fetchEndpointModels() async {
     final baseUrl = _baseUrl;
     if (baseUrl.isEmpty) return;
     setState(() => _modelsLoading = true);
+    var fromBundledCatalog = false;
     try {
       final key =
           widget.apiKeyOverride ??
@@ -492,12 +501,21 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
           : await fetchModelsForEndpoint(
               baseUrl,
               apiKey: key,
-              provider: modelsDispatchHintFor(baseUrl),
+              provider: modelsDispatchHintForEntry(_entryKind, baseUrl),
+              onBundledFallback: () => fromBundledCatalog = true,
             );
       if (!mounted) return;
-      setState(() => _endpointModels = ids);
+      setState(() {
+        _endpointModels = ids;
+        _fromBundledCatalog = fromBundledCatalog;
+      });
     } on Object {
-      if (mounted) setState(() => _endpointModels = const []);
+      if (mounted) {
+        setState(() {
+          _endpointModels = const [];
+          _fromBundledCatalog = false;
+        });
+      }
     } finally {
       if (mounted) setState(() => _modelsLoading = false);
     }
@@ -597,6 +615,7 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
                 controller: _modelController,
                 models: _endpointModels,
                 loading: _modelsLoading,
+                fromBundledCatalog: _fromBundledCatalog,
               ),
               if (widget.slot == MediaSlot.audioTts) ...[
                 const SizedBox(height: 16),

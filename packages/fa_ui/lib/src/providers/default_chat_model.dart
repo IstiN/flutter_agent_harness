@@ -10,7 +10,6 @@ import 'package:fa_ui/src/providers/provider_editor_page.dart';
 import 'package:fa_ui/src/host_config.dart';
 import 'package:fa_ui/src/providers/media_slot_picker_page.dart';
 import 'package:fa_ui/src/providers/provider_preset.dart';
-import 'package:fa_ui/src/providers/unified_model_picker.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
 import 'package:fa_ui/src/utils/page_presentation.dart';
@@ -71,7 +70,6 @@ class DefaultChatModelSection extends StatelessWidget {
     required this.onApply,
     this.registry,
     this.modelsFetcher,
-    this.providerModelFetcher,
     this.onDeviceProviders = const [],
     this.providerKindLabels = const {},
     this.addProviderPage,
@@ -89,10 +87,6 @@ class DefaultChatModelSection extends StatelessWidget {
 
   /// `/models` fetch override (tests), forwarded to the model page.
   final ModelsEndpointFetcher? modelsFetcher;
-
-  /// Provider-specific model-list fetcher for non-standard endpoints (e.g.
-  /// CodeMie). Forwarded to the [UnifiedModelPickerPage].
-  final ProviderModelFetcher? providerModelFetcher;
 
   /// The on-device provider entries appended to the picker (already
   /// filtered for the platform by the host).
@@ -175,9 +169,9 @@ class DefaultChatModelSection extends StatelessWidget {
                   );
                 } catch (error) {
                   if (!context.mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text(error.toString())),
-                  );
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text(error.toString())));
                 }
               },
               child: Padding(

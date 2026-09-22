@@ -9,7 +9,7 @@ import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa_llm/fa_llm.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    show CustomProviderRegistry, fetchModelsForEndpoint;
+    show CustomProviderRegistry, copilotDispatchHint, fetchModelsForEndpoint;
 import 'package:fa_ui/fa_ui.dart'
     show CopilotConnectCallbacks, CopilotConnectResult, showCopilotConnectSheet;
 
@@ -65,12 +65,11 @@ Future<bool> runCopilotConnectFlow({
         // The connect sheet's model step: the live /models of the resolved
         // endpoint (the Copilot token exchange runs inside the dialect) —
         // no default model exists.
-        fetchModels: (token, baseUrl) async =>
-            (await fetchModelsForEndpoint(
-              baseUrl,
-              apiKey: token,
-              provider: 'copilot',
-            )).$1,
+        fetchModels: (token, baseUrl) async => (await fetchModelsForEndpoint(
+          baseUrl,
+          apiKey: token,
+          provider: 'copilot',
+        )).$1,
       );
 
   CopilotConnectResult? result;
@@ -99,6 +98,9 @@ Future<bool> runCopilotConnectFlow({
         name: connect.entryName,
         baseUrl: baseUrl,
         modelId: connect.modelId,
+        // Persist the provider identity so the model-list dispatch rides
+        // the Copilot wire (token exchange) even if the URL is edited.
+        kind: copilotDispatchHint,
       );
 
   // Session key for the running app (Keychain-backed when available).
