@@ -61,6 +61,11 @@ const _documentedExemptions = <String, String>{
   'lib/ui/screens/tools_availability_section.dart':
       'Not a screen — the settings sub-section for per-tool availability; '
       'its host SettingsScreen logs screenOpened.',
+  'lib/ui/screens/oauth_webview_scaffold.dart':
+      'Shared WebView chrome (issue #773) — both SSO/OAuth sign-in screens '
+      'render through it; the concrete pages carry the analytics: '
+      'chatgpt_oauth_webview.dart logs screenOpened here, the CodeMie '
+      'surface is exempt above.',
 };
 
 /// Every `lib/ui/screens/*.dart` file plus the shared non-screen surfaces.
