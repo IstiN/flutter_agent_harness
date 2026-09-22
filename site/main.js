@@ -143,6 +143,64 @@
     });
   }
 
+  /* ── Mobile disclosure menu (gh-756) ──────────────────────────────── */
+  var nav = document.querySelector('.nav');
+  var navToggle = document.querySelector('.nav-toggle');
+  var navMenu = document.getElementById('nav-menu');
+
+  // Anchor jumps must land clear of the sticky header: size scroll-padding
+  // to the LIVE header height (it differs wrapped vs one-row) and re-check
+  // on resize. Inline style overrides the CSS fallback in styles.css.
+  function syncScrollPadding() {
+    if (!nav) { return; }
+    var h = Math.ceil(nav.getBoundingClientRect().height);
+    document.documentElement.style.scrollPaddingTop = (h + 8) + 'px';
+  }
+  syncScrollPadding();
+  var paddingTicking = false;
+  window.addEventListener('resize', function () {
+    if (paddingTicking) { return; }
+    paddingTicking = true;
+    setTimeout(function () { syncScrollPadding(); paddingTicking = false; }, 120);
+  });
+
+  if (nav && navToggle && navMenu) {
+    navToggle.hidden = false; // CSS decides visibility (html.js + ≤960px)
+    function setMenu(open) {
+      if (open) { nav.setAttribute('data-open', ''); }
+      else { nav.removeAttribute('data-open'); }
+      navToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      syncScrollPadding();
+    }
+    navToggle.addEventListener('click', function () {
+      setMenu(navToggle.getAttribute('aria-expanded') !== 'true');
+    });
+    // Esc closes and returns focus to the toggle.
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && nav.hasAttribute('data-open')) {
+        setMenu(false);
+        navToggle.focus();
+      }
+    });
+    // Backdrop (a tap anywhere outside the header) closes too. Pointer
+    // dismissal: leave focus where the user put it — only the keyboard
+    // path (Esc) returns focus to the toggle.
+    document.addEventListener('click', function (e) {
+      if (nav.hasAttribute('data-open') && !nav.contains(e.target)) {
+        setMenu(false);
+      }
+    });
+    // Choosing a menu entry dismisses the panel.
+    navMenu.addEventListener('click', function (e) {
+      if (e.target.closest('a')) { setMenu(false); }
+    });
+    // Rotating past the breakpoint auto-closes — no stale overlay (E3).
+    var menuMq = window.matchMedia('(min-width: 961px)');
+    function onMenuMq() { if (menuMq.matches) { setMenu(false); } }
+    if (menuMq.addEventListener) { menuMq.addEventListener('change', onMenuMq); }
+    else if (menuMq.addListener) { menuMq.addListener(onMenuMq); } // old Safari
+  }
+
   /* ── Analytics (GA4 custom events; no-ops when gtag is blocked) ────── */
   function track(name, params) {
     if (typeof window.gtag === 'function') {
