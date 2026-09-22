@@ -4083,6 +4083,15 @@
 - chore: pin factory f5c86d8 — mergeBot pullRequestId (#762 merge fix) (#826)
 - fix(772): one identity per provider - name/kind split resolved through the catalog seam (#779)
 
+## 1.0.458
+
+- fix: factory_ref skew — macOS sed \s gap left acc3ded after pin 54e86fd (#851)
+- ci: skip SM gate bridge on chore:pin PRs — pin validation is exempt by design (#848)
+- chore: pin factory 54e86fd (mutexAmong priority fix) (#847)
+- ci: runner split final — pure-Dart ARM, flutter via arm64 git bootstrap (pending experiment), M5 macOS (#846)
+- chore: pin factory acc3ded — PR-head leg dispatch (#842)
+- ci: runner split — ARM pool for light/medium jobs, self-hosted M5 for macOS (#844)
+
 ## Unreleased
 
 ## Unreleased
