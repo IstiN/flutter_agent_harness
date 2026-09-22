@@ -242,8 +242,13 @@ crashed run.
 - **Kernel activation — landed:** `spec.backend: kernel` wraps every
   child process in the OS sandbox — macOS `sandbox-exec -f`, Linux
   `unshare` user namespace (`--net` only when nothing is allowed), clean
-  `env -i` environment, `ulimit` ceilings; profiles staged under
-  `.fah/cube-profiles/`. Windows remains descriptor-only. A wrapper that
+  `env -i` environment, `ulimit` ceilings; profiles staged content-verified
+  under `<home>/.fah/cube-profiles/` — a user-level directory outside
+  every guest-writable area, re-verified against the recomputed profile
+  immediately before every wrapped exec (restaged atomically on
+  mismatch). Enforcement artifacts never live under the workspace: the
+  profile itself grants workspace writes, so a prisoner could otherwise
+  rewrite its own prison. Windows remains descriptor-only. A wrapper that
   is missing from PATH or refuses the sandbox surfaces as a clean
   `fa_cube[<name>]:` spawn error, in foreground execs and background jobs
   alike.

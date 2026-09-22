@@ -628,8 +628,10 @@ factual: paths, commands, invariants — no essays.
   sandbox via `CubeSandboxBackend.wrapCommand` — macOS `sandbox-exec -f
   <profile>`, Linux `unshare --user --map-root-user --mount [--net iff the
   spec allows no network]` + `ulimit -v/-t` ceilings, both over a clean
-  `env -i` environment; profiles staged `.fah/cube-profiles/<md5>.sb` once
-  per spec; the macOS SBPL profile denies writes blanket outside the
+  `env -i` environment; profiles staged content-verified under
+  `<home>/.fah/cube-profiles/<md5>.sb` (outside the guest-writable
+  workspace; re-verified against the recomputed profile before every
+  wrapped exec — #790); the macOS SBPL profile denies writes blanket outside the
   workspace + `rw` mounts (`/dev/null`, `/dev/fd` exempt) and denies reads
   of `/etc` + user homes when no root mount grants reads (a blanket read
   deny would abort exec — dyld); Windows = Job Object descriptor only

@@ -146,8 +146,18 @@ final class SandboxedExecutionEnv implements ExecutionEnv, BackgroundShell {
     if (wrapperFailure != null) {
       return Err(ExecutionError(ExecutionErrorCode.spawnError, wrapperFailure));
     }
+    final prepared = await _shell.prepare(command, env: options?.env);
+    if (prepared == null) {
+      return Err(
+        ExecutionError(
+          ExecutionErrorCode.spawnError,
+          'fa_cube[${spec.name}]: kernel backend '
+          '${_shell.kernelStagingError ?? 'profile staging failed'}',
+        ),
+      );
+    }
     return bg.startShellJob(
-      await _shell.prepare(command, env: options?.env),
+      prepared,
       id: id,
       logPath: logPath,
       options: sandboxExecOptions(spec, options),
