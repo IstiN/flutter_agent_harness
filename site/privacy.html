@@ -28,6 +28,10 @@
   h2 { font-size: 20px; margin: 40px 0 12px; }
   h3 { font-size: 16px; margin: 24px 0 8px; }
   p, li { color: var(--dim); }
+  /* gh-756: long unbroken tokens (URLs) must wrap at 360px instead of
+     forcing horizontal page scroll; only breaks when overflow would occur,
+     so desktop rendering is unchanged. */
+  p, li, a { overflow-wrap: break-word; }
   strong { color: var(--text); }
   .meta { color: var(--dim); font-size: 14px; margin-bottom: 24px; }
   .lang {
