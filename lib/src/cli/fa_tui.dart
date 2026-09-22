@@ -28,6 +28,7 @@ import 'tui_text_width.dart'
 import '../messaging/scheduled_messages.dart' show ScheduledMessageQueue;
 import 'paste_image.dart';
 import 'tui_key_hints.dart';
+import 'sigint_action.dart';
 
 part 'fa_tui_messages.dart';
 part 'fa_tui_hub.dart';
@@ -73,6 +74,7 @@ final class FaTuiCallbacks {
     required this.statusLine,
     required this.prompt,
     this.onInterrupt,
+    this.onCtrlCExit,
     this.isShiftPressed,
     this.opensPicker,
     this.onPickerSelected,
@@ -107,6 +109,13 @@ final class FaTuiCallbacks {
 
   /// Called on Ctrl-C while the agent is busy.
   final void Function()? onInterrupt;
+
+  /// Double-press Ctrl+C exit (issue #830): press 2 within the window
+  /// resolved [SigintAction.exitInteractive] — the host runs the
+  /// SIGINT-parity exit (abort-if-running bounded, session resume hint,
+  /// exit 130). Null falls back to a plain `quit()` (exit 0), the
+  /// single-press behavior this issue replaced.
+  final void Function()? onCtrlCExit;
 
   /// Host-provided Shift modifier check (e.g. macOS Core Graphics via FFI).
   /// When null, Shift+Enter is not specially handled.
@@ -246,8 +255,11 @@ final class FaTuiModel extends Model {
     this.scheduledTickPending = false,
     this.frameNonce = 0,
     this.hub,
+    SigintPolicy? sigintPolicy,
+    this.ctrlCArmed = false,
     DateTime Function()? now,
   }) : nowFn = now ?? DateTime.now,
+       sigintPolicy = sigintPolicy ?? SigintPolicy(now: now),
        editor = editor ?? const TuiLineEditor.empty();
 
   final FaTuiCallbacks callbacks;
@@ -275,6 +287,18 @@ final class FaTuiModel extends Model {
 
   /// The open agents-hub overlay state (issue #277); null when closed.
   final FaHubState? hub;
+
+  /// The double-press Ctrl+C contract (issue #830). The host passes the
+  /// process-wide instance so the SIGINT path (bin/fah.dart) and this
+  /// KeyMsg path resolve ONE window state (ACX.5); the default builds a
+  /// policy on this model's own clock ([now]) so model-driven tests get
+  /// injectable time for free.
+  final SigintPolicy sigintPolicy;
+
+  /// Press 1 landed inside the window: the prompt-zone footer row shows
+  /// the dim [kCtrlCExitHint] instead of the status line until the next
+  /// keypress.
+  final bool ctrlCArmed;
 
   /// Persistent viewport scroll offset (0 = top). Snapped to the bottom on
   /// new output while [followTail] holds; kept (clamped) otherwise.
@@ -665,6 +689,7 @@ final class FaTuiModel extends Model {
     Object? historyDraft = _unset,
     FaHubState? hub,
     bool clearHub = false,
+    bool? ctrlCArmed,
   }) {
     final copy = FaTuiModel(
       callbacks: callbacks,
@@ -722,6 +747,8 @@ final class FaTuiModel extends Model {
           ? this.historyDraft
           : historyDraft as String?,
       hub: clearHub ? null : (hub ?? this.hub),
+      sigintPolicy: sigintPolicy,
+      ctrlCArmed: ctrlCArmed ?? this.ctrlCArmed,
       // Every copy is a new model state: bump the frame nonce so the view's
       // cursor line always differs after a change (see [frameNonce]).
       frameNonce: frameNonce + 1,
@@ -795,6 +822,7 @@ final class FaTuiModel extends Model {
     if (msg is SpinnerTickMsg) return _handleSpinnerTick();
     if (msg is DrainQueueMsg) return _handleDrainQueue(msg);
     if (msg is ClearQueueMsg) return _handleClearQueue();
+    if (msg is InterruptArmedMsg) return _handleInterruptArmed();
     if (msg is OpenPromptMsg) {
       _promptCompleter = msg.completer;
       return (copyWith(prompt: TuiPromptState(msg.spec)), null);
@@ -1066,11 +1094,31 @@ final class FaTuiModel extends Model {
     if (msg is KeyPressMsg &&
         msg.keyEvent.code == KeyCode.rune &&
         msg.keyEvent.text.length > 1) {
-      return _handleMultiCharRunes(msg);
+      return _withFreshCtrlCWindow(msg, () => _handleMultiCharRunes(msg));
     }
 
-    if (msg is KeyMsg) return _handleKey(msg);
+    if (msg is KeyMsg) {
+      return _withFreshCtrlCWindow(
+        msg,
+        () => _handleKey(msg),
+        keepWindow: msg.key == 'ctrl+c',
+      );
+    }
     return (this, null);
+  }
+
+  /// Any input other than a ctrl+c press resets the double-press window
+  /// (issue #830): the next ctrl+c is a fresh press 1 and the footer hint
+  /// goes away. Ctrl+c itself keeps the window so press 2 can land.
+  (Model, Cmd?) _withFreshCtrlCWindow(
+    Msg msg,
+    (Model, Cmd?) Function() handle, {
+    bool keepWindow = false,
+  }) {
+    if (keepWindow || (!ctrlCArmed && !sigintPolicy.armed)) return handle();
+    sigintPolicy.noteOtherInput();
+    final (next, cmd) = handle();
+    return ((next as FaTuiModel).copyWith(ctrlCArmed: false), cmd);
   }
 
   (Model, Cmd?) _handleModelsRefresh() {
@@ -1464,13 +1512,12 @@ final class FaTuiModel extends Model {
     }
   }
 
-  /// Normal-mode interrupt keys (ctrl+c quits, esc aborts the run); null
-  /// when the key belongs to another cluster.
+  /// Normal-mode interrupt keys (ctrl+c double-press, esc aborts the run);
+  /// null when the key belongs to another cluster.
   (Model, Cmd?)? _handleInterruptKeys(KeyMsg msg) {
     switch (msg.key) {
       case 'ctrl+c':
-        callbacks.onInterrupt?.call();
-        return (this, () => quit());
+        return _handleCtrlCPress();
       case 'esc':
         // Escape aborts the streaming run (pi's keybinding); a no-op when
         // idle because the host only aborts while busy. Unlike Ctrl+C it
@@ -1481,6 +1528,46 @@ final class FaTuiModel extends Model {
         return null;
     }
   }
+
+  /// ONE implementation of a ctrl+c press for every key path (normal mode
+  /// and the hub overlay — issue #830): the shared [sigintPolicy] decides.
+  /// Press 1 aborts the in-flight run (bounded downstream), clears the
+  /// composer when idle, and arms the footer hint; press 2 within the
+  /// window runs the SIGINT-parity exit (resume hint, 130).
+  (Model, Cmd?) _handleCtrlCPress() {
+    callbacks.onInterrupt?.call();
+    if (sigintPolicy.press(headless: false) == SigintAction.exitInteractive) {
+      final exit = callbacks.onCtrlCExit;
+      if (exit != null) {
+        return (
+          copyWith(ctrlCArmed: false),
+          () async {
+            exit();
+            return null;
+          },
+        );
+      }
+      // Legacy hosts without the SIGINT-parity exit seam: the old
+      // single-press quit (exit 0).
+      return (copyWith(ctrlCArmed: false), () => quit());
+    }
+    return (_stayAfterCtrlC(), null);
+  }
+
+  /// Press-1 stay state: the dim footer hint goes up; an idle composer
+  /// with text clears (the boot banner's `ctrl+c clear` promise). A run
+  /// in flight keeps the composer — the abort already owns the screen.
+  FaTuiModel _stayAfterCtrlC() {
+    var next = copyWith(ctrlCArmed: true);
+    if (!next.busy && next.inputText.isNotEmpty) {
+      next = next.copyWith(inputText: '', cursor: 0);
+    }
+    return next;
+  }
+
+  /// SIGINT press 1 routed in from the host (isig terminals never deliver
+  /// ctrl+c as a key): same stay state as the key path.
+  (Model, Cmd?) _handleInterruptArmed() => (_stayAfterCtrlC(), null);
 
   /// Queue-row keys while a run streams: ctrl+x deletes the last queued
   /// row (issue #275 AC2). Idle ctrl+x is NOT handled here — it stays an
@@ -2459,10 +2546,16 @@ final class FaTuiController {
     this.mouseCapture = true,
     this.syncOutput,
     this.sttyRunner,
-  });
+    SigintPolicy? sigintPolicy,
+  }) : sigintPolicy = sigintPolicy ?? SigintPolicy();
 
   final FaTuiCallbacks callbacks;
   final bool Function() isExited;
+
+  /// The double-press Ctrl+C window (issue #830) shared with the host's
+  /// SIGINT handler; defaults to a fresh policy when the host does not
+  /// pass one.
+  final SigintPolicy sigintPolicy;
 
   /// Whether the TUI captures the mouse (wheel scrolling); when false the
   /// terminal keeps its native text selection. See
@@ -2489,6 +2582,7 @@ final class FaTuiController {
     isExited: isExited,
     mouseCapture: mouseCapture,
     forceSyncUpdates: syncOutput == true,
+    sigintPolicy: sigintPolicy,
   );
   late final Program _program = Program(
     options: [
@@ -2630,6 +2724,14 @@ final class FaTuiController {
   /// issue #275). The strip disappearing is the user's confirmation.
   void clearQueue() {
     _send(const ClearQueueMsg());
+  }
+
+  /// SIGINT press 1 of the double-press contract (issue #830): the host
+  /// aborted the in-flight run itself and stays alive — the model clears
+  /// the idle composer and shows the dim `press ctrl+c again to exit`
+  /// footer hint until the next keypress.
+  void armInterruptHint() {
+    _send(const InterruptArmedMsg());
   }
 
   Future<void> run() async {

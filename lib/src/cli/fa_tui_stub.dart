@@ -17,6 +17,7 @@ library;
 
 import 'agent_hub_tui.dart';
 import 'paste_image.dart';
+import 'sigint_action.dart';
 import 'termios_guard.dart' show SttyRunner;
 import 'tui_prompt.dart';
 import 'tui_repl.dart' show MenuItem, TuiProgramHooks;
@@ -35,6 +36,7 @@ final class FaTuiCallbacks {
     required this.statusLine,
     required this.prompt,
     this.onInterrupt,
+    this.onCtrlCExit,
     this.isShiftPressed,
     this.opensPicker,
     this.onPickerSelected,
@@ -53,6 +55,7 @@ final class FaTuiCallbacks {
   final String Function() statusLine;
   final String prompt;
   final void Function()? onInterrupt;
+  final void Function()? onCtrlCExit;
   final bool Function()? isShiftPressed;
   final bool Function(String key)? opensPicker;
   final Future<void> Function(String pickerId, String key)? onPickerSelected;
@@ -79,6 +82,7 @@ final class FaTuiController {
     bool mouseCapture = true,
     bool? syncOutput,
     SttyRunner? sttyRunner,
+    SigintPolicy? sigintPolicy,
   });
 
   final FaTuiCallbacks callbacks;
@@ -157,6 +161,10 @@ final class FaTuiController {
   Future<List<String>> drainQueue() async => const [];
 
   void clearQueue() {}
+
+  /// No-op on web. Mirrors the dart_tui controller's method so agent_cli
+  /// call sites compile for BOTH targets (issue #830 double-press hint).
+  void armInterruptHint() {}
 
   Future<void> run() async {}
 }

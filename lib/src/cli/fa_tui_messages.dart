@@ -150,6 +150,16 @@ final class ClearQueueMsg extends Msg {
   const ClearQueueMsg();
 }
 
+/// SIGINT press 1 of the double-press contract (issue #830): the host's
+/// SIGINT handler resolved [SigintAction.interruptAndStay] and stays
+/// alive — the model clears the composer (idle only) and arms the dim
+/// `press ctrl+c again to exit` footer hint, which the next keypress
+/// clears. The raw/kitty KeyMsg path never sees this message: it resolves
+/// the shared policy directly in the model.
+final class InterruptArmedMsg extends Msg {
+  const InterruptArmedMsg();
+}
+
 /// Message opening the interactive prompt zone (ask/secret/approval).
 final class OpenPromptMsg extends Msg {
   OpenPromptMsg(this.spec, this.completer);

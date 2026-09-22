@@ -180,7 +180,7 @@ final class FaPrototypeModel extends Model {
 
   static const _welcome =
       'fa v0.1.41\n'
-      'escape interrupt · ctrl+c clear/exit · / commands · ! bash\n'
+      'esc interrupt · ctrl+c clear · double ctrl+c exit · / commands · ! bash\n'
       'Press /help to show full commands and resources.\n';
 
   static const _slashItems = [

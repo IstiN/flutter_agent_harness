@@ -36,6 +36,7 @@ import 'stream_json.dart';
 import 'key_event.dart';
 import 'key_status.dart';
 import 'provider_error_text.dart';
+import 'sigint_action.dart';
 import '../agent/agent_loop.dart';
 import '../session/windowed_session_storage.dart' show WindowedSessionStorage;
 import '../trajectory/event_projection.dart'
@@ -270,8 +271,7 @@ class AgentCli {
     Future<void> Function(Duration)? waitingSleep,
   }) : io = useTui && io.supportsRawMode ? _TuiCliIO(io) : io,
        _style = _Style(enabled: useColor),
-       _markdownSurface =
-           markdownSurface ?? const MarkdownSurface(),
+       _markdownSurface = markdownSurface ?? const MarkdownSurface(),
        _waitingClock = waitingClock ?? DateTime.now,
        _waitingSleep =
            waitingSleep ?? ((Duration d) => Future<void>.delayed(d)),
@@ -1291,6 +1291,22 @@ class AgentCli {
   /// can refresh the picker while it is open.
   FaTuiController? _tuiController;
 
+  /// The active TUI controller for the SIGINT handler in `bin/fah.dart`:
+  /// press 1 of the double-press contract (issue #830) reaches the model
+  /// through it (composer clear + footer hint). Null in line mode.
+  FaTuiController? get tuiController => _tuiController;
+
+  /// The process-wide double-press Ctrl+C window (issue #830): the SIGINT
+  /// handler and the TUI's ctrl+c KeyMsg path resolve THIS instance, so
+  /// the two input paths can never disagree (ACX.5).
+  final SigintPolicy sigintPolicy = SigintPolicy();
+
+  /// The SIGINT-parity exit the TUI's ctrl+c press 2 triggers
+  /// (issue #830): abort-if-running bounded, session resume hint,
+  /// exit 130. `bin/fah.dart` installs the real routine; null leaves the
+  /// legacy plain-quit fallback.
+  void Function()? onCtrlCExitRequest;
+
   /// Whether the current run was pushed to consumers as stalled (issue
   /// #514): the edge flag keeps the banner to ONE print per stall
   /// episode instead of one per watchdog tick.
@@ -1722,6 +1738,7 @@ class AgentCli {
       mouseCapture: config.tuiMouseCapture,
       syncOutput: config.tuiSyncOutput,
       sttyRunner: config.sttyRunner,
+      sigintPolicy: sigintPolicy,
       callbacks: FaTuiCallbacks(
         onSubmit: (line, {images = const []}) =>
             _handleTuiSubmit(controller, line, images),
@@ -1736,6 +1753,10 @@ class AgentCli {
           _abortRequested = true;
           if (isBusy) _agent.abort();
         },
+        // Double-press Ctrl+C press 2 (issue #830): the same SIGINT-parity
+        // exit the host's SIGINT handler runs — abort-if-running bounded,
+        // session resume hint, exit 130.
+        onCtrlCExit: onCtrlCExitRequest,
         isShiftPressed: config.isShiftPressed,
         opensPicker: (key) => const {
           '/sessions',
