@@ -29,11 +29,12 @@ List<String> apiKeyEnvNames(String provider) => switch (provider) {
 /// so its key resolves from `CHATGPT_OAUTH_CREDENTIALS`. Null for ids no
 /// version knows.
 ///
-/// Filter stance: the NAME path honors the build-time provider filter
-/// (via [catalogProvider]); the KIND fallback does not — a filtered build
-/// must still resolve a restored kind's key names (the key layer is not a
-/// user-facing picker). The same id can therefore resolve in the key layer
-/// but not the picker layer; that is intended.
+/// Filter stance: NEITHER path honors the build-time provider filter —
+/// the body delegates to [resolveCliProviderSpec], which reads
+/// [providerCatalog] directly. Deliberate: a filtered build (`FA_PROVIDERS`
+/// without `kimi`) must still resolve a restored kind's key names (the
+/// key layer is not a user-facing picker), so the same id can resolve here
+/// but not in the picker layer.
 ProviderSpec? _keySpec(String provider) => resolveCliProviderSpec(provider);
 
 /// Resolves [provider]'s API key headlessly. On the catalog spec's DEFAULT
