@@ -616,12 +616,16 @@ extension on AgentCli {
       );
       return;
     }
-    final spec = catalogProvider(built.provider)!;
+    final spec = resolveCliProviderSpec(built.provider)!;
     final key = _providerKeyFor(spec, built.baseUrl) ?? '';
-    _providerKind = state.providerKind;
+    // The resolved KIND feeds the session state and the stream factory —
+    // a raw name-shaped id here would throw at providerStreamFunction
+    // (the crash this PR removes at boot) and persist itself back into
+    // the state file via onProviderChanged (issue #772 review).
+    _providerKind = spec.kind;
     _apiKey = key;
     _explicitToken = false;
-    _streamFunction = _catalogStreamFunction(state.providerKind, key);
+    _streamFunction = _catalogStreamFunction(spec.kind, key);
     _agent.streamFunction = _streamFunction;
     _agent.state.model = built;
     // The cached model list belongs to the previous provider/endpoint.
