@@ -149,7 +149,6 @@ void main() {
 
     test('a saved chatgpt-codex kind is restored (gh-760 AC1)', () {
       // The app writes `provider: chatgpt-codex` into the shared config;
-<<<<<<< HEAD
       // the boot path must resolve it to the codex catalog entry. The
       // servable shape carries the codex endpoint (CliConfig defaults an
       // absent baseUrl to the openrouter one — that PAIR degrades, see the
@@ -161,20 +160,11 @@ void main() {
           modelId: 'gpt-5-codex',
           baseUrl: 'https://chatgpt.com/backend-api/codex',
         ),
-=======
-      // the boot path must resolve it to the codex catalog entry.
-      final resolved = resolveEffectiveCliArgs(
-        const CliArgs(),
-        CliConfig(providerKind: 'chatgpt-codex', modelId: 'gpt-5-codex'),
->>>>>>> origin/main
         env: const {},
       );
       expect(resolved.provider, 'chatgpt-codex');
       expect(resolved.unknownSavedProvider, isNull);
-<<<<<<< HEAD
       expect(resolved.incompatibleSavedEndpoint, isNull);
-=======
->>>>>>> origin/main
     });
 
     test('a saved catalog NAME restores as its adapter KIND (gh-760 '
@@ -190,29 +180,38 @@ void main() {
       expect(resolved.unknownSavedProvider, isNull);
     });
 
-<<<<<<< HEAD
-=======
     test('app-written and CLI-written configs restore identically '
         '(issue #772 AC1)', () {
       // The app persists the kind (`chatgpt-codex`); old CLI versions
-      // persisted the name (`chatgpt`). Both must land on ONE identity.
+      // persisted the name (`chatgpt`). Both must land on ONE identity —
+      // on the servable pair shape (codex kind + its own endpoint; a
+      // defaulted foreign baseUrl degrades, see the endpoint-lock tests).
       final fromName = resolveEffectiveCliArgs(
         const CliArgs(),
-        CliConfig(providerKind: 'chatgpt', modelId: 'gpt-5-codex'),
+        CliConfig(
+          providerKind: 'chatgpt',
+          modelId: 'gpt-5-codex',
+          baseUrl: 'https://chatgpt.com/backend-api/codex',
+        ),
         env: const {},
       );
       final fromKind = resolveEffectiveCliArgs(
         const CliArgs(),
-        CliConfig(providerKind: 'chatgpt-codex', modelId: 'gpt-5-codex'),
+        CliConfig(
+          providerKind: 'chatgpt-codex',
+          modelId: 'gpt-5-codex',
+          baseUrl: 'https://chatgpt.com/backend-api/codex',
+        ),
         env: const {},
       );
       expect(fromName.provider, 'chatgpt-codex');
       expect(fromName.provider, fromKind.provider);
       expect(fromName.unknownSavedProvider, isNull);
       expect(fromKind.unknownSavedProvider, isNull);
+      expect(fromName.incompatibleSavedEndpoint, isNull);
+      expect(fromKind.incompatibleSavedEndpoint, isNull);
     });
 
->>>>>>> origin/main
     test('a saved kind no version knows degrades to the parsed default '
         'and is reported (gh-760 AC2)', () {
       final resolved = resolveEffectiveCliArgs(
@@ -224,7 +223,6 @@ void main() {
       expect(resolved.unknownSavedProvider, 'from-the-future');
     });
 
-<<<<<<< HEAD
     test('a BLANK saved provider is unset, not unknown (gh-760 review)',
         () {
       // `provider: ""` is a hand-edit artifact — pre-#760 it silently took
@@ -297,8 +295,6 @@ void main() {
       expect(explicit.incompatibleSavedEndpoint, isNull);
     });
 
-=======
->>>>>>> origin/main
     test('an unknown saved kind is not reported when a declaration '
         'overrides it', () {
       final explicit = resolveEffectiveCliArgs(

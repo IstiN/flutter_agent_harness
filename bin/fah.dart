@@ -1322,10 +1322,7 @@ Future<void> _runApp(List<String> args) async {
     String provider,
     EnvProviderPreconfig? faPreconfig,
     String? unknownSavedProvider,
-<<<<<<< HEAD
     String? incompatibleSavedEndpoint,
-=======
->>>>>>> origin/main
   })
   cliStartup;
   try {
@@ -1349,17 +1346,12 @@ Future<void> _runApp(List<String> args) async {
   // NOT modified — warn, don't mutate.
   if (cliStartup.unknownSavedProvider case final unknown?) {
     stderr.writeln(
-<<<<<<< HEAD
       'warning: unknown provider "$unknown" in $home/.fah/config.yaml - '
-=======
-      'warning: unknown provider "$unknown" in $home/.fah/config.yaml — '
->>>>>>> origin/main
       'written by a newer app/CLI version? falling back to '
       '"$provider" (the config was not modified; run /provider or edit '
       'the file to switch)',
     );
   }
-<<<<<<< HEAD
   // gh-760 (review): a persisted provider/baseUrl PAIR an endpoint-locked
   // kind cannot serve (codex pointed at a stale foreign endpoint by a
   // partial write) degrades like an unknown id - the key gate would
@@ -1373,8 +1365,6 @@ Future<void> _runApp(List<String> args) async {
       'the file to switch)',
     );
   }
-=======
->>>>>>> origin/main
 
   final cwd = effective.cwd ?? Directory.current.path;
   final sessionRoot = effective.sessionRoot ?? _defaultSessionRoot();
@@ -1409,7 +1399,6 @@ Future<void> _runApp(List<String> args) async {
   final folderSpec = applyFolderState
       ? resolveCliProviderSpec(folderState.providerKind)
       : null;
-<<<<<<< HEAD
   final state = folderState;
   // gh-760 (review): the same provider/baseUrl PAIR judgement as the saved
   // config restore — an endpoint-locked kind over a foreign state baseUrl
@@ -1435,15 +1424,6 @@ Future<void> _runApp(List<String> args) async {
               '"${state.providerKind}" '
               '(${folderModelStatePath(sessionsRoot: sessionRoot, cwd: cwd)}) — '
               'ignoring it and keeping "$provider"',
-=======
-  final folderStateUsable = applyFolderState && folderSpec != null;
-  if (applyFolderState && !folderStateUsable) {
-    stderr.writeln(
-      'warning: saved folder model state names unknown provider '
-      '"${folderState.providerKind}" '
-      '(${folderModelStatePath(sessionsRoot: sessionRoot, cwd: cwd)}) — '
-      'ignoring it and keeping "$provider"',
->>>>>>> origin/main
     );
   }
   final applyFolderModel = applyFolderState && folderStateUsable;
@@ -1609,14 +1589,10 @@ Future<void> _runApp(List<String> args) async {
       // stderr with the reasons and fall back to the legacy single-model
       // path. Unknown-provider entries were already skipped with named
       // reasons by the resolver; the throw only fires when no usable
-<<<<<<< HEAD
       // entry remains. The drop is whole-resolver BY DESIGN (gh-760
       // review): the per-turn main-model path re-enters chainFor, so a
       // half-alive resolver would move the failure to mid-session; the
       // aux roles ride guarded best-effort paths either way.
-=======
-      // entry remains.
->>>>>>> origin/main
       stderr.writeln(
         'warning: model roles config is unusable (${error.message}) — '
         'falling back to the configured single provider/model',

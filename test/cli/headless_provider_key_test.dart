@@ -60,7 +60,28 @@ void main() {
     },
   );
 
-<<<<<<< HEAD
+  group('both identifiers resolve the same key slot (issue #772)', () {
+    test('name and kind both answer the ChatGPT OAuth credential', () async {
+      final store = FakeSecureKeyStore()
+        ..map['CHATGPT_OAUTH_CREDENTIALS'] = 'oauth-blob';
+      final keys = SecureKeyCache(store);
+      await keys.preload(const ['CHATGPT_OAUTH_CREDENTIALS']);
+
+      for (final id in ['chatgpt', 'chatgpt-codex']) {
+        final key = optionalProviderApiKey(id, keys, env: const {});
+        expect(key, 'oauth-blob', reason: '$id: key resolution');
+      }
+    });
+
+    test('an unknown kind never invents a key', () {
+      final keys = SecureKeyCache(FakeSecureKeyStore());
+      expect(
+        optionalProviderApiKey('from-the-future', keys, env: const {}),
+        isNull,
+      );
+    });
+  });
+
   test('the chatgpt-codex KIND resolves key names through the chatgpt spec '
       '(gh-760 review)', () {
     // gh-760: the restored boot provider is the kind; the key layer must
@@ -85,8 +106,7 @@ void main() {
     );
     // A foreign baseUrl is a custom endpoint: the catalog env names
     // describe the default endpoint and must never hijack it (#40) —
-    // null, even with the env var present (the boot pair-guard degrades
-    // this shape before the key gate).
+    // null, even with the env var present.
     expect(
       optionalProviderApiKey(
         'chatgpt-codex',
@@ -96,27 +116,5 @@ void main() {
       ),
       isNull,
     );
-=======
-  group('both identifiers resolve the same key slot (issue #772)', () {
-    test('name and kind both answer the ChatGPT OAuth credential', () async {
-      final store = FakeSecureKeyStore()
-        ..map['CHATGPT_OAUTH_CREDENTIALS'] = 'oauth-blob';
-      final keys = SecureKeyCache(store);
-      await keys.preload(const ['CHATGPT_OAUTH_CREDENTIALS']);
-
-      for (final id in ['chatgpt', 'chatgpt-codex']) {
-        final key = optionalProviderApiKey(id, keys, env: const {});
-        expect(key, 'oauth-blob', reason: '$id: key resolution');
-      }
-    });
-
-    test('an unknown kind never invents a key', () {
-      final keys = SecureKeyCache(FakeSecureKeyStore());
-      expect(
-        optionalProviderApiKey('from-the-future', keys, env: const {}),
-        isNull,
-      );
-    });
->>>>>>> origin/main
   });
 }
