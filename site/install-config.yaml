@@ -97,6 +97,26 @@ install:
   # release whose assets carry signed provenance). FA_VERSION=latest opts
   # into the moving latest release explicitly. Bump this when a signed
   # release lands — install.sh must never default to an unsigned one.
+  # Release-signing trust anchor (SEC-07 #795): the PUBLIC half of the
+  # FA_RELEASE_SIGNING_KEY repo secret, embedded into install.sh at
+  # generation time via {{SIGNING_PEM}}. Rotate = new keypair, update this
+  # block, regenerate, and keep secret + committed key in lockstep
+  # (ci.yml release-provenance fails closed on drift).
+  signing_public_key: |
+    -----BEGIN PUBLIC KEY-----
+    MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAxdC14PjIMylwleL1r1db
+    ok0WiVkQxHPcPyuJ4yc0E7XT63oIPKAuNdSHaQuejKBncZtwAkAUC95FQL2f5kx7
+    xaFJqggy35347uD5WQFrSoxaV+0rS5Gju7bCtb75Ffy7TAh6vMQX3dgC/Ushhzf6
+    NL4LvK2J8NsVDoG7qqduCMf3t+k+oBZJhZxSs47v12E+tp6StJ9efpfM7oDELuBA
+    ujVQlz39rTS2DFH2A7EaOyP5CmEdqU0ApXkMcOmS4RTlRfgG4LZSFDoZSO4a83gY
+    J0YgT74puGyVMGzpgGMD9BmSwDmXhiHPXCOqcpyjY+LmGMvjhrjmHYfITOlsWjBr
+    Xx5Vt2sstEDjeHr1AydPi28bSV30pnbD/OKhzSE6DK5pQne9PO77ybJw0O5dDxju
+    vv5Bof7joUPkBMbOGhbeiEqDd3J+A0Ue88OrArEj3SlxePERwcMQbzxOXrD+ku7N
+    hlsEvUTQj76J2Gyuh9eVFbRnL6hrTKepycWC8eNezvjjfMXMioGoWK6nNfaAdwXn
+    TtNIIK21mMEHc7rLxohg9+x14aD+7FXgI16iP+Tm4FAC2OTnvm1iaJ0Bd/0Tg094
+    R4ENyyWPuB5SnBK0c4wHDHVM2T2872IVOVKboXFp9ES0p+BRsagG6WT95tg7UACq
+    PhEfPuI1BbH6frKA2swu3JECAwEAAQ==
+    -----END PUBLIC KEY-----
   pinned_cli_version: "0.1.452"
   banner:
     - "  ███████╗ █████╗       ████████╗███████╗██████╗ ███╗   ███╗██╗███╗   ██╗ █████╗ ██╗"

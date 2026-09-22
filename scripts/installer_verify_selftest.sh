@@ -120,8 +120,9 @@ fi
 if ! run_install "$fixture"; then
   echo "FAIL (AC3): valid fixture failed to install:"; sed -n '1,60p' "$work/out.log"; exit 1
 fi
-grep -q "Installing Fa version: 0.0.0-test" "$work/out.log" || {
-  echo "FAIL (AC3): resolved version not printed"; exit 1
+# gh-814 r2: the resolved version prints in its NORMALIZED (v-tagged) form.
+grep -q "Installing Fa version: v0.0.0-test" "$work/out.log" || {
+  echo "FAIL (AC3): resolved version not printed (normalized v-form)"; exit 1
 }
 grep -q "Checksum manifest signature verified" "$work/out.log" || {
   echo "FAIL (AC3): provenance verification did not run"; exit 1
@@ -142,13 +143,31 @@ echo "ok  (AC3): valid fixture installed; verification preceded install + strip"
 
 # ── pinned default + latest override resolve (contract 1) ───────────────────
 # (no network here — just assert the script carries a baked non-empty pin)
-grep -q 'FA_VERSION="${FA_VERSION:-[0-9]' "$INSTALLER" || {
+grep -q 'FA_VERSION="${FA_VERSION:-[0-9v]' "$INSTALLER" || {
   echo "FAIL (contract1): no pinned default version in installer"; exit 1
 }
 grep -q 'FA_VERSION=latest' "$INSTALLER" || {
   echo "FAIL (contract1): no explicit latest override in installer"; exit 1
 }
-echo "ok  (contract1): installer pins a default version; latest is opt-in"
+# gh-814 r2: release tags are v-prefixed — the installer must normalize a
+# bare X.Y.Z pin/override to vX.Y.Z or every pinned download 404s.
+grep -qF 'latest|v*)' "$INSTALLER" || {
+  echo "FAIL (contract1): no v-prefix normalization for FA_VERSION"; exit 1
+}
+echo "ok  (contract1): installer pins a default version; latest is opt-in; bare pins normalize to v-tags"
+
+# ── embedded trust anchor (gh-814 r2): parses WITHOUT any override ──────────
+# The production trust path is the PEM baked into the installer (single-
+# sourced from install-config.yaml). This asserts the committed anchor is a
+# real public key — no FA_SIGNING_PEM fixture override involved.
+sed -n '/BEGIN PUBLIC KEY/,/END PUBLIC KEY/p' "$INSTALLER" |
+  sed "1s/^.*BEGIN/-----BEGIN/; \$s/END.*\$/END PUBLIC KEY-----/" \
+  > "$work/embedded-anchor.pem"
+if ! openssl pkey -pubin -in "$work/embedded-anchor.pem" -noout 2>/dev/null; then
+  echo "FAIL (anchor): embedded trust anchor does not parse as a public key"
+  exit 1
+fi
+echo "ok  (anchor): embedded trust anchor parses (no FA_SIGNING_PEM override)"
 
 echo ""
 echo "installer_verify_selftest: ALL GREEN (AC1-AC4)"

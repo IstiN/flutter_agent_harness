@@ -126,6 +126,11 @@ target="$install_dir/$BINARY"
 # FA_VERSION overrides it explicitly (FA_VERSION=latest tracks the moving
 # latest release); the resolved version is always printed.
 FA_VERSION="${FA_VERSION:-0.1.452}"
+# Release tags are v-prefixed (releases/download/vX.Y.Z); accept both spellings.
+case "$FA_VERSION" in
+  latest|v*) ;;
+  *) FA_VERSION="v$FA_VERSION" ;;
+esac
 if [ "$FA_VERSION" = "latest" ]; then
   release_base="https://github.com/$REPO/releases/latest/download"
 else
@@ -196,8 +201,9 @@ if ! fetch "$sig_url" "$tmp_sig"; then
 fi
 
 # Trust anchor: the release-signing public key (public material, embedded
-# here at generation time). FA_SIGNING_PEM overrides it for the fixture
-# self-test only.
+# here at generation time from install.signing_public_key in
+# install-config.yaml — the single source). FA_SIGNING_PEM overrides it for
+# the fixture self-test only.
 TRUSTED_SIGNING_PEM='-----BEGIN PUBLIC KEY-----
 MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAxdC14PjIMylwleL1r1db
 ok0WiVkQxHPcPyuJ4yc0E7XT63oIPKAuNdSHaQuejKBncZtwAkAUC95FQL2f5kx7
@@ -217,6 +223,15 @@ if [ -n "${FA_SIGNING_PEM:-}" ]; then
 else
   trust_pem="$(mktemp 2>/dev/null || mktemp -t fa-pem)"
   printf '%s\n' "$TRUSTED_SIGNING_PEM" > "$trust_pem"
+fi
+
+# openssl is mandatory for the gate (gh-814 r2): a missing tool gets its own
+# named error so it can never masquerade as "verification failed" — or worse,
+# as "verified".
+if ! command -v openssl >/dev/null 2>&1; then
+  err "E_PROVENANCE_UNAVAILABLE: openssl is required to verify release provenance but was not found on PATH. Nothing was installed."
+  rm -rf "$tmp_archive" "$tmp_sums" "$tmp_sig"
+  exit 1
 fi
 
 info "Verifying release provenance (signed checksums)..."
@@ -274,7 +289,9 @@ if [ "$os" = "macos" ] && command -v codesign >/dev/null 2>&1 && [ -n "${FA_EXPE
   fi
   authority="$(codesign -dv "$tmp_extract/bundle/bin/fa" 2>&1 | sed -n 's/^Authority=//p' | head -1)"
   case "$authority" in
-    *"$FA_EXPECTED_SIGNER"*)
+    # Anchored (gh-814 r2): the expected identity must PREFIX the signing
+    # authority — a substring match would accept lookalike CN fragments.
+    "$FA_EXPECTED_SIGNER"*)
       ok "Code signature identity verified: $authority"
       ;;
     "")

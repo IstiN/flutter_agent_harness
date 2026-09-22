@@ -2109,6 +2109,10 @@ jobs:
     permissions:
       contents: write # upload SHA256SUMS(.sig) to the GitHub Release
     steps:
+      # gh-814 r2: the trust-anchor drift gate below diffs the secret's public
+      # key against the PEM embedded in site/install.sh — that file must be
+      # present, so the signing job checks out the site/ tree.
+      - uses: actions/checkout@v5
       - name: Collect release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -2128,13 +2132,27 @@ jobs:
             echo "::error::FA_RELEASE_SIGNING_KEY is not set — refusing to publish a release without signed checksums (SEC-07 #795, fail-closed). Set the repo secret with the release-signing private key."
             exit 1
           fi
-          printf '%s' "$FA_RELEASE_SIGNING_KEY" > signing.key
-          openssl dgst -sha256 -sign signing.key -out SHA256SUMS.sig SHA256SUMS
+          printf '%s' "$FA_RELEASE_SIGNING_KEY" > "$RUNNER_TEMP/fa-release-signing.key"
+          chmod 600 "$RUNNER_TEMP/fa-release-signing.key"
+          # The key never outlives the step — trap covers mid-step failure.
+          trap 'rm -f "$RUNNER_TEMP/fa-release-signing.key"' EXIT
+          openssl dgst -sha256 -sign "$RUNNER_TEMP/fa-release-signing.key" -out SHA256SUMS.sig SHA256SUMS
           # Self-check: the signature must verify against OUR OWN public key
           # before anything is uploaded.
-          openssl rsa -in signing.key -pubout -out pub.pem 2>/dev/null
+          openssl rsa -in "$RUNNER_TEMP/fa-release-signing.key" -pubout -out pub.pem 2>/dev/null
           openssl dgst -sha256 -verify pub.pem -signature SHA256SUMS.sig SHA256SUMS
-          rm -f signing.key pub.pem
+          rm -f "$RUNNER_TEMP/fa-release-signing.key"
+          # gh-814 r2 trust-anchor drift gate (fail-closed): the public key
+          # derived from the secret must equal the PEM embedded in
+          # site/install.sh — otherwise every pinned installer would ship an
+          # anchor that rejects this release's signed checksums.
+          sed -n '/BEGIN PUBLIC KEY/,/END PUBLIC KEY/p' "$GITHUB_WORKSPACE/site/install.sh" |
+            sed "1s/^.*BEGIN/-----BEGIN/; \$s/END.*\$/END PUBLIC KEY-----/" > embedded-anchor.pem
+          openssl pkey -pubin -in embedded-anchor.pem -noout ||
+            { echo "::error::site/install.sh trust anchor does not parse as a public key — regenerate installers (dart run scripts/gen_installers.dart)"; exit 1; }
+          cmp embedded-anchor.pem pub.pem ||
+            { echo "::error::FA_RELEASE_SIGNING_KEY drifted from the trust anchor embedded in site/install.sh — rotate the keypair: update install.signing_public_key in site/install-config.yaml, regenerate installers, and update the repo secret TOGETHER. Refusing to sign (fail-closed)."; exit 1; }
+          rm -f pub.pem embedded-anchor.pem
 
       - name: Upload provenance assets
         env:
