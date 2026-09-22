@@ -7,8 +7,4 @@
 library;
 
 export 'package:fa_ui/fa_ui.dart'
-    show
-        defaultModelsEndpointFetcher,
-        MediaSlotEditorResult,
-        MediaSlotProviderPickerPage,
-        MediaSlotModelPage;
+    show MediaSlotEditorResult, MediaSlotProviderPickerPage, MediaSlotModelPage;

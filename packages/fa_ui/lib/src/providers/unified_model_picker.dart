@@ -9,22 +9,12 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa_ui/src/providers/connection.dart';
 import 'package:fa_ui/src/providers/default_chat_model.dart';
-import 'package:fa_ui/src/providers/media_slot_picker_page.dart'
-    show defaultModelsEndpointFetcher;
 import 'package:fa_ui/src/providers/provider_editor_page.dart';
 import 'package:fa_ui/src/providers/provider_preset.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/stores/session_keys_store.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
 import 'package:fa_ui/src/utils/page_presentation.dart';
-
-/// A provider-specific model-list fetcher. Used by
-/// [UnifiedModelPickerPage] to support non-standard endpoints (e.g.
-/// CodeMie's `/llm_models` with `Cookie:` auth instead of `/models` with
-/// `Bearer`). When null, the standard `defaultModelsEndpointFetcher` is
-/// used. The host (app) injects this to handle CodeMie providers.
-typedef ProviderModelFetcher =
-    Future<List<String>> Function(String baseUrl, String apiKey);
 
 /// A model entry in the [UnifiedModelPickerPage]: the provider that owns it,
 /// the model id, and the display label.
@@ -37,6 +27,7 @@ final class _ModelEntry {
     required this.modelId,
     required this.contextWindow,
     required this.maxTokens,
+    this.kind,
   });
 
   final String provider;
@@ -46,6 +37,10 @@ final class _ModelEntry {
   final String modelId;
   final int contextWindow;
   final int maxTokens;
+
+  /// The source entry's persisted identity ([CustomProvider.kind]) — wins
+  /// over URL matching in the save path, mirroring the fetch hint.
+  final String? kind;
 
   bool matches(String filter) {
     final lower = filter.toLowerCase();
@@ -76,7 +71,6 @@ class UnifiedModelPickerPage extends StatefulWidget {
     required this.onApply,
     this.registry,
     this.modelsFetcher,
-    this.providerModelFetcher,
     this.onDeviceProviders = const [],
     this.providerKindLabels = const {},
     this.addProviderPage,
@@ -91,15 +85,9 @@ class UnifiedModelPickerPage extends StatefulWidget {
   /// The user-added providers.
   final ProviderRegistry? registry;
 
-  /// `/models` fetch override (tests); defaults to
-  /// [defaultModelsEndpointFetcher].
+  /// `/models` fetch override (tests); production goes through the core
+  /// [fetchModelsForEndpoint] dispatch directly.
   final ModelsEndpointFetcher? modelsFetcher;
-
-  /// Provider-specific model-list fetcher for non-standard endpoints (e.g.
-  /// CodeMie). When provided, the picker calls this instead of
-  /// [modelsFetcher] for any baseUrl where the standard fetcher returns
-  /// empty. The host injects `fetchCodeMieModels` for CodeMie providers.
-  final ProviderModelFetcher? providerModelFetcher;
 
   /// On-device provider routes (Gemma, WebLLM, …), appended to the list.
   final List<FaOnDeviceRoute> onDeviceProviders;
@@ -125,14 +113,17 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
   String? _error;
 
   /// The provider kind for a picked model entry — matches the dispatch
-  /// hint so the stream adapter gets the right wire shape. Google
-  /// endpoints need the Gemini adapter (inlineData, not image_url);
-  /// DIAL and Copilot have their own dialects; Codex is bundled-list only.
-  String _providerKindFor(String baseUrl) {
+  /// hint so the stream adapter gets the right wire shape. The source
+  /// entry's persisted identity wins; Google endpoints need the Gemini
+  /// adapter (inlineData, not image_url); DIAL and Copilot have their own
+  /// dialects; Codex rides the codex wire.
+  String _providerKindFor(String? kind, String baseUrl) {
+    if (kind != null) return kind;
     final preset = ProviderPreset.fromBaseUrl(baseUrl);
     if (preset == ProviderPreset.dial) return 'dial';
     if (isCopilotBaseUrl(baseUrl)) return 'copilot';
     if (baseUrl.contains('generativelanguage.googleapis.com')) return 'google';
+    if (isChatGptCodexEndpoint(baseUrl)) return 'chatgpt-codex';
     return 'openai-completions';
   }
 
@@ -157,16 +148,21 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
   Future<void> _fetchAllModels() async {
     final registry = widget.registry;
     final entries = <_ModelEntry>[];
-    final fetch = widget.modelsFetcher ?? defaultModelsEndpointFetcher;
 
     // Gather all CONNECTED endpoint providers: saved custom providers plus
     // hosted presets whose key resolves (hostedProviderConnected) — the
     // same set every other picker in the app shows. A custom provider on a
     // preset's endpoint covers the preset (never both).
-    final providers = <({String name, String id, String baseUrl})>[];
+    final providers =
+        <({String name, String id, String baseUrl, String? kind})>[];
     if (registry != null) {
       for (final p in registry.providers) {
-        providers.add((name: p.name, id: p.id, baseUrl: p.baseUrl));
+        providers.add((
+          name: p.name,
+          id: p.id,
+          baseUrl: p.baseUrl,
+          kind: p.kind,
+        ));
       }
       for (final preset in hostedProviderPresets) {
         if (preset.baseUrl == null) continue;
@@ -176,6 +172,7 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
           name: preset.labelFor(context),
           id: preset.name,
           baseUrl: preset.baseUrl!,
+          kind: null,
         ));
       }
     }
@@ -188,9 +185,7 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
     }
 
     // Fetch in parallel.
-    final results = await Future.wait(
-      providers.map((p) => _fetchOne(p, fetch)),
-    );
+    final results = await Future.wait(providers.map(_fetchOne));
 
     for (final result in results) {
       entries.addAll(result);
@@ -213,15 +208,23 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
     }
   }
 
-  _ModelEntry _entryFromActive() => _ModelEntry(
-    provider: _activeProviderLabel(),
-    providerId: widget.connection.activeProviderId,
-    baseUrl: widget.connection.activeBaseUrl,
-    apiKey: '',
-    modelId: widget.connection.modelId,
-    contextWindow: fallbackContextWindow,
-    maxTokens: fallbackMaxTokens,
-  );
+  _ModelEntry _entryFromActive() {
+    final activeId = widget.connection.activeProviderId;
+    final activeKind = widget.registry?.providers
+        .where((p) => p.id == activeId)
+        .firstOrNull
+        ?.kind;
+    return _ModelEntry(
+      provider: _activeProviderLabel(),
+      providerId: activeId,
+      baseUrl: widget.connection.activeBaseUrl,
+      apiKey: '',
+      modelId: widget.connection.modelId,
+      contextWindow: fallbackContextWindow,
+      maxTokens: fallbackMaxTokens,
+      kind: activeKind,
+    );
+  }
 
   String _activeProviderLabel() {
     final kindLabel = widget.providerKindLabels[widget.connection.providerKind];
@@ -238,8 +241,7 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
   }
 
   Future<List<_ModelEntry>> _fetchOne(
-    ({String name, String id, String baseUrl}) provider,
-    ModelsEndpointFetcher fetch,
+    ({String name, String id, String baseUrl, String? kind}) provider,
   ) async {
     try {
       var key = widget.registry?.keyFor(provider.id) ?? '';
@@ -275,32 +277,18 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
 
       // The host/test override wins; production goes through the core
       // dispatch (DIAL deployments, the CodeMie marker, the bundled Codex
-      // catalog, and the Copilot token exchange all live in there).
-      var (ids, windows, caps) = widget.modelsFetcher != null
-          ? await fetch(provider.baseUrl, apiKey: key)
+      // catalog, and the Copilot token exchange all live in there), with
+      // the entry's persisted identity winning over URL matching.
+      final (ids, windows, caps) = widget.modelsFetcher != null
+          ? await widget.modelsFetcher!(provider.baseUrl, apiKey: key)
           : await fetchModelsForEndpoint(
               provider.baseUrl,
               apiKey: key,
-              provider: modelsDispatchHintFor(provider.baseUrl),
+              provider: modelsDispatchHintForEntry(
+                provider.kind,
+                provider.baseUrl,
+              ),
             );
-
-      // CodeMie (and other non-standard endpoints): fall back to the
-      // provider-specific fetcher when the standard one returns empty.
-      // This handles the Cookie-auth `/llm_models` endpoint.
-      if (ids.isEmpty &&
-          widget.providerModelFetcher != null &&
-          _isNonStandardProvider(provider.baseUrl)) {
-        try {
-          final providerIds = await widget.providerModelFetcher!(
-            provider.baseUrl,
-            key,
-          );
-          ids = providerIds;
-        } on Object {
-          // Provider-specific fetch also failed — fall through to the
-          // saved model fallback below.
-        }
-      }
 
       if (ids.isEmpty) {
         // Fall back to the provider's saved model.
@@ -333,6 +321,7 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
             modelId: id,
             contextWindow: windows[id] ?? fallbackContextWindow,
             maxTokens: caps[id] ?? fallbackMaxTokens,
+            kind: provider.kind,
           ),
       ];
     } on Object {
@@ -351,6 +340,7 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
             modelId: savedModel,
             contextWindow: fallbackContextWindow,
             maxTokens: fallbackMaxTokens,
+            kind: provider.kind,
           ),
         ];
       }
@@ -405,9 +395,8 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
       if (custom != null &&
           isKeyMissingOnSurface(custom, registry: widget.registry)) {
         setState(
-          () => _error = FaUiStrings.of(
-            context,
-          ).missingKeyOnDevice(custom.name),
+          () =>
+              _error = FaUiStrings.of(context).missingKeyOnDevice(custom.name),
         );
         return;
       }
@@ -418,7 +407,7 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
           // DIAL deployments live on a dial adapter kind (URL/auth dialect);
           // Google endpoints use the Gemini adapter (inlineData, not
           // image_url); everything else is plain openai-completions.
-          providerKind: _providerKindFor(entry.baseUrl),
+          providerKind: _providerKindFor(entry.kind, entry.baseUrl),
           modelId: entry.modelId,
           baseUrl: entry.baseUrl,
           apiKey: entry.apiKey,
@@ -615,9 +604,3 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
 /// suggest vision input).
 String visionMarkerText(String modelId) =>
     modelIdSuggestsVision(modelId) ? 'vision ✓' : '';
-
-/// Whether [baseUrl] belongs to a provider with a non-standard model-list
-/// endpoint (CodeMie uses `/llm_models` with `Cookie:` auth instead of
-/// `/models` with `Bearer`).
-bool _isNonStandardProvider(String baseUrl) =>
-    baseUrl.contains('/code-assistant-api/');

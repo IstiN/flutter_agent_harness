@@ -269,6 +269,71 @@ void main() {
     );
 
     test(
+      'codex hint alone: a proxied codex baseUrl stays on the codex wire',
+      () async {
+        // Identity beats URL shape: the chatgpt-codex hint dispatches to
+        // the codex dialect even when the URL matches no codex shape, and
+        // the bundled catalog answers when the probe fails.
+        http.Request? seen;
+        final client = http_testing.MockClient((request) async {
+          seen = request;
+          return http.Response('unauthorized', 401);
+        });
+        final (ids, _, _) = await fetchModelsForEndpoint(
+          'https://proxy.example.com/api',
+          apiKey: 'raw-token',
+          provider: 'chatgpt-codex',
+          client: client,
+        );
+        expect(seen!.url.toString(), 'https://proxy.example.com/api/models');
+        expect(ids, containsAll(chatGptCodexModels));
+      },
+    );
+
+    test('isChatGptCodexEndpoint: codex shapes and impostors', () {
+      expect(isChatGptCodexEndpoint(chatGptCodexBaseUrl), isTrue);
+      expect(isChatGptCodexEndpoint('https://chatgpt.com/backend-api/codex/x'), isTrue);
+      // A different host is never the codex backend — even a chatgpt-ish
+      // suffix trick.
+      expect(isChatGptCodexEndpoint('https://proxy.example.com/backend-api/codex'), isFalse);
+      expect(isChatGptCodexEndpoint('https://evilchatgpt.com/backend-api/codex'), isFalse);
+      expect(isChatGptCodexEndpoint('https://api.openai.com/v1'), isFalse);
+    });
+
+    test(
+      'the dispatch reports a bundled-catalog answer via onBundledFallback',
+      () async {
+        var bundledReported = 0;
+        Future<ModelsEndpointInfo> run(http.Client client) =>
+            fetchModelsForEndpoint(
+              chatGptCodexBaseUrl,
+              apiKey: 'irrelevant',
+              client: client,
+              onBundledFallback: () => bundledReported++,
+            );
+        // Live failure → bundled, and the caller is told.
+        await run(
+          http_testing.MockClient(
+            (request) async => http.Response('unauthorized', 401),
+          ),
+        );
+        expect(bundledReported, 1);
+        // A live list that happens to equal the bundled catalog is NOT a
+        // fallback — provenance stays truthful (E6).
+        final liveBody =
+            '{"data":[${chatGptCodexModels.map((id) => '{"id":"$id"}').join(',')}]'
+            '}';
+        final (ids, _, _) = await run(
+          http_testing.MockClient(
+            (request) async => http.Response(liveBody, 200),
+          ),
+        );
+        expect(bundledReported, 1);
+        expect(ids, containsAll(chatGptCodexModels));
+      },
+    );
+
+    test(
       'copilot: only picker-enabled, chat-completions models are listed',
       () async {
         // The dialect exchanges the GitHub token first, then filters the
