@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## 1.0.457
+
 
 - fix(771): one model-list dispatch everywhere — the ChatGPT (codex)
   provider's model list loads on every surface (provider editor
@@ -13,7 +14,6 @@
   `void Function()? onBundledFallback` parameter — keep it in the
   override's signature (and ignore it) unless your dialect can answer
   from a bundled offline catalog when the live fetch fails.
-
 
 ## 0.1.397
 
@@ -4082,5 +4082,7 @@
 - gh-760 [GOAL] A persisted provider can never brick the CLI — chatgpt-codex boot-switch hole + degrade-never-crash boot (#762)
 - chore: pin factory f5c86d8 — mergeBot pullRequestId (#762 merge fix) (#826)
 - fix(772): one identity per provider - name/kind split resolved through the catalog seam (#779)
+
+## Unreleased
 
 ## Unreleased
