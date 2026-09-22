@@ -9,7 +9,7 @@ name: 'Machine Merge Bot'
 
 on:
   workflow_run:
-    workflows: ['Quality']   # the dispatched CI — rename per repo if needed
+    workflows: ['CI', 'Quality']   # per-repo: fa's dispatched CI is named 'CI'
     types: [completed]
   pull_request:
     types: [labeled, synchronize, edited]
@@ -35,8 +35,9 @@ jobs:
       github.event.action != 'labeled' ||
       contains(github.event.label.name, 'ai_') ||
       contains(github.event.label.name, 'pr_approved')
-    uses: IstiN/dmtools-agents/.github/workflows/factory-merge.yml@4d8537b1700ee39088b0aad9da4f09fb04094540
+    uses: IstiN/dmtools-agents/.github/workflows/factory-merge.yml@f0198b1fb66cd70d940db883cd481d2532da22e7
     with:
-      factory_ref: 4d8537b1700ee39088b0aad9da4f09fb04094540
+      factory_ref: f0198b1fb66cd70d940db883cd481d2532da22e7
+      ci_workflow: ci.yml
     secrets:
       SOURCE_GITHUB_TOKEN: ${{ secrets.SOURCE_GITHUB_TOKEN }}
