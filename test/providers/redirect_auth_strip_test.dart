@@ -159,6 +159,36 @@ void main() {
       );
 
       test(
+        'a same-origin 303 See Other downgrades to GET and drops the body',
+        () async {
+          final client = _RecordingClient(
+            (call, request) async => call == 1
+                ? _empty(303, {'location': 'https://api.example.com/v1/status'})
+                : _empty(200, {'content-type': 'text/event-stream'}),
+          );
+          final response = await sendProviderRequest(
+            client,
+            _post('https://api.example.com/v1/chat'),
+            null,
+          );
+          expect(response.statusCode, 200);
+          expect(client.requests, hasLength(2));
+          final followed = client.requests[1];
+          // RFC 9110 (303): the new request is a body-less GET — the same
+          // downgrade dart:io's previous auto-follow performed on this
+          // shared path. 301/302/307/308 keep the original method.
+          expect(followed.method, 'GET');
+          expect(
+            followed.url.toString(),
+            'https://api.example.com/v1/status',
+          );
+          expect((followed as http.Request).bodyBytes, isEmpty);
+          // Same-origin hop, so the credentials stay.
+          expect(followed.headers['authorization'], 'Bearer sk-protected');
+        },
+      );
+
+      test(
         'a relative same-origin Location resolves against the request',
         () async {
           final client = _RecordingClient(
