@@ -86,10 +86,10 @@ void main() {
     return (res, body);
   }
 
-  Map<String, Object?> envelope(String url) => {
+  Map<String, Object?> envelope(String url, {Map<String, String>? headers}) => {
     'url': url,
     'method': 'POST',
-    'headers': {
+    'headers': headers ?? {
       'Authorization': 'Bearer test-key',
       'Content-Type': 'application/json',
     },
@@ -303,6 +303,51 @@ void main() {
     );
     expect(capped.statusCode, 502);
     expect(cappedBody, contains('too many redirects'));
+  });
+
+  test('a cross-host redirect drops credentials and 303 demotes the '
+      'method (issue #792 AC4)', () async {
+    await upstream.close(force: true);
+    final redirector = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => redirector.close(force: true));
+    final landedMethod = <String>[];
+    final landedAuth = <String?>[];
+    final landedTrace = <String?>[];
+    unawaited(
+      redirector.forEach((req) async {
+        if (req.uri.path == '/hop') {
+          landedMethod.add(req.method);
+          landedAuth.add(req.headers.value('authorization'));
+          landedTrace.add(req.headers.value('x-trace'));
+          req.response.statusCode = 200;
+          await req.response.close();
+          return;
+        }
+        // A different HOST spelling of the same loopback server —
+        // enough to cross the host line.
+        req.response.statusCode = 303;
+        req.response.headers.set(
+          'location',
+          'http://localhost:${redirector.port}/hop',
+        );
+        await req.response.close();
+      }),
+    );
+
+    final (res, _) = await relay(
+      envelope(
+        'http://127.0.0.1:${redirector.port}/anywhere',
+        headers: {'Authorization': 'Bearer sk-secret', 'X-Trace': 't1'},
+      ),
+    );
+    expect(res.statusCode, 200);
+    expect(landedMethod, ['GET'], reason: '303 demotes POST to GET');
+    expect(
+      landedAuth,
+      [isNull],
+      reason: 'credentials never leave the original host',
+    );
+    expect(landedTrace, ['t1'], reason: 'non-credential headers ride on');
   });
 
   test('a disallowed Origin is a 403 rejection — the upstream is never '

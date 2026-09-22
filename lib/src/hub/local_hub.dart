@@ -853,14 +853,69 @@ Future<(Uri, Map<String, dynamic>)?> _relayEnvelope(
   }
 }
 
+/// Headers for one relay hop: the envelope's headers verbatim, minus
+/// the credential-bearing ones once a redirect has left the original
+/// host (they belong to the host that asked for them).
+Map<String, String> _relayHopHeaders(
+  Map<String, dynamic> envelope,
+  Uri original,
+  Uri current,
+) {
+  final headers = <String, String>{
+    for (final entry in ((envelope['headers'] as Map?) ?? const {}).entries)
+      '${entry.key}': '${entry.value}',
+  };
+  if (current.host.toLowerCase() != original.host.toLowerCase()) {
+    headers.removeWhere(
+      (name, _) {
+        final lower = name.toLowerCase();
+        return lower == 'authorization' || lower == 'cookie';
+      },
+    );
+  }
+  return headers;
+}
+
+/// The redirect target of [res], or null when [res] is not a redirect
+/// (301/302/303/307/308 are the contract — `isRedirect` is unreliable
+/// under `followRedirects = false`).
+Uri? _relayRedirectLocation(HttpClientResponse res) {
+  const redirectCodes = {301, 302, 303, 307, 308};
+  final location = redirectCodes.contains(res.statusCode)
+      ? res.headers.value(HttpHeaders.locationHeader)
+      : null;
+  return location == null ? null : Uri.parse(location);
+}
+
+/// The method a redirect asks for: 301/302/303 demote to GET (the
+/// browser shape); 307/308 replay the original method.
+String _relayRedirectMethod(int statusCode, String method) =>
+    statusCode == HttpStatus.movedTemporarily ||
+        statusCode == HttpStatus.seeOther ||
+        statusCode == HttpStatus.movedPermanently
+    ? 'GET'
+    : method;
+
+/// Answers a relay rejection on the client response: [status] + CORS +
+/// a small `{"error": ...}` JSON body.
+Future<void> _relayReject(
+  HttpRequest request,
+  int status,
+  String error,
+  String? allowedOrigin,
+) async {
+  request.response.statusCode = status;
+  _relayCors(request, allowedOrigin);
+  request.response.write('{"error":"$error"}');
+  await request.response.close();
+}
+
 /// Proxies the raw upstream response (status + content-type + streamed
 /// body, so SSE rides through incrementally); 502 when unreachable.
 ///
 /// Redirects are followed MANUALLY (issue #792): each hop is re-checked
 /// against the same destination rules before it is issued, so a provider
-/// 3xx cannot silently walk the request into internal space. On a host
-/// change the credential headers are dropped (they belong to the host
-/// that asked for them).
+/// 3xx cannot silently walk the request into internal space.
 Future<void> _relayForward(
   HttpRequest request,
   Uri url,
@@ -878,58 +933,39 @@ Future<void> _relayForward(
     for (var hop = 0;; hop++) {
       final req = await upstream.openUrl(method, current);
       req.followRedirects = false;
-      final hopHeaders = <String, String>{
-        for (final entry
-            in ((envelope['headers'] as Map?) ?? const {}).entries)
-          '${entry.key}': '${entry.value}',
-      };
-      if (hop > 0 && current.host.toLowerCase() != url.host.toLowerCase()) {
-        hopHeaders
-          ..remove('authorization')
-          ..remove('cookie');
-      }
-      hopHeaders.forEach(req.headers.set);
+      _relayHopHeaders(envelope, url, current).forEach(req.headers.set);
       final hasBody = body != null && method != 'GET' && method != 'HEAD';
       if (hasBody) req.add(body);
       final res = await req.close();
-      // NOT res.isRedirect — under followRedirects=false that getter is
-      // unreliable on current SDKs; the codes are the contract.
-      const redirectCodes = {301, 302, 303, 307, 308};
-      final location = redirectCodes.contains(res.statusCode)
-          ? res.headers.value(HttpHeaders.locationHeader)
-          : null;
+      final location = _relayRedirectLocation(res);
       if (location == null) {
         await _relayRespond(request, res, allowedOrigin);
         return;
       }
-      // 301/302/303 demote a POST to GET (the browser shape); 307/308
-      // replay method + body unchanged.
-      if (res.statusCode == HttpStatus.movedTemporarily ||
-          res.statusCode == HttpStatus.seeOther ||
-          res.statusCode == HttpStatus.movedPermanently) {
-        method = 'GET';
-      }
-      final next = current.resolve(location);
-      if (hop >= 5 || !relayDestinationAllowed(next, allowAnyHost: allowAnyHost)) {
+      method = _relayRedirectMethod(res.statusCode, method);
+      final next = current.resolveUri(location);
+      if (hop >= 5) {
         await res.drain<void>();
-        request.response.statusCode = hop >= 5 ? 502 : 403;
-        _relayCors(request, allowedOrigin);
-        request.response.write(
-          hop >= 5
-              ? '{"error":"too many redirects"}'
-              : '{"error":"redirect destination not allowed"}',
+        await _relayReject(
+            request, HttpStatus.badGateway, 'too many redirects', allowedOrigin);
+        return;
+      }
+      if (!relayDestinationAllowed(next, allowAnyHost: allowAnyHost)) {
+        await res.drain<void>();
+        await _relayReject(
+          request,
+          HttpStatus.forbidden,
+          'redirect destination not allowed',
+          allowedOrigin,
         );
-        await request.response.close();
         return;
       }
       await res.drain<void>();
       current = next;
     }
   } on Object {
-    request.response.statusCode = 502;
-    _relayCors(request, allowedOrigin);
-    request.response.write('{"error":"upstream unreachable"}');
-    await request.response.close();
+    await _relayReject(
+        request, HttpStatus.badGateway, 'upstream unreachable', allowedOrigin);
   } finally {
     upstream.close(force: true);
   }
