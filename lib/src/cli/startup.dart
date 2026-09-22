@@ -108,36 +108,19 @@ resolveEffectiveCliArgs(
   required Map<String, String> env,
 }) {
   final faPreconfig = faProviderPreconfig(parsed, saved, env: env);
-  // gh-760 (review): restore the RESOLVED spec's kind, never the raw saved
-  // string — the saved id may be a catalog NAME, and the raw name reaching
-  // AgentCliConfig.providerKind bricks the boot at providerStreamFunction.
-  // A blank saved value is UNSET, not unknown: no version-skew warning for
-  // a hand-edit artifact (gh-760 review).
-  final savedRaw = saved.providerKind.trim();
-  final savedSpec = savedRaw.isEmpty ? null : resolveCliProviderSpec(savedRaw);
-  // gh-760 (review): a persisted provider/baseUrl PAIR can be unservable —
-  // an endpoint-locked kind (chatgpt-codex speaks the OAuth Codex wire on
-  // chatgpt.com ONLY) pointed at a stale foreign baseUrl (a partial write
-  // keeping the previous config's endpoint). Restoring it would die at the
-  // key gate with self-contradictory guidance, so the pair is rejected as
-  // a unit: the saved restore degrades like an unknown id — loud warning,
-  // parsed-default provider, config untouched.
-  final endpointConflict =
-      savedSpec != null &&
-      savedSpec.endpointLocked &&
-      saved.baseUrl != savedSpec.defaultBaseUrl;
-  final restoredKind = endpointConflict ? null : savedSpec?.kind;
-  final provider = parsed.providerExplicit
-      ? parsed.provider
-      : faPreconfig?.spec.kind ?? restoredKind ?? parsed.provider;
-  final unknownSavedProvider =
-      savedSpec == null && savedRaw.isNotEmpty && !parsed.providerExplicit && faPreconfig == null
-      ? savedRaw
-      : null;
-  final incompatibleSavedEndpoint =
-      endpointConflict && !parsed.providerExplicit && faPreconfig == null
-      ? savedRaw
-      : null;
+  final restore = _judgeSavedRestore(saved);
+  final restoredKind = restore.endpointConflict ? null : restore.spec?.kind;
+  final provider = _bootProvider(
+    parsed: parsed,
+    faPreconfig: faPreconfig,
+    restoredKind: restoredKind,
+  );
+  final reports = _savedRestoreReports(
+    savedRaw: restore.raw,
+    savedSpec: restore.spec,
+    endpointConflict: restore.endpointConflict,
+    explicitOverride: parsed.providerExplicit || faPreconfig != null,
+  );
   final modelId = parsed.model ?? faPreconfig?.modelId ?? saved.modelId;
   final baseUrl = parsed.baseUrl ?? faPreconfig?.baseUrl ?? saved.baseUrl;
   final effective = CliArgs(
@@ -161,8 +144,61 @@ resolveEffectiveCliArgs(
     args: effective,
     provider: provider,
     faPreconfig: faPreconfig,
-    unknownSavedProvider: unknownSavedProvider,
-    incompatibleSavedEndpoint: incompatibleSavedEndpoint,
+    unknownSavedProvider: reports.unknownSavedProvider,
+    incompatibleSavedEndpoint: reports.incompatibleSavedEndpoint,
+  );
+}
+
+/// The saved-restore judgement (gh-760 review): the saved id trimmed and
+/// resolved through the catalog, plus the provider/baseUrl PAIR verdict.
+/// A blank saved value is UNSET, not unknown — no version-skew warning for
+/// a hand-edit artifact. An endpoint-locked spec ([ProviderSpec
+/// .endpointLocked]) over a foreign persisted baseUrl is an unservable
+/// PAIR: a partial write (provider overwritten, stale endpoint kept) would
+/// otherwise die at the key gate with self-contradictory guidance.
+({String raw, ProviderSpec? spec, bool endpointConflict}) _judgeSavedRestore(
+  CliConfig saved,
+) {
+  final raw = saved.providerKind.trim();
+  final spec = raw.isEmpty ? null : resolveCliProviderSpec(raw);
+  final endpointConflict =
+      spec != null &&
+      spec.endpointLocked &&
+      saved.baseUrl != spec.defaultBaseUrl;
+  return (raw: raw, spec: spec, endpointConflict: endpointConflict);
+}
+
+/// The boot provider: an explicit `--provider` flag or an `FA_PROVIDER_*`
+/// declaration wins; otherwise the saved restore's kind (null when the
+/// pair was judged unservable) or the parsed default.
+String _bootProvider({
+  required CliArgs parsed,
+  required EnvProviderPreconfig? faPreconfig,
+  required String? restoredKind,
+}) {
+  if (parsed.providerExplicit) return parsed.provider;
+  return faPreconfig?.spec.kind ?? restoredKind ?? parsed.provider;
+}
+
+/// The degrade reports for the saved restore: the raw saved id when no
+/// version knows it, and the raw saved id when the provider/baseUrl pair
+/// was judged unservable. An explicit override (flag or preconfig) silences
+/// both — the saved value never took effect, so there is nothing to warn
+/// about.
+({String? unknownSavedProvider, String? incompatibleSavedEndpoint})
+_savedRestoreReports({
+  required String savedRaw,
+  required ProviderSpec? savedSpec,
+  required bool endpointConflict,
+  required bool explicitOverride,
+}) {
+  if (explicitOverride) {
+    return (unknownSavedProvider: null, incompatibleSavedEndpoint: null);
+  }
+  return (
+    unknownSavedProvider:
+        savedSpec == null && savedRaw.isNotEmpty ? savedRaw : null,
+    incompatibleSavedEndpoint: endpointConflict ? savedRaw : null,
   );
 }
 
