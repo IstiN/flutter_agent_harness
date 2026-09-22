@@ -134,11 +134,11 @@ jobs:
     # a branch ref executes whatever is at the head at run start). Flip in
     # lockstep with the machine-sm.yml pin — guarded by
     # test/machine_kit/factory_stub_ref_test.dart.
-    uses: IstiN/dmtools-agents/.github/workflows/factory-teammate.yml@27534bf1771ba6477189224e292ee458d4af90dc
+    uses: IstiN/dmtools-agents/.github/workflows/factory-teammate.yml@f0e962a79acfd0f10c29550840bf03e34d9b8a8b
     with:
       # The literal uses-ref: the factory requires it (it cannot derive its
       # own ref — github.workflow_ref in a called workflow is the CALLER's).
-      factory_ref: 27534bf1771ba6477189224e292ee458d4af90dc
+      factory_ref: f0e962a79acfd0f10c29550840bf03e34d9b8a8b
       # STRING — number/choice-typed reusable inputs cannot take expressions.
       issue: ${{ needs.gate.outputs.issue || github.event.inputs.issue }}
       # #687: PR-anchored review (SM dispatches with pr instead of issue).

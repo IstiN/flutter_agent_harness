@@ -4017,4 +4017,19 @@
 - feat(blog): fa1.dev blog — first post (40B tokens article) (#758)
 - fix(#761): never emit whole-screen CSI S/T when the leading edge row is static (#766)
 
+## 0.1.448
+
+- fix(machine): repair Frankenstein factory ref — sed replaced only the 7-char prefix inside the 40-char SHA
+- chore(machine): pin factory to 27534bf — no-op rework token guard (#775)
+- feat(machine): dispatch-only CI — SM is the only CI trigger; auto-update-prs retired (#770)
+- feat(693): providers queue picks through the shared two-step provider→model flow (#769)
+- chore(ci): cache native-assets hook downloads — ride out GitHub release-asset 504s (#768)
+- fix(729): over-window resume — raised-window override + window-bounded compaction payloads (#767)
+
+## 0.1.449
+
+- chore: pin factory b105bfd1bc1d93539b561f1957e6e97466a8fe4a (conflict-rework)
+- chore: pin factory a92d91cd2ceb3787c80982542844d03aa6ade73f (prStatus BLOCKED fix)
+- chore(machine): pin factory to d6c45fb — guest PRs never get a rework arm
+
 ## Unreleased
