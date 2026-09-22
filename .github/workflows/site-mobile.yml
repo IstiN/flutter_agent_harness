@@ -1,0 +1,79 @@
+name: Site mobile
+
+# gh-756 — fa1.dev mobile-first gate. Red blocks merge (repo rule; add the
+# `site-mobile` check to branch protection). Path-gated to the static site,
+# its E2E script, and this workflow — PRs that don't touch them don't pay.
+#
+# Asserts in real headless Chromium (Playwright, pinned 1.49.1 — the same
+# pin the Pages boot smoke uses):
+#   AC1/AC4  documentElement.scrollWidth <= innerWidth on every inventory
+#            page (index, privacy, app-store, widgets, 3x oauth) at
+#            360x640 / 390x844 / 768x1024 / 641x800 / 1280x800
+#   AC2      header disclosure menu: tap/Esc/backdrop, aria-expanded,
+#            all 10 links reachable, sticky bar height constant
+#   AC3      every header anchor jump lands with the heading visible
+#   AC5/REG  desktop 1280px full-page screenshots byte-compare against the
+#            committed goldens (test/site/goldens/site-mobile/) — a red REG
+#            blocks merge (REG-D1); re-bake intended changes with
+#            `node scripts/site_mobile_check.mjs --update-goldens`
+#   E2-E6    landscape fit, rotate auto-close, reduced-motion, no-JS degrade
+# Serves site/ with a plain `python3 -m http.server` — the no-server static
+# case. Viewport screenshots upload as an artifact for review/diffing.
+#
+# Golden rule: the REG goldens are only byte-valid for THIS pinned Playwright
+# Chromium — never re-bake them via CHROMIUM_PATH/<system browser> (the
+# script refuses that; system Chromium rasterizes the font stacks
+# differently).
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - 'scripts/site_mobile_check.mjs'
+      - '.github/workflows/site-mobile.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - 'scripts/site_mobile_check.mjs'
+      - '.github/workflows/site-mobile.yml'
+  workflow_dispatch:
+
+# Least privilege: this job only reads the checkout (CodeQL alert #38 —
+# without this block GITHUB_TOKEN inherits the repo default, which here is
+# read-write, while the job runs `npm i playwright` supply-chain code).
+permissions:
+  contents: read
+
+jobs:
+  site-mobile:
+    name: Site mobile E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Same install recipe as the Pages workflow's boot smoke (pinned).
+      - name: Install Playwright
+        run: |
+          npm init -y >/dev/null
+          npm i --no-fund --no-audit playwright@1.49.1 >/dev/null
+          npx playwright install chromium --with-deps >/dev/null
+
+      - name: Site mobile check
+        env:
+          SHOTS_DIR: site-mobile-shots
+        run: node scripts/site_mobile_check.mjs
+
+      - name: Upload viewport screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: site-mobile-screenshots
+          path: site-mobile-shots/
+          retention-days: 14
+          if-no-files-found: ignore
