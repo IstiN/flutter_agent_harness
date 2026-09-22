@@ -23,6 +23,7 @@ List<String> apiKeyEnvNames(String provider) => switch (provider) {
         const ['OPENROUTER_API_KEY', 'OPENAI_API_KEY'],
 };
 
+<<<<<<< HEAD
 /// The catalog spec for a provider name OR adapter kind. The kind fallback
 /// matters since the restored boot provider can be a kind that is not
 /// itself a catalog name — `chatgpt-codex` → the `chatgpt` spec (gh-760),
@@ -35,6 +36,16 @@ List<String> apiKeyEnvNames(String provider) => switch (provider) {
 /// without `kimi`) must still resolve a restored kind's key names (the
 /// key layer is not a user-facing picker), so the same id can resolve here
 /// but not in the picker layer.
+=======
+/// The catalog spec for a provider name OR adapter kind, via
+/// [resolveCliProviderSpec] — the ONE both-identifier lookup (issue #772).
+/// The kind leg matters since the restored boot provider can be a kind
+/// that is not itself a catalog name — `chatgpt-codex` → the `chatgpt`
+/// spec, so its key resolves from `CHATGPT_OAUTH_CREDENTIALS`. Null for
+/// ids no version knows. Intentionally NOT honoring the build-time
+/// provider filter: the boot-restored provider's key must resolve in
+/// every build (the seam's restore-path filter stance).
+>>>>>>> origin/main
 ProviderSpec? _keySpec(String provider) => resolveCliProviderSpec(provider);
 
 /// Resolves [provider]'s API key headlessly. On the catalog spec's DEFAULT

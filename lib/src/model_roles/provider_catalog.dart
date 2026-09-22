@@ -478,6 +478,7 @@ Model buildCatalogModel(
 /// a custom [baseUrl] resolve to the `openai` spec (the model reports
 /// provider `openai` instead of `openrouter`); without one, `openrouter`.
 ///
+<<<<<<< HEAD
 /// Intentionally NOT honoring the build-time provider filter
 /// (`FA_PROVIDERS`): the boot restore path must judge every persisted id
 /// against the full catalog — a disabled-in-this-build saved provider
@@ -498,12 +499,84 @@ ProviderSpec? resolveCliProviderSpec(String kind, {String? baseUrl}) {
   final byName = providerCatalog[key];
   if (byName != null) return byName;
   // A kind that is not itself a catalog name (e.g. `chatgpt-codex`).
+=======
+/// Intentionally filter-less by default: the boot restore path must judge
+/// every persisted id against the full catalog — a disabled-in-this-build
+/// saved provider restores and boots (the wire adapters stay in the
+/// binary) instead of degrading to the fallback warning. User-facing
+/// surfaces (pickers, roles, `/provider`, key collection, `models:`
+/// validation) pass `honorBuildFilter: true` — the filter the
+/// [catalogProvider] lookups used to apply — instead of re-wiring
+/// [providerEnabledInBuild] by hand.
+
+/// The legacy `openai-completions`/`openrouter` default-endpoint rule
+/// (gh-760 historical behavior): the model reports provider `openai`
+/// instead of `openrouter` on a custom base URL.
+ProviderSpec? _legacyOpenAiSpec(String? baseUrl) =>
+    baseUrl == null ? providerCatalog['openrouter'] : providerCatalog['openai'];
+
+/// The kind scan: the entry whose ADAPTER KIND is [key] — a kind that is
+/// not itself a catalog name (e.g. `chatgpt-codex`).
+ProviderSpec? _kindScan(String key) {
+>>>>>>> origin/main
   for (final spec in providerCatalog.values) {
     if (spec.kind == key) return spec;
   }
   return null;
 }
 
+<<<<<<< HEAD
+=======
+/// The FA_PROVIDERS gate for resolved specs: a [honorBuildFilter] lookup
+/// yields null when the resolved entry is disabled in this build.
+ProviderSpec? _applyBuildFilter(ProviderSpec? spec, bool honorBuildFilter) {
+  if (spec == null) return null;
+  if (honorBuildFilter && !providerEnabledInBuild(spec.name)) return null;
+  return spec;
+}
+
+ProviderSpec? resolveCliProviderSpec(
+  String kind, {
+  String? baseUrl,
+  bool honorBuildFilter = false,
+}) {
+  // Uniform normalization: names AND kinds are lowercase in the catalog,
+  // so the literal special-case, the name leg, and the kind leg all
+  // accept case variants identically.
+  final key = kind.trim().toLowerCase();
+  if (key == 'openai-completions' || key == 'openrouter') {
+    return _applyBuildFilter(_legacyOpenAiSpec(baseUrl), honorBuildFilter);
+  }
+  return _applyBuildFilter(
+    providerCatalog[key] ?? _kindScan(key),
+    honorBuildFilter,
+  );
+}
+
+/// The canonical PERSISTED identity for a provider id (issue #772): the
+/// catalog entry's adapter [ProviderSpec.kind]. Config files
+/// (`provider:`, folder model state, handoffs) carry the kind — the name
+/// (`chatgpt`) is display/command sugar that resolves here, in ONE place.
+///
+/// Only UNIQUE-kind entries canonicalize: when several catalog entries
+/// share one kind (`openai-completions` is openrouter/openai/kimi/codemie),
+/// the kind is coarser than the saved name and the name stays (the endpoint
+/// base URL carries the identity there). A kind owned by exactly one entry
+/// (`chatgpt-codex` → `chatgpt`) folds its name-shaped spellings onto the
+/// kind. Alias spellings (`chatgpt.com`) fold first via
+/// [canonicalProviderName] at the config boundary. Unknown ids return
+/// unchanged — the boot boundary warns and degrades (issue #760), it never
+/// rewrites a value it cannot resolve.
+String canonicalProviderKind(String id) {
+  final spec = resolveCliProviderSpec(id);
+  if (spec == null) return id;
+  for (final other in providerCatalog.values) {
+    if (other.kind == spec.kind && other.name != spec.name) return id;
+  }
+  return spec.kind;
+}
+
+>>>>>>> origin/main
 /// Builds the legacy single [Model] the `fah` executable runs when no roles
 /// are configured (`--provider`/`--model`/`--base-url` flags).
 ///

@@ -48,6 +48,7 @@ Map<String, String> scrubbedChildEnv() {
     ..removeWhere((key, _) => ambient(key));
 }
 
+<<<<<<< HEAD
 /// The one spawn site both IT families share (`runFaHeadless` here,
 /// `runFaHeadlessRaw` in poisoned_provider_boot_test.dart): the scrubbed
 /// environment, the credential blank-pins and the `dart run bin/fah.dart`
@@ -92,6 +93,8 @@ Future<FaResult> spawnFa({
   );
 }
 
+=======
+>>>>>>> origin/main
 /// Runs one headless prompt against the CLI.
 ///
 /// [workspace] is passed as `--cwd` (cube manifests, cache and session cwd
@@ -107,9 +110,24 @@ Future<FaResult> runFaHeadless({
   String? cubeConfig,
   Map<String, String> env = const {},
   Duration timeout = const Duration(minutes: 2),
+<<<<<<< HEAD
 }) {
   return spawnFa(
     fahArgs: [
+=======
+}) async {
+  // Scrub the ambient FA_* environment (a developer/CI shell may export
+  // FA_PROVIDER_*/FA_PROVIDERS_QUEUE/FA_LOG_FILE/...): those are
+  // boot-resolution inputs, and an inherited preconfig or queue would
+  // hijack the run away from the explicit flags below. Blank values read
+  // as unset at every consumer, so the explicit blanks keep the override
+  // minimal where the injection re-adds missing vars.
+  final result = await Process.run(
+    'dart',
+    [
+      'run',
+      'bin/fah.dart',
+>>>>>>> origin/main
       '--provider',
       'openai-completions',
       '--base-url',
@@ -123,7 +141,29 @@ Future<FaResult> runFaHeadless({
       '-p',
       prompt,
     ],
+<<<<<<< HEAD
     env: env,
     timeout: timeout,
+=======
+    workingDirectory: Directory.current.path,
+    environment: {
+      ...scrubbedChildEnv(),
+      'OPENAI_API_KEY': 'mock',
+      'FA_PROVIDER_TYPE': '',
+      'FA_PROVIDER_NAME': '',
+      'FA_PROVIDER_CONFIG': '',
+      'FA_PROVIDER_CONFIG_BASE64': '',
+      'FA_PROVIDERS_QUEUE': '',
+      'FA_LOG_FILE': '',
+      ...env,
+    },
+    stdoutEncoding: utf8,
+    stderrEncoding: utf8,
+  ).timeout(timeout);
+  return FaResult(
+    stdout: result.stdout as String,
+    stderr: result.stderr as String,
+    exitCode: result.exitCode,
+>>>>>>> origin/main
   );
 }

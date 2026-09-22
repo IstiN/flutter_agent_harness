@@ -104,6 +104,7 @@ approvalMode: yolo
       );
     });
 
+<<<<<<< HEAD
     test('AC1 pair guard: persisted chatgpt-codex over a stale foreign '
         'baseUrl degrades with a named warning, never bricks', () async {
       // The realistic partial write: a surface overwrites provider: on an
@@ -116,6 +117,13 @@ approvalMode: yolo
       writeConfig('''
 provider: chatgpt-codex
 model: mock-model
+=======
+    test('AC1: the app-written chatgpt-codex provider no longer bricks '
+        'the boot', () async {
+      writeConfig('''
+provider: chatgpt-codex
+model: gpt-5-codex
+>>>>>>> origin/main
 baseUrl: ${server.baseUrl}
 mode: code
 approvalMode: yolo
@@ -126,6 +134,7 @@ approvalMode: yolo
         extraEnv: const {'CHATGPT_OAUTH_CREDENTIALS': 'dummy-creds'},
       );
 
+<<<<<<< HEAD
       expect(result.exitCode, 0, reason: result.output);
       expect(
         result.stderr,
@@ -178,6 +187,13 @@ approvalMode: yolo
       expect(result.stderr, isNot(contains('missing API key')));
       expect(result.stderr, isNot(contains('unknown provider')));
       expect(result.stderr, isNot(contains('only works with its own')));
+=======
+      // The boot-crash signature is gone: no uncaught ConfigException, no
+      // crash.log. (The turn itself cannot complete against the mock —
+      // the Codex Responses wire is unmatched — but the boot MUST reach
+      // the provider call instead of dying at model construction.)
+      expect(result.output, isNot(contains('unknown provider')));
+>>>>>>> origin/main
       expect(
         File('${tempHome.path}/.fah/crash.log').existsSync(),
         isFalse,
@@ -241,12 +257,18 @@ approvalMode: yolo
 
     test('BLOCKING regression: the name form of the ticket provider '
         '(provider: chatgpt) no longer bricks the boot', () async {
+<<<<<<< HEAD
       // Same pair guard as the kind form: the name resolves to the
       // endpoint-locked codex kind, the stale foreign baseUrl degrades
       // with the named warning, the turn completes on the fallback.
       writeConfig('''
 provider: chatgpt
 model: mock-model
+=======
+      writeConfig('''
+provider: chatgpt
+model: gpt-5-codex
+>>>>>>> origin/main
 baseUrl: ${server.baseUrl}
 mode: code
 approvalMode: yolo
@@ -257,13 +279,17 @@ approvalMode: yolo
         extraEnv: const {'CHATGPT_OAUTH_CREDENTIALS': 'dummy-creds'},
       );
 
+<<<<<<< HEAD
       expect(result.exitCode, 0, reason: result.output);
+=======
+>>>>>>> origin/main
       expect(result.output, isNot(contains('Unknown provider kind')));
       expect(
         File('${tempHome.path}/.fah/crash.log').existsSync(),
         isFalse,
         reason: result.output,
       );
+<<<<<<< HEAD
       expect(
         result.stderr,
         contains('saved provider "chatgpt" only works with its own '
@@ -271,6 +297,8 @@ approvalMode: yolo
         reason: result.output,
       );
       expect(result.stdout, contains('fallback reply'));
+=======
+>>>>>>> origin/main
     });
 
     test('folder model state carrying a catalog NAME normalizes to the '
@@ -303,9 +331,12 @@ approvalMode: yolo
       );
 
       expect(result.output, isNot(contains('Unknown provider kind')));
+<<<<<<< HEAD
       // The kind restored with no baseUrl (spec default = the endpoint the
       // kind locks to), so the injected creds resolve the key gate.
       expect(result.stderr, isNot(contains('missing API key')));
+=======
+>>>>>>> origin/main
       expect(
         File('${tempHome.path}/.fah/crash.log').existsSync(),
         isFalse,
@@ -323,6 +354,7 @@ Future<FaResult> runFaHeadlessRaw({
   Map<String, String> env = const {},
   Map<String, String> extraEnv = const {},
   Duration timeout = const Duration(minutes: 2),
+<<<<<<< HEAD
 }) {
   // The shared [spawnFa] owns the scrub + blank pins (see its doc): the
   // boot must resolve ONLY from the poisoned config fixture — an inherited
@@ -333,5 +365,39 @@ Future<FaResult> runFaHeadlessRaw({
     env: env,
     extraEnv: extraEnv,
     timeout: timeout,
+=======
+}) async {
+  // Scrub the ambient environment (the developer's/CI's own provider
+  // preconfig, queue, log file, and any REAL provider keys — see
+  // [scrubbedChildEnv]) so the boot resolves ONLY from the poisoned
+  // config fixture — an inherited FA_PROVIDER_* declaration would
+  // legitimately override it and defeat the test.
+  final result = await Process.run(
+    'dart',
+    ['run', 'bin/fah.dart', '--cwd', workspace.path, '-p', prompt],
+    workingDirectory: Directory.current.path,
+    environment: {
+      ...scrubbedChildEnv(),
+      'OPENAI_API_KEY': 'mock',
+      // The ambient FA_* injection fills missing vars only — explicit
+      // blanks neutralize the preconfig/queue/log-file (blank reads as
+      // unset at every consumer) so the boot resolves from the fixture.
+      'FA_PROVIDER_TYPE': '',
+      'FA_PROVIDER_NAME': '',
+      'FA_PROVIDER_CONFIG': '',
+      'FA_PROVIDER_CONFIG_BASE64': '',
+      'FA_PROVIDERS_QUEUE': '',
+      'FA_LOG_FILE': '',
+      ...env,
+      ...extraEnv,
+    },
+    stdoutEncoding: utf8,
+    stderrEncoding: utf8,
+  ).timeout(timeout);
+  return FaResult(
+    stdout: result.stdout as String,
+    stderr: result.stderr as String,
+    exitCode: result.exitCode,
+>>>>>>> origin/main
   );
 }

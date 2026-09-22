@@ -26,6 +26,15 @@ import '../providers/copilot_oauth.dart';
 import '../providers/openai_completions.dart';
 import '../types.dart';
 
+/// The named refusal for the Codex kind (gh-760): the Responses adapter
+/// has no vision wire. One constant so the two refuse sites (default
+/// endpoint pick and the explicit-baseUrl stream route) cannot drift.
+StateError _codexVisionRefusal() => StateError(
+      'inspect_image: provider kind "chatgpt-codex" (ChatGPT Codex) has no '
+      'vision adapter — configure inspect_image with an openai-completions '
+      'or copilot vision model',
+    );
+
 /// Configuration for the [inspectImageTool] vision model.
 final class InspectImageConfig {
   /// Creates a configuration.
@@ -71,11 +80,15 @@ Model _visionModel(InspectImageConfig config) {
         // gh-760: the Codex Responses adapter has no vision wire — refuse
         // with a named error instead of silently misrouting the call to
         // api.openai.com via the catch-all below.
+<<<<<<< HEAD
         'chatgpt-codex' => throw StateError(
           'inspect_image: provider kind "chatgpt-codex" (ChatGPT Codex) '
           'has no vision adapter — configure inspect_image with an '
           'openai-completions or copilot vision model',
         ),
+=======
+        'chatgpt-codex' => throw _codexVisionRefusal(),
+>>>>>>> origin/main
         _ => 'https://api.openai.com/v1',
       };
   return Model(
@@ -121,11 +134,15 @@ AssistantMessageEventStream _streamVisionResponse(
       // Named refusal (gh-760): the Codex Responses adapter has no vision
       // wire; reaching the old `default` here meant the call had already
       // been misrouted to api.openai.com by _visionModel.
+<<<<<<< HEAD
       throw StateError(
         'inspect_image: provider kind "chatgpt-codex" (ChatGPT Codex) has '
         'no vision adapter — configure inspect_image with an '
         'openai-completions or copilot vision model',
       );
+=======
+      throw _codexVisionRefusal();
+>>>>>>> origin/main
     default:
       throw StateError(
         'Unsupported inspect_image provider kind: ${config.providerKind}',

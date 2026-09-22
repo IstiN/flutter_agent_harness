@@ -96,6 +96,58 @@ void main() {
   );
 
   test(
+    'a name-shaped folder state restores through the seam (issue #772)',
+    timeout: const Timeout(Duration(seconds: 60)),
+    () async {
+      final first = cliFactory(sessionName: 'name-shaped');
+      final run1 = first.run();
+      ios.single.sendLine('hi');
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      ios.single.sendLine('/exit');
+      await run1;
+
+      // The pre-#772 app shape: the catalog NAME persisted as providerKind.
+      await saveFolderModelState(
+        env,
+        sessionsRoot: '/sessions',
+        cwd: '/work',
+        providerKind: 'chatgpt',
+        modelId: 'gpt-5-codex',
+        baseUrl: null,
+      );
+
+      // Boot 2: the resume twin must feed the RESOLVED kind into the
+      // stream factory — the raw name would throw
+      // `Unknown provider kind: chatgpt` at _catalogStreamFunction and
+      // persist itself back into the state file.
+      final second = cliFactory(
+        sessionName: 'name-shaped',
+        modelId: 'other-model',
+      );
+      final secondIo = ios.last;
+      final run2 = second.run();
+      secondIo.sendLine('/exit');
+      await run2;
+
+      expect(second.agent.state.model.id, 'gpt-5-codex');
+      expect(second.agent.state.model.provider, 'chatgpt');
+      expect(second.providerKind, 'chatgpt-codex');
+      expect(
+        secondIo.out.toString(),
+        isNot(contains('Unknown provider kind')),
+      );
+      // The state file keeps the name spelling (restore never mutates);
+      // the fix is at the seam, not a rewrite.
+      final state = await loadFolderModelState(
+        env,
+        sessionsRoot: '/sessions',
+        cwd: '/work',
+      );
+      expect(state!.providerKind, 'chatgpt');
+    },
+  );
+
+  test(
     'an explicit launch pin disables the folder restore',
     timeout: const Timeout(Duration(seconds: 60)),
     () async {

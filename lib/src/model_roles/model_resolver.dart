@@ -178,7 +178,13 @@ final class ModelRolesResolver {
     // gh-760 (review): resolve by catalog name AND adapter kind — a roles
     // entry written as a kind (`chatgpt-codex`, exactly what the app
     // writes) is KNOWN to this version and must not be skipped as unknown.
+<<<<<<< HEAD
     final spec = catalogProvider(ref.provider) ?? _kindProvider(ref.provider);
+=======
+    // honorBuildFilter: roles are a user-facing surface — the filter the
+    // old name-only + kind-loop pair applied, now in the one seam.
+    final spec = resolveCliProviderSpec(ref.provider, honorBuildFilter: true);
+>>>>>>> origin/main
     if (spec == null) {
       // gh-760: degrade, never brick. An entry whose provider no version
       // knows (a config written by a newer app/CLI) skips like a

@@ -90,17 +90,25 @@ import 'headless_provider_key.dart';
 /// Returns the effective [CliArgs], the resolved provider kind — the same
 /// value, the explicit record field saves the caller a re-derivation — the
 /// `FA_PROVIDER_*` declaration when one is active (the caller needs it
+<<<<<<< HEAD
 /// for the roles pinning, the key decision and the extra redaction), the
 /// saved provider id when it was unrecognizable, and the saved provider id
 /// when the persisted provider/baseUrl pair was unservable (endpoint-locked
 /// kind, foreign baseUrl — the caller degrades it with a named warning).
 /// Both report fields are null otherwise.
+=======
+/// for the roles pinning, the key decision and the extra redaction), and
+/// the saved provider id when it was unrecognizable (null otherwise).
+>>>>>>> origin/main
 ({
   CliArgs args,
   String provider,
   EnvProviderPreconfig? faPreconfig,
   String? unknownSavedProvider,
+<<<<<<< HEAD
   String? incompatibleSavedEndpoint,
+=======
+>>>>>>> origin/main
 })
 resolveEffectiveCliArgs(
   CliArgs parsed,
@@ -108,6 +116,7 @@ resolveEffectiveCliArgs(
   required Map<String, String> env,
 }) {
   final faPreconfig = faProviderPreconfig(parsed, saved, env: env);
+<<<<<<< HEAD
   final restore = _judgeSavedRestore(saved);
   final restoredKind = restore.endpointConflict ? null : restore.spec?.kind;
   final provider = _bootProvider(
@@ -121,6 +130,19 @@ resolveEffectiveCliArgs(
     endpointConflict: restore.endpointConflict,
     explicitOverride: parsed.providerExplicit || faPreconfig != null,
   );
+=======
+  // gh-760 (review): restore the RESOLVED spec's kind, never the raw saved
+  // string — the saved id may be a catalog NAME, and the raw name reaching
+  // AgentCliConfig.providerKind bricks the boot at providerStreamFunction.
+  final savedSpec = resolveCliProviderSpec(saved.providerKind);
+  final provider = parsed.providerExplicit
+      ? parsed.provider
+      : faPreconfig?.spec.kind ?? (savedSpec?.kind ?? parsed.provider);
+  final unknownSavedProvider =
+      savedSpec == null && !parsed.providerExplicit && faPreconfig == null
+      ? saved.providerKind
+      : null;
+>>>>>>> origin/main
   final modelId = parsed.model ?? faPreconfig?.modelId ?? saved.modelId;
   final baseUrl = parsed.baseUrl ?? faPreconfig?.baseUrl ?? saved.baseUrl;
   final effective = CliArgs(
@@ -144,6 +166,7 @@ resolveEffectiveCliArgs(
     args: effective,
     provider: provider,
     faPreconfig: faPreconfig,
+<<<<<<< HEAD
     unknownSavedProvider: reports.unknownSavedProvider,
     incompatibleSavedEndpoint: reports.incompatibleSavedEndpoint,
   );
@@ -199,6 +222,9 @@ _savedRestoreReports({
     unknownSavedProvider:
         savedSpec == null && savedRaw.isNotEmpty ? savedRaw : null,
     incompatibleSavedEndpoint: endpointConflict ? savedRaw : null,
+=======
+    unknownSavedProvider: unknownSavedProvider,
+>>>>>>> origin/main
   );
 }
 
