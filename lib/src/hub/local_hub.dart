@@ -170,10 +170,27 @@ class LocalHub {
     this.bind = 'loopback',
     this._masterSecret,
     this._stateFile,
+    this.relayAllowAnyHost = false,
   });
 
   /// The port to bind (`0` = ephemeral, tests).
   final int port;
+
+  /// Relay destination dev opt-in (issue #792 AC3): when true, the
+  /// `/relay` destination allowlist is lifted so a development taskpane
+  /// can reach a local mock provider. Off in production — a relay is a
+  /// provider transport, not a general-purpose fetch tool.
+  final bool relayAllowAnyHost;
+
+  /// The bearer credential `/relay` demands on every scope (issue #792):
+  /// the master secret when one is configured, else an ephemeral per-serve
+  /// secret ([relaySecret]) — fail-closed, never "null means skip".
+  String? _relaySecret;
+
+  /// The relay bearer the operator (or the taskpane) must present.
+  /// Ephemeral when no master secret is configured; `fa hub serve` prints
+  /// and persists it (pid state file) so clients can pair.
+  String? get relaySecret => _relaySecret;
 
   /// The listener scope (issue #402 AC4): `'loopback'` (default) binds
   /// 127.0.0.1 only; `'lan'` binds all interfaces so LAN peers — the iOS
@@ -252,6 +269,11 @@ class LocalHub {
       bind == 'lan' ? InternetAddress.anyIPv4 : InternetAddress.loopbackIPv4,
       port,
     );
+    // Issue #792: the relay authenticates on EVERY scope. A protected hub
+    // demands its master secret; an open loopback hub still gets an
+    // ephemeral per-serve secret — loopback is an address, not an auth
+    // method (any local process can hit it).
+    _relaySecret ??= _masterSecret ?? _newEnrollmentSecret();
     unawaited(_serve());
   }
 
@@ -314,8 +336,9 @@ class LocalHub {
       } else if (request.uri.path == '/relay') {
         await handleRelayRequest(
           request,
-          requireCredential: () => bind == 'lan' ? _masterSecret : null,
-          allowedOrigin: relayAllowedOrigin(request.headers.value('origin')),
+          requireCredential: () => _relaySecret,
+          origin: request.headers.value('origin'),
+          allowAnyHost: relayAllowAnyHost,
         );
       } else {
         request.response.statusCode = 404;
@@ -669,28 +692,116 @@ String? relayAllowedOrigin(String? origin) {
 /// upstream answer is streamed back raw (status + content-type + body), so
 /// provider SSE flows through incrementally.
 ///
-/// Loopback-bound hubs relay for the taskpane origins (same trust domain
-/// as /healthz); a lan-bound hub demands the master bearer — an open relay
-/// on the LAN would be a fetch oracle.
+/// Authentication (issue #792): `/relay` demands a bearer credential on
+/// EVERY scope — the master secret when the hub is protected, else the
+/// ephemeral per-serve [LocalHub.relaySecret]. A null credential (the hub
+/// never started) authenticates nothing: fail closed, 401 everything.
+/// A present but non-allowlisted `Origin` is a 403 REJECTION before any
+/// upstream work — the old behavior answered minus CORS headers, which
+/// still executed the fetch for the hostile page's benefit.
 Future<void> handleRelayRequest(
   HttpRequest request, {
   required String? Function() requireCredential,
-  required String? allowedOrigin,
+  required String? origin,
+  bool allowAnyHost = false,
 }) async {
+  final allowedOrigin = relayAllowedOrigin(origin);
   if (request.method == 'OPTIONS') {
     await _relayPreflight(request, allowedOrigin);
     return;
   }
   final credential = requireCredential();
-  if (credential != null &&
+  if (credential == null ||
+      credential.isEmpty ||
       request.headers.value('authorization') != 'Bearer $credential') {
+    // Keep-alive pools must not reuse a rejected socket (same shape as
+    // the rejected WS upgrade — a stale pooled connection surfaces as
+    // "connection closed" on the client's NEXT request).
+    request.response.headers.set(HttpHeaders.connectionHeader, 'close');
     request.response.statusCode = 401;
+    await request.response.close();
+    return;
+  }
+  if (origin != null && allowedOrigin == null) {
+    request.response.statusCode = 403;
+    request.response.write('{"error":"origin not allowed"}');
     await request.response.close();
     return;
   }
   final parsed = await _relayEnvelope(request, allowedOrigin);
   if (parsed == null) return;
-  await _relayForward(request, parsed.$1, parsed.$2, allowedOrigin);
+  if (!relayDestinationAllowed(parsed.$1, allowAnyHost: allowAnyHost)) {
+    request.response.statusCode = 403;
+    _relayCors(request, allowedOrigin);
+    request.response.write('{"error":"destination not allowed"}');
+    await request.response.close();
+    return;
+  }
+  await _relayForward(
+    request,
+    parsed.$1,
+    parsed.$2,
+    allowedOrigin,
+    allowAnyHost: allowAnyHost,
+  );
+}
+
+/// The known provider hosts a relay destination may name (issue #792):
+/// exact match or any subdomain. A relay is a provider transport — the
+/// taskpane holds no other legitimate destination.
+const _relayAllowedHosts = <String>{
+  // Anthropic / OpenAI / ChatGPT
+  'api.anthropic.com',
+  'api.openai.com',
+  'auth.openai.com',
+  'chatgpt.com',
+  // OpenRouter / Google / MiniMax
+  'openrouter.ai',
+  'generativelanguage.googleapis.com',
+  'platform.minimax.io',
+  // GitHub Copilot / models
+  'api.github.com',
+  'github.com',
+  'api.githubcopilot.com',
+  'api.enterprise.githubcopilot.com',
+  'api.business.githubcopilot.com',
+  // FA / Codemie / Aiin
+  'fa1.dev',
+  'codemie.lab.epam.com',
+  'api.aiin.by',
+  'auth.aiin.by',
+};
+
+/// The destination verdict for one relay envelope (issue #792 AC3):
+/// only allowlisted provider hosts, and never loopback, private,
+/// link-local (cloud metadata `169.254.169.254` included), or
+/// unspecified addresses — denied BEFORE any outbound attempt.
+/// [allowAnyHost] is the explicit development opt-in.
+// ponytail: name-based checks, DNS that resolves a public name to an
+// internal IP still passes — resolve-and-verify each hop if that
+// matters someday.
+bool relayDestinationAllowed(Uri url, {bool allowAnyHost = false}) {
+  if (allowAnyHost) return true;
+  final host = url.host.toLowerCase();
+  if (host.isEmpty) return false;
+  final address = InternetAddress.tryParse(host);
+  if (address != null) {
+    if (address.isLoopback || address.isLinkLocal) return false;
+    if (address.type == InternetAddressType.IPv4) {
+      final b = address.rawAddress;
+      // 10/8, 172.16/12, 192.168/16, 0.0.0.0/8 — RFC 1918 + unspecified.
+      if (b[0] == 10 || b[0] == 0 || (b[0] == 172 && b[1] >= 16 && b[1] <= 31) ||
+          (b[0] == 192 && b[1] == 168)) {
+        return false;
+      }
+      return false; // any other IPv4 literal is not a provider name
+    }
+    return false; // IPv6 literals: providers are named, not literal
+  }
+  if (host == 'localhost' || host.endsWith('.localhost')) return false;
+  return _relayAllowedHosts.any(
+    (allowed) => host == allowed || host.endsWith('.$allowed'),
+  );
 }
 
 /// CORS grant for a relay response — only when the origin was allowlisted
@@ -744,30 +855,76 @@ Future<(Uri, Map<String, dynamic>)?> _relayEnvelope(
 
 /// Proxies the raw upstream response (status + content-type + streamed
 /// body, so SSE rides through incrementally); 502 when unreachable.
+///
+/// Redirects are followed MANUALLY (issue #792): each hop is re-checked
+/// against the same destination rules before it is issued, so a provider
+/// 3xx cannot silently walk the request into internal space. On a host
+/// change the credential headers are dropped (they belong to the host
+/// that asked for them).
 Future<void> _relayForward(
   HttpRequest request,
   Uri url,
   Map<String, dynamic> envelope,
-  String? allowedOrigin,
-) async {
+  String? allowedOrigin, {
+  required bool allowAnyHost,
+}) async {
   final upstream = HttpClient();
   try {
-    final req = await upstream.openUrl('${envelope['method'] ?? 'POST'}', url);
-    for (final entry in ((envelope['headers'] as Map?) ?? const {}).entries) {
-      req.headers.set('${entry.key}', '${entry.value}');
+    var current = url;
+    var method = '${envelope['method'] ?? 'POST'}';
+    final body = envelope['bodyB64'] is String
+        ? base64Decode(envelope['bodyB64'] as String)
+        : null;
+    for (var hop = 0;; hop++) {
+      final req = await upstream.openUrl(method, current);
+      req.followRedirects = false;
+      final hopHeaders = <String, String>{
+        for (final entry
+            in ((envelope['headers'] as Map?) ?? const {}).entries)
+          '${entry.key}': '${entry.value}',
+      };
+      if (hop > 0 && current.host.toLowerCase() != url.host.toLowerCase()) {
+        hopHeaders
+          ..remove('authorization')
+          ..remove('cookie');
+      }
+      hopHeaders.forEach(req.headers.set);
+      final hasBody = body != null && method != 'GET' && method != 'HEAD';
+      if (hasBody) req.add(body);
+      final res = await req.close();
+      // NOT res.isRedirect — under followRedirects=false that getter is
+      // unreliable on current SDKs; the codes are the contract.
+      const redirectCodes = {301, 302, 303, 307, 308};
+      final location = redirectCodes.contains(res.statusCode)
+          ? res.headers.value(HttpHeaders.locationHeader)
+          : null;
+      if (location == null) {
+        await _relayRespond(request, res, allowedOrigin);
+        return;
+      }
+      // 301/302/303 demote a POST to GET (the browser shape); 307/308
+      // replay method + body unchanged.
+      if (res.statusCode == HttpStatus.movedTemporarily ||
+          res.statusCode == HttpStatus.seeOther ||
+          res.statusCode == HttpStatus.movedPermanently) {
+        method = 'GET';
+      }
+      final next = current.resolve(location);
+      if (hop >= 5 || !relayDestinationAllowed(next, allowAnyHost: allowAnyHost)) {
+        await res.drain<void>();
+        request.response.statusCode = hop >= 5 ? 502 : 403;
+        _relayCors(request, allowedOrigin);
+        request.response.write(
+          hop >= 5
+              ? '{"error":"too many redirects"}'
+              : '{"error":"redirect destination not allowed"}',
+        );
+        await request.response.close();
+        return;
+      }
+      await res.drain<void>();
+      current = next;
     }
-    if (envelope['bodyB64'] is String) {
-      req.add(base64Decode(envelope['bodyB64'] as String));
-    }
-    final res = await req.close();
-    request.response.statusCode = res.statusCode;
-    _relayCors(request, allowedOrigin);
-    final contentType = res.headers.value('content-type');
-    if (contentType != null) {
-      request.response.headers.set('Content-Type', contentType);
-    }
-    await request.response.addStream(res);
-    await request.response.close();
   } on Object {
     request.response.statusCode = 502;
     _relayCors(request, allowedOrigin);
@@ -776,4 +933,21 @@ Future<void> _relayForward(
   } finally {
     upstream.close(force: true);
   }
+}
+
+/// Streams the upstream answer to the relay client: status + content-type
+/// + body, so SSE rides through incrementally.
+Future<void> _relayRespond(
+  HttpRequest request,
+  HttpClientResponse res,
+  String? allowedOrigin,
+) async {
+  request.response.statusCode = res.statusCode;
+  _relayCors(request, allowedOrigin);
+  final contentType = res.headers.value('content-type');
+  if (contentType != null) {
+    request.response.headers.set('Content-Type', contentType);
+  }
+  await request.response.addStream(res);
+  await request.response.close();
 }

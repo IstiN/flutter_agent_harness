@@ -672,6 +672,7 @@ class DapHubController {
           pid: pid,
           port: port,
           startedAt: DateTime.now().toUtc().toIso8601String(),
+          relaySecret: null,
         )),
       );
     } on Object {

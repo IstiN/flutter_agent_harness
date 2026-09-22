@@ -74,22 +74,32 @@ void main() {
         port: defaultHubServePort,
         flagSecret: null,
         flagBind: null,
+        relayAllowAnyHost: false,
       ));
       expect(parseHubServeSpec(const ['--port', 'x']), (
         port: defaultHubServePort,
         flagSecret: null,
         flagBind: null,
+        relayAllowAnyHost: false,
       ));
       expect(parseHubServeSpec(const ['--port', '9100', '--secret', 'k']), (
         port: 9100,
         flagSecret: 'k',
         flagBind: null,
+        relayAllowAnyHost: false,
       ));
       expect(parseHubServeSpec(const ['--bind', 'lan']), (
         port: defaultHubServePort,
         flagSecret: null,
         flagBind: 'lan',
+        relayAllowAnyHost: false,
       ));
+      expect(
+        parseHubServeSpec(const ['--relay-allow-any-host']).relayAllowAnyHost,
+        isTrue,
+        reason: 'the dev opt-in is a bare boolean flag (issue #792)',
+      );
+      expect(parseHubServeSpec(const []).relayAllowAnyHost, isFalse);
     });
   });
 

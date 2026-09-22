@@ -90,9 +90,15 @@ Future<int> _hubServe(List<String> flags, HubServeDeps deps) async {
 
 /// The parsed `fa hub serve` flags: the [port] (a bad `--port` value
 /// keeps the zero-config default, as the old hand-rolled loop did), the
-/// `--secret` override and the `--bind` scope (`lan` = all interfaces,
-/// issue #402 AC4; anything else = loopback, the default).
-typedef HubServeSpec = ({int port, String? flagSecret, String? flagBind});
+/// `--secret` override, the `--bind` scope (`lan` = all interfaces,
+/// issue #402 AC4; anything else = loopback, the default) and the
+/// relay destination dev opt-in (`--relay-allow-any-host`, issue #792).
+typedef HubServeSpec = ({
+  int port,
+  String? flagSecret,
+  String? flagBind,
+  bool relayAllowAnyHost,
+});
 
 /// Collapses `--flag value` pairs; later duplicates win (the same
 /// sequential-overwrite shape the hand-rolled loop had).
@@ -106,14 +112,16 @@ Map<String, String> parseFlagValues(List<String> args) {
   return values;
 }
 
-/// Parses `fa hub serve`'s `--port`/`--secret`; unknown flags are
-/// ignored, as before.
+/// Parses `fa hub serve`'s `--port`/`--secret`/`--bind`; unknown value
+/// flags are ignored, as before. `--relay-allow-any-host` is a bare
+/// boolean flag (issue #792).
 HubServeSpec parseHubServeSpec(List<String> flags) {
   final values = parseFlagValues(flags);
   return (
     port: int.tryParse(values['--port'] ?? '') ?? defaultHubServePort,
     flagSecret: values['--secret'],
     flagBind: values['--bind'],
+    relayAllowAnyHost: flags.contains('--relay-allow-any-host'),
   );
 }
 
@@ -183,6 +191,18 @@ bool hubSecretPromptApplies(File stateFile) {
   }
 }
 
+/// The named refusal (issue #792 AC2) for a LAN-bound hub with no master
+/// secret: a hub reachable from the LAN must not run open — WS enroll
+/// would be free and the relay would be an authenticated-only-by-luck
+/// fetch oracle. Returns the error line, or null when the start may
+/// proceed. Pure so the CRAP ratchet holds.
+String? hubLanSecretRefusal({required String? bind, required String? secret}) {
+  if (bind != 'lan') return null;
+  if (secret != null && secret.isNotEmpty) return null;
+  return 'hub: --bind lan requires a master secret — pass --secret <secret> '
+      'or set DAP_HUB_SECRET (a LAN-reachable hub must not run open)';
+}
+
 /// Serves the hub: idempotent against a live one, pid-state
 /// bookkeeping for `fa dap stop`, then the serve loop ([serveLoop] is
 /// the seam tests cut short; production blocks until killed).
@@ -200,11 +220,17 @@ Future<int> hubServe(
     stdout.writeln('DAP hub already running on ws://127.0.0.1:${spec.port}/ws');
     return 0;
   }
+  final refusal = hubLanSecretRefusal(bind: spec.flagBind, secret: secret);
+  if (refusal != null) {
+    stderr.writeln(refusal);
+    return 1;
+  }
   final hub = LocalHub(
     port: spec.port,
     bind: spec.flagBind ?? 'loopback',
     masterSecret: secret,
     stateFile: stateFile,
+    relayAllowAnyHost: spec.relayAllowAnyHost,
   );
   try {
     await hub.start();
@@ -217,11 +243,19 @@ Future<int> hubServe(
   }
   // The pid/state file (issue #304): lets `fa dap stop` work from ANY
   // CLI instance (not just the spawner) exactly once, with no zombie
-  // pid — the serve loop owns the cleanup on a graceful exit.
-  _writePidState(pidFile, pid, spec.port);
+  // pid — the serve loop owns the cleanup on a graceful exit. On an
+  // open hub it also carries the ephemeral relay bearer (issue #792).
+  _writePidState(pidFile, pid, spec.port, relaySecret: hub.relaySecret);
   stdout.writeln(
     'DAP hub on ${hub.url}${hub.isProtected ? ' (password-protected)' : ''}',
   );
+  if (!hub.isProtected && hub.relaySecret != null) {
+    stdout.writeln(
+      'relay: POST http://127.0.0.1:${hub.url.port}/relay with '
+      'Authorization: Bearer ${hub.relaySecret} (ephemeral — '
+      'persists in $pidFile until restart)',
+    );
+  }
   if (spec.flagBind == 'lan') {
     // The pairing surface (issue #402 AC4): a LAN peer enters one of
     // these URLs (plus the password) by hand — no scanning magic.
@@ -326,18 +360,29 @@ Future<void> hubGracefulExit(
   exitProcess(0);
 }
 
-void _writePidState(File pidFile, int pid, int port) {
+void _writePidState(
+  File pidFile,
+  int pid,
+  int port, {
+  String? relaySecret,
+}) {
   try {
     if (!pidFile.parent.existsSync()) {
       pidFile.parent.createSync(recursive: true);
     }
+    // 0600: the file can carry the ephemeral relay bearer now (issue
+    // #792) — same rule as the hub state file.
     pidFile.writeAsStringSync(
       renderDapLocalHubState((
         pid: pid,
         port: port,
         startedAt: DateTime.now().toUtc().toIso8601String(),
+        relaySecret: relaySecret,
       )),
+      mode: FileMode.write,
+      flush: true,
     );
+    Process.runSync('chmod', ['600', pidFile.path]);
   } on Object {
     // Best-effort: `fa dap stop` still works via its own probe.
   }

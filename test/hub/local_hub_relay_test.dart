@@ -8,9 +8,11 @@
 /// upstream response (status + content-type + streamed body), so SSE rides
 /// through incrementally.
 ///
-/// CORS is origin-allowlisted (the taskpane origins only — never `*`), so
-/// a hostile web page cannot read this loopback proxy; a lan-bound hub
-/// additionally requires the master bearer credential.
+/// CORS is origin-allowlisted (the taskpane origins only — never `*`, and
+/// a disallowed origin is a 403 rejection). Authentication (issue #792):
+/// every scope demands a bearer — the master secret on a protected hub,
+/// else the ephemeral per-serve secret — and destinations are allowlisted
+/// to known provider hosts (redirects re-checked per hop).
 library;
 
 import 'dart:async';
@@ -30,7 +32,9 @@ void main() {
   /// Serves a fake provider: POST → SSE stream of two data chunks.
   /// Deliberately sends NO CORS headers — like z.ai, the point of the hub.
   setUp(() async {
-    hub = LocalHub();
+    // The dev opt-in exists exactly for a loopback mock provider like
+    // this fixture; the policy tests below spin a strict hub inline.
+    hub = LocalHub(relayAllowAnyHost: true);
     await hub.start();
     port = hub.url.port;
     upstreamRequests.clear();
@@ -63,6 +67,7 @@ void main() {
     Map<String, Object?> envelope, {
     String origin = 'https://fa1.dev',
     Map<String, String> headers = const {},
+    String? bearer = '',
   }) async {
     final client = HttpClient();
     final req = await client.postUrl(
@@ -70,6 +75,9 @@ void main() {
     );
     req.headers.set('Origin', origin);
     req.headers.contentType = ContentType.json;
+    // '' = the default ephemeral bearer; null = none (unauthenticated).
+    final token = bearer == '' ? hub.relaySecret : bearer;
+    if (token != null) req.headers.set('Authorization', 'Bearer $token');
     headers.forEach(req.headers.set);
     req.write(jsonEncode(envelope));
     final res = await req.close();
@@ -156,21 +164,156 @@ void main() {
   test('a lan-bound protected hub requires the master bearer on /relay',
       () async {
     await hub.stop();
-    hub = LocalHub(bind: 'lan', masterSecret: 'master-key');
+    hub = LocalHub(bind: 'lan', masterSecret: 'master-key', relayAllowAnyHost: true);
     await hub.start();
     port = hub.url.port;
+    // The master secret IS the relay credential on a protected hub.
+    expect(hub.relaySecret, 'master-key');
 
     final (denied, _) = await relay(
       envelope('http://127.0.0.1:${upstream.port}/chat/completions'),
+      bearer: null,
     );
     expect(denied.statusCode, 401);
     expect(upstreamRequests, isEmpty);
 
+    final (wrong, _) = await relay(
+      envelope('http://127.0.0.1:${upstream.port}/chat/completions'),
+      bearer: 'not-the-key',
+    );
+    expect(wrong.statusCode, 401);
+
     final (ok, _) = await relay(
       envelope('http://127.0.0.1:${upstream.port}/chat/completions'),
-      headers: {'Authorization': 'Bearer master-key'},
+      bearer: 'master-key',
     );
     expect(ok.statusCode, 200);
+  });
+
+  test('every relay request carries a secret — an ephemeral hub still '
+      'refuses the credential-less (issue #792 AC1)', () async {
+    // `hub` is the default loopback fixture: no master secret, yet the
+    // relay demands its per-serve bearer.
+    expect(hub.isProtected, isFalse);
+    expect(hub.relaySecret, isNotNull);
+    expect(hub.relaySecret, isNot(isEmpty));
+
+    final (denied, _) = await relay(
+      envelope('http://127.0.0.1:${upstream.port}/chat/completions'),
+      bearer: null,
+    );
+    expect(denied.statusCode, 401);
+    final (wrong, _) = await relay(
+      envelope('http://127.0.0.1:${upstream.port}/chat/completions'),
+      bearer: 'guess',
+    );
+    expect(wrong.statusCode, 401);
+    // Zero upstream attempts for both.
+    expect(upstreamRequests, isEmpty);
+
+    // And the secret is per-serve: a fresh hub rolls a new one.
+    final second = LocalHub();
+    addTearDown(second.stop);
+    await second.start();
+    expect(second.relaySecret, isNot(hub.relaySecret));
+  });
+
+  test('denied destinations answer 403 before any outbound attempt '
+      '(issue #792 AC3)', () async {
+    await hub.stop();
+    hub = LocalHub(); // strict: no dev opt-in
+    await hub.start();
+    port = hub.url.port;
+    for (final url in [
+      'http://127.0.0.1:1/',
+      'http://localhost:8787/',
+      'http://169.254.169.254/latest/meta-data/',
+      'http://10.1.2.3/',
+      'http://192.168.1.10/',
+      'http://172.16.0.9/',
+      'http://[::1]:9000/',
+      'http://0.0.0.0/',
+    ]) {
+      final (res, body) = await relay(envelope(url));
+      expect(res.statusCode, 403, reason: 'destination $url');
+      expect(body, contains('destination not allowed'), reason: url);
+    }
+    // The fixture provider saw nothing.
+    expect(upstreamRequests, isEmpty);
+  });
+
+  test('the provider allowlist admits known hosts (and their '
+      'subdomains), denies strangers; dev opt-in lifts it', () async {
+    final ok = relayDestinationAllowed(Uri.parse('https://api.anthropic.com/v1/x'));
+    expect(ok, isTrue);
+    expect(
+      relayDestinationAllowed(Uri.parse('https://eu.api.aiin.by/v1')),
+      isTrue,
+      reason: 'subdomain of an allowlisted host',
+    );
+    expect(
+      relayDestinationAllowed(Uri.parse('https://evil.example/')),
+      isFalse,
+    );
+    // The dev opt-in lifts everything — including loopback mocks.
+    expect(
+      relayDestinationAllowed(
+        Uri.parse('http://127.0.0.1:9000/'),
+        allowAnyHost: true,
+      ),
+      isTrue,
+    );
+  });
+
+  test('redirects are followed manually: a same-host hop lands, a '
+      'redirect loop is capped (issue #792 AC4)', () async {
+    await upstream.close(force: true);
+    // /hop answers; anything else 302s — to /hop, or to itself forever.
+    final redirector = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => redirector.close(force: true));
+    unawaited(
+      redirector.forEach((req) async {
+        if (req.uri.path == '/hop') {
+          req.response.statusCode = 200;
+          req.response.headers.contentType = ContentType(
+            'text',
+            'event-stream',
+          );
+          req.response.write('data: {"delta":"landed"}\n\n');
+          await req.response.close();
+          return;
+        }
+        req.response.statusCode = 302;
+        req.response.headers.set(
+          'location',
+          req.uri.path == '/to-loop' ? '/to-loop' : '/hop',
+        );
+        await req.response.close();
+      }),
+    );
+
+    final (ok, okBody) = await relay(
+      envelope('http://127.0.0.1:${redirector.port}/to-same-host'),
+    );
+    expect(ok.statusCode, 200);
+    expect(okBody, 'data: {"delta":"landed"}\n\n');
+
+    final (capped, cappedBody) = await relay(
+      envelope('http://127.0.0.1:${redirector.port}/to-loop'),
+    );
+    expect(capped.statusCode, 502);
+    expect(cappedBody, contains('too many redirects'));
+  });
+
+  test('a disallowed Origin is a 403 rejection — the upstream is never '
+      'touched (issue #792 AC4)', () async {
+    final (res, body) = await relay(
+      envelope('http://127.0.0.1:${upstream.port}/chat/completions'),
+      origin: 'https://evil.example',
+    );
+    expect(res.statusCode, 403);
+    expect(body, contains('origin not allowed'));
+    expect(upstreamRequests, isEmpty);
   });
 
   test('a non-http(s) or missing url is a clean 400', () async {
