@@ -107,6 +107,7 @@ final class CliArgs extends CliArgsResult {
     this.waitForJobs = false,
     this.piMode = false,
     this.ompMode = false,
+    this.noFormat = false,
   }) : super._();
 
   /// `--model <id>`.
@@ -261,6 +262,11 @@ final class CliArgs extends CliArgsResult {
   /// (flag > env > config).
   final bool ompMode;
 
+  /// `--no-format`: render assistant markdown raw (byte-identical
+  /// passthrough) even on a color TTY (issue #774). Same effect as the
+  /// `FA_NO_FORMAT` env var.
+  final bool noFormat;
+
   /// Whether this invocation runs a single headless prompt instead of the
   /// interactive REPL.
   bool get isHeadless =>
@@ -296,6 +302,10 @@ bool _applyBooleanFlag(_CliArgValues values, String arg) {
   }
   if (arg == '--omp') {
     values.ompMode = true;
+    return true;
+  }
+  if (arg == '--no-format') {
+    values.noFormat = true;
     return true;
   }
   return false;
@@ -1036,6 +1046,7 @@ final class _CliArgValues {
   bool waitForJobs = false;
   bool piMode = false;
   bool ompMode = false;
+  bool noFormat = false;
   final promptTemplateDirs = <String>[];
   String? mode;
   String? cwd;
@@ -1109,6 +1120,7 @@ final class _CliArgValues {
       waitForJobs: waitForJobs,
       piMode: piMode,
       ompMode: ompMode,
+      noFormat: noFormat,
       attachments: List.unmodifiable(attachments),
     );
   }
