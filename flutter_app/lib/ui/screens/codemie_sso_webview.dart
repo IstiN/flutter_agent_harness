@@ -1,10 +1,8 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:fa/services/codemie_sso_flow_steps.dart';
-import 'package:fa/ui/widgets/wide_layout_shell.dart';
+import 'package:fa/ui/screens/oauth_webview_scaffold.dart';
 
 /// The SSO callback redirect decision for [url]: any localhost/loopback
 /// hit is the CodeMie backend bouncing the token back — hand a non-empty
@@ -25,6 +23,12 @@ NavigationDecision codeMieNavigationDecision(
   if (token != null && token.isNotEmpty) onToken?.call(token);
   return NavigationDecision.prevent;
 }
+
+/// A dummy callback port baked into the SSO login URL. We never bind it —
+/// the redirect is intercepted by the NavigationDelegate. Any non-privileged
+/// port works; a fixed value keeps the URL predictable.
+const _dummyPort = 48127;
+
 /// A full-screen WebView that walks the user through the CodeMie SSO login
 /// and intercepts the `http://localhost:<port>/?token=...` redirect.
 ///
@@ -36,7 +40,7 @@ NavigationDecision codeMieNavigationDecision(
 ///
 /// Pops with [CodeMieSsoCredentials] on success, or `null` when the user
 /// cancels / the flow times out.
-class CodeMieSsoWebViewPage extends StatefulWidget {
+class CodeMieSsoWebViewPage extends StatelessWidget {
   /// Creates the SSO page.
   const CodeMieSsoWebViewPage({
     super.key,
@@ -52,135 +56,23 @@ class CodeMieSsoWebViewPage extends StatefulWidget {
   final Duration timeout;
 
   @override
-  State<CodeMieSsoWebViewPage> createState() => _CodeMieSsoWebViewPageState();
-}
-
-class _CodeMieSsoWebViewPageState extends State<CodeMieSsoWebViewPage> {
-  late final WebViewController _controller;
-  var _loading = true;
-  var _errorMessage = '';
-  Timer? _timeoutTimer;
-  bool _completed = false;
-
-  /// A dummy callback port baked into the SSO login URL. We never bind it —
-  /// the redirect is intercepted by the NavigationDelegate. Any non-privileged
-  /// port works; a fixed value keeps the URL predictable.
-  static const _dummyPort = 48127;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = _createController();
-    _timeoutTimer = Timer(widget.timeout, _onTimeout);
-  }
-
-  /// Builds the WebView controller: unrestricted JS, the navigation
-  /// delegate (SSO callback interception + loading/error surfacing) and
-  /// the CodeMie SSO login URL load.
-  WebViewController _createController() {
-    final ssoUrl = buildCodeMieSsoUrl(widget.orgUrl, _dummyPort);
-    return WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onNavigationRequest: _onNavigationRequest,
-          onPageStarted: (_) {
-            if (mounted) setState(() => _loading = true);
-          },
-          onPageFinished: (_) {
-            if (mounted) setState(() => _loading = false);
-          },
-          onWebResourceError: (error) {
-            // Ignore sub-frame errors (ads, favicons); only surface
-            // main-frame failures that would leave the user stuck.
-            if (error.isForMainFrame == true && mounted) {
-              setState(() => _errorMessage = error.description);
-            }
-          },
-        ),
-      )
-      ..loadRequest(Uri.parse(ssoUrl));
-  }
-
-  @override
-  void dispose() {
-    _timeoutTimer?.cancel();
-    super.dispose();
-  }
-
-  NavigationDecision _onNavigationRequest(NavigationRequest request) =>
-      codeMieNavigationDecision(request.url, onToken: _completeWithToken);
-
-  Future<void> _completeWithToken(String rawToken) async {
-    if (_completed) return;
-    _completed = true;
-    _timeoutTimer?.cancel();
-    try {
-      final credentials = decodeCodeMieSsoCredentials(rawToken, widget.orgUrl);
-      if (mounted) Navigator.of(context).pop(credentials);
-    } on Object catch (e) {
-      await _failDecode(e);
-    }
-  }
-
-  /// The token never decodes: surface the error and re-arm the flow (the
-  /// user may retry through the SSO host).
-  Future<void> _failDecode(Object e) async {
-    if (mounted) {
-      setState(() => _errorMessage = 'Failed to decode SSO token: $e');
-      _completed = false;
-    }
-  }
-
-  void _onTimeout() {
-    if (!_completed && mounted) {
-      _completed = true;
-      Navigator.of(context).pop(null);
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Scaffold(
-      appBar: faAppBar(
-        title: const Text(
-          'CodeMie Sign In',
-        ), // l10n:ignore — proper noun, fallback-only screen
-        actions: [
-          if (_loading)
-            const Padding(
-              padding: EdgeInsets.all(14),
-              child: SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            ),
-        ],
-      ),
-      body: Stack(
-        children: [
-          WebViewWidget(controller: _controller),
-          if (_errorMessage.isNotEmpty)
-            Positioned(
-              left: 16,
-              right: 16,
-              bottom: 16,
-              child: Material(
-                elevation: 4,
-                borderRadius: BorderRadius.circular(12),
-                color: theme.colorScheme.errorContainer,
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Text(
-                    _errorMessage,
-                    style: TextStyle(color: theme.colorScheme.onErrorContainer),
-                  ),
-                ),
-              ),
-            ),
-        ],
+    return OAuthWebViewScaffold<CodeMieSsoCredentials>(
+      title:
+          'CodeMie Sign In', // l10n:ignore — proper noun, fallback-only screen
+      initialUrl: buildCodeMieSsoUrl(orgUrl, _dummyPort),
+      timeout: timeout,
+      onNavigationRequest: (request, ops) => codeMieNavigationDecision(
+        request.url,
+        onToken: (rawToken) {
+          try {
+            ops.popWith(decodeCodeMieSsoCredentials(rawToken, orgUrl));
+          } on Object catch (e) {
+            // The token never decodes: surface the error and re-arm the
+            // flow (the user may retry through the SSO host).
+            ops.showError('Failed to decode SSO token: $e');
+          }
+        },
       ),
     );
   }
