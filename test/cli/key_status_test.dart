@@ -5,6 +5,7 @@
 import 'package:flutter_agent_harness/src/cli/headless_provider_key.dart';
 import 'package:flutter_agent_harness/src/cli/key_status.dart';
 import 'package:flutter_agent_harness/src/model.dart';
+import 'package:flutter_agent_harness/src/providers/chatgpt_oauth.dart';
 import 'package:flutter_agent_harness/src/secrets/secure_key_store.dart';
 import 'package:test/test.dart';
 import 'agent_cli_test_support.dart';
@@ -172,6 +173,33 @@ void main() {
       );
 
       expect(key, isNull);
+    });
+  });
+
+
+  group('keyStatusLine by provider kind (issue #772 identity)', () {
+    test('the chatgpt-codex kind resolves the catalog env names', () async {
+      final keys = SecureKeyCache(FakeSecureKeyStore());
+      final renderer = KeyStatusRenderer(
+        rolesDriven: false,
+        providerKind: 'chatgpt-codex',
+        explicitToken: false,
+        activeCustomName: null,
+        red: (message) => message,
+        secureKeys: keys,
+        envVarIsSet: (name) => name == 'CHATGPT_OAUTH_CREDENTIALS',
+        envVarValue: (name) =>
+            name == 'CHATGPT_OAUTH_CREDENTIALS' ? 'blob' : null,
+      );
+      final model = Model(
+        id: 'gpt-5-codex',
+        api: 'responses',
+        provider: 'chatgpt',
+        baseUrl: chatGptCodexBaseUrl,
+        contextWindow: 128000,
+        maxTokens: 16384,
+      );
+      expect(renderer.keyStatusLine(model), isNotNull);
     });
   });
 }

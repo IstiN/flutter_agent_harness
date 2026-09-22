@@ -105,7 +105,10 @@ EnvProviderPreconfig? parseEnvProviderPreconfig({
   required Iterable<String> takenNames,
 }) {
   if (providerType == null || providerType.trim().isEmpty) return null;
-  final spec = catalogProvider(providerType);
+  // Resolution goes through the one both-identifier seam (issue #772),
+  // honoring the FA_PROVIDERS build filter — exactly what the switch-time
+  // and validation surfaces do.
+  final spec = resolveCliProviderSpec(providerType, honorBuildFilter: true);
   if (spec == null) {
     throw ConfigException(
       'unknown FA_PROVIDER_TYPE "$providerType" — supported providers: '

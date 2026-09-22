@@ -37,6 +37,8 @@ void main() {
     modelsFetcher,
     String? Function(String name)? envVarValue,
     ExchangeFn? chatGptOAuthExchangeFn,
+    Future<void> Function(String kind, String key)? onProviderChanged,
+    ModelsConfig? modelsConfig,
   }) {
     return AgentCli(
       config: AgentCliConfig(
@@ -50,6 +52,8 @@ void main() {
         customProviders: customProviders,
         providerKind: 'openai-completions',
         chatGptOAuthExchangeFn: chatGptOAuthExchangeFn,
+        onProviderChanged: onProviderChanged,
+        modelsConfig: modelsConfig,
       ),
       io: io,
       streamFunction: streamFunction,
@@ -346,5 +350,110 @@ void main() {
         );
       },
     );
+  });
+
+  group('kind-form /provider switch (issue #772)', () {
+    test('/provider accepts the adapter KIND, not just the name', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final changes = <(String, String)>[];
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        onProviderChanged: (kind, key) async => changes.add((kind, key)),
+      );
+      final run = cli.run();
+
+      io.sendLine('/provider chatgpt-codex');
+      await waitForIt(
+        () => io.out.toString().contains('switched provider to chatgpt'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      final output = io.out.toString();
+      expect(output, isNot(contains('unknown provider')));
+      // The name/kind split holds end to end: the session kind is the
+      // adapter kind, the model identity stays the catalog name.
+      expect(cli.providerKind, 'chatgpt-codex');
+      expect(cli.agent.state.model.provider, 'chatgpt');
+      expect(cli.agent.state.model.api, 'responses');
+      expect(cli.agent.state.model.baseUrl, 'https://chatgpt.com/backend-api/codex');
+      expect(changes, hasLength(1));
+      expect(changes.single.$1, 'chatgpt-codex');
+    });
+
+    test('a kind-shaped models.custom entry loads and switches '
+        '(issue #772 review: the /model crash)', () async {
+      // `provider: chatgpt-codex` passes load validation via the seam;
+      // the switch used to resolve name-only (`catalogProvider(def.provider)!`)
+      // and crash on the null check. Both ends must resolve identically.
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        modelsConfig: ModelsConfig(
+          custom: {
+            'codex': const CustomModelDefinition(
+              provider: 'chatgpt-codex',
+              baseUrl: 'https://chatgpt.com/backend-api/codex',
+              model: 'gpt-5-codex',
+            ),
+          },
+        ),
+      );
+      final run = cli.run();
+
+      io.sendLine('/model codex');
+      await waitForIt(
+        () => io.out.toString().contains('switched model to codex'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      final output = io.out.toString();
+      expect(output, isNot(contains('unknown provider')));
+      expect(cli.providerKind, 'chatgpt-codex');
+      expect(cli.agent.state.model.provider, 'chatgpt');
+      expect(cli.agent.state.model.id, 'gpt-5-codex');
+    });
+
+    test('/provider refuses an id the FA_PROVIDERS filter disables '
+        '(issue #772 review)', () async {
+      providerFilterEnvOverride = 'openai';
+      addTearDown(() => providerFilterEnvOverride = null);
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, envVarValue: (_) => null);
+      final run = cli.run();
+
+      io.sendLine('/provider anthropic');
+      await waitForIt(
+        () => io.out.toString().contains('unknown provider: anthropic'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      final output = io.out.toString();
+      expect(output, isNot(contains('switched provider')));
+      expect(output, contains('supported providers: openai'));
+    });
+
+    test('unknown /provider ids get the kinds hint (issue #772 review)',
+        () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, envVarValue: (_) => null);
+      final run = cli.run();
+
+      io.sendLine('/provider from-the-future');
+      await waitForIt(
+        () => io.out.toString().contains('unknown provider: from-the-future'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      expect(
+        io.out.toString(),
+        contains('kinds accepted too: chatgpt-codex'),
+      );
+    });
   });
 }
