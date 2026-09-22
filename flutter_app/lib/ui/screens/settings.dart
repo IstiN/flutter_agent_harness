@@ -38,7 +38,6 @@ import 'package:fa/services/openrouter_oauth_coordinator.dart';
 import 'package:fa/services/openrouter_oauth_links_stub.dart'
     if (dart.library.html) 'package:fa/services/openrouter_oauth_links_web.dart';
 import 'package:fa/services/media_models_store.dart';
-import 'endpoint_models_controller.dart';
 import 'package:fa/services/compaction_engine_loader.dart';
 import 'package:fa/services/providers_queue_loader.dart';
 import 'package:fa/services/provider_registry.dart';
@@ -64,6 +63,8 @@ import 'package:fa/ui/screens/models_settings_page.dart';
 import 'package:fa/ui/screens/onboarding_screen.dart';
 import 'package:fa/services/project_mount_env.dart' show SessionCwd;
 import 'package:url_launcher/url_launcher.dart';
+
+import 'endpoint_models_controller.dart';
 import 'package:fa/ui/screens/provider_editor_page.dart';
 import 'package:fa/ui/screens/providers_section.dart';
 import 'package:fa/webllm/webllm_cache_section.dart';
@@ -680,6 +681,11 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
       name: result.name,
       baseUrl: result.baseUrl,
       modelId: result.modelId,
+      // Identity rides the rebuild: editing a codex entry's URL must not
+      // silently drop it back to URL-shape dispatch guessing.
+      provenance: target.provenance,
+      requiresKey: target.requiresKey,
+      kind: target.kind,
     );
     await _registry.update(updated);
     if (result.apiKey.isNotEmpty) {

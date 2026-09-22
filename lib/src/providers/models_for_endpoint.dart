@@ -27,7 +27,6 @@ import 'remote_catalog.dart';
 const String chatgptCodexDispatchHint = 'chatgpt-codex';
 const String copilotDispatchHint = 'copilot';
 const String dialDispatchHint = 'dial';
-const String codemieDispatchHint = 'codemie';
 
 /// One provider's "how to list models" implementation. Each dialect
 /// encapsulates its own detection (does this endpoint belong to me?) and

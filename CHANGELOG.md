@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- fix(771): one model-list dispatch everywhere — the ChatGPT (codex)
+  provider's model list loads on every surface (provider editor
+  quick-select, default-chat picker, media-slot pickers, task model
+  pickers) instead of only right after OAuth. Pickers resolve through
+  `fetchModelsForEndpoint`, with registry entries' persisted
+  `CustomProvider.kind` winning over URL-shape guessing.
+  **Breaking for out-of-tree `ModelListDialect` implementers**: the
+  `fetch` override signature gains an optional named
+  `void Function()? onBundledFallback` parameter — keep it in the
+  override's signature (and ignore it) unless your dialect can answer
+  from a bundled offline catalog when the live fetch fails.
+
+
 ## 0.1.397
 
 

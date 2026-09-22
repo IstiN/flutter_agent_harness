@@ -394,6 +394,12 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
   /// openai-completions. Media-slot saves always speak the OpenAI dialect;
   /// the generic role flow (slot == null) maps each endpoint to its real
   /// adapter so role runs use the same wire as the chat path.
+  ///
+  /// Identity first: a persisted entry kind ([_entryKind], e.g.
+  /// 'chatgpt-codex' after OAuth) wins over every URL-shape check below,
+  /// so an edited/proxied codex URL still saves — and dispatches — as its
+  /// real kind; URL shape only classifies entries without a persisted
+  /// kind.
   String _mediaSlotProviderKind(String? slot, String baseUrl) {
     if (slot != null) return 'openai-completions';
     final kind = _entryKind;

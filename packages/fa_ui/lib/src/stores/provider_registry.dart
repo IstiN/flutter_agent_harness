@@ -399,6 +399,7 @@ class ProviderRegistry extends ChangeNotifier {
               modelId: provider.modelId,
               provenance: provider.provenance,
               requiresKey: true,
+              kind: provider.kind,
             );
             markerUpgraded = true;
           }
