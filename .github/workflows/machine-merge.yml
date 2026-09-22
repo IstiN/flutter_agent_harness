@@ -35,9 +35,9 @@ jobs:
       github.event.action != 'labeled' ||
       contains(github.event.label.name, 'ai_') ||
       contains(github.event.label.name, 'pr_approved')
-    uses: IstiN/dmtools-agents/.github/workflows/factory-merge.yml@f0198b1fb66cd70d940db883cd481d2532da22e7
+    uses: IstiN/dmtools-agents/.github/workflows/factory-merge.yml@46cf243f7a4ccd85a89d64d83fb6b9d519b28eb6
     with:
-      factory_ref: f0198b1fb66cd70d940db883cd481d2532da22e7
+      factory_ref: 46cf243f7a4ccd85a89d64d83fb6b9d519b28eb6
       ci_workflow: ci.yml
     secrets:
       SOURCE_GITHUB_TOKEN: ${{ secrets.SOURCE_GITHUB_TOKEN }}
