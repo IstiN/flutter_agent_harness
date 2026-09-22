@@ -30,6 +30,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
+import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/ext_cli.dart';
 import 'package:flutter_agent_harness/src/cli/session_tree.dart';
 import 'package:flutter_agent_harness/src/cli/trajectory_tui.dart';
@@ -1912,11 +1913,33 @@ Future<void> _runApp(List<String> args) async {
     configMode: saved.agentMode,
   );
 
+  // The ONE markdown-surface resolution for the process (issue #774):
+  // the same resolution pins the palette the markdown engine and the CLI
+  // styling emit, so the two can never diverge (NO_COLOR / TERM=dumb
+  // fold to null here).
+  final markdownSurface = resolveMarkdownSurface(
+    ansiSupported: stdout.supportsAnsiEscapes,
+    environment: Platform.environment,
+    noFormatFlag: parsed.noFormat,
+    width: io.columns,
+  );
+
   cli = AgentCli(
-    useColor: headlessPrompt == null && stdout.supportsAnsiEscapes,
+    // Same source of truth as the palette (issue #778 round 2): chrome
+    // (status line, keyhints, warnings) styles iff the resolved theme
+    // profile exists — NO_COLOR / TERM=dumb degrade the whole session,
+    // not just the markdown.
+    useColor: headlessPrompt == null && markdownSurface.profile != null,
     environment: Platform.environment,
     useTui: useTui,
     version: packageVersion,
+    // Markdown parity (issue #774): every non-TUI surface renders
+    // assistant markdown through ONE policy — resolveMarkdownSurface
+    // above (pipes stay byte-identical raw; NO_COLOR / TERM=dumb degrade
+    // to plain; --no-format / FA_NO_FORMAT (truthy values, like
+    // FA_PI_MODE) force raw; width is the stdout terminal width at
+    // process start, irrelevant in raw mode).
+    markdownSurface: markdownSurface,
     config: AgentCliConfig(
       wakeExecutable: wakeExecutable(),
       // Marathon-session resume parses its multi-hundred-MB tail off the
