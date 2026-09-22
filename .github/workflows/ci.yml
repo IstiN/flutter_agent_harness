@@ -1555,10 +1555,30 @@ jobs:
           esac
           echo "$GRAPH graph audit OK"
 
+  # SEC-07 (#795) AC4: run the installer against fixture releases
+  # (good / tampered / unsigned) on EVERY PR — no path gating needed at
+  # ~15s/job, and a security IT you can dodge with a cunning diff is not
+  # an IT. macOS leg exercises the real quarantine-strip ordering (AC3).
+  installer-verify:
+    name: Installer verify IT (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: changes
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Installer verification fixtures (AC1-AC4)
+        run: bash scripts/installer_verify_selftest.sh
+
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, supply-chain, dep-audit]
+    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, supply-chain, dep-audit, installer-verify]
     if: always()
     timeout-minutes: 5
     permissions:
@@ -1579,6 +1599,7 @@ jobs:
           echo "integ-mock    = ${{ needs.integration-mock.result }}"
           echo "supply-chain  = ${{ needs.supply-chain.result }}"
           echo "dep-audit     = ${{ needs.dep-audit.result }}"
+          echo "installer-it = ${{ needs.installer-verify.result }}"
       - name: Fail on any real failure
         run: |
           for r in "${{ needs.static.result }}" "${{ needs.test-core.result }}" \
@@ -1589,7 +1610,8 @@ jobs:
                    "${{ needs.integration-mock.result }}" \
                    "${{ needs.hostile-env.result }}" \
                    "${{ needs.supply-chain.result }}" \
-                   "${{ needs.dep-audit.result }}"; do
+                   "${{ needs.dep-audit.result }}" \
+                   "${{ needs.installer-verify.result }}"; do
             if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then
               echo "Quality gate FAILED (a leg is $r)"
               exit 1
@@ -2067,10 +2089,65 @@ jobs:
           fi
           gh release upload "${GITHUB_REF_NAME}" "$asset" --clobber --repo "${GITHUB_REPOSITORY}"
 
+  # SEC-07 (#795): the installer's default trust path is SIGNED checksums.
+  # This job aggregates every fa-* asset of the release into SHA256SUMS and
+  # signs it with the FA_RELEASE_SIGNING_KEY repo secret (openssl RSA —
+  # already available on runners, no new dependency). The signing key is a
+  # channel separate from the release assets, so a checksum file served from
+  # the same compromised source as the binary cannot vouch for itself.
+  # Fail-closed: without the secret the release publishes NO provenance and
+  # this job goes red — install.sh aborts with E_PROVENANCE_MISSING on it.
+  release-provenance:
+    name: Sign release checksums
+    runs-on: ubuntu-latest
+    needs: binaries
+    timeout-minutes: 10
+    if: >-
+      !cancelled() && needs.binaries.result == 'success' &&
+      ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      github.event_name == 'release')
+    permissions:
+      contents: write # upload SHA256SUMS(.sig) to the GitHub Release
+    steps:
+      - name: Collect release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p provenance
+          gh release download "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" \
+            --dir provenance --pattern 'fa-*'
+          ls -l provenance
+
+      - name: Build and sign SHA256SUMS
+        env:
+          FA_RELEASE_SIGNING_KEY: ${{ secrets.FA_RELEASE_SIGNING_KEY }}
+        run: |
+          cd provenance
+          sha256sum fa-* > SHA256SUMS
+          if [ -z "$FA_RELEASE_SIGNING_KEY" ]; then
+            echo "::error::FA_RELEASE_SIGNING_KEY is not set — refusing to publish a release without signed checksums (SEC-07 #795, fail-closed). Set the repo secret with the release-signing private key."
+            exit 1
+          fi
+          printf '%s' "$FA_RELEASE_SIGNING_KEY" > signing.key
+          openssl dgst -sha256 -sign signing.key -out SHA256SUMS.sig SHA256SUMS
+          # Self-check: the signature must verify against OUR OWN public key
+          # before anything is uploaded.
+          openssl rsa -in signing.key -pubout -out pub.pem 2>/dev/null
+          openssl dgst -sha256 -verify pub.pem -signature SHA256SUMS.sig SHA256SUMS
+          rm -f signing.key pub.pem
+
+      - name: Upload provenance assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" \
+            provenance/SHA256SUMS provenance/SHA256SUMS.sig \
+            --clobber --repo "${GITHUB_REPOSITORY}"
+
   installer-smoke:
     name: Installer smoke
     runs-on: ${{ matrix.os }}
-    needs: binaries
+    needs: [binaries, release-provenance]
     timeout-minutes: 15
     # Depends on binaries — no !cancelled() needed here: the skip chain is
     # already broken upstream by the binaries job's own guard (fa#456).
@@ -2102,6 +2179,9 @@ jobs:
         shell: bash
         env:
           FA_INSTALL_DIR: ${{ runner.temp }}/fa-bin
+          # Install THIS release (its provenance was just signed by
+          # release-provenance); the installer's baked default pin may lag.
+          FA_VERSION: ${{ github.ref_name }}
         run: sh ./site/install.sh
 
       - name: Smoke the installed binary (Windows)

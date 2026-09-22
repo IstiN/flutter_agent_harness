@@ -93,6 +93,11 @@ approval_modes:
 # Edit this section, then regenerate site/install.sh / site/install.ps1:
 #   dart run scripts/gen_installers.dart
 install:
+  # SEC-07 (#795): the version install.sh installs BY DEFAULT (a known-good
+  # release whose assets carry signed provenance). FA_VERSION=latest opts
+  # into the moving latest release explicitly. Bump this when a signed
+  # release lands — install.sh must never default to an unsigned one.
+  pinned_cli_version: "0.1.452"
   banner:
     - "  ███████╗ █████╗       ████████╗███████╗██████╗ ███╗   ███╗██╗███╗   ██╗ █████╗ ██╗"
     - "  ██╔════╝██╔══██╗      ╚══██╔══╝██╔════╝██╔══██╗████╗ ████║██║████╗  ██║██╔══██╗██║"

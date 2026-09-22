@@ -45,10 +45,23 @@ void main() {
   final shRecipe = _shSetupRecipe(installConfig);
   final psRecipe = _psSetupRecipe(installConfig);
 
+  // SEC-07 (#795): the default install pins a known version. Must be set in
+  // install-config.yaml (a release that exists AND carries signed
+  // provenance) — the pubspec version is NOT usable here: at generation
+  // time that version usually has no release yet.
+  final pinnedVersion = installConfig['pinned_cli_version'] as String? ?? '';
+  if (pinnedVersion.isEmpty) {
+    throw StateError(
+      'install.pinned_cli_version is not set in $_configPath — install.sh '
+      'must default to a pinned, provenance-carrying release (SEC-07 #795)',
+    );
+  }
+
   final sh = File(_shTemplatePath)
       .readAsStringSync()
       .replaceFirst('# {{GENERATED_HEADER}}', _generatedHeader)
       .replaceFirst('{{BANNER}}', shBanner)
+      .replaceFirst('{{PINNED_VERSION}}', pinnedVersion)
       .replaceFirst('{{SETUP_RECIPE}}', shRecipe)
       .replaceFirst('{{PROVIDER_MENU}}', _shProviderMenu(providers))
       .replaceFirst('{{PROVIDER_CASES}}', _shProviderCases(providers))
