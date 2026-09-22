@@ -1756,11 +1756,18 @@ extension on AgentCli {
   Future<void> _switchToCatalogProvider(List<String> args) async {
     // Both identifiers route (issue #772): the friendly name (`chatgpt`)
     // and the adapter kind (`chatgpt-codex`) resolve to the same entry.
-    final spec = resolveCliProviderSpec(args[0]);
+    // The switch is a user-facing surface — the FA_PROVIDERS build filter
+    // still gates it (as the old catalogProvider lookup did).
+    final spec = resolveCliProviderSpec(args[0], honorBuildFilter: true);
     if (spec == null) {
+      final kinds = [
+        for (final name in enabledProviderNames())
+          if (canonicalProviderKind(name) != name) canonicalProviderKind(name),
+      ];
       io.writeln(
         'unknown provider: ${args[0]} — supported providers: '
-        '${enabledProviderNames().join(', ')}',
+        '${enabledProviderNames().join(', ')}'
+        '${kinds.isEmpty ? '' : ' — kinds accepted too: ${kinds.join(', ')}'}',
       );
       return;
     }

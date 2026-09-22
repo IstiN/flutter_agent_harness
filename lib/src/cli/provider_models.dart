@@ -1048,8 +1048,16 @@ extension on AgentCli {
     String name,
     CustomModelDefinition def,
   ) async {
-    // fromYaml validates the provider against the catalog.
-    final spec = catalogProvider(def.provider)!;
+    // Resolve exactly as fromYaml validated (both identifiers, filter) —
+    // and never via a reachable `!` (issue #772 review).
+    final spec = resolveCliProviderSpec(def.provider, honorBuildFilter: true);
+    if (spec == null) {
+      io.writeln(
+        'unknown provider: ${def.provider} — supported providers: '
+        '${enabledProviderNames().join(', ')}',
+      );
+      return;
+    }
     final rolesResolver = config.modelRolesResolver;
     if (rolesResolver != null) {
       rolesResolver.setDefaultChain([

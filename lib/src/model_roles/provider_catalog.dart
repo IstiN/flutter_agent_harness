@@ -464,25 +464,45 @@ Model buildCatalogModel(
 /// a custom [baseUrl] resolve to the `openai` spec (the model reports
 /// provider `openai` instead of `openrouter`); without one, `openrouter`.
 ///
-/// Intentionally NOT honoring the build-time provider filter
-/// (`FA_PROVIDERS`): the boot restore path must judge every persisted id
-/// against the full catalog — a disabled-in-this-build saved provider
-/// restores and boots (the wire adapters stay in the binary) instead of
-/// degrading to the fallback warning. The user-facing surfaces (pickers,
-/// roles, `/provider`, key collection) keep the filter via
-/// [catalogProvider].
-ProviderSpec? resolveCliProviderSpec(String kind, {String? baseUrl}) {
-  final key = kind.trim();
+/// Intentionally filter-less by default: the boot restore path must judge
+/// every persisted id against the full catalog — a disabled-in-this-build
+/// saved provider restores and boots (the wire adapters stay in the
+/// binary) instead of degrading to the fallback warning. User-facing
+/// surfaces (pickers, roles, `/provider`, key collection, `models:`
+/// validation) pass `honorBuildFilter: true` — the filter the
+/// [catalogProvider] lookups used to apply — instead of re-wiring
+/// [providerEnabledInBuild] by hand.
+ProviderSpec? resolveCliProviderSpec(
+  String kind, {
+  String? baseUrl,
+  bool honorBuildFilter = false,
+}) {
+  // Uniform normalization: names AND kinds are lowercase in the catalog,
+  // so the literal special-case, the name leg, and the kind leg all
+  // accept case variants identically.
+  final key = kind.trim().toLowerCase();
   if (key == 'openai-completions' || key == 'openrouter') {
-    return baseUrl == null
-        ? providerCatalog['openrouter']
-        : providerCatalog['openai'];
+    final spec =
+        baseUrl == null ? providerCatalog['openrouter'] : providerCatalog['openai'];
+    if (spec == null ||
+        (honorBuildFilter && !providerEnabledInBuild(spec.name))) {
+      return null;
+    }
+    return spec;
   }
-  final byName = providerCatalog[key.toLowerCase()];
-  if (byName != null) return byName;
+  final byName = providerCatalog[key];
+  if (byName != null) {
+    return honorBuildFilter && !providerEnabledInBuild(byName.name)
+        ? null
+        : byName;
+  }
   // A kind that is not itself a catalog name (e.g. `chatgpt-codex`).
   for (final spec in providerCatalog.values) {
-    if (spec.kind == key) return spec;
+    if (spec.kind == key) {
+      return honorBuildFilter && !providerEnabledInBuild(spec.name)
+          ? null
+          : spec;
+    }
   }
   return null;
 }

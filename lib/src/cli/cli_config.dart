@@ -969,13 +969,27 @@ String? _canonicalSavedProvider(Object? raw) {
   return canonicalProviderKind(canonicalProviderName(raw));
 }
 
-/// One-time note for the kind canonicalization (issue #772, E1): a saved
+/// Note for the kind canonicalization (issue #772, E1): a saved
 /// name-shaped `provider:` (`chatgpt`, `chatgpt.com`) loads as the catalog
-/// kind (`chatgpt-codex`); the file itself is rewritten only on the next
-/// save — boot never mutates the config.
+/// kind (`chatgpt-codex`). The note prints on EVERY load until the next
+/// save persists the kind into the file — boot never mutates the config
+/// (no de-dup state; it self-extinguishes after the first save).
 void _warnCanonicalizedProvider(YamlMap doc, CliConfig config) {
   final raw = doc['provider'];
-  if (raw is! String || raw.trim().toLowerCase() == config.providerKind) {
+  if (raw == null) {
+    return;
+  }
+  if (raw is! String) {
+    // Type-invalid value (e.g. `provider: 123`): degrades to the default —
+    // say so instead of swallowing it silently (the
+    // _warnDroppedGhostProviders named-note precedent).
+    stderr.writeln(
+      "note: provider '$raw' is not a string — ignoring it; the default "
+      "'${config.providerKind}' applies (issue #772)",
+    );
+    return;
+  }
+  if (raw.trim().toLowerCase() == config.providerKind) {
     return;
   }
   stderr.writeln(

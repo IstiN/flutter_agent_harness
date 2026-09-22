@@ -1486,6 +1486,13 @@ memory:
       expect(configOf('mode: code\n').providerKind, 'openai-completions');
     });
 
+    test('a type-invalid provider value degrades to the default', () {
+      // `provider: 123` used to throw a cast error; now it degrades with
+      // a named note (stderr) instead of silently swallowing the key.
+      final config = CliConfig.fromYaml(loadYaml('provider: 123\n') as YamlMap);
+      expect(config.providerKind, 'openai-completions');
+    });
+
     test('the next save persists the kind (write-back on save only)',
         () async {
       final tmp = Directory.systemTemp.createTempSync('fah-canonical-');

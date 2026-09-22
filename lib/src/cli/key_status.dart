@@ -78,6 +78,7 @@ final class KeyStatusRenderer {
   String? keyStatusLine(Model model) {
     final spec = resolveCliProviderSpec(
       rolesDriven ? model.provider : providerKind,
+      honorBuildFilter: true,
     );
     final names = spec?.apiKeyEnvNames;
     if (names == null || names.isEmpty) return null;
@@ -226,7 +227,7 @@ final class KeyStatusRenderer {
       return ' — roles mode reads keys from the environment only; check '
           'the chain env vars in ~/.fah/config.yaml';
     }
-    final spec = resolveCliProviderSpec(providerKind);
+    final spec = resolveCliProviderSpec(providerKind, honorBuildFilter: true);
     if (spec == null || spec.apiKeyEnvNames.isEmpty) {
       return ' — check the credentials for $baseUrl';
     }

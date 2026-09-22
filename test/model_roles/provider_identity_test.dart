@@ -160,6 +160,21 @@ void main() {
       );
     });
 
+    test('case variants resolve identically through the seam (review)', () {
+      // Names AND kinds lowercase-normalize uniformly — including the
+      // literal openai-completions/openrouter special-case.
+      expect(
+        resolveCliProviderSpec('OPENAI-COMPLETIONS'),
+        same(providerCatalog['openrouter']),
+      );
+      expect(resolveCliProviderSpec('OPENROUTER'),
+          same(providerCatalog['openrouter']));
+      expect(resolveCliProviderSpec('Anthropic'),
+          same(providerCatalog['anthropic']));
+      expect(resolveCliProviderSpec('ChatGPT-Codex'),
+          same(providerCatalog['chatgpt']));
+    });
+
     test('the closed kind sets derive from the catalog', () {
       final kinds = providerCatalog.values.map((spec) => spec.kind).toSet();
       // The queue parser's literal candidate list (kept literal only to
