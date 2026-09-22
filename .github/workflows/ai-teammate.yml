@@ -87,6 +87,12 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'issues' && contains(github.event.issue.assignees.*.login, 'ai-teammate'))
     runs-on: ubuntu-24.04
+    # Read-only: this job only resolves assignees/inputs and echoes outputs.
+    # The workflow-level mirror scopes exist for the pinned factory call
+    # (a reusable workflow cannot raise rights above the caller); the gate
+    # must not inherit them (SEC-08 review, #796).
+    permissions:
+      contents: read
     outputs:
       issue: ${{ steps.resolve.outputs.issue }}
       leg: ${{ steps.resolve.outputs.leg }}

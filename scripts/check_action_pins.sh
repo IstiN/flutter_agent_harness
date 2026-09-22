@@ -20,11 +20,15 @@ if [ "${1:-}" = "--path" ]; then
 fi
 
 shopt -s nullglob
-if [ "$dir" = ".github/workflows" ]; then
-  files=("$dir"/*.yml "$dir"/*.yaml .github/actions/*/action.yml)
-else
-  files=("$dir"/*.yml "$dir"/*.yaml)
-fi
+# Both modes share one shape: the root's workflows (either a
+# .github/workflows layout or loose *.yml/*.yaml fixtures) plus EVERY
+# composite action manifest at any depth — composite action steps can
+# carry remote uses: refs, so they are part of AC1's threat surface.
+files=("$dir"/.github/workflows/*.yml "$dir"/.github/workflows/*.yaml \
+       "$dir"/*.yml "$dir"/*.yaml)
+while IFS= read -r -d '' f; do
+  files+=("$f")
+done < <(find "$dir" -name .git -prune -o -type f \( -name 'action.yml' -o -name 'action.yaml' \) -print0 2>/dev/null)
 
 if [ ${#files[@]} -eq 0 ]; then
   echo "no workflow files found under $dir" >&2
@@ -50,13 +54,14 @@ for file in "${files[@]}"; do
         ;;
       *)
         sha="${ref##*@}"
-        case "$sha" in
-          ????????????????????????????????????????) ;; # 40-hex commit SHA
-          *)
-            echo "::error file=$file::third-party action not SHA-pinned: $ref"
-            violations=$((violations + 1))
-            ;;
-        esac
+        # A mutable ref whose NAME is exactly 40 chars would pass a pure
+        # length glob — require hex digits (a commit SHA), nothing else.
+        if [[ "$sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
+          : # full 40-hex commit SHA — the only accepted third-party form
+        else
+          echo "::error file=$file::third-party action not SHA-pinned: $ref"
+          violations=$((violations + 1))
+        fi
         ;;
     esac
   done <<EOF
