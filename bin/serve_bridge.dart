@@ -113,6 +113,11 @@ final class BridgeServer {
 
   /// Saved custom providers pushed (metadata) on every pairing that asks
   /// for it (issue #34 item 3). Empty = no providers-sync capability.
+  ///
+  /// Also the SEC-01 key pocket for the llm relay: a paired client names a
+  /// provider (WHAT); a stored record's endpoint (WHERE) and key (WITH
+  /// WHAT) travel together or not at all — a client-supplied baseUrl is
+  /// never an independent input to a keyed request.
   final List<CustomProviderEntry> providers;
 
   /// Copy-on-pair mode: keys transfer once in the sync push and the
@@ -142,23 +147,21 @@ final class BridgeServer {
     if (providers.isNotEmpty) providersSyncCapability,
   ];
 
-  /// The `llmReq` handler: frame glue over [llmRelay] with key
-  /// resolution against [providers] + [keys]. Null when no transport is
-  /// wired — llmReq then answers with a clean llmRes error.
+  /// The `llmReq` handler: frame glue over [llmRelay] with SEC-01 target
+  /// resolution against [providers] + [keys] — the client names WHAT
+  /// (provider id); this table alone decides WHERE (endpoint) and WITH
+  /// WHAT (key). Null when no transport is wired — llmReq then answers
+  /// with a clean llmRes error.
   BridgeLlmRelay? get llmRelayHandler => llmRelay == null
       ? null
-      : BridgeLlmRelay(relay: llmRelay!, resolveKey: _relayResolveKey);
-
-  /// Resolves the key for a relay request: the matching saved entry's
-  /// slot (env first, then the secure store — the CLI's own lookup
-  /// order). An unknown provider falls back to the host-scoped slot.
-  String? _relayResolveKey(String baseUrl, String? providerName) {
-    final entry = providerName != null
-        ? providers.where((e) => e.name == providerName).firstOrNull
-        : providers.where((e) => e.baseUrl == baseUrl).firstOrNull;
-    if (entry != null) return resolveProviderKey(entry);
-    return _readStoredKey(CustomProviderRegistry.keyNameFor(baseUrl));
-  }
+      : BridgeLlmRelay(
+          relay: llmRelay!,
+          resolveTarget: (request) => resolveLlmRelayTarget(
+            request,
+            providers: providers,
+            resolveKey: resolveProviderKey,
+          ),
+        );
 
   /// Resolves one saved entry's key: its explicit [CustomProviderEntry
   /// .keyName] when set, else the host(+entry)-scoped slot name.

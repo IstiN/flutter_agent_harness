@@ -509,30 +509,123 @@ String? _formatAuthRedirect(ProviderHttpError error) {
       'moved URL.';
 }
 
+/// Same-origin redirect hops the shared layer follows itself. Auto-follow
+/// is DISABLED on every request (`followRedirects` forced off below): the
+/// redirect decision is made HERE so a cross-origin 3xx can never re-send
+/// `Authorization: Bearer …` to the redirect target — the shared-layer
+/// rule (SEC-01 class), not a per-relay or per-client behavior some
+/// HTTP stacks (URLSession-backed clients) get wrong by default. Five
+/// hops mirrors the common client default.
+const int _maxProviderRedirects = 5;
+
+bool _isRedirectStatus(int statusCode) => statusCode >= 300 && statusCode < 400;
+
+/// The absolute redirect target, or null when [statusCode] is not a
+/// redirect or the `Location` header is absent/unparseable.
+Uri? _redirectTarget(Uri from, int statusCode, String? location) {
+  if (!_isRedirectStatus(statusCode) || location == null || location.isEmpty) {
+    return null;
+  }
+  final parsed = Uri.tryParse(location);
+  if (parsed == null) return null;
+  return from.resolveUri(parsed);
+}
+
+/// Strict same-origin: scheme, host and effective port all equal — the
+/// only redirect kind that may keep the request's credentials.
+bool _sameOrigin(Uri a, Uri b) {
+  int effectivePort(Uri u) =>
+      u.port != 0 ? u.port : (u.scheme == 'https' ? 443 : 80);
+  return a.scheme.toLowerCase() == b.scheme.toLowerCase() &&
+      a.host.toLowerCase() == b.host.toLowerCase() &&
+      effectivePort(a) == effectivePort(b);
+}
+
+/// Re-issues [previous] at [target] for a same-origin redirect hop:
+/// method, body and headers ride along (credentials stay on-origin) —
+/// except `303 See Other`, which RFC 9110 (and dart:io's prior
+/// auto-follow on this path) downgrades to a body-less GET.
+http.Request _reissue(http.Request previous, Uri target, int statusCode) {
+  final switchToGet = statusCode == 303;
+  final reissued = http.Request(switchToGet ? 'GET' : previous.method, target)
+    ..followRedirects = false
+    ..headers.addAll({
+      for (final entry in previous.headers.entries)
+        if (entry.key.toLowerCase() != 'content-length') entry.key: entry.value,
+    });
+  if (!switchToGet) reissued.bodyBytes = previous.bodyBytes;
+  return reissued;
+}
+
 /// Sends [request], racing [cancelToken] (abort wins), and validates the
 /// response status.
 ///
-/// Throws [AbortedError] when the token fires before the headers arrive and
-/// [ProviderHttpError] on a non-200 status (with the body consumed for the
-/// error message). The adapter's try/catch turns both into error events.
+/// Redirects are decided HERE, never by the underlying client
+/// (`followRedirects` is forced off): a same-origin hop is re-issued
+/// verbatim (method/body/headers — credentials intact), while a
+/// cross-origin 3xx FAILS as [ProviderHttpError] carrying the
+/// `Location`. An endpoint that bounces an API call to another host
+/// (expired SSO portal, moved URL) never gets the request re-sent, so
+/// `Authorization: Bearer …` can never leak to a redirect target — the
+/// SEC-01 trust boundary lives in this shared layer, not per relay.
+///
+/// Throws [AbortedError] when the token fires before the headers arrive
+/// and [ProviderHttpError] on a non-200 status (with the body consumed
+/// for the error message). The adapter's try/catch turns both into error
+/// events.
 Future<http.StreamedResponse> sendProviderRequest(
   http.Client httpClient,
   http.Request request,
   CancelToken? cancelToken,
 ) async {
-  final responseFuture = httpClient.send(request);
-  final http.StreamedResponse response;
-  if (cancelToken == null) {
-    response = await responseFuture.timeout(effectiveProviderConnectTimeout);
-  } else {
-    response = await Future.any([
-      responseFuture,
-      cancelToken.onCancel.then<http.StreamedResponse>(
-        (_) => throw const AbortedError(),
-      ),
-    ]).timeout(effectiveProviderConnectTimeout);
+  request.followRedirects = false;
+  var current = request;
+  for (var redirects = 0; ; redirects++) {
+    final response = await _sendWatched(httpClient, current, cancelToken);
+    final location = response.headers['location'];
+    final target = _redirectTarget(current.url, response.statusCode, location);
+    if (target == null) return _validateStreamResponse(current, response);
+    if (redirects >= _maxProviderRedirects ||
+        !_sameOrigin(current.url, target)) {
+      final body = await response.stream.bytesToString();
+      throw ProviderHttpError(
+        response.statusCode,
+        body,
+        requestUrl: current.url,
+        redirectLocation: location,
+      );
+    }
+    // Consume the (tiny) redirect body so the connection can be reused.
+    await response.stream.drain<void>();
+    current = _reissue(current, target, response.statusCode);
   }
+}
 
+/// One watched send: the cancel-token race plus the connect watchdog.
+Future<http.StreamedResponse> _sendWatched(
+  http.Client httpClient,
+  http.Request request,
+  CancelToken? cancelToken,
+) async {
+  final responseFuture = httpClient.send(request);
+  if (cancelToken == null) {
+    return responseFuture.timeout(effectiveProviderConnectTimeout);
+  }
+  return Future.any([
+    responseFuture,
+    cancelToken.onCancel.then<http.StreamedResponse>(
+      (_) => throw const AbortedError(),
+    ),
+  ]).timeout(effectiveProviderConnectTimeout);
+}
+
+/// The terminal-hop validations: non-200 statuses and the 200 answers
+/// that are secretly not event streams (HTML login portal, buffered JSON
+/// gateway error).
+Future<http.StreamedResponse> _validateStreamResponse(
+  http.Request request,
+  http.StreamedResponse response,
+) async {
   if (response.statusCode != 200) {
     final body = await response.stream.bytesToString();
     throw ProviderHttpError(
@@ -546,10 +639,10 @@ Future<http.StreamedResponse> sendProviderRequest(
 
   // A 200 with an HTML body is NEVER a valid event stream: an SSO-gated
   // endpoint (CodeMie et al.) whose session died answers the API call with
-  // its login portal after a transparent redirect (fetch and dart:io both
-  // follow 3xx silently). Without this guard the SSE consumer sees no
-  // `data:` lines and the turn finishes with an empty assistant message —
-  // "(empty response — try again)" with zero hint that re-login is needed.
+  // its login portal after a redirect. Without this guard the SSE consumer
+  // sees no `data:` lines and the turn finishes with an empty assistant
+  // message — "(empty response — try again)" with zero hint that re-login
+  // is needed.
   final contentType = response.headers['content-type'] ?? '';
   final contentTypeLower = contentType.toLowerCase();
   if (contentTypeLower.contains('text/html')) {

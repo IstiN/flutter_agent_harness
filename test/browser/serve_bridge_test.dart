@@ -608,14 +608,16 @@ void main() {
       await client.close();
     });
 
-    test('llmReq streams llmRes deltas then done; the key is injected '
-        'server-side and never appears in any frame', () async {
+    test('llmReq naming its provider streams llmRes deltas then done; the '
+        'key is injected server-side and never appears in any frame', () async {
       final seenKeys = <String?>[];
+      final seenUrls = <String>[];
       server = await spin(
         providers: [entry],
         keys: await keyCache({'FA_KEY_TEST_ZAI': secret}),
         llmRelay: (request, onDelta) async {
           seenKeys.add(request.key);
+          seenUrls.add(request.baseUrl);
           onDelta('hel');
           onDelta('lo');
         },
@@ -628,6 +630,7 @@ void main() {
         'op': 'llmReq',
         'req': {
           'baseUrl': entry.baseUrl,
+          'provider': 'zai',
           'model': 'glm-4.6',
           'messages': [
             {'role': 'user', 'content': 'hi'},
@@ -644,6 +647,7 @@ void main() {
       expect(done['done'], isTrue);
       // The key reached the relay transport server-side...
       expect(seenKeys, everyElement(secret));
+      expect(seenUrls, everyElement(entry.baseUrl));
       // ...but no frame the client saw carried it.
       for (final frame in client.frames) {
         expect(jsonEncode(frame), isNot(contains(secret)));
@@ -668,7 +672,7 @@ void main() {
     });
 
     test(
-      'llmReq for a keyless endpoint answers a no-key llmRes error',
+      'a named provider whose key is missing answers a no-key llmRes error',
       () async {
         server = await spin(
           providers: [entry],
@@ -681,15 +685,173 @@ void main() {
           'v': 1,
           'id': '2-llm3',
           'op': 'llmReq',
-          'req': {'baseUrl': entry.baseUrl, 'model': 'glm-4.6', 'messages': []},
+          'req': {
+            'baseUrl': entry.baseUrl,
+            'provider': 'zai',
+            'model': 'glm-4.6',
+            'messages': [],
+          },
         });
         final error = await client.next();
         expect(error['op'], 'llmRes');
-        expect(error['error'], contains('no key for'));
+        expect(error['error'], contains('no key'));
+        expect(error['error'], contains('zai'));
         expect(jsonEncode(error), isNot(contains('FA_KEY_TEST_ZAI')));
         await client.close();
       },
     );
+  });
+
+  group('llm relay trust boundary (SEC-01)', () {
+    final entry = CustomProviderEntry(
+      name: 'zai',
+      apiType: 'openai',
+      baseUrl: 'https://api.z.ai/api/paas/v4',
+      modelId: 'glm-4.6',
+      keyName: 'FA_KEY_TEST_ZAI',
+    );
+    const secret = 'the-stored-key-bytes';
+
+    Future<SecureKeyCache> keyCache(Map<String, String> names) async {
+      final cache = SecureKeyCache(_MapKeyStore(names));
+      await cache.preload(names.keys);
+      return cache;
+    }
+
+    /// Connects a plain scripted client (the relay needs no capability).
+    Future<_ExtClient> connectPlain() async {
+      final socket = await WebSocket.connect(server.url);
+      final client = _ExtClient(socket);
+      client.send({
+        'v': 1,
+        'id': '1-hello',
+        'op': 'hello',
+        'agentId': 'sec1',
+        'proto': 1,
+        'token': server.token,
+        'caps': ['tabs'],
+      });
+      await client.next(); // welcome
+      return client;
+    }
+
+    test('provider=X + baseUrl=attacker → llmRes error naming X, the relay '
+        'is NEVER invoked', () async {
+      var relayCalls = 0;
+      server = await spin(
+        providers: [entry],
+        keys: await keyCache({'FA_KEY_TEST_ZAI': secret}),
+        llmRelay: (request, onDelta) async {
+          relayCalls++;
+        },
+      );
+      final client = await connectPlain();
+      client.send({
+        'v': 1,
+        'id': '2-sec1',
+        'op': 'llmReq',
+        'req': {
+          'baseUrl': 'https://attacker.example/v1',
+          'provider': 'zai',
+          'model': 'glm-4.6',
+          'messages': [],
+        },
+      });
+      final error = await client.next();
+      expect(error['op'], 'llmRes');
+      expect(error['error'], contains('zai'));
+      expect(error['error'], contains('attacker.example'));
+      expect(relayCalls, isZero);
+      // The stored key never leaves the process on any frame.
+      for (final frame in client.frames) {
+        expect(jsonEncode(frame), isNot(contains(secret)));
+      }
+      await client.close();
+    });
+
+    test('an unknown provider name is a named rejection with zero relay '
+        'calls', () async {
+      var relayCalls = 0;
+      server = await spin(
+        providers: [entry],
+        keys: await keyCache({'FA_KEY_TEST_ZAI': secret}),
+        llmRelay: (request, onDelta) async {
+          relayCalls++;
+        },
+      );
+      final client = await connectPlain();
+      client.send({
+        'v': 1,
+        'id': '2-sec2',
+        'op': 'llmReq',
+        'req': {
+          'baseUrl': entry.baseUrl,
+          'provider': 'ghost',
+          'model': 'glm-4.6',
+          'messages': [],
+        },
+      });
+      final error = await client.next();
+      expect(error['error'], contains('ghost'));
+      expect(relayCalls, isZero);
+      await client.close();
+    });
+
+    test('an anonymous llmReq aimed at a keyed saved record answers the '
+        'migration hint; the relay is NEVER invoked', () async {
+      var relayCalls = 0;
+      server = await spin(
+        providers: [entry],
+        keys: await keyCache({'FA_KEY_TEST_ZAI': secret}),
+        llmRelay: (request, onDelta) async {
+          relayCalls++;
+        },
+      );
+      final client = await connectPlain();
+      client.send({
+        'v': 1,
+        'id': '2-sec3',
+        'op': 'llmReq',
+        'req': {'baseUrl': entry.baseUrl, 'model': 'glm-4.6', 'messages': []},
+      });
+      final error = await client.next();
+      expect(error['op'], 'llmRes');
+      // Legacy-client migration: fails safe — no key can attach either way,
+      // but the extension gets an actionable hint instead of a raw 401.
+      expect(error['error'], contains('re-pair'));
+      expect(relayCalls, isZero);
+      for (final frame in client.frames) {
+        expect(jsonEncode(frame), isNot(contains(secret)));
+      }
+      await client.close();
+    });
+
+    test('a client-supplied baseUrl matching no record and no provider is '
+        'relayed keyless (no key lookup)', () async {
+      final seenKeys = <String?>[];
+      server = await spin(
+        providers: [entry],
+        keys: await keyCache({'FA_KEY_TEST_ZAI': secret}),
+        llmRelay: (request, onDelta) async {
+          seenKeys.add(request.key);
+        },
+      );
+      final client = await connectPlain();
+      client.send({
+        'v': 1,
+        'id': '2-sec4',
+        'op': 'llmReq',
+        'req': {
+          'baseUrl': 'https://attacker.example/v1',
+          'model': 'glm-4.6',
+          'messages': [],
+        },
+      });
+      final done = await client.next();
+      expect(done['done'], isTrue);
+      expect(seenKeys, [isNull]);
+      await client.close();
+    });
   });
 
   group('token file', () {
