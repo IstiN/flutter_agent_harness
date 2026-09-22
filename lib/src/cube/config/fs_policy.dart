@@ -10,12 +10,18 @@
 ///       - {path: ~/.ssh, access: deny}
 /// ```
 ///
-/// Resolution ([CubeFsPolicy.accessFor]) is pure string math — a lexical
-/// traversal guard, no filesystem access: paths are `~`-expanded (when
-/// [homeDir] is known; a `~` path with unknown [homeDir] is denied), `.`
-/// and `..` segments are collapsed (a path that climbs above `/` is denied),
-/// and symlinks are intentionally left unresolved. Relative paths resolve
-/// against the workspace (the sandbox working directory).
+/// Resolution ([CubeFsPolicy.accessFor]) expands `~` (when [homeDir] is
+/// known; a `~` path with unknown [homeDir] is denied) and collapses `.`
+/// and `..` segments (a path that climbs above `/` is denied). Relative
+/// paths resolve against the workspace (the sandbox working directory).
+///
+/// Without a [CubeFsProbe] the check is pure string math — symlinked paths
+/// are judged by their written form. With a probe,
+/// [CubeFsPolicy.accessForResolved] resolves each path component against
+/// the filesystem instead: symlink chains are followed to a fixed depth,
+/// `..` applies after resolution, unreadable indirections (Windows reparse
+/// points) fail closed, and the verdict judges the file the OS would
+/// actually open.
 ///
 /// The **longest matching mount wins**; otherwise a path inside the
 /// workspace is read/write, and anything else is denied.
@@ -27,6 +33,24 @@ library;
 import 'package:yaml/yaml.dart';
 
 import '../../exceptions.dart';
+
+/// One symlink-probe result for a path component:
+///
+/// - `(isLink: false, target: null)` — a regular file or directory.
+/// - `(isLink: true, target: "…")` — a symlink; [target] is verbatim
+///   (absolute or relative, and may itself contain links or `..`).
+/// - `(isLink: true, target: null)` — an indirection exists but cannot be
+///   read (an unreadable Windows reparse point/junction, a permission
+///   wall): callers MUST deny — fail closed.
+typedef CubeLinkTarget = ({bool isLink, String? target});
+
+/// Answers "is this path a symlink, and where does it point?" — the seam
+/// that keeps [CubeFsPolicy] pure Dart. Real hosts implement it over the OS
+/// (`LocalCubeFsProbe`, exported from `lib/io.dart`); tests fake it.
+abstract interface class CubeFsProbe {
+  /// Probes [path] for an indirection. See [CubeLinkTarget] for the shapes.
+  CubeLinkTarget linkTarget(String path);
+}
 
 /// Access level granted for a path.
 enum CubePathAccess {
@@ -130,12 +154,135 @@ final class CubeFsPolicy {
   /// inside [workspace], else [CubePathAccess.deny]. `~` paths with an
   /// unknown [homeDir], and paths that traverse above `/`, are denied.
   ///
-  /// Pure string math — never touches the filesystem; symlinked paths are
-  /// judged by their written form (the traversal guard is lexical only).
-  CubePathAccess accessFor(String path, {String? homeDir}) {
-    final target = _resolve(path, homeDir: homeDir);
-    if (target == null) return CubePathAccess.deny;
+  /// Without a [probe] this is pure string math — symlinked paths are
+  /// judged by their written form. With a probe the verdict judges the
+  /// file the OS will open; see [accessForResolved].
+  CubePathAccess accessFor(String path, {String? homeDir, CubeFsProbe? probe}) =>
+      accessForResolved(path, homeDir: homeDir, probe: probe).access;
 
+  /// [accessFor] plus the canonical path to open: `resolved` is the
+  /// per-component real-path resolution of [path] when a [probe] is given
+  /// and the path is allowed (feed it to the delegate — resolve-then-open),
+  /// and `null` otherwise (denied, or the no-probe lexical mode).
+  ///
+  /// Resolving mode: each component of [path] is probed in turn, symlink
+  /// chains are followed up to a fixed depth, relative link targets splice
+  /// in front of the remaining components, and `..` pops the RESOLVED
+  /// prefix (so `link/..` climbs out of the link's target, like the kernel
+  /// does). Every resolved ancestor is probed; the access verdict itself
+  /// runs once on the final resolved path — longest-match mounts stay
+  /// intact (an ancestor inside a deny mount never over-blocks a deeper
+  /// rw mount). An unreadable indirection (Windows reparse point) or a
+  /// chain past the depth limit denies — fail closed.
+  ///
+  /// Residual race (documented, not solved): the target can still be
+  /// swapped between this check and the delegate's open. That window is a
+  /// swap, not a standing symlink — closing it entirely needs the file
+  /// tools to run inside the sandboxed worker.
+  ({CubePathAccess access, String? resolved}) accessForResolved(
+    String path, {
+    String? homeDir,
+    CubeFsProbe? probe,
+  }) {
+    if (probe == null) {
+      final target = _resolve(path, homeDir: homeDir);
+      return (
+        access: target == null ? CubePathAccess.deny : _classify(target, homeDir: homeDir),
+        resolved: null,
+      );
+    }
+    final head = _splitHead(path, homeDir: homeDir);
+    if (head == null) return (access: CubePathAccess.deny, resolved: null);
+    final resolved = _resolveReal(head: head.$1, rest: head.$2, probe: probe);
+    if (resolved == null) return (access: CubePathAccess.deny, resolved: null);
+    return (access: _classify(resolved, homeDir: homeDir), resolved: resolved);
+  }
+
+  /// Symlink chains longer than this are denied (fail-closed). The POSIX
+  /// kernel limit is 40; ours is deliberately tighter — eight hops already
+  /// covers every legitimate layout.
+  static const _maxResolvedLinks = 8;
+
+  /// Walks the attacker-controlled components of a path to their real-path
+  /// resolution: `null` denies (above-root climb, unreadable indirection,
+  /// or a chain past [_maxResolvedLinks]). Trusted heads (home, workspace)
+  /// are seeded as the stack and never probed — the cube owner picks them.
+  static String? _resolveReal({
+    required List<String> head,
+    required List<String> rest,
+    required CubeFsProbe probe,
+  }) {
+    var linksLeft = _maxResolvedLinks;
+    final stack = [...head];
+    final pending = [...rest];
+    while (pending.isNotEmpty) {
+      final segment = pending.removeAt(0);
+      if (segment.isEmpty || segment == '.') continue;
+      if (segment == '..') {
+        if (stack.isEmpty) return null; // traversal above the root
+        stack.removeLast();
+        continue;
+      }
+      final link = probe.linkTarget('/${[...stack, segment].join('/')}');
+      if (!link.isLink) {
+        stack.add(segment);
+        continue;
+      }
+      final target = link.target;
+      if (target == null || linksLeft == 0) return null;
+      linksLeft--;
+      if (target.startsWith('/')) stack.clear();
+      pending.insertAll(0, target.split('/'));
+    }
+    return '/${stack.join('/')}';
+  }
+
+  /// The trusted head of [raw] plus its own untrusted components. The head
+  /// is the longest configured root (~-expanded home, workspace, or the
+  /// longest matching mount — normalized, no links involved) that lexically
+  /// prefixes [raw]; only components BELOW it are probed. The owner picks
+  /// the roots, and firmware symlinks (`/tmp` → `/private/tmp`) live in
+  /// them, not below — resolving them would split the verdict from the
+  /// mounts' own spelling. `null` per [_resolve]'s unresolvable rules.
+  (List<String>, List<String>)? _splitHead(String raw, {String? homeDir}) {
+    final path = raw.trim();
+    if (path.isEmpty) return null;
+    final home = homeDir?.trim();
+    final hasHome = home != null && home.isNotEmpty;
+    if (path == '~' || path.startsWith('~/')) {
+      if (!hasHome) return null;
+      return (
+        home.split('/')..removeWhere((segment) => segment.isEmpty),
+        path.substring(2).split('/'),
+      );
+    }
+    if (path.startsWith('/')) {
+      var head = const <String>[];
+      var bestLength = -1;
+      final roots = [workspace, ...mounts.map((mount) => mount.path)];
+      for (final root in roots) {
+        final base = _resolve(root, homeDir: homeDir);
+        if (base != null && _within(path, base) && base.length > bestLength) {
+          bestLength = base.length;
+          head = base.split('/')..removeWhere((segment) => segment.isEmpty);
+        }
+      }
+      final components = path.split('/')
+        ..removeWhere((segment) => segment.isEmpty);
+      return (head, components.sublist(head.length));
+    }
+    // Relative path: the sandbox working directory is the workspace, so
+    // resolve against it (workspace is validated absolute at parse time).
+    final ws = _resolve(workspace, homeDir: homeDir);
+    if (ws == null) return null;
+    return (
+      ws.split('/')..removeWhere((segment) => segment.isEmpty),
+      path.split('/'),
+    );
+  }
+
+  /// The longest-mount-else-workspace verdict for a fully resolved [target].
+  CubePathAccess _classify(String target, {String? homeDir}) {
     CubeMount? best;
     var bestLength = -1;
     for (final mount in mounts) {

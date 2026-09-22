@@ -17,6 +17,7 @@ library;
 import 'dart:typed_data';
 
 import '../config/cube_spec.dart';
+import '../config/fs_policy.dart';
 import '../../env/execution_env.dart';
 import 'cube_fs_guard.dart';
 import 'policy_engine.dart';
@@ -30,7 +31,9 @@ final class SandboxedExecutionEnv implements ExecutionEnv, BackgroundShell {
   ///
   /// [homeDir] and [workspaceRoot] forward to [CubeFsGuard] (the CLI passes
   /// the real process cwd as [workspaceRoot]; the cube's `/workspace` is
-  /// realized as the env cwd, not a literal directory).
+  /// realized as the env cwd, not a literal directory). [pathProbe] enables
+  /// symlink resolution in the fs guard; real hosts pass
+  /// `LocalCubeFsProbe`.
   ///
   /// [os] names the host platform for `backend: kernel` specs (the CLI
   /// passes `Platform.operatingSystem`; `lib/src` itself stays pure Dart).
@@ -42,10 +45,12 @@ final class SandboxedExecutionEnv implements ExecutionEnv, BackgroundShell {
     CubeSpec? spec, {
     String? homeDir,
     String? workspaceRoot,
+    CubeFsProbe? pathProbe,
     String? os,
     void Function(String message)? onWarning,
   }) : _homeDir = homeDir,
        _workspaceRoot = workspaceRoot,
+       _pathProbe = pathProbe,
        _os = os,
        _onWarning = onWarning {
     if (spec == null) {
@@ -59,6 +64,7 @@ final class SandboxedExecutionEnv implements ExecutionEnv, BackgroundShell {
   final String? _homeDir;
   final ExecutionEnv _delegate;
   final String? _workspaceRoot;
+  final CubeFsProbe? _pathProbe;
   final String? _os;
   final void Function(String message)? _onWarning;
 
@@ -163,6 +169,7 @@ final class SandboxedExecutionEnv implements ExecutionEnv, BackgroundShell {
       spec,
       homeDir: _homeDir,
       workspaceRoot: _workspaceRoot,
+      pathProbe: _pathProbe,
     );
     _shell = SandboxedShell(
       _delegate,

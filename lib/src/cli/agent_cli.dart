@@ -346,6 +346,7 @@ class AgentCli {
       config.cubeSpec,
       homeDir: config.homeDir,
       workspaceRoot: _env.cwd,
+      pathProbe: config.fsProbe,
       os: config.osName,
       // A `backend: kernel` cube degrading to policy mode (no enforcing
       // backend on this host) is a security-relevant downgrade — say so.

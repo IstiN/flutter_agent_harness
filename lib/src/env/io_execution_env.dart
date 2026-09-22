@@ -12,6 +12,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import '../cancel_token.dart';
+import '../cube/config/fs_policy.dart';
 import 'execution_env.dart';
 
 FileError _toFileError(Object error, String path) {
@@ -360,6 +361,28 @@ final class LocalFileSystem
       return const Ok(null);
     } on Object catch (error) {
       return Err(_toFileError(error, resolvedTo));
+    }
+  }
+}
+
+/// Real-filesystem [CubeFsProbe]: `FileSystemEntity.typeSync` (nofollow)
+/// spots link nodes, `Link.targetSync` reads them. A link node whose target
+/// cannot be read — or any indirection dart:io cannot classify — reports
+/// `(isLink: true, target: null)`, which the cube policy treats as
+/// fail-closed deny (Windows reparse points/junctions included).
+final class LocalCubeFsProbe implements CubeFsProbe {
+  const LocalCubeFsProbe();
+
+  @override
+  CubeLinkTarget linkTarget(String path) {
+    final type = FileSystemEntity.typeSync(path, followLinks: false);
+    if (type != FileSystemEntityType.link) {
+      return (isLink: false, target: null);
+    }
+    try {
+      return (isLink: true, target: Link(path).targetSync());
+    } on FileSystemException {
+      return (isLink: true, target: null);
     }
   }
 }

@@ -168,4 +168,112 @@ void main() {
       expect((await guard.createDir('/work/rw/d')).isOk, isTrue);
     });
   });
+
+  group('CubeFsGuard symlink resolution (#791)', () {
+    // Fake probe standing in for the real filesystem: [links] maps paths to
+    // their symlink targets. The MemoryExecutionEnv delegate holds real
+    // (virtual) files, so "the same file via an allowed path still works"
+    // is provable end to end.
+    late _Probe probe;
+    late MemoryExecutionEnv delegate;
+    late CubeFsGuard guard;
+
+    setUp(() {
+      probe = _Probe();
+      delegate = MemoryExecutionEnv(cwd: '/work');
+      guard = CubeFsGuard(
+        delegate,
+        spec(workspace: '/work'),
+        workspaceRoot: '/work',
+        pathProbe: probe,
+      );
+    });
+
+    test('AC1: read AND write through a link outside are denied, named', () async {
+      probe.links['/work/link'] = '/outside';
+      await delegate.createDir('/outside');
+
+      final read = await guard.readTextFile('/work/link/id_rsa');
+      expect(read.isErr, isTrue);
+      expect(read.errorOrNull!.code, FileErrorCode.notFound);
+      expect(read.errorOrNull!.message, contains('fa_cube[test-cube]'));
+
+      final write = await guard.writeFile('/work/link/evil', 'x');
+      expect(write.isErr, isTrue);
+      expect(write.errorOrNull!.code, FileErrorCode.permissionDenied);
+      expect(write.errorOrNull!.message, contains('fa_cube[test-cube]'));
+      expect((await delegate.exists('/outside/evil')).getOrThrow(), isFalse);
+
+      // No over-block: the same file via its allowed path still works.
+      await delegate.writeFile('/outside/id_rsa', 'secret');
+      final direct = await guard.writeFile('/work/mine.txt', 'fine');
+      expect(direct.isOk, isTrue);
+      expect((await guard.readTextFile('/work/mine.txt')).getOrThrow(), 'fine');
+    });
+
+    test('AC2: symlink chains are denied, in-workspace chains allowed', () async {
+      probe.links.addAll({
+        '/work/a': 'b',
+        '/work/b': '/outside',
+      });
+      expect(
+        (await guard.readTextFile('/work/a/key')).errorOrNull!.code,
+        FileErrorCode.notFound,
+      );
+
+      probe.links.clear();
+      probe.links.addAll({'/work/a': 'b', '/work/b': 'sub'});
+      final write = await guard.writeFile('/work/a/f.txt', 'chained');
+      expect(write.isOk, isTrue);
+      // The open path is the resolved target, not the written form.
+      expect((await delegate.readTextFile('/work/sub/f.txt')).getOrThrow(),
+          'chained');
+    });
+
+    test('AC3: .. traversal after resolution is denied', () async {
+      probe.links['/work/l'] = 'sub/deep';
+      final result = await guard.writeFile('/work/l/../../../etc/passwd', 'x');
+      expect(result.isErr, isTrue);
+      expect(result.errorOrNull!.code, FileErrorCode.permissionDenied);
+      expect((await delegate.exists('/etc/passwd')).getOrThrow(), isFalse);
+    });
+
+    test('unreadable indirection fails closed', () async {
+      probe.unreadable.add('/work/junction');
+      expect(
+        (await guard.writeFile('/work/junction/f', 'x')).errorOrNull!.code,
+        FileErrorCode.permissionDenied,
+      );
+      expect(
+        (await guard.readTextFile('/work/junction/f')).errorOrNull!.code,
+        FileErrorCode.notFound,
+      );
+    });
+
+    test('without a probe the guard keeps the lexical check', () async {
+      final lexical = CubeFsGuard(delegate, spec(workspace: '/work'));
+      expect(
+        (await lexical.writeFile('/work/../escape', 'x')).isErr,
+        isTrue,
+      );
+      expect((await lexical.writeFile('/work/ok', 'x')).isOk, isTrue);
+    });
+  });
+}
+
+/// Fake [CubeFsProbe]: [links] maps a path to its symlink target; paths in
+/// [unreadable] are indirections that cannot be read (Windows reparse
+/// points) — the fail-closed case.
+class _Probe implements CubeFsProbe {
+  final Map<String, String> links = {};
+  final Set<String> unreadable = {};
+
+  @override
+  CubeLinkTarget linkTarget(String path) {
+    if (unreadable.contains(path)) return (isLink: true, target: null);
+    final target = links[path];
+    return target == null
+        ? (isLink: false, target: null)
+        : (isLink: true, target: target);
+  }
 }

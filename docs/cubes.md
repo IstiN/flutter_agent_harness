@@ -102,9 +102,12 @@ the gate is allow-all and byte-identical to pre-gate behavior.
 | `workspace` | path | Read/write root; absolute or `~/`-relative. Default `/workspace`. |
 | `mounts` | list | `{path, access}` with access `ro`, `rw`, or `deny`. The **longest matching mount wins**; otherwise paths inside the workspace are read/write and everything else is denied. |
 
-Path checks are pure string math: `~` is expanded, `.`/`..` segments are
-collapsed (climbing above `/` is denied), and symlinks are judged by
-their written form.
+Path checks resolve symlinks: every path component is probed and links are
+followed (chains to a fixed depth, `..` applied after resolution, unreadable
+indirections such as Windows reparse points fail closed), so a path is
+judged — and opened — by its real-path target, not its written form. `~` is
+expanded, and a `..` climb above `/` is denied. Without a filesystem probe
+(web hosts, tests) the check degrades to the written form.
 
 ### `spec.env`
 
@@ -214,8 +217,9 @@ platforms (including Windows) currently report a descriptor-only no-op.
   read, `N>&M` fd duplicates exempt), but quoting inside `$(`, process
   substitution and `eval` indirection are above its ceiling, and the
   network scan sees only `curl`/`wget`/`gh api` URL arguments — bare-host
-  operands are unchecked. The fs guard resolves symlinks by their
-  written form only.
+  operands are unchecked. (The fs guard itself resolves symlinks to the
+  real target — see `spec.filesystem` above; the residual check-to-open
+  swap race is documented on `CubeFsGuard`.)
 - **No side-channel guarantees.** Timing, cache and similar side
   channels are out of scope for the Dart layer.
 - **Kernel = hard boundary.** As the policy engine's own contract states:
