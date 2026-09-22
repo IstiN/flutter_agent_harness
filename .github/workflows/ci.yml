@@ -1586,20 +1586,42 @@ jobs:
           echo "integ-mock    = ${{ needs.integration-mock.result }}"
           echo "supply-chain  = ${{ needs.supply-chain.result }}"
           echo "dep-audit     = ${{ needs.dep-audit.result }}"
-      - name: Fail on any real failure
+      - name: Fail on any real failure (skipped security = dodge = FAIL)
+        env:
+          R_CHANGES: ${{ needs.changes.result }}
+          R_SUPPLY_CHAIN: ${{ needs.supply-chain.result }}
+          R_DEP_AUDIT: ${{ needs.dep-audit.result }}
+          R_STATIC: ${{ needs.static.result }}
+          R_TEST_CORE: ${{ needs.test-core.result }}
+          R_COVERAGE: ${{ needs.coverage-gate.result }}
+          R_GUARDS: ${{ needs.guards.result }}
+          R_FLUTTER: ${{ needs.flutter-tests.result }}
+          R_CRAP: ${{ needs.app-crap-gate.result }}
+          R_FAUI: ${{ needs.test-faui.result }}
+          R_PERF: ${{ needs.perf-gate.result }}
+          R_CUBE: ${{ needs.cube-kernel-live.result }}
+          R_INTEG: ${{ needs.integration-mock.result }}
+          R_HOSTILE: ${{ needs.hostile-env.result }}
         run: |
-          for r in "${{ needs.static.result }}" "${{ needs.test-core.result }}" \
-                   "${{ needs.coverage-gate.result }}" "${{ needs.guards.result }}" \
-                   "${{ needs.flutter-tests.result }}" "${{ needs.app-crap-gate.result }}" \
-                   "${{ needs.test-faui.result }}" "${{ needs.perf-gate.result }}" \
-                   "${{ needs.cube-kernel-live.result }}" \
-                   "${{ needs.integration-mock.result }}" \
-                   "${{ needs.hostile-env.result }}" \
-                   "${{ needs.supply-chain.result }}" \
-                   "${{ needs.dep-audit.result }}"; do
+          fail() { echo "Quality gate FAILED: $1"; exit 1; }
+          # The classifier itself must have run: a failed or skipped
+          # classifier skips EVERY downstream leg and would wave a PR
+          # through with zero gates executed.
+          [ "$R_CHANGES" = "success" ] || fail "changes classifier = $R_CHANGES"
+          # Security legs must EXECUTE and pass. For these, skipped is a
+          # dodge (e.g. a cunning diff that makes the classifier misfire),
+          # not a pass — review follow-up, #796/#801.
+          [ "$R_SUPPLY_CHAIN" = "success" ] || fail "supply-chain = $R_SUPPLY_CHAIN (skipped security is a dodge)"
+          [ "$R_DEP_AUDIT" = "success" ] || fail "dep-audit = $R_DEP_AUDIT (skipped security is a dodge)"
+          # The remaining legs are path-gated: success or skipped is fine,
+          # anything else fails.
+          for kv in "static:$R_STATIC" "test-core:$R_TEST_CORE" "coverage-gate:$R_COVERAGE" \
+                    "guards:$R_GUARDS" "flutter-tests:$R_FLUTTER" "app-crap-gate:$R_CRAP" \
+                    "test-faui:$R_FAUI" "perf-gate:$R_PERF" "cube-kernel-live:$R_CUBE" \
+                    "integration-mock:$R_INTEG" "hostile-env:$R_HOSTILE"; do
+            name="${kv%%:*}"; r="${kv#*:}"
             if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then
-              echo "Quality gate FAILED (a leg is $r)"
-              exit 1
+              fail "a leg is $r ($name)"
             fi
           done
           echo "Quality gate OK"
