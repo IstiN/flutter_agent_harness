@@ -4,10 +4,20 @@
 /// provider, and answers with correlated `llmRes` frames — `{delta}` per
 /// chunk, then `{done: true}`, or `{error}`.
 ///
+/// **Trust boundary (SEC-01, security review 2026-09-22): the client
+/// chooses WHAT (provider id); the server alone decides WHERE (endpoint)
+/// and WITH WHAT (key).** A named provider resolves BOTH the endpoint and
+/// the key from the same saved record — the client's `baseUrl` must
+/// byte-equal the record's and is checked BEFORE any network call; an
+/// unknown name is a named rejection; the anonymous (unnamed) mode is
+/// relayed with NO stored key attached. A compromised extension can name
+/// providers, never pocket them.
+///
 /// Pure Dart: the frame glue ([BridgeLlmRelay]) never touches dart:io or
-/// a key store — key resolution and the actual provider call are injected.
-/// [relayOpenAiCompletion] is the real transport, built on the provider
-/// path's own primitives (`sendProviderRequest` + `createSseIterator`).
+/// a key store — target/key resolution and the actual provider call are
+/// injected. [relayOpenAiCompletion] is the real transport, built on the
+/// provider path's own primitives (`sendProviderRequest` +
+/// `createSseIterator`).
 library;
 
 import 'dart:async';
@@ -15,6 +25,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../cli/custom_providers.dart';
 import '../providers/provider_common.dart';
 import '../sse_decoder.dart';
 import 'bridge_protocol.dart';
@@ -31,7 +42,8 @@ final class LlmRelayRequest {
   });
 
   /// Total decode: null on a shape it cannot trust; unknown fields
-  /// ignored (additive versioning).
+  /// ignored (additive versioning). An empty `provider` string decodes as
+  /// absent (the extension glue only sends it when non-empty).
   static LlmRelayRequest? fromJson(Object? json) {
     if (json is! Map<String, dynamic>) return null;
     final baseUrl = json['baseUrl'];
@@ -40,6 +52,7 @@ final class LlmRelayRequest {
     if (baseUrl is! String || baseUrl.isEmpty) return null;
     if (model is! String || model.isEmpty) return null;
     if (messages is! List) return null;
+    final provider = json['provider'];
     return LlmRelayRequest(
       baseUrl: baseUrl,
       model: model,
@@ -47,7 +60,7 @@ final class LlmRelayRequest {
         for (final m in messages)
           if (m is Map<String, dynamic>) m,
       ],
-      provider: json['provider'] is String ? json['provider'] as String : null,
+      provider: provider is String && provider.isNotEmpty ? provider : null,
     );
   }
 
@@ -59,8 +72,32 @@ final class LlmRelayRequest {
   final String? provider;
 
   /// The API key, injected server-side by [BridgeLlmRelay] right before
-  /// [relay] runs. Never serialized onto a frame.
+  /// [relay] runs. Never serialized onto a frame. Null = anonymous mode:
+  /// the transport sends no Authorization header at all.
   String? key;
+}
+
+/// The server-resolved target for one `llmReq` (SEC-01): WHERE the request
+/// goes and WITH WHAT key — both decided from the server's own records,
+/// never from client fields.
+final class LlmRelayTarget {
+  const LlmRelayTarget({required this.baseUrl, this.key});
+
+  /// A named rejection: the request never leaves the machine.
+  const LlmRelayTarget.reject(this.error) : baseUrl = '', key = null;
+
+  /// The endpoint the stored key may travel to — the record's own
+  /// baseUrl, verbatim.
+  final String baseUrl;
+
+  /// The record's key. Null = keyless record (the frame glue turns this
+  /// into a named no-key rejection).
+  final String? key;
+
+  /// Non-null on a named rejection; the message names the provider.
+  final String? error;
+
+  bool get rejected => error != null;
 }
 
 /// Streams one relayed completion, calling [onDelta] per text chunk. A
@@ -72,16 +109,52 @@ typedef LlmRelayStream =
       void Function(String delta) onDelta,
     );
 
-/// Resolves the stored key for an endpoint (env-first, then the secure
-/// store — mirroring the CLI's `envVarValue` order). Null = no key.
-typedef LlmKeyResolver = String? Function(String baseUrl, String? providerName);
+/// Resolves the server-side target for one relay request (SEC-01).
+///
+/// Returns null → anonymous mode: the request's own `baseUrl` is honored
+/// and NO stored key is ever attached. A non-null [LlmRelayTarget] is
+/// either the record-backed endpoint+key pair or a named rejection.
+typedef LlmRelayResolver = LlmRelayTarget? Function(LlmRelayRequest request);
+
+/// The SEC-01 resolution over the saved-provider table (pure; hosts inject
+/// the key lookup): a named provider resolves endpoint AND key from the
+/// SAME record — a client `baseUrl` that is not byte-equal to the record's
+/// is a rejection checked BEFORE any network call; an unknown name is a
+/// named rejection; no name at all → null (anonymous, keyless).
+LlmRelayTarget? resolveLlmRelayTarget(
+  LlmRelayRequest request, {
+  required Iterable<CustomProviderEntry> providers,
+  String? Function(CustomProviderEntry entry)? resolveKey,
+}) {
+  final name = request.provider;
+  if (name == null) return null;
+  final entry = providers.where((e) => e.name == name).firstOrNull;
+  if (entry == null) {
+    return LlmRelayTarget.reject(
+      'unknown provider "$name" - re-pair (/browser connect) to refresh '
+      'the provider list',
+    );
+  }
+  // Byte-equality BEFORE any network call: a client-chosen baseUrl can
+  // never steer a stored key to another address.
+  if (request.baseUrl != entry.baseUrl) {
+    return LlmRelayTarget.reject(
+      'provider "$name" is served at ${entry.baseUrl} - the relay sends '
+      'stored keys only to the saved record\'s own endpoint '
+      '(got ${Uri.tryParse(request.baseUrl)?.host ?? request.baseUrl})',
+    );
+  }
+  return LlmRelayTarget(baseUrl: entry.baseUrl, key: resolveKey?.call(entry));
+}
 
 /// The `llmReq` → `llmRes` frame glue. Shared per server; stateless.
 final class BridgeLlmRelay {
-  BridgeLlmRelay({required this.relay, required this.resolveKey});
+  BridgeLlmRelay({required this.relay, required this.resolveTarget});
 
   final LlmRelayStream relay;
-  final LlmKeyResolver resolveKey;
+
+  /// The SEC-01 target resolver (see [resolveLlmRelayTarget]).
+  final LlmRelayResolver resolveTarget;
 
   /// Handles one `llmReq` frame, streaming `llmRes` frames back through
   /// [send]. Never throws: every failure path becomes an `llmRes` error
@@ -99,19 +172,35 @@ final class BridgeLlmRelay {
       );
       return;
     }
-    final key = resolveKey(req.baseUrl, req.provider);
-    if (key == null || key.isEmpty) {
-      await _sendError(
-        request,
-        send,
-        'no key for ${Uri.tryParse(req.baseUrl)?.host ?? req.baseUrl} '
-        '- save one with /provider or /key',
-      );
-      return;
+    final target = resolveTarget(req);
+    LlmRelayRequest effective;
+    if (target == null) {
+      // Anonymous mode: the client's own baseUrl, keyless by construction.
+      effective = req;
+    } else {
+      if (target.rejected) {
+        await _sendError(request, send, target.error!);
+        return;
+      }
+      if (target.key == null || target.key!.isEmpty) {
+        await _sendError(
+          request,
+          send,
+          'no key for provider "${req.provider}" - save one with /provider '
+          'or /key',
+        );
+        return;
+      }
+      // Server decides WHERE and WITH WHAT: endpoint and key both come
+      // from the record.
+      effective = LlmRelayRequest(
+        baseUrl: target.baseUrl,
+        model: req.model,
+        messages: req.messages,
+      )..key = target.key;
     }
-    req.key = key;
     try {
-      await relay(req, (delta) async {
+      await relay(effective, (delta) async {
         await send(
           BridgeFrame(
             id: request.id,
@@ -146,8 +235,8 @@ final class BridgeLlmRelay {
 }
 
 /// The real relay transport: one OpenAI-completions-dialect streaming
-/// call — POST `{baseUrl}/chat/completions` with the injected key, SSE
-/// deltas forwarded per chunk.
+/// call — POST `{baseUrl}/chat/completions` with the injected key (none
+/// for the anonymous mode), SSE deltas forwarded per chunk.
 ///
 /// ponytail: openai-completions dialect only (the default custom-provider
 /// norm — openai/openrouter/zai/minimax/aiin/kimi endpoints); other
@@ -159,15 +248,12 @@ Future<void> relayOpenAiCompletion(
   http.Client? client,
   Duration? idleTimeout,
 }) async {
-  final key = request.key;
-  if (key == null || key.isEmpty) {
-    throw StateError('relayOpenAiCompletion needs an injected key');
-  }
-  // No injected client: the shared keep-alive client (never closed per
-  // call — same as every streaming adapter).
+  // The key is injected server-side; a null key is the ANONYMOUS relay
+  // mode — the call goes out with no Authorization header and can never
+  // carry a stored key (SEC-01).
   final response = await sendProviderRequest(
     client ?? sharedProviderHttpClient(),
-    _relayCall(request, key),
+    _relayCall(request, request.key),
     null,
   );
   await _forwardDeltas(
@@ -177,19 +263,23 @@ Future<void> relayOpenAiCompletion(
 }
 
 /// Builds the one streaming POST the relay sends: `{baseUrl}/chat/completions`
-/// with the injected key and `stream: true`.
-http.Request _relayCall(LlmRelayRequest request, String key) {
+/// with the injected key (omitted entirely for the anonymous mode) and
+/// `stream: true`.
+http.Request _relayCall(LlmRelayRequest request, String? key) {
   final base = request.baseUrl.endsWith('/')
       ? request.baseUrl.substring(0, request.baseUrl.length - 1)
       : request.baseUrl;
-  return http.Request('POST', Uri.parse('$base/chat/completions'))
-    ..headers['authorization'] = 'Bearer $key'
+  final call = http.Request('POST', Uri.parse('$base/chat/completions'))
     ..headers['content-type'] = 'application/json'
     ..body = jsonEncode({
       'model': request.model,
       'messages': request.messages,
       'stream': true,
     });
+  if (key != null && key.isNotEmpty) {
+    call.headers['authorization'] = 'Bearer $key';
+  }
+  return call;
 }
 
 /// Drives the SSE stream to completion, forwarding each text delta.

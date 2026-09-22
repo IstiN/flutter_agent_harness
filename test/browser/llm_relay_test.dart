@@ -39,9 +39,13 @@ void main() {
     test('a keyless request (anonymous mode) posts WITHOUT an auth header',
         () async {
       http.BaseRequest? seen;
+      String? body;
       final client = http_testing.MockClient.streaming((request, bodyStream) {
         seen = request;
-        return http.StreamedResponse(Stream.value(utf8.encode('')), 200);
+        return bodyStream.bytesToString().then((b) {
+          body = b;
+          return http.StreamedResponse(Stream.value(utf8.encode('')), 200);
+        });
       });
       final deltas = <String>[];
       await relayOpenAiCompletion(

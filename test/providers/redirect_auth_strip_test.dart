@@ -27,8 +27,10 @@ final class _RecordingClient extends http.BaseClient {
   final requests = <http.BaseRequest>[];
 
   @override
-  Future<http.StreamedResponse> send(http.BaseRequest request) =>
-      respond(requests.length, request)..then((_) => requests.add(request));
+  Future<http.StreamedResponse> send(http.BaseRequest request) {
+    requests.add(request);
+    return respond(requests.length, request);
+  }
 }
 
 http.Request _post(String url) => http.Request('POST', Uri.parse(url))

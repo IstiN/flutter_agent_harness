@@ -258,7 +258,7 @@ void main() {
     test(
       'a 302 to another host fails; no request re-sent, no auth leaked',
       () async {
-        final client = _CountingClient((request) {
+        final client = _CountingClient((request) async {
           if (request.url.toString() == '$_recordZai/chat/completions') {
             return http.StreamedResponse(
               Stream.value(utf8.encode('')),
