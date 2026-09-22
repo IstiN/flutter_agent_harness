@@ -91,7 +91,6 @@ void main() {
       );
       expect(custom.provider, 'openai');
     });
-<<<<<<< HEAD
 
     test('ids are canonicalized at the seam: trim + case-fold on names '
         'AND kinds (gh-760 review)', () {
@@ -115,7 +114,5 @@ void main() {
       ];
       expect(locked, ['chatgpt']);
     });
-=======
->>>>>>> origin/main
   });
 }
