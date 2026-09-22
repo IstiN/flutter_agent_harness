@@ -1458,13 +1458,14 @@ jobs:
         run: |
           tmp="$(mktemp -d)"
           trap 'rm -rf "$tmp"' EXIT
-          printf 'jobs:\n  probe:\n    steps:\n      - uses: actions/checkout@v4\n' > "$tmp/bad.yml"
-          if bash scripts/check_action_pins.sh --path "$tmp" >/dev/null 2>&1; then
+          mkdir "$tmp/bad" "$tmp/good"
+          printf 'jobs:\n  probe:\n    steps:\n      - uses: actions/checkout@v4\n' > "$tmp/bad/bad.yml"
+          if bash scripts/check_action_pins.sh --path "$tmp/bad" >/dev/null 2>&1; then
             echo "::error::pin checker FAILED to flag a @v4 fixture"
             exit 1
           fi
-          printf 'jobs:\n  probe:\n    steps:\n      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4\n' > "$tmp/good.yml"
-          bash scripts/check_action_pins.sh --path "$tmp" >/dev/null
+          printf 'jobs:\n  probe:\n    steps:\n      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4\n' > "$tmp/good/good.yml"
+          bash scripts/check_action_pins.sh --path "$tmp/good" >/dev/null
           echo "fixture regression OK: @v4 rejected, SHA-pinned accepted"
 
   # SEC-08 (#796): audit BOTH dependency graphs. pubspec_overrides.yaml
