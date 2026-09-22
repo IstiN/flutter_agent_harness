@@ -127,7 +127,7 @@ final class EmbedHttpClient extends http.BaseClient {
         }
       }
     }
-    if (await hubUp) {
+    if (await hubUp && _hasRelayToken) {
       try {
         return await _hubSend(request);
       } on _HubRelayUnauthorized {
@@ -210,16 +210,19 @@ final class EmbedHttpClient extends http.BaseClient {
     return head.future;
   }
 
+  bool get _hasRelayToken {
+    final token = officeHubRelayToken;
+    return token != null && token.isNotEmpty;
+  }
+
   /// The desktop path: the request rides the hub's /relay mount, the
   /// upstream answer (status + content-type + body) streams back raw.
-  /// The relay is fail-closed (issue #792) — the bearer is mandatory;
-  /// without one the transport is skipped ([_HubRelayUnauthorized]
-  /// would be the guaranteed answer).
+  /// The relay is authenticated (issue #792): the caller checks
+  /// [_hasRelayToken] first — a token-less pane skips this transport
+  /// — and a refused credential (stale bearer) surfaces as the named
+  /// error, never a silent degrade.
   Future<http.StreamedResponse> _hubSend(http.BaseRequest request) async {
-    final token = officeHubRelayToken;
-    if (token == null || token.isEmpty) {
-      throw _HubRelayUnauthorized('no bearer configured');
-    }
+    final token = officeHubRelayToken!;
     final controller = web.AbortController();
     return _sendViaFetch(
       request,

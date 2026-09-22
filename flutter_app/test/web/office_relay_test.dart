@@ -151,7 +151,10 @@ Future<String> drain(http.StreamedResponse response) =>
     utf8.decoder.bind(response.stream).join();
 
 void main() {
-  tearDown(() => officeHubRelayBase = 'http://127.0.0.1:8787');
+  tearDown(() {
+    officeHubRelayBase = 'http://127.0.0.1:8787';
+    officeHubRelayToken = null;
+  });
 
   test('AC1 web+extension: the bridge carries the send, the provider URL '
       'is never fetched directly', () async {
@@ -248,16 +251,23 @@ void main() {
   });
 
   test('AC1 desktop: no extension, hub running — the send rides the hub '
-      'relay envelope and streams back', () async {
+      'relay envelope (bearer attached) and streams back', () async {
+    officeHubRelayToken = 'test-key';
     final relayEnvelopes = <Map<Object?, Object?>>[];
     final fetchDouble = FetchDouble((url, init) async {
       if (url == 'http://127.0.0.1:8787/healthz') {
         return web.Response('ok'.toJS);
       }
       if (url == 'http://127.0.0.1:8787/relay') {
+        expect(
+          (init!.getProperty('headers'.toJS) as JSObject?)
+              ?.getProperty('authorization'.toJS),
+          'Bearer test-key',
+          reason: 'the pane carries the relay bearer (issue #792)',
+        );
         relayEnvelopes.add(
           jsonDecode(
-            (init!.getProperty('body'.toJS) as JSString).toDart,
+            (init.getProperty('body'.toJS) as JSString).toDart,
           ) as Map<Object?, Object?>,
         );
         return sseResponse(['data: {"delta":"hi"}\n\n']);
@@ -303,8 +313,65 @@ void main() {
     );
   });
 
+  test('issue #792: a token-less pane skips the hub transport outright '
+      '(no credential-less /relay request is ever sent)', () async {
+    officeHubRelayToken = null; // explicit: no credential configured
+    var relayAsked = false;
+    final fetchDouble = FetchDouble((url, init) async {
+      if (url.endsWith('/healthz')) return web.Response('ok'.toJS);
+      if (url.endsWith('/relay')) {
+        relayAsked = true;
+        fail('a credential-less pane must not call /relay');
+      }
+      throw const HttpDeath(); // the direct path: CORS death
+    });
+    addTearDown(fetchDouble.dispose);
+
+    await expectLater(
+      newClient().send(providerRequest()),
+      throwsA(
+        isA<StateError>().having(
+          (e) => e.toString(),
+          'text',
+          allOf(contains('provider unreachable'), contains('fa hub')),
+        ),
+      ),
+    );
+    expect(relayAsked, isFalse);
+  });
+
+  test('issue #792: a refused credential (stale bearer) surfaces as the '
+      'named credential error, never a silent degrade', () async {
+    officeHubRelayToken = 'stale-key';
+    final fetchDouble = FetchDouble((url, init) async {
+      if (url == 'http://127.0.0.1:8787/healthz') {
+        return web.Response('ok'.toJS);
+      }
+      if (url == 'http://127.0.0.1:8787/relay') {
+        return web.Response(
+          'not found',
+          ({'status': 401}).jsify()! as web.ResponseInit,
+        );
+      }
+      fail('unexpected fetch: $url');
+    });
+    addTearDown(fetchDouble.dispose);
+
+    await expectLater(
+      newClient().send(providerRequest()),
+      throwsA(
+        isA<StateError>().having(
+          (e) => e.toString(),
+          'text',
+          contains('hub relay rejected the pane credential'),
+        ),
+      ),
+    );
+  });
+
   test('AC3: cancelling the hub-path stream aborts the upstream fetch',
       () async {
+    officeHubRelayToken = 'test-key';
     // A body that starts and never ends: the only way cancel is
     // observable mid-stream.
     final fetchDouble = FetchDouble((url, init) async {
