@@ -178,6 +178,38 @@ void main() {
       expect(inner.jobs, isEmpty);
     });
 
+    test('a job is denied cleanly when staging lands inside the workspace',
+        () async {
+      final inner = _RecordingShell();
+      final env = SandboxedExecutionEnv(
+        MemoryExecutionEnv(cwd: '/work', shell: inner),
+        CubeSpec(
+          name: 'test-cube',
+          backend: CubeBackendMode.kernel,
+          tools: const CubeToolPolicy(allow: {'git'}),
+          filesystem: const CubeFsPolicy(workspace: '/work'),
+        ),
+        os: 'macos',
+        // A workspace-relative home would stage the enforcement profile
+        // inside the enforced zone (SEC-02) — refused, never trusted.
+        homeDir: '/work/home',
+      );
+      final result = await env.startShellJob(
+        'git log',
+        id: 'j1',
+        logPath: '/tmp/j1.log',
+      );
+      expect(result.isErr, isTrue);
+      expect(result.errorOrNull!.code, ExecutionErrorCode.spawnError);
+      expect(
+        result.errorOrNull!.message,
+        'fa_cube[test-cube]: kernel backend profile staging directory '
+        '</work/home/.fah/cube-profiles> is inside the guest-writable '
+        'workspace </work>',
+      );
+      expect(inner.jobs, isEmpty);
+    });
+
     test('backgroundJobsSupported delegates to the wrapped shell', () {
       final env = SandboxedExecutionEnv(
         MemoryExecutionEnv(cwd: '/work', shell: _RecordingShell()),

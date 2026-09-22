@@ -151,8 +151,10 @@ final class SandboxedExecutionEnv implements ExecutionEnv, BackgroundShell {
       return Err(
         ExecutionError(
           ExecutionErrorCode.spawnError,
-          'fa_cube[${spec.name}]: kernel backend '
-          '${_shell.kernelStagingError ?? 'profile staging failed'}',
+          // Same shape as every kernel failure — the shell owns it.
+          _shell.kernelError(
+            _shell.kernelStagingError ?? 'profile staging failed',
+          ),
         ),
       );
     }

@@ -39,7 +39,7 @@ CubeSpec spec({
 
 /// The final staged profile path from the fake fs (renames carry the
 /// temp-to-final flip; writes only ever see the temp name).
-String stagedPath(_RenamingFs fs) => fs.renames.last.$2;
+String _stagedPath(_RenamingFs fs) => fs.renames.last.$2;
 
 void main() {
   group('SandboxedShell', () {
@@ -187,7 +187,7 @@ void main() {
         );
 
         await shell.exec('git status');
-        final profilePath = stagedPath(fs);
+        final profilePath = _stagedPath(fs);
         expect(profilePath, startsWith('/home/.fah/cube-profiles/'));
         expect(profilePath, isNot(startsWith('/work')));
         expect(fs.files[profilePath], startsWith('(version 1)'));
@@ -257,7 +257,7 @@ void main() {
               isNot(127),
               reason: '${spec.name} @$cwd should wrap, not deny',
             );
-            final staged = stagedPath(fs);
+            final staged = _stagedPath(fs);
             expect(
               staged,
               startsWith('/home/tester/.fah/cube-profiles/'),
@@ -290,7 +290,7 @@ void main() {
         );
 
         await shell.exec('git status');
-        final profilePath = stagedPath(fs);
+        final profilePath = _stagedPath(fs);
         expect(profilePath, startsWith('/home/.fah/cube-profiles/'));
         expect(inner.commands.single, contains("sandbox-exec -f '$profilePath'"));
         // The old-location file is never read, trusted or passed to exec.
@@ -313,7 +313,7 @@ void main() {
         );
 
         await shell.exec('git status');
-        final profilePath = stagedPath(fs);
+        final profilePath = _stagedPath(fs);
         final genuine = fs.files[profilePath]!;
 
         // The "prisoner" rewrites the staged profile between runs.
@@ -468,6 +468,127 @@ void main() {
       await shell.exec('git status');
       expect(degradations, isEmpty);
     });
+
+    group('SEC-02 staging invariant', () {
+      test('a workspace-relative homeDir fail-closes kernel mode', () async {
+        final inner = _RecordingShell();
+        final fs = _RenamingFs();
+        final shell = SandboxedShell(
+          inner,
+          kernelSpec(),
+          fs: fs,
+          os: 'macos',
+          homeDir: 'relative/home',
+        );
+        final error = (await shell.exec('git status')).errorOrNull;
+        expect(error, isNotNull);
+        expect(error!.code, ExecutionErrorCode.spawnError);
+        expect(
+          error.message,
+          'fa_cube[test-cube]: kernel backend profile staging directory '
+          'must be an absolute path (got <relative/home/.fah/cube-profiles>)',
+        );
+        expect(inner.commands, isEmpty);
+        expect(fs.writes, isEmpty);
+        expect(fs.renames, isEmpty);
+      });
+
+      test('a homeDir inside the workspace fail-closes kernel mode', () async {
+        for (final home in ['/work', '/work/home', '/work/../work/steal']) {
+          final inner = _RecordingShell();
+          final fs = _RenamingFs();
+          final shell = SandboxedShell(
+            inner,
+            kernelSpec(),
+            fs: fs,
+            os: 'macos',
+            homeDir: home,
+          );
+          final error = (await shell.exec('git status')).errorOrNull;
+          expect(error, isNotNull, reason: 'home $home must be refused');
+          expect(error!.message, contains('is inside the guest-writable '
+              'workspace </work>'), reason: 'home $home must be refused');
+          expect(inner.commands, isEmpty, reason: 'home $home');
+          expect(fs.writes, isEmpty, reason: 'home $home');
+        }
+      });
+
+      test('`..` cannot smuggle a home outside the workspace back in', () {
+        // '/outside/../work/steal' normalizes to '/work/steal' — inside.
+        expect(
+          stagingOutsideWorkspace(
+            '/outside/../work/steal/.fah/cube-profiles',
+            '/work',
+          ),
+          isNotNull,
+        );
+        // The inverse is genuinely outside and stays allowed.
+        expect(
+          stagingOutsideWorkspace('/work/../home/.fah/cube-profiles', '/work'),
+          isNull,
+        );
+        // A sibling directory is not the workspace.
+        expect(
+          stagingOutsideWorkspace('/workspace/.fah/cube-profiles', '/work'),
+          isNull,
+        );
+      });
+
+      test(
+        'kernel staging refuses background preparation when the fs cannot '
+        'atomically restage',
+        () async {
+          final inner = _RecordingShell();
+          final shell = SandboxedShell(
+            inner,
+            kernelSpec(),
+            fs: _FakeFs(), // no rename capability
+            os: 'macos',
+            homeDir: '/home',
+          );
+          final note = await shell.startupFailure();
+          expect(note, isNotNull);
+          expect(note, startsWith('fa_cube[test-cube]: kernel backend '));
+          // One error shape everywhere: the probe note and the staging
+          // error render identically.
+          expect(note, shell.kernelError(shell.kernelStagingError!));
+          expect(await shell.prepare('git status'), isNull);
+          expect(inner.commands, isEmpty);
+        },
+      );
+    });
+
+    test(
+      'staging sweeps tmp orphans and stale profiles once per binding',
+      () async {
+        final inner = _RecordingShell();
+        final fs = _RenamingFs();
+        const profileDir = '/home/.fah/cube-profiles';
+        fs.seed('$profileDir/orphan.sb.42-0.tmp', 'junk');
+        fs.seed('$profileDir/stale-old-profile.sb', '(version 1)\nstale');
+        final shell = SandboxedShell(
+          inner,
+          kernelSpec(),
+          fs: fs,
+          os: 'macos',
+          homeDir: '/home',
+        );
+        await shell.exec('git status');
+        final profilePath = _stagedPath(fs);
+        expect(
+          fs.removed,
+          containsAll([
+            '$profileDir/orphan.sb.42-0.tmp',
+            '$profileDir/stale-old-profile.sb',
+          ]),
+        );
+        expect(fs.removed, isNot(contains(profilePath)));
+        expect(inner.commands.single, contains("sandbox-exec -f '$profilePath'"));
+        // Swept once, not per exec.
+        await shell.exec('git log');
+        expect(fs.removed, hasLength(2));
+      },
+    );
 
     test(
       'a missing sandbox-exec spawn failure maps to a clean error',
@@ -643,7 +764,7 @@ void main() {
           homeDir: '/home',
         );
         await shell.exec('git status');
-        final profilePath = stagedPath(fs);
+        final profilePath = _stagedPath(fs);
         fs.writes.clear();
         fs.renames.clear();
         // Second shell, same spec + workspace: content hash matches, the
@@ -673,6 +794,7 @@ class _FakeFs implements FileSystem {
 
   final Map<String, String> writes = {};
   final Map<String, String> files = {};
+  final List<String> removed = [];
 
   void seed(String path, String content) => files[path] = content;
 
@@ -739,15 +861,33 @@ class _FakeFs implements FileSystem {
   Future<Result<FileInfo, FileError>> fileInfo(String path) async => _missing();
 
   @override
-  Future<Result<List<FileInfo>, FileError>> listDir(String path) async =>
-      _missing();
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) async {
+    final prefix = path.endsWith('/') ? path : '$path/';
+    return Ok([
+      for (final p in files.keys)
+        if (p.startsWith(prefix) &&
+            !p.substring(prefix.length).contains('/'))
+          FileInfo(
+            name: p.substring(prefix.length),
+            path: p,
+            kind: FileKind.file,
+            size: files[p]!.length,
+            mtimeMs: 0,
+          ),
+    ]);
+  }
 
   @override
   Future<Result<void, FileError>> remove(
     String path, {
     bool recursive = false,
     bool force = false,
-  }) async => _missing();
+  }) async {
+    files.remove(path);
+    writes.remove(path);
+    removed.add(path);
+    return const Ok(null);
+  }
 }
 
 /// A renamable [_FakeFs]: the atomic temp+rename restaging path works.
