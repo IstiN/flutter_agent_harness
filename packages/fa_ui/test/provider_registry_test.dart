@@ -56,6 +56,40 @@ void main() {
       expect(reloaded.providers[1].name, 'Beta');
     });
 
+    test(
+      'the connect-flow identity kind round-trips; plain entries stay null',
+      () async {
+        final env = MemoryExecutionEnv();
+        final registry = await ProviderRegistry.load(env);
+        await registry.add(
+          name: 'ChatGPT Codex',
+          baseUrl: chatGptCodexBaseUrl,
+          modelId: 'gpt-5.6-sol',
+          kind: 'chatgpt-codex',
+        );
+        await registry.add(
+          name: 'Plain',
+          baseUrl: 'https://api.openai.com/v1',
+          modelId: 'gpt-4.1',
+        );
+
+        final reloaded = await ProviderRegistry.load(env);
+        expect(reloaded.providers[0].kind, 'chatgpt-codex');
+        expect(reloaded.providers[1].kind, isNull);
+        // JSON stays lean: no kind key for identity-less entries.
+        final stored =
+            jsonDecode(
+                  (await env.readTextFile(
+                    '${env.cwd}/providers.json',
+                  )).valueOrNull!,
+                )
+                as Map<String, dynamic>;
+        final plain =
+            (stored['providers'] as List).last as Map<String, dynamic>;
+        expect(plain.containsKey('kind'), isFalse);
+      },
+    );
+
     test('the registry file lives at the sandbox root', () async {
       final env = MemoryExecutionEnv();
       final registry = await ProviderRegistry.load(env);

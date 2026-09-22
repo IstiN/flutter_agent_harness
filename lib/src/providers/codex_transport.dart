@@ -29,7 +29,8 @@ bool isAllowedChatgptHost(String host) {
 /// half is the `chatgpt`/`chatgpt-codex` provider hint) — shared by the
 /// core dispatch and every picker's hint mapping.
 bool isChatGptCodexEndpoint(String baseUrl) {
-  final uri = Uri.parse(baseUrl);
+  final uri = Uri.tryParse(baseUrl);
+  if (uri == null) return false;
   return isAllowedChatgptHost(uri.host) &&
       uri.path.startsWith('/backend-api/codex');
 }

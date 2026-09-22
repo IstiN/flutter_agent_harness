@@ -45,47 +45,44 @@ class _FakeConnection extends ChangeNotifier implements FaChatConnection {
   String get modelId => model;
 }
 
-/// The OAuth-blob key the ChatGPT connect flow saves into the registry.
-const _codexBlob = String.fromEnvironment('unused');
-
 Future<String> _blob() => Future.value(
-      const ChatGptOAuthCredentials(
-        accessToken: 'at-1',
-        refreshToken: 'rt-1',
-        idToken: 'it-1',
-        accountId: 'acc-1',
-      ).encode(),
-    );
+  const ChatGptOAuthCredentials(
+    accessToken: 'at-1',
+    refreshToken: 'rt-1',
+    idToken: 'it-1',
+    accountId: 'acc-1',
+  ).encode(),
+);
 
 /// One registry entry per dialect-bearing kind with its distinct live
 /// model id.
 final _kindEntries =
     <String, ({String name, String baseUrl, String key, String id})>{
-  'chatgpt-codex': (
-    name: 'ChatGPT Codex',
-    baseUrl: chatGptCodexBaseUrl,
-    key: 'blob',
-    id: 'gpt-5.6-sol',
-  ),
-  'dial': (
-    name: 'DIAL',
-    baseUrl: 'https://ai-proxy.lab.epam.com',
-    key: 'dial-key',
-    id: 'terra',
-  ),
-  'codemie': (
-    name: 'CodeMie',
-    baseUrl: 'https://org.example.com/code-assistant-api/v1',
-    key: 'cookie',
-    id: 'litellm-1',
-  ),
-  'copilot': (
-    name: 'Copilot',
-    baseUrl: 'https://api.individual.githubcopilot.com',
-    key: 'gho_session',
-    id: 'gpt-4.1',
-  ),
-};
+      'chatgpt-codex': (
+        name: 'ChatGPT Codex',
+        baseUrl: chatGptCodexBaseUrl,
+        key: 'blob',
+        id: 'gpt-5.6-sol',
+      ),
+      'dial': (
+        name: 'DIAL',
+        baseUrl: 'https://ai-proxy.lab.epam.com',
+        key: 'dial-key',
+        id: 'terra',
+      ),
+      'codemie': (
+        name: 'CodeMie',
+        baseUrl: 'https://org.example.com/code-assistant-api/v1',
+        key: 'cookie',
+        id: 'litellm-1',
+      ),
+      'copilot': (
+        name: 'Copilot',
+        baseUrl: 'https://api.individual.githubcopilot.com',
+        key: 'gho_session',
+        id: 'gpt-4.1',
+      ),
+    };
 
 http.Client _liveRouter() => MockClient((request) async {
   final url = request.url.toString();
@@ -114,13 +111,15 @@ http.Client _liveRouter() => MockClient((request) async {
   return http.Response('not found', 404);
 });
 
-Future<ProviderRegistry> _registryWith(String kind) async {
+Future<ProviderRegistry> _registryWith(String kind, {String? baseUrl}) async {
   final registry = ProviderRegistry.inMemory();
   final entry = _kindEntries[kind]!;
   final provider = await registry.add(
     name: entry.name,
-    baseUrl: entry.baseUrl,
+    baseUrl: baseUrl ?? entry.baseUrl,
     modelId: entry.id,
+    // The connect flows persist the entry's identity — mirror that.
+    kind: kind,
   );
   registry.rememberKey(
     provider.id,
@@ -142,7 +141,10 @@ Future<void> _pumpForm(
         key: key,
         child: Scaffold(
           body: SingleChildScrollView(
-            child: AgentSettingsForm(registry: registry, onConnect: (_) async {}),
+            child: AgentSettingsForm(
+              registry: registry,
+              onConnect: (_) async {},
+            ),
           ),
         ),
       ),
@@ -153,36 +155,43 @@ Future<void> _pumpForm(
 /// Selects the provider row, waits out the fetch debounce, and opens the
 /// model quick-select by typing a filter (RawAutocomplete shows options
 /// for the typed text).
-Future<void> _openQuickSelect(WidgetTester tester, String label, String id) async {
+Future<void> _openQuickSelect(
+  WidgetTester tester,
+  String label,
+  String id,
+) async {
   await tester.ensureVisible(find.text(label).last);
   await tester.tap(find.text(label).last);
   await tester.pump(const Duration(milliseconds: 500));
   await tester.pumpAndSettle();
   final field = find.widgetWithText(TextField, 'Model id');
-  expect(field, findsOneWidget, reason: 'label $label must show the model field');
+  expect(
+    field,
+    findsOneWidget,
+    reason: 'label $label must show the model field',
+  );
   await tester.ensureVisible(field.first);
   await tester.enterText(field.first, id.substring(0, 3).toLowerCase());
   await tester.pumpAndSettle();
 }
 
 void main() {
+  setUp(() => setModelsDispatchClientForTesting(_liveRouter()));
+  tearDown(() => setModelsDispatchClientForTesting(null));
+
   testWidgets(
     'AC1: a chatgpt-codex registry entry lists models in the provider '
     'editor — live codex wire, and bundled catalog when it 401s',
     (tester) async {
       // Variant 1: the codex /models answers 200 — the live list renders
       // and no fallback note shows.
-      setModelsDispatchClientForTesting(_liveRouter());
       await _pumpForm(
         tester,
         await _registryWith('chatgpt-codex'),
         key: const ValueKey('live'),
       );
       await _openQuickSelect(tester, 'ChatGPT Codex', 'gpt-5.7-flask');
-      expect(
-        find.text('gpt-5.7-flask', findRichText: true),
-        findsWidgets,
-      );
+      expect(find.text('gpt-5.7-flask', findRichText: true), findsWidgets);
       expect(find.textContaining('bundled catalog'), findsNothing);
 
       // Variant 2: the same surface with the live wire 401ing — the
@@ -201,11 +210,33 @@ void main() {
     },
   );
 
+  testWidgets('identity beats URL shape: the editor quick-select keeps a codex '
+      'entry on the codex wire after its baseUrl was edited (issue #771 '
+      'owner scenario)', (tester) async {
+    // The proxied URL answers 401 — only the entry's persisted identity
+    // selects the codex dialect, whose failure falls back to the bundled
+    // catalog with the note. URL-shape matching would show NOTHING here
+    // (the edited URL looks like a plain 404ing OpenAI endpoint).
+    setModelsDispatchClientForTesting(
+      MockClient((request) async => http.Response('unauthorized', 401)),
+    );
+    await _pumpForm(
+      tester,
+      await _registryWith(
+        'chatgpt-codex',
+        baseUrl: 'https://relay.example.net/codex-proxy',
+      ),
+      key: const ValueKey('edited'),
+    );
+    await _openQuickSelect(tester, 'ChatGPT Codex', 'gpt-5.6-sol');
+    expect(find.text('gpt-5.6-sol', findRichText: true), findsWidgets);
+    expect(find.textContaining('bundled catalog'), findsOneWidget);
+  });
+
   testWidgets(
     'the editor quick-select routes every dialect kind through the one '
     'dispatch',
     (tester) async {
-      setModelsDispatchClientForTesting(_liveRouter());
       var generation = 0;
       for (final kind in _kindEntries.keys) {
         if (kind == 'chatgpt-codex') continue; // covered by AC1 above
@@ -214,7 +245,11 @@ void main() {
           await _registryWith(kind),
           key: ValueKey('matrix-$kind-${generation++}'),
         );
-        await _openQuickSelect(tester, _kindEntries[kind]!.name, _kindEntries[kind]!.id);
+        await _openQuickSelect(
+          tester,
+          _kindEntries[kind]!.name,
+          _kindEntries[kind]!.id,
+        );
         expect(
           find.text(_kindEntries[kind]!.id, findRichText: true),
           findsWidgets,
@@ -224,63 +259,59 @@ void main() {
     },
   );
 
-  testWidgets(
-    'the default-chat picker lists the codex entry from the bundled '
-    'catalog and connects as the codex kind',
-    (tester) async {
-      setModelsDispatchClientForTesting(
-        MockClient((request) async => http.Response('unauthorized', 401)),
-      );
-      final registry = ProviderRegistry.inMemory();
-      final entry = _kindEntries['chatgpt-codex']!;
-      final provider = await registry.add(
-        name: entry.name,
-        baseUrl: entry.baseUrl,
-        modelId: entry.id,
-      );
-      registry.rememberKey(provider.id, await _blob());
-      final connection = _FakeConnection();
+  testWidgets('the default-chat picker lists the codex entry from the bundled '
+      'catalog and connects as the codex kind', (tester) async {
+    setModelsDispatchClientForTesting(
+      MockClient((request) async => http.Response('unauthorized', 401)),
+    );
+    final registry = ProviderRegistry.inMemory();
+    final entry = _kindEntries['chatgpt-codex']!;
+    final provider = await registry.add(
+      name: entry.name,
+      baseUrl: entry.baseUrl,
+      modelId: entry.id,
+      kind: 'chatgpt-codex',
+    );
+    registry.rememberKey(provider.id, await _blob());
+    final connection = _FakeConnection();
 
-      await tester.pumpWidget(
-        MaterialApp(
-          builder: (context, child) => SessionKeysScope(
-            store: SessionKeysStore.inMemory(),
-            child: child!,
-          ),
-          home: Scaffold(
-            body: SingleChildScrollView(
-              child: SizedBox(
-                width: 800,
-                child: DefaultChatModelSection(
-                  connection: connection,
-                  registry: registry,
-                  onApply: (config) async => connection.applied = config,
-                ),
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) =>
+            SessionKeysScope(store: SessionKeysStore.inMemory(), child: child!),
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: SizedBox(
+              width: 800,
+              child: DefaultChatModelSection(
+                connection: connection,
+                registry: registry,
+                onApply: (config) async => connection.applied = config,
               ),
             ),
           ),
         ),
-      );
+      ),
+    );
 
-      // The two-step flow: provider row -> model list.
-      await tester.tap(find.text('test-model · example.com'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('ChatGPT Codex'));
-      await tester.pumpAndSettle();
+    // The two-step flow: provider row -> model list.
+    await tester.tap(find.text('test-model · example.com'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('ChatGPT Codex'));
+    await tester.pumpAndSettle();
 
-      expect(find.text('gpt-5.6-sol', findRichText: true), findsWidgets);
-      expect(find.textContaining('bundled catalog'), findsOneWidget);
+    expect(find.text('gpt-5.6-sol', findRichText: true), findsWidgets);
+    expect(find.textContaining('bundled catalog'), findsOneWidget);
 
-      await tester.tap(find.text('gpt-5.6-sol', findRichText: true).first);
-      await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('Save'));
-      await tester.tap(find.text('Save'));
-      await tester.pumpAndSettle();
+    await tester.tap(find.text('gpt-5.6-sol', findRichText: true).first);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Save'));
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
 
-      expect(connection.applied, isNotNull);
-      expect(connection.applied!.providerKind, 'chatgpt-codex');
-      expect(connection.applied!.modelId, 'gpt-5.6-sol');
-      expect(connection.applied!.baseUrl, chatGptCodexBaseUrl);
-    },
-  );
+    expect(connection.applied, isNotNull);
+    expect(connection.applied!.providerKind, 'chatgpt-codex');
+    expect(connection.applied!.modelId, 'gpt-5.6-sol');
+    expect(connection.applied!.baseUrl, chatGptCodexBaseUrl);
+  });
 }

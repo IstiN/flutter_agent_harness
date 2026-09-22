@@ -38,6 +38,7 @@ import 'package:fa/services/openrouter_oauth_coordinator.dart';
 import 'package:fa/services/openrouter_oauth_links_stub.dart'
     if (dart.library.html) 'package:fa/services/openrouter_oauth_links_web.dart';
 import 'package:fa/services/media_models_store.dart';
+import 'endpoint_models_controller.dart';
 import 'package:fa/services/compaction_engine_loader.dart';
 import 'package:fa/services/providers_queue_loader.dart';
 import 'package:fa/services/provider_registry.dart';
@@ -234,24 +235,9 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   /// (a localhost server is started lazily by the coordinator).
   String? _oauthCallbackUrl;
 
-  /// The endpoint's `/models` ids feeding the model field's quick select.
-  /// Free text always stays valid (the field is a [RawAutocomplete]).
-  List<String> _endpointModels = const [];
-
-  /// Endpoint-reported per-model limits (see [parseModelsResponse]),
-  /// applied to the [AgentConfig] at connect — same source of truth as the
-  /// CLI's auto-correction instead of the hardcoded defaults.
-  Map<String, int> _endpointContextWindows = const {};
-  Map<String, int> _endpointMaxTokens = const {};
-  var _modelsLoading = false;
-
-  /// Whether the model list answered from the bundled offline catalog (the
-  /// live fetch failed) — drives the field's provenance note.
-  var _fromBundledCatalog = false;
-
-  /// Stale-response guard: bumped per fetch, only the latest applies.
-  var _modelsFetchGeneration = 0;
-  Timer? _modelsFetchDebounce;
+  /// The endpoint model quick-select (fetched list, limits, provenance,
+  /// debounce + stale guard) — extracted into its own controller.
+  late EndpointModelsController _models;
 
   /// The model field's focus node (drives the quick-select overlay).
   final FocusNode _modelFocusNode = FocusNode();
@@ -310,11 +296,27 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     }
     // The endpoint's model list feeds the model field's quick select;
     // endpoint/key edits refetch (debounced).
-    _urlController.addListener(_scheduleModelsFetch);
-    _keyController.addListener(_scheduleModelsFetch);
-    _scheduleModelsFetch();
+    _models = EndpointModelsController(
+      mutate: (fn) {
+        if (mounted) setState(fn);
+      },
+      baseUrl: () => _urlController.text,
+      apiKey: () => _keyController.text,
+      identityKind: () => _selectionKind,
+      fetchEnabled: () => !_isOnDevice && !_isGemma && !_isTransformersJs,
+      overrideFetcher: () => widget.modelsFetcher,
+    );
+    _urlController.addListener(_models.schedule);
+    _keyController.addListener(_models.schedule);
+    _models.schedule();
     _oauthCallbackUrl = OpenRouterOAuthCoordinator.instance.platformCallbackUrl;
   }
+
+  /// The selected registry entry's persisted identity ([CustomProvider.kind],
+  /// saved by the connect flow) — the dispatch hint prefers it over URL
+  /// matching. Null for hosted presets and free-typed endpoints.
+  String? get _selectionKind =>
+      _selection is CustomProvider ? (_selection as CustomProvider).kind : null;
 
   void _onModelIdChanged() {
     if (_visionOverridden) return;
@@ -326,68 +328,10 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     if (suggested != _vision) setState(() => _vision = suggested);
   }
 
-  /// Debounced refetch of the endpoint's model list for the quick select.
-  void _scheduleModelsFetch() {
-    _modelsFetchDebounce?.cancel();
-    _modelsFetchDebounce = Timer(const Duration(milliseconds: 400), () {
-      unawaited(_fetchEndpointModels());
-    });
-  }
-
-  /// Fetches the endpoint's model list for the model field's quick select
-  /// through the core [fetchModelsForEndpoint] dispatch (hinted by
-  /// [faui.modelsDispatchHintFor]: DIAL deployments, the CodeMie marker,
-  /// the bundled Codex catalog, the Copilot token exchange, else plain
-  /// OpenAI `/models`). The [AgentSettingsForm.modelsFetcher] override
-  /// (tests) wins. Silent on failure — free-text entry always works, the
-  /// field just loses its suggestions; a bundled-catalog answer shows the
-  /// provenance note.
-  Future<void> _fetchEndpointModels() async {
-    if (_isOnDevice || _isGemma || _isTransformersJs) return;
-    final baseUrl = _urlController.text.trim();
-    if (baseUrl.isEmpty) return;
-    final generation = ++_modelsFetchGeneration;
-    if (mounted) setState(() => _modelsLoading = true);
-    var fromBundledCatalog = false;
-    try {
-      final key = _keyController.text.trim();
-      final override = widget.modelsFetcher;
-      final (ids, windows, caps) = override != null
-          ? await override(baseUrl, apiKey: key)
-          : await fetchModelsForEndpoint(
-              baseUrl,
-              apiKey: key,
-              provider: faui.modelsDispatchHintFor(baseUrl),
-              onBundledFallback: () => fromBundledCatalog = true,
-            );
-      if (!mounted || generation != _modelsFetchGeneration) return;
-      setState(() {
-        _endpointModels = ids;
-        _endpointContextWindows = windows;
-        _endpointMaxTokens = caps;
-        _fromBundledCatalog = fromBundledCatalog;
-      });
-      AppAnalytics.instance.modelsFetchResult(ids.length);
-    } on Object {
-      if (mounted && generation == _modelsFetchGeneration) {
-        setState(() {
-          _endpointModels = const [];
-          _endpointContextWindows = const {};
-          _endpointMaxTokens = const {};
-          _fromBundledCatalog = false;
-        });
-      }
-    } finally {
-      if (mounted && generation == _modelsFetchGeneration) {
-        setState(() => _modelsLoading = false);
-      }
-    }
-  }
-
   @override
   void dispose() {
     _gemmaVerifyTimer?.cancel();
-    _modelsFetchDebounce?.cancel();
+    _models.dispose();
     _modelFocusNode.dispose();
     _registry.removeListener(_onRegistryChanged);
     _keyController.dispose();
@@ -781,7 +725,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     });
     try {
       AppAnalytics.instance.modelPickedFromSuggestions(
-        fromSuggestions: _endpointModels.contains(model),
+        fromSuggestions: _models.models.contains(model),
       );
       await widget.onConnect(
         AgentConfig(
@@ -791,9 +735,8 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           apiKey: key,
           // Endpoint-reported limits (the /models quick-select fetch) win
           // over the shared fallbacks — same correction as the CLI.
-          contextWindow:
-              _endpointContextWindows[model] ?? fallbackContextWindow,
-          maxTokens: _endpointMaxTokens[model] ?? fallbackMaxTokens,
+          contextWindow: _models.contextWindows[model] ?? fallbackContextWindow,
+          maxTokens: _models.maxTokens[model] ?? fallbackMaxTokens,
           supportsImages: _vision,
         ),
       );
@@ -1113,9 +1056,9 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
             ModelIdAutocompleteField(
               controller: _modelController,
               focusNode: _modelFocusNode,
-              models: _endpointModels,
-              loading: _modelsLoading,
-              fromBundledCatalog: _fromBundledCatalog,
+              models: _models.models,
+              loading: _models.loading,
+              fromBundledCatalog: _models.fromBundledCatalog,
             ),
             CheckboxListTile(
               value: _vision,

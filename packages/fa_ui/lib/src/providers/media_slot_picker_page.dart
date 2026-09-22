@@ -4,7 +4,6 @@
 
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
@@ -19,18 +18,7 @@ import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/stores/session_keys_store.dart';
 import 'package:fa_ui/src/utils/page_presentation.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
-import 'package:fa_ui/src/utils/vision_models.dart';
 import 'package:fa_ui/src/widgets/model_list_picker.dart';
-
-/// The production [ModelsEndpointFetcher] shared by the settings form and
-/// the media slot picker: the openai-compatible branch of the core
-/// [fetchModelsForEndpoint] dispatch (GETs `<baseUrl>/models`, bearer key
-/// when present, shared parser for ids/windows/caps). Failures return empty
-/// info — free-text model entry keeps working.
-Future<ModelsEndpointInfo> defaultModelsEndpointFetcher(
-  String baseUrl, {
-  required String apiKey,
-}) => fetchModelsForEndpoint(baseUrl, apiKey: apiKey);
 
 /// The outcome of the media slot flow ([MediaSlotProviderPickerPage] →
 /// [MediaSlotModelPage]): either a [override] to save or [cleared] (remove
@@ -377,8 +365,8 @@ class MediaSlotModelPage extends StatefulWidget {
   /// [resolveProviderKey].
   final String? apiKeyOverride;
 
-  /// `/models` fetch override (tests); defaults to the production HTTP
-  /// fetch + shared parser ([defaultModelsEndpointFetcher]).
+  /// `/models` fetch override (tests); production goes through the core
+  /// [fetchModelsForEndpoint] dispatch directly.
   final ModelsEndpointFetcher? modelsFetcher;
 
   @override
@@ -408,6 +396,8 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
   /// adapter so role runs use the same wire as the chat path.
   String _mediaSlotProviderKind(String? slot, String baseUrl) {
     if (slot != null) return 'openai-completions';
+    final kind = _entryKind;
+    if (kind != null) return kind;
     if (isCopilotBaseUrl(baseUrl)) return 'copilot';
     final preset = ProviderPreset.fromBaseUrl(baseUrl);
     if (preset == ProviderPreset.dial) return 'dial';
@@ -439,6 +429,13 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
     ProviderPreset preset => preset.baseUrl ?? '',
     CustomProvider custom => custom.baseUrl,
     _ => '',
+  };
+
+  /// The source entry's persisted identity ([CustomProvider.kind]) — wins
+  /// over URL matching in the fetch hint and the generic-role save path.
+  String? get _entryKind => switch (widget.provider) {
+    CustomProvider custom => custom.kind,
+    _ => null,
   };
 
   void _onModelChanged() => setState(() {});
@@ -498,7 +495,7 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
           : await fetchModelsForEndpoint(
               baseUrl,
               apiKey: key,
-              provider: modelsDispatchHintFor(baseUrl),
+              provider: modelsDispatchHintForEntry(_entryKind, baseUrl),
               onBundledFallback: () => fromBundledCatalog = true,
             );
       if (!mounted) return;

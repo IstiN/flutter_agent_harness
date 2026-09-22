@@ -74,43 +74,53 @@ http.Client _dispatchRouter() => MockClient((request) async {
 /// provider's connect flow saves it. DIAL uses a real DIAL host — the
 /// hint (and thus the dialect) keys off the identity-bearing host.
 final _kindEntries =
-    <String, ({String name, String baseUrl, String key, String id, String wire})>{
-  'chatgpt-codex': (
-    name: 'ChatGPT Codex',
-    baseUrl: chatGptCodexBaseUrl,
-    key: 'blob',
-    id: 'gpt-5.6-sol',
-    wire: '$chatGptCodexBaseUrl/models',
-  ),
-  'dial': (
-    name: 'DIAL',
-    baseUrl: 'https://ai-proxy.lab.epam.com',
-    key: 'dial-key',
-    id: 'terra',
-    wire: 'https://ai-proxy.lab.epam.com/openai/models',
-  ),
-  'codemie': (
-    name: 'CodeMie',
-    baseUrl: 'https://org.example.com/code-assistant-api/v1',
-    key: 'cookie',
-    id: 'litellm-1',
-    wire: 'https://org.example.com/code-assistant-api/v1/llm_models',
-  ),
-  'copilot': (
-    name: 'Copilot',
-    baseUrl: 'https://api.individual.githubcopilot.com',
-    key: 'gho_session',
-    id: 'gpt-4.1',
-    wire: 'api.individual.githubcopilot.com/models',
-  ),
-};
+    <
+      String,
+      ({String name, String baseUrl, String key, String id, String wire})
+    >{
+      'chatgpt-codex': (
+        name: 'ChatGPT Codex',
+        baseUrl: chatGptCodexBaseUrl,
+        key: 'blob',
+        id: 'gpt-5.6-sol',
+        wire: '$chatGptCodexBaseUrl/models',
+      ),
+      'dial': (
+        name: 'DIAL',
+        baseUrl: 'https://ai-proxy.lab.epam.com',
+        key: 'dial-key',
+        id: 'terra',
+        wire: 'https://ai-proxy.lab.epam.com/openai/models',
+      ),
+      'codemie': (
+        name: 'CodeMie',
+        baseUrl: 'https://org.example.com/code-assistant-api/v1',
+        key: 'cookie',
+        id: 'litellm-1',
+        wire: 'https://org.example.com/code-assistant-api/v1/llm_models',
+      ),
+      'copilot': (
+        name: 'Copilot',
+        baseUrl: 'https://api.individual.githubcopilot.com',
+        key: 'gho_session',
+        id: 'gpt-4.1',
+        wire: 'api.individual.githubcopilot.com/models',
+      ),
+    };
 
-Future<CustomProvider> _addEntry(ProviderRegistry registry, String kind) async {
+Future<CustomProvider> _addEntry(
+  ProviderRegistry registry,
+  String kind, {
+  String? baseUrl,
+}) async {
   final entry = _kindEntries[kind]!;
   final provider = await registry.add(
     name: entry.name,
-    baseUrl: entry.baseUrl,
+    baseUrl: baseUrl ?? entry.baseUrl,
     modelId: entry.id,
+    // The connect flows persist the entry's identity — mirror that so the
+    // identity-first dispatch path is what the tests exercise.
+    kind: kind,
   );
   registry.rememberKey(provider.id, entry.key);
   return provider;
@@ -124,7 +134,10 @@ Future<void> _pumpPage(WidgetTester tester, Widget page, Key key) {
     MaterialApp(
       builder: (context, child) =>
           SessionKeysScope(store: SessionKeysStore.inMemory(), child: child!),
-      home: KeyedSubtree(key: key, child: Scaffold(body: page)),
+      home: KeyedSubtree(
+        key: key,
+        child: Scaffold(body: page),
+      ),
     ),
   );
 }
@@ -142,53 +155,63 @@ void main() {
       expect(modelsDispatchHintFor(chatGptCodexBaseUrl), 'chatgpt-codex');
       // A plain OpenAI-shaped URL stays null (the generic dialect).
       expect(modelsDispatchHintFor('https://api.openai.com/v1'), isNull);
+      // A persisted entry identity wins over any URL; without one, the
+      // edited URL is the only signal.
+      expect(
+        modelsDispatchHintForEntry(
+          'chatgpt-codex',
+          'https://relay.example.net',
+        ),
+        'chatgpt-codex',
+      );
+      expect(
+        modelsDispatchHintForEntry(null, 'https://relay.example.net'),
+        isNull,
+      );
     },
   );
 
-  testWidgets(
-    'the media-slot model page routes every dialect kind through the '
-    'dispatch',
-    (tester) async {
-      var generation = 0;
-      for (final kind in _kindEntries.keys) {
-        seenUrls.clear();
-        final registry = ProviderRegistry.inMemory();
-        final provider = await _addEntry(registry, kind);
-        final entry = _kindEntries[kind]!;
+  testWidgets('the media-slot model page routes every dialect kind through the '
+      'dispatch', (tester) async {
+    var generation = 0;
+    for (final kind in _kindEntries.keys) {
+      seenUrls.clear();
+      final registry = ProviderRegistry.inMemory();
+      final provider = await _addEntry(registry, kind);
+      final entry = _kindEntries[kind]!;
 
-        await _pumpPage(
-          tester,
-          MediaSlotModelPage(
-            provider: provider,
-            registry: registry,
-            initialModel: '',
-          ),
-          ValueKey('media-$kind-${generation++}'),
-        );
-        await tester.pumpAndSettle();
+      await _pumpPage(
+        tester,
+        MediaSlotModelPage(
+          provider: provider,
+          registry: registry,
+          initialModel: '',
+        ),
+        ValueKey('media-$kind-${generation++}'),
+      );
+      await tester.pumpAndSettle();
 
-        // The page spoke ONLY the kind's own wire (one dispatch call, no
-        // local re-fetch), and the live model rendered.
-        expect(
-          seenUrls.where((url) => url.contains(_kindUrlProbe(entry.wire))),
-          isNotEmpty,
-          reason: 'kind $kind must hit ${entry.wire}',
-        );
-        // Exactly one dispatch call — copilot's dialect is two-leg
-        // (GitHub token exchange, then the models API).
-        expect(
-          seenUrls.length,
-          kind == 'copilot' ? 2 : 1,
-          reason: 'kind $kind: no extra fetches beyond the dialect wire',
-        );
-        expect(
-          find.text(entry.id, findRichText: true),
-          findsWidgets,
-          reason: 'kind $kind must list ${entry.id} through the dispatch',
-        );
-      }
-    },
-  );
+      // The page spoke ONLY the kind's own wire (one dispatch call, no
+      // local re-fetch), and the live model rendered.
+      expect(
+        seenUrls.where((url) => url.contains(_kindUrlProbe(entry.wire))),
+        isNotEmpty,
+        reason: 'kind $kind must hit ${entry.wire}',
+      );
+      // Exactly one dispatch call — copilot's dialect is two-leg
+      // (GitHub token exchange, then the models API).
+      expect(
+        seenUrls.length,
+        kind == 'copilot' ? 2 : 1,
+        reason: 'kind $kind: no extra fetches beyond the dialect wire',
+      );
+      expect(
+        find.text(entry.id, findRichText: true),
+        findsWidgets,
+        reason: 'kind $kind must list ${entry.id} through the dispatch',
+      );
+    }
+  });
 
   testWidgets(
     'the media-slot page shows the bundled-catalog note when the live '
@@ -216,6 +239,99 @@ void main() {
       expect(find.textContaining('bundled catalog'), findsOneWidget);
     },
   );
+
+  testWidgets('identity beats URL shape: a codex entry whose baseUrl was later '
+      'edited stays on the codex wire (bundled on failure), and its save '
+      'kind follows the entry, not the URL', (tester) async {
+    // The proxied URL answers nothing useful (401 everywhere) — only the
+    // entry's persisted identity can select the codex dialect here.
+    setModelsDispatchClientForTesting(
+      MockClient((request) async => http.Response('unauthorized', 401)),
+    );
+    final registry = ProviderRegistry.inMemory();
+    final editedUrl = 'https://relay.example.net/codex-proxy';
+    final provider = await _addEntry(
+      registry,
+      'chatgpt-codex',
+      baseUrl: editedUrl,
+    );
+    expect(provider.kind, 'chatgpt-codex');
+
+    // Media-slot page (generic role flow, slot == null): the fetch rides
+    // the codex dialect AT THE EDITED URL (401 -> bundled, never empty),
+    // and saving maps the override to the codex adapter kind.
+    MediaSlotOverride? saved;
+    await _pumpPage(
+      tester,
+      Builder(
+        builder: (context) => Scaffold(
+          body: FilledButton(
+            onPressed: () async {
+              saved = (await Navigator.of(context).push<MediaSlotEditorResult>(
+                MaterialPageRoute(
+                  builder: (_) => MediaSlotModelPage(
+                    provider: provider,
+                    registry: registry,
+                    initialModel: '',
+                  ),
+                ),
+              ))?.override;
+            },
+            child: const Text('open'),
+          ),
+        ),
+      ),
+      const ValueKey('identity-media'),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    await tester.pumpAndSettle();
+
+    expect(find.text('gpt-5.6-sol', findRichText: true), findsWidgets);
+    expect(find.textContaining('bundled catalog'), findsOneWidget);
+
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Model id'),
+      'gpt-5.6-sol',
+    );
+    await tester.ensureVisible(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+
+    expect(saved, isNotNull);
+    expect(saved!.providerKind, 'chatgpt-codex');
+    expect(saved!.baseUrl, editedUrl);
+
+    // The same entry through the unified picker: picking its bundled
+    // model applies the codex connection kind despite the edited URL.
+    // A plain entry (no persisted identity) on the same URL stays on the
+    // generic openai kind — identity, not the URL, is what selects.
+    FaChatModelConfig? applied;
+    await _pumpPage(
+      tester,
+      SizedBox(
+        width: 800,
+        height: 1200,
+        child: UnifiedModelPickerPage(
+          connection: _FakeConnection(),
+          onApply: (config) async => applied = config,
+          registry: registry,
+        ),
+      ),
+      const ValueKey('identity-unified'),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.text('ChatGPT Codex / gpt-5.6-sol', findRichText: true).first,
+    );
+    await tester.pumpAndSettle();
+
+    expect(applied, isNotNull);
+    expect(applied!.providerKind, 'chatgpt-codex');
+    expect(applied!.modelId, 'gpt-5.6-sol');
+    expect(applied!.baseUrl, editedUrl);
+  });
 
   testWidgets(
     'the unified picker routes dialect entries through the dispatch',
@@ -250,6 +366,14 @@ void main() {
           reason: 'kind $kind must fetch $wire via the dispatch',
         );
       }
+
+      // Picking a dialect entry applies its persisted identity as the
+      // connection kind (identity beats URL matching on the save path).
+      await tester.tap(find.text('DIAL / terra', findRichText: true).first);
+      await tester.pumpAndSettle();
+      expect(applied, isNotNull);
+      expect(applied!.providerKind, 'dial');
+      expect(applied!.modelId, 'terra');
     },
   );
 }

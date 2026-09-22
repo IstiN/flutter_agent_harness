@@ -1,6 +1,6 @@
 /// One shared "which models does this endpoint serve" dispatch for every
 /// model picker (CLI settings flows, the app's chat/media/agent model
-/// pages). Each wire dialect is its own class — add a new provider by
+/// pages). Each wire dialect is its own class - add a new provider by
 /// implementing [ModelListDialect] and registering it in
 /// [modelListDialects], never by adding a branch here.
 library;
@@ -20,11 +20,27 @@ import 'dial.dart';
 import 'models_endpoint.dart';
 import 'remote_catalog.dart';
 
+/// The [fetchModelsForEndpoint] `provider` hints the dialects match on.
+/// Connect flows persist these on registry entries (`CustomProvider.kind`)
+/// so identity survives URL edits; [modelsDispatchHintFor]-style URL
+/// mappers return the same values.
+const String chatgptCodexDispatchHint = 'chatgpt-codex';
+const String copilotDispatchHint = 'copilot';
+const String dialDispatchHint = 'dial';
+const String codemieDispatchHint = 'codemie';
+
 /// One provider's "how to list models" implementation. Each dialect
 /// encapsulates its own detection (does this endpoint belong to me?) and
 /// its own fetch (what URL, what auth, what shape the response has, how
-/// to normalise ids). Pickers never see the internals — they just call
+/// to normalise ids). Pickers never see the internals - they just call
 /// [fetchModelsForEndpoint] which delegates.
+///
+/// The [ModelListDialect.fetch] `onBundledFallback` parameter is optional
+/// for dialects without a bundled offline catalog: keep it in the
+/// override's signature and simply ignore it — only dialects that answer
+/// from a bundled catalog when the live fetch fails ever invoke it.
+/// (Adding the parameter is a breaking change for out-of-tree
+/// implementers; called out in CHANGELOG.md.)
 abstract final class ModelListDialect {
   /// Whether this dialect handles [baseUrl] (optionally with the
   /// provider's hint from the caller).
@@ -118,7 +134,8 @@ final class _CodeMieDialect extends ModelListDialect {
 
 final class _DialDialect extends ModelListDialect {
   @override
-  bool matches(String baseUrl, String? provider) => provider == 'dial';
+  bool matches(String baseUrl, String? provider) =>
+      provider == dialDispatchHint;
 
   @override
   Future<ModelsEndpointInfo> fetch(
@@ -147,7 +164,9 @@ final class _CodexDialect extends ModelListDialect {
   bool matches(String baseUrl, String? provider) {
     // Identity first — a codex entry stays on the codex wire even when
     // its baseUrl was edited (proxy, path prefix).
-    if (provider == 'chatgpt' || provider == 'chatgpt-codex') return true;
+    if (provider == chatgptCodexDispatchHint || provider == 'chatgpt') {
+      return true;
+    }
     return isChatGptCodexEndpoint(baseUrl);
   }
 
@@ -295,7 +314,7 @@ final class _GoogleDialect extends ModelListDialect {
 final class _CopilotDialect extends ModelListDialect {
   @override
   bool matches(String baseUrl, String? provider) =>
-      provider == 'copilot' || isCopilotBaseUrl(baseUrl);
+      provider == copilotDispatchHint || isCopilotBaseUrl(baseUrl);
 
   @override
   Future<ModelsEndpointInfo> fetch(

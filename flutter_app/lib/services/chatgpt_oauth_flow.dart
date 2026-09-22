@@ -149,6 +149,9 @@ Future<CustomProvider> _saveCredentials(
         // The bundled Codex default — the same entry codex-rs surfaces as
         // recommended (chatGptCodexDefaultModel is derived, not const).
         modelId: chatGptCodexDefaultModel,
+        // Persist the provider identity: the model-list dispatch rides the
+        // codex wire for this entry even after its URL is edited/proxied.
+        kind: chatgptCodexDispatchHint,
       );
 
   // Session key for the running app (Keychain-backed when available).
