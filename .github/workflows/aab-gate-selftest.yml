@@ -50,18 +50,18 @@ jobs:
           # (a) with libs: a REAL 16 KB-aligned .so from the vendored
           # wasm_run plugin, packaged at the AAB layout.
           mkdir -p fx/with-libs/base/lib/arm64-v8a
-          cp vendor/wasm_run_flutter/android/src/main/jniLibs/arm64-v8a/libwasm_run_dart.so \
-            fx/with-libs/base/lib/arm64-v8a/
+          cp vendor/wasm_run_flutter/android/src/main/jniLibs/arm64-v8a/libwasm_run_dart.so fx/with-libs/base/lib/arm64-v8a/
           (cd fx/with-libs && zip -q -r -X ../with-libs.aab base)
           # (b) without libs: structurally valid bundle, zero native libs.
           mkdir -p fx/without-libs/base
           (cd fx/without-libs && zip -q -r -X ../without-libs.aab base)
+          unzip -l fx/with-libs.aab 'base/lib/*'
 
       - name: "(a) libs present → gate passes"
         run: |
           set -euo pipefail
           OUT="$(mktemp)"
-          if bash scripts/verify_aab_native_libs.sh with-libs.aab >"$OUT" 2>&1; then
+          if bash scripts/verify_aab_native_libs.sh fx/with-libs.aab >"$OUT" 2>&1; then
             cat "$OUT"
           else
             echo "::error::gate must PASS on a bundle WITH native libs (gh-798 AC3a) — regressed glob or layout assumption?"
@@ -77,7 +77,7 @@ jobs:
         run: |
           set -euo pipefail
           OUT="$(mktemp)"
-          if bash scripts/verify_aab_native_libs.sh without-libs.aab >"$OUT" 2>&1; then
+          if bash scripts/verify_aab_native_libs.sh fx/without-libs.aab >"$OUT" 2>&1; then
             echo "::error::gate must FAIL on a bundle WITHOUT native libs (gh-798 AC3b) — native libs are expected in the store bundle"
             exit 1
           fi
