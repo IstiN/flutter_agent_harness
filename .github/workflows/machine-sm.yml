@@ -49,11 +49,11 @@ jobs:
     # re-review after the first approval; supersedes #466).
     # Flip in lockstep with ai-teammate.yml — guarded by
     # test/machine_kit/factory_stub_ref_test.dart.
-    uses: IstiN/dmtools-agents/.github/workflows/factory-sm.yml@f5c86d83124e6ba81069f1401f2d4cf4f6a927bf
+    uses: IstiN/dmtools-agents/.github/workflows/factory-sm.yml@5fabe9304710d6d977bca46293a69e9962fee396
     with:
       # The literal uses-ref: the factory requires it (it cannot derive its
       # own ref — github.workflow_ref in a called workflow is the CALLER's).
-      factory_ref: f5c86d83124e6ba81069f1401f2d4cf4f6a927bf
+      factory_ref: 5fabe9304710d6d977bca46293a69e9962fee396
       # Manual ticks default to dry; cron ticks run live.
       dryRun: ${{ github.event.inputs.dryRun || 'false' }}
       # #687: one source of truth for the machine login (repo variable).
