@@ -88,8 +88,12 @@ open(path, "w", encoding="utf-8").write(text)
 PY
 
   sed -i "s/^version: .*/version: $next/" pubspec.yaml
+  # One version everywhere (gh-785): the app pubspec (Android versionName,
+  # CFBundleShortVersionString fallback, App Store train) rides the same
+  # bump so the ASC-approved floor can never outgrow it again.
+  sed -i "s/^version: .*/version: $next+1/" flutter_app/pubspec.yaml
 
-  git add pubspec.yaml CHANGELOG.md
+  git add pubspec.yaml flutter_app/pubspec.yaml CHANGELOG.md
   git commit -m "chore(release): v$next"
   # Annotated tag: --follow-tags only pushes annotated tags, lightweight
   # ones stay local. --atomic makes main+tag land together or not at all.
