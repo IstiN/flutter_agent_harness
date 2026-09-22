@@ -57,8 +57,13 @@ concurrency:
 #                runner allocation → ONE empty-commit retrigger, never
 #                `gh run rerun` (a rerun reallocates into the same pool)
 # Tag-only / main-only jobs (publish, binaries, installer-smoke, release,
-# integration) are unchanged in semantics — they just need the new aggregate.
+#   integration) are unchanged in semantics — they just need the new aggregate.
 # ─────────────────────────────────────────────────────────────────────────────
+
+# SEC-08 (#796): explicit minimal default — every job that needs more
+# declares its own job-level permissions block.
+permissions:
+  contents: read
 
 jobs:
   changes:
@@ -79,7 +84,7 @@ jobs:
       # mock-LLM integration legs per-PR instead of at tag time only.
       intmock: ${{ steps.paths.outputs.intmock }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0 # base...head diff for the classifier below
       # Non-PR events (main push, tags, schedule, dispatch): everything is
@@ -160,9 +165,9 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: dart-lang/setup-dart@v1
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         with:
           sdk: stable
 
@@ -173,7 +178,7 @@ jobs:
       # brownout (504 bodies hashed as mismatches, 2026-09-21) can't
       # re-break every job that re-downloads.
       - name: Native-assets hook cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .dart_tool/hooks_runner/shared
           key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
@@ -190,14 +195,14 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: dart-lang/setup-dart@v1
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         with:
           sdk: stable
 
       - name: Pub cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.pub-cache
           key: pub-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
@@ -222,7 +227,7 @@ jobs:
       # Full analyze needs the example app's package config (Flutter imports);
       # a docs-only PR skips the flutter setup entirely and analyzes the pure
       # Dart scopes only — it cannot have changed resolution anyway.
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
           channel: stable
@@ -293,22 +298,22 @@ jobs:
         if: needs.changes.outputs.core != 'true' && needs.changes.outputs.shared != 'true'
         run: echo "no core/shared changes — shard green-skipped (required context reported)"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
 
-      - uses: dart-lang/setup-dart@v1
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
           sdk: stable
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
           python-version: '3.x'
 
       - name: Pub cache
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.pub-cache
           key: pub-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
@@ -319,7 +324,7 @@ jobs:
 
       - name: Native-assets hook cache
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .dart_tool/hooks_runner/shared
           key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
@@ -352,7 +357,7 @@ jobs:
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         run: dart run coverage:format_coverage --lcov -i coverage -o coverage/lcov.info
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
           name: coverage-shard-${{ matrix.shard }}
@@ -361,7 +366,7 @@ jobs:
 
       # junit durations for the weekly shard-rebalance.yml (retention 7d so
       # a quiet week never starves it into the file-count fallback).
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
           name: junit-shard-${{ matrix.shard }}
@@ -386,14 +391,14 @@ jobs:
       contents: read
     if: needs.changes.outputs.intmock == 'true'
     steps:
-      - uses: actions/checkout@v4
-      - uses: dart-lang/setup-dart@v1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         with:
           sdk: stable
       - run: dart pub get
 
       - name: Native-assets hook cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .dart_tool/hooks_runner/shared
           key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
@@ -420,14 +425,14 @@ jobs:
       FA_PROVIDER_CONFIG: '{"baseUrl":"https://api.z.ai/api/coding/paas/v4","model":"glm-5.3-flash","apiKeyEnvVar":"ZAI_CODE_KEY"}'
       FAH_PROVIDER: zai
     steps:
-      - uses: actions/checkout@v4
-      - uses: dart-lang/setup-dart@v1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         with:
           sdk: stable
       - run: dart pub get
 
       - name: Native-assets hook cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .dart_tool/hooks_runner/shared
           key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
@@ -448,22 +453,22 @@ jobs:
         if: needs.changes.outputs.core != 'true' && needs.changes.outputs.shared != 'true'
         run: echo "no core/shared changes — coverage ratchet green-skipped (required context reported)"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
           fetch-depth: 0
 
-      - uses: dart-lang/setup-dart@v1
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
           sdk: stable
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
           python-version: '3.x'
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
           pattern: coverage-shard-*
@@ -502,22 +507,22 @@ jobs:
         if: needs.changes.outputs.core != 'true' && needs.changes.outputs.shared != 'true' && needs.changes.outputs.app != 'true'
         run: echo "no core/shared/app changes — guards green-skipped (required context reported)"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true' || needs.changes.outputs.app == 'true'
 
-      - uses: dart-lang/setup-dart@v1
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
           sdk: stable
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
           python-version: '3.x'
 
       - name: Pub cache
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.pub-cache
           key: pub-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
@@ -530,13 +535,13 @@ jobs:
 
       - name: Native-assets hook cache
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .dart_tool/hooks_runner/shared
           key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
           restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
           pattern: coverage-shard-*
@@ -648,15 +653,15 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           channel: stable
           cache: true
 
       - name: Pub cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.pub-cache
           key: pubcache-flutter-${{ runner.os }}-${{ hashFiles('**/pubspec.yaml') }}
@@ -707,7 +712,7 @@ jobs:
       matrix:
         shard: [0, 1]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # arm64: no official linux-arm64 release tarball (x64-only manifest) —
       # subosito/flutter-action cannot fetch stable here. Bootstrap via git
@@ -721,7 +726,7 @@ jobs:
           flutter --version
           flutter precache
       - name: Pub cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.pub-cache
           key: pubcache-flutter-${{ runner.os }}-${{ hashFiles('**/pubspec.yaml') }}
@@ -766,7 +771,7 @@ jobs:
           # sources [lib] exactly.
           flutter test --exclude-tags integration --coverage $(cat shard-files.txt)
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: app-coverage-shard-${{ matrix.shard }}
           path: flutter_app/coverage/lcov.info
@@ -809,26 +814,26 @@ jobs:
       - name: Scope fastpass (out-of-scope → green in seconds)
         if: needs.changes.outputs.app != 'true' && needs.changes.outputs.shared != 'true'
         run: echo "no app/shared changes — flutter_app CRAP green-skipped (required context reported)"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true'
         with:
           fetch-depth: 0 # only-down guard diffs thresholds against the base
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true'
         with:
           python-version: '3.x'
-      - uses: dart-lang/setup-dart@v1
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true'
         with:
           sdk: stable
       - name: Pub cache (crap4dart)
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.pub-cache
           key: pub-crap4dart-${{ runner.os }}
           restore-keys: pub-crap4dart-${{ runner.os }}-
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true'
         with:
           pattern: app-coverage-shard-*
@@ -865,7 +870,7 @@ jobs:
       # ad-hoc run.
       - name: Upload crap_report.json artifact (issue 490 AC2)
         if: always() && (needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: crap_report
           path: flutter_app/crap_report.json
@@ -896,14 +901,14 @@ jobs:
       matrix:
         shard: [0, 1, 2]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           channel: stable
           cache: true
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.x'
 
@@ -936,7 +941,7 @@ jobs:
             test-results/flutter-shard-${{ matrix.shard }}.json \
             test-results/junit-faui-shard-${{ matrix.shard }}.xml
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: faui-coverage-shard-${{ matrix.shard }}
           path: packages/fa_ui/coverage/lcov.info
@@ -944,7 +949,7 @@ jobs:
 
       # junit durations for the weekly shard-rebalance.yml (AC3), same
       # contract as the core shards.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: junit-faui-shard-${{ matrix.shard }}
           path: packages/fa_ui/test-results/junit-faui-shard-${{ matrix.shard }}.xml
@@ -962,13 +967,13 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.x'
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: faui-coverage-shard-*
           path: faui-coverage-shards
@@ -985,7 +990,7 @@ jobs:
             -o packages/fa_ui/coverage/lcov.merged.info \
             faui-coverage-shards/*/lcov.info
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: faui-coverage
           path: packages/fa_ui/coverage/lcov.merged.info
@@ -1003,9 +1008,9 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           channel: stable
           cache: true
@@ -1032,7 +1037,7 @@ jobs:
           cd flutter_app && flutter test test/cli_visual/fa_cli_visual_test.dart
           --tags integration --name "settings hub → (compaction|memory)"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: cli-visual-settings-screenshots
@@ -1068,12 +1073,12 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # Pinned to the same SDK as the release path (#281): 3.47.x. The
       # action's cache key embeds the resolved SDK version, so an SDK bump
       # in a PR never restores a poisoned cache (E1).
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           flutter-version: '3.47.x'
           channel: stable
@@ -1109,15 +1114,15 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: 'temurin'
           java-version: '17'
           cache: 'gradle'
 
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           flutter-version: '3.47.x'
           channel: stable
@@ -1200,9 +1205,9 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           flutter-version: '3.47.x'
           channel: stable
@@ -1266,7 +1271,7 @@ jobs:
         run: echo "epoch=$(date -u +%Y-W%V)" >> "$GITHUB_OUTPUT"
 
       - name: Cache CocoaPods (iOS)
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: flutter_app/ios/Pods
           key: ios-pods-ci-v1-${{ hashFiles('flutter_app/ios/Podfile.lock') }}-${{ steps.week.outputs.epoch }}
@@ -1314,9 +1319,9 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           flutter-version: '3.47.x'
           channel: stable
@@ -1373,7 +1378,7 @@ jobs:
         run: echo "epoch=$(date -u +%Y-W%V)" >> "$GITHUB_OUTPUT"
 
       - name: Cache CocoaPods (macOS)
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: flutter_app/macos/Pods
           key: macos-pods-ci-v1-${{ hashFiles('flutter_app/macos/Podfile.lock') }}-${{ steps.week.outputs.epoch }}
@@ -1429,10 +1434,123 @@ jobs:
             exit 1
           fi
 
+  # ─────────────────────────────────────────────────────────────────────────
+  # SEC-08 (#796): CI supply-chain gate. Runs on EVERY PR — no path gating,
+  # a security gate you can dodge with a cunning diff is not a gate.
+  supply-chain:
+    name: Supply-chain gate
+    runs-on: ubuntu-latest
+    needs: changes
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # AC1: zero mutable third-party action refs (script + CI job).
+      - name: AC1 — all third-party actions SHA-pinned
+        run: bash scripts/check_action_pins.sh
+
+      # AC2: every workflow declares an explicit top-level permissions block.
+      - name: AC2 — every workflow declares top-level permissions
+        run: |
+          status=0
+          for f in .github/workflows/*.yml; do
+            if ! grep -q '^permissions:' "$f"; then
+              echo "::error file=$f::missing top-level permissions: block"
+              status=1
+            fi
+          done
+          exit $status
+
+      # AC4 (REG): the checker must reject a @v4 fixture and accept a clean
+      # one — a gate that cannot fail is decoration.
+      - name: AC4 — pin-checker fixture regression (@v4 must fail)
+        run: |
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          printf 'jobs:\n  probe:\n    steps:\n      - uses: actions/checkout@v4\n' > "$tmp/bad.yml"
+          if bash scripts/check_action_pins.sh --path "$tmp" >/dev/null 2>&1; then
+            echo "::error::pin checker FAILED to flag a @v4 fixture"
+            exit 1
+          fi
+          printf 'jobs:\n  probe:\n    steps:\n      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4\n' > "$tmp/good.yml"
+          bash scripts/check_action_pins.sh --path "$tmp" >/dev/null
+          echo "fixture regression OK: @v4 rejected, SHA-pinned accepted"
+
+  # SEC-08 (#796): audit BOTH dependency graphs. pubspec_overrides.yaml
+  # redirects dart_tui to the vendored fork (vendor/dart_tui) for local/CI/
+  # release builds while pubspec.yaml pins hosted dart_tui for the published
+  # package — two different graphs; an audit of one says nothing about the
+  # other. Each graph gets its own matrix leg and the split is documented in
+  # the audit output.
+  dep-audit:
+    name: Dependency audit (${{ matrix.graph }})
+    runs-on: ubuntu-latest
+    needs: changes
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        graph: [hosted, vendored]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
+        with:
+          sdk: stable
+      # Hosted leg = exactly what pub.dev consumers resolve; the overrides
+      # file never ships, so it must not bend this graph.
+      - name: Park vendored overrides (hosted leg)
+        if: matrix.graph == 'hosted'
+        run: mv pubspec_overrides.yaml pubspec_overrides.yaml.vendored
+      - run: dart pub get
+      - name: Audit the ${{ matrix.graph }} dependency graph
+        run: |
+          {
+            echo "### Dependency audit — \`${{ matrix.graph }}\` graph"
+            echo ""
+            echo "This repo resolves TWO dependency graphs (SEC-08):"
+            echo "- **hosted** — \`pubspec.yaml\` alone: what \`pub publish\` ships and pub.dev consumers resolve (dart_tui hosted)."
+            echo "- **vendored** — \`pubspec.yaml\` + \`pubspec_overrides.yaml\`: local dev, CI and the release binaries (dart_tui rides \`vendor/dart_tui\`)."
+            echo ""
+            echo "An audit of one says nothing about the other, so both are audited on every run. Resolved graph:"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+          dart pub deps --style=compact | tee /tmp/graph.txt >> "$GITHUB_STEP_SUMMARY" || true
+          {
+            echo ""
+            echo "Outdated direct dependencies (informational):"
+            echo '```'
+            dart pub outdated
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY" || true
+          # The split must be REAL: each leg resolves dart_tui from its own
+          # source, read from the resolved pubspec.lock.
+          lock_block=$(grep -A7 '^  dart_tui:' pubspec.lock)
+          echo "$lock_block"
+          case "${{ matrix.graph }}" in
+            hosted)
+              if echo "$lock_block" | grep -q 'source: path'; then
+                echo "::error::hosted graph resolved the vendored dart_tui fork"
+                exit 1
+              fi
+              echo "$lock_block" | grep -q 'source: hosted'
+              ;;
+            vendored)
+              echo "$lock_block" | grep -q 'source: path' || {
+                echo "::error::vendored graph did not resolve dart_tui from vendor/dart_tui"
+                exit 1
+              }
+              ;;
+          esac
+          echo "${{ matrix.graph }} graph audit OK"
+
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env]
+    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, supply-chain, dep-audit]
     if: always()
     timeout-minutes: 5
     permissions:
@@ -1451,6 +1569,8 @@ jobs:
           echo "perf-gate     = ${{ needs.perf-gate.result }}"
           echo "cube-live     = ${{ needs.cube-kernel-live.result }}"
           echo "integ-mock    = ${{ needs.integration-mock.result }}"
+          echo "supply-chain  = ${{ needs.supply-chain.result }}"
+          echo "dep-audit     = ${{ needs.dep-audit.result }}"
       - name: Fail on any real failure
         run: |
           for r in "${{ needs.static.result }}" "${{ needs.test-core.result }}" \
@@ -1459,7 +1579,9 @@ jobs:
                    "${{ needs.test-faui.result }}" "${{ needs.perf-gate.result }}" \
                    "${{ needs.cube-kernel-live.result }}" \
                    "${{ needs.integration-mock.result }}" \
-                   "${{ needs.hostile-env.result }}"; do
+                   "${{ needs.hostile-env.result }}" \
+                   "${{ needs.supply-chain.result }}" \
+                   "${{ needs.dep-audit.result }}"; do
             if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then
               echo "Quality gate FAILED (a leg is $r)"
               exit 1
@@ -1484,14 +1606,14 @@ jobs:
       contents: read
     if: github.event_name == 'pull_request' && needs.changes.outputs.perf == 'true'
     steps:
-      - uses: actions/checkout@v4
-      - uses: dart-lang/setup-dart@v1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         with:
           sdk: stable
       - run: dart pub get
 
       - name: Native-assets hook cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .dart_tool/hooks_runner/shared
           key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
@@ -1535,7 +1657,7 @@ jobs:
           EOF
           cp /tmp/jobs.json step-timings.json
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: step-timings
           path: step-timings.json
@@ -1579,7 +1701,7 @@ jobs:
           done
           echo "trip=$trip" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         if: steps.trip.outputs.trip == 'true'
         with:
           ref: ${{ github.event.pull_request.head.sha }}
@@ -1624,8 +1746,8 @@ jobs:
       GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
       OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dart-lang/setup-dart@v1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         with:
           sdk: stable
       # Issue #551: the ONLY tag-only LLM job — a small provider smoke.
@@ -1636,7 +1758,7 @@ jobs:
       # (integration-mock + nightly pty-integration): tag CI no longer
       # gates releases on it, publish waits on this smoke instead.
       - name: Native-assets hook cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .dart_tool/hooks_runner/shared
           key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
@@ -1652,14 +1774,14 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: dart-lang/setup-dart@v1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         with:
           sdk: stable
       - run: dart pub get
 
       - name: Native-assets hook cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .dart_tool/hooks_runner/shared
           key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
@@ -1705,7 +1827,7 @@ jobs:
       id-token: write # OIDC — pub.dev verifies the GitHub identity, no secrets
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # A tag is a release announcement: if pubspec says publish_to: none,
       # failing LOUDLY is correct (#554) — a green skip is how pub.dev went
@@ -1719,7 +1841,7 @@ jobs:
           fi
           echo "publishable=true" >> "$GITHUB_OUTPUT"
 
-      - uses: dart-lang/setup-dart@v1
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         if: steps.gate.outputs.publishable == 'true'
         with:
           sdk: stable
@@ -1854,9 +1976,9 @@ jobs:
             arch: arm64
             archive: tar
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: dart-lang/setup-dart@v1
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         with:
           sdk: stable
 
@@ -1876,7 +1998,7 @@ jobs:
       - run: dart pub get
 
       - name: Native-assets hook cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .dart_tool/hooks_runner/shared
           key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
@@ -1960,7 +2082,7 @@ jobs:
           - os: macos-latest
             kind: sh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Run the one-line installer (PowerShell)
         if: matrix.kind == 'ps1'
@@ -2021,14 +2143,14 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
           # PAT (not GITHUB_TOKEN) so the pushed tag triggers the publish job —
           # GITHUB_TOKEN pushes never trigger downstream workflow runs.
           token: ${{ secrets.RELEASE_PAT }}
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.x'
 
@@ -2066,14 +2188,14 @@ jobs:
             os: linux
             arch: arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: dart-lang/setup-dart@v1
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         with:
           sdk: stable
 
       - name: Pub cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.pub-cache
           key: pub-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
@@ -2082,7 +2204,7 @@ jobs:
       - run: dart pub get
 
       - name: Native-assets hook cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .dart_tool/hooks_runner/shared
           key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
