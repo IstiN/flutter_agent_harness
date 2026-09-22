@@ -24,6 +24,7 @@ class FaModelListPicker extends StatefulWidget {
     required this.loading,
     this.label,
     this.focusNode,
+    this.fromBundledCatalog = false,
   });
 
   /// The model id being edited — its text is also the list filter.
@@ -41,6 +42,10 @@ class FaModelListPicker extends StatefulWidget {
 
   /// Optional focus node for the field.
   final FocusNode? focusNode;
+
+  /// Whether the list answered from the bundled offline catalog (the live
+  /// fetch failed) — shows the provenance note.
+  final bool fromBundledCatalog;
 
   @override
   State<FaModelListPicker> createState() => _FaModelListPickerState();
@@ -127,7 +132,7 @@ class _FaModelListPickerState extends State<FaModelListPicker> {
               ),
             ),
           )
-        else
+        else ...[
           Container(
             constraints: const BoxConstraints(maxHeight: 260),
             decoration: BoxDecoration(
@@ -170,6 +175,17 @@ class _FaModelListPickerState extends State<FaModelListPicker> {
               ],
             ),
           ),
+          if (widget.fromBundledCatalog)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Text(
+                strings.modelPickerBundledCatalogNote,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+        ],
       ],
     );
   }

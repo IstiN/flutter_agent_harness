@@ -317,6 +317,7 @@ class ProvidersSection extends StatelessWidget {
           modelId: result.modelId,
           provenance: existing.provenance,
           requiresKey: existing.requiresKey,
+          kind: existing.kind,
         ),
       );
       if (result.apiKey.isNotEmpty) {
@@ -373,6 +374,7 @@ class ProvidersSection extends StatelessWidget {
       modelId: result.modelId,
       provenance: provider.provenance,
       requiresKey: provider.requiresKey,
+      kind: provider.kind,
     );
     await registry.update(updated);
     if (result.apiKey.isNotEmpty) {
