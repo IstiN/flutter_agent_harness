@@ -87,9 +87,13 @@ final class AppAnalytics {
       _log('provider_saved', {'action': action});
 
   /// The endpoint model fetch finished (quick select); count is bucketed.
-  void modelsFetchResult(int count) => _log('models_fetch_result', {
-    'count_bucket': _bucket(count, [0, 1, 10, 50, 200]),
-  });
+  /// [fromBundled] separates a bundled-catalog answer (live fetch failed)
+  /// from a live one — the owner can tell which path fed the picker.
+  void modelsFetchResult(int count, {bool fromBundled = false}) =>
+      _log('models_fetch_result', {
+        'count_bucket': _bucket(count, [0, 1, 10, 50, 200]),
+        if (fromBundled) 'from_bundled': true,
+      });
 
   /// The user picked a suggestion from the model quick select (vs free text).
   void modelPickedFromSuggestions({required bool fromSuggestions}) =>

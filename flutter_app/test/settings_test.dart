@@ -781,6 +781,41 @@ void main() {
       expect(_field(tester, 'Model id').controller!.text, 'acme-2');
     });
 
+    testWidgets('editing a provider keeps its persisted identity kind', (
+      tester,
+    ) async {
+      // The app edit path rebuilds the entry and hands it to the registry;
+      // a rebuild that dropped `kind` would demote a codex entry back to
+      // URL-shape dispatch guessing on the very URL the user just edited.
+      final registry = ProviderRegistry.inMemory();
+      final provider = await registry.add(
+        name: 'ChatGPT Codex',
+        baseUrl: chatGptCodexBaseUrl,
+        modelId: 'gpt-5.6-sol',
+        kind: 'chatgpt-codex',
+      );
+      registry.rememberKey(provider.id, 'blob');
+      await _pumpForm(tester, registry, modelsFetcher: _someModels);
+      await _selectProvider(tester, 'ChatGPT Codex');
+
+      await tester.ensureVisible(find.byIcon(Icons.edit_outlined));
+      await tester.tap(find.byIcon(Icons.edit_outlined));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        _editorField('Base URL'),
+        'https://relay.example.net/codex-proxy',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
+
+      expect(registry.providers.single.kind, 'chatgpt-codex');
+      expect(registry.providers.single.id, provider.id);
+      expect(
+        registry.providers.single.baseUrl,
+        'https://relay.example.net/codex-proxy',
+      );
+    });
+
     testWidgets('deleting a provider removes it from the picker and resets '
         'the selection', (tester) async {
       final registry = ProviderRegistry.inMemory();
@@ -1171,7 +1206,6 @@ void main() {
       expect(find.byType(LinearProgressIndicator), findsNothing);
     });
   });
-
 
   group('On-device (Gemma) provider', () {
     // Widget tests run with defaultTargetPlatform = android by default, so

@@ -257,7 +257,8 @@ void main() {
       );
     });
 
-    test('unknown providers in a chain throw ConfigException', () {
+    test('unknown providers in a chain are skipped with a named reason '
+        '(gh-760 E3)', () {
       final resolver = ModelRolesResolver(
         config: ModelRolesConfig(
           roles: const {
@@ -267,10 +268,159 @@ void main() {
         secrets: const {},
         streamFactory: _neverStream,
       );
+      // Degrade, never brick: the unknown entry is skipped like a
+      // missing-key entry (reported in skippedEntries) — the throw only
+      // fires because nothing usable remains, and names the reasons.
       expect(
         () => resolver.chainFor('default'),
-        throwsA(isA<ConfigException>()),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('no usable chain entry'),
+          ),
+        ),
       );
+      expect(
+        resolver.skippedEntries['default']!.join(' '),
+        contains('unknown provider'),
+      );
+    });
+
+    test('a chain with an unknown provider falls back to its known '
+        'entries (gh-760 E3)', () {
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: const {
+            'default': [
+              ModelRef(provider: 'from-the-future', modelId: 'x'),
+              ModelRef(provider: 'anthropic', modelId: 'claude-smol'),
+            ],
+          },
+        ),
+        secrets: const {'ANTHROPIC_API_KEY': 'a-key'},
+        streamFactory: _neverStream,
+      );
+      final entries = resolver.chainFor('default');
+      expect(entries, hasLength(1));
+      expect(entries!.single.model.provider, 'anthropic');
+      expect(
+        resolver.skippedEntries['default']!.join(' '),
+        contains('unknown provider'),
+      );
+    });
+
+    test('a chain whose entries are all unknown providers reports the '
+        'reasons in the no-usable-entry error', () {
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: const {
+            'default': [
+              ModelRef(provider: 'bogus', modelId: 'x'),
+              ModelRef(provider: 'also-bogus', modelId: 'y'),
+            ],
+          },
+        ),
+        secrets: const {},
+        streamFactory: _neverStream,
+      );
+      expect(
+        () => resolver.chainFor('default'),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            allOf([
+              contains('no usable chain entry'),
+              contains('unknown provider'),
+            ]),
+          ),
+        ),
+      );
+    });
+
+    test('all-unknown-provider chains throw the DEGRADE subtype (gh-760 '
+        'review)', () {
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: const {
+            'default': [ModelRef(provider: 'from-the-future', modelId: 'x')],
+          },
+        ),
+        secrets: const {},
+        streamFactory: _neverStream,
+      );
+      expect(
+        () => resolver.chainFor('default'),
+        throwsA(isA<UnknownProviderRoleException>()),
+      );
+    });
+
+    test('a KNOWN provider missing its key stays a plain ConfigException '
+        '(gh-760 review: current-version misconfiguration hard-fails, '
+        'the boot does NOT degrade it)', () {
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: const {
+            'default': [
+              ModelRef(provider: 'anthropic', modelId: 'claude-smol'),
+            ],
+          },
+        ),
+        secrets: const {},
+        streamFactory: _neverStream,
+      );
+      try {
+        resolver.chainFor('default');
+        fail('expected chainFor to throw');
+      } on UnknownProviderRoleException {
+        fail('missing keys on a KNOWN provider is not version skew — '
+            'it must stay a plain ConfigException');
+      } on ConfigException {
+        // Expected: the pre-#760 loud failure the boot maps to _fail.
+      }
+    });
+
+    test('a model id CONTAINING the marker words is not misclassified as '
+        'version skew (gh-760 review: typed classification, no substring '
+        'matching)', () {
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: const {
+            'default': [
+              ModelRef(provider: 'anthropic', modelId: 'unknown provider test'),
+            ],
+          },
+        ),
+        secrets: const {},
+        streamFactory: _neverStream,
+      );
+      try {
+        resolver.chainFor('default');
+        fail('expected chainFor to throw');
+      } on UnknownProviderRoleException {
+        fail('the skip reason embedding a user-controlled model id must '
+            'not classify a known provider as version skew');
+      } on ConfigException {
+        // Expected.
+      }
+    });
+
+    test('a roles entry naming an adapter KIND resolves (gh-760 review)', () {
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: const {
+            'default': [
+              ModelRef(provider: 'chatgpt-codex', modelId: 'gpt-5-codex'),
+            ],
+          },
+        ),
+        secrets: const {'CHATGPT_OAUTH_CREDENTIALS': 'creds'},
+        streamFactory: _neverStream,
+      );
+      final entries = resolver.chainFor('default');
+      expect(entries, hasLength(1));
+      expect(entries!.single.model.provider, 'chatgpt');
     });
 
     test('resolveRole is null when neither role nor default is configured', () {
