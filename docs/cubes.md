@@ -252,7 +252,9 @@ crashed run.
   time and kernel mode is refused (clean `fa_cube[<name>]:` error, no
   exec) when it cannot be proven guest-unwritable — a `homeDir` inside
   or relative to the workspace, or a spec mount granting read-write over
-  the staging directory (`~`/`/` mounts). Windows remains
+  the staging directory (`~`/`/` mounts). The staging directory is
+  swept once per binding for this profile's own `.tmp` orphans; other
+  bindings' profiles and temp files are never touched. Windows remains
   descriptor-only. A wrapper that
   is missing from PATH or refuses the sandbox surfaces as a clean
   `fa_cube[<name>]:` spawn error, in foreground execs and background jobs

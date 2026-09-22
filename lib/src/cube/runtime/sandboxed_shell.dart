@@ -456,7 +456,12 @@ final class _KernelRun {
       await _sweepStagingDir();
     }
     final existing = await fs.readTextFile(profilePath);
-    if (existing.valueOrNull == profileContent) return true;
+    if (existing.valueOrNull == profileContent) {
+      // A stale note from an earlier failed attempt must not outlive a
+      // successful verification.
+      stagingError = null;
+      return true;
+    }
     // Restage out-of-band and flip the directory entry atomically: no
     // reader ever sees partial bytes, and anything planted at
     // [profilePath] (a symlink, tampered bytes) is replaced, not followed
@@ -485,26 +490,29 @@ final class _KernelRun {
       stagingError = 'profile staging failed: ${rename.errorOrNull!.message}';
       return false;
     }
+    stagingError = null;
     return true;
   }
 
   /// Best-effort staging-dir hygiene, once per binding (the "boot" of
   /// this spec's kernel mode): crashed restages leave
-  /// `<profile>.<instance>-<n>.tmp` orphans behind and retired specs
-  /// leave stale `<md5>.sb` siblings. Never fails staging — a sweep
-  /// error is swallowed. Safety note: profiles are content-verified
-  /// before every exec, so removing a sibling another spec still uses
-  /// costs it one idempotent restage, never an unverified exec.
+  /// `<profile>.<instance>-<n>.tmp` orphans behind. Strictly scoped to
+  /// this binding's own debris — files prefixed with this profile's own
+  /// content-hash name; other bindings' files (their live `<md5>.sb`
+  /// profiles and their tmp files) are theirs to verify and sweep, so an
+  /// alternating or concurrent session never evicts a profile in use.
+  /// Never fails staging — a sweep error is swallowed.
   Future<void> _sweepStagingDir() async {
     final slash = profilePath.lastIndexOf('/');
     if (slash <= 0) return;
     final dir = profilePath.substring(0, slash);
+    final ownPrefix = '${profilePath.substring(slash + 1)}.';
     final entries = (await fs.listDir(dir)).valueOrNull;
     if (entries == null) return;
     for (final entry in entries) {
       final path = entry.path;
       if (path == profilePath) continue;
-      if (path.endsWith('.tmp') || path.endsWith('.sb')) {
+      if (entry.name.startsWith(ownPrefix) && path.endsWith('.tmp')) {
         await fs.remove(path, force: true);
       }
     }

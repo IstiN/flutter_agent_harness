@@ -611,42 +611,73 @@ void main() {
         expect(await shell.prepare('git status'), isNull);
         expect(inner.commands, isEmpty);
       });
+
+      test(
+        'prepare refuses when staging fails after the probe passed',
+        () async {
+          final inner = _RecordingShell();
+          final fs = _RenamingFs();
+          final shell = SandboxedShell(
+            inner,
+            kernelSpec(),
+            fs: fs,
+            os: 'macos',
+            homeDir: '/home',
+          );
+          // The startup probe passes: the profile stages and verifies.
+          expect(await shell.startupFailure(), isNull);
+          // Then the "prisoner" tampers and restaging becomes impossible —
+          // the probe can no longer vouch for the next exec.
+          fs.tamper(_stagedPath(fs));
+          fs.broken = true;
+          expect(await shell.prepare('git status'), isNull);
+          expect(
+            shell.kernelStagingError,
+            startsWith('profile staging failed:'),
+          );
+          // Only the startup probe's wrapped no-op ran — never the payload.
+          expect(inner.commands, hasLength(1));
+          expect(inner.commands.single, contains("'true'"));
+        },
+      );
     });
 
-    test(
-      'staging sweeps tmp orphans and stale profiles once per binding',
-      () async {
-        final inner = _RecordingShell();
-        final fs = _RenamingFs();
-        const profileDir = '/home/.fah/cube-profiles';
-        fs.seed('$profileDir/orphan.sb.42-0.tmp', 'junk');
-        fs.seed('$profileDir/stale-old-profile.sb', '(version 1)\nstale');
-        final shell = SandboxedShell(
-          inner,
-          kernelSpec(),
-          fs: fs,
-          os: 'macos',
-          homeDir: '/home',
-        );
-        await shell.exec('git status');
-        final profilePath = _stagedPath(fs);
-        expect(
-          fs.removed,
-          containsAll([
-            '$profileDir/orphan.sb.42-0.tmp',
-            '$profileDir/stale-old-profile.sb',
-          ]),
-        );
-        expect(fs.removed, isNot(contains(profilePath)));
-        expect(
-          inner.commands.single,
-          contains("sandbox-exec -f '$profilePath'"),
-        );
-        // Swept once, not per exec.
-        await shell.exec('git log');
-        expect(fs.removed, hasLength(2));
-      },
-    );
+    test('staging sweeps its own tmp orphans once per binding and leaves '
+        'other bindings alone', () async {
+      final inner = _RecordingShell();
+      final fs = _RenamingFs();
+      const profileDir = '/home/.fah/cube-profiles';
+      final shell = SandboxedShell(
+        inner,
+        kernelSpec(),
+        fs: fs,
+        os: 'macos',
+        homeDir: '/home',
+      );
+      await shell.exec('git status');
+      final profilePath = _stagedPath(fs);
+      final ownName = profilePath.split('/').last;
+      // A crashed restage of THIS binding, a crashed restage of another
+      // spec's binding, and another spec's live profile.
+      fs.seed('$profileDir/$ownName.42-0.tmp', 'junk');
+      fs.seed('$profileDir/othercontenthash.7-1.tmp', 'junk');
+      fs.seed('$profileDir/othercontenthash.sb', '(version 1)\nstale');
+      fs.removed.clear();
+
+      // Rebind (as `/cube use` would): the fresh binding sweeps once.
+      shell.updateSpec(kernelSpec());
+      await shell.exec('git log');
+      expect(fs.removed, ['$profileDir/$ownName.42-0.tmp']);
+      expect(fs.files.containsKey('$profileDir/othercontenthash.sb'), isTrue);
+      expect(
+        fs.files.containsKey('$profileDir/othercontenthash.7-1.tmp'),
+        isTrue,
+      );
+      expect(inner.commands.last, contains("sandbox-exec -f '$profilePath'"));
+      // Swept once, not per exec.
+      await shell.exec('git status');
+      expect(fs.removed, hasLength(1));
+    });
 
     test(
       'a missing sandbox-exec spawn failure maps to a clean error',
@@ -951,8 +982,15 @@ class _FakeFs implements FileSystem {
 class _RenamingFs extends _FakeFs implements RenamableFileSystem {
   final renames = <(String, String)>[];
 
+  /// When set, restaging becomes impossible (simulates a failure window
+  /// after the startup probe passed).
+  bool broken = false;
+
   @override
   Future<Result<void, FileError>> renamePath(String from, String to) async {
+    if (broken) {
+      return const Err(FileError(FileErrorCode.unknown, 'rename broken'));
+    }
     if (!files.containsKey(from)) {
       return const Err(FileError(FileErrorCode.notFound, 'missing'));
     }
@@ -960,4 +998,8 @@ class _RenamingFs extends _FakeFs implements RenamableFileSystem {
     files[to] = files.remove(from)!;
     return const Ok(null);
   }
+
+  /// Plants tampered bytes at [path], as the sandboxed guest would
+  /// between two runs.
+  void tamper(String path) => files[path] = '(version 1)\n(allow default)\n';
 }
