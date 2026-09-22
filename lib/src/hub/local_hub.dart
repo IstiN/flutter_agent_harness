@@ -777,27 +777,16 @@ const _relayAllowedHosts = <String>{
 /// link-local (cloud metadata `169.254.169.254` included), or
 /// unspecified addresses — denied BEFORE any outbound attempt.
 /// [allowAnyHost] is the explicit development opt-in.
-// ponytail: name-based checks, DNS that resolves a public name to an
+// ponytail: every literal IP denies in one gate (loopback, RFC 1918,
+// link-local, unspecified, public literals alike — providers are named
+// hosts, never addresses); DNS that resolves a public name to an
 // internal IP still passes — resolve-and-verify each hop if that
 // matters someday.
 bool relayDestinationAllowed(Uri url, {bool allowAnyHost = false}) {
   if (allowAnyHost) return true;
   final host = url.host.toLowerCase();
   if (host.isEmpty) return false;
-  final address = InternetAddress.tryParse(host);
-  if (address != null) {
-    if (address.isLoopback || address.isLinkLocal) return false;
-    if (address.type == InternetAddressType.IPv4) {
-      final b = address.rawAddress;
-      // 10/8, 172.16/12, 192.168/16, 0.0.0.0/8 — RFC 1918 + unspecified.
-      if (b[0] == 10 || b[0] == 0 || (b[0] == 172 && b[1] >= 16 && b[1] <= 31) ||
-          (b[0] == 192 && b[1] == 168)) {
-        return false;
-      }
-      return false; // any other IPv4 literal is not a provider name
-    }
-    return false; // IPv6 literals: providers are named, not literal
-  }
+  if (InternetAddress.tryParse(host) != null) return false;
   if (host == 'localhost' || host.endsWith('.localhost')) return false;
   return _relayAllowedHosts.any(
     (allowed) => host == allowed || host.endsWith('.$allowed'),
