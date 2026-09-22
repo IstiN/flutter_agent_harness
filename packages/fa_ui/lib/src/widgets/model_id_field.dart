@@ -11,6 +11,8 @@ import 'package:fa_ui/src/strings/fa_ui_strings.dart';
 /// picker: a free-text field whose autocomplete options are the endpoint's
 /// model ids, filtered by the typed text (any custom id stays valid).
 /// While [loading] the field shows the fetching helper and a spinner.
+/// When [fromBundledCatalog] is set the list answered from the bundled
+/// offline catalog (the live fetch failed) — a muted note says so.
 class ModelIdAutocompleteField extends StatelessWidget {
   const ModelIdAutocompleteField({
     super.key,
@@ -18,6 +20,7 @@ class ModelIdAutocompleteField extends StatelessWidget {
     required this.focusNode,
     required this.models,
     required this.loading,
+    this.fromBundledCatalog = false,
   });
 
   /// The model id being edited (also receives the picked option).
@@ -32,10 +35,14 @@ class ModelIdAutocompleteField extends StatelessWidget {
   /// Whether a `/models` fetch is in flight.
   final bool loading;
 
+  /// Whether the list answered from the bundled offline catalog (the live
+  /// fetch failed) — shows the provenance note.
+  final bool fromBundledCatalog;
+
   @override
   Widget build(BuildContext context) {
     final strings = FaUiStrings.of(context);
-    return RawAutocomplete<String>(
+    final field = RawAutocomplete<String>(
       textEditingController: controller,
       focusNode: focusNode,
       optionsBuilder: (value) {
@@ -89,6 +96,22 @@ class ModelIdAutocompleteField extends StatelessWidget {
           ),
         );
       },
+    );
+    if (!fromBundledCatalog) return field;
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        field,
+        const SizedBox(height: 4),
+        Text(
+          strings.modelPickerBundledCatalogNote,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.outline,
+          ),
+        ),
+      ],
     );
   }
 }

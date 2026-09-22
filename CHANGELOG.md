@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- fix(771): one model-list dispatch everywhere — the ChatGPT (codex)
+  provider's model list loads on every surface (provider editor
+  quick-select, default-chat picker, media-slot pickers, task model
+  pickers) instead of only right after OAuth. Pickers resolve through
+  `fetchModelsForEndpoint`, with registry entries' persisted
+  `CustomProvider.kind` winning over URL-shape guessing.
+  **Breaking for out-of-tree `ModelListDialect` implementers**: the
+  `fetch` override signature gains an optional named
+  `void Function()? onBundledFallback` parameter — keep it in the
+  override's signature (and ignore it) unless your dialect can answer
+  from a bundled offline catalog when the live fetch fails.
+
+
 ## 0.1.397
 
 
@@ -4060,5 +4075,12 @@
 
 - chore: pin factory fec4d87 — CANCELLED≠red + bot BLOCKED-race (#762) (#824)
 - chore: pin factory dff2d08 — mergeBot fallback scoped (#762) (#822)
+
+## 1.0.456
+
+- gh-789 [SEC-01] the browser relay must never send a stored key to a client-chosen address (#811)
+- gh-760 [GOAL] A persisted provider can never brick the CLI — chatgpt-codex boot-switch hole + degrade-never-crash boot (#762)
+- chore: pin factory f5c86d8 — mergeBot pullRequestId (#762 merge fix) (#826)
+- fix(772): one identity per provider - name/kind split resolved through the catalog seam (#779)
 
 ## Unreleased
