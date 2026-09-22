@@ -478,28 +478,6 @@ Model buildCatalogModel(
 /// a custom [baseUrl] resolve to the `openai` spec (the model reports
 /// provider `openai` instead of `openrouter`); without one, `openrouter`.
 ///
-<<<<<<< HEAD
-/// Intentionally NOT honoring the build-time provider filter
-/// (`FA_PROVIDERS`): the boot restore path must judge every persisted id
-/// against the full catalog — a disabled-in-this-build saved provider
-/// restores and boots (the wire adapters stay in the binary) instead of
-/// degrading to the fallback warning. The user-facing surfaces (pickers,
-/// roles, `/provider`, key collection) keep the filter via
-/// [catalogProvider].
-ProviderSpec? resolveCliProviderSpec(String kind, {String? baseUrl}) {
-  // Canonical id: trimmed + case-folded at the seam — names AND kinds
-  // compare uniformly (`CHATGPT-CODEX` and ` chatgpt ` resolve like the
-  // canonical spelling; gh-760 review). Catalog keys are lowercase.
-  final key = kind.trim().toLowerCase();
-  if (key == 'openai-completions' || key == 'openrouter') {
-    return baseUrl == null
-        ? providerCatalog['openrouter']
-        : providerCatalog['openai'];
-  }
-  final byName = providerCatalog[key];
-  if (byName != null) return byName;
-  // A kind that is not itself a catalog name (e.g. `chatgpt-codex`).
-=======
 /// Intentionally filter-less by default: the boot restore path must judge
 /// every persisted id against the full catalog — a disabled-in-this-build
 /// saved provider restores and boots (the wire adapters stay in the
@@ -518,15 +496,12 @@ ProviderSpec? _legacyOpenAiSpec(String? baseUrl) =>
 /// The kind scan: the entry whose ADAPTER KIND is [key] — a kind that is
 /// not itself a catalog name (e.g. `chatgpt-codex`).
 ProviderSpec? _kindScan(String key) {
->>>>>>> origin/main
   for (final spec in providerCatalog.values) {
     if (spec.kind == key) return spec;
   }
   return null;
 }
 
-<<<<<<< HEAD
-=======
 /// The FA_PROVIDERS gate for resolved specs: a [honorBuildFilter] lookup
 /// yields null when the resolved entry is disabled in this build.
 ProviderSpec? _applyBuildFilter(ProviderSpec? spec, bool honorBuildFilter) {
@@ -576,7 +551,6 @@ String canonicalProviderKind(String id) {
   return spec.kind;
 }
 
->>>>>>> origin/main
 /// Builds the legacy single [Model] the `fah` executable runs when no roles
 /// are configured (`--provider`/`--model`/`--base-url` flags).
 ///

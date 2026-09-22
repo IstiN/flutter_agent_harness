@@ -90,16 +90,11 @@ import 'headless_provider_key.dart';
 /// Returns the effective [CliArgs], the resolved provider kind — the same
 /// value, the explicit record field saves the caller a re-derivation — the
 /// `FA_PROVIDER_*` declaration when one is active (the caller needs it
-<<<<<<< HEAD
 /// for the roles pinning, the key decision and the extra redaction), the
 /// saved provider id when it was unrecognizable, and the saved provider id
 /// when the persisted provider/baseUrl pair was unservable (endpoint-locked
 /// kind, foreign baseUrl — the caller degrades it with a named warning).
 /// Both report fields are null otherwise.
-=======
-/// for the roles pinning, the key decision and the extra redaction), and
-/// the saved provider id when it was unrecognizable (null otherwise).
->>>>>>> origin/main
 ({
   CliArgs args,
   String provider,
