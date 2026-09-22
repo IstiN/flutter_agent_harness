@@ -73,15 +73,9 @@ void main() {
       await harness.waitForBoot();
 
       await harness.runSlashCommand('/dap');
-      // Wait for the LAST menu label on the PAINTED SCREEN (not raw): the
-      // /dap echo reaches the raw stream one frame before the menu paints,
-      // and asserting labels against the pre-paint frame flakes on loaded
-      // runners (v0.1.405 tag CI).
-      final lastLabel = dapMenuOptions().last.$2;
-      await harness.waitForScreen(
-        lastLabel,
-        timeout: const Duration(seconds: 20),
-      );
+      // Wait for the menu to be fully painted before asserting labels
+      // (raw echo races the paint — see [_waitForMenuPainted]).
+      await _waitForMenuPainted(harness, hubRunning: false);
       // Every menu label is visible, derived from the structural menu
       // definition (stopped state — no local hub in this temp HOME).
       for (final option in dapMenuOptions()) {
@@ -233,19 +227,14 @@ void main() {
         await harness.waitForBoot();
 
         await harness.runSlashCommand('/dap');
-        await harness.waitForText(
-          'Stop DAP',
-          timeout: const Duration(seconds: 20),
-        );
+        await _waitForMenuPainted(harness, hubRunning: true);
         // The stopped-state row is gone; the rest of the menu is intact.
-        // Anchor each label on the PAINTED screen before asserting: raw
-        // echo satisfies waitForText one frame ahead of the full menu
-        // paint, and an immediate screenText read can observe a partially
-        // painted frame (#550 family — reddened the pre-merge validation
-        // run with the header + Stop DAP row visible but the remaining
-        // rows not yet drawn).
-        expect(harness.screenText, isNot(contains('Start DAP locally')));
-        for (final label in ['Connection status', 'Connect to a hub']) {
+        expect(
+          harness.screenText,
+          isNot(contains('Start DAP locally')),
+          reason: harness.screenText,
+        );
+        for (final label in dapMenuOptions(hubRunning: true).map((o) => o.$2)) {
           await harness.waitForScreen(
             label,
             timeout: const Duration(seconds: 20),
@@ -336,6 +325,22 @@ int _arrowsTo(String key) {
     );
   }
   return index;
+}
+
+/// Waits until the /dap menu is fully PAINTED: the /dap echo reaches the
+/// raw stream one frame before the menu paints, and asserting labels
+/// against the pre-paint frame flakes on loaded runners (#550 family —
+/// v0.1.405 tag CI; reddened the integ-mock leg on d331157b). Anchors on
+/// the LAST menu label of the painted screen before any label assert.
+Future<void> _waitForMenuPainted(
+  FaCliHarness harness, {
+  required bool hubRunning,
+}) async {
+  final lastLabel = dapMenuOptions(hubRunning: hubRunning).last.$2;
+  await harness.waitForScreen(
+    lastLabel,
+    timeout: const Duration(seconds: 20),
+  );
 }
 
 /// Walks the open `/dap` menu down to [key] and activates it.
