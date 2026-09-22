@@ -1,0 +1,89 @@
+name: AAB 16k gate self-test
+
+# gh-798 AC3: the 16 KB page-size gate (scripts/verify_aab_native_libs.sh,
+# called by build-mobile.yml's "Verify AAB" step) is itself tested — a gate
+# that is wrong from day one (gh-786: APK-layout glob in an AAB) must be
+# caught at PR time, not by the nightly. This job runs the REAL gate script
+# against two fixture bundles:
+#   (a) libs present (a real 16 KB-aligned vendored .so under the AAB
+#       layout base/lib/<abi>/) → gate passes with the green marker;
+#   (b) libs absent → the named "::error:: expected native libs …"
+#       verdict, never a silent pass, never an inherited exit code.
+# A regressed glob or verdict turns this job red and blocks merge — the
+# fixture is the AAB layout, so ANY layout assumption regression fails
+# case (a) exactly like the nightly did (gh-786). A failure on an
+# unrelated change is the desired loudness — fix the gate or fixture,
+# never delete the job (gh-798 E3).
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/build-mobile.yml'
+      - '.github/workflows/aab-gate-selftest.yml'
+      - 'scripts/verify_aab_native_libs.sh'
+      - 'scripts/patch_elf_16k_alignment.dart'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  self-test:
+    name: Gate self-test (fixture bundles)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        # Only `dart` is needed (the 16 KB checker); flutter-action is the
+        # repo-standard pinned source of it and mirrors the real leg.
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Build fixture bundles (AAB layout, with/without native libs)
+        run: |
+          set -euo pipefail
+          # (a) with libs: a REAL 16 KB-aligned .so from the vendored
+          # wasm_run plugin, packaged at the AAB layout.
+          mkdir -p fx/with-libs/base/lib/arm64-v8a
+          cp vendor/wasm_run_flutter/android/src/main/jniLibs/arm64-v8a/libwasm_run_dart.so \
+            fx/with-libs/base/lib/arm64-v8a/
+          (cd fx/with-libs && zip -q -r -X ../with-libs.aab base)
+          # (b) without libs: structurally valid bundle, zero native libs.
+          mkdir -p fx/without-libs/base
+          (cd fx/without-libs && zip -q -r -X ../without-libs.aab base)
+
+      - name: "(a) libs present → gate passes"
+        run: |
+          set -euo pipefail
+          OUT="$(mktemp)"
+          if bash scripts/verify_aab_native_libs.sh with-libs.aab >"$OUT" 2>&1; then
+            cat "$OUT"
+          else
+            echo "::error::gate must PASS on a bundle WITH native libs (gh-798 AC3a) — regressed glob or layout assumption?"
+            cat "$OUT"
+            exit 1
+          fi
+          grep -q "✅ 16 KB alignment check green" "$OUT" || {
+            echo "::error::gate passed without its green marker — verdict text drifted (gh-798 AC3a)"
+            exit 1
+          }
+
+      - name: "(b) libs absent → named failure, never a silent pass"
+        run: |
+          set -euo pipefail
+          OUT="$(mktemp)"
+          if bash scripts/verify_aab_native_libs.sh without-libs.aab >"$OUT" 2>&1; then
+            echo "::error::gate must FAIL on a bundle WITHOUT native libs (gh-798 AC3b) — native libs are expected in the store bundle"
+            exit 1
+          fi
+          cat "$OUT"
+          grep -q "expected native libs at base/lib/\*/\*\.so" "$OUT" || {
+            echo "::error::gate failed WITHOUT its named verdict — regressed to an inherited/unlabeled exit code (the exact gh-786 class)"
+            exit 1
+          }
+          echo "✅ self-test green: pass-on-libs + named-fail-without-libs verified"

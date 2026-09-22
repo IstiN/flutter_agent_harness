@@ -25,6 +25,7 @@
 
 require_relative "appstore_preflight"
 require_relative "play_upload_preflight"
+require_relative "version_floor"
 
 def asc_api_key
   app_store_connect_api_key(
@@ -308,6 +309,50 @@ def upload_version_metadata_via_api(metadata_dir:, bundle_id:, platform:)
 end
 
 platform :ios do
+  # gh-798 AC1/AC2: the daily TestFlight leg asserts the version it is
+  # about to stamp is strictly ABOVE the latest ASC-approved version BEFORE
+  # any build runs — #785's failure class (altool 90062 at the end of a
+  # 20-minute build) dies here in seconds instead. Reads the SAME version
+  # source the build stamps (BUILD_NAME — pubspec → tag → version job, the
+  # one-version scheme gh-785 centralized). The decision lives in
+  # version_floor.rb (plain-ruby tested); this lane only fetches ASC facts.
+  desc "Assert the stamped version is above the ASC-approved floor before building (gh-798)"
+  lane :assert_version_floor do
+    stamped = ENV["BUILD_NAME"].to_s.strip
+    UI.user_error!("[gh-798] BUILD_NAME is not set — the version-floor pre-check needs the version the build will stamp") if stamped.empty?
+
+    if ENV["APP_STORE_CONNECT_KEY_CONTENT"].to_s.strip.empty?
+      # ASC keys are optional repo secrets: without them the submit leg
+      # skips the upload anyway, so there is no floor to guard. The skip
+      # stays a visible marker, never a silent pass (gh-798 AC4).
+      UI.important("[gh-798] version-floor pre-check: SKIPPED — no APP_STORE_CONNECT_KEY_CONTENT secret (the upload leg would skip too)")
+      next
+    end
+
+    bundle_id = ENV["IOS_BUNDLE_ID"] || "dev.fa1.app"
+    # E1: ASC unreachable/rate-limited gets exactly one retry, then a
+    # fail-closed named error — a skipped floor check is a silent floor.
+    tries = 0
+    begin
+      tries += 1
+      asc_token!
+      app = asc_app!(bundle_id: bundle_id)
+      approved = app.get_app_store_versions(filter: { platform: Spaceship::ConnectAPI::Platform::IOS }).map do |v|
+        { "state" => v.app_store_state, "version" => v.version_string }
+      end
+    rescue StandardError => e
+      retry if tries < 2
+      UI.user_error!("[gh-798] version-floor pre-check: App Store Connect unreachable after one retry (#{e.class}: #{e.message.to_s[0, 200]}) — failing closed: cannot verify the version floor, refusing to build")
+    end
+
+    decision = VersionFloor.decide(stamped: stamped, approved: approved)
+    # AC4 leg-level marker: the pre-check RAN and what it decided — visible
+    # in the daily report, so a silently-skipped check can never hide.
+    UI.message("[gh-798] version-floor pre-check RAN: stamped=#{stamped} approved_floor=#{decision['floor']} verdict=#{decision['action']}")
+    UI.user_error!(decision["reason"]) if decision["action"] == "abort"
+    UI.success("✅ #{decision['reason']}")
+  end
+
   desc "Build iOS IPA only (for CI split build/submit pattern)"
   lane :build_only do
     # The CI workflow creates and unlocks build.keychain before calling this lane.
