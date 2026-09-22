@@ -163,14 +163,15 @@ void main() {
       expect(_resolver(_req('https://lan.example/v1')), isNull);
     });
 
-    test('a named non-openai record is rejected with a named dialect error', () {
-      final target = _resolver(
-        _req(_recordClaude, provider: 'claude'),
-      );
-      expect(target!.rejected, isTrue);
-      expect(target.error, contains('claude'));
-      expect(target.error, contains('anthropic'));
-    });
+    test(
+      'a named non-openai record is rejected with a named dialect error',
+      () {
+        final target = _resolver(_req(_recordClaude, provider: 'claude'));
+        expect(target!.rejected, isTrue);
+        expect(target.error, contains('claude'));
+        expect(target.error, contains('anthropic'));
+      },
+    );
 
     test('a keyless record resolves with a null key (frame glue rejects)', () {
       final target = _resolver(
@@ -273,31 +274,25 @@ void main() {
       },
     );
 
-    test(
-      'an unnamed request aimed at a keyed saved record answers the '
-      'migration hint with zero outbound requests',
-      () async {
-        final client = _CountingClient();
-        final frames = await _handle(_req(_recordZai), client);
-        expect(client.requests, isEmpty);
-        expect(frames.single.fields['error'], contains('re-pair'));
-      },
-    );
+    test('an unnamed request aimed at a keyed saved record answers the '
+        'migration hint with zero outbound requests', () async {
+      final client = _CountingClient();
+      final frames = await _handle(_req(_recordZai), client);
+      expect(client.requests, isEmpty);
+      expect(frames.single.fields['error'], contains('re-pair'));
+    });
 
-    test(
-      'a named non-openai record never sends its key with an '
-      'openai-shaped request',
-      () async {
-        final client = _CountingClient();
-        final frames = await _handle(
-          _req(_recordClaude, provider: 'claude'),
-          client,
-        );
-        expect(client.requests, isEmpty);
-        expect(frames.single.fields['error'], contains('claude'));
-        expect(frames.single.fields['error'], contains('dialect'));
-      },
-    );
+    test('a named non-openai record never sends its key with an '
+        'openai-shaped request', () async {
+      final client = _CountingClient();
+      final frames = await _handle(
+        _req(_recordClaude, provider: 'claude'),
+        client,
+      );
+      expect(client.requests, isEmpty);
+      expect(frames.single.fields['error'], contains('claude'));
+      expect(frames.single.fields['error'], contains('dialect'));
+    });
   });
 
   group('SEC-01 AC3 — cross-origin redirect strips the relayed auth', () {
@@ -353,7 +348,7 @@ void main() {
     /// `https://api.z.ai/api/paas/v4@evil.example/…` (userinfo trick —
     /// different host) and `…/v4.evil.example/…` (same host, foreign
     /// path), so a prefix check would let both through.
-    (String, String, int) _originOf(Uri u) => (
+    (String, String, int) originOf(Uri u) => (
       u.scheme.toLowerCase(),
       u.host.toLowerCase(),
       u.port != 0 ? u.port : (u.scheme == 'https' ? 443 : 80),
@@ -362,14 +357,14 @@ void main() {
     final recordTargets = [
       for (final e in _records)
         (
-          origin: _originOf(Uri.parse(e.baseUrl)),
+          origin: originOf(Uri.parse(e.baseUrl)),
           path: Uri.parse(e.baseUrl).path,
         ),
     ];
 
     bool goesToRecordTarget(http.BaseRequest r) => recordTargets.any(
       (t) =>
-          _originOf(r.url) == t.origin &&
+          originOf(r.url) == t.origin &&
           (r.url.path == t.path || r.url.path.startsWith('${t.path}/')),
     );
 

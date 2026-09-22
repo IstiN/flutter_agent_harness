@@ -4,7 +4,9 @@
 // `Authorization: Bearer …` to the redirect target — some injected clients
 // (CupertinoClient/URLSession on the app hosts) follow cross-host by
 // default and keep the header. Same-origin hops are re-issued verbatim
-// (method, body, headers — credentials stay on-origin); anything crossing
+// (method, body, headers — credentials stay on-origin), except 303 See
+// Other which downgrades to a body-less GET (RFC 9110, and the same
+// downgrade dart:io's prior auto-follow performed); anything crossing
 // origins fails as a ProviderHttpError the SSO/moved-URL diagnostics
 // already understand.
 @Timeout(Duration(seconds: 30))
@@ -178,10 +180,7 @@ void main() {
           // downgrade dart:io's previous auto-follow performed on this
           // shared path. 301/302/307/308 keep the original method.
           expect(followed.method, 'GET');
-          expect(
-            followed.url.toString(),
-            'https://api.example.com/v1/status',
-          );
+          expect(followed.url.toString(), 'https://api.example.com/v1/status');
           expect((followed as http.Request).bodyBytes, isEmpty);
           // Same-origin hop, so the credentials stay.
           expect(followed.headers['authorization'], 'Bearer sk-protected');

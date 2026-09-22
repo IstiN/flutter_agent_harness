@@ -439,12 +439,18 @@ Carried over from v1, still true:
   WHAT (key). A named provider resolves endpoint AND key from the same
   saved record: the client's `baseUrl` must byte-equal the record's
   (checked BEFORE any network call), an unknown name is a named
-  rejection, and the anonymous mode is relayed with NO stored key. The
-  same rule lives in the shared HTTP layer: `sendProviderRequest`
-  disables client auto-follow, so a cross-origin 3xx never re-sends
-  `Authorization` to the redirect target (same-origin hops are followed
-  verbatim; anything crossing origins fails). Any future relay-ish
-  surface gets the same split by construction.
+  rejection, a non-openai record is rejected by dialect (the relay
+  speaks openai-completions only), and an unnamed request aimed at a
+  keyed saved record answers a migration hint instead of a raw 401
+  (re-pair so `llmReq` names its provider). The same rule lives in the
+  shared HTTP layer: `sendProviderRequest` disables client auto-follow,
+  so a cross-origin 3xx never re-sends `Authorization` to the redirect
+  target (same-origin hops are followed verbatim, `303` downgrading to a
+  body-less GET; anything crossing origins fails). Any future relay-ish
+  surface gets the same split by construction. Accepted residual risk
+  (ticket contract #2): the anonymous relay remains a keyless POST
+  primitive to client-chosen URLs — the bridge binds the loopback
+  interface only and the mode can never attach a stored key.
 
 ## Advanced: desktop bridge (v1 machinery, optional)
 
