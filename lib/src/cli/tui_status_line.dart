@@ -218,6 +218,11 @@ enum StatusLineRoleKey {
   separator,
   gaugeUsed,
   gaugeUnused,
+
+  /// The band composer's fill (#806): the composer-top-band background
+  /// the S3 writer paints behind the rendered spans. Additive key — the
+  /// S1 token merge re-points the lambda, never removes the key.
+  bandBg,
 }
 
 /// The statusLine role TABLE (issue #805 seam): maps each role key onto an
@@ -249,6 +254,12 @@ final Map<StatusLineRoleKey, Style Function(TuiTheme theme)> kStatusLineRoles =
       StatusLineRoleKey.gaugeUsed: (t) =>
           Style(foregroundRgb: t.focusBorder.foregroundRgb),
       StatusLineRoleKey.gaugeUnused: (t) => t.border,
+
+      // The band fill (#806): the nearest existing background tint (the
+      // composer-adjacent user-message band). S1's statusLine* tokens
+      // re-point this one lambda — the band writer never names a color.
+      StatusLineRoleKey.bandBg: (t) =>
+          Style(backgroundRgb: t.userMessageBg.backgroundRgb),
     };
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -28,6 +28,12 @@ import '../dap/dap_hub_snapshot.dart';
 import 'agent_event_handler.dart';
 import 'ansi_markdown.dart';
 import 'path_candidates.dart';
+import 'tui_status_line.dart'
+    show
+        StatusLineConfig,
+        StatusLineSnapshot,
+        TuiStatusLine,
+        resolveStatusLineSpec;
 import 'browser_bridge_commands.dart';
 import '../browser/browser_tools.dart';
 import 'headless_prompt.dart';
@@ -1731,6 +1737,15 @@ class AgentCli {
         buildSlashMenu: _buildSlashMenu,
         buildModelMenu: _buildModelMenu,
         statusLine: _statusLine,
+        // The band composer (#806): the omp status line attaches as the
+        // composer's top band unless the `tui.classic` kill switch pins
+        // the legacy chrome (byte-identical rule + dim footer).
+        statusSnapshot: config.tuiClassic ? null : _statusLineSnapshot,
+        statusLineEngine: config.tuiClassic
+            ? null
+            : TuiStatusLine(
+                spec: resolveStatusLineSpec(config.statusLine),
+              ),
         prompt: prompt,
         onInterrupt: () {
           // Marks the drain loop to discard queued messages (kimi-cli drops

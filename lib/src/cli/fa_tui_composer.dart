@@ -5,6 +5,12 @@ part of 'fa_tui.dart';
 /// the extension sees the model's private members (issue #467).
 
 extension _TuiComposerLayout on FaTuiModel {
+  /// The band composer attachment (#806): the host supplies a snapshot
+  /// builder + the status-line engine unless the `tui.classic` kill
+  /// switch pinned the legacy chrome.
+  bool get _bandAttached =>
+      callbacks.statusSnapshot != null && callbacks.statusLineEngine != null;
+
   /// The input block's height in PHYSICAL rows: the text soft-wraps to the
   /// terminal width, so a long single line occupies several rows. All
   /// layout math (viewport height, cursor homing) must use this count —
@@ -38,10 +44,22 @@ extension _TuiComposerLayout on FaTuiModel {
   /// transcript is non-empty: the live edge (the sent echo / newest answer
   /// line) must stay on screen even on a squeezed frame.
   _FramePlan _framePlanFor(int width, int height) {
-    const mandatory =
+    final inPrompt = prompt != null;
+    // Band composer (#806): the top band replaces the composer's top
+    // rule, bottom rule and status footer — the fixed chrome below the
+    // scroll indicator shrinks from three rows to one (the band), the
+    // freed row goes to history. Prompt
+    // mode keeps the legacy layout (the prompt zone replaces the
+    // composer; its footer stays).
+    final bandFrame = _bandAttached && !inPrompt;
+    const legacyMandatory =
         1 /* progress indicator */ +
         2 /* input frame rules */ +
         1 /* status row */;
+    const bandMandatory =
+        1 /* progress indicator */ +
+        1 /* top status band (always owns its row — omp verticalChrome: 1) */;
+    final mandatory = bandFrame ? bandMandatory : legacyMandatory;
     // The scroll-progress indicator row ALWAYS paints — the percent rule
     // while the follow latch is detached, a blank row while following
     // (skipping it shifted every later row on scroll). Its row is the
@@ -53,7 +71,6 @@ extension _TuiComposerLayout on FaTuiModel {
     // the prompt path for the input window, the never-painted bottom rule
     // AND the status row twice, so the frame under-filled and left a dead
     // band above the glass).
-    final inPrompt = prompt != null;
     final promptH = inPrompt ? tuiPromptRowCount(prompt!, width) + 1 : 0;
     final (inputVisible, inputOffset) = inPrompt
         ? (0, 0)
@@ -190,6 +207,68 @@ extension _TuiComposerLayout on FaTuiModel {
     tuiPadRight(tuiFitWidth(callbacks.statusLine(), termWidth), termWidth),
   );
 
+  /// The status band row (#806): the omp band attachment — the host
+  /// snapshot renders as a flush-left filled powerline band with a soft
+  /// opening cap (nerd symbol table only; omp's font-safe table ships no
+  /// cap), no frame, rules or corners. The band always owns its row (omp
+  /// `verticalChrome: 1`) even when the engine has nothing to render.
+  /// Colors flow through [statusLineStyle]/[kStatusLineRoles] at write
+  /// time; width math runs on the raw strings (rule #279 E1).
+  int _writeStatusBand(StringBuffer b, int baseRow) {
+    final snapshot = callbacks.statusSnapshot!();
+    final engine = callbacks.statusLineEngine!;
+    final spans = engine.renderSpans(snapshot, termWidth);
+    final raw = spans.map((s) => s.$1).join();
+    if (tuiTextWidth(raw) > termWidth) {
+      // E1 belt: the engine's ladder is width-exact; a resize race
+      // truncates as the last resort so the row can never hardware-wrap.
+      b.writeln(_dim(tuiFitWidth(raw, termWidth)));
+      return 1;
+    }
+    final c = FaThemeController.instance;
+    final theme = c.current;
+    final fill = kStatusLineRoles[StatusLineRoleKey.bandBg]!(theme);
+    final bandBg = fill.backgroundRgb;
+    final row = StringBuffer();
+    if (bandBg != null && engine.spec.nerdSymbols) {
+      // The soft opening cap painted band-bg-as-fg (omp `useBgAsFg`).
+      row
+        ..write(c.sgrPrefix(Style(foregroundRgb: bandBg)))
+        ..write('\u{e0b6}');
+    }
+    final brandT = statusLineBrandFadeT(
+      lit: !snapshot.idle,
+      changedAgoMs: snapshot.idleChangedAgoMs,
+    );
+    for (final (text, key) in spans) {
+      final style = statusLineStyle(
+        key,
+        theme: theme,
+        idle: snapshot.idle,
+        brandT: brandT,
+      );
+      row
+        ..write(
+          c.sgrPrefix(
+            bandBg == null ? style : style.copyWith(backgroundRgb: bandBg),
+          ),
+        )
+        ..write(text);
+    }
+    final pad = termWidth - tuiTextWidth(raw);
+    if (pad > 0) {
+      // Keep the band continuous flush to the right edge.
+      row
+        ..write(c.sgrPrefix(fill))
+        ..write(' ' * pad);
+    }
+    // Close the last span's SGR — only when styling is on (NO_COLOR
+    // keeps the band shape-only, zero escapes).
+    if (c.profile != null) row.write('\x1b[0m');
+    b.writeln(row.toString());
+    return 1;
+  }
+
   /// The framed input lines with horizontal cursor-window scrolling; returns
   /// the cursor's input line index and screen column for the cursor home.
   /// Registers the composer hit-region (issue #278): click = caret move.
@@ -214,9 +293,19 @@ extension _TuiComposerLayout on FaTuiModel {
     );
     for (var i = 0; i < visible.length; i++) {
       if (i > 0) b.writeln();
+      if (_bandAttached) {
+        // omp band.ts renderRow: the gutter rides every composer row —
+        // the border-colored `╰─ ` cue on the first, a plain indent on
+        // the continuations (omp `gutter.continuation`).
+        b.write(i == 0 ? _borderMuted(_composerGutter) : ' ' * _composerGutterWidth);
+      }
       b.write(visible[i]);
     }
-    b.writeln();
+    // Classic separates the input from the bottom rule + footer below;
+    // the band frame ENDS at the input (the band is above), so no
+    // trailing row — an over-painted frame would crop from the top and
+    // desync the hit-region rows from the painted ones.
+    if (!_bandAttached) b.writeln();
     final inWindow = cursorRow - start;
     return (inWindow < 0 ? 0 : inWindow, cursorCol);
   }
@@ -228,7 +317,11 @@ extension _TuiComposerLayout on FaTuiModel {
   /// the row count is cursor-dependent — [_inputLineCount] uses this same
   /// computation and the two never disagree.
   (List<String>, int, int) _wrappedInput() {
-    final width = termWidth < 1 ? 1 : termWidth;
+    // Band mode wraps at the composer CONTENT width (the gutter owns its
+    // columns, omp `lineContentWidth`); legacy wraps at the full width.
+    final gutter = _bandAttached ? _composerGutterWidth : 0;
+    final content = termWidth - gutter;
+    final width = content < 1 ? 1 : content;
     final logical = inputText.split('\n');
     final beforeCursor = inputText.substring(0, cursor);
     final cursorLogicalLine = '\n'.allMatches(beforeCursor).length;

@@ -7,6 +7,10 @@ import 'dart:io'
 // The composer's editor types come from the vendored tui_editor.dart
 // (issue #613): hosted dart_tui exports none, so this file compiles
 // against BOTH resolutions.
+// The vendored dart_tui exports no Style surface (issue #613) — same
+// direct-src import tui_theme.dart uses.
+// ignore: implementation_imports
+import 'package:dart_tui/src/bubbles/style.dart' show Style;
 import 'package:dart_tui/dart_tui.dart' hide stripAnsi;
 import 'package:meta/meta.dart';
 
@@ -19,6 +23,14 @@ import 'package:characters/characters.dart';
 import 'tui_editor.dart';
 import 'tui_hit_regions.dart';
 import 'tui_prompt.dart';
+import 'tui_status_line.dart'
+    show
+        StatusLineRoleKey,
+        StatusLineSnapshot,
+        TuiStatusLine,
+        kStatusLineRoles,
+        statusLineBrandFadeT,
+        statusLineStyle;
 import 'tui_theme.dart';
 import 'termios_guard.dart' show SttyRunner;
 import 'tui_repl.dart' show MenuItem, QueuedMessage, TuiProgramHooks, stripAnsi;
@@ -63,6 +75,18 @@ String _accent2(String s) => tuiAccent2(s);
 String _accent2Plain(String s) => tuiAccent2Soft(s);
 String _dim(String s) => tuiDim(s);
 
+/// The composer gutter / chrome border color (#806 band composer).
+String _borderMuted(String s) =>
+    FaThemeController.instance.borderMuted(s);
+
+/// The omp prompt gutter (band.ts `defaultPromptGutter`): the first
+/// composer row's leading cue in the border color; continuation rows
+/// indent by the same width (omp `gutter.continuation`).
+const String _composerGutter = '╰─ ';
+
+/// `tuiTextWidth('╰─ ')` — narrow-cell box glyphs + one space.
+const int _composerGutterWidth = 3;
+
 /// Host callbacks supplied by [AgentCli] to the dart_tui REPL.
 final class FaTuiCallbacks {
   const FaTuiCallbacks({
@@ -81,6 +105,8 @@ final class FaTuiCallbacks {
     this.pathCandidates,
     this.onHubAction,
     this.readClipboardImage,
+    this.statusSnapshot,
+    this.statusLineEngine,
   });
 
   /// Called when the user submits a non-empty input line. [images] carries
@@ -101,6 +127,18 @@ final class FaTuiCallbacks {
 
   /// One-line status shown above the input line.
   final String Function() statusLine;
+
+  /// Host-built status-bar frame data (issue #806, the S3 band
+  /// attachment): the host resolves the snapshot per frame tick — the
+  /// TUI layer performs zero fetches and zero subprocess calls. NULL
+  /// means the legacy composer (the `tui.classic` kill switch, or the
+  /// web stub): the dim one-line footer stays, byte-identical.
+  final StatusLineSnapshot Function()? statusSnapshot;
+
+  /// The status-line engine (spec resolved once from `tui.statusLine`
+  /// config). Supplied together with [statusSnapshot]; the band writer
+  /// renders it per frame at the composer's top.
+  final TuiStatusLine? statusLineEngine;
 
   /// The input prompt (e.g. `fa> `).
   final String prompt;
@@ -2123,19 +2161,42 @@ final class FaTuiModel extends Model {
     // sitting on the status line while the dialog had focus.
     if (prompt != null) return _promptModeView(b);
 
-    final (cursorInputLine, cursorScreenCol) = _writeInputLines(b, row, plan);
-    b.writeln(_dim('─' * termWidth));
-    // The status line stays plain; the busy indicator lives above the input.
-    b.write(_statusRow());
+    // Band composer (#806): the status line attaches as the composer's
+    // TOP band (omp band.ts `statusAttachment: "top-band"`) and the
+    // legacy bottom rule + dim status footer retire. Prompt mode keeps
+    // the legacy layout — the prompt zone replaces the composer, and its
+    // status footer is not composer chrome.
+    final bandFrame = _bandAttached && prompt == null;
+    int cursorInputLine;
+    int cursorScreenCol;
+    if (bandFrame) {
+      row += _writeStatusBand(b, row);
+      (cursorInputLine, cursorScreenCol) = _writeInputLines(b, row, plan);
+    } else {
+      (cursorInputLine, cursorScreenCol) = _writeInputLines(b, row, plan);
+      b.writeln(_dim('─' * termWidth));
+      // The status line stays plain; the busy indicator lives above the input.
+      b.write(_statusRow());
+    }
 
     // One snapshot serves both consumers: newline counting for the cursor
     // row math (O(n) scan, ZERO allocations — the old split('\n') built a
     // List<String> of every physical row on every frame just to take its
     // length) and the frame body itself.
     final body = _cropToGlass(b.toString());
-    final inputStartRow = _lineCount(body) - 2 - plan.input;
+    // The first input row's screen row. Legacy: the tail is rule + input
+    // + bottom rule + status (the last row unterminated), so two painted
+    // rows sit below the input block. Band: the band sits ABOVE the
+    // input and the input's last row ends the frame unterminated — only
+    // the separators between input rows sit below the first one.
+    final inputStartRow = bandFrame
+        ? _lineCount(body) - plan.input + 1
+        : _lineCount(body) - 2 - plan.input;
     final cursorRow = inputStartRow + cursorInputLine;
-    final cursorX = cursorScreenCol;
+    // Band mode: the caret aligns with the text AFTER the gutter's cells.
+    final cursorX = bandFrame
+        ? cursorScreenCol + _composerGutterWidth
+        : cursorScreenCol;
     // Pickers (models, sessions, mode, approval, provider, settings, wizard
     // steps) never show the physical cursor: generic pickers ignore typing
     // entirely, and the models picker's type-to-filter echoes into the
