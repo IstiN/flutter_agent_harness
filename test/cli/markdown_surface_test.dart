@@ -77,6 +77,11 @@ AgentCli _headlessCli(
 }
 
 void main() {
+  // The policy reads the process-wide controller (it must never write
+  // it — issue #778 round 2); tests pin it so constructor writes in the
+  // wiring groups cannot leak into golden groups regardless of order.
+  setUp(() => FaThemeController.instance.profile = ColorProfile.trueColor);
+
   group('headless -p (issue #774)', () {
     test('to a color TTY renders through the policy (AC2)', () async {
       final io = _HeadlessIO();
@@ -340,6 +345,69 @@ void main() {
         markdownSurface: const MarkdownSurface(),
       );
       expect(FaThemeController.instance.profile, isNull);
+    });
+  });
+
+  group('resolveMarkdownSurface — the host wiring step (issue #778 r2)', () {
+    test('a terminal resolves ANSI with the detected palette', () {
+      final s = resolveMarkdownSurface(ansiSupported: true);
+      expect(s.mode, MarkdownSurfaceMode.ansi);
+      expect(s.profile, isNotNull);
+      // The palette is the CLI styling's source of truth: chrome styles
+      // iff the surface resolved one (bin/fah useColor derivation).
+      expect(s.profile != null, isTrue);
+    });
+
+    test('a pipe stays raw byte-identical (AC3)', () {
+      final s = resolveMarkdownSurface(ansiSupported: false);
+      expect(s.mode, MarkdownSurfaceMode.raw);
+      expect(s.profile, isNull);
+    });
+
+    test('NO_COLOR degrades the WHOLE session to plain', () {
+      final s = resolveMarkdownSurface(
+        ansiSupported: true,
+        environment: const {'NO_COLOR': '1'},
+      );
+      expect(s.mode, MarkdownSurfaceMode.plain);
+      expect(s.profile, isNull);
+    });
+
+    test('TERM=dumb degrades to plain', () {
+      final s = resolveMarkdownSurface(
+        ansiSupported: true,
+        environment: const {'TERM': 'dumb'},
+      );
+      expect(s.mode, MarkdownSurfaceMode.plain);
+      expect(s.profile, isNull);
+    });
+
+    test('FA_NO_FORMAT truthy forces raw; =0 does not', () {
+      expect(
+        resolveMarkdownSurface(
+          ansiSupported: true,
+          environment: const {'FA_NO_FORMAT': '1'},
+        ).mode,
+        MarkdownSurfaceMode.raw,
+      );
+      expect(
+        resolveMarkdownSurface(
+          ansiSupported: true,
+          environment: const {'FA_NO_FORMAT': '0'},
+        ).mode,
+        MarkdownSurfaceMode.ansi,
+      );
+    });
+
+    test('the --no-format flag forces raw', () {
+      expect(
+        resolveMarkdownSurface(ansiSupported: true, noFormatFlag: true).mode,
+        MarkdownSurfaceMode.raw,
+      );
+    });
+
+    test('width threads through (the one construction-time freeze)', () {
+      expect(resolveMarkdownSurface(ansiSupported: true, width: 40).width, 40);
     });
   });
 }

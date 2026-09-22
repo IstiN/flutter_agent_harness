@@ -27,6 +27,7 @@ import 'package:meta/meta.dart';
 
 import 'tui_text_width.dart' show tuiTextWidth;
 import 'tui_theme.dart';
+import 'pi_mode.dart' show isTruthyEnvValue;
 
 /// Lightweight inline renderer for streaming reasoning: bold (`**x**`),
 /// italic (`*x*`), inline code (`` `x` ``). Skips block constructs
@@ -1198,10 +1199,10 @@ enum MarkdownSurfaceMode {
 final class MarkdownSurface {
   /// Creates a policy in an explicit [mode]. The default is [raw] —
   /// byte-identical to the pre-#774 behavior, so a host that does not
-  /// resolve a surface keeps today's output. [profile] pins the theme
-  /// palette the engine emits (null = leave the process-wide profile
-  /// alone); hosts resolve it once and thread the SAME value here and
-  /// into their CLI styling.
+  /// resolve a surface keeps today's output. [profile] RECORDS the host's
+  /// single theme resolution (issue #774) for consumers — AgentCli pins
+  /// `FaThemeController.instance` (the palette the engine reads) from it
+  /// and aligns its styling; render() itself never writes globals.
   const MarkdownSurface({
     this.mode = MarkdownSurfaceMode.raw,
     this.width = 80,
@@ -1253,14 +1254,49 @@ final class MarkdownSurface {
   };
 
   String _renderWhole(String text) {
-    // Pin the palette this surface was constructed with — the host's
-    // single theme resolution — so the engine's SGR getters emit it.
-    final resolved = profile;
-    if (resolved != null) FaThemeController.instance.profile = resolved;
+    // Palette discipline (issue #778 round 2): the policy NEVER writes
+    // process globals. The engine reads FaThemeController.instance, which
+    // the HOST pins once (bin/fah.dart resolves the surface; AgentCli's
+    // constructor pins the controller from surface.profile) — render()
+    // only formats.
     return AnsiMarkdown(width: width)
         .formatAll(resolveSetextHeadings(text.split('\n')))
         .join('\n');
   }
+}
+
+/// The host's ONE markdown-surface resolution for the process (issue
+/// #774): terminal capability + environment + the `--no-format` flag →
+/// the [MarkdownSurface] every non-TUI surface routes assistant text
+/// through. Kept pure (facts as parameters, no `dart:io`) so the exact
+/// production resolution is unit-testable (issue #778 round 2); the
+/// executable calls it with `stdout.supportsAnsiEscapes` /
+/// `Platform.environment` / `parsed.noFormat` / `io.columns`.
+///
+/// [ansiSupported] is `stdout.supportsAnsiEscapes`: false means piped or
+/// redirected, so the surface is [MarkdownSurfaceMode.raw] regardless of
+/// environment. A terminal degrades per [MarkdownSurface.resolving]
+/// (`NO_COLOR` / `TERM=dumb` → plain). The resolved profile rides on the
+/// surface ([MarkdownSurface.profile]) so the host's CLI styling can
+/// align with the SAME source of truth (`useColor := profile != null`).
+MarkdownSurface resolveMarkdownSurface({
+  required bool ansiSupported,
+  Map<String, String> environment = const {},
+  bool noFormatFlag = false,
+  int width = 80,
+}) {
+  final profile = detectThemeProfile(
+    ansiSupported: ansiSupported,
+    environment: environment,
+  );
+  return MarkdownSurface.resolving(
+    tty: ansiSupported,
+    color: profile != null,
+    format:
+        !noFormatFlag && !isTruthyEnvValue(environment['FA_NO_FORMAT']),
+    width: width,
+    profile: profile,
+  );
 }
 
 /// Rewrites setext heading pairs (`paragraph` + `===`/`---` underline) to
@@ -1336,10 +1372,3 @@ final _setextUnderline2Re = RegExp(r'^ {0,3}-+ *$');
 final _ansiEscapeRe = RegExp(
   r'\x1b(?:\[[0-9;?]*[A-Za-z]|\][^\x07\x1b]*(?:\x07|\x1b\\))',
 );
-
-/// Whether an `FA_*` boolean env value counts as ON — the repo-wide
-/// truthy convention (`FA_PI_MODE`): `'1'/'true'/'yes'/'on'`,
-/// case-insensitive, trimmed; any other value (including `0`, `false`,
-/// `""`) is OFF.
-bool isTruthyEnvValue(String? value) =>
-    const {'1', 'true', 'yes', 'on'}.contains(value?.trim().toLowerCase());

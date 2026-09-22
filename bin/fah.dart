@@ -34,7 +34,6 @@ import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/ext_cli.dart';
 import 'package:flutter_agent_harness/src/cli/session_tree.dart';
 import 'package:flutter_agent_harness/src/cli/trajectory_tui.dart';
-import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:flutter_agent_harness/src/prompts/prompts.g.dart';
 import 'package:yaml/yaml.dart' as yaml;
 // The ONLY place the core CLI imports the hub client package: downstream
@@ -1914,36 +1913,33 @@ Future<void> _runApp(List<String> args) async {
     configMode: saved.agentMode,
   );
 
-  // The ONE theme resolution for the process (issue #774 review): the
-  // same profile drives the CLI styling and the markdown surface, so the
-  // two can never diverge (NO_COLOR / TERM=dumb fold to null here).
-  final themeProfile = detectThemeProfile(
+  // The ONE markdown-surface resolution for the process (issue #774):
+  // the same resolution pins the palette the markdown engine and the CLI
+  // styling emit, so the two can never diverge (NO_COLOR / TERM=dumb
+  // fold to null here).
+  final markdownSurface = resolveMarkdownSurface(
     ansiSupported: stdout.supportsAnsiEscapes,
     environment: Platform.environment,
+    noFormatFlag: parsed.noFormat,
+    width: io.columns,
   );
 
   cli = AgentCli(
-    useColor: headlessPrompt == null && stdout.supportsAnsiEscapes,
+    // Same source of truth as the palette (issue #778 round 2): chrome
+    // (status line, keyhints, warnings) styles iff the resolved theme
+    // profile exists — NO_COLOR / TERM=dumb degrade the whole session,
+    // not just the markdown.
+    useColor: headlessPrompt == null && markdownSurface.profile != null,
     environment: Platform.environment,
     useTui: useTui,
     version: packageVersion,
     // Markdown parity (issue #774): every non-TUI surface renders
-    // assistant markdown through ONE policy. tty = stdout is a terminal
-    // (pipes stay byte-identical raw); color folds NO_COLOR/TERM=dumb
-    // into plain; --no-format / FA_NO_FORMAT (truthy values, like
+    // assistant markdown through ONE policy — resolveMarkdownSurface
+    // above (pipes stay byte-identical raw; NO_COLOR / TERM=dumb degrade
+    // to plain; --no-format / FA_NO_FORMAT (truthy values, like
     // FA_PI_MODE) force raw; width is the stdout terminal width at
-    // process start (80 when piped — irrelevant in raw mode); the
-    // resolved palette rides along so the surface cannot disagree with
-    // the CLI styling.
-    markdownSurface: MarkdownSurface.resolving(
-      tty: stdout.supportsAnsiEscapes,
-      color: themeProfile != null,
-      format:
-          !parsed.noFormat &&
-          !isTruthyEnvValue(Platform.environment['FA_NO_FORMAT']),
-      width: io.columns,
-      profile: themeProfile,
-    ),
+    // process start, irrelevant in raw mode).
+    markdownSurface: markdownSurface,
     config: AgentCliConfig(
       wakeExecutable: wakeExecutable(),
       // Marathon-session resume parses its multi-hundred-MB tail off the
