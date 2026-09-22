@@ -73,7 +73,8 @@ extension on AgentCli {
     final model = _agent.state.model;
     final spec = entry != null
         ? entry.spec
-        : (catalogProvider(model.provider) ?? providerCatalog['openai']!);
+        : (resolveCliProviderSpec(model.provider) ??
+              providerCatalog['openai']!);
     _startProviderFlow(
       initialType: entry?.apiType ?? spec.name,
       initialBaseUrl: entry?.baseUrl ?? model.baseUrl,
@@ -215,7 +216,9 @@ extension on AgentCli {
     if (providerName == 'dial') {
       return _fetchDialModelsAndFeatures(baseUrl, apiKey: key);
     }
-    if (providerName == 'chatgpt') {
+    // Identity by kind, not a name literal (issue #772): the branch fires
+    // for the catalog name AND the adapter kind.
+    if (resolveCliProviderSpec(providerName)?.kind == 'chatgpt-codex') {
       final (ids, _, _) = await fetchModelsForEndpoint(
         baseUrl,
         apiKey: key,
@@ -1747,16 +1750,31 @@ extension on AgentCli {
     return host;
   }
 
+/// The shared refusal wording for a provider id no enabled catalog entry
+/// names (issue #772): the enabled names, plus the kinds that add
+/// information (`chatgpt-codex`), so a kind-shaped typo is discoverable.
+/// One constant for the `/provider` and `/model` refusals.
+String _unknownProviderMessage(String id) {
+  final kinds = [
+    for (final name in enabledProviderNames())
+      if (canonicalProviderKind(name) != name) canonicalProviderKind(name),
+  ];
+  return 'unknown provider: $id — supported providers: '
+      '${enabledProviderNames().join(', ')}'
+      '${kinds.isEmpty ? '' : ' — kinds accepted too: ${kinds.join(', ')}'}';
+}
+
   /// The catalog-switch branch of [_handleProviderCommand]: resolves the
   /// provider name against the catalog and switches with the optional
   /// endpoint/token args.
   Future<void> _switchToCatalogProvider(List<String> args) async {
-    final spec = catalogProvider(args[0]);
+    // Both identifiers route (issue #772): the friendly name (`chatgpt`)
+    // and the adapter kind (`chatgpt-codex`) resolve to the same entry.
+    // The switch is a user-facing surface — the FA_PROVIDERS build filter
+    // still gates it (as the old catalogProvider lookup did).
+    final spec = resolveCliProviderSpec(args[0], honorBuildFilter: true);
     if (spec == null) {
-      io.writeln(
-        'unknown provider: ${args[0]} — supported providers: '
-        '${enabledProviderNames().join(', ')}',
-      );
+      io.writeln(_unknownProviderMessage(args[0]));
       return;
     }
     _activeCustomName = null;
@@ -2318,7 +2336,9 @@ extension on AgentCli {
   /// immediately when it serves the active provider (roles mode applies it
   /// on the next start).
   void _applySavedKeyToActiveProvider(String name, String value) {
-    final spec = catalogProvider(_providerKind);
+    // _providerKind is the adapter KIND (`chatgpt-codex`) — the seam
+    // resolves both identifiers (issue #772).
+    final spec = resolveCliProviderSpec(_providerKind);
     if (config.modelRolesResolver != null) {
       io.writeln('  takes effect on the next start (roles mode)');
     } else if (spec != null && spec.apiKeyEnvNames.contains(name)) {

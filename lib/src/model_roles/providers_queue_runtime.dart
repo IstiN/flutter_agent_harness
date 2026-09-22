@@ -123,24 +123,21 @@ final _timeoutPatterns = [
 ];
 
 /// Maps a queue adapter kind to the catalog provider NAME the model
-/// builder keys off. `openai-completions` keeps the historical CLI rule:
-/// a custom baseUrl reports provider `openai`, the default reports
-/// `openrouter`.
-String queueKindCatalogName(String kind, String? baseUrl) => switch (kind) {
-  'openai-completions' => baseUrl == null ? 'openrouter' : 'openai',
-  'anthropic' => 'anthropic',
-  'google' => 'google',
-  'dial' => 'dial',
-  'minimax' => 'minimax',
-  'zai' => 'zai',
-  'aiin' => 'aiin',
-  'chatgpt-codex' => 'chatgpt',
-  'copilot' => 'copilot',
-  _ => throw ConfigException(
-    'unknown provider kind "$kind" — supported: '
-    '${providerQueueKinds.join(', ')}',
-  ),
-};
+/// builder keys off — derived from the catalog ([resolveCliProviderSpec],
+/// issue #772 AC3), never a hand-maintained map: a catalog addition flows
+/// through with no edit here. `openai-completions` keeps the historical
+/// CLI rule: a custom baseUrl reports provider `openai`, the default
+/// reports `openrouter`.
+String queueKindCatalogName(String kind, String? baseUrl) {
+  final spec = resolveCliProviderSpec(kind, baseUrl: baseUrl);
+  if (spec == null) {
+    throw ConfigException(
+      'unknown provider kind "$kind" — supported: '
+      '${providerQueueKinds.join(', ')}',
+    );
+  }
+  return spec.name;
+}
 
 /// Builds the [ChainEntry] list for a resolved queue: one model per entry
 /// (catalog defaults + the entry's overrides), a single key stack per
