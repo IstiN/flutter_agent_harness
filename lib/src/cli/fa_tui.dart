@@ -27,6 +27,7 @@ import 'tui_text_width.dart'
     show tuiFitWidth, tuiGraphemeWidth, tuiPadRight, tuiTextWidth;
 import '../messaging/scheduled_messages.dart' show ScheduledMessageQueue;
 import 'paste_image.dart';
+import 'tui_key_hints.dart';
 
 part 'fa_tui_messages.dart';
 part 'fa_tui_hub.dart';

@@ -314,7 +314,17 @@ extension _TuiRowRenderers on FaTuiModel {
       row++;
     }
     if (plan.queueHint) {
-      b.writeln(_dim('↑ edit · ctrl+x delete · ctrl-s send immediately'));
+      // keyHint grammar (issue #809): chords come from the registry, the
+      // theme emitter (tuiDim) owns styling + NO_COLOR.
+      b.writeln(
+        _dim(
+          tuiKeyHintRow([
+            hintAction('queue.pop', 'edit'),
+            hintAction('queue.delete', 'delete'),
+            hintAction('queue.steer', 'send immediately'),
+          ]),
+        ),
+      );
     }
     return row;
   }
