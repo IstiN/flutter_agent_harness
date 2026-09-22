@@ -4036,4 +4036,8 @@
 
 - chore: pin factory f0e962a79acfd0f10c29550840bf03e34d9b8a8b (sticky-approval rework fix)
 
+## 0.1.451
+
+- test(550-family): /dap menu leg anchors on the painted screen (Stop DAP races sibling rows) (#776)
+
 ## Unreleased
