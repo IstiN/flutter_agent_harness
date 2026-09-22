@@ -182,7 +182,10 @@ const TuiTheme _ohmypiDark = TuiTheme(
   toolPendingBg: Style(backgroundRgb: RgbColor(0x1d, 0x21, 0x29)),
   customMessageBg: Style(backgroundRgb: RgbColor(0x2a, 0x25, 0x30)),
   customMessageText: Style(foregroundRgb: RgbColor(0xd4, 0xd4, 0xd4)),
-  thinkingText: Style(foregroundRgb: RgbColor(0x77, 0x7d, 0x88)),
+  // gh-671 readability: omp's #777d88 thinking prose is 3.97:1 on the
+  // reference terminal — below the 4.5:1 body floor (review k6LLp);
+  // lifted to the lightened family gray like [muted]/[toolOutput].
+  thinkingText: Style(foregroundRgb: RgbColor(0x86, 0x8d, 0x99)),
   // Thinking scale: omp's two faintest steps (#3d424a darkGray 1.6:1 and
   // #5f6673 dimGray 2.9:1) fail the 3:1 secondary floor on a dark
   // terminal — lifted to the palette's own gray family, scale order kept.

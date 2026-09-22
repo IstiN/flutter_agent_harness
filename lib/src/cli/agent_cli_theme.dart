@@ -87,7 +87,9 @@ extension ThemeCommands on AgentCli {
   /// via [FaThemeController.reapplyAutoLightDark]. No persist
   /// round-trip.
   Future<void> _applyBootTheme() async {
-    await _reloadUserThemes();
+    // Arm the auto tier BEFORE the async user-theme IO (review k6LHR): the
+    // first frame must already carry the tier-resolved palette — no
+    // dark-first-then-flash window.
     final persisted = config.tuiTheme;
     if (persisted == null || persisted.isEmpty) {
       // Auto tier (issue #804 AC1.2) — TUI sessions only: the TUI owns the
@@ -102,6 +104,7 @@ extension ThemeCommands on AgentCli {
       }
       return;
     }
+    await _reloadUserThemes();
     if (!FaThemeController.instance.switchTo(persisted)) {
       io.writeln(
         'config tui.theme: unknown theme "$persisted" — using default '

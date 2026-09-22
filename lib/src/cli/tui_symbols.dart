@@ -38,6 +38,7 @@ final class TuiSymbols {
     return value ?? '';
   }
 }
+
 /// The omp `unicode` preset.
 const TuiSymbols kTuiSymbolsUnicode = TuiSymbols(
   name: 'unicode',
@@ -338,7 +339,20 @@ const TuiSymbols kTuiSymbolsNerd = TuiSymbols(
     'tool.delete': '\uf12d',
     'tool.move': '\uf061',
   },
-  statusSpinner: ['\u{f1456}', '\u{f144b}', '\u{f144c}', '\u{f144d}', '\u{f144e}', '\u{f144f}', '\u{f1450}', '\u{f1451}', '\u{f1452}', '\u{f1453}', '\u{f1454}', '\u{f1455}'],
+  statusSpinner: [
+    '\u{f1456}',
+    '\u{f144b}',
+    '\u{f144c}',
+    '\u{f144d}',
+    '\u{f144e}',
+    '\u{f144f}',
+    '\u{f1450}',
+    '\u{f1451}',
+    '\u{f1452}',
+    '\u{f1453}',
+    '\u{f1454}',
+    '\u{f1455}',
+  ],
   activitySpinner: ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
 );
 

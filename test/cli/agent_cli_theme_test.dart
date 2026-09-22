@@ -10,7 +10,6 @@ library;
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:dart_tui/dart_tui.dart' show ColorProfile;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:test/test.dart';

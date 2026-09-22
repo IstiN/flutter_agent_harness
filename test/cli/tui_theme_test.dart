@@ -12,7 +12,6 @@ import 'dart:convert';
 import 'dart:io' as io;
 
 import 'package:dart_tui/src/bubbles/style.dart' show RgbColor, Style;
-import 'package:dart_tui/src/msg.dart' show ColorProfile;
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/tool_rows.dart';
 import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
@@ -1032,6 +1031,9 @@ void main() {
         'ohmypi-dark': RgbColor(0x86, 0x8d, 0x99),
         'ohmypi-light': RgbColor(0x56, 0x56, 0x56),
       },
+      'thinkingText': {
+        'ohmypi-dark': RgbColor(0x86, 0x8d, 0x99),
+      },
       'thinkingOff': {
         'ohmypi-dark': RgbColor(0x77, 0x7d, 0x88),
         'ohmypi-light': RgbColor(0x8c, 0x8c, 0x8c),
@@ -1282,6 +1284,16 @@ void main() {
         if (!entry.key.startsWith('ohmypi')) continue;
         final t = entry.value;
         final terminalBg = themeReferenceTerminalBg(t);
+        // thinkingText is body text (the thinking block prose), not a
+        // scale label — it holds the 4.5:1 body floor (review k6LLp).
+        expect(
+          themeColorContrast(fgOf(t.thinkingText)!, terminalBg),
+          greaterThanOrEqualTo(kThemeBodyTextFloor),
+          reason:
+              '${entry.key}.thinkingText is '
+              '${themeColorContrast(fgOf(t.thinkingText)!, terminalBg)
+                  .toStringAsFixed(2)}:1 on the reference terminal',
+        );
         for (final (name, style) in [
           ('thinkingOff', t.thinkingOff),
           ('thinkingMinimal', t.thinkingMinimal),
@@ -1300,6 +1312,72 @@ void main() {
           );
         }
       }
+    });
+
+    test('every new emitter paints under truecolor (review k6LOc)', () {
+      final controller = FaThemeController.instance
+        ..reset()
+        ..switchTo('ohmypi-dark');
+      final emitters = <String, String Function(String)>{
+        'toolPendingBg': controller.toolPendingBg,
+        'customMessageBg': controller.customMessageBg,
+        'customMessageText': controller.customMessageText,
+        'thinkingText': controller.thinkingText,
+        'thinkingOff': controller.thinkingOff,
+        'thinkingMinimal': controller.thinkingMinimal,
+        'thinkingLow': controller.thinkingLow,
+        'thinkingMedium': controller.thinkingMedium,
+        'thinkingHigh': controller.thinkingHigh,
+        'thinkingXhigh': controller.thinkingXhigh,
+        'mdHeading': controller.mdHeading,
+        'mdLink': controller.mdLink,
+        'mdLinkUrl': controller.mdLinkUrl,
+        'mdCode': controller.mdCode,
+        'mdCodeBlock': controller.mdCodeBlock,
+        'mdCodeBlockBorder': controller.mdCodeBlockBorder,
+        'mdQuote': controller.mdQuote,
+        'mdQuoteBorder': controller.mdQuoteBorder,
+        'mdHr': controller.mdHr,
+        'mdListBullet': controller.mdListBullet,
+        'link': controller.link,
+        'toolDiffAdded': controller.toolDiffAdded,
+        'toolDiffRemoved': controller.toolDiffRemoved,
+        'toolDiffContext': controller.toolDiffContext,
+        'syntaxComment': controller.syntaxComment,
+        'syntaxKeyword': controller.syntaxKeyword,
+        'syntaxFunction': controller.syntaxFunction,
+        'syntaxVariable': controller.syntaxVariable,
+        'syntaxString': controller.syntaxString,
+        'syntaxNumber': controller.syntaxNumber,
+        'syntaxType': controller.syntaxType,
+        'syntaxOperator': controller.syntaxOperator,
+        'syntaxPunctuation': controller.syntaxPunctuation,
+        'bashMode': controller.bashMode,
+        'pythonMode': controller.pythonMode,
+        'statusLineSep': controller.statusLineSep,
+        'statusLineModel': controller.statusLineModel,
+        'statusLinePath': controller.statusLinePath,
+        'statusLineGitClean': controller.statusLineGitClean,
+        'statusLineGitDirty': controller.statusLineGitDirty,
+        'statusLineContext': controller.statusLineContext,
+        'statusLineSpend': controller.statusLineSpend,
+        'statusLineStaged': controller.statusLineStaged,
+        'statusLineDirty': controller.statusLineDirty,
+        'statusLineUntracked': controller.statusLineUntracked,
+        'statusLineOutput': controller.statusLineOutput,
+        'statusLineCost': controller.statusLineCost,
+        'statusLineSubagents': controller.statusLineSubagents,
+        'accentSgr': (text) => '${controller.accentSgr()}$text\x1b[0m',
+      };
+      expect(emitters, hasLength(49));
+      final sgr = RegExp(r'\x1b\[(38|48);2;\d+;\d+;\d+m');
+      emitters.forEach((name, emit) {
+        expect(
+          sgr.hasMatch(emit('x')),
+          isTrue,
+          reason: '$name must carry a truecolor SGR under ohmypi-dark',
+        );
+      });
     });
   });
 }
