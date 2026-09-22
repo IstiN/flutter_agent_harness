@@ -49,7 +49,7 @@ jobs:
     # re-review after the first approval; supersedes #466).
     # Flip in lockstep with ai-teammate.yml — guarded by
     # test/machine_kit/factory_stub_ref_test.dart.
-    uses: IstiN/dmtools-agents/.github/workflows/factory-sm.yml@acc3dedaabbeb040df687a1513f44097c6f27e8b
+    uses: IstiN/dmtools-agents/.github/workflows/factory-sm.yml@54e86fdc49494db581a045526707486458bd76e7
     with:
       # The literal uses-ref: the factory requires it (it cannot derive its
       # own ref — github.workflow_ref in a called workflow is the CALLER's).
