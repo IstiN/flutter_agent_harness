@@ -52,6 +52,11 @@ import 'tui_theme_palette.dart';
 /// The fah-owned palette type (see tui_theme_palette.dart): the hosted
 /// dart_tui `Theme` lacks the #444 roles, so fah vendors its extension.
 export 'tui_theme_palette.dart';
+
+/// The vendor color profile ([FaThemeController.profile]'s type) is part
+/// of this file's public API surface — consumers theme through here, not
+/// through the vendored TUI package.
+export 'package:dart_tui/src/msg.dart' show ColorProfile;
 import 'package:dart_tui/src/msg.dart' show ColorProfile;
 import 'tool_rows.dart' show LaidOutToolRow, ToolRowState;
 import 'tui_repl.dart' show MenuItem;
