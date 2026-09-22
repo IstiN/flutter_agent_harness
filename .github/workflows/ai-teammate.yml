@@ -134,7 +134,7 @@ jobs:
     # a branch ref executes whatever is at the head at run start). Flip in
     # lockstep with the machine-sm.yml pin — guarded by
     # test/machine_kit/factory_stub_ref_test.dart.
-    uses: IstiN/dmtools-agents/.github/workflows/factory-teammate.yml@f0e962a79acfd0f10c29550840bf03e34d9b8a8b
+    uses: IstiN/dmtools-agents/.github/workflows/factory-teammate.yml@a7a1b1362b6fb332deadb145d038a71075285092
     with:
       # The literal uses-ref: the factory requires it (it cannot derive its
       # own ref — github.workflow_ref in a called workflow is the CALLER's).
