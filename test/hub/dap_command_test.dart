@@ -14,11 +14,7 @@ import 'dart:io';
 
 import 'package:fa_hub_client/fa_hub_client.dart' as client;
 import 'package:flutter_agent_harness/io.dart'
-    show
-        LocalHub,
-        defaultHubStateFile,
-        readHubState,
-        writeHubState;
+    show LocalHub, defaultHubStateFile, readHubState, writeHubState;
 import 'package:test/test.dart';
 
 import '../../bin/fah_dap_command.dart';
@@ -54,8 +50,7 @@ void main() {
   File stateFileFor() =>
       defaultHubStateFile(home: tempHome.path, environment: const {});
 
-  String configPath() =>
-      client.defaultDapConfigFile(tempHome.path, const {});
+  String configPath() => client.defaultDapConfigFile(tempHome.path, const {});
 
   /// File mode as octal (`600`), POSIX only; null elsewhere.
   Future<String?> modeOf(String path) async {
@@ -110,80 +105,78 @@ void main() {
     LocalHub hub, {
     SecretPrompt? prompt,
     Future<bool> Function(int pid)? terminator,
-  }) => attachUrl(
-        hub.url.toString(),
-        prompt: prompt,
-        terminator: terminator,
-      );
+  }) => attachUrl(hub.url.toString(), prompt: prompt, terminator: terminator);
 
   /// Collects the controller's output lines for assertions.
   List<String> sinkOf(DapHubController controller) => controller.lines;
 
   group('fa dap start (AC1)', () {
-    test(
-      'clean machine, interactive: prompts the master key (hidden), '
-      'starts a protected hub, enrolls, persists clientSecret — a second '
-      'start attaches WITHOUT prompting',
-      () async {
-        final port = await freePort();
-        final hub = LocalHub(port: port, stateFile: stateFileFor());
-        addTearDown(() => hub.stop());
-        final prompts = <String>[];
-        final controller = controllerFor(
-          hub,
-          port,
-          prompt: (question) {
-            prompts.add(question);
-            return Future.value('k1-master-key');
-          },
-        );
+    test('clean machine, interactive: prompts the master key (hidden), '
+        'starts a protected hub, enrolls, persists clientSecret — a second '
+        'start attaches WITHOUT prompting', () async {
+      final port = await freePort();
+      final hub = LocalHub(port: port, stateFile: stateFileFor());
+      addTearDown(() => hub.stop());
+      final prompts = <String>[];
+      final controller = controllerFor(
+        hub,
+        port,
+        prompt: (question) {
+          prompts.add(question);
+          return Future.value('k1-master-key');
+        },
+      );
 
-        final code = await controller.start();
-        final lines = sinkOf(controller);
-        expect(code, 0, reason: lines.join('\n'));
-        expect(prompts, hasLength(1), reason: 'exactly one master-key prompt');
-        final out = lines.join('\n');
-        expect(out, contains('DAP hub on ws://127.0.0.1:$port'));
-        expect(out, contains('enrolled'));
-        expect(out, contains('fabric enabled'));
+      final code = await controller.start();
+      final lines = sinkOf(controller);
+      expect(code, 0, reason: lines.join('\n'));
+      expect(prompts, hasLength(1), reason: 'exactly one master-key prompt');
+      final out = lines.join('\n');
+      expect(out, contains('DAP hub on ws://127.0.0.1:$port'));
+      expect(out, contains('enrolled'));
+      expect(out, contains('fabric enabled'));
 
-        // The hub is protected with the entered master key and persisted
-        // its enrollment (the `fa hub serve` state contract).
-        final hubState = readHubState(stateFileFor());
-        expect(hubState.masterSecret, 'k1-master-key');
-        expect(hubState.clients, isNotEmpty,
-            reason: 'the hub persisted the issued client secret');
+      // The hub is protected with the entered master key and persisted
+      // its enrollment (the `fa hub serve` state contract).
+      final hubState = readHubState(stateFileFor());
+      expect(hubState.masterSecret, 'k1-master-key');
+      expect(
+        hubState.clients,
+        isNotEmpty,
+        reason: 'the hub persisted the issued client secret',
+      );
 
-        // The CLI persisted the hub-issued clientSecret — never the
-        // master key (AC6).
-        final config = client.readDapConfig(configPath());
-        expect(config['clientSecret'], isA<String>());
-        expect(config['clientSecret'], isNot('k1-master-key'));
+      // The CLI persisted the hub-issued clientSecret — never the
+      // master key (AC6).
+      final config = client.readDapConfig(configPath());
+      expect(config['clientSecret'], isA<String>());
+      expect(config['clientSecret'], isNot('k1-master-key'));
 
-        // The pid/state file exists so a second instance attaches (E4).
-        final state = parseDapLocalHubState(
-          File(dapHubPidFileFor(tempHome.path)).readAsStringSync(),
-        );
-        expect(state, isNotNull);
-        expect(state!.port, port);
+      // The pid/state file exists so a second instance attaches (E4).
+      final state = parseDapLocalHubState(
+        File(dapHubPidFileFor(tempHome.path)).readAsStringSync(),
+      );
+      expect(state, isNotNull);
+      expect(state!.port, port);
 
-        // SECOND START: attach — no spawn, no prompt.
-        final controller2 = attachController(
-          hub,
-          prompt: (q) {
-            prompts.add(q);
-            return Future.value('k1-master-key');
-          },
-        );
-        final code2 = await controller2.start();
-        final out2 = sinkOf(controller2).join('\n');
-        expect(code2, 0, reason: out2);
-        expect(out2, contains('already running'));
-        expect(prompts, hasLength(1),
-            reason: 'the second start attaches without prompting');
-      },
-      timeout: timeout,
-    );
+      // SECOND START: attach — no spawn, no prompt.
+      final controller2 = attachController(
+        hub,
+        prompt: (q) {
+          prompts.add(q);
+          return Future.value('k1-master-key');
+        },
+      );
+      final code2 = await controller2.start();
+      final out2 = sinkOf(controller2).join('\n');
+      expect(code2, 0, reason: out2);
+      expect(out2, contains('already running'));
+      expect(
+        prompts,
+        hasLength(1),
+        reason: 'the second start attaches without prompting',
+      );
+    }, timeout: timeout);
 
     test(
       'clean machine, non-interactive: open hub, zero prompts (AC5)',
@@ -203,36 +196,32 @@ void main() {
       timeout: timeout,
     );
 
-    test(
-      'master key already in ~/.dap/hub.json: restart enrolls without a '
-      'prompt (hub crash recovery, E2/E4)',
-      () async {
-        final port = await freePort();
-        final hub = LocalHub(port: port, stateFile: stateFileFor());
-        addTearDown(() => hub.stop());
-        await writeHubState(
-          stateFileFor(),
-          masterSecret: 'stored-master',
-          clients: const {},
-        );
-        final controller = controllerFor(
-          hub,
-          port,
-          prompt: (q) async {
-            fail('no prompt expected: $q');
-          },
-        );
-        final code = await controller.start();
-        final out = sinkOf(controller).join('\n');
-        expect(code, 0, reason: out);
-        expect(out, contains('enrolled'));
-        expect(
-          client.readDapConfig(configPath())['clientSecret'],
-          isNot('stored-master'),
-        );
-      },
-      timeout: timeout,
-    );
+    test('master key already in ~/.dap/hub.json: restart enrolls without a '
+        'prompt (hub crash recovery, E2/E4)', () async {
+      final port = await freePort();
+      final hub = LocalHub(port: port, stateFile: stateFileFor());
+      addTearDown(() => hub.stop());
+      await writeHubState(
+        stateFileFor(),
+        masterSecret: 'stored-master',
+        clients: const {},
+      );
+      final controller = controllerFor(
+        hub,
+        port,
+        prompt: (q) async {
+          fail('no prompt expected: $q');
+        },
+      );
+      final code = await controller.start();
+      final out = sinkOf(controller).join('\n');
+      expect(code, 0, reason: out);
+      expect(out, contains('enrolled'));
+      expect(
+        client.readDapConfig(configPath())['clientSecret'],
+        isNot('stored-master'),
+      );
+    }, timeout: timeout);
 
     test('secrets hygiene (AC6): modes and byte-scan', () async {
       final port = await freePort();
@@ -268,161 +257,153 @@ void main() {
   });
 
   group('E1: foreign server on the port', () {
-    test('start detects a non-DAP /healthz answer and refuses to enroll',
-        () async {
-      final port = await freePort();
-      final server = await HttpServer.bind('127.0.0.1', port);
-      addTearDown(() => server.close(force: true));
-      unawaited(
-        server.listen((request) {
-          request.response
-            ..statusCode = 200
-            ..write('{"service": "not-a-dap-hub"}')
-            ..close();
-        }).asFuture<void>(),
-      );
-
-      final controller = DapHubController(
-        home: tempHome.path,
-        environment: const {},
-        url: 'ws://127.0.0.1:$port/ws',
-        spawnHub: (url, secret) async =>
-            throw StateError('E1 must not spawn over a foreign server'),
-        terminateHub: (_) async => true,
-        secretPrompt: (q) async {
-          fail('E1 must not prompt: $q');
-        },
-      );
-      final code = await controller.start();
-      expect(code, 1);
-      final out = controller.lines.join('\n');
-      expect(out, contains('not a DAP hub'));
-      expect(out, contains('$port'), reason: 'the error names the port');
-      // No enrollment happened: no client credential was persisted.
-      expect(client.readDapConfig(configPath()), isEmpty);
-    }, timeout: timeout);
-  });
-
-  group('E3: wrong master key', () {
     test(
-      're-prompts up to 3x, then exits with the manual hint; the '
-      'rejected secrets are never persisted',
+      'start detects a non-DAP /healthz answer and refuses to enroll',
       () async {
-        final hub = LocalHub(masterSecret: 'right-key');
-        await hub.start();
-        addTearDown(() => hub.stop());
-        final attempts = <String>[];
-        final controller = attachController(
-          hub,
-          prompt: (q) {
-            attempts.add(q);
-            return Future.value('wrong-${attempts.length}');
+        final port = await freePort();
+        final server = await HttpServer.bind('127.0.0.1', port);
+        addTearDown(() => server.close(force: true));
+        unawaited(
+          server.listen((request) {
+            request.response
+              ..statusCode = 200
+              ..write('{"service": "not-a-dap-hub"}')
+              ..close();
+          }).asFuture<void>(),
+        );
+
+        final controller = DapHubController(
+          home: tempHome.path,
+          environment: const {},
+          url: 'ws://127.0.0.1:$port/ws',
+          spawnHub: (url, secret) async =>
+              throw StateError('E1 must not spawn over a foreign server'),
+          terminateHub: (_) async => true,
+          secretPrompt: (q) async {
+            fail('E1 must not prompt: $q');
           },
         );
         final code = await controller.start();
         expect(code, 1);
-        expect(attempts, hasLength(3), reason: 'exactly three prompts');
         final out = controller.lines.join('\n');
-        expect(out, contains('manual'),
-            reason: 'the final failure carries the manual hint');
-        // None of the wrong keys leaked into output or config.
-        for (var i = 1; i <= 3; i++) {
-          expect(out, isNot(contains('wrong-$i')));
-        }
-        expect(client.readDapConfig(configPath())['clientSecret'], isNull);
-        // The hub never enrolled a stranger.
-        expect(hub.agentIds, isEmpty);
+        expect(out, contains('not a DAP hub'));
+        expect(out, contains('$port'), reason: 'the error names the port');
+        // No enrollment happened: no client credential was persisted.
+        expect(client.readDapConfig(configPath()), isEmpty);
       },
       timeout: timeout,
     );
+  });
+
+  group('E3: wrong master key', () {
+    test('re-prompts up to 3x, then exits with the manual hint; the '
+        'rejected secrets are never persisted', () async {
+      final hub = LocalHub(masterSecret: 'right-key');
+      await hub.start();
+      addTearDown(() => hub.stop());
+      final attempts = <String>[];
+      final controller = attachController(
+        hub,
+        prompt: (q) {
+          attempts.add(q);
+          return Future.value('wrong-${attempts.length}');
+        },
+      );
+      final code = await controller.start();
+      expect(code, 1);
+      expect(attempts, hasLength(3), reason: 'exactly three prompts');
+      final out = controller.lines.join('\n');
+      expect(
+        out,
+        contains('manual'),
+        reason: 'the final failure carries the manual hint',
+      );
+      // None of the wrong keys leaked into output or config.
+      for (var i = 1; i <= 3; i++) {
+        expect(out, isNot(contains('wrong-$i')));
+      }
+      expect(client.readDapConfig(configPath())['clientSecret'], isNull);
+      // The hub never enrolled a stranger.
+      expect(hub.agentIds, isEmpty);
+    }, timeout: timeout);
   });
 
   group('fa dap start pid-state hygiene (issue #792 review)', () {
-    test(
-      'the spawner preserves a child-written relaySecret in the pid file '
-      '(read-modify-write, never a clobber to null)',
-      () async {
-        final port = await freePort();
-        final hub = LocalHub(port: port, stateFile: stateFileFor());
-        addTearDown(() => hub.stop());
+    test('the spawner preserves a child-written relaySecret in the pid file '
+        '(read-modify-write, never a clobber to null)', () async {
+      final port = await freePort();
+      final hub = LocalHub(port: port, stateFile: stateFileFor());
+      addTearDown(() => hub.stop());
 
-        // Simulate a child that already persisted its ephemeral relay
-        // bearer (what `fa hub serve` writes moments after spawn).
-        final pidFile = File(dapHubPidFileFor(tempHome.path));
-        writeHubPidState(
-          pidFile,
-          pid: 424242,
-          port: port,
-          relaySecret: 'sk-child-ephemeral',
-        );
+      // Simulate a child that already persisted its ephemeral relay
+      // bearer (what `fa hub serve` writes moments after spawn).
+      final pidFile = File(dapHubPidFileFor(tempHome.path));
+      writeHubPidState(
+        pidFile,
+        pid: 424242,
+        port: port,
+        relaySecret: 'sk-child-ephemeral',
+      );
 
-        final controller = controllerFor(hub, port);
-        final code = await controller.start();
-        expect(code, 0, reason: sinkOf(controller).join('\n'));
+      final controller = controllerFor(hub, port);
+      final code = await controller.start();
+      expect(code, 0, reason: sinkOf(controller).join('\n'));
 
-        final state = parseDapLocalHubState(
-          pidFile.readAsStringSync(),
-        );
-        expect(state, isNotNull);
-        expect(state!.port, port, reason: 'the live record was written');
-        expect(
-          state.relaySecret,
-          'sk-child-ephemeral',
-          reason: 'the spawner re-read and carried the child bearer '
-              'forward instead of clobbering it',
-        );
-      },
-      timeout: timeout,
-    );
+      final state = parseDapLocalHubState(pidFile.readAsStringSync());
+      expect(state, isNotNull);
+      expect(state!.port, port, reason: 'the live record was written');
+      expect(
+        state.relaySecret,
+        'sk-child-ephemeral',
+        reason:
+            'the spawner re-read and carried the child bearer '
+            'forward instead of clobbering it',
+      );
+    }, timeout: timeout);
   });
 
   group('fa dap stop (AC2, E4)', () {
-    test(
-      'stop names connected peers, stops the hub, clears the state file; '
-      'a second stop is a calm no-op',
-      () async {
-        final port = await freePort();
-        final hub = LocalHub(port: port, stateFile: stateFileFor());
-        final starter = controllerFor(hub, port);
-        expect(await starter.start(), 0,
-            reason: sinkOf(starter).join('\n'));
+    test('stop names connected peers, stops the hub, clears the state file; '
+        'a second stop is a calm no-op', () async {
+      final port = await freePort();
+      final hub = LocalHub(port: port, stateFile: stateFileFor());
+      final starter = controllerFor(hub, port);
+      expect(await starter.start(), 0, reason: sinkOf(starter).join('\n'));
 
-        // A second client playing the browser extension.
-        final browser = client.HubClient(
-          config: client.HubConfig(url: hub.url.toString(), name: 'Browser'),
-          identity: await client.HubIdentity.generate(),
-        );
-        await browser.connect();
-        addTearDown(() => browser.disconnect());
+      // A second client playing the browser extension.
+      final browser = client.HubClient(
+        config: client.HubConfig(url: hub.url.toString(), name: 'Browser'),
+        identity: await client.HubIdentity.generate(),
+      );
+      await browser.connect();
+      addTearDown(() => browser.disconnect());
 
-        final stopper = attachController(
-          hub,
-          terminator: (_) async {
-            await hub.stop();
-            return true;
-          },
-        );
-        final code = await stopper.stop();
-        final out = sinkOf(stopper).join('\n');
-        expect(code, 0, reason: out);
-        expect(out, contains('Browser'),
-            reason: 'the stop warning names the connected peer');
-        expect(out, contains('DAP hub stopped'));
-        // The hub is down and the pid state is gone (no zombie, E4).
-        expect(await healthzDown(port), isTrue);
-        expect(
-          await File(dapHubPidFileFor(tempHome.path)).exists(),
-          isFalse,
-        );
+      final stopper = attachController(
+        hub,
+        terminator: (_) async {
+          await hub.stop();
+          return true;
+        },
+      );
+      final code = await stopper.stop();
+      final out = sinkOf(stopper).join('\n');
+      expect(code, 0, reason: out);
+      expect(
+        out,
+        contains('Browser'),
+        reason: 'the stop warning names the connected peer',
+      );
+      expect(out, contains('DAP hub stopped'));
+      // The hub is down and the pid state is gone (no zombie, E4).
+      expect(await healthzDown(port), isTrue);
+      expect(await File(dapHubPidFileFor(tempHome.path)).exists(), isFalse);
 
-        // Second stop: calm no-op (the hub object is dead — address by
-        // the known url).
-        final stopper2 = attachUrl('ws://127.0.0.1:$port/ws');
-        expect(await stopper2.stop(), 0);
-        expect(sinkOf(stopper2).join('\n'), contains('not running'));
-      },
-      timeout: timeout,
-    );
+      // Second stop: calm no-op (the hub object is dead — address by
+      // the known url).
+      final stopper2 = attachUrl('ws://127.0.0.1:$port/ws');
+      expect(await stopper2.stop(), 0);
+      expect(sinkOf(stopper2).join('\n'), contains('not running'));
+    }, timeout: timeout);
   });
 
   group('fa dap status', () {
@@ -496,15 +477,17 @@ void main() {
     // PORT draining is the liveness signal. `pidProbePosix: false`
     // pins the Windows path on any OS; the kill seam records signals
     // so no real process is touched.
-    test('dapPortAnswers: a live listener answers, a drained one does not',
-        () async {
-      final server = await ServerSocket.bind('127.0.0.1', 0);
-      addTearDown(() => server.close());
-      final url = Uri.parse('ws://127.0.0.1:${server.port}/ws');
-      expect(await dapPortAnswers(url), isTrue);
-      await server.close();
-      expect(await dapPortAnswers(url), isFalse);
-    });
+    test(
+      'dapPortAnswers: a live listener answers, a drained one does not',
+      () async {
+        final server = await ServerSocket.bind('127.0.0.1', 0);
+        addTearDown(() => server.close());
+        final url = Uri.parse('ws://127.0.0.1:${server.port}/ws');
+        expect(await dapPortAnswers(url), isTrue);
+        await server.close();
+        expect(await dapPortAnswers(url), isFalse);
+      },
+    );
 
     test(
       'no pid probe: the port draining (not the pid) decides, no escalation',
@@ -528,35 +511,29 @@ void main() {
           force: const Duration(seconds: 1),
         );
         expect(stopped, isTrue, reason: 'the port drained → hub gone');
-        expect(
-          signals,
-          [ProcessSignal.sigterm],
-          reason: 'no SIGKILL escalation once the port drains',
-        );
+        expect(signals, [
+          ProcessSignal.sigterm,
+        ], reason: 'no SIGKILL escalation once the port drains');
       },
       timeout: timeout,
     );
 
-    test(
-      'port never drains: SIGTERM → SIGKILL escalation, then honest false '
-      '(no false success, no stale "stopped" claim)',
-      () async {
-        final server = await ServerSocket.bind('127.0.0.1', 0);
-        addTearDown(() => server.close());
-        final signals = <ProcessSignal>[];
-        final stopped = await defaultDapTerminate(
-          4190203,
-          'ws://127.0.0.1:${server.port}/ws',
-          pidProbePosix: false,
-          kill: (pid, signal) => signals.add(signal),
-          grace: const Duration(milliseconds: 400),
-          force: const Duration(milliseconds: 300),
-        );
-        expect(stopped, isFalse);
-        expect(signals, [ProcessSignal.sigterm, ProcessSignal.sigkill]);
-      },
-      timeout: timeout,
-    );
+    test('port never drains: SIGTERM → SIGKILL escalation, then honest false '
+        '(no false success, no stale "stopped" claim)', () async {
+      final server = await ServerSocket.bind('127.0.0.1', 0);
+      addTearDown(() => server.close());
+      final signals = <ProcessSignal>[];
+      final stopped = await defaultDapTerminate(
+        4190203,
+        'ws://127.0.0.1:${server.port}/ws',
+        pidProbePosix: false,
+        kill: (pid, signal) => signals.add(signal),
+        grace: const Duration(milliseconds: 400),
+        force: const Duration(milliseconds: 300),
+      );
+      expect(stopped, isFalse);
+      expect(signals, [ProcessSignal.sigterm, ProcessSignal.sigkill]);
+    }, timeout: timeout);
 
     test('POSIX path still probes the pid (platform-guarded)', () async {
       // kill -0 is a POSIX shell dance — Windows hosts skip this test.
@@ -579,62 +556,8 @@ void main() {
     // answering the actual presence_query with the full roster. The
     // probe must take the replyTo-matched ANSWER, not the racing push —
     // otherwise stop/status can report a partial roster.
-    test('a racing presence push (no replyTo) never completes the probe',
-        () async {
-      final server = await HttpServer.bind('127.0.0.1', 0);
-      addTearDown(() => server.close(force: true));
-      unawaited(
-        server.listen((request) async {
-          if (request.uri.path == '/healthz') {
-            request.response.statusCode = 200;
-            await request.response.close();
-            return;
-          }
-          if (request.uri.path != '/ws') {
-            request.response.statusCode = 404;
-            await request.response.close();
-            return;
-          }
-          final ws = await WebSocketTransformer.upgrade(request);
-          // The racing broadcast: presence with NO replyTo and a
-          // partial (online-only) roster.
-          ws.add(jsonEncode({
-            'op': 'presence',
-            'agents': [
-              {'name': 'Browser', 'online': true},
-            ],
-          }));
-          ws.listen((dynamic data) {
-            final frame = jsonDecode(data as String);
-            if (frame is Map && frame['op'] == 'presence_query') {
-              ws.add(jsonEncode({
-                'op': 'presence',
-                'replyTo': frame['id'],
-                'agents': [
-                  {'name': 'Browser', 'online': true},
-                  {'name': 'Editor', 'online': true},
-                  {'name': 'Ghost', 'online': false},
-                ],
-              }));
-            }
-          });
-        }).asFuture<void>(),
-      );
-
-      final controller = attachUrl('ws://127.0.0.1:${server.port}/ws');
-      final probe = await controller.probeHub();
-      expect(probe.kind, DapHubProbeKind.running);
-      expect(
-        probe.peers,
-        ['Browser', 'Editor'],
-        reason: 'the ANSWER roster (replyTo-matched, online-only), not '
-            'the racing partial push',
-      );
-    }, timeout: timeout);
-
     test(
-      'a hub that never echoes replyTo degrades to "roster unknown", '
-      'not a partial guess',
+      'a racing presence push (no replyTo) never completes the probe',
       () async {
         final server = await HttpServer.bind('127.0.0.1', 0);
         addTearDown(() => server.close(force: true));
@@ -651,23 +574,86 @@ void main() {
               return;
             }
             final ws = await WebSocketTransformer.upgrade(request);
-            ws.add(jsonEncode({
-              'op': 'presence', // legacy shape: no replyTo echo
-              'agents': [
-                {'name': 'Browser', 'online': true},
-              ],
-            }));
+            // The racing broadcast: presence with NO replyTo and a
+            // partial (online-only) roster.
+            ws.add(
+              jsonEncode({
+                'op': 'presence',
+                'agents': [
+                  {'name': 'Browser', 'online': true},
+                ],
+              }),
+            );
+            ws.listen((dynamic data) {
+              final frame = jsonDecode(data as String);
+              if (frame is Map && frame['op'] == 'presence_query') {
+                ws.add(
+                  jsonEncode({
+                    'op': 'presence',
+                    'replyTo': frame['id'],
+                    'agents': [
+                      {'name': 'Browser', 'online': true},
+                      {'name': 'Editor', 'online': true},
+                      {'name': 'Ghost', 'online': false},
+                    ],
+                  }),
+                );
+              }
+            });
           }).asFuture<void>(),
         );
 
         final controller = attachUrl('ws://127.0.0.1:${server.port}/ws');
         final probe = await controller.probeHub();
         expect(probe.kind, DapHubProbeKind.running);
-        expect(probe.peers, isEmpty,
-            reason: 'no replyTo-matched answer → running, roster unknown');
+        expect(
+          probe.peers,
+          ['Browser', 'Editor'],
+          reason:
+              'the ANSWER roster (replyTo-matched, online-only), not '
+              'the racing partial push',
+        );
       },
       timeout: timeout,
     );
+
+    test('a hub that never echoes replyTo degrades to "roster unknown", '
+        'not a partial guess', () async {
+      final server = await HttpServer.bind('127.0.0.1', 0);
+      addTearDown(() => server.close(force: true));
+      unawaited(
+        server.listen((request) async {
+          if (request.uri.path == '/healthz') {
+            request.response.statusCode = 200;
+            await request.response.close();
+            return;
+          }
+          if (request.uri.path != '/ws') {
+            request.response.statusCode = 404;
+            await request.response.close();
+            return;
+          }
+          final ws = await WebSocketTransformer.upgrade(request);
+          ws.add(
+            jsonEncode({
+              'op': 'presence', // legacy shape: no replyTo echo
+              'agents': [
+                {'name': 'Browser', 'online': true},
+              ],
+            }),
+          );
+        }).asFuture<void>(),
+      );
+
+      final controller = attachUrl('ws://127.0.0.1:${server.port}/ws');
+      final probe = await controller.probeHub();
+      expect(probe.kind, DapHubProbeKind.running);
+      expect(
+        probe.peers,
+        isEmpty,
+        reason: 'no replyTo-matched answer → running, roster unknown',
+      );
+    }, timeout: timeout);
   });
 }
 
