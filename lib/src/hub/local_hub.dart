@@ -1173,9 +1173,6 @@ String _relayRedirectMethod(int statusCode, String method) =>
     ? 'GET'
     : method;
 
-/// Answers a relay rejection on the client response: [status] + CORS +
-/// a small `{"error": ...}` JSON body. Rejected sockets are never
-/// reused (Connection: close).
 /// Marks a hub-GENERATED relay rejection so clients can tell it apart
 /// from an upstream answer that merely shares the status: a provider 401
 /// is the CALLER's credential problem and streams through verbatim; a
@@ -1184,6 +1181,9 @@ void _relayMarkRejection(HttpRequest request) {
   request.response.headers.set('x-fah-relay', 'rejection');
 }
 
+/// Answers a relay rejection on the client response: [status] + CORS +
+/// a small `{"error": ...}` JSON body. Rejected sockets are never
+/// reused (Connection: close).
 Future<void> _relayReject(
   HttpRequest request,
   int status,

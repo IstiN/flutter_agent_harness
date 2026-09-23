@@ -20,9 +20,12 @@ import 'dart:io';
 
 import 'package:flutter_agent_harness/io.dart'
     show LocalHub, defaultHubStateFile, readHubState;
+import 'package:flutter_agent_harness/src/hub/dap_local_hub_state.dart'
+    show parseDapLocalHubState;
 import 'package:test/test.dart';
 
-import '../../bin/fah_dap_command.dart' show envHubPidFile, writeHubPidState;
+import '../../bin/fah_dap_command.dart'
+    show envHubPidFile, writeHubPidState, writeSecretFile0600;
 import '../../bin/fah_hub_serve.dart';
 
 const timeout = Timeout(Duration(seconds: 20));
@@ -112,6 +115,35 @@ void main() {
       final file = File('${tmp.path}/hub.pid');
       writeHubPidState(file, pid: 42, port: 8787, relaySecret: null);
       expect(hubTokenHint(file), isNull);
+    });
+
+    test('fa hub token refusal: hubTokenRefusalMessage names the actual '
+        'situation (protected hub vs not running)', () {
+      final protected = hubTokenRefusalMessage(protectedHub: true);
+      expect(protected, contains('password-protected'));
+      expect(protected, contains('master secret'));
+      expect(protected, isNot(contains('not running')));
+      final down = hubTokenRefusalMessage(protectedHub: false);
+      expect(down, contains('not running'));
+      expect(down, isNot(contains('password-protected')));
+    });
+
+    test('writeSecretFile0600: content survives a chmod-less platform '
+        '(guarded chmod, never an empty state file)', () {
+      final tmp = Directory.systemTemp.createTempSync('fah-0600');
+      addTearDown(() => tmp.deleteSync(recursive: true));
+      final file = File('${tmp.path}/secret.pid');
+      const body =
+          '{"pid":42,"port":8787,"startedAt":"2026-09-23T00:00:00Z",'
+          '"relaySecret":"sk-test"}';
+      writeSecretFile0600(file, body);
+      expect(
+        file.readAsStringSync(),
+        body,
+        reason: 'the content is on disk regardless of chmod support',
+      );
+      // The file is parseable — the exact failure the ordering guards.
+      expect(parseDapLocalHubState(file.readAsStringSync())!.port, 8787);
     });
 
     test('port: a bad value keeps the default; secret passes through', () {
