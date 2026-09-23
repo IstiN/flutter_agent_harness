@@ -8,10 +8,10 @@
 /// 256-color degrade + contrast floor (E2), and the swatch/table surface.
 library;
 
+import 'dart:convert';
 import 'dart:io' as io;
 
 import 'package:dart_tui/src/bubbles/style.dart' show RgbColor, Style;
-import 'package:dart_tui/src/msg.dart' show ColorProfile;
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/tool_rows.dart';
 import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
@@ -121,6 +121,37 @@ void main() {
       final truecolor = RegExp(r'\x1b\[38;2;\d+;\d+;\d+m');
       expect(truecolor.hasMatch(tuiAccent('x')), isFalse);
       expect(tuiAccent('x'), matches(RegExp(r'\x1b\[38;5;\d+m')));
+    });
+
+    test('the #804 emitters degrade with the profile (AC1.3)', () {
+      final controller = FaThemeController.instance;
+      controller.switchTo('ohmypi-dark');
+      // ansi256: quantized SGR, never RGB.
+      controller.profile = ColorProfile.ansi256;
+      final truecolor = RegExp(r'\x1b\[(38|48);2;\d+;\d+;\d+m');
+      for (final rendered in [
+        controller.thinkingLow('t'),
+        controller.mdHeading('t'),
+        controller.mdLinkUrl('t'),
+        controller.mdCodeBlockBorder('t'),
+        controller.syntaxComment('t'),
+        controller.statusLineModel('t'),
+        controller.statusLineCost('t'),
+        controller.bashMode('t'),
+        controller.toolDiffAdded('t'),
+        controller.customMessageText('t'),
+      ]) {
+        expect(truecolor.hasMatch(rendered), isFalse);
+      }
+      expect(
+        controller.statusLineModel('t'),
+        matches(RegExp(r'\x1b\[38;5;\d+m')),
+      );
+      // NO_COLOR / dumb: raw text only.
+      controller.profile = null;
+      expect(controller.thinkingLow('t'), 't');
+      expect(controller.statusLineModel('t'), 't');
+      expect(controller.customMessageBg('t'), 't');
     });
 
     test('every built-in keeps base text readable on the message bg (E2)', () {
@@ -731,6 +762,49 @@ void main() {
         ...markdown,
         tuiUserMessageLine(' switch the theme to ohmypi '),
         '${tuiWarning('retrying in 2s')} ${tuiError('denied: write outside workspace')}',
+        // issue #804 token families: thinking scale, syntax line, diff
+        // line, status line segments over the band tint.
+        [
+          FaThemeController.instance.thinkingOff('· snooze'),
+          FaThemeController.instance.thinkingMinimal('· minimal'),
+          FaThemeController.instance.thinkingLow('· low'),
+          FaThemeController.instance.thinkingMedium('· medium'),
+          FaThemeController.instance.thinkingHigh('· high'),
+          FaThemeController.instance.thinkingXhigh('· xhigh'),
+        ].join(),
+        [
+          FaThemeController.instance.syntaxKeyword('final'),
+          FaThemeController.instance.syntaxPunctuation(' '),
+          FaThemeController.instance.syntaxVariable('theme'),
+          FaThemeController.instance.syntaxPunctuation(' = '),
+          FaThemeController.instance.syntaxString("'omp'"),
+          FaThemeController.instance.syntaxPunctuation(';'),
+          FaThemeController.instance.syntaxComment(' // parity'),
+        ].join(),
+        [
+          FaThemeController.instance.toolDiffAdded('+ added'),
+          FaThemeController.instance.toolDiffRemoved(' - removed'),
+          FaThemeController.instance.toolDiffContext(' ~ context'),
+        ].join(),
+        [
+          FaThemeController.instance.statusLineModel('glm-5.3-flash'),
+          FaThemeController.instance.statusLineSep(
+            FaThemeController.instance.sym('sep.dot'),
+          ),
+          FaThemeController.instance.statusLinePath('~/work/harness'),
+          FaThemeController.instance.statusLineSep(
+            FaThemeController.instance.sym('sep.dot'),
+          ),
+          FaThemeController.instance.statusLineGitClean('✓'),
+          FaThemeController.instance.statusLineSep(
+            FaThemeController.instance.sym('sep.dot'),
+          ),
+          FaThemeController.instance.statusLineContext('42%'),
+          FaThemeController.instance.statusLineSep(
+            FaThemeController.instance.sym('sep.dot'),
+          ),
+          FaThemeController.instance.statusLineCost('\$1.24'),
+        ].join(),
         themeTableLines(current: FaThemeController.instance.currentName).first,
       ];
     }
@@ -754,6 +828,557 @@ void main() {
         );
       });
     }
+  });
+
+  // -- issue #804 -----------------------------------------------------------
+
+  group('controller emitters are the only theme surface (AC1.4)', () {
+    test('no view code reads TuiTheme fields raw', () {
+      // View code paints through the controller emitters (rule #279 E1):
+      // a `.current.<field>` read outside the emitter home would survive a
+      // hot theme switch on a stale value. Emitters live in tui_theme.dart
+      // (+ the palette type in tui_theme_palette.dart); everything else in
+      // lib/src/cli is view code.
+      final fieldPattern = RegExp(
+        r'\.current\.('
+        r'accent2Soft|accentSoft|accent2|accent|muted|highlight|success'
+        r'|warning|error|border'
+        r'|focusBorder|userMessageBg|borderMuted|toolTitle|toolOutput'
+        r'|userMessageText|toolSuccessBg|toolErrorBg|toolPendingBg'
+        r'|customMessageBg|customMessageText|thinkingText|thinkingOff'
+        r'|thinkingMinimal|thinkingLow|thinkingMedium|thinkingHigh'
+        r'|thinkingXhigh|mdHeading|mdLink|mdLinkUrl|mdCode|mdCodeBlock'
+        r'|mdCodeBlockBorder|mdQuote|mdQuoteBorder|mdHr|mdListBullet|link'
+        r'|toolDiffAdded|toolDiffRemoved|toolDiffContext|syntaxComment'
+        r'|syntaxKeyword|syntaxFunction|syntaxVariable|syntaxString'
+        r'|syntaxNumber|syntaxType|syntaxOperator|syntaxPunctuation'
+        r'|bashMode|pythonMode|statusLineBg|statusLineSep|statusLineModel'
+        r'|statusLinePath|statusLineGitClean|statusLineGitDirty'
+        r'|statusLineContext|statusLineSpend|statusLineStaged'
+        r'|statusLineDirty|statusLineUntracked|statusLineOutput'
+        r'|statusLineCost|statusLineSubagents)\b',
+      );
+      final violations = <String>[];
+      for (final entity
+          in io.Directory('lib/src/cli').listSync(recursive: true)) {
+        if (entity is! io.File || !entity.path.endsWith('.dart')) continue;
+        if (entity.path.endsWith('tui_theme.dart') ||
+            entity.path.endsWith('tui_theme_palette.dart')) {
+          continue;
+        }
+        final lines = entity.readAsLinesSync();
+        for (var i = 0; i < lines.length; i++) {
+          if (fieldPattern.hasMatch(lines[i])) {
+            violations.add('${entity.path}:${i + 1}: ${lines[i].trim()}');
+          }
+        }
+      }
+      expect(
+        violations,
+        isEmpty,
+        reason:
+            'theme fields must flow through FaThemeController emitters '
+            '(rule #279 E1):\n${violations.join('\n')}',
+      );
+    });
+  });
+
+  group('omp token parity (issue #804 AC1.1)', () {
+    // Walks EVERY color token of the pinned omp fixtures
+    // (test/fixtures/tui_omp/{dark,light}.json, omp df624f5) into the
+    // corresponding TuiTheme field: vars resolved, 256-color palette
+    // indices expanded, `''` treated as terminal-default. Deliberate
+    // deviations (gh-671/#444/#804 readability + role-table contracts)
+    // are pinned to their exact ported values so they can never drift
+    // silently either.
+    Map<String, dynamic> fixtureOf(String name) {
+      final raw = io.File('test/fixtures/tui_omp/$name.json').readAsStringSync();
+      return (jsonDecode(raw) as Map).cast<String, dynamic>();
+    }
+
+    final cubeLevels = [0, 95, 135, 175, 215, 255];
+    RgbColor cube256(int index) {
+      if (index < 16 || index > 255) {
+        throw ArgumentError('bad 256-color index: $index');
+      }
+      if (index >= 232) {
+        final gray = 8 + 10 * (index - 232);
+        return RgbColor(gray, gray, gray);
+      }
+      final value = index - 16;
+      final r = cubeLevels[value ~/ 36];
+      final g = cubeLevels[(value % 36) ~/ 6];
+      final b = cubeLevels[value % 6];
+      return RgbColor(r, g, b);
+    }
+
+    RgbColor hexRgb(String hex) {
+      final body = hex.replaceFirst('#', '');
+      return RgbColor(
+        int.parse(body.substring(0, 2), radix: 16),
+        int.parse(body.substring(2, 4), radix: 16),
+        int.parse(body.substring(4, 6), radix: 16),
+      );
+    }
+
+    /// omp token values: `#hex`, a 256 palette index, a var name, or `''`
+    /// (terminal default). Var chains resolve recursively.
+    RgbColor? resolveOmpToken(dynamic value, Map<String, dynamic> vars) {
+      if (value is int) return cube256(value);
+      if (value is! String || value.isEmpty) return null;
+      if (value.startsWith('#')) return hexRgb(value);
+      return resolveOmpToken(vars[value], vars);
+    }
+
+    /// omp color key -> the fa TuiTheme field it ports to (returns null
+    /// for keys fa has no field for).
+    Style? faFieldFor(TuiTheme theme, String key) => switch (key) {
+      'accent' => theme.accent,
+      'border' => theme.border,
+      'borderAccent' => theme.focusBorder,
+      'borderMuted' => theme.borderMuted,
+      'success' => theme.success,
+      'error' => theme.error,
+      'warning' => theme.warning,
+      'muted' => theme.muted,
+      'dim' => theme.muted,
+      'thinkingText' => theme.thinkingText,
+      'selectedBg' => theme.highlight,
+      'userMessageBg' => theme.userMessageBg,
+      'userMessageText' => theme.userMessageText,
+      'customMessageBg' => theme.customMessageBg,
+      'customMessageText' => theme.customMessageText,
+      'customMessageLabel' => theme.accent2Soft,
+      'toolPendingBg' => theme.toolPendingBg,
+      'toolSuccessBg' => theme.toolSuccessBg,
+      'toolErrorBg' => theme.toolErrorBg,
+      'toolTitle' => theme.toolTitle,
+      'toolOutput' => theme.toolOutput,
+      'mdHeading' => theme.mdHeading,
+      'mdLink' => theme.mdLink,
+      'mdLinkUrl' => theme.mdLinkUrl,
+      'mdCode' => theme.mdCode,
+      'mdCodeBlock' => theme.mdCodeBlock,
+      'mdCodeBlockBorder' => theme.mdCodeBlockBorder,
+      'mdQuote' => theme.mdQuote,
+      'mdQuoteBorder' => theme.mdQuoteBorder,
+      'mdHr' => theme.mdHr,
+      'mdListBullet' => theme.mdListBullet,
+      'toolDiffAdded' => theme.toolDiffAdded,
+      'toolDiffRemoved' => theme.toolDiffRemoved,
+      'toolDiffContext' => theme.toolDiffContext,
+      'link' => theme.link,
+      'syntaxComment' => theme.syntaxComment,
+      'syntaxKeyword' => theme.syntaxKeyword,
+      'syntaxFunction' => theme.syntaxFunction,
+      'syntaxVariable' => theme.syntaxVariable,
+      'syntaxString' => theme.syntaxString,
+      'syntaxNumber' => theme.syntaxNumber,
+      'syntaxType' => theme.syntaxType,
+      'syntaxOperator' => theme.syntaxOperator,
+      'syntaxPunctuation' => theme.syntaxPunctuation,
+      'thinkingOff' => theme.thinkingOff,
+      'thinkingMinimal' => theme.thinkingMinimal,
+      'thinkingLow' => theme.thinkingLow,
+      'thinkingMedium' => theme.thinkingMedium,
+      'thinkingHigh' => theme.thinkingHigh,
+      'thinkingXhigh' => theme.thinkingXhigh,
+      'bashMode' => theme.bashMode,
+      'pythonMode' => theme.pythonMode,
+      'statusLineBg' => theme.statusLineBg,
+      'statusLineSep' => theme.statusLineSep,
+      'statusLineModel' => theme.statusLineModel,
+      'statusLinePath' => theme.statusLinePath,
+      'statusLineGitClean' => theme.statusLineGitClean,
+      'statusLineGitDirty' => theme.statusLineGitDirty,
+      'statusLineContext' => theme.statusLineContext,
+      'statusLineSpend' => theme.statusLineSpend,
+      'statusLineStaged' => theme.statusLineStaged,
+      'statusLineDirty' => theme.statusLineDirty,
+      'statusLineUntracked' => theme.statusLineUntracked,
+      'statusLineOutput' => theme.statusLineOutput,
+      'statusLineCost' => theme.statusLineCost,
+      'statusLineSubagents' => theme.statusLineSubagents,
+      'text' => null, // terminal default: fa's `base` stays unpainted
+      _ => throw StateError('unmapped omp color key: $key — extend the walker'),
+    };
+
+    /// omp keys ship `''` or a value fa deliberately replaces (gh-671
+    /// readability lifts, #444 explicit-contrast contracts). Pinned to the
+    /// exact ported value per theme.
+    final deviations = const {
+      'userMessageText': {
+        'ohmypi-dark': RgbColor(0xd4, 0xd4, 0xd4),
+        'ohmypi-light': RgbColor(0x22, 0x22, 0x22),
+      },
+      'customMessageText': {
+        'ohmypi-dark': RgbColor(0xd4, 0xd4, 0xd4),
+        'ohmypi-light': RgbColor(0x22, 0x22, 0x22),
+      },
+      'toolTitle': {
+        'ohmypi-dark': RgbColor(0xb2, 0x81, 0xd6),
+        'ohmypi-light': RgbColor(0x7e, 0x57, 0xc2),
+      },
+      'muted': {
+        'ohmypi-dark': RgbColor(0x86, 0x8d, 0x99),
+        'ohmypi-light': RgbColor(0x76, 0x76, 0x76),
+      },
+      'dim': {
+        'ohmypi-dark': RgbColor(0x86, 0x8d, 0x99),
+        'ohmypi-light': RgbColor(0x76, 0x76, 0x76),
+      },
+      'toolOutput': {
+        'ohmypi-dark': RgbColor(0x86, 0x8d, 0x99),
+        'ohmypi-light': RgbColor(0x56, 0x56, 0x56),
+      },
+      'thinkingText': {
+        'ohmypi-dark': RgbColor(0x86, 0x8d, 0x99),
+      },
+      'thinkingOff': {
+        'ohmypi-dark': RgbColor(0x77, 0x7d, 0x88),
+        'ohmypi-light': RgbColor(0x8c, 0x8c, 0x8c),
+      },
+      'thinkingMinimal': {
+        'ohmypi-dark': RgbColor(0x86, 0x8d, 0x99),
+      },
+      'mdLinkUrl': {
+        'ohmypi-dark': RgbColor(0x86, 0x8d, 0x99),
+      },
+      'statusLineSep': {
+        'ohmypi-light': RgbColor(0x6c, 0x6c, 0x6c),
+      },
+      'statusLineStaged': {
+        'ohmypi-light': RgbColor(0x58, 0x84, 0x58),
+      },
+      'statusLineDirty': {
+        'ohmypi-light': RgbColor(0x9a, 0x73, 0x26),
+      },
+      'statusLineUntracked': {
+        'ohmypi-light': RgbColor(0x5a, 0x80, 0x80),
+      },
+    };
+
+    /// Bold/dim flags fa keeps on ported roles (omp ships none).
+    void expectFlags(TuiTheme theme, String key, Style style) {
+      final bold = switch (key) {
+        'accent' || 'accent2' || 'toolTitle' => true,
+        _ => false,
+      };
+      final dim = switch (key) {
+        'muted' || 'dim' || 'borderMuted' || 'toolOutput' => true,
+        _ => false,
+      };
+      expect(style.isBold ?? false, bold, reason: '${theme.name}.$key bold');
+      expect(style.isDim ?? false, dim, reason: '${theme.name}.$key dim');
+    }
+
+    for (final fixtureName in ['dark', 'light']) {
+      test('$fixtureName.json: every color token ports token-for-token', () {
+        final fixture = fixtureOf(fixtureName);
+        final themeName = 'ohmypi-$fixtureName';
+        final theme = kBuiltInTuiThemes[themeName]!;
+        final vars =
+            (fixture['vars'] as Map).cast<String, dynamic>();
+        final colors =
+            (fixture['colors'] as Map).cast<String, dynamic>();
+        expect(colors, isNotEmpty);
+        final mappedKeys = <String>{};
+        colors.forEach((key, value) {
+          final style = faFieldFor(theme, key);
+          if (style == null) return; // `text`: base stays terminal-default
+          mappedKeys.add(key);
+          final omp = resolveOmpToken(value, vars);
+          final pinned = deviations[key]?[themeName];
+          if (pinned != null) {
+            expect(
+              style.foregroundRgb ?? style.backgroundRgb,
+              pinned,
+              reason: '$themeName.$key: pinned deviation drifted',
+            );
+          } else if (omp == null) {
+            expect(
+              style.foregroundRgb,
+              isNull,
+              reason:
+                  '$themeName.$key: omp ships terminal-default; fa must '
+                  'not invent a color (or pin the deviation)',
+            );
+          } else {
+            expect(
+              style.foregroundRgb ?? style.backgroundRgb,
+              omp,
+              reason:
+                  '$themeName.$key: expected omp $value -> $omp, got '
+                  '${style.foregroundRgb ?? style.backgroundRgb}',
+            );
+          }
+          expectFlags(theme, key, style);
+        });
+        // Walker completeness, both directions: every fixture token maps
+        // to a fa field (except the terminal-default `text`), and the
+        // walker stops covering nothing.
+        expect(
+          mappedKeys,
+          equals(colors.keys.toSet()..remove('text')),
+        );
+      });
+    }
+  });
+
+  group('auto light/dark detection (issue #804 AC1.2)', () {
+    test('tier: measured terminal background beats COLORFGBG', () {
+      expect(
+        FaThemeController.prefersLightTheme(
+          terminalBg: const RgbColor(0xff, 0xff, 0xff),
+          colorfgbg: '15;0',
+        ),
+        isTrue,
+        reason: 'luminance > 0.5 wins over a dark COLORFGBG',
+      );
+      expect(
+        FaThemeController.prefersLightTheme(
+          terminalBg: const RgbColor(0x12, 0x12, 0x12),
+          colorfgbg: '0;15',
+        ),
+        isFalse,
+        reason: 'a dark measured bg wins over a light COLORFGBG',
+      );
+    });
+
+    test('COLORFGBG: bg >= 8 is light, bg < 8 dark, unparseable dark', () {
+      expect(
+        FaThemeController.prefersLightTheme(colorfgbg: '0;15'),
+        isTrue,
+      );
+      expect(FaThemeController.prefersLightTheme(colorfgbg: '15;7'), isFalse);
+      expect(FaThemeController.prefersLightTheme(colorfgbg: '15'), isFalse);
+      expect(
+        FaThemeController.prefersLightTheme(colorfgbg: '15;x'),
+        isFalse,
+      );
+      expect(FaThemeController.prefersLightTheme(), isFalse);
+    });
+
+    test('boot tier: COLORFGBG light resolves ohmypi-light, dark default', () {
+      final controller = FaThemeController.instance;
+      controller.armAutoLightDark(colorfgbg: '0;15');
+      expect(controller.currentName, 'ohmypi-light');
+      expect(controller.autoLightDarkArmed, isTrue);
+      controller.reset();
+      controller.armAutoLightDark(colorfgbg: '15;0');
+      expect(controller.currentName, kDefaultTuiTheme.name);
+    });
+
+    test('OSC 11 reply re-resolves the armed tier (hot swap path)', () {
+      final controller = FaThemeController.instance;
+      controller.armAutoLightDark(colorfgbg: '15;0');
+      expect(controller.currentName, kDefaultTuiTheme.name);
+      controller.measuredTerminalBg = const RgbColor(0xff, 0xff, 0xff);
+      expect(controller.reapplyAutoLightDark(), isTrue);
+      expect(controller.currentName, 'ohmypi-light');
+      // Dark terminal: swaps back to the default palette.
+      controller.measuredTerminalBg = const RgbColor(0x12, 0x12, 0x12);
+      expect(controller.reapplyAutoLightDark(), isTrue);
+      expect(controller.currentName, kDefaultTuiTheme.name);
+      // Same palette again: no change to report.
+      expect(controller.reapplyAutoLightDark(), isFalse);
+    });
+
+    test('explicit switchTo disarms the tier', () {
+      final controller = FaThemeController.instance;
+      controller.armAutoLightDark(colorfgbg: '15;0');
+      expect(controller.switchTo('ohmypi-light'), isTrue);
+      expect(controller.autoLightDarkArmed, isFalse);
+      controller.measuredTerminalBg = const RgbColor(0xff, 0xff, 0xff);
+      expect(
+        controller.reapplyAutoLightDark(),
+        isFalse,
+        reason: 'an explicit /theme choice outranks detection',
+      );
+      expect(controller.currentName, 'ohmypi-light');
+    });
+  });
+
+  group('issue #804 readability floors (new roles)', () {
+    RgbColor? fgOf(Style style) => style.foregroundRgb;
+    RgbColor? bgOf(Style style) => style.backgroundRgb;
+
+    test('statusLine segments clear 3:1 over the status line band', () {
+      for (final entry in kBuiltInTuiThemes.entries) {
+        if (!entry.key.startsWith('ohmypi')) continue;
+        final t = entry.value;
+        final band = bgOf(t.statusLineBg);
+        expect(
+          band,
+          isNotNull,
+          reason: '${entry.key}: statusLineBg must paint the band',
+        );
+        for (final (name, style) in [
+          ('statusLineSep', t.statusLineSep),
+          ('statusLineModel', t.statusLineModel),
+          ('statusLinePath', t.statusLinePath),
+          ('statusLineGitClean', t.statusLineGitClean),
+          ('statusLineGitDirty', t.statusLineGitDirty),
+          ('statusLineContext', t.statusLineContext),
+          ('statusLineSpend', t.statusLineSpend),
+          ('statusLineStaged', t.statusLineStaged),
+          ('statusLineDirty', t.statusLineDirty),
+          ('statusLineUntracked', t.statusLineUntracked),
+          ('statusLineOutput', t.statusLineOutput),
+          ('statusLineCost', t.statusLineCost),
+          ('statusLineSubagents', t.statusLineSubagents),
+        ]) {
+          final fg = fgOf(style);
+          expect(
+            fg,
+            isNotNull,
+            reason: '${entry.key}.$name must carry an explicit foreground',
+          );
+          expect(
+            themeColorContrast(fg!, band!),
+            greaterThanOrEqualTo(kThemeSecondaryTextFloor),
+            reason:
+                '${entry.key}.$name on statusLineBg is '
+                '${themeColorContrast(fg, band).toStringAsFixed(2)}:1 '
+                '(floor $kThemeSecondaryTextFloor)',
+          );
+        }
+      }
+    });
+
+    test('custom message text clears 4.5:1 over its band', () {
+      for (final entry in kBuiltInTuiThemes.entries) {
+        if (!entry.key.startsWith('ohmypi')) continue;
+        final t = entry.value;
+        expect(
+          themeColorContrast(
+            fgOf(t.customMessageText)!,
+            bgOf(t.customMessageBg)!,
+          ),
+          greaterThanOrEqualTo(kThemeBodyTextFloor),
+          reason: '${entry.key}: customMessageText over its band',
+        );
+      }
+    });
+
+    test('tool rows clear their floors over the pending tint too', () {
+      for (final entry in kBuiltInTuiThemes.entries) {
+        final t = entry.value;
+        final tint = bgOf(t.toolPendingBg);
+        if (tint == null) continue; // non-omp palettes may not paint it
+        expect(
+          themeColorContrast(fgOf(t.toolOutput)!, tint),
+          greaterThanOrEqualTo(kThemeBodyTextFloor),
+          reason: '${entry.key}: detail text on toolPendingBg',
+        );
+        expect(
+          themeColorContrast(fgOf(t.toolTitle)!, tint),
+          greaterThanOrEqualTo(kThemeSecondaryTextFloor),
+          reason: '${entry.key}: label on toolPendingBg',
+        );
+      }
+    });
+
+    test('thinking scale steps clear 3:1 on the reference terminal', () {
+      for (final entry in kBuiltInTuiThemes.entries) {
+        if (!entry.key.startsWith('ohmypi')) continue;
+        final t = entry.value;
+        final terminalBg = themeReferenceTerminalBg(t);
+        // thinkingText is body text (the thinking block prose), not a
+        // scale label — it holds the 4.5:1 body floor (review k6LLp).
+        expect(
+          themeColorContrast(fgOf(t.thinkingText)!, terminalBg),
+          greaterThanOrEqualTo(kThemeBodyTextFloor),
+          reason:
+              '${entry.key}.thinkingText is '
+              '${themeColorContrast(fgOf(t.thinkingText)!, terminalBg)
+                  .toStringAsFixed(2)}:1 on the reference terminal',
+        );
+        for (final (name, style) in [
+          ('thinkingOff', t.thinkingOff),
+          ('thinkingMinimal', t.thinkingMinimal),
+          ('thinkingLow', t.thinkingLow),
+          ('thinkingMedium', t.thinkingMedium),
+          ('thinkingHigh', t.thinkingHigh),
+          ('thinkingXhigh', t.thinkingXhigh),
+        ]) {
+          expect(
+            themeColorContrast(fgOf(style)!, terminalBg),
+            greaterThanOrEqualTo(kThemeSecondaryTextFloor),
+            reason:
+                '${entry.key}.$name is '
+                '${themeColorContrast(fgOf(style)!, terminalBg)
+                    .toStringAsFixed(2)}:1 on the reference terminal',
+          );
+        }
+      }
+    });
+
+    test('every new emitter paints under truecolor (review k6LOc)', () {
+      final controller = FaThemeController.instance
+        ..reset()
+        ..switchTo('ohmypi-dark');
+      final emitters = <String, String Function(String)>{
+        'toolPendingBg': controller.toolPendingBg,
+        'customMessageBg': controller.customMessageBg,
+        'customMessageText': controller.customMessageText,
+        'thinkingText': controller.thinkingText,
+        'thinkingOff': controller.thinkingOff,
+        'thinkingMinimal': controller.thinkingMinimal,
+        'thinkingLow': controller.thinkingLow,
+        'thinkingMedium': controller.thinkingMedium,
+        'thinkingHigh': controller.thinkingHigh,
+        'thinkingXhigh': controller.thinkingXhigh,
+        'mdHeading': controller.mdHeading,
+        'mdLink': controller.mdLink,
+        'mdLinkUrl': controller.mdLinkUrl,
+        'mdCode': controller.mdCode,
+        'mdCodeBlock': controller.mdCodeBlock,
+        'mdCodeBlockBorder': controller.mdCodeBlockBorder,
+        'mdQuote': controller.mdQuote,
+        'mdQuoteBorder': controller.mdQuoteBorder,
+        'mdHr': controller.mdHr,
+        'mdListBullet': controller.mdListBullet,
+        'link': controller.link,
+        'toolDiffAdded': controller.toolDiffAdded,
+        'toolDiffRemoved': controller.toolDiffRemoved,
+        'toolDiffContext': controller.toolDiffContext,
+        'syntaxComment': controller.syntaxComment,
+        'syntaxKeyword': controller.syntaxKeyword,
+        'syntaxFunction': controller.syntaxFunction,
+        'syntaxVariable': controller.syntaxVariable,
+        'syntaxString': controller.syntaxString,
+        'syntaxNumber': controller.syntaxNumber,
+        'syntaxType': controller.syntaxType,
+        'syntaxOperator': controller.syntaxOperator,
+        'syntaxPunctuation': controller.syntaxPunctuation,
+        'bashMode': controller.bashMode,
+        'pythonMode': controller.pythonMode,
+        'statusLineSep': controller.statusLineSep,
+        'statusLineModel': controller.statusLineModel,
+        'statusLinePath': controller.statusLinePath,
+        'statusLineGitClean': controller.statusLineGitClean,
+        'statusLineGitDirty': controller.statusLineGitDirty,
+        'statusLineContext': controller.statusLineContext,
+        'statusLineSpend': controller.statusLineSpend,
+        'statusLineStaged': controller.statusLineStaged,
+        'statusLineDirty': controller.statusLineDirty,
+        'statusLineUntracked': controller.statusLineUntracked,
+        'statusLineOutput': controller.statusLineOutput,
+        'statusLineCost': controller.statusLineCost,
+        'statusLineSubagents': controller.statusLineSubagents,
+        'accentSgr': (text) => '${controller.accentSgr()}$text\x1b[0m',
+      };
+      expect(emitters, hasLength(49));
+      final sgr = RegExp(r'\x1b\[(38|48);2;\d+;\d+;\d+m');
+      emitters.forEach((name, emit) {
+        expect(
+          sgr.hasMatch(emit('x')),
+          isTrue,
+          reason: '$name must carry a truecolor SGR under ohmypi-dark',
+        );
+      });
+    });
   });
 }
 
