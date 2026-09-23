@@ -23,6 +23,7 @@ const parserSpecKeys = {
   'env',
   'resources',
   'cache',
+  'allowDegrade',
 };
 
 /// Spec sections the schema allows: the parser's set plus `backend`.

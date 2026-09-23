@@ -73,6 +73,33 @@ A JSON Schema for this document lives at `schema/cube_schema.json`
 hard OS boundary in addition to the Dart policy layer; `policy` enforces
 in Dart only.
 
+An explicit `backend: kernel` is a contract, not a wish: when the host
+cannot deliver kernel isolation, the run is **refused** (a clean
+`fa_cube[<name>]:` error on every command; zero commands run) unless the
+manifest opts into the fallback:
+
+```yaml
+spec:
+  backend: kernel
+  allowDegrade: true   # permit policy-mode fallback when kernel is unavailable
+```
+
+| Host platform | `backend: kernel` | `+ allowDegrade: true` | `backend: policy` |
+|---|---|---|---|
+| macOS (`sandbox-exec`) | kernel | kernel | policy |
+| Linux (user namespaces available) | kernel | kernel | policy |
+| Linux (no user namespaces) | refusal | policy (+ loud warning) | policy |
+| Windows / web (descriptor-only) | refusal | policy (+ loud warning) | policy |
+
+A refusal names the opt-in (`... set spec.allowDegrade: true to allow the
+degrade`) so the fix is discoverable. The degrade path announces itself
+(`fa_cube[<name>]: kernel backend unavailable, running in policy mode`)
+and the shell exposes `effectiveBackend()` so hosts can display/audit
+what actually ran. `allowDegrade` never rescues a *launch* failure: a
+missing `sandbox-exec`/`unshare` or an EPERM refusal stays a hard error
+regardless. The policy-mode floor keeps its documented limitations (no
+full env scrubbing; inherited variables ride along).
+
 ### `spec.tools`
 
 | Key | Type | Notes |
@@ -197,11 +224,14 @@ actually holds, per level and enforcement mode:
 | L2 | Same policy floor as L1. | Writes: blanket `deny file-write*` with the workspace re-allowed and the `ro /` mount denying writes. Reads: everywhere (the `ro /` mount). | `ro /` re-bound read-only: writes confined, reads everywhere. |
 | L3 | Redirects unrestricted — writes are allowed everywhere by design. | Reads and writes everywhere. | Reads and writes everywhere. |
 
-A `backend: kernel` spec that degrades to policy mode — no enforcing
-backend for the host (Windows, web, Linux without user namespaces) —
-announces it loudly: `fa_cube[<name>]: kernel backend unavailable, running
-in policy mode`. The policy-mode floor is the redirect check above, not a
-kernel boundary.
+A `backend: kernel` spec on a host without an enforcing backend (Windows,
+web, Linux without user namespaces) is **refused by default** — a clean
+`fa_cube[<name>]:` error on every command, zero commands run, the message
+naming `spec.allowDegrade`. Only an explicit `allowDegrade: true` in the
+manifest degrades to policy mode, and it announces that loudly:
+`fa_cube[<name>]: kernel backend unavailable, running in policy mode`.
+The policy-mode floor is the redirect check above, not a kernel boundary.
+`effectiveBackend` always reports what actually runs.
 
 Backend selection follows the host OS: macOS generates a `sandbox-exec`
 SBPL profile, Linux an `unshare` user-namespace argv prefix, and other
@@ -246,8 +276,13 @@ crashed run.
 - **Kernel activation — landed:** `spec.backend: kernel` wraps every
   child process in the OS sandbox — macOS `sandbox-exec -f`, Linux
   `unshare` user namespace (`--net` only when nothing is allowed), clean
-  `env -i` environment, `ulimit` ceilings; profiles staged under
-  `.fah/cube-profiles/`. Windows remains descriptor-only. A wrapper that
+  `env -i` environment, `ulimit` ceilings; profiles staged content-verified
+  under `<home>/.fah/cube-profiles/` — a user-level directory outside
+  every guest-writable area, re-verified against the recomputed profile
+  immediately before every wrapped exec (restaged atomically on
+  mismatch). Enforcement artifacts never live under the workspace: the
+  profile itself grants workspace writes, so a prisoner could otherwise
+  rewrite its own prison. Windows remains descriptor-only. A wrapper that
   is missing from PATH or refuses the sandbox surfaces as a clean
   `fa_cube[<name>]:` spawn error, in foreground execs and background jobs
   alike.

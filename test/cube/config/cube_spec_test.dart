@@ -212,6 +212,36 @@ metadata: {name: web-scraper}
 spec: {backend: kernel}
 ''');
       expect(spec.backend, CubeBackendMode.kernel);
+      expect(spec.allowDegrade, isFalse);
+    });
+
+    test('allowDegrade parses as the kernel-degrade opt-in', () {
+      final spec = parse('''
+apiVersion: fa/v1
+kind: Cube
+metadata: {name: web-scraper}
+spec: {backend: kernel, allowDegrade: true}
+''');
+      expect(spec.backend, CubeBackendMode.kernel);
+      expect(spec.allowDegrade, isTrue);
+    });
+
+    test('a non-bool allowDegrade is rejected', () {
+      expect(
+        () => parse('''
+apiVersion: fa/v1
+kind: Cube
+metadata: {name: web-scraper}
+spec: {backend: kernel, allowDegrade: yes-please}
+'''),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('spec.allowDegrade: must be a boolean'),
+          ),
+        ),
+      );
     });
 
     test('an unknown backend value is rejected', () {
@@ -309,6 +339,19 @@ spec:
         'spec: {backend: kernel}',
       ).toCanonicalMap();
       expect((kernelMap['spec'] as Map)['backend'], 'kernel');
+    });
+
+    test('allowDegrade is omitted unless true (cache keys stay stable)', () {
+      final off = parse(
+        'apiVersion: fa/v1\nkind: Cube\nmetadata: {name: a}\n'
+        'spec: {backend: kernel}',
+      ).toCanonicalMap();
+      expect((off['spec'] as Map).containsKey('allowDegrade'), isFalse);
+      final on = parse(
+        'apiVersion: fa/v1\nkind: Cube\nmetadata: {name: a}\n'
+        'spec: {backend: kernel, allowDegrade: true}',
+      ).toCanonicalMap();
+      expect((on['spec'] as Map)['allowDegrade'], isTrue);
     });
   });
 }
