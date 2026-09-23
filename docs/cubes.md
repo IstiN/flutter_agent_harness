@@ -282,7 +282,10 @@ crashed run.
   time and kernel mode is refused (clean `fa_cube[<name>]:` error, no
   exec) when it cannot be proven guest-unwritable — a `homeDir` inside
   or relative to the workspace, or a spec mount granting read-write over
-  the staging directory (`~`/`/` mounts). The staging directory is
+  the staging directory (`~`/`/` mounts); the refusal carries the
+  remediation (`spec.allowDegrade: true` degrades the bind to policy
+  mode and fires `onDegrade`, naming the staging violation). The
+  staging directory is
   swept once per binding for this profile's own `.tmp` orphans; other
   bindings' profiles and temp files are never touched. Windows remains
   descriptor-only. A wrapper that

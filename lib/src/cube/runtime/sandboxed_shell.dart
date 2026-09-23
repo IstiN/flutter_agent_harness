@@ -278,6 +278,23 @@ final class SandboxedShell implements Shell {
             'this platform and the run refuses to fall back to policy '
             'mode — set spec.allowDegrade: true to allow the degrade';
       }
+      return;
+    }
+    final blocked = _kernel?.blockedNote;
+    if (blocked != null) {
+      if (spec.allowDegrade) {
+        // The explicit escape hatch: the staging location cannot be
+        // trusted, so kernel mode is undeliverable — degrade instead of
+        // hard-locking the spec (same contract as the unavailable
+        // backend above).
+        _kernel = null;
+        onDegrade?.call(
+          'fa_cube[${spec.name}]: kernel backend $blocked, '
+          'allowDegrade set — running in policy mode',
+        );
+      }
+      // Without the opt-in the per-exec path fail-closes with the
+      // remediation in the note (see [_KernelRun.stageVerified]).
     }
   }
 
@@ -327,7 +344,8 @@ final class SandboxedShell implements Shell {
     // SEC-02 runtime invariant: the staging location must be outside every
     // guest-writable area. Verified here, before anything is trusted or
     // written — a violation fail-closes the run (every command refused
-    // with a clear error), it never falls back to unwrapped execution.
+    // with a remediation in the error), or degrades to policy mode when
+    // the spec explicitly opted in via allowDegrade.
     return _KernelRun(
       backend: backend,
       fs: fs,
@@ -485,7 +503,8 @@ final class _KernelRun {
   Future<bool> stageVerified() async {
     final blocked = blockedNote;
     if (blocked != null) {
-      stagingError = blocked;
+      stagingError = '$blocked — set spec.allowDegrade: true to run in '
+          'policy mode, or narrow the read-write mounts';
       return false;
     }
     if (!_swept) {
@@ -539,6 +558,14 @@ final class _KernelRun {
   /// profiles and their tmp files) are theirs to verify and sweep, so an
   /// alternating or concurrent session never evicts a profile in use.
   /// Never fails staging — a sweep error is swallowed.
+  ///
+  // TODO(cube): retired bindings' stale `<md5>.sb` profiles are never
+  // swept — the staging dir grows unboundedly across spec churn
+  // (per-binding scoping is the price of never evicting a live profile;
+  // needs an age- or refcount-based follow-up).
+  // TODO(cube): the sweep runs once per binding and is best-effort — a
+  // failed sweep leaves this binding's `.tmp` orphans until the next
+  // boot; a retry keyed off [stagingError] would close the window.
   Future<void> _sweepStagingDir() async {
     final slash = profilePath.lastIndexOf('/');
     if (slash <= 0) return;
