@@ -1,4 +1,6 @@
+import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/tui_key_hints.dart';
+import 'package:flutter_agent_harness/src/cli/tui_text_width.dart';
 import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:test/test.dart';
 
@@ -30,6 +32,26 @@ void main() {
       expect(const TuiChord('up').display(), '↑');
       expect(const TuiChord('1').display(), '1');
       expect(const TuiChord('ctrl+home').display(), 'Ctrl+Home');
+    });
+
+    test('display consults key labels for modified chords too', () {
+      // A modified arrow/paged key keeps the same label vocabulary as its
+      // bare form (thread lC-Zb: the first `ctrl+left`-style registry entry
+      // must not silently degrade to prose casing).
+      expect(const TuiChord('ctrl+up').display(), 'Ctrl+↑');
+      expect(const TuiChord('ctrl+pgdown').display(), 'Ctrl+PgDn');
+      expect(const TuiChord('alt+left').display(), 'Alt+←');
+      expect(TuiChord.parse('Ctrl+↑'), const TuiChord('ctrl+up'));
+      expect(TuiChord.parse('Ctrl+PgDn'), const TuiChord('ctrl+pgdown'));
+      expect(TuiChord.parse('Alt+←'), const TuiChord('alt+left'));
+    });
+
+    test('parse normalizes alias spellings inside modified chords', () {
+      // Bare and modified alias spellings share one normalization path.
+      expect(TuiChord.parse('pgdn'), const TuiChord('pgdown'));
+      expect(TuiChord.parse('ctrl+pgdn'), const TuiChord('ctrl+pgdown'));
+      expect(TuiChord.parse('Option+P'), const TuiChord('alt+p'));
+      expect(TuiChord.parse('cmd+k'), const TuiChord('super+k'));
     });
 
     test('parse(display) round-trips for every registry chord', () {
@@ -234,6 +256,50 @@ void main() {
         tuiHotkeyTableLines().join('\n'),
         contains('Option+Enter'),
       );
+    });
+
+    test('plain table aligns the description column in display cells', () {
+      // `↑` is East-Asian-ambiguous: on double-width terminals its UTF-16
+      // length (1) under-measures its cells (2), so alignment must be
+      // computed with the cell-width helper, not String.padRight (thread
+      // lC-WJ). A synthetic double-width key exaggerates the drift.
+      const wide = TuiKeybinding('test.wide', 'composer', [TuiChord('漢字漢')],
+          'wide synthetic binding');
+      const ascii = TuiKeybinding(
+          'test.ascii', 'composer', [TuiChord('ctrl+x')], 'ascii binding');
+      final lines = tuiHotkeyTableLines(
+        markdown: false,
+        darwin: false,
+        bindings: [wide, ascii],
+      );
+      final descs = [wide.description, ascii.description];
+      final starts = <int>[];
+      for (final line in lines) {
+        for (final d in descs) {
+          final i = line.indexOf(d);
+          if (i >= 0) starts.add(tuiTextWidth(line.substring(0, i)));
+        }
+      }
+      expect(starts, hasLength(2));
+      expect(starts.toSet(), {2 + tuiTextWidth('漢字漢') + 2},
+          reason: 'descriptions must start at the same display column');
+    });
+
+    test('markdown table box-grids through the transcript renderer', () {
+      // Pins the TUI leg end to end: the generated markdown rows satisfy
+      // the renderer's table contract and never leak as raw pipe text
+      // (thread lC-eC).
+      final fmt = AnsiMarkdown(width: 80);
+      final out = <String>[];
+      for (final line in tuiHotkeyTableLines(markdown: true)) {
+        out.addAll(fmt.consumeLine(line));
+      }
+      out.addAll(fmt.flushTrailing());
+      final text = out.join('\n');
+      expect(text.contains('| `'), isFalse, reason: 'raw markdown leaked');
+      expect(text.contains('│'), isTrue,
+          reason: 'box-grid column separator missing');
+      expect(text.contains('Composer'), isTrue);
     });
   });
 }
