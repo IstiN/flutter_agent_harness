@@ -676,31 +676,35 @@ TuiSectionConfig parseTuiSection(Object? node) {
   if (node is! YamlMap) {
     throw ConfigException('tui must be a map, got: $node');
   }
-  const knownKeys = {'theme', 'classic', 'statusLine'};
-  for (final key in node.keys) {
-    if (!knownKeys.contains('$key')) {
-      throw ConfigException(
-        'unknown "tui" key: $key (known: ${knownKeys.join(', ')})',
-      );
-    }
-  }
-  final theme = node['theme'];
-  if (theme != null && (theme is! String || theme.trim().isEmpty)) {
-    throw ConfigException('"tui.theme" must be a non-empty theme name');
-  }
-  final classic = node['classic'];
-  if (classic != null && classic is! bool) {
-    throw ConfigException('"tui.classic" must be a boolean');
-  }
+  _checkStrictKeys(node, 'tui', const {'theme', 'classic', 'statusLine'});
+  final theme = _tuiThemeName(node['theme']);
+  final classic = _tuiClassicFlag(node['classic']);
   final statusLine = node['statusLine'];
   if (statusLine != null && statusLine is! YamlMap) {
     throw ConfigException('"tui.statusLine" must be a map, got: $statusLine');
   }
   return TuiSectionConfig(
-    theme: theme as String?,
-    classic: classic ?? false,
+    theme: theme,
+    classic: classic,
     statusLine: statusLine == null ? null : parseStatusLineConfig(statusLine),
   );
+}
+
+/// Validates the `theme:` value; null when unset.
+String? _tuiThemeName(Object? theme) {
+  if (theme == null) return null;
+  if (theme is! String || theme.trim().isEmpty) {
+    throw ConfigException('"tui.theme" must be a non-empty theme name');
+  }
+  return theme;
+}
+
+/// Validates the `classic:` kill switch; false when unset.
+bool _tuiClassicFlag(Object? classic) {
+  if (classic != null && classic is! bool) {
+    throw ConfigException('"tui.classic" must be a boolean');
+  }
+  return classic as bool? ?? false;
 }
 
 /// The parsed `tui.statusLine:` section. `preset` selects one of the 7
@@ -752,7 +756,7 @@ StatusLineConfig parseStatusLineConfig(Object? node) {
   if (node is! YamlMap) {
     throw ConfigException('tui.statusLine must be a map, got: $node');
   }
-  _checkStatusLineKeys(node, 'tui.statusLine', const {
+  _checkStrictKeys(node, 'tui.statusLine', const {
     'preset',
     'left',
     'right',
@@ -786,10 +790,9 @@ StatusLineConfig parseStatusLineConfig(Object? node) {
   );
 }
 
-/// Strict-key guard for the `tui.statusLine` section family: any key
-/// outside [knownKeys] throws (a typo must never silently disable a
-/// setting).
-void _checkStatusLineKeys(YamlMap node, String path, Set<String> knownKeys) {
+/// Strict-key guard for the `tui` section family: any key outside
+/// [knownKeys] throws (a typo must never silently disable a setting).
+void _checkStrictKeys(YamlMap node, String path, Set<String> knownKeys) {
   for (final key in node.keys) {
     if (!knownKeys.contains('$key')) {
       throw ConfigException(
@@ -835,7 +838,7 @@ List<String>? _statusLineSegmentIds(YamlMap node, String key) {
 /// (only the fields the user mentioned are non-null).
 StatusLineSegmentOptions parseSegmentOptions(Object? node) {
   final map = node as YamlMap;
-  _checkStatusLineKeys(map, 'tui.statusLine.segmentOptions', const {
+  _checkStrictKeys(map, 'tui.statusLine.segmentOptions', const {
     'model',
     'path',
     'git',
