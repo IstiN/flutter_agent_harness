@@ -151,11 +151,22 @@ void main() {
       // flakes under CI load with "the shared flag to bind()" (observed on
       // the pre-merge validation run).
       await timedOut.close();
-      // The port is released: a bind on the same port succeeds.
-      await HttpServer.bind(
-        InternetAddress.loopbackIPv4,
-        Uri.parse(url2).port,
-      ).then((s) => s.close());
+      // The port is released: a bind on the same port succeeds. Release can
+      // lag the awaited close() on loaded CI runners (same-process double
+      // bind → "the shared flag" error), so prove it with a bounded retry
+      // instead of asserting instant release.
+      for (var i = 0; ; i++) {
+        try {
+          await HttpServer.bind(
+            InternetAddress.loopbackIPv4,
+            Uri.parse(url2).port,
+          ).then((s) => s.close());
+          break;
+        } on SocketException {
+          if (i >= 20) rethrow; // ~2s total: release is genuinely stuck.
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+      }
     });
 
     test('starting again rebinds and closes the previous socket', () async {
