@@ -40,6 +40,10 @@ permissions:
   contents: write         # checkout + silent update-branch pushes
   issues: write           # labels + close-issue safety net
   pull-requests: write    # update-branch + merge
+  checks: write           # bridge-free validation stamps (factory #510):
+                          # the reusable factory requests it — the caller
+                          # must grant an equal-or-superset or the workflow
+                          # dies with startup_failure (live 16:03-16:13 ×3).
   actions: write          # workflow_dispatch on the teammate workflow
 
 jobs:
@@ -49,11 +53,11 @@ jobs:
     # re-review after the first approval; supersedes #466).
     # Flip in lockstep with ai-teammate.yml — guarded by
     # test/machine_kit/factory_stub_ref_test.dart.
-    uses: IstiN/dmtools-agents/.github/workflows/factory-sm.yml@f7fac02fb11aa1cb5d202e260e67ca12cc15ee68
+    uses: IstiN/dmtools-agents/.github/workflows/factory-sm.yml@68d98b0461944c6f48a7699e0eb35d5344bfeed6
     with:
       # The literal uses-ref: the factory requires it (it cannot derive its
       # own ref — github.workflow_ref in a called workflow is the CALLER's).
-      factory_ref: f7fac02fb11aa1cb5d202e260e67ca12cc15ee68
+      factory_ref: 68d98b0461944c6f48a7699e0eb35d5344bfeed6
       # Manual ticks default to dry; cron ticks run live.
       dryRun: ${{ github.event.inputs.dryRun || 'false' }}
       # #687: one source of truth for the machine login (repo variable).
@@ -64,6 +68,9 @@ jobs:
       # Dispatch-only CI: this repo's CI file (the SM dispatches it on PR
       # heads; default 'quality.yml' fits dmtools-dart, not this repo).
       ci-workflow: ci.yml
+      # Bridge-free mode (factory #510): the tick stamps the three required
+      # protection checks itself — ci-gate.yml bridge is deleted in this PR.
+      validation-checks: '["Quality gate","JS engine integration (quickjs-ng)","Binaries smoke gate"]'
     # Explicit mapping — the factory DECLARES SOURCE_GITHUB_TOKEN as a
     # required named secret (plus optional ZAI_CODE_KEY / KIMI_REVIEW_KEY),
     # and `secrets: inherit` does not satisfy required-secret validation at
