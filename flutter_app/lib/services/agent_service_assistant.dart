@@ -89,8 +89,17 @@ extension AgentServiceAssistant on AgentService {
       // A failed run must be VISIBLE: an error tile in the transcript
       // (the shared renderer styles it), not just the banner field —
       // otherwise a dead key silently looks like "no answer".
-      final text =
-          message.errorMessage ?? 'Run failed (${StopReason.error.name})';
+      // Issue #867: a structured 429 renders the localized human message
+      // (plan, server-derived countdown, next step); the raw payload stays
+      // on the info and never reaches the bubble.
+      final info = message.rateLimit;
+      final text = info != null
+          ? formatRateLimitMessage(
+              info,
+              localeCode:
+                  WidgetsBinding.instance.platformDispatcher.locale.languageCode,
+            )
+          : message.errorMessage ?? 'Run failed (${StopReason.error.name})';
       error = text;
       messages.add(
         FahChatMessage(

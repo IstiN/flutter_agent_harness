@@ -19,6 +19,7 @@ import '../context.dart';
 import '../event_stream.dart';
 import '../json_parse.dart';
 import '../model.dart';
+import '../rate_limit_info.dart';
 import '../sse_decoder.dart';
 import '../types.dart';
 
@@ -263,6 +264,7 @@ final class ProviderHttpError implements Exception {
     this.statusCode,
     this.body, {
     this.retryAfter,
+    this.rateLimit,
     this.requestUrl,
     this.redirectLocation,
     this.answeredHtml = false,
@@ -278,6 +280,11 @@ final class ProviderHttpError implements Exception {
   /// The provider-suggested delay before retrying (parsed from the
   /// `Retry-After` response header), typically set on HTTP 429 responses.
   final Duration? retryAfter;
+
+  /// The structured 429 decode (issue #867), when the failure was a
+  /// rate limit. [formatProviderError] renders it human; the raw payload
+  /// stays inside for diagnostics.
+  final RateLimitInfo? rateLimit;
 
   /// Request URL that produced the error, when known.
   final Uri? requestUrl;
@@ -300,70 +307,6 @@ final class ProviderHttpError implements Exception {
   final bool answeredJson;
 }
 
-/// Parses a `Retry-After` header value into a [Duration].
-///
-/// Supports both forms defined by RFC 9110 (and handled by pi's
-/// `getRetryAfterDelayMs`): delta-seconds (`"120"`) and an HTTP date
-/// (`"Wed, 21 Oct 2015 07:28:00 GMT"`, also ISO-8601 as a fallback). The
-/// result is clamped to be non-negative. Returns `null` for absent or
-/// unparseable values.
-Duration? parseRetryAfter(String? value, {DateTime? now}) {
-  if (value == null) {
-    return null;
-  }
-  final trimmed = value.trim();
-  final seconds = int.tryParse(trimmed);
-  if (seconds != null) {
-    return Duration(seconds: seconds < 0 ? 0 : seconds);
-  }
-  final date = _parseHttpDate(trimmed) ?? DateTime.tryParse(trimmed);
-  if (date == null) {
-    return null;
-  }
-  final delta = date.difference(now ?? DateTime.now());
-  return delta.isNegative ? Duration.zero : delta;
-}
-
-const _httpMonths = {
-  'jan': 1,
-  'feb': 2,
-  'mar': 3,
-  'apr': 4,
-  'may': 5,
-  'jun': 6,
-  'jul': 7,
-  'aug': 8,
-  'sep': 9,
-  'oct': 10,
-  'nov': 11,
-  'dec': 12,
-};
-
-final _httpDatePattern = RegExp(
-  r'^[A-Za-z]{3}, (\d{2}) ([A-Za-z]{3}) (\d{4}) (\d{2}):(\d{2}):(\d{2}) GMT$',
-);
-
-/// Parses the IMF-fixdate form of an HTTP date
-/// (`Wed, 21 Oct 2015 07:28:00 GMT`). Returns `null` for anything else.
-DateTime? _parseHttpDate(String value) {
-  final match = _httpDatePattern.firstMatch(value);
-  if (match == null) {
-    return null;
-  }
-  final month = _httpMonths[match[2]!.toLowerCase()];
-  if (month == null) {
-    return null;
-  }
-  return DateTime.utc(
-    int.parse(match[3]!),
-    month,
-    int.parse(match[1]!),
-    int.parse(match[4]!),
-    int.parse(match[5]!),
-    int.parse(match[6]!),
-  );
-}
-
 /// Composes the display string for an `ErrorEvent.errorMessage`.
 ///
 /// Simplified port of pi's `formatProviderError(normalizeProviderError(e))`:
@@ -374,6 +317,13 @@ String formatProviderError(Object error) {
     if (error.answeredJson) return _formatJsonAnswer(error);
     final redirect = _formatAuthRedirect(error);
     if (redirect != null) return redirect;
+
+    // Issue #867: a structured 429 renders the human message — plan,
+    // server-derived reset, next step. The raw payload stays on
+    // [RateLimitInfo.rawBody] and never reaches the transcript.
+    if (error.rateLimit case final rateLimit?) {
+      return '${error.statusCode}: ${formatRateLimitMessage(rateLimit)}';
+    }
 
     final body = error.body.trim();
     if (body.isEmpty) {
@@ -632,6 +582,13 @@ Future<http.StreamedResponse> _validateStreamResponse(
       response.statusCode,
       body,
       retryAfter: parseRetryAfter(response.headers['retry-after']),
+      // Issue #867: parse once, at the provider — every adapter routing
+      // through this send path decodes its 429 (null for other statuses).
+      rateLimit: parseRateLimitInfo(
+        statusCode: response.statusCode,
+        body: body,
+        headers: response.headers,
+      ),
       requestUrl: request.url,
       redirectLocation: response.headers['location'],
     );
@@ -862,6 +819,10 @@ final class ProviderStreamState {
   /// Failure description for error/aborted terminal events.
   String? errorMessage;
 
+  /// The structured 429 decode (issue #867), set only by the terminal
+  /// error path; carried onto the finalized [AssistantMessage].
+  RateLimitInfo? rateLimit;
+
   /// Provider-specific response/message identifier, when exposed upstream.
   String? responseId;
 
@@ -886,6 +847,7 @@ final class ProviderStreamState {
     stopReason: stopReason,
     rawStopReason: rawStopReason,
     errorMessage: errorMessage,
+    rateLimit: rateLimit,
     timestamp: timestamp,
   );
 }
@@ -1093,6 +1055,11 @@ void pushStreamErrorEvent(
   state.errorMessage = aborted
       ? 'Request was aborted'
       : formatProviderError(error);
+  // Issue #867: the structured 429 rides on the finalized message so every
+  // surface renders from the structure; the raw payload stays inside.
+  state.rateLimit = aborted || error is! ProviderHttpError
+      ? null
+      : error.rateLimit;
   final retryAfter = !aborted && error is ProviderHttpError
       ? error.retryAfter
       : null;

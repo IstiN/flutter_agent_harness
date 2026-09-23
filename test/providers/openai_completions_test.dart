@@ -701,8 +701,14 @@ void main() {
       final error = events.single as ErrorEvent;
       expect(error.reason, StopReason.error);
       expect(error.error.stopReason, StopReason.error);
-      expect(error.error.errorMessage, contains('429'));
-      expect(error.error.errorMessage, contains('Rate limit exceeded'));
+      // Issue #867: the 429 speaks human — the payload rides the
+      // structured info, never the rendered line.
+      final message = error.error.errorMessage!;
+      expect(message, contains('429'));
+      expect(message, contains('Rate limit reached'));
+      expect(message.contains('{'), isFalse);
+      expect(error.error.rateLimit?.rawBody,
+          '{"error":{"message":"Rate limit exceeded"}}');
       expect(error.retryAfter, isNull);
       expect(await stream.result, same(error.error));
     });

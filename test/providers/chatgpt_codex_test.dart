@@ -1022,7 +1022,8 @@ void main() {
       final error = events.whereType<ErrorEvent>().single;
       expect(error.error.errorMessage, contains('ChatGPT response failed'));
     });
-    test('a 429 error message includes the Codex reset time', () async {
+    test('a 429 error message speaks human and carries the structured reset',
+        () async {
       final client = http_testing.MockClient.streaming(
         (request, requestBody) async => http.StreamedResponse(
           Stream.value(utf8.encode('slow down')),
@@ -1041,18 +1042,22 @@ void main() {
         client: client,
       ).toList();
 
-      final message = events.whereType<ErrorEvent>().single.error.errorMessage!;
+      final error = events.whereType<ErrorEvent>().single;
+      final message = error.error.errorMessage!;
       expect(message, contains('429'));
-      expect(message, contains('rate limited; resets at'));
+      expect(message, contains('Rate limit reached'));
+      // No raw payload fragment reaches the rendered line (issue #867).
+      expect(message.contains('{'), isFalse);
+      expect(message, contains(RegExp(r'— in \d+ days')));
+      // The structured reset rides the event for surface rendering.
+      final info = error.error.rateLimit;
+      expect(info, isNotNull);
       expect(
-        message,
-        contains(
-          DateTime.fromMillisecondsSinceEpoch(
-            2000000000 * 1000,
-            isUtc: true,
-          ).toIso8601String(),
-        ),
+        info!.resetsAt,
+        DateTime.fromMillisecondsSinceEpoch(2000000000 * 1000, isUtc: true),
       );
+      expect(info.limitKind, 'primary');
+      expect(info.rawBody, 'slow down');
     });
   });
 }
