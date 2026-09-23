@@ -8,6 +8,7 @@
 /// price (E3: a model without pricing renders `—`, never 0.00).
 library;
 
+import 'tui_key_hints.dart';
 import 'tui_repl.dart';
 
 /// One model row the picker will render, with its resolved metadata.
@@ -167,6 +168,11 @@ String formatModelCost(({double input, double output})? cost) {
   return '\$${c.input.toStringAsFixed(2)}/\$${c.output.toStringAsFixed(2)}';
 }
 
-/// The one-line hint under the model table (footer row).
-const modelPickerFooterHint =
-    '↑/↓ select · enter switch · type to filter · esc close';
+/// The one-line hint under the model table (footer row) — keyHint grammar
+/// (issue #809): chords resolve from the keybinding registry.
+final modelPickerFooterHint = tuiKeyHintRow([
+  hintAction('picker.navigate', 'select'),
+  hintAction('picker.select', 'switch'),
+  hintText('type to filter'),
+  hintAction('picker.close', 'close'),
+]);
