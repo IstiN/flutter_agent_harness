@@ -53,11 +53,11 @@ jobs:
     # re-review after the first approval; supersedes #466).
     # Flip in lockstep with ai-teammate.yml — guarded by
     # test/machine_kit/factory_stub_ref_test.dart.
-    uses: IstiN/dmtools-agents/.github/workflows/factory-sm.yml@68d98b0461944c6f48a7699e0eb35d5344bfeed6
+    uses: IstiN/dmtools-agents/.github/workflows/factory-sm.yml@34097f06b18463f38ed748b025761374fc923364
     with:
       # The literal uses-ref: the factory requires it (it cannot derive its
       # own ref — github.workflow_ref in a called workflow is the CALLER's).
-      factory_ref: 68d98b0461944c6f48a7699e0eb35d5344bfeed6
+      factory_ref: 34097f06b18463f38ed748b025761374fc923364
       # Manual ticks default to dry; cron ticks run live.
       dryRun: ${{ github.event.inputs.dryRun || 'false' }}
       # #687: one source of truth for the machine login (repo variable).
@@ -71,6 +71,8 @@ jobs:
       # Bridge-free mode (factory #510): the tick stamps the three required
       # protection checks itself — ci-gate.yml bridge is deleted in this PR.
       validation-checks: '["Quality gate","JS engine integration (quickjs-ng)","Binaries smoke gate"]'
+      # Factory-state snapshot → public prerelease asset (board: site/factory)
+      state-publish: '{"channel":"release","tag":"factory-state","asset":"fa-state.json"}'
     # Explicit mapping — the factory DECLARES SOURCE_GITHUB_TOKEN as a
     # required named secret (plus optional ZAI_CODE_KEY / KIMI_REVIEW_KEY),
     # and `secrets: inherit` does not satisfy required-secret validation at
