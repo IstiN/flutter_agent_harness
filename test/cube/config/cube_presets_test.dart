@@ -171,6 +171,11 @@ void main() {
           final env = SandboxedExecutionEnv(
             MemoryExecutionEnv(cwd: cwd, shell: inner),
             spec,
+            // Presets demand kernel mode; on this enforcing platform the
+            // shell delivers it (profile staged in the in-memory home),
+            // so the matrix exercises the presets as they really run.
+            os: 'macos',
+            homeDir: '/home',
           );
 
           // bash: a redirect write one level above the workspace.
@@ -190,17 +195,23 @@ void main() {
               startsWith('fa_cube[${preset.id}]:'),
               reason: preset.id,
             );
-            expect(inner.commands, ['echo x > out.txt'], reason: preset.id);
+            // The one in-workspace command ran, kernel-wrapped.
+            expect(inner.commands, hasLength(1), reason: preset.id);
+            expect(inner.commands.single, startsWith('sandbox-exec'),
+                reason: preset.id);
+            expect(inner.commands.single, contains('echo x > out.txt'),
+                reason: preset.id);
             expect(
               write.errorOrNull!.code,
               FileErrorCode.permissionDenied,
               reason: preset.id,
             );
           } else {
-            expect(inner.commands, [
-              'echo x > ../escape',
-              'echo x > out.txt',
-            ], reason: preset.id);
+            expect(inner.commands, hasLength(2), reason: preset.id);
+            expect(inner.commands[0], contains('echo x > ../escape'),
+                reason: preset.id);
+            expect(inner.commands[1], contains('echo x > out.txt'),
+                reason: preset.id);
             expect(write.isOk, isTrue, reason: preset.id);
           }
           if (preset.level == 'L1') {
