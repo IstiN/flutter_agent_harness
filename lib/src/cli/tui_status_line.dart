@@ -329,19 +329,6 @@ final class StatusLineSegmentOptions {
         timeShowSeconds: timeShowSeconds,
       );
 
-  /// Whether any option was mentioned at all.
-  bool get isEmpty =>
-      modelShowThinkingLevel == null &&
-      pathAbbreviate == null &&
-      pathMaxLength == null &&
-      pathStripWorkPrefix == null &&
-      gitShowBranch == null &&
-      gitShowStaged == null &&
-      gitShowUnstaged == null &&
-      gitShowUntracked == null &&
-      time24h == null &&
-      timeShowSeconds == null;
-
   /// YAML fragment (the `segmentOptions:` block inside
   /// `tui.statusLine:`), grouped into the `model`/`path`/`git`/`time`
   /// subsections the parser reads, only non-default mentions — the file
@@ -1376,17 +1363,47 @@ List<StatusSpan> renderStatusLineSpans(
   if (leftIn.isEmpty && rightIn.isEmpty) return [];
 
   final sep = getSeparator(spec.separator, nerd: spec.nerdSymbols);
-  var left = leftIn;
-  var right = rightIn;
-  var leftGroup = _Group(left, sep);
-  var rightGroup = _Group(right, sep);
-  var options = spec.options;
+  final squeezed = _squeezeGroups(leftIn, rightIn, snapshot, spec, sep, width);
+  final leftW = squeezed.left.width;
+  final rightW = squeezed.right.width;
+  final gap = width - leftW - rightW;
 
-  // ── The elastic truncation ladder ──
-  // Step 1: shrink session_name to 8, then 4 cells.
-  for (final nameMax in const [8, 4]) {
-    if (leftGroup.width + rightGroup.width <= width) break;
-    right = [
+  // Irreducible overflow: collapse to `left + ' ' + right` (omp).
+  if (gap < 1) {
+    return [
+      ...squeezed.left.spans,
+      if (leftW > 0 && rightW > 0) (' ', StatusLineRoleKey.dim),
+      ...squeezed.right.spans,
+    ];
+  }
+
+  final pct = snapshot.contextPercent;
+  if (pct == null || snapshot.contextWindow <= 0) {
+    return [
+      ...squeezed.left.spans,
+      (' ' * gap, StatusLineRoleKey.dim),
+      ...squeezed.right.spans,
+    ];
+  }
+
+  return [
+    ...squeezed.left.spans,
+    ..._gaugeSpans(gap, pct, snapshot.contextWindow),
+    ...squeezed.right.spans,
+  ];
+}
+
+/// One ladder outcome: the two groups after elastic squeezing, ready to
+/// spanify.
+final class _Squeezed {
+  final _Group left;
+  final _Group right;
+  _Squeezed(this.left, this.right);
+}
+
+/// Ladder step 1 body: re-renders `session_name` clamped to [nameMax]
+/// cells; every other right-group member passes through.
+List<LaidSegment> _shrinkSessionName(List<LaidSegment> right, int nameMax) => [
       for (final seg in right)
         if (seg.id != 'session_name')
           seg
@@ -1395,103 +1412,123 @@ List<StatusSpan> renderStatusLineSpans(
             (tuiFitWidth(seg.text, nameMax), StatusLineRoleKey.name),
           ]),
     ];
+
+/// The elastic truncation ladder (omp): shrink `session_name` to 8 then
+/// 4 cells, drop right-group members right-to-left, re-render `path` at
+/// shrinking maxLengths, drop left-group members left-to-right. Stops
+/// at the first step that fits.
+_Squeezed _squeezeGroups(
+  List<LaidSegment> leftIn,
+  List<LaidSegment> rightIn,
+  StatusLineSnapshot snapshot,
+  StatusLineSpec spec,
+  StatusLineSeparator sep,
+  int width,
+) {
+  var left = leftIn;
+  var right = rightIn;
+  var leftGroup = _Group(left, sep);
+  var rightGroup = _Group(right, sep);
+
+  // Step 1: shrink session_name to 8, then 4 cells.
+  for (final nameMax in const [8, 4]) {
+    if (leftGroup.width + rightGroup.width <= width) break;
+    right = _shrinkSessionName(right, nameMax);
     rightGroup = _Group(right, sep);
   }
-  if (leftGroup.width + rightGroup.width > width) {
-    // Step 2: drop right-group members right-to-left.
-    while (right.isNotEmpty && leftGroup.width + rightGroup.width > width) {
-      right = right.sublist(0, right.length - 1);
-      rightGroup = _Group(right, sep);
-    }
-    // Step 3: re-render the path at shrinking maxLengths.
-    final pathIndex = left.indexWhere((seg) => seg.id == 'path');
-    if (pathIndex >= 0) {
-      for (var maxLength = options.maxLength;
-          maxLength >= 10 && leftGroup.width + rightGroup.width > width;
-          maxLength -= 10) {
-        options = options.withPathMaxLength(maxLength);
-        final re = _renderPath(
-          snapshot,
-          StatusLineSpec(
-            left: const [],
-            right: const [],
-            separator: spec.separator,
-            options: options,
-          ),
-        );
-        if (re == null) break;
-        left = [...left]..[pathIndex] = re;
-        leftGroup = _Group(left, sep);
-      }
-    }
-    // Step 4: drop left-group members left-to-right.
-    while (left.isNotEmpty && leftGroup.width + rightGroup.width > width) {
-      left = left.sublist(1);
-      leftGroup = _Group(left, sep);
-    }
+  if (leftGroup.width + rightGroup.width <= width) {
+    return _Squeezed(leftGroup, rightGroup);
   }
 
-  final leftSpans = leftGroup.spans;
-  final rightSpans = rightGroup.spans;
-  final leftW = leftGroup.width;
-  final rightW = rightGroup.width;
-  final gap = width - leftW - rightW;
-
-  // Irreducible overflow: collapse to `left + ' ' + right` (omp).
-  if (gap < 1) {
-    return [
-      ...leftSpans,
-      if (leftW > 0 && rightW > 0) (' ', StatusLineRoleKey.dim),
-      ...rightSpans,
-    ];
+  // Step 2: drop right-group members right-to-left.
+  while (right.isNotEmpty && leftGroup.width + rightGroup.width > width) {
+    right = right.sublist(0, right.length - 1);
+    rightGroup = _Group(right, sep);
   }
 
-  final pct = snapshot.contextPercent;
-  if (pct == null || snapshot.contextWindow <= 0) {
-    return [
-      ...leftSpans,
-      (' ' * gap, StatusLineRoleKey.dim),
-      ...rightSpans,
-    ];
-  }
+  // Step 3: re-render the path at shrinking maxLengths.
+  left = _shrinkPath(left, snapshot, spec, sep, rightGroup.width, width);
+  leftGroup = _Group(left, sep);
 
-  // ── The embedded context gauge ──
+  // Step 4: drop left-group members left-to-right.
+  while (left.isNotEmpty && leftGroup.width + rightGroup.width > width) {
+    left = left.sublist(1);
+    leftGroup = _Group(left, sep);
+  }
+  return _Squeezed(leftGroup, rightGroup);
+}
+
+/// Ladder step 3 body: re-renders the `path` segment at maxLengths
+/// stepping down by 10 to the floor of 10 while the row overflows;
+/// a segment whose data vanished mid-shrink stops the loop.
+List<LaidSegment> _shrinkPath(
+  List<LaidSegment> left,
+  StatusLineSnapshot snapshot,
+  StatusLineSpec spec,
+  StatusLineSeparator sep,
+  int rightW,
+  int width,
+) {
+  final pathIndex = left.indexWhere((seg) => seg.id == 'path');
+  if (pathIndex < 0) return left;
+  final shrunk = [...left];
+  var leftGroup = _Group(shrunk, sep);
+  var options = spec.options;
+  for (var maxLength = options.maxLength;
+      maxLength >= 10 && leftGroup.width + rightW > width;
+      maxLength -= 10) {
+    options = options.withPathMaxLength(maxLength);
+    final re = _renderPath(
+      snapshot,
+      StatusLineSpec(
+        left: const [],
+        right: const [],
+        separator: spec.separator,
+        options: options,
+      ),
+    );
+    if (re == null) break;
+    shrunk[pathIndex] = re;
+    leftGroup = _Group(shrunk, sep);
+  }
+  return shrunk;
+}
+
+/// The embedded context gauge filling the gap: the full
+/// `pct ━ scale window` form, a centered bare percent, or a plain gap
+/// as space runs out. The fill/role track the gauge level.
+List<StatusSpan> _gaugeSpans(int gap, double pct, int contextWindow) {
   final pctLabel = formatStatusLinePercent(pct);
-  final windowLabel = formatTokens(snapshot.contextWindow);
+  final windowLabel = formatTokens(contextWindow);
   final role = switch (statusLineGaugeLevel(pct)) {
     StatusLineGaugeLevel.normal => StatusLineRoleKey.gaugeUsed,
     StatusLineGaugeLevel.warn => StatusLineRoleKey.warn,
     StatusLineGaugeLevel.error => StatusLineRoleKey.error,
   };
-  final gaugeSpans = () {
-    // Full form: pct label + `━` scale + window label, padded one cell
-    // into each group. Narrower: bare percent. Narrowest: plain gap.
-    if (gap >= statusLineGaugeMinWidth(pct, snapshot.contextWindow)) {
-      final scaleWidth = gap - pctLabel.length - windowLabel.length - 2;
-      final usedCount = ((pct.clamp(0, 100) / 100) * scaleWidth)
-          .round()
-          .clamp(0, scaleWidth);
-      return <StatusSpan>[
-        (' $pctLabel', role),
-        ('━' * usedCount, StatusLineRoleKey.gaugeUsed),
-        ('━' * (scaleWidth - usedCount), StatusLineRoleKey.gaugeUnused),
-        ('$windowLabel ', StatusLineRoleKey.context),
-      ];
-    }
-    if (gap >= pctLabel.length + 2) {
-      return <StatusSpan>[
-        (' ' * ((gap - pctLabel.length) ~/ 2), StatusLineRoleKey.dim),
-        (pctLabel, role),
-        (
-          ' ' * (gap - pctLabel.length - (gap - pctLabel.length) ~/ 2),
-          StatusLineRoleKey.dim,
-        ),
-      ];
-    }
-    return <StatusSpan>[(' ' * gap, StatusLineRoleKey.dim)];
-  }();
-
-  return [...leftSpans, ...gaugeSpans, ...rightSpans];
+  // Full form: pct label + `━` scale + window label, padded one cell
+  // into each group. Narrower: bare percent. Narrowest: plain gap.
+  if (gap >= statusLineGaugeMinWidth(pct, contextWindow)) {
+    final scaleWidth = gap - pctLabel.length - windowLabel.length - 2;
+    final usedCount =
+        ((pct.clamp(0, 100) / 100) * scaleWidth).round().clamp(0, scaleWidth);
+    return <StatusSpan>[
+      (' $pctLabel', role),
+      ('━' * usedCount, StatusLineRoleKey.gaugeUsed),
+      ('━' * (scaleWidth - usedCount), StatusLineRoleKey.gaugeUnused),
+      ('$windowLabel ', StatusLineRoleKey.context),
+    ];
+  }
+  if (gap >= pctLabel.length + 2) {
+    return <StatusSpan>[
+      (' ' * ((gap - pctLabel.length) ~/ 2), StatusLineRoleKey.dim),
+      (pctLabel, role),
+      (
+        ' ' * (gap - pctLabel.length - (gap - pctLabel.length) ~/ 2),
+        StatusLineRoleKey.dim,
+      ),
+    ];
+  }
+  return <StatusSpan>[(' ' * gap, StatusLineRoleKey.dim)];
 }
 
 /// The raw width-correct rows for one frame — the pure [TuiStatusLine]
