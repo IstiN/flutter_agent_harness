@@ -195,6 +195,7 @@ void main() {
       '/sessions',
       '/resume',
       '/help',
+      '/help hotkeys',
       '/tools',
       // Config file.
       '~/.fah/config.yaml',
