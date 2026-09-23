@@ -31,6 +31,7 @@ import 'tui_key_hints.dart';
 import 'sigint_action.dart';
 
 part 'fa_tui_messages.dart';
+part 'fa_tui_heartbeat.dart';
 part 'fa_tui_interrupt.dart';
 part 'fa_tui_hub.dart';
 part 'fa_tui_mouse.dart';
@@ -804,37 +805,6 @@ final class FaTuiModel extends Model {
         ? copyWith(busyLastEventMs: DateTime.now().millisecondsSinceEpoch)
         : this;
     return self._updateWithHeartbeat(msg);
-  }
-
-  (Model, Cmd?) _updateWithHeartbeat(Msg msg) {
-    final scheduled = _updateScheduled(msg);
-    if (scheduled != null) return scheduled;
-    // Output is handled before the exit check so trailing writes (e.g. the
-    // 'bye' line from /exit) still render before the program quits; the host
-    // sends _QuitRequestedMsg once it has marked exit.
-    if (msg is OutputMsg) return _handleOutputMsg(msg);
-    // Busy/spinner messages are handled before the exit check for the same
-    // reason as output: /exit arrives wrapped in sendBusy(true/false) calls,
-    // and quitting here would land in the same drained batch as the farewell
-    // output and skip its render. The host's delayed _QuitRequestedMsg is
-    // the only quit path that matters.
-    if (msg is BusyMsg) return _handleBusyMsg(msg);
-    // Issue #804: the vendored program's OSC 11 background reply lands
-    // before the exit check — a late reply must still re-resolve the
-    // palette (and paint via the theme-swap cache reset) even while busy.
-    if (msg is BackgroundColorMsg) return _handleBackgroundProbe(msg);
-    if (msg is RunStalledMsg) return _handleRunStalled(msg);
-    if (msg is SpinnerTickMsg) return _handleSpinnerTick();
-    if (msg is DrainQueueMsg) return _handleDrainQueue(msg);
-    if (msg is ClearQueueMsg) return _handleClearQueue();
-    if (msg is InterruptArmedMsg) return _handleInterruptArmed();
-    if (msg is CtrlCWindowExpiredMsg) return _handleWindowExpired();
-    if (msg is OpenPromptMsg) {
-      _promptCompleter = msg.completer;
-      return (copyWith(prompt: TuiPromptState(msg.spec)), null);
-    }
-    if (isExited()) return (this, () => quit());
-    return _updateAfterExitCheck(msg);
   }
 
   /// Scheduled/waiting dispatch group ([_updateWithHeartbeat] prefix):
