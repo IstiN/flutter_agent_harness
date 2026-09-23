@@ -253,17 +253,17 @@ void main() {
       await harness.screenshot(shotsDir, '30_boot_delete');
 
       await harness.runSlashCommand('/settings');
-      await harness.liveWaitForText(
+      await harness.liveWaitForScreen(
         'Chat model',
         timeout: const Duration(seconds: 15),
       );
       harness.sendEnter();
-      await harness.liveWaitForText(
+      await harness.liveWaitForScreen(
         'test-provider',
         timeout: const Duration(seconds: 15),
       );
       harness.sendEnter();
-      await harness.liveWaitForText(
+      await harness.liveWaitForScreen(
         'Delete provider',
         timeout: const Duration(seconds: 15),
       );
@@ -272,7 +272,7 @@ void main() {
       // Navigate to Delete (second option) and confirm
       harness.sendArrowDown();
       harness.sendEnter();
-      await harness.liveWaitForText(
+      await harness.liveWaitForScreen(
         'Yes, delete',
         timeout: const Duration(seconds: 15),
       );
@@ -280,7 +280,7 @@ void main() {
 
       // Pick Yes (first option)
       harness.sendEnter();
-      await harness.liveWaitForText(
+      await harness.liveWaitForScreen(
         'deleted provider',
         timeout: const Duration(seconds: 15),
       );
@@ -351,7 +351,10 @@ void main() {
       // Verify the mode persisted — bare /approval opens the interactive
       // picker with always-ask marked as current.
       await harness.runSlashCommand('/approval');
-      await harness.liveWaitForText(
+      // Screen anchor: a raw-only wait can return while the picker bytes
+      // streamed but the frame is still the boot one — the (current)
+      // assert then reads a stale screen (CI dispatch red under load).
+      await harness.liveWaitForScreen(
         '[Approval mode]',
         timeout: const Duration(seconds: 15),
       );
