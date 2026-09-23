@@ -69,9 +69,15 @@ void main() {
       addTearDown(() => stateFile.parent.delete(recursive: true));
       var served = false;
       final code = await hubServe(
-        (port: port, flagSecret: null, flagBind: 'lan'),
+        (
+          port: port,
+          flagSecret: null,
+          flagBind: 'lan',
+          relayAllowAnyHost: false,
+        ),
         stateFile: stateFile,
         pidFile: File('${stateFile.parent.path}/hub.pid'),
+        secret: 'pairing-key',
         serveLoop: (hub, _) async {
           served = true;
           addTearDown(() => hub.stop());
@@ -82,6 +88,48 @@ void main() {
       // The pairing lines depend on host interfaces; a container with no
       // non-loopback IPv4 prints none - both shapes are correct. What
       // matters for coverage is that the LAN branch ran without throwing.
+    });
+  });
+
+  group('hubServe refuses a secretless LAN start (issue #792 AC2)', () {
+    test('the named refusal fires only for lan + no secret', () {
+      expect(
+        hubLanSecretRefusal(bind: 'lan', secret: null),
+        contains('--bind lan requires a master secret'),
+      );
+      expect(
+        hubLanSecretRefusal(bind: 'lan', secret: ''),
+        contains('--bind lan requires a master secret'),
+      );
+      expect(hubLanSecretRefusal(bind: 'lan', secret: 'k'), isNull);
+      expect(hubLanSecretRefusal(bind: null, secret: null), isNull);
+      expect(hubLanSecretRefusal(bind: 'loopback', secret: null), isNull);
+    });
+
+    test('hubServe exits 1 without binding or serving', () async {
+      final stateFile = File(
+        '${Directory.systemTemp.createTempSync('fah-lan').path}/hub.json',
+      );
+      addTearDown(() => stateFile.parent.delete(recursive: true));
+      var served = false;
+      final code = await hubServe(
+        (
+          port: 0,
+          flagSecret: null,
+          flagBind: 'lan',
+          relayAllowAnyHost: false,
+        ),
+        stateFile: stateFile,
+        pidFile: File('${stateFile.parent.path}/hub.pid'),
+        serveLoop: (hub, _) async => served = true,
+      );
+      expect(code, 1);
+      expect(served, isFalse, reason: 'nothing served — refused at start');
+      expect(
+        File('${stateFile.parent.path}/hub.pid').existsSync(),
+        isFalse,
+        reason: 'no pid state — the hub never started',
+      );
     });
   });
 }
