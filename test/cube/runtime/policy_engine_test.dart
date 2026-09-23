@@ -5,6 +5,8 @@ import 'package:flutter_agent_harness/src/cube/config/fs_policy.dart';
 import 'package:flutter_agent_harness/src/cube/runtime/policy_engine.dart';
 import 'package:test/test.dart';
 
+import '../fake_fs_probe.dart';
+
 CubeSpec spec({
   Set<String> allow = const {'git', 'echo'},
   Set<String> deny = const {},
@@ -312,6 +314,32 @@ void main() {
           fsSpec(),
         ).checkCommand('git status && echo x > ../esc').allowed,
         isFalse,
+      );
+    });
+
+    test('a symlinked redirect target outside the workspace is denied', () {
+      final probe = FakeFsProbe(links: {'/work/link': '/etc'});
+      CubePolicyEngine probed() => CubePolicyEngine(
+        fsSpec(),
+        homeDir: '/Users/agent',
+        workspaceRoot: '/work',
+        pathProbe: probe,
+      );
+      // Lexically inside the workspace; resolved target outside.
+      final write = probed().checkCommand('echo x > link/evil');
+      expect(write.allowed, isFalse);
+      expect(write.reason, contains("write to 'link/evil'"));
+      final read = probed().checkCommand('cat < link/id_rsa');
+      expect(read.allowed, isFalse);
+
+      // The legitimate in-workspace link keeps working.
+      probe.links['/work/link'] = 'sub';
+      expect(probed().checkCommand('echo x > link/ok').allowed, isTrue);
+
+      // Without a probe the lexical floor still judges the written form.
+      expect(
+        redirectEngine(fsSpec()).checkCommand('echo x > link/evil').allowed,
+        isTrue,
       );
     });
   });
