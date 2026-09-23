@@ -31,9 +31,7 @@ void main() {
       server.forEach((req) {
         // Handler errors (e.g. the hub aborting its relay socket
         // mid-response) are expected teardown noise.
-        unawaited(
-          handler(req).then<void>((_) {}, onError: (Object _) {}),
-        );
+        unawaited(handler(req).then<void>((_) {}, onError: (Object _) {}));
       }),
     );
     return server;
@@ -53,11 +51,9 @@ void main() {
     final req = await client.postUrl(Uri.parse('http://127.0.0.1:$port/relay'));
     req.headers.contentType = ContentType.json;
     if (bearer != null) req.headers.set('Authorization', 'Bearer $bearer');
-    req.write(jsonEncode({
-      'url': '$url',
-      'method': 'POST',
-      ...envelopeOverride,
-    }));
+    req.write(
+      jsonEncode({'url': '$url', 'method': 'POST', ...envelopeOverride}),
+    );
     final res = await req.close();
     final body = await res.transform(utf8.decoder).join();
     client.close();
@@ -107,10 +103,10 @@ void main() {
     expect(body, 'fast');
 
     // And the health check rides the same detached loop.
-    final healthz = await (HttpClient()
-          ..connectionTimeout = const Duration(seconds: 2))
-        .getUrl(Uri.parse('http://127.0.0.1:$port/healthz'))
-        .then((r) => r.close());
+    final healthz =
+        await (HttpClient()..connectionTimeout = const Duration(seconds: 2))
+            .getUrl(Uri.parse('http://127.0.0.1:$port/healthz'))
+            .then((r) => r.close());
     expect(healthz.statusCode, 200);
     await healthz.drain<void>();
   });
@@ -147,6 +143,60 @@ void main() {
     );
     expect(res.statusCode, 200);
     expect(body, 'ok');
+  });
+
+  test('AC2 paced: an over-cap upload is cut off at the cap — the 413 '
+      'does not wait for the upload (no whole-upload worker pin)', () async {
+    hub = LocalHub(relayAllowAnyHost: true, relayMaxBodyBytes: 64 * 1024);
+    await hub.start();
+    port = hub.url.port;
+
+    // The reviewer's measured round-4 failure: a client PUMPING an
+    // oversized body slowly (here ~2.6 s total). The cap fires on the
+    // second 32 KiB chunk (~40 ms in) — the 413 must be answerable and
+    // the worker freed NOW, not when the upload ends.
+    final socket = await Socket.connect('127.0.0.1', port);
+    addTearDown(socket.destroy);
+    final answer = Completer<String>();
+    final got = <String>[];
+    socket.listen(
+      (chunk) {
+        got.add(utf8.decode(chunk, allowMalformed: true));
+        if (!answer.isCompleted && got.join().contains('413')) {
+          answer.complete('413');
+        }
+      },
+      onDone: () {
+        if (!answer.isCompleted) answer.complete('closed');
+      },
+      onError: (Object _) {
+        if (!answer.isCompleted) answer.complete('error');
+      },
+    );
+    socket.write(
+      'POST /relay HTTP/1.1\r\n'
+      'Host: 127.0.0.1:$port\r\n'
+      'Authorization: Bearer ${hub.relaySecret}\r\n'
+      'Content-Type: application/json\r\n'
+      'Transfer-Encoding: chunked\r\n\r\n',
+    );
+    final fat = base64Encode(List<int>.filled(32 * 1024, 120));
+    final pump = Timer.periodic(const Duration(milliseconds: 20), (t) {
+      socket.write('${fat.length}\r\n$fat\r\n'); // 32 KiB body per chunk
+    });
+    addTearDown(pump.cancel);
+    // The upload would need ~2.6 s; the answer-or-close must arrive
+    // within a second — while the client is still pumping. The wire
+    // answer itself is best-effort here (a server close mid-send
+    // surfaces as RST, which can eat the written answer — the same
+    // convention as the 408 test); the deterministic proof of the fix
+    // is the timing plus the freed worker.
+    await answer.future.timeout(const Duration(seconds: 1));
+    expect(
+      hub.relayInFlight,
+      0,
+      reason: 'the worker is freed at the cap, not after the upload',
+    );
   });
 
   test('AC3: a client disconnect mid-relay never pins the worker past '
@@ -207,8 +257,7 @@ void main() {
       onError: (Object _) {},
       cancelOnError: false,
     );
-    final first = await firstChunk.future
-        .timeout(const Duration(seconds: 5));
+    final first = await firstChunk.future.timeout(const Duration(seconds: 5));
     expect(first, contains('data: chunk-0'));
     expect(hub.relayInFlight, 1);
 
@@ -251,7 +300,7 @@ void main() {
       req.response.bufferOutput = false;
       req.response.headers.contentType = ContentType('text', 'event-stream');
       try {
-        for (var i = 0;; i++) {
+        for (var i = 0; ; i++) {
           req.response.write('data: chunk-$i\n\n');
           await req.response.flush();
           await Future<void>.delayed(const Duration(milliseconds: 100));
@@ -419,6 +468,10 @@ void main() {
     );
     await closed.future.timeout(const Duration(seconds: 5));
     expect(hub.relayUpstreamAborts, 0);
-    expect(hub.relayInFlight, 0, reason: 'the stalled relay released its worker');
+    expect(
+      hub.relayInFlight,
+      0,
+      reason: 'the stalled relay released its worker',
+    );
   });
 }

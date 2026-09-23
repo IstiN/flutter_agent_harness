@@ -64,6 +64,10 @@ HubState readHubState(File file) {
 /// invalid file counts as "no password".
 String? readHubStateSecret(File file) => readHubState(file).masterSecret;
 
+/// Monotonic per-process write counter for [writeHubState]'s unique
+/// temp names.
+int _hubStateWriteSeq = 0;
+
 /// Persists `{masterSecret, clients}` (0600 — the file carries secrets).
 /// Best-effort: IO failures never take the hub down.
 ///
@@ -80,7 +84,15 @@ Future<void> writeHubState(
     if (!await file.parent.exists()) {
       await file.parent.create(recursive: true);
     }
-    final tmp = File('${file.path}.tmp');
+    // Unique temp name: two overlapping writes must not race one
+    // shared .tmp (A renames it away; B's rename then throws and its
+    // enrollment is silently lost — issue #794 review round 5). The
+    // write counter keeps same-microsecond writes apart; microseconds
+    // keep restarts apart.
+    final tmp = File(
+      '${file.path}.${DateTime.now().microsecondsSinceEpoch}'
+      '.${_hubStateWriteSeq++}.tmp',
+    );
     await tmp.writeAsString(
       jsonEncode({'masterSecret': masterSecret, 'clients': clients}),
       flush: true,
@@ -91,7 +103,8 @@ Future<void> writeHubState(
     await tmp.rename(file.path);
   } on Object {
     // Persistence is best-effort; the in-memory state still serves.
-    // (A leftover .tmp is harmless — the next write overwrites it.)
+    // (A leftover uniquely-named .tmp from a crashed write is never
+    // read — harmless.)
   }
 }
 
@@ -183,23 +196,23 @@ class LocalHub {
     this.relayAllowAnyHost = false,
     this.relayConcurrency = 4,
     this.relayQueueLimit = 32,
-    this.relayMaxBodyBytes = 10 * 1024 * 1024,
+    this.relayMaxBodyBytes = relayDefaultMaxBodyBytes,
     this.relayConnectTimeout = relayDefaultConnectTimeout,
-    this.relayIdleTimeout = const Duration(seconds: 30),
+    this.relayIdleTimeout = relayDefaultIdleTimeout,
   }) : assert(
-          relayConcurrency > 0,
-          'relayConcurrency must be positive — 0 wedges the pool forever',
-        ),
-        assert(relayQueueLimit >= 0, 'relayQueueLimit must not be negative'),
-        assert(relayMaxBodyBytes > 0, 'relayMaxBodyBytes must be positive'),
-        assert(
-          relayConnectTimeout > Duration.zero,
-          'relayConnectTimeout must be positive',
-        ),
-        assert(
-          relayIdleTimeout > Duration.zero,
-          'relayIdleTimeout must be positive',
-        );
+         relayConcurrency > 0,
+         'relayConcurrency must be positive — 0 wedges the pool forever',
+       ),
+       assert(relayQueueLimit >= 0, 'relayQueueLimit must not be negative'),
+       assert(relayMaxBodyBytes > 0, 'relayMaxBodyBytes must be positive'),
+       assert(
+         relayConnectTimeout > Duration.zero,
+         'relayConnectTimeout must be positive',
+       ),
+       assert(
+         relayIdleTimeout > Duration.zero,
+         'relayIdleTimeout must be positive',
+       );
 
   /// The port to bind (`0` = ephemeral, tests).
   final int port;
@@ -458,10 +471,11 @@ class LocalHub {
       return;
     }
     if (slot == _RelaySlot.dropped) {
-      // The client disconnected while queued — response.done released
-      // the slot before a worker ever touched this request. There is
-      // nothing left to answer.
-      log('relay client went away while queued — dropped');
+      // The slot was released without a worker: the client disconnected
+      // while queued, or the hub is stopping (waiters completed false).
+      // Nothing is left to answer — the log stays generic so a shutdown
+      // does not read as phantom client churn (issue #794 review r5).
+      log('queued relay dropped (client gone or hub stopping)');
       return;
     }
     try {
@@ -843,10 +857,6 @@ class HubJoin {
 /// headers = the browser blocks the read).
 // ponytail: exact fa1.dev + localhost dev; extend the list when the pane
 // gains another production origin.
-/// The connect window for one upstream relay dial on this branch (the
-/// bounded relay of issue #794 layers the full timeout set on top).
-const Duration relayConnectTimeout = Duration(seconds: 10);
-
 String? relayAllowedOrigin(String? origin) {
   if (origin == null) return null;
   final uri = Uri.tryParse(origin);
@@ -874,10 +884,20 @@ const Duration relayDefaultConnectTimeout = Duration(seconds: 10);
 /// SINGLE source of truth for [handleRelayRequest]'s default and the
 /// [LocalHub] constructor defaults (issue #794 review: the 10 MiB body
 /// cap lived as two literals).
+/// The default relay body cap — the single literal behind
+/// [relayDefaultLimits] and the [LocalHub] constructor default (issue
+/// #794 review: the 10 MiB cap lived as two literals).
+const relayDefaultMaxBodyBytes = 10 * 1024 * 1024;
+
+/// The default per-chunk idle window on the upstream leg — shared the
+/// same way (record fields cannot feed const constructor defaults
+/// directly, so the knobs are named and the record assembles them).
+const relayDefaultIdleTimeout = Duration(seconds: 30);
+
 const RelayLimits relayDefaultLimits = (
-  maxBodyBytes: 10 * 1024 * 1024,
+  maxBodyBytes: relayDefaultMaxBodyBytes,
   connectTimeout: relayDefaultConnectTimeout,
-  idleTimeout: Duration(seconds: 30),
+  idleTimeout: relayDefaultIdleTimeout,
 );
 
 /// The redirect-hop cap (issue #792 AC4): a chain longer than this is a
@@ -1133,7 +1153,7 @@ Future<(Uri, Map<String, dynamic>)?> _relayEnvelope(
   var bodyComplete = false;
   try {
     final builder = BytesBuilder(copy: false);
-    var overCap = false;
+    final capHit = Completer<void>();
     final consumed = Completer<void>();
     late final StreamSubscription<Uint8List> sub;
     sub = request
@@ -1148,39 +1168,43 @@ Future<(Uri, Map<String, dynamic>)?> _relayEnvelope(
         )
         .listen(
           (chunk) {
-            if (overCap) return; // over the cap: drain, don't buffer
+            if (capHit.isCompleted) return; // over the cap: drain, don't buffer
             builder.add(chunk);
             if (builder.length > limits.maxBodyBytes) {
-              overCap = true;
               builder.clear(); // no unbounded buffer behind the cap
+              capHit.complete(); // the read must end NOW — see below
             }
           },
           onError: consumed.completeError,
           onDone: consumed.complete,
           cancelOnError: true,
         );
-    if (overCap) {
-      // The body crossed the cap: keep consuming what the client
-      // already has in flight so the 413 can ride a clean close
-      // (issue #794 review: the RST shape answered through a half-read
-      // request). Bounded by the drain window — a client still pumping
-      // past it is a stalled writer; cancel and take the raw path.
+    // Whichever ends the read first: the body completing (a stall
+    // errors as the 408 above), or the cap firing. Stream events arrive
+    // in LATER turns, so an over-cap flag checked in place is always
+    // false — the cap must WIN the race, or a client pumping past it
+    // pins the worker for the whole upload (issue #794 review round 5,
+    // measured: 4 MiB at 32 KiB / 20 ms held the slot 2.6 s).
+    await Future.any<void>([consumed.future, capHit.future]);
+    if (capHit.isCompleted) {
+      // Over the cap: drain a bounded window — a client that finished
+      // anyway gets the 413 on a clean close; one still pumping is cut
+      // off and the raw-socket fallback answers. Either way the worker
+      // is freed NOW, not after the upload.
       try {
         await consumed.future.timeout(_relayDrainWindow);
-        bodyComplete = true;
+        bodyComplete = true; // upload done: the 413 rides HttpResponse
       } on TimeoutException {
-        await sub.cancel();
+        await sub.cancel(); // still pumping: cut the read
+      } on Object {
+        // A stall (408) raced the cap — over-cap wins: 413.
       }
-    } else {
-      await consumed.future;
-      bodyComplete = true;
-    }
-    if (overCap) {
       throw const RelayLimitExceeded(
         HttpStatus.requestEntityTooLarge,
         'relay body too large',
       );
     }
+    bodyComplete = true;
     final envelope = (jsonDecode(utf8.decode(builder.takeBytes())) as Map)
         .cast<String, dynamic>();
     final url = Uri.tryParse('${envelope['url']}') ?? Uri();
@@ -1563,7 +1587,7 @@ Future<void> _relayFollowHops(
   var method = _relayMethodFor(envelope);
   final body = _relayRequestBody(envelope);
   _relayArmDisconnectWatch(request, state, onUpstreamAbort: onUpstreamAbort);
-  for (var hop = 0;; hop++) {
+  for (var hop = 0; ; hop++) {
     final res = await _relayIssueHop(
       upstream,
       method,
@@ -1619,11 +1643,12 @@ void _relayArmDisconnectWatch(
   state.watchArmed = true;
   unawaited(
     request.response.done.whenComplete(() {
-      state.upstreamReq?.abort();
-      if (!state.relaySettled) {
-        state.clientGone = true;
-        onUpstreamAbort?.call();
+      if (state.relaySettled) {
+        return; // settled relay: nothing to abort, nothing to count
       }
+      state.clientGone = true;
+      state.upstreamReq?.abort();
+      onUpstreamAbort?.call();
     }),
   );
 }
@@ -1765,9 +1790,9 @@ Future<void> _relayRespond(
       try {
         request.response.add(chunk);
         await request.response.flush().timeout(
-              limits.idleTimeout,
-              onTimeout: () => throw const RelayClientGone(),
-            );
+          limits.idleTimeout,
+          onTimeout: () => throw const RelayClientGone(),
+        );
       } on RelayLimitExceeded {
         rethrow;
       } on Object {
