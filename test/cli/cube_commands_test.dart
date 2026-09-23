@@ -38,6 +38,20 @@ spec:
     allow: [ls, echo]
 ''';
 
+  /// A kernel-backend manifest: the only shape where `--allow-degrade`
+  /// means anything (policy specs have nothing to degrade from).
+  const kernelCube = '''
+apiVersion: fa/v1
+kind: Cube
+metadata:
+  name: locked
+  description: kernel sandbox
+spec:
+  backend: kernel
+  tools:
+    allow: [ls, echo]
+''';
+
   const strictCube = '''
 apiVersion: fa/v1
 kind: Cube
@@ -166,44 +180,111 @@ spec:
   });
 
   test('/cube use --allow-degrade opts in and reload remembers it', () async {
-    await writeCube('dev', devCube);
+    await writeCube('locked', kernelCube);
     final fake = FakeStreamFunction([]);
     final cli = cliFor(fake.call);
     final run = cli.run();
-    io.sendLine('/cube use dev --allow-degrade');
-    await waitFor(
-      () => io.out.toString().contains('cube: dev active'),
-    );
+    io.sendLine('/cube use locked --allow-degrade');
+    await waitFor(() => io.out.toString().contains('cube: locked active'));
     io.sendLine('/cube');
-    await waitFor(
-      () => io.out.toString().contains('policy degrade allowed'),
-    );
+    await waitFor(() => io.out.toString().contains('policy degrade allowed'));
     io.sendLine('/cube reload');
     io.sendLine('/cube');
     io.sendLine('/exit');
     await run;
     final out = io.out.toString();
-    expect(out, contains('cube: dev active (policy degrade allowed)'));
-    // The opt-in survives /cube reload.
+    // Kernel specs render the opt-in suffix.
+    expect(out, contains('cube: locked active (policy degrade allowed)'));
+    // The opt-in survives /cube reload — loudly (re-applied note).
+    expect(out, contains('cube: locked reloaded (policy degrade allowed)'));
     expect(
       'policy degrade allowed'.allMatches(out).length,
-      greaterThanOrEqualTo(2),
+      greaterThanOrEqualTo(3),
     );
   });
 
-  test('/cube use without the flag keeps the refusal-by-default spec',
-      () async {
+  test('a mangled flag token is a plain target, not an opt-in', () async {
     await writeCube('dev', devCube);
     final fake = FakeStreamFunction([]);
     final cli = cliFor(fake.call);
     final run = cli.run();
-    io.sendLine('/cube use dev');
-    io.sendLine('/cube');
-    await waitFor(() => io.out.toString().contains('backend: '));
+    // `dev--allow-degrade` is one token: a (missing) cube name, not dev
+    // plus the flag.
+    io.sendLine('/cube use dev--allow-degrade');
+    await waitFor(() => io.out.toString().contains('not found'));
     io.sendLine('/exit');
     await run;
-    expect(io.out.toString(), isNot(contains('policy degrade allowed')));
+    final out = io.out.toString();
+    expect(out, contains('not found'));
+    expect(out, isNot(contains('cube: dev active')));
+    expect(out, isNot(contains('policy degrade allowed')));
   });
+
+  test(
+    '/cube use without the flag keeps the refusal-by-default spec',
+    () async {
+      await writeCube('locked', kernelCube);
+      final fake = FakeStreamFunction([]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+      io.sendLine('/cube use locked');
+      io.sendLine('/cube');
+      await waitFor(() => io.out.toString().contains('backend: '));
+      io.sendLine('/exit');
+      await run;
+      expect(io.out.toString(), contains('backend: kernel'));
+      expect(io.out.toString(), isNot(contains('policy degrade allowed')));
+    },
+  );
+
+  test(
+    'a policy-backend spec drops --allow-degrade (nothing to degrade)',
+    () async {
+      await writeCube('dev', devCube);
+      final fake = FakeStreamFunction([]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+      io.sendLine('/cube use dev --allow-degrade');
+      await waitFor(() => io.out.toString().contains('cube: dev active'));
+      io.sendLine('/exit');
+      await run;
+      expect(io.out.toString(), contains('cube: dev active'));
+      expect(io.out.toString(), isNot(contains('policy degrade allowed')));
+    },
+  );
+
+  test(
+    'REG: a settings-hub selection resets a remembered --allow-degrade',
+    () async {
+      await writeCube('locked', kernelCube);
+      await writeCube('dev', devCube);
+      final fake = FakeStreamFunction([]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      // Explicit opt-in for the kernel cube.
+      io.sendLine('/cube use locked --allow-degrade');
+      await waitFor(() => io.out.toString().contains('policy degrade allowed'));
+
+      // The settings-hub Cube sandbox flow selects another cube through
+      // the SHARED source/activate helpers — it must reset the remembered
+      // opt-in instead of leaking it into the new source.
+      final flow = cli.startCubeSandboxFlow();
+      await waitFor(() => io.out.toString().contains('custom path...'));
+      io.sendLine('2'); // dev (first project manifest)
+      await waitFor(() => io.out.toString().contains('cube: dev active'));
+      await flow;
+
+      io.sendLine('/cube reload');
+      io.sendLine('/exit');
+      await run;
+      final out = io.out.toString();
+      expect(out, contains('cube: dev active'));
+      // No degrade leak: reload re-resolves the settings-hub source plain.
+      expect(out, contains('cube: dev reloaded'));
+      expect(out, isNot(contains('dev reloaded (policy degrade allowed)')));
+    },
+  );
 
   test('/cube list shows the project manifests', () async {
     await writeCube('dev', devCube);

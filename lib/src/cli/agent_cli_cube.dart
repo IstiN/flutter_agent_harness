@@ -120,29 +120,30 @@ extension CubeCommands on AgentCli {
   /// `/cube use <name-or-path>` — resolve a manifest and enforce it from now
   /// on. A target containing `/` is a path, anything else a cube name.
   Future<void> _cubeUse(String args) async {
-    var target = args.trim();
+    // Tokenized, not suffix-matched: only a standalone `--allow-degrade`
+    // token opts in (`dev--allow-degrade` stays a plain target name).
+    final tokens = args.trim().split(RegExp(r'\s+'));
+    final allowDegrade = tokens.contains('--allow-degrade');
+    final target = tokens.where((t) => t != '--allow-degrade').join(' ');
     // SEC-05 escape hatch: `/cube use <preset> --allow-degrade` opts a
     // kernel spec into policy-mode fallback on hosts without an
-    // enforcing backend. Explicit per invocation, remembered for reload.
-    var allowDegrade = false;
-    if (target.endsWith('--allow-degrade')) {
-      allowDegrade = true;
-      target = target
-          .substring(0, target.length - '--allow-degrade'.length)
-          .trim();
-    }
+    // enforcing backend. Explicit per invocation, remembered for reload;
+    // a settings-hub selection never carries it.
     if (target.isEmpty) {
       io.writeln('usage: /cube use <name-or-path> [--allow-degrade]');
       return;
     }
     final resolved = await _resolveCubeTarget(target);
     if (resolved == null) return;
-    final spec = allowDegrade ? resolved.withAllowDegrade() : resolved;
-    _cubeUseAllowDegrade = allowDegrade;
-    await _activateCube(spec, target);
+    // The opt-in is only meaningful for kernel specs; on a policy spec it
+    // is dropped (and the suffix is not rendered).
+    final kernelSpec = resolved.backend == CubeBackendMode.kernel;
+    final degrade = allowDegrade && kernelSpec;
+    final spec = degrade ? resolved.withAllowDegrade() : resolved;
+    await _activateCube(spec, target, allowDegrade: degrade);
     io.writeln(
       'cube: ${spec.name} active'
-      '${allowDegrade ? ' (policy degrade allowed)' : ''}',
+      '${degrade ? ' (policy degrade allowed)' : ''}',
     );
   }
 
@@ -166,11 +167,19 @@ extension CubeCommands on AgentCli {
     }
     final resolved = await _resolveCubeTarget(source);
     if (resolved == null) return;
+    // A remembered `/cube use --allow-degrade` re-applies loudly (it is
+    // meaningless — and therefore dropped — for policy-backend specs).
+    final degrade =
+        _cubeUseAllowDegrade && resolved.backend == CubeBackendMode.kernel;
     await _activateCube(
-      _cubeUseAllowDegrade ? resolved.withAllowDegrade() : resolved,
+      degrade ? resolved.withAllowDegrade() : resolved,
       source,
+      allowDegrade: degrade,
     );
-    io.writeln('cube: ${resolved.name} reloaded');
+    io.writeln(
+      'cube: ${resolved.name} reloaded'
+      '${degrade ? ' (policy degrade allowed)' : ''}',
+    );
   }
 
   /// `/cube templates` — the fa1.dev registry catalog.
@@ -327,9 +336,17 @@ extension CubeCommands on AgentCli {
   /// Enforces [spec] from now on: swaps the sandbox spec, remembers
   /// [source] for `/cube reload` and restores the cache — shared by
   /// `/cube use`, `/cube reload` and the settings-hub Cube sandbox flow.
-  Future<void> _activateCube(CubeSpec spec, String source) async {
+  /// [allowDegrade] is the remembered opt-in for [source]; only `/cube
+  /// use` passes it, so a settings-hub selection always resets the flag
+  /// and `/cube reload` can never leak a degrade into another source.
+  Future<void> _activateCube(
+    CubeSpec spec,
+    String source, {
+    bool allowDegrade = false,
+  }) async {
     _cubeEnv.updateSpec(spec);
     _cubeSource = source;
+    _cubeUseAllowDegrade = allowDegrade;
     await _cubeRestoreQuietly(spec);
   }
 

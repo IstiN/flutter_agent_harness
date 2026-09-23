@@ -269,8 +269,7 @@ class AgentCli {
     Future<void> Function(Duration)? waitingSleep,
   }) : io = useTui && io.supportsRawMode ? _TuiCliIO(io) : io,
        _style = _Style(enabled: useColor),
-       _markdownSurface =
-           markdownSurface ?? const MarkdownSurface(),
+       _markdownSurface = markdownSurface ?? const MarkdownSurface(),
        _waitingClock = waitingClock ?? DateTime.now,
        _waitingSleep =
            waitingSleep ?? ((Duration d) => Future<void>.delayed(d)),
@@ -962,9 +961,11 @@ class AgentCli {
   /// `/cube use`; never cleared by `/cube off` (a reload re-applies it).
   String? _cubeSource;
 
-  /// Whether the last `/cube use` carried `--allow-degrade` (SEC-05:
-  /// policy-degrade opt-in for kernel specs); `/cube reload` re-applies
-  /// it to the re-resolved spec.
+  /// Whether the remembered source was activated with `--allow-degrade`
+  /// via an explicit `/cube use` (SEC-05: policy-degrade opt-in for
+  /// kernel specs); `/cube reload` re-applies it to the re-resolved
+  /// spec. Only `/cube use` sets it — a settings-hub selection resets
+  /// it, so a degrade can never leak into another source.
   bool _cubeUseAllowDegrade = false;
 
   /// The last fetched [DapHubSnapshot] — rendered by the settings hub's
