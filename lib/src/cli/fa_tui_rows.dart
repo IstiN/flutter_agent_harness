@@ -125,7 +125,7 @@ extension _TuiRowRenderers on FaTuiModel {
   /// selected").
   String _rearmSelection(String label) {
     final theme = FaThemeController.instance;
-    final open = theme.sgrPrefix(theme.current.accent);
+    final open = theme.accentSgr();
     if (open.isEmpty) return label;
     if (!label.contains('\x1b[0m')) return '$open$label\x1b[0m';
     return label.replaceAll('\x1b[0m', '\x1b[0m$open');
@@ -314,7 +314,17 @@ extension _TuiRowRenderers on FaTuiModel {
       row++;
     }
     if (plan.queueHint) {
-      b.writeln(_dim('↑ edit · ctrl+x delete · ctrl-s send immediately'));
+      // keyHint grammar (issue #809): chords come from the registry, the
+      // theme emitter (tuiDim) owns styling + NO_COLOR.
+      b.writeln(
+        _dim(
+          tuiKeyHintRow([
+            hintAction('queue.pop', 'edit'),
+            hintAction('queue.delete', 'delete'),
+            hintAction('queue.steer', 'send immediately'),
+          ]),
+        ),
+      );
     }
     return row;
   }

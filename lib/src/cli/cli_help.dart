@@ -581,7 +581,7 @@ SKILLS AND CONTEXT FILES
   /review            switch to review mode
   /terminal-setup    Shift+Enter newline support per terminal (Ctrl+O
                      always inserts one; /help TERMINAL has the keys)
-  /help              in-REPL command summary
+  /help [filter]     in-REPL command summary (/help hotkeys: key table)
   !<command>         run a shell command directly
   /<template> args   expand a prompt template (see PROMPTS)
   While a run is streaming, typed input steers the agent; Ctrl-C aborts.

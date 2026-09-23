@@ -49,6 +49,90 @@ final class TuiTheme {
 
     /// Failed tool row tint (subtle background).
     this.toolErrorBg = const Style(),
+
+    // ── issue #804 (omp S1): the token families the follow-up stories
+    // consume, token-for-token from omp `dark.json`/`light.json` (pinned
+    // df624f5). Roles a palette leaves unset render plain — never a
+    // fallback color (issue #444 role-table rule).
+
+    /// Pending tool row tint (subtle background) — S2 tool cards.
+    this.toolPendingBg = const Style(),
+
+    /// Background of custom (slash-command) message lines.
+    this.customMessageBg = const Style(),
+
+    /// Foreground of custom message text over [customMessageBg].
+    this.customMessageText = const Style(),
+
+    /// Thinking-block body text (S4 thinking panels).
+    this.thinkingText = const Style(),
+
+    /// Thinking intensity scale (S4): the level indicator color steps
+    /// from faint (off) to vivid (xhigh). Rendered as level labels.
+    this.thinkingOff = const Style(),
+    this.thinkingMinimal = const Style(),
+    this.thinkingLow = const Style(),
+    this.thinkingMedium = const Style(),
+    this.thinkingHigh = const Style(),
+    this.thinkingXhigh = const Style(),
+
+    /// Markdown transcript roles (S5): heading, link text, the dim
+    /// printed URL under a link, inline code, fenced code text, the
+    /// fence border glyphs, quoted text, the quote rail, horizontal
+    /// rules and list bullets.
+    this.mdHeading = const Style(),
+    this.mdLink = const Style(),
+    this.mdLinkUrl = const Style(),
+    this.mdCode = const Style(),
+    this.mdCodeBlock = const Style(),
+    this.mdCodeBlockBorder = const Style(),
+    this.mdQuote = const Style(),
+    this.mdQuoteBorder = const Style(),
+    this.mdHr = const Style(),
+    this.mdListBullet = const Style(),
+
+    /// Bare link foreground (non-markdown contexts).
+    this.link = const Style(),
+
+    /// Diff text roles (S2/S4 tool cards): added/removed lines and the
+    /// dim context lines.
+    this.toolDiffAdded = const Style(),
+    this.toolDiffRemoved = const Style(),
+    this.toolDiffContext = const Style(),
+
+    /// Syntax highlighting (S5), VS Code Dark+/Light+ token sets.
+    this.syntaxComment = const Style(),
+    this.syntaxKeyword = const Style(),
+    this.syntaxFunction = const Style(),
+    this.syntaxVariable = const Style(),
+    this.syntaxString = const Style(),
+    this.syntaxNumber = const Style(),
+    this.syntaxType = const Style(),
+    this.syntaxOperator = const Style(),
+    this.syntaxPunctuation = const Style(),
+
+    /// Bash-mode / python-mode prompt indicator (S3 composer band).
+    this.bashMode = const Style(),
+    this.pythonMode = const Style(),
+
+    /// Status line (S2): band background, separator glyphs, and the
+    /// segment text roles (model, path, git state, context share,
+    /// spend, staged/dirty/untracked counts, output/cost, subagents).
+    /// Text roles render over [statusLineBg].
+    this.statusLineBg = const Style(),
+    this.statusLineSep = const Style(),
+    this.statusLineModel = const Style(),
+    this.statusLinePath = const Style(),
+    this.statusLineGitClean = const Style(),
+    this.statusLineGitDirty = const Style(),
+    this.statusLineContext = const Style(),
+    this.statusLineSpend = const Style(),
+    this.statusLineStaged = const Style(),
+    this.statusLineDirty = const Style(),
+    this.statusLineUntracked = const Style(),
+    this.statusLineOutput = const Style(),
+    this.statusLineCost = const Style(),
+    this.statusLineSubagents = const Style(),
   });
 
   final String name;
@@ -102,6 +186,80 @@ final class TuiTheme {
 
   /// Failed tool row tint (subtle background).
   final Style toolErrorBg;
+
+  // ── issue #804 (omp S1) ──────────────────────────────────────────────────
+
+  /// Pending tool row tint (subtle background).
+  final Style toolPendingBg;
+
+  /// Background of custom (slash-command) message lines.
+  final Style customMessageBg;
+
+  /// Foreground of custom message text over [customMessageBg].
+  final Style customMessageText;
+
+  /// Thinking-block body text.
+  final Style thinkingText;
+
+  /// Thinking intensity scale, faint → vivid.
+  final Style thinkingOff;
+  final Style thinkingMinimal;
+  final Style thinkingLow;
+  final Style thinkingMedium;
+  final Style thinkingHigh;
+  final Style thinkingXhigh;
+
+  /// Markdown transcript roles (S5).
+  final Style mdHeading;
+  final Style mdLink;
+  final Style mdLinkUrl;
+  final Style mdCode;
+  final Style mdCodeBlock;
+  final Style mdCodeBlockBorder;
+  final Style mdQuote;
+  final Style mdQuoteBorder;
+  final Style mdHr;
+  final Style mdListBullet;
+
+  /// Bare link foreground (non-markdown contexts).
+  final Style link;
+
+  /// Diff text roles (S2/S4 tool cards).
+  final Style toolDiffAdded;
+  final Style toolDiffRemoved;
+  final Style toolDiffContext;
+
+  /// Syntax highlighting (S5), VS Code Dark+/Light+ token sets.
+  final Style syntaxComment;
+  final Style syntaxKeyword;
+  final Style syntaxFunction;
+  final Style syntaxVariable;
+  final Style syntaxString;
+  final Style syntaxNumber;
+  final Style syntaxType;
+  final Style syntaxOperator;
+  final Style syntaxPunctuation;
+
+  /// Bash-mode / python-mode prompt indicator (S3 composer band).
+  final Style bashMode;
+  final Style pythonMode;
+
+  /// Status line band + segment roles (S2); text renders over
+  /// [statusLineBg].
+  final Style statusLineBg;
+  final Style statusLineSep;
+  final Style statusLineModel;
+  final Style statusLinePath;
+  final Style statusLineGitClean;
+  final Style statusLineGitDirty;
+  final Style statusLineContext;
+  final Style statusLineSpend;
+  final Style statusLineStaged;
+  final Style statusLineDirty;
+  final Style statusLineUntracked;
+  final Style statusLineOutput;
+  final Style statusLineCost;
+  final Style statusLineSubagents;
 
   // ── Built-in themes ──────────────────────────────────────────────────────
 

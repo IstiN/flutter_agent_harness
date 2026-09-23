@@ -1,7 +1,8 @@
-# Runner split (2026-09-22): light/medium jobs -> ubuntu-24.04-arm (public repo:
-# free, SEPARATE capacity pool from the x64 queue that was the bottleneck);
-# cube-kernel-live -> self-hosted M5 (fa-m5-1, user LaunchAgent); remaining
-# x64 jobs (hostile-env, release binaries) stay on ubuntu-latest.
+# Runner split (2026-09-22): PURE-DART jobs -> ubuntu-24.04-arm (public repo:
+# free, SEPARATE capacity pool from the x64 queue). Flutter jobs stay x64 —
+# Flutter ships NO official linux-arm64 SDK (stable 3.47.5 manifest is x64
+# only; subosito/flutter-action fails 'version: any architecture: arm64').
+# cube-kernel-live -> self-hosted M5 (fa-m5-1, user LaunchAgent).
 name: CI
 
 on:
@@ -188,7 +189,7 @@ jobs:
 
   static:
     name: Static gates
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-latest
     needs: changes
     timeout-minutes: 8
     permissions:
@@ -645,7 +646,7 @@ jobs:
   # sharded test legs, each leg no longer waits for it.
   flutter-analyze:
     name: Flutter app analyze (ubuntu)
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
     timeout-minutes: 8
@@ -713,11 +714,17 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
-        with:
-          channel: stable
-          cache: true
-
+      # arm64: no official linux-arm64 release tarball (x64-only manifest) —
+      # subosito/flutter-action cannot fetch stable here. Bootstrap via git
+      # clone instead: flutter_tools pulls the official arm64 Dart SDK itself.
+      - name: Flutter SDK (arm64 git bootstrap)
+        shell: bash
+        run: |
+          git clone --depth 1 -b stable https://github.com/flutter/flutter.git "$HOME/flutter"
+          echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/flutter/bin:$PATH"
+          flutter --version
+          flutter precache
       - name: Pub cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
@@ -1440,6 +1447,14 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      # Known limit: pull_request/dispatched runs execute THIS file and the
+      # checker from the PR's own head — a PR can edit the gate in the same
+      # diff. Backstops: reviewers see workflow edits, Dependabot PRs
+      # re-verify on main, and the gate is re-enforced by any post-merge
+      # scheduled run. A hard guarantee needs a separate workflow_call gate
+      # pinned by SHA, invoked from a caller that never comes from the PR
+      # (follow-up issue, not this PR).
+
       # AC1: zero mutable third-party action refs (script + CI job).
       - name: AC1 — all third-party actions SHA-pinned
         run: bash scripts/check_action_pins.sh
@@ -1466,12 +1481,17 @@ jobs:
         run: |
           tmp="$(mktemp -d)"
           trap 'rm -rf "$tmp"' EXIT
-          mkdir -p "$tmp/bad" "$tmp/bad-hex" "$tmp/bad-composite/.github/actions/probe/deep" "$tmp/good" "$tmp/good-composite/.github/actions/probe/deep"
+          mkdir -p "$tmp/bad" "$tmp/bad-hex" "$tmp/bad-composite/.github/actions/probe/deep" "$tmp/good" "$tmp/good-composite/.github/actions/probe/deep" "$tmp/string-safe"
           printf 'jobs:\n  probe:\n    steps:\n      - uses: actions/checkout@v4\n' > "$tmp/bad/bad.yml"
-          printf 'jobs:\n  probe:\n    steps:\n      - uses: actions/checkout@not-a-real-sha-but-40-chars-aaaaaa\n' > "$tmp/bad-hex/bad.yml"
+          printf 'jobs:\n  probe:\n    steps:\n      - uses: actions/checkout@gggggggggggggggggggggggggggggggggggggggg\n' > "$tmp/bad-hex/bad.yml"
           printf 'name: probe\nruns:\n  using: composite\n  steps:\n    - uses: actions/checkout@v4\n' > "$tmp/bad-composite/.github/actions/probe/deep/action.yaml"
           printf 'jobs:\n  probe:\n    steps:\n      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4\n' > "$tmp/good/good.yml"
           printf 'name: probe\nruns:\n  using: composite\n  steps:\n    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4\n' > "$tmp/good-composite/.github/actions/probe/deep/action.yaml"
+          # String-safety: a uses-shaped string INSIDE a run: scalar is not a
+          # step ref — the checker is line-anchored (^[[:space:]]*(- )?uses:)
+          # and must not flag it. (Regression: a reviewer suspected the
+          # fixture printf lines in this very workflow would trip AC1.)
+          printf "jobs:\n  probe:\n    steps:\n      - name: write fixture\n        run: |\n          printf 'jobs:\\\\n  probe:\\\\n    steps:\\\\n      - uses: actions/checkout@v4\\\\n' > out.yml\n          bash scripts/check_action_pins.sh --path . >/dev/null 2>&1 || true\n" > "$tmp/string-safe/wf.yml"
           for bad in bad bad-hex bad-composite; do
             if bash scripts/check_action_pins.sh --path "$tmp/$bad" >/dev/null 2>&1; then
               echo "::error::pin checker FAILED to flag the $bad fixture"
@@ -1480,7 +1500,8 @@ jobs:
           done
           bash scripts/check_action_pins.sh --path "$tmp/good" >/dev/null
           bash scripts/check_action_pins.sh --path "$tmp/good-composite" >/dev/null
-          echo "fixture regression OK: @v4 / 40-char non-hex / unpinned nested composite rejected; SHA-pinned accepted"
+          bash scripts/check_action_pins.sh --path "$tmp/string-safe" >/dev/null
+          echo "fixture regression OK: @v4 / 40-char non-hex / unpinned nested composite rejected; SHA-pinned accepted; uses-shaped run-scalar strings ignored"
 
   # SEC-08 (#796): audit BOTH dependency graphs. pubspec_overrides.yaml
   # redirects dart_tui to the vendored fork (vendor/dart_tui) for local/CI/
@@ -1508,7 +1529,12 @@ jobs:
       # file never ships, so it must not bend this graph.
       - name: Park vendored overrides (hosted leg)
         if: matrix.graph == 'hosted'
-        run: mv pubspec_overrides.yaml pubspec_overrides.yaml.vendored
+        run: |
+          [ -f pubspec_overrides.yaml ] || {
+            echo "::error::pubspec_overrides.yaml missing — hosted-leg precondition broke, parking nothing would bend the graph silently"
+            exit 1
+          }
+          mv pubspec_overrides.yaml pubspec_overrides.yaml.vendored
       - run: dart pub get
       - name: Audit the ${{ matrix.graph }} dependency graph
         env:
@@ -1537,6 +1563,14 @@ jobs:
           # the `dart_tui:` entry header to the next top-level entry header
           # (two-space indent) — no fixed line window to rot.
           lock_block=$(awk 'f && /^  [A-Za-z0-9_.-]+:$/ { exit } /^  dart_tui:$/ { f = 1 } f { print }' pubspec.lock)
+          # Vacuous-assertion guard: if dart_tui ever leaves the lock (or
+          # the entry is renamed) the block is empty and the per-graph
+          # greps below would fail bare (exit 1, no annotation) or — worse
+          # for future shape changes — pass on nothing. Fail loudly here.
+          [ -n "$lock_block" ] || {
+            echo "::error::no dart_tui entry found in pubspec.lock — the audit assertion is vacuous, aborting"
+            exit 1
+          }
           echo "$lock_block"
           case "$GRAPH" in
             hosted)
@@ -1578,7 +1612,7 @@ jobs:
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, supply-chain, dep-audit, installer-verify]
+    needs: [changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, supply-chain, dep-audit, installer-verify]
     if: always()
     timeout-minutes: 5
     permissions:
@@ -1591,30 +1625,72 @@ jobs:
           echo "test-core     = ${{ needs.test-core.result }}"
           echo "coverage-gate = ${{ needs.coverage-gate.result }}"
           echo "guards        = ${{ needs.guards.result }}"
+          echo "flutter-analyze = ${{ needs.flutter-analyze.result }}"
           echo "flutter-tests = ${{ needs.flutter-tests.result }}"
           echo "test-faui     = ${{ needs.test-faui.result }}"
           echo "app-crap-gate = ${{ needs.app-crap-gate.result }}"
           echo "perf-gate     = ${{ needs.perf-gate.result }}"
           echo "cube-live     = ${{ needs.cube-kernel-live.result }}"
+          echo "cli-visual    = ${{ needs.cli-visual-settings.result }}"
+          echo "build-web     = ${{ needs.build-web.result }}"
+          echo "build-android = ${{ needs.build-android.result }}"
+          echo "build-ios     = ${{ needs.build-ios.result }}"
+          echo "build-macos   = ${{ needs.build-macos.result }}"
           echo "integ-mock    = ${{ needs.integration-mock.result }}"
           echo "supply-chain  = ${{ needs.supply-chain.result }}"
           echo "dep-audit     = ${{ needs.dep-audit.result }}"
           echo "installer-it = ${{ needs.installer-verify.result }}"
-      - name: Fail on any real failure
+      - name: Fail on any real failure (skipped security = dodge = FAIL)
+        env:
+          R_CHANGES: ${{ needs.changes.result }}
+          R_SUPPLY_CHAIN: ${{ needs.supply-chain.result }}
+          R_DEP_AUDIT: ${{ needs.dep-audit.result }}
+          R_STATIC: ${{ needs.static.result }}
+          R_FLUTTER_ANALYZE: ${{ needs.flutter-analyze.result }}
+          R_TEST_CORE: ${{ needs.test-core.result }}
+          R_COVERAGE: ${{ needs.coverage-gate.result }}
+          R_GUARDS: ${{ needs.guards.result }}
+          R_FLUTTER: ${{ needs.flutter-tests.result }}
+          R_CRAP: ${{ needs.app-crap-gate.result }}
+          R_FAUI: ${{ needs.test-faui.result }}
+          R_PERF: ${{ needs.perf-gate.result }}
+          R_CUBE: ${{ needs.cube-kernel-live.result }}
+          R_CLI_VISUAL: ${{ needs.cli-visual-settings.result }}
+          R_BUILD_WEB: ${{ needs.build-web.result }}
+          R_BUILD_ANDROID: ${{ needs.build-android.result }}
+          R_BUILD_IOS: ${{ needs.build-ios.result }}
+          R_BUILD_MACOS: ${{ needs.build-macos.result }}
+          R_INTEG: ${{ needs.integration-mock.result }}
+          R_HOSTILE: ${{ needs.hostile-env.result }}
+          R_INSTALLER_VERIFY: ${{ needs.installer-verify.result }}
         run: |
-          for r in "${{ needs.static.result }}" "${{ needs.test-core.result }}" \
-                   "${{ needs.coverage-gate.result }}" "${{ needs.guards.result }}" \
-                   "${{ needs.flutter-tests.result }}" "${{ needs.app-crap-gate.result }}" \
-                   "${{ needs.test-faui.result }}" "${{ needs.perf-gate.result }}" \
-                   "${{ needs.cube-kernel-live.result }}" \
-                   "${{ needs.integration-mock.result }}" \
-                   "${{ needs.hostile-env.result }}" \
-                   "${{ needs.supply-chain.result }}" \
-                   "${{ needs.dep-audit.result }}" \
-                   "${{ needs.installer-verify.result }}"; do
+          fail() { echo "Quality gate FAILED: $1"; exit 1; }
+          # The classifier itself must have run: a failed or skipped
+          # classifier skips EVERY downstream leg and would wave a PR
+          # through with zero gates executed.
+          [ "$R_CHANGES" = "success" ] || fail "changes classifier = $R_CHANGES"
+          # Security legs must EXECUTE and pass. For these, skipped is a
+          # dodge (e.g. a cunning diff that makes the classifier misfire),
+          # not a pass — review follow-up, #796/#801.
+          [ "$R_SUPPLY_CHAIN" = "success" ] || fail "supply-chain = $R_SUPPLY_CHAIN (skipped security is a dodge)"
+          [ "$R_DEP_AUDIT" = "success" ] || fail "dep-audit = $R_DEP_AUDIT (skipped security is a dodge)"
+          # The remaining legs are path-gated (flutter-analyze covers the
+          # lib/bin/test surface; the build-* legs cover platform targets):
+          # success or skipped is fine, anything else fails. Branch
+          # protection relies on THIS aggregate as the single required
+          # check (AGENTS.md "one aggregate Quality gate"), so every needs
+          # leg must land here — a red platform build must never yield a
+          # green required check.
+          for kv in "static:$R_STATIC" "flutter-analyze:$R_FLUTTER_ANALYZE" "test-core:$R_TEST_CORE" "coverage-gate:$R_COVERAGE" \
+                    "guards:$R_GUARDS" "flutter-tests:$R_FLUTTER" "app-crap-gate:$R_CRAP" \
+                    "test-faui:$R_FAUI" "perf-gate:$R_PERF" "cube-kernel-live:$R_CUBE" \
+                    "cli-visual-settings:$R_CLI_VISUAL" "build-web:$R_BUILD_WEB" \
+                    "build-android:$R_BUILD_ANDROID" "build-ios:$R_BUILD_IOS" "build-macos:$R_BUILD_MACOS" \
+                    "integration-mock:$R_INTEG" "hostile-env:$R_HOSTILE" \
+                    "installer-verify:$R_INSTALLER_VERIFY"; do
+            name="${kv%%:*}"; r="${kv#*:}"
             if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then
-              echo "Quality gate FAILED (a leg is $r)"
-              exit 1
+              fail "a leg is $r ($name)"
             fi
           done
           echo "Quality gate OK"
@@ -2197,9 +2273,6 @@ jobs:
         shell: bash
         env:
           FA_INSTALL_DIR: ${{ runner.temp }}/fa-bin
-          # Install THIS release (its provenance was just signed by
-          # release-provenance); the installer's baked default pin may lag.
-          FA_VERSION: ${{ github.ref_name }}
         run: sh ./site/install.sh
 
       - name: Smoke the installed binary (Windows)
