@@ -631,7 +631,15 @@ factual: paths, commands, invariants — no essays.
   `env -i` environment; profiles staged content-verified under
   `<home>/.fah/cube-profiles/<md5>.sb` (outside the guest-writable
   workspace; re-verified against the recomputed profile before every
-  wrapped exec — #790); the macOS SBPL profile denies writes blanket outside the
+  wrapped exec — #790); kernel mode fail-closes (`fa_cube[<name>]:`
+  error, no exec) when the staging location is not provably
+  guest-unwritable — a `homeDir` inside/relative-to the workspace or a
+  spec mount granting rw over it (the refusal names
+  `spec.allowDegrade: true` as the explicit policy-mode escape hatch;
+  with it set, the bind degrades and `onDegrade` fires); the staging
+  dir is swept once per
+  binding for this profile's own `.tmp` orphans (other bindings' files
+  untouched); the macOS SBPL profile denies writes blanket outside the
   workspace + `rw` mounts (`/dev/null`, `/dev/fd` exempt) and denies reads
   of `/etc` + user homes when no root mount grants reads (a blanket read
   deny would abort exec — dyld); Windows = Job Object descriptor only
