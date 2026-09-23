@@ -4146,6 +4146,18 @@
 - fix(security): installer verifies pinned version + provenance before install (#814)
 - chore: pin factory 77fc330 — sm: validation economy (#506) (#868)
 
+## 1.0.465
+
+- test: remove await_sm_ci_test — the bridge it pinned is deleted (#873) (#880)
+- chore: pin factory 68d98b0461944c6f48a7699e0eb35d5344bfeed6 (loop-scope stamp fix) (#879)
+- ci: grant checks:write — the factory stamps validation check runs (#878)
+- chore: pin factory 7e63e31a62793a178cb929bc0817d07d33f5cdda (App-token check stamps) (#877)
+- chore: pin factory 37cb42725a7588897ebc500ee26e455766cc9ca7 (gh-api check stamps) (#876)
+- chore: pin factory b00d60c90dd2a60bcb4df1f366ebdf0b7e6c3d1c (validation-sync URL fix) (#875)
+- chore: pin factory 28eee7ba65edb150bcca560f91396fbfae4f9819 (debug instrumentation for validation-sync) (#874)
+- ci: bridge-free validation — tick-stamped checks, ci-gate.yml deleted (#873)
+- chore: revert SM tick to hosted pool — Bitrise group invisible to IstiN org (#871)
+
 ## Unreleased
 
 ## Unreleased
