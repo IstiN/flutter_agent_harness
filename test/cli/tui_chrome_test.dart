@@ -81,6 +81,19 @@ void main() {
       final rows = tuiUserBubble(['hi']);
       expect(rows, ['', ' hi', '']);
     });
+
+    test('an unknown stored tint is kept, never repainted as a bubble (JVtX)', () {
+      FaThemeController.instance
+        ..reset()
+        ..profile = ColorProfile.trueColor;
+      const alienLead = '\x1b[48;2;1;2;3m';
+      final line = AnsiMarkdown(width: 60).formatLine('$alienLead card\x1b[0m');
+      // The stored lead survives verbatim — no bubble band guessed in.
+      expect(line, startsWith(alienLead));
+      expect(line, isNot(contains(tuiUserMessageBgSgr())));
+      // Still width-padded inside the stored band.
+      expect(tuiTextWidth(line.replaceAll(RegExp(r'\x1b\[[0-9;]*m'), '')), 60);
+    });
   });
 
   group('tool card (omp render/status-line.ts + getStateBgColor)', () {

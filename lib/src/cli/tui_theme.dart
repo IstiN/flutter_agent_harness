@@ -356,8 +356,10 @@ const TuiTheme _piDark = TuiTheme(
   userMessageText: Style(foregroundRgb: RgbColor(0xd4, 0xd4, 0xd4)),
   toolSuccessBg: Style(backgroundRgb: RgbColor(0x2a, 0x2e, 0x24)),
   toolErrorBg: Style(backgroundRgb: RgbColor(0x36, 0x26, 0x26)),
-  // Pending/in-flight card band — cool slate between userMessageBg and
-  // the error tint, keeping the pi palette's low-contrast rhythm.
+  // Pending/in-flight card band. NOT the highlight value (0x3a3a4a,
+  // JVaq): pi's dim toolOutput #989898 on it clears only 3.86:1 — below
+  // the #804 detail-text floor of 4.5. This darker slate clears the
+  // floor and keeps a visible band between the settled tints.
   toolPendingBg: Style(backgroundRgb: RgbColor(0x2b, 0x2d, 0x36)),
 );
 

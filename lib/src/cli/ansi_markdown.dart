@@ -244,9 +244,16 @@ final class AnsiMarkdown {
     final lead = _ansiRe.firstMatch(line)!.group(0)!;
     final role = FaThemeController.instance.preStyledRole(lead);
     final visible = line.replaceAll(_ansiRe, '');
-    if (role == null || role == 'bubble') {
-      // User-message bubble (or an unknown legacy prefix): repaint the
-      // band from the CURRENT session theme.
+    if (role == null) {
+      // Unknown tint (a card stored under a since-removed user palette):
+      // keep the stored bytes — repainting would GUESS a role, and the
+      // sniff must never mislabel (JVtX). Still padded, but with the
+      // stored prefix untouched so the original band survives.
+      final pad = width - tuiTextWidth(visible);
+      return pad <= 0 ? line : '$line${' ' * pad}$_reset';
+    }
+    if (role == 'bubble') {
+      // User-message bubble: repaint the band from the CURRENT theme.
       final pad = width - tuiTextWidth(visible);
       final bg = tuiUserMessageBgSgr();
       final fg = tuiUserMessageTextSgr();
