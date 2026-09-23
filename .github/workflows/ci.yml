@@ -1473,12 +1473,17 @@ jobs:
         run: |
           tmp="$(mktemp -d)"
           trap 'rm -rf "$tmp"' EXIT
-          mkdir -p "$tmp/bad" "$tmp/bad-hex" "$tmp/bad-composite/.github/actions/probe/deep" "$tmp/good" "$tmp/good-composite/.github/actions/probe/deep"
+          mkdir -p "$tmp/bad" "$tmp/bad-hex" "$tmp/bad-composite/.github/actions/probe/deep" "$tmp/good" "$tmp/good-composite/.github/actions/probe/deep" "$tmp/string-safe"
           printf 'jobs:\n  probe:\n    steps:\n      - uses: actions/checkout@v4\n' > "$tmp/bad/bad.yml"
           printf 'jobs:\n  probe:\n    steps:\n      - uses: actions/checkout@not-a-real-sha-but-40-chars-aaaaaa\n' > "$tmp/bad-hex/bad.yml"
           printf 'name: probe\nruns:\n  using: composite\n  steps:\n    - uses: actions/checkout@v4\n' > "$tmp/bad-composite/.github/actions/probe/deep/action.yaml"
           printf 'jobs:\n  probe:\n    steps:\n      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4\n' > "$tmp/good/good.yml"
           printf 'name: probe\nruns:\n  using: composite\n  steps:\n    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4\n' > "$tmp/good-composite/.github/actions/probe/deep/action.yaml"
+          # String-safety: a uses-shaped string INSIDE a run: scalar is not a
+          # step ref — the checker is line-anchored (^[[:space:]]*(- )?uses:)
+          # and must not flag it. (Regression: a reviewer suspected the
+          # fixture printf lines in this very workflow would trip AC1.)
+          printf "jobs:\n  probe:\n    steps:\n      - name: write fixture\n        run: |\n          printf 'jobs:\\\\n  probe:\\\\n    steps:\\\\n      - uses: actions/checkout@v4\\\\n' > out.yml\n          bash scripts/check_action_pins.sh --path . >/dev/null 2>&1 || true\n" > "$tmp/string-safe/wf.yml"
           for bad in bad bad-hex bad-composite; do
             if bash scripts/check_action_pins.sh --path "$tmp/$bad" >/dev/null 2>&1; then
               echo "::error::pin checker FAILED to flag the $bad fixture"
@@ -1487,7 +1492,8 @@ jobs:
           done
           bash scripts/check_action_pins.sh --path "$tmp/good" >/dev/null
           bash scripts/check_action_pins.sh --path "$tmp/good-composite" >/dev/null
-          echo "fixture regression OK: @v4 / 40-char non-hex / unpinned nested composite rejected; SHA-pinned accepted"
+          bash scripts/check_action_pins.sh --path "$tmp/string-safe" >/dev/null
+          echo "fixture regression OK: @v4 / 40-char non-hex / unpinned nested composite rejected; SHA-pinned accepted; uses-shaped run-scalar strings ignored"
 
   # SEC-08 (#796): audit BOTH dependency graphs. pubspec_overrides.yaml
   # redirects dart_tui to the vendored fork (vendor/dart_tui) for local/CI/
