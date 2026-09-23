@@ -4158,6 +4158,23 @@
 - ci: bridge-free validation — tick-stamped checks, ci-gate.yml deleted (#873)
 - chore: revert SM tick to hosted pool — Bitrise group invisible to IstiN org (#871)
 
+## 1.0.466
+
+- fix(hub): relay handling bounded - one slow request never stalls the hub (#794) (#817)
+- chore: pin factory c6eb4eb — one-tick actualization order (#895)
+- chore: pin factory c17bd77 — gh-first whitelist transport (#894)
+- chore: pin factory 67ec614 — stale-validation cancel, both stubs (#893)
+- chore: pin factory fc29b7e — both stubs in lockstep (Contents API PUT transport) (#892)
+- chore: align ai-teammate factory pin with machine-sm (383a27b, #890) (#891)
+- chore: pin factory 383a27b — heredoc graphql state transport (#516) (#890)
+- chore: align ai-teammate factory pin with machine-sm (f767351) (#888)
+- chore: pin factory 05f591c + branch tag factory-data (#515) (#889)
+- chore: pin factory f767351b75a47112e0f01ef86da213117154ffb3 — gh-only state transport (#514) (#887)
+- chore: pin factory ee66f4e — state-publish whitelist fix (#513) (#886)
+- hotfix: restore factory pin — 882 wrote an empty sha (uses: @ / factory_ref: empty) (#884)
+- chore: pin factory 34097f0 + publish fa-state.json (agents#512) (#883)
+- chore: pin factory d7d7308 — duplicate-dispatch guard (agents#511) (#882)
+
 ## Unreleased
 
 ## Unreleased
