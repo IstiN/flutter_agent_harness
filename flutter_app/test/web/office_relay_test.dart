@@ -309,6 +309,36 @@ void main() {
     );
   });
 
+  test('issue #792 review: a fresh localStorage setItem takes effect on '
+      'the next send — the stored bearer is never pinned stale', () async {
+    officeHubRelayToken = 'old-key'; // programmatic override (tests)
+    web.window.localStorage.setItem('fa_office_relay_token', 'updated-key');
+    addTearDown(
+      () => web.window.localStorage.removeItem('fa_office_relay_token'),
+    );
+    var authorization;
+    final fetchDouble = FetchDouble((url, init) async {
+      if (url == 'http://127.0.0.1:8787/healthz') {
+        return web.Response('ok'.toJS);
+      }
+      if (url == 'http://127.0.0.1:8787/relay') {
+        authorization = (init!.getProperty('headers'.toJS) as JSObject?)
+            ?.getProperty('authorization'.toJS);
+        return sseResponse(['data: {"delta":"hi"}\n\n']);
+      }
+      fail('unexpected fetch: $url');
+    });
+    addTearDown(fetchDouble.dispose);
+
+    final response = await newClient().send(providerRequest());
+    expect(response.statusCode, 200);
+    expect(
+      authorization,
+      'Bearer updated-key',
+      reason: 'storage wins over the stale global on every send',
+    );
+  });
+
   test('issue #792: a token-less pane skips the hub transport outright '
       '(no credential-less /relay request is ever sent)', () async {
     officeHubRelayToken = null; // explicit: no credential configured
