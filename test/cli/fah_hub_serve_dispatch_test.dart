@@ -91,7 +91,7 @@ void main() {
         'and names the pane storage key (issue #792 provisioning)', () {
       final tmp = Directory.systemTemp.createTempSync('fah-token');
       addTearDown(() => tmp.deleteSync(recursive: true));
-      final file = File('\${tmp.path}/hub.pid');
+      final file = File('${tmp.path}/hub.pid');
       writeHubPidState(file, pid: 42, port: 8787, relaySecret: 'sk-test');
       final hint = hubTokenHint(file);
       expect(hint, isNotNull);
@@ -104,12 +104,12 @@ void main() {
     test('fa hub token: no pid file or no relay secret answers null '
         '(the command refuses by name, never prints an empty hint)', () {
       expect(
-        hubTokenHint(File('\${Directory.systemTemp.path}/none-here')),
+        hubTokenHint(File('${Directory.systemTemp.path}/none-here')),
         isNull,
       );
       final tmp = Directory.systemTemp.createTempSync('fah-token2');
       addTearDown(() => tmp.deleteSync(recursive: true));
-      final file = File('\${tmp.path}/hub.pid');
+      final file = File('${tmp.path}/hub.pid');
       writeHubPidState(file, pid: 42, port: 8787, relaySecret: null);
       expect(hubTokenHint(file), isNull);
     });
