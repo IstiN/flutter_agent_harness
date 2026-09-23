@@ -20,6 +20,7 @@ import 'tui_editor.dart';
 import 'tui_hit_regions.dart';
 import 'tui_prompt.dart';
 import 'tui_theme.dart';
+import 'tui_chrome.dart';
 import 'termios_guard.dart' show SttyRunner;
 import 'tui_repl.dart' show MenuItem, QueuedMessage, TuiProgramHooks, stripAnsi;
 import 'system_notice_render.dart';
@@ -1862,7 +1863,16 @@ final class FaTuiModel extends Model {
   /// so the markdown formatter leaves them alone). Two blank lines follow:
   /// the first is consumed by the run's first output line (thinking or the
   /// `>_Fa` prefix), leaving one visible empty line after the user message.
+  ///
+  /// Chrome mode (issue #807) drops the rule — the omp bubble band IS the
+  /// turn separator — and wraps the input in [tuiUserBubble] (blank band
+  /// rows above/below, one leading space per row). The pre-styled contract
+  /// is shared: rows carry the bg SGR marker and the view re-pads/repaints.
   List<String> _echoAppend(List<String> lines, String text) {
+    if (tuiChromeEnabled) {
+      final appended = _appendOutput(lines, tuiUserBubble(text.split('\n')).join('\n'), true);
+      return _appendOutput(appended, '', true);
+    }
     final rule = _dim('─' * termWidth);
     final styledInput = text.split('\n').map(tuiUserMessageLine).join('\n');
     final appended = _appendOutput(lines, '$rule\n$styledInput', true);
@@ -1885,7 +1895,6 @@ final class FaTuiModel extends Model {
     final images = keepAttachments
         ? const <TuiImageAttachment>[]
         : List<TuiImageAttachment>.of(attachments);
-    final rule = _dim('─' * termWidth);
     // Empty submits (guided-flow "keep the default" answers) skip the
     // message echo — an empty backgrounded block would read as a glitch.
     if (inputText.isEmpty) {
@@ -1897,27 +1906,14 @@ final class FaTuiModel extends Model {
           menuTokenStart: -1,
           attachments: keepAttachments ? null : const [],
         ),
-        () async {
-          await callbacks.onSubmit(text, images: images);
-          return null;
-        },
+        _submitCmd(text, images),
       );
     }
     final echoed = _echoAppend(outputLines, inputText);
     // Shell-style input history: plain messages only (no slash/bang
     // commands), consecutive duplicates collapsed, capped at 100.
     final history = _recordInputHistory(inputHistory, text);
-    // The pinned echo for long answers (Copilot-style): rule + the first
-    // input line, truncated to the width with an ellipsis marking any
-    // remainder — a multi-line message or one simply longer than a row
-    // (a bare long line previously got visually cut without any marker).
-    // The ellipsis is stored PLAIN: the sticky formatter paints it with
-    // the current theme at emit time; a baked dim SGR would freeze the
-    // old palette after a mid-session /theme switch (issue #279 E1).
-    final firstLine = inputText.split('\n').first;
-    final fits = firstLine.length <= termWidth - 3 || termWidth <= 3;
-    final shown = fits ? firstLine : firstLine.substring(0, termWidth - 3);
-    final more = inputText.contains('\n') || !fits ? ' …' : '';
+    final (sticky, stickyEchoLineCount) = _pinnedEcho(inputText);
     final cleared = copyWith(
       inputText: '',
       cursor: 0,
@@ -1927,9 +1923,9 @@ final class FaTuiModel extends Model {
       outputLines: echoed,
       menuOpen: false,
       menuTokenStart: -1,
-      stickyLines: [rule, '${tuiUserMessageLine(shown)}$more'],
+      stickyLines: sticky,
       stickyIndex: outputLines.length,
-      stickyEchoLineCount: 2 + inputText.split('\n').length,
+      stickyEchoLineCount: stickyEchoLineCount,
       attachments: keepAttachments ? null : const [],
     );
     return (
@@ -1940,11 +1936,39 @@ final class FaTuiModel extends Model {
         scrollOffset: cleared._scrollBottom(cleared._wrappedLines()),
         followTail: true,
       ),
+      _submitCmd(text, images),
+    );
+  }
+
+  /// The host-submit command both submit shapes end with.
+  Cmd _submitCmd(String text, List<TuiImageAttachment> images) =>
       () async {
         await callbacks.onSubmit(text, images: images);
         return null;
-      },
-    );
+      };
+
+  /// The pinned echo for long answers (Copilot-style) and its echo-line
+  /// count: the first input line, truncated to the width with an ellipsis
+  /// marking any remainder — a multi-line message or one simply longer
+  /// than a row (a bare long line previously got visually cut without any
+  /// marker). The ellipsis is stored PLAIN: the sticky formatter paints it
+  /// with the current theme at emit time; a baked dim SGR would freeze the
+  /// old palette after a mid-session /theme switch (issue #279 E1).
+  /// Chrome mode pins the bubble's leading band rows (issue #807); the
+  /// echo grows by the second band row. Pinned rows are pre-styled bubble
+  /// rows, so the sticky painter re-themes them like any echo line.
+  (List<String>, int) _pinnedEcho(String text) {
+    final firstLine = text.split('\n').first;
+    // Cell-width math (issue #859 family): UTF-16 length both mis-measures
+    // wide glyphs and can split a surrogate pair mid-echo.
+    final budget = termWidth - 3;
+    final fits = tuiTextWidth(firstLine) <= budget || termWidth <= 3;
+    final shown = fits ? firstLine : tuiFitWidth(firstLine, budget);
+    final more = text.contains('\n') || !fits ? ' …' : '';
+    final sticky = tuiChromeEnabled
+        ? [tuiUserMessageLine(''), tuiUserMessageLine(' $shown$more')]
+        : [_dim('─' * termWidth), '${tuiUserMessageLine(shown)}$more'];
+    return (sticky, (tuiChromeEnabled ? 3 : 2) + text.split('\n').length);
   }
 
   /// The input history after recording [text]: plain messages only (no
