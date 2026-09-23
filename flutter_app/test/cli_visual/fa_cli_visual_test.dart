@@ -1821,8 +1821,6 @@ Future<int> _freeLoopbackPort(WidgetTester tester) async {
 /// Starts the canned-answer server on [port] and waits until it accepts
 /// connections. Process I/O runs in the real-async zone (see the harness
 /// docs on fake-zone timers).
-/// Starts the canned-answer server on [port] and waits until it accepts
-/// connections. Process I/O runs in the real-async zone (see the harness
 /// docs on fake-zone timers).
 Future<Process> _startAnsweringServer(
   WidgetTester tester,
