@@ -117,8 +117,9 @@ void main() {
 
     test('kernel mode wraps background jobs and stages the profile', () async {
       final inner = _RecordingShell();
+      final delegate = MemoryExecutionEnv(cwd: '/work', shell: inner);
       final env = SandboxedExecutionEnv(
-        MemoryExecutionEnv(cwd: '/work', shell: inner),
+        delegate,
         CubeSpec(
           name: 'test-cube',
           backend: CubeBackendMode.kernel,
@@ -126,15 +127,19 @@ void main() {
           filesystem: const CubeFsPolicy(workspace: '/work'),
         ),
         os: 'macos',
+        homeDir: '/home',
       );
       await env.startShellJob('git log', id: 'j1', logPath: '/tmp/j1.log');
       final job = inner.jobs.single;
       expect(job, contains('sandbox-exec'));
       expect(job, endsWith("'git log'"));
-      // The SBPL profile is staged on the delegate filesystem.
-      final profile = await env.readTextFile(
-        '/work/.fah/cube-profiles/${cubeSpecCacheKey(env.activeSpec!)}.sb',
-      );
+      // The SBPL profile is staged on the delegate filesystem, under the
+      // user home — outside the guarded workspace.
+      final profilePath =
+          RegExp(r"sandbox-exec -f '([^']+\.sb)'").firstMatch(job)!.group(1)!;
+      expect(profilePath, startsWith('/home/.fah/cube-profiles/'));
+      expect(profilePath, isNot(startsWith('/work')));
+      final profile = await delegate.readTextFile(profilePath);
       expect(profile.getOrThrow(), startsWith('(version 1)'));
     });
 
@@ -156,6 +161,7 @@ void main() {
           filesystem: const CubeFsPolicy(workspace: '/work'),
         ),
         os: 'linux',
+        homeDir: '/home',
       );
       final result = await env.startShellJob(
         'git log',
@@ -170,6 +176,39 @@ void main() {
         'unshare failed: Operation not permitted',
       );
       expect(inner.jobs, isEmpty);
+    });
+
+    test('a refusing kernel spec denies background jobs naming allowDegrade',
+        () async {
+      final inner = _RecordingShell();
+      final env = SandboxedExecutionEnv(
+        MemoryExecutionEnv(cwd: '/work', shell: inner),
+        CubeSpec(
+          name: 'test-cube',
+          backend: CubeBackendMode.kernel,
+          tools: const CubeToolPolicy(allow: {'git'}),
+          filesystem: const CubeFsPolicy(workspace: '/work'),
+        ),
+        os: 'windows',
+      );
+      final result = await env.startShellJob(
+        'git log',
+        id: 'j1',
+        logPath: '/tmp/j1.log',
+      );
+      expect(result.isErr, isTrue);
+      expect(result.errorOrNull!.code, ExecutionErrorCode.spawnError);
+      expect(result.errorOrNull!.message, contains('allowDegrade'));
+      expect(inner.jobs, isEmpty);
+      expect(env.effectiveBackend, isNull);
+    });
+
+    test('effectiveBackend forwards the shell mode', () {
+      final env = SandboxedExecutionEnv(
+        MemoryExecutionEnv(cwd: '/work', shell: _RecordingShell()),
+        spec('test-cube'),
+      );
+      expect(env.effectiveBackend, CubeBackendMode.policy);
     });
 
     test('backgroundJobsSupported delegates to the wrapped shell', () {
