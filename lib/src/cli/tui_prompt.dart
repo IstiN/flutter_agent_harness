@@ -17,6 +17,7 @@ import 'package:characters/characters.dart';
 import '../approval/approval.dart';
 import '../tools/ask_tool.dart';
 import '../tools/request_secret_tool.dart';
+import 'tui_key_hints.dart';
 import 'tui_text_width.dart';
 import 'tui_theme.dart';
 
@@ -1292,9 +1293,20 @@ List<String> _askInputRows(TuiPromptState state, int inner) {
     return rows;
   }
   final hint = spec.multiSelect
-      ? '↑/↓ navigate · numbers toggle · d done · space for free text · Esc cancel'
-      : '↑/↓ navigate · number to select · space for free text · '
-            'Enter to confirm · Esc cancel';
+      ? tuiKeyHintRow([
+          hintAction('prompt.selector', 'navigate'),
+          hintText('numbers toggle'),
+          hintChords(const [TuiChord('d')], 'done'),
+          hintChords(const [TuiChord('space')], 'for free text'),
+          hintAction('prompt.cancel', 'cancel'),
+        ])
+      : tuiKeyHintRow([
+          hintAction('prompt.selector', 'navigate'),
+          hintText('number to select'),
+          hintChords(const [TuiChord('space')], 'for free text'),
+          hintAction('prompt.confirm', 'confirm'),
+          hintAction('prompt.cancel', 'cancel'),
+        ]);
   return [
     _wrapBodyLine(_dim(hint), inner, dim: true),
     _wrapBodyLine('', inner),
@@ -1403,8 +1415,16 @@ List<String> _secretFooterRows(
   required bool nameFocused,
 }) {
   final hint = nameFocused
-      ? 'Type to replace name · Tab to value · Esc cancel'
-      : 'Enter to save · Tab to edit name · Esc cancel';
+      ? tuiKeyHintRow([
+          hintText('type to replace name'),
+          hintAction('prompt.nextField', 'to value'),
+          hintAction('prompt.cancel', 'cancel'),
+        ])
+      : tuiKeyHintRow([
+          hintAction('prompt.confirm', 'to save'),
+          hintAction('prompt.nextField', 'to edit name'),
+          hintAction('prompt.cancel', 'cancel'),
+        ]);
   final rows = <String>[_wrapBodyLine(_dim(hint), inner, dim: true)];
 
   final error = state.secretEnterError;
@@ -1424,7 +1444,13 @@ List<String> _approvalInputRows(TuiPromptState state, int inner) {
   };
   final rows = <String>[
     _wrapBodyLine(
-      _dim('1-3 or y/a/n · other keys type a note · Esc = deny'),
+      _dim(
+        tuiKeyHintRow([
+          hintAction('prompt.answer', 'answer'),
+          hintText('other keys type a note'),
+          hintAction('prompt.cancel', '= deny'),
+        ]),
+      ),
       inner,
       dim: true,
     ),
