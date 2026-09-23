@@ -33,6 +33,7 @@ import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/ext_cli.dart';
 import 'package:flutter_agent_harness/src/cli/session_tree.dart';
+import 'package:flutter_agent_harness/src/cli/tui_key_hints.dart';
 import 'package:flutter_agent_harness/src/cli/trajectory_tui.dart';
 import 'package:flutter_agent_harness/src/prompts/prompts.g.dart';
 import 'package:yaml/yaml.dart' as yaml;
@@ -1138,6 +1139,8 @@ final class _FaBrowserController implements BrowserController {
 Future<void> _runApp(List<String> args) async {
   final packageVersion = _packageVersion();
   _applyProviderFilterEnv();
+  // Platform-aware chord display (issue #809): Option/Cmd labels on macOS.
+  tuiKeyHintDarwin = Platform.isMacOS;
   // `fa serve [--a2a|--bridge] [--port N] [--token T]` — the parser does
   // not know the serve forms, so they are intercepted before CliArgs
   // parsing: serve-specific flags are stripped from the parsed args and

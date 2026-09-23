@@ -1247,7 +1247,7 @@ void main() {
       expect(rows, contains('MY_TOKEN'));
       expect(rows, contains('Value — hidden (Ctrl+R reveals):'));
       expect(rows, contains('(paste or type secret)'));
-      expect(rows, contains('Enter to save · Tab to edit name · Esc cancel'));
+      expect(rows, contains('enter to save · tab to edit name · esc cancel'));
     });
 
     test('renders masked value with cursor when characters are entered', () {
@@ -1267,7 +1267,7 @@ void main() {
       );
       state = handleTuiPromptKey(state, const PromptTab()).state;
       final rows = renderTuiPrompt(state, 60).join('\n');
-      expect(rows, contains('Type to replace name · Tab to value · Esc cancel'));
+      expect(rows, contains('type to replace name · tab to value · esc cancel'));
     });
   });
 }
