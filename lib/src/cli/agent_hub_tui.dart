@@ -306,6 +306,7 @@ String renderHubFrame(
   FaHubState state, {
   required int width,
   required int height,
+  String? footerHint,
 }) {
   final bodyHeight = (height - 3).clamp(1, 1000); // title + footer + hint
   final b = StringBuffer();
@@ -319,7 +320,10 @@ String renderHubFrame(
   } else {
     _hubTranscriptBody(state, bodyHeight, width, row);
   }
-  row(hubDim(state.hint));
+  // A transient host hint (the armed double-press ctrl+c hint, issue
+  // #830) takes over the footer row for its window, then state.hint
+  // returns.
+  row(hubDim(footerHint ?? state.hint));
   return b.toString();
 }
 

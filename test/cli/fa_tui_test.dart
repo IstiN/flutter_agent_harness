@@ -5,10 +5,12 @@ import 'package:dart_tui/dart_tui.dart';
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/fa_tui.dart';
 import 'package:flutter_agent_harness/src/cli/fuzzy_matcher.dart';
-import 'package:flutter_agent_harness/src/cli/tui_chrome.dart' show tuiChromeEnabled;
+import 'package:flutter_agent_harness/src/cli/tui_chrome.dart'
+    show tuiChromeEnabled;
 import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:flutter_agent_harness/src/cli/tui_repl.dart';
-import 'package:flutter_agent_harness/src/cli/tui_text_width.dart' show tuiTextWidth;
+import 'package:flutter_agent_harness/src/cli/tui_text_width.dart'
+    show tuiTextWidth;
 import 'package:test/test.dart';
 
 void main() {
@@ -757,9 +759,9 @@ void main() {
         termHeight: 12, // small viewport so content overflows fast
       );
       for (final ch in 'hello'.split('')) {
-        model = model
-            .update(KeyPressMsg(TeaKey(code: KeyCode.rune, text: ch))).$1
-            as FaTuiModel;
+        model =
+            model.update(KeyPressMsg(TeaKey(code: KeyCode.rune, text: ch))).$1
+                as FaTuiModel;
       }
       final submitted_ = model.update(
         KeyPressMsg(const TeaKey(code: KeyCode.enter)),
@@ -771,29 +773,32 @@ void main() {
 
       model = model.update(BusyMsg(true)).$1 as FaTuiModel;
       for (var i = 0; i < 20; i++) {
-        model = model
-            .update(OutputMsg('line $i', newline: true)).$1 as FaTuiModel;
+        model =
+            model.update(OutputMsg('line $i', newline: true)).$1 as FaTuiModel;
       }
       final stripped = model.view().content.replaceAll(
-      RegExp(r'\x1b\[[0-9;]*m'),
-      '',
-    );
-    final rows = stripped.split('\n');
-    if (chrome) {
-      // The pinned echo sits at the top: bubble band top, then the first
-      // input line (issue #807 chrome).
-      expect(rows[0].trim(), isEmpty);
-    } else {
-      // Kill switch: the legacy dim rule pins the echo top.
-      expect(rows.first, contains('─'),
-          reason: 'tuiChromeEnabled=false keeps the legacy echo rule');
-    }
-    expect(rows[1], contains('hello'));
+        RegExp(r'\x1b\[[0-9;]*m'),
+        '',
+      );
+      final rows = stripped.split('\n');
+      if (chrome) {
+        // The pinned echo sits at the top: bubble band top, then the first
+        // input line (issue #807 chrome).
+        expect(rows[0].trim(), isEmpty);
+      } else {
+        // Kill switch: the legacy dim rule pins the echo top.
+        expect(
+          rows.first,
+          contains('─'),
+          reason: 'tuiChromeEnabled=false keeps the legacy echo rule',
+        );
+      }
+      expect(rows[1], contains('hello'));
 
-    // Going idle unpins the echo.
-    model = model.update(BusyMsg(false)).$1 as FaTuiModel;
-    expect(model.stickyLines, isEmpty);
-    expect(model.stickyIndex, -1);
+      // Going idle unpins the echo.
+      model = model.update(BusyMsg(false)).$1 as FaTuiModel;
+      expect(model.stickyLines, isEmpty);
+      expect(model.stickyIndex, -1);
     }
   });
 
@@ -2000,16 +2005,9 @@ void main() {
       expect(submitted, ['hi']);
     });
 
-    test('ctrl+c interrupts and returns a quit command', () {
-      var interrupted = false;
-      final model = FaTuiModel(
-        callbacks: callbacks(onInterrupt: () => interrupted = true),
-        isExited: () => false,
-      );
-      final result = model.update(ctrl('c'));
-      expect(interrupted, isTrue);
-      expect(result.$2, isNotNull);
-    });
+    // The double-press ctrl+c suite (issue #830) lives in
+    // fa_tui_double_press_test.dart; the hub-overlay double-press case in
+    // fa_tui_controller_overlay_test.dart.
 
     test('generic picker arrows and page keys navigate with clamping', () {
       var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
@@ -2154,5 +2152,4 @@ void main() {
       expect((result.$1 as FaTuiModel).termWidth, 120);
     });
   });
-
 }

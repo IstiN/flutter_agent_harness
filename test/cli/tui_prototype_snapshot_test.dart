@@ -85,7 +85,10 @@ void main() {
     final out = await acc.waitFor('0tok');
     final plain = _stripAnsi(out);
     expect(plain, contains('fa — Flutter Agent Harness'));
-    expect(plain, contains('escape interrupt'));
+    expect(
+      plain,
+      contains('esc interrupt · ctrl+c clear · double ctrl+c exit'),
+    );
     expect(plain, contains('> '));
     expect(plain, contains('mode: code'));
     expect(plain, contains('0tok'));
