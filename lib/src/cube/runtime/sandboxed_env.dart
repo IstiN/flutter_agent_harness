@@ -17,6 +17,7 @@ library;
 import 'dart:typed_data';
 
 import '../config/cube_spec.dart';
+import '../config/fs_policy.dart';
 import '../../env/execution_env.dart';
 import 'cube_fs_guard.dart';
 import 'policy_engine.dart';
@@ -30,22 +31,29 @@ final class SandboxedExecutionEnv implements ExecutionEnv, BackgroundShell {
   ///
   /// [homeDir] and [workspaceRoot] forward to [CubeFsGuard] (the CLI passes
   /// the real process cwd as [workspaceRoot]; the cube's `/workspace` is
-  /// realized as the env cwd, not a literal directory).
+  /// realized as the env cwd, not a literal directory). [pathProbe] enables
+  /// symlink resolution in the fs guard; real hosts pass
+  /// `LocalCubeFsProbe`.
   ///
   /// [os] names the host platform for `backend: kernel` specs (the CLI
   /// passes `Platform.operatingSystem`; `lib/src` itself stays pure Dart).
-  /// A null [os] — or a platform without an enforcing backend — keeps
-  /// kernel-mode cubes in pure policy mode, announced through [onWarning]
-  /// with a loud `fa_cube[<name>]:` line.
+  /// A null [os] — or a platform without an enforcing backend — leaves a
+  /// kernel-mode cube undeliverable: the shell refuses (clean
+  /// `fa_cube[<name>]:` error on every exec, zero commands run) unless the
+  /// spec sets `allowDegrade: true`, in which case it runs in pure policy
+  /// mode, announced through [onWarning] with a loud `fa_cube[<name>]:`
+  /// line. `effectiveBackend` reports what actually runs.
   SandboxedExecutionEnv(
     this._delegate,
     CubeSpec? spec, {
     String? homeDir,
     String? workspaceRoot,
+    CubeFsProbe? pathProbe,
     String? os,
     void Function(String message)? onWarning,
   }) : _homeDir = homeDir,
        _workspaceRoot = workspaceRoot,
+       _pathProbe = pathProbe,
        _os = os,
        _onWarning = onWarning {
     if (spec == null) {
@@ -59,6 +67,7 @@ final class SandboxedExecutionEnv implements ExecutionEnv, BackgroundShell {
   final String? _homeDir;
   final ExecutionEnv _delegate;
   final String? _workspaceRoot;
+  final CubeFsProbe? _pathProbe;
   final String? _os;
   final void Function(String message)? _onWarning;
 
@@ -68,6 +77,10 @@ final class SandboxedExecutionEnv implements ExecutionEnv, BackgroundShell {
 
   /// The spec currently enforced, or `null` in passthrough mode.
   CubeSpec? get activeSpec => _shellActiveSpec;
+
+  /// The backend the shell actually executes with (`null` = passthrough or
+  /// a refused kernel spec): hosts display/audit what actually ran.
+  CubeBackendMode? get effectiveBackend => _shell.effectiveBackend;
 
   /// Reads the shell's live spec (the single source of truth for sandbox
   /// mode across the fs guard, shell and job policy checks).
@@ -146,8 +159,20 @@ final class SandboxedExecutionEnv implements ExecutionEnv, BackgroundShell {
     if (wrapperFailure != null) {
       return Err(ExecutionError(ExecutionErrorCode.spawnError, wrapperFailure));
     }
+    final prepared = await _shell.prepare(command, env: options?.env);
+    if (prepared == null) {
+      return Err(
+        ExecutionError(
+          ExecutionErrorCode.spawnError,
+          // Same shape as every kernel failure — the shell owns it.
+          _shell.kernelError(
+            _shell.kernelStagingError ?? 'profile staging failed',
+          ),
+        ),
+      );
+    }
     return bg.startShellJob(
-      await _shell.prepare(command, env: options?.env),
+      prepared,
       id: id,
       logPath: logPath,
       options: sandboxExecOptions(spec, options),
@@ -163,6 +188,7 @@ final class SandboxedExecutionEnv implements ExecutionEnv, BackgroundShell {
       spec,
       homeDir: _homeDir,
       workspaceRoot: _workspaceRoot,
+      pathProbe: _pathProbe,
     );
     _shell = SandboxedShell(
       _delegate,
@@ -171,11 +197,13 @@ final class SandboxedExecutionEnv implements ExecutionEnv, BackgroundShell {
       os: _os,
       homeDir: _homeDir,
       onDegrade: _onWarning,
+      pathProbe: _pathProbe,
     );
     _engine = CubePolicyEngine(
       spec,
       homeDir: _homeDir,
       workspaceRoot: _delegate.cwd,
+      pathProbe: _pathProbe,
     );
   }
 

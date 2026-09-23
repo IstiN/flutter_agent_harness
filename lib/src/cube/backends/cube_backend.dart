@@ -21,7 +21,8 @@ abstract interface class CubeSandboxBackend {
   bool get enforces;
 
   /// Wraps [command] so it runs inside the OS sandbox. [profilePath] names
-  /// the profile file staged for the current spec (`.fah/cube-profiles/`);
+  /// the content-verified profile file staged by the shell
+  /// (`<home>/.fah/cube-profiles/`);
   /// implementations that confine by other means may ignore it. [env]
   /// carries the caller's per-exec environment ([ShellExecOptions.env]):
   /// kernel wrapping must thread it into the clean child environment or
@@ -38,9 +39,9 @@ abstract interface class CubeSandboxBackend {
 
 /// A backend whose kernel confinement is driven by a profile artifact that
 /// must exist on disk before the wrapped command runs. [SandboxedShell]
-/// probes for this capability and stages [buildProfile]'s output to
-/// `.fah/cube-profiles/<cacheKey>.sb` (once per spec) before the first
-/// wrapped exec.
+/// probes for this capability and stages [buildProfile]'s output under the
+/// user-level staging directory (`<home>/.fah/cube-profiles/`, outside
+/// every guest-writable area) content-verified before each wrapped exec.
 abstract interface class CubeProfileStaging {
   /// The profile content for [spec]. [workspaceRoot] is the real writable
   /// root (the env cwd); the cube's `/workspace` is realized as that cwd.

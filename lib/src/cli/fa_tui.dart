@@ -818,6 +818,10 @@ final class FaTuiModel extends Model {
     // output and skip its render. The host's delayed _QuitRequestedMsg is
     // the only quit path that matters.
     if (msg is BusyMsg) return _handleBusyMsg(msg);
+    // Issue #804: the vendored program's OSC 11 background reply lands
+    // before the exit check — a late reply must still re-resolve the
+    // palette (and paint via the theme-swap cache reset) even while busy.
+    if (msg is BackgroundColorMsg) return _handleBackgroundProbe(msg);
     if (msg is RunStalledMsg) return _handleRunStalled(msg);
     if (msg is SpinnerTickMsg) return _handleSpinnerTick();
     if (msg is DrainQueueMsg) return _handleDrainQueue(msg);

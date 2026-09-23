@@ -73,6 +73,33 @@ A JSON Schema for this document lives at `schema/cube_schema.json`
 hard OS boundary in addition to the Dart policy layer; `policy` enforces
 in Dart only.
 
+An explicit `backend: kernel` is a contract, not a wish: when the host
+cannot deliver kernel isolation, the run is **refused** (a clean
+`fa_cube[<name>]:` error on every command; zero commands run) unless the
+manifest opts into the fallback:
+
+```yaml
+spec:
+  backend: kernel
+  allowDegrade: true   # permit policy-mode fallback when kernel is unavailable
+```
+
+| Host platform | `backend: kernel` | `+ allowDegrade: true` | `backend: policy` |
+|---|---|---|---|
+| macOS (`sandbox-exec`) | kernel | kernel | policy |
+| Linux (user namespaces available) | kernel | kernel | policy |
+| Linux (no user namespaces) | refusal | policy (+ loud warning) | policy |
+| Windows / web (descriptor-only) | refusal | policy (+ loud warning) | policy |
+
+A refusal names the opt-in (`... set spec.allowDegrade: true to allow the
+degrade`) so the fix is discoverable. The degrade path announces itself
+(`fa_cube[<name>]: kernel backend unavailable, running in policy mode`)
+and the shell exposes `effectiveBackend()` so hosts can display/audit
+what actually ran. `allowDegrade` never rescues a *launch* failure: a
+missing `sandbox-exec`/`unshare` or an EPERM refusal stays a hard error
+regardless. The policy-mode floor keeps its documented limitations (no
+full env scrubbing; inherited variables ride along).
+
 ### `spec.tools`
 
 | Key | Type | Notes |
@@ -102,9 +129,12 @@ the gate is allow-all and byte-identical to pre-gate behavior.
 | `workspace` | path | Read/write root; absolute or `~/`-relative. Default `/workspace`. |
 | `mounts` | list | `{path, access}` with access `ro`, `rw`, or `deny`. The **longest matching mount wins**; otherwise paths inside the workspace are read/write and everything else is denied. |
 
-Path checks are pure string math: `~` is expanded, `.`/`..` segments are
-collapsed (climbing above `/` is denied), and symlinks are judged by
-their written form.
+Path checks resolve symlinks: every path component is probed and links are
+followed (chains to a fixed depth, `..` applied after resolution, unreadable
+indirections such as Windows reparse points fail closed), so a path is
+judged — and opened — by its real-path target, not its written form. `~` is
+expanded, and a `..` climb above `/` is denied. Without a filesystem probe
+(web hosts, tests) the check degrades to the written form.
 
 ### `spec.env`
 
@@ -194,11 +224,14 @@ actually holds, per level and enforcement mode:
 | L2 | Same policy floor as L1. | Writes: blanket `deny file-write*` with the workspace re-allowed and the `ro /` mount denying writes. Reads: everywhere (the `ro /` mount). | `ro /` re-bound read-only: writes confined, reads everywhere. |
 | L3 | Redirects unrestricted — writes are allowed everywhere by design. | Reads and writes everywhere. | Reads and writes everywhere. |
 
-A `backend: kernel` spec that degrades to policy mode — no enforcing
-backend for the host (Windows, web, Linux without user namespaces) —
-announces it loudly: `fa_cube[<name>]: kernel backend unavailable, running
-in policy mode`. The policy-mode floor is the redirect check above, not a
-kernel boundary.
+A `backend: kernel` spec on a host without an enforcing backend (Windows,
+web, Linux without user namespaces) is **refused by default** — a clean
+`fa_cube[<name>]:` error on every command, zero commands run, the message
+naming `spec.allowDegrade`. Only an explicit `allowDegrade: true` in the
+manifest degrades to policy mode, and it announces that loudly:
+`fa_cube[<name>]: kernel backend unavailable, running in policy mode`.
+The policy-mode floor is the redirect check above, not a kernel boundary.
+`effectiveBackend` always reports what actually runs.
 
 Backend selection follows the host OS: macOS generates a `sandbox-exec`
 SBPL profile, Linux an `unshare` user-namespace argv prefix, and other
@@ -214,8 +247,9 @@ platforms (including Windows) currently report a descriptor-only no-op.
   read, `N>&M` fd duplicates exempt), but quoting inside `$(`, process
   substitution and `eval` indirection are above its ceiling, and the
   network scan sees only `curl`/`wget`/`gh api` URL arguments — bare-host
-  operands are unchecked. The fs guard resolves symlinks by their
-  written form only.
+  operands are unchecked. (The fs guard itself resolves symlinks to the
+  real target — see `spec.filesystem` above; the residual check-to-open
+  swap race is documented on `CubeFsGuard`.)
 - **No side-channel guarantees.** Timing, cache and similar side
   channels are out of scope for the Dart layer.
 - **Kernel = hard boundary.** As the policy engine's own contract states:
@@ -242,8 +276,23 @@ crashed run.
 - **Kernel activation — landed:** `spec.backend: kernel` wraps every
   child process in the OS sandbox — macOS `sandbox-exec -f`, Linux
   `unshare` user namespace (`--net` only when nothing is allowed), clean
-  `env -i` environment, `ulimit` ceilings; profiles staged under
-  `.fah/cube-profiles/`. Windows remains descriptor-only. A wrapper that
+  `env -i` environment, `ulimit` ceilings; profiles staged content-verified
+  under `<home>/.fah/cube-profiles/` — a user-level directory outside
+  every guest-writable area, re-verified against the recomputed profile
+  immediately before every wrapped exec (restaged atomically on
+  mismatch). Enforcement artifacts never live under the workspace: the
+  profile itself grants workspace writes, so a prisoner could otherwise
+  rewrite its own prison. The staging location is trust-checked at bind
+  time and kernel mode is refused (clean `fa_cube[<name>]:` error, no
+  exec) when it cannot be proven guest-unwritable — a `homeDir` inside
+  or relative to the workspace, or a spec mount granting read-write over
+  the staging directory (`~`/`/` mounts); the refusal carries the
+  remediation (`spec.allowDegrade: true` degrades the bind to policy
+  mode and fires `onDegrade`, naming the staging violation). The
+  staging directory is
+  swept once per binding for this profile's own `.tmp` orphans; other
+  bindings' profiles and temp files are never touched. Windows remains
+  descriptor-only. A wrapper that
   is missing from PATH or refuses the sandbox surfaces as a clean
   `fa_cube[<name>]:` spawn error, in foreground execs and background jobs
   alike.

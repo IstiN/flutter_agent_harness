@@ -354,9 +354,11 @@ class AgentCli {
       config.cubeSpec,
       homeDir: config.homeDir,
       workspaceRoot: _env.cwd,
+      pathProbe: config.fsProbe,
       os: config.osName,
-      // A `backend: kernel` cube degrading to policy mode (no enforcing
-      // backend on this host) is a security-relevant downgrade — say so.
+      // A `backend: kernel` cube on a host without an enforcing backend
+      // refuses by default; only an explicit spec.allowDegrade opt-in
+      // degrades to policy mode (a security-relevant downgrade — say so).
       onWarning: (message) => io.writeln(tuiWarning(message)),
     );
     _webNetworkGate = _initWebNetworkGate(_cubeEnv);

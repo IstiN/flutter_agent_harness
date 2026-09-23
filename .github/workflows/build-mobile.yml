@@ -83,7 +83,7 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
@@ -128,17 +128,17 @@ jobs:
       github.event.inputs.android_content != 'screenshots_only'
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Java
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: 'temurin'
           java-version: '17'
           cache: 'gradle'
 
       - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           channel: 'stable'
           cache: true
@@ -200,7 +200,7 @@ jobs:
       - name: Setup Ruby
         # ubuntu-24.04 runner images ship no Ruby — `bundle: command not
         # found` exit 127 (issue #353). Same setup as store-metadata.yml.
-        uses: ruby/setup-ruby@v1
+        uses: ruby/setup-ruby@e5517072e87f198d9533967ae13d97c11b604005 # v1.99.0 (branch head; v1 moves)
         with:
           ruby-version: '3.2'
 
@@ -240,29 +240,16 @@ jobs:
           java -jar /tmp/bundletool.jar validate --bundle "$AAB_PATH"
           echo "✅ bundletool validate green"
           # 16 KB page-size gate (gh-746, review round 1): re-check every
-          # native lib in the PACKAGED bundle. The build-time patch task
-          # only sees the staged native_assets dir — this verifies what
-          # actually ships, so a future Flutter staging-layout change that
+          # native lib in the PACKAGED bundle — a staging-layout change that
           # silently un-wires the gate fails here instead of at Play upload.
-          # AAB layout: native libs live at base/lib/<abi>/*.so — the old
-          # 'lib/*' glob is the APK layout and matched nothing, so unzip
-          # exited 11 and set -e killed the leg (gh-786). The gate owns its
-          # verdict: it checks what matched and prints a named pass/fail
-          # instead of riding unzip's exit code.
-          TMP_LIBS="$(mktemp -d)"
-          unzip -o -q "$AAB_PATH" 'base/lib/*' -d "$TMP_LIBS" || true
-          LIB_COUNT=$(find "$TMP_LIBS" -type f -name '*.so' | wc -l)
-          if [ "$LIB_COUNT" -eq 0 ]; then
-            echo "::error::expected native libs at base/lib/*/*.so in the AAB, found none — packaging regression (gh-786)"
-            exit 1
-          fi
-          echo "Native libs in the bundle: $LIB_COUNT"
-          find "$TMP_LIBS" -type f -name '*.so' | sed "s|$TMP_LIBS/||"
-          dart scripts/patch_elf_16k_alignment.dart --check "$TMP_LIBS"
-          echo "✅ 16 KB alignment check green"
+          # The gate lives in its own script so aab-gate-selftest.yml runs
+          # the SAME logic against fixture bundles on every PR (gh-798 AC3):
+          # AAB layout base/lib/<abi>/*.so, owned named verdict — never an
+          # inherited exit code (gh-786).
+          bash scripts/verify_aab_native_libs.sh "$AAB_PATH"
 
       - name: Upload AAB Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: android-aab
           path: flutter_app/build/app/outputs/bundle/storeRelease/app-store-release.aab
@@ -278,22 +265,22 @@ jobs:
     if: needs.build-android.result == 'success'
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Java
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: 'temurin'
           java-version: '17'
 
       - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           channel: 'stable'
           cache: true
 
       - name: Download AAB artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: android-aab
           path: flutter_app/aab/
@@ -301,7 +288,7 @@ jobs:
       - name: Setup Ruby
         # ubuntu-24.04 runner images ship no Ruby — `bundle: command not
         # found` exit 127 (issue #353). Same setup as store-metadata.yml.
-        uses: ruby/setup-ruby@v1
+        uses: ruby/setup-ruby@e5517072e87f198d9533967ae13d97c11b604005 # v1.99.0 (branch head; v1 moves)
         with:
           ruby-version: '3.2'
 
@@ -355,17 +342,17 @@ jobs:
       FLAVOR: ${{ matrix.flavor }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Java
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: 'temurin'
           java-version: '17'
           cache: 'gradle'
 
       - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           channel: 'stable'
           cache: true
@@ -471,7 +458,7 @@ jobs:
           # fi
 
       - name: Upload APK Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: android-apk-${{ matrix.flavor }}
           path: flutter_app/build/app/outputs/flutter-apk/app-${{ matrix.flavor }}-release.apk
@@ -507,16 +494,16 @@ jobs:
       FLAVOR: ${{ matrix.flavor }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Java
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: 'temurin'
           java-version: '17'
 
       - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           channel: 'stable'
           cache: true
@@ -614,6 +601,25 @@ jobs:
           echo "/opt/homebrew/opt/ruby/bin" >> $GITHUB_PATH
           echo "/opt/homebrew/bin" >> $GITHUB_PATH
 
+      # gh-798 AC1/AC2: fail FAST before any build minute is spent when the
+      # version about to be stamped is not above ASC's approved floor
+      # (#785's class: altool 90062 at the END of the build). Reads the
+      # SAME version source the build lane stamps (BUILD_NAME of the
+      # version job); the lane skips named without ASC secrets (the upload
+      # leg skips too) and fails closed if ASC is unreachable (E1, one
+      # retry). The AC4 marker line lands in the leg log either way.
+      - name: Assert TestFlight version floor
+        working-directory: flutter_app
+        env:
+          BUILD_NAME: ${{ needs.version.outputs.version }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_CONTENT: ${{ secrets.APP_STORE_CONNECT_KEY_CONTENT }}
+        run: |
+          set -euo pipefail
+          bundle install
+          bundle exec fastlane ios assert_version_floor
+
       # Issue #726 (run 35491603044): pub re-fetches the moving `ref: master`
       # git deps (dart_git) on every resolve — pubspec.lock is untracked —
       # and one flaky TCP connect to github.com:443 ("Failed to connect
@@ -648,7 +654,7 @@ jobs:
       # `flutter build ios` runs `pod install` which regenerates the lockfile
       # with all registered plugins.
       - name: Cache CocoaPods (iOS)
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: flutter_app/ios/Pods
           key: ios-pods-v2-${{ hashFiles('flutter_app/ios/Podfile.lock') }}
@@ -806,7 +812,7 @@ jobs:
       - name: Upload IPA Artifact
         # Uploaded before the symbol gate so a failed gate still leaves the
         # IPA available for debugging.
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ios-ipa
           path: flutter_app/build/ios/ipa/*.ipa
@@ -911,7 +917,7 @@ jobs:
           echo "/opt/homebrew/bin" >> $GITHUB_PATH
 
       - name: Download IPA artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ios-ipa
           path: flutter_app/ipa/
@@ -974,7 +980,7 @@ jobs:
 
       - name: Checkout repository
         if: needs.build-android.result == 'success' || needs.build-android-apks.result == 'success' || needs.build-ios.result == 'success'
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # Full history: release_notes.sh falls back to "commits since the
           # previous tag" when the CHANGELOG has no section for this version.
@@ -982,28 +988,28 @@ jobs:
 
       - name: Download iOS IPA artifact
         if: needs.build-ios.result == 'success'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ios-ipa
           path: artifacts/
 
       - name: Download Android AAB artifact
         if: needs.build-android.result == 'success'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: android-aab
           path: artifacts/
 
       - name: Download store APK artifact
         if: needs.build-android-apks.result == 'success'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: android-apk-store
           path: artifacts/
 
       - name: Download god APK artifact
         if: needs.build-android-apks.result == 'success'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: android-apk-god
           path: artifacts/
