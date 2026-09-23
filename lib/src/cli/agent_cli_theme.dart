@@ -81,12 +81,30 @@ extension ThemeCommands on AgentCli {
   Future<void> bootThemeForTest() => _applyBootTheme();
 
   /// Applies the persisted `tui.theme` at boot: user themes load first so
-  /// a persisted user theme resolves end to end (AC4). No persist
+  /// a persisted user theme resolves end to end (AC4). With NO explicit
+  /// `tui.theme`, the auto light/dark tier runs (issue #804 AC1.2):
+  /// COLORFGBG decides here — the TUI's OSC 11 reply re-resolves later
+  /// via [FaThemeController.reapplyAutoLightDark]. No persist
   /// round-trip.
   Future<void> _applyBootTheme() async {
-    await _reloadUserThemes();
+    // Arm the auto tier BEFORE the async user-theme IO (review k6LHR): the
+    // first frame must already carry the tier-resolved palette — no
+    // dark-first-then-flash window.
     final persisted = config.tuiTheme;
-    if (persisted == null || persisted.isEmpty) return;
+    if (persisted == null || persisted.isEmpty) {
+      // Auto tier (issue #804 AC1.2) — TUI sessions only: the TUI owns the
+      // OSC 11 re-check, and line mode must stay byte-unchanged (its
+      // COLORFGBG-light sessions keep today's palette). Dark resolves to
+      // the default palette (dark-terminal sessions keep today's bytes),
+      // light to ohmypi-light.
+      if (_useTui) {
+        FaThemeController.instance.armAutoLightDark(
+          colorfgbg: environment['COLORFGBG'],
+        );
+      }
+      return;
+    }
+    await _reloadUserThemes();
     if (!FaThemeController.instance.switchTo(persisted)) {
       io.writeln(
         'config tui.theme: unknown theme "$persisted" — using default '

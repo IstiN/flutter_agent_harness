@@ -26,10 +26,14 @@
 /// | userMessageBg  | userMessageBg          |
 ///
 /// The #444 completion adds borderMuted, toolTitle, toolOutput,
-/// userMessageText and the toolSuccessBg/toolErrorBg tints; their
-/// remaining roles (md*, syntax*, statusLine*, thinking*, scrollbar*,
-/// search*) have no rendering surface here — user themes use OUR role
-/// schema, so nothing silently drops.
+/// userMessageText and the toolSuccessBg/toolErrorBg tints. Issue #804
+/// completes the ohmypi-dark/light ports to FULL token parity with the
+/// pinned fixture under `test/fixtures/tui_omp/` (statusLine*, syntax*,
+/// thinking scale, md*, diffs, mode indicators — the parity walker in
+/// `tui_theme_test.dart` walks every token; deliberate WCAG deviations
+/// are allowlisted there), adds the symbol presets (`tui_symbols.dart`),
+/// and the auto light/dark detection tier on [FaThemeController].
+/// User themes use OUR role schema, so nothing silently drops.
 library;
 
 import 'dart:convert';
@@ -47,11 +51,16 @@ import 'dart:math' as math;
 // these exact files and 2.0.0→2.1.0 kept them stable. Revisit if
 // upstream moves them (then: propose the pure shim upstream).
 import 'package:dart_tui/src/bubbles/style.dart' show RgbColor, Style;
+import 'tui_symbols.dart';
 import 'tui_theme_palette.dart';
 
 /// The fah-owned palette type (see tui_theme_palette.dart): the hosted
 /// dart_tui `Theme` lacks the #444 roles, so fah vendors its extension.
 export 'tui_theme_palette.dart';
+
+/// The symbol presets (issue #804): glyphs + spinner frames, keyed like
+/// omp's symbol map.
+export 'tui_symbols.dart';
 
 /// The vendor color profile ([FaThemeController.profile]'s type) is part
 /// of this file's public API surface — consumers theme through here, not
@@ -131,6 +140,12 @@ const Map<String, TuiTheme> kBuiltInTuiThemes = {
 };
 
 /// oh-my-pi `dark.json` port (vars resolved; see the library-docs mapping).
+/// Complete token parity with the pinned fixture
+/// (`test/fixtures/tui_omp/dark.json`, omp df624f5) — the parity walker in
+/// `tui_theme_test.dart` asserts every token. Deviations tagged gh-671/#804
+/// with the reason; 256-color palette indexes resolve to their RGB cube or
+/// grayscale value (noted inline) so the vendor's ansi256 quantization
+/// round-trips them exactly.
 const TuiTheme _ohmypiDark = TuiTheme(
   name: 'ohmypi-dark',
   base: Style(),
@@ -147,20 +162,92 @@ const TuiTheme _ohmypiDark = TuiTheme(
   accent2: Style(foregroundRgb: RgbColor(0xb2, 0x81, 0xd6), isBold: true),
   accent2Soft: Style(foregroundRgb: RgbColor(0xb2, 0x81, 0xd6)),
   userMessageBg: Style(backgroundRgb: RgbColor(0x22, 0x1d, 0x1a)),
-  borderMuted: Style(foregroundRgb: RgbColor(0x5f, 0x66, 0x73), isDim: true),
+  // #804 parity: omp `borderMuted` is the darkGray var (#3d424a); the old
+  // port shipped dimGray. Decorative border role — omp value verbatim.
+  borderMuted: Style(foregroundRgb: RgbColor(0x3d, 0x42, 0x4a), isDim: true),
+  // omp ships `toolTitle: ''` (terminal default); fa's #444 role table
+  // gives every rendered string a named role — the label keeps accent2.
   toolTitle: Style(foregroundRgb: RgbColor(0xb2, 0x81, 0xd6), isBold: true),
-  // gh-671 readability: #5f6673 (their dark.json `dim`) is 2.8:1 on a dark
-  // terminal and 2.8:1 on the tints — lightened one step, same family.
+  // gh-671 readability: #777d88 (their `toolOutput` gray) is fine on the
+  // reference terminal but the port keeps the lightened family gray for
+  // AA on the tints.
   toolOutput: Style(foregroundRgb: RgbColor(0x86, 0x8d, 0x99), isDim: true),
+  // omp ships `userMessageText: ''`; explicit per the gh-671 contract
+  // (text over a painted band never relies on the terminal default).
   userMessageText: Style(foregroundRgb: RgbColor(0xd4, 0xd4, 0xd4)),
-  toolSuccessBg: Style(backgroundRgb: RgbColor(0x1a, 0x22, 0x1a)),
-  toolErrorBg: Style(backgroundRgb: RgbColor(0x2a, 0x1a, 0x1a)),
+  // #804 parity: omp tints verbatim (the old greenish/reddish ports
+  // predate the audit; rails keep ≥3:1 on these, floors re-verified).
+  toolSuccessBg: Style(backgroundRgb: RgbColor(0x16, 0x1a, 0x1f)),
+  toolErrorBg: Style(backgroundRgb: RgbColor(0x29, 0x1d, 0x1d)),
+  toolPendingBg: Style(backgroundRgb: RgbColor(0x1d, 0x21, 0x29)),
+  customMessageBg: Style(backgroundRgb: RgbColor(0x2a, 0x25, 0x30)),
+  customMessageText: Style(foregroundRgb: RgbColor(0xd4, 0xd4, 0xd4)),
+  // gh-671 readability: omp's #777d88 thinking prose is 3.97:1 on the
+  // reference terminal — below the 4.5:1 body floor (review k6LLp);
+  // lifted to the lightened family gray like [muted]/[toolOutput].
+  thinkingText: Style(foregroundRgb: RgbColor(0x86, 0x8d, 0x99)),
+  // Thinking scale: omp's two faintest steps (#3d424a darkGray 1.6:1 and
+  // #5f6673 dimGray 2.9:1) fail the 3:1 secondary floor on a dark
+  // terminal — lifted to the palette's own gray family, scale order kept.
+  thinkingOff: Style(foregroundRgb: RgbColor(0x77, 0x7d, 0x88)),
+  thinkingMinimal: Style(foregroundRgb: RgbColor(0x86, 0x8d, 0x99)),
+  thinkingLow: Style(foregroundRgb: RgbColor(0x17, 0x8f, 0xb9)),
+  thinkingMedium: Style(foregroundRgb: RgbColor(0x00, 0x88, 0xfa)),
+  thinkingHigh: Style(foregroundRgb: RgbColor(0xb2, 0x81, 0xd6)),
+  thinkingXhigh: Style(foregroundRgb: RgbColor(0xe5, 0xc1, 0xff)),
+  mdHeading: Style(foregroundRgb: RgbColor(0xfe, 0xbc, 0x38)),
+  mdLink: Style(foregroundRgb: RgbColor(0x00, 0x88, 0xfa)),
+  // gh-671 readability: #5f6673 dimGray link URLs are 2.9:1 — lifted to
+  // the lightened family gray like [muted].
+  mdLinkUrl: Style(foregroundRgb: RgbColor(0x86, 0x8d, 0x99)),
+  mdCode: Style(foregroundRgb: RgbColor(0xe5, 0xc1, 0xff)),
+  mdCodeBlock: Style(foregroundRgb: RgbColor(0x9c, 0xdc, 0xfe)),
+  mdCodeBlockBorder: Style(foregroundRgb: RgbColor(0x77, 0x7d, 0x88)),
+  mdQuote: Style(foregroundRgb: RgbColor(0x77, 0x7d, 0x88)),
+  mdQuoteBorder: Style(foregroundRgb: RgbColor(0x3d, 0x42, 0x4a)),
+  mdHr: Style(foregroundRgb: RgbColor(0x3d, 0x42, 0x4a)),
+  mdListBullet: Style(foregroundRgb: RgbColor(0xfe, 0xbc, 0x38)),
+  link: Style(foregroundRgb: RgbColor(0x00, 0x88, 0xfa)),
+  toolDiffAdded: Style(foregroundRgb: RgbColor(0x89, 0xd2, 0x81)),
+  toolDiffRemoved: Style(foregroundRgb: RgbColor(0xfc, 0x3a, 0x4b)),
+  toolDiffContext: Style(foregroundRgb: RgbColor(0x77, 0x7d, 0x88)),
+  syntaxComment: Style(foregroundRgb: RgbColor(0x6a, 0x99, 0x55)),
+  syntaxKeyword: Style(foregroundRgb: RgbColor(0x56, 0x9c, 0xd6)),
+  syntaxFunction: Style(foregroundRgb: RgbColor(0xdc, 0xdc, 0xaa)),
+  syntaxVariable: Style(foregroundRgb: RgbColor(0x9c, 0xdc, 0xfe)),
+  syntaxString: Style(foregroundRgb: RgbColor(0xce, 0x91, 0x78)),
+  syntaxNumber: Style(foregroundRgb: RgbColor(0xb5, 0xce, 0xa8)),
+  syntaxType: Style(foregroundRgb: RgbColor(0x4e, 0xc9, 0xb0)),
+  syntaxOperator: Style(foregroundRgb: RgbColor(0xd4, 0xd4, 0xd4)),
+  syntaxPunctuation: Style(foregroundRgb: RgbColor(0xd4, 0xd4, 0xd4)),
+  bashMode: Style(foregroundRgb: RgbColor(0x00, 0x88, 0xfa)),
+  pythonMode: Style(foregroundRgb: RgbColor(0xe4, 0xc0, 0x0f)),
+  statusLineBg: Style(backgroundRgb: RgbColor(0x12, 0x12, 0x12)),
+  statusLineSep: Style(foregroundRgb: RgbColor(0x80, 0x80, 0x80)), // 256:244
+  statusLineModel: Style(foregroundRgb: RgbColor(0xd7, 0x87, 0xaf)),
+  statusLinePath: Style(foregroundRgb: RgbColor(0x00, 0xaf, 0xaf)),
+  statusLineGitClean: Style(foregroundRgb: RgbColor(0x5f, 0xaf, 0x5f)),
+  statusLineGitDirty: Style(foregroundRgb: RgbColor(0xd7, 0xaf, 0x5f)),
+  statusLineContext: Style(foregroundRgb: RgbColor(0x87, 0x87, 0xaf)),
+  statusLineSpend: Style(foregroundRgb: RgbColor(0x5f, 0xaf, 0xaf)),
+  statusLineStaged: Style(foregroundRgb: RgbColor(0x5f, 0xaf, 0x00)), // 256:70
+  statusLineDirty: Style(foregroundRgb: RgbColor(0xd7, 0xaf, 0x00)), // 256:178
+  statusLineUntracked: Style(
+    foregroundRgb: RgbColor(0x00, 0xaf, 0xff),
+  ), // 256:39
+  statusLineOutput: Style(foregroundRgb: RgbColor(0xff, 0x5f, 0xaf)), // 256:205
+  statusLineCost: Style(foregroundRgb: RgbColor(0xff, 0x5f, 0xaf)), // 256:205
+  statusLineSubagents: Style(foregroundRgb: RgbColor(0xfe, 0xbc, 0x38)),
 );
 
-/// oh-my-pi `light.json` port.
+/// oh-my-pi `light.json` port — complete token parity with the pinned
+/// fixture (`test/fixtures/tui_omp/light.json`), same deviation rules as
+/// [_ohmypiDark].
 const TuiTheme _ohmypiLight = TuiTheme(
   name: 'ohmypi-light',
   base: Style(),
+  // omp `muted` is their mediumGray #6c6c6c; the port keeps the darkGray
+  // #767676 step (the pre-audit choice, 4.5:1 on white) — allowlisted.
   muted: Style(foregroundRgb: RgbColor(0x76, 0x76, 0x76), isDim: true),
   accent: Style(foregroundRgb: RgbColor(0x5a, 0x80, 0x80), isBold: true),
   highlight: Style(backgroundRgb: RgbColor(0xd0, 0xd0, 0xe0)),
@@ -169,16 +256,76 @@ const TuiTheme _ohmypiLight = TuiTheme(
   error: Style(foregroundRgb: RgbColor(0xaa, 0x55, 0x55)),
   border: Style(foregroundRgb: RgbColor(0x54, 0x7d, 0xa7)),
   focusBorder: Style(foregroundRgb: RgbColor(0x5a, 0x80, 0x80)),
+  accent2: Style(foregroundRgb: RgbColor(0x7e, 0x57, 0xc2), isBold: true),
   accent2Soft: Style(foregroundRgb: RgbColor(0x7e, 0x57, 0xc2)),
   userMessageBg: Style(backgroundRgb: RgbColor(0xe8, 0xe8, 0xe8)),
-  borderMuted: Style(foregroundRgb: RgbColor(0x76, 0x76, 0x76), isDim: true),
+  // #804 parity: omp `borderMuted` is the lightGray var (#b0b0b0).
+  borderMuted: Style(foregroundRgb: RgbColor(0xb0, 0xb0, 0xb0), isDim: true),
   toolTitle: Style(foregroundRgb: RgbColor(0x7e, 0x57, 0xc2), isBold: true),
   // gh-671 readability: #767676 is 3.5:1 on the light tints — darkened so
   // detail text clears AA on the palette's own reference terminal.
   toolOutput: Style(foregroundRgb: RgbColor(0x56, 0x56, 0x56), isDim: true),
   userMessageText: Style(foregroundRgb: RgbColor(0x22, 0x22, 0x22)),
-  toolSuccessBg: Style(backgroundRgb: RgbColor(0xdc, 0xe8, 0xdc)),
-  toolErrorBg: Style(backgroundRgb: RgbColor(0xf0, 0xdc, 0xdc)),
+  toolSuccessBg: Style(backgroundRgb: RgbColor(0xe8, 0xf0, 0xe8)),
+  toolErrorBg: Style(backgroundRgb: RgbColor(0xf0, 0xe8, 0xe8)),
+  toolPendingBg: Style(backgroundRgb: RgbColor(0xe8, 0xe8, 0xf0)),
+  customMessageBg: Style(backgroundRgb: RgbColor(0xed, 0xe7, 0xf6)),
+  customMessageText: Style(foregroundRgb: RgbColor(0x22, 0x22, 0x22)),
+  thinkingText: Style(foregroundRgb: RgbColor(0x6c, 0x6c, 0x6c)),
+  // gh-671-family fix: omp's thinkingOff lightGray (#b0b0b0) is 2.2:1 on
+  // white — lifted to the dimGray/lightGray midpoint (3.4:1), scale order
+  // kept.
+  thinkingOff: Style(foregroundRgb: RgbColor(0x8c, 0x8c, 0x8c)),
+  thinkingMinimal: Style(foregroundRgb: RgbColor(0x76, 0x76, 0x76)),
+  thinkingLow: Style(foregroundRgb: RgbColor(0x54, 0x7d, 0xa7)),
+  thinkingMedium: Style(foregroundRgb: RgbColor(0x5a, 0x80, 0x80)),
+  thinkingHigh: Style(foregroundRgb: RgbColor(0x87, 0x5f, 0x87)),
+  thinkingXhigh: Style(foregroundRgb: RgbColor(0x8b, 0x00, 0x8b)),
+  mdHeading: Style(foregroundRgb: RgbColor(0x9a, 0x73, 0x26)),
+  mdLink: Style(foregroundRgb: RgbColor(0x54, 0x7d, 0xa7)),
+  mdLinkUrl: Style(foregroundRgb: RgbColor(0x76, 0x76, 0x76)),
+  mdCode: Style(foregroundRgb: RgbColor(0x5a, 0x80, 0x80)),
+  mdCodeBlock: Style(foregroundRgb: RgbColor(0x58, 0x84, 0x58)),
+  mdCodeBlockBorder: Style(foregroundRgb: RgbColor(0x6c, 0x6c, 0x6c)),
+  mdQuote: Style(foregroundRgb: RgbColor(0x6c, 0x6c, 0x6c)),
+  mdQuoteBorder: Style(foregroundRgb: RgbColor(0x6c, 0x6c, 0x6c)),
+  mdHr: Style(foregroundRgb: RgbColor(0x6c, 0x6c, 0x6c)),
+  mdListBullet: Style(foregroundRgb: RgbColor(0x58, 0x84, 0x58)),
+  link: Style(foregroundRgb: RgbColor(0x54, 0x7d, 0xa7)),
+  toolDiffAdded: Style(foregroundRgb: RgbColor(0x58, 0x84, 0x58)),
+  toolDiffRemoved: Style(foregroundRgb: RgbColor(0xaa, 0x55, 0x55)),
+  toolDiffContext: Style(foregroundRgb: RgbColor(0x6c, 0x6c, 0x6c)),
+  syntaxComment: Style(foregroundRgb: RgbColor(0x00, 0x80, 0x00)),
+  syntaxKeyword: Style(foregroundRgb: RgbColor(0x00, 0x00, 0xff)),
+  syntaxFunction: Style(foregroundRgb: RgbColor(0x79, 0x5e, 0x26)),
+  syntaxVariable: Style(foregroundRgb: RgbColor(0x00, 0x10, 0x80)),
+  syntaxString: Style(foregroundRgb: RgbColor(0xa3, 0x15, 0x15)),
+  syntaxNumber: Style(foregroundRgb: RgbColor(0x09, 0x86, 0x58)),
+  syntaxType: Style(foregroundRgb: RgbColor(0x26, 0x7f, 0x99)),
+  syntaxOperator: Style(foregroundRgb: RgbColor(0x00, 0x00, 0x00)),
+  syntaxPunctuation: Style(foregroundRgb: RgbColor(0x00, 0x00, 0x00)),
+  bashMode: Style(foregroundRgb: RgbColor(0x58, 0x84, 0x58)),
+  pythonMode: Style(foregroundRgb: RgbColor(0x9a, 0x73, 0x26)),
+  statusLineBg: Style(backgroundRgb: RgbColor(0xe0, 0xe0, 0xe0)),
+  // #804 readability: omp's #808080 separator is 2.99:1 on its own
+  // #e0e0e0 band — one step darker inside the palette's grays (3.98:1).
+  statusLineSep: Style(foregroundRgb: RgbColor(0x6c, 0x6c, 0x6c)),
+  statusLineModel: Style(foregroundRgb: RgbColor(0x87, 0x5f, 0x87)),
+  statusLinePath: Style(foregroundRgb: RgbColor(0x00, 0x5f, 0x87)),
+  statusLineGitClean: Style(foregroundRgb: RgbColor(0x00, 0x5f, 0x00)),
+  statusLineGitDirty: Style(foregroundRgb: RgbColor(0xaf, 0x5f, 0x00)),
+  statusLineContext: Style(foregroundRgb: RgbColor(0x5f, 0x5f, 0x87)),
+  statusLineSpend: Style(foregroundRgb: RgbColor(0x00, 0x5f, 0x5f)),
+  // #804 readability: omp's bright 256-index counts (28 #00d700, 136
+  // #afd700, 31 #00afaf) are 1.0–2.7:1 on the light band — re-tinted to
+  // the palette's own green/yellow/teal vars (≥3.1:1). Output/cost keep
+  // 133 (#af5faf, 3.1:1) verbatim.
+  statusLineStaged: Style(foregroundRgb: RgbColor(0x58, 0x84, 0x58)),
+  statusLineDirty: Style(foregroundRgb: RgbColor(0x9a, 0x73, 0x26)),
+  statusLineUntracked: Style(foregroundRgb: RgbColor(0x5a, 0x80, 0x80)),
+  statusLineOutput: Style(foregroundRgb: RgbColor(0xaf, 0x5f, 0xaf)), // 256:133
+  statusLineCost: Style(foregroundRgb: RgbColor(0xaf, 0x5f, 0xaf)), // 256:133
+  statusLineSubagents: Style(foregroundRgb: RgbColor(0x5a, 0x80, 0x80)),
 );
 
 /// pi's interactive-mode dark palette (`theme/dark.json`) port.
@@ -226,6 +373,57 @@ const Set<String> kThemeRoleNames = {
   'userMessageText',
   'toolSuccessBg',
   'toolErrorBg',
+  // issue #804: the omp token families (partial themes keep inheriting
+  // per-role; built-in names stay unshadowable).
+  'toolPendingBg',
+  'customMessageBg',
+  'customMessageText',
+  'thinkingText',
+  'thinkingOff',
+  'thinkingMinimal',
+  'thinkingLow',
+  'thinkingMedium',
+  'thinkingHigh',
+  'thinkingXhigh',
+  'mdHeading',
+  'mdLink',
+  'mdLinkUrl',
+  'mdCode',
+  'mdCodeBlock',
+  'mdCodeBlockBorder',
+  'mdQuote',
+  'mdQuoteBorder',
+  'mdHr',
+  'mdListBullet',
+  'link',
+  'toolDiffAdded',
+  'toolDiffRemoved',
+  'toolDiffContext',
+  'syntaxComment',
+  'syntaxKeyword',
+  'syntaxFunction',
+  'syntaxVariable',
+  'syntaxString',
+  'syntaxNumber',
+  'syntaxType',
+  'syntaxOperator',
+  'syntaxPunctuation',
+  'bashMode',
+  'pythonMode',
+  'statusLineBg',
+  'statusLineSep',
+  'statusLineModel',
+  'statusLinePath',
+  'statusLineGitClean',
+  'statusLineGitDirty',
+  'statusLineContext',
+  'statusLineSpend',
+  'statusLineStaged',
+  'statusLineDirty',
+  'statusLineUntracked',
+  'statusLineOutput',
+  'statusLineCost',
+  'statusLineSubagents',
 };
 
 /// A user-theme parse failure naming every problem with its role and line.
@@ -349,6 +547,57 @@ TuiTheme parseUserTheme(String text, String fileName) {
     userMessageText: fg('userMessageText'),
     toolSuccessBg: bg('toolSuccessBg'),
     toolErrorBg: bg('toolErrorBg'),
+    // issue #804 token families: same inheritance rules, no flags (omp
+    // has none).
+    toolPendingBg: bg('toolPendingBg'),
+    customMessageBg: bg('customMessageBg'),
+    customMessageText: fg('customMessageText'),
+    thinkingText: fg('thinkingText'),
+    thinkingOff: fg('thinkingOff'),
+    thinkingMinimal: fg('thinkingMinimal'),
+    thinkingLow: fg('thinkingLow'),
+    thinkingMedium: fg('thinkingMedium'),
+    thinkingHigh: fg('thinkingHigh'),
+    thinkingXhigh: fg('thinkingXhigh'),
+    mdHeading: fg('mdHeading'),
+    mdLink: fg('mdLink'),
+    mdLinkUrl: fg('mdLinkUrl'),
+    mdCode: fg('mdCode'),
+    mdCodeBlock: fg('mdCodeBlock'),
+    mdCodeBlockBorder: fg('mdCodeBlockBorder'),
+    mdQuote: fg('mdQuote'),
+    mdQuoteBorder: fg('mdQuoteBorder'),
+    mdHr: fg('mdHr'),
+    mdListBullet: fg('mdListBullet'),
+    link: fg('link'),
+    toolDiffAdded: fg('toolDiffAdded'),
+    toolDiffRemoved: fg('toolDiffRemoved'),
+    toolDiffContext: fg('toolDiffContext'),
+    syntaxComment: fg('syntaxComment'),
+    syntaxKeyword: fg('syntaxKeyword'),
+    syntaxFunction: fg('syntaxFunction'),
+    syntaxVariable: fg('syntaxVariable'),
+    syntaxString: fg('syntaxString'),
+    syntaxNumber: fg('syntaxNumber'),
+    syntaxType: fg('syntaxType'),
+    syntaxOperator: fg('syntaxOperator'),
+    syntaxPunctuation: fg('syntaxPunctuation'),
+    bashMode: fg('bashMode'),
+    pythonMode: fg('pythonMode'),
+    statusLineBg: bg('statusLineBg'),
+    statusLineSep: fg('statusLineSep'),
+    statusLineModel: fg('statusLineModel'),
+    statusLinePath: fg('statusLinePath'),
+    statusLineGitClean: fg('statusLineGitClean'),
+    statusLineGitDirty: fg('statusLineGitDirty'),
+    statusLineContext: fg('statusLineContext'),
+    statusLineSpend: fg('statusLineSpend'),
+    statusLineStaged: fg('statusLineStaged'),
+    statusLineDirty: fg('statusLineDirty'),
+    statusLineUntracked: fg('statusLineUntracked'),
+    statusLineOutput: fg('statusLineOutput'),
+    statusLineCost: fg('statusLineCost'),
+    statusLineSubagents: fg('statusLineSubagents'),
   );
 }
 
@@ -460,14 +709,209 @@ final class FaThemeController {
       _userThemes.addAll(themes);
 
   /// Applies [name] if known; returns whether it resolved. Does not
-  /// persist (that is `/theme`'s job).
+  /// persist (that is `/theme`'s job). Disarms the auto light/dark tier —
+  /// an explicit choice outranks detection for the rest of the session.
   bool switchTo(String name) {
     final theme = available()[name];
     if (theme == null) return false;
     _current = theme;
     _currentName = name;
+    _autoArmed = false;
     return true;
   }
+
+  // ── Auto light/dark detection (issue #804) ──────────────────────────────
+
+  bool _autoArmed = false;
+  String? _autoColorfgbg;
+  RgbColor? _measuredBg;
+
+  /// Whether the boot ran the detection tier (no explicit `tui.theme`);
+  /// while armed, a terminal OSC 11 background reply re-resolves the
+  /// palette. Any explicit [switchTo] disarms.
+  bool get autoLightDarkArmed => _autoArmed;
+
+  /// The terminal background the TUI measured via its OSC 11 query (the
+  /// vendored program probes at startup; `fa_tui` feeds the reply here).
+  set measuredTerminalBg(RgbColor? rgb) => _measuredBg = rgb;
+
+  /// The detection tier (omp `theme.ts` semantics): a measured terminal
+  /// background wins (luminance > 0.5 → light), then `COLORFGBG`
+  /// (`fg;bg` — bg ≥ 8 → light), then default dark.
+  static bool prefersLightTheme({RgbColor? terminalBg, String? colorfgbg}) {
+    if (terminalBg != null) return _relativeLuminance(terminalBg) > 0.5;
+    if (colorfgbg != null) {
+      final parts = colorfgbg.split(';');
+      if (parts.length >= 2) {
+        final bg = int.tryParse(parts[1].trim());
+        if (bg != null) return bg >= 8;
+      }
+    }
+    return false;
+  }
+
+  /// Runs the tier at boot (no explicit `tui.theme`): COLORFGBG is all we
+  /// have until the TUI's OSC 11 reply lands. Dark resolves to the
+  /// default palette (zero visual change for dark-terminal sessions);
+  /// light resolves to `ohmypi-light` — the one palette tuned for light
+  /// terminals (gh-671).
+  void armAutoLightDark({String? colorfgbg}) {
+    _autoArmed = true;
+    _autoColorfgbg = colorfgbg;
+    _applyAutoTheme();
+  }
+
+  /// Re-runs the tier with the measured terminal background; returns
+  /// whether the palette changed (the caller hot-swaps). No-op when not
+  /// armed.
+  bool reapplyAutoLightDark() {
+    if (!_autoArmed) return false;
+    return _applyAutoTheme();
+  }
+
+  bool _applyAutoTheme() {
+    final light = prefersLightTheme(
+      terminalBg: _measuredBg,
+      colorfgbg: _autoColorfgbg,
+    );
+    final theme = light ? kBuiltInTuiThemes['ohmypi-light']! : kDefaultTuiTheme;
+    if (identical(_current, theme)) return false;
+    _current = theme;
+    _currentName = theme.name;
+    return true;
+  }
+
+  // ── Symbol presets (issue #804) ─────────────────────────────────────────
+
+  TuiSymbols _symbols = kTuiSymbolsUnicode;
+
+  /// The session symbol preset (glyphs + spinner frames). Consumers go
+  /// through [sym] so a preset switch needs no view-code change.
+  TuiSymbols get symbols => _symbols;
+
+  /// Applies the symbol preset [name] (`unicode`/`nerd`/`ascii`);
+  /// returns whether it resolved.
+  bool switchSymbols(String name) {
+    final preset = kTuiSymbolPresets[name];
+    if (preset == null) return false;
+    _symbols = preset;
+    return true;
+  }
+
+  /// The glyph for the omp symbol [key] in the session preset.
+  String sym(String key) => _symbols.glyph(key);
+
+  // ── issue #804 role emitters (E1: views read nothing raw) ────────────────
+
+  /// The accent SGR prefix — selection re-arming in row chrome needs the
+  /// raw prefix, not wrapped text.
+  String accentSgr() => sgrPrefix(_current.accent);
+
+  String toolPendingBg(String text) => _render(_current.toolPendingBg, text);
+
+  String customMessageBg(String text) => _render(_current.customMessageBg, text);
+
+  String customMessageText(String text) =>
+      _render(_current.customMessageText, text);
+
+  String thinkingText(String text) => _render(_current.thinkingText, text);
+
+  String thinkingOff(String text) => _render(_current.thinkingOff, text);
+
+  String thinkingMinimal(String text) => _render(_current.thinkingMinimal, text);
+
+  String thinkingLow(String text) => _render(_current.thinkingLow, text);
+
+  String thinkingMedium(String text) => _render(_current.thinkingMedium, text);
+
+  String thinkingHigh(String text) => _render(_current.thinkingHigh, text);
+
+  String thinkingXhigh(String text) => _render(_current.thinkingXhigh, text);
+
+  String mdHeading(String text) => _render(_current.mdHeading, text);
+
+  String mdLink(String text) => _render(_current.mdLink, text);
+
+  String mdLinkUrl(String text) => _render(_current.mdLinkUrl, text);
+
+  String mdCode(String text) => _render(_current.mdCode, text);
+
+  String mdCodeBlock(String text) => _render(_current.mdCodeBlock, text);
+
+  String mdCodeBlockBorder(String text) =>
+      _render(_current.mdCodeBlockBorder, text);
+
+  String mdQuote(String text) => _render(_current.mdQuote, text);
+
+  String mdQuoteBorder(String text) => _render(_current.mdQuoteBorder, text);
+
+  String mdHr(String text) => _render(_current.mdHr, text);
+
+  String mdListBullet(String text) => _render(_current.mdListBullet, text);
+
+  String link(String text) => _render(_current.link, text);
+
+  String toolDiffAdded(String text) => _render(_current.toolDiffAdded, text);
+
+  String toolDiffRemoved(String text) => _render(_current.toolDiffRemoved, text);
+
+  String toolDiffContext(String text) => _render(_current.toolDiffContext, text);
+
+  String syntaxComment(String text) => _render(_current.syntaxComment, text);
+
+  String syntaxKeyword(String text) => _render(_current.syntaxKeyword, text);
+
+  String syntaxFunction(String text) => _render(_current.syntaxFunction, text);
+
+  String syntaxVariable(String text) => _render(_current.syntaxVariable, text);
+
+  String syntaxString(String text) => _render(_current.syntaxString, text);
+
+  String syntaxNumber(String text) => _render(_current.syntaxNumber, text);
+
+  String syntaxType(String text) => _render(_current.syntaxType, text);
+
+  String syntaxOperator(String text) => _render(_current.syntaxOperator, text);
+
+  String syntaxPunctuation(String text) =>
+      _render(_current.syntaxPunctuation, text);
+
+  String bashMode(String text) => _render(_current.bashMode, text);
+
+  String pythonMode(String text) => _render(_current.pythonMode, text);
+
+  String statusLineSep(String text) => _render(_current.statusLineSep, text);
+
+  String statusLineModel(String text) => _render(_current.statusLineModel, text);
+
+  String statusLinePath(String text) => _render(_current.statusLinePath, text);
+
+  String statusLineGitClean(String text) =>
+      _render(_current.statusLineGitClean, text);
+
+  String statusLineGitDirty(String text) =>
+      _render(_current.statusLineGitDirty, text);
+
+  String statusLineContext(String text) =>
+      _render(_current.statusLineContext, text);
+
+  String statusLineSpend(String text) => _render(_current.statusLineSpend, text);
+
+  String statusLineStaged(String text) =>
+      _render(_current.statusLineStaged, text);
+
+  String statusLineDirty(String text) => _render(_current.statusLineDirty, text);
+
+  String statusLineUntracked(String text) =>
+      _render(_current.statusLineUntracked, text);
+
+  String statusLineOutput(String text) =>
+      _render(_current.statusLineOutput, text);
+
+  String statusLineCost(String text) => _render(_current.statusLineCost, text);
+
+  String statusLineSubagents(String text) =>
+      _render(_current.statusLineSubagents, text);
 
   /// Restores the boot default.
   void reset() => switchTo(kDefaultTuiTheme.name);
