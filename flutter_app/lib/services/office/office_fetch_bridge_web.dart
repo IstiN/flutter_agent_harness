@@ -226,13 +226,17 @@ final class EmbedHttpClient extends http.BaseClient {
     }
   }
 
-  bool get _hasRelayToken {
-    if (officeHubRelayToken == null) {
-      final stored = _storedRelayToken();
-      if (stored != null && stored.isNotEmpty) officeHubRelayToken = stored;
-    }
-    final token = officeHubRelayToken;
-    return token != null && token.isNotEmpty;
+  bool get _hasRelayToken => _effectiveRelayToken != null;
+
+  /// Storage wins whenever it holds a non-empty value: the relay-401
+  /// remediation tells the operator to UPDATE the bearer, so a fresh
+  /// `setItem` must take effect on the next send — pinning it in the
+  /// global would keep the stale value until a pane reload. The global
+  /// stays the programmatic/test override when storage is empty.
+  String? get _effectiveRelayToken {
+    final stored = _storedRelayToken();
+    if (stored != null && stored.isNotEmpty) return stored;
+    return officeHubRelayToken;
   }
 
   /// The desktop path: the request rides the hub's /relay mount, the
@@ -242,7 +246,7 @@ final class EmbedHttpClient extends http.BaseClient {
   /// — and a refused credential (stale bearer) surfaces as the named
   /// error, never a silent degrade.
   Future<http.StreamedResponse> _hubSend(http.BaseRequest request) async {
-    final token = officeHubRelayToken!;
+    final token = _effectiveRelayToken!;
     final controller = web.AbortController();
     return _sendViaFetch(
       request,
