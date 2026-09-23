@@ -422,16 +422,43 @@ Future<int> _hubToken(List<String> flags, HubServeDeps deps) async {
   final hint = hubTokenHint(
     hubPidFileFor(environment: deps.environment, home: deps.home),
   );
-  if (hint == null) {
-    stderr.writeln(
-      'no relay secret found — the hub is not running (or its pid file '
-      'predates issue #792): start it with `fa hub serve`, then re-run '
-      '`fa hub token`',
-    );
-    return 1;
+  if (hint != null) {
+    stdout.writeln(hint);
+    return 0;
   }
-  stdout.writeln(hint);
-  return 0;
+  // Named refusal: the message names the ACTUAL situation. A protected
+  // hub's master secret never lands in the pid file, so "no relay
+  // secret" there does NOT mean "not running".
+  final protected = _hubIsProtected(deps);
+  stderr.writeln(hubTokenRefusalMessage(protectedHub: protected));
+  return 1;
+}
+
+bool _hubIsProtected(HubServeDeps deps) {
+  try {
+    final stateFile = defaultHubStateFile(
+      home: deps.home,
+      environment: deps.environment,
+    );
+    return readHubState(stateFile).masterSecret?.isNotEmpty ?? false;
+  } on Object {
+    return false; // no readable hub state: treat as not running
+  }
+}
+
+/// The `fa hub token` refusal for a hub with no relay bearer in its pid
+/// file. [protectedHub] names the password-protected case: the bearer
+/// the operator needs is the master secret they already hold.
+String hubTokenRefusalMessage({required bool protectedHub}) {
+  if (protectedHub) {
+    return 'this hub is password-protected — use your hub master secret '
+        'as the relay bearer (the `--secret` you started it with / '
+        '`DAP_HUB_SECRET`); only ephemeral open-hub bearers live in the '
+        'pid file';
+  }
+  return 'no relay secret found — the hub is not running (or its pid '
+      'file predates issue #792): start it with `fa hub serve`, then '
+      're-run `fa hub token`';
 }
 
 void _writePidState(File pidFile, int pid, int port, {String? relaySecret}) {
