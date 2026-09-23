@@ -1,0 +1,17 @@
+# SEC-08 (#796): pin freshness. Dependabot tracks SHA-pinned GitHub Actions
+# refs (it bumps both the ref and the `# vX` comment) across
+# .github/workflows and .github/actions, so pinned SHAs stay current
+# instead of silently rotting. All bumps land as ONE grouped weekly PR —
+# each bump is an independent supply-chain decision, but batching keeps
+# review noise down; the supply-chain gate re-verifies every ref on that
+# PR regardless.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"
