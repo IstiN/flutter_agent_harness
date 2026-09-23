@@ -4114,6 +4114,10 @@
 - feat(ci): SHA-pinned actions + pin-freshness automation (#796) (#849)
 - feat(tui): theme token parity - 67 omp tokens, syntax/markdown palettes, symbol presets (#804) (#832)
 
+## 1.0.462
+
+- feat(tui): keyHint grammar + /help hotkey table (#809) (#834)
+
 ## Unreleased
 
 ## Unreleased

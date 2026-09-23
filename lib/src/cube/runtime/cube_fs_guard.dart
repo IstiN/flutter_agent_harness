@@ -7,6 +7,17 @@
 /// cannot even discover that a denied path exists. Reads are denied, not
 /// audited.
 ///
+/// With a [pathProbe], every check resolves the real path first: symlink
+/// chains are followed (to a fixed depth; unreadable indirections such as
+/// Windows reparse points fail closed), `..` applies after resolution, and
+/// both the verdict and the path handed to the delegate judge the file the
+/// OS will actually open — a link to outside the workspace can no longer
+/// smuggle reads or writes out. Residual race, documented honestly: the
+/// target can still be swapped between check and open (a much smaller
+/// window than a standing symlink; full closure needs file-tool execution
+/// inside the sandboxed worker). Without a probe the guard falls back to
+/// the lexical traversal check of the written path.
+///
 /// Relative paths are resolved against the delegate's [FileSystem.cwd] first
 /// ([CubeFsPolicy.accessFor] resolves them against the spec's `/workspace`,
 /// which is only realized as the process cwd in a real sandbox).
@@ -31,18 +42,23 @@ final class CubeFsGuard implements FileSystem {
   /// `spec.filesystem.workspace` as the policy's workspace root — the CLI
   /// passes the real process cwd here, because the cube's `/workspace` is
   /// realized as the env cwd rather than a literal `/workspace` directory.
+  /// [pathProbe] enables symlink resolution (see the class docs); real
+  /// hosts pass `LocalCubeFsProbe`.
   CubeFsGuard(
     this._delegate,
     this.spec, {
     String? homeDir,
     String? workspaceRoot,
+    CubeFsProbe? pathProbe,
   }) : _homeDir = homeDir,
-       _workspaceRoot = workspaceRoot;
+       _workspaceRoot = workspaceRoot,
+       _pathProbe = pathProbe;
 
   final FileSystem _delegate;
   final CubeSpec spec;
   final String? _homeDir;
   final String? _workspaceRoot;
+  final CubeFsProbe? _pathProbe;
 
   @override
   String get cwd => _delegate.cwd;
@@ -55,11 +71,12 @@ final class CubeFsGuard implements FileSystem {
       ? spec.filesystem
       : CubeFsPolicy(workspace: _workspaceRoot, mounts: spec.filesystem.mounts);
 
-  /// The access level the policy grants to [path], with relative paths
-  /// resolved against the delegate cwd first.
-  CubePathAccess _accessFor(String path) {
+  /// The access level for [path] plus — with a probe — the resolved
+  /// canonical path to open, with relative paths resolved against the
+  /// delegate cwd first.
+  ({CubePathAccess access, String? resolved}) _accessFor(String path) {
     final resolved = path.startsWith('/') ? path : '${_delegate.cwd}/$path';
-    return _policy.accessFor(resolved, homeDir: _homeDir);
+    return _policy.accessForResolved(resolved, homeDir: _homeDir, probe: _pathProbe);
   }
 
   /// The guard-prefixed denial message for [path] at [access].
@@ -73,9 +90,9 @@ final class CubeFsGuard implements FileSystem {
 
   @override
   Future<Result<void, FileError>> writeFile(String path, String content) {
-    final denied = _writeDeniedError(path);
-    if (denied != null) return Future.value(Err(denied));
-    return _delegate.writeFile(path, content);
+    final (error, target) = _writeCheck(path);
+    if (error != null) return Future.value(Err(error));
+    return _delegate.writeFile(target, content);
   }
 
   @override
@@ -83,16 +100,16 @@ final class CubeFsGuard implements FileSystem {
     String path,
     Uint8List content,
   ) {
-    final denied = _writeDeniedError(path);
-    if (denied != null) return Future.value(Err(denied));
-    return _delegate.writeBinaryFile(path, content);
+    final (error, target) = _writeCheck(path);
+    if (error != null) return Future.value(Err(error));
+    return _delegate.writeBinaryFile(target, content);
   }
 
   @override
   Future<Result<void, FileError>> appendFile(String path, String content) {
-    final denied = _writeDeniedError(path);
-    if (denied != null) return Future.value(Err(denied));
-    return _delegate.appendFile(path, content);
+    final (error, target) = _writeCheck(path);
+    if (error != null) return Future.value(Err(error));
+    return _delegate.appendFile(target, content);
   }
 
   @override
@@ -100,9 +117,9 @@ final class CubeFsGuard implements FileSystem {
     String path, {
     bool recursive = true,
   }) {
-    final denied = _writeDeniedError(path);
-    if (denied != null) return Future.value(Err(denied));
-    return _delegate.createDir(path, recursive: recursive);
+    final (error, target) = _writeCheck(path);
+    if (error != null) return Future.value(Err(error));
+    return _delegate.createDir(target, recursive: recursive);
   }
 
   @override
@@ -111,23 +128,23 @@ final class CubeFsGuard implements FileSystem {
     bool recursive = false,
     bool force = false,
   }) {
-    final denied = _writeDeniedError(path);
-    if (denied != null) return Future.value(Err(denied));
-    return _delegate.remove(path, recursive: recursive, force: force);
+    final (error, target) = _writeCheck(path);
+    if (error != null) return Future.value(Err(error));
+    return _delegate.remove(target, recursive: recursive, force: force);
   }
 
   @override
   Future<Result<String, FileError>> readTextFile(String path) async {
-    final denied = _deniedReadError(path);
-    if (denied != null) return Err(denied);
-    return _delegate.readTextFile(path);
+    final (error, target) = _readCheck(path);
+    if (error != null) return Err(error);
+    return _delegate.readTextFile(target);
   }
 
   @override
   Future<Result<Uint8List, FileError>> readBinaryFile(String path) async {
-    final denied = _deniedReadError(path);
-    if (denied != null) return Err(denied);
-    return _delegate.readBinaryFile(path);
+    final (error, target) = _readCheck(path);
+    if (error != null) return Err(error);
+    return _delegate.readBinaryFile(target);
   }
 
   @override
@@ -135,31 +152,32 @@ final class CubeFsGuard implements FileSystem {
     String path, {
     int? maxLines,
   }) async {
-    final denied = _deniedReadError(path);
-    if (denied != null) return Err(denied);
-    return _delegate.readTextLines(path, maxLines: maxLines);
+    final (error, target) = _readCheck(path);
+    if (error != null) return Err(error);
+    return _delegate.readTextLines(target, maxLines: maxLines);
   }
 
   @override
   Future<Result<FileInfo, FileError>> fileInfo(String path) async {
-    final denied = _deniedReadError(path);
-    if (denied != null) return Err(denied);
-    return _delegate.fileInfo(path);
+    final (error, target) = _readCheck(path);
+    if (error != null) return Err(error);
+    return _delegate.fileInfo(target);
   }
 
   @override
   Future<Result<List<FileInfo>, FileError>> listDir(String path) async {
-    final denied = _deniedReadError(path);
-    if (denied != null) return Err(denied);
-    return _delegate.listDir(path);
+    final (error, target) = _readCheck(path);
+    if (error != null) return Err(error);
+    return _delegate.listDir(target);
   }
 
   @override
   Future<Result<bool, FileError>> exists(String path) {
-    if (_accessFor(path) == CubePathAccess.deny) {
+    final (:access, :resolved) = _accessFor(path);
+    if (access == CubePathAccess.deny) {
       return Future.value(const Ok(false));
     }
-    return _delegate.exists(path);
+    return _delegate.exists(resolved ?? path);
   }
 
   @override
@@ -170,19 +188,26 @@ final class CubeFsGuard implements FileSystem {
   Future<Result<String, FileError>> joinPath(List<String> parts) =>
       _delegate.joinPath(parts);
 
-  /// The `permissionDenied` error for a refused write to [path], or `null`
-  /// when the write may proceed.
-  FileError? _writeDeniedError(String path) {
-    final access = _accessFor(path);
-    if (access == CubePathAccess.readWrite) return null;
-    return FileError(FileErrorCode.permissionDenied, _message(path, access));
+  /// The `permissionDenied` error for a refused write to [path], plus the
+  /// path to open (the resolved target when a probe is active), or a null
+  /// error when the write may proceed.
+  (FileError?, String) _writeCheck(String path) {
+    final (:access, :resolved) = _accessFor(path);
+    if (access != CubePathAccess.readWrite) {
+      return (FileError(FileErrorCode.permissionDenied, _message(path, access)), path);
+    }
+    return (null, resolved ?? path);
   }
 
-  /// The `notFound` error swallowed for a denied read of [path], or `null`
-  /// when the read may proceed. Denied reads vanish: they never reveal the
-  /// path exists.
-  FileError? _deniedReadError(String path) {
-    if (_accessFor(path) != CubePathAccess.deny) return null;
-    return FileError(FileErrorCode.notFound, _deniedReadMessage(path));
+  /// The `notFound` error swallowed for a denied read of [path] — denied
+  /// reads vanish, they never reveal the path exists — plus the path to
+  /// open (the resolved target when a probe is active), or a null error
+  /// when the read may proceed.
+  (FileError?, String) _readCheck(String path) {
+    final (:access, :resolved) = _accessFor(path);
+    if (access == CubePathAccess.deny) {
+      return (FileError(FileErrorCode.notFound, _deniedReadMessage(path)), path);
+    }
+    return (null, resolved ?? path);
   }
 }

@@ -106,6 +106,7 @@ final class AgentCliConfig {
     this.onToolsConfigChanged,
     this.onDapHubConfigChanged,
     this.osName,
+    this.fsProbe,
     this.browserBridgeHandle,
     this.browserController,
     this.hubFabric,
@@ -195,6 +196,11 @@ final class AgentCliConfig {
   /// lib/src stays dart:io-free. `/cube` uses it to describe the OS sandbox
   /// backend. Null (tests, web) reports a generic passthrough instead.
   final String? osName;
+
+  /// The symlink probe for the cube fs guard, supplied by the executable
+  /// (`LocalCubeFsProbe` on IO hosts — lib/src stays dart:io-free). Null
+  /// (tests, web) keeps the guard on the lexical traversal check.
+  final CubeFsProbe? fsProbe;
 
   /// The `package:http` client for the fa1.dev cube registry
   /// (`/cube templates` / `/cube install`). Tests inject a mock; web hosts

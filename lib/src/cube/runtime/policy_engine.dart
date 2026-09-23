@@ -47,8 +47,15 @@ final class CubePolicyEngine {
   /// `spec.filesystem.workspace` as the base for relative targets (the
   /// shell passes the real process cwd — the cube's `/workspace` is
   /// realized as the env cwd). A `~` target with an unknown [homeDir] is
-  /// denied.
-  const CubePolicyEngine(this.spec, {this.homeDir, this.workspaceRoot});
+  /// denied. [pathProbe] enables symlink resolution for redirect targets —
+  /// the same [CubeFsProbe]-based resolution the fs guard uses, so a link
+  /// inside the workspace cannot redirect a write outside either.
+  const CubePolicyEngine(
+    this.spec, {
+    this.homeDir,
+    this.workspaceRoot,
+    this.pathProbe,
+  });
 
   /// The cube specification whose policies are enforced.
   final CubeSpec spec;
@@ -58,6 +65,10 @@ final class CubePolicyEngine {
 
   /// The real workspace root, resolving relative redirection targets.
   final String? workspaceRoot;
+
+  /// The symlink probe for redirect-target checks; `null` keeps the
+  /// lexical traversal check (web hosts, tests without a filesystem).
+  final CubeFsProbe? pathProbe;
 
   /// Checks every command the [commandLine] would run.
   ///
@@ -136,12 +147,19 @@ final class CubePolicyEngine {
   /// Checks every shell redirection target of [segment] against the
   /// filesystem policy: a write redirect (`>`, `>>`, `<>`, `&>`, `N>`) must
   /// land in a read/write path, an input redirect (`<`) must not read a
-  /// denied path. This is the policy-mode floor for the trivial `>`
-  /// escape — lexical, not a shell parser.
+  /// denied path. With a [pathProbe] the target is judged — and followed —
+  /// by its resolved real path, the same resolution the fs guard applies;
+  /// without one this is the lexical floor for the trivial `>` escape.
   CubePolicyDecision _checkRedirects(String segment) {
     for (final (target, writes) in _redirectTargets(segment)) {
       if (writes && _deviceSinkPattern.hasMatch(target)) continue;
-      final access = _fsPolicy.accessFor(_targetPath(target), homeDir: homeDir);
+      final access = _fsPolicy
+          .accessForResolved(
+            _targetPath(target),
+            homeDir: homeDir,
+            probe: pathProbe,
+          )
+          .access;
       if (writes && access != CubePathAccess.readWrite) {
         return CubePolicyDecision.denied(
           "write to '$target' denied by cube '${spec.name}'",
