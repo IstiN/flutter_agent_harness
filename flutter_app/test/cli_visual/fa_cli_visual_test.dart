@@ -438,11 +438,29 @@ void main() {
       await harness.screenshot(shotsDir, '60_boot_key');
 
       await harness.runSlashCommand('/key set TEST_KEY');
+      // Two post-merge realities (main@17a58a48 moved the store probe ahead
+      // of the prompt): a host WITH a working store opens the masked prompt
+      // and the save writes through (CI macOS — the keychain is user-level,
+      // not HOME-bound); a host WITHOUT one reports unavailable and never
+      // prompts (Linux: no secret service). The test adapts; both paths
+      // keep the value out of any real config file.
       await harness.liveWaitForText(
-        'Value for',
+        RegExp('Value for|secure storage unavailable on this host'),
         timeout: const Duration(seconds: 15),
       );
-      await harness.screenshot(shotsDir, '61_key_prompt');
+      final storeUsable = harness.screenText.contains('Value for');
+      await harness.screenshot(
+        shotsDir,
+        '61_key_${storeUsable ? 'prompt' : 'unavailable'}',
+      );
+      if (!storeUsable) {
+        // No store on this host: the honest unavailable report IS the
+        // contract — masked entry cannot exist without a prompt. The
+        // save-success path stays covered on store-bearing runners.
+        await harness.close();
+        tempHome.deleteSync(recursive: true);
+        return;
+      }
 
       // Type a value (should be masked)
       harness.sendText('secret123');
@@ -450,18 +468,14 @@ void main() {
       await harness.screenshot(shotsDir, '62_key_masked');
 
       harness.sendEnter();
-      // The sandbox HOME (issue #508) can never have a working keychain:
-      // `security default-keychain` fails without a real user keychain, so
-      // the macOS store probe degrades and the save honestly reports
-      // `could not save` (SecureKeyCache.save → false) instead of leaking
-      // the value into the developer's real keychain. The masked entry
-      // above is the behavior under test; persistence itself is covered by
-      // the SecureKeyCache tests.
+      // The masked entry is the behavior under test; the store writes
+      // through on store-bearing runners (`saved`), and persistence edge
+      // cases stay covered by the SecureKeyCache tests.
       await harness.liveWaitForText(
-        'could not save TEST_KEY',
+        'saved',
         timeout: const Duration(seconds: 15),
       );
-      await harness.screenshot(shotsDir, '63_key_save_reported');
+      await harness.screenshot(shotsDir, '63_key_saved');
 
       await harness.close();
       tempHome.deleteSync(recursive: true);
