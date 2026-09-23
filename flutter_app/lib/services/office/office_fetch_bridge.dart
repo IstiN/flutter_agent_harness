@@ -37,6 +37,15 @@ const String officeRelayDownError =
 // port exists to point at.
 String officeHubRelayBase = 'http://127.0.0.1:8787';
 
+/// The bearer the local fa hub's `/relay` requires (issue #792: the
+/// relay is fail-closed — EVERY scope authenticates). Copy the secret
+/// from the hub's start output (`relay: ... Bearer <secret>`); mutable
+/// for tests. null = the pane holds no credential: the hub transport
+/// is then skipped outright (a credential-less request is refused, so
+/// sending one would only burn a round-trip) and the named
+/// [officeRelayDownError] surface explains what to run where.
+String? officeHubRelayToken;
+
 /// True when an err-frame text means the BRIDGE transport itself died (an
 /// MV3 service-worker restart mid-handshake, the extension context
 /// invalidated by an update) — distinct from an upstream provider failure.
