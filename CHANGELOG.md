@@ -4140,6 +4140,12 @@
 
 - fix(cube): fs guard resolves symlinks — access checks judge the file the OS will open (#791) (#813)
 
+## 1.0.464
+
+- chore: pin factory f7fac02 — SM tick on Bitrise dmtools-ci pool (factory #507) (#870)
+- fix(security): installer verifies pinned version + provenance before install (#814)
+- chore: pin factory 77fc330 — sm: validation economy (#506) (#868)
+
 ## Unreleased
 
 ## Unreleased
