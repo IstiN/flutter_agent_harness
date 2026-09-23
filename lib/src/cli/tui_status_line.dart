@@ -224,32 +224,32 @@ enum StatusLineRoleKey {
 /// EXISTING [TuiTheme] role. S1's token merge (#804) re-points these
 /// lambdas at the dedicated `statusLine*` roles — the only place that
 /// changes; every renderer paints through this table, never a raw color.
-final Map<StatusLineRoleKey, Style Function(TuiTheme theme)>
-    kStatusLineRoles = {
-  StatusLineRoleKey.brandA: (t) => t.accent,
-  StatusLineRoleKey.brandB: (t) => t.accent2,
-  StatusLineRoleKey.model: (t) => t.toolTitle,
-  StatusLineRoleKey.mode: (t) => t.muted,
-  StatusLineRoleKey.path: (t) => t.focusBorder,
-  StatusLineRoleKey.gitClean: (t) => t.success,
-  StatusLineRoleKey.gitDirty: (t) => t.warning,
-  StatusLineRoleKey.gitStaged: (t) => t.success,
-  StatusLineRoleKey.gitUntracked: (t) => t.focusBorder,
-  StatusLineRoleKey.pr: (t) => t.accent,
-  StatusLineRoleKey.subagents: (t) => t.accent2,
-  StatusLineRoleKey.spend: (t) => t.accent2Soft,
-  StatusLineRoleKey.output: (t) => t.toolOutput,
-  StatusLineRoleKey.context: (t) => t.accent2Soft,
-  StatusLineRoleKey.time: (t) => t.muted,
-  StatusLineRoleKey.name: (t) => t.muted,
-  StatusLineRoleKey.dim: (t) => t.muted,
-  StatusLineRoleKey.warn: (t) => t.warning,
-  StatusLineRoleKey.error: (t) => t.error,
-  StatusLineRoleKey.separator: (t) => t.borderMuted,
-  StatusLineRoleKey.gaugeUsed: (t) =>
-      Style(foregroundRgb: t.focusBorder.foregroundRgb),
-  StatusLineRoleKey.gaugeUnused: (t) => t.border,
-};
+final Map<StatusLineRoleKey, Style Function(TuiTheme theme)> kStatusLineRoles =
+    {
+      StatusLineRoleKey.brandA: (t) => t.accent,
+      StatusLineRoleKey.brandB: (t) => t.accent2,
+      StatusLineRoleKey.model: (t) => t.toolTitle,
+      StatusLineRoleKey.mode: (t) => t.muted,
+      StatusLineRoleKey.path: (t) => t.focusBorder,
+      StatusLineRoleKey.gitClean: (t) => t.success,
+      StatusLineRoleKey.gitDirty: (t) => t.warning,
+      StatusLineRoleKey.gitStaged: (t) => t.success,
+      StatusLineRoleKey.gitUntracked: (t) => t.focusBorder,
+      StatusLineRoleKey.pr: (t) => t.accent,
+      StatusLineRoleKey.subagents: (t) => t.accent2,
+      StatusLineRoleKey.spend: (t) => t.accent2Soft,
+      StatusLineRoleKey.output: (t) => t.toolOutput,
+      StatusLineRoleKey.context: (t) => t.accent2Soft,
+      StatusLineRoleKey.time: (t) => t.muted,
+      StatusLineRoleKey.name: (t) => t.muted,
+      StatusLineRoleKey.dim: (t) => t.muted,
+      StatusLineRoleKey.warn: (t) => t.warning,
+      StatusLineRoleKey.error: (t) => t.error,
+      StatusLineRoleKey.separator: (t) => t.borderMuted,
+      StatusLineRoleKey.gaugeUsed: (t) =>
+          Style(foregroundRgb: t.focusBorder.foregroundRgb),
+      StatusLineRoleKey.gaugeUnused: (t) => t.border,
+    };
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Segment options + presets (verbatim shapes from omp presets.ts)
@@ -343,16 +343,21 @@ final class StatusLineSegmentOptions {
     List<String> group(List<String?> leaves) =>
         leaves.whereType<String>().toList();
     final model = group([
-      leaf('showThinkingLevel', modelShowThinkingLevel,
-          defaults.modelShowThinkingLevel),
+      leaf(
+        'showThinkingLevel',
+        modelShowThinkingLevel,
+        defaults.modelShowThinkingLevel,
+      ),
     ]);
     final path = group([
       leaf('abbreviate', pathAbbreviate, defaults.pathAbbreviate),
-      if (pathMaxLength != null &&
-          pathMaxLength != defaults.pathMaxLength)
+      if (pathMaxLength != null && pathMaxLength != defaults.pathMaxLength)
         'maxLength: $pathMaxLength',
-      leaf('stripWorkPrefix', pathStripWorkPrefix,
-          defaults.pathStripWorkPrefix),
+      leaf(
+        'stripWorkPrefix',
+        pathStripWorkPrefix,
+        defaults.pathStripWorkPrefix,
+      ),
     ]);
     final git = group([
       leaf('showBranch', gitShowBranch, defaults.gitShowBranch),
@@ -364,7 +369,8 @@ final class StatusLineSegmentOptions {
       if (time24h == false) 'format: 12h',
       leaf('showSeconds', timeShowSeconds, defaults.timeShowSeconds),
     ]);
-    String section(String name, List<String> leaves) => '      $name:\n'
+    String section(String name, List<String> leaves) =>
+        '      $name:\n'
         '${leaves.map((l) => '        $l').join('\n')}';
     final sections = [
       if (model.isNotEmpty) section('model', model),
@@ -405,12 +411,31 @@ final class StatusLineSpec {
 
 /// The 7 presets verbatim from omp `presets.ts` (pinned commit `df624f5`):
 /// default/minimal/compact/full/nerd/ascii/custom.
-const Map<String,
-        ({List<String> left, List<String> right, StatusLineSeparatorStyle separator, bool nerd, StatusLineSegmentOptions options})>
-    kStatusLinePresets = {
+const Map<
+  String,
+  ({
+    List<String> left,
+    List<String> right,
+    StatusLineSeparatorStyle separator,
+    bool nerd,
+    StatusLineSegmentOptions options,
+  })
+>
+kStatusLinePresets = {
   'default': (
-    left: ['pi', 'vim', 'model', 'mode', 'collab', 'stream', 'path', 'git',
-        'pr', 'context_pct', 'cost'],
+    left: [
+      'pi',
+      'vim',
+      'model',
+      'mode',
+      'collab',
+      'stream',
+      'path',
+      'git',
+      'pr',
+      'context_pct',
+      'cost',
+    ],
     right: ['session_name'],
     separator: StatusLineSeparatorStyle.powerlineThin,
     nerd: false,
@@ -439,21 +464,59 @@ const Map<String,
     ),
   ),
   'full': (
-    left: ['pi', 'vim', 'hostname', 'model', 'mode', 'path', 'git', 'pr',
-        'subagents'],
-    right: ['session_name', 'cache_hit', 'token_in', 'token_out',
-        'token_rate', 'cache_read', 'cost', 'context_pct', 'time_spent',
-        'time'],
+    left: [
+      'pi',
+      'vim',
+      'hostname',
+      'model',
+      'mode',
+      'path',
+      'git',
+      'pr',
+      'subagents',
+    ],
+    right: [
+      'session_name',
+      'cache_hit',
+      'token_in',
+      'token_out',
+      'token_rate',
+      'cache_read',
+      'cost',
+      'context_pct',
+      'time_spent',
+      'time',
+    ],
     separator: StatusLineSeparatorStyle.powerline,
     nerd: false,
     options: StatusLineSegmentOptions(pathMaxLength: 50),
   ),
   'nerd': (
-    left: ['pi', 'vim', 'hostname', 'model', 'mode', 'path', 'git', 'pr',
-        'session', 'subagents'],
-    right: ['session_name', 'token_in', 'token_out', 'cache_read',
-        'cache_write', 'token_rate', 'cost', 'context_pct', 'context_total',
-        'time_spent', 'time'],
+    left: [
+      'pi',
+      'vim',
+      'hostname',
+      'model',
+      'mode',
+      'path',
+      'git',
+      'pr',
+      'session',
+      'subagents',
+    ],
+    right: [
+      'session_name',
+      'token_in',
+      'token_out',
+      'cache_read',
+      'cache_write',
+      'token_rate',
+      'cost',
+      'context_pct',
+      'context_total',
+      'time_spent',
+      'time',
+    ],
     separator: StatusLineSeparatorStyle.powerline,
     nerd: true,
     options: StatusLineSegmentOptions(pathMaxLength: 60, timeShowSeconds: true),
@@ -554,8 +617,7 @@ StatusLineSpec resolveStatusLineSpec(
   void Function(String message)? warn,
 }) {
   final hasCustomGroups = config?.left != null || config?.right != null;
-  final presetName =
-      config?.preset ?? (hasCustomGroups ? 'custom' : 'default');
+  final presetName = config?.preset ?? (hasCustomGroups ? 'custom' : 'default');
   final preset = kStatusLinePresets[presetName];
   if (preset == null) {
     throw ConfigException(
@@ -618,7 +680,8 @@ TuiSectionConfig parseTuiSection(Object? node) {
   for (final key in node.keys) {
     if (!knownKeys.contains('$key')) {
       throw ConfigException(
-          'unknown "tui" key: $key (known: ${knownKeys.join(', ')})');
+        'unknown "tui" key: $key (known: ${knownKeys.join(', ')})',
+      );
     }
   }
   final theme = node['theme'];
@@ -636,8 +699,7 @@ TuiSectionConfig parseTuiSection(Object? node) {
   return TuiSectionConfig(
     theme: theme as String?,
     classic: classic ?? false,
-    statusLine:
-        statusLine == null ? null : parseStatusLineConfig(statusLine),
+    statusLine: statusLine == null ? null : parseStatusLineConfig(statusLine),
   );
 }
 
@@ -690,80 +752,95 @@ StatusLineConfig parseStatusLineConfig(Object? node) {
   if (node is! YamlMap) {
     throw ConfigException('tui.statusLine must be a map, got: $node');
   }
-  const knownKeys = {
+  _checkStatusLineKeys(node, 'tui.statusLine', const {
     'preset',
     'left',
     'right',
     'separator',
     'segmentOptions',
     'transparent',
-  };
-  for (final key in node.keys) {
-    if (!knownKeys.contains('$key')) {
-      throw ConfigException(
-          'unknown "tui.statusLine" key: $key (known: '
-          '${knownKeys.join(', ')})');
-    }
-  }
-  final preset = node['preset'];
-  if (preset != null &&
-      (preset is! String || !kStatusLinePresetNames.contains(preset))) {
-    throw ConfigException(
-      'unknown "tui.statusLine" preset: $preset '
-      '(known: ${kStatusLinePresetNames.join(', ')})',
-    );
-  }
-  List<String>? readIds(String key) {
-    final value = node[key];
-    if (value == null) return null;
-    if (value is! YamlList) {
-      throw ConfigException(
-          '"tui.statusLine.$key" must be a list of segment ids');
-    }
-    return [
-      for (final id in value)
-        if (id is! String)
-          throw ConfigException(
-              '"tui.statusLine.$key" entries must be strings, got: $id')
-        else
-          id,
-    ];
-  }
-
-  final separator = node['separator'];
+  });
+  final preset = _statusLinePreset(node['preset']);
   final optionsNode = node['segmentOptions'];
   if (optionsNode != null && optionsNode is! YamlMap) {
     throw ConfigException(
-        '"tui.statusLine.segmentOptions" must be a map, got: $optionsNode');
+      '"tui.statusLine.segmentOptions" must be a map, got: $optionsNode',
+    );
   }
   final transparent = node['transparent'];
   if (transparent != null && transparent is! bool) {
     throw ConfigException('"tui.statusLine.transparent" must be a boolean');
   }
+  final separator = node['separator'];
   return StatusLineConfig(
-    preset: preset as String?,
-    left: readIds('left'),
-    right: readIds('right'),
-    separator:
-        separator == null ? null : parseStatusLineSeparator('$separator'),
-    segmentOptions:
-        optionsNode == null ? null : parseSegmentOptions(optionsNode),
+    preset: preset,
+    left: _statusLineSegmentIds(node, 'left'),
+    right: _statusLineSegmentIds(node, 'right'),
+    separator: separator == null
+        ? null
+        : parseStatusLineSeparator('$separator'),
+    segmentOptions: optionsNode == null
+        ? null
+        : parseSegmentOptions(optionsNode),
     transparent: transparent ?? false,
   );
+}
+
+/// Strict-key guard for the `tui.statusLine` section family: any key
+/// outside [knownKeys] throws (a typo must never silently disable a
+/// setting).
+void _checkStatusLineKeys(YamlMap node, String path, Set<String> knownKeys) {
+  for (final key in node.keys) {
+    if (!knownKeys.contains('$key')) {
+      throw ConfigException(
+        'unknown "$path" key: $key (known: ${knownKeys.join(', ')})',
+      );
+    }
+  }
+}
+
+/// Validates the `preset:` value; null when unset.
+String? _statusLinePreset(Object? preset) {
+  if (preset == null) return null;
+  if (preset is! String || !kStatusLinePresetNames.contains(preset)) {
+    throw ConfigException(
+      'unknown "tui.statusLine" preset: $preset '
+      '(known: ${kStatusLinePresetNames.join(', ')})',
+    );
+  }
+  return preset;
+}
+
+/// Reads a `left:`/`right:` id list; every entry must be a string.
+List<String>? _statusLineSegmentIds(YamlMap node, String key) {
+  final value = node[key];
+  if (value == null) return null;
+  if (value is! YamlList) {
+    throw ConfigException(
+      '"tui.statusLine.$key" must be a list of segment ids',
+    );
+  }
+  return [
+    for (final id in value)
+      if (id is! String)
+        throw ConfigException(
+          '"tui.statusLine.$key" entries must be strings, got: $id',
+        )
+      else
+        id,
+  ];
 }
 
 /// Parses the `segmentOptions:` node into the explicit-override shape
 /// (only the fields the user mentioned are non-null).
 StatusLineSegmentOptions parseSegmentOptions(Object? node) {
   final map = node as YamlMap;
-  const knownKeys = {'model', 'path', 'git', 'time'};
-  for (final key in map.keys) {
-    if (!knownKeys.contains('$key')) {
-      throw ConfigException(
-          'unknown "tui.statusLine.segmentOptions" key: $key '
-          '(known: ${knownKeys.join(', ')})');
-    }
-  }
+  _checkStatusLineKeys(map, 'tui.statusLine.segmentOptions', const {
+    'model',
+    'path',
+    'git',
+    'time',
+  });
   final model = _subSection(map, 'model');
   final path = _subSection(map, 'path');
   final git = _subSection(map, 'git');
@@ -787,7 +864,8 @@ YamlMap? _subSection(YamlMap parent, String key) {
   if (value == null) return null;
   if (value is! YamlMap) {
     throw ConfigException(
-        '"tui.statusLine.segmentOptions.$key" must be a map, got: $value');
+      '"tui.statusLine.segmentOptions.$key" must be a map, got: $value',
+    );
   }
   return value;
 }
@@ -797,7 +875,8 @@ bool? _boolOpt(YamlMap? node, String key) {
   if (value == null) return null;
   if (value is! bool) {
     throw ConfigException(
-        '"tui.statusLine.segmentOptions" "$key" must be a boolean');
+      '"tui.statusLine.segmentOptions" "$key" must be a boolean',
+    );
   }
   return value;
 }
@@ -807,7 +886,8 @@ int? _positiveInt(YamlMap? node, String key) {
   if (value == null) return null;
   if (value is! int || value <= 0) {
     throw ConfigException(
-        '"tui.statusLine.segmentOptions" "$key" must be a positive integer');
+      '"tui.statusLine.segmentOptions" "$key" must be a positive integer',
+    );
   }
   return value;
 }
@@ -818,7 +898,8 @@ bool? _time24h(YamlMap? node) {
   if (value == '24h') return true;
   if (value == '12h') return false;
   throw ConfigException(
-      '"tui.statusLine.segmentOptions.time.format" must be "24h" or "12h"');
+    '"tui.statusLine.segmentOptions.time.format" must be "24h" or "12h"',
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -857,28 +938,38 @@ StatusLineSeparator getSeparator(
   final pwThinRight = nerd ? '\u{e0b3}' : '<';
   return switch (style) {
     StatusLineSeparatorStyle.powerline => StatusLineSeparator(
-        left: pwLeft,
-        right: pwRight,
-        capAfterLeft: pwRight,
-        capBeforeRight: pwLeft,
-      ),
+      left: pwLeft,
+      right: pwRight,
+      capAfterLeft: pwRight,
+      capBeforeRight: pwLeft,
+    ),
     StatusLineSeparatorStyle.powerlineThin => StatusLineSeparator(
-        left: pwThinLeft,
-        right: pwThinRight,
-        // Full-width caps even for the thin style (omp verbatim).
-        capAfterLeft: pwRight,
-        capBeforeRight: pwLeft,
-      ),
-    StatusLineSeparatorStyle.slash =>
-      const StatusLineSeparator(left: '/', right: '/'),
-    StatusLineSeparatorStyle.pipe =>
-      const StatusLineSeparator(left: '│', right: '│'),
-    StatusLineSeparatorStyle.block =>
-      StatusLineSeparator(left: nerd ? '█' : '▌', right: nerd ? '█' : '▌'),
-    StatusLineSeparatorStyle.space =>
-      const StatusLineSeparator(left: ' ', right: ' '),
-    StatusLineSeparatorStyle.ascii =>
-      const StatusLineSeparator(left: '>', right: '<'),
+      left: pwThinLeft,
+      right: pwThinRight,
+      // Full-width caps even for the thin style (omp verbatim).
+      capAfterLeft: pwRight,
+      capBeforeRight: pwLeft,
+    ),
+    StatusLineSeparatorStyle.slash => const StatusLineSeparator(
+      left: '/',
+      right: '/',
+    ),
+    StatusLineSeparatorStyle.pipe => const StatusLineSeparator(
+      left: '│',
+      right: '│',
+    ),
+    StatusLineSeparatorStyle.block => StatusLineSeparator(
+      left: nerd ? '█' : '▌',
+      right: nerd ? '█' : '▌',
+    ),
+    StatusLineSeparatorStyle.space => const StatusLineSeparator(
+      left: ' ',
+      right: ' ',
+    ),
+    StatusLineSeparatorStyle.ascii => const StatusLineSeparator(
+      left: '>',
+      right: '<',
+    ),
   };
 }
 
@@ -1023,8 +1114,11 @@ StatusLineGit parseGitStatusPorcelain(String output) {
 
 /// The `time`/`time_spent` clock form: `HH:MM(:SS)` in 24h, or
 /// `H:MM(:SS) AM/PM` in 12h (compact 24h form `H:MM` for durations).
-String formatStatusLineClock(DateTime now,
-    {required bool clock24h, required bool showSeconds}) {
+String formatStatusLineClock(
+  DateTime now, {
+  required bool clock24h,
+  required bool showSeconds,
+}) {
   var hour = now.hour;
   var suffix = '';
   if (!clock24h) {
@@ -1105,21 +1199,33 @@ LaidSegment? _renderGit(StatusLineSnapshot s, StatusLineSpec spec) {
   final branch = git.branch;
   final counts = git.staged + git.unstaged + git.untracked;
   if ((branch == null || branch.isEmpty) && counts == 0) return null;
-  final spans = <StatusSpan>[];
-  if (branch != null && branch.isNotEmpty && spec.options.showBranch) {
-    spans.add((branch, StatusLineRoleKey.gitClean));
-  }
-  if (spec.options.showUnstaged && git.unstaged > 0) {
-    spans.add((' *${git.unstaged}', StatusLineRoleKey.gitDirty));
-  }
-  if (spec.options.showStaged && git.staged > 0) {
-    spans.add((' +${git.staged}', StatusLineRoleKey.gitStaged));
-  }
-  if (spec.options.showUntracked && git.untracked > 0) {
-    spans.add((' ?${git.untracked}', StatusLineRoleKey.gitUntracked));
-  }
+  final spans = _gitSpans(branch, git, spec.options);
   if (spans.isEmpty) return null;
   return LaidSegment('git', spans);
+}
+
+/// The git tail spans: the branch, then the dirty markers in omp's
+/// order (unstaged `*n`, staged `+n`, untracked `?n`), each behind its
+/// `segmentOptions.git.*` toggle and only when its count is nonzero.
+List<StatusSpan> _gitSpans(
+  String? branch,
+  StatusLineGit git,
+  StatusLineSegmentOptions o,
+) {
+  final spans = <StatusSpan>[];
+  if (branch != null && branch.isNotEmpty && o.showBranch) {
+    spans.add((branch, StatusLineRoleKey.gitClean));
+  }
+  if (o.showUnstaged && git.unstaged > 0) {
+    spans.add((' *${git.unstaged}', StatusLineRoleKey.gitDirty));
+  }
+  if (o.showStaged && git.staged > 0) {
+    spans.add((' +${git.staged}', StatusLineRoleKey.gitStaged));
+  }
+  if (o.showUntracked && git.untracked > 0) {
+    spans.add((' ?${git.untracked}', StatusLineRoleKey.gitUntracked));
+  }
+  return spans;
 }
 
 LaidSegment? _renderPr(StatusLineSnapshot s, StatusLineSpec spec) {
@@ -1130,27 +1236,31 @@ LaidSegment? _renderPr(StatusLineSnapshot s, StatusLineSpec spec) {
 
 LaidSegment? _renderSubagents(StatusLineSnapshot s, StatusLineSpec spec) {
   if (s.subagents <= 0) return null;
-  return LaidSegment(
-      'subagents', [('⧉${s.subagents}', StatusLineRoleKey.subagents)]);
+  return LaidSegment('subagents', [
+    ('⧉${s.subagents}', StatusLineRoleKey.subagents),
+  ]);
 }
 
 LaidSegment? _renderTokenIn(StatusLineSnapshot s, StatusLineSpec spec) =>
     s.tokensIn <= 0
-        ? null
-        : LaidSegment(
-            'token_in', [('↑${formatTokens(s.tokensIn)}', StatusLineRoleKey.output)]);
+    ? null
+    : LaidSegment('token_in', [
+        ('↑${formatTokens(s.tokensIn)}', StatusLineRoleKey.output),
+      ]);
 
 LaidSegment? _renderTokenOut(StatusLineSnapshot s, StatusLineSpec spec) =>
     s.tokensOut <= 0
-        ? null
-        : LaidSegment('token_out',
-            [('↓${formatTokens(s.tokensOut)}', StatusLineRoleKey.output)]);
+    ? null
+    : LaidSegment('token_out', [
+        ('↓${formatTokens(s.tokensOut)}', StatusLineRoleKey.output),
+      ]);
 
 LaidSegment? _renderTokenTotal(StatusLineSnapshot s, StatusLineSpec spec) {
   final total = s.tokensIn + s.tokensOut;
   if (total <= 0) return null;
-  return LaidSegment('token_total',
-      [('Σ${formatTokens(total)}', StatusLineRoleKey.output)]);
+  return LaidSegment('token_total', [
+    ('Σ${formatTokens(total)}', StatusLineRoleKey.output),
+  ]);
 }
 
 LaidSegment? _renderTokenRate(StatusLineSnapshot s, StatusLineSpec spec) {
@@ -1159,15 +1269,17 @@ LaidSegment? _renderTokenRate(StatusLineSnapshot s, StatusLineSpec spec) {
   final formatted = rate >= 100
       ? rate.round().toString()
       : rate.toStringAsFixed(1).replaceFirst(RegExp(r'\.0$'), '');
-  return LaidSegment(
-      'token_rate', [('$formatted t/s', StatusLineRoleKey.output)]);
+  return LaidSegment('token_rate', [
+    ('$formatted t/s', StatusLineRoleKey.output),
+  ]);
 }
 
 LaidSegment? _renderCost(StatusLineSnapshot s, StatusLineSpec spec) {
   final cost = s.costUsd;
   if (cost == null) return null; // null = unpriced: hide, never $0.00
-  return LaidSegment(
-      'cost', [('\$${cost.toStringAsFixed(2)}', StatusLineRoleKey.spend)]);
+  return LaidSegment('cost', [
+    ('\$${cost.toStringAsFixed(2)}', StatusLineRoleKey.spend),
+  ]);
 }
 
 LaidSegment? _renderContextPct(StatusLineSnapshot s, StatusLineSpec spec) {
@@ -1186,14 +1298,16 @@ LaidSegment? _renderContextPct(StatusLineSnapshot s, StatusLineSpec spec) {
 
 LaidSegment? _renderContextTotal(StatusLineSnapshot s, StatusLineSpec spec) {
   if (s.contextWindow <= 0) return null;
-  return LaidSegment('context_total',
-      [(formatTokens(s.contextWindow), StatusLineRoleKey.context)]);
+  return LaidSegment('context_total', [
+    (formatTokens(s.contextWindow), StatusLineRoleKey.context),
+  ]);
 }
 
 LaidSegment? _renderTimeSpent(StatusLineSnapshot s, StatusLineSpec spec) {
   if (s.elapsed <= Duration.zero) return null;
-  return LaidSegment('time_spent',
-      [(formatStatusLineDuration(s.elapsed), StatusLineRoleKey.time)]);
+  return LaidSegment('time_spent', [
+    (formatStatusLineDuration(s.elapsed), StatusLineRoleKey.time),
+  ]);
 }
 
 LaidSegment? _renderTime(StatusLineSnapshot s, StatusLineSpec spec) {
@@ -1201,9 +1315,11 @@ LaidSegment? _renderTime(StatusLineSnapshot s, StatusLineSpec spec) {
   if (now == null) return null;
   return LaidSegment('time', [
     (
-      formatStatusLineClock(now,
-          clock24h: spec.options.clock24h,
-          showSeconds: spec.options.showSeconds),
+      formatStatusLineClock(
+        now,
+        clock24h: spec.options.clock24h,
+        showSeconds: spec.options.showSeconds,
+      ),
       StatusLineRoleKey.time,
     ),
   ]);
@@ -1240,15 +1356,17 @@ LaidSegment? _renderStream(StatusLineSnapshot s, StatusLineSpec spec) {
 
 LaidSegment? _renderCacheRead(StatusLineSnapshot s, StatusLineSpec spec) =>
     s.cacheRead <= 0
-        ? null
-        : LaidSegment('cache_read',
-            [('⟲${formatTokens(s.cacheRead)}', StatusLineRoleKey.output)]);
+    ? null
+    : LaidSegment('cache_read', [
+        ('⟲${formatTokens(s.cacheRead)}', StatusLineRoleKey.output),
+      ]);
 
 LaidSegment? _renderCacheWrite(StatusLineSnapshot s, StatusLineSpec spec) =>
     s.cacheWrite <= 0
-        ? null
-        : LaidSegment('cache_write',
-            [('⟳${formatTokens(s.cacheWrite)}', StatusLineRoleKey.output)]);
+    ? null
+    : LaidSegment('cache_write', [
+        ('⟳${formatTokens(s.cacheWrite)}', StatusLineRoleKey.output),
+      ]);
 
 LaidSegment? _renderCacheHit(StatusLineSnapshot s, StatusLineSpec spec) =>
     // omp keeps `cache_hit` in the 27-id table with no renderer (verified
@@ -1264,9 +1382,11 @@ LaidSegment? _renderStatus(StatusLineSnapshot s, StatusLineSpec spec) {
 /// The registry: omp's 27 segment ids → fa renderers. A renderer returns
 /// `null` when its data is absent — the segment hides (E7), never
 /// rendering a placeholder.
-final Map<String,
-        LaidSegment? Function(StatusLineSnapshot s, StatusLineSpec spec)>
-    kStatusLineSegments = {
+final Map<
+  String,
+  LaidSegment? Function(StatusLineSnapshot s, StatusLineSpec spec)
+>
+kStatusLineSegments = {
   'pi': _renderPi,
   'status': _renderStatus,
   'model': _renderModel,
@@ -1299,10 +1419,10 @@ final Map<String,
 /// Lays out one configured group into rendered segments (hidden ones
 /// dropped).
 List<LaidSegment> _layoutGroup(
-        List<String> ids, StatusLineSnapshot s, StatusLineSpec spec) =>
-    [
-      for (final id in ids) ?kStatusLineSegments[id]!(s, spec),
-    ];
+  List<String> ids,
+  StatusLineSnapshot s,
+  StatusLineSpec spec,
+) => [for (final id in ids) ?kStatusLineSegments[id]!(s, spec)];
 
 // ═══════════════════════════════════════════════════════════════════════════
 // The engine — layout, truncation ladder, gauge fill
@@ -1329,8 +1449,7 @@ final class _Group {
     return out;
   }
 
-  int get width =>
-      spans.fold(0, (w, s) => w + tuiTextWidth(s.$1));
+  int get width => spans.fold(0, (w, s) => w + tuiTextWidth(s.$1));
 }
 
 /// Renders one status-bar frame as role-keyed spans.
@@ -1404,14 +1523,14 @@ final class _Squeezed {
 /// Ladder step 1 body: re-renders `session_name` clamped to [nameMax]
 /// cells; every other right-group member passes through.
 List<LaidSegment> _shrinkSessionName(List<LaidSegment> right, int nameMax) => [
-      for (final seg in right)
-        if (seg.id != 'session_name')
-          seg
-        else
-          LaidSegment('session_name', [
-            (tuiFitWidth(seg.text, nameMax), StatusLineRoleKey.name),
-          ]),
-    ];
+  for (final seg in right)
+    if (seg.id != 'session_name')
+      seg
+    else
+      LaidSegment('session_name', [
+        (tuiFitWidth(seg.text, nameMax), StatusLineRoleKey.name),
+      ]),
+];
 
 /// The elastic truncation ladder (omp): shrink `session_name` to 8 then
 /// 4 cells, drop right-group members right-to-left, re-render `path` at
@@ -1474,9 +1593,11 @@ List<LaidSegment> _shrinkPath(
   final shrunk = [...left];
   var leftGroup = _Group(shrunk, sep);
   var options = spec.options;
-  for (var maxLength = options.maxLength;
-      maxLength >= 10 && leftGroup.width + rightW > width;
-      maxLength -= 10) {
+  for (
+    var maxLength = options.maxLength;
+    maxLength >= 10 && leftGroup.width + rightW > width;
+    maxLength -= 10
+  ) {
     options = options.withPathMaxLength(maxLength);
     final re = _renderPath(
       snapshot,
@@ -1509,8 +1630,10 @@ List<StatusSpan> _gaugeSpans(int gap, double pct, int contextWindow) {
   // into each group. Narrower: bare percent. Narrowest: plain gap.
   if (gap >= statusLineGaugeMinWidth(pct, contextWindow)) {
     final scaleWidth = gap - pctLabel.length - windowLabel.length - 2;
-    final usedCount =
-        ((pct.clamp(0, 100) / 100) * scaleWidth).round().clamp(0, scaleWidth);
+    final usedCount = ((pct.clamp(0, 100) / 100) * scaleWidth).round().clamp(
+      0,
+      scaleWidth,
+    );
     return <StatusSpan>[
       (' $pctLabel', role),
       ('━' * usedCount, StatusLineRoleKey.gaugeUsed),
@@ -1595,5 +1718,3 @@ final class TuiStatusLine {
   List<StatusSpan> renderSpans(StatusLineSnapshot snapshot, int width) =>
       renderStatusLineSpans(snapshot, spec, width);
 }
-
-
