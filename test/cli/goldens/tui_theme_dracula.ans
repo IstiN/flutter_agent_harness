@@ -12,4 +12,8 @@
 [2m[38;2;98;114;164m```[0m
 [48;2;33;34;44m[38;2;248;248;242m switch the theme to ohmypi [0m
 [38;2;255;184;108mretrying in 2s[0m [38;2;255;85;85mdenied: write outside workspace[0m
+· snooze· minimal· low· medium· high· xhigh
+final theme = 'omp'; // parity
++ added - removed ~ context
+glm-5.3-flash · ~/work/harness · ✓ · 42% · $1.24
   default       [1m[38;2;94;234;212m███[0m[1m[38;2;129;140;248m███[0m[38;2;74;222;128m███[0m[38;2;250;204;21m███[0m[38;2;248;113;113m███[0m[48;2;30;34;42m███[0m
