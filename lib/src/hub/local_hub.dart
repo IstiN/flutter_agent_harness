@@ -16,6 +16,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 
@@ -63,8 +64,17 @@ HubState readHubState(File file) {
 /// invalid file counts as "no password".
 String? readHubStateSecret(File file) => readHubState(file).masterSecret;
 
+/// Monotonic per-process write counter for [writeHubState]'s unique
+/// temp names.
+int _hubStateWriteSeq = 0;
+
 /// Persists `{masterSecret, clients}` (0600 — the file carries secrets).
 /// Best-effort: IO failures never take the hub down.
+///
+/// Temp + chmod + rename: the file must never be world-readable for
+/// even a moment, and content-first/chmod-second on the live path
+/// leaves exactly that window while `hub.json` carries the master
+/// secret (issue #794 review).
 Future<void> writeHubState(
   File file, {
   required String? masterSecret,
@@ -74,14 +84,27 @@ Future<void> writeHubState(
     if (!await file.parent.exists()) {
       await file.parent.create(recursive: true);
     }
-    await file.writeAsString(
-      jsonEncode({'masterSecret': masterSecret, 'clients': clients}),
+    // Unique temp name: two overlapping writes must not race one
+    // shared .tmp (A renames it away; B's rename then throws and its
+    // enrollment is silently lost — issue #794 review round 5). The
+    // write counter keeps same-microsecond writes apart; microseconds
+    // keep restarts apart.
+    final tmp = File(
+      '${file.path}.${DateTime.now().microsecondsSinceEpoch}'
+      '.${_hubStateWriteSeq++}.tmp',
     );
-    // dart:io has no chmod API — best-effort via the shell (on platforms
-    // without chmod we just skip).
-    await Process.run('chmod', ['600', file.path]);
+    await tmp.writeAsString(
+      jsonEncode({'masterSecret': masterSecret, 'clients': clients}),
+      flush: true,
+    );
+    if (!Platform.isWindows) {
+      await Process.run('chmod', ['600', tmp.path]);
+    }
+    await tmp.rename(file.path);
   } on Object {
     // Persistence is best-effort; the in-memory state still serves.
+    // (A leftover uniquely-named .tmp from a crashed write is never
+    // read — harmless.)
   }
 }
 
@@ -171,7 +194,25 @@ class LocalHub {
     this._masterSecret,
     this._stateFile,
     this.relayAllowAnyHost = false,
-  });
+    this.relayConcurrency = 4,
+    this.relayQueueLimit = 32,
+    this.relayMaxBodyBytes = relayDefaultMaxBodyBytes,
+    this.relayConnectTimeout = relayDefaultConnectTimeout,
+    this.relayIdleTimeout = relayDefaultIdleTimeout,
+  }) : assert(
+         relayConcurrency > 0,
+         'relayConcurrency must be positive — 0 wedges the pool forever',
+       ),
+       assert(relayQueueLimit >= 0, 'relayQueueLimit must not be negative'),
+       assert(relayMaxBodyBytes > 0, 'relayMaxBodyBytes must be positive'),
+       assert(
+         relayConnectTimeout > Duration.zero,
+         'relayConnectTimeout must be positive',
+       ),
+       assert(
+         relayIdleTimeout > Duration.zero,
+         'relayIdleTimeout must be positive',
+       );
 
   /// The port to bind (`0` = ephemeral, tests).
   final int port;
@@ -181,6 +222,34 @@ class LocalHub {
   /// can reach a local mock provider. Off in production — a relay is a
   /// provider transport, not a general-purpose fetch tool.
   final bool relayAllowAnyHost;
+
+  /// Bounded relay handling (issue #794): at most [relayConcurrency]
+  /// relays run at once; overflow queues up to [relayQueueLimit] deep
+  /// and answers 503 beyond that — backpressure, not OOM. A request
+  /// body larger than [relayMaxBodyBytes] is a 413; the upstream leg
+  /// gets a [relayConnectTimeout] and a per-chunk [relayIdleTimeout]
+  /// (which also bounds a stalled client body). Defaults are modest.
+  final int relayConcurrency;
+  final int relayQueueLimit;
+  final int relayMaxBodyBytes;
+  final Duration relayConnectTimeout;
+  final Duration relayIdleTimeout;
+
+  /// Upstream requests aborted because the relay client went away
+  /// mid-flight (cancel-on-disconnect, issue #794 AC3).
+  int relayUpstreamAborts = 0;
+
+  /// Relays currently holding a pool slot (tests observe backpressure
+  /// and release through this).
+  int get relayInFlight => _relayActive;
+
+  /// Relays currently parked in the overflow queue (tests synchronize
+  /// occupancy ladders on this instead of sleeping).
+  int get relayQueueDepth => _relayWaiters.length;
+
+  int _relaySeq = 0;
+  int _relayActive = 0;
+  final _relayWaiters = <Completer<bool>>[];
 
   /// The bearer credential `/relay` demands on every scope (issue #792):
   /// the master secret when one is configured, else an ephemeral per-serve
@@ -298,6 +367,12 @@ class LocalHub {
   Uri get url => Uri.parse('ws://127.0.0.1:${_server!.port}/ws');
 
   Future<void> stop() async {
+    // A queued relay waits forever otherwise; the hub is going away, so
+    // every waiter is released as dropped (issue #794 review).
+    for (final waiter in _relayWaiters) {
+      if (!waiter.isCompleted) waiter.complete(false);
+    }
+    _relayWaiters.clear();
     for (final ws in _conns.values) {
       await ws.close();
     }
@@ -323,27 +398,133 @@ class LocalHub {
     await hellos.firstWhere((_) => _hellosSeen >= n).timeout(timeout);
   }
 
+  /// The accept loop NEVER awaits request work (issue #794): every
+  /// request routes detached, so a slow relay, a hung upgrade, or a dead
+  /// socket cannot delay the next accept. Per-request errors are
+  /// contained here — one bad socket never kills the loop.
   Future<void> _serve() async {
     await for (final request in _server!) {
+      unawaited(_route(request));
+    }
+  }
+
+  Future<void> _route(HttpRequest request) async {
+    try {
       if (request.uri.path == '/healthz') {
         request.response.statusCode = 200;
         await request.response.close();
       } else if (request.uri.path == '/ws' &&
           WebSocketTransformer.isUpgradeRequest(request)) {
         final ws = await _authorizedUpgrade(request);
-        if (ws == null) continue; // 401 already answered
+        if (ws == null) return; // 401 already answered
         unawaited(_handle(ws));
       } else if (request.uri.path == '/relay') {
-        await handleRelayRequest(
-          request,
-          requireCredential: () => _relaySecret,
-          origin: request.headers.value('origin'),
-          allowAnyHost: relayAllowAnyHost,
-        );
+        await _relayDispatch(request);
       } else {
         request.response.statusCode = 404;
         await request.response.close();
       }
+    } on Object catch (error) {
+      // The socket died mid-handler — or a handler had a bug. Both stay
+      // out of the serve loop, but a programming error must not vanish
+      // without a trace in a long-lived daemon (issue #794 review).
+      stderr.writeln(
+        'hub: handler error on ${request.method} ${request.uri.path}: '
+        '$error',
+      );
+      try {
+        await request.response.close();
+      } on Object {
+        // Already gone.
+      }
+    }
+  }
+
+  /// The relay gate (issue #794): bounded concurrency with queue
+  /// backpressure, a per-request run id on every response, and named
+  /// limit errors logged with that id. The CHEAP verdicts (OPTIONS,
+  /// bearer, origin) run BEFORE any pool slot is touched — unauthenticated
+  /// garbage and browser preflights must not occupy workers or queue
+  /// slots (issue #794 review).
+  Future<void> _relayDispatch(HttpRequest request) async {
+    final runId = 'relay-${++_relaySeq}';
+    request.response.headers.set('x-fah-relay-id', runId);
+    void log(String line) => stderr.writeln('hub [$runId]: $line');
+    final origin = request.headers.value('origin');
+    if (!await _relayGate(
+      request,
+      requireCredential: () => _relaySecret,
+      origin: origin,
+    )) {
+      return; // answered (preflight / 401 / 403) without any slot cost
+    }
+    final slot = await _acquireRelaySlot(request);
+    if (slot == _RelaySlot.refused) {
+      log('relay worker queue full (${_relayWaiters.length} waiters) — 503');
+      await _relayError(
+        request,
+        HttpStatus.serviceUnavailable,
+        'relay busy — try again',
+        bodyConsumed: false,
+        relayAllowedOrigin(origin),
+      );
+      return;
+    }
+    if (slot == _RelaySlot.dropped) {
+      // The slot was released without a worker: the client disconnected
+      // while queued, or the hub is stopping (waiters completed false).
+      // Nothing is left to answer — the log stays generic so a shutdown
+      // does not read as phantom client churn (issue #794 review r5).
+      log('queued relay dropped (client gone or hub stopping)');
+      return;
+    }
+    try {
+      await handleRelayBody(
+        request,
+        allowedOrigin: relayAllowedOrigin(origin),
+        allowAnyHost: relayAllowAnyHost,
+        limits: (
+          maxBodyBytes: relayMaxBodyBytes,
+          connectTimeout: relayConnectTimeout,
+          idleTimeout: relayIdleTimeout,
+        ),
+        log: log,
+        onUpstreamAbort: () => relayUpstreamAborts++,
+      );
+    } finally {
+      _releaseRelaySlot();
+    }
+  }
+
+  /// One relay slot: free slots go straight through; overflow queues
+  /// ([_relayWaiters]); a full queue refuses (backpressure → 503). A
+  /// client that disconnects while queued is dropped instead of being
+  /// handed a worker later (issue #794 review) — `response.done` DOES
+  /// complete for a client-gone socket.
+  Future<_RelaySlot> _acquireRelaySlot(HttpRequest request) async {
+    if (_relayWaiters.isEmpty && _relayActive < relayConcurrency) {
+      _relayActive++;
+      return _RelaySlot.granted;
+    }
+    if (_relayWaiters.length >= relayQueueLimit) return _RelaySlot.refused;
+    final waiter = Completer<bool>();
+    _relayWaiters.add(waiter);
+    unawaited(
+      request.response.done.whenComplete(() {
+        if (!waiter.isCompleted) {
+          _relayWaiters.remove(waiter);
+          waiter.complete(false); // dropped — answer nothing
+        }
+      }),
+    );
+    return await waiter.future ? _RelaySlot.granted : _RelaySlot.dropped;
+  }
+
+  void _releaseRelaySlot() {
+    if (_relayWaiters.isNotEmpty) {
+      _relayWaiters.removeAt(0).complete(true);
+    } else if (_relayActive > 0) {
+      _relayActive--;
     }
   }
 
@@ -676,10 +857,6 @@ class HubJoin {
 /// headers = the browser blocks the read).
 // ponytail: exact fa1.dev + localhost dev; extend the list when the pane
 // gains another production origin.
-/// The connect window for one upstream relay dial on this branch (the
-/// bounded relay of issue #794 layers the full timeout set on top).
-const Duration relayConnectTimeout = Duration(seconds: 10);
-
 String? relayAllowedOrigin(String? origin) {
   if (origin == null) return null;
   final uri = Uri.tryParse(origin);
@@ -687,6 +864,77 @@ String? relayAllowedOrigin(String? origin) {
   const allowedHosts = {'fa1.dev'};
   final localhost = host == 'localhost' || host.endsWith('.localhost');
   return (allowedHosts.contains(host) || localhost) ? origin : null;
+}
+
+/// Bounded relay handling knobs (issue #794). A host tunes them per hub;
+/// defaults are modest on purpose: a 10 MiB body cap and 10 s connect /
+/// 30 s idle windows on the upstream leg.
+typedef RelayLimits = ({
+  int maxBodyBytes,
+  Duration connectTimeout,
+  Duration idleTimeout,
+});
+
+/// The upstream connect window for one relay hop — the single literal
+/// behind both [relayDefaultLimits] and the [LocalHub.relayConnectTimeout]
+/// constructor default (issue #794 review: two 10 s literals).
+const Duration relayDefaultConnectTimeout = Duration(seconds: 10);
+
+/// The default relay body cap — the single literal behind
+/// [relayDefaultLimits.maxBodyBytes] and the [LocalHub] constructor
+/// default (issue #794 review: the 10 MiB cap lived as two literals).
+const relayDefaultMaxBodyBytes = 10 * 1024 * 1024;
+
+/// The default per-chunk idle window on the upstream leg — shared the
+/// same way (record fields cannot feed const constructor defaults
+/// directly, so the knobs are named and the record assembles them).
+const relayDefaultIdleTimeout = Duration(seconds: 30);
+
+/// The relay limits everything runs with unless told otherwise — the
+/// SINGLE source of truth for [handleRelayRequest]'s default and the
+/// [LocalHub] constructor defaults (issue #794 review: the 10 MiB body
+/// cap lived as two literals).
+const RelayLimits relayDefaultLimits = (
+  maxBodyBytes: relayDefaultMaxBodyBytes,
+  connectTimeout: relayDefaultConnectTimeout,
+  idleTimeout: relayDefaultIdleTimeout,
+);
+
+/// The redirect-hop cap (issue #792 AC4): a chain longer than this is a
+/// loop — named 502. Shared by the hop policy and the bad-hop rejection
+/// so the cap is defined once.
+const relayMaxRedirectHops = 5;
+
+/// The relay CLIENT stopped taking data mid-answer (issue #794 review):
+/// on some platforms a dead keep-alive peer's writes neither error nor
+/// close — the flush just never completes. Racing each flush against the
+/// idle window turns that silence into a detectable, bounded event.
+class RelayClientGone implements Exception {
+  const RelayClientGone();
+
+  @override
+  String toString() => 'relay client stopped taking data';
+}
+
+/// The outcome of asking for a relay worker slot
+/// ([LocalHub._acquireRelaySlot]):
+///
+/// - [granted]: run the relay.
+/// - [refused]: the queue is full — answer 503 backpressure.
+/// - [dropped]: the client disconnected while queued — answer nothing.
+enum _RelaySlot { granted, refused, dropped }
+
+/// A named relay limit breach (issue #794): [status] is the HTTP shape
+/// (413 oversized body, 408 stalled request, 503 queue backpressure,
+/// 504 upstream timeout) and [name] is the wire error string.
+class RelayLimitExceeded implements Exception {
+  const RelayLimitExceeded(this.status, this.name);
+
+  final int status;
+  final String name;
+
+  @override
+  String toString() => '$name ($status)';
 }
 
 /// One `POST /relay` call (issue #633): the desktop add-in taskpane has no
@@ -703,16 +951,28 @@ String? relayAllowedOrigin(String? origin) {
 /// A present but non-allowlisted `Origin` is a 403 REJECTION before any
 /// upstream work — the old behavior answered minus CORS headers, which
 /// still executed the fetch for the hostile page's benefit.
-Future<void> handleRelayRequest(
+///
+/// The gate (OPTIONS / bearer / origin) lives in the top-level
+/// [_relayGate]; the body read + upstream forward in
+/// [handleRelayBody] — the hub runs the gate BEFORE its pool slot is
+/// touched so unauthenticated garbage never occupies a worker
+/// (issue #794 review).
+
+/// The cheap relay verdicts every request must pass before it may do
+/// any relay work: the OPTIONS preflight, the bearer check, and the
+/// origin allowlist. Returns false when the request was ANSWERED here
+/// (preflight / 401 / 403). The hub runs this BEFORE pool-slot
+/// acquisition so unauthenticated garbage and browser preflights never
+/// occupy a worker or a queue slot (issue #794 review).
+Future<bool> _relayGate(
   HttpRequest request, {
   required String? Function() requireCredential,
   required String? origin,
-  bool allowAnyHost = false,
 }) async {
   final allowedOrigin = relayAllowedOrigin(origin);
   if (request.method == 'OPTIONS') {
     await _relayPreflight(request, allowedOrigin);
-    return;
+    return false;
   }
   final credential = requireCredential();
   if (credential == null ||
@@ -723,19 +983,64 @@ Future<void> handleRelayRequest(
     // "connection closed" on the client's NEXT request).
     request.response.headers.set(HttpHeaders.connectionHeader, 'close');
     _relayMarkRejection(request);
+    await _drainRequestBounded(request);
     request.response.statusCode = 401;
     await request.response.close();
-    return;
+    return false;
   }
   if (origin != null && allowedOrigin == null) {
+    await _drainRequestBounded(request);
     request.response.headers.set(HttpHeaders.connectionHeader, 'close');
     _relayMarkRejection(request);
     request.response.statusCode = 403;
     request.response.write('{"error":"origin not allowed"}');
     await request.response.close();
+    return false;
+  }
+  return true;
+}
+
+Future<void> handleRelayRequest(
+  HttpRequest request, {
+  required String? Function() requireCredential,
+  required String? origin,
+  bool allowAnyHost = false,
+  RelayLimits limits = relayDefaultLimits,
+  void Function(String line)? log,
+  void Function()? onUpstreamAbort,
+}) async {
+  final allowedOrigin = relayAllowedOrigin(origin);
+  if (!await _relayGate(
+    request,
+    requireCredential: requireCredential,
+    origin: origin,
+  )) {
     return;
   }
-  final parsed = await _relayEnvelope(request, allowedOrigin);
+  await handleRelayBody(
+    request,
+    allowedOrigin: allowedOrigin,
+    allowAnyHost: allowAnyHost,
+    limits: limits,
+    log: log,
+    onUpstreamAbort: onUpstreamAbort,
+  );
+}
+
+/// The EXPENSIVE tail of [handleRelayRequest] — the body read and the
+/// upstream forward — everything that must run under a pool slot. The
+/// cheap verdicts (OPTIONS / bearer / origin) live in the hub's
+/// [_relayGate], which runs BEFORE slot acquisition (issue #794 review):
+/// unauthenticated garbage never reaches this function through the hub.
+Future<void> handleRelayBody(
+  HttpRequest request, {
+  required String? allowedOrigin,
+  bool allowAnyHost = false,
+  RelayLimits limits = relayDefaultLimits,
+  void Function(String line)? log,
+  void Function()? onUpstreamAbort,
+}) async {
+  final parsed = await _relayEnvelope(request, allowedOrigin, limits, log: log);
   if (parsed == null) return;
   if (!relayDestinationAllowed(parsed.$1, allowAnyHost: allowAnyHost)) {
     request.response.headers.set(HttpHeaders.connectionHeader, 'close');
@@ -752,6 +1057,9 @@ Future<void> handleRelayRequest(
     parsed.$2,
     allowedOrigin,
     allowAnyHost: allowAnyHost,
+    limits: limits,
+    log: log,
+    onUpstreamAbort: onUpstreamAbort,
   );
 }
 
@@ -825,20 +1133,111 @@ Future<void> _relayPreflight(HttpRequest request, String? allowedOrigin) async {
   await request.response.close();
 }
 
+/// Bounded drain of an over-cap relay body: a client that finished
+/// within the window gets the 413 on a clean close; one still pumping
+/// is cut off (its named answer is then close-only — see
+/// [_relayError]). True = the body arrived COMPLETE.
+Future<bool> _relayDrainOverCap(
+  StreamSubscription<Uint8List> sub,
+  Completer<void> consumed,
+) async {
+  try {
+    await consumed.future.timeout(_relayDrainWindow);
+    return true; // upload done: the 413 rides HttpResponse
+  } on TimeoutException {
+    await sub.cancel(); // still pumping: cut the read
+  } on Object {
+    // A stall (408) raced the cap — over-cap wins: 413.
+  }
+  return false;
+}
+
 /// Reads and validates the bridge envelope; answers 400 and returns null
 /// when the body is not JSON or the url is missing/non-http(s).
+///
+/// Bounded (issue #794): the body streams in under a hard byte cap
+/// (413 beyond [RelayLimits.maxBodyBytes]) and a per-chunk idle window
+/// (408 when the client stalls mid-body — no slowloris pinning a
+/// worker).
 Future<(Uri, Map<String, dynamic>)?> _relayEnvelope(
   HttpRequest request,
   String? allowedOrigin,
-) async {
+  RelayLimits limits, {
+  void Function(String line)? log,
+}) async {
+  // Whether the request body arrived COMPLETE (so the named answer can
+  // ride a clean HttpResponse close); a body still inbound makes
+  // HttpResponse.close destroy the socket — an RST that eats the
+  // answer — and makes the named answer close-only (see _relayError).
+  var bodyComplete = false;
   try {
-    final body = await utf8.decoder.bind(request).join();
-    final envelope = (jsonDecode(body) as Map).cast<String, dynamic>();
+    final builder = BytesBuilder(copy: false);
+    final capHit = Completer<void>();
+    final consumed = Completer<void>();
+    late final StreamSubscription<Uint8List> sub;
+    sub = request
+        .timeout(
+          limits.idleTimeout,
+          onTimeout: (sink) => sink.addError(
+            const RelayLimitExceeded(
+              HttpStatus.requestTimeout,
+              'relay request stalled',
+            ),
+          ),
+        )
+        .listen(
+          (chunk) {
+            if (capHit.isCompleted) return; // over the cap: drain, don't buffer
+            builder.add(chunk);
+            if (builder.length > limits.maxBodyBytes) {
+              builder.clear(); // no unbounded buffer behind the cap
+              capHit.complete(); // the read must end NOW — see below
+            }
+          },
+          onError: consumed.completeError,
+          onDone: consumed.complete,
+          cancelOnError: true,
+        );
+    // Whichever ends the read first: the body completing (a stall
+    // errors as the 408 above), or the cap firing. Stream events arrive
+    // in LATER turns, so an over-cap flag checked in place is always
+    // false — the cap must WIN the race, or a client pumping past it
+    // pins the worker for the whole upload (issue #794 review round 5,
+    // measured: 4 MiB at 32 KiB / 20 ms held the slot 2.6 s).
+    await Future.any<void>([consumed.future, capHit.future]);
+    if (capHit.isCompleted) {
+      // Over the cap: drain a bounded window — a client that finished
+      // anyway gets the 413 on a clean close; one still pumping is cut
+      // off (the answer is then close-only, see _relayError). Either
+      // way the worker is freed NOW, not after the upload.
+      bodyComplete = await _relayDrainOverCap(sub, consumed);
+      throw const RelayLimitExceeded(
+        HttpStatus.requestEntityTooLarge,
+        'relay body too large',
+      );
+    }
+    bodyComplete = true;
+    final envelope = (jsonDecode(utf8.decode(builder.takeBytes())) as Map)
+        .cast<String, dynamic>();
     final url = Uri.tryParse('${envelope['url']}') ?? Uri();
     if (!url.isScheme('https') && !url.isScheme('http')) {
       throw const FormatException('url must be http(s)');
     }
     return (url, envelope);
+  } on RelayLimitExceeded catch (error) {
+    log?.call('${error.name} → ${error.status}');
+    await _relayError(
+      request,
+      error.status,
+      error.name,
+      allowedOrigin,
+      // The answer rides the normal HttpResponse only when the request
+      // body arrived complete; a stalled (408) or still-pumping (413
+      // past the drain window) body makes the named answer close-only (see _relayError) —
+      // see _relayError (issue #794 review).
+      bodyConsumed: bodyComplete,
+    );
+    return null;
   } on FormatException {
     request.response.headers.set(HttpHeaders.connectionHeader, 'close');
     _relayMarkRejection(request);
@@ -853,9 +1252,68 @@ Future<(Uri, Map<String, dynamic>)?> _relayEnvelope(
   }
 }
 
+/// Answers a NAMED limit error (issue #794): 413 / 408 / 503 / 504
+/// shapes carry `{"error": "<name>"}`. [bodyConsumed]: whether the
+/// request body was fully read on the answering path — an UNconsumed
+/// body gets a bounded drain first, and if it still never finishes,
+/// the answer goes CLOSE-ONLY: dart:io offers no way to deliver an
+/// HTTP answer for an unconsumed request body (HttpResponse.close
+/// destroys the socket; detachSocket either throws mid-cancel or
+/// auto-commits a 200 before the hand-write — both measured, issue
+/// #794 review). The write below is then best-effort and may surface
+/// to the client as a bare close; the deterministic guarantee is the
+/// named log line and the freed worker. Swallows socket failures —
+/// the client being gone is often WHY this answers.
+Future<void> _relayError(
+  HttpRequest request,
+  int status,
+  String name,
+  String? allowedOrigin, {
+  bool bodyConsumed = true,
+}) async {
+  final answerable = bodyConsumed || await _drainRequestBounded(request);
+  try {
+    _relayMarkRejection(request);
+    if (answerable) {
+      _relayCors(request, allowedOrigin);
+    }
+    request.response.statusCode = status;
+    request.response.write('{"error":"$name"}');
+    await request.response.close();
+  } on Object {
+    // The socket died first; nothing to answer.
+  }
+}
+
+/// The bounded window a limit-hit request body may take to finish
+/// arriving before its named answer is attempted close-only (see
+/// [_relayError] for why delivery is then not guaranteed).
+const _relayDrainWindow = Duration(milliseconds: 250);
+
+/// Best-effort bounded drain of an unread request body; returns whether
+/// the request body is COMPLETE afterwards. Answering a request whose
+/// body is still inbound + closing the socket makes dart:io destroy it
+/// — an RST that eats the answer before the client reads it — the drain
+/// keeps that close a clean FIN whenever the body can actually finish.
+// ponytail: fixed 250ms drain window — enough for a fully-sent body
+// already in kernel buffers; longer waits only help deliberately
+// stalled clients, who got the limit for exactly that.
+Future<bool> _drainRequestBounded(HttpRequest request) async {
+  try {
+    await request.drain<void>().timeout(
+      _relayDrainWindow,
+      onTimeout: () => throw TimeoutException('drain'),
+    );
+    return true;
+  } on Object {
+    return false; // stalled body (timeout) or gone client
+  }
+}
+
 /// Headers for one relay hop: the envelope's headers verbatim, minus
 /// the credential-bearing ones once a redirect has left the original
-/// host (they belong to the host that asked for them).
+/// host — or downgraded its scheme (https -> http). Header names match
+/// case-insensitively.
 Map<String, String> _relayHopHeaders(
   Map<String, dynamic> envelope,
   Uri original,
@@ -899,8 +1357,6 @@ String _relayRedirectMethod(int statusCode, String method) =>
     ? 'GET'
     : method;
 
-/// Answers a relay rejection on the client response: [status] + CORS +
-/// a small `{"error": ...}` JSON body.
 /// Marks a hub-GENERATED relay rejection so clients can tell it apart
 /// from an upstream answer that merely shares the status: a provider 401
 /// is the CALLER's credential problem and streams through verbatim; a
@@ -909,13 +1365,15 @@ void _relayMarkRejection(HttpRequest request) {
   request.response.headers.set('x-fah-relay', 'rejection');
 }
 
+/// Answers a relay rejection on the client response: [status] + CORS +
+/// a small `{"error": ...}` JSON body. Rejected sockets are never
+/// reused (Connection: close).
 Future<void> _relayReject(
   HttpRequest request,
   int status,
   String error,
   String? allowedOrigin,
 ) async {
-  // Keep-alive pools must not reuse a rejected socket.
   request.response.headers.set(HttpHeaders.connectionHeader, 'close');
   _relayMarkRejection(request);
   request.response.statusCode = status;
@@ -924,91 +1382,403 @@ Future<void> _relayReject(
   await request.response.close();
 }
 
+/// Issues one relay hop and returns its answer; the open and the
+/// response-header wait both ride the connect window (issue #794).
+Future<HttpClientResponse> _relayIssueHop(
+  HttpClient upstream,
+  String method,
+  Uri current, {
+  required Map<String, dynamic> envelope,
+  required Uri original,
+  required List<int>? body,
+  required RelayLimits limits,
+  void Function(HttpClientRequest req)? onIssued,
+}) async {
+  final req = await upstream
+      .openUrl(method, current)
+      .timeout(
+        limits.connectTimeout,
+        onTimeout: () => throw const RelayLimitExceeded(
+          HttpStatus.gatewayTimeout,
+          'upstream connect timeout',
+        ),
+      );
+  req.followRedirects = false;
+  onIssued?.call(req);
+  _relayHopHeaders(envelope, original, current).forEach(req.headers.set);
+  final hasBody = body != null && method != 'GET' && method != 'HEAD';
+  if (hasBody) req.add(body);
+  return req.close().timeout(
+    limits.connectTimeout,
+    onTimeout: () => throw const RelayLimitExceeded(
+      HttpStatus.gatewayTimeout,
+      'upstream connect timeout',
+    ),
+  );
+}
+
+/// Bounded drain of an upstream hop body (redirects); a provider that
+/// stops mid-drain cannot hold the hop (issue #794).
+Future<void> _relayDrainBounded(HttpClientResponse res, RelayLimits limits) =>
+    res.drain<void>().timeout(
+      limits.idleTimeout,
+      onTimeout: () => throw const RelayLimitExceeded(
+        HttpStatus.gatewayTimeout,
+        'upstream idle timeout',
+      ),
+    );
+
 /// Proxies the raw upstream response (status + content-type + streamed
 /// body, so SSE rides through incrementally); 502 when unreachable.
 ///
 /// Redirects are followed MANUALLY (issue #792): each hop is re-checked
 /// against the same destination rules before it is issued, so a provider
-/// 3xx cannot silently walk the request into internal space.
+/// 3xx cannot silently walk the request into internal space. On a host
+/// change the credential headers are dropped (they belong to the host
+/// that asked for them).
+///
+/// Bounded (issue #794): the upstream leg gets a connect timeout and a
+/// per-chunk idle timeout (named 504s), and when the relay client goes
+/// away mid-flight the upstream request is ABORTED — no orphaned
+/// sockets burning a worker.
 Future<void> _relayForward(
   HttpRequest request,
   Uri url,
   Map<String, dynamic> envelope,
   String? allowedOrigin, {
   required bool allowAnyHost,
+  RelayLimits limits = relayDefaultLimits,
+  void Function(String line)? log,
+  void Function()? onUpstreamAbort,
 }) async {
   final upstream = HttpClient()
-    // Minimal connect-window bound on this branch; the bounded relay
-    // (issue #794) carries the full per-hop timeout set on top (#817).
-    ..connectionTimeout = relayConnectTimeout;
+    // Belt over the per-hop .timeout windows: an idle-socket connect
+    // attempt dies here too, before the request object even exists
+    // (issue #792 review).
+    ..connectionTimeout = limits.connectTimeout;
+  final state = _RelayHopState();
   try {
-    var current = url;
-    var method = '${envelope['method'] ?? 'POST'}';
-    final body = envelope['bodyB64'] is String
-        ? base64Decode(envelope['bodyB64'] as String)
-        : null;
-    for (var hop = 0; ; hop++) {
-      final req = await upstream.openUrl(method, current);
-      req.followRedirects = false;
-      _relayHopHeaders(envelope, url, current).forEach(req.headers.set);
-      final hasBody = body != null && method != 'GET' && method != 'HEAD';
-      if (hasBody) req.add(body);
-      final res = await req.close();
-      final location = _relayRedirectLocation(res);
-      if (location == null) {
-        await _relayRespond(request, res, allowedOrigin);
-        return;
-      }
-      method = _relayRedirectMethod(res.statusCode, method);
-      final next = current.resolveUri(location);
-      if (hop >= 5) {
-        await res.drain<void>();
-        await _relayReject(
-          request,
-          HttpStatus.badGateway,
-          'too many redirects',
-          allowedOrigin,
-        );
-        return;
-      }
-      if (!relayDestinationAllowed(next, allowAnyHost: allowAnyHost)) {
-        await res.drain<void>();
-        await _relayReject(
-          request,
-          HttpStatus.forbidden,
-          'redirect destination not allowed',
-          allowedOrigin,
-        );
-        return;
-      }
-      await res.drain<void>();
-      current = next;
-    }
+    await _relayFollowHops(
+      request,
+      url,
+      envelope,
+      allowedOrigin,
+      upstream: upstream,
+      allowAnyHost: allowAnyHost,
+      limits: limits,
+      state: state,
+      onUpstreamAbort: onUpstreamAbort,
+      log: log,
+    );
+  } on RelayLimitExceeded catch (error) {
+    state.relaySettled = true; // the client gets a named answer
+    await _relayForwardFailure(
+      request,
+      error.status,
+      error.name,
+      allowedOrigin,
+      log,
+    );
+  } on RelayClientGone {
+    // The flush-stall race fired: the relay client stopped taking data
+    // mid-answer (on some platforms the only detectable form of a dead
+    // keep-alive peer). The upstream is already aborted via
+    // onClientGone; the answer is moot — end quietly, log the fact.
+    state.relaySettled = true;
+    log?.call('relay client stopped taking data — upstream aborted');
+    await _relayQuietClose(request);
   } on Object {
-    await _relayReject(
+    // Includes the abort path: the relay client disconnected, so the
+    // aborted upstream surfaces here. That is a routine disconnect, not
+    // an upstream outage: no 502, no error log (issue #794 review). A
+    // genuine upstream failure answers 502 Bad Gateway — the proxy
+    // semantic; the hub itself is fine.
+    state.relaySettled = true;
+    if (state.clientGone) {
+      await _relayQuietClose(request);
+      return;
+    }
+    await _relayForwardFailure(
       request,
       HttpStatus.badGateway,
       'upstream unreachable',
       allowedOrigin,
+      log,
     );
   } finally {
     upstream.close(force: true);
   }
 }
 
+/// Mutable per-forward relay state shared by the hop loop and its
+/// callbacks (the disconnect watch, the respond arm) — one small cell
+/// instead of closures capturing closures.
+class _RelayHopState {
+  /// The in-flight upstream request of the CURRENT hop; aborted when
+  /// the relay client goes away.
+  HttpClientRequest? upstreamReq;
+
+  /// Set once the disconnect watch is armed (exactly once per relay).
+  bool watchArmed = false;
+
+  /// Set once the relay has ANSWERED its client (any shape). A
+  /// response.done that fires before that is a client disconnect.
+  bool relaySettled = false;
+
+  /// Set when the failure is the relay CLIENT going away (write-driven
+  /// flush error, flush-stall race, or response.done before the answer)
+  /// — a routine disconnect, not an upstream outage: the answer goes
+  /// nowhere, and the log must not cry 502.
+  bool clientGone = false;
+}
+
+/// The redirect-following loop of [_relayForward]: issues hops, answers
+/// the relay client from the first terminal response, and re-checks
+/// every redirect target against the same destination rules before it
+/// is issued (issue #792 AC4).
+Future<void> _relayFollowHops(
+  HttpRequest request,
+  Uri url,
+  Map<String, dynamic> envelope,
+  String? allowedOrigin, {
+  required HttpClient upstream,
+  required bool allowAnyHost,
+  required RelayLimits limits,
+  required _RelayHopState state,
+  void Function()? onUpstreamAbort,
+  void Function(String line)? log,
+}) async {
+  var current = url;
+  var method = _relayMethodFor(envelope);
+  final body = _relayRequestBody(envelope);
+  _relayArmDisconnectWatch(request, state, onUpstreamAbort: onUpstreamAbort);
+  for (var hop = 0; ; hop++) {
+    final res = await _relayIssueHop(
+      upstream,
+      method,
+      current,
+      envelope: envelope,
+      original: url,
+      body: body,
+      limits: limits,
+      onIssued: (req) => state.upstreamReq = req,
+    );
+    final location = _relayRedirectLocation(res);
+    // Done: the client is being served.
+    if (location == null) {
+      await _relayAnswerFromUpstream(
+        request,
+        res,
+        allowedOrigin,
+        limits,
+        state: state,
+        onUpstreamAbort: onUpstreamAbort,
+      );
+      return;
+    }
+    method = _relayRedirectMethod(res.statusCode, method);
+    final next = current.resolveUri(location);
+    if (!_relayHopAllowed(hop, next, allowAnyHost: allowAnyHost)) {
+      await _relayRejectBadHop(request, res, hop, allowedOrigin, limits, log);
+      return;
+    }
+    await _relayDrainBounded(res, limits);
+    current = next;
+  }
+}
+
+/// The relay HTTP method (POST unless the envelope says otherwise).
+String _relayMethodFor(Map<String, dynamic> envelope) =>
+    '${envelope['method'] ?? 'POST'}';
+
+/// Arms the cancel-on-disconnect watch exactly once per relay (issue
+/// #794): response.done completes when the relay client goes away — on
+/// current SDKs NORMALLY, not as an error — so whenComplete is the
+/// signal, not onError. A settled relay aborts nothing. (A SILENTLY
+/// dead keep-alive peer never fires this on some platforms — that side
+/// is bounded by the flush-stall race in _relayRespond.)
+void _relayArmDisconnectWatch(
+  HttpRequest request,
+  _RelayHopState state, {
+  void Function()? onUpstreamAbort,
+}) {
+  if (state.watchArmed) {
+    return;
+  }
+  state.watchArmed = true;
+  unawaited(
+    request.response.done.whenComplete(() {
+      if (state.relaySettled) {
+        return; // settled relay: nothing to abort, nothing to count
+      }
+      state.clientGone = true;
+      state.upstreamReq?.abort();
+      onUpstreamAbort?.call();
+    }),
+  );
+}
+
+/// Serves the relay client from the terminal upstream response. Settle
+/// before AND after — a disconnect mid-stream surfaces as done while
+/// _relayRespond runs.
+Future<void> _relayAnswerFromUpstream(
+  HttpRequest request,
+  HttpClientResponse res,
+  String? allowedOrigin,
+  RelayLimits limits, {
+  required _RelayHopState state,
+  void Function()? onUpstreamAbort,
+}) async {
+  state.relaySettled = true;
+  await _relayRespond(
+    request,
+    res,
+    allowedOrigin,
+    limits,
+    onClientGone: () {
+      // Write-driven disconnect (see _relayRespond): kill the upstream
+      // and count the abort.
+      state.clientGone = true;
+      state.upstreamReq?.abort();
+      onUpstreamAbort?.call();
+    },
+  );
+  state.relaySettled = true;
+}
+
+/// The redirect policy for one hop: [hop] within the cap AND the target
+/// allowed by the same destination rules as the original URL (issue
+/// #792 AC4).
+bool _relayHopAllowed(int hop, Uri next, {required bool allowAnyHost}) =>
+    hop < relayMaxRedirectHops &&
+    relayDestinationAllowed(next, allowAnyHost: allowAnyHost);
+
+/// Ends a relay whose answer is moot: closing the response of a client
+/// that is already gone must not throw.
+Future<void> _relayQuietClose(HttpRequest request) async {
+  try {
+    await request.response.close();
+  } on Object {
+    // Already gone.
+  }
+}
+
+/// The relay request body as bytes (null when the envelope carries none).
+Uint8List? _relayRequestBody(Map<String, dynamic> envelope) =>
+    envelope['bodyB64'] is String
+    ? base64Decode(envelope['bodyB64'] as String)
+    : null;
+
+/// Rejects a relay whose redirect chain went bad ([hop] past the cap, or
+/// the next hop is a denied destination — issue #792 AC4): the upstream
+/// answer is drained so the socket closes cleanly, then a named 502/403
+/// reaches the client.
+Future<void> _relayRejectBadHop(
+  HttpRequest request,
+  HttpClientResponse res,
+  int hop,
+  String? allowedOrigin,
+  RelayLimits limits,
+  void Function(String line)? log,
+) async {
+  final tooMany = hop >= relayMaxRedirectHops;
+  log?.call(
+    tooMany
+        ? 'redirect loop (>5 hops) → 502'
+        : 'redirect to denied destination → 403',
+  );
+  await _relayDrainBounded(res, limits);
+  await _relayReject(
+    request,
+    tooMany ? HttpStatus.badGateway : HttpStatus.forbidden,
+    tooMany ? 'too many redirects' : 'redirect destination not allowed',
+    allowedOrigin,
+  );
+}
+
+/// Answers a relay that died before an upstream answer could be served:
+/// [status]/[name] is a named limit rejection (RelayLimitExceeded) or the
+/// plain 502 unreachable fallback.
+Future<void> _relayForwardFailure(
+  HttpRequest request,
+  int status,
+  String name,
+  String? allowedOrigin,
+  void Function(String line)? log,
+) async {
+  log?.call('$name → $status');
+  await _relayError(request, status, name, allowedOrigin);
+}
+
 /// Streams the upstream answer to the relay client: status + content-type
-/// + body, so SSE rides through incrementally.
+/// + body, so SSE rides through incrementally. The stream rides an idle
+/// timeout (issue #794): a provider that stops mid-answer cannot hold
+/// the worker forever.
+///
+/// Disconnect detection is WRITE-driven: [HttpResponse.done] is NOT
+/// signaled when a keep-alive client silently dies mid-response, so
+/// every chunk is flushed and a failed flush means the client is gone —
+/// [onClientGone] aborts the upstream. On some platforms a dead
+/// keep-alive peer's flush neither errors nor completes — the future
+/// just hangs — so every flush is ALSO raced against the idle window
+/// (issue #794 review): silence that long means nobody is taking data,
+/// the upstream is aborted, and the worker is freed. A live peer's
+/// flush completes in microseconds (the data only has to reach the
+/// kernel), so the race can never fire on a healthy client that is
+/// merely slow to READ.
 Future<void> _relayRespond(
   HttpRequest request,
   HttpClientResponse res,
   String? allowedOrigin,
-) async {
+  RelayLimits limits, {
+  void Function()? onClientGone,
+}) async {
   request.response.statusCode = res.statusCode;
+  // The relay is a pipe: small flushed writes (SSE events!) must reach
+  // the client immediately, not sit in the HTTP output buffer.
+  request.response.bufferOutput = false;
   _relayCors(request, allowedOrigin);
   final contentType = res.headers.value('content-type');
   if (contentType != null) {
     request.response.headers.set('Content-Type', contentType);
   }
-  await request.response.addStream(res);
-  await request.response.close();
+  try {
+    await for (final chunk in res.timeout(
+      limits.idleTimeout,
+      onTimeout: (sink) => sink.addError(
+        const RelayLimitExceeded(
+          HttpStatus.gatewayTimeout,
+          'upstream idle timeout',
+        ),
+      ),
+    )) {
+      try {
+        request.response.add(chunk);
+        await request.response.flush().timeout(
+          limits.idleTimeout,
+          onTimeout: () => throw const RelayClientGone(),
+        );
+      } on RelayLimitExceeded {
+        rethrow;
+      } on Object {
+        // The flush failed (or stalled past the window): the relay
+        // client is gone. Abort the upstream — no orphaned socket may
+        // hold the worker.
+        onClientGone?.call();
+        rethrow;
+      }
+    }
+    await request.response.close();
+  } on RelayLimitExceeded {
+    // Upstream stopped mid-answer: the 200 headers are committed, so
+    // the named 504 cannot replace them — finish the TRUNCATED answer
+    // instead of leaving the client hanging, then let the named error
+    // shape ride the log.
+    try {
+      await request.response.close();
+    } on Object {
+      // The client is already gone; the socket needs nothing.
+    }
+    rethrow;
+  }
 }
