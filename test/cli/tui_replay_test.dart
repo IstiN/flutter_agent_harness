@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/system_notice_render.dart';
 import 'package:flutter_agent_harness/src/cli/tool_rows.dart';
+import 'package:flutter_agent_harness/src/cli/tui_chrome.dart'
+    show tuiChromeEnabled;
 import 'package:flutter_agent_harness/src/cli/tui_replay.dart';
 import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:flutter_agent_harness/src/context.dart';
@@ -237,17 +239,40 @@ void main() {
 
   group('replayLinesTui', () {
     test('a plain-text user message renders as the background echo box', () {
-      final lines = replayLinesTui(
-        UserMessage.text('hello\nworld'),
-        width: 10,
-        dim: dim,
-      );
-      expect(lines, [
-        '<d>──────────</d>',
-        '\x1b[48;2;30;34;42mhello\x1b[0m',
-        '\x1b[48;2;30;34;42mworld\x1b[0m',
-        '',
-      ]);
+      // Both kill-switch modes are pinned (D1): chrome bubble band AND
+      // the legacy rule + bare backgrounded rows (issue #807 round-2).
+      for (final chrome in [true, false]) {
+        addTearDown(() => tuiChromeEnabled = true);
+        tuiChromeEnabled = chrome;
+        final lines = replayLinesTui(
+          UserMessage.text('hello\nworld'),
+          width: 10,
+          dim: dim,
+        );
+        if (chrome) {
+          // Issue #807 chrome: the same bubble band rows the live echo
+          // emits (blank top, leading-space content rows, blank bottom,
+          // trailing blank).
+          const fg = '\x1b[38;2;232;238;247m';
+          const bg = '\x1b[48;2;30;34;42m';
+          expect(lines, [
+            '$bg$fg\x1b[0m',
+            '$bg$fg hello\x1b[0m',
+            '$bg$fg world\x1b[0m',
+            '$bg$fg\x1b[0m',
+            '',
+          ]);
+        } else {
+          // Kill switch (D1): the legacy rule + bare backgrounded rows,
+          // byte-pinned so the off-path stays provable.
+          expect(lines, [
+            dim('─' * 10),
+            '${tuiUserMessageBgSgr()}hello\x1b[0m',
+            '${tuiUserMessageBgSgr()}world\x1b[0m',
+            '',
+          ]);
+        }
+      }
     });
 
     test('an empty user message renders nothing', () {
