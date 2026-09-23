@@ -2041,6 +2041,9 @@ Future<void> _runApp(List<String> args) async {
       cubeSpec: cubeSpec,
       cubeSource: cubeSource,
       osName: Platform.operatingSystem,
+      // Real-symlink resolution for the cube fs guard (lib/src stays
+      // dart:io-free; the executable owns the probe).
+      fsProbe: const LocalCubeFsProbe(),
       // The banner names the key env var in play (name only, never the
       // value); the catalog maps the effective provider to its var names.
       // A name counts as set when the environment OR the secure store has

@@ -148,6 +148,9 @@ final class SandboxedShell implements Shell {
   /// backend is queryable via [effectiveBackend].
   ///
   /// [homeDir] resolves `~` redirection targets in the policy engine.
+  /// [pathProbe] enables symlink resolution for redirect targets — the
+  /// same [CubeFsProbe]-based resolution the fs guard and the env's policy
+  /// engine use, so foreground and background execs judge identically.
   SandboxedShell(
     this._inner,
     CubeSpec? spec, {
@@ -155,10 +158,12 @@ final class SandboxedShell implements Shell {
     String? os,
     String? homeDir,
     void Function(String message)? onDegrade,
+    CubeFsProbe? pathProbe,
   }) : _fs = fs,
        _os = os,
        _homeDir = homeDir,
-       onDegrade = onDegrade {
+       onDegrade = onDegrade,
+       _pathProbe = pathProbe {
     if (spec != null) updateSpec(spec);
   }
 
@@ -166,6 +171,7 @@ final class SandboxedShell implements Shell {
   final FileSystem? _fs;
   final String? _os;
   final String? _homeDir;
+  final CubeFsProbe? _pathProbe;
   CubeSpec? _spec;
   late CubePolicyEngine _engine;
   _KernelRun? _kernel;
@@ -264,6 +270,7 @@ final class SandboxedShell implements Shell {
       spec,
       homeDir: _homeDir,
       workspaceRoot: _fs?.cwd,
+      pathProbe: _pathProbe,
     );
     _kernel = _kernelRunFor(spec);
     if (_kernel == null && spec.backend == CubeBackendMode.kernel) {
