@@ -104,7 +104,6 @@ void main() {
     });
 
     test('phase tints: success/error ride the named roles, pending the stand-in', () {
-      String bgOf(String sgr) => sgr.contains('\x1b[48;2;') ? sgr : '';
       final c = FaThemeController.instance;
       expect(
         tuiCardTintSgr(TuiCardPhase.success),
