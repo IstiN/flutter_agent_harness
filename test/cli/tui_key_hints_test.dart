@@ -51,7 +51,16 @@ void main() {
       expect(TuiChord.parse('pgdn'), const TuiChord('pgdown'));
       expect(TuiChord.parse('ctrl+pgdn'), const TuiChord('ctrl+pgdown'));
       expect(TuiChord.parse('Option+P'), const TuiChord('alt+p'));
+      expect(TuiChord.parse('ctrl+opt+p'), const TuiChord('ctrl+alt+p'));
       expect(TuiChord.parse('cmd+k'), const TuiChord('super+k'));
+    });
+
+    test('parse tolerates spaces around the + separator', () {
+      // A spaced display spelling is exactly the free-form input the
+      // normalizer exists for: internal empty parts must collapse.
+      expect(TuiChord.parse('Ctrl + X'), const TuiChord('ctrl+x'));
+      expect(TuiChord.parse('ctrl + up'), const TuiChord('ctrl+up'));
+      expect(TuiChord.parse('Ctrl + ↑'), const TuiChord('ctrl+up'));
     });
 
     test('parse(display) round-trips for every registry chord', () {
@@ -259,10 +268,11 @@ void main() {
     });
 
     test('plain table aligns the description column in display cells', () {
-      // `↑` is East-Asian-ambiguous: on double-width terminals its UTF-16
-      // length (1) under-measures its cells (2), so alignment must be
-      // computed with the cell-width helper, not String.padRight (thread
-      // lC-WJ). A synthetic double-width key exaggerates the drift.
+      // String.padRight counts UTF-16 units; a wide key (漢字漢: 6 cells,
+      // 3 units) under-pads its row. Widths must be measured in display
+      // cells (tuiTextWidth, matching dart_tui) — ambiguous-width arrows
+      // (↑) stay terminal-dependent in line mode by design (threads
+      // lC-WJ + 859 review).
       const wide = TuiKeybinding('test.wide', 'composer', [TuiChord('漢字漢')],
           'wide synthetic binding');
       const ascii = TuiKeybinding(
@@ -280,9 +290,13 @@ void main() {
           if (i >= 0) starts.add(tuiTextWidth(line.substring(0, i)));
         }
       }
+      // Literal pins: the oracle must not depend on the mechanism under
+      // test (a width-table regression would otherwise shrink both sides
+      // in lockstep).
+      expect(tuiTextWidth('漢字漢'), 6, reason: 'CJK is 2 cells per glyph');
       expect(starts, hasLength(2));
-      expect(starts.toSet(), {2 + tuiTextWidth('漢字漢') + 2},
-          reason: 'descriptions must start at the same display column');
+      expect(starts.toSet(), {10},
+          reason: '2 + 6 + 2 — descriptions share one display column');
     });
 
     test('markdown table box-grids through the transcript renderer', () {

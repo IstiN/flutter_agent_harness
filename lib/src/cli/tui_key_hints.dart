@@ -9,6 +9,8 @@
 /// the CLI entry point and overridable in tests.
 library;
 
+import 'dart:math' as math;
+
 import 'tui_text_width.dart';
 
 /// A key chord in canonical form: lowercase fa keystroke id with `+`-joined
@@ -25,13 +27,7 @@ final class TuiChord {
     final raw = text.trim().toLowerCase().replaceAll(RegExp(r'[\s_-]+'), '+');
     final parts = [
       for (final p in raw.split('+')) _glyphFromDisplay[p] ?? _keyAliases[p] ?? p,
-    ];
-    while (parts.isNotEmpty && parts.first.isEmpty) {
-      parts.removeAt(0);
-    }
-    while (parts.isNotEmpty && parts.last.isEmpty) {
-      parts.removeLast();
-    }
+    ]..removeWhere((p) => p.isEmpty);
     return TuiChord(parts.join('+'));
   }
 
@@ -297,6 +293,9 @@ const _scopeTitles = {
 ///   `NO_COLOR`).
 /// - `false` (line mode): plain ASCII — `[Scope]` headers and a fixed
 ///   key column, no markup, no escapes.
+///
+/// Pass [bindings] to render a custom row set (test seam); defaults to
+/// [kTuiKeybindings].
 List<String> tuiHotkeyTableLines({
   bool markdown = false,
   bool? darwin,
@@ -316,13 +315,12 @@ List<String> tuiHotkeyTableLines({
     '',
   ];
   // Plain mode pads the key column to the widest entry of the whole table —
-  // computed up front in display cells (`tuiTextWidth`, so arrow glyphs stay
-  // aligned on double-width terminals), so descriptions align across
-  // sections. `tuiPadRight` uses the same measurement.
-  final keyColumn = rows.fold<int>(
-    0,
-    (w, r) => tuiTextWidth(r.keys) > w ? tuiTextWidth(r.keys) : w,
-  );
+  // computed up front in display cells (a wide key under-pads its row when
+  // measured in UTF-16 units; ambiguous-width arrows stay terminal-dependent
+  // in line mode by design), so descriptions align across sections.
+  // `tuiPadRight` uses the same measurement.
+  final keyColumn =
+      rows.fold<int>(0, (w, r) => math.max(w, tuiTextWidth(r.keys)));
   var lastScope = '';
   for (final r in rows) {
     if (r.binding.scope != lastScope) {
