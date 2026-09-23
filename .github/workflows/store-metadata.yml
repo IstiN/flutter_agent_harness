@@ -57,10 +57,10 @@ jobs:
     if: github.event.inputs.ios_content != 'none' && github.event.inputs.ios_content != ''
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Ruby
-        uses: ruby/setup-ruby@v1
+        uses: ruby/setup-ruby@e5517072e87f198d9533967ae13d97c11b604005 # v1.99.0 (branch head; v1 moves)
         with:
           ruby-version: '3.2'
 
@@ -93,10 +93,10 @@ jobs:
     if: github.event.inputs.macos_content != 'none' && github.event.inputs.macos_content != ''
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Ruby
-        uses: ruby/setup-ruby@v1
+        uses: ruby/setup-ruby@e5517072e87f198d9533967ae13d97c11b604005 # v1.99.0 (branch head; v1 moves)
         with:
           ruby-version: '3.2'
 
@@ -129,10 +129,10 @@ jobs:
     if: github.event.inputs.android_content != 'none' && github.event.inputs.android_content != ''
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Ruby
-        uses: ruby/setup-ruby@v1
+        uses: ruby/setup-ruby@e5517072e87f198d9533967ae13d97c11b604005 # v1.99.0 (branch head; v1 moves)
         with:
           ruby-version: '3.2'
 

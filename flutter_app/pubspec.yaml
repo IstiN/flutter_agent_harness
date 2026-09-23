@@ -3,7 +3,7 @@ description: >-
   Fa — the Flutter Agent app: a chat UI that runs the agent with a mobile
   ExecutionEnv backed by path_provider and Process.run.
 publish_to: 'none'
-version: 1.0.458+1
+version: 1.0.460+1
 
 environment:
   sdk: ^3.12.2
