@@ -55,15 +55,12 @@ extension FaTuiModelInterrupt on FaTuiModel {
   FaTuiModel _stayAfterCtrlC() {
     var next = copyWith(
       ctrlCArmed: true,
+      ctrlCGeneration: ctrlCGeneration + 1,
       menuOpen: false,
       menuTokenStart: -1,
     );
     if (!next.busy && next.inputText.isNotEmpty) {
-      next = next.copyWith(
-        inputText: '',
-        cursor: 0,
-        attachments: const [],
-      );
+      next = next.copyWith(inputText: '', cursor: 0, attachments: const []);
     }
     return next;
   }
@@ -75,19 +72,30 @@ extension FaTuiModelInterrupt on FaTuiModel {
 
   /// The window ran out: the armed hint would now lie (the next press is
   /// a fresh press 1), so the hint goes away and the policy disarms. A
-  /// late timer after the window was already reset is a no-op.
-  (Model, Cmd?) _handleWindowExpired() {
-    if (!ctrlCArmed) return (this, null);
+  /// late timer is a no-op unless it belongs to the CURRENT arm: a stale
+  /// timer from a previous arm must neither disarm the model nor touch
+  /// the policy when the user re-armed in between (otherwise press 2
+  /// silently stopped exiting — re-review regression fix).
+  (Model, Cmd?) _handleWindowExpired(CtrlCWindowExpiredMsg msg) {
+    if (!ctrlCArmed || msg.generation != ctrlCGeneration) {
+      return (this, null);
+    }
     sigintPolicy.noteOtherInput();
     return (copyWith(ctrlCArmed: false), null);
   }
 
   /// Schedules [CtrlCWindowExpiredMsg] one press window after the arm, so
-  /// the hint tracks the policy's clock instead of living forever.
-  Cmd _scheduleWindowExpiry() => () async {
-    await Future<void>.delayed(sigintPolicy.window);
-    return const CtrlCWindowExpiredMsg();
-  };
+  /// the hint tracks the policy's clock instead of living forever. The
+  /// message stamps THIS arm's generation (evaluated on the pre-arm model,
+  /// the same `this` [_stayAfterCtrlC] bumps from), so the handler can
+  /// tell this timer from a stale one.
+  Cmd _scheduleWindowExpiry() {
+    final generation = ctrlCGeneration + 1;
+    return () async {
+      await Future<void>.delayed(sigintPolicy.window);
+      return CtrlCWindowExpiredMsg(generation);
+    };
+  }
 
   /// Any input other than a ctrl+c press resets the double-press window
   /// (issue #830): the next ctrl+c is a fresh press 1 and the footer hint

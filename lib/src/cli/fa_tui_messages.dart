@@ -163,9 +163,12 @@ final class InterruptArmedMsg extends Msg {
 /// The double-press window ran out (issue #830): the dim footer hint goes
 /// away and the next ctrl+c is a fresh press 1. Scheduled as a Cmd when a
 /// press 1 arms, `window` later — an armed hint must never outlive the
-/// window it describes.
+/// window it describes. [generation] stamps the arm that scheduled the
+/// timer: a stale timer from a previous arm must never kill a freshly
+/// re-armed window (re-review regression fix).
 final class CtrlCWindowExpiredMsg extends Msg {
-  const CtrlCWindowExpiredMsg();
+  const CtrlCWindowExpiredMsg([this.generation = 0]);
+  final int generation;
 }
 
 /// Message opening the interactive prompt zone (ask/secret/approval).

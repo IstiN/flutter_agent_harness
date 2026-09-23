@@ -18,8 +18,7 @@ import 'dart:math';
 import 'package:dart_tui/dart_tui.dart';
 // The harness's SigintPolicy drives the prototype's double-press ctrl+c;
 // hide its TUI core — this example builds on dart_tui's.
-import 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    hide Model;
+import 'package:flutter_agent_harness/flutter_agent_harness.dart' hide Model;
 
 final _log = FileLog('/tmp/fa_tui_debug.log');
 
@@ -172,6 +171,7 @@ final class FaPrototypeModel extends Model {
     this.termHeight = 24,
     this.pendingFaReplies = 0,
     this.ctrlCArmed = false,
+    this.ctrlCGeneration = 0,
     SigintPolicy? sigintPolicy,
   }) : sigintPolicy = sigintPolicy ?? SigintPolicy(),
        viewport =
@@ -233,6 +233,11 @@ final class FaPrototypeModel extends Model {
   /// The armed double-press Ctrl+C hint (issue #830) — the prototype
   /// mirrors the real TUI's grammar, banner included.
   final bool ctrlCArmed;
+
+  /// Double-press window generation: bumped on every press-1 arm so a
+  /// stale expiry timer from a previous arm can never kill a freshly
+  /// re-armed window (mirrors FaTuiModel.ctrlCGeneration).
+  final int ctrlCGeneration;
   final SigintPolicy sigintPolicy;
 
   FaPrototypeModel copyWith({
@@ -250,6 +255,7 @@ final class FaPrototypeModel extends Model {
     int? termHeight,
     int? pendingFaReplies,
     bool? ctrlCArmed,
+    int? ctrlCGeneration,
     SigintPolicy? sigintPolicy,
   }) => FaPrototypeModel(
     viewport: viewport ?? this.viewport,
@@ -266,6 +272,7 @@ final class FaPrototypeModel extends Model {
     termHeight: termHeight ?? this.termHeight,
     pendingFaReplies: pendingFaReplies ?? this.pendingFaReplies,
     ctrlCArmed: ctrlCArmed ?? this.ctrlCArmed,
+    ctrlCGeneration: ctrlCGeneration ?? this.ctrlCGeneration,
     sigintPolicy: sigintPolicy ?? this.sigintPolicy,
   );
 
@@ -287,7 +294,9 @@ final class FaPrototypeModel extends Model {
     // press 1), so it goes away and the policy disarms. A late timer
     // after the window was already reset is a no-op.
     if (msg is _WindowExpiredMsg) {
-      if (!ctrlCArmed) return (this, null);
+      if (!ctrlCArmed || msg.generation != ctrlCGeneration) {
+        return (this, null);
+      }
       sigintPolicy.noteOtherInput();
       return (copyWith(ctrlCArmed: false), null);
     }
@@ -295,7 +304,8 @@ final class FaPrototypeModel extends Model {
     // Any input other than a ctrl+c press resets the double-press window
     // (issue #830): the next ctrl+c is a fresh press 1 and the hint goes
     // away. Ctrl+c itself keeps the window so press 2 can land.
-    final otherInput = (msg is KeyMsg && msg.key != 'ctrl+c') ||
+    final otherInput =
+        (msg is KeyMsg && msg.key != 'ctrl+c') ||
         msg is MouseMsg ||
         msg is PasteMsg;
     if (otherInput && next is FaPrototypeModel && next.ctrlCArmed) {
@@ -506,11 +516,13 @@ final class FaPrototypeModel extends Model {
     // swaps to it), press 2 within the window quits so the program can
     // disable mouse reporting on exit.
     if (msg.key == 'ctrl+c') {
-      if (sigintPolicy.press(headless: false) ==
-          SigintAction.exitInteractive) {
+      if (sigintPolicy.press(headless: false) == SigintAction.exitInteractive) {
         return (copyWith(ctrlCArmed: false), () => quit());
       }
-      return (copyWith(ctrlCArmed: true), _scheduleWindowExpiry());
+      return (
+        copyWith(ctrlCArmed: true, ctrlCGeneration: ctrlCGeneration + 1),
+        _scheduleWindowExpiry(),
+      );
     }
     // Word motion like pi's editor: alt+left/right jump by words.
     if (msg.key == 'alt+left') {
@@ -547,9 +559,10 @@ final class FaPrototypeModel extends Model {
   /// Schedules [_WindowExpiredMsg] one press window after the arm, so the
   /// hint tracks the shared policy's clock instead of living forever.
   Cmd _scheduleWindowExpiry() {
+    final generation = ctrlCGeneration + 1;
     return () async {
       await Future<void>.delayed(sigintPolicy.window);
-      return const _WindowExpiredMsg();
+      return _WindowExpiredMsg(generation);
     };
   }
 
@@ -807,5 +820,6 @@ final class _FaReplyMsg extends Msg {}
 /// The double-press window ran out (issue #830): the armed hint goes away
 /// and the next ctrl+c is a fresh press 1.
 final class _WindowExpiredMsg extends Msg {
-  const _WindowExpiredMsg();
+  const _WindowExpiredMsg([this.generation = 0]);
+  final int generation;
 }

@@ -45,7 +45,7 @@ extension FaTuiModelHeartbeat on FaTuiModel {
   /// exited model only quits; everything else takes the main dispatch.
   (Model, Cmd?) _updateTail(Msg msg) {
     if (msg is InterruptArmedMsg) return _handleInterruptArmed();
-    if (msg is CtrlCWindowExpiredMsg) return _handleWindowExpired();
+    if (msg is CtrlCWindowExpiredMsg) return _handleWindowExpired(msg);
     if (msg is OpenPromptMsg) {
       _promptCompleter = msg.completer;
       return (copyWith(prompt: TuiPromptState(msg.spec)), null);

@@ -100,7 +100,11 @@ void main() {
     );
     final (next, cmd) = model.update(ctrl('c'));
     expect(interrupted, isTrue);
-    expect((next as FaTuiModel).ctrlCArmed, isTrue, reason: 'footer hint armed');
+    expect(
+      (next as FaTuiModel).ctrlCArmed,
+      isTrue,
+      reason: 'footer hint armed',
+    );
     expect(cmd, isNotNull, reason: 'press 1 schedules the window expiry');
   });
 
@@ -217,6 +221,36 @@ void main() {
       expect(model.ctrlCArmed, isTrue);
     });
 
+    test(
+      'a stale expiry timer cannot kill a freshly re-armed window',
+      () async {
+        var exited = false;
+        var model = FaTuiModel(
+          callbacks: callbacks(onCtrlCExit: () => exited = true),
+          isExited: () => false,
+          sigintPolicy: policy(),
+        );
+        // Press 1: arm + timer T1 (generation 1).
+        final (armed, t1) = model.update(ctrl('c'));
+        model = armed as FaTuiModel;
+        // Any other input resets the window…
+        model = typed(model, 'x');
+        expect(model.ctrlCArmed, isFalse);
+        // …then ctrl+c re-arms a FRESH window (generation 2, timer T2).
+        model = send(model, ctrl('c'));
+        expect(model.ctrlCArmed, isTrue);
+        // T1 fires late: it belongs to the dead arm, so it must be a no-op —
+        // neither the hint nor the policy may drop the fresh window.
+        final stale = await t1!() as CtrlCWindowExpiredMsg;
+        model = send(model, stale);
+        expect(model.ctrlCArmed, isTrue, reason: 'stale timer no-ops');
+        // Press 2 inside the fresh window still exits.
+        final (_, cmd) = model.update(ctrl('c'));
+        await cmd?.call();
+        expect(exited, isTrue);
+      },
+    );
+
     test('the armed hint expires with the window and cannot lie', () async {
       var exited = false;
       var model = FaTuiModel(
@@ -229,9 +263,14 @@ void main() {
       expect(model.view().content, contains('press ctrl+c again to exit'));
 
       advance(kSigintPressWindow + const Duration(milliseconds: 100));
-      model = send(model, const CtrlCWindowExpiredMsg());
-      expect(model.ctrlCArmed, isFalse, reason: 'the hint must not outlive '
-          'the window it describes');
+      model = send(model, const CtrlCWindowExpiredMsg(1));
+      expect(
+        model.ctrlCArmed,
+        isFalse,
+        reason:
+            'the hint must not outlive '
+            'the window it describes',
+      );
       expect(
         model.view().content,
         isNot(contains('press ctrl+c again to exit')),
@@ -268,22 +307,24 @@ void main() {
       expect(model.ctrlCArmed, isTrue);
     });
 
-    test('a paste between presses resets the window (review: any input)',
-        () async {
-      var exited = false;
-      var model = FaTuiModel(
-        callbacks: callbacks(onCtrlCExit: () => exited = true),
-        isExited: () => false,
-        sigintPolicy: policy(),
-      );
-      model = send(model, ctrl('c')); // press 1: arm
-      expect(model.ctrlCArmed, isTrue);
-      model = send(model, PasteMsg('pasted draft'));
-      expect(model.ctrlCArmed, isFalse, reason: 'a paste is other input');
-      model = send(model, ctrl('c')); // would be press 2 — must NOT exit
-      expect(exited, isFalse, reason: 'paste reset the window');
-      expect(model.ctrlCArmed, isTrue);
-    });
+    test(
+      'a paste between presses resets the window (review: any input)',
+      () async {
+        var exited = false;
+        var model = FaTuiModel(
+          callbacks: callbacks(onCtrlCExit: () => exited = true),
+          isExited: () => false,
+          sigintPolicy: policy(),
+        );
+        model = send(model, ctrl('c')); // press 1: arm
+        expect(model.ctrlCArmed, isTrue);
+        model = send(model, PasteMsg('pasted draft'));
+        expect(model.ctrlCArmed, isFalse, reason: 'a paste is other input');
+        model = send(model, ctrl('c')); // would be press 2 — must NOT exit
+        expect(exited, isFalse, reason: 'paste reset the window');
+        expect(model.ctrlCArmed, isTrue);
+      },
+    );
 
     test('both input paths consume ONE shared policy (ACX.5)', () async {
       // The host (SIGINT) resolves press 1 on the shared policy…
@@ -302,8 +343,7 @@ void main() {
       expect((next as FaTuiModel).ctrlCArmed, isFalse);
     });
 
-    test('press 1 under the hub overlay shows the hint in the hub footer',
-        () {
+    test('press 1 under the hub overlay shows the hint in the hub footer', () {
       final hub = FaHubState(
         mode: FaHubMode.tree,
         title: 'agents hub',

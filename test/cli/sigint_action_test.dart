@@ -51,7 +51,8 @@ void main() {
       clock = FakeStopwatch(clocks); // registered first, for advanceAll
     });
 
-    FakeStopwatch Function() makeStopwatch() => () => FakeStopwatch(clocks);
+    FakeStopwatch Function() makeStopwatch() =>
+        () => FakeStopwatch(clocks);
     void advance(Duration d) => clock.advanceAll(d);
 
     test('headless exits immediately on every press — no window', () {

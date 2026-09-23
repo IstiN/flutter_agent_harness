@@ -259,6 +259,7 @@ final class FaTuiModel extends Model {
     this.hub,
     SigintPolicy? sigintPolicy,
     this.ctrlCArmed = false,
+    this.ctrlCGeneration = 0,
     DateTime Function()? now,
   }) : nowFn = now ?? DateTime.now,
        sigintPolicy = sigintPolicy ?? SigintPolicy(),
@@ -301,6 +302,12 @@ final class FaTuiModel extends Model {
   /// the dim [kCtrlCExitHint] instead of the status line until the next
   /// keypress.
   final bool ctrlCArmed;
+
+  /// Double-press window generation: bumped on every press-1 arm. The
+  /// expiry timer stamps its arm's generation, so a stale timer from a
+  /// previous arm can never kill a freshly re-armed window (issue #830
+  /// re-review regression fix — press 2 silently stopped exiting).
+  final int ctrlCGeneration;
 
   /// Persistent viewport scroll offset (0 = top). Snapped to the bottom on
   /// new output while [followTail] holds; kept (clamped) otherwise.
@@ -692,6 +699,7 @@ final class FaTuiModel extends Model {
     FaHubState? hub,
     bool clearHub = false,
     bool? ctrlCArmed,
+    int? ctrlCGeneration,
   }) {
     final copy = FaTuiModel(
       callbacks: callbacks,
@@ -751,6 +759,7 @@ final class FaTuiModel extends Model {
       hub: clearHub ? null : (hub ?? this.hub),
       sigintPolicy: sigintPolicy,
       ctrlCArmed: ctrlCArmed ?? this.ctrlCArmed,
+      ctrlCGeneration: ctrlCGeneration ?? this.ctrlCGeneration,
       // Every copy is a new model state: bump the frame nonce so the view's
       // cursor line always differs after a change (see [frameNonce]).
       frameNonce: frameNonce + 1,

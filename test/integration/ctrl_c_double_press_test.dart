@@ -85,29 +85,26 @@ allowedTools: []
       },
     );
 
-    test(
-      'ACX.2: press 2 within the window exits 130; a fresh session prints '
-      'the honest nothing-to-resume line',
-      () async {
-        final harness = await spawnTui();
-        addTearDown(harness.close);
-        await harness.waitForBoot();
+    test('ACX.2: press 2 within the window exits 130; a fresh session prints '
+        'the honest nothing-to-resume line', () async {
+      final harness = await spawnTui();
+      addTearDown(harness.close);
+      await harness.waitForBoot();
 
-        harness.sendCtrlC(); // press 1: arm
-        await harness.waitForScreen('press ctrl+c again to exit');
-        harness.sendCtrlC(); // press 2: exit
+      harness.sendCtrlC(); // press 1: arm
+      await harness.waitForScreen('press ctrl+c again to exit');
+      harness.sendCtrlC(); // press 2: exit
 
-        // A virgin session persists nothing, so the exit deletes the empty
-        // session file — "resume this session with ..." would point at a
-        // deleted file. The honest line is the contract for fresh runs
-        // (issue #830 review); a non-empty session prints the resume hint.
-        await harness.waitForText(kNothingToResumeHint);
-        expect(
-          await harness.pty.exitCode.timeout(const Duration(seconds: 15)),
-          130,
-        );
-      },
-    );
+      // A virgin session persists nothing, so the exit deletes the empty
+      // session file — "resume this session with ..." would point at a
+      // deleted file. The honest line is the contract for fresh runs
+      // (issue #830 review); a non-empty session prints the resume hint.
+      await harness.waitForText(kNothingToResumeHint);
+      expect(
+        await harness.pty.exitCode.timeout(const Duration(seconds: 15)),
+        130,
+      );
+    });
 
     test('ACX.3: a press after the window is a fresh press 1', () async {
       final harness = await spawnTui();

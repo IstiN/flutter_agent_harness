@@ -2428,9 +2428,9 @@ Future<void> _runApp(List<String> args) async {
         if (tui != null) {
           tui.armInterruptHint();
         } else {
-          stderr.writeln(dimCtrlCExitHint(
-            supportsAnsiEscapes: stdout.supportsAnsiEscapes,
-          ));
+          stderr.writeln(
+            dimCtrlCExitHint(supportsAnsiEscapes: stdout.supportsAnsiEscapes),
+          );
         }
       case SigintAction.exitInteractive:
         unawaited(exitInteractive130());
