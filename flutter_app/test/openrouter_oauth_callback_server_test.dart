@@ -172,9 +172,28 @@ void main() {
       // dying with "The shared flag to bind() needs to be `true` …" under
       // CI load (gh-781, shard-0 validation run).
       await timedOut.close();
+<<<<<<< HEAD
       // The port is released: a bind on the same port succeeds.
       final rebound = await rebindReleasedPort(Uri.parse(url2).port);
       await rebound.close();
+=======
+      // The port is released: a bind on the same port succeeds. Release can
+      // lag the awaited close() on loaded CI runners (same-process double
+      // bind → "the shared flag" error), so prove it with a bounded retry
+      // instead of asserting instant release.
+      for (var i = 0; ; i++) {
+        try {
+          await HttpServer.bind(
+            InternetAddress.loopbackIPv4,
+            Uri.parse(url2).port,
+          ).then((s) => s.close());
+          break;
+        } on SocketException {
+          if (i >= 20) rethrow; // ~2s total: release is genuinely stuck.
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+      }
+>>>>>>> origin/main
     });
 
     test(
