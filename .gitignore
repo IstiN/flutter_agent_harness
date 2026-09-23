@@ -178,3 +178,4 @@ factory-agents/
 # source of truth there, only derivatives are ignored (memory/.gitignore).
 /input/
 /outputs/
+.pub-cache/
