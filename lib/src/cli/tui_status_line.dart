@@ -1083,24 +1083,41 @@ String abbreviateSegmentPath(
   required bool stripWorkPrefix,
 }) {
   var path = cwd;
-  var prefix = '';
   // Work-root strip first (raw path): inside the workspace the display
   // root is the workspace itself, so `~` never appears.
   if (stripWorkPrefix &&
       workRoot != null &&
       workRoot.isNotEmpty &&
       (path == workRoot || path.startsWith('$workRoot/'))) {
-    path = path == workRoot ? '.' : path.substring(workRoot.length + 1);
-    return tuiFitWidth(path, maxLength);
+    return tuiFitWidth(
+      path == workRoot ? '.' : path.substring(workRoot.length + 1),
+      maxLength,
+    );
   }
+  return _homeAbbreviatedFit(
+    path,
+    abbreviate: abbreviate,
+    homeDir: homeDir,
+    maxLength: maxLength,
+  );
+}
+
+/// The `~` half of [abbreviateSegmentPath]: the home dir itself collapses
+/// to a RAW `~` (never re-clamped), anything under it to `~/rest`, else
+/// the untouched path clamps to [maxLength].
+String _homeAbbreviatedFit(
+  String path, {
+  required bool abbreviate,
+  required String? homeDir,
+  required int maxLength,
+}) {
   if (abbreviate && homeDir != null && homeDir.isNotEmpty) {
     if (path == homeDir) return '~';
     if (path.startsWith('$homeDir/')) {
-      prefix = '~/';
-      path = path.substring(homeDir.length + 1);
+      return tuiFitWidth('~/${path.substring(homeDir.length + 1)}', maxLength);
     }
   }
-  return tuiFitWidth('$prefix$path', maxLength);
+  return tuiFitWidth(path, maxLength);
 }
 
 /// Parses `git status --porcelain` output (the git watcher seam's

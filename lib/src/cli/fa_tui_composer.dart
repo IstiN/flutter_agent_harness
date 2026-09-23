@@ -235,6 +235,63 @@ extension _TuiComposerLayout on FaTuiModel {
     tuiPadRight(tuiFitWidth(callbacks.statusLine(), termWidth), termWidth),
   );
 
+  /// The E1 belt: the engine's ladder is width-exact; a resize race
+  /// truncates as the last resort so the row can never hardware-wrap.
+  /// Pad after the cut — a truncated wide grapheme can leave the row
+  /// short, and stale cells survive on the right of a short row.
+  void _writeBeltRow(StringBuffer b, String raw) {
+    b.writeln(_dim(tuiPadRight(tuiFitWidth(raw, termWidth), termWidth)));
+  }
+
+  /// One rendered span: the role style through the write-time seam, the
+  /// band tint behind it unless the band is transparent.
+  void _writeBandSpan(
+    StringBuffer row,
+    (String, StatusLineRoleKey) span,
+    TuiTheme theme, {
+    required bool idle,
+    required double brandT,
+    required RgbColor? bandBg,
+  }) {
+    final style = statusLineStyle(
+      span.$2,
+      theme: theme,
+      idle: idle,
+      brandT: brandT,
+    );
+    final c = FaThemeController.instance;
+    row
+      ..write(
+        c.sgrPrefix(
+          bandBg == null ? style : style.copyWith(backgroundRgb: bandBg),
+        ),
+      )
+      ..write(span.$1);
+  }
+
+  /// The trailing gap: a transparent band resets and pads plain (the
+  /// terminal background shows through); a filled band paints the bandBg
+  /// fill flush to the right edge — either way the row stays full-width
+  /// so stale cells die.
+  void _writeBandGap(
+    StringBuffer row,
+    int pad,
+    Style fill, {
+    required bool transparent,
+  }) {
+    if (pad <= 0) return;
+    final c = FaThemeController.instance;
+    if (transparent) {
+      // Reset first so the gap is plain terminal background.
+      if (c.profile != null) row.write('\x1b[0m');
+      row.write(' ' * pad);
+    } else {
+      row
+        ..write(c.sgrPrefix(fill))
+        ..write(' ' * pad);
+    }
+  }
+
   /// The status band row (#806): the omp band attachment — the host
   /// snapshot renders as a flush-left filled powerline band with a soft
   /// opening cap (nerd symbol table only; omp's font-safe table ships no
@@ -248,11 +305,7 @@ extension _TuiComposerLayout on FaTuiModel {
     final spans = engine.renderSpans(snapshot, termWidth);
     final raw = spans.map((s) => s.$1).join();
     if (tuiTextWidth(raw) > termWidth) {
-      // E1 belt: the engine's ladder is width-exact; a resize race
-      // truncates as the last resort so the row can never hardware-wrap.
-      // Pad after the cut — a truncated wide grapheme can leave the row
-      // short, and stale cells survive on the right of a short row.
-      b.writeln(_dim(tuiPadRight(tuiFitWidth(raw, termWidth), termWidth)));
+      _writeBeltRow(b, raw);
       return 1;
     }
     final c = FaThemeController.instance;
@@ -274,35 +327,22 @@ extension _TuiComposerLayout on FaTuiModel {
     // 450 ms tween never engages — the host snapshot carries no
     // timestamps (the #837 review retired the dead fade plumbing).
     final brandT = snapshot.idle ? 0.0 : 1.0;
-    for (final (text, key) in spans) {
-      final style = statusLineStyle(
-        key,
-        theme: theme,
+    for (final span in spans) {
+      _writeBandSpan(
+        row,
+        span,
+        theme,
         idle: snapshot.idle,
         brandT: brandT,
+        bandBg: bandBg,
       );
-      row
-        ..write(
-          c.sgrPrefix(
-            bandBg == null ? style : style.copyWith(backgroundRgb: bandBg),
-          ),
-        )
-        ..write(text);
     }
-    final pad = termWidth - tuiTextWidth(raw);
-    if (pad > 0) {
-      if (transparent) {
-        // Reset first so the gap is plain terminal background, then keep
-        // the row full-width (stale cells die at the right edge).
-        if (c.profile != null) row.write('\x1b[0m');
-        row.write(' ' * pad);
-      } else {
-        // Keep the band continuous flush to the right edge.
-        row
-          ..write(c.sgrPrefix(fill))
-          ..write(' ' * pad);
-      }
-    }
+    _writeBandGap(
+      row,
+      termWidth - tuiTextWidth(raw),
+      fill,
+      transparent: transparent,
+    );
     // Close the last span's SGR — only when styling is on (NO_COLOR
     // keeps the band shape-only, zero escapes).
     if (c.profile != null && !transparent) row.write('\x1b[0m');
