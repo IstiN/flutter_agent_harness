@@ -1279,9 +1279,7 @@ Future<void> _relayForward(
   try {
     var current = url;
     var method = '${envelope['method'] ?? 'POST'}';
-    final body = envelope['bodyB64'] is String
-        ? base64Decode(envelope['bodyB64'] as String)
-        : null;
+    final body = _relayRequestBody(envelope);
     var disconnectWatch = false;
     for (var hop = 0; ; hop++) {
       if (!disconnectWatch) {
@@ -1331,20 +1329,7 @@ Future<void> _relayForward(
       final next = current.resolveUri(location);
       if (hop >= 5 ||
           !relayDestinationAllowed(next, allowAnyHost: allowAnyHost)) {
-        log?.call(
-          hop >= 5
-              ? 'redirect loop (>5 hops) → 502'
-              : 'redirect to '
-                    'denied destination → 403',
-        );
-        await _relayDrainBounded(res, limits);
-        relaySettled = true;
-        await _relayReject(
-          request,
-          hop >= 5 ? HttpStatus.badGateway : HttpStatus.forbidden,
-          hop >= 5 ? 'too many redirects' : 'redirect destination not allowed',
-          allowedOrigin,
-        );
+        await _relayRejectBadHop(request, res, hop, allowedOrigin, limits, log);
         return;
       }
       await _relayDrainBounded(res, limits);
@@ -1352,18 +1337,76 @@ Future<void> _relayForward(
     }
   } on RelayLimitExceeded catch (error) {
     relaySettled = true; // the client gets a named answer
-    log?.call('${error.name} → ${error.status}');
-    await _relayError(request, error.status, error.name, allowedOrigin);
+    await _relayForwardFailure(
+      request,
+      error.status,
+      error.name,
+      allowedOrigin,
+      log,
+    );
   } on Object {
     // Includes the abort path: the relay client disconnected, so the
     // aborted upstream surfaces here — answering the dead socket is a
     // harmless no-op (_relayError swallows). Settled either way: a
     // disconnect already counted when response.done fired.
     relaySettled = true;
-    await _relayError(request, 502, 'upstream unreachable', allowedOrigin);
+    await _relayForwardFailure(
+      request,
+      HttpStatus.internalServerError,
+      'upstream unreachable',
+      allowedOrigin,
+      log,
+    );
   } finally {
     upstream.close(force: true);
   }
+}
+
+/// The relay request body as bytes (null when the envelope carries none).
+Uint8List? _relayRequestBody(Map<String, dynamic> envelope) =>
+    envelope['bodyB64'] is String
+    ? base64Decode(envelope['bodyB64'] as String)
+    : null;
+
+/// Rejects a relay whose redirect chain went bad ([hop] past the cap, or
+/// the next hop is a denied destination — issue #792 AC4): the upstream
+/// answer is drained so the socket closes cleanly, then a named 502/403
+/// reaches the client.
+Future<void> _relayRejectBadHop(
+  HttpRequest request,
+  HttpClientResponse res,
+  int hop,
+  String? allowedOrigin,
+  RelayLimits limits,
+  void Function(String line)? log,
+) async {
+  final tooMany = hop >= 5;
+  log?.call(
+    tooMany
+        ? 'redirect loop (>5 hops) → 502'
+        : 'redirect to denied destination → 403',
+  );
+  await _relayDrainBounded(res, limits);
+  await _relayReject(
+    request,
+    tooMany ? HttpStatus.badGateway : HttpStatus.forbidden,
+    tooMany ? 'too many redirects' : 'redirect destination not allowed',
+    allowedOrigin,
+  );
+}
+
+/// Answers a relay that died before an upstream answer could be served:
+/// [status]/[name] is a named limit rejection (RelayLimitExceeded) or the
+/// plain 502 unreachable fallback.
+Future<void> _relayForwardFailure(
+  HttpRequest request,
+  int status,
+  String name,
+  String? allowedOrigin,
+  void Function(String line)? log,
+) async {
+  log?.call('$name → $status');
+  await _relayError(request, status, name, allowedOrigin);
 }
 
 /// Streams the upstream answer to the relay client: status + content-type
