@@ -3,6 +3,8 @@ import 'dart:typed_data';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
+import '../fake_fs_probe.dart';
+
 /// A [Shell] returning a canned result and recording its invocations.
 class _RecordingShell implements Shell {
   final commands = <String>[];
@@ -39,6 +41,39 @@ CubeSpec spec({
 
 void main() {
   group('SandboxedShell', () {
+    test(
+      'foreground exec denies a redirect through a symlinked target',
+      () async {
+        final inner = _RecordingShell();
+        final shell = SandboxedShell(
+          inner,
+          spec(),
+          fs: _FakeFs(),
+          pathProbe: FakeFsProbe(links: {'/work/link': '/etc'}),
+        );
+        // Foreground policy check: lexically inside the workspace, resolved
+        // target outside — the same verdict the env's background-job engine
+        // gives, via the same shared probe seam.
+        final result = await shell.exec('echo x > link/evil');
+        final exec = result.getOrThrow();
+        expect(exec.exitCode, 127);
+        expect(exec.stderr, contains('fa_cube[test-cube]'));
+        expect(exec.stderr, contains("write to 'link/evil'"));
+        expect(inner.commands, isEmpty);
+
+        // The legitimate in-workspace link keeps running.
+        final linked = SandboxedShell(
+          inner,
+          spec(),
+          fs: _FakeFs(),
+          pathProbe: FakeFsProbe(links: {'/work/link': 'sub'}),
+        );
+        final ok = await linked.exec('echo x > link/ok');
+        expect(ok.getOrThrow().exitCode, 0);
+        expect(inner.commands, ['echo x > link/ok']);
+      },
+    );
+
     test('forwards an allowed command to the inner shell', () async {
       final inner = _RecordingShell();
       final shell = SandboxedShell(inner, spec());

@@ -178,6 +178,7 @@ final class SandboxedExecutionEnv implements ExecutionEnv, BackgroundShell {
       os: _os,
       homeDir: _homeDir,
       onDegrade: _onWarning,
+      pathProbe: _pathProbe,
     );
     _engine = CubePolicyEngine(
       spec,

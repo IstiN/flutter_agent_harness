@@ -194,10 +194,9 @@ mounts:
 
     test('denies symlink chains a -> b -> outside', () {
       const policy = CubeFsPolicy();
-      final probe = FakeFsProbe(links: {
-        '/workspace/a': 'b',
-        '/workspace/b': '/etc',
-      });
+      final probe = FakeFsProbe(
+        links: {'/workspace/a': 'b', '/workspace/b': '/etc'},
+      );
       expect(
         policy.accessFor('/workspace/a/passwd', probe: probe),
         CubePathAccess.deny,
@@ -206,10 +205,9 @@ mounts:
 
     test('allows a link inside the workspace (legitimate use)', () {
       const policy = CubeFsPolicy();
-      final probe = FakeFsProbe(links: {
-        '/workspace/l': 'sub',
-        '/workspace/sub/deep': '../other',
-      });
+      final probe = FakeFsProbe(
+        links: {'/workspace/l': 'sub', '/workspace/sub/deep': '../other'},
+      );
       expect(
         policy.accessFor('/workspace/l/file', probe: probe),
         CubePathAccess.readWrite,
@@ -280,10 +278,9 @@ mounts:
         CubePathAccess.readWrite,
       );
       // A link BELOW the root is still resolved and denied.
-      final probe2 = FakeFsProbe(links: {
-        '/var': '/private/var',
-        '/var/folders/ws/l': '/etc',
-      });
+      final probe2 = FakeFsProbe(
+        links: {'/var': '/private/var', '/var/folders/ws/l': '/etc'},
+      );
       expect(
         policy.accessFor('/var/folders/ws/l/x', probe: probe2),
         CubePathAccess.deny,

@@ -191,46 +191,54 @@ void main() {
       );
     });
 
-    test('AC1: read AND write through a link outside are denied, named', () async {
-      probe.links['/work/link'] = '/outside';
-      await delegate.createDir('/outside');
+    test(
+      'AC1: read AND write through a link outside are denied, named',
+      () async {
+        probe.links['/work/link'] = '/outside';
+        await delegate.createDir('/outside');
 
-      final read = await guard.readTextFile('/work/link/id_rsa');
-      expect(read.isErr, isTrue);
-      expect(read.errorOrNull!.code, FileErrorCode.notFound);
-      expect(read.errorOrNull!.message, contains('fa_cube[test-cube]'));
+        final read = await guard.readTextFile('/work/link/id_rsa');
+        expect(read.isErr, isTrue);
+        expect(read.errorOrNull!.code, FileErrorCode.notFound);
+        expect(read.errorOrNull!.message, contains('fa_cube[test-cube]'));
 
-      final write = await guard.writeFile('/work/link/evil', 'x');
-      expect(write.isErr, isTrue);
-      expect(write.errorOrNull!.code, FileErrorCode.permissionDenied);
-      expect(write.errorOrNull!.message, contains('fa_cube[test-cube]'));
-      expect((await delegate.exists('/outside/evil')).getOrThrow(), isFalse);
+        final write = await guard.writeFile('/work/link/evil', 'x');
+        expect(write.isErr, isTrue);
+        expect(write.errorOrNull!.code, FileErrorCode.permissionDenied);
+        expect(write.errorOrNull!.message, contains('fa_cube[test-cube]'));
+        expect((await delegate.exists('/outside/evil')).getOrThrow(), isFalse);
 
-      // No over-block: the same file via its allowed path still works.
-      await delegate.writeFile('/outside/id_rsa', 'secret');
-      final direct = await guard.writeFile('/work/mine.txt', 'fine');
-      expect(direct.isOk, isTrue);
-      expect((await guard.readTextFile('/work/mine.txt')).getOrThrow(), 'fine');
-    });
+        // No over-block: the same file via its allowed path still works.
+        await delegate.writeFile('/outside/id_rsa', 'secret');
+        final direct = await guard.writeFile('/work/mine.txt', 'fine');
+        expect(direct.isOk, isTrue);
+        expect(
+          (await guard.readTextFile('/work/mine.txt')).getOrThrow(),
+          'fine',
+        );
+      },
+    );
 
-    test('AC2: symlink chains are denied, in-workspace chains allowed', () async {
-      probe.links.addAll({
-        '/work/a': 'b',
-        '/work/b': '/outside',
-      });
-      expect(
-        (await guard.readTextFile('/work/a/key')).errorOrNull!.code,
-        FileErrorCode.notFound,
-      );
+    test(
+      'AC2: symlink chains are denied, in-workspace chains allowed',
+      () async {
+        probe.links.addAll({'/work/a': 'b', '/work/b': '/outside'});
+        expect(
+          (await guard.readTextFile('/work/a/key')).errorOrNull!.code,
+          FileErrorCode.notFound,
+        );
 
-      probe.links.clear();
-      probe.links.addAll({'/work/a': 'b', '/work/b': 'sub'});
-      final write = await guard.writeFile('/work/a/f.txt', 'chained');
-      expect(write.isOk, isTrue);
-      // The open path is the resolved target, not the written form.
-      expect((await delegate.readTextFile('/work/sub/f.txt')).getOrThrow(),
-          'chained');
-    });
+        probe.links.clear();
+        probe.links.addAll({'/work/a': 'b', '/work/b': 'sub'});
+        final write = await guard.writeFile('/work/a/f.txt', 'chained');
+        expect(write.isOk, isTrue);
+        // The open path is the resolved target, not the written form.
+        expect(
+          (await delegate.readTextFile('/work/sub/f.txt')).getOrThrow(),
+          'chained',
+        );
+      },
+    );
 
     test('AC3: .. traversal after resolution is denied', () async {
       probe.links['/work/l'] = 'sub/deep';
@@ -254,10 +262,7 @@ void main() {
 
     test('without a probe the guard keeps the lexical check', () async {
       final lexical = CubeFsGuard(delegate, spec(workspace: '/work'));
-      expect(
-        (await lexical.writeFile('/work/../escape', 'x')).isErr,
-        isTrue,
-      );
+      expect((await lexical.writeFile('/work/../escape', 'x')).isErr, isTrue);
       expect((await lexical.writeFile('/work/ok', 'x')).isOk, isTrue);
     });
   });

@@ -157,8 +157,11 @@ final class CubeFsPolicy {
   /// Without a [probe] this is pure string math — symlinked paths are
   /// judged by their written form. With a probe the verdict judges the
   /// file the OS will open; see [accessForResolved].
-  CubePathAccess accessFor(String path, {String? homeDir, CubeFsProbe? probe}) =>
-      accessForResolved(path, homeDir: homeDir, probe: probe).access;
+  CubePathAccess accessFor(
+    String path, {
+    String? homeDir,
+    CubeFsProbe? probe,
+  }) => accessForResolved(path, homeDir: homeDir, probe: probe).access;
 
   /// [accessFor] plus the canonical path to open: `resolved` is the
   /// per-component real-path resolution of [path] when a [probe] is given
@@ -187,7 +190,9 @@ final class CubeFsPolicy {
     if (probe == null) {
       final target = _resolve(path, homeDir: homeDir);
       return (
-        access: target == null ? CubePathAccess.deny : _classify(target, homeDir: homeDir),
+        access: target == null
+            ? CubePathAccess.deny
+            : _classify(target, homeDir: homeDir),
         resolved: null,
       );
     }

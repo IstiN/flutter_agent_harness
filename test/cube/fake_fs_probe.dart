@@ -7,9 +7,11 @@ library;
 import 'package:flutter_agent_harness/src/cube/config/fs_policy.dart';
 
 class FakeFsProbe implements CubeFsProbe {
-  FakeFsProbe({Map<String, String> links = const {}, Set<String> unreadable = const {}})
-    : links = Map.of(links),
-      unreadable = Set.of(unreadable);
+  FakeFsProbe({
+    Map<String, String> links = const {},
+    Set<String> unreadable = const {},
+  }) : links = Map.of(links),
+       unreadable = Set.of(unreadable);
 
   /// path -> verbatim symlink target (absolute or relative).
   final Map<String, String> links;

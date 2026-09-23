@@ -50,7 +50,12 @@ final class CubePolicyEngine {
   /// denied. [pathProbe] enables symlink resolution for redirect targets —
   /// the same [CubeFsProbe]-based resolution the fs guard uses, so a link
   /// inside the workspace cannot redirect a write outside either.
-  const CubePolicyEngine(this.spec, {this.homeDir, this.workspaceRoot, this.pathProbe});
+  const CubePolicyEngine(
+    this.spec, {
+    this.homeDir,
+    this.workspaceRoot,
+    this.pathProbe,
+  });
 
   /// The cube specification whose policies are enforced.
   final CubeSpec spec;
@@ -149,7 +154,11 @@ final class CubePolicyEngine {
     for (final (target, writes) in _redirectTargets(segment)) {
       if (writes && _deviceSinkPattern.hasMatch(target)) continue;
       final access = _fsPolicy
-          .accessForResolved(_targetPath(target), homeDir: homeDir, probe: pathProbe)
+          .accessForResolved(
+            _targetPath(target),
+            homeDir: homeDir,
+            probe: pathProbe,
+          )
           .access;
       if (writes && access != CubePathAccess.readWrite) {
         return CubePolicyDecision.denied(
