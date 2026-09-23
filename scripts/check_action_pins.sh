@@ -26,9 +26,19 @@ shopt -s nullglob
 # carry remote uses: refs, so they are part of AC1's threat surface.
 files=("$dir"/.github/workflows/*.yml "$dir"/.github/workflows/*.yaml \
        "$dir"/*.yml "$dir"/*.yaml)
+# Default (CI) mode: composite actions live under .github/actions/, OUTSIDE
+# the workflows dir — root the manifest sweep at the repo root so they
+# are covered (a regression here would let an unpinned remote uses: sail
+# through AC1). Prune .worktrees: sibling checkouts are not this repo's
+# gate surface. Fixture mode (--path) stays rooted at DIR: fixtures are
+# self-contained trees.
+root="$dir"
+if [ "$dir" = ".github/workflows" ] && [ -d "$dir" ]; then
+  root="."
+fi
 while IFS= read -r -d '' f; do
   files+=("$f")
-done < <(find "$dir" -name .git -prune -o -type f \( -name 'action.yml' -o -name 'action.yaml' \) -print0 2>/dev/null)
+done < <(find "$root" -name .git -prune -o -path './.worktrees' -prune -o -type f \( -name 'action.yml' -o -name 'action.yaml' \) -print0 2>/dev/null)
 
 if [ ${#files[@]} -eq 0 ]; then
   echo "no workflow files found under $dir" >&2
