@@ -958,16 +958,21 @@ void writeHubPidState(
   );
 }
 
-/// Writes [body] to [file] and best-effort restricts it to 0600. Content
-/// lands FIRST, the chmod SECOND (issue #792 review): on platforms
-/// without `chmod` the best-effort restriction fails silently, and a
-/// create->chmod->write order would then strand an EMPTY state file —
-/// breaking every reader. A world-readable WINDOW is the trade-off, and
-/// only where chmod is missing anyway (dart:io has no creation-mode API).
+/// Writes [body] to [file] at mode 0600 where `chmod` exists: the empty
+/// file is created first, restricted, and only then does content land —
+/// POSIX never shows a world-readable window (issue #792 review). The
+/// chmod itself is guarded: on a chmod-less platform (Windows) it can
+/// fail without stranding an EMPTY state file, which would break every
+/// reader (dart:io has no creation-mode API; the umask mode stands).
 void writeSecretFile0600(File file, String body) {
   if (!file.parent.existsSync()) {
     file.parent.createSync(recursive: true);
   }
+  file.writeAsStringSync('', mode: FileMode.write, flush: true);
+  try {
+    Process.runSync('chmod', ['600', file.path]);
+  } on Object {
+    // No chmod here: keep the content, keep the umask mode.
+  }
   file.writeAsStringSync(body, mode: FileMode.write, flush: true);
-  Process.runSync('chmod', ['600', file.path]);
 }
