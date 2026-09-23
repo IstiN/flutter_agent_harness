@@ -20,6 +20,17 @@ final class OpenRouterOAuthCallbackServer {
   Completer<String?>? _codeCompleter;
   Timer? _timeoutTimer;
 
+  /// The in-flight socket close, if one is running.
+  ///
+  /// The timeout and code-captured paths call [close] fire-and-forget
+  /// (`unawaited(close())`), and that close nulls [_server] before the
+  /// socket is actually released. A [close] (or [start]) landing on top of
+  /// it must chain that real release instead of no-oping on the nulled
+  /// field — otherwise `await close()` returned with the port still bound
+  /// and a rebind raced the release ("The shared flag to bind() needs to
+  /// be `true` …" under CI load — gh-781).
+  Future<void>? _closing;
+
   /// The callback URL to pass to OpenRouter, or null before [start].
   String? get callbackUrl {
     final server = _server;
@@ -32,7 +43,7 @@ final class OpenRouterOAuthCallbackServer {
   /// [timeout] caps how long the server waits for the callback; after it
   /// elapses the server closes and [waitForCode] completes with null.
   Future<String> start({Duration timeout = const Duration(minutes: 5)}) async {
-    await _closeExisting();
+    await close();
     _codeCompleter = Completer<String?>();
 
     _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -123,19 +134,23 @@ final class OpenRouterOAuthCallbackServer {
   }
 
   /// Closes the server and cancels the timeout.
+  ///
+  /// Idempotent and chain-safe: a call landing while a previous close is
+  /// still in flight awaits that release, so when the returned future
+  /// completes the socket is provably closed and the port is free to
+  /// rebind.
   Future<void> close() async {
     _timeoutTimer?.cancel();
     _timeoutTimer = null;
     final server = _server;
     _server = null;
-    if (server != null) await server.close();
-  }
-
-  Future<void> _closeExisting() async {
-    final server = _server;
     if (server != null) {
-      _server = null;
-      await server.close();
+      _closing = server.close();
+    }
+    final closing = _closing;
+    if (closing != null) {
+      await closing;
+      _closing = null;
     }
   }
 }
