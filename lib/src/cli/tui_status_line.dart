@@ -27,6 +27,8 @@
 /// separators,segments,component}.ts` at the pinned commit `df624f5`.
 library;
 
+import 'dart:collection' show UnmodifiableMapView;
+
 // The vendored dart_tui exports no Style surface (issue #613) — same
 // direct-src import tui_theme.dart uses.
 // ignore: implementation_imports
@@ -224,8 +226,10 @@ enum StatusLineRoleKey {
 /// EXISTING [TuiTheme] role. S1's token merge (#804) re-points these
 /// lambdas at the dedicated `statusLine*` roles — the only place that
 /// changes; every renderer paints through this table, never a raw color.
+/// Unmodifiable: a stray write must not corrupt every later frame (the
+/// S1 token merge re-points entries here, in code, not at runtime).
 final Map<StatusLineRoleKey, Style Function(TuiTheme theme)> kStatusLineRoles =
-    {
+    UnmodifiableMapView(<StatusLineRoleKey, Style Function(TuiTheme theme)>{
       StatusLineRoleKey.brandA: (t) => t.accent,
       StatusLineRoleKey.brandB: (t) => t.accent2,
       StatusLineRoleKey.model: (t) => t.toolTitle,
@@ -249,7 +253,7 @@ final Map<StatusLineRoleKey, Style Function(TuiTheme theme)> kStatusLineRoles =
       StatusLineRoleKey.gaugeUsed: (t) =>
           Style(foregroundRgb: t.focusBorder.foregroundRgb),
       StatusLineRoleKey.gaugeUnused: (t) => t.border,
-    };
+    });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Segment options + presets (verbatim shapes from omp presets.ts)
@@ -912,8 +916,14 @@ bool? _time24h(YamlMap? node) {
 /// One resolved separator style: the glyph between group members
 /// ([left]/[right] by group direction) and the optional end caps that
 /// bridge the band fill into the terminal bg ([capAfterLeft] closes the
-/// left group, [capBeforeRight] opens the right one; painted fg=band-bg
-/// per omp's `useBgAsFg`).
+/// left group, [capBeforeRight] opens the right one).
+///
+/// Caps are BAND edges, not segment content: they are painted by S3's
+/// band composer (#806) reading these fields — `fg=band-bg` per omp's
+/// `useBgAsFg`, which only makes sense once the composer also paints
+/// the band fill this render-only story deliberately drops (the same
+/// split as `StatusLineSpec.transparent`). The span stream here stays
+/// cap-free; glyph parity with omp is pinned by tests.
 final class StatusLineSeparator {
   final String left;
   final String right;
@@ -1018,6 +1028,10 @@ double statusLineBrandFadeT({
     return lit ? 1.0 : 0.0;
   }
   final frames = durationMs ~/ frameMs;
+  if (frames <= 0) {
+    // Degenerate tuning (frameMs > durationMs): no tween room - snap.
+    return lit ? 1.0 : 0.0;
+  }
   final t = (changedAgoMs ~/ frameMs) / frames;
   return lit ? t : 1.0 - t;
 }
@@ -1090,6 +1104,9 @@ StatusLineGit parseGitStatusPorcelain(String output) {
     if (line.isEmpty) continue;
     if (line.startsWith('## ')) {
       final header = line.substring(3);
+      // An initial repo has no branch yet (`## No commits yet on main`);
+      // report branch-less rather than adopting the sentence as a name.
+      if (header.startsWith('No commits yet')) continue;
       final dot = header.indexOf('...');
       final bracket = header.indexOf('[');
       branch = header
@@ -1100,8 +1117,12 @@ StatusLineGit parseGitStatusPorcelain(String output) {
     if (line.length < 2) continue;
     final x = line[0];
     final y = line[1];
-    if (x == '?' || x == '!') {
+    // `!` = ignored files (only reported with --ignored): they are not
+    // untracked work, so they never count toward `?N`.
+    if (x == '?') {
       untracked++;
+    } else if (x == '!') {
+      continue;
     } else {
       if (x != ' ') staged++;
       if (y != ' ') unstaged++;
@@ -1148,7 +1169,7 @@ LaidSegment? _renderPi(StatusLineSnapshot s, StatusLineSpec spec) {
   // The brand mark: `>_Fa` with the fade handled at paint time (the
   // painter blends toward the dim endpoint via [statusLineBrandFadeT]).
   return const LaidSegment('pi', [
-    ('>_Fa', StatusLineRoleKey.brandA),
+    ('>_', StatusLineRoleKey.brandA),
     ('Fa', StatusLineRoleKey.brandB),
   ]);
 }
@@ -1328,7 +1349,20 @@ LaidSegment? _renderTime(StatusLineSnapshot s, StatusLineSpec spec) {
   ]);
 }
 
-LaidSegment? _renderSession(StatusLineSnapshot s, StatusLineSpec spec) {
+/// `session`: the short session-id slot (omp's left-group surface).
+/// Absent data hides (E7) - the `'new'` stand-in belongs to
+/// `_renderSessionName` alone.
+LaidSegment? _renderSessionId(StatusLineSnapshot s, StatusLineSpec spec) {
+  final id = s.sessionId;
+  if (id == null || id.isEmpty) return null;
+  return LaidSegment('session', [
+    (id.length < 8 ? id : id.substring(0, 8), StatusLineRoleKey.name),
+  ]);
+}
+
+/// `session_name`: the session title; an unnamed session falls back to
+/// the short id, then to omp's `'new'` stand-in.
+LaidSegment? _renderSessionName(StatusLineSnapshot s, StatusLineSpec spec) {
   final name = s.sessionName;
   if (name != null && name.isNotEmpty) {
     return LaidSegment('session_name', [(name, StatusLineRoleKey.name)]);
@@ -1384,48 +1418,52 @@ LaidSegment? _renderStatus(StatusLineSnapshot s, StatusLineSpec spec) {
 
 /// The registry: omp's 27 segment ids → fa renderers. A renderer returns
 /// `null` when its data is absent — the segment hides (E7), never
-/// rendering a placeholder.
+/// rendering a placeholder. Unmodifiable: consumers must never mutate
+/// the shared table.
 final Map<
   String,
   LaidSegment? Function(StatusLineSnapshot s, StatusLineSpec spec)
 >
-kStatusLineSegments = {
-  'pi': _renderPi,
-  'status': _renderStatus,
-  'model': _renderModel,
-  'mode': _renderMode,
-  'path': _renderPath,
-  'git': _renderGit,
-  'pr': _renderPr,
-  'subagents': _renderSubagents,
-  'token_in': _renderTokenIn,
-  'token_out': _renderTokenOut,
-  'token_total': _renderTokenTotal,
-  'token_rate': _renderTokenRate,
-  'cost': _renderCost,
-  'context_pct': _renderContextPct,
-  'context_total': _renderContextTotal,
-  'time_spent': _renderTimeSpent,
-  'time': _renderTime,
-  'session': _renderSession,
-  'hostname': _renderHostname,
-  'cache_read': _renderCacheRead,
-  'cache_write': _renderCacheWrite,
-  'cache_hit': _renderCacheHit,
-  'session_name': _renderSession,
-  'usage': _renderUsage,
-  'collab': _renderCollab,
-  'stream': _renderStream,
-  'vim': _renderVim,
-};
+kStatusLineSegments = UnmodifiableMapView(
+  <String, LaidSegment? Function(StatusLineSnapshot s, StatusLineSpec spec)>{
+    'pi': _renderPi,
+    'status': _renderStatus,
+    'model': _renderModel,
+    'mode': _renderMode,
+    'path': _renderPath,
+    'git': _renderGit,
+    'pr': _renderPr,
+    'subagents': _renderSubagents,
+    'token_in': _renderTokenIn,
+    'token_out': _renderTokenOut,
+    'token_total': _renderTokenTotal,
+    'token_rate': _renderTokenRate,
+    'cost': _renderCost,
+    'context_pct': _renderContextPct,
+    'context_total': _renderContextTotal,
+    'time_spent': _renderTimeSpent,
+    'time': _renderTime,
+    'session': _renderSessionId,
+    'hostname': _renderHostname,
+    'cache_read': _renderCacheRead,
+    'cache_write': _renderCacheWrite,
+    'cache_hit': _renderCacheHit,
+    'session_name': _renderSessionName,
+    'usage': _renderUsage,
+    'collab': _renderCollab,
+    'stream': _renderStream,
+    'vim': _renderVim,
+  },
+);
 
-/// Lays out one configured group into rendered segments (hidden ones
-/// dropped).
+/// Lays out one configured group into rendered segments. Unknown ids
+/// (a hand-built spec bypassing [resolveStatusLineSpec]'s warn+drop)
+/// and absent data both hide (E7) — never a crash inside the frame.
 List<LaidSegment> _layoutGroup(
   List<String> ids,
   StatusLineSnapshot s,
   StatusLineSpec spec,
-) => [for (final id in ids) ?kStatusLineSegments[id]!(s, spec)];
+) => [for (final id in ids) ?kStatusLineSegments[id]?.call(s, spec)];
 
 // ═══════════════════════════════════════════════════════════════════════════
 // The engine — layout, truncation ladder, gauge fill
@@ -1433,14 +1471,16 @@ List<LaidSegment> _layoutGroup(
 
 /// Joins laid segments into group spans: member spans with the
 /// separator chunk (` glyph ` padded) between them, separator runs
-/// carrying the separator role.
+/// carrying the separator role. Spans and width are computed once —
+/// the ladder re-reads `.width` across steps, but groups are
+/// immutable after construction, so both are cached.
 final class _Group {
   final List<LaidSegment> segments;
   final StatusLineSeparator separator;
 
   _Group(this.segments, this.separator);
 
-  List<StatusSpan> get spans {
+  late final List<StatusSpan> spans = () {
     final glyph = separator.left;
     final out = <StatusSpan>[];
     for (final seg in segments) {
@@ -1450,9 +1490,9 @@ final class _Group {
       out.addAll(seg.spans);
     }
     return out;
-  }
+  }();
 
-  int get width => spans.fold(0, (w, s) => w + tuiTextWidth(s.$1));
+  late final int width = spans.fold(0, (w, s) => w + tuiTextWidth(s.$1));
 }
 
 /// Renders one status-bar frame as role-keyed spans.
@@ -1470,6 +1510,11 @@ final class _Group {
 ///    scale between; 50 % warn / 90 % error levels); narrower gaps show
 ///    the bare percent, and an irreducible overflow collapses to
 ///    `left + ' ' + right`.
+///
+/// `spec.transparent` (omp's band-less mode) drops the pure gap fill:
+/// content — segments, separators, gauge — still renders, but no dim
+/// space run pads the line out to [width], so the terminal bg shows
+/// through and the returned line may be shorter than [width].
 ///
 /// Pure: reads the snapshot, measures raw strings, returns raw spans —
 /// colors are applied at write time via [statusLineStyle] /
@@ -1503,16 +1548,19 @@ List<StatusSpan> renderStatusLineSpans(
   if (pct == null || snapshot.contextWindow <= 0) {
     return [
       ...squeezed.left.spans,
-      (' ' * gap, StatusLineRoleKey.dim),
+      // Transparent: no band fill — the terminal bg shows through.
+      if (!spec.transparent) (' ' * gap, StatusLineRoleKey.dim),
       ...squeezed.right.spans,
     ];
   }
 
-  return [
-    ...squeezed.left.spans,
-    ..._gaugeSpans(gap, pct, snapshot.contextWindow),
-    ...squeezed.right.spans,
-  ];
+  final gauge = _gaugeSpans(
+    gap,
+    pct,
+    snapshot.contextWindow,
+    transparent: spec.transparent,
+  );
+  return [...squeezed.left.spans, ...gauge, ...squeezed.right.spans];
 }
 
 /// One ladder outcome: the two groups after elastic squeezing, ready to
@@ -1620,8 +1668,16 @@ List<LaidSegment> _shrinkPath(
 
 /// The embedded context gauge filling the gap: the full
 /// `pct ━ scale window` form, a centered bare percent, or a plain gap
-/// as space runs out. The fill/role track the gauge level.
-List<StatusSpan> _gaugeSpans(int gap, double pct, int contextWindow) {
+/// as space runs out. The fill/role track the gauge level. Under
+/// [transparent] the plain-gap fallback renders nothing (no band
+/// fill); the bare-percent centering pads stay so the percent stays
+/// readable mid-gap.
+List<StatusSpan> _gaugeSpans(
+  int gap,
+  double pct,
+  int contextWindow, {
+  required bool transparent,
+}) {
   final pctLabel = formatStatusLinePercent(pct);
   final windowLabel = formatTokens(contextWindow);
   final role = switch (statusLineGaugeLevel(pct)) {
@@ -1654,6 +1710,7 @@ List<StatusSpan> _gaugeSpans(int gap, double pct, int contextWindow) {
       ),
     ];
   }
+  if (transparent) return const [];
   return <StatusSpan>[(' ' * gap, StatusLineRoleKey.dim)];
 }
 
