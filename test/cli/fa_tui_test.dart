@@ -962,7 +962,7 @@ void main() {
       expect(frame, contains('❯ second'));
       expect(
         frame,
-        contains('↑ edit · ctrl+x delete · ctrl-s send immediately'),
+        contains('↑ edit · ctrl+x delete · ctrl+s send immediately'),
       );
     });
 

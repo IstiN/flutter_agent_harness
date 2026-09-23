@@ -730,6 +730,18 @@ extension ApprovalCommands on AgentCli {
 
   /// The numbered command list of the line-mode menu.
   void _printHelp({String filter = ''}) {
+    // `/help hotkeys` (issue #809): the keybinding reference generated from
+    // the keyHint registry. New surface — the TUI prints the markdown shape
+    // (the transcript renderer box-grids it with theme colors), line mode
+    // stays plain ASCII; existing `/help` output is byte-unchanged.
+    final lower = filter.trim().toLowerCase();
+    if (lower == 'hotkeys' || lower == 'keys' || lower == 'keybindings') {
+      for (final line
+          in tuiHotkeyTableLines(markdown: _useTui, darwin: tuiKeyHintDarwin)) {
+        io.writeln(line);
+      }
+      return;
+    }
     for (final line in helpLines(
       filter: filter,
       pluginSlashCommands: _pluginSlashCommands,
