@@ -30,6 +30,10 @@
           "enum": ["policy", "kernel"],
           "description": "kernel — OS confinement via the host primitive (sandbox-exec on macOS, unshare on Linux; descriptor-only elsewhere). policy (default) enforces in Dart only."
         },
+        "allowDegrade": {
+          "type": "boolean",
+          "description": "Opt-in fallback for backend: kernel. Without it (the default), a kernel spec on a platform without an enforcing backend is refused (clean error, zero commands run). With it, the run degrades to policy mode with a loud warning and the effective backend is queryable for audit."
+        },
         "tools": {
           "type": "object",
           "additionalProperties": false,

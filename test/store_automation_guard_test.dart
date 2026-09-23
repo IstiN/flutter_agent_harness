@@ -436,4 +436,75 @@ void main() {
       }
     });
   });
+
+  // gh-798: the two release-train tripwires must not be silently dropped —
+  // a refactor that removes them re-opens the #785/#786 failure classes.
+  group('release-train tripwires (gh-798)', () {
+    test('build-ios asserts the ASC version floor before building', () {
+      final yaml = loadYaml(buildMobile) as Map;
+      final steps = ((yaml['jobs'] as Map)['build-ios'] as Map)['steps']
+          as Iterable;
+      final names = steps.map((s) => (s as Map)['name']).toList();
+      // gh-800 r2: a DELETED tripwire must fail loudly. indexOf returns -1
+      // for a missing step and -1 < anything, so the order assertion below
+      // silently passed a gutted workflow — assert presence first.
+      final floorIndex = names.indexOf('Assert TestFlight version floor');
+      expect(
+        floorIndex,
+        greaterThanOrEqualTo(0),
+        reason:
+            "the 'Assert TestFlight version floor' step must EXIST — "
+            'deleting it re-opens gh-785 and must trip this guard '
+            'explicitly, never slip through index arithmetic',
+      );
+      expect(
+        floorIndex,
+        lessThan(names.indexOf('Install Flutter dependencies')),
+        reason:
+            'the version-floor pre-check must run BEFORE any build '
+            'preparation — a violation must cost zero build minutes '
+            '(gh-798 AC1)',
+      );
+      expect(
+        fastfile,
+        contains('require_relative "version_floor"'),
+        reason: 'the lane must keep using the plain-ruby tested decision '
+            'module (gh-798)',
+      );
+      expect(
+        fastfile,
+        contains('version-floor pre-check RAN'),
+        reason:
+            'the AC4 leg-level marker line must stay — a silently-skipped '
+            'check must remain visible in the daily report',
+      );
+    });
+
+    test('the 16 KB AAB gate is the shared script and CI self-tests it', () {
+      expect(
+        buildMobile,
+        contains('scripts/verify_aab_native_libs.sh'),
+        reason:
+            'the Verify AAB step must run the gate via the shared script — '
+            'an inline copy drifts from the self-tested one (gh-798 AC3)',
+      );
+      final selftest =
+          read('.github/workflows/aab-gate-selftest.yml');
+      expect(
+        selftest,
+        contains('scripts/verify_aab_native_libs.sh'),
+        reason: 'the self-test job must exercise the REAL gate script',
+      );
+      final selftestYaml = loadYaml(selftest) as Map;
+      final on = (selftestYaml['on'] ?? selftestYaml[true]) as Map; // YAML 1.1 may key `on` as true
+      final paths = on['pull_request'] as Map;
+      expect(
+        (paths['paths'] as List).cast<String>(),
+        contains('scripts/verify_aab_native_libs.sh'),
+        reason:
+            'PRs touching the gate script must trigger the self-test '
+            '(gh-798 AC3)',
+      );
+    });
+  });
 }
