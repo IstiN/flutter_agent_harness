@@ -2915,4 +2915,7 @@ void main() {
       expect(model.view().content, contains('agents hub'));
     });
   });
+
+  // The OSC 11 background-probe tier tests live in
+  // fa_tui_emitters_test.dart (2800-line static gate).
 }

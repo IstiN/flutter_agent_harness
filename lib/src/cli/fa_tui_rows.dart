@@ -125,7 +125,7 @@ extension _TuiRowRenderers on FaTuiModel {
   /// selected").
   String _rearmSelection(String label) {
     final theme = FaThemeController.instance;
-    final open = theme.sgrPrefix(theme.current.accent);
+    final open = theme.accentSgr();
     if (open.isEmpty) return label;
     if (!label.contains('\x1b[0m')) return '$open$label\x1b[0m';
     return label.replaceAll('\x1b[0m', '\x1b[0m$open');
