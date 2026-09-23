@@ -18,9 +18,9 @@ import '../config/cube_spec.dart';
 import '../../env/execution_env.dart';
 
 /// The content-addressed spec key: 10 hex chars of the md5 over the spec's
-/// [CubeSpec.toCanonicalMap] JSON. Shared by the cache root
-/// (`cube-cache/<key>`) and the kernel profile staging path
-/// (`cube-profiles/<key>.sb`).
+/// [CubeSpec.toCanonicalMap] JSON. Keys the cache root
+/// (`cube-cache/<key>`); the kernel profile staging path is
+/// content-hashed separately (see `SandboxedShell`).
 String cubeSpecCacheKey(CubeSpec spec) => md5
     .convert(utf8.encode(jsonEncode(spec.toCanonicalMap())))
     .toString()
