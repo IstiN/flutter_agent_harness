@@ -880,6 +880,11 @@ const RelayLimits relayDefaultLimits = (
   idleTimeout: Duration(seconds: 30),
 );
 
+/// The redirect-hop cap (issue #792 AC4): a chain longer than this is a
+/// loop — named 502. Shared by the hop policy and the bad-hop rejection
+/// so the cap is defined once.
+const relayMaxRedirectHops = 5;
+
 /// The relay CLIENT stopped taking data mid-answer (issue #794 review):
 /// on some platforms a dead keep-alive peer's writes neither error nor
 /// close — the flush just never completes. Racing each flush against the
@@ -1462,81 +1467,22 @@ Future<void> _relayForward(
     // attempt dies here too, before the request object even exists
     // (issue #792 review).
     ..connectionTimeout = limits.connectTimeout;
-  HttpClientRequest? currentUpstreamReq;
-  // Set when the failure is the relay CLIENT going away (write-driven
-  // flush error or flush-stall) — a routine disconnect, not an upstream
-  // outage: the answer goes nowhere, and the log must not cry 502.
-  var clientGone = false;
-  // Set once the relay has ANSWERED its client (any shape). A
-  // response.done that fires before that is a client disconnect.
-  var relaySettled = false;
+  final state = _RelayHopState();
   try {
-    var current = url;
-    var method = '${envelope['method'] ?? 'POST'}';
-    final body = _relayRequestBody(envelope);
-    var disconnectWatch = false;
-    for (var hop = 0; ; hop++) {
-      if (!disconnectWatch) {
-        disconnectWatch = true;
-        // Cancel-on-disconnect (issue #794): response.done completes
-        // when the relay client goes away — on current SDKs NORMALLY,
-        // not as an error — so whenComplete is the signal, not
-        // onError. A settled relay aborts nothing. (A SILENTLY dead
-        // keep-alive peer never fires this on some platforms — that
-        // side is bounded by the flush-stall race in _relayRespond.)
-        unawaited(
-          request.response.done.whenComplete(() {
-            currentUpstreamReq?.abort();
-            if (!relaySettled) {
-              clientGone = true;
-              onUpstreamAbort?.call();
-            }
-          }),
-        );
-      }
-      final res = await _relayIssueHop(
-        upstream,
-        method,
-        current,
-        envelope: envelope,
-        original: url,
-        body: body,
-        limits: limits,
-        onIssued: (req) => currentUpstreamReq = req,
-      );
-      final location = _relayRedirectLocation(res);
-      // Done: the client is being served. (Set before AND after — a
-      // disconnect mid-stream surfaces as done while _relayRespond runs.)
-      if (location == null) {
-        relaySettled = true;
-        await _relayRespond(
-          request,
-          res,
-          allowedOrigin,
-          limits,
-          onClientGone: () {
-            // Write-driven disconnect (see _relayRespond): kill the
-            // upstream and count the abort.
-            clientGone = true;
-            currentUpstreamReq?.abort();
-            onUpstreamAbort?.call();
-          },
-        );
-        relaySettled = true;
-        return;
-      }
-      method = _relayRedirectMethod(res.statusCode, method);
-      final next = current.resolveUri(location);
-      if (hop >= 5 ||
-          !relayDestinationAllowed(next, allowAnyHost: allowAnyHost)) {
-        await _relayRejectBadHop(request, res, hop, allowedOrigin, limits, log);
-        return;
-      }
-      await _relayDrainBounded(res, limits);
-      current = next;
-    }
+    await _relayFollowHops(
+      request,
+      url,
+      envelope,
+      allowedOrigin,
+      upstream: upstream,
+      allowAnyHost: allowAnyHost,
+      limits: limits,
+      state: state,
+      onUpstreamAbort: onUpstreamAbort,
+      log: log,
+    );
   } on RelayLimitExceeded catch (error) {
-    relaySettled = true; // the client gets a named answer
+    state.relaySettled = true; // the client gets a named answer
     await _relayForwardFailure(
       request,
       error.status,
@@ -1549,26 +1495,18 @@ Future<void> _relayForward(
     // mid-answer (on some platforms the only detectable form of a dead
     // keep-alive peer). The upstream is already aborted via
     // onClientGone; the answer is moot — end quietly, log the fact.
-    relaySettled = true;
+    state.relaySettled = true;
     log?.call('relay client stopped taking data — upstream aborted');
-    try {
-      await request.response.close();
-    } on Object {
-      // Already gone.
-    }
+    await _relayQuietClose(request);
   } on Object {
     // Includes the abort path: the relay client disconnected, so the
     // aborted upstream surfaces here. That is a routine disconnect, not
     // an upstream outage: no 502, no error log (issue #794 review). A
     // genuine upstream failure answers 502 Bad Gateway — the proxy
     // semantic; the hub itself is fine.
-    relaySettled = true;
-    if (clientGone) {
-      try {
-        await request.response.close();
-      } on Object {
-        // Already gone.
-      }
+    state.relaySettled = true;
+    if (state.clientGone) {
+      await _relayQuietClose(request);
       return;
     }
     await _relayForwardFailure(
@@ -1580,6 +1518,158 @@ Future<void> _relayForward(
     );
   } finally {
     upstream.close(force: true);
+  }
+}
+
+/// Mutable per-forward relay state shared by the hop loop and its
+/// callbacks (the disconnect watch, the respond arm) — one small cell
+/// instead of closures capturing closures.
+class _RelayHopState {
+  /// The in-flight upstream request of the CURRENT hop; aborted when
+  /// the relay client goes away.
+  HttpClientRequest? upstreamReq;
+
+  /// Set once the disconnect watch is armed (exactly once per relay).
+  bool watchArmed = false;
+
+  /// Set once the relay has ANSWERED its client (any shape). A
+  /// response.done that fires before that is a client disconnect.
+  bool relaySettled = false;
+
+  /// Set when the failure is the relay CLIENT going away (write-driven
+  /// flush error, flush-stall race, or response.done before the answer)
+  /// — a routine disconnect, not an upstream outage: the answer goes
+  /// nowhere, and the log must not cry 502.
+  bool clientGone = false;
+}
+
+/// The redirect-following loop of [_relayForward]: issues hops, answers
+/// the relay client from the first terminal response, and re-checks
+/// every redirect target against the same destination rules before it
+/// is issued (issue #792 AC4).
+Future<void> _relayFollowHops(
+  HttpRequest request,
+  Uri url,
+  Map<String, dynamic> envelope,
+  String? allowedOrigin, {
+  required HttpClient upstream,
+  required bool allowAnyHost,
+  required RelayLimits limits,
+  required _RelayHopState state,
+  void Function()? onUpstreamAbort,
+  void Function(String line)? log,
+}) async {
+  var current = url;
+  var method = _relayMethodFor(envelope);
+  final body = _relayRequestBody(envelope);
+  _relayArmDisconnectWatch(request, state, onUpstreamAbort: onUpstreamAbort);
+  for (var hop = 0;; hop++) {
+    final res = await _relayIssueHop(
+      upstream,
+      method,
+      current,
+      envelope: envelope,
+      original: url,
+      body: body,
+      limits: limits,
+      onIssued: (req) => state.upstreamReq = req,
+    );
+    final location = _relayRedirectLocation(res);
+    // Done: the client is being served.
+    if (location == null) {
+      await _relayAnswerFromUpstream(
+        request,
+        res,
+        allowedOrigin,
+        limits,
+        state: state,
+        onUpstreamAbort: onUpstreamAbort,
+      );
+      return;
+    }
+    method = _relayRedirectMethod(res.statusCode, method);
+    final next = current.resolveUri(location);
+    if (!_relayHopAllowed(hop, next, allowAnyHost: allowAnyHost)) {
+      await _relayRejectBadHop(request, res, hop, allowedOrigin, limits, log);
+      return;
+    }
+    await _relayDrainBounded(res, limits);
+    current = next;
+  }
+}
+
+/// The relay HTTP method (POST unless the envelope says otherwise).
+String _relayMethodFor(Map<String, dynamic> envelope) =>
+    '${envelope['method'] ?? 'POST'}';
+
+/// Arms the cancel-on-disconnect watch exactly once per relay (issue
+/// #794): response.done completes when the relay client goes away — on
+/// current SDKs NORMALLY, not as an error — so whenComplete is the
+/// signal, not onError. A settled relay aborts nothing. (A SILENTLY
+/// dead keep-alive peer never fires this on some platforms — that side
+/// is bounded by the flush-stall race in _relayRespond.)
+void _relayArmDisconnectWatch(
+  HttpRequest request,
+  _RelayHopState state, {
+  void Function()? onUpstreamAbort,
+}) {
+  if (state.watchArmed) {
+    return;
+  }
+  state.watchArmed = true;
+  unawaited(
+    request.response.done.whenComplete(() {
+      state.upstreamReq?.abort();
+      if (!state.relaySettled) {
+        state.clientGone = true;
+        onUpstreamAbort?.call();
+      }
+    }),
+  );
+}
+
+/// Serves the relay client from the terminal upstream response. Settle
+/// before AND after — a disconnect mid-stream surfaces as done while
+/// _relayRespond runs.
+Future<void> _relayAnswerFromUpstream(
+  HttpRequest request,
+  HttpClientResponse res,
+  String? allowedOrigin,
+  RelayLimits limits, {
+  required _RelayHopState state,
+  void Function()? onUpstreamAbort,
+}) async {
+  state.relaySettled = true;
+  await _relayRespond(
+    request,
+    res,
+    allowedOrigin,
+    limits,
+    onClientGone: () {
+      // Write-driven disconnect (see _relayRespond): kill the upstream
+      // and count the abort.
+      state.clientGone = true;
+      state.upstreamReq?.abort();
+      onUpstreamAbort?.call();
+    },
+  );
+  state.relaySettled = true;
+}
+
+/// The redirect policy for one hop: [hop] within the cap AND the target
+/// allowed by the same destination rules as the original URL (issue
+/// #792 AC4).
+bool _relayHopAllowed(int hop, Uri next, {required bool allowAnyHost}) =>
+    hop < relayMaxRedirectHops &&
+    relayDestinationAllowed(next, allowAnyHost: allowAnyHost);
+
+/// Ends a relay whose answer is moot: closing the response of a client
+/// that is already gone must not throw.
+Future<void> _relayQuietClose(HttpRequest request) async {
+  try {
+    await request.response.close();
+  } on Object {
+    // Already gone.
   }
 }
 
@@ -1601,7 +1691,7 @@ Future<void> _relayRejectBadHop(
   RelayLimits limits,
   void Function(String line)? log,
 ) async {
-  final tooMany = hop >= 5;
+  final tooMany = hop >= relayMaxRedirectHops;
   log?.call(
     tooMany
         ? 'redirect loop (>5 hops) → 502'
