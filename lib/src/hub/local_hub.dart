@@ -1133,6 +1133,24 @@ Future<void> _relayPreflight(HttpRequest request, String? allowedOrigin) async {
   await request.response.close();
 }
 
+/// Bounded drain of an over-cap relay body: a client that finished
+/// within the window gets the 413 on a clean close; one still pumping
+/// is cut off (raw-socket fallback). True = the body arrived COMPLETE.
+Future<bool> _relayDrainOverCap(
+  StreamSubscription<Uint8List> sub,
+  Completer<void> consumed,
+) async {
+  try {
+    await consumed.future.timeout(_relayDrainWindow);
+    return true; // upload done: the 413 rides HttpResponse
+  } on TimeoutException {
+    await sub.cancel(); // still pumping: cut the read
+  } on Object {
+    // A stall (408) raced the cap — over-cap wins: 413.
+  }
+  return false;
+}
+
 /// Reads and validates the bridge envelope; answers 400 and returns null
 /// when the body is not JSON or the url is missing/non-http(s).
 ///
@@ -1191,14 +1209,7 @@ Future<(Uri, Map<String, dynamic>)?> _relayEnvelope(
       // anyway gets the 413 on a clean close; one still pumping is cut
       // off and the raw-socket fallback answers. Either way the worker
       // is freed NOW, not after the upload.
-      try {
-        await consumed.future.timeout(_relayDrainWindow);
-        bodyComplete = true; // upload done: the 413 rides HttpResponse
-      } on TimeoutException {
-        await sub.cancel(); // still pumping: cut the read
-      } on Object {
-        // A stall (408) raced the cap — over-cap wins: 413.
-      }
+      bodyComplete = await _relayDrainOverCap(sub, consumed);
       throw const RelayLimitExceeded(
         HttpStatus.requestEntityTooLarge,
         'relay body too large',
