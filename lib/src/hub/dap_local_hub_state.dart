@@ -13,8 +13,15 @@ library;
 import 'dart:convert';
 
 /// The parsed state: the hub process id, the port it serves, and when it
-/// was started (ISO-8601, informational).
-typedef DapLocalHubState = ({int pid, int port, String startedAt});
+/// was started (ISO-8601, informational). [relaySecret] (issue #792) is
+/// the `/relay` bearer an ephemeral-secret loopback hub persists for the
+/// operator / pairing clients; null on protected hubs and old files.
+typedef DapLocalHubState = ({
+  int pid,
+  int port,
+  String startedAt,
+  String? relaySecret,
+});
 
 /// Where the pid/state file lives under [home] (`<home>/.dap/hub.pid`).
 /// The caller applies the `DAP_HUB_PID_FILE` environment override.
@@ -22,9 +29,16 @@ String dapHubPidFileFor(String home) =>
     '${home.endsWith('/') ? home : '$home/'}.dap/hub.pid';
 
 /// Renders [state] as the file body (pretty JSON, trailing newline).
+/// Built through [JsonEncoder.withIndent] — the fields are escaped
+/// properly (a relay secret carrying quotes or backslashes cannot
+/// corrupt the file).
 String renderDapLocalHubState(DapLocalHubState state) =>
-    '{\n  "pid": ${state.pid},\n  "port": ${state.port},\n'
-    '  "startedAt": ${state.startedAt.isEmpty ? 'null' : '"${state.startedAt}"'}\n}\n';
+    '${const JsonEncoder.withIndent('  ').convert({
+      'pid': state.pid,
+      'port': state.port,
+      'startedAt': state.startedAt.isEmpty ? null : state.startedAt,
+      'relaySecret': state.relaySecret,
+    })}\n';
 
 /// Parses a pid/state file body; null when [content] is missing, invalid
 /// JSON, or lacks a usable `pid`/`port` (E4: a bad file is no state —
@@ -47,5 +61,8 @@ DapLocalHubState? parseDapLocalHubState(String? content) {
     pid: pid,
     port: port,
     startedAt: startedAt is String ? startedAt : '',
+    relaySecret: decoded['relaySecret'] is String
+        ? decoded['relaySecret'] as String
+        : null,
   );
 }

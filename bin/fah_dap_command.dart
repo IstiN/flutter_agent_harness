@@ -663,16 +663,17 @@ class DapHubController {
 
   void _writePidState(int pid, int port) {
     try {
-      final file = _pidFile;
-      if (!file.parent.existsSync()) {
-        file.parent.createSync(recursive: true);
-      }
-      file.writeAsStringSync(
-        renderDapLocalHubState((
-          pid: pid,
-          port: port,
-          startedAt: DateTime.now().toUtc().toIso8601String(),
-        )),
+      // Read-modify-write (issue #792 review): the child process owns
+      // the relaySecret — by the time the spawner tidies the pid file,
+      // the child may have persisted its EPHEMERAL relay bearer there.
+      // Clobbering it with null breaks every pairing client; carry the
+      // existing value forward instead.
+      final previous = _readPidState();
+      writeHubPidState(
+        _pidFile,
+        pid: pid,
+        port: port,
+        relaySecret: previous?.relaySecret,
       );
     } on Object {
       // Best-effort: the probe remains the source of truth for "running".
@@ -934,4 +935,39 @@ Future<String?> _stdinSecretPrompt(String question) async {
     stdout.writeln();
   }
   return line;
+}
+
+/// Writes one pid-state record to [file] verbatim: [relaySecret] goes in
+/// as given — the caller owns the preserve-vs-overwrite decision (the
+/// `fa dap` spawner PRESERVES the child's bearer; `fa hub serve` writes
+/// its own resolved secret) (issue #792).
+void writeHubPidState(
+  File file, {
+  required int pid,
+  required int port,
+  String? relaySecret,
+}) {
+  writeSecretFile0600(
+    file,
+    renderDapLocalHubState((
+      pid: pid,
+      port: port,
+      startedAt: DateTime.now().toUtc().toIso8601String(),
+      relaySecret: relaySecret,
+    )),
+  );
+}
+
+/// Writes [body] to [file] and best-effort restricts it to 0600. Content
+/// lands FIRST, the chmod SECOND (issue #792 review): on platforms
+/// without `chmod` the best-effort restriction fails silently, and a
+/// create->chmod->write order would then strand an EMPTY state file —
+/// breaking every reader. A world-readable WINDOW is the trade-off, and
+/// only where chmod is missing anyway (dart:io has no creation-mode API).
+void writeSecretFile0600(File file, String body) {
+  if (!file.parent.existsSync()) {
+    file.parent.createSync(recursive: true);
+  }
+  file.writeAsStringSync(body, mode: FileMode.write, flush: true);
+  Process.runSync('chmod', ['600', file.path]);
 }
