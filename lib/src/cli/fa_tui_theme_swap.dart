@@ -25,6 +25,23 @@ extension FaTuiThemeSwap on FaTuiModel {
       .._stickyFmtWidth = null;
     return (next, null);
   }
+
+  /// OSC 11 background reply (issue #804): the vendored program probes
+  /// the terminal background at startup and the decoded color arrives
+  /// here. While the auto light/dark tier is armed (no explicit
+  /// `tui.theme`), the reply re-resolves the palette — a light terminal
+  /// upgrades the boot default to `ohmypi-light` right after the first
+  /// frame; dark keeps it (no swap, no repaint).
+  (Model, Cmd?) _handleBackgroundProbe(BackgroundColorMsg msg) {
+    final controller = FaThemeController.instance;
+    controller.measuredTerminalBg = RgbColor(
+      (msg.rgb >> 16) & 0xff,
+      (msg.rgb >> 8) & 0xff,
+      msg.rgb & 0xff,
+    );
+    if (!controller.reapplyAutoLightDark()) return (this, null);
+    return _handleThemeSwapped();
+  }
 }
 
 extension FaTuiThemeSwapController on FaTuiController {
