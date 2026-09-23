@@ -61,38 +61,52 @@ void main() {
       Object? body,
     }) async {
       final client = HttpClient();
-      final req = await client.postUrl(Uri.parse('http://127.0.0.1:$port/relay'));
+      final req = await client.postUrl(
+        Uri.parse('http://127.0.0.1:$port/relay'),
+      );
       req.headers.set('Origin', origin);
       req.headers.contentType = ContentType.json;
       if (bearer.isNotEmpty) {
         req.headers.set('Authorization', 'Bearer $bearer');
       }
-      req.write(jsonEncode(body ?? envelope('http://127.0.0.1:${upstream.port}/')));
+      req.write(
+        jsonEncode(body ?? envelope('http://127.0.0.1:${upstream.port}/')),
+      );
       final res = await req.close();
       await res.drain<void>();
       client.close();
       return res;
     }
 
-    test('AC1: loopback fixture — no credential and wrong credential → 401', () async {
-      expect((await post('')).statusCode, 401);
-      expect((await post('wrong')).statusCode, 401);
-      expect(upstreamHits, 0, reason: 'unauthenticated: no upstream work');
-      expect(
-        (await post(hub.relaySecret!)).statusCode,
-        200,
-        reason: 'the ephemeral bearer authenticates',
-      );
-    });
+    test(
+      'AC1: loopback fixture — no credential and wrong credential → 401',
+      () async {
+        expect((await post('')).statusCode, 401);
+        expect((await post('wrong')).statusCode, 401);
+        expect(upstreamHits, 0, reason: 'unauthenticated: no upstream work');
+        expect(
+          (await post(hub.relaySecret!)).statusCode,
+          200,
+          reason: 'the ephemeral bearer authenticates',
+        );
+      },
+    );
 
-    test('AC1: lan fixture — the master bearer is the relay credential', () async {
-      await hub.stop();
-      hub = LocalHub(bind: 'lan', masterSecret: 'reg-master', relayAllowAnyHost: true);
-      await hub.start();
-      port = hub.url.port;
-      expect((await post('')).statusCode, 401);
-      expect((await post('reg-master')).statusCode, 200);
-    });
+    test(
+      'AC1: lan fixture — the master bearer is the relay credential',
+      () async {
+        await hub.stop();
+        hub = LocalHub(
+          bind: 'lan',
+          masterSecret: 'reg-master',
+          relayAllowAnyHost: true,
+        );
+        await hub.start();
+        port = hub.url.port;
+        expect((await post('')).statusCode, 401);
+        expect((await post('reg-master')).statusCode, 200);
+      },
+    );
 
     test('fail closed: a hub with no secret at all serves nothing', () {
       // The decision seam: a null credential must 401 everything — the
@@ -129,6 +143,9 @@ void main() {
         'close',
         reason: 'rejected sockets must not be pooled',
       );
+      // Hub-GENERATED rejections carry the marker so clients can tell
+      // them apart from a forwarded provider 401 (issue #792 review).
+      expect(res.headers.value('x-fah-relay'), 'rejection');
       await res.drain<void>();
       client.close();
       expect(upstreamHits, 0, reason: 'refused, not skipped');
@@ -149,6 +166,7 @@ void main() {
       ]) {
         final res = await post(hub.relaySecret!, body: envelope(dest));
         expect(res.statusCode, 403, reason: dest);
+        expect(res.headers.value('x-fah-relay'), 'rejection', reason: dest);
         expect(res.headers.value('connection'), 'close', reason: dest);
       }
       expect(upstreamHits, 0);
@@ -186,12 +204,7 @@ void main() {
       );
       addTearDown(() => stateFile.parent.delete(recursive: true));
       final code = await hubServe(
-        (
-          port: 0,
-          flagSecret: null,
-          flagBind: 'lan',
-          relayAllowAnyHost: false,
-        ),
+        (port: 0, flagSecret: null, flagBind: 'lan', relayAllowAnyHost: false),
         stateFile: stateFile,
         pidFile: File('${stateFile.parent.path}/hub.pid'),
         serveLoop: (_, _) async {},

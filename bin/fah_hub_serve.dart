@@ -18,7 +18,7 @@ import 'dart:io';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_agent_harness/src/hub/dap_local_hub_state.dart';
 
-import 'fah_dap_command.dart' show envHubPidFile;
+import 'fah_dap_command.dart' show envHubPidFile, writeHubPidState;
 
 /// The well-known zero-config port (mirrors the client default
 /// `ws://127.0.0.1:8787/ws`).
@@ -42,7 +42,10 @@ typedef HubSubcommand =
 
 /// The `fa hub` verb table — `serve` today. A map (not a switch) keeps
 /// the dispatcher branch-free and each verb a one-line entry.
-final Map<String, HubSubcommand> hubSubcommands = {'serve': _hubServe};
+final Map<String, HubSubcommand> hubSubcommands = {
+  'serve': _hubServe,
+  'token': _hubToken,
+};
 
 /// Runs the `hub` command; returns the process exit code.
 Future<int> runHubCommand(
@@ -54,7 +57,10 @@ Future<int> runHubCommand(
 }) async {
   final verb = args.isEmpty ? null : hubSubcommands[args.first];
   if (verb == null) {
-    stderr.writeln('usage: fa hub serve [--port N] [--secret S] [--bind lan]');
+    stderr.writeln(
+      'usage: fa hub serve [--port N] [--secret S] [--bind lan] | '
+      'fa hub token',
+    );
     return 1;
   }
   return verb(args.sublist(1), (
@@ -387,39 +393,54 @@ Future<void> hubGracefulExit(
   exitProcess(0);
 }
 
-void _writePidState(
-  File pidFile,
-  int pid,
-  int port, {
-  String? relaySecret,
-}) {
+/// The `fa hub token` answer for the running hub, or null when no relay
+/// secret is available (hub down, or a pre-#792 pid file). This is the
+/// provisioning path for the office pane's relay bearer (issue #792
+/// review): the operator copies the printed lines into the pane (the
+/// localStorage key the bridge reads; a settings field is the planned
+/// follow-up).
+String? hubTokenHint(File pidFile) {
+  final DapLocalHubState? state;
   try {
-    _writeSecretFile0600(
-      pidFile,
-      renderDapLocalHubState((
-        pid: pid,
-        port: port,
-        startedAt: DateTime.now().toUtc().toIso8601String(),
-        relaySecret: relaySecret,
-      )),
+    state = parseDapLocalHubState(pidFile.readAsStringSync());
+  } on Object {
+    return null;
+  }
+  final secret = state?.relaySecret;
+  if (state == null || secret == null || secret.isEmpty) return null;
+  return 'relay: http://127.0.0.1:${state.port}/relay\n'
+      'bearer: Bearer $secret\n'
+      "pane setup — run once in the add-in pane's devtools console:\n"
+      "  localStorage.setItem('fa_office_relay_token', '$secret')\n"
+      '(a settings field in the add-in is the planned follow-up)';
+}
+
+/// `fa hub token`: prints the running hub's relay bearer for the office
+/// pane. Named refusal when nothing is available — never an empty
+/// success.
+Future<int> _hubToken(List<String> flags, HubServeDeps deps) async {
+  final hint = hubTokenHint(
+    hubPidFileFor(environment: deps.environment, home: deps.home),
+  );
+  if (hint == null) {
+    stderr.writeln(
+      'no relay secret found — the hub is not running (or its pid file '
+      'predates issue #792): start it with `fa hub serve`, then re-run '
+      '`fa hub token`',
     );
+    return 1;
+  }
+  stdout.writeln(hint);
+  return 0;
+}
+
+void _writePidState(File pidFile, int pid, int port, {String? relaySecret}) {
+  try {
+    writeHubPidState(pidFile, pid: pid, port: port, relaySecret: relaySecret);
   } on Object {
     // Best-effort: `fa dap stop` still works via its own probe.
   }
 }
-// Writes [body] to [file] at mode 0600 with no world-readable window
-// (issue #792 review): the empty file is created first, restricted,
-// and only then does the content land. dart:io has no creation-mode
-// API, so the shell chmod is the earliest restriction point.
-void _writeSecretFile0600(File file, String body) {
-  if (!file.parent.existsSync()) {
-    file.parent.createSync(recursive: true);
-  }
-  file.writeAsStringSync('', mode: FileMode.write, flush: true);
-  Process.runSync('chmod', ['600', file.path]);
-  file.writeAsStringSync(body, mode: FileMode.write, flush: true);
-}
-
 
 void _clearPidState(File pidFile) {
   try {

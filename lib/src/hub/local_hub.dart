@@ -676,6 +676,10 @@ class HubJoin {
 /// headers = the browser blocks the read).
 // ponytail: exact fa1.dev + localhost dev; extend the list when the pane
 // gains another production origin.
+/// The connect window for one upstream relay dial on this branch (the
+/// bounded relay of issue #794 layers the full timeout set on top).
+const Duration relayConnectTimeout = Duration(seconds: 10);
+
 String? relayAllowedOrigin(String? origin) {
   if (origin == null) return null;
   final uri = Uri.tryParse(origin);
@@ -718,12 +722,14 @@ Future<void> handleRelayRequest(
     // the rejected WS upgrade — a stale pooled connection surfaces as
     // "connection closed" on the client's NEXT request).
     request.response.headers.set(HttpHeaders.connectionHeader, 'close');
+    _relayMarkRejection(request);
     request.response.statusCode = 401;
     await request.response.close();
     return;
   }
   if (origin != null && allowedOrigin == null) {
     request.response.headers.set(HttpHeaders.connectionHeader, 'close');
+    _relayMarkRejection(request);
     request.response.statusCode = 403;
     request.response.write('{"error":"origin not allowed"}');
     await request.response.close();
@@ -733,6 +739,7 @@ Future<void> handleRelayRequest(
   if (parsed == null) return;
   if (!relayDestinationAllowed(parsed.$1, allowAnyHost: allowAnyHost)) {
     request.response.headers.set(HttpHeaders.connectionHeader, 'close');
+    _relayMarkRejection(request);
     request.response.statusCode = 403;
     _relayCors(request, allowedOrigin);
     request.response.write('{"error":"destination not allowed"}');
@@ -834,6 +841,7 @@ Future<(Uri, Map<String, dynamic>)?> _relayEnvelope(
     return (url, envelope);
   } on FormatException {
     request.response.headers.set(HttpHeaders.connectionHeader, 'close');
+    _relayMarkRejection(request);
     request.response.statusCode = 400;
     _relayCors(request, allowedOrigin);
     request.response.write(
@@ -859,17 +867,14 @@ Map<String, String> _relayHopHeaders(
   };
   // Credentials also die on a scheme downgrade: https -> http on the
   // SAME host hands the bearer to plaintext (issue #792 review).
-  final hostChanged =
-      current.host.toLowerCase() != original.host.toLowerCase();
+  final hostChanged = current.host.toLowerCase() != original.host.toLowerCase();
   final schemeDowngraded =
       original.scheme == 'https' && current.scheme == 'http';
   if (hostChanged || schemeDowngraded) {
-    headers.removeWhere(
-      (name, _) {
-        final lower = name.toLowerCase();
-        return lower == 'authorization' || lower == 'cookie';
-      },
-    );
+    headers.removeWhere((name, _) {
+      final lower = name.toLowerCase();
+      return lower == 'authorization' || lower == 'cookie';
+    });
   }
   return headers;
 }
@@ -896,6 +901,14 @@ String _relayRedirectMethod(int statusCode, String method) =>
 
 /// Answers a relay rejection on the client response: [status] + CORS +
 /// a small `{"error": ...}` JSON body.
+/// Marks a hub-GENERATED relay rejection so clients can tell it apart
+/// from an upstream answer that merely shares the status: a provider 401
+/// is the CALLER's credential problem and streams through verbatim; a
+/// relay 401 is the transport's (issue #792 review).
+void _relayMarkRejection(HttpRequest request) {
+  request.response.headers.set('x-fah-relay', 'rejection');
+}
+
 Future<void> _relayReject(
   HttpRequest request,
   int status,
@@ -904,6 +917,7 @@ Future<void> _relayReject(
 ) async {
   // Keep-alive pools must not reuse a rejected socket.
   request.response.headers.set(HttpHeaders.connectionHeader, 'close');
+  _relayMarkRejection(request);
   request.response.statusCode = status;
   _relayCors(request, allowedOrigin);
   request.response.write('{"error":"$error"}');
@@ -923,14 +937,17 @@ Future<void> _relayForward(
   String? allowedOrigin, {
   required bool allowAnyHost,
 }) async {
-  final upstream = HttpClient();
+  final upstream = HttpClient()
+    // Minimal connect-window bound on this branch; the bounded relay
+    // (issue #794) carries the full per-hop timeout set on top (#817).
+    ..connectionTimeout = relayConnectTimeout;
   try {
     var current = url;
     var method = '${envelope['method'] ?? 'POST'}';
     final body = envelope['bodyB64'] is String
         ? base64Decode(envelope['bodyB64'] as String)
         : null;
-    for (var hop = 0;; hop++) {
+    for (var hop = 0; ; hop++) {
       final req = await upstream.openUrl(method, current);
       req.followRedirects = false;
       _relayHopHeaders(envelope, url, current).forEach(req.headers.set);
@@ -947,7 +964,11 @@ Future<void> _relayForward(
       if (hop >= 5) {
         await res.drain<void>();
         await _relayReject(
-            request, HttpStatus.badGateway, 'too many redirects', allowedOrigin);
+          request,
+          HttpStatus.badGateway,
+          'too many redirects',
+          allowedOrigin,
+        );
         return;
       }
       if (!relayDestinationAllowed(next, allowAnyHost: allowAnyHost)) {
@@ -965,7 +986,11 @@ Future<void> _relayForward(
     }
   } on Object {
     await _relayReject(
-        request, HttpStatus.badGateway, 'upstream unreachable', allowedOrigin);
+      request,
+      HttpStatus.badGateway,
+      'upstream unreachable',
+      allowedOrigin,
+    );
   } finally {
     upstream.close(force: true);
   }
