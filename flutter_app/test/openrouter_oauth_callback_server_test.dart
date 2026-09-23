@@ -151,22 +151,12 @@ void main() {
       // flakes under CI load with "the shared flag to bind()" (observed on
       // the pre-merge validation run).
       await timedOut.close();
-      // The port is released: a bind on the same port succeeds. Release can
-      // lag the awaited close() on loaded CI runners (same-process double
-      // bind → "the shared flag" error), so prove it with a bounded retry
-      // instead of asserting instant release.
-      for (var i = 0; ; i++) {
-        try {
-          await HttpServer.bind(
-            InternetAddress.loopbackIPv4,
-            Uri.parse(url2).port,
-          ).then((s) => s.close());
-          break;
-        } on SocketException {
-          if (i >= 20) rethrow; // ~2s total: release is genuinely stuck.
-          await Future<void>.delayed(const Duration(milliseconds: 100));
-        }
-      }
+      // The port is released: a bind on the same port succeeds. The timer's
+      // unawaited(close()) leaves server.close() in flight (a re-entered
+      // timedOut.close() is a no-op), so the bind can race the still-closing
+      // socket on loaded CI runners ("the shared flag" error) — prove release
+      // with a bounded retry instead of asserting instant release.
+      await expectPortReleased(Uri.parse(url2).port);
     });
 
     test('starting again rebinds and closes the previous socket', () async {
@@ -177,10 +167,7 @@ void main() {
       expect(Uri.parse(secondUrl).port, isNot(firstPort));
       expect(server.callbackUrl, secondUrl);
       // The first server's port is free again.
-      await HttpServer.bind(
-        InternetAddress.loopbackIPv4,
-        firstPort,
-      ).then((s) => s.close());
+      await expectPortReleased(firstPort);
     });
 
     test(
@@ -199,4 +186,19 @@ void main() {
       },
     );
   });
+}
+
+/// Proves [port] is bindable again, retrying past the OS-release lag after
+/// an awaited close (~2s budget; a genuinely stuck release rethrows).
+Future<void> expectPortReleased(int port) async {
+  for (var attempt = 0; ; attempt++) {
+    try {
+      await HttpServer.bind(InternetAddress.loopbackIPv4, port)
+          .then((s) => s.close());
+      return;
+    } on SocketException {
+      if (attempt >= 20) rethrow; // ~2s total: release is genuinely stuck.
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+  }
 }
