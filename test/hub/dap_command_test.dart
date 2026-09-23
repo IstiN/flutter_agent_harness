@@ -337,6 +337,45 @@ void main() {
     );
   });
 
+  group('fa dap start pid-state hygiene (issue #792 review)', () {
+    test(
+      'the spawner preserves a child-written relaySecret in the pid file '
+      '(read-modify-write, never a clobber to null)',
+      () async {
+        final port = await freePort();
+        final hub = LocalHub(port: port, stateFile: stateFileFor());
+        addTearDown(() => hub.stop());
+
+        // Simulate a child that already persisted its ephemeral relay
+        // bearer (what `fa hub serve` writes moments after spawn).
+        final pidFile = File(dapHubPidFileFor(tempHome.path));
+        writeHubPidState(
+          pidFile,
+          pid: 424242,
+          port: port,
+          relaySecret: 'sk-child-ephemeral',
+        );
+
+        final controller = controllerFor(hub, port);
+        final code = await controller.start();
+        expect(code, 0, reason: sinkOf(controller).join('\n'));
+
+        final state = parseDapLocalHubState(
+          pidFile.readAsStringSync(),
+        );
+        expect(state, isNotNull);
+        expect(state!.port, port, reason: 'the live record was written');
+        expect(
+          state.relaySecret,
+          'sk-child-ephemeral',
+          reason: 'the spawner re-read and carried the child bearer '
+              'forward instead of clobbering it',
+        );
+      },
+      timeout: timeout,
+    );
+  });
+
   group('fa dap stop (AC2, E4)', () {
     test(
       'stop names connected peers, stops the hub, clears the state file; '

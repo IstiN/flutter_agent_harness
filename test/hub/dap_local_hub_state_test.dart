@@ -21,12 +21,29 @@ void main() {
     });
   });
 
+  test('renderDapLocalHubState escapes hostile secrets (issue #792 '
+      'review)', () {
+    const state = (
+      pid: 7,
+      port: 8787,
+      startedAt: '2026-09-23T00:00:00Z',
+      relaySecret: 'a"b\\c\nd',
+    );
+    final rendered = renderDapLocalHubState(state);
+    final parsed = parseDapLocalHubState(rendered);
+    expect(parsed, isNotNull);
+    expect(parsed!.relaySecret, 'a"b\\c\nd');
+    expect(rendered.contains('a"b'), isFalse,
+        reason: 'the quote is escaped in the file body');
+  });
+
   group('parseDapLocalHubState', () {
     test('round-trips a rendered state', () {
       final state = (
         pid: 4242,
         port: 8787,
         startedAt: '2026-09-13T10:00:00Z',
+        relaySecret: 'reg-pair-4f2a',
       );
       final parsed = parseDapLocalHubState(
         renderDapLocalHubState(state),
@@ -35,6 +52,15 @@ void main() {
       expect(parsed!.pid, 4242);
       expect(parsed.port, 8787);
       expect(parsed.startedAt, '2026-09-13T10:00:00Z');
+      expect(parsed.relaySecret, 'reg-pair-4f2a');
+    });
+
+    test('a pre-#792 file without relaySecret parses with null', () {
+      final parsed = parseDapLocalHubState(
+        '{"pid": 7, "port": 8787, "startedAt": "2026-09-13T10:00:00Z"}',
+      );
+      expect(parsed, isNotNull);
+      expect(parsed!.relaySecret, isNull);
     });
 
     test('null on missing, invalid or incomplete content (E4 no zombie)',
