@@ -4137,6 +4137,10 @@
 
 - feat(tui): keyHint grammar + /help hotkey table (#809) (#834)
 
+## 1.0.463
+
+- fix(cube): fs guard resolves symlinks — access checks judge the file the OS will open (#791) (#813)
+
 ## Unreleased
 
 ## Unreleased
