@@ -2747,10 +2747,11 @@ void main() {
         isExited: () => false,
         hub: tree(),
       );
-      // Press 1: abort + hint, overlay and process stay.
+      // Press 1: abort + hint, overlay and process stay. The only Cmd is
+      // the window-expiry scheduler — never a quit.
       final (first, firstCmd) = model.update(ctrl('c'));
       expect(interrupted, isTrue);
-      expect(firstCmd, isNull, reason: 'press 1 never quits');
+      expect(firstCmd, isNotNull, reason: 'press 1 arms the timed hint');
       // Press 2 within the window: the quit command (legacy fallback —
       // no onCtrlCExit seam on this bare host).
       final (second, secondCmd) = (first as FaTuiModel).update(ctrl('c'));

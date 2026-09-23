@@ -260,7 +260,7 @@ final class FaTuiModel extends Model {
     this.ctrlCArmed = false,
     DateTime Function()? now,
   }) : nowFn = now ?? DateTime.now,
-       sigintPolicy = sigintPolicy ?? SigintPolicy(now: now),
+       sigintPolicy = sigintPolicy ?? SigintPolicy(),
        editor = editor ?? const TuiLineEditor.empty();
 
   final FaTuiCallbacks callbacks;
@@ -828,6 +828,7 @@ final class FaTuiModel extends Model {
     if (msg is DrainQueueMsg) return _handleDrainQueue(msg);
     if (msg is ClearQueueMsg) return _handleClearQueue();
     if (msg is InterruptArmedMsg) return _handleInterruptArmed();
+    if (msg is CtrlCWindowExpiredMsg) return _handleWindowExpired();
     if (msg is OpenPromptMsg) {
       _promptCompleter = msg.completer;
       return (copyWith(prompt: TuiPromptState(msg.spec)), null);
@@ -1080,13 +1081,26 @@ final class FaTuiModel extends Model {
   }
 
   /// Terminal events: resizes, mouse wheel scrolling, pastes, keys.
+  /// Mouse and pastes route through the double-press window too (issue
+  /// #830 review): the contract says "any other key/input", and a paste
+  /// between two presses must never turn press 2 into an exit.
   (Model, Cmd?) _handleTerminalMsg(Msg msg) {
     if (msg is WindowSizeMsg) return _handleWindowSize(msg);
-    if (msg is MouseClickMsg) return _handleMouseClick(msg);
-    if (msg is MouseMotionMsg) return _handleMouseMotion(msg);
-    if (msg is MouseReleaseMsg) return _handleMouseRelease(msg);
-    if (msg is MouseWheelMsg) return _handleMouseWheel(msg);
-    if (msg is PasteMsg) return _handlePaste(msg);
+    if (msg is MouseClickMsg) {
+      return _withFreshCtrlCWindow(msg, () => _handleMouseClick(msg));
+    }
+    if (msg is MouseMotionMsg) {
+      return _withFreshCtrlCWindow(msg, () => _handleMouseMotion(msg));
+    }
+    if (msg is MouseReleaseMsg) {
+      return _withFreshCtrlCWindow(msg, () => _handleMouseRelease(msg));
+    }
+    if (msg is MouseWheelMsg) {
+      return _withFreshCtrlCWindow(msg, () => _handleMouseWheel(msg));
+    }
+    if (msg is PasteMsg) {
+      return _withFreshCtrlCWindow(msg, () => _handlePaste(msg));
+    }
     return _handleKeyMsg(msg);
   }
 
@@ -2091,6 +2105,10 @@ final class FaTuiModel extends Model {
           hub!,
           width: termWidth,
           height: _viewportHeight,
+          // Press 1 under the overlay (issue #830 review): the composer's
+          // status row is covered, so the armed hint takes the hub's own
+          // footer hint row until the window expires or input resets it.
+          footerHint: ctrlCArmed ? kCtrlCExitHint : null,
         ),
         cursor: null,
         mouseMode: _viewMouseMode,

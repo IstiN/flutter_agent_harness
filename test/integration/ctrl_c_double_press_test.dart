@@ -16,13 +16,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_agent_harness/src/cli/sigint_action.dart';
 import 'package:test/test.dart';
 
 import 'pty_harness.dart';
-
-/// The press window from the shared policy (lib/src/cli/sigint_action.dart);
-/// duplicated here so the sleep provably crosses it if the constant moves.
-const _pressWindow = Duration(seconds: 3);
 
 void main() {
   group('double-press ctrl+c - SIGINT path (issue #830)', () {
@@ -89,7 +86,8 @@ allowedTools: []
     );
 
     test(
-      'ACX.2: press 2 within the window exits 130 with the resume hint',
+      'ACX.2: press 2 within the window exits 130; a fresh session prints '
+      'the honest nothing-to-resume line',
       () async {
         final harness = await spawnTui();
         addTearDown(harness.close);
@@ -99,7 +97,11 @@ allowedTools: []
         await harness.waitForScreen('press ctrl+c again to exit');
         harness.sendCtrlC(); // press 2: exit
 
-        await harness.waitForText('resume this session with');
+        // A virgin session persists nothing, so the exit deletes the empty
+        // session file — "resume this session with ..." would point at a
+        // deleted file. The honest line is the contract for fresh runs
+        // (issue #830 review); a non-empty session prints the resume hint.
+        await harness.waitForText(kNothingToResumeHint);
         expect(
           await harness.pty.exitCode.timeout(const Duration(seconds: 15)),
           130,
@@ -114,7 +116,9 @@ allowedTools: []
 
       harness.sendCtrlC(); // press 1 at t=0
       await harness.waitForScreen('press ctrl+c again to exit');
-      await Future<void>.delayed(_pressWindow + const Duration(seconds: 1));
+      await Future<void>.delayed(
+        kSigintPressWindow + const Duration(seconds: 1),
+      );
       harness.sendCtrlC(); // past the window: fresh press 1, NOT an exit
       await harness.waitForOutput(settleMs: 200);
       expect(

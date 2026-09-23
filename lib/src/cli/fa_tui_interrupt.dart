@@ -44,23 +44,50 @@ extension FaTuiModelInterrupt on FaTuiModel {
       // single-press quit (exit 0).
       return (copyWith(ctrlCArmed: false), () => quit());
     }
-    return (_stayAfterCtrlC(), null);
+    return (_stayAfterCtrlC(), _scheduleWindowExpiry());
   }
 
   /// Press-1 stay state: the dim footer hint goes up; an idle composer
-  /// with text clears (the boot banner's `ctrl+c clear` promise). A run
-  /// in flight keeps the composer — the abort already owns the screen.
+  /// clears fully — text (the boot banner's `ctrl+c clear` promise),
+  /// attachment chips, and a stale slash menu (the SIGINT path arms
+  /// before mode gating, so the menu can be open here). A run in flight
+  /// keeps the composer — the abort already owns the screen.
   FaTuiModel _stayAfterCtrlC() {
-    var next = copyWith(ctrlCArmed: true);
+    var next = copyWith(
+      ctrlCArmed: true,
+      menuOpen: false,
+      menuTokenStart: -1,
+    );
     if (!next.busy && next.inputText.isNotEmpty) {
-      next = next.copyWith(inputText: '', cursor: 0);
+      next = next.copyWith(
+        inputText: '',
+        cursor: 0,
+        attachments: const [],
+      );
     }
     return next;
   }
 
   /// SIGINT press 1 routed in from the host (isig terminals never deliver
-  /// ctrl+c as a key): same stay state as the key path.
-  (Model, Cmd?) _handleInterruptArmed() => (_stayAfterCtrlC(), null);
+  /// ctrl+c as a key): same stay state + expiry schedule as the key path.
+  (Model, Cmd?) _handleInterruptArmed() =>
+      (_stayAfterCtrlC(), _scheduleWindowExpiry());
+
+  /// The window ran out: the armed hint would now lie (the next press is
+  /// a fresh press 1), so the hint goes away and the policy disarms. A
+  /// late timer after the window was already reset is a no-op.
+  (Model, Cmd?) _handleWindowExpired() {
+    if (!ctrlCArmed) return (this, null);
+    sigintPolicy.noteOtherInput();
+    return (copyWith(ctrlCArmed: false), null);
+  }
+
+  /// Schedules [CtrlCWindowExpiredMsg] one press window after the arm, so
+  /// the hint tracks the policy's clock instead of living forever.
+  Cmd _scheduleWindowExpiry() => () async {
+    await Future<void>.delayed(sigintPolicy.window);
+    return const CtrlCWindowExpiredMsg();
+  };
 
   /// Any input other than a ctrl+c press resets the double-press window
   /// (issue #830): the next ctrl+c is a fresh press 1 and the footer hint
