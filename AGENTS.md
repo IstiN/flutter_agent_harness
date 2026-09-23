@@ -640,8 +640,12 @@ factual: paths, commands, invariants — no essays.
   workspace + `rw` mounts (`/dev/null`, `/dev/fd` exempt) and denies reads
   of `/etc` + user homes when no root mount grants reads (a blanket read
   deny would abort exec — dyld); Windows = Job Object descriptor only
-  (degrades to policy, loudly: `fa_cube[<name>]: kernel backend
-  unavailable, running in policy mode`); a wrapper that is missing from
+  (kernel on a platform without an enforcing backend is REFUSED — clean
+  `fa_cube[<name>]:` error naming `spec.allowDegrade`, zero commands —
+  unless the spec opts in via `allowDegrade: true`, which degrades to
+  policy mode with the loud `fa_cube[<name>]: kernel backend unavailable,
+  running in policy mode` warning; `effectiveBackend` reports what
+  actually ran — #793); a wrapper that is missing from
   PATH or refuses the sandbox (EPERM, SBPL
   rejection) surfaces as a clean `fa_cube[<name>]: kernel backend ...`
   spawn error in foreground execs and background jobs alike. CLI:

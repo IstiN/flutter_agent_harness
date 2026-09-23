@@ -162,10 +162,12 @@ void main() {
     CubeSpec kernelSpec({
       CubeEnvPolicy env = const CubeEnvPolicy(),
       bool networkAllowed = false,
+      bool allowDegrade = false,
       String backend = 'kernel',
     }) => CubeSpec(
       name: 'test-cube',
       backend: CubeBackendMode.values.byName(backend),
+      allowDegrade: allowDegrade,
       tools: const CubeToolPolicy(allow: {'git', 'echo'}),
       network: CubeNetworkPolicy(
         allow: networkAllowed ? [const CubeNetworkRule(host: '*')] : const [],
@@ -382,13 +384,14 @@ void main() {
       },
     );
 
-    test('a kernel spec without a home stays in policy mode', () async {
+    test('a kernel spec without a home is refused (nothing to stage on)',
+        () async {
       final inner = _RecordingShell();
       final fs = _RenamingFs();
       final shell = SandboxedShell(inner, kernelSpec(), fs: fs, os: 'macos');
-      await shell.exec('git status');
-      expect(fs.writes, isEmpty);
-      expect(inner.commands.single, 'git status');
+      final error = (await shell.exec('git status')).errorOrNull;
+      expect(error!.message, contains('allowDegrade'));
+      expect(inner.commands, isEmpty);
     });
 
     test(
@@ -469,41 +472,149 @@ void main() {
       expect(inner.commands.single, 'git status');
     });
 
-    test('a kernel spec without a platform stays in policy mode', () async {
-      final inner = _RecordingShell();
-      final fs = _FakeFs();
-      final shell = SandboxedShell(inner, kernelSpec(), fs: fs);
-      await shell.exec('git status');
-      expect(fs.writes, isEmpty);
-      expect(inner.commands.single, 'git status');
-    });
-
-    test('an unenforcing platform (windows) stays in policy mode', () async {
-      final inner = _RecordingShell();
-      final fs = _FakeFs();
-      final shell = SandboxedShell(inner, kernelSpec(), fs: fs, os: 'windows');
-      await shell.exec('git status');
-      expect(fs.writes, isEmpty);
-      expect(inner.commands.single, 'git status');
-    });
+    test(
+      'AC1: a kernel spec on a platform without a backend is refused with '
+      'zero commands',
+      () async {
+        final inner = _RecordingShell();
+        final fs = _RenamingFs();
+        final shell = SandboxedShell(
+          inner,
+          kernelSpec(),
+          fs: fs,
+          os: 'windows',
+          homeDir: '/home',
+        );
+        final error = (await shell.exec('git status')).errorOrNull;
+        expect(error, isNotNull);
+        expect(error!.code, ExecutionErrorCode.spawnError);
+        expect(error.message, contains('allowDegrade'));
+        expect(error.message, startsWith('fa_cube[test-cube]:'));
+        expect(inner.commands, isEmpty);
+        expect(fs.writes, isEmpty);
+        expect(shell.effectiveBackend, isNull);
+      },
+    );
 
     test(
-      'a kernel spec degrading to policy mode emits a loud warning',
+      'AC1: a kernel spec without a platform or home is refused too',
+      () async {
+        for (final shell in [
+          SandboxedShell(_RecordingShell(), kernelSpec(), fs: _RenamingFs()),
+          SandboxedShell(
+            _RecordingShell(),
+            kernelSpec(),
+            fs: _RenamingFs(),
+            os: 'macos',
+          ),
+        ]) {
+          final error = (await shell.exec('git status')).errorOrNull;
+          expect(error, isNotNull);
+          expect(error!.message, contains('allowDegrade'));
+        }
+      },
+    );
+
+    test(
+      'AC2: allowDegrade runs in policy mode loudly and queryably',
       () async {
         final inner = _RecordingShell();
         final degradations = <String>[];
         final shell = SandboxedShell(
           inner,
-          kernelSpec(),
-          fs: _FakeFs(),
+          kernelSpec(allowDegrade: true),
+          fs: _RenamingFs(),
           os: 'windows',
+          homeDir: '/home',
           onDegrade: degradations.add,
         );
-        await shell.exec('git status');
+        final result = await shell.exec('git status');
+        expect(result.getOrThrow().stdout, 'out');
+        expect(inner.commands.single, 'git status');
         expect(degradations, hasLength(1));
         expect(degradations.single, startsWith('fa_cube[test-cube]:'));
         expect(degradations.single, contains('policy mode'));
-        expect(inner.commands.single, 'git status');
+        expect(shell.effectiveBackend, CubeBackendMode.policy);
+      },
+    );
+
+    test('effectiveBackend reports the mode each spec actually runs', () {
+      final shell = SandboxedShell(_RecordingShell(), null);
+      expect(shell.effectiveBackend, isNull);
+      shell.updateSpec(kernelSpec(backend: 'policy'));
+      expect(shell.effectiveBackend, CubeBackendMode.policy);
+      shell.clearSpec();
+      expect(shell.effectiveBackend, isNull);
+      // macos + home + fs deliver the kernel backend.
+      final kernelShell = SandboxedShell(
+        _RecordingShell(),
+        kernelSpec(),
+        fs: _RenamingFs(),
+        os: 'macos',
+        homeDir: '/home',
+      );
+      expect(kernelShell.effectiveBackend, CubeBackendMode.kernel);
+    });
+
+    test(
+      'AC3 REG: an explicit kernel spec never silently executes in policy '
+      'mode',
+      () async {
+        for (final os in const ['macos', 'linux', 'windows', null]) {
+          for (final allowDegrade in const [false, true]) {
+            final inner = _RecordingShell();
+            final degradations = <String>[];
+            final withFs = os != null;
+            final shell = SandboxedShell(
+              inner,
+              kernelSpec(allowDegrade: allowDegrade),
+              fs: withFs ? _RenamingFs() : null,
+              os: os,
+              homeDir: withFs ? '/home' : null,
+              onDegrade: degradations.add,
+            );
+            final outcome = await shell.exec('git status');
+            final ran = inner.commands;
+            if (ran.isEmpty) {
+              // Refused: nothing executed, and the refusal names the opt-in.
+              expect(
+                outcome.errorOrNull!.message,
+                contains('allowDegrade'),
+                reason: 'os=$os allowDegrade=$allowDegrade',
+              );
+              expect(
+                allowDegrade,
+                isFalse,
+                reason: 'a degrading spec must run: os=$os',
+              );
+            } else {
+              expect(ran, hasLength(1), reason: 'os=$os');
+              if (ran.single == 'git status') {
+                // UNWRAPPED execution in policy mode is only ever legal
+                // through the explicit allowDegrade opt-in, loudly.
+                expect(
+                  allowDegrade,
+                  isTrue,
+                  reason:
+                      'os=$os: explicit kernel silently ran in policy mode',
+                );
+                expect(degradations, hasLength(1), reason: 'os=$os');
+                expect(shell.effectiveBackend, CubeBackendMode.policy,
+                    reason: 'os=$os');
+              } else {
+                // Kernel-wrapped: binary on PATH is irrelevant here — the
+                // wrap shape itself proves kernel mode was honored.
+                expect(
+                  ran.single,
+                  anyOf(contains('sandbox-exec'), contains('unshare')),
+                  reason: 'os=$os',
+                );
+                expect(shell.effectiveBackend, CubeBackendMode.kernel,
+                    reason: 'os=$os');
+              }
+            }
+          }
+        }
       },
     );
 
@@ -904,8 +1015,8 @@ class _FakeFs implements FileSystem {
   @override
   Future<Result<String, FileError>> readTextFile(String path) async =>
       files.containsKey(path)
-      ? Ok(files[path]!)
-      : const Err(FileError(FileErrorCode.notFound, 'missing'));
+          ? Ok(files[path]!)
+          : const Err(FileError(FileErrorCode.notFound, 'missing'));
 
   @override
   Future<Result<String, FileError>> absolutePath(String path) async =>

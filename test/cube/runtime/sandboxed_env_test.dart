@@ -213,6 +213,39 @@ void main() {
       },
     );
 
+    test('a refusing kernel spec denies background jobs naming allowDegrade',
+        () async {
+      final inner = _RecordingShell();
+      final env = SandboxedExecutionEnv(
+        MemoryExecutionEnv(cwd: '/work', shell: inner),
+        CubeSpec(
+          name: 'test-cube',
+          backend: CubeBackendMode.kernel,
+          tools: const CubeToolPolicy(allow: {'git'}),
+          filesystem: const CubeFsPolicy(workspace: '/work'),
+        ),
+        os: 'windows',
+      );
+      final result = await env.startShellJob(
+        'git log',
+        id: 'j1',
+        logPath: '/tmp/j1.log',
+      );
+      expect(result.isErr, isTrue);
+      expect(result.errorOrNull!.code, ExecutionErrorCode.spawnError);
+      expect(result.errorOrNull!.message, contains('allowDegrade'));
+      expect(inner.jobs, isEmpty);
+      expect(env.effectiveBackend, isNull);
+    });
+
+    test('effectiveBackend forwards the shell mode', () {
+      final env = SandboxedExecutionEnv(
+        MemoryExecutionEnv(cwd: '/work', shell: _RecordingShell()),
+        spec('test-cube'),
+      );
+      expect(env.effectiveBackend, CubeBackendMode.policy);
+    });
+
     test('backgroundJobsSupported delegates to the wrapped shell', () {
       final env = SandboxedExecutionEnv(
         MemoryExecutionEnv(cwd: '/work', shell: _RecordingShell()),

@@ -34,9 +34,12 @@ final class SandboxedExecutionEnv implements ExecutionEnv, BackgroundShell {
   ///
   /// [os] names the host platform for `backend: kernel` specs (the CLI
   /// passes `Platform.operatingSystem`; `lib/src` itself stays pure Dart).
-  /// A null [os] — or a platform without an enforcing backend — keeps
-  /// kernel-mode cubes in pure policy mode, announced through [onWarning]
-  /// with a loud `fa_cube[<name>]:` line.
+  /// A null [os] — or a platform without an enforcing backend — leaves a
+  /// kernel-mode cube undeliverable: the shell refuses (clean
+  /// `fa_cube[<name>]:` error on every exec, zero commands run) unless the
+  /// spec sets `allowDegrade: true`, in which case it runs in pure policy
+  /// mode, announced through [onWarning] with a loud `fa_cube[<name>]:`
+  /// line. `effectiveBackend` reports what actually runs.
   SandboxedExecutionEnv(
     this._delegate,
     CubeSpec? spec, {
@@ -68,6 +71,10 @@ final class SandboxedExecutionEnv implements ExecutionEnv, BackgroundShell {
 
   /// The spec currently enforced, or `null` in passthrough mode.
   CubeSpec? get activeSpec => _shellActiveSpec;
+
+  /// The backend the shell actually executes with (`null` = passthrough or
+  /// a refused kernel spec): hosts display/audit what actually ran.
+  CubeBackendMode? get effectiveBackend => _shell.effectiveBackend;
 
   /// Reads the shell's live spec (the single source of truth for sandbox
   /// mode across the fs guard, shell and job policy checks).

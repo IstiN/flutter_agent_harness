@@ -139,11 +139,13 @@ final class SandboxedShell implements Shell {
   ///
   /// [fs] and [os] enable `backend: kernel` mode: [fs] stages the backend's
   /// profile artifact and [os] names the host platform (`macos` or
-  /// `linux`). [homeDir] anchors the user-level profile staging directory;
-  /// any of the three missing — or a backend that does not enforce on the
-  /// given platform — keeps the shell in pure policy mode, and [onDegrade]
-  /// is called with a loud `fa_cube[<name>]:` warning when a `backend:
-  /// kernel` spec takes that path.
+  /// `linux`). [homeDir] anchors the user-level profile staging directory.
+  /// Any of the three missing — or a backend that does not enforce on the
+  /// given platform — leaves a `backend: kernel` spec undeliverable: by
+  /// default the shell REFUSES (a named error on every [exec], zero
+  /// commands run); with `spec.allowDegrade: true` it degrades to pure
+  /// policy mode and [onDegrade] announces it. Either way the actual
+  /// backend is queryable via [effectiveBackend].
   ///
   /// [homeDir] resolves `~` redirection targets in the policy engine.
   SandboxedShell(
@@ -168,9 +170,26 @@ final class SandboxedShell implements Shell {
   late CubePolicyEngine _engine;
   _KernelRun? _kernel;
 
+  /// The named refusal for a `backend: kernel` spec that cannot be honored
+  /// and was not allowed to degrade: every [exec] answers with it and no
+  /// command ever runs.
+  String? _refusal;
+
   /// Called when a `backend: kernel` spec degrades to policy mode because
-  /// no enforcing backend exists for the host.
+  /// no enforcing backend exists for the host — only when the spec opted
+  /// in via `allowDegrade`.
   final void Function(String message)? onDegrade;
+
+  /// The backend this shell actually executes with: [CubeBackendMode.kernel]
+  /// when commands are OS-wrapped, [CubeBackendMode.policy] when only the
+  /// Dart policy layers run (a plain policy spec, or a kernel spec allowed
+  /// to degrade), `null` in passthrough mode or while a kernel spec is
+  /// refused (nothing executes at all). Hosts query this to display/audit
+  /// what actually ran.
+  CubeBackendMode? get effectiveBackend {
+    if (_spec == null || _refusal != null) return null;
+    return _kernel == null ? CubeBackendMode.policy : CubeBackendMode.kernel;
+  }
 
   @override
   Future<Result<ShellExecResult, ExecutionError>> exec(
@@ -179,6 +198,12 @@ final class SandboxedShell implements Shell {
   }) async {
     final spec = _spec;
     if (spec == null) return _inner.exec(command, options: options);
+    final refusal = _refusal;
+    if (refusal != null) {
+      // backend: kernel was requested and cannot be delivered: kernel or
+      // refuse, zero commands run (SEC-05).
+      return Err(ExecutionError(ExecutionErrorCode.spawnError, refusal));
+    }
     final decision = _engine.checkCommand(command);
     if (!decision.allowed) {
       return Ok(
@@ -229,22 +254,30 @@ final class SandboxedShell implements Shell {
 
   /// Swaps the enforced spec live; the next [exec] uses the new policies.
   /// A `backend: kernel` spec with no enforcing backend for the host
-  /// degrades to policy mode and fires [onDegrade].
+  /// refuses (every command denied, nothing runs) unless the spec opts in
+  /// via `allowDegrade`, in which case it degrades to policy mode and
+  /// fires [onDegrade].
   void updateSpec(CubeSpec spec) {
     _spec = spec;
+    _refusal = null;
     _engine = CubePolicyEngine(
       spec,
       homeDir: _homeDir,
       workspaceRoot: _fs?.cwd,
     );
     _kernel = _kernelRunFor(spec);
-    if (_kernel == null &&
-        spec.backend == CubeBackendMode.kernel &&
-        onDegrade != null) {
-      onDegrade!(
-        'fa_cube[${spec.name}]: kernel backend unavailable, '
-        'running in policy mode',
-      );
+    if (_kernel == null && spec.backend == CubeBackendMode.kernel) {
+      if (spec.allowDegrade) {
+        onDegrade?.call(
+          'fa_cube[${spec.name}]: kernel backend unavailable, '
+          'running in policy mode',
+        );
+      } else {
+        _refusal =
+            'fa_cube[${spec.name}]: backend: kernel is not available on '
+            'this platform and the run refuses to fall back to policy '
+            'mode — set spec.allowDegrade: true to allow the degrade';
+      }
     }
   }
 
@@ -252,14 +285,15 @@ final class SandboxedShell implements Shell {
   void clearSpec() {
     _spec = null;
     _kernel = null;
+    _refusal = null;
   }
 
   /// Binds the kernel backend for a `backend: kernel` spec, or `null` when
-  /// the run stays in pure policy mode: no filesystem to stage with, no
-  /// user home to stage outside the workspace, no platform named, no
-  /// backend for the platform, or the backend not enforcing there
-  /// (Windows/web) — a kernel spec degrades to policy mode rather than
-  /// failing the run.
+  /// kernel mode is undeliverable: no filesystem to stage with, no user
+  /// home to stage outside the workspace, no platform named, no backend
+  /// for the platform, or the backend not enforcing there (Windows/web).
+  /// The caller decides the outcome — refusal by default, policy mode
+  /// under `allowDegrade`.
   _KernelRun? _kernelRunFor(CubeSpec spec) {
     final fs = _fs;
     final os = _os;
@@ -317,7 +351,10 @@ final class SandboxedShell implements Shell {
   Future<String?> startupFailure() async {
     final kernel = _kernel;
     final spec = _spec;
-    if (kernel == null || spec == null) return null;
+    if (spec == null) return null;
+    final refusal = _refusal;
+    if (refusal != null) return refusal;
+    if (kernel == null) return null;
     if (kernel.probed) return kernel.failureNote;
     kernel.probed = true;
     if (!await kernel.stageVerified()) {
