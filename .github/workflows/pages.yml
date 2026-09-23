@@ -38,9 +38,9 @@ jobs:
     # chromium boot smoke; historically ~15m, 45m is the slow-day bound.
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           channel: stable
 
@@ -124,7 +124,7 @@ jobs:
           sed -i -E 's|src="\./app/"|src="./app/index.html?v='"${BUILD_ID}"'"|g' build/pages/root/index.html
           sed -i -E 's|href="\./app/" target="_blank"|href="./app/index.html?v='"${BUILD_ID}"'" target="_blank"|g' build/pages/root/index.html
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
           path: build/pages/root
 
@@ -156,4 +156,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

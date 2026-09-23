@@ -46,18 +46,18 @@ EmbedHttpClient Function()? installOfficeHttpBridgeImpl() {
 
 /// The err-frame text of a transport that died under us (SW restart,
 /// invalidated extension context) — retryable with a fresh handshake.
-/// The hub relay refused the pane's credential (or none was
-/// configured) — distinct from a transport death: retrying is
-/// pointless, the operator must update the token.
-final class _HubRelayUnauthorized implements Exception {
-  _HubRelayUnauthorized(this.raw);
+final class _BridgeDead implements Exception {
+  _BridgeDead(this.raw);
   final String raw;
   @override
   String toString() => raw;
 }
 
-final class _BridgeDead implements Exception {
-  _BridgeDead(this.raw);
+/// The hub relay refused the pane's credential — distinct from a
+/// transport death and from a provider 401 (which streams through):
+/// retrying is pointless, the operator must update the token.
+final class _HubRelayUnauthorized implements Exception {
+  _HubRelayUnauthorized(this.raw);
   final String raw;
   @override
   String toString() => raw;
@@ -80,7 +80,9 @@ final class EmbedHttpClient extends http.BaseClient {
 
   /// One probe per client: `true` when the local fa hub relay answers.
   Future<bool> get hubUp => _hubUp ??= _probeHub().then((up) {
-    debugBridgeLog('hub relay: ${up ? 'up — provider traffic via hub' : 'absent'}');
+    debugBridgeLog(
+      'hub relay: ${up ? 'up — provider traffic via hub' : 'absent'}',
+    );
     return up;
   });
 
@@ -210,7 +212,25 @@ final class EmbedHttpClient extends http.BaseClient {
     return head.future;
   }
 
+  /// Provisioning (issue #792 review): `fa hub token` prints the
+  /// per-serve relay bearer; the operator stores it in the pane under
+  /// this key (devtools console today, a settings field is the planned
+  /// follow-up) and every send picks it up.
+  static const _relayTokenStorageKey = 'fa_office_relay_token';
+
+  String? _storedRelayToken() {
+    try {
+      return web.window.localStorage.getItem(_relayTokenStorageKey);
+    } on Object {
+      return null; // privacy modes can deny storage outright
+    }
+  }
+
   bool get _hasRelayToken {
+    if (officeHubRelayToken == null) {
+      final stored = _storedRelayToken();
+      if (stored != null && stored.isNotEmpty) officeHubRelayToken = stored;
+    }
     final token = officeHubRelayToken;
     return token != null && token.isNotEmpty;
   }
@@ -276,7 +296,12 @@ final class EmbedHttpClient extends http.BaseClient {
       'signal': ?controller?.signal,
     };
     final response = await _fetch(url, init.jsify()! as web.RequestInit);
-    if (response.status == 401 && bearer != null) {
+    if (response.status == 401 &&
+        bearer != null &&
+        // Hub-GENERATED rejection only: a provider 401 carries no such
+        // marker and streams through verbatim — that is the CALLER's
+        // credential problem, not the relay's (issue #792 review).
+        response.headers.get('x-fah-relay') == 'rejection') {
       throw _HubRelayUnauthorized('relay answered 401');
     }
     return http.StreamedResponse(
@@ -285,9 +310,7 @@ final class EmbedHttpClient extends http.BaseClient {
         onDetach: controller == null ? null : () => controller.abort(),
       ),
       response.status,
-      headers: {
-        'content-type': ?response.headers.get('content-type'),
-      },
+      headers: {'content-type': ?response.headers.get('content-type')},
       request: request,
     );
   }
@@ -307,20 +330,24 @@ final class EmbedHttpClient extends http.BaseClient {
       },
     );
     void pump() {
-      reader.read().toDart.then((result) {
-        if (out.isClosed) return;
-        if (result.done) {
-          out.close();
-          return;
-        }
-        final chunk = result.value;
-        if (chunk != null) {
-          out.add((chunk as JSUint8Array).toDart);
-        }
-        pump();
-      }).catchError((Object e) {
-        if (!out.isClosed) out.addError(e);
-      });
+      reader
+          .read()
+          .toDart
+          .then((result) {
+            if (out.isClosed) return;
+            if (result.done) {
+              out.close();
+              return;
+            }
+            final chunk = result.value;
+            if (chunk != null) {
+              out.add((chunk as JSUint8Array).toDart);
+            }
+            pump();
+          })
+          .catchError((Object e) {
+            if (!out.isClosed) out.addError(e);
+          });
     }
 
     pump();
@@ -328,9 +355,10 @@ final class EmbedHttpClient extends http.BaseClient {
   }
 
   Future<web.Response> _fetch(String url, web.RequestInit init) async =>
-      await (globalContext
-              .callMethod('fetch'.toJS, url.toJS, init) as JSPromise)
-          .toDart as web.Response;
+      await (globalContext.callMethod('fetch'.toJS, url.toJS, init)
+                  as JSPromise)
+              .toDart
+          as web.Response;
 
   /// The hub presence probe: healthz inside a short timeout window.
   Future<bool> _probeHub() async {

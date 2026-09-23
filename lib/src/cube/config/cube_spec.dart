@@ -41,16 +41,17 @@ import 'tool_policy.dart';
 
 final RegExp _namePattern = RegExp(r'^[a-z][a-z0-9-]*$');
 
-/// How a cube's commands are confined: `policy` (the Dart policy layers
-/// only) or `kernel` (wrapped in the OS sandbox primitive of the host
-/// platform — sandbox-exec on macOS, unshare on Linux).
+/// How commands are confined: `policy` (the Phase 1 default) or `kernel`
+/// (wrapped in the OS sandbox primitive of the host platform —
+/// sandbox-exec on macOS, unshare on Linux).
 enum CubeBackendMode {
   /// Dart policy layers only — the Phase 1 default.
   policy,
 
   /// OS kernel confinement for the host platform, on top of the Dart
-  /// layers. Degrades to [policy] on a platform without an enforcing
-  /// backend (e.g. Windows or web) rather than failing the run.
+  /// layers. On a platform without an enforcing backend a kernel spec is
+  /// REFUSED (fail-closed) unless the spec opts into the fallback via
+  /// [CubeSpec.allowDegrade].
   kernel;
 
   /// Parses the `spec.backend:` label, throwing [ConfigException] on an
@@ -72,6 +73,7 @@ final class CubeSpec {
     required this.name,
     this.description,
     this.backend = CubeBackendMode.policy,
+    this.allowDegrade = false,
     this.tools = const CubeToolPolicy(),
     this.network = const CubeNetworkPolicy(),
     this.filesystem = const CubeFsPolicy(),
@@ -89,6 +91,13 @@ final class CubeSpec {
   /// How commands are confined — Dart policy layers only, or wrapped in
   /// the host platform's kernel sandbox.
   final CubeBackendMode backend;
+
+  /// Whether an unavailable `backend: kernel` may degrade to policy mode.
+  /// Requested isolation is a contract: without this opt-in a kernel spec
+  /// on a platform without an enforcing backend is REFUSED (zero commands
+  /// run); with it the shell degrades loudly (`onDegrade`) and reports the
+  /// effective backend for audit.
+  final bool allowDegrade;
 
   /// Which command words may run.
   final CubeToolPolicy tools;
@@ -163,6 +172,7 @@ final class CubeSpec {
     }
     _checkKeys(spec, const {
       'backend',
+      'allowDegrade',
       'tools',
       'network',
       'filesystem',
@@ -170,10 +180,17 @@ final class CubeSpec {
       'resources',
       'cache',
     }, '$sourcePath.spec');
+    final allowDegrade = spec?['allowDegrade'];
+    if (allowDegrade != null && allowDegrade is! bool) {
+      throw ConfigException(
+        '$sourcePath.spec.allowDegrade: must be a boolean, got $allowDegrade',
+      );
+    }
     return CubeSpec(
       name: name,
       description: description,
       backend: CubeBackendMode.parse(spec?['backend'], '$sourcePath.spec'),
+      allowDegrade: allowDegrade ?? false,
       tools: CubeToolPolicy.fromYaml(spec?['tools']),
       network: CubeNetworkPolicy.fromYaml(spec?['network']),
       filesystem: CubeFsPolicy.fromYaml(spec?['filesystem']),
@@ -198,6 +215,9 @@ final class CubeSpec {
       },
       'spec': {
         'backend': backend.name,
+        // Omitted when false so existing specs keep byte-identical cache
+        // keys.
+        if (allowDegrade) 'allowDegrade': true,
         'cache': {
           'enabled': cache.enabled,
           if (cache.paths.isNotEmpty) 'paths': [...cache.paths]..sort(),

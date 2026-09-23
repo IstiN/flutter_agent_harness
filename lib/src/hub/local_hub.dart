@@ -778,6 +778,10 @@ class HubJoin {
 /// headers = the browser blocks the read).
 // ponytail: exact fa1.dev + localhost dev; extend the list when the pane
 // gains another production origin.
+/// The connect window for one upstream relay dial on this branch (the
+/// bounded relay of issue #794 layers the full timeout set on top).
+const Duration relayConnectTimeout = Duration(seconds: 10);
+
 String? relayAllowedOrigin(String? origin) {
   if (origin == null) return null;
   final uri = Uri.tryParse(origin);
@@ -853,6 +857,7 @@ Future<void> handleRelayRequest(
     // the rejected WS upgrade — a stale pooled connection surfaces as
     // "connection closed" on the client's NEXT request).
     request.response.headers.set(HttpHeaders.connectionHeader, 'close');
+    _relayMarkRejection(request);
     await _drainRequestBounded(request);
     request.response.statusCode = 401;
     await request.response.close();
@@ -861,16 +866,17 @@ Future<void> handleRelayRequest(
   if (origin != null && allowedOrigin == null) {
     await _drainRequestBounded(request);
     request.response.headers.set(HttpHeaders.connectionHeader, 'close');
+    _relayMarkRejection(request);
     request.response.statusCode = 403;
     request.response.write('{"error":"origin not allowed"}');
     await request.response.close();
     return;
   }
-  final parsed =
-      await _relayEnvelope(request, allowedOrigin, limits, log: log);
+  final parsed = await _relayEnvelope(request, allowedOrigin, limits, log: log);
   if (parsed == null) return;
   if (!relayDestinationAllowed(parsed.$1, allowAnyHost: allowAnyHost)) {
     request.response.headers.set(HttpHeaders.connectionHeader, 'close');
+    _relayMarkRejection(request);
     request.response.statusCode = 403;
     _relayCors(request, allowedOrigin);
     request.response.write('{"error":"destination not allowed"}');
@@ -991,9 +997,8 @@ Future<(Uri, Map<String, dynamic>)?> _relayEnvelope(
         );
       }
     }
-    final envelope =
-        (jsonDecode(utf8.decode(builder.takeBytes())) as Map)
-            .cast<String, dynamic>();
+    final envelope = (jsonDecode(utf8.decode(builder.takeBytes())) as Map)
+        .cast<String, dynamic>();
     final url = Uri.tryParse('${envelope['url']}') ?? Uri();
     if (!url.isScheme('https') && !url.isScheme('http')) {
       throw const FormatException('url must be http(s)');
@@ -1013,6 +1018,8 @@ Future<(Uri, Map<String, dynamic>)?> _relayEnvelope(
     );
     return null;
   } on FormatException {
+    request.response.headers.set(HttpHeaders.connectionHeader, 'close');
+    _relayMarkRejection(request);
     request.response.statusCode = 400;
     _relayCors(request, allowedOrigin);
     request.response.write(
@@ -1047,6 +1054,7 @@ Future<void> _relayError(
     return;
   }
   try {
+    _relayMarkRejection(request);
     request.response.statusCode = status;
     _relayCors(request, allowedOrigin);
     request.response.write('{"error":"$name"}');
@@ -1131,8 +1139,9 @@ Map<String, String> _relayHopHeaders(
     for (final entry in ((envelope['headers'] as Map?) ?? const {}).entries)
       '${entry.key}': '${entry.value}',
   };
-  final hostChanged =
-      current.host.toLowerCase() != original.host.toLowerCase();
+  // Credentials also die on a scheme downgrade: https -> http on the
+  // SAME host hands the bearer to plaintext (issue #792 review).
+  final hostChanged = current.host.toLowerCase() != original.host.toLowerCase();
   final schemeDowngraded =
       original.scheme == 'https' && current.scheme == 'http';
   if (hostChanged || schemeDowngraded) {
@@ -1167,6 +1176,14 @@ String _relayRedirectMethod(int statusCode, String method) =>
 /// Answers a relay rejection on the client response: [status] + CORS +
 /// a small `{"error": ...}` JSON body. Rejected sockets are never
 /// reused (Connection: close).
+/// Marks a hub-GENERATED relay rejection so clients can tell it apart
+/// from an upstream answer that merely shares the status: a provider 401
+/// is the CALLER's credential problem and streams through verbatim; a
+/// relay 401 is the transport's (issue #792 review).
+void _relayMarkRejection(HttpRequest request) {
+  request.response.headers.set('x-fah-relay', 'rejection');
+}
+
 Future<void> _relayReject(
   HttpRequest request,
   int status,
@@ -1174,6 +1191,7 @@ Future<void> _relayReject(
   String? allowedOrigin,
 ) async {
   request.response.headers.set(HttpHeaders.connectionHeader, 'close');
+  _relayMarkRejection(request);
   request.response.statusCode = status;
   _relayCors(request, allowedOrigin);
   request.response.write('{"error":"$error"}');
@@ -1192,13 +1210,15 @@ Future<HttpClientResponse> _relayIssueHop(
   required RelayLimits limits,
   void Function(HttpClientRequest req)? onIssued,
 }) async {
-  final req = await upstream.openUrl(method, current).timeout(
-    limits.connectTimeout,
-    onTimeout: () => throw const RelayLimitExceeded(
-      HttpStatus.gatewayTimeout,
-      'upstream connect timeout',
-    ),
-  );
+  final req = await upstream
+      .openUrl(method, current)
+      .timeout(
+        limits.connectTimeout,
+        onTimeout: () => throw const RelayLimitExceeded(
+          HttpStatus.gatewayTimeout,
+          'upstream connect timeout',
+        ),
+      );
   req.followRedirects = false;
   onIssued?.call(req);
   _relayHopHeaders(envelope, original, current).forEach(req.headers.set);
@@ -1263,7 +1283,7 @@ Future<void> _relayForward(
         ? base64Decode(envelope['bodyB64'] as String)
         : null;
     var disconnectWatch = false;
-    for (var hop = 0;; hop++) {
+    for (var hop = 0; ; hop++) {
       if (!disconnectWatch) {
         disconnectWatch = true;
         // Cancel-on-disconnect (issue #794): response.done completes
@@ -1312,8 +1332,10 @@ Future<void> _relayForward(
       if (hop >= 5 ||
           !relayDestinationAllowed(next, allowAnyHost: allowAnyHost)) {
         log?.call(
-          hop >= 5 ? 'redirect loop (>5 hops) → 502' : 'redirect to '
-              'denied destination → 403',
+          hop >= 5
+              ? 'redirect loop (>5 hops) → 502'
+              : 'redirect to '
+                    'denied destination → 403',
         );
         await _relayDrainBounded(res, limits);
         relaySettled = true;
