@@ -270,8 +270,7 @@ class AgentCli {
     Future<void> Function(Duration)? waitingSleep,
   }) : io = useTui && io.supportsRawMode ? _TuiCliIO(io) : io,
        _style = _Style(enabled: useColor),
-       _markdownSurface =
-           markdownSurface ?? const MarkdownSurface(),
+       _markdownSurface = markdownSurface ?? const MarkdownSurface(),
        _waitingClock = waitingClock ?? DateTime.now,
        _waitingSleep =
            waitingSleep ?? ((Duration d) => Future<void>.delayed(d)),
@@ -1133,6 +1132,15 @@ class AgentCli {
   Timer? _hubFollowTimer;
   StreamSubscription<dynamic>? _hubSubagentEventsSub;
   StreamSubscription<dynamic>? _hubTaskStartsSub;
+
+  /// Per-agent pending-inbox counts backing the hub tree's `mail:N`
+  /// markers (the same cue the variant-B picker rows carry). The peek is
+  /// async fabric I/O while the tree push is sync, so the first render
+  /// draws without markers and the hub driver's refresher re-pushes
+  /// (refresh-only) when a count lands or changes. State lives on the
+  /// class — the hub driver is an extension (no instance fields there).
+  final Map<String, int> _hubMailCounts = <String, int>{};
+  bool _hubMailRefreshInFlight = false;
 
   // Issue #437 steering delivery tracking. A mid-run steer is persisted
   // at accept and queued here until the agent loop merges it at a step

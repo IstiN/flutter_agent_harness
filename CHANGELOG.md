@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.0.461
+
+
+- fix(781): green the nightly, nightly parity at PR time. Five
+  `cli_visual` regressions red on main for days are fixed at the test
+  layer — the product behavior was already correct in each case:
+  sandbox-HOME (`#508`) can never have a working keychain so `key set`
+  honestly reports `could not save`; the `/agents` hub overlay
+  (`#316`) never carried the picker's `mail:N` cue (hub rows now
+  append ` · mail:N` via a re-entrancy-guarded fabric peek, refresh-only
+  re-push can never force the overlay open); the secret-sheet rename hint
+  copy changed in `#627`; the markdown-table and sibling tests shared one
+  fixed port whose leak cascaded into an unreadable `SocketException`
+  (ephemeral ports now); the seeded-fleet fixture lied about liveness
+  (a seeded `running` row is zombie-settled to `failed` at boot, `#332`,
+  which reordered the tree under arrow navigation — seed `idle`).
+  `bin/fah.dart` lost a duplicated remote-catalog preload (merge artifact
+  from `#411`+`#448`) that double-awaited boot latency up to +10s
+  offline. CI: the two nightly-only legs — PTY/CLI integration + CLI
+  coverage ratchet and the Terminal-visual PTY suite — now run on every
+  PR (aggregate Quality gate, same secret shape as the nightly/gardener
+  so the ratchet measures the same surface; `#781`).
+
 ## 1.0.457
 
 

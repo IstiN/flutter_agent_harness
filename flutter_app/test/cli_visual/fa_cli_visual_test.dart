@@ -103,8 +103,10 @@ void main() {
       harness.sendArrowDown();
       await harness.settle(settleMs: 300);
       await harness.screenshot(shotsDir, '04_model_highlight');
-      final highlightedLine = harness.viewportLines
-          .firstWhere((line) => line.contains('▸'), orElse: () => '');
+      final highlightedLine = harness.viewportLines.firstWhere(
+        (line) => line.contains('▸'),
+        orElse: () => '',
+      );
       expect(
         highlightedLine,
         contains('test-max'),
@@ -445,11 +447,18 @@ void main() {
       await harness.screenshot(shotsDir, '62_key_masked');
 
       harness.sendEnter();
+      // The sandbox HOME (issue #508) can never have a working keychain:
+      // `security default-keychain` fails without a real user keychain, so
+      // the macOS store probe degrades and the save honestly reports
+      // `could not save` (SecureKeyCache.save → false) instead of leaking
+      // the value into the developer's real keychain. The masked entry
+      // above is the behavior under test; persistence itself is covered by
+      // the SecureKeyCache tests.
       await harness.liveWaitForText(
-        'saved',
+        'could not save TEST_KEY',
         timeout: const Duration(seconds: 15),
       );
-      await harness.screenshot(shotsDir, '63_key_saved');
+      await harness.screenshot(shotsDir, '63_key_save_reported');
 
       await harness.close();
       tempHome.deleteSync(recursive: true);
@@ -533,22 +542,22 @@ void main() {
       );
 
       await harness.runSlashCommand('/agents');
+      // The hub overlay renders the `mail:N` marker once the fabric peek
+      // resolves (the async refresher re-pushes the tree — issue #277's
+      // picker carried the same cue).
       await harness.liveWaitForText(
         'mail:1',
         timeout: const Duration(seconds: 15),
       );
       await harness.screenshot(shotsDir, '92_agents_inbox');
 
-      // Select "main" — the info block opens deterministically (model /
-      // children / session rows). The 'N pending' count is racy by design:
-      // the wake turn drains the inbox as soon as it starts, and on a
-      // loaded machine the 2s watcher beats us.
-      harness.sendEnter();
-      await harness.liveWaitForText(
-        'children:',
-        timeout: const Duration(seconds: 15),
-      );
-      await harness.screenshot(shotsDir, '93_main_inbox_info');
+      // Close the overlay. (The picker-era flow drilled into a "children:"
+      // info block here; the hub overlay's enter opens the transcript, and
+      // delivery is asserted at the source of truth below.) The wake turn
+      // may drain the inbox on a loaded machine — that race is fine, the
+      // session-file assert is the binding one.
+      harness.sendEscape();
+      await harness.settle(settleMs: 300);
 
       await harness.close();
       // The fabric delivery itself is asserted at the source of truth: the
@@ -1195,7 +1204,9 @@ http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
       // Tab renames: the committed name replaces the ghost suggestion.
       harness.sendText('\t');
       await harness.settle(settleMs: 200);
-      expect(harness.screenText, contains('Type to replace it'));
+      // The rename-mode hint names the field (#627 rewrote the cue copy;
+      // #834's keyHint grammar renders it lowercase).
+      expect(harness.screenText, contains('type to replace name'));
       harness.sendText('SUDO_X');
       await harness.settle(settleMs: 300);
       expect(harness.screenText, contains('SUDO_X'));
@@ -1230,40 +1241,50 @@ http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
     // first column at its full natural width — every label cell renders
     // on a single grid row while the text column wraps. (A Dart SSE
     // server — no python3 dependency, unlike _startAnsweringServer.)
-    const tableReply = 'Готово:\n'
+    const tableReply =
+        'Готово:\n'
         '| Гейт | Результат |\n'
         '|---|---|\n'
         '| Сьюты форка | +697 passed, вкл. новый fps-тест и дроп-кадровый '
         'троттлинг рендера |\n'
         '| fa-сьюты поверх форка | +139 passed |\n';
-    String sse(String content) => 'data: ${jsonEncode({
+    String sse(String content) =>
+        'data: ${jsonEncode({
           'choices': [
-            {'delta': {'content': content}},
+            {
+              'delta': {'content': content},
+            },
           ],
         })}\n\n';
     final server = (await tester.runAsync(() async {
-      final bound = await HttpServer.bind('127.0.0.1', 18780);
+      // Port 0 = ephemeral: a fixed port here turned any leftover listener
+      // (a leaked server from a failed sibling test) into a bind-time
+      // SocketException that killed this test with an unreadable signature.
+      final bound = await HttpServer.bind('127.0.0.1', 0);
       bound.listen((request) async {
-        final payload = utf8.encode(
-          '${sse(tableReply)}'
-          '${sse('')}'
-          'data: [DONE]\n\n',
-        ).length;
-        request.response.headers.set(
-          'Content-Type',
-          'text/event-stream',
-        );
+        final payload = utf8
+            .encode(
+              '${sse(tableReply)}'
+              '${sse('')}'
+              'data: [DONE]\n\n',
+            )
+            .length;
+        request.response.headers.set('Content-Type', 'text/event-stream');
         request.response.headers.set('Content-Length', '$payload');
-        request.response.add(utf8.encode(
-          '${sse(tableReply)}'
-          '${sse('')}'
-          'data: [DONE]\n\n',
-        ));
+        request.response.add(
+          utf8.encode(
+            '${sse(tableReply)}'
+            '${sse('')}'
+            'data: [DONE]\n\n',
+          ),
+        );
         await request.response.close();
       });
       return bound;
     }))!;
-    final tempHome = _tempHomeWithEndpoint('http://127.0.0.1:18780/v1');
+    final tempHome = _tempHomeWithEndpoint(
+      'http://127.0.0.1:${server.port}/v1',
+    );
     final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
 
     harness.sendText('покажи отчёт');
@@ -1287,7 +1308,6 @@ http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
     await tester.runAsync(() => server.close(force: true));
     tempHome.deleteSync(recursive: true);
   });
-
 
   group('agents hub (issue 277)', () {
     testWidgets('/agents opens the hub overlay; enter drills into the '
@@ -1363,8 +1383,11 @@ http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
       expect(harness.screenText, contains('18.4k tok'));
       expect(harness.screenText, contains('Σ'));
 
-      // Drill into the first child row — the tree orders running above
-      // done, so that is the live explore#2 transcript.
+      // Drill into the first child row — the tree orders idle above done
+      // (hubStatusRank), and explore#2 is seeded `idle`: a seeded `running`
+      // row would be zombie-settled to failed at boot (issue #332 — a
+      // resumed registry row has no live runner), which silently reorders
+      // the tree under this test's arrow navigation.
       harness.sendArrowDown();
       harness.sendEnter();
       await harness.liveWaitForText(
@@ -1372,7 +1395,7 @@ http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
         timeout: const Duration(seconds: 15),
       );
       await harness.liveWaitForText(
-        'following live',
+        'end follow',
         timeout: const Duration(seconds: 15),
       );
       await harness.screenshot(shotsDir, '277_hub_child_transcript');
@@ -1544,7 +1567,7 @@ Future<void> _seedHubFleet(
           'createdAt': now.toIso8601String(),
           'lastActivity': now.toIso8601String(),
           'task': 'Check the auth refresh loop',
-          'status': 'running',
+          'status': 'idle',
           'tokens': 512,
           'requests': 1,
         },

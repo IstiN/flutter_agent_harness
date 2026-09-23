@@ -1418,15 +1418,15 @@ Future<void> _runApp(List<String> args) async {
     stderr.writeln(
       folderEndpointConflict
           ? 'warning: saved folder model state pairs '
-              '"${state.providerKind}" with a foreign baseUrl '
-              '"${state.baseUrl}" - the kind only works with its '
-              'own default endpoint '
-              '(${folderModelStatePath(sessionsRoot: sessionRoot, cwd: cwd)})'
-              ' — ignoring it and keeping "$provider"'
+                '"${state.providerKind}" with a foreign baseUrl '
+                '"${state.baseUrl}" - the kind only works with its '
+                'own default endpoint '
+                '(${folderModelStatePath(sessionsRoot: sessionRoot, cwd: cwd)})'
+                ' — ignoring it and keeping "$provider"'
           : 'warning: saved folder model state names unknown provider '
-              '"${state.providerKind}" '
-              '(${folderModelStatePath(sessionsRoot: sessionRoot, cwd: cwd)}) — '
-              'ignoring it and keeping "$provider"',
+                '"${state.providerKind}" '
+                '(${folderModelStatePath(sessionsRoot: sessionRoot, cwd: cwd)}) — '
+                'ignoring it and keeping "$provider"',
     );
   }
   final applyFolderModel = applyFolderState && folderStateUsable;
@@ -1491,12 +1491,6 @@ Future<void> _runApp(List<String> args) async {
   // Raw wire dumps (issue #385 F5): opt-in only — the project
   // `.fah/config.yaml` `trajectory:` section wins over the user one.
   final wireDump = loadProjectWireDump(cwd) ?? saved.wireDump;
-
-  // Remote provider catalog (fa1.dev/models-catalog.json): default model
-  // ids and per-provider context-window tables for endpoints that don't
-  // publish them. Preloaded once, non-blocking (a 10s timeout, never
-  // throws) — pickers fall back to the live endpoint + local defaults.
-  await remoteCatalogEnrichment.preload(client: sharedProviderHttpClient());
 
   // Remote provider catalog (fa1.dev/models-catalog.json): default model
   // ids and per-provider context-window tables for endpoints that don't

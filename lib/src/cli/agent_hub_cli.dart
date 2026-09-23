@@ -80,12 +80,43 @@ extension AgentCliHubDriver on AgentCli {
     controller.pushHub(
       FaHubState.tree(
         rows: [
-          for (final row in rows) HubLine(hubAgentRow(row), key: row.agent.id),
+          for (final row in rows)
+            HubLine(
+              hubAgentRow(row, mailCount: _hubMailCounts[row.agent.id]),
+              key: row.agent.id,
+            ),
         ],
         footer: hubFooterLine(_hubProjection.footer()),
       ),
       refreshOnly: refreshOnly,
     );
+    unawaited(_refreshHubMailCounts());
+  }
+
+  /// Per-agent pending-inbox counts backing the tree's `mail:N` markers.
+  /// State (`_hubMailCounts`) lives on [AgentCli] — this extension can't
+  /// hold instance fields; see the class field docs for the async/sync
+  /// split.
+  Future<void> _refreshHubMailCounts() async {
+    if (_hubMailRefreshInFlight) return;
+    _hubMailRefreshInFlight = true;
+    try {
+      final ids = [
+        _subagentManager.selfId,
+        for (final handle in _subagentManager.handles) handle.id,
+      ];
+      var changed = false;
+      for (final id in ids) {
+        final count = await _subagentManager.pendingInboxCount(id);
+        if (_hubMailCounts[id] != count) {
+          _hubMailCounts[id] = count;
+          changed = true;
+        }
+      }
+      if (changed) _pushHubTree(refreshOnly: true);
+    } finally {
+      _hubMailRefreshInFlight = false;
+    }
   }
 
   /// Test seam: pushes the tree overlay into [controller] — the same
@@ -102,6 +133,14 @@ extension AgentCliHubDriver on AgentCli {
     _hubUpsertFleet();
     final rows = _hubProjection.rows();
     return (rows, _hubProjection.footer());
+  }
+
+  /// Test seam: refreshes the pending-inbox counts (the async half of the
+  /// `mail:N` markers) and returns the snapshot the tree rows render with.
+  @visibleForTesting
+  Future<Map<String, int>> hubMailCountsForTest() async {
+    await _refreshHubMailCounts();
+    return Map.of(_hubMailCounts);
   }
 
   /// Test seam: the transcript push for [id] (the overlay's enter target).
