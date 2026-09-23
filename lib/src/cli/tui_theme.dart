@@ -125,6 +125,10 @@ const TuiTheme kDefaultTuiTheme = TuiTheme(
   userMessageText: Style(foregroundRgb: RgbColor(0xE8, 0xEE, 0xF7)),
   toolSuccessBg: Style(backgroundRgb: RgbColor(20, 37, 27)),
   toolErrorBg: Style(backgroundRgb: RgbColor(42, 21, 24)),
+  // The in-flight card tint: the historical `highlight` stand-in value,
+  // now a named role (S1) — kept byte-stable so stored pre-#807 cards
+  // still resolve their phase at repaint time.
+  toolPendingBg: Style(backgroundRgb: RgbColor(49, 50, 68)),
 );
 
 /// The built-in catalog, keyed by config name. `default` wins the
@@ -352,6 +356,11 @@ const TuiTheme _piDark = TuiTheme(
   userMessageText: Style(foregroundRgb: RgbColor(0xd4, 0xd4, 0xd4)),
   toolSuccessBg: Style(backgroundRgb: RgbColor(0x2a, 0x2e, 0x24)),
   toolErrorBg: Style(backgroundRgb: RgbColor(0x36, 0x26, 0x26)),
+  // Pending/in-flight card band. NOT the highlight value (0x3a3a4a,
+  // JVaq): pi's dim toolOutput #989898 on it clears only 3.86:1 — below
+  // the #804 detail-text floor of 4.5. This darker slate clears the
+  // floor and keeps a visible band between the settled tints.
+  toolPendingBg: Style(backgroundRgb: RgbColor(0x2b, 0x2d, 0x36)),
 );
 
 /// The roles a user theme JSON may set (values: `#rgb`/`#rrggbb`).
@@ -950,6 +959,9 @@ final class FaThemeController {
   /// Tool-row detail/output role.
   String toolOutput(String text) => _render(_current.toolOutput, text);
 
+  /// The muted role (dim meta fragments on tool cards).
+  String muted(String text) => _render(_current.muted, text);
+
   /// Settled-border role.
   String borderMuted(String text) => _render(_current.borderMuted, text);
 
@@ -966,6 +978,24 @@ final class FaThemeController {
   /// Renders [glyph] in [style] (the tool-row state rail).
   String border(Style style, String glyph) => _render(style, glyph);
 
+  // Tool-card phase tints (#807, issue-#804 emitter rule): the card
+  // background tint as a raw SGR prefix ('' when styling is off).
+
+  /// Settled-success card background.
+  String toolSuccessBgSgr() => sgrPrefix(_current.toolSuccessBg);
+
+  /// Settled-failure card background.
+  String toolErrorBgSgr() => sgrPrefix(_current.toolErrorBg);
+
+  /// In-flight/pending card background (the S1 `toolPendingBg` role).
+  String toolPendingBgSgr() => sgrPrefix(_current.toolPendingBg);
+
+  /// Card phase foreground styles (the header/icon roles).
+  Style get cardSuccessStyle => _current.success;
+  Style get cardErrorStyle => _current.error;
+  Style get cardPendingStyle => _current.muted;
+  Style get cardRunningStyle => _current.accent;
+
   /// The raw SGR prefix [style] renders with under the active profile
   /// ('' when styling is off). Derived from a probe render so the prefix
   /// always matches the vendor's own emission order byte for byte.
@@ -975,6 +1005,58 @@ final class FaThemeController {
     final rendered = _p(style).render(probe);
     return rendered.substring(0, rendered.indexOf(probe));
   }
+
+  /// The pre-styled-line role carried by a stored transcript line's LEAD
+  /// background SGR prefix (issue #807 round-2, tint-survival fix):
+  /// `'bubble'` for the user-message band, `'success'`/`'error'`/
+  /// `'pending'` for the tool-card tints (pending covers the running
+  /// phase — both ride [toolPendingBgSgr]), or null when the prefix
+  /// matches nothing this session ever painted.
+  ///
+  /// Matching tries the CURRENT theme's tints first, then the boot
+  /// default ([kDefaultTuiTheme]) — lines stored before a mid-session
+  /// `/theme` switch still resolve to a role and repaint through the
+  /// live theme (issue #279 E1: stored lines never freeze a palette).
+  ///
+  /// Hardened (JVtX): a tint that maps to NO role (unknown palette) or to
+  /// MORE than one role (a user theme aliasing e.g. success/error to one
+  /// color) returns null — the line keeps its stored bytes rather than
+  /// being repainted under a guessed role.
+  String? preStyledRole(String leadSgr) {
+    if (leadSgr.isEmpty) return null;
+    final candidates = <String, List<Style>>{
+      'bubble': [_current.userMessageBg, kDefaultTuiTheme.userMessageBg],
+      'success': [
+        _current.toolSuccessBg,
+        kDefaultTuiTheme.toolSuccessBg,
+      ],
+      'error': [_current.toolErrorBg, kDefaultTuiTheme.toolErrorBg],
+      'pending': [
+        _current.toolPendingBg,
+        kDefaultTuiTheme.toolPendingBg,
+        _current.highlight,
+        kDefaultTuiTheme.highlight,
+      ],
+    };
+    String? hit;
+    for (final entry in candidates.entries) {
+      for (final style in entry.value) {
+        if (sgrPrefix(style) == leadSgr) {
+          if (hit != null && hit != entry.key) return null; // ambiguous
+          hit = entry.key;
+        }
+      }
+    }
+    return hit;
+  }
+
+  /// The live tint SGR for a role returned by [preStyledRole] — the
+  /// repaint source for stored pre-styled lines (view-time paint).
+  String preStyledTintSgr(String role) => switch (role) {
+    'success' => toolSuccessBgSgr(),
+    'error' => toolErrorBgSgr(),
+    _ => toolPendingBgSgr(),
+  };
 }
 
 // ── Emitters ──────────────────────────────────────────────────────────────

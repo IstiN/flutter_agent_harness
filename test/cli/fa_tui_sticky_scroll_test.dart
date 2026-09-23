@@ -19,6 +19,7 @@ import 'package:dart_tui/dart_tui.dart';
 import 'package:dart_tui/src/renderer.dart';
 
 import 'package:flutter_agent_harness/src/cli/fa_tui.dart';
+import 'package:flutter_agent_harness/src/cli/tui_chrome.dart' show tuiChromeEnabled;
 import 'package:test/test.dart';
 
 void main() {
@@ -36,7 +37,11 @@ void main() {
 
   final ansi = RegExp(r'\x1b\[[0-9;?]*[A-Za-z]');
 
-  test('streaming under the pinned sticky echo never scrolls the screen', () {
+  for (final chrome in [true, false]) {
+    test('streaming under the pinned sticky echo never scrolls the screen '
+        '(chrome=$chrome)', () {
+      addTearDown(() => tuiChromeEnabled = true);
+      tuiChromeEnabled = chrome;
     var model = FaTuiModel(
       callbacks: callbacks(),
       isExited: () => false,
@@ -64,7 +69,14 @@ void main() {
     // Guard against a vacuous pass: the echo must actually be pinned now.
     final rows =
         model.view().content.split('\n').map((l) => l.replaceAll(ansi, '')).toList();
-    expect(rows.first, '─' * 80, reason: 'sticky echo pins the frame top');
+    if (chrome) {
+      expect(rows.first.trim(), isEmpty,
+          reason: 'sticky echo pins the bubble band top (issue #807 chrome)');
+    } else {
+      // Kill switch (D1): the legacy full-width dim rule pins row 0.
+      expect(rows.first, contains('─'),
+          reason: 'tuiChromeEnabled=false keeps the legacy echo rule');
+    }
     expect(rows[1], contains('explain the scrollback bug'));
 
     // Feed eleven consecutive streaming frames through the real renderer.
@@ -97,6 +109,7 @@ void main() {
     expect(replay.scrollback, isNot(contains('explain the scrollback bug')),
         reason: 'the sticky echo must stay pinned, never scroll off');
   });
+  }
 }
 
 final class _Replay {
