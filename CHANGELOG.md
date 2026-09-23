@@ -1,7 +1,6 @@
 # Changelog
 
-## 1.0.461
-
+## Unreleased
 
 - fix(env): `LocalExecutionEnv` forwards `renamePath` — kernel-mode cube
   exec was dead since #803's atomic profile restage (the

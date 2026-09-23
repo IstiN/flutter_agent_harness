@@ -1010,14 +1010,19 @@ http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
       // The canned endpoint answers one long line whose bold span is longer
       // than any terminal row: the wrap MUST cut inside it, and the
       // continuation row must stay bold (SGR carry across the cut).
+      // Ephemeral port + addTearDown leak guard (gh-781): a mid-test
+      // failure must not leak the python answer server, and a leaked
+      // server from a crashed run must not hold a fixed port.
+      final port = await _freeLoopbackPort(tester);
       final server = await _startAnsweringServer(
         tester,
-        18778,
+        port,
         'Verified: **the bold span deliberately runs past every possible '
         'terminal width so the soft wrap cuts right through the middle of '
         'it** — and this trailing plain suffix proves word wrap.',
       );
-      final tempHome = _tempHomeWithEndpoint('http://127.0.0.1:18778/v1');
+      addTearDown(() => _stopServer(tester, server));
+      final tempHome = _tempHomeWithEndpoint('http://127.0.0.1:$port/v1');
       final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
 
       harness.sendText('go');
@@ -1048,12 +1053,16 @@ http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
         'untouched and answers right away', (tester) async {
       // The canned endpoint answers a `sleep 300` tool call to the first
       // user message and a text answer once the user steers mid-tool.
+      // Ephemeral port + addTearDown leak guard (gh-781), same as the
+      // other answer-server tests in this file.
+      final port = await _freeLoopbackPort(tester);
       final server = await _startAnsweringServer(
         tester,
-        18779,
+        port,
         null, // steer mode: tool call first, text after the steer
       );
-      final tempHome = _tempHomeWithEndpoint('http://127.0.0.1:18779/v1');
+      addTearDown(() => _stopServer(tester, server));
+      final tempHome = _tempHomeWithEndpoint('http://127.0.0.1:$port/v1');
       final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
 
       harness.sendText('run the long task');
@@ -1150,12 +1159,21 @@ http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
         'reveals, Ctrl+U clears, the saved secret never echoes', (
       tester,
     ) async {
+      // The gh-781 leak class, closed at the source: this test used to
+      // bind the FIXED port 18780 with a happy-path-only stop — any
+      // mid-test failure (the nightly's liveWaitForText timeout on the
+      // rename hint) skipped the stop and leaked the server, which then
+      // poisoned the next test's bind. The addTearDown guard stops the
+      // server on every exit path; the ephemeral port means a stale
+      // leaked process from a crashed run can never wedge the rerun.
+      final port = await _freeLoopbackPort(tester);
       final server = await _startAnsweringServer(
         tester,
-        18780,
+        port,
         null, // steer/secret mode: 'deploy the app' → request_secret
       );
-      final tempHome = _tempHomeWithEndpoint('http://127.0.0.1:18780/v1');
+      addTearDown(() => _stopServer(tester, server));
+      final tempHome = _tempHomeWithEndpoint('http://127.0.0.1:$port/v1');
       final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
 
       harness.sendText('deploy the app');
@@ -1786,6 +1804,23 @@ class H(http.server.BaseHTTPRequestHandler):
 http.server.HTTPServer(('127.0.0.1', PORT), H).serve_forever()
 ''';
 
+/// Grabs a free loopback port for a canned answer server — fixed ports
+/// turned any leaked server (a crashed sibling run holding 18778-18780)
+/// into a bind-time wedge, and the gh-781 cascade: the secret-sheet leak
+/// poisoned the markdown-table test's bind. Same bind-:0-then-hand-the-
+/// port-to-the-script pattern the mouse visual test uses.
+Future<int> _freeLoopbackPort(WidgetTester tester) async {
+  return (await tester.runAsync(() async {
+    final socket = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final port = socket.port;
+    await socket.close();
+    return port;
+  }))!;
+}
+
+/// Starts the canned-answer server on [port] and waits until it accepts
+/// connections. Process I/O runs in the real-async zone (see the harness
+/// docs on fake-zone timers).
 /// Starts the canned-answer server on [port] and waits until it accepts
 /// connections. Process I/O runs in the real-async zone (see the harness
 /// docs on fake-zone timers).
