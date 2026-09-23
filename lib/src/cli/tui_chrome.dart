@@ -126,47 +126,58 @@ String tuiToolCardHeader(
 
   // Fit FIRST, paint second — painting an unfitted run would emit a head
   // wider than the card (the fitted/unfitted drift the UT pins).
-  var glyph = tuiCardGlyph(phase);
-  final titleBudget = width - tuiTextWidth(glyph) - 1;
-  var title = s.title;
-  if (titleBudget < 1) {
-    glyph = tuiFitWidth(glyph, width);
-    title = '';
-  } else if (tuiTextWidth(title) > titleBudget) {
-    title = tuiFitWidth(title, titleBudget);
-  }
+  final (glyph, title) = _fitCardHead(s.title, tuiCardGlyph(phase), width);
   final headRaw = paint(glyph, (g) => c.border(_phaseStyle(c, phase), g)) +
       paint(title.isEmpty ? '' : ' $title', (t) => c.accent(t));
   final remain = width - tuiTextWidth('$glyph $title');
 
+  final tail = _squeezeCardTail(s, remain);
+  return headRaw + _paintCardTail(c, phase, tail, paint);
+}
+
+/// The width-fitted head: the glyph plus the title ellipsized to the
+/// remaining budget (empty title when even the glyph can't fit).
+(String, String) _fitCardHead(String title, String glyph, int width) {
+  final titleBudget = width - tuiTextWidth(glyph) - 1;
+  if (titleBudget < 1) return (tuiFitWidth(glyph, width), '');
+  if (tuiTextWidth(title) > titleBudget) {
+    return (glyph, tuiFitWidth(title, titleBudget));
+  }
+  return (glyph, title);
+}
+
+/// The fitted tail segments, decided on RAW widths. Squeeze drops from
+/// the tail — meta first, then the badge, then the description
+/// ellipsizes.
+(String, String, String) _squeezeCardTail(ToolCardSegments s, int remain) {
   final descRaw = s.description.isEmpty ? '' : ': ${s.description}';
   final badgeRaw = s.badge.isEmpty ? '' : ' [${s.badge}]';
   final meta = s.meta.where((m) => m.trim().isNotEmpty).toList();
   final metaRaw = meta.isEmpty ? '' : ' ${meta.join('·')}';
 
-  // Squeeze drops from the tail — meta first, then the badge, then the
-  // description ellipsizes. Decided on RAW widths, painted per-part so
-  // each piece keeps its documented role (ToolCardSegments: description
-  // muted — bright in the error phase, #366's keep-failure-text-bright —
-  // badge in the phase color, meta dim).
-  var desc = '';
-  var badge = '';
-  var metaPart = '';
   if (tuiTextWidth('$descRaw$badgeRaw$metaRaw') <= remain) {
-    desc = descRaw;
-    badge = badgeRaw;
-    metaPart = metaRaw;
-  } else if (tuiTextWidth('$descRaw$badgeRaw') <= remain) {
-    desc = descRaw;
-    badge = badgeRaw;
-  } else if (tuiTextWidth(descRaw) > remain) {
-    desc = remain > 0 ? tuiFitWidth(descRaw, remain) : '';
-  } else {
-    desc = descRaw;
+    return (descRaw, badgeRaw, metaRaw);
   }
+  if (tuiTextWidth('$descRaw$badgeRaw') <= remain) {
+    return (descRaw, badgeRaw, '');
+  }
+  if (tuiTextWidth(descRaw) > remain) {
+    return (remain > 0 ? tuiFitWidth(descRaw, remain) : '', '', '');
+  }
+  return (descRaw, '', '');
+}
 
-  return headRaw +
-      (desc.isEmpty
+/// Paints the surviving tail in each piece's documented role
+/// (ToolCardSegments): description muted — bright in the error phase,
+/// #366's keep-failure-text-bright — badge in the phase color, meta dim.
+String _paintCardTail(
+  FaThemeController c,
+  TuiCardPhase phase,
+  (String, String, String) tail,
+  String Function(String, String Function(String)) paint,
+) {
+  final (desc, badge, meta) = tail;
+  return (desc.isEmpty
           ? ''
           : paint(
               desc,
@@ -177,7 +188,7 @@ String tuiToolCardHeader(
       (badge.isEmpty
           ? ''
           : paint(badge, (t) => c.border(_phaseStyle(c, phase), t))) +
-      (metaPart.isEmpty ? '' : paint(metaPart, (t) => c.muted(t)));
+      (meta.isEmpty ? '' : paint(meta, (t) => c.muted(t)));
 }
 
 /// The card tint's raw background SGR prefix ('' without a profile).
