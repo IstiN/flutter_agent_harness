@@ -25,6 +25,7 @@
 library;
 
 import 'package:dart_tui/src/bubbles/style.dart' show Style;
+import 'ansi_markdown.dart' show AnsiMarkdown;
 import 'tui_text_width.dart';
 import 'tui_theme.dart';
 
@@ -119,41 +120,64 @@ String tuiToolCardHeader(
   int width,
 ) {
   final c = FaThemeController.instance;
-  final glyph = tuiCardGlyph(phase);
   final styled = c.profile != null;
   String paint(String piece, String Function(String) role) =>
       styled ? role(piece) : piece;
 
-  var head = '$glyph ${s.title}';
-  if (tuiTextWidth(head) > width) head = tuiFitWidth(head, width);
-  final headRaw = paint(
-        glyph,
-        (g) => c.border(_phaseStyle(c, phase), g),
-      ) +
-      paint(' ${s.title}', (t) => c.accent(t));
-  var remain = width - tuiTextWidth(head);
+  // Fit FIRST, paint second — painting an unfitted run would emit a head
+  // wider than the card (the fitted/unfitted drift the UT pins).
+  var glyph = tuiCardGlyph(phase);
+  final titleBudget = width - tuiTextWidth(glyph) - 1;
+  var title = s.title;
+  if (titleBudget < 1) {
+    glyph = tuiFitWidth(glyph, width);
+    title = '';
+  } else if (tuiTextWidth(title) > titleBudget) {
+    title = tuiFitWidth(title, titleBudget);
+  }
+  final headRaw = paint(glyph, (g) => c.border(_phaseStyle(c, phase), g)) +
+      paint(title.isEmpty ? '' : ' $title', (t) => c.accent(t));
+  final remain = width - tuiTextWidth('$glyph $title');
 
   final descRaw = s.description.isEmpty ? '' : ': ${s.description}';
   final badgeRaw = s.badge.isEmpty ? '' : ' [${s.badge}]';
   final meta = s.meta.where((m) => m.trim().isNotEmpty).toList();
   final metaRaw = meta.isEmpty ? '' : ' ${meta.join('·')}';
 
-  var tail = descRaw;
+  // Squeeze drops from the tail — meta first, then the badge, then the
+  // description ellipsizes. Decided on RAW widths, painted per-part so
+  // each piece keeps its documented role (ToolCardSegments: description
+  // muted — bright in the error phase, #366's keep-failure-text-bright —
+  // badge in the phase color, meta dim).
+  var desc = '';
+  var badge = '';
+  var metaPart = '';
   if (tuiTextWidth('$descRaw$badgeRaw$metaRaw') <= remain) {
-    tail = '$descRaw$badgeRaw$metaRaw';
+    desc = descRaw;
+    badge = badgeRaw;
+    metaPart = metaRaw;
   } else if (tuiTextWidth('$descRaw$badgeRaw') <= remain) {
-    tail = '$descRaw$badgeRaw';
+    desc = descRaw;
+    badge = badgeRaw;
   } else if (tuiTextWidth(descRaw) > remain) {
-    tail = remain > 0 ? tuiFitWidth(descRaw, remain) : '';
+    desc = remain > 0 ? tuiFitWidth(descRaw, remain) : '';
+  } else {
+    desc = descRaw;
   }
 
   return headRaw +
-      paint(tail, (t) {
-        // The tail mixes muted description, phase badge and dim meta; the
-        // muted role paints the whole fitted run (omp's description role —
-        // badge/meta deviations are the first squeeze victims anyway).
-        return c.toolOutput(t);
-      });
+      (desc.isEmpty
+          ? ''
+          : paint(
+              desc,
+              phase == TuiCardPhase.error
+                  ? (t) => c.error(t)
+                  : (t) => c.toolOutput(t),
+            )) +
+      (badge.isEmpty
+          ? ''
+          : paint(badge, (t) => c.border(_phaseStyle(c, phase), t))) +
+      (metaPart.isEmpty ? '' : paint(metaPart, (t) => c.muted(t)));
 }
 
 /// The card tint's raw background SGR prefix ('' without a profile).
@@ -179,8 +203,6 @@ Style _phaseStyle(FaThemeController c, TuiCardPhase phase) => switch (phase) {
   TuiCardPhase.running => c.cardRunningStyle,
 };
 
-final _sgrEscapeRe = RegExp(r'\x1b\[[0-9;]*m');
-
 /// The bordered tool card (omp's generic tinted card + status header):
 /// the header row, up to [maxDetailLines] tinted detail rows padded to
 /// [width], and a `… N more lines` footer when detail was cut (omp's
@@ -195,17 +217,26 @@ List<String> tuiToolCard(
   int maxDetailLines = 3,
 }) {
   final tint = tuiCardTintSgr(phase);
+  // Detail rows are width-fitted BEFORE painting — an overlong line would
+  // break the card's right edge (paintRow only pads short rows). The
+  // header is already composed to [width] and is STYLED — fitting it with
+  // [tuiFitWidth] (raw-string contract) would chop mid-SGR.
   // Padding measures VISIBLE cells — the styled row's escapes are
   // zero-width at the terminal (same contract as the view-time echo pad).
-  final paintRow = tint.isEmpty
-      ? (String row) => row
-      : (String row) {
-          final pad = width - tuiTextWidth(row.replaceAll(_sgrEscapeRe, ''));
-          return '$tint$row${pad > 0 ? ' ' * pad : ''}\x1b[0m';
-        };
+  String paintRow(String row, {bool fit = true}) {
+    final fitted = fit ? tuiFitWidth(row, width) : row;
+    if (tint.isEmpty) return fitted;
+    final pad = width - tuiTextWidth(
+      fitted.replaceAll(AnsiMarkdown.ansiSgrPattern, ''),
+    );
+    return '$tint$fitted${pad > 0 ? ' ' * pad : ''}\x1b[0m';
+  }
+
   return [
-    paintRow(tuiToolCardHeader(segments, phase, width)),
-    ..._previewLines(detailLines, maxDetailLines).map(paintRow),
+    paintRow(tuiToolCardHeader(segments, phase, width), fit: false),
+    ..._previewLines(detailLines, maxDetailLines).map(
+      (line) => paintRow(line),
+    ),
   ];
 }
 

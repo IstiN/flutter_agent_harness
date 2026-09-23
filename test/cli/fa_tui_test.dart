@@ -5,6 +5,7 @@ import 'package:dart_tui/dart_tui.dart';
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/fa_tui.dart';
 import 'package:flutter_agent_harness/src/cli/fuzzy_matcher.dart';
+import 'package:flutter_agent_harness/src/cli/tui_chrome.dart' show tuiChromeEnabled;
 import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:flutter_agent_harness/src/cli/tui_repl.dart';
 import 'package:test/test.dart';
@@ -743,44 +744,56 @@ void main() {
   });
 
   test('sticky user echo pins to the top while streaming past it', () async {
-    final submitted = <String>[];
-    var model = FaTuiModel(
-      callbacks: callbacks(submitted: submitted),
-      isExited: () => false,
-      termHeight: 12, // small viewport so content overflows fast
-    );
-    for (final ch in 'hello'.split('')) {
-      model =
-          model.update(KeyPressMsg(TeaKey(code: KeyCode.rune, text: ch))).$1
-              as FaTuiModel;
-    }
-    final submitted_ = model.update(
-      KeyPressMsg(const TeaKey(code: KeyCode.enter)),
-    );
-    model = submitted_.$1 as FaTuiModel;
-    await submitted_.$2?.call();
-    expect(model.stickyLines, isNotEmpty);
-    expect(model.stickyIndex, 0);
+    // Both kill-switch modes (D1, issue #807 round-2): chrome pins the
+    // bubble band top; the legacy path pins the dim rule row.
+    for (final chrome in [true, false]) {
+      addTearDown(() => tuiChromeEnabled = true);
+      tuiChromeEnabled = chrome;
+      final submitted = <String>[];
+      var model = FaTuiModel(
+        callbacks: callbacks(submitted: submitted),
+        isExited: () => false,
+        termHeight: 12, // small viewport so content overflows fast
+      );
+      for (final ch in 'hello'.split('')) {
+        model = model
+            .update(KeyPressMsg(TeaKey(code: KeyCode.rune, text: ch))).$1
+            as FaTuiModel;
+      }
+      final submitted_ = model.update(
+        KeyPressMsg(const TeaKey(code: KeyCode.enter)),
+      );
+      model = submitted_.$1 as FaTuiModel;
+      await submitted_.$2?.call();
+      expect(model.stickyLines, isNotEmpty);
+      expect(model.stickyIndex, 0);
 
-    model = model.update(BusyMsg(true)).$1 as FaTuiModel;
-    for (var i = 0; i < 20; i++) {
-      model =
-          model.update(OutputMsg('line $i', newline: true)).$1 as FaTuiModel;
-    }
-    final stripped = model.view().content.replaceAll(
+      model = model.update(BusyMsg(true)).$1 as FaTuiModel;
+      for (var i = 0; i < 20; i++) {
+        model = model
+            .update(OutputMsg('line $i', newline: true)).$1 as FaTuiModel;
+      }
+      final stripped = model.view().content.replaceAll(
       RegExp(r'\x1b\[[0-9;]*m'),
       '',
     );
     final rows = stripped.split('\n');
-    // The pinned echo sits at the top: bubble band top, then the first
-    // input line (issue #807 chrome).
-    expect(rows[0].trim(), isEmpty);
+    if (chrome) {
+      // The pinned echo sits at the top: bubble band top, then the first
+      // input line (issue #807 chrome).
+      expect(rows[0].trim(), isEmpty);
+    } else {
+      // Kill switch: the legacy dim rule pins the echo top.
+      expect(rows.first, contains('─'),
+          reason: 'tuiChromeEnabled=false keeps the legacy echo rule');
+    }
     expect(rows[1], contains('hello'));
 
     // Going idle unpins the echo.
     model = model.update(BusyMsg(false)).$1 as FaTuiModel;
     expect(model.stickyLines, isEmpty);
     expect(model.stickyIndex, -1);
+    }
   });
 
   test('a mid-session theme switch repaints the pinned echo (E1)', () async {

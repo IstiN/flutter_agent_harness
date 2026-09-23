@@ -1,3 +1,4 @@
+import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/tui_chrome.dart';
 import 'package:flutter_agent_harness/src/cli/tui_text_width.dart';
 import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
@@ -113,10 +114,11 @@ void main() {
         tuiCardTintSgr(TuiCardPhase.error),
         c.sgrPrefix(c.current.toolErrorBg),
       );
-      // ponytail: pending rides `highlight` until S1 lands toolPendingBg.
+      // S1 landed toolPendingBg — pending/running ride the named role
+      // (default palette pins the historical highlight stand-in value).
       expect(
-        bgOf(tuiCardTintSgr(TuiCardPhase.pending)),
-        isNotEmpty,
+        tuiCardTintSgr(TuiCardPhase.pending),
+        c.sgrPrefix(c.current.toolPendingBg),
       );
       expect(
         tuiCardTintSgr(TuiCardPhase.running),
@@ -210,6 +212,87 @@ void main() {
       }
       expect(cells(card[0]), '✘ bash: ls 2s');
       expect(cells(card[1]), 'failed');
+    });
+
+    test('round-2: error card paints the failure line bright (#366), '
+        'meta muted, badge in the phase color', () {
+      final c = FaThemeController.instance;
+      final header = tuiToolCardHeader(
+        const ToolCardSegments(
+          title: 'bash',
+          description: 'exit 1: boom',
+          badge: 'exit 1',
+          meta: ['2s'],
+        ),
+        TuiCardPhase.error,
+        80,
+      );
+      // The description is painted in the BRIGHT error role — not the
+      // muted toolOutput role the tail flattener used to apply.
+      expect(header, contains(c.error(': exit 1: boom')));
+      expect(header, isNot(contains(c.toolOutput(': exit 1: boom'))));
+      // Badge rides the phase style; meta stays muted.
+      expect(header, contains(c.border(c.cardErrorStyle, ' [exit 1]')));
+      expect(header, contains(c.muted(' 2s')));
+      // Non-error phases keep the muted description.
+      final ok = tuiToolCardHeader(
+        const ToolCardSegments(title: 'read', description: 'fine', meta: ['1s']),
+        TuiCardPhase.success,
+        80,
+      );
+      expect(ok, contains(c.toolOutput(': fine')));
+    });
+
+    test('round-2: the header is fitted BEFORE painting — a styled row '
+        'never exceeds its width budget (B8LV)', () {
+      final header = tuiToolCardHeader(
+        const ToolCardSegments(title: 'a-very-long-tool-name'),
+        TuiCardPhase.running,
+        10,
+      );
+      // tuiTextWidth is the RAW-string measurer — the styled row is
+      // measured after the same ANSI strip the cell renderer applies.
+      expect(tuiTextWidth(strip(header)), lessThanOrEqualTo(10));
+      // The styled row survives whole: every SGR it carries is balanced
+      // (no mid-escape chop, the tuiFitWidth-on-styled-row bug).
+      expect(header.contains('\x1b[3'), isTrue);
+    });
+
+    test('round-2: tint survives the view-time formatter (B8Fe) — the '
+        'card repaints its phase tint, never the bubble band', () {
+      final c = FaThemeController.instance;
+      final card = tuiToolCard(
+        const ToolCardSegments(title: 'read', description: 'lib/a.dart'),
+        TuiCardPhase.success,
+        60,
+        detailLines: ['one'],
+      );
+      // The SAME pipeline the transcript view runs (TranscriptMarkdown →
+      // formatLine): the stored tint must resolve to the success ROLE and
+      // repaint from the CURRENT theme — not degrade to the user bubble.
+      final fmt = AnsiMarkdown(width: 60);
+      final repainted = fmt.formatLine(card[1]);
+      expect(repainted, startsWith(c.toolSuccessBgSgr()));
+      expect(
+        repainted,
+        isNot(startsWith(tuiUserMessageBgSgr())),
+        reason: 'the phase tint must not be erased into the bubble band',
+      );
+      // Pending resolves to the pending tint; an unknown legacy prefix
+      // still degrades to the bubble.
+      final pendingRow = tuiToolCard(
+        const ToolCardSegments(title: 'bash'),
+        TuiCardPhase.pending,
+        60,
+      )[0];
+      expect(
+        fmt.formatLine(pendingRow),
+        startsWith(c.toolPendingBgSgr()),
+      );
+      expect(
+        fmt.formatLine('${tuiUserMessageBgSgr()}hello\x1b[0m'),
+        startsWith(tuiUserMessageBgSgr()),
+      );
     });
   });
 }

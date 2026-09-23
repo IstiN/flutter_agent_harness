@@ -104,12 +104,14 @@ List<String> _replayUserTui(
     final (label, firstLine) = summary;
     final hint = firstLine.isEmpty ? '' : ' — $firstLine';
     final markerLine = '$label$hint';
-    // The marker fits the terminal width — a wrapped chrome row desyncs
-    // the renderer.
-    final line = markerLine.length > width
-        ? '${markerLine.substring(0, width - 1)}…'
-        : markerLine;
-    return [dim('─' * width), dim(line), ''];
+    // The divider fits the label to the terminal width itself (cells, not
+    // UTF-16 units) — a wrapped chrome row desyncs the renderer.
+    // The divider chrome (issue #807): short rule + label, the omp
+    // `message-divider.ts` shape (`tuiMessageDividerLayout`), at the
+    // session-resume boundary — the production call site. Painted through
+    // the host's dim seam ([dim] = tuiDim live, the test fake in UTs),
+    // byte-identical to [tuiMessageDividerBlock] in the live host.
+    return ['', dim(tuiMessageDividerLayout(markerLine, width)), ''];
   }
   if (needsSystemNoticeRewrite(text)) return renderSystemNoticeLines(text);
   // Chrome mode (issue #807): the SAME builder the live submit echo uses —

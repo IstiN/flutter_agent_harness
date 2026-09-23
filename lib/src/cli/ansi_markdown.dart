@@ -241,12 +241,31 @@ final class AnsiMarkdown {
   /// invisible over the light userMessageBg band on light palettes.
   String? _formatPreStyled(String line) {
     if (!line.startsWith('\x1b[48')) return null;
+    final lead = _ansiRe.firstMatch(line)!.group(0)!;
+    final role = FaThemeController.instance.preStyledRole(lead);
     final visible = line.replaceAll(_ansiRe, '');
+    if (role == null || role == 'bubble') {
+      // User-message bubble (or an unknown legacy prefix): repaint the
+      // band from the CURRENT session theme.
+      final pad = width - tuiTextWidth(visible);
+      final bg = tuiUserMessageBgSgr();
+      final fg = tuiUserMessageTextSgr();
+      if (pad <= 0) return '$bg$fg$visible$_reset';
+      return '$bg$fg$visible${' ' * pad}$_reset';
+    }
+    // Tool-card row: repaint the PHASE TINT from the current theme —
+    // the stored tint only MARKS the row's role (a `/theme` switch
+    // repaints it, same contract as the bubble). Interior styles (the
+    // accent title, the bright error line) survive: everything after the
+    // lead SGR is kept verbatim; the tint pad re-fills to the current
+    // width INSIDE the tint, before the stored reset.
+    final tint = FaThemeController.instance.preStyledTintSgr(role);
+    final rest = line.substring(lead.length);
     final pad = width - tuiTextWidth(visible);
-    final bg = tuiUserMessageBgSgr();
-    final fg = tuiUserMessageTextSgr();
-    if (pad <= 0) return '$bg$fg$visible$_reset';
-    return '$bg$fg$visible${' ' * pad}$_reset';
+    final body = rest.endsWith(_reset)
+        ? rest.substring(0, rest.length - _reset.length)
+        : rest;
+    return '$tint$body${pad > 0 ? ' ' * pad : ''}$_reset';
   }
 
   /// Code fences swallow everything between the markers verbatim (pi:
