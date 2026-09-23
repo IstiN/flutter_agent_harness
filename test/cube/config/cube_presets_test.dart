@@ -197,21 +197,38 @@ void main() {
             );
             // The one in-workspace command ran, kernel-wrapped.
             expect(inner.commands, hasLength(1), reason: preset.id);
-            expect(inner.commands.single, startsWith('sandbox-exec'),
-                reason: preset.id);
-            expect(inner.commands.single, contains('echo x > out.txt'),
-                reason: preset.id);
+            expect(
+              inner.commands.single,
+              startsWith('sandbox-exec'),
+              reason: preset.id,
+            );
+            expect(
+              inner.commands.single,
+              contains('echo x > out.txt'),
+              reason: preset.id,
+            );
             expect(
               write.errorOrNull!.code,
               FileErrorCode.permissionDenied,
               reason: preset.id,
             );
           } else {
-            expect(inner.commands, hasLength(2), reason: preset.id);
-            expect(inner.commands[0], contains('echo x > ../escape'),
-                reason: preset.id);
-            expect(inner.commands[1], contains('echo x > out.txt'),
-                reason: preset.id);
+            // L3 mounts `/` read-write, which makes the user-level
+            // staging directory guest-writable: SEC-02 fail-closes
+            // kernel mode — every command is refused, nothing runs or
+            // stages (the clean error names the staging directory).
+            expect(
+              escaped.errorOrNull!.message,
+              contains('guest-writable under the spec mounts'),
+              reason: preset.id,
+            );
+            // The refusal discloses the escape hatch (round-3 review).
+            expect(
+              escaped.errorOrNull!.message,
+              contains('allowDegrade'),
+              reason: preset.id,
+            );
+            expect(inner.commands, isEmpty, reason: preset.id);
             expect(write.isOk, isTrue, reason: preset.id);
           }
           if (preset.level == 'L1') {

@@ -135,8 +135,9 @@ void main() {
       expect(job, endsWith("'git log'"));
       // The SBPL profile is staged on the delegate filesystem, under the
       // user home — outside the guarded workspace.
-      final profilePath =
-          RegExp(r"sandbox-exec -f '([^']+\.sb)'").firstMatch(job)!.group(1)!;
+      final profilePath = RegExp(
+        r"sandbox-exec -f '([^']+\.sb)'",
+      ).firstMatch(job)!.group(1)!;
       expect(profilePath, startsWith('/home/.fah/cube-profiles/'));
       expect(profilePath, isNot(startsWith('/work')));
       final profile = await delegate.readTextFile(profilePath);
@@ -178,30 +179,72 @@ void main() {
       expect(inner.jobs, isEmpty);
     });
 
-    test('a refusing kernel spec denies background jobs naming allowDegrade',
-        () async {
-      final inner = _RecordingShell();
-      final env = SandboxedExecutionEnv(
-        MemoryExecutionEnv(cwd: '/work', shell: inner),
-        CubeSpec(
-          name: 'test-cube',
-          backend: CubeBackendMode.kernel,
-          tools: const CubeToolPolicy(allow: {'git'}),
-          filesystem: const CubeFsPolicy(workspace: '/work'),
-        ),
-        os: 'windows',
-      );
-      final result = await env.startShellJob(
-        'git log',
-        id: 'j1',
-        logPath: '/tmp/j1.log',
-      );
-      expect(result.isErr, isTrue);
-      expect(result.errorOrNull!.code, ExecutionErrorCode.spawnError);
-      expect(result.errorOrNull!.message, contains('allowDegrade'));
-      expect(inner.jobs, isEmpty);
-      expect(env.effectiveBackend, isNull);
-    });
+    test(
+      'a job is denied cleanly when staging lands inside the workspace',
+      () async {
+        final inner = _RecordingShell();
+        final env = SandboxedExecutionEnv(
+          MemoryExecutionEnv(cwd: '/work', shell: inner),
+          CubeSpec(
+            name: 'test-cube',
+            backend: CubeBackendMode.kernel,
+            tools: const CubeToolPolicy(allow: {'git'}),
+            filesystem: const CubeFsPolicy(workspace: '/work'),
+          ),
+          os: 'macos',
+          // A workspace-relative home would stage the enforcement profile
+          // inside the enforced zone (SEC-02) — refused, never trusted.
+          homeDir: '/work/home',
+        );
+        final result = await env.startShellJob(
+          'git log',
+          id: 'j1',
+          logPath: '/tmp/j1.log',
+        );
+        expect(result.isErr, isTrue);
+        expect(result.errorOrNull!.code, ExecutionErrorCode.spawnError);
+        expect(
+          result.errorOrNull!.message,
+          startsWith(
+            'fa_cube[test-cube]: kernel backend profile staging directory '
+            '</work/home/.fah/cube-profiles> is inside the guest-writable '
+            'workspace </work>',
+          ),
+        );
+        expect(
+          result.errorOrNull!.message,
+          contains('spec.allowDegrade: true'),
+        );
+        expect(inner.jobs, isEmpty);
+      },
+    );
+
+    test(
+      'a refusing kernel spec denies background jobs naming allowDegrade',
+      () async {
+        final inner = _RecordingShell();
+        final env = SandboxedExecutionEnv(
+          MemoryExecutionEnv(cwd: '/work', shell: inner),
+          CubeSpec(
+            name: 'test-cube',
+            backend: CubeBackendMode.kernel,
+            tools: const CubeToolPolicy(allow: {'git'}),
+            filesystem: const CubeFsPolicy(workspace: '/work'),
+          ),
+          os: 'windows',
+        );
+        final result = await env.startShellJob(
+          'git log',
+          id: 'j1',
+          logPath: '/tmp/j1.log',
+        );
+        expect(result.isErr, isTrue);
+        expect(result.errorOrNull!.code, ExecutionErrorCode.spawnError);
+        expect(result.errorOrNull!.message, contains('allowDegrade'));
+        expect(inner.jobs, isEmpty);
+        expect(env.effectiveBackend, isNull);
+      },
+    );
 
     test('effectiveBackend forwards the shell mode', () {
       final env = SandboxedExecutionEnv(
