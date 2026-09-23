@@ -45,10 +45,7 @@ void main() {
         upstreamRequests.add(req);
         upstreamBodies.add(await utf8.decoder.bind(req).join());
         req.response.statusCode = 200;
-        req.response.headers.contentType = ContentType(
-          'text',
-          'event-stream',
-        );
+        req.response.headers.contentType = ContentType('text', 'event-stream');
         req.response.write('data: {"delta":"Hel"}\n\n');
         await req.response.flush();
         req.response.write('data: {"delta":"lo"}\n\n');
@@ -70,9 +67,7 @@ void main() {
     String? bearer = '',
   }) async {
     final client = HttpClient();
-    final req = await client.postUrl(
-      Uri.parse('http://127.0.0.1:$port/relay'),
-    );
+    final req = await client.postUrl(Uri.parse('http://127.0.0.1:$port/relay'));
     req.headers.set('Origin', origin);
     req.headers.contentType = ContentType.json;
     // '' = the default ephemeral bearer; null = none (unauthenticated).
@@ -89,15 +84,19 @@ void main() {
   Map<String, Object?> envelope(String url, {Map<String, String>? headers}) => {
     'url': url,
     'method': 'POST',
-    'headers': headers ?? {
-      'Authorization': 'Bearer test-key',
-      'Content-Type': 'application/json',
-    },
+    'headers':
+        headers ??
+        {
+          'Authorization': 'Bearer test-key',
+          'Content-Type': 'application/json',
+        },
     'bodyB64': base64Encode(utf8.encode('{"model":"glm-5.3-flash"}')),
   };
   test('POST /relay proxies the upstream status, content-type and '
       'streamed SSE body to the taskpane origin', () async {
-    final (res, body) = await relay(envelope('http://127.0.0.1:${upstream.port}/chat/completions'));
+    final (res, body) = await relay(
+      envelope('http://127.0.0.1:${upstream.port}/chat/completions'),
+    );
 
     expect(res.statusCode, 200);
     expect(res.headers.value('access-control-allow-origin'), 'https://fa1.dev');
@@ -125,10 +124,7 @@ void main() {
         Uri.parse('http://127.0.0.1:$port/relay'),
       );
       req.headers.set('Origin', origin);
-      req.headers.set(
-        'Access-Control-Request-Method',
-        'POST',
-      );
+      req.headers.set('Access-Control-Request-Method', 'POST');
       final res = await req.close();
       await res.drain<void>();
       expect(
@@ -161,34 +157,40 @@ void main() {
     expect(res.headers.value('access-control-allow-origin'), 'https://fa1.dev');
   });
 
-  test('a lan-bound protected hub requires the master bearer on /relay',
-      () async {
-    await hub.stop();
-    hub = LocalHub(bind: 'lan', masterSecret: 'master-key', relayAllowAnyHost: true);
-    await hub.start();
-    port = hub.url.port;
-    // The master secret IS the relay credential on a protected hub.
-    expect(hub.relaySecret, 'master-key');
+  test(
+    'a lan-bound protected hub requires the master bearer on /relay',
+    () async {
+      await hub.stop();
+      hub = LocalHub(
+        bind: 'lan',
+        masterSecret: 'master-key',
+        relayAllowAnyHost: true,
+      );
+      await hub.start();
+      port = hub.url.port;
+      // The master secret IS the relay credential on a protected hub.
+      expect(hub.relaySecret, 'master-key');
 
-    final (denied, _) = await relay(
-      envelope('http://127.0.0.1:${upstream.port}/chat/completions'),
-      bearer: null,
-    );
-    expect(denied.statusCode, 401);
-    expect(upstreamRequests, isEmpty);
+      final (denied, _) = await relay(
+        envelope('http://127.0.0.1:${upstream.port}/chat/completions'),
+        bearer: null,
+      );
+      expect(denied.statusCode, 401);
+      expect(upstreamRequests, isEmpty);
 
-    final (wrong, _) = await relay(
-      envelope('http://127.0.0.1:${upstream.port}/chat/completions'),
-      bearer: 'not-the-key',
-    );
-    expect(wrong.statusCode, 401);
+      final (wrong, _) = await relay(
+        envelope('http://127.0.0.1:${upstream.port}/chat/completions'),
+        bearer: 'not-the-key',
+      );
+      expect(wrong.statusCode, 401);
 
-    final (ok, _) = await relay(
-      envelope('http://127.0.0.1:${upstream.port}/chat/completions'),
-      bearer: 'master-key',
-    );
-    expect(ok.statusCode, 200);
-  });
+      final (ok, _) = await relay(
+        envelope('http://127.0.0.1:${upstream.port}/chat/completions'),
+        bearer: 'master-key',
+      );
+      expect(ok.statusCode, 200);
+    },
+  );
 
   test('every relay request carries a secret — an ephemeral hub still '
       'refuses the credential-less (issue #792 AC1)', () async {
@@ -244,7 +246,9 @@ void main() {
 
   test('the provider allowlist admits known hosts (and their '
       'subdomains), denies strangers; dev opt-in lifts it', () async {
-    final ok = relayDestinationAllowed(Uri.parse('https://api.anthropic.com/v1/x'));
+    final ok = relayDestinationAllowed(
+      Uri.parse('https://api.anthropic.com/v1/x'),
+    );
     expect(ok, isTrue);
     expect(
       relayDestinationAllowed(Uri.parse('https://eu.api.aiin.by/v1')),
@@ -343,11 +347,9 @@ void main() {
     );
     expect(res.statusCode, 200);
     expect(landedMethod, ['GET'], reason: '303 demotes POST to GET');
-    expect(
-      landedAuth,
-      [isNull],
-      reason: 'credentials never leave the original host',
-    );
+    expect(landedAuth, [
+      isNull,
+    ], reason: 'credentials never leave the original host');
     expect(landedTrace, ['t1'], reason: 'non-credential headers ride on');
   });
 
