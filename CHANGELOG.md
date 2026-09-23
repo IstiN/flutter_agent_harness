@@ -4175,6 +4175,12 @@
 - chore: pin factory 34097f0 + publish fa-state.json (agents#512) (#883)
 - chore: pin factory d7d7308 — duplicate-dispatch guard (agents#511) (#882)
 
+## 1.0.467
+
+- ci: factory pin c6eb4eb → 7fe0a64 (agents #522 — publish fix + time-travel history) (#901)
+- test: retry the port-release proof-bind in openrouter oauth timeout test (#885)
+- feat(tui): transcript chrome - Box frames, dividers, bordered tool cards (#807) (#828)
+
 ## Unreleased
 
 ## Unreleased
