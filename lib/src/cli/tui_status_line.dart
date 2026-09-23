@@ -220,6 +220,11 @@ enum StatusLineRoleKey {
   separator,
   gaugeUsed,
   gaugeUnused,
+
+  /// The band composer's fill (#806): the composer-top-band background
+  /// the S3 writer paints behind the rendered spans. Additive key — the
+  /// S1 token merge re-points the lambda, never removes the key.
+  bandBg,
 }
 
 /// The statusLine role TABLE (issue #805 seam): maps each role key onto an
@@ -253,6 +258,12 @@ final Map<StatusLineRoleKey, Style Function(TuiTheme theme)> kStatusLineRoles =
       StatusLineRoleKey.gaugeUsed: (t) =>
           Style(foregroundRgb: t.focusBorder.foregroundRgb),
       StatusLineRoleKey.gaugeUnused: (t) => t.border,
+
+      // The band fill (#806): the nearest existing background tint (the
+      // composer-adjacent user-message band). S1's statusLine* tokens
+      // re-point this one lambda — the band writer never names a color.
+      StatusLineRoleKey.bandBg: (t) =>
+          Style(backgroundRgb: t.userMessageBg.backgroundRgb),
     });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1072,24 +1083,41 @@ String abbreviateSegmentPath(
   required bool stripWorkPrefix,
 }) {
   var path = cwd;
-  var prefix = '';
   // Work-root strip first (raw path): inside the workspace the display
   // root is the workspace itself, so `~` never appears.
   if (stripWorkPrefix &&
       workRoot != null &&
       workRoot.isNotEmpty &&
       (path == workRoot || path.startsWith('$workRoot/'))) {
-    path = path == workRoot ? '.' : path.substring(workRoot.length + 1);
-    return tuiFitWidth(path, maxLength);
+    return tuiFitWidth(
+      path == workRoot ? '.' : path.substring(workRoot.length + 1),
+      maxLength,
+    );
   }
+  return _homeAbbreviatedFit(
+    path,
+    abbreviate: abbreviate,
+    homeDir: homeDir,
+    maxLength: maxLength,
+  );
+}
+
+/// The `~` half of [abbreviateSegmentPath]: the home dir itself collapses
+/// to a RAW `~` (never re-clamped), anything under it to `~/rest`, else
+/// the untouched path clamps to [maxLength].
+String _homeAbbreviatedFit(
+  String path, {
+  required bool abbreviate,
+  required String? homeDir,
+  required int maxLength,
+}) {
   if (abbreviate && homeDir != null && homeDir.isNotEmpty) {
     if (path == homeDir) return '~';
     if (path.startsWith('$homeDir/')) {
-      prefix = '~/';
-      path = path.substring(homeDir.length + 1);
+      return tuiFitWidth('~/${path.substring(homeDir.length + 1)}', maxLength);
     }
   }
-  return tuiFitWidth('$prefix$path', maxLength);
+  return tuiFitWidth(path, maxLength);
 }
 
 /// Parses `git status --porcelain` output (the git watcher seam's

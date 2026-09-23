@@ -538,6 +538,35 @@ extension ApprovalCommands on AgentCli {
         '${_statusProviderLabel(model)}/${model.id}';
   }
 
+  /// The host-built status-bar snapshot (issue #806, the S3 band
+  /// attachment): everything the TUI's status band renders from,
+  /// resolved per frame tick host-side — the TUI layer stays fetch-free
+  /// and subprocess-free (the #802 invariant). Segments with no data yet
+  /// (git/pr — the watcher seam is a later story, session name) stay
+  /// null and hide.
+  StatusLineSnapshot _statusLineSnapshot() {
+    final total = _usage.total;
+    final cost = total.cost.total;
+    return StatusLineSnapshot(
+      cwd: _env.cwd,
+      homeDir: config.homeDir,
+      modelName: _agent.state.model.id,
+      approvalMode: _approval.mode.name,
+      agentLoadMode: config.agentLoadMode,
+      contextTokens: _liveContextTokens(),
+      contextWindow: _effectiveContextWindow,
+      tokensIn: total.input,
+      tokensOut: total.output,
+      cacheRead: total.cacheRead,
+      cacheWrite: total.cacheWrite,
+      // Unpriced/zero-cost models hide the spend segment (E2) — same
+      // policy as the legacy footer's costPart.
+      costUsd: cost > 0 ? cost : null,
+      sessionId: _session?.cachedId,
+      idle: !isBusy,
+    );
+  }
+
   /// Status-bar provider label: the saved custom entry's name when the
   /// model's endpoint belongs to one — the user picked "z.ai"/"codemie",
   /// while the model's `provider` field carries the catalog protocol kind
