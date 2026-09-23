@@ -37,6 +37,10 @@ CubeSpec spec({
   env: env,
 );
 
+/// The final staged profile path from the fake fs (renames carry the
+/// temp-to-final flip; writes only ever see the temp name).
+String _stagedPath(_RenamingFs fs) => fs.renames.last.$2;
+
 void main() {
   group('SandboxedShell', () {
     test('forwards an allowed command to the inner shell', () async {
@@ -157,35 +161,207 @@ void main() {
   group('SandboxedShell kernel mode', () {
     CubeSpec kernelSpec({
       CubeEnvPolicy env = const CubeEnvPolicy(),
+      bool networkAllowed = false,
+      bool allowDegrade = false,
       String backend = 'kernel',
     }) => CubeSpec(
       name: 'test-cube',
       backend: CubeBackendMode.values.byName(backend),
+      allowDegrade: allowDegrade,
       tools: const CubeToolPolicy(allow: {'git', 'echo'}),
+      network: CubeNetworkPolicy(
+        allow: networkAllowed ? [const CubeNetworkRule(host: '*')] : const [],
+      ),
       env: env,
     );
 
-    test('stages the profile once and wraps allowed commands', () async {
+    test(
+      'stages the verified profile outside the workspace and wraps commands',
+      () async {
+        final inner = _RecordingShell();
+        final fs = _RenamingFs();
+        final shell = SandboxedShell(
+          inner,
+          kernelSpec(),
+          fs: fs,
+          os: 'macos',
+          homeDir: '/home',
+        );
+
+        await shell.exec('git status');
+        final profilePath = _stagedPath(fs);
+        expect(profilePath, startsWith('/home/.fah/cube-profiles/'));
+        expect(profilePath, isNot(startsWith('/work')));
+        expect(fs.files[profilePath], startsWith('(version 1)'));
+        expect(
+          inner.commands.single,
+          contains("sandbox-exec -f '$profilePath'"),
+        );
+        expect(inner.commands.single, contains('/usr/bin/env -i '));
+        expect(inner.commands.single, contains("HOME='/work'"));
+        expect(inner.commands.single, contains("TMPDIR='/work/.fah/tmp'"));
+        expect(inner.commands.single, endsWith(shellQuote('git status')));
+
+        // Second exec: content verified, no rewrite, same staging.
+        await shell.exec('git log');
+        expect(fs.renames, hasLength(1));
+        expect(inner.commands, hasLength(2));
+      },
+    );
+
+    test(
+      'REG: the staged profile path never resolves under the workspace',
+      () async {
+        final specs = [
+          kernelSpec(),
+          kernelSpec(networkAllowed: true),
+          CubeSpec(
+            name: 'root-rw',
+            backend: CubeBackendMode.kernel,
+            tools: const CubeToolPolicy(allow: {'git'}),
+            filesystem: const CubeFsPolicy(
+              workspace: '/work',
+              mounts: [CubeMount(path: '/', access: CubePathAccess.readWrite)],
+            ),
+            resources: const CubeResourceLimits(
+              timeout: Duration(minutes: 5),
+            ),
+            env: const CubeEnvPolicy(
+              vars: [CubeEnvValue(name: 'K', value: 'v')],
+            ),
+          ),
+          CubeSpec(
+            name: 'mixed-mounts',
+            backend: CubeBackendMode.kernel,
+            tools: const CubeToolPolicy(allow: {'git'}),
+            filesystem: const CubeFsPolicy(
+              workspace: '/work',
+              mounts: [
+                CubeMount(path: '/etc', access: CubePathAccess.readOnly),
+                CubeMount(path: '/data', access: CubePathAccess.deny),
+              ],
+            ),
+          ),
+        ];
+        for (final spec in specs) {
+          for (final cwd in const ['/work', '/Users/dev/project']) {
+            final fs = _RenamingFs()..cwd = cwd;
+            final shell = SandboxedShell(
+              _RecordingShell(),
+              spec,
+              fs: fs,
+              os: 'macos',
+              homeDir: '/home/tester',
+            );
+            final outcome = await shell.exec('git status');
+            expect(
+              outcome.getOrThrow().exitCode,
+              isNot(127),
+              reason: '${spec.name} @$cwd should wrap, not deny',
+            );
+            final staged = _stagedPath(fs);
+            expect(
+              staged,
+              startsWith('/home/tester/.fah/cube-profiles/'),
+              reason: '${spec.name} @$cwd',
+            );
+            expect(
+              fs.writes.keys.where((p) => p.startsWith('$cwd/')),
+              isEmpty,
+              reason: '${spec.name} @$cwd: no artifact under the workspace',
+            );
+          }
+        }
+      },
+    );
+
+    test(
+      'a pre-seeded profile in the old in-workspace location is inert',
+      () async {
+        final inner = _RecordingShell();
+        final fs = _RenamingFs();
+        final oldPath =
+            '/work/.fah/cube-profiles/${cubeSpecCacheKey(kernelSpec())}.sb';
+        fs.seed(oldPath, '(version 1)\n(allow default)\n');
+        final shell = SandboxedShell(
+          inner,
+          kernelSpec(),
+          fs: fs,
+          os: 'macos',
+          homeDir: '/home',
+        );
+
+        await shell.exec('git status');
+        final profilePath = _stagedPath(fs);
+        expect(profilePath, startsWith('/home/.fah/cube-profiles/'));
+        expect(inner.commands.single, contains("sandbox-exec -f '$profilePath'"));
+        // The old-location file is never read, trusted or passed to exec.
+        expect(inner.commands.single, isNot(contains(oldPath)));
+        expect(fs.writes.keys, isNot(contains(oldPath)));
+      },
+    );
+
+    test(
+      'a tampered profile in the staging location is restaged before exec',
+      () async {
+        final inner = _RecordingShell();
+        final fs = _RenamingFs();
+        final shell = SandboxedShell(
+          inner,
+          kernelSpec(),
+          fs: fs,
+          os: 'macos',
+          homeDir: '/home',
+        );
+
+        await shell.exec('git status');
+        final profilePath = _stagedPath(fs);
+        final genuine = fs.files[profilePath]!;
+
+        // The "prisoner" rewrites the staged profile between runs.
+        fs.files[profilePath] = '(version 1)\n(allow default)\n';
+
+        await shell.exec('git log');
+        // Restaged atomically (temp + rename) and the tampered bytes are
+        // gone: exec never saw them.
+        expect(fs.renames, hasLength(2));
+        expect(fs.renames.last.$2, profilePath);
+        expect(fs.files[profilePath], genuine);
+        expect(inner.commands, hasLength(2));
+        expect(inner.commands.last, contains("sandbox-exec -f '$profilePath'"));
+      },
+    );
+
+    test('a kernel spec without a home is refused (nothing to stage on)',
+        () async {
       final inner = _RecordingShell();
-      final fs = _FakeFs();
+      final fs = _RenamingFs();
       final shell = SandboxedShell(inner, kernelSpec(), fs: fs, os: 'macos');
-
-      await shell.exec('git status');
-      final profilePath =
-          '/work/.fah/cube-profiles/${cubeSpecCacheKey(kernelSpec())}.sb';
-      expect(fs.writes.keys, [profilePath]);
-      expect(fs.writes[profilePath], startsWith('(version 1)'));
-      expect(inner.commands.single, contains("sandbox-exec -f '$profilePath'"));
-      expect(inner.commands.single, contains('/usr/bin/env -i '));
-      expect(inner.commands.single, contains("HOME='/work'"));
-      expect(inner.commands.single, contains("TMPDIR='/work/.fah/tmp'"));
-      expect(inner.commands.single, endsWith(shellQuote('git status')));
-
-      // Second exec: no rewrite, same staging.
-      await shell.exec('git log');
-      expect(fs.writes.keys, [profilePath]);
-      expect(inner.commands, hasLength(2));
+      final error = (await shell.exec('git status')).errorOrNull;
+      expect(error!.message, contains('allowDegrade'));
+      expect(inner.commands, isEmpty);
     });
+
+    test(
+      'a filesystem without atomic rename refuses staging and never execs',
+      () async {
+        final inner = _RecordingShell();
+        final fs = _FakeFs();
+        final shell = SandboxedShell(
+          inner,
+          kernelSpec(),
+          fs: fs,
+          os: 'macos',
+          homeDir: '/home',
+        );
+        final error = (await shell.exec('git status')).errorOrNull;
+        expect(error, isNotNull);
+        expect(error!.code, ExecutionErrorCode.spawnError);
+        expect(error.message, contains('profile staging failed'));
+        expect(fs.writes, isEmpty);
+        expect(inner.commands, isEmpty);
+      },
+    );
 
     test('injected env vars ride inside the clean environment', () async {
       final inner = _RecordingShell();
@@ -196,8 +372,9 @@ void main() {
             vars: [CubeEnvValue(name: 'FAH_MODE', value: 'sandboxed')],
           ),
         ),
-        fs: _FakeFs(),
+        fs: _RenamingFs(),
         os: 'macos',
+        homeDir: '/home',
       );
       await shell.exec('git status');
       expect(inner.commands.single, contains("FAH_MODE='sandboxed'"));
@@ -212,8 +389,9 @@ void main() {
             vars: [CubeEnvValue(name: 'FAH_MODE', value: 'sandboxed')],
           ),
         ),
-        fs: _FakeFs(),
+        fs: _RenamingFs(),
         os: 'macos',
+        homeDir: '/home',
       );
       await shell.exec(
         'git status',
@@ -242,41 +420,149 @@ void main() {
       expect(inner.commands.single, 'git status');
     });
 
-    test('a kernel spec without a platform stays in policy mode', () async {
-      final inner = _RecordingShell();
-      final fs = _FakeFs();
-      final shell = SandboxedShell(inner, kernelSpec(), fs: fs);
-      await shell.exec('git status');
-      expect(fs.writes, isEmpty);
-      expect(inner.commands.single, 'git status');
-    });
-
-    test('an unenforcing platform (windows) stays in policy mode', () async {
-      final inner = _RecordingShell();
-      final fs = _FakeFs();
-      final shell = SandboxedShell(inner, kernelSpec(), fs: fs, os: 'windows');
-      await shell.exec('git status');
-      expect(fs.writes, isEmpty);
-      expect(inner.commands.single, 'git status');
-    });
+    test(
+      'AC1: a kernel spec on a platform without a backend is refused with '
+      'zero commands',
+      () async {
+        final inner = _RecordingShell();
+        final fs = _RenamingFs();
+        final shell = SandboxedShell(
+          inner,
+          kernelSpec(),
+          fs: fs,
+          os: 'windows',
+          homeDir: '/home',
+        );
+        final error = (await shell.exec('git status')).errorOrNull;
+        expect(error, isNotNull);
+        expect(error!.code, ExecutionErrorCode.spawnError);
+        expect(error.message, contains('allowDegrade'));
+        expect(error.message, startsWith('fa_cube[test-cube]:'));
+        expect(inner.commands, isEmpty);
+        expect(fs.writes, isEmpty);
+        expect(shell.effectiveBackend, isNull);
+      },
+    );
 
     test(
-      'a kernel spec degrading to policy mode emits a loud warning',
+      'AC1: a kernel spec without a platform or home is refused too',
+      () async {
+        for (final shell in [
+          SandboxedShell(_RecordingShell(), kernelSpec(), fs: _RenamingFs()),
+          SandboxedShell(
+            _RecordingShell(),
+            kernelSpec(),
+            fs: _RenamingFs(),
+            os: 'macos',
+          ),
+        ]) {
+          final error = (await shell.exec('git status')).errorOrNull;
+          expect(error, isNotNull);
+          expect(error!.message, contains('allowDegrade'));
+        }
+      },
+    );
+
+    test(
+      'AC2: allowDegrade runs in policy mode loudly and queryably',
       () async {
         final inner = _RecordingShell();
         final degradations = <String>[];
         final shell = SandboxedShell(
           inner,
-          kernelSpec(),
-          fs: _FakeFs(),
+          kernelSpec(allowDegrade: true),
+          fs: _RenamingFs(),
           os: 'windows',
+          homeDir: '/home',
           onDegrade: degradations.add,
         );
-        await shell.exec('git status');
+        final result = await shell.exec('git status');
+        expect(result.getOrThrow().stdout, 'out');
+        expect(inner.commands.single, 'git status');
         expect(degradations, hasLength(1));
         expect(degradations.single, startsWith('fa_cube[test-cube]:'));
         expect(degradations.single, contains('policy mode'));
-        expect(inner.commands.single, 'git status');
+        expect(shell.effectiveBackend, CubeBackendMode.policy);
+      },
+    );
+
+    test('effectiveBackend reports the mode each spec actually runs', () {
+      final shell = SandboxedShell(_RecordingShell(), null);
+      expect(shell.effectiveBackend, isNull);
+      shell.updateSpec(kernelSpec(backend: 'policy'));
+      expect(shell.effectiveBackend, CubeBackendMode.policy);
+      shell.clearSpec();
+      expect(shell.effectiveBackend, isNull);
+      // macos + home + fs deliver the kernel backend.
+      final kernelShell = SandboxedShell(
+        _RecordingShell(),
+        kernelSpec(),
+        fs: _RenamingFs(),
+        os: 'macos',
+        homeDir: '/home',
+      );
+      expect(kernelShell.effectiveBackend, CubeBackendMode.kernel);
+    });
+
+    test(
+      'AC3 REG: an explicit kernel spec never silently executes in policy '
+      'mode',
+      () async {
+        for (final os in const ['macos', 'linux', 'windows', null]) {
+          for (final allowDegrade in const [false, true]) {
+            final inner = _RecordingShell();
+            final degradations = <String>[];
+            final withFs = os != null;
+            final shell = SandboxedShell(
+              inner,
+              kernelSpec(allowDegrade: allowDegrade),
+              fs: withFs ? _RenamingFs() : null,
+              os: os,
+              homeDir: withFs ? '/home' : null,
+              onDegrade: degradations.add,
+            );
+            final outcome = await shell.exec('git status');
+            final ran = inner.commands;
+            if (ran.isEmpty) {
+              // Refused: nothing executed, and the refusal names the opt-in.
+              expect(
+                outcome.errorOrNull!.message,
+                contains('allowDegrade'),
+                reason: 'os=$os allowDegrade=$allowDegrade',
+              );
+              expect(
+                allowDegrade,
+                isFalse,
+                reason: 'a degrading spec must run: os=$os',
+              );
+            } else {
+              expect(ran, hasLength(1), reason: 'os=$os');
+              if (ran.single == 'git status') {
+                // UNWRAPPED execution in policy mode is only ever legal
+                // through the explicit allowDegrade opt-in, loudly.
+                expect(
+                  allowDegrade,
+                  isTrue,
+                  reason:
+                      'os=$os: explicit kernel silently ran in policy mode',
+                );
+                expect(degradations, hasLength(1), reason: 'os=$os');
+                expect(shell.effectiveBackend, CubeBackendMode.policy,
+                    reason: 'os=$os');
+              } else {
+                // Kernel-wrapped: binary on PATH is irrelevant here — the
+                // wrap shape itself proves kernel mode was honored.
+                expect(
+                  ran.single,
+                  anyOf(contains('sandbox-exec'), contains('unshare')),
+                  reason: 'os=$os',
+                );
+                expect(shell.effectiveBackend, CubeBackendMode.kernel,
+                    reason: 'os=$os');
+              }
+            }
+          }
+        }
       },
     );
 
@@ -285,8 +571,9 @@ void main() {
       final shell = SandboxedShell(
         _RecordingShell(),
         kernelSpec(),
-        fs: _FakeFs(),
+        fs: _RenamingFs(),
         os: 'macos',
+        homeDir: '/home',
         onDegrade: degradations.add,
       );
       await shell.exec('git status');
@@ -307,8 +594,9 @@ void main() {
         final shell = SandboxedShell(
           inner,
           kernelSpec(),
-          fs: _FakeFs(),
+          fs: _RenamingFs(),
           os: 'macos',
+          homeDir: '/home',
         );
         final outcome = await shell.exec('git status');
         final error = outcome.errorOrNull;
@@ -334,8 +622,9 @@ void main() {
       final shell = SandboxedShell(
         inner,
         kernelSpec(),
-        fs: _FakeFs(),
+        fs: _RenamingFs(),
         os: 'macos',
+        homeDir: '/home',
       );
       final error = (await shell.exec('git status')).errorOrNull;
       expect(
@@ -358,8 +647,9 @@ void main() {
         final shell = SandboxedShell(
           inner,
           kernelSpec(),
-          fs: _FakeFs(),
+          fs: _RenamingFs(),
           os: 'linux',
+          homeDir: '/home',
         );
         final error = (await shell.exec('git status')).errorOrNull;
         expect(error!.code, ExecutionErrorCode.spawnError);
@@ -383,8 +673,9 @@ void main() {
       final shell = SandboxedShell(
         inner,
         kernelSpec(),
-        fs: _FakeFs(),
+        fs: _RenamingFs(),
         os: 'linux',
+        homeDir: '/home',
       );
       final note = await shell.startupFailure();
       expect(
@@ -404,8 +695,9 @@ void main() {
       final shell = SandboxedShell(
         inner,
         kernelSpec(),
-        fs: _FakeFs(),
+        fs: _RenamingFs(),
         os: 'linux',
+        homeDir: '/home',
       );
       expect(await shell.startupFailure(), isNull);
       expect(inner.commands.length, 1);
@@ -425,8 +717,9 @@ void main() {
         final shell = SandboxedShell(
           inner,
           kernelSpec(),
-          fs: _FakeFs(),
+          fs: _RenamingFs(),
           os: 'macos',
+          homeDir: '/home',
         );
         final result = (await shell.exec('git status')).getOrThrow();
         expect(result.exitCode, 128);
@@ -435,37 +728,68 @@ void main() {
 
     test('prepare wraps background job commands identically', () async {
       final inner = _RecordingShell();
-      final fs = _FakeFs();
-      final shell = SandboxedShell(inner, kernelSpec(), fs: fs, os: 'macos');
+      final fs = _RenamingFs();
+      final shell = SandboxedShell(
+        inner,
+        kernelSpec(),
+        fs: fs,
+        os: 'macos',
+        homeDir: '/home',
+      );
       final job = await shell.prepare('git status');
       expect(job, contains('sandbox-exec'));
       expect(fs.writes, hasLength(1));
     });
 
-    test('a staged profile is reused when the file already exists', () async {
-      final inner = _RecordingShell();
-      final fs = _FakeFs();
-      final shell = SandboxedShell(inner, kernelSpec(), fs: fs, os: 'macos');
-      fs.files.add(
-        '/work/.fah/cube-profiles/${cubeSpecCacheKey(kernelSpec())}.sb',
-      );
-      await shell.exec('git status');
-      expect(fs.writes, isEmpty);
-    });
+    test(
+      'a staged profile with matching content is reused without a rewrite',
+      () async {
+        final inner = _RecordingShell();
+        final fs = _RenamingFs();
+        final shell = SandboxedShell(
+          inner,
+          kernelSpec(),
+          fs: fs,
+          os: 'macos',
+          homeDir: '/home',
+        );
+        await shell.exec('git status');
+        final profilePath = _stagedPath(fs);
+        fs.writes.clear();
+        fs.renames.clear();
+        // Second shell, same spec + workspace: content hash matches, the
+        // existing file is trusted without touching it.
+        final second = SandboxedShell(
+          inner,
+          kernelSpec(),
+          fs: fs,
+          os: 'macos',
+          homeDir: '/home',
+        );
+        await second.exec('git log');
+        expect(fs.writes, isEmpty);
+        expect(fs.renames, isEmpty);
+        expect(inner.commands.last, contains("sandbox-exec -f '$profilePath'"));
+      },
+    );
   });
 }
 
 /// A [FileSystem] recording writes; only the staging-relevant members work.
+/// No rename capability — kernel staging against this fake refuses (use
+/// [_RenamingFs] for the renamable variant).
 class _FakeFs implements FileSystem {
   @override
-  final String cwd = '/work';
+  String cwd = '/work';
 
   final Map<String, String> writes = {};
-  final Set<String> files = {};
+  final Map<String, String> files = {};
+
+  void seed(String path, String content) => files[path] = content;
 
   @override
   Future<Result<bool, FileError>> exists(String path) async =>
-      Ok(files.contains(path) || writes.containsKey(path));
+      Ok(files.containsKey(path) || writes.containsKey(path));
 
   @override
   Future<Result<void, FileError>> writeFile(String path, String content) =>
@@ -473,8 +797,15 @@ class _FakeFs implements FileSystem {
 
   Result<void, FileError> _record(String path, String content) {
     writes[path] = content;
+    files[path] = content;
     return const Ok(null);
   }
+
+  @override
+  Future<Result<String, FileError>> readTextFile(String path) async =>
+      files.containsKey(path)
+          ? Ok(files[path]!)
+          : const Err(FileError(FileErrorCode.notFound, 'missing'));
 
   @override
   Future<Result<String, FileError>> absolutePath(String path) async =>
@@ -497,10 +828,6 @@ class _FakeFs implements FileSystem {
 
   @override
   Future<Result<String, FileError>> joinPath(List<String> parts) async =>
-      _missing();
-
-  @override
-  Future<Result<String, FileError>> readTextFile(String path) async =>
       _missing();
 
   @override
@@ -532,4 +859,19 @@ class _FakeFs implements FileSystem {
     bool recursive = false,
     bool force = false,
   }) async => _missing();
+}
+
+/// A renamable [_FakeFs]: the atomic temp+rename restaging path works.
+class _RenamingFs extends _FakeFs implements RenamableFileSystem {
+  final renames = <(String, String)>[];
+
+  @override
+  Future<Result<void, FileError>> renamePath(String from, String to) async {
+    if (!files.containsKey(from)) {
+      return const Err(FileError(FileErrorCode.notFound, 'missing'));
+    }
+    renames.add((from, to));
+    files[to] = files.remove(from)!;
+    return const Ok(null);
+  }
 }
