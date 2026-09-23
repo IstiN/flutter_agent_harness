@@ -94,6 +94,19 @@ void main() {
       }
     });
 
+    test('presets are refusal-by-default (no implicit allowDegrade)', () {
+      // SEC-05: a preset on a host without an enforcing backend refuses
+      // all commands unless the user explicitly opts in via
+      // `/cube use <preset> --allow-degrade` or an edited manifest.
+      for (final preset in CubePresets.all) {
+        expect(
+          CubePresets.maybeSpec(name: preset.id, cwd: cwd)!.allowDegrade,
+          isFalse,
+          reason: '${preset.id} must not degrade implicitly',
+        );
+      }
+    });
+
     test('L1: no mounts, no network', () {
       final spec = parse('l1-core');
       expect(spec.filesystem.mounts, isEmpty);

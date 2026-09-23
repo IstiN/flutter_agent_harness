@@ -88,8 +88,15 @@ spec:
 |---|---|---|---|
 | macOS (`sandbox-exec`) | kernel | kernel | policy |
 | Linux (user namespaces available) | kernel | kernel | policy |
-| Linux (no user namespaces) | refusal | policy (+ loud warning) | policy |
+| Linux (no user namespaces)¹ | hard launch error¹ | hard launch error¹ | policy |
 | Windows / web (descriptor-only) | refusal | policy (+ loud warning) | policy |
+
+¹ Linux has no user-namespace capability probe: the kernel backend binds
+and every command fails at launch — a clean
+`fa_cube[<name>]: kernel backend unshare failed: Operation not permitted`
+error. Launch failures are **never** degraded, even with
+`allowDegrade: true`; the opt-in covers only hosts with no enforcing
+backend at all.
 
 A refusal names the opt-in (`... set spec.allowDegrade: true to allow the
 degrade`) so the fix is discoverable. The degrade path announces itself
@@ -192,9 +199,9 @@ Slash commands (line mode):
 |---|---|
 | `/cube` | Show the active profile: identity, backend, policy summary, cache. |
 | `/cube list` | List manifests in `.fah/cubes/` plus the built-in security presets. |
-| `/cube use <name-or-path>` | Resolve and enforce a manifest from now on (preset ids like `l2-full` resolve through the built-in catalog). |
+| `/cube use <name-or-path>` | Resolve and enforce a manifest from now on (preset ids like `l2-full` resolve through the built-in catalog). `--allow-degrade` opts a kernel manifest into policy-mode fallback on hosts with no enforcing backend (SEC-05; remembered across `/cube reload`). |
 | `/cube off` | Leave sandbox mode (full host access; the boot source is kept for `/cube reload`). |
-| `/cube reload` | Re-resolve the remembered source and enforce it again. |
+| `/cube reload` | Re-resolve the remembered source and enforce it again (re-applying a remembered `--allow-degrade`). |
 | `/cube templates` | List the fa1.dev registry catalog. |
 | `/cube install <id>` | Download a registry manifest into `.fah/cubes/` (sha256-verified). |
 | `/cube cache status` | Show the cache key, root and policy. |
@@ -222,11 +229,16 @@ actually holds, per level and enforcement mode:
 | L3 | Redirects unrestricted — writes are allowed everywhere by design. | Reads and writes everywhere. | Reads and writes everywhere. |
 
 A `backend: kernel` spec on a host without an enforcing backend (Windows,
-web, Linux without user namespaces) is **refused by default** — a clean
+web) is **refused by default** — a clean
 `fa_cube[<name>]:` error on every command, zero commands run, the message
 naming `spec.allowDegrade`. Only an explicit `allowDegrade: true` in the
-manifest degrades to policy mode, and it announces that loudly:
+manifest (or `/cube use <preset> --allow-degrade`) degrades to policy
+mode, and it announces that loudly:
 `fa_cube[<name>]: kernel backend unavailable, running in policy mode`.
+Linux without user namespaces is different: the kernel backend binds
+there (there is no capability probe) and every command fails at launch
+with the clean `unshare failed` error — launch failures are not
+degrades, and `allowDegrade` does not apply to them.
 The policy-mode floor is the redirect check above, not a kernel boundary.
 `effectiveBackend` always reports what actually runs.
 

@@ -962,6 +962,11 @@ class AgentCli {
   /// `/cube use`; never cleared by `/cube off` (a reload re-applies it).
   String? _cubeSource;
 
+  /// Whether the last `/cube use` carried `--allow-degrade` (SEC-05:
+  /// policy-degrade opt-in for kernel specs); `/cube reload` re-applies
+  /// it to the re-resolved spec.
+  bool _cubeUseAllowDegrade = false;
+
   /// The last fetched [DapHubSnapshot] — rendered by the settings hub's
   /// DAP / Hub row and the `/settings` summary, refreshed before each
   /// render and at the top of the DAP flow. Null until fetched or when no

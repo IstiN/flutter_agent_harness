@@ -8,8 +8,8 @@ part of 'agent_cli.dart';
 
 /// Usage line printed for an unknown `/cube` subcommand.
 const String _cubeUsage =
-    'usage: /cube [list | use <name-or-path> | off | reload | templates | '
-    'install <id> | cache status | cache clear]';
+    'usage: /cube [list | use <name-or-path> [--allow-degrade] | off | '
+    'reload | templates | install <id> | cache status | cache clear]';
 
 /// The web-egress network gate (issue #682) handed to the web tools;
 /// reads the LIVE cube spec per call. Null only on hosts that build the
@@ -69,7 +69,8 @@ extension CubeCommands on AgentCli {
     final osName = config.osName;
     io.writeln(
       '  backend: '
-      '${osName == null ? 'host passthrough' : cubeBackendForPlatform(osName).describe()}',
+      '${osName == null ? 'host passthrough' : cubeBackendForPlatform(osName).describe()}'
+      '${spec.allowDegrade ? ' (policy degrade allowed)' : ''}',
     );
     final allow = spec.tools.allow.toList()..sort();
     io.writeln(
@@ -118,15 +119,31 @@ extension CubeCommands on AgentCli {
 
   /// `/cube use <name-or-path>` — resolve a manifest and enforce it from now
   /// on. A target containing `/` is a path, anything else a cube name.
-  Future<void> _cubeUse(String target) async {
+  Future<void> _cubeUse(String args) async {
+    var target = args.trim();
+    // SEC-05 escape hatch: `/cube use <preset> --allow-degrade` opts a
+    // kernel spec into policy-mode fallback on hosts without an
+    // enforcing backend. Explicit per invocation, remembered for reload.
+    var allowDegrade = false;
+    if (target.endsWith('--allow-degrade')) {
+      allowDegrade = true;
+      target = target
+          .substring(0, target.length - '--allow-degrade'.length)
+          .trim();
+    }
     if (target.isEmpty) {
-      io.writeln('usage: /cube use <name-or-path>');
+      io.writeln('usage: /cube use <name-or-path> [--allow-degrade]');
       return;
     }
-    final spec = await _resolveCubeTarget(target);
-    if (spec == null) return;
+    final resolved = await _resolveCubeTarget(target);
+    if (resolved == null) return;
+    final spec = allowDegrade ? resolved.withAllowDegrade() : resolved;
+    _cubeUseAllowDegrade = allowDegrade;
     await _activateCube(spec, target);
-    io.writeln('cube: ${spec.name} active');
+    io.writeln(
+      'cube: ${spec.name} active'
+      '${allowDegrade ? ' (policy degrade allowed)' : ''}',
+    );
   }
 
   /// `/cube off` — leave sandbox mode; every operation forwards untouched.
@@ -147,10 +164,13 @@ extension CubeCommands on AgentCli {
       io.writeln('cube: no source to reload (use /cube use <name-or-path>)');
       return;
     }
-    final spec = await _resolveCubeTarget(source);
-    if (spec == null) return;
-    await _activateCube(spec, source);
-    io.writeln('cube: ${spec.name} reloaded');
+    final resolved = await _resolveCubeTarget(source);
+    if (resolved == null) return;
+    await _activateCube(
+      _cubeUseAllowDegrade ? resolved.withAllowDegrade() : resolved,
+      source,
+    );
+    io.writeln('cube: ${resolved.name} reloaded');
   }
 
   /// `/cube templates` — the fa1.dev registry catalog.

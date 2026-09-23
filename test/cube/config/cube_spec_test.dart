@@ -226,6 +226,29 @@ spec: {backend: kernel, allowDegrade: true}
       expect(spec.allowDegrade, isTrue);
     });
 
+    test('withAllowDegrade copies every field and flips only the flag', () {
+      const spec = CubeSpec(
+        name: 'locked',
+        description: 'desc',
+        backend: CubeBackendMode.kernel,
+      );
+      final optIn = spec.withAllowDegrade();
+      expect(optIn.allowDegrade, isTrue);
+      expect(optIn.name, spec.name);
+      expect(optIn.description, spec.description);
+      expect(optIn.backend, CubeBackendMode.kernel);
+      expect(optIn.tools, spec.tools);
+      expect(optIn.network, spec.network);
+      expect(optIn.filesystem, spec.filesystem);
+      expect(optIn.env, spec.env);
+      expect(optIn.resources, spec.resources);
+      expect(optIn.cache, spec.cache);
+      // The original stays refusal-by-default.
+      expect(spec.allowDegrade, isFalse);
+      // The opt-in is reversible (back to the safe default).
+      expect(optIn.withAllowDegrade(allowDegrade: false).allowDegrade, isFalse);
+    });
+
     test('a non-bool allowDegrade is rejected', () {
       expect(
         () => parse('''

@@ -165,6 +165,46 @@ spec:
     expect(io.out.toString(), contains('cube: file not found'));
   });
 
+  test('/cube use --allow-degrade opts in and reload remembers it', () async {
+    await writeCube('dev', devCube);
+    final fake = FakeStreamFunction([]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+    io.sendLine('/cube use dev --allow-degrade');
+    await waitFor(
+      () => io.out.toString().contains('cube: dev active'),
+    );
+    io.sendLine('/cube');
+    await waitFor(
+      () => io.out.toString().contains('policy degrade allowed'),
+    );
+    io.sendLine('/cube reload');
+    io.sendLine('/cube');
+    io.sendLine('/exit');
+    await run;
+    final out = io.out.toString();
+    expect(out, contains('cube: dev active (policy degrade allowed)'));
+    // The opt-in survives /cube reload.
+    expect(
+      'policy degrade allowed'.allMatches(out).length,
+      greaterThanOrEqualTo(2),
+    );
+  });
+
+  test('/cube use without the flag keeps the refusal-by-default spec',
+      () async {
+    await writeCube('dev', devCube);
+    final fake = FakeStreamFunction([]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+    io.sendLine('/cube use dev');
+    io.sendLine('/cube');
+    await waitFor(() => io.out.toString().contains('backend: '));
+    io.sendLine('/exit');
+    await run;
+    expect(io.out.toString(), isNot(contains('policy degrade allowed')));
+  });
+
   test('/cube list shows the project manifests', () async {
     await writeCube('dev', devCube);
     await writeCube('strict', strictCube);
