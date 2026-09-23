@@ -80,12 +80,12 @@ extension _TuiMouseRegions on FaTuiModel {
   int _caretForComposerClick(int clickRow, int clickCol) {
     // Band mode (#806): the gutter owns its leading columns on every
     // composer row — clicks in the gutter clamp to the row's first cell,
-    // chunks wrap at the content width.
-    final gutter = _composerGutterWidth;
-    final content = termWidth - (_bandAttached ? gutter : 0);
+    // chunks wrap at the content width. [_activeGutterWidth] stands down
+    // under 4 columns, where the painter drops the cue too.
+    final gutter = _activeGutterWidth;
+    final content = termWidth - gutter;
     final width = content < 1 ? 1 : content;
-    final col = _bandAttached
-        ? (clickCol > gutter ? clickCol - gutter : 0)
+    final col = gutter > 0 ? (clickCol > gutter ? clickCol - gutter : 0)
         : clickCol;
     var offset = 0; // code units consumed, newlines included
     for (final line in inputText.split('\n')) {

@@ -242,7 +242,7 @@ extension _TuiComposerLayout on FaTuiModel {
   /// `verticalChrome: 1`) even when the engine has nothing to render.
   /// Colors flow through [statusLineStyle]/[kStatusLineRoles] at write
   /// time; width math runs on the raw strings (rule #279 E1).
-  int _writeStatusBand(StringBuffer b, int baseRow) {
+  int _writeStatusBand(StringBuffer b) {
     final snapshot = callbacks.statusSnapshot!();
     final engine = callbacks.statusLineEngine!;
     final spans = engine.renderSpans(snapshot, termWidth);
@@ -250,13 +250,19 @@ extension _TuiComposerLayout on FaTuiModel {
     if (tuiTextWidth(raw) > termWidth) {
       // E1 belt: the engine's ladder is width-exact; a resize race
       // truncates as the last resort so the row can never hardware-wrap.
-      b.writeln(_dim(tuiFitWidth(raw, termWidth)));
+      // Pad after the cut — a truncated wide grapheme can leave the row
+      // short, and stale cells survive on the right of a short row.
+      b.writeln(_dim(tuiPadRight(tuiFitWidth(raw, termWidth), termWidth)));
       return 1;
     }
     final c = FaThemeController.instance;
     final theme = c.current;
+    // omp `transparent`: no band fill and no end cap — the terminal
+    // background shows through the gap (the #831 round-2 writer fix,
+    // mirrored here).
+    final transparent = engine.spec.transparent;
     final fill = kStatusLineRoles[StatusLineRoleKey.bandBg]!(theme);
-    final bandBg = fill.backgroundRgb;
+    final bandBg = transparent ? null : fill.backgroundRgb;
     final row = StringBuffer();
     if (bandBg != null && engine.spec.nerdSymbols) {
       // The soft opening cap painted band-bg-as-fg (omp `useBgAsFg`).
@@ -264,10 +270,10 @@ extension _TuiComposerLayout on FaTuiModel {
         ..write(c.sgrPrefix(Style(foregroundRgb: bandBg)))
         ..write('\u{e0b6}');
     }
-    final brandT = statusLineBrandFadeT(
-      lit: !snapshot.idle,
-      changedAgoMs: snapshot.idleChangedAgoMs,
-    );
+    // The brand spans dim with the idle flag. Binary on purpose: the
+    // 450 ms tween never engages — the host snapshot carries no
+    // timestamps (the #837 review retired the dead fade plumbing).
+    final brandT = snapshot.idle ? 0.0 : 1.0;
     for (final (text, key) in spans) {
       final style = statusLineStyle(
         key,
@@ -285,14 +291,21 @@ extension _TuiComposerLayout on FaTuiModel {
     }
     final pad = termWidth - tuiTextWidth(raw);
     if (pad > 0) {
-      // Keep the band continuous flush to the right edge.
-      row
-        ..write(c.sgrPrefix(fill))
-        ..write(' ' * pad);
+      if (transparent) {
+        // Reset first so the gap is plain terminal background, then keep
+        // the row full-width (stale cells die at the right edge).
+        if (c.profile != null) row.write('\x1b[0m');
+        row.write(' ' * pad);
+      } else {
+        // Keep the band continuous flush to the right edge.
+        row
+          ..write(c.sgrPrefix(fill))
+          ..write(' ' * pad);
+      }
     }
     // Close the last span's SGR — only when styling is on (NO_COLOR
     // keeps the band shape-only, zero escapes).
-    if (c.profile != null) row.write('\x1b[0m');
+    if (c.profile != null && !transparent) row.write('\x1b[0m');
     b.writeln(row.toString());
     return 1;
   }
@@ -321,11 +334,13 @@ extension _TuiComposerLayout on FaTuiModel {
     );
     for (var i = 0; i < visible.length; i++) {
       if (i > 0) b.writeln();
-      if (_bandAttached) {
+      if (_activeGutterWidth > 0) {
         // omp band.ts renderRow: the gutter rides every composer row —
         // the border-colored `╰─ ` cue on the first, a plain indent on
         // the continuations (omp `gutter.continuation`).
-        b.write(i == 0 ? _borderMuted(_composerGutter) : ' ' * _composerGutterWidth);
+        b.write(
+          i == 0 ? _borderMuted(_composerGutter) : ' ' * _activeGutterWidth,
+        );
       }
       b.write(visible[i]);
     }
@@ -338,13 +353,23 @@ extension _TuiComposerLayout on FaTuiModel {
     return (inWindow < 0 ? 0 : inWindow, cursorCol);
   }
 
+  /// The gutter width that actually paints: band rows carry the 3-cell
+  /// `╰─ ` cue only when the terminal affords cue + one content cell —
+  /// under 4 columns the band degrades to full-width rows. The painter,
+  /// the wrap width, the caret home and the click mapping all read this
+  /// ONE value so they can never disagree.
+  int get _activeGutterWidth =>
+      (_bandAttached && termWidth >= _composerGutterWidth + 1)
+      ? _composerGutterWidth
+      : 0;
+
   /// The wrap width for the composer's input text: band mode wraps at the
   /// CONTENT width (the gutter owns its columns, omp `lineContentWidth`);
   /// legacy wraps at the full width. [_wrappedInput] and [_inputLineCount]
   /// share it so the row count the budget pays for and the rows the
   /// painter writes can never disagree.
   int get _lineWrapWidth {
-    final gutter = _bandAttached ? _composerGutterWidth : 0;
+    final gutter = _activeGutterWidth;
     final content = termWidth - gutter;
     return content < 1 ? 1 : content;
   }

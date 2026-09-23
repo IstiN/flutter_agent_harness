@@ -29,7 +29,6 @@ import 'tui_status_line.dart'
         StatusLineSnapshot,
         TuiStatusLine,
         kStatusLineRoles,
-        statusLineBrandFadeT,
         statusLineStyle;
 import 'tui_theme.dart';
 import 'termios_guard.dart' show SttyRunner;
@@ -2170,7 +2169,7 @@ final class FaTuiModel extends Model {
     int cursorInputLine;
     int cursorScreenCol;
     if (bandFrame) {
-      row += _writeStatusBand(b, row);
+      row += _writeStatusBand(b);
       (cursorInputLine, cursorScreenCol) = _writeInputLines(b, row, plan);
     } else {
       (cursorInputLine, cursorScreenCol) = _writeInputLines(b, row, plan);
@@ -2187,15 +2186,18 @@ final class FaTuiModel extends Model {
     // The first input row's screen row. Legacy: the tail is rule + input
     // + bottom rule + status (the last row unterminated), so two painted
     // rows sit below the input block. Band: the band sits ABOVE the
-    // input and the input's last row ends the frame unterminated — only
-    // the separators between input rows sit below the first one.
+    // input and the input's last row ends the frame unterminated — the
+    // first input row is the LAST `plan.input` rows of the body, nothing
+    // paints between band and input (the off-by-one homed the caret one
+    // row BELOW its text).
     final inputStartRow = bandFrame
-        ? _lineCount(body) - plan.input + 1
+        ? _lineCount(body) - plan.input
         : _lineCount(body) - 2 - plan.input;
     final cursorRow = inputStartRow + cursorInputLine;
-    // Band mode: the caret aligns with the text AFTER the gutter's cells.
+    // Band mode: the caret aligns with the text AFTER the gutter's cells
+    // (zero when the terminal is too narrow to afford the gutter).
     final cursorX = bandFrame
-        ? cursorScreenCol + _composerGutterWidth
+        ? cursorScreenCol + _activeGutterWidth
         : cursorScreenCol;
     // Pickers (models, sessions, mode, approval, provider, settings, wizard
     // steps) never show the physical cursor: generic pickers ignore typing

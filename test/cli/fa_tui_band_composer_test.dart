@@ -14,6 +14,7 @@ library;
 
 import 'package:dart_tui/dart_tui.dart';
 import 'package:flutter_agent_harness/src/cli/fa_tui.dart';
+import 'package:flutter_agent_harness/src/cli/tui_prompt.dart';
 import 'package:flutter_agent_harness/src/cli/tui_status_line.dart';
 import 'package:flutter_agent_harness/src/cli/tui_text_width.dart'
     show tuiPadRight, tuiTextWidth;
@@ -43,7 +44,10 @@ StatusLineSnapshot _snapshot({bool idle = true}) => StatusLineSnapshot(
 
 final _engine = TuiStatusLine(spec: resolveStatusLineSpec(null));
 
-FaTuiCallbacks _callbacks({StatusLineSnapshot Function()? snapshot}) =>
+FaTuiCallbacks _callbacks({
+  StatusLineSnapshot Function()? snapshot,
+  TuiStatusLine? engine,
+}) =>
     FaTuiCallbacks(
       onSubmit: (_, {images = const []}) async {},
       onModelSelected: (_) async {},
@@ -52,7 +56,7 @@ FaTuiCallbacks _callbacks({StatusLineSnapshot Function()? snapshot}) =>
       statusLine: () => 'cwd · ctx 42% · legacy footer',
       prompt: '',
       statusSnapshot: snapshot,
-      statusLineEngine: snapshot == null ? null : _engine,
+      statusLineEngine: snapshot == null ? null : (engine ?? _engine),
     );
 
 /// Band-attached callbacks (the host default without `tui.classic`).
@@ -113,6 +117,27 @@ void main() {
       // Every band span paints the bandBg role's tint behind the role
       // color — a 48;2 truecolor background escape must be on the row.
       expect(bandRow, contains('\x1b[48;2;'));
+    });
+
+    test('statusLine.transparent drops the fill, keeps the row flush', () {
+      final m = _model(
+        _callbacks(
+          snapshot: _snapshot,
+          engine: TuiStatusLine(
+            spec: resolveStatusLineSpec(
+              const StatusLineConfig(transparent: true),
+            ),
+          ),
+        ),
+      );
+      final raw = m.view().content.split('\n');
+      final bandRow = raw[_gutterRowIndex(_plainRows(m)) - 1];
+      // No bandBg fill, no gap fill — the terminal background shows
+      // through (omp `transparent`, mirroring the #831 round-2 writer).
+      expect(bandRow, isNot(contains('\x1b[48;2;')));
+      // The row still covers the full width (stale cells die at the
+      // right edge) — plain padding after the reset.
+      expect(tuiTextWidth(_stripAnsi(bandRow)), m.termWidth);
     });
 
     test('idle renders dim, streaming renders lit (write-time seam)', () {
@@ -185,6 +210,57 @@ void main() {
         _classicCallbacks(),
       ).copyWith(inputText: 'ab', cursor: 2);
       expect(classic.view().cursor!.x, 2);
+    });
+
+    test('the caret homes on the FIRST input row (band row math)', () {
+      // The band sits ABOVE the input and nothing paints between them:
+      // the caret row is exactly the `╰─ ` cue row (the off-by-one homed
+      // it one row BELOW the text).
+      final m = _type(_model(_bandCallbacks()), 'hello world');
+      expect(m.view().cursor!.y, _gutterRowIndex(_plainRows(m)));
+      // A second input line homes on its own row.
+      final multi = _type(_model(_bandCallbacks()), 'one\ntwo');
+      expect(
+        multi.view().cursor!.y,
+        _gutterRowIndex(_plainRows(multi)) + 1,
+        reason: 'cursor on the `two` row',
+      );
+    });
+
+    test('under 4 columns the gutter stands down, rows stay in the glass', () {
+      final m = _type(_model(_bandCallbacks(), width: 3), 'abcdef');
+      final rows = _plainRows(m);
+      expect(
+        rows.where((row) => row.startsWith('╰─ ')),
+        isEmpty,
+        reason: 'the cue cannot fit under 4 columns',
+      );
+      for (final row in rows) {
+        expect(tuiTextWidth(row), lessThanOrEqualTo(3));
+      }
+      final view = m.view();
+      expect(view.cursor, isNotNull);
+      expect(view.cursor!.x, lessThan(3));
+    });
+
+    test('prompt frames keep the legacy top rule (frame-shape gate)', () {
+      // Band config on + an open prompt: the prompt zone replaces the
+      // composer, so the frame is legacy-shaped and the rule chrome
+      // paints — retirement follows the frame shape, never the bare
+      // config flag.
+      final m = _model(
+        _bandCallbacks(),
+      ).copyWith(prompt: TuiPromptState(TextPromptSpec(question: 'Pick')));
+      expect(
+        _plainRows(m).where((row) => row == '─' * m.termWidth),
+        isNotEmpty,
+        reason: 'the legacy top rule paints in prompt frames',
+      );
+      // And a band COMPOSER frame still retires it.
+      expect(
+        _plainRows(_model(_bandCallbacks())).where((row) => row == '─' * 80),
+        isEmpty,
+      );
     });
   });
 
