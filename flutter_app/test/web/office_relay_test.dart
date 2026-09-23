@@ -140,10 +140,12 @@ web.Response sseResponse(List<String> chunks, {int status = 200}) {
   }
 
   final source = ({'start': start.toJS}).jsify()! as JSObject;
-  final init = ({
-    'status': status,
-    'headers': {'content-type': 'text/event-stream'},
-  }).jsify()! as web.ResponseInit;
+  final init =
+      ({
+            'status': status,
+            'headers': {'content-type': 'text/event-stream'},
+          }).jsify()!
+          as web.ResponseInit;
   return web.Response(web.ReadableStream(source), init);
 }
 
@@ -151,7 +153,10 @@ Future<String> drain(http.StreamedResponse response) =>
     utf8.decoder.bind(response.stream).join();
 
 void main() {
-  tearDown(() => officeHubRelayBase = 'http://127.0.0.1:8787');
+  tearDown(() {
+    officeHubRelayBase = 'http://127.0.0.1:8787';
+    officeHubRelayToken = null;
+  });
 
   test('AC1 web+extension: the bridge carries the send, the provider URL '
       'is never fetched directly', () async {
@@ -176,16 +181,14 @@ void main() {
       'the stream', () async {
     final fetchDouble = FetchDouble((url, init) async => fail(url));
     addTearDown(fetchDouble.dispose);
-    final relay = RelayDouble(onStream: (_) async => const [
-      {
-        't': 'head',
-        'status': 200,
-        'headers': <String, String>{},
-      },
-      {'t': 'chunk', 'b64': 'ZGF0YTogMQo='},
-      {'t': 'chunk', 'b64': 'ZGF0YTogMgo='},
-      {'t': 'end'},
-    ]);
+    final relay = RelayDouble(
+      onStream: (_) async => const [
+        {'t': 'head', 'status': 200, 'headers': <String, String>{}},
+        {'t': 'chunk', 'b64': 'ZGF0YTogMQo='},
+        {'t': 'chunk', 'b64': 'ZGF0YTogMgo='},
+        {'t': 'end'},
+      ],
+    );
     addTearDown(relay.dispose);
 
     final body = await drain(await newClient().send(providerRequest()));
@@ -198,19 +201,18 @@ void main() {
     final fetchDouble = FetchDouble((url, init) async => fail(url));
     addTearDown(fetchDouble.dispose);
     var attempts = 0;
-    final relay = RelayDouble(onStream: (attempt) async {
-      attempts++;
-      if (attempt == 0) {
-        // The MV3 SW restart signature: the port died before any frame.
-        return [
-          {
-            't': 'err',
-            'error': 'bridge port closed',
-          },
-        ];
-      }
-      return RelayDouble.sseFrames;
-    });
+    final relay = RelayDouble(
+      onStream: (attempt) async {
+        attempts++;
+        if (attempt == 0) {
+          // The MV3 SW restart signature: the port died before any frame.
+          return [
+            {'t': 'err', 'error': 'bridge port closed'},
+          ];
+        }
+        return RelayDouble.sseFrames;
+      },
+    );
     addTearDown(relay.dispose);
 
     final response = await newClient().send(providerRequest());
@@ -226,10 +228,7 @@ void main() {
     addTearDown(fetchDouble.dispose);
     final relay = RelayDouble(
       onStream: (_) async => [
-        {
-          't': 'err',
-          'error': 'bridge port closed',
-        },
+        {'t': 'err', 'error': 'bridge port closed'},
       ],
     );
     addTearDown(relay.dispose);
@@ -248,17 +247,24 @@ void main() {
   });
 
   test('AC1 desktop: no extension, hub running — the send rides the hub '
-      'relay envelope and streams back', () async {
+      'relay envelope (bearer attached) and streams back', () async {
+    officeHubRelayToken = 'test-key';
     final relayEnvelopes = <Map<Object?, Object?>>[];
     final fetchDouble = FetchDouble((url, init) async {
       if (url == 'http://127.0.0.1:8787/healthz') {
         return web.Response('ok'.toJS);
       }
       if (url == 'http://127.0.0.1:8787/relay') {
+        expect(
+          (init!.getProperty('headers'.toJS) as JSObject?)?.getProperty(
+            'authorization'.toJS,
+          ),
+          'Bearer test-key',
+          reason: 'the pane carries the relay bearer (issue #792)',
+        );
         relayEnvelopes.add(
-          jsonDecode(
-            (init!.getProperty('body'.toJS) as JSString).toDart,
-          ) as Map<Object?, Object?>,
+          jsonDecode((init.getProperty('body'.toJS) as JSString).toDart)
+              as Map<Object?, Object?>,
         );
         return sseResponse(['data: {"delta":"hi"}\n\n']);
       }
@@ -303,35 +309,157 @@ void main() {
     );
   });
 
-  test('AC3: cancelling the hub-path stream aborts the upstream fetch',
-      () async {
-    // A body that starts and never ends: the only way cancel is
-    // observable mid-stream.
+  test('issue #792: a token-less pane skips the hub transport outright '
+      '(no credential-less /relay request is ever sent)', () async {
+    officeHubRelayToken = null; // explicit: no credential configured
+    var relayAsked = false;
     final fetchDouble = FetchDouble((url, init) async {
       if (url.endsWith('/healthz')) return web.Response('ok'.toJS);
-      void start(JSObject controller) {
-        controller.callMethod(
-          'enqueue'.toJS,
-          Uint8List.fromList(utf8.encode('data: x\n\n')).toJS,
+      if (url.endsWith('/relay')) {
+        relayAsked = true;
+        fail('a credential-less pane must not call /relay');
+      }
+      throw const HttpDeath(); // the direct path: CORS death
+    });
+    addTearDown(fetchDouble.dispose);
+
+    await expectLater(
+      newClient().send(providerRequest()),
+      throwsA(
+        isA<StateError>().having(
+          (e) => e.toString(),
+          'text',
+          allOf(contains('provider unreachable'), contains('fa hub')),
+        ),
+      ),
+    );
+    expect(relayAsked, isFalse);
+  });
+
+  test('issue #792 review: a provider 401 through the relay streams '
+      'through verbatim — it is NOT a pane-credential error', () async {
+    officeHubRelayToken = 'test-key';
+    final fetchDouble = FetchDouble((url, init) async {
+      if (url == 'http://127.0.0.1:8787/healthz') {
+        return web.Response('ok'.toJS);
+      }
+      if (url == 'http://127.0.0.1:8787/relay') {
+        // No x-fah-relay marker: the HUB forwarded a provider 401.
+        return web.Response(
+          '{"error":"invalid api key"}'.toJS,
+          ({
+                'status': 401,
+                'headers': {'content-type': 'application/json'},
+              }).jsify()!
+              as web.ResponseInit,
         );
       }
-
-      final source = ({'start': start.toJS}).jsify()! as JSObject;
-      return web.Response(
-        web.ReadableStream(source),
-        ({'status': 200}).jsify()! as web.ResponseInit,
-      );
+      fail('unexpected fetch: $url');
     });
     addTearDown(fetchDouble.dispose);
 
     final response = await newClient().send(providerRequest());
-    final subscription = response.stream.listen((_) {});
-    await Future<void>.delayed(Duration.zero);
-    await subscription.cancel();
-    await Future<void>.delayed(Duration.zero);
-
-    expect(fetchDouble.lastSignal?.aborted, isTrue);
+    expect(response.statusCode, 401, reason: 'the provider said it, verbatim');
+    expect(await drain(response), contains('invalid api key'));
   });
+
+  test(
+    'issue #792 review: the pane picks up the relay bearer from '
+    "localStorage['fa_office_relay_token'] (the fa hub token path)",
+    () async {
+      web.window.localStorage.setItem('fa_office_relay_token', 'stored-key');
+      addTearDown(
+        () => web.window.localStorage.removeItem('fa_office_relay_token'),
+      );
+      officeHubRelayToken = null; // force the storage ingest
+      var sawAuthorization = false;
+      final fetchDouble = FetchDouble((url, init) async {
+        if (url == 'http://127.0.0.1:8787/healthz') {
+          return web.Response('ok'.toJS);
+        }
+        if (url == 'http://127.0.0.1:8787/relay') {
+          sawAuthorization =
+              (init!.getProperty('headers'.toJS) as JSObject?)?.getProperty(
+                'authorization'.toJS,
+              ) ==
+              'Bearer stored-key';
+          return sseResponse(['data: {"delta":"hi"}\n\n']);
+        }
+        fail('unexpected fetch: $url');
+      });
+      addTearDown(fetchDouble.dispose);
+
+      final response = await newClient().send(providerRequest());
+      expect(response.statusCode, 200);
+      expect(sawAuthorization, isTrue, reason: 'the stored bearer rode along');
+    },
+  );
+
+  test('issue #792: a refused credential (stale bearer) surfaces as the '
+      'named credential error, never a silent degrade', () async {
+    officeHubRelayToken = 'stale-key';
+    final fetchDouble = FetchDouble((url, init) async {
+      if (url == 'http://127.0.0.1:8787/healthz') {
+        return web.Response('ok'.toJS);
+      }
+      if (url == 'http://127.0.0.1:8787/relay') {
+        return web.Response(
+          'not found'.toJS,
+          ({
+                'status': 401,
+                'headers': {'x-fah-relay': 'rejection'},
+              }).jsify()!
+              as web.ResponseInit,
+        );
+      }
+      fail('unexpected fetch: $url');
+    });
+    addTearDown(fetchDouble.dispose);
+
+    await expectLater(
+      newClient().send(providerRequest()),
+      throwsA(
+        isA<StateError>().having(
+          (e) => e.toString(),
+          'text',
+          contains('hub relay rejected the pane credential'),
+        ),
+      ),
+    );
+  });
+
+  test(
+    'AC3: cancelling the hub-path stream aborts the upstream fetch',
+    () async {
+      officeHubRelayToken = 'test-key';
+      // A body that starts and never ends: the only way cancel is
+      // observable mid-stream.
+      final fetchDouble = FetchDouble((url, init) async {
+        if (url.endsWith('/healthz')) return web.Response('ok'.toJS);
+        void start(JSObject controller) {
+          controller.callMethod(
+            'enqueue'.toJS,
+            Uint8List.fromList(utf8.encode('data: x\n\n')).toJS,
+          );
+        }
+
+        final source = ({'start': start.toJS}).jsify()! as JSObject;
+        return web.Response(
+          web.ReadableStream(source),
+          ({'status': 200}).jsify()! as web.ResponseInit,
+        );
+      });
+      addTearDown(fetchDouble.dispose);
+
+      final response = await newClient().send(providerRequest());
+      final subscription = response.stream.listen((_) {});
+      await Future<void>.delayed(Duration.zero);
+      await subscription.cancel();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(fetchDouble.lastSignal?.aborted, isTrue);
+    },
+  );
 }
 
 /// The rejection a dead fetch produces, named for the test.
