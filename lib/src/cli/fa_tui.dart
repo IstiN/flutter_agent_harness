@@ -1959,8 +1959,11 @@ final class FaTuiModel extends Model {
   /// rows, so the sticky painter re-themes them like any echo line.
   (List<String>, int) _pinnedEcho(String text) {
     final firstLine = text.split('\n').first;
-    final fits = firstLine.length <= termWidth - 3 || termWidth <= 3;
-    final shown = fits ? firstLine : firstLine.substring(0, termWidth - 3);
+    // Cell-width math (issue #859 family): UTF-16 length both mis-measures
+    // wide glyphs and can split a surrogate pair mid-echo.
+    final budget = termWidth - 3;
+    final fits = tuiTextWidth(firstLine) <= budget || termWidth <= 3;
+    final shown = fits ? firstLine : tuiFitWidth(firstLine, budget);
     final more = text.contains('\n') || !fits ? ' …' : '';
     final sticky = tuiChromeEnabled
         ? [tuiUserMessageLine(''), tuiUserMessageLine(' $shown$more')]

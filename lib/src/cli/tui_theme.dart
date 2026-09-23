@@ -356,6 +356,9 @@ const TuiTheme _piDark = TuiTheme(
   userMessageText: Style(foregroundRgb: RgbColor(0xd4, 0xd4, 0xd4)),
   toolSuccessBg: Style(backgroundRgb: RgbColor(0x2a, 0x2e, 0x24)),
   toolErrorBg: Style(backgroundRgb: RgbColor(0x36, 0x26, 0x26)),
+  // Pending/in-flight card band — cool slate between userMessageBg and
+  // the error tint, keeping the pi palette's low-contrast rhythm.
+  toolPendingBg: Style(backgroundRgb: RgbColor(0x2b, 0x2d, 0x36)),
 );
 
 /// The roles a user theme JSON may set (values: `#rgb`/`#rrggbb`).
@@ -975,8 +978,6 @@ final class FaThemeController {
 
   // Tool-card phase tints (#807, issue-#804 emitter rule): the card
   // background tint as a raw SGR prefix ('' when styling is off).
-  // [toolPendingBgSgr] rides the highlight tint until S1 lands the
-  // `toolPendingBg` role — the swap is one line here.
 
   /// Settled-success card background.
   String toolSuccessBgSgr() => sgrPrefix(_current.toolSuccessBg);
@@ -1014,6 +1015,11 @@ final class FaThemeController {
   /// default ([kDefaultTuiTheme]) — lines stored before a mid-session
   /// `/theme` switch still resolve to a role and repaint through the
   /// live theme (issue #279 E1: stored lines never freeze a palette).
+  ///
+  /// Hardened (JVtX): a tint that maps to NO role (unknown palette) or to
+  /// MORE than one role (a user theme aliasing e.g. success/error to one
+  /// color) returns null — the line keeps its stored bytes rather than
+  /// being repainted under a guessed role.
   String? preStyledRole(String leadSgr) {
     if (leadSgr.isEmpty) return null;
     final candidates = <String, List<Style>>{
@@ -1030,12 +1036,16 @@ final class FaThemeController {
         kDefaultTuiTheme.highlight,
       ],
     };
+    String? hit;
     for (final entry in candidates.entries) {
       for (final style in entry.value) {
-        if (sgrPrefix(style) == leadSgr) return entry.key;
+        if (sgrPrefix(style) == leadSgr) {
+          if (hit != null && hit != entry.key) return null; // ambiguous
+          hit = entry.key;
+        }
       }
     }
-    return null;
+    return hit;
   }
 
   /// The live tint SGR for a role returned by [preStyledRole] — the

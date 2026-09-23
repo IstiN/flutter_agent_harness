@@ -51,7 +51,8 @@ String tuiCardGlyph(TuiCardPhase phase) => switch (phase) {
 /// The divider's raw layout (omp `#renderDivider`): a short left rule, a
 /// space, then the label. `ruleWidth = min([ruleWidth], width - labelWidth
 /// - 1)`; below one rule cell the label alone renders, truncated to
-/// [width]. RAW text in, RAW text out — paint via [tuiMessageDivider].
+/// [width]. RAW text in, RAW text out — callers own the paint role
+/// (the replay resume boundary paints it dim).
 String tuiMessageDividerLayout(String label, int width, {int ruleWidth = 10}) {
   width = width < 1 ? 1 : width;
   final labelWidth = tuiTextWidth(label);
@@ -60,19 +61,6 @@ String tuiMessageDividerLayout(String label, int width, {int ruleWidth = 10}) {
   if (rule < 1) return tuiFitWidth(label, width);
   return '${'─' * rule} $label';
 }
-
-/// The painted divider row: rule and label in the dim role (omp defaults:
-/// ruleColor `dim`, transcript call sites pass muted/dim labels).
-String tuiMessageDivider(String label, int width, {int ruleWidth = 10}) {
-  final raw = tuiMessageDividerLayout(label, width, ruleWidth: ruleWidth);
-  if (FaThemeController.instance.profile == null) return raw;
-  return tuiDim(raw);
-}
-
-/// The divider block: omp caches `["", divider, ""]` — a blank row above
-/// and below so turn groups breathe.
-List<String> tuiMessageDividerBlock(String label, int width, {int ruleWidth = 10}) =>
-    ['', tuiMessageDivider(label, width, ruleWidth: ruleWidth), ''];
 
 /// The user-message bubble (omp `chat/user-message.ts`): the message body
 /// on the full-width [TuiTheme.userMessageBg] band, one blank band row
@@ -193,17 +181,15 @@ String _paintCardTail(
 
 /// The card tint's raw background SGR prefix ('' without a profile).
 ///
-/// success/error map to the existing [TuiTheme.toolSuccessBg]/
-/// [TuiTheme.toolErrorBg] tints. pending/running ride [TuiTheme.highlight]
-/// until S1 lands the `toolPendingBg` role — the swap is one line here
-/// (`_current.toolPendingBg`), documented on the S1 seam.
+/// success/error/pending map to the [TuiTheme.toolSuccessBg]/
+/// [TuiTheme.toolErrorBg]/[TuiTheme.toolPendingBg] tints.
 String tuiCardTintSgr(TuiCardPhase phase) {
   final c = FaThemeController.instance;
   if (c.profile == null) return '';
   return switch (phase) {
     TuiCardPhase.success => c.toolSuccessBgSgr(),
     TuiCardPhase.error => c.toolErrorBgSgr(),
-    _ => c.toolPendingBgSgr(), // ponytail: S1's toolPendingBg completes this
+    _ => c.toolPendingBgSgr(),
   };
 }
 

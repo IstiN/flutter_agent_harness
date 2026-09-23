@@ -29,43 +29,31 @@ void main() {
 
   group('message divider (omp chrome/message-divider.ts)', () {
     test('wide terminal: short default rule of 10 + label', () {
-      expect(cells(tuiMessageDivider('Turn 2', 120)), '────────── Turn 2');
+      expect(cells(tuiMessageDividerLayout('Turn 2', 120)),
+          '────────── Turn 2');
     });
 
     test('rule shrinks to the width budget: min(10, width - label - 1)', () {
       // width 20, label 6 → budget 13 → rule stays 10 … width 14 → 7.
-      expect(cells(tuiMessageDivider('Turn 2', 20)), '────────── Turn 2');
-      expect(cells(tuiMessageDivider('Turn 2', 14)), '─────── Turn 2');
+      expect(cells(tuiMessageDividerLayout('Turn 2', 20)),
+          '────────── Turn 2');
+      expect(tuiMessageDividerLayout('Turn 2', 14), '─────── Turn 2');
     });
 
     test('no rule room: label alone, truncated to width', () {
-      expect(cells(tuiMessageDivider('abcdefgh', 6)), 'abcde…');
+      expect(cells(tuiMessageDividerLayout('abcdefgh', 6)), 'abcde…');
       // width < 1 clamps to 1 — never a crash, never a negative repeat.
       expect(tuiMessageDividerLayout('x', 0), isNotEmpty);
     });
 
     test('custom ruleWidth caps the rule', () {
-      expect(cells(tuiMessageDivider('T', 80, ruleWidth: 3)), '─── T');
-    });
-
-    test('block adds the blank breathing rows', () {
-      expect(
-        tuiMessageDividerBlock('resume', 80).map(cells),
-        ['', '────────── resume', ''],
-      );
-    });
-
-    test('no profile: raw structure, zero escapes', () {
-      FaThemeController.instance.profile = null;
-      final row = tuiMessageDivider('Turn', 80);
-      expect(row, '────────── Turn');
-      expect(row.contains('\x1b'), isFalse);
+      expect(cells(tuiMessageDividerLayout('T', 80, ruleWidth: 3)), '─── T');
     });
 
     test('width math is cell-accurate for wide labels', () {
       // '時時' is 4 cells: budget 80-4-1 = 75 → default 10 wins.
       expect(
-        cells(tuiMessageDivider('時時', 80)),
+        cells(tuiMessageDividerLayout('時時', 80)),
         '────────── 時時',
       );
     });

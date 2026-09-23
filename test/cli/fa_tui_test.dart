@@ -8,6 +8,7 @@ import 'package:flutter_agent_harness/src/cli/fuzzy_matcher.dart';
 import 'package:flutter_agent_harness/src/cli/tui_chrome.dart' show tuiChromeEnabled;
 import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:flutter_agent_harness/src/cli/tui_repl.dart';
+import 'package:flutter_agent_harness/src/cli/tui_text_width.dart' show tuiTextWidth;
 import 'package:test/test.dart';
 
 void main() {
@@ -1397,6 +1398,43 @@ void main() {
             .where((row) => row.contains('x'))
             .join();
         expect(joined, contains('x' * 150));
+      },
+    );
+
+    test(
+      'the sticky echo truncates by cell width, never mid-glyph (JVzl)',
+      () async {
+        var model = FaTuiModel(
+          callbacks: cancelCallbacks(const []),
+          isExited: () => false,
+          termWidth: 60,
+        );
+        // 40 double-cell emoji = 80 cells / 80 UTF-16 units; the old
+        // code-unit substring both misfit the term and could split a
+        // surrogate pair mid-row.
+        for (final r in ('🙋' * 40).runes) {
+          model = send(
+            model,
+            KeyPressMsg(
+              TeaKey(code: KeyCode.rune, text: String.fromCharCode(r)),
+            ),
+          );
+        }
+        final result = model.update(
+          KeyPressMsg(const TeaKey(code: KeyCode.enter)),
+        );
+        model = result.$1 as FaTuiModel;
+        await result.$2?.call();
+
+        final sticky = model.stickyLines.join('\n');
+        expect(sticky, contains('…'));
+        final strippedSticky = sticky.replaceAll(RegExp(r'\x1b\[[0-9;]*m'), '');
+        for (final row in strippedSticky.split('\n')) {
+          // Cell width, not UTF-16 length — double-cell glyphs counted.
+          expect(tuiTextWidth(row), lessThanOrEqualTo(60));
+          // utf8.encode throws on lone surrogates: no truncated pair.
+          expect(() => utf8.encode(row), returnsNormally);
+        }
       },
     );
 
