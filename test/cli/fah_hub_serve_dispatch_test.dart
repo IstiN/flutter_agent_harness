@@ -144,6 +144,13 @@ void main() {
       );
       // The file is parseable — the exact failure the ordering guards.
       expect(parseDapLocalHubState(file.readAsStringSync())!.port, 8787);
+      // The mode landed where chmod exists (POSIX CI): 0600, no group/
+      // world bits. Windows has no chmod — the umask mode stands.
+      if (!Platform.isWindows) {
+        final mode = FileStat.statSync(file.path).mode;
+        // 63 = 0o77 — group+world bits must be clear.
+        expect(mode & 63, 0, reason: 'only the owner may read $file');
+      }
     });
 
     test('port: a bad value keeps the default; secret passes through', () {

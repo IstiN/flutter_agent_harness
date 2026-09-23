@@ -96,16 +96,15 @@ void main() {
     );
     forget(hungRelay);
 
-    // A second, independent request must complete on another worker.
-    final watch = Stopwatch()..start();
+    // A second, independent request must complete on another worker —
+    // the .timeout(5s) itself is the responsiveness bound (a hub that
+    // serializes behind the hung relay fails HERE, with TimeoutException).
     final (res, body) = await relay(
       Uri.parse('http://127.0.0.1:${fast.port}/y'),
       bearer: hub.relaySecret,
     ).timeout(const Duration(seconds: 5));
-    watch.stop();
     expect(res.statusCode, 200);
     expect(body, 'fast');
-    expect(watch.elapsed, lessThan(const Duration(seconds: 5)));
 
     // And the health check rides the same detached loop.
     final healthz = await (HttpClient()
@@ -319,14 +318,20 @@ void main() {
       bearer: hub.relaySecret,
     );
     forget(first);
-    await Future<void>.delayed(const Duration(milliseconds: 100));
-    // ...the second queues...
+    // ...the second queues (synchronized on the observable queue, not a
+    // blind sleep — loaded-CI races)...
     final second = relay(
       Uri.parse('http://127.0.0.1:${hung.port}/x'),
       bearer: hub.relaySecret,
     );
     forget(second);
-    await Future<void>.delayed(const Duration(milliseconds: 100));
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
+    while (hub.relayQueueDepth < 1) {
+      if (DateTime.now().isAfter(deadline)) {
+        fail('the second relay never queued behind the first');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
     // ...the third is refused on the spot.
     final (res, body) = await relay(
       Uri.parse('http://127.0.0.1:${hung.port}/x'),
