@@ -201,6 +201,7 @@ import 'ask_menu.dart';
 import 'slash_menu.dart';
 import 'task_list.dart';
 import 'model_picker_table.dart';
+import 'tui_key_hints.dart';
 import 'text_format.dart';
 import 'terminal_setup.dart';
 import 'tui_helpers.dart';
@@ -353,6 +354,7 @@ class AgentCli {
       config.cubeSpec,
       homeDir: config.homeDir,
       workspaceRoot: _env.cwd,
+      pathProbe: config.fsProbe,
       os: config.osName,
       // A `backend: kernel` cube on a host without an enforcing backend
       // refuses by default; only an explicit spec.allowDegrade opt-in
