@@ -95,8 +95,10 @@ void main() {
     test('readRange reads a byte slice from real disk', () async {
       final bytes = Uint8List.fromList(List.generate(10, (i) => i));
       await fs.writeBinaryFile('r.bin', bytes);
-      expect((await fs.readRange('r.bin', 2, 5)).getOrThrow(),
-          Uint8List.fromList([2, 3, 4]));
+      expect(
+        (await fs.readRange('r.bin', 2, 5)).getOrThrow(),
+        Uint8List.fromList([2, 3, 4]),
+      );
     });
 
     test('readRange clamps end past EOF and start at EOF', () async {
@@ -156,21 +158,17 @@ void main() {
         );
       });
 
-      test(
-        'unreadable file maps to permissionDenied',
-        () async {
-          await fs.writeFile('locked.txt', 'secret');
-          final locked = '${tempDir.path}/locked.txt';
-          Process.runSync('chmod', ['000', locked]);
-          try {
-            final result = await fs.readTextFile('locked.txt');
-            expect(result.errorOrNull?.code, FileErrorCode.permissionDenied);
-          } finally {
-            Process.runSync('chmod', ['644', locked]);
-          }
-        },
-        skip: Platform.isWindows ? 'POSIX chmod semantics only' : false,
-      );
+      test('unreadable file maps to permissionDenied', () async {
+        await fs.writeFile('locked.txt', 'secret');
+        final locked = '${tempDir.path}/locked.txt';
+        Process.runSync('chmod', ['000', locked]);
+        try {
+          final result = await fs.readTextFile('locked.txt');
+          expect(result.errorOrNull?.code, FileErrorCode.permissionDenied);
+        } finally {
+          Process.runSync('chmod', ['644', locked]);
+        }
+      }, skip: Platform.isWindows ? 'POSIX chmod semantics only' : false);
 
       test('path through a regular file maps to notDirectory', () async {
         await fs.writeFile('plain.txt', 'data');
@@ -178,16 +176,12 @@ void main() {
         expect(result.errorOrNull?.code, FileErrorCode.notDirectory);
       });
 
-      test(
-        'a symlink loop maps to unknown',
-        () async {
-          Link('${tempDir.path}/loop-a').createSync('loop-b');
-          Link('${tempDir.path}/loop-b').createSync('loop-a');
-          final result = await fs.readTextFile('loop-a');
-          expect(result.errorOrNull?.code, FileErrorCode.unknown);
-        },
-        skip: Platform.isWindows ? 'POSIX symlink semantics only' : false,
-      );
+      test('a symlink loop maps to unknown', () async {
+        Link('${tempDir.path}/loop-a').createSync('loop-b');
+        Link('${tempDir.path}/loop-b').createSync('loop-a');
+        final result = await fs.readTextFile('loop-a');
+        expect(result.errorOrNull?.code, FileErrorCode.unknown);
+      }, skip: Platform.isWindows ? 'POSIX symlink semantics only' : false);
     });
 
     group('remove', () {
@@ -212,16 +206,12 @@ void main() {
         expect((await fs.remove('missing.txt', force: true)).isOk, isTrue);
       });
 
-      test(
-        'non-empty directory without recursive maps to invalid',
-        () async {
-          await fs.writeFile('full-dir/f.txt', 'data');
-          final result = await fs.remove('full-dir');
-          expect(result.errorOrNull?.code, FileErrorCode.invalid);
-          expect((await fs.exists('full-dir')).valueOrNull, isTrue);
-        },
-        skip: Platform.isWindows ? 'POSIX delete semantics only' : false,
-      );
+      test('non-empty directory without recursive maps to invalid', () async {
+        await fs.writeFile('full-dir/f.txt', 'data');
+        final result = await fs.remove('full-dir');
+        expect(result.errorOrNull?.code, FileErrorCode.invalid);
+        expect((await fs.exists('full-dir')).valueOrNull, isTrue);
+      }, skip: Platform.isWindows ? 'POSIX delete semantics only' : false);
 
       test('non-empty directory with recursive succeeds', () async {
         await fs.writeFile('tree/sub/f.txt', 'data');
@@ -346,6 +336,29 @@ void main() {
       final result = await env.exec('hello');
       expect(result.getOrThrow().exitCode, 42);
       expect(captured, ['hello']);
+    });
+
+    test('LocalExecutionEnv exposes renamePath (RenamableFileSystem) — '
+        'kernel-mode cube profile staging depends on it (issue #781 '
+        'follow-up)', () async {
+      final env = LocalExecutionEnv(cwd: tempDir.path);
+      // The capability probe the kernel staging path runs before it will
+      // even try: without the capability kernel mode refuses to exec
+      // ("renamePath not supported by LocalExecutionEnv").
+      expect(env, isA<RenamableFileSystem>());
+      final source = '${tempDir.path}/profile.sb.1.tmp';
+      final target = '${tempDir.path}/profile.sb';
+      await File(source).writeAsString('sandbox profile bytes');
+      final renamed = await env.renamePath(source, target);
+      expect(renamed.isOk, isTrue, reason: '${renamed.errorOrNull}');
+      expect(File(target).readAsStringSync(), 'sandbox profile bytes');
+      expect(File(source).existsSync(), isFalse);
+      // Renaming onto an existing target overwrites (POSIX semantics) —
+      // the atomic restage relies on it.
+      await File(source).writeAsString('restaged bytes');
+      final over = await env.renamePath(source, target);
+      expect(over.isOk, isTrue, reason: '${over.errorOrNull}');
+      expect(File(target).readAsStringSync(), 'restaged bytes');
     });
   });
 }

@@ -3,6 +3,14 @@
 ## 1.0.461
 
 
+- fix(env): `LocalExecutionEnv` forwards `renamePath` — kernel-mode cube
+  exec was dead since #803's atomic profile restage (the
+  `RenamableFileSystem` capability probe failed at the base env), making
+  every kernel-backend bash call fail with "profile staging failed" and
+  keeping the macOS nested-rw integration gate red on darwin dev
+  machines. Capability restored + unit regression; the full
+  `fa_cube_integration_test` suite is green again through real
+  sandbox-exec.
 - fix(781): green the nightly, nightly parity at PR time. Five
   `cli_visual` regressions red on main for days are fixed at the test
   layer — the product behavior was already correct in each case:
