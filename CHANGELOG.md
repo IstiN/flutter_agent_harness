@@ -4092,6 +4092,11 @@
 - chore: pin factory acc3ded — PR-head leg dispatch (#842)
 - ci: runner split — ARM pool for light/medium jobs, self-hosted M5 for macOS (#844)
 
+## 1.0.459
+
+- fix(cube): backend kernel means kernel-or-refuse, degrade only via explicit allowDegrade (#793) (#815)
+- ci(release): ASC version-floor pre-check + AAB gate self-test (#798) (#800)
+
 ## Unreleased
 
 ## Unreleased
