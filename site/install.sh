@@ -5,9 +5,15 @@
 #
 # What it does:
 #   1. Detects OS and architecture.
-#   2. Downloads the matching Fa binary from the latest GitHub Release.
-#   3. Installs it to a directory on your PATH.
-#   4. Prints a concise setup recipe and exits.
+#   2. Downloads the PINNED Fa release (FA_VERSION overrides; the resolved
+#      version is printed) from GitHub Releases.
+#   3. Verifies the artifact's provenance BEFORE installing: the release's
+#      SHA256SUMS manifest must carry a valid signature from the embedded
+#      release-signing key, and the archive must match the signed checksum
+#      (SEC-07 #795 — fail-closed on any missing/invalid provenance).
+#   4. Installs it to a directory on your PATH (macOS quarantine is stripped
+#      only AFTER verification).
+#   5. Prints a concise setup recipe and exits.
 #
 # For interactive configuration (provider, model, API key), run:
 #   curl -fsSL "https://fa1.dev/setup.sh" | sh
@@ -115,33 +121,52 @@ fi
 mkdir -p "$install_dir"
 target="$install_dir/$BINARY"
 
-# ── 3. Resolve download URL ──────────────────────────────────────────────────
-download_url="https://github.com/$REPO/releases/latest/download/$asset"
+# ── 3. Resolve version and download URLs ────────────────────────────────────
+# SEC-07 (#795): the default install is PINNED to a known-good release.
+# FA_VERSION overrides it explicitly (FA_VERSION=latest tracks the moving
+# latest release); the resolved version is always printed.
+FA_VERSION="${FA_VERSION:-0.1.452}"
+# Release tags are v-prefixed (releases/download/vX.Y.Z); accept both spellings.
+case "$FA_VERSION" in
+  latest|v*) ;;
+  *) FA_VERSION="v$FA_VERSION" ;;
+esac
+if [ "$FA_VERSION" = "latest" ]; then
+  release_base="https://github.com/$REPO/releases/latest/download"
+else
+  release_base="https://github.com/$REPO/releases/download/$FA_VERSION"
+fi
+# FA_RELEASE_BASE_URL exists for the verification self-test (local fixture
+# "releases"); production installs never set it.
+release_base="${FA_RELEASE_BASE_URL:-$release_base}"
+info "Installing Fa version: $FA_VERSION"
+asset_url="$release_base/$asset"
+sums_url="$release_base/SHA256SUMS"
+sig_url="$release_base/SHA256SUMS.sig"
 
-# ── 4. Download and install bundle ───────────────────────────────────────────
+fetch() { # fetch <url> <out-file>
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$1" -o "$2"
+  else
+    wget -qO "$2" "$1"
+  fi
+}
+
+# ── 4. Download release + provenance, verify BEFORE installing ──────────────
 info "Downloading Fa for ${os}-${arch}..."
 dl_ok=false
 tmp_archive="$(mktemp 2>/dev/null || mktemp -t fa-archive)"
-if command -v curl >/dev/null 2>&1; then
-  if curl -fSL --progress-bar "$download_url" -o "$tmp_archive" 2>/dev/null; then
-    dl_ok=true
-  else
-    curl_status=$?
-    warn "Download failed (curl exit $curl_status): $download_url"
-  fi
+if fetch "$asset_url" "$tmp_archive"; then
+  dl_ok=true
 else
-  if wget --show-progress -qO "$tmp_archive" "$download_url" 2>/dev/null; then
-    dl_ok=true
-  else
-    warn "Download failed: $download_url"
-  fi
+  warn "Download failed: $asset_url"
 fi
 
 if [ "$dl_ok" != true ]; then
-  err "No prebuilt binary is available for ${os}-${arch} right now."
+  err "E_ASSET_MISSING: no prebuilt binary is available for ${os}-${arch} right now."
   say ""
   say "  The installer tried to fetch:"
-  say "    $download_url"
+  say "    $asset_url"
   say ""
   say "  Common causes:"
   say "    • A release is still building — wait a minute and retry."
@@ -156,13 +181,130 @@ if [ "$dl_ok" != true ]; then
   exit 1
 fi
 
+# Provenance gate (SEC-07 #795): the checksum manifest is only trusted when
+# it carries a valid signature from the release-signing key. The private key
+# lives in the repository (FA_RELEASE_SIGNING_KEY secret) — a channel
+# separate from the release assets — so a checksum file served from the SAME
+# compromised source as the binary cannot vouch for itself. Fail-closed:
+# missing or invalid provenance never degrades to "install anyway".
+tmp_sums="$(mktemp 2>/dev/null || mktemp -t fa-sums)"
+tmp_sig="$(mktemp 2>/dev/null || mktemp -t fa-sig)"
+if ! fetch "$sums_url" "$tmp_sums"; then
+  err "E_PROVENANCE_MISSING: release $FA_VERSION publishes no SHA256SUMS — refusing to install unverified binaries."
+  rm -rf "$tmp_archive" "$tmp_sums" "$tmp_sig"
+  exit 1
+fi
+if ! fetch "$sig_url" "$tmp_sig"; then
+  err "E_PROVENANCE_MISSING: release $FA_VERSION publishes no SHA256SUMS.sig signature — refusing to install without provenance."
+  rm -rf "$tmp_archive" "$tmp_sums" "$tmp_sig"
+  exit 1
+fi
+
+# Trust anchor: the release-signing public key (public material, embedded
+# here at generation time from install.signing_public_key in
+# install-config.yaml — the single source). FA_SIGNING_PEM overrides it for
+# the fixture self-test only.
+TRUSTED_SIGNING_PEM='-----BEGIN PUBLIC KEY-----
+MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAxdC14PjIMylwleL1r1db
+ok0WiVkQxHPcPyuJ4yc0E7XT63oIPKAuNdSHaQuejKBncZtwAkAUC95FQL2f5kx7
+xaFJqggy35347uD5WQFrSoxaV+0rS5Gju7bCtb75Ffy7TAh6vMQX3dgC/Ushhzf6
+NL4LvK2J8NsVDoG7qqduCMf3t+k+oBZJhZxSs47v12E+tp6StJ9efpfM7oDELuBA
+ujVQlz39rTS2DFH2A7EaOyP5CmEdqU0ApXkMcOmS4RTlRfgG4LZSFDoZSO4a83gY
+J0YgT74puGyVMGzpgGMD9BmSwDmXhiHPXCOqcpyjY+LmGMvjhrjmHYfITOlsWjBr
+Xx5Vt2sstEDjeHr1AydPi28bSV30pnbD/OKhzSE6DK5pQne9PO77ybJw0O5dDxju
+vv5Bof7joUPkBMbOGhbeiEqDd3J+A0Ue88OrArEj3SlxePERwcMQbzxOXrD+ku7N
+hlsEvUTQj76J2Gyuh9eVFbRnL6hrTKepycWC8eNezvjjfMXMioGoWK6nNfaAdwXn
+TtNIIK21mMEHc7rLxohg9+x14aD+7FXgI16iP+Tm4FAC2OTnvm1iaJ0Bd/0Tg094
+R4ENyyWPuB5SnBK0c4wHDHVM2T2872IVOVKboXFp9ES0p+BRsagG6WT95tg7UACq
+PhEfPuI1BbH6frKA2swu3JECAwEAAQ==
+-----END PUBLIC KEY-----'
+if [ -n "${FA_SIGNING_PEM:-}" ]; then
+  trust_pem="$FA_SIGNING_PEM"
+else
+  trust_pem="$(mktemp 2>/dev/null || mktemp -t fa-pem)"
+  printf '%s\n' "$TRUSTED_SIGNING_PEM" > "$trust_pem"
+fi
+
+# openssl is mandatory for the gate (gh-814 r2): a missing tool gets its own
+# named error so it can never masquerade as "verification failed" — or worse,
+# as "verified".
+if ! command -v openssl >/dev/null 2>&1; then
+  err "E_PROVENANCE_UNAVAILABLE: openssl is required to verify release provenance but was not found on PATH. Nothing was installed."
+  rm -rf "$tmp_archive" "$tmp_sums" "$tmp_sig"
+  exit 1
+fi
+
+info "Verifying release provenance (signed checksums)..."
+if ! openssl dgst -sha256 -verify "$trust_pem" -signature "$tmp_sig" "$tmp_sums" >/dev/null 2>&1; then
+  err "E_PROVENANCE_INVALID: SHA256SUMS signature verification FAILED for release $FA_VERSION — the release channel may be compromised. Nothing was installed."
+  rm -rf "$tmp_archive" "$tmp_sums" "$tmp_sig"
+  [ "$trust_pem" = "${FA_SIGNING_PEM:-}" ] || rm -f "$trust_pem"
+  exit 1
+fi
+ok "Checksum manifest signature verified."
+
+if command -v sha256sum >/dev/null 2>&1; then
+  actual_sum="$(sha256sum "$tmp_archive" | awk '{print $1}')"
+else
+  actual_sum="$(shasum -a 256 "$tmp_archive" | awk '{print $1}')"
+fi
+expected_sum="$(awk -v a="$asset" '$2 == a { print $1 }' "$tmp_sums")"
+rm -rf "$tmp_sums" "$tmp_sig"
+if [ -z "$expected_sum" ]; then
+  err "E_CHECKSUM_MISSING: $asset is not listed in the signed SHA256SUMS of release $FA_VERSION. Nothing was installed."
+  rm -rf "$tmp_archive"
+  [ "$trust_pem" = "${FA_SIGNING_PEM:-}" ] || rm -f "$trust_pem"
+  exit 1
+fi
+if [ "$actual_sum" != "$expected_sum" ]; then
+  err "E_CHECKSUM_MISMATCH: downloaded $asset does not match the signed checksum (expected $expected_sum, got $actual_sum). The download may be tampered with. Nothing was installed."
+  rm -rf "$tmp_archive"
+  [ "$trust_pem" = "${FA_SIGNING_PEM:-}" ] || rm -f "$trust_pem"
+  exit 1
+fi
+ok "Archive checksum verified."
+[ "$trust_pem" = "${FA_SIGNING_PEM:-}" ] || rm -f "$trust_pem"
+
 # dart build cli produces a bundle/ dir: bundle/bin/fa + bundle/lib/*.dylib
-# Extract the bundle, copy bin/ and lib/ into the install dir.
+# Extract into a TEMP dir — nothing touches the install directory until the
+# artifact above has passed the provenance gate.
 tmp_extract="$(mktemp -d 2>/dev/null || mktemp -d -t fa-extract)"
 if ! tar -xzf "$tmp_archive" -C "$tmp_extract" 2>/dev/null; then
-  err "Downloaded archive is corrupt or empty."
+  err "E_ARCHIVE_CORRUPT: downloaded archive is corrupt or empty. Nothing was installed."
   rm -rf "$tmp_extract" "$tmp_archive"
   exit 1
+fi
+rm -f "$tmp_archive"
+
+# macOS code-signature identity check (SEC-07 contract 3): verified BEFORE
+# the binary lands in the install directory. Release CLI binaries are
+# ad-hoc signed today — their provenance is the signed-checksum gate above;
+# once releases carry a real Developer ID identity, set (or bake in)
+# FA_EXPECTED_SIGNER to enforce the publisher identity and abort otherwise.
+if [ "$os" = "macos" ] && command -v codesign >/dev/null 2>&1 && [ -n "${FA_EXPECTED_SIGNER:-}" ]; then
+  if ! codesign --verify --strict "$tmp_extract/bundle/bin/fa" >/dev/null 2>&1; then
+    err "E_CODESIGN_INVALID: the binary's code signature is invalid for release $FA_VERSION. Nothing was installed."
+    rm -rf "$tmp_extract"
+    exit 1
+  fi
+  authority="$(codesign -dv "$tmp_extract/bundle/bin/fa" 2>&1 | sed -n 's/^Authority=//p' | head -1)"
+  case "$authority" in
+    # Anchored (gh-814 r2): the expected identity must PREFIX the signing
+    # authority — a substring match would accept lookalike CN fragments.
+    "$FA_EXPECTED_SIGNER"*)
+      ok "Code signature identity verified: $authority"
+      ;;
+    "")
+      err "E_SIGNER_MISSING: expected signer '$FA_EXPECTED_SIGNER' but the binary carries no signature identity. Nothing was installed."
+      rm -rf "$tmp_extract"
+      exit 1
+      ;;
+    *)
+      err "E_SIGNER_MISMATCH: binary signed by '$authority', expected '$FA_EXPECTED_SIGNER'. Nothing was installed."
+      rm -rf "$tmp_extract"
+      exit 1
+      ;;
+  esac
 fi
 
 mkdir -p "$install_dir/lib"
@@ -176,14 +318,16 @@ fi
 if [ -d "$tmp_extract/bundle/lib" ]; then
   cp -r "$tmp_extract/bundle/lib/"* "$install_dir/lib/" 2>/dev/null || true
 fi
-rm -rf "$tmp_extract" "$tmp_archive"
+rm -rf "$tmp_extract"
 
 ok "Installed $target"
 
-# macOS quarantine / signature hardening: downloaded executables are tagged by
-# Gatekeeper and will be killed on launch unless the quarantine attribute is
-# removed. Re-signing ad-hoc makes the binary runnable from any directory on
-# Apple Silicon, even without a paid Developer ID certificate.
+# macOS quarantine / signature hardening — runs ONLY after the provenance
+# gate above succeeded (SEC-07 #795: no blind quarantine strip). Downloaded
+# executables are tagged by Gatekeeper and will be killed on launch unless
+# the quarantine attribute is removed. Re-signing ad-hoc makes the binary
+# runnable from any directory on Apple Silicon, even without a paid
+# Developer ID certificate.
 if [ "$os" = "macos" ]; then
   if command -v xattr >/dev/null 2>&1; then
     xattr -dr com.apple.quarantine "$target" 2>/dev/null || true
