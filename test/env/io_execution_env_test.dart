@@ -339,8 +339,8 @@ void main() {
     });
 
     test('LocalExecutionEnv exposes renamePath (RenamableFileSystem) — '
-        'kernel-mode cube profile staging depends on it (issue #781 '
-        'follow-up)', () async {
+        'kernel-mode cube profile staging depends on it (the #803 '
+        'regression)', () async {
       final env = LocalExecutionEnv(cwd: tempDir.path);
       // The capability probe the kernel staging path runs before it will
       // even try: without the capability kernel mode refuses to exec

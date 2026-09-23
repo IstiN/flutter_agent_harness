@@ -28,7 +28,9 @@ final class OpenRouterOAuthCallbackServer {
   /// it must chain that real release instead of no-oping on the nulled
   /// field — otherwise `await close()` returned with the port still bound
   /// and a rebind raced the release ("The shared flag to bind() needs to
-  /// be `true` …" under CI load — gh-781).
+  /// be `true` …" under CI load — gh-781). Concurrent closers awaiting the
+  /// same future may all clear it — the cleared field only means "no close
+  /// is pending", never "a close is missing".
   Future<void>? _closing;
 
   /// The callback URL to pass to OpenRouter, or null before [start].
@@ -149,8 +151,13 @@ final class OpenRouterOAuthCallbackServer {
     }
     final closing = _closing;
     if (closing != null) {
-      await closing;
-      _closing = null;
+      // finally, not after-await: an errored close must not stay pinned in
+      // _closing and rethrow out of every later close()/start().
+      try {
+        await closing;
+      } finally {
+        _closing = null;
+      }
     }
   }
 }
