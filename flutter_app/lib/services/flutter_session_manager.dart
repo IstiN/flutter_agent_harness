@@ -66,6 +66,25 @@ final class SessionTooLargeException implements Exception {
       '(${metadata.sizeBytes} bytes > $limitBytes limit)';
 }
 
+/// A session delete failed (issue #863): the id resolved to nothing (a
+/// stale drawer row, deleted elsewhere, or an env/repo mismatch) or the
+/// delete did not stick. The UI surfaces this instead of keeping the row
+/// silently — a delete is never a silent no-op.
+final class SessionDeleteException implements Exception {
+  /// Creates the exception.
+  SessionDeleteException(this.sessionId, {this.reason = 'is not in the '
+      'session store (stale row — nothing was deleted)'});
+
+  /// The id that could not be deleted.
+  final String sessionId;
+
+  /// What went wrong, in user-visible words.
+  final String reason;
+
+  @override
+  String toString() => 'Session ${sessionId.substring(0, 8)}… $reason';
+}
+
 /// Opening this session for DRIVE was refused: another host holds a
 /// live ownership lease (#428). No takeover exists — the app opens the
 /// session as a VIEWER (attach path) and the composer mails the owner.
@@ -720,6 +739,9 @@ final class FlutterSessionManager extends ChangeNotifier {
     if (_heldLeasePath != null) _releaseDriveLease();
     managed.service.abort();
     if (deleteFile) {
+      // E2 (issue #863): let the aborted run's final persist settle BEFORE
+      // the file disappears, or that persist recreates it as an orphan.
+      await managed.service.waitForIdle();
       final metadata = (await _repo.list())
           .where((m) => m.id == sessionId)
           .firstOrNull;
@@ -727,7 +749,23 @@ final class FlutterSessionManager extends ChangeNotifier {
       // under us) must not crash the close — the manager forgets it
       // either way.
       if (metadata != null) {
-        await _repo.delete(metadata, actor: 'app:close');
+        try {
+          await _repo.delete(metadata, actor: 'app:close');
+        } on Object catch (error) {
+          debugPrint(
+            '[fah][sessions] delete: id=$sessionId outcome=failed ($error)',
+          );
+          rethrow;
+        }
+        debugPrint(
+          '[fah][sessions] delete: id=$sessionId outcome=ok (closed live '
+          'session, file removed)',
+        );
+      } else {
+        debugPrint(
+          '[fah][sessions] delete: id=$sessionId outcome=ok (no file left '
+          'to delete — already gone)',
+        );
       }
     } else {
       // A session nobody wrote to leaves no file behind.
@@ -743,15 +781,54 @@ final class FlutterSessionManager extends ChangeNotifier {
   /// Deletes a session outright: a live one is closed (aborting any run)
   /// with its file removed; a persisted-only one ([metadata]) is deleted
   /// straight from the repo. Powers the sidebar tile menu.
+  ///
+  /// Issue #863: no silent outcomes. An id that resolves neither live nor
+  /// in the repo listing throws [SessionDeleteException] (and notifies so
+  /// hosts rebuild the list from the source of truth), a successful delete
+  /// is verified against a FRESH listing, and every attempt logs
+  /// `[fah][sessions] delete` with the id + outcome.
   Future<void> deleteSession(String id, {SessionMetadata? metadata}) async {
+    debugPrint(
+      '[fah][sessions] delete: id=$id outcome=attempt '
+      '(live=${_sessions.containsKey(id)}, '
+      'persisted=${metadata != null ? 'caller-supplied' : 'resolve'})',
+    );
     if (_sessions.containsKey(id)) {
-      await closeSession(id, deleteFile: true);
+      await closeSession(id, deleteFile: true); // notifies on completion
       return;
     }
     final SessionMetadata? resolved =
         metadata ?? (await _repo.list()).where((m) => m.id == id).firstOrNull;
-    if (resolved == null) return; // already gone (deleted elsewhere)
-    await _repo.delete(resolved, actor: 'app:sidebar');
+    if (resolved == null) {
+      debugPrint(
+        '[fah][sessions] delete: id=$id outcome=not-found '
+        '(not live, not in the repo listing — surfacing instead of '
+        'silently keeping the row)',
+      );
+      // Not a pass: hosts listening rebuild from the source of truth, so
+      // the stale row goes even though nothing was deleted here.
+      notifyListeners();
+      throw SessionDeleteException(id);
+    }
+    try {
+      await _repo.delete(resolved, actor: 'app:sidebar');
+    } on Object catch (error) {
+      debugPrint(
+        '[fah][sessions] delete: id=$id outcome=failed ($error)',
+      );
+      rethrow;
+    }
+    // Verify against the source of truth (issue #863 AC1/AC3): a FRESH
+    // listing, not the caller's cached rows, must no longer contain the id.
+    final stillListed = (await _listAcrossRoots()).any((m) => m.id == id);
+    if (stillListed) {
+      const failure = 'still in the session store after the delete';
+      debugPrint(
+        '[fah][sessions] delete: id=$id outcome=failed ($failure)',
+      );
+      throw SessionDeleteException(id, reason: failure);
+    }
+    debugPrint('[fah][sessions] delete: id=$id outcome=ok');
     notifyListeners();
   }
 

@@ -64,6 +64,58 @@ AgentService _fakeService(ExecutionEnv env) {
   );
 }
 
+/// A minimal host holding the sidebar's persisted list and rebuilding it
+/// from the manager's SOURCE-OF-TRUTH listing on every manager change —
+/// the same contract [WideLayoutShell]'s sidebar and the chat sheet's
+/// drawer follow (issue #863 AC3).
+class _ReloadingHost extends StatefulWidget {
+  const _ReloadingHost({required this.manager, required this.initial, this.names});
+
+  final FlutterSessionManager manager;
+  final List<SessionMetadata> initial;
+  final SessionNamesStore? names;
+
+  @override
+  State<_ReloadingHost> createState() => _ReloadingHostState();
+}
+
+class _ReloadingHostState extends State<_ReloadingHost> {
+  late List<SessionMetadata> _persisted = widget.initial;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.manager.addListener(_reload);
+  }
+
+  Future<void> _reload() async {
+    final all = await widget.manager.listPersistedSessions();
+    if (mounted) setState(() => _persisted = all);
+  }
+
+  @override
+  void dispose() {
+    widget.manager.removeListener(_reload);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      theme: buildFahTheme(),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: Scaffold(
+        body: SidebarSessionsList(
+          manager: widget.manager,
+          sessionNamesStore: widget.names,
+          persistedSessions: _persisted,
+        ),
+      ),
+    );
+  }
+}
+
 void main() {
   setUpAll(() async {
     await initializeDateFormatting('en');
@@ -554,6 +606,85 @@ void main() {
     expect(await repo.list(), isEmpty);
     expect(manager.active, isNotNull);
     expect(manager.active!.id, isNot(meta.id));
+  });
+
+  testWidgets('a delete that does not stick surfaces the named failure '
+      '(issue #863 AC2/E3)', (tester) async {
+    final real = await persistSession(userText: 'haunted');
+    // The row's cached metadata points at a path that no longer resolves —
+    // the stale-row/env-mismatch shape from the issue. The session itself
+    // is still listed, so nothing was really deleted.
+    final staleRow = SessionMetadata(
+      id: real.id,
+      createdAt: real.createdAt,
+      cwd: real.cwd,
+      path: '/sessions/gone-dir/stale-copy.jsonl',
+      lastUpdatedAt: real.lastUpdatedAt,
+    );
+
+    await tester.pumpWidget(
+      harness(
+        names: SessionNamesStore.inMemory({real.id: 'Haunted'}),
+        persisted: [staleRow],
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.more_horiz).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+    await tester.pumpAndSettle();
+
+    // The failure is NAMED in the UI — never a silent no-op.
+    expect(find.textContaining('Could not delete session'), findsOneWidget);
+    // And the surviving session was not lost silently either.
+    expect(
+      (await repo.list()).where((m) => m.id == real.id),
+      isNotEmpty,
+    );
+  });
+
+  testWidgets('after a delete the list rebuilds from the repo listing, not '
+      'the cached rows (issue #863 AC3)', (tester) async {
+    final gone = await persistSession(userText: 'vanish');
+    final stay = await persistSession(userText: 'stay');
+    // Hermetic listing: no shared App Group root leaking dev-box sessions.
+    final local = FlutterSessionManager(
+      env: env,
+      sessionsRoot: '/sessions',
+      includeSharedSessionRoots: false,
+    );
+
+    await tester.pumpWidget(
+      _ReloadingHost(
+        manager: local,
+        initial: [gone, stay],
+        names: SessionNamesStore.inMemory({gone.id: 'Vanish', stay.id: 'Stay'}),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Vanish'), findsOneWidget);
+
+    // The persisted tail sorts newest-activity first: open the menu on the
+    // VANISH tile explicitly, not just the first row.
+    final vanishTile = find
+        .ancestor(of: find.text('Vanish'), matching: find.byType(SessionTile))
+        .first;
+    await tester.tap(
+      find.descendant(of: vanishTile, matching: find.byIcon(Icons.more_horiz)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+    await tester.pumpAndSettle();
+
+    // The host reloaded from the source of truth: the deleted row is gone
+    // without any manual onDeleted nudge, the survivor stays.
+    expect(find.text('Vanish'), findsNothing);
+    expect(find.text('Stay'), findsOneWidget);
   });
 
   /// Regression for the user-reported bug: clicking an OLDER session in the
