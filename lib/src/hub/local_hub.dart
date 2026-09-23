@@ -880,13 +880,9 @@ typedef RelayLimits = ({
 /// constructor default (issue #794 review: two 10 s literals).
 const Duration relayDefaultConnectTimeout = Duration(seconds: 10);
 
-/// The relay limits everything runs with unless told otherwise — the
-/// SINGLE source of truth for [handleRelayRequest]'s default and the
-/// [LocalHub] constructor defaults (issue #794 review: the 10 MiB body
-/// cap lived as two literals).
 /// The default relay body cap — the single literal behind
-/// [relayDefaultLimits] and the [LocalHub] constructor default (issue
-/// #794 review: the 10 MiB cap lived as two literals).
+/// [relayDefaultLimits.maxBodyBytes] and the [LocalHub] constructor
+/// default (issue #794 review: the 10 MiB cap lived as two literals).
 const relayDefaultMaxBodyBytes = 10 * 1024 * 1024;
 
 /// The default per-chunk idle window on the upstream leg — shared the
@@ -894,6 +890,10 @@ const relayDefaultMaxBodyBytes = 10 * 1024 * 1024;
 /// directly, so the knobs are named and the record assembles them).
 const relayDefaultIdleTimeout = Duration(seconds: 30);
 
+/// The relay limits everything runs with unless told otherwise — the
+/// SINGLE source of truth for [handleRelayRequest]'s default and the
+/// [LocalHub] constructor defaults (issue #794 review: the 10 MiB body
+/// cap lived as two literals).
 const RelayLimits relayDefaultLimits = (
   maxBodyBytes: relayDefaultMaxBodyBytes,
   connectTimeout: relayDefaultConnectTimeout,
@@ -1135,7 +1135,8 @@ Future<void> _relayPreflight(HttpRequest request, String? allowedOrigin) async {
 
 /// Bounded drain of an over-cap relay body: a client that finished
 /// within the window gets the 413 on a clean close; one still pumping
-/// is cut off (raw-socket fallback). True = the body arrived COMPLETE.
+/// is cut off (its named answer is then close-only — see
+/// [_relayError]). True = the body arrived COMPLETE.
 Future<bool> _relayDrainOverCap(
   StreamSubscription<Uint8List> sub,
   Completer<void> consumed,
@@ -1167,7 +1168,7 @@ Future<(Uri, Map<String, dynamic>)?> _relayEnvelope(
   // Whether the request body arrived COMPLETE (so the named answer can
   // ride a clean HttpResponse close); a body still inbound makes
   // HttpResponse.close destroy the socket — an RST that eats the
-  // answer — and forces the raw-socket fallback in _relayError.
+  // answer — and makes the named answer close-only (see _relayError).
   var bodyComplete = false;
   try {
     final builder = BytesBuilder(copy: false);
@@ -1207,8 +1208,8 @@ Future<(Uri, Map<String, dynamic>)?> _relayEnvelope(
     if (capHit.isCompleted) {
       // Over the cap: drain a bounded window — a client that finished
       // anyway gets the 413 on a clean close; one still pumping is cut
-      // off and the raw-socket fallback answers. Either way the worker
-      // is freed NOW, not after the upload.
+      // off (the answer is then close-only, see _relayError). Either
+      // way the worker is freed NOW, not after the upload.
       bodyComplete = await _relayDrainOverCap(sub, consumed);
       throw const RelayLimitExceeded(
         HttpStatus.requestEntityTooLarge,
@@ -1232,7 +1233,7 @@ Future<(Uri, Map<String, dynamic>)?> _relayEnvelope(
       allowedOrigin,
       // The answer rides the normal HttpResponse only when the request
       // body arrived complete; a stalled (408) or still-pumping (413
-      // past the drain window) body forces the raw-socket fallback —
+      // past the drain window) body makes the named answer close-only (see _relayError) —
       // see _relayError (issue #794 review).
       bodyConsumed: bodyComplete,
     );
@@ -1254,10 +1255,15 @@ Future<(Uri, Map<String, dynamic>)?> _relayEnvelope(
 /// Answers a NAMED limit error (issue #794): 413 / 408 / 503 / 504
 /// shapes carry `{"error": "<name>"}`. [bodyConsumed]: whether the
 /// request body was fully read on the answering path — an UNconsumed
-/// stalled body cannot be answered through [HttpResponse] (its close
-/// destroys the socket), so those answers go out on the raw socket.
-/// Swallows socket failures — the client being gone is often WHY this
-/// answers.
+/// body gets a bounded drain first, and if it still never finishes,
+/// the answer goes CLOSE-ONLY: dart:io offers no way to deliver an
+/// HTTP answer for an unconsumed request body (HttpResponse.close
+/// destroys the socket; detachSocket either throws mid-cancel or
+/// auto-commits a 200 before the hand-write — both measured, issue
+/// #794 review). The write below is then best-effort and may surface
+/// to the client as a bare close; the deterministic guarantee is the
+/// named log line and the freed worker. Swallows socket failures —
+/// the client being gone is often WHY this answers.
 Future<void> _relayError(
   HttpRequest request,
   int status,
@@ -1265,18 +1271,13 @@ Future<void> _relayError(
   String? allowedOrigin, {
   bool bodyConsumed = true,
 }) async {
-  final bodyComplete = bodyConsumed || await _drainRequestBounded(request);
-  if (!bodyComplete) {
-    // The declared body never finished: HttpResponse.close on such a
-    // request destroys the socket (an RST that eats the answer), so
-    // skip HttpResponse and hand-write the answer on the raw socket.
-    await _relayRawError(request, status, name);
-    return;
-  }
+  final answerable = bodyConsumed || await _drainRequestBounded(request);
   try {
     _relayMarkRejection(request);
+    if (answerable) {
+      _relayCors(request, allowedOrigin);
+    }
     request.response.statusCode = status;
-    _relayCors(request, allowedOrigin);
     request.response.write('{"error":"$name"}');
     await request.response.close();
   } on Object {
@@ -1284,56 +1285,9 @@ Future<void> _relayError(
   }
 }
 
-/// The reason phrases for the status codes the relay answers with (the
-/// raw-socket fallback hand-writes the status line).
-const _relayReasonPhrases = {
-  HttpStatus.badRequest: 'Bad Request',
-  HttpStatus.unauthorized: 'Unauthorized',
-  HttpStatus.forbidden: 'Forbidden',
-  HttpStatus.notFound: 'Not Found',
-  HttpStatus.requestEntityTooLarge: 'Payload Too Large',
-  HttpStatus.requestTimeout: 'Request Timeout',
-  HttpStatus.serviceUnavailable: 'Service Unavailable',
-  HttpStatus.gatewayTimeout: 'Gateway Timeout',
-  HttpStatus.badGateway: 'Bad Gateway',
-};
-
-/// Answers [status] on the RAW socket ([HttpResponse.detachSocket]):
-/// for a request whose declared body never arrived, dart:io's response
-/// close destroys the socket (an RST that eats the answer), so the
-/// named error must be hand-written and closed gracefully. The
-/// hub-rejection and correlation markers ride along — captured BEFORE
-/// the detach, after which the response headers are gone (issue #794
-/// review).
-Future<void> _relayRawError(
-  HttpRequest request,
-  int status,
-  String name,
-) async {
-  try {
-    final relayId = request.response.headers.value('x-fah-relay-id');
-    final raw = await request.response.detachSocket();
-    final body = '{"error":"$name"}';
-    final phrase = _relayReasonPhrases[status] ?? 'Error';
-    raw.write(
-      'HTTP/1.1 $status $phrase\r\n'
-      'Content-Type: application/json\r\n'
-      'x-fah-relay: rejection\r\n'
-      '${relayId == null ? '' : 'x-fah-relay-id: $relayId\r\n'}'
-      'Content-Length: ${utf8.encode(body).length}\r\n'
-      'Connection: close\r\n'
-      '\r\n'
-      '$body',
-    );
-    await raw.flush();
-    await raw.close();
-  } on Object {
-    // Nothing left to answer with.
-  }
-}
-
 /// The bounded window a limit-hit request body may take to finish
-/// arriving before its named answer goes out on the raw socket.
+/// arriving before its named answer is attempted close-only (see
+/// [_relayError] for why delivery is then not guaranteed).
 const _relayDrainWindow = Duration(milliseconds: 250);
 
 /// Best-effort bounded drain of an unread request body; returns whether
