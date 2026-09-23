@@ -503,7 +503,8 @@ final class _KernelRun {
   Future<bool> stageVerified() async {
     final blocked = blockedNote;
     if (blocked != null) {
-      stagingError = '$blocked — set spec.allowDegrade: true to run in '
+      stagingError =
+          '$blocked — set spec.allowDegrade: true to run in '
           'policy mode, or narrow the read-write mounts';
       return false;
     }
@@ -566,6 +567,10 @@ final class _KernelRun {
   // TODO(cube): the sweep runs once per binding and is best-effort — a
   // failed sweep leaves this binding's `.tmp` orphans until the next
   // boot; a retry keyed off [stagingError] would close the window.
+  // TODO(cube): SandboxedExecutionEnv.startShellJob's `prepared == null`
+  // arm (probe OK, then the re-verification restage fails — the
+  // probe-then-tamper window) is pinned only at the [SandboxedShell]
+  // level; an env-level stateful fake would cover it directly.
   Future<void> _sweepStagingDir() async {
     final slash = profilePath.lastIndexOf('/');
     if (slash <= 0) return;

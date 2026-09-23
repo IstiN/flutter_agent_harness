@@ -966,6 +966,36 @@ void main() {
       expect(inner.commands.length, 1);
     });
 
+    test('a post-probe restage failure refuses exec (probe-then-tamper '
+        'window)', () async {
+      final inner = _RecordingShell()
+        ..result = const Ok(
+          ShellExecResult(stdout: '', stderr: '', exitCode: 0),
+        );
+      final fs = _RenamingFs();
+      final shell = SandboxedShell(
+        inner,
+        kernelSpec(),
+        fs: fs,
+        os: 'macos',
+        homeDir: '/home',
+      );
+      // The probe stages and verifies once.
+      expect(await shell.startupFailure(), isNull);
+      // Then the guest tampers AND the fs can no longer rename: the
+      // re-verification must fail closed instead of exec-ing tampered
+      // bytes (this is the fail-closed arm behind env-level
+      // `prepared == null`).
+      fs.broken = true;
+      final profilePath = fs.files.keys.firstWhere((p) => p.endsWith('.sb'));
+      fs.tamper(profilePath);
+      final error = (await shell.exec('git status')).errorOrNull;
+      expect(error!.code, ExecutionErrorCode.spawnError);
+      expect(error.message, contains('profile staging failed'));
+      // Only the probe's wrapped no-op ever ran.
+      expect(inner.commands.length, 1);
+    });
+
     test(
       'a normal non-zero result inside the sandbox passes through',
       () async {
