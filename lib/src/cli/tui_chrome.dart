@@ -165,19 +165,18 @@ String tuiToolCardHeader(
 String tuiCardTintSgr(TuiCardPhase phase) {
   final c = FaThemeController.instance;
   if (c.profile == null) return '';
-  final tint = switch (phase) {
-    TuiCardPhase.success => c.current.toolSuccessBg,
-    TuiCardPhase.error => c.current.toolErrorBg,
-    _ => c.current.highlight, // ponytail: S1's toolPendingBg completes this
+  return switch (phase) {
+    TuiCardPhase.success => c.toolSuccessBgSgr(),
+    TuiCardPhase.error => c.toolErrorBgSgr(),
+    _ => c.toolPendingBgSgr(), // ponytail: S1's toolPendingBg completes this
   };
-  return c.sgrPrefix(tint);
 }
 
 Style _phaseStyle(FaThemeController c, TuiCardPhase phase) => switch (phase) {
-  TuiCardPhase.success => c.current.success,
-  TuiCardPhase.error => c.current.error,
-  TuiCardPhase.pending => c.current.muted,
-  TuiCardPhase.running => c.current.accent,
+  TuiCardPhase.success => c.cardSuccessStyle,
+  TuiCardPhase.error => c.cardErrorStyle,
+  TuiCardPhase.pending => c.cardPendingStyle,
+  TuiCardPhase.running => c.cardRunningStyle,
 };
 
 final _sgrEscapeRe = RegExp(r'\x1b\[[0-9;]*m');

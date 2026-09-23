@@ -966,6 +966,26 @@ final class FaThemeController {
   /// Renders [glyph] in [style] (the tool-row state rail).
   String border(Style style, String glyph) => _render(style, glyph);
 
+  // Tool-card phase tints (#807, issue-#804 emitter rule): the card
+  // background tint as a raw SGR prefix ('' when styling is off).
+  // [toolPendingBgSgr] rides the highlight tint until S1 lands the
+  // `toolPendingBg` role — the swap is one line here.
+
+  /// Settled-success card background.
+  String toolSuccessBgSgr() => sgrPrefix(_current.toolSuccessBg);
+
+  /// Settled-failure card background.
+  String toolErrorBgSgr() => sgrPrefix(_current.toolErrorBg);
+
+  /// In-flight/pending card background (highlight until toolPendingBg).
+  String toolPendingBgSgr() => sgrPrefix(_current.highlight);
+
+  /// Card phase foreground styles (the header/icon roles).
+  Style get cardSuccessStyle => _current.success;
+  Style get cardErrorStyle => _current.error;
+  Style get cardPendingStyle => _current.muted;
+  Style get cardRunningStyle => _current.accent;
+
   /// The raw SGR prefix [style] renders with under the active profile
   /// ('' when styling is off). Derived from a probe render so the prefix
   /// always matches the vendor's own emission order byte for byte.
