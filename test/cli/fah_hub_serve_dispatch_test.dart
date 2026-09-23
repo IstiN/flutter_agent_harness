@@ -22,7 +22,7 @@ import 'package:flutter_agent_harness/io.dart'
     show LocalHub, defaultHubStateFile, readHubState;
 import 'package:test/test.dart';
 
-import '../../bin/fah_dap_command.dart' show envHubPidFile;
+import '../../bin/fah_dap_command.dart' show envHubPidFile, writeHubPidState;
 import '../../bin/fah_hub_serve.dart';
 
 const timeout = Timeout(Duration(seconds: 20));
@@ -69,27 +69,82 @@ void main() {
       expect(parseFlagValues(const ['x', '--port']), isEmpty);
     });
 
+    test('bare boolean flags never consume the next flag (issue #792 '
+        'review: --relay-allow-any-host --bind lan)', () {
+      expect(
+        parseFlagValues(
+          const ['--relay-allow-any-host', '--bind', 'lan'],
+          boolFlags: const {'--relay-allow-any-host'},
+        ),
+        {'--bind': 'lan'},
+      );
+      final spec = parseHubServeSpec(const [
+        '--relay-allow-any-host',
+        '--bind',
+        'lan',
+      ]);
+      expect(spec.flagBind, 'lan');
+      expect(spec.relayAllowAnyHost, isTrue);
+    });
+
+    test('fa hub token: hubTokenHint reads the running hub relay bearer '
+        'and names the pane storage key (issue #792 provisioning)', () {
+      final tmp = Directory.systemTemp.createTempSync('fah-token');
+      addTearDown(() => tmp.deleteSync(recursive: true));
+      final file = File('${tmp.path}/hub.pid');
+      writeHubPidState(file, pid: 42, port: 8787, relaySecret: 'sk-test');
+      final hint = hubTokenHint(file);
+      expect(hint, isNotNull);
+      expect(hint, contains('http://127.0.0.1:8787/relay'));
+      expect(hint, contains('Bearer sk-test'));
+      expect(hint, contains('fa_office_relay_token'));
+      expect(hubSubcommands.containsKey('token'), isTrue);
+    });
+
+    test('fa hub token: no pid file or no relay secret answers null '
+        '(the command refuses by name, never prints an empty hint)', () {
+      expect(
+        hubTokenHint(File('${Directory.systemTemp.path}/none-here')),
+        isNull,
+      );
+      final tmp = Directory.systemTemp.createTempSync('fah-token2');
+      addTearDown(() => tmp.deleteSync(recursive: true));
+      final file = File('${tmp.path}/hub.pid');
+      writeHubPidState(file, pid: 42, port: 8787, relaySecret: null);
+      expect(hubTokenHint(file), isNull);
+    });
+
     test('port: a bad value keeps the default; secret passes through', () {
       expect(parseHubServeSpec(const []), (
         port: defaultHubServePort,
         flagSecret: null,
         flagBind: null,
+        relayAllowAnyHost: false,
       ));
       expect(parseHubServeSpec(const ['--port', 'x']), (
         port: defaultHubServePort,
         flagSecret: null,
         flagBind: null,
+        relayAllowAnyHost: false,
       ));
       expect(parseHubServeSpec(const ['--port', '9100', '--secret', 'k']), (
         port: 9100,
         flagSecret: 'k',
         flagBind: null,
+        relayAllowAnyHost: false,
       ));
       expect(parseHubServeSpec(const ['--bind', 'lan']), (
         port: defaultHubServePort,
         flagSecret: null,
         flagBind: 'lan',
+        relayAllowAnyHost: false,
       ));
+      expect(
+        parseHubServeSpec(const ['--relay-allow-any-host']).relayAllowAnyHost,
+        isTrue,
+        reason: 'the dev opt-in is a bare boolean flag (issue #792)',
+      );
+      expect(parseHubServeSpec(const []).relayAllowAnyHost, isFalse);
     });
   });
 
