@@ -28,6 +28,7 @@ import '../trajectory/trajectory_controller.dart';
 import '../trajectory/trajectory_panel.dart';
 import '../trajectory/trajectory_view.dart';
 import '../trajectory/trajectory_strings.dart';
+import '../widgets/snackbars.dart';
 import 'approval_ui.dart';
 import 'ask_ui.dart';
 import 'chat_composer.dart';
@@ -1043,11 +1044,10 @@ class _FaChatScreenState extends State<FaChatScreen>
       ClipboardData(text: widget.service.transcriptMarkdown()),
     );
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(FaChatStrings.of(context).chatCopiedToClipboard),
-          duration: const Duration(seconds: 2),
-        ),
+      showFahSnack(
+        context,
+        FaChatStrings.of(context).chatCopiedToClipboard,
+        duration: const Duration(seconds: 2),
       );
     }
   }
@@ -1179,6 +1179,12 @@ class _FaChatScreenState extends State<FaChatScreen>
                           ),
                         ),
                       ),
+                      // Issue #869: one tap puts the full error on the
+                      // clipboard — errors are for pasting, not screenshots.
+                      FahErrorCopyButton(
+                        text: error,
+                        color: Theme.of(context).colorScheme.error,
+                      ),
                     ],
                   ),
                 ),
@@ -1259,7 +1265,7 @@ class _FaChatScreenState extends State<FaChatScreen>
               ),
             ),
           ),
-          if (_buildWidgetOpenChip(context) case final chip?) chip,
+          ?_buildWidgetOpenChip(context),
           if (_historyHasNewer)
             _historyPinnedBanner(
               top: false,
@@ -1646,6 +1652,10 @@ class _AuthExpiredBanner extends StatelessWidget {
                 ],
               ),
             ),
+            // Issue #869: copy carries the RAW error verbatim — the
+            // friendly text derives from it, the raw payload is what a
+            // bug report needs.
+            FahErrorCopyButton(text: error, color: colors.error),
             if (onAuthorize != null) ...[
               const SizedBox(width: 8),
               FilledButton.tonal(
