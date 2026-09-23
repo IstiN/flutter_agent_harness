@@ -349,7 +349,7 @@ void main() {
       }
       if (url == 'http://127.0.0.1:8787/relay') {
         return web.Response(
-          'not found',
+          'not found'.toJS,
           ({'status': 401}).jsify()! as web.ResponseInit,
         );
       }
