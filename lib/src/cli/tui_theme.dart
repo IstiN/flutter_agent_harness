@@ -1031,6 +1031,16 @@ String tuiSuccess(String s) => FaThemeController.instance.success(s);
 /// token styles, the user-message echo background).
 String tuiSgr(Style style) => FaThemeController.instance.sgrPrefix(style);
 
+/// Whether the current theme's text background is light (rec.601 luminance
+/// > 0.5 — ohmypi-light and user themes of the same sort). Palette pickers
+/// with pinned dark-theme colors trade them for readable light-theme
+/// equivalents through this probe (issue #808: syntax tokens, mdCode).
+bool get tuiThemeIsLight {
+  final bg = FaThemeController.instance.current.userMessageBg.backgroundRgb;
+  if (bg == null) return false;
+  return (0.299 * bg.r + 0.587 * bg.g + 0.114 * bg.b) / 255 > 0.5;
+}
+
 /// Raw SGR prefix of the first accent WITHOUT bold — the markdown marker
 /// color (bullets, checkboxes, code spans, list numbers).
 String tuiAccentSoftSgr() => tuiSgr(

@@ -252,6 +252,7 @@ final class CliConfig {
     this.powerSleepPrevention,
     this.powerHold,
     this.tuiTheme,
+    this.tuiLinks,
     this.links = const LinksConfig(),
   });
 
@@ -285,8 +286,18 @@ final class CliConfig {
           : ModelRolesConfig.fromYaml(map),
       // The theme section: `tui.theme` names a built-in or user TUI theme;
       // unknown names surface at boot (the default applies instead).
+      // `tui.links` (issue #808) is the OSC 8 hyperlink mode — off/auto/
+      // always; unknown values fall back to the auto default (cosmetic
+      // setting, never a boot failure).
       tuiTheme: switch (map['tui']) {
         final YamlMap tui => tui['theme'] as String?,
+        _ => null,
+      },
+      tuiLinks: switch (map['tui']) {
+        final YamlMap tui => switch (tui['links']) {
+            'off' || 'auto' || 'always' => tui['links'] as String,
+            _ => null,
+          },
         _ => null,
       },
       // The ttsr section is parsed strictly too (bad rules must surface).
@@ -606,6 +617,11 @@ final class CliConfig {
   /// theme; an unknown name warns at boot and keeps the default.
   final String? tuiTheme;
 
+  /// OSC 8 hyperlink mode (`tui.links`, issue #808): off/auto/always —
+  /// resolved at CLI boot. `null` = auto (hyperlinks when the color
+  /// profile is truecolor/256-color); unknown values never parse through.
+  final String? tuiLinks;
+
   /// The `links:` section (issue #691): the single source of truth for
   /// product/store links — the app banners, the CLI (`fa config get
   /// links.…`) and the site generator all resolve the same values.
@@ -647,6 +663,7 @@ final class CliConfig {
       powerSleepPrevention: powerSleepPrevention,
       powerHold: powerHold,
       tuiTheme: tuiTheme,
+      tuiLinks: tuiLinks,
       links: links,
     );
   }
@@ -674,9 +691,15 @@ final class CliConfig {
     return buffer.toString();
   }
 
-  /// The `tui:` section, only when a theme is persisted.
-  String _tuiSectionYaml() =>
-      tuiTheme == null ? '' : 'tui:\n  theme: $tuiTheme\n';
+  /// The `tui:` section, only when a theme or the OSC 8 links mode
+  /// (issue #808) is persisted — defaults are never written.
+  String _tuiSectionYaml() {
+    if (tuiTheme == null && tuiLinks == null) return '';
+    final buffer = StringBuffer('tui:\n');
+    if (tuiTheme != null) buffer.write('  theme: $tuiTheme\n');
+    if (tuiLinks != null) buffer.write('  links: $tuiLinks\n');
+    return buffer.toString();
+  }
 
   String _modelSectionsYaml() {
     final buffer = StringBuffer();

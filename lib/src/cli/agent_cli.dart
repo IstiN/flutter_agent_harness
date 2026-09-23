@@ -209,6 +209,7 @@ import 'scripted_test_stream.dart';
 import 'tui_replay.dart';
 import 'tui_repl.dart';
 import 'tui_theme.dart';
+import 'osc8.dart' show resolveOsc8Links;
 import 'tui_chrome.dart';
 import 'termios_guard.dart';
 
@@ -294,6 +295,14 @@ class AgentCli {
           ansiSupported: useTui || useColor,
           environment: environment,
         );
+    // OSC 8 hyperlinks (issue #808): a TUI-only affordance — the mode
+    // comes from `tui.links`, the capability from the just-resolved
+    // session profile (auto wraps only on truecolor/256-color). Line-mode
+    // and headless surfaces keep their byte-exact non-TUI output; their
+    // raw/plain modes cannot carry escapes at all.
+    if (useTui) {
+      resolveOsc8Links(config.tuiLinks, FaThemeController.instance.profile);
+    }
     // Boot theme: async — user themes load through the FileSystem seam
     // before the persisted name resolves (issue #279 AC4); fire-and-forget
     // keeps the constructor sync.

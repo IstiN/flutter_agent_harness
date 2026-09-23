@@ -14,6 +14,8 @@ library;
 
 import 'package:characters/characters.dart';
 
+import 'osc8.dart' show stripOsc8;
+
 /// Terminal cells occupied by one grapheme cluster (0, 1, or 2).
 int tuiGraphemeWidth(String grapheme) {
   if (grapheme.isEmpty) return 0;
@@ -46,7 +48,12 @@ int tuiTextWidth(String text) {
   }
   if (i < units.length) {
     // The prefix consumed only single-unit ASCII, so [i] is a char boundary.
-    for (final grapheme in text.substring(i).characters) {
+    var rest = text.substring(i);
+    // OSC 8 hyperlinks are zero-width escapes — strip them before the
+    // cluster walk so linked rows measure like their plain text (issue
+    // #808; the fast path above never sees them).
+    if (rest.contains('\x1b]')) rest = stripOsc8(rest);
+    for (final grapheme in rest.characters) {
       width += tuiGraphemeWidth(grapheme);
     }
   }

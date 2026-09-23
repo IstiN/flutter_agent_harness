@@ -25,9 +25,13 @@ library;
 
 import 'package:meta/meta.dart';
 
+import 'package:dart_tui/src/bubbles/style.dart' show RgbColor, Style;
+
 import 'tui_text_width.dart' show tuiTextWidth;
 import 'tui_theme.dart';
 import 'pi_mode.dart' show isTruthyEnvValue;
+import 'code_highlight.dart';
+import 'osc8.dart' show osc8Wrap;
 
 /// Lightweight inline renderer for streaming reasoning: bold (`**x**`),
 /// italic (`*x*`), inline code (`` `x` ``). Skips block constructs
@@ -107,6 +111,12 @@ final class AnsiMarkdown {
   final int width;
 
   var _inFence = false;
+
+  /// Live highlighter for the open fence (null: unknown language — the
+  /// legacy verbatim shape — or no fence). Advanced per completed line;
+  /// its cross-line lexer state snapshots with the commit boundary.
+  CodeHighlighter? _fenceHighlighter;
+
   final _tableBuffer = <String>[];
 
   // Palette escapes ride the session theme (issue #279) — the default
@@ -114,11 +124,26 @@ final class AnsiMarkdown {
   // instance: a theme switch repaints through a fresh pass, never
   // mid-pass.
   String get _teal => _tealSgr ??= tuiAccentSoftSgr();
-  String get _indigo => _indigoSgr ??= tuiAccent2SoftSgr();
   String get _dim => _dimSgr ??= tuiDimSgr();
+  // Issue-#808 md* roles: heading=accent, link=#0088FA, code=#E5C1FF
+  // (umbrella #802 dark palette). Code spans move from the accent to
+  // mdCode; headings from accent2 to accent. mdCode trades for a readable
+  // Light+ purple on light themes (the Dark+ pin is invisible there);
+  // S1's theme roles replace the pick.
+  String get _mdLink => _mdLinkSgr ??= tuiSgr(
+        Style(foregroundRgb: const RgbColor(0x00, 0x88, 0xfa)),
+      );
+  String get _mdCode => _mdCodeSgr ??= tuiSgr(
+        Style(
+          foregroundRgb: tuiThemeIsLight
+              ? const RgbColor(0x6f, 0x42, 0xc1)
+              : const RgbColor(0xe5, 0xc1, 0xff),
+        ),
+      );
   String? _tealSgr;
-  String? _indigoSgr;
   String? _dimSgr;
+  String? _mdLinkSgr;
+  String? _mdCodeSgr;
   static const _bold = '\x1b[1m';
   static const _italic = '\x1b[3m';
   static const _underline = '\x1b[4m';
@@ -131,7 +156,15 @@ final class AnsiMarkdown {
   static final _quoteRe = RegExp(r'^(\s*)>( |$)(.*)$');
   static final _bulletRe = RegExp(r'^(\s*)([-*+]|\d{1,3}[.)])\s+(.*)$');
   static final _taskRe = RegExp(r'^\[( |x|X)\]\s+(.*)$');
-  static final _linkRe = RegExp(r'\[([^\]]+)\]\(([^)]+)\)');
+
+  /// Markdown links OR bare http(s) URLs — one pass so the autolink never
+  /// re-matches inside a rendered link's ` (url)` suffix (issue #808).
+  /// The URL run stops at ESC, and the lookbehind skips URLs that are the
+  /// payload of a raw incoming OSC 8 opener (`ESC ]8;;url`) — model noise
+  /// must reach the plain-strip pass unrestyled.
+  static final _linkOrUrlRe = RegExp(
+    r'\[([^\]]+)\]\(([^)]+)\)|(?<!\x1b\]8;;)https?://[^\s)>\]\x1b]+',
+  );
   static final _codeSpanRe = RegExp(r'`([^`]+)`');
   static final _boldRe = RegExp(r'\*\*([^*]+)\*\*');
   static final _strikeRe = RegExp(r'~~([^~]+)~~');
@@ -173,16 +206,25 @@ final class AnsiMarkdown {
 
   /// Restores the cross-line state captured at a commit boundary (see
   /// [TranscriptMarkdown]). Same library, so private fields are reachable;
-  /// takes copies defensively.
-  void restoreState({required bool inFence, required List<String> table}) {
+  /// takes copies defensively. [highlighter] restores the fence lexer
+  /// state when a fence spans the boundary (null = none was open).
+  void restoreState({
+    required bool inFence,
+    required List<String> table,
+    CodeLexState? highlighter,
+  }) {
     _inFence = inFence;
+    if (highlighter != null) {
+      _fenceHighlighter?.restore(highlighter);
+    }
     _tableBuffer
       ..clear()
       ..addAll(table);
   }
 
   /// Current cross-line state snapshot (see [restoreState]).
-  (bool, List<String>) snapshotState() => (_inFence, List.of(_tableBuffer));
+  (bool, List<String>, CodeLexState?) snapshotState() =>
+      (_inFence, List.of(_tableBuffer), _fenceHighlighter?.snapshot());
 
   /// Lines longer than this render verbatim (no inline span substitution).
   /// See [_formatInline] for the quadratic-input rationale.
@@ -250,15 +292,31 @@ final class AnsiMarkdown {
   }
 
   /// Code fences swallow everything between the markers verbatim (pi:
-  /// content indented 2 spaces, no background, dim border lines). Null for
-  /// markdown content outside a fence.
+  /// content indented 2 spaces, no background, dim border lines). Known
+  /// languages highlight per completed line (issue #808); unknown ones
+  /// keep exactly this shape. Null for markdown content outside a fence.
+  static final _fenceLangRe = RegExp(r'^\s*```\s*([A-Za-z0-9_+#-]+)');
+
   String? _formatFence(String line) {
     if (_fenceRe.hasMatch(line)) {
+      final opening = !_inFence;
       _inFence = !_inFence;
+      if (opening) {
+        final langMatch = _fenceLangRe.firstMatch(line);
+        final lang = codeLanguageOfTag(langMatch?.group(1));
+        // ponytail: streaming lexes per completed line (final by the
+        // left-to-right contract); no close-time whole-fence re-lex —
+        // see code_highlight.dart's streaming contract note.
+        _fenceHighlighter = lang == null ? null : CodeHighlighter(lang);
+      } else {
+        _fenceHighlighter = null;
+      }
       return '$_dim$line$_reset';
     }
     if (_inFence) {
-      return '  $line';
+      final highlighter = _fenceHighlighter;
+      if (highlighter == null) return '  $line';
+      return '  ${highlighter.push(line)}';
     }
     return null;
   }
@@ -288,15 +346,16 @@ final class AnsiMarkdown {
   }
 
   /// Header line formatting (H1 bold+underline, H2 bold, H3+ keeps prefix).
+  /// Issue #808 md* roles: heading=accent (was accent2).
   String? _formatHeader(String line) {
     final header = _headerRe.firstMatch(line);
     if (header == null) return null;
     final level = header.group(1)!.length;
     final text = header.group(2)!;
     return switch (level) {
-      1 => '$_indigo$_bold$_underline$text$_reset',
-      2 => '$_indigo$_bold$text$_reset',
-      _ => '$_indigo$_bold${header.group(1)} $text$_reset',
+      1 => '$_teal$_bold$_underline$text$_reset',
+      2 => '$_teal$_bold$text$_reset',
+      _ => '$_teal$_bold${header.group(1)} $text$_reset',
     };
   }
 
@@ -348,13 +407,15 @@ final class AnsiMarkdown {
   /// literal; every span is self-contained (SGR + reset).
   String _formatInline(String text) {
     // Hot path: ~11M calls, the vast majority are plain text with no inline
-    // markdown markers at all. Skip 5 chained replaceAllMapped regex scans
+    // markdown markers at all. Skip the chained replaceAllMapped regex scans
     // when none of the trigger characters are present.
     if (!text.contains('[') &&
         !text.contains('`') &&
         !text.contains('*') &&
         !text.contains('~') &&
-        !text.contains('_')) {
+        !text.contains('_') &&
+        !text.contains('h')) {
+      // 'h' gates the bare-URL autolink pass (https?://).
       return text;
     }
     // Hard cost bound for huge lines. The inline scans are quadratic on
@@ -366,11 +427,21 @@ final class AnsiMarkdown {
     // lines verbatim (fences/rules/table state still apply upstream).
     if (text.length > inlineFormatMaxChars) return text;
     var out = text;
-    out = out.replaceAllMapped(
-      _linkRe,
-      (m) => '$_underline${m[1]}$_reset$_dim (${m[2]})$_reset',
-    );
-    out = out.replaceAllMapped(_codeSpanRe, (m) => '$_teal${m[1]}$_reset');
+    // Links and bare URLs in ONE pass (issue #808): a combined alternation
+    // keeps the autolink pass from re-matching the URL inside a rendered
+    // markdown link's ` (url)` suffix. Visible text is unchanged — links
+    // add the OSC 8 escape pair and the mdLink color around the label.
+    out = out.replaceAllMapped(_linkOrUrlRe, (m) {
+      final label = m.group(1);
+      if (label != null) {
+        final url = m.group(2)!;
+        return '${osc8Wrap('$_mdLink$_underline$label$_reset', url)}'
+            '$_dim ($url)$_reset';
+      }
+      final url = m.group(0)!;
+      return osc8Wrap('$_mdLink$_underline$url$_reset', url);
+    });
+    out = out.replaceAllMapped(_codeSpanRe, (m) => '$_mdCode${m[1]}$_reset');
     out = out.replaceAllMapped(_boldRe, (m) => '$_bold${m[1]}$_reset');
     out = out.replaceAllMapped(_strikeRe, (m) => '$_strike${m[1]}$_reset');
     out = out.replaceAllMapped(_italicRe, (m) => '$_italic${m[1]}$_reset');
@@ -644,7 +715,15 @@ final class AnsiMarkdown {
 
 /// Tokenizer for [wrapAnsiLine] — hoisted: it runs per wrapped line, and
 /// building the RegExp there dominated the wrap cost on long histories.
-final _ansiTokenRe = RegExp(r'\x1b\[[0-9;]*m|.', unicode: true);
+/// OSC 8 hyperlink spans tokenize as ONE zero-width atom so a link's
+/// payload never leaks as visible text or counts columns (issue #808).
+final _ansiTokenRe = RegExp(
+  r'\x1b\[[0-9;]*m|\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\)|.',
+  unicode: true,
+);
+
+/// The OSC 8 closer emitted to balance a link across wrapped rows.
+const _osc8Closer = '\x1b]8;;\x07';
 
 /// First-byte markers for markdown block candidates (#, >, -, *, +, space).
 const _blockMarkerChars = {0x23, 0x3E, 0x2D, 0x2A, 0x2B, 0x20};
@@ -685,6 +764,10 @@ List<String> wrapAnsiLine(String line, int width) {
   var col = 0;
   // SGR codes active at the current write position (since the last reset).
   final activeSgr = <String>[];
+  // Open OSC 8 link at the current write position: its opener token. A
+  // row cut inside a link closes and re-opens it on the continuation
+  // (omp's wrapTextWithAnsi OSC-8 balancing).
+  String? activeLink;
   // The word being accumulated: whole tokens (chars + inline SGR) and its
   // visible length.
   final wordTokens = <String>[];
@@ -692,17 +775,23 @@ List<String> wrapAnsiLine(String line, int width) {
 
   void closeRow() {
     if (activeSgr.isNotEmpty) row.write('\x1b[0m');
+    if (activeLink != null) row.write(_osc8Closer);
     rows.add(row.toString());
     row
       ..clear()
       ..writeAll(activeSgr);
+    if (activeLink != null) row.write(activeLink!);
     col = 0;
   }
 
   void writeToken(String token, int visibleLen) {
     row.write(token);
     col += visibleLen;
-    if (token.startsWith('\x1b')) {
+    if (token.startsWith('\x1b]8;')) {
+      activeLink = token;
+    } else if (token == _osc8Closer) {
+      activeLink = null;
+    } else if (token.startsWith('\x1b')) {
       if (token == '\x1b[0m') {
         activeSgr.clear();
       } else {
@@ -800,6 +889,8 @@ final class _WalkResult {
     this.pendingEnd,
     this.trailing,
     this.fenceAfter,
+    this.highlighterAfter,
+    this.highlighterAtClean,
   );
 
   final List<List<String>> outsPerLine;
@@ -812,6 +903,14 @@ final class _WalkResult {
   /// line from+i) — lets the commit edge remember the state just BEFORE
   /// the boundary line so a one-line rollback can restore it.
   final List<bool> fenceAfter;
+
+  /// The open fence's lexer state after each consumed line (null where no
+  /// fence is open); the commit edge snapshots it like [fenceAfter] so an
+  /// incremental resume mid-fence re-lexes exactly (issue #808).
+  final List<CodeLexState?> highlighterAfter;
+
+  /// The open fence's lexer state at the last clean step.
+  final CodeLexState? highlighterAtClean;
 }
 
 final class TranscriptMarkdown {
@@ -852,9 +951,17 @@ final class TranscriptMarkdown {
   // Pipeline state captured at the commit boundary ([_through]).
   var _savedFence = false;
 
+  /// The open fence's lexer state at the boundary — the highlighter half
+  /// of [_savedFence] (issue #808): a resume mid-fence must re-lex with
+  /// exactly the boundary state.
+  CodeLexState? _savedHl;
+
   /// Fence state just BEFORE the boundary source line — the restore point
   /// used by the grown-tail rollback (streaming without newlines).
   var _fenceBeforeBoundaryLine = false;
+
+  /// The highlighter half of [_fenceBeforeBoundaryLine].
+  CodeLexState? _fenceBeforeBoundaryHl;
 
   /// Start index into [_formatted] per SOURCE line (sentinel = current
   /// length) — lets the rollback drop exactly one source line's formatted
@@ -1003,6 +1110,7 @@ final class TranscriptMarkdown {
     _through = edge;
     _boundaryLast = edge > 0 ? src[edge - 1] : null;
     _savedFence = _fenceBeforeBoundaryLine;
+    _savedHl = _fenceBeforeBoundaryHl;
     return true;
   }
 
@@ -1035,17 +1143,26 @@ final class TranscriptMarkdown {
 
   /// Consume-walk over src[from..) seeded with the frozen boundary state.
   _WalkResult _walk(List<String> src, {required int from}) {
-    _fmt.restoreState(inFence: _savedFence, table: const []);
+    _fmt.restoreState(
+      inFence: _savedFence,
+      table: const [],
+      highlighter: _savedHl,
+    );
     final outsPerLine = <List<String>>[];
     final fenceAfter = <bool>[];
+    final highlighterAfter = <CodeLexState?>[];
     var lastClean = -1; // step whose completion left no pending table
     var fenceAtClean = false;
+    var highlighterAtClean = _savedHl;
     for (var i = from; i < src.length; i++) {
       outsPerLine.add(_fmt.consumeLine(src[i]));
       fenceAfter.add(_fmt.inFence);
+      final hl = _fmt._fenceHighlighter?.snapshot();
+      highlighterAfter.add(hl);
       if (!_fmt.hasPendingTable) {
         lastClean = outsPerLine.length - 1;
         fenceAtClean = _fmt.inFence;
+        highlighterAtClean = hl;
       }
     }
     return _WalkResult(
@@ -1055,6 +1172,8 @@ final class TranscriptMarkdown {
       _fmt.hasPendingTable,
       _fmt.flushTrailing(),
       fenceAfter,
+      highlighterAfter,
+      highlighterAtClean,
     );
   }
 
@@ -1091,7 +1210,9 @@ final class TranscriptMarkdown {
     if (from == 0) _boundaryFirst ??= src.first;
     _boundaryLast = src[_through - 1];
     _fenceBeforeBoundaryLine = upto >= 2 ? r.fenceAfter[upto - 2] : _savedFence;
+    _fenceBeforeBoundaryHl = upto >= 2 ? r.highlighterAfter[upto - 2] : _savedHl;
     _savedFence = r.fenceAtClean;
+    _savedHl = r.highlighterAtClean;
   }
 
   /// Publishes caches + whatever this walk produced beyond the commit
@@ -1137,14 +1258,19 @@ final class TranscriptMarkdown {
     final fmt = AnsiMarkdown(width: width);
     final outs = <List<String>>[];
     final fenceAfter = <bool>[];
+    final highlighterAfter = <CodeLexState?>[];
     var lastClean = -1;
     var fenceAtClean = false;
+    CodeLexState? highlighterAtClean;
     for (final line in src) {
       outs.add(fmt.consumeLine(line));
       fenceAfter.add(fmt.inFence);
+      final hl = fmt._fenceHighlighter?.snapshot();
+      highlighterAfter.add(hl);
       if (!fmt.hasPendingTable) {
         lastClean = outs.length - 1;
         fenceAtClean = fmt.inFence;
+        highlighterAtClean = hl;
       }
     }
     final hadPending = fmt.hasPendingTable;
@@ -1159,6 +1285,7 @@ final class TranscriptMarkdown {
     _srcFmtStarts = [0];
     _srcRowStarts = [0];
     _fenceBeforeBoundaryLine = false;
+    _fenceBeforeBoundaryHl = null;
     _through = 0;
     _boundaryFirst = src.isEmpty ? null : src.first;
     _boundaryLast = src.isEmpty ? null : src.last;
@@ -1170,9 +1297,15 @@ final class TranscriptMarkdown {
       hadPending,
       trailing,
       fenceAfter,
+      highlighterAfter,
+      highlighterAtClean,
     );
     _commitTo(r, src, from: 0);
     _savedFence = fenceAtClean; // even without a durable edge yet
+    // The rebuild's formatter survives as _fmt — a resume seeded from the
+    // boundary must carry the fence-lexer state AT that boundary (a doc
+    // ending mid-fence re-lexes from there, never from end-of-doc state).
+    _savedHl = highlighterAtClean;
     _expose(r, src);
   }
 }

@@ -106,7 +106,11 @@ void main() {
       expect(io.out.toString(), isNot(contains('# Plan')));
       expect(io.out.toString(), contains('•'));
       expect(io.out.toString(), contains('│'));
-      expect(io.out.toString(), contains('  var x = 1;'));
+      // ```dart highlights per line — compare escape-free text.
+      expect(
+        io.out.toString().replaceAll(RegExp(r'\x1b\[[0-9;]*m'), ''),
+        contains('  var x = 1;'),
+      );
     });
 
     test('piped stays byte-identical raw (AC3)', () async {

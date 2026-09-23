@@ -75,6 +75,7 @@ final class AgentCliConfig {
     this.powerSleepPreventionHold = PowerAssertionHold.perRun,
     this.powerRunner,
     this.tuiTheme,
+    this.tuiLinks,
     this.tuiProgramHooks,
     this.sttyRunner,
     this.openRouterOAuthExchangeFn,
@@ -123,6 +124,10 @@ final class AgentCliConfig {
   /// Persisted TUI theme name (`tui.theme`, issue #279): a built-in key or
   /// a user theme file stem. `null`/unknown → default theme at boot.
   final String? tuiTheme;
+
+  /// OSC 8 hyperlink mode (`tui.links`, issue #808): off/auto/always;
+  /// `null` → auto at boot.
+  final String? tuiLinks;
 
   /// Backend agent mode (issue #155): persist aborted assistant partials
   /// so a SIGTERM/SIGINT graceful cancel leaves a resumable JSONL (the

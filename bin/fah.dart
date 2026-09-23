@@ -2161,6 +2161,7 @@ Future<void> _runApp(List<String> args) async {
       onModelsConfigChanged: () async => persistConfig(),
       homeDir: home,
       tuiTheme: saved.tuiTheme,
+      tuiLinks: saved.tuiLinks,
       // TTSR stream rules: user config (~/.fah/config.yaml `ttsr:`) merged
       // with project rules (.fah/rules.yaml), project first.
       ttsr: _resolveTtsr(saved, cwd),

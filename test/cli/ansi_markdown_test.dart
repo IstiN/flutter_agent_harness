@@ -5,11 +5,13 @@ import 'package:test/test.dart';
 
 void main() {
   group('AnsiMarkdown', () {
-    test('h1 renders bold+underline indigo without the # prefix', () {
+    test('h1 renders bold+underline accent without the # prefix (md* role)',
+        () {
       final out = AnsiMarkdown().formatLine('# Title');
       expect(out, contains('\x1b[1m'));
       expect(out, contains('\x1b[4m'));
-      expect(out, contains('\x1b[38;2;129;140;248m'));
+      expect(out, contains(tuiAccentSoftSgr()));
+      expect(out, isNot(contains(tuiAccent2SoftSgr())));
       expect(out, contains('Title'));
       expect(out, isNot(contains('# Title')));
     });
@@ -24,9 +26,10 @@ void main() {
       expect(md.formatLine('a **b** c'), contains('\x1b[1mb\x1b[0m'));
       expect(md.formatLine('a *b* c'), contains('\x1b[3mb\x1b[0m'));
       expect(md.formatLine('a ~~b~~ c'), contains('\x1b[9mb\x1b[0m'));
+      // Code spans ride the mdCode role (#E5C1FF dark pin) — not the accent.
       expect(
         md.formatLine('a `b` c'),
-        contains('\x1b[38;2;94;234;212mb\x1b[0m'),
+        contains('\x1b[38;2;229;193;255mb\x1b[0m'),
       );
     });
 
@@ -50,9 +53,11 @@ void main() {
 
     test('code fences toggle verbatim indented content', () {
       final md = AnsiMarkdown();
-      expect(md.formatLine('```dart'), contains('```dart'));
+      expect(md.formatLine('```text'), contains('```text'));
       final code = md.formatLine('final **x** = 1;');
-      // Inside a fence the markdown markers stay literal and unstyled.
+      // Inside a fence the markdown markers stay literal and unstyled —
+      // the legacy shape for languages the highlighter does not know
+      // (```dart and friends highlight per line, issue #808).
       expect(code, '  final **x** = 1;');
       expect(md.formatLine('```'), contains('```'));
       // After the fence closes, markdown works again.
@@ -265,9 +270,9 @@ void main() {
         // Separator row: dim box-drawing.
         expect(out[1], contains('┼'));
         expect(out[1], contains('─'));
-        // Data rows keep inline formatting (bold/cyan code).
+        // Data rows keep inline formatting (bold / mdCode code).
         expect(out[2], contains('\x1b[1mИнструменты\x1b[0m'));
-        expect(out[2], contains('\x1b[38;2;94;234;212mls\x1b[0m'));
+        expect(out[2], contains('\x1b[38;2;229;193;255mls\x1b[0m'));
         expect(out[3], contains('AI/LSP'));
         // The grid is rectangular: every row has the same visible length and
         // the │ separators land in the same visible columns on every row
@@ -458,7 +463,11 @@ void main() {
       expect(out, contains('•')); // bullet list
       expect(out, contains('\x1b[1mstep')); // inline bold
       expect(out, contains('│')); // table grid
-      expect(out, contains('  var x = 1;')); // fence content indented
+      // ```dart highlights per line — compare escape-free text.
+      expect(
+        out.replaceAll(RegExp(r'\x1b\[[0-9;]*m'), ''),
+        contains('  var x = 1;'),
+      );
     });
 
     test('plain mode keeps structure with zero escape bytes (AC4)', () {
@@ -505,7 +514,10 @@ void main() {
       // Unclosed fence at end-of-stream: content renders as a code block.
       final first = surface.render('```dart\nfinal x = 1;');
       expect(first, contains('```dart'));
-      expect(first, contains('  final x = 1;'));
+      expect(
+        first.replaceAll(RegExp(r'\x1b\[[0-9;]*m'), ''),
+        contains('  final x = 1;'),
+      );
       // The NEXT message renders formatted — no leaked fence state.
       final second = surface.render('- **fresh** item');
       expect(second, contains('•'));
