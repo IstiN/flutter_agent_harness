@@ -12,6 +12,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import '../cancel_token.dart';
+import '../cube/config/fs_policy.dart';
 import 'execution_env.dart';
 
 FileError _toFileError(Object error, String path) {
@@ -360,6 +361,32 @@ final class LocalFileSystem
       return const Ok(null);
     } on Object catch (error) {
       return Err(_toFileError(error, resolvedTo));
+    }
+  }
+}
+
+/// Real-filesystem [CubeFsProbe]: `FileSystemEntity.typeSync` (nofollow)
+/// spots link nodes, `Link.targetSync` reads them. A link node whose target
+/// cannot be read (link swapped mid-flight, unreadable reparse point)
+/// reports `(isLink: true, target: null)` — fail-closed deny. Errors that
+/// dart:io maps to `notFound` (missing path, unreadable parent) read as
+/// "not a link" and fall to the lexical floor: the same-uid opener is
+/// equally blind there, so no privilege is leaked. Never throws.
+final class LocalCubeFsProbe implements CubeFsProbe {
+  const LocalCubeFsProbe();
+
+  @override
+  CubeLinkTarget linkTarget(String path) {
+    try {
+      final type = FileSystemEntity.typeSync(path, followLinks: false);
+      if (type != FileSystemEntityType.link) {
+        return (isLink: false, target: null);
+      }
+      return (isLink: true, target: Link(path).targetSync());
+    } on Object {
+      // Link node we could stat but cannot read: fail closed rather than
+      // guess.
+      return (isLink: true, target: null);
     }
   }
 }
