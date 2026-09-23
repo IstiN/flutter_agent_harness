@@ -145,9 +145,23 @@ void showFahSnack(
   String message, {
   Duration duration = const Duration(seconds: 4),
 }) {
-  ScaffoldMessenger.maybeOf(
-    context,
-  )?.showSnackBar(SnackBar(content: Text(message), duration: duration));
+  _showSnack(context, SnackBar(content: Text(message), duration: duration));
+}
+
+void _showSnack(BuildContext context, SnackBar snack) {
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  if (messenger == null) return;
+  try {
+    messenger.showSnackBar(snack);
+  } on AssertionError catch (error) {
+    // Scaffold-less host: the root messenger exists but registers no
+    // Scaffold, so the snack has nowhere to render — stay cosmetic
+    // (the pre-#869 no-crash contract, pinned by the codemie flow-steps
+    // test and the fa_ui error-copy suite).
+    debugPrint(
+      'fa_ui: snack dropped, no Scaffold under the messenger ($error)',
+    );
+  }
 }
 
 /// ERROR snack (issue #869): the rendered message plus the trailing copy
@@ -168,7 +182,8 @@ void showFahErrorSnack(
   final messenger = ScaffoldMessenger.maybeOf(context);
   if (messenger == null) return;
   if (hideCurrent) messenger.hideCurrentSnackBar();
-  messenger.showSnackBar(
+  _showSnack(
+    context,
     SnackBar(
       duration: duration,
       action: action,

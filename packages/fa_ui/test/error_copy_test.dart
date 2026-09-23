@@ -260,6 +260,46 @@ void main() {
       await _settleCopy(tester);
     });
   });
+
+  group('Scaffold-less host: snacks stay cosmetic (no-crash contract)', () {
+    // The root ScaffoldMessenger exists under a bare MaterialApp, but no
+    // Scaffold is registered to render into — the helpers must no-op
+    // instead of tripping the messenger's assertion.
+    testWidgets('showFahSnack does not crash', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) {
+              WidgetsBinding.instance.addPostFrameCallback(
+                (_) => showFahSnack(context, 'info without a Scaffold'),
+              );
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('showFahErrorSnack does not crash (AC1 host without '
+        'a Scaffold)', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) {
+              WidgetsBinding.instance.addPostFrameCallback(
+                (_) => showFahErrorSnack(context, 'error without a Scaffold'),
+              );
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+    });
+  });
 }
 
 /// A [FakeChatService] with a settable service-level error.
