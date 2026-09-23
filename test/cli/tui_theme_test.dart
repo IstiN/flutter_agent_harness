@@ -75,6 +75,10 @@ void main() {
         themeSwatchRow(kBuiltInTuiThemes['pi']!),
         isNot(contains('\x1b[')),
       );
+      expect(
+        kBuiltInTuiThemes['pi']!.toolPendingBg.backgroundRgb,
+        const RgbColor(0x2b, 0x2d, 0x36),
+      );
     });
 
     test('detectThemeProfile honors NO_COLOR, dumb terms and COLORTERM', () {
@@ -1378,6 +1382,37 @@ void main() {
           reason: '$name must carry a truecolor SGR under ohmypi-dark',
         );
       });
+    });
+  });
+
+  // LAST: this test installs a user theme, and the controller has no
+  // removal API (boot-time install only) — keep it after the /theme
+  // table counts so the extra entry cannot leak into earlier rows.
+  group('preStyledRole tint sniff hardening (JVtX)', () {
+    test('never guesses: unknown or aliased tints resolve to null', () {
+      final c = FaThemeController.instance..reset();
+      c.profile = ColorProfile.trueColor;
+      // A tint no role claims: null — the line keeps its stored bytes.
+      expect(c.preStyledRole('\x1b[48;2;9;9;9m'), isNull);
+      // A user theme aliasing success and error to ONE color makes that
+      // tint ambiguous: null, never repainted under a guessed role.
+      final loaded = loadUserThemes(
+        '/home',
+        (dir) => const ['/home/.fah/themes/alias.json'],
+        (path) => '{"roles": {"toolSuccessBg": "#101010", '
+            '"toolErrorBg": "#101010"}}',
+      );
+      expect(loaded.errors, isEmpty);
+      c.addUserThemes(loaded.themes);
+      expect(c.switchTo('alias'), isTrue);
+      final aliased = c.sgrPrefix(c.current.toolSuccessBg);
+      expect(c.preStyledRole(aliased), isNull);
+      // Unambiguous tints still resolve (default bubble band).
+      c.reset();
+      expect(
+        c.preStyledRole(c.sgrPrefix(c.current.userMessageBg)),
+        'bubble',
+      );
     });
   });
 }
