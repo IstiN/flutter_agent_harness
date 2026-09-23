@@ -45,10 +45,46 @@ void main() {
   final shRecipe = _shSetupRecipe(installConfig);
   final psRecipe = _psSetupRecipe(installConfig);
 
+  // SEC-07 (#795): the default install pins a known version. Must be set in
+  // install-config.yaml (a release that exists AND carries signed
+  // provenance) — the pubspec version is NOT usable here: at generation
+  // time that version usually has no release yet.
+  final pinnedVersion = installConfig['pinned_cli_version'] as String? ?? '';
+  if (pinnedVersion.isEmpty) {
+    throw StateError(
+      'install.pinned_cli_version is not set in $_configPath — install.sh '
+      'must default to a pinned, provenance-carrying release (SEC-07 #795)',
+    );
+  }
+  // gh-814 r2: the pin lands in `releases/download/$FA_VERSION` URLs, and
+  // release tags are v-prefixed. Accept both spellings in the config; the
+  // installer normalizes bare X.Y.Z to vX.Y.Z at runtime.
+  if (!RegExp(r'^v?\d+\.\d+\.\d+$').hasMatch(pinnedVersion)) {
+    throw StateError(
+      'install.pinned_cli_version "$pinnedVersion" is not a semver '
+      '(vX.Y.Z or X.Y.Z) — release URLs would 404',
+    );
+  }
+
+  // gh-814 r2: the trust anchor is single-sourced here. Hard-error when the
+  // config carries no parseable-looking PUBLIC KEY block — a silently
+  // missing anchor would produce an installer that can never verify.
+  final signingPem =
+      (installConfig['signing_public_key'] as String? ?? '').trim();
+  if (!signingPem.startsWith('-----BEGIN PUBLIC KEY-----') ||
+      !signingPem.endsWith('-----END PUBLIC KEY-----')) {
+    throw StateError(
+      'install.signing_public_key in $_configPath must be a PUBLIC KEY PEM '
+      'block (the release-signing trust anchor embedded via {{SIGNING_PEM}})',
+    );
+  }
+
   final sh = File(_shTemplatePath)
       .readAsStringSync()
       .replaceFirst('# {{GENERATED_HEADER}}', _generatedHeader)
       .replaceFirst('{{BANNER}}', shBanner)
+      .replaceFirst('{{PINNED_VERSION}}', pinnedVersion)
+      .replaceFirst('{{SIGNING_PEM}}', signingPem)
       .replaceFirst('{{SETUP_RECIPE}}', shRecipe)
       .replaceFirst('{{PROVIDER_MENU}}', _shProviderMenu(providers))
       .replaceFirst('{{PROVIDER_CASES}}', _shProviderCases(providers))

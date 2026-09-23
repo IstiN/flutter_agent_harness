@@ -83,11 +83,6 @@ jobs:
       # PR-only (issue #551): test/integration/** changes run the no-key
       # mock-LLM integration legs per-PR instead of at tag time only.
       intmock: ${{ steps.paths.outputs.intmock }}
-      # Nightly parity (2026-09-23): lib/src/cli diffs (or the ratchet's
-      # baseline/suites) select the pty-integration leg + CLI-coverage
-      # ratchet at PR time (kept for opt-in path gating even though the
-      # pty legs now run unconditionally — see the pty-integration job).
-      cli: ${{ steps.paths.outputs.cli || steps.filter.outputs.cli }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -101,7 +96,6 @@ jobs:
           echo "app=true" >> "$GITHUB_OUTPUT"
           echo "docs=true" >> "$GITHUB_OUTPUT"
           echo "shared=true" >> "$GITHUB_OUTPUT"
-          echo "cli=true" >> "$GITHUB_OUTPUT"
       # PR classification runs through THE SAME classifier the pre-commit
       # hook uses (issue #194, AC7 + AC5/E2): one source of truth for path
       # rules, and the unknown-path safe default (full gate) — e.g. a new
@@ -142,13 +136,6 @@ jobs:
           if git diff --name-only "$BASE_REF" "$HEAD_REF" |
               grep -qE '(^lib/src/trajectory/|^packages/fa_ui/lib/src/trajectory/|^lib/src/cli/trajectory_|^bin/fah\.dart$|^test/(integration/)?trajectory/|^flutter_app/lib/services/agent_service(_sessions)?\.dart$)'; then
             echo "perf=true" >> "$GITHUB_OUTPUT"
-          fi
-          # Nightly parity (2026-09-23): CLI-surface diffs (or anything the
-          # ratchet itself consumes) select the pty-integration + CLI
-          # coverage ratchet leg at PR time.
-          if git diff --name-only "$BASE_REF" "$HEAD_REF" |
-              grep -qE '^(lib/src/cli/|test/integration/|scripts/cli_coverage_baseline\.txt|scripts/check_cli_coverage\.py)'; then
-            echo "cli=true" >> "$GITHUB_OUTPUT"
           fi
 
   # ─────────────────────────────────────────────────────────────────────────
@@ -473,6 +460,22 @@ jobs:
       contents: read
     env:
       # SAME secret shape as nightly.yml's pty-integration leg and the
+      # Trust model (review 2026-09-23): this is the first pull_request-time
+      # leg in ci.yml that receives real provider secrets. GitHub withholds
+      # secrets from forks, so external contributions never see them — but
+      # every SAME-REPO branch runs this suite with the keys in its process
+      # environment before human review (this repo's agent-authored-branch
+      # model). The marginal escalation vs the nightly (same suites, same
+      # keys, post-merge on main) is small and the watchdog already hands
+      # RELEASE_PAT to same-repo PRs; documented here so the assumption is
+      # explicit, not implicit.
+      #
+      # SAME secret shape as nightly.yml's pty-integration leg and the
+      # coverage-gardener that bumps the baseline: the live-provider legs
+      # (unlocked by these keys) load extra lib/src/cli surface into the
+      # measurement, so a no-key run measures a DIFFERENT — higher —
+      # number and would pass while the nightly fails. Missing keys (forks)
+      # self-skip those legs gracefully; the gate stays honest either way.
       # coverage-gardener that bumps the baseline: the live-provider legs
       # (unlocked by these keys) load extra lib/src/cli surface into the
       # measurement, so a no-key run measures a DIFFERENT — higher —
@@ -1679,10 +1682,30 @@ jobs:
           esac
           echo "$GRAPH graph audit OK"
 
+  # SEC-07 (#795) AC4: run the installer against fixture releases
+  # (good / tampered / unsigned) on EVERY PR — no path gating needed at
+  # ~15s/job, and a security IT you can dodge with a cunning diff is not
+  # an IT. macOS leg exercises the real quarantine-strip ordering (AC3).
+  installer-verify:
+    name: Installer verify IT (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: changes
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Installer verification fixtures (AC1-AC4)
+        run: bash scripts/installer_verify_selftest.sh
+
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, pty-integration, pty-visual, supply-chain, dep-audit]
+    needs: [changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, pty-integration, pty-visual, supply-chain, dep-audit, installer-verify]
     if: always()
     timeout-minutes: 5
     permissions:
@@ -1712,6 +1735,7 @@ jobs:
           echo "pty-visual    = ${{ needs.pty-visual.result }}"
           echo "supply-chain  = ${{ needs.supply-chain.result }}"
           echo "dep-audit     = ${{ needs.dep-audit.result }}"
+          echo "installer-it = ${{ needs.installer-verify.result }}"
       - name: Fail on any real failure (skipped security = dodge = FAIL)
         env:
           R_CHANGES: ${{ needs.changes.result }}
@@ -1736,6 +1760,7 @@ jobs:
           R_HOSTILE: ${{ needs.hostile-env.result }}
           R_PTY_INTEG: ${{ needs.pty-integration.result }}
           R_PTY_VISUAL: ${{ needs.pty-visual.result }}
+          R_INSTALLER_VERIFY: ${{ needs.installer-verify.result }}
         run: |
           fail() { echo "Quality gate FAILED: $1"; exit 1; }
           # The classifier itself must have run: a failed or skipped
@@ -1760,7 +1785,8 @@ jobs:
                     "cli-visual-settings:$R_CLI_VISUAL" "build-web:$R_BUILD_WEB" \
                     "build-android:$R_BUILD_ANDROID" "build-ios:$R_BUILD_IOS" "build-macos:$R_BUILD_MACOS" \
                     "integration-mock:$R_INTEG" "hostile-env:$R_HOSTILE" \
-                    "pty-integration:$R_PTY_INTEG" "pty-visual:$R_PTY_VISUAL"; do
+                    "pty-integration:$R_PTY_INTEG" "pty-visual:$R_PTY_VISUAL" \
+                    "installer-verify:$R_INSTALLER_VERIFY"; do
             name="${kv%%:*}"; r="${kv#*:}"
             if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then
               fail "a leg is $r ($name)"
@@ -1853,7 +1879,12 @@ jobs:
     name: Watchdog (degraded-runner retrigger)
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, test-faui]
+    # pty-integration/pty-visual ride along (review 2026-09-23): they are
+    # the two longest legs (60/45 min, macOS) and without being in `needs`
+    # the watchdog fires before they settle — a degraded-runner timeout on
+    # either would land after the scan and never get its one-shot
+    # empty-commit retrigger. Cost: the watchdog waits for them.
+    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, test-faui, pty-integration, pty-visual]
     # Same-repo PRs only: the empty-commit retrigger pushes to the PR branch,
     # which this token cannot do for a fork's ref.
     if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
@@ -2238,10 +2269,83 @@ jobs:
           fi
           gh release upload "${GITHUB_REF_NAME}" "$asset" --clobber --repo "${GITHUB_REPOSITORY}"
 
+  # SEC-07 (#795): the installer's default trust path is SIGNED checksums.
+  # This job aggregates every fa-* asset of the release into SHA256SUMS and
+  # signs it with the FA_RELEASE_SIGNING_KEY repo secret (openssl RSA —
+  # already available on runners, no new dependency). The signing key is a
+  # channel separate from the release assets, so a checksum file served from
+  # the same compromised source as the binary cannot vouch for itself.
+  # Fail-closed: without the secret the release publishes NO provenance and
+  # this job goes red — install.sh aborts with E_PROVENANCE_MISSING on it.
+  release-provenance:
+    name: Sign release checksums
+    runs-on: ubuntu-latest
+    needs: binaries
+    timeout-minutes: 10
+    if: >-
+      !cancelled() && needs.binaries.result == 'success' &&
+      ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      github.event_name == 'release')
+    permissions:
+      contents: write # upload SHA256SUMS(.sig) to the GitHub Release
+    steps:
+      # gh-814 r2: the trust-anchor drift gate below diffs the secret's public
+      # key against the PEM embedded in site/install.sh — that file must be
+      # present, so the signing job checks out the site/ tree.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Collect release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p provenance
+          gh release download "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" \
+            --dir provenance --pattern 'fa-*'
+          ls -l provenance
+
+      - name: Build and sign SHA256SUMS
+        env:
+          FA_RELEASE_SIGNING_KEY: ${{ secrets.FA_RELEASE_SIGNING_KEY }}
+        run: |
+          cd provenance
+          sha256sum fa-* > SHA256SUMS
+          if [ -z "$FA_RELEASE_SIGNING_KEY" ]; then
+            echo "::error::FA_RELEASE_SIGNING_KEY is not set — refusing to publish a release without signed checksums (SEC-07 #795, fail-closed). Set the repo secret with the release-signing private key."
+            exit 1
+          fi
+          printf '%s' "$FA_RELEASE_SIGNING_KEY" > "$RUNNER_TEMP/fa-release-signing.key"
+          chmod 600 "$RUNNER_TEMP/fa-release-signing.key"
+          # The key never outlives the step — trap covers mid-step failure.
+          trap 'rm -f "$RUNNER_TEMP/fa-release-signing.key"' EXIT
+          openssl dgst -sha256 -sign "$RUNNER_TEMP/fa-release-signing.key" -out SHA256SUMS.sig SHA256SUMS
+          # Self-check: the signature must verify against OUR OWN public key
+          # before anything is uploaded.
+          openssl rsa -in "$RUNNER_TEMP/fa-release-signing.key" -pubout -out pub.pem 2>/dev/null
+          openssl dgst -sha256 -verify pub.pem -signature SHA256SUMS.sig SHA256SUMS
+          rm -f "$RUNNER_TEMP/fa-release-signing.key"
+          # gh-814 r2 trust-anchor drift gate (fail-closed): the public key
+          # derived from the secret must equal the PEM embedded in
+          # site/install.sh — otherwise every pinned installer would ship an
+          # anchor that rejects this release's signed checksums.
+          sed -n '/BEGIN PUBLIC KEY/,/END PUBLIC KEY/p' "$GITHUB_WORKSPACE/site/install.sh" |
+            sed "1s/^.*BEGIN/-----BEGIN/; \$s/END.*\$/END PUBLIC KEY-----/" > embedded-anchor.pem
+          openssl pkey -pubin -in embedded-anchor.pem -noout ||
+            { echo "::error::site/install.sh trust anchor does not parse as a public key — regenerate installers (dart run scripts/gen_installers.dart)"; exit 1; }
+          cmp embedded-anchor.pem pub.pem ||
+            { echo "::error::FA_RELEASE_SIGNING_KEY drifted from the trust anchor embedded in site/install.sh — rotate the keypair: update install.signing_public_key in site/install-config.yaml, regenerate installers, and update the repo secret TOGETHER. Refusing to sign (fail-closed)."; exit 1; }
+          rm -f pub.pem embedded-anchor.pem
+
+      - name: Upload provenance assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" \
+            provenance/SHA256SUMS provenance/SHA256SUMS.sig \
+            --clobber --repo "${GITHUB_REPOSITORY}"
+
   installer-smoke:
     name: Installer smoke
     runs-on: ${{ matrix.os }}
-    needs: binaries
+    needs: [binaries, release-provenance]
     timeout-minutes: 15
     # Depends on binaries — no !cancelled() needed here: the skip chain is
     # already broken upstream by the binaries job's own guard (fa#456).
@@ -2473,4 +2577,3 @@ jobs:
             gh issue create --repo "$REPO" --title "$title" --body "$body" \
               --label bug --label ci-red --assignee ai-teammate
           fi
-
