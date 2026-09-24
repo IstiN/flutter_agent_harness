@@ -34,6 +34,9 @@ final class AgentCliConfig {
     this.modelsHttpClient,
     this.tuiMouseCapture = true,
     this.tuiSyncOutput,
+    this.tuiClassic = false,
+    this.statusLine,
+    this.agentLoadMode,
     this.systemPrompt,
     this.promptOverrides,
     this.visionConfig,
@@ -593,6 +596,20 @@ final class AgentCliConfig {
   /// terminals that support ?2026 but not the query; `FA_TUI_SYNC=0` forces
   /// legacy writes (deterministic fallback path).
   final bool? tuiSyncOutput;
+
+  /// The classic-chrome kill switch (`tui.classic`, #806): `true` pins
+  /// the legacy TUI composer — the `─` rule, the bare input zone and the
+  /// dim one-line status footer — byte-identically, and disables the
+  /// omp status band (the `images.registry: false` precedent).
+  final bool tuiClassic;
+
+  /// The parsed `tui.statusLine` section; [AgentCli] resolves it once
+  /// into the status-line engine the composer's top band renders.
+  final StatusLineConfig? statusLine;
+
+  /// The agent load mode label (`omp`/`pi`/null) for the band's mode
+  /// segment (`default` renders as nothing — see [StatusLineSnapshot]).
+  final String? agentLoadMode;
 
   /// System prompt override; defaults to [defaultAgentCliSystemPrompt].
   ///
