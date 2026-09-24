@@ -33,6 +33,8 @@ baseUrl: http://localhost:9999/v1
 mode: code
 approvalMode: yolo
 allowedTools: []
+tui:
+  classic: true  # pins the classic chrome; band redesign #805-#807
 ''');
   });
 
@@ -107,7 +109,7 @@ scenarios:
       harness.sendEnter();
 
       // Full loop semantics (issue #551 AC): user msg → task tool call →
-      // subagent execution → agent:// result → parent reply. The ✓ task row
+      // subagent execution → agent:// result → parent reply. The task result row
       // proves the spawned subagent ran to completion; the subagent's own
       // model turn is proven on the wire (chatBodies); the parent's scripted
       // reply proves the result flowed back into a final turn. (The child's
@@ -121,7 +123,7 @@ scenarios:
         timeout: const Duration(seconds: 30),
       );
       final screen = harness.screenText;
-      expect(screen, contains('✓ task · Prove the task loop'));
+      expect(screen, contains('✔ task: Prove the task loop'));
       expect(screen, contains('subagent finished: agent://explorer1'));
       // >= 3 chat round-trips: parent tool-call turn, subagent turn, parent
       // reply turn (session title/summary calls may add more).
@@ -205,7 +207,7 @@ scenarios:
     // scripted reply proves the result flowed back into a final turn — the
     // full loop, not just boot (issue #551 AC).
     await harness.waitForText(
-      '✓ memory_add',
+      '✔ memory_add',
       timeout: const Duration(seconds: 30),
     );
     await harness.waitForText(

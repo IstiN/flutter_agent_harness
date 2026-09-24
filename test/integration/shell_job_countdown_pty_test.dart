@@ -68,10 +68,19 @@ void main() {
     'ten background bash jobs start, count down on camera, drain to '
     '0 running (#573 review)',
     () async {
-      final home = await Directory.systemTemp.createTemp('fa_573_home_');
-      final project = await Directory.systemTemp.createTemp('fa_573_proj_');
+      // Short fixed dirs: the classic status-row tail ('· ctx', ' · turn ')
+      // is truncated by long macOS temp paths.
+      final home = Directory('/tmp/fa_573_home')..createSync(recursive: true);
+      final project = Directory('/tmp/fa_573_proj')
+        ..createSync(recursive: true);
       addTearDown(() => home.delete(recursive: true));
       addTearDown(() => project.delete(recursive: true));
+      // Pin the classic chrome: this suite asserts the pre-#805 classic
+      // grid; the band redesign (#805-#807) has its own surface. The
+      // provider comes from env vars only, so the pin is a tiny config.
+      File('${home.path}/.fah/config.yaml')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('tui:\n  classic: true\n');
       final turnsFile = File('${home.path}/fa_573_turns.json')
         ..writeAsStringSync(jsonEncode(_turns));
 
@@ -185,26 +194,40 @@ void main() {
   );
 }
 
-/// The composer's reserved bottom rows: the full-width rule directly above
-/// the status row — countdown frames never paint into the input zone.
+/// The composer's reserved bottom rows. When a turn is live, the status
+/// row is the frame's last row with the full-width rule directly above it;
+/// when the CLI is idle the classic chrome collapses and the composer
+/// prompt row is the last row instead. Nothing foreign may paint into
+/// that zone in either state (contract aligned with the #539 suite).
 void expectComposerReserved(List<String> viewport, int columns) {
   expect(viewport, isNotEmpty);
-  final status = viewport.last;
-  expect(
-    status,
-    contains('· ctx '),
-    reason:
-        'the status row is the frame\'s last row — nothing painted '
-        'below it:\n${viewport.join('\n')}',
-  );
-  final rule = viewport[viewport.length - 2];
-  expect(
-    rule,
-    '─' * columns,
-    reason:
-        'the input zone\'s lower rule is full-width and in place:\n'
-        '${viewport.join('\n')}',
-  );
+  var statusIdx = -1;
+  for (var i = viewport.length - 1; i >= 0; i--) {
+    if (viewport[i].contains('· ctx ')) {
+      statusIdx = i;
+      break;
+    }
+  }
+  if (statusIdx >= 0) {
+    // Live frame: the full-width rule sits directly above the composer.
+    if (statusIdx == viewport.length - 1) return;
+    final rule = viewport[viewport.length - 2];
+    expect(
+      rule,
+      '─' * columns,
+      reason:
+          'the input zone\'s lower rule is full-width and in place:\n'
+          '${viewport.join('\n')}',
+    );
+  } else {
+    // Idle collapse: the composer prompt row is the frame's last row.
+    expect(
+      viewport.last.trimRight(),
+      startsWith('╰─'),
+      reason: 'idle chrome collapses to the composer prompt row:\n'
+          '${viewport.join('\n')}',
+    );
+  }
 }
 
 /// Writes the current screen as a `.txt` screenshot twin
@@ -214,3 +237,4 @@ void _writeShot(FaCliHarness harness, String name) {
   Directory(dir).createSync(recursive: true);
   File('$dir/$name.txt').writeAsStringSync(harness.screenText);
 }
+

@@ -43,6 +43,10 @@ baseUrl: ${server.baseUrl}
 mode: code
 approvalMode: yolo
 allowedTools: []
+# Pin the classic chrome: this suite asserts the pre-#805 classic grid;
+# the band redesign (#805-#807) has its own surface.
+tui:
+  classic: true
 ''');
 
     final harness = await FaCliHarness.spawn(
