@@ -76,7 +76,8 @@ Future<void> _bootAndQuit({
     // build, so arming lands on the live loop instead of the pre-loop first
     // paint). Give the loop one turn so a framed frame exists before quit.
     await Future<void>.delayed(const Duration(milliseconds: 100));
-    keys.add([0x03]); // ctrl+c — the TUI's normal-mode quit key.
+    keys.add([0x03]); // ctrl+c press 1: arms the double-press window (#830)
+    keys.add([0x03]); // press 2 within the window quits the TUI
     await run;
   } finally {
     await io.close();
