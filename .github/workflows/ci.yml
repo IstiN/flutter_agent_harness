@@ -485,17 +485,17 @@ jobs:
           free=$((M5_POOL - busy))
           if [ "$free" -ge 2 ]; then
             echo "pool: $free free of $M5_POOL fa-m5 -> self-hosted"
-            echo "pty_integration=[self-hosted, macos-m5]" >> "$GITHUB_OUTPUT"
-            echo "pty_visual=[self-hosted, macos-m5]" >> "$GITHUB_OUTPUT"
+            echo 'pty_integration=["self-hosted","macos-m5"]' >> "$GITHUB_OUTPUT"
+            echo 'pty_visual=["self-hosted","macos-m5"]' >> "$GITHUB_OUTPUT"
           else
             echo "pool: $free free of $M5_POOL fa-m5 -> hosted fallback"
-            echo "pty_integration=ubuntu-latest" >> "$GITHUB_OUTPUT"
-            echo "pty_visual=macos-latest" >> "$GITHUB_OUTPUT"
+            echo 'pty_integration=["ubuntu-latest"]' >> "$GITHUB_OUTPUT"
+            echo 'pty_visual=["macos-latest"]' >> "$GITHUB_OUTPUT"
           fi
 
   pty-integration:
     name: PTY/CLI integration + cli coverage (PR)
-    runs-on: ${{ needs.runner-pick.outputs.pty_integration }}
+    runs-on: ${{ fromJSON(needs.runner-pick.outputs.pty_integration) }}
     needs: [changes, runner-pick]
     timeout-minutes: 60
     permissions:
@@ -547,7 +547,7 @@ jobs:
 
   pty-visual:
     name: Terminal visual (PTY screenshots, PR)
-    runs-on: ${{ needs.runner-pick.outputs.pty_visual }}
+    runs-on: ${{ fromJSON(needs.runner-pick.outputs.pty_visual) }}
     needs: [changes, runner-pick]
     timeout-minutes: 45
     permissions:
