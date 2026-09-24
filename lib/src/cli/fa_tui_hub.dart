@@ -19,11 +19,10 @@ extension FaTuiModelHub on FaTuiModel {
   /// The open hub overlay owns every key; wheel scrolling moves its tree
   /// selection instead of the chat history.
   (Model, Cmd?) _handleHubKey(KeyMsg msg) {
-    // ctrl+c outranks the modal: abort + quit, exactly as on the main path.
-    if (msg.key == 'ctrl+c') {
-      callbacks.onInterrupt?.call();
-      return (this, () => quit());
-    }
+    // ctrl+c outranks the modal: the same double-press contract as on the
+    // main path (issue #830) — press 1 aborts + hints and stays, press 2
+    // exits with SIGINT parity.
+    if (msg.key == 'ctrl+c') return _handleCtrlCPress();
     final current = hub!;
     final (next, action) = current.handleKey(
       msg.key,

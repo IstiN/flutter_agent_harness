@@ -61,17 +61,23 @@ extension _TuiComposerLayout on FaTuiModel {
     final fixed =
         mandatory -
         (inPrompt ? 1 : 0) /* the input zone's bottom rule never paints */ +
-        (busy ? 1 : 0) + _menuReservedLines + promptH + inputVisible;
+        (busy ? 1 : 0) +
+        _menuReservedLines +
+        promptH +
+        inputVisible;
     final boardWanted = jobBoardLines.length;
     final waitingWanted = _waitingRowLines().length;
     final scheduledWanted = scheduledCount > 0 ? 1 : 0;
     final chipsWanted = attachments.isEmpty ? 0 : attachments.length + 1;
     final queueWanted = queue.isEmpty ? 0 : queue.length + 2;
-    final stickyWanted =
-        _stickyActive ? _formattedStickyRows(width).length : 0;
+    final stickyWanted = _stickyActive ? _formattedStickyRows(width).length : 0;
     final optionalWanted =
-        boardWanted + waitingWanted + scheduledWanted + chipsWanted +
-        queueWanted + stickyWanted;
+        boardWanted +
+        waitingWanted +
+        scheduledWanted +
+        chipsWanted +
+        queueWanted +
+        stickyWanted;
     var budget = (height - fixed).clamp(0, height);
     // Reserve a small live-edge tail (the sent echo lines + the newest
     // tool card) ONLY when the optional chrome would otherwise swallow the
@@ -136,8 +142,10 @@ extension _TuiComposerLayout on FaTuiModel {
     // painted frame overran the glass, the terminal scrolled and the
     // composer row painted over the status row with the frame rules gone.
     final wanted = _inputLineCount;
-    final cap = (height - fixedChrome - (busy ? 1 : 0))
-        .clamp(1, height == 0 ? 1 : height);
+    final cap = (height - fixedChrome - (busy ? 1 : 0)).clamp(
+      1,
+      height == 0 ? 1 : height,
+    );
     final visible = wanted < cap ? wanted : cap;
     return (visible, _inputWindowOffset(visible));
   }
@@ -186,9 +194,18 @@ extension _TuiComposerLayout on FaTuiModel {
   /// cells the new content covers. Both operations are cell-width aware
   /// (grapheme clusters): UTF-16 padding underpads any status carrying wide
   /// characters and stale cells survive on the right.
-  String _statusRow() => _dim(
-    tuiPadRight(tuiFitWidth(callbacks.statusLine(), termWidth), termWidth),
-  );
+  ///
+  /// While the double-press Ctrl+C window is armed (issue #830), the dim
+  /// `press ctrl+c again to exit` hint replaces the status line; the next
+  /// keypress disarms and the status returns.
+  String _statusRow() => ctrlCArmed
+      ? _dim(tuiPadRight(kCtrlCExitHint, termWidth))
+      : _dim(
+          tuiPadRight(
+            tuiFitWidth(callbacks.statusLine(), termWidth),
+            termWidth,
+          ),
+        );
 
   /// The framed input lines with horizontal cursor-window scrolling; returns
   /// the cursor's input line index and screen column for the cursor home.

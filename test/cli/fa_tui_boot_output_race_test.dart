@@ -93,7 +93,8 @@ void main() {
             'park in _pending and render, not drop via Program.send '
             '(#538)',
       );
-      keys.add([0x03]); // ctrl+c quits the TUI.
+      keys.add([0x03]); // ctrl+c press 1: arms the double-press window (#830)
+      keys.add([0x03]); // press 2 within the window quits the TUI
     } finally {
       await run;
       await keys.close();
