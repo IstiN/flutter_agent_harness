@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+<<<<<<< HEAD
 - fix(env): `LocalExecutionEnv` forwards `renamePath` — kernel-mode cube
   exec was dead since #803's atomic profile restage (the
   `RenamableFileSystem` capability probe failed at the base env), making
@@ -29,6 +30,17 @@
   coverage ratchet and the Terminal-visual PTY suite — now run on every
   PR (aggregate Quality gate, same secret shape as the nightly/gardener
   so the ratchet measures the same surface; `#781`).
+=======
+- feat(tui): the omp status bar engine (#805). **Behavior note**: the
+  `tui:` config section is now parsed strictly — an unknown key under
+  `tui:` (e.g. a typo'd `theme2:` left behind by hand-editing) throws
+  `ConfigException` at boot instead of being silently ignored. Remove
+  the unknown key; the error message lists the known ones
+  (`theme`, `classic`, `statusLine`). New `tui.statusLine:` section
+  configures the status bar (preset | custom groups | separator |
+  segmentOptions | transparent); unknown *segment ids* there are
+  warned and dropped at boot, not fatal.
+>>>>>>> origin/main
 
 ## 1.0.457
 
