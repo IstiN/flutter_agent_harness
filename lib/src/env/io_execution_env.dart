@@ -1027,10 +1027,6 @@ final class LocalExecutionEnv
   }) => _fs.remove(path, recursive: recursive, force: force);
 
   @override
-  Future<Result<void, FileError>> renamePath(String from, String to) =>
-      _fs.renamePath(from, to);
-
-  @override
   Future<Result<ShellExecResult, ExecutionError>> exec(
     String command, {
     ShellExecOptions? options,
