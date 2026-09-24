@@ -35,6 +35,8 @@ baseUrl: ${server.baseUrl}
 mode: code
 approvalMode: yolo
 allowedTools: []
+tui:
+  classic: true  # pins the classic chrome this suite asserts (see #467); band redesign #805-#807
 ''');
 
     final harness = await FaCliHarness.spawn(
