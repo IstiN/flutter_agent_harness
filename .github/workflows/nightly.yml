@@ -127,9 +127,51 @@ jobs:
   # "no keys → skip everything" from the old CI job is gone. Coverage over
   # lib/src/cli/** feeds the only-up ratchet (coverage-gardener.yml bumps
   # the baseline weekly) — terminal-test coverage can never silently drop.
+  # ─────────────────────────────────────────────────────────────────────────
+  # PTY runner picker: prefer the self-hosted fa-m5 minis (dedicated hardware,
+  # warm caches, no VM boot, no port contention — the hosted pty-integration
+  # leg loses 20-40 min to queue+load flake), fall back to the hosted labels
+  # when the pool is busy. GitHub has no OR in runs-on (an array is AND), so
+  # the choice happens HERE by counting in-progress jobs already parked on
+  # fa-m5 runners (jobs API, actions:read — no admin token needed).
+  # ─────────────────────────────────────────────────────────────────────────
+  runner-pick:
+    name: Pick PTY runners (fa-m5 or hosted fallback)
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      actions: read
+    outputs:
+      pty_integration: ${{ steps.pick.outputs.pty_integration }}
+      pty_visual: ${{ steps.pick.outputs.pty_visual }}
+    steps:
+      - name: Probe fa-m5 pool and pick
+        id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          M5_POOL: '3'
+        run: |
+          busy=0
+          for rid in $(gh api "repos/$REPO/actions/runs?status=in_progress&per_page=100" --jq '.workflow_runs[].id'); do
+            n=$(gh api "repos/$REPO/actions/runs/$rid/jobs" --jq '[.jobs[] | select(.status == "in_progress" and ((.runner_name // "") | startswith("fa-m5")))] | length' || echo 0)
+            busy=$((busy + n))
+          done
+          free=$((M5_POOL - busy))
+          if [ "$free" -ge 2 ]; then
+            echo "pool: $free free of $M5_POOL fa-m5 -> self-hosted"
+            echo 'pty_integration=["self-hosted","macos-m5"]' >> "$GITHUB_OUTPUT"
+            echo 'pty_visual=["self-hosted","macos-m5"]' >> "$GITHUB_OUTPUT"
+          else
+            echo "pool: $free free of $M5_POOL fa-m5 -> hosted fallback"
+            echo 'pty_integration=["ubuntu-latest"]' >> "$GITHUB_OUTPUT"
+            echo 'pty_visual=["macos-latest"]' >> "$GITHUB_OUTPUT"
+          fi
+
   pty-integration:
     name: PTY/CLI integration + cli coverage
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(needs.runner-pick.outputs.pty_integration) }}
+    needs: runner-pick
     permissions:
       contents: read
     env:
@@ -139,6 +181,9 @@ jobs:
       OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Self-hosted toolcache redirect (fa-m5)
+        if: startsWith(runner.name, 'fa-m5')
+        run: echo "RUNNER_TOOL_CACHE=${{ runner.workspace }}/toolcache" >> "$GITHUB_ENV"
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         with:
           sdk: stable
@@ -167,7 +212,8 @@ jobs:
   # artifact for eyeballing.
   cli-visual:
     name: Terminal visual (PTY screenshots)
-    runs-on: macos-latest
+    runs-on: ${{ fromJSON(needs.runner-pick.outputs.pty_visual) }}
+    needs: runner-pick
     permissions:
       contents: read
     steps:
