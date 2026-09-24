@@ -7,6 +7,10 @@ import 'dart:io'
 // The composer's editor types come from the vendored tui_editor.dart
 // (issue #613): hosted dart_tui exports none, so this file compiles
 // against BOTH resolutions.
+// The vendored dart_tui exports no Style surface (issue #613) — same
+// direct-src import tui_theme.dart uses.
+// ignore: implementation_imports
+import 'package:dart_tui/src/bubbles/style.dart' show Style;
 import 'package:dart_tui/dart_tui.dart' hide stripAnsi;
 import 'package:meta/meta.dart';
 
@@ -19,6 +23,13 @@ import 'package:characters/characters.dart';
 import 'tui_editor.dart';
 import 'tui_hit_regions.dart';
 import 'tui_prompt.dart';
+import 'tui_status_line.dart'
+    show
+        StatusLineRoleKey,
+        StatusLineSnapshot,
+        TuiStatusLine,
+        kStatusLineRoles,
+        statusLineStyle;
 import 'tui_theme.dart';
 import 'tui_chrome.dart';
 import 'termios_guard.dart' show SttyRunner;
@@ -30,6 +41,8 @@ import '../messaging/scheduled_messages.dart' show ScheduledMessageQueue;
 import 'paste_image.dart';
 import 'tui_key_hints.dart';
 import 'sigint_action.dart';
+
+part 'fa_tui_slash_menu.dart';
 
 part 'fa_tui_messages.dart';
 part 'fa_tui_heartbeat.dart';
@@ -67,6 +80,17 @@ String _accent2(String s) => tuiAccent2(s);
 String _accent2Plain(String s) => tuiAccent2Soft(s);
 String _dim(String s) => tuiDim(s);
 
+/// The composer gutter / chrome border color (#806 band composer).
+String _borderMuted(String s) => FaThemeController.instance.borderMuted(s);
+
+/// The omp prompt gutter (band.ts `defaultPromptGutter`): the first
+/// composer row's leading cue in the border color; continuation rows
+/// indent by the same width (omp `gutter.continuation`).
+const String _composerGutter = '╰─ ';
+
+/// `tuiTextWidth('╰─ ')` — narrow-cell box glyphs + one space.
+const int _composerGutterWidth = 3;
+
 /// Host callbacks supplied by [AgentCli] to the dart_tui REPL.
 final class FaTuiCallbacks {
   const FaTuiCallbacks({
@@ -86,6 +110,8 @@ final class FaTuiCallbacks {
     this.pathCandidates,
     this.onHubAction,
     this.readClipboardImage,
+    this.statusSnapshot,
+    this.statusLineEngine,
   });
 
   /// Called when the user submits a non-empty input line. [images] carries
@@ -106,6 +132,18 @@ final class FaTuiCallbacks {
 
   /// One-line status shown above the input line.
   final String Function() statusLine;
+
+  /// Host-built status-bar frame data (issue #806, the S3 band
+  /// attachment): the host resolves the snapshot per frame tick — the
+  /// TUI layer performs zero fetches and zero subprocess calls. NULL
+  /// means the legacy composer (the `tui.classic` kill switch, or the
+  /// web stub): the dim one-line footer stays, byte-identical.
+  final StatusLineSnapshot Function()? statusSnapshot;
+
+  /// The status-line engine (spec resolved once from `tui.statusLine`
+  /// config). Supplied together with [statusSnapshot]; the band writer
+  /// renders it per frame at the composer's top.
+  final TuiStatusLine? statusLineEngine;
 
   /// The input prompt (e.g. `fa> `).
   final String prompt;
@@ -1305,151 +1343,6 @@ final class FaTuiModel extends Model {
         _handleEditKey(msg);
   }
 
-  /// Slash/menu mode: arrows navigate, enter/tab accept, esc closes, and
-  /// typing keeps editing the input so `/models` can be typed in full.
-  (Model, Cmd?) _handleSlashMenuKey(KeyMsg msg) {
-    return _handleSlashMenuNavKey(msg) ??
-        _handleSlashMenuAcceptKey(msg) ??
-        _handleSlashMenuEditKey(msg);
-  }
-
-  /// Path-completion overlay keys: Tab accepts, arrows navigate, esc
-  /// closes; everything else falls through (Enter SUBMITS, editing edits).
-  (Model, Cmd?)? _handlePathMenuKey(KeyMsg msg) {
-    switch (msg.key) {
-      case 'tab':
-        return _acceptSlashMenuItem();
-      case 'esc':
-        return (copyWith(menuOpen: false, menuTokenStart: -1), null);
-      case 'up':
-      case 'down':
-        return _handleSlashMenuNavKey(msg);
-      default:
-        return null;
-    }
-  }
-
-  /// Slash-menu navigation keys (esc/up/down); null when the key belongs to
-  /// the accept or edit clusters.
-  (Model, Cmd?)? _handleSlashMenuNavKey(KeyMsg msg) {
-    switch (msg.key) {
-      case 'esc':
-        return (copyWith(menuOpen: false, menuTokenStart: -1), null);
-      case 'up':
-        return (
-          copyWith(menuSelected: menuSelected > 0 ? menuSelected - 1 : 0),
-          null,
-        );
-      case 'down':
-        return (
-          copyWith(
-            menuSelected: menuSelected < menuItems.length - 1
-                ? menuSelected + 1
-                : menuSelected,
-          ),
-          null,
-        );
-      default:
-        return null;
-    }
-  }
-
-  /// Slash-menu accept keys (enter/tab); null for every other key.
-  (Model, Cmd?)? _handleSlashMenuAcceptKey(KeyMsg msg) {
-    switch (msg.key) {
-      case 'enter':
-      case 'tab':
-        return _acceptSlashMenuItem();
-      default:
-        return null;
-    }
-  }
-
-  /// Slash-menu edit keys: backspace and typed characters keep editing the
-  /// input so `/models` can be typed in full.
-  (Model, Cmd?) _handleSlashMenuEditKey(KeyMsg msg) {
-    switch (msg.key) {
-      case 'backspace':
-        if (cursor > 0 && inputText.isNotEmpty) {
-          return (
-            _updateMenuForInput(copyWith(editor: editor.backspace())),
-            null,
-          );
-        }
-        return (this, null);
-      default:
-        final text = msg.keyEvent.text;
-        if (text.isNotEmpty && text.length == 1) {
-          return (
-            _updateMenuForInput(copyWith(editor: editor.insert(text))),
-            null,
-          );
-        }
-        return (this, null);
-    }
-  }
-
-  /// Slash-menu accept (enter/tab): fills the input with the picked command,
-  /// or switches into the models picker, or submits picker-opening commands
-  /// (/sessions, /mode, /approval) immediately.
-  (Model, Cmd?) _acceptSlashMenuItem() {
-    if (menuItems.isEmpty) return (this, null);
-    final item = menuItems[menuSelected];
-    if (item.key == '/model' || item.key == '/models') {
-      return (
-        copyWith(
-          menuModelMode: true,
-          menuItems: callbacks.buildModelMenu('', termWidth),
-          menuSelected: 0,
-          modelFilter: '',
-          pickerId: 'models',
-          pickerTitle: '',
-        ),
-        null,
-      );
-    }
-    // Commands that open a host-side picker (/sessions, /mode,
-    // /approval) submit immediately instead of filling the input.
-    if (callbacks.opensPicker?.call(item.key) ?? false) {
-      return (
-        copyWith(menuOpen: false, inputText: '', cursor: 0, pickerId: ''),
-        () async {
-          await callbacks.onSubmit(item.key, images: const []);
-          return null;
-        },
-      );
-    }
-    // Token splice (issue #275): replace just the completed token — an
-    // `@`-fragment or a shell word after '!' — with the chosen path plus a
-    // trailing space that ends the token. Slash commands (tokenStart == 0,
-    // line-start) keep the legacy whole-input replace below.
-    if (menuTokenStart > 0) {
-      final head = inputText.substring(0, menuTokenStart);
-      final tail = inputText.substring(
-        cursor.clamp(menuTokenStart, inputText.length),
-      );
-      final inserted = '${item.key} ';
-      return (
-        copyWith(
-          inputText: head + inserted + tail,
-          cursor: menuTokenStart + inserted.length,
-          menuOpen: false,
-          menuTokenStart: -1,
-        ),
-        null,
-      );
-    }
-    return (
-      copyWith(
-        inputText: item.key,
-        cursor: item.key.length,
-        menuOpen: false,
-        menuTokenStart: -1,
-      ),
-      null,
-    );
-  }
-
   /// Normal-mode control keys (submit/steer/newline/interrupt/abort); null
   /// when the key belongs to another cluster.
   (Model, Cmd?)? _handleControlKey(KeyMsg msg) {
@@ -1884,7 +1777,11 @@ final class FaTuiModel extends Model {
   /// is shared: rows carry the bg SGR marker and the view re-pads/repaints.
   List<String> _echoAppend(List<String> lines, String text) {
     if (tuiChromeEnabled) {
-      final appended = _appendOutput(lines, tuiUserBubble(text.split('\n')).join('\n'), true);
+      final appended = _appendOutput(
+        lines,
+        tuiUserBubble(text.split('\n')).join('\n'),
+        true,
+      );
       return _appendOutput(appended, '', true);
     }
     final rule = _dim('─' * termWidth);
@@ -1955,11 +1852,10 @@ final class FaTuiModel extends Model {
   }
 
   /// The host-submit command both submit shapes end with.
-  Cmd _submitCmd(String text, List<TuiImageAttachment> images) =>
-      () async {
-        await callbacks.onSubmit(text, images: images);
-        return null;
-      };
+  Cmd _submitCmd(String text, List<TuiImageAttachment> images) => () async {
+    await callbacks.onSubmit(text, images: images);
+    return null;
+  };
 
   /// The pinned echo for long answers (Copilot-style) and its echo-line
   /// count: the first input line, truncated to the width with an ellipsis
@@ -2165,19 +2061,45 @@ final class FaTuiModel extends Model {
     // sitting on the status line while the dialog had focus.
     if (prompt != null) return _promptModeView(b);
 
-    final (cursorInputLine, cursorScreenCol) = _writeInputLines(b, row, plan);
-    b.writeln(_dim('─' * termWidth));
-    // The status line stays plain; the busy indicator lives above the input.
-    b.write(_statusRow());
+    // Band composer (#806): the status line attaches as the composer's
+    // TOP band (omp band.ts `statusAttachment: "top-band"`) and the
+    // legacy bottom rule + dim status footer retire. Prompt mode keeps
+    // the legacy layout — the prompt zone replaces the composer, and its
+    // status footer is not composer chrome.
+    final bandFrame = _bandAttached && prompt == null;
+    int cursorInputLine;
+    int cursorScreenCol;
+    if (bandFrame) {
+      row += _writeStatusBand(b);
+      (cursorInputLine, cursorScreenCol) = _writeInputLines(b, row, plan);
+    } else {
+      (cursorInputLine, cursorScreenCol) = _writeInputLines(b, row, plan);
+      b.writeln(_dim('─' * termWidth));
+      // The status line stays plain; the busy indicator lives above the input.
+      b.write(_statusRow());
+    }
 
     // One snapshot serves both consumers: newline counting for the cursor
     // row math (O(n) scan, ZERO allocations — the old split('\n') built a
     // List<String> of every physical row on every frame just to take its
     // length) and the frame body itself.
     final body = _cropToGlass(b.toString());
-    final inputStartRow = _lineCount(body) - 2 - plan.input;
+    // The first input row's screen row. Legacy: the tail is rule + input
+    // + bottom rule + status (the last row unterminated), so two painted
+    // rows sit below the input block. Band: the band sits ABOVE the
+    // input and the input's last row ends the frame unterminated — the
+    // first input row is the LAST `plan.input` rows of the body, nothing
+    // paints between band and input (the off-by-one homed the caret one
+    // row BELOW its text).
+    final inputStartRow = bandFrame
+        ? _lineCount(body) - plan.input
+        : _lineCount(body) - 2 - plan.input;
     final cursorRow = inputStartRow + cursorInputLine;
-    final cursorX = cursorScreenCol;
+    // Band mode: the caret aligns with the text AFTER the gutter's cells
+    // (zero when the terminal is too narrow to afford the gutter).
+    final cursorX = bandFrame
+        ? cursorScreenCol + _activeGutterWidth
+        : cursorScreenCol;
     // Pickers (models, sessions, mode, approval, provider, settings, wizard
     // steps) never show the physical cursor: generic pickers ignore typing
     // entirely, and the models picker's type-to-filter echoes into the
