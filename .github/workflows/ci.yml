@@ -477,11 +477,11 @@ jobs:
           REPO: ${{ github.repository }}
           M5_POOL: '3'
         run: |
-          busy=$(gh api "repos/$REPO/actions/runs?status=in_progress&per_page=100" \
-            --jq '.workflow_runs[].id' | while read -r rid; do \
-              gh api "repos/$REPO/actions/runs/$rid/jobs" \
-                --jq '.jobs[] | select(.status == "in_progress") | .runner_name // empty' \
-            done | grep -c '^fa-m5' || true)
+          busy=0
+          for rid in $(gh api "repos/$REPO/actions/runs?status=in_progress&per_page=100" --jq '.workflow_runs[].id'); do
+            n=$(gh api "repos/$REPO/actions/runs/$rid/jobs" --jq '[.jobs[] | select(.status == "in_progress" and ((.runner_name // "") | startswith("fa-m5")))] | length' || echo 0)
+            busy=$((busy + n))
+          done
           free=$((M5_POOL - busy))
           if [ "$free" -ge 2 ]; then
             echo "pool: $free free of $M5_POOL fa-m5 -> self-hosted"
