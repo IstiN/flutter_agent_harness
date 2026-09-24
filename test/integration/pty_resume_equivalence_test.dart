@@ -152,7 +152,7 @@ List<String> transcriptOf(List<String> lines) {
   }
   return [
     for (final line in stripped.take(end))
-      if (!_isChrome(line.trim())) line,
+      if (!_isChrome(line.trim()) && !line.trim().startsWith('⟳ ')) line,
   ];
 }
 
@@ -360,7 +360,7 @@ ${resumeTail.join('\n')}''',
         );
         // The tail rides the unified pipeline: pinned rows visible.
         final tail = resumed.screenText;
-        expect(tail, contains('✓ bash'));
+        expect(tail, contains('✔ bash:'));
         expect(tail, contains('echo probe-$turns'));
         expect(tail, contains('answer $turns'));
         expect(tail, isNot(contains('[bash]')));
