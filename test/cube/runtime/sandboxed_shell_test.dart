@@ -500,6 +500,29 @@ void main() {
       },
     );
 
+    test('a failed rename cleans up its temp file', () async {
+      final inner = _RecordingShell();
+      final fs = _RenamingFs()..broken = true;
+      final shell = SandboxedShell(
+        inner,
+        kernelSpec(),
+        fs: fs,
+        os: 'macos',
+        homeDir: '/home',
+      );
+      final error = (await shell.exec('git status')).errorOrNull;
+      expect(error, isNotNull);
+      expect(error!.message, contains('profile staging failed'));
+      // The temp file was written (the failed rename was attempted from
+      // it) and then removed — repeated staging failures must not leak
+      // orphans.
+      expect(fs.renames, hasLength(1));
+      expect(fs.renames.single.$1, endsWith('.tmp'));
+      expect(fs.files.keys.where((p) => p.endsWith('.tmp')), isEmpty);
+      expect(fs.writes.keys.where((p) => p.endsWith('.tmp')), isEmpty);
+      expect(inner.commands, isEmpty);
+    });
+
     test('injected env vars ride inside the clean environment', () async {
       final inner = _RecordingShell();
       final shell = SandboxedShell(
@@ -1211,13 +1234,14 @@ class _FakeFs implements FileSystem {
 class _RenamingFs extends _FakeFs implements RenamableFileSystem {
   final renames = <(String, String)>[];
 
-  /// When set, restaging becomes impossible (simulates a failure window
-  /// after the startup probe passed).
+  /// When true, every rename fails (the temp file write still succeeds),
+  /// exercising the failed-restage cleanup path.
   bool broken = false;
 
   @override
   Future<Result<void, FileError>> renamePath(String from, String to) async {
     if (broken) {
+      renames.add((from, to));
       return const Err(FileError(FileErrorCode.unknown, 'rename broken'));
     }
     if (!files.containsKey(from)) {

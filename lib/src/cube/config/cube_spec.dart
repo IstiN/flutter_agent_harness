@@ -99,6 +99,22 @@ final class CubeSpec {
   /// effective backend for audit.
   final bool allowDegrade;
 
+  /// A copy of this spec with [allowDegrade] set — the `/cube use
+  /// --allow-degrade` opt-in path (SEC-05: degrade only via explicit
+  /// opt-in, never silently).
+  CubeSpec withAllowDegrade({bool allowDegrade = true}) => CubeSpec(
+    name: name,
+    description: description,
+    backend: backend,
+    allowDegrade: allowDegrade,
+    tools: tools,
+    network: network,
+    filesystem: filesystem,
+    env: env,
+    resources: resources,
+    cache: cache,
+  );
+
   /// Which command words may run.
   final CubeToolPolicy tools;
 
