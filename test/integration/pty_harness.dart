@@ -299,6 +299,19 @@ final class FaCliHarness {
     return lines;
   }
 
+  /// The composer-attached status band (#806/#831), or null when it is
+  /// absent or not unique: the row that replaced the legacy bottom rule +
+  /// dim status footer. Opens with the `pi` segment (`>_Fa`) and joins its
+  /// segments with ` > `; system event lines share the `>_` prefix but
+  /// carry no segment separator.
+  String? get statusBandRow {
+    final rows = [
+      for (final line in viewportLines)
+        if (line.trimLeft().startsWith('>_') && line.contains(' > ')) line,
+    ];
+    return rows.length == 1 ? rows.single.trimRight() : null;
+  }
+
   /// The terminal screen as text lines (ANSI-stripped, empty lines dropped).
   List<String> get screenLines => [
     for (final line in viewportLines)

@@ -2070,7 +2070,15 @@ final class FaTuiModel extends Model {
     int cursorInputLine;
     int cursorScreenCol;
     if (bandFrame) {
-      row += _writeStatusBand(b);
+      // Press 1 armed (issue #830): the dim hint replaces the band, the
+      // same swap the legacy status row makes below — the armed hint must
+      // surface on every composer layout, not just the classic one.
+      if (ctrlCArmed) {
+        b.writeln(_dim(tuiPadRight(kCtrlCExitHint, termWidth)));
+        row += 1;
+      } else {
+        row += _writeStatusBand(b);
+      }
       (cursorInputLine, cursorScreenCol) = _writeInputLines(b, row, plan);
     } else {
       (cursorInputLine, cursorScreenCol) = _writeInputLines(b, row, plan);

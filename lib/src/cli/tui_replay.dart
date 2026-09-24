@@ -58,19 +58,38 @@ String replayToolRow(
 }) {
   final failed = result == null || result.isError;
   var detail = toolRowDetail(call.name, call.arguments, cwd: cwd, home: home);
-  var glyphPaint = tuiAccentSoft;
-  var detailPaint = tuiDim;
+  var phase = TuiCardPhase.success;
   if (result != null && result.isError) {
     // The failure text is the news: bright first line, like the live row.
-    glyphPaint = tuiError;
-    detailPaint = (s) => s;
     detail = result.content
         .whereType<TextContent>()
         .map((block) => block.text)
         .join()
         .split('\n')
         .first;
+    phase = TuiCardPhase.error;
+  } else if (result == null) {
+    // A call whose result never landed (crash mid-turn) renders in its
+    // interrupted error state from the args — never a bare success.
+    phase = TuiCardPhase.error;
   }
+  // TUI chrome (issue #807): replay paints the SAME card the live end
+  // row did — resume renders 1:1 with live (the AC1 equivalence
+  // contract). The `—` meta stands in for the live duration cell (the
+  // one permitted live/replay difference, issue #446 contract point 2).
+  if (tuiChromeEnabled) {
+    return tuiToolCard(
+      ToolCardSegments(
+        title: call.name,
+        description: detail,
+        meta: const ['—'],
+      ),
+      phase,
+      width,
+    ).join('\n');
+  }
+  final glyphPaint = tuiAccentSoft;
+  final detailPaint = tuiDim;
   final row = layoutToolRow(
     // Settled state without live durations: the `—` elapsed zone is the
     // one permitted live/replay difference (issue #446 contract point 2).
@@ -86,7 +105,6 @@ String replayToolRow(
       ? row.style(glyph: glyphPaint, label: tuiAccent2, dim: detailPaint)
       : row.join();
 }
-
 /// The TUI-mode projection of a restored user message: the same background
 /// echo box the live submit draws; compaction/branch summaries render as
 /// one compact chrome row; `<system-notice>` blocks ride the SAME
