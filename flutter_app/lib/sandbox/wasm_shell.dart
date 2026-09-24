@@ -487,14 +487,29 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     if (token != null && token.isCancelled) {
       return const Err(ExecutionError(ExecutionErrorCode.aborted, 'aborted'));
     }
-    final io.RandomAccessFile logFile;
+    final logOpen = await _openJobLog(logPath);
+    if (logOpen.isErr) return Err(logOpen.errorOrNull!);
+    return Ok(
+      _wireJob(
+        command,
+        id: id,
+        logPath: logPath,
+        logFile: logOpen.valueOrNull!,
+        token: token,
+        options: options,
+      ),
+    );
+  }
+
+  /// Issue #925: same guarded eager open as LocalShell.startShellJob.
+  /// `File.openWrite` under a try/catch is false safety — the open starts
+  /// eagerly but its failure is async and unowned, so open-class errors
+  /// (missing dir, permissions, ENOSPC) escaped to the zone mid-job.
+  Future<Result<io.RandomAccessFile, ExecutionError>> _openJobLog(
+    String logPath,
+  ) async {
     try {
-      // Issue #925: same guarded eager open as LocalShell.startShellJob.
-      // `File.openWrite` under a try/catch was false safety — the open
-      // starts eagerly but its failure is async and unowned, so open- and
-      // write-class errors (missing dir, permissions, ENOSPC) escaped to
-      // the zone mid-job.
-      logFile = await io.File(logPath).open(mode: io.FileMode.append);
+      return Ok(await io.File(logPath).open(mode: io.FileMode.append));
     } on Object catch (error) {
       return Err(
         ExecutionError(
@@ -504,12 +519,23 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         ),
       );
     }
+  }
+
+  /// Builds the job over the opened log, wires the cancel token, and
+  /// detaches the script run. SandboxShellJob serializes writers
+  /// (RandomAccessFile allows one op at a time) and consumes write errors.
+  SandboxShellJob _wireJob(
+    String command, {
+    required String id,
+    required String logPath,
+    required io.RandomAccessFile logFile,
+    required CancelToken? token,
+    required ShellExecOptions? options,
+  }) {
     final job = SandboxShellJob(
       id: id,
       command: command,
       logPath: logPath,
-      // SandboxShellJob serializes writers (RandomAccessFile allows one op
-      // at a time) and consumes write errors.
       logWriter: logFile.writeString,
       closeLog: () async {
         // Issue #925: a broken log sink must not break the settle path.
@@ -538,7 +564,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
           )
           .then(job.completeWith),
     );
-    return Ok(job);
+    return job;
   }
 
   /// A job-local clone: shares the WASM modules, HTTP client, and sandbox
