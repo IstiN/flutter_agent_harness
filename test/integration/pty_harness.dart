@@ -43,6 +43,22 @@ final class FaCliHarness {
     required this.rows,
   });
 
+  /// Short fixed CWD used when the caller does not pin [spawn]'s
+  /// workingDirectory. The CLI derives its session slug from the CWD, and on
+  /// CI runners the checkout path is so long that the boot banner
+  /// (`/Users/.../flutter_agent_harness` + the `.fah/sessions/<slug>` block)
+  /// wraps over a dozen rows and floods an 80x24 frame — fa-m5-3's slug
+  /// alone ate 6 rows, hiding the credential sheet and half the job board
+  /// from the assertions. Suites that need a specific CWD pass it
+  /// explicitly; package resolution stays on the repo either way (the
+  /// script path is absolute).
+  static Directory _shortDefaultCwd() {
+    const path = '/tmp/fa_pty_cwd';
+    final dir = Directory(path);
+    if (!dir.existsSync()) dir.createSync(recursive: true);
+    return dir;
+  }
+
   /// Spawns the Fa CLI with a PTY of fixed size.
   ///
   /// [args] are extra CLI arguments (e.g., `['--model', 'test-model']`).
@@ -91,7 +107,7 @@ final class FaCliHarness {
         ],
         ...args,
       ],
-      workingDirectory: workingDirectory ?? Directory.current.path,
+      workingDirectory: workingDirectory ?? _shortDefaultCwd().path,
       environment: env,
       raw: raw,
     );

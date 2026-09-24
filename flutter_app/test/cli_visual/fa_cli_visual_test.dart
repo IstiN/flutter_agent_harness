@@ -11,6 +11,7 @@
 ///   cd flutter_app && flutter test test/cli_visual --tags integration
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -130,7 +131,29 @@ void main() {
         'Select model',
         timeout: const Duration(seconds: 15),
       );
-      harness.sendText('zzz');
+      // Type the filter one character at a time, verifying the picker title
+      // absorbed each keystroke: on a loaded runner the title can paint
+      // before the filter input is attached, and a blind sendText('zzz')
+      // loses all three keys (fa-m5: two consecutive red CI runs — the
+      // frame showed the unfiltered '[Select model]' list).
+      var typed = '';
+      for (final ch in 'zzz'.split('')) {
+        var absorbed = false;
+        for (var attempt = 0; attempt < 3 && !absorbed; attempt++) {
+          harness.sendText(ch);
+          try {
+            await harness.liveWaitForText(
+              '[Select model: $typed$ch',
+              timeout: const Duration(seconds: 3),
+            );
+            absorbed = true;
+          } on TimeoutException {
+            // keystroke lost during the picker's input attach — resend
+          }
+        }
+        expect(absorbed, isTrue, reason: 'filter keystroke "$ch" never landed');
+        typed += ch;
+      }
       await harness.settle(settleMs: 300);
       await harness.screenshot(shotsDir, '06_model_filter_no_match');
       expect(harness.screenText, contains('[Select model: zzz]'));
