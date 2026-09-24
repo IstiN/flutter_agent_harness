@@ -31,7 +31,8 @@ void main() {
     // results) blow the 16384-token capped window at the second request —
     // the guard refuses, the compaction folds the older results, the
     // retry continues the turn.
-    final workspace = Directory.systemTemp.createTempSync('fa_badge_ws_');
+    final workspace = Directory('/tmp/fa_badge_ws')
+      ..createSync(recursive: true);
     for (var i = 1; i <= 8; i++) {
       File(
         '${workspace.path}/big$i.txt',
@@ -102,6 +103,10 @@ baseUrl: http://127.0.0.1:$port/v1
 mode: code
 approvalMode: yolo
 allowedTools: [read]
+# Pin the classic chrome: this suite asserts the pre-#805 classic status
+# row; the band redesign (#805-#807) has its own surface.
+tui:
+  classic: true
 agent:
   contextWindowCap: 16384
 ''');
