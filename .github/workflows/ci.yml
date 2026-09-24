@@ -538,9 +538,14 @@ jobs:
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         with:
           sdk: stable
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with:
-          python-version: '3.x'
+      # setup-python hardcodes AGENT_TOOLSDIRECTORY=/Users/runner/hostedtoolcache
+      # on every macOS runner (hosted layout assumption) and overwrites
+      # RUNNER_TOOL_CACHE, so on self-hosted macs without a 'runner' user it
+      # dies with "mkdir: /Users/runner: Permission denied". The only python
+      # consumer here is the pure-python coverage ratchet below — system
+      # python3 (CLT on macOS, preinstalled on hosted images) suffices.
+      - name: python3 available
+        run: python3 --version
       - run: dart pub get
       - name: dart test --tags integration (excluding browser-ext)
         run: >-
