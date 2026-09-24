@@ -290,4 +290,86 @@ void main() {
       );
     });
   });
+
+  group('isBudgetExhaustion (issue #926)', () {
+    AssistantMessage errorMsg(
+      String text, {
+      StopReason stop = StopReason.error,
+    }) => AssistantMessage(
+      content: const [],
+      api: 'test-api',
+      provider: 'test-provider',
+      model: 'test-model',
+      usage: Usage.zero,
+      stopReason: stop,
+      errorMessage: text,
+      timestamp: DateTime.utc(2026),
+    );
+
+    test('matches the budget/spending wordings', () {
+      expect(
+        isBudgetExhaustion(
+          errorMsg(
+            'CodeMie monthly budget limit reached (\$150.08 / \$150.00). '
+            'Next reset: 01/10/2026',
+          ),
+        ),
+        isTrue,
+      );
+      expect(
+        isBudgetExhaustion(errorMsg('403: spending limit exceeded')),
+        isTrue,
+      );
+      expect(
+        isBudgetExhaustion(
+          errorMsg('insufficient_quota: You exceeded your current quota'),
+        ),
+        isTrue,
+      );
+      expect(isBudgetExhaustion(errorMsg('budget reset on 01/10')), isTrue);
+    });
+
+    test(
+      'transport and plain rate-limit wordings are not budget exhaustion',
+      () {
+        expect(
+          isBudgetExhaustion(errorMsg('429: rate limit exceeded')),
+          isFalse,
+        );
+        expect(
+          isBudgetExhaustion(errorMsg('Connection reset by peer')),
+          isFalse,
+        );
+        expect(
+          isBudgetExhaustion(errorMsg('quota exceeded for this project')),
+          isFalse,
+        );
+      },
+    );
+
+    test('only error stops classify', () {
+      expect(
+        isBudgetExhaustion(errorMsg('spending limit', stop: StopReason.stop)),
+        isFalse,
+      );
+    });
+
+    test('finishReasonRetryClass: budget wording is terminal regardless '
+        'of wire form', () {
+      // HTTP-level budget error (no finish_reason marker): still terminal.
+      expect(
+        finishReasonRetryClass(
+          errorMsg('403: CodeMie monthly budget limit reached'),
+        ),
+        FinishReasonClass.terminal,
+      );
+      // A budget wording riding a finish_reason message.
+      expect(
+        finishReasonRetryClass(
+          errorMsg('Provider finish_reason: insufficient_quota'),
+        ),
+        FinishReasonClass.terminal,
+      );
+    });
+  });
 }

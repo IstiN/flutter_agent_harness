@@ -474,6 +474,32 @@ void main() {
       expect(r.cooldown, providerQueueDefaultCooldown);
     });
 
+    test(
+      'budget/spending exhaustion → quota death, immediate (issue #926)',
+      () {
+        final r = classify(
+          _err(
+            m,
+            '403: CodeMie monthly budget limit reached '
+            '(\$150.08 / \$150.00). Next budget reset: 01/10/2026',
+          ),
+        );
+        expect(r.kind, QueueDeathKind.quota);
+        expect(r.immediate, isTrue);
+        expect(r.cooldown, isNull);
+      },
+    );
+
+    test('budget wording outranks the gateway 5xx and finish_reason nets', () {
+      // A budget error wrapped in transport/terminal wordings must still
+      // advance immediately, never surface verbatim or ride the ladder.
+      final wrapped = classify(
+        _err(m, '500: Internal network failure — spending limit reached'),
+      );
+      expect(wrapped.kind, QueueDeathKind.quota);
+      expect(wrapped.immediate, isTrue);
+    });
+
     test('401/403 → auth, immediate, no cooldown (UT-10)', () {
       for (final text in ['401 Unauthorized', '403 Forbidden: bad key']) {
         final r = classify(_err(m, text));

@@ -29,12 +29,20 @@ const defaultProviderQueueCooldown = Duration(seconds: 60);
 /// content_filter finish_reason family, a user abort, and unknown errors
 /// all surface verbatim (the roles precedent).
 ///
-/// Precedence: quota → auth → finish_reason → 5xx → malformed → timeout →
-/// network.
+/// Precedence: budget → quota → auth → finish_reason → 5xx → malformed →
+/// timeout → network.
 QueueDeath? classifyQueueDeath(ErrorEvent event) {
   if (event.reason != StopReason.error) return null; // abort — never advance
   final text = event.error.errorMessage;
   if (text == null || text.isEmpty) return null;
+
+  // Budget/spending exhaustion (issue #926): the entry is dead until the
+  // budget reset — advance at once, no ladder, no cooldown, and the
+  // provider's budget wording rides the switch event. Checked BEFORE the
+  // terminal finish_reason veto (a budget death is not a content stop).
+  if (isBudgetExhaustion(event.error)) {
+    return const QueueDeath(kind: QueueDeathKind.quota, immediate: true);
+  }
 
   // Content_filter family (terminal finish_reason class, issue #312):
   // never a queue death — the error surfaces verbatim.
