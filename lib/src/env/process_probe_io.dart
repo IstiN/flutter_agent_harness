@@ -16,21 +16,33 @@ import 'dart:io';
 
 /// The raw `ps -ax -o pid=,lstart=` stdout, or null when ps fails.
 Future<String?> processTableSnapshot() async {
-  final ps = await Process.run('ps', ['-ax', '-o', 'pid=,lstart=']);
-  final out = ps.stdout.toString();
-  return ps.exitCode == 0 ? out : null;
+  try {
+    final ps = await Process.run('ps', ['-ax', '-o', 'pid=,lstart=']);
+    final out = ps.stdout.toString();
+    return ps.exitCode == 0 ? out : null;
+  } on ProcessException {
+    return null; // spawn itself denied (hardened runtime, sandbox)
+  }
 }
 
 /// The raw `ps -ax -o pid=,pgid=` stdout, or null when ps fails.
 Future<String?> processGroupTableSnapshot() async {
-  final ps = await Process.run('ps', ['-ax', '-o', 'pid=,pgid=']);
-  final out = ps.stdout.toString();
-  return ps.exitCode == 0 ? out : null;
+  try {
+    final ps = await Process.run('ps', ['-ax', '-o', 'pid=,pgid=']);
+    final out = ps.stdout.toString();
+    return ps.exitCode == 0 ? out : null;
+  } on ProcessException {
+    return null;
+  }
 }
 
 /// The raw `ps -o lstart= -p <pid>` stdout, or null when ps fails.
 Future<String?> pidStartSnapshot(int pid) async {
-  final ps = await Process.run('ps', ['-o', 'lstart=', '-p', '$pid']);
-  final out = ps.stdout.toString();
-  return ps.exitCode == 0 && out.isNotEmpty ? out : null;
+  try {
+    final ps = await Process.run('ps', ['-o', 'lstart=', '-p', '$pid']);
+    final out = ps.stdout.toString();
+    return ps.exitCode == 0 && out.isNotEmpty ? out : null;
+  } on ProcessException {
+    return null;
+  }
 }

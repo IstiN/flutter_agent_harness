@@ -2,6 +2,26 @@
 
 ## 1.0.472
 
+- feat(818): herdr integration — fa as a supported herdr agent. The
+  canonical detection manifest (`docs/integrations/herdr/fa.toml`) keys
+  herdr's `working/blocked/idle` classification on the S3 band-composer
+  chrome and the four prompt-zone sheets; `not` gates keep the
+  never-unmounting composer gutter from reading idle under the busy row.
+  Fixture transcripts captured from the real renderers live under
+  `docs/integrations/herdr/fixtures/`, and
+  `herdr_detection_test.dart` transliterates herdr's matcher (regions,
+  gates, priority arbitration) to keep the manifest and fixtures honest.
+  The herdr agent skill (`docs/integrations/herdr/SKILL.md`, installed
+  by herdr into `~/.fah/skills/herdr/`) is first-party, `HERDR_ENV`-
+  guarded and inert outside herdr; `herdr_skill_test.dart` proves
+  discovery, rendering, env passthrough, resume by session id and name,
+  and zero regression without herdr. herdr's pane restore re-attaches
+  killed panes with the existing `fa --session <id|name>` contract — no
+  new fa surface needed. Side fix: `process_probe_io.dart` honored its
+  documented never-throws contract — a `ProcessException` from the `ps`
+  spawn itself (hardened runtimes, sandboxes) crashed the waiting
+  manifest reconcile instead of degrading to unverifiable.
+
 
 - fix(env): `LocalExecutionEnv` forwards `renamePath` — kernel-mode cube
   exec was dead since #803's atomic profile restage (the
