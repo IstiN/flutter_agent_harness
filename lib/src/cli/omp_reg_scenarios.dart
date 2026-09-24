@@ -12,7 +12,9 @@
 /// the root package's `lib/src/cli/` and are imported by the plain-dart
 /// root REG suite and the flutter_app visual legs via
 /// `package:flutter_agent_harness/...` — any flutter import here breaks
-/// the root suite (issue #810).
+/// the root suite (issue #810). The `dart:io` import below is fine: it
+/// serves `findRepoRoot()`, and lib/src/cli files import dart:io as a
+/// matter of precedent (fa_tui.dart, cli_config.dart, …).
 library;
 
 import 'dart:io';

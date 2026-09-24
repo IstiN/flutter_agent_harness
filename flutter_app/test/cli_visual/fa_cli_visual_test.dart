@@ -22,6 +22,7 @@ import 'package:xterm/xterm.dart';
 
 import '../golden/golden_test_helper.dart';
 import 'cli_visual_harness.dart';
+import 'package:flutter_agent_harness/src/cli/omp_reg_scenarios.dart';
 
 void main() {
   late String repoRoot;
@@ -29,7 +30,7 @@ void main() {
 
   setUpAll(() async {
     await ensureGoldenFonts();
-    repoRoot = _findRepoRoot();
+    repoRoot = findRepoRoot();
     shotsDir = '$repoRoot/test/integration/screenshots';
     final dir = Directory(shotsDir);
     if (!dir.existsSync()) dir.createSync(recursive: true);
@@ -1668,18 +1669,6 @@ Future<void> _seedHubFleet(
 /// Walks up from the CWD until a directory containing `bin/fah.dart` is
 /// found — the flutter_agent repo root regardless of where the test runner
 /// was started from.
-String _findRepoRoot() {
-  var dir = Directory.current;
-  while (true) {
-    if (File('${dir.path}/bin/fah.dart').existsSync()) return dir.path;
-    final parent = dir.parent;
-    if (parent.path == dir.path) {
-      throw StateError('flutter_agent repo root not found from $dir');
-    }
-    dir = parent;
-  }
-}
-
 /// Creates a temp HOME with a saved custom provider.
 Directory _tempHomeWithProvider() {
   final tempHome = Directory.systemTemp.createTempSync('fa_test_');

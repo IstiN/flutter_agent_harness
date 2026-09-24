@@ -32,6 +32,14 @@ void main() {
       expect(scrubVolatile('~/work/omp'), '<path>');
       expect(scrubVolatile('./.worktrees/x'), '<path>');
       expect(scrubVolatile('/usr/local/bin/fa'), '<path>');
+      // Digit-bearing anchored paths must be claimed whole BEFORE the
+      // numeric rules see them - the round-1 ordering fix these rows pin.
+      expect(scrubVolatile('/logs/2024/run'), '<path>');
+      expect(scrubVolatile('~/cache/2024/run'), '<path>');
+      // Bare relative paths (no ~/./ anchor) are OUT of the path rule's
+      // documented scope; their numeric segments still scrub to the same
+      // placeholders deterministically on both sides.
+      expect(scrubVolatile('2024/cache/v2/store'), '<num><path>');
       expect(scrubVolatile('plain-text'), 'plain-text');
     });
 

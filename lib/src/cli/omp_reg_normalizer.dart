@@ -49,7 +49,8 @@ final List<(Pattern, String)> kVolatilePatterns = [
   // Paths BEFORE the generic numeric rules: any path containing a
   // standalone digit segment ("/logs/2024/run") must be claimed whole by
   // this rule, not shredded into `<path><num><path>` (issue #810 review).
-  // The pattern is anchored on path starts ("~", ".", "/"), so it cannot
+  // The pattern is anchored on path starts ("~", ".", "/") — bare relative
+  // paths (no anchor) stay out of scope on purpose; it cannot
   // eat numbers inside plain words.
   (RegExp(r'(?:~|\.)?/[A-Za-z0-9._@/-]{2,}'), '<path>'),
   // Numbers with thousands separators next ("1,234"), then k-suffixed
