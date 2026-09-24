@@ -60,17 +60,32 @@ allowedTools: []
       await harness.waitForBoot();
 
       // Line-mode /skills lists every discovered skill — herdr must be there.
-      harness.sendText('/skills');
-      await Future<void>.delayed(const Duration(milliseconds: 150));
-      harness.sendEnter();
+      // runSlashCommand (not raw sendText/sendEnter): typing a slash command
+      // opens the completion menu and a bare Enter ACCEPTS the ghost — the
+      // fa-m5 runner saw `/skill:herdr` expand into `/skills/skill:herdr`
+      // and submit the filesystem-path hint instead of the command.
+      await harness.runSlashCommand('/skills');
       await harness.waitForText('herdr', timeout: const Duration(seconds: 20));
 
-      // Invocation renders the body and submits it as the user turn.
-      harness.sendText('/skill:herdr who is blocked');
-      await Future<void>.delayed(const Duration(milliseconds: 150));
-      harness.sendEnter();
+      // Invocation renders the body and submits it as the user turn. Assert
+      // the INVOCATION side-effect first — the rendered body reaching the
+      // model — which is terminal-independent (no band-wrap/render racing),
+      // then the reply render with a wrap-resistant single token.
+      await harness.runSlashCommand('/skill:herdr who is blocked');
+      final deadline = DateTime.now().add(const Duration(seconds: 40));
+      while (true) {
+        final bodies = server.chatBodies;
+        if (bodies.isNotEmpty && bodies.last.contains('HERDR_ENV')) break;
+        if (DateTime.now().isAfter(deadline)) {
+          fail(
+            'the /skill:herdr body never reached the model; '
+            'chatBodies=${bodies.length}',
+          );
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
       await harness.waitForText(
-        'herdr skill invocation acknowledged',
+        'acknowledged',
         timeout: const Duration(seconds: 40),
       );
     },
