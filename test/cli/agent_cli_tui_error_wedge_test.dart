@@ -115,7 +115,8 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 200));
         expect(exited, isFalse,
             reason: 'a run error must never exit the TUI app (#355)');
-        // Ctrl+C must still quit cleanly — no wedge.
+        // Ctrl+C must still quit cleanly — no wedge (double-press, #830).
+        keys.add([0x03]);
         keys.add([0x03]);
         await run.timeout(const Duration(seconds: 10));
       } finally {

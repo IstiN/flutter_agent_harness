@@ -169,7 +169,8 @@ const kTuiKeybindings = <TuiKeybinding>[
   // ── Run & queue ──────────────────────────────────────────────────────
   TuiKeybinding('run.interrupt', 'run', [TuiChord('esc')],
       'abort the streaming run'),
-  TuiKeybinding('app.exit', 'run', [TuiChord('ctrl+c')], 'quit fa'),
+  TuiKeybinding('app.exit', 'run', [TuiChord('ctrl+c')],
+      'clear composer · double-press to exit'),
   TuiKeybinding('run.queue', 'run', [TuiChord('enter')],
       'queue message while a run streams'),
   TuiKeybinding('queue.pop', 'run', [TuiChord('up')],
