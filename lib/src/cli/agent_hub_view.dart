@@ -23,7 +23,10 @@ String hubDuration(Duration d) {
 /// One tree row: indent · status icon · name id · status · metrics.
 /// Known metrics only — an unknown metric renders `—` and stays out of the
 /// way; a row with no metrics at all skips the metrics segment entirely.
-String hubAgentRow(HubRow row) {
+/// A positive [mailCount] appends the `mail:N` pending-inbox marker — the
+/// same cue the variant-B picker rows carry, so the overlay is the surface
+/// users watch.
+String hubAgentRow(HubRow row, {int? mailCount}) {
   final agent = row.agent;
   final indent = '  ' * (row.depth + 1);
   final connector = row.depth > 0 ? '└ ' : '';
@@ -38,8 +41,9 @@ String hubAgentRow(HubRow row) {
   final head =
       '$indent$connector${hubStatusIcon(agent.status)} '
       '${agent.name} (${agent.agentType}) · ${agent.status.name}';
-  if (metrics.isEmpty) return head;
-  return '$head · ${metrics.join(' · ')}';
+  var line = metrics.isEmpty ? head : '$head · ${metrics.join(' · ')}';
+  if (mailCount != null && mailCount > 0) line = '$line · mail:$mailCount';
+  return line;
 }
 
 /// The footer line: Σ tokens · Σ cost · N running · fleet size. The cost

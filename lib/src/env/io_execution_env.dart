@@ -936,7 +936,11 @@ final class _LocalShellJob implements ShellJob {
 ///
 /// Exported only from `lib/io.dart`.
 final class LocalExecutionEnv
-    implements ExecutionEnv, BackgroundShell, RangedReadFileSystem {
+    implements
+        ExecutionEnv,
+        BackgroundShell,
+        RangedReadFileSystem,
+        RenamableFileSystem {
   /// Creates a [LocalExecutionEnv] rooted at [cwd].
   ///
   /// A custom [shell] may be provided to swap the default [LocalShell] for a
@@ -983,6 +987,10 @@ final class LocalExecutionEnv
   @override
   Future<Result<void, FileError>> writeFile(String path, String content) =>
       _fs.writeFile(path, content);
+
+  @override
+  Future<Result<void, FileError>> renamePath(String from, String to) =>
+      _fs.renamePath(from, to);
 
   @override
   Future<Result<void, FileError>> writeBinaryFile(
