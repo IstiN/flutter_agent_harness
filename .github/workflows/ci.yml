@@ -441,6 +441,141 @@ jobs:
       - name: dart test under hostile ambient env
         run: dart test --exclude-tags integration
 
+  # ─────────────────────────────────────────────────────────────────────────
+  # Nightly parity (2026-09-23): the two legs that stayed nightly-only went
+  # red on main night after night before anyone looked — the CLI-coverage
+  # ratchet (12.07% < 12.17%) and the Terminal-visual PTY suite (five
+  # regressions, several cascading out of fixed-port collisions). Both legs
+  # are part of the COMMON PR suite: they run on every CI invocation (the
+  # Machine SM dispatches ci.yml per PR head), unconditioned by path — a
+  # diff that breaks them must red-block THE PR, never the 3:30 nightly.
+  # Main remains backstopped by nightly.yml.
+  # ─────────────────────────────────────────────────────────────────────────
+  # ─────────────────────────────────────────────────────────────────────────
+  # PTY runner picker: prefer the self-hosted fa-m5 minis (dedicated hardware,
+  # warm caches, no VM boot, no port contention — the hosted pty-integration
+  # leg loses 20-40 min to queue+load flake), fall back to the hosted labels
+  # when the pool is busy. GitHub has no OR in runs-on (an array is AND), so
+  # the choice happens HERE by counting in-progress jobs already parked on
+  # fa-m5 runners (jobs API, actions:read — no admin token needed).
+  # ─────────────────────────────────────────────────────────────────────────
+  runner-pick:
+    name: Pick PTY runners (fa-m5 or hosted fallback)
+    runs-on: ubuntu-latest
+    needs: changes
+    timeout-minutes: 3
+    permissions:
+      actions: read
+    outputs:
+      pty_integration: ${{ steps.pick.outputs.pty_integration }}
+      pty_visual: ${{ steps.pick.outputs.pty_visual }}
+    steps:
+      - name: Probe fa-m5 pool and pick
+        id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          M5_POOL: '3'
+        run: |
+          busy=$(gh api "repos/$REPO/actions/runs?status=in_progress&per_page=100" \
+            --jq '.workflow_runs[].id' | while read -r rid; do \
+              gh api "repos/$REPO/actions/runs/$rid/jobs" \
+                --jq '.jobs[] | select(.status == "in_progress") | .runner_name // empty' \
+            done | grep -c '^fa-m5' || true)
+          free=$((M5_POOL - busy))
+          if [ "$free" -ge 2 ]; then
+            echo "pool: $free free of $M5_POOL fa-m5 -> self-hosted"
+            echo "pty_integration=[self-hosted, macos-m5]" >> "$GITHUB_OUTPUT"
+            echo "pty_visual=[self-hosted, macos-m5]" >> "$GITHUB_OUTPUT"
+          else
+            echo "pool: $free free of $M5_POOL fa-m5 -> hosted fallback"
+            echo "pty_integration=ubuntu-latest" >> "$GITHUB_OUTPUT"
+            echo "pty_visual=macos-latest" >> "$GITHUB_OUTPUT"
+          fi
+
+  pty-integration:
+    name: PTY/CLI integration + cli coverage (PR)
+    runs-on: ${{ needs.runner-pick.outputs.pty_integration }}
+    needs: [changes, runner-pick]
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      # SAME secret shape as nightly.yml's pty-integration leg and the
+      # Trust model (review 2026-09-23): this is the first pull_request-time
+      # leg in ci.yml that receives real provider secrets. GitHub withholds
+      # secrets from forks, so external contributions never see them — but
+      # every SAME-REPO branch runs this suite with the keys in its process
+      # environment before human review (this repo's agent-authored-branch
+      # model). The marginal escalation vs the nightly (same suites, same
+      # keys, post-merge on main) is small and the watchdog already hands
+      # RELEASE_PAT to same-repo PRs; documented here so the assumption is
+      # explicit, not implicit.
+      #
+      # SAME secret shape as nightly.yml's pty-integration leg and the
+      # coverage-gardener that bumps the baseline: the live-provider legs
+      # (unlocked by these keys) load extra lib/src/cli surface into the
+      # measurement, so a no-key run measures a DIFFERENT — higher —
+      # number and would pass while the nightly fails. Missing keys (forks)
+      # self-skip those legs gracefully; the gate stays honest either way.
+      # coverage-gardener that bumps the baseline: the live-provider legs
+      # (unlocked by these keys) load extra lib/src/cli surface into the
+      # measurement, so a no-key run measures a DIFFERENT — higher —
+      # number and would pass while the nightly fails. Missing keys (forks)
+      # self-skip those legs gracefully; the gate stays honest either way.
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
+        with:
+          sdk: stable
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.x'
+      - run: dart pub get
+      - name: dart test --tags integration (excluding browser-ext)
+        run: >-
+          dart test --tags integration --exclude-tags browser-ext
+          --coverage=coverage
+      - name: Format coverage to lcov
+        run: dart run coverage:format_coverage --lcov -i coverage -o coverage/lcov.info
+      - name: CLI coverage ratchet (lib/src/cli/**, baseline only up)
+        run: python3 scripts/check_cli_coverage.py
+
+  pty-visual:
+    name: Terminal visual (PTY screenshots, PR)
+    runs-on: ${{ needs.runner-pick.outputs.pty_visual }}
+    needs: [changes, runner-pick]
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          cache: true
+      - name: Create placeholder .env asset
+        working-directory: flutter_app
+        run: touch .env
+      - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
+      - run: cd flutter_app && flutter pub get
+      # The harness spawns `dart bin/fah.dart` FROM THE REPO ROOT; without
+      # a root package config it resolves the package to the pub-cache copy
+      # (an old published build) and the CLI dies before the first frame.
+      - run: dart pub get
+      - name: flutter test test/cli_visual --tags integration
+        run: cd flutter_app && flutter test test/cli_visual --tags integration
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: cli-visual-screenshots-pr
+          path: test/integration/screenshots/
+          retention-days: 7
+
   coverage-gate:
     name: Coverage ratchet
     runs-on: ubuntu-24.04-arm
@@ -1612,7 +1747,7 @@ jobs:
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, supply-chain, dep-audit, installer-verify]
+    needs: [changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, pty-integration, pty-visual, supply-chain, dep-audit, installer-verify]
     if: always()
     timeout-minutes: 5
     permissions:
@@ -1637,6 +1772,9 @@ jobs:
           echo "build-ios     = ${{ needs.build-ios.result }}"
           echo "build-macos   = ${{ needs.build-macos.result }}"
           echo "integ-mock    = ${{ needs.integration-mock.result }}"
+          echo "hostile-env   = ${{ needs.hostile-env.result }}"
+          echo "pty-integ     = ${{ needs.pty-integration.result }}"
+          echo "pty-visual    = ${{ needs.pty-visual.result }}"
           echo "supply-chain  = ${{ needs.supply-chain.result }}"
           echo "dep-audit     = ${{ needs.dep-audit.result }}"
           echo "installer-it = ${{ needs.installer-verify.result }}"
@@ -1662,6 +1800,8 @@ jobs:
           R_BUILD_MACOS: ${{ needs.build-macos.result }}
           R_INTEG: ${{ needs.integration-mock.result }}
           R_HOSTILE: ${{ needs.hostile-env.result }}
+          R_PTY_INTEG: ${{ needs.pty-integration.result }}
+          R_PTY_VISUAL: ${{ needs.pty-visual.result }}
           R_INSTALLER_VERIFY: ${{ needs.installer-verify.result }}
         run: |
           fail() { echo "Quality gate FAILED: $1"; exit 1; }
@@ -1687,6 +1827,7 @@ jobs:
                     "cli-visual-settings:$R_CLI_VISUAL" "build-web:$R_BUILD_WEB" \
                     "build-android:$R_BUILD_ANDROID" "build-ios:$R_BUILD_IOS" "build-macos:$R_BUILD_MACOS" \
                     "integration-mock:$R_INTEG" "hostile-env:$R_HOSTILE" \
+                    "pty-integration:$R_PTY_INTEG" "pty-visual:$R_PTY_VISUAL" \
                     "installer-verify:$R_INSTALLER_VERIFY"; do
             name="${kv%%:*}"; r="${kv#*:}"
             if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then
@@ -1780,7 +1921,12 @@ jobs:
     name: Watchdog (degraded-runner retrigger)
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, test-faui]
+    # pty-integration/pty-visual ride along (review 2026-09-23): they are
+    # the two longest legs (60/45 min, macOS) and without being in `needs`
+    # the watchdog fires before they settle — a degraded-runner timeout on
+    # either would land after the scan and never get its one-shot
+    # empty-commit retrigger. Cost: the watchdog waits for them.
+    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, test-faui, pty-integration, pty-visual]
     # Same-repo PRs only: the empty-commit retrigger pushes to the PR branch,
     # which this token cannot do for a fork's ref.
     if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
