@@ -185,25 +185,26 @@ void main() {
   );
 }
 
-/// The composer's reserved bottom rows: the full-width rule directly above
-/// the status row — countdown frames never paint into the input zone.
+/// The composer's reserved bottom rows: the status band directly above
+/// the frame-close row — countdown frames never paint into the input zone.
 void expectComposerReserved(List<String> viewport, int columns) {
   expect(viewport, isNotEmpty);
-  final status = viewport.last;
+  final close = viewport.last.trimRight();
   expect(
-    status,
-    contains('· ctx '),
+    close.startsWith('╰'),
+    isTrue,
     reason:
-        'the status row is the frame\'s last row — nothing painted '
-        'below it:\n${viewport.join('\n')}',
+        'the composer frame closes the screen — nothing painted '
+        'below it:\n$viewport',
   );
-  final rule = viewport[viewport.length - 2];
+  final band = viewport[viewport.length - 2];
   expect(
-    rule,
-    '─' * columns,
+    band.trimLeft().startsWith('>_Fa > '),
+    isTrue,
     reason:
-        'the input zone\'s lower rule is full-width and in place:\n'
-        '${viewport.join('\n')}',
+        'the status band sits directly above the frame close (#831 '
+        'retired the rule + dim footer this helper used to pin):\n'
+        '$viewport',
   );
 }
 

@@ -54,6 +54,17 @@ allowedTools: []
     harness.sendEnter();
     await Future<void>.delayed(const Duration(milliseconds: 800));
     dump('mid-run +2s');
+    const composed = 'please check whether the composer wraps this very long '
+        'line correctly across several terminal rows without ever sliding '
+        'the beginning of the sentence out of view at any point during a '
+        'long busy run ok';
+    for (var i = 0; i < composed.length; i += 10) {
+      harness.sendText(composed.substring(
+          i, i + 10 > composed.length ? composed.length : i + 10));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 1300));
+    dump('mid-run composed');
     await Future<void>.delayed(const Duration(seconds: 7));
     dump('settled');
   });

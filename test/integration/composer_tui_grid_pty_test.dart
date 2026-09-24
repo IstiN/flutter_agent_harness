@@ -85,46 +85,42 @@ allowedTools: []
       final gridB = _grid(harness);
 
       // ── (1) the composed line soft-wraps across rows ───────────────────
-      final rule = '─' * columns;
-      final rules = <int>[
-        for (var i = 0; i < gridA.length; i++)
-          if (gridA[i].trim() == rule) i,
-      ];
-      expect(rules.length, greaterThanOrEqualTo(2), reason: 'input frame');
-      final region = gridA
-          .sublist(rules[rules.length - 2] + 1, rules.last)
-          .map((l) => l.trimRight())
-          .toList();
+      // (#831 band layout: the input zone is the gutter-prefixed rows
+      // between the status band and the glass bottom — the legacy rule
+      // pair is retired.)
+      final bandIdx = gridA.indexWhere(
+          (l) => l.trimLeft().startsWith('>_') && l.contains(' > '));
+      expect(bandIdx, greaterThanOrEqualTo(0), reason: 'status band visible');
+      final region = gridA.sublist(bandIdx + 1).map((l) {
+        final t = l.trimRight();
+        return t.startsWith('╰─')
+            ? t.substring(2)
+            : t.replaceFirst(RegExp('^   '), '');
+      }).toList();
       expect(region.length, greaterThanOrEqualTo(3),
           reason: 'wrapped, not one row: ${region.join(" | ")}');
       final visible = region.map((l) => l.replaceAll(' ', '')).join();
       expect(visible, _composed.replaceAll(' ', ''));
       expect(region.first.trimLeft().startsWith('please '), isTrue);
 
-      // ── (2) the status row: EXACTLY once, own bottom row, never merged ──
+      // ── (2) the band: EXACTLY once, own row, never merged ──────────────
       final statusRows = [
         for (final row in gridA)
-          if (row.contains(' · turn ')) row,
+          if (row.trimLeft().startsWith('>_') && row.contains(' > ')) row,
       ];
       expect(statusRows.length, 1,
           reason: 'status rendered exactly once; screen:\n'
               '${gridA.where((l) => l.trim().isNotEmpty).join("\n")}');
       final statusRow = statusRows.single.trimRight();
-      // Merging with the composer would put composed text left of the cwd.
-      expect(statusRow.trimLeft().startsWith('/'), isTrue,
-          reason: 'status opens with the cwd, not composer text');
-      expect(statusRow, contains('ctx '));
+      // Merging with the composer would corrupt the band's pi segment.
+      expect(statusRow.trimLeft().startsWith('>_Fa > '), isTrue,
+          reason: 'band opens with the pi segment, not composer text');
+      expect(statusRow, contains('%/'));
       expect(statusRow, contains('mock-model'));
-      // Own bottom row: the status is the LAST non-blank grid row and the
-      // row right above it is the input zone's bottom rule.
-      var last = gridA.length - 1;
-      while (last > 0 && gridA[last].trim().isEmpty) {
-        last--;
-      }
-      expect(gridA[last].contains(' · turn '), isTrue,
-          reason: 'status is the bottom row');
-      expect(gridA[last - 1].trim(), rule,
-          reason: 'a full-width rule separates the composer from the status');
+      // Own row: the band is the painted row the (1) zone hangs below.
+      expect(gridA[bandIdx], statusRows.single,
+          reason: 'the band sits between the transcript and the input '
+              'zone');
 
       // ── (3) the ticker updates IN PLACE ─────────────────────────────────
       expect(gridB.length, gridA.length, reason: 'no row count drift');
@@ -226,9 +222,13 @@ allowedTools: []
         final grid = grids[tick];
         expect(grid.length, rowsCount,
             reason: 'tick $tick: frame height drifted — a row wrapped');
-        // The status stays the BOTTOM row: any wrap above pushes it off.
-        expect(grid[rowsCount - 1].contains(' · turn '), isTrue,
-            reason: 'tick $tick: status not at the bottom — drift');
+        // The bottom chrome stays pinned: band above the gutter row (the
+        // submitted line cleared the composer, so the input zone is one
+        // empty gutter row) — any wrap above pushes it off.
+        expect(grid[rowsCount - 2].trimLeft().startsWith('>_Fa > '), isTrue,
+            reason: 'tick $tick: band not in the bottom chrome — drift');
+        expect(grid[rowsCount - 1].trimRight().startsWith('╰─'), isTrue,
+            reason: 'tick $tick: composer gutter not at the bottom — drift');
         for (final row in grid) {
           expect(row.runes.length, lessThanOrEqualTo(columns));
         }
@@ -243,18 +243,15 @@ allowedTools: []
             reason: 'tick $tick: duplicated board rows (ghost snapshot)');
       }
       // The composed line survived intact through the run.
-      final rules = [
-        for (var i = 0; i < grids.last.length; i++)
-          if (grids.last[i].trim() == '─' * columns) i,
-      ];
       // The composer itself is CLEAN: the line was submitted, so the input
-      // zone holds the cursor only — submitted text must never linger (or
-      // duplicate) in the input row (issue #496).
+      // zone holds the empty gutter only — submitted text must never
+      // linger (or duplicate) in the input row (issue #496).
       final composer = grids.last
-          .sublist(rules[rules.length - 2] + 1, rules.last)
+          .sublist(grids.last.indexWhere(
+              (l) => l.trimLeft().startsWith('>_') && l.contains(' > ')) + 1)
           .map((l) => l.replaceAll(' ', ''))
           .join();
-      expect(composer, isEmpty,
+      expect(composer, '╰─',
           reason: 'the submitted line must not linger in the composer:\n'
               '${grids.last.join('\n')}');
       // …and the line survived the run INTACT: the history echo still
@@ -342,45 +339,29 @@ allowedTools: []
           reason: 'frame height drifted — the input zone overran the '
               'glass:\n${screenShot()}');
 
-      // Status: bottom row, left edge intact (cwd, never composer text).
-      var last = grid.length - 1;
-      while (last > 0 && grid[last].trim().isEmpty) {
-        last--;
-      }
-      expect(grid[last].contains(' · turn '), isTrue,
-          reason: 'status is the bottom row:\n${screenShot()}');
-      expect(
-        grid[last].trimLeft().startsWith('/') ||
-            grid[last].trimLeft().startsWith('…'),
-        isTrue,
-        reason: 'status left edge (cwd) not overwritten: '
-            '"${grid[last]}"',
-      );
-      expect(grid[last - 1].trim(), rule,
-          reason: 'a full-width rule separates the composer from the '
-              'status:\n${screenShot()}');
-
-      // Input-frame rules both present, input zone between them.
-      final rules = [
-        for (var i = 0; i < grid.length; i++)
-          if (grid[i].trim() == rule) i,
-      ];
-      expect(rules.length, greaterThanOrEqualTo(2),
-          reason: 'input frame rules present:\n${screenShot()}');
-      expect(rules.last, last - 1,
-          reason: 'the bottom rule sits directly above the status');
-      expect(last - 1 - rules[rules.length - 2], greaterThanOrEqualTo(1),
-          reason: 'the input zone holds at least one row between the '
-              'rules:\n${screenShot()}');
+      // Bottom chrome: the band between the transcript and the input zone,
+      // the gutter-prefixed draft tail on the glass (#831 layout — the
+      // legacy rule pair is retired). The left edge stays intact: the band
+      // opens with the pi segment, never composer text.
+      final bandIdx = grid.indexWhere(
+          (l) => l.trimLeft().startsWith('>_') && l.contains(' > '));
+      expect(bandIdx, greaterThanOrEqualTo(0),
+          reason: 'status band visible:\n${screenShot()}');
+      expect(grid[bandIdx].trimLeft().startsWith('>_Fa > '), isTrue,
+          reason: 'band left edge (pi segment) not overwritten: '
+              '"${grid[bandIdx]}"\n${screenShot()}');
 
       // The cursor window shows the composer tail (the last typed line).
       final composer = grid
-          .sublist(rules[rules.length - 2] + 1, rules.last)
+          .sublist(bandIdx + 1)
           .map((l) => l.replaceAll(' ', ''))
           .join();
       expect(composer, contains('steerdraftline40offorty'),
           reason: 'the cursor window follows the composer tail:\n'
               '${screenShot()}');
+      expect(grid.last.trimRight().startsWith('╰─'),
+          isTrue,
+          reason: 'the composer gutter ends the frame:\n${screenShot()}');
     });
   }
 }
