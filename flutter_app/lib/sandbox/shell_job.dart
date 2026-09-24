@@ -95,39 +95,56 @@ final class SandboxShellJob implements ShellJob {
     Result<ShellExecResult, ExecutionError> result,
   ) async {
     if (_exitCode != null) return;
-    if (result.isErr) {
-      final error = result.errorOrNull!;
-      if (error.code != ExecutionErrorCode.aborted) {
-        // Surface backend failures in the log, not just the exit code.
-        writeLog('[job error: $error]\n');
-      }
-    }
+    _noteBackendFailure(result);
     try {
       await _writeChain;
-      // Issue #925: the flush/close of a broken log must not escape into
-      // the zone or leave _settled incomplete (job board showed the job as
-      // running forever).
-      try {
-        await _closeLog?.call();
-      } on Object {}
-      if (result.isOk) {
-        _exitCode = result.valueOrNull!.exitCode;
-      } else {
-        final error = result.errorOrNull!;
-        _exitCode = switch (error.code) {
-          ExecutionErrorCode.aborted => 143,
-          ExecutionErrorCode.timeout => 124,
-          _ => 1,
-        };
-        if (error.code == ExecutionErrorCode.aborted) {
-          _stopReason ??= 'cancelled';
-        } else if (error.code == ExecutionErrorCode.timeout) {
-          _stopReason ??= 'timeout';
-        }
-      }
+      await _closeLogQuietly();
+      _applyOutcome(result);
     } finally {
       _settled.complete();
     }
+  }
+
+  /// Surfaces backend failures in the log, not just the exit code.
+  void _noteBackendFailure(Result<ShellExecResult, ExecutionError> result) {
+    if (!result.isErr) return;
+    final error = result.errorOrNull!;
+    if (error.code != ExecutionErrorCode.aborted) {
+      writeLog('[job error: $error]\n');
+    }
+  }
+
+  /// Drains the close hook; a throwing log close must not escape into the
+  /// zone or leave the job unsettled (issue #925).
+  Future<void> _closeLogQuietly() async {
+    try {
+      await _closeLog?.call();
+    } on Object {}
+  }
+
+  /// Exit codes for a failed exec result, by error code.
+  static const _errorExitCodes = <ExecutionErrorCode, int>{
+    ExecutionErrorCode.aborted: 143,
+    ExecutionErrorCode.timeout: 124,
+  };
+
+  /// Stop reasons recorded for a failed exec result, by error code.
+  static const _errorStopReasons = <ExecutionErrorCode, String>{
+    ExecutionErrorCode.aborted: 'cancelled',
+    ExecutionErrorCode.timeout: 'timeout',
+  };
+
+  /// Maps the exec result onto exit code and stop reason (first-completion
+  /// wins: a [stop] reason recorded earlier is never overwritten).
+  void _applyOutcome(Result<ShellExecResult, ExecutionError> result) {
+    if (result.isOk) {
+      _exitCode = result.valueOrNull!.exitCode;
+      return;
+    }
+    final code = result.errorOrNull!.code;
+    _exitCode = _errorExitCodes[code] ?? 1;
+    final reason = _errorStopReasons[code];
+    if (reason != null) _stopReason ??= reason;
   }
 
   @override

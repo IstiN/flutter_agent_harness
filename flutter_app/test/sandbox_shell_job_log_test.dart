@@ -50,5 +50,51 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       expect(calls, 1, reason: 'broken log stops receiving writes');
     });
+
+    test('failed exec results map to exit code and stop reason', () async {
+      final aborted = SandboxShellJob(
+        id: 'sh-3',
+        command: 'x',
+        logPath: '/nonexistent/x.log',
+        logWriter: (_) {},
+      );
+      await aborted.completeWith(
+        const Err(ExecutionError(ExecutionErrorCode.aborted, 'aborted')),
+      );
+      await aborted.settled;
+      expect(aborted.exitCode, 143);
+      expect(aborted.stopReason, 'cancelled');
+      // First completion wins: a second completeWith is a no-op.
+      await aborted.completeWith(
+        const Ok(ShellExecResult(stdout: '', stderr: '', exitCode: 0)),
+      );
+      expect(aborted.exitCode, 143);
+
+      final timedOut = SandboxShellJob(
+        id: 'sh-4',
+        command: 'x',
+        logPath: '/nonexistent/x.log',
+        logWriter: (_) {},
+      );
+      await timedOut.completeWith(
+        const Err(ExecutionError(ExecutionErrorCode.timeout, 'timeout')),
+      );
+      expect(timedOut.exitCode, 124);
+      expect(timedOut.stopReason, 'timeout');
+
+      final failed = SandboxShellJob(
+        id: 'sh-5',
+        command: 'x',
+        logPath: '/nonexistent/x.log',
+        logWriter: (_) {},
+      );
+      await failed.completeWith(
+        const Err(
+          ExecutionError(ExecutionErrorCode.spawnError, 'spawn failed'),
+        ),
+      );
+      expect(failed.exitCode, 1);
+      expect(failed.stopReason, isNull);
+    });
   });
 }
