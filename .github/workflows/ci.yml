@@ -529,6 +529,12 @@ jobs:
       OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # Self-hosted fa-m5 minis have no /Users/runner home — setup-* would
+      # try to mkdir the hosted toolcache and die. Redirect it to a stable
+      # per-runner path (warm across runs); hosted runners are untouched.
+      - name: Self-hosted toolcache redirect (fa-m5)
+        if: startsWith(runner.name, 'fa-m5')
+        run: echo "RUNNER_TOOL_CACHE=${{ runner.workspace }}/toolcache" >> "$GITHUB_ENV"
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         with:
           sdk: stable
