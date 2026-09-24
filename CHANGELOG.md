@@ -17,11 +17,11 @@
   discovery, rendering, env passthrough, resume by session id and name,
   and zero regression without herdr. herdr's pane restore re-attaches
   killed panes with the existing `fa --session <id|name>` contract — no
-  new fa surface needed. Side fix: `process_probe_io.dart` honored its
-  documented never-throws contract — a `ProcessException` from the `ps`
-  spawn itself (hardened runtimes, sandboxes) crashed the waiting
-  manifest reconcile instead of degrading to unverifiable.
-
+  new fa surface needed. Side fix: `process_probe_io.dart` now honors
+  its documented never-throws contract — the old code let a
+  `ProcessException` from the `ps` spawn itself (hardened runtimes,
+  sandboxes) crash the waiting manifest reconcile; the probes now
+  degrade to the documented null ("unverifiable") path.
 
 - fix(env): `LocalExecutionEnv` forwards `renamePath` — kernel-mode cube
   exec was dead since #803's atomic profile restage (the

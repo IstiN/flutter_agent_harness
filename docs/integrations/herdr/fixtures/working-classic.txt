@@ -1,4 +1,4 @@
-⠙ Compacting context…     12s
+⠙ Compacting context…         12s · run
 ────────────────────────────────────────────────────────────
 ~/work/proj · ctx 42% (84k/200k) · 120k tok · turn 3 · openai/gpt-5
 fa> 

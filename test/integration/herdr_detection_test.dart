@@ -22,6 +22,7 @@ library;
 import 'dart:io';
 
 import 'package:flutter_agent_harness/src/approval/approval.dart';
+import 'package:flutter_agent_harness/src/cli/fa_tui.dart';
 import 'package:flutter_agent_harness/src/cli/tui_prompt.dart';
 import 'package:flutter_agent_harness/src/tools/ask_tool.dart';
 import 'package:test/test.dart';
@@ -401,6 +402,54 @@ String renderAskFixture() {
   return '⠋ Working…      3s\n${_sheet(spec)}\n';
 }
 
+String renderInputFixture() =>
+    '${_sheet(const TextPromptSpec(question: 'API base URL', defaultValue: 'http://localhost:8080'))}\n';
+
+String renderPasswordFixture() =>
+    '${_sheet(const TextPromptSpec(header: 'Password', question: 'API key for openai', secret: true))}\n';
+
+/// The live busy-row line from the real frame painter (`FaTuiModel.view()`,
+/// the same seam `fa_tui_busy_row_test.dart` pins), ANSI-stripped and
+/// trimmed — the bytes herdr's engine reads off the emulated screen.
+/// `source: 'run'` because every interactive run brackets with
+/// `sendBusy(true, source: 'run')` (agent_cli.dart).
+String _liveBusyLine({String phase = '', required int elapsed, int frame = 1}) {
+  final ansi = RegExp(r'\x1b\[[0-9;?]*[A-Za-z]');
+  var model = FaTuiModel(
+    callbacks: FaTuiCallbacks(
+      onSubmit: (_, {images = const []}) async {},
+      onModelSelected: (_) async {},
+      buildSlashMenu: (_) => const [],
+      buildModelMenu: (_, _) => const [],
+      statusLine: () => '',
+      prompt: '',
+    ),
+    isExited: () => false,
+    termWidth: 80,
+  );
+  model = model.update(const BusyMsg(true, source: 'run')).$1 as FaTuiModel;
+  final now = DateTime.now().millisecondsSinceEpoch;
+  model = model.copyWith(
+    busyStartedAtMs: now - elapsed * 1000,
+    busyLastEventMs: now,
+    busyPhase: phase,
+    spinnerFrame: frame,
+  );
+  return model
+      .view()
+      .content
+      .split('\n')
+      .map((l) => l.replaceAll(ansi, ''))
+      .firstWhere((l) => l.contains('· run'))
+      .trimRight();
+}
+
+final _busyLineRe = RegExp('^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] ');
+
+String _fixtureBusyLine(String name) => File(
+  '$_fixturesDir/$name',
+).readAsStringSync().split('\n').firstWhere(_busyLineRe.hasMatch);
+
 void main() {
   final manifest = _parseFaManifest(File(_manifestPath).readAsStringSync());
 
@@ -428,11 +477,16 @@ void main() {
     final expected = {
       'working.txt': 'working',
       'working-classic.txt': 'working',
+      // A mid-run phase label (tool execution) must classify busy — the
+      // busy_row rule keys on the spinner + elapsed cells, not the label.
+      'working-phase.txt': 'working',
       'idle.txt': 'idle',
       'idle-classic.txt': 'idle',
       'blocked-approval.txt': 'blocked',
       'blocked-secret.txt': 'blocked',
       'blocked-ask.txt': 'blocked',
+      'blocked-input.txt': 'blocked',
+      'blocked-password.txt': 'blocked',
     };
     expected.forEach((name, state) {
       final screen = File('$_fixturesDir/$name').readAsStringSync();
@@ -449,10 +503,33 @@ void main() {
       'blocked-approval.txt': renderApprovalFixture(),
       'blocked-secret.txt': renderSecretFixture(),
       'blocked-ask.txt': renderAskFixture(),
+      'blocked-input.txt': renderInputFixture(),
+      'blocked-password.txt': renderPasswordFixture(),
     };
     live.forEach((name, rendered) {
       final committed = File('$_fixturesDir/$name').readAsStringSync();
       expect(committed, rendered, reason: '$name drifted from the renderer');
+    });
+  });
+
+  test('busy-row fixtures match the live frame painter bytes', () {
+    final live = {
+      // plain run, spinner frame 1
+      'working.txt': _liveBusyLine(elapsed: 12),
+      // classic chrome renders the identical busy row with a phase label
+      'working-classic.txt': _liveBusyLine(
+        phase: 'Compacting context…',
+        elapsed: 12,
+      ),
+      // tool-execution phase naming ('Running bash…')
+      'working-phase.txt': _liveBusyLine(
+        phase: 'Running bash…',
+        elapsed: 30,
+        frame: 0,
+      ),
+    };
+    live.forEach((name, rendered) {
+      expect(_fixtureBusyLine(name), rendered, reason: '$name busy-row drift');
     });
   });
 
