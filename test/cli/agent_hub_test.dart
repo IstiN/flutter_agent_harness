@@ -136,6 +136,17 @@ void main() {
       );
       expect(footer, isNot(contains(r'$')));
     });
+
+    test('a positive mail count appends the mail:N marker; zero/absent '
+        'never does', () {
+      final row = HubRow(agent: _agent('a1', tokens: 512), depth: 1);
+      expect(hubAgentRow(row), isNot(contains('mail:')));
+      expect(hubAgentRow(row, mailCount: 0), isNot(contains('mail:')));
+      expect(hubAgentRow(row, mailCount: 2), contains(' · mail:2'));
+      // The marker trails every metric segment (picker rows end the same
+      // way, so the two surfaces read identically).
+      expect(hubAgentRow(row, mailCount: 2), endsWith(' · mail:2'));
+    });
   });
 
   group('FaHubState', () {

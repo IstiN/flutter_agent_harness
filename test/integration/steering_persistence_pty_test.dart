@@ -118,8 +118,14 @@ allowedTools: []
       // kill is a race the loop owns — the steering contract under test
       // here is only that the record is on disk the moment the process
       // dies (the reported 19:40:57 shape: accepted, process gone).
+      // No continuation response is queued on purpose: the kill lands
+      // mid-sleep, and a leftover queue head would be eaten by the
+      // phase-3 recovery's first model turn instead of STEERED-ACK
+      // rescued — nondeterministically failing that wait when recovery
+      // batches both records into one turn (CI dispatch reds). A late
+      // kill would just surface the mock's 500 (harmless to these
+      // assertions).
       server.enqueueToolCall('bash', '{"command": "sleep 8"}');
-      server.enqueueText('unused');
       await harness.runSlashCommand('run the tool again');
       await harness.waitForText(
         'sleep 8',

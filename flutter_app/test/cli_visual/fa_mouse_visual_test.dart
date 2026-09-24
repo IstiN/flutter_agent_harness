@@ -13,7 +13,6 @@
 ///     --tags integration
 library;
 
-
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
@@ -145,9 +144,10 @@ void main() {
       expect(harness.screenText, contains('●'));
 
       // The footer hint row marks the bottom of the table; the model row
-      // right above it is the click target.
+      // right above it is the click target. (#834's keyHint grammar renders
+      // picker.select's two chords as `enter/tab`.)
       final lines = harness.viewportLines;
-      final hintRow = lines.indexWhere((l) => l.contains('enter switch'));
+      final hintRow = lines.indexWhere((l) => l.contains('enter/tab switch'));
       expect(hintRow, greaterThan(0), reason: 'picker footer hint not shown');
       final targetLine = lines[hintRow - 1].trim();
       // The selection cursor (▸) / current marker (●) prefixes the label;
@@ -169,7 +169,7 @@ void main() {
       await harness.screenshot(shotsDir, '104_model_switched_by_click');
 
       // The picker closed and the clicked model is the live one.
-      expect(harness.screenText, isNot(contains('enter switch')));
+      expect(harness.screenText, isNot(contains('enter/tab switch')));
       expect(harness.screenText, contains(idToken));
 
       await harness.close();
@@ -181,17 +181,14 @@ void main() {
       // The port is picked free at runtime: fixed test ports collide with
       // stale answer-server processes from other visual test files.
       final port = (await tester.runAsync(() async {
-        final socket = await ServerSocket.bind(
-          InternetAddress.loopbackIPv4,
-          0,
-        );
+        final socket = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
         final picked = socket.port;
         await socket.close();
         return picked;
       }))!;
-      final serverScript = File(
-        '${Directory.systemTemp.path}/fa_mouse_slow_server.py',
-      )..writeAsStringSync('''
+      final serverScript =
+          File('${Directory.systemTemp.path}/fa_mouse_slow_server.py')
+            ..writeAsStringSync('''
 import http.server, time
 class H(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
@@ -290,6 +287,7 @@ allowedTools: []
 ''');
   return tempHome;
 }
+
 /// Creates a temp HOME whose boot model is the fixture `test-mini` and
 /// whose persisted model cache seeds the fixture models the golden
 /// picker table shows (`test-mini`, `test-max`, `omega`) — the CLI

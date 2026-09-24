@@ -989,6 +989,10 @@ final class LocalExecutionEnv
       _fs.writeFile(path, content);
 
   @override
+  Future<Result<void, FileError>> renamePath(String from, String to) =>
+      _fs.renamePath(from, to);
+
+  @override
   Future<Result<void, FileError>> writeBinaryFile(
     String path,
     Uint8List content,

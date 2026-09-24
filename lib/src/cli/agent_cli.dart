@@ -1128,31 +1128,31 @@ class AgentCli {
   var _rolesDriven = false;
   final _usage = UsageAccumulator();
 
-  // Issue #277 agents-hub driver state (see agent_hub_cli.dart). The
-  // projection accumulates per-agent running spans; the panel log keeps
-  // the deferred (btw) panel history; the subscriptions are lazy so a
-  // session that never opens the hub still gets task-block rendering.
+  // Issue #277 hub driver state (see agent_hub_cli.dart): the projection
+  // accumulates running spans; the panel log keeps deferred (btw) history;
+  // lazy subscriptions keep task-block rendering for hub-less sessions.
   final AgentHubProjection _hubProjection = AgentHubProjection();
   final DeferredPanelLog _hubPanels = DeferredPanelLog();
 
-  /// Issue #429: the per-session background-job board — truthful phases,
-  /// per-turn collapse, records for reload. Replaced wholesale on session
-  /// resume by rehydration.
+  /// Issue #429: per-session background-job board (truthful phases,
+  /// per-turn collapse, reload records) — replaced wholesale on resume.
   ShellJobBoard _jobBoard = ShellJobBoard();
 
-  /// The registry-persist serialization tail (issue #539) — see
-  /// `_persistJobBoard` in the hub driver extension.
+  /// Registry-persist serialization tail (issue #539; see `_persistJobBoard` in the driver).
   Future<void> _persistChain = Future.value();
   final DateTime _hubMainStartedAt = DateTime.now();
   String? _hubTranscriptId;
   Timer? _hubFollowTimer;
   StreamSubscription<dynamic>? _hubSubagentEventsSub;
   StreamSubscription<dynamic>? _hubTaskStartsSub;
+  /// Hub tree `mail:N` marker counts (async peek → refresh-only re-push
+  /// by the driver extension, which cannot hold fields — state here).
+  final Map<String, int> _hubMailCounts = <String, int>{};
+  bool _hubMailRefreshInFlight = false;
 
-  // Issue #437 steering delivery tracking. A mid-run steer is persisted
-  // at accept and queued here until the agent loop merges it at a step
-  // boundary (identity match on the queued message) or the leftover
-  // settle runs/drops it; the wake paths deliver recovered records.
+  // Issue #437 steering delivery: a steer persists at accept and queues
+  // here until the loop merges it at a step boundary (identity match) or
+  // the settle leftover drops it; wake paths deliver recovered records.
   final List<PendingSteering> _pendingSteering = [];
 
   /// Last agent event time — the run heartbeat. A busy run silent past
