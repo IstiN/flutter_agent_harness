@@ -63,11 +63,27 @@ allowedTools: []
       // Seed named sessions so the picker has real rows. Newest sorts
       // first within the folder, so the picker numbers them:
       // 1) gamma-four, 2) beta-three, 3) alpha-two, 4) alpha-one.
-      for (final name in ['alpha-one', 'alpha-two', 'beta-three', 'gamma-four']) {
+      // Each seed session gets one exchange BEFORE the next /session-new:
+      // switching away deletes the previous session when it is empty
+      // ('cli:empty-cleanup' — don't litter pickers), so message-less
+      // seeds would be trashed before the picker ever opens.
+      for (final name in [
+        'alpha-one',
+        'alpha-two',
+        'beta-three',
+        'gamma-four',
+      ]) {
+        server.enqueueText('seed $name');
         await harness.runSlashCommand('/session-new $name');
         await harness.waitForText(
           "created session '$name'",
           timeout: const Duration(seconds: 20),
+        );
+        harness.sendText('seed $name');
+        harness.sendEnter();
+        await harness.waitForText(
+          'seed $name',
+          timeout: const Duration(seconds: 30),
         );
       }
       await harness.waitForOutput(
@@ -81,47 +97,38 @@ allowedTools: []
         '[Sessions]',
         timeout: const Duration(seconds: 10),
       );
-      await harness.waitForOutput(
-        settleMs: 200,
-        timeout: const Duration(seconds: 5),
+      // Anchor on the LAST numbered row and assert on the frame that
+      // matched: a late transcript re-render can replace the frame between
+      // a header-only wait and a capture (the #550/#557 family) — the
+      // returned frame is the one the contract holds on.
+      var screen = await harness.waitForScreen(
+        '4) alpha-one',
+        timeout: const Duration(seconds: 10),
       );
-      var screen = harness.viewportLines.join('\n');
       // On open the cursor sits on the first item — the flat/tree toggle;
       // numbered rows follow in recency order (newest first).
       expect(screen, contains('▸ ⟳ flat list'));
       expect(screen, contains('1) gamma-four'));
-      expect(screen, contains('4) alpha-one'));
 
       // Type-to-filter `alp`: exactly the two alpha rows stay, selection
       // cursor on the first match, non-matching rows leave the menu.
       harness.sendText('alp');
-      await harness.waitForScreen(
-        '[Sessions: alp]',
+      final filtered = await harness.waitForScreen(
+        '▸ 3) alpha-two',
         timeout: const Duration(seconds: 10),
       );
-      await harness.waitForOutput(
-        settleMs: 200,
-        timeout: const Duration(seconds: 5),
-      );
-      screen = harness.viewportLines.join('\n');
-      expect(screen, contains('▸ 3) alpha-two'));
-      expect(screen, contains('4) alpha-one'));
+      expect(filtered, contains('4) alpha-one'));
       // The `N)` index prefixes keep these assertions unambiguous against
       // the seeded `/session-new` echoes in the transcript history.
-      expect(screen, isNot(contains('1) gamma-four')));
-      expect(screen, isNot(contains('2) beta-three')));
+      expect(filtered, isNot(contains('1) gamma-four')));
+      expect(filtered, isNot(contains('2) beta-three')));
 
       // An empty result keeps the title + the dim (no matches) hint.
       harness.sendText('zzzz');
-      await harness.waitForScreen(
+      screen = await harness.waitForScreen(
         '(no matches)',
         timeout: const Duration(seconds: 10),
       );
-      await harness.waitForOutput(
-        settleMs: 200,
-        timeout: const Duration(seconds: 5),
-      );
-      screen = harness.viewportLines.join('\n');
       expect(screen, contains('[Sessions: alpzzzz]'));
       expect(screen, contains('(no matches)'));
 
