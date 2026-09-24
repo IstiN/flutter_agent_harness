@@ -4169,6 +4169,10 @@
 - fix(tui): address #834 review threads - alignment, chord labels, /help summary, TUI-leg pin (#859)
 - chore(deps): bump the github-actions group with 10 updates (#853)
 
+## 1.0.471
+
+- security(sep-07): rotate release-signing trust anchor — the #814 keypair died with its ephemeral CI runner (#902)
+
 ## Unreleased
 
 ## Unreleased
