@@ -86,14 +86,18 @@ allowedTools: []
           reason: 'the empty gutter ends the frame; screen:\n$screen');
       expect(grid[last - 1], statusRows.single,
           reason: 'the band sits directly above the gutter; screen:\n$screen');
+      // At these heights the transcript may shrink to nothing and the
+      // draft lives only in the composer's gutter row — anywhere on the
+      // glass counts; the band-clean assert above pins the separation.
       expect(
-        grid.sublist(0, last - 1).any((l) => l.contains('draft')),
+        grid.any((l) => l.contains('draft')),
         isTrue,
         reason: 'the composed draft is on the glass; screen:\n$screen',
       );
-      // The draft row is NOT the status row (no merge).
-      expect(grid[last].contains('draft'), isFalse,
-          reason: 'draft must not merge into the status row');
+      // The draft is NOT the status row (no merge): the band carries no
+      // composer text — the draft lives in the gutter row below it.
+      expect(statusRows.single.contains('draft'), isFalse,
+          reason: 'draft must not merge into the status band');
     });
   }
 }

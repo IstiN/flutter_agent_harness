@@ -23,6 +23,8 @@ baseUrl: ${server.baseUrl}
 mode: code
 approvalMode: yolo
 allowedTools: []
+tui:
+  classic: true
 ''');
 
     final harness = await FaCliHarness.spawn(
@@ -65,6 +67,14 @@ allowedTools: []
     }
     await Future<void>.delayed(const Duration(milliseconds: 1300));
     dump('mid-run composed');
+    for (var i = 1; i <= 33; i++) {
+      harness.sendText('hold the queue ${i.toString().padLeft(2, '0')}');
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      harness.sendEnter();
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 1200));
+    dump('classic flood');
     await Future<void>.delayed(const Duration(seconds: 7));
     dump('settled');
   });
