@@ -483,7 +483,7 @@ jobs:
             busy=$((busy + n))
           done
           free=$((M5_POOL - busy))
-          if [ "$free" -ge 2 ]; then
+          if [ "$free" -ge 1 ]; then
             echo "pool: $free free of $M5_POOL fa-m5 -> self-hosted"
             echo 'pty_integration=["self-hosted","macos-m5"]' >> "$GITHUB_OUTPUT"
             echo 'pty_visual=["self-hosted","macos-m5"]' >> "$GITHUB_OUTPUT"
