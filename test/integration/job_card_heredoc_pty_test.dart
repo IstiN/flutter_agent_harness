@@ -64,8 +64,13 @@ void main() {
   late File turnsFile;
 
   setUp(() async {
-    home = await Directory.systemTemp.createTemp('fa_599_home_');
-    project = await Directory.systemTemp.createTemp('fa_599_proj_');
+    home = Directory('/tmp/fa_599_home')..createSync(recursive: true);
+    project = Directory('/tmp/fa_599_proj')..createSync(recursive: true);
+    // Pin the classic chrome: this suite asserts the classic grid (#599);
+    // the band redesign (#805-#807) has its own surface.
+    File('${home.path}/.fah/config.yaml')
+      ..createSync(recursive: true)
+      ..writeAsStringSync('tui:\n  classic: true\n');
     turnsFile = File('${home.path}/fa_599_turns.json')
       ..writeAsStringSync(jsonEncode(_turns));
   });
