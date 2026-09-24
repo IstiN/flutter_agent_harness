@@ -71,9 +71,13 @@ final class SandboxShellJob implements ShellJob {
   bool writeStdin(String data) => false;
 
   /// Appends one output chunk to the log, serialized so concurrent
-  /// stdout/stderr chunks keep their arrival order.
+  /// stdout/stderr chunks keep their arrival order. A failing log writer
+  /// must not poison the chain — completeWith drains it before settling
+  /// (issue #925: a broken log must never kill the host or hang the job).
   void writeLog(String chunk) {
-    _writeChain = _writeChain.then((_) => _logWriter(chunk));
+    _writeChain = _writeChain
+        .then((_) => _logWriter(chunk))
+        .catchError((Object _) {});
   }
 
   /// Completes the job from the script's exec result (called by the owning

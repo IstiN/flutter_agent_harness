@@ -114,6 +114,30 @@ void main() {
         expect(job.exitCode, 0);
       },
     );
+
+    test('an unwritable job log fails cleanly instead of crashing with an '
+        'unhandled error (issue #925)', () async {
+      // The log path's parent is a regular file, so the open fails with
+      // ENOTDIR — the same FileSystemException class as the ticket's
+      // ENOSPC. Pre-fix the open ran unowned inside `File.openWrite` and
+      // the error escaped to the root-zone handler (fatal for fa) while
+      // the job never settled.
+      final blocker = File('${tempDir.path}/bash_jobs')
+        ..writeAsStringSync('not a directory\n');
+      final started = await env.startShellJob(
+        'echo hi',
+        id: 'sh-7',
+        logPath: '${blocker.path}/sh-7.log',
+      );
+      expect(started.isErr, isTrue);
+      expect(
+        started.errorOrNull!.message,
+        contains('cannot open job log file'),
+      );
+      // Settle the event loop: a broken implementation surfaces its
+      // unhandled write error here and fails the whole suite.
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+    });
   });
   group('job stop kills the whole process tree (issue #517)', () {
     // Per-run fractional seconds keep the ps scan unique to this run, and

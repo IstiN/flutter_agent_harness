@@ -505,8 +505,11 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       logPath: logPath,
       logWriter: sink.write,
       closeLog: () async {
-        await sink.flush();
-        await sink.close();
+        // Issue #925: a broken log sink must not break the settle path —
+        // completeWith awaits this; an escaping error left the job
+        // unsettled (stuck on the job board) forever.
+        await sink.flush().catchError((Object _) {});
+        await sink.close().catchError((Object _) {});
       },
     );
     // An outer abort stops the job too (same contract as the local shell).
