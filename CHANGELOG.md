@@ -4224,6 +4224,17 @@
 
 - security(sep-07): rotate release-signing trust anchor — the #814 keypair died with its ephemeral CI runner (#902)
 
+## 1.0.473
+
+- ci: cap the fa-m5 mini pool at 2 concurrent PTY jobs (was 3) (#935)
+- chore(ci): rebase cli coverage floor 12.17 → 11.9 (#924)
+- test(integration): port pty suites to band-mode TUI + GLM live provider tests (#914)
+- ci(nightly): PTY legs on fa-m5 minis (hosted fallback) (#903)
+- fix(ci): drop setup-python from the mac PTY/CLI leg — system python3 (#910)
+- ci: runner-pick threshold 2 -> 1 free mini (#909)
+- fix(ci): redirect RUNNER_TOOL_CACHE on fa-m5 minis (#908)
+- fix(ci): runner-pick outputs must be JSON arrays — fromJSON in runs-on (#907)
+
 ## Unreleased
 
 ## Unreleased
