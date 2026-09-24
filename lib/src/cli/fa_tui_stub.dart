@@ -21,6 +21,7 @@ import 'sigint_action.dart';
 import 'termios_guard.dart' show SttyRunner;
 import 'tui_prompt.dart';
 import 'tui_repl.dart' show MenuItem, TuiProgramHooks;
+import 'tui_status_line.dart' show StatusLineSnapshot, TuiStatusLine;
 
 /// Stub mirror of fa_tui.dart's busy forensic sink (never fires here).
 void Function(String line)? faTuiBusyDiagnostics;
@@ -45,6 +46,8 @@ final class FaTuiCallbacks {
     this.pathCandidates,
     this.onHubAction,
     this.readClipboardImage,
+    this.statusSnapshot,
+    this.statusLineEngine,
   });
 
   final Future<void> Function(String line, {List<TuiImageAttachment> images})
@@ -54,6 +57,11 @@ final class FaTuiCallbacks {
   final List<MenuItem> Function(String filter, int width) buildModelMenu;
   final String Function() statusLine;
   final String prompt;
+
+  /// Band composer seam (#806). Always null here — the web stub keeps
+  /// the legacy composer; see fa_tui.dart for the real contract.
+  final StatusLineSnapshot Function()? statusSnapshot;
+  final TuiStatusLine? statusLineEngine;
   final void Function()? onInterrupt;
   final void Function()? onCtrlCExit;
   final bool Function()? isShiftPressed;

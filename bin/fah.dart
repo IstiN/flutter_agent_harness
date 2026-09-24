@@ -2282,6 +2282,11 @@ Future<void> _runApp(List<String> args) async {
       // DEC 2026 synchronized output: auto-detect by default; FA_TUI_SYNC
       // forces it on (terminals without DECRQM answers) or off (fallback).
       tuiSyncOutput: _envTristate('FA_TUI_SYNC'),
+      // The omp band composer (#806): on unless `tui.classic: true` pins
+      // the legacy chrome byte-identically.
+      tuiClassic: saved.tuiClassic,
+      statusLine: saved.statusLine,
+      agentLoadMode: saved.agentLoadMode,
     ),
     io: io,
   );
