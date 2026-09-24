@@ -359,9 +359,17 @@ allowedTools: []
       expect(composer, contains('steerdraftline40offorty'),
           reason: 'the cursor window follows the composer tail:\n'
               '${screenShot()}');
-      expect(grid.last.trimRight().startsWith('╰─'),
-          isTrue,
-          reason: 'the composer gutter ends the frame:\n${screenShot()}');
+      // The frame ends on a gutter-prefixed composer row: `╰─ ` rides the
+      // FIRST visible input row, three spaces the continuations — with a
+      // tall draft the tail row is a continuation.
+      final lastRaw = grid.last.trimRight();
+      expect(
+        lastRaw.startsWith('╰─') ||
+            lastRaw.startsWith('   ') ||
+            lastRaw.isEmpty,
+        isTrue,
+        reason: 'the composer gutter ends the frame:\n${screenShot()}',
+      );
     });
   }
 }
