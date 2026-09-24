@@ -4235,6 +4235,10 @@
 - fix(ci): redirect RUNNER_TOOL_CACHE on fa-m5 minis (#908)
 - fix(ci): runner-pick outputs must be JSON arrays — fromJSON in runs-on (#907)
 
+## 1.0.474
+
+- feat(chat): live phase/tool status row above the composer (#865) (#897)
+
 ## Unreleased
 
 ## Unreleased
