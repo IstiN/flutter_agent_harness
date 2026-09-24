@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## 1.0.472
+
 
 - fix(env): `LocalExecutionEnv` forwards `renamePath` — kernel-mode cube
   exec was dead since #803's atomic profile restage (the
@@ -4202,6 +4203,8 @@
 ## 1.0.471
 
 - security(sep-07): rotate release-signing trust anchor — the #814 keypair died with its ephemeral CI runner (#902)
+
+## Unreleased
 
 ## Unreleased
 
