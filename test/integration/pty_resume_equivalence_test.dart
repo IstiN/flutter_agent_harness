@@ -5,9 +5,12 @@
 /// bash + a `task` subagent spawn) runs in a real PTY CLI process; the TUI
 /// exits, the session reopens, and the resumed screen's transcript grammar
 /// — tool rows, notice blockquotes, markdown rows, user echo — must EQUAL
-/// the live screen's, modulo the contract's only permitted difference
-/// (settled durations `—` vs live cells; board re-print cards are dropped
-/// from both sides, their shape is #429's own coverage).
+/// the live screen's, modulo the contract's permitted differences (settled
+/// durations `—` vs live cells; board re-print cards are dropped from both
+/// sides, their shape is #429's own coverage; and since #807 the live edge
+/// paints band tool cards `✔ name: detail 0s` while the replay keeps the
+/// legacy row grammar `✓ name · detail —` — both canonicalize to the
+/// shared `name: detail` core).
 ///
 /// AC6/AC8: a 3k-record session resumes through the unified pipeline — the
 /// tail's pinned grammar rows render, zero `[name]` markers leak, and
@@ -105,6 +108,43 @@ final _durationCell = RegExp(r'·\s*\d+(?:\.\d+)?(?:ms|s)');
 /// sides; the settlement NOTICE rows stay (they replay as blockquotes).
 final _boardCard = RegExp(r'sh-\d+-\w+.*·');
 
+/// The context gauge (`5%/200k`, `10.5k/200k`): only the status footer and
+/// the resumed boot's brand row carry it — never transcript grammar.
+final _ctxGauge = RegExp(r'\d+(?:\.\d+)?[k%]/\d');
+
+/// A live RUNNING band tool card (`⟳ bash: sleep 2 …`, `⏳ …`): live-only
+/// transient — its settled twin carries the same facts and is the row that
+/// replays.
+final _runningCard = RegExp(r'^[⟳⏳] \S+: ');
+
+/// A live SETTLED band tool card (`✔ bash: sleep 2 … 0s`, `✘ … [exit 1]`).
+final _settledCard = RegExp(r'^[✔✘] (\S+): (.+)$');
+
+/// A replayed legacy tool row (`✓ bash · sleep 2 … —`, `✗ …` when the
+/// result record never landed).
+final _replayedRow = RegExp(r'^[✓✗] (\S+) · (.+)$');
+
+/// A settled card's trailing meta zone: the bracketed badge and/or the
+/// elapsed cell (`0s`, `12.4ms`).
+final _cardMeta = RegExp(r'(?:\s\[[^\]]+\]|\s\d+(?:\.\d+)?(?:ms|s))+$');
+
+/// Canonicalizes one settled tool row to its shared `name: detail`
+/// grammar. The live band card (`✔ bash: sleep 2 … 0s`) and the replayed
+/// row (`✓ bash · sleep 2 … —`) render the same call with different
+/// glyph/separator/elapsed chrome (#807 vs the legacy row grammar), so the
+/// comparison reads the name+detail core both share. Running cards
+/// (`⟳ …`) normalize to null: live-only transient.
+String? _canonicalToolRow(String t) {
+  if (_runningCard.hasMatch(t)) return null;
+  final card = _settledCard.firstMatch(t);
+  if (card != null) return '${card[1]}: ${card[2]!.replaceAll(_cardMeta, '')}';
+  final row = _replayedRow.firstMatch(t);
+  if (row != null) {
+    return '${row[1]}: ${row[2]!.replaceFirst(RegExp(r'\s+—$'), '')}';
+  }
+  return t;
+}
+
 /// Everything that is boot chrome, composer, status, or board — never
 /// transcript grammar.
 bool _isChrome(String t) =>
@@ -112,16 +152,20 @@ bool _isChrome(String t) =>
     t.startsWith('--- restored session') ||
     t.startsWith('ctrl+') ||
     t.contains('tokens') && t.contains('·') ||
+    t.contains(' · ctx ') ||
+    _ctxGauge.hasMatch(t) ||
     _boardCard.hasMatch(t) ||
     t.startsWith('/exit') ||
     t.startsWith('====') ||
     t.startsWith('────') ||
+    t.startsWith('╰─') ||
     t.contains('Working') ||
     // Box-drawn blocks (background-task completion cards) — their durable
-    // form is the persisted notice/registry, replayed below them.
+    // form is the persisted notice/registry, replayed below them. The
+    // `│ ⚙ …` system-notice blockquote is NOT chrome: it replays 1:1.
     t.startsWith('┌') ||
-    t.startsWith('│') ||
     t.startsWith('└') ||
+    t.startsWith('│') && !t.contains('⚙') ||
     // The live settlement toast writeln and its wrap continuation; the
     // durable notice replays as a `│ ⚙ …` blockquote instead.
     t.startsWith('[bash] ') && t.contains('exited(') ||
@@ -140,7 +184,9 @@ List<String> transcriptOf(List<String> lines) {
     final t = stripped[end - 1].trim();
     if (t.startsWith('>') ||
         t.startsWith('✓') ||
+        t.startsWith('✔') ||
         t.startsWith('✗') ||
+        t.startsWith('✘') ||
         t.startsWith('•') ||
         RegExp(r'^\d+\.\s').hasMatch(t) ||
         t == _prompt) {
@@ -148,9 +194,21 @@ List<String> transcriptOf(List<String> lines) {
     }
     end--;
   }
+  final rows = <String>[];
+  for (final line in stripped.take(end)) {
+    final t = line.trim();
+    if (_isChrome(t)) continue;
+    final canonical = _canonicalToolRow(t);
+    if (canonical != null) rows.add(canonical);
+  }
+  // The settled bg-job notice starts one wrap-around scripted turn whose
+  // reply repeats the marker row; whether that repeat has PAINTED when a
+  // frame is captured is a timing race, not a grammar difference (the
+  // session always persists it). Keep the first assistant row only.
+  final seenAssistant = <String>{};
   return [
-    for (final line in stripped.take(end))
-      if (!_isChrome(line.trim())) line,
+    for (final row in rows)
+      if (!row.startsWith('>_Fa ') || seenAssistant.add(row)) row,
   ];
 }
 
@@ -160,8 +218,18 @@ void main() {
   late File turnsFile;
 
   setUp(() async {
-    home = await Directory.systemTemp.createTemp('fa_446_home_');
-    project = await Directory.systemTemp.createTemp('fa_446_proj_');
+    // Short fixed dirs (#446): long macOS temp paths wrap mid-path and
+    // desync the two frames' wrap continuations; /tmp keeps every row on
+    // one physical line.
+    home = Directory('/tmp/fa_446_home')..createSync(recursive: true);
+    project = Directory('/tmp/fa_446_proj')..createSync(recursive: true);
+    // Pin the classic chrome: this suite asserts the classic transcript
+    // grammar; the band redesign (#805-#807) has its own surface. The
+    // harness configures providers via FA_PROVIDER_CONFIG env only, so the
+    // pin rides its own tiny config.yaml.
+    File('${home.path}/.fah/config.yaml')
+      ..createSync(recursive: true)
+      ..writeAsStringSync('tui:\n  classic: true\n');
     turnsFile = File('${home.path}/fa_446_turns.json')
       ..writeAsStringSync(jsonEncode(_turns));
   });

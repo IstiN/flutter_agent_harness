@@ -54,25 +54,21 @@ void main() {
         timeout: const Duration(seconds: 30),
       );
       fa.sendCtrlC();
-      // Linux PTY flake (CI legs): a single ^C byte can race the TUI's
-      // render loop and the process then dies by signal (exitCode < 0)
-      // instead of the clean exit(130). The #355 contract is "Ctrl+C
-      // quits the REPL BOUNDED" — a second ^C after a grace beat, and
-      // any process death inside the window counts; only a process that
-      // is STILL ALIVE at the end of the budget fails (a wedge).
-      // `stillAlive` is a sentinel: exitCode is a Future<int>, so the
-      // timeout can't return null — the sentinel keeps it null-free.
+      // Double-press Ctrl+C contract (#830): press 1 arms a 3 s window and
+      // STAYS alive; only press 2 inside the window exits (130). The old
+      // pre-#830 grace beat (5 s) is past the window — a late press reads
+      // as a fresh press 1 — so the confirming press lands ~300 ms later.
+      // Linux PTY flake (CI legs): presses can race the TUI's render
+      // loop; a missed cycle gets ONE bounded retry (a full fresh
+      // press-1/press-2 cycle). The #355 contract is "Ctrl+C quits the
+      // REPL BOUNDED" — any process death inside the window counts; only
+      // a process that is STILL ALIVE at the end of the budget fails (a
+      // wedge). `stillAlive` is a sentinel: exitCode is a Future<int>, so
+      // the timeout can't return null — the sentinel keeps it null-free.
       const stillAlive = -999;
-      var code = await fa.pty.exitCode.timeout(
-        const Duration(seconds: 5),
-        onTimeout: () => stillAlive,
-      );
+      var code = await exitAfterDoubleCtrlC(fa);
       if (identical(code, stillAlive)) {
-        fa.sendCtrlC();
-        code = await fa.pty.exitCode.timeout(
-          const Duration(seconds: 10),
-          onTimeout: () => stillAlive,
-        );
+        code = await exitAfterDoubleCtrlC(fa);
       }
       expect(
         identical(code, stillAlive),
@@ -105,6 +101,20 @@ void main() {
   );
 }
 
+/// One bounded double-press Ctrl+C cycle (#830): press 1, confirming
+/// press 2 ~300 ms later (inside the 3 s press window), then wait up to
+/// 10 s for the process to die. Returns the sentinel when still alive.
+Future<int> exitAfterDoubleCtrlC(FaCliHarness fa) async {
+  const stillAlive = -999;
+  fa.sendCtrlC();
+  await Future<void>.delayed(const Duration(milliseconds: 300));
+  fa.sendCtrlC();
+  return fa.pty.exitCode.timeout(
+    const Duration(seconds: 10),
+    onTimeout: () => stillAlive,
+  );
+}
+
 /// Creates a temp HOME pointing at the local mock with yolo approval.
 Directory _tempHomeForMock(int port) {
   final tempHome = Directory.systemTemp.createTempSync('fa_ssh_gate_');
@@ -117,6 +127,10 @@ baseUrl: http://127.0.0.1:$port/v1
 mode: code
 approvalMode: yolo
 allowedTools: []
+# Pin the classic chrome: this suite asserts the pre-#805 classic REPL
+# chrome; the band redesign (#805-#807) has its own surface.
+tui:
+  classic: true
 ''');
   return tempHome;
 }

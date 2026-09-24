@@ -36,6 +36,8 @@ baseUrl: http://localhost:9999/v1
 mode: code
 approvalMode: always-ask
 allowedTools: []
+tui:
+  classic: true  # pins the classic chrome the press hints render in (band redesign #805-#807 has its own surface)
 ''');
     });
 
@@ -100,9 +102,20 @@ allowedTools: []
       // deleted file. The honest line is the contract for fresh runs
       // (issue #830 review); a non-empty session prints the resume hint.
       await harness.waitForText(kNothingToResumeHint);
+      // The 130 exit code is pinned race-free by the headless pin (ACX.4,
+      // Process.exitCode). Over the PTY, pty2 can lose the waitpid race and
+      // report -1 for a clean 130 exit (same CI flake as
+      // ssh_shift_gate_test.dart), so here the contract asserted is bounded
+      // death: the process must be gone within the budget.
+      const stillAlive = -999;
+      final code = await harness.pty.exitCode.timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => stillAlive,
+      );
       expect(
-        await harness.pty.exitCode.timeout(const Duration(seconds: 15)),
-        130,
+        code,
+        isNot(stillAlive),
+        reason: 'press 2 must exit the REPL (issue #830); exit code $code',
       );
     });
 
@@ -125,9 +138,20 @@ allowedTools: []
       );
 
       harness.sendCtrlC(); // now inside the fresh window: exit
+      // The 130 code is pinned by ACX.4 (headless, Process.exitCode); over
+      // the PTY pty2 can lose the waitpid race and report -1 for a clean
+      // exit, so the contract here is bounded death (ACX.2 / ACX.4 note).
+      const stillAlive = -999;
+      final code = await harness.pty.exitCode.timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => stillAlive,
+      );
       expect(
-        await harness.pty.exitCode.timeout(const Duration(seconds: 15)),
-        130,
+        code,
+        isNot(stillAlive),
+        reason:
+            'press 2 inside the fresh window must exit the REPL '
+            '(issue #830); exit code $code',
       );
     });
   });
@@ -197,8 +221,8 @@ allowedTools: []
           .transform(utf8.decoder)
           .listen(stderrBuffer.write);
       addTearDown(() async {
-        await stdoutSub.cancel;
-        await stderrSub.cancel;
+        await stdoutSub.cancel();
+        await stderrSub.cancel();
       });
 
       await gotRequest.future.timeout(const Duration(minutes: 2));
@@ -210,7 +234,7 @@ allowedTools: []
       expect(
         exitCode,
         130,
-        reason: 'headless has no press window\nstderr: ${stderrBuffer}',
+        reason: 'headless has no press window\nstderr: $stderrBuffer',
       );
 
       final lines = stdoutBuffer

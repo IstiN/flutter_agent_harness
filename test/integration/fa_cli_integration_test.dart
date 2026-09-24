@@ -609,6 +609,8 @@ baseUrl: http://localhost:9999/v1
 mode: code
 approvalMode: yolo
 allowedTools: []
+tui:
+  classic: true  # pins the classic chrome the boot status-line assert needs (band redesign #805-#807 has its own surface)
 ''');
   return tempHome;
 }
