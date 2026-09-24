@@ -1,4 +1,6 @@
+import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/tui_key_hints.dart';
+import 'package:flutter_agent_harness/src/cli/tui_text_width.dart';
 import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:test/test.dart';
 
@@ -30,6 +32,35 @@ void main() {
       expect(const TuiChord('up').display(), '↑');
       expect(const TuiChord('1').display(), '1');
       expect(const TuiChord('ctrl+home').display(), 'Ctrl+Home');
+    });
+
+    test('display consults key labels for modified chords too', () {
+      // A modified arrow/paged key keeps the same label vocabulary as its
+      // bare form (thread lC-Zb: the first `ctrl+left`-style registry entry
+      // must not silently degrade to prose casing).
+      expect(const TuiChord('ctrl+up').display(), 'Ctrl+↑');
+      expect(const TuiChord('ctrl+pgdown').display(), 'Ctrl+PgDn');
+      expect(const TuiChord('alt+left').display(), 'Alt+←');
+      expect(TuiChord.parse('Ctrl+↑'), const TuiChord('ctrl+up'));
+      expect(TuiChord.parse('Ctrl+PgDn'), const TuiChord('ctrl+pgdown'));
+      expect(TuiChord.parse('Alt+←'), const TuiChord('alt+left'));
+    });
+
+    test('parse normalizes alias spellings inside modified chords', () {
+      // Bare and modified alias spellings share one normalization path.
+      expect(TuiChord.parse('pgdn'), const TuiChord('pgdown'));
+      expect(TuiChord.parse('ctrl+pgdn'), const TuiChord('ctrl+pgdown'));
+      expect(TuiChord.parse('Option+P'), const TuiChord('alt+p'));
+      expect(TuiChord.parse('ctrl+opt+p'), const TuiChord('ctrl+alt+p'));
+      expect(TuiChord.parse('cmd+k'), const TuiChord('super+k'));
+    });
+
+    test('parse tolerates spaces around the + separator', () {
+      // A spaced display spelling is exactly the free-form input the
+      // normalizer exists for: internal empty parts must collapse.
+      expect(TuiChord.parse('Ctrl + X'), const TuiChord('ctrl+x'));
+      expect(TuiChord.parse('ctrl + up'), const TuiChord('ctrl+up'));
+      expect(TuiChord.parse('Ctrl + ↑'), const TuiChord('ctrl+up'));
     });
 
     test('parse(display) round-trips for every registry chord', () {
@@ -234,6 +265,55 @@ void main() {
         tuiHotkeyTableLines().join('\n'),
         contains('Option+Enter'),
       );
+    });
+
+    test('plain table aligns the description column in display cells', () {
+      // String.padRight counts UTF-16 units; a wide key (漢字漢: 6 cells,
+      // 3 units) under-pads its row. Widths must be measured in display
+      // cells (tuiTextWidth, matching dart_tui) — ambiguous-width arrows
+      // (↑) stay terminal-dependent in line mode by design (threads
+      // lC-WJ + 859 review).
+      const wide = TuiKeybinding('test.wide', 'composer', [TuiChord('漢字漢')],
+          'wide synthetic binding');
+      const ascii = TuiKeybinding(
+          'test.ascii', 'composer', [TuiChord('ctrl+x')], 'ascii binding');
+      final lines = tuiHotkeyTableLines(
+        markdown: false,
+        darwin: false,
+        bindings: [wide, ascii],
+      );
+      final descs = [wide.description, ascii.description];
+      final starts = <int>[];
+      for (final line in lines) {
+        for (final d in descs) {
+          final i = line.indexOf(d);
+          if (i >= 0) starts.add(tuiTextWidth(line.substring(0, i)));
+        }
+      }
+      // Literal pins: the oracle must not depend on the mechanism under
+      // test (a width-table regression would otherwise shrink both sides
+      // in lockstep).
+      expect(tuiTextWidth('漢字漢'), 6, reason: 'CJK is 2 cells per glyph');
+      expect(starts, hasLength(2));
+      expect(starts.toSet(), {10},
+          reason: '2 + 6 + 2 — descriptions share one display column');
+    });
+
+    test('markdown table box-grids through the transcript renderer', () {
+      // Pins the TUI leg end to end: the generated markdown rows satisfy
+      // the renderer's table contract and never leak as raw pipe text
+      // (thread lC-eC).
+      final fmt = AnsiMarkdown(width: 80);
+      final out = <String>[];
+      for (final line in tuiHotkeyTableLines(markdown: true)) {
+        out.addAll(fmt.consumeLine(line));
+      }
+      out.addAll(fmt.flushTrailing());
+      final text = out.join('\n');
+      expect(text.contains('| `'), isFalse, reason: 'raw markdown leaked');
+      expect(text.contains('│'), isTrue,
+          reason: 'box-grid column separator missing');
+      expect(text.contains('Composer'), isTrue);
     });
   });
 }
