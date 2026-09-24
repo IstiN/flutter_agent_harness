@@ -53,6 +53,11 @@ baseUrl: ${server.baseUrl}
 mode: code
 approvalMode: yolo
 allowedTools: []
+# The consent suite tests the ASK flow: granted is the config default
+# (cli_config.dart), so the ask decision must be pinned explicitly or the
+# startup dialog never fires.
+skills:
+  access: ask
 ''');
   final workspace = Directory.systemTemp.createTempSync('fa927_ws_');
   File(

@@ -58,11 +58,15 @@ jobs:
           fi
           title="raise coverage to $measured"
           body="$(printf 'Weekly CLI-coverage gardener measured **%s**%% on lib/src/cli/** — above the committed floor of **%s**%% (scripts/cli_coverage_baseline.txt).\n\nPer the #927 contract the baseline never auto-commits: land the raise through a reviewed PR that\n- updates scripts/cli_coverage_baseline.txt to %s,\n- passes the per-PR pty-integration ratchet gate green, and\n- traces every bump to a merged PTY test with real frame assertions.\n' "$measured" "$baseline" "$measured")"
-          number=$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "in:title \"$title\"" --json number --jq '.[0].number // empty')
+          number=$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "in:title \"raise coverage to\"" --json number,createdAt --jq 'sort_by(.createdAt) | map(.number) | last // empty')
           if [ -n "$number" ]; then
-            gh issue edit "$number" -R "$GITHUB_REPOSITORY" --body "$body"
+            gh issue edit "$number" -R "$GITHUB_REPOSITORY" --title "$title" --body "$body"
             echo "updated issue #$number"
           else
-            gh issue create -R "$GITHUB_REPOSITORY" --assignee ai-teammate --title "$title" --body "$body"
+            # The #927 AC wants the raise-to-X issue assigned to ai-teammate;
+            # keep the measured number alive even when the login is not
+            # assignable (renamed/removed) — file unassigned as a fallback.
+            gh issue create -R "$GITHUB_REPOSITORY" --assignee ai-teammate --title "$title" --body "$body" ||
+              gh issue create -R "$GITHUB_REPOSITORY" --title "$title" --body "$body"
             echo "filed raise-to-$measured issue"
           fi
