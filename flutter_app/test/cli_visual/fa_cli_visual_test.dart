@@ -11,6 +11,7 @@
 ///   cd flutter_app && flutter test test/cli_visual --tags integration
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -130,7 +131,33 @@ void main() {
         'Select model',
         timeout: const Duration(seconds: 15),
       );
-      harness.sendText('zzz');
+      // Type the filter one character at a time, verifying the picker title
+      // absorbed each keystroke. On a loaded runner the picker can paint
+      // before its filter grabs keyboard focus, and the keystroke falls
+      // through into the composer (failure frame: '╰─ z' under an
+      // unfiltered '[Select model]' list) — erase the leak (DEL) and retry
+      // until the filter takes the key.
+      var typed = '';
+      for (final ch in 'zzz'.split('')) {
+        var absorbed = false;
+        for (var attempt = 0; attempt < 6 && !absorbed; attempt++) {
+          await harness.settle(settleMs: 250);
+          harness.sendText(ch);
+          try {
+            await harness.liveWaitForText(
+              '[Select model: $typed$ch',
+              timeout: const Duration(seconds: 3),
+            );
+            absorbed = true;
+          } on TimeoutException {
+            // Focus had not attached yet — the char leaked into the
+            // composer; erase it so retries never compound into garbage.
+            harness.sendText('\x7f');
+          }
+        }
+        expect(absorbed, isTrue, reason: 'filter keystroke "$ch" never landed');
+        typed += ch;
+      }
       await harness.settle(settleMs: 300);
       await harness.screenshot(shotsDir, '06_model_filter_no_match');
       expect(harness.screenText, contains('[Select model: zzz]'));

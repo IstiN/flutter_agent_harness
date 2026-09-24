@@ -36,6 +36,8 @@ baseUrl: ${server.baseUrl}
 mode: code
 approvalMode: yolo
 allowedTools: []
+tui:
+  classic: true  # pins the classic chrome this suite asserts; band redesign #805-#807
 ''');
 
       final harness = await FaCliHarness.spawn(
@@ -66,9 +68,10 @@ allowedTools: []
         for (final line in harness.viewportLines) line.trimRight(),
       ];
 
+      final raw = '\nRAW:\n${harness.rawTail}';
       final screen = [
         for (var i = 0; i < grid.length; i++) 'R$i |${grid[i]}|',
-      ].join('\n') + '\nRAW:\n' + harness.rawTail;
+      ].join('\n') + raw;
       // Status exactly once, and it is the bottom non-blank row.
       final statusRows = [
         for (final row in grid)
