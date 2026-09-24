@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## 1.0.468
+
 
 - fix(env): `LocalExecutionEnv` forwards `renamePath` — kernel-mode cube
   exec was dead since #803's atomic profile restage (the
@@ -4189,6 +4190,8 @@
 - ci: factory pin c6eb4eb → 7fe0a64 (agents #522 — publish fix + time-travel history) (#901)
 - test: retry the port-release proof-bind in openrouter oauth timeout test (#885)
 - feat(tui): transcript chrome - Box frames, dividers, bordered tool cards (#807) (#828)
+
+## Unreleased
 
 ## Unreleased
 
