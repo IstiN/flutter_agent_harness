@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -124,19 +125,29 @@ void main() {
       // the job never settled.
       final blocker = File('${tempDir.path}/bash_jobs')
         ..writeAsStringSync('not a directory\n');
-      final started = await env.startShellJob(
-        'echo hi',
-        id: 'sh-7',
-        logPath: '${blocker.path}/sh-7.log',
+      Object? zoneError;
+      await runZonedGuarded(
+        () async {
+          final started = await env.startShellJob(
+            'echo hi',
+            id: 'sh-7',
+            logPath: '${blocker.path}/sh-7.log',
+          );
+          expect(started.isErr, isTrue);
+          expect(
+            started.errorOrNull!.message,
+            contains('cannot open job log file'),
+          );
+        },
+        (Object error, StackTrace _) {
+          zoneError = error;
+        },
       );
-      expect(started.isErr, isTrue);
-      expect(
-        started.errorOrNull!.message,
-        contains('cannot open job log file'),
-      );
-      // Settle the event loop: a broken implementation surfaces its
-      // unhandled write error here and fails the whole suite.
+      // An escaping error still needs an event-loop turn to surface.
       await Future<void>.delayed(const Duration(milliseconds: 300));
+      if (zoneError != null) {
+        fail('unhandled zone error escaped: $zoneError');
+      }
     });
   });
   group('job stop kills the whole process tree (issue #517)', () {

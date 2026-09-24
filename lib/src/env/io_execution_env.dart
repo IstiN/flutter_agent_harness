@@ -889,8 +889,14 @@ final class _LocalShellJob implements ShellJob {
         // Drain pending writes first (RAF allows one op at a time), then
         // swallow every sink failure and settle regardless.
         await _writeChain;
+        // Guarded separately so a failed flush never skips close() — a
+        // leaked RAF fd would live for the whole fa process (issue #925).
         try {
           await _logSink.flush();
+        } on Object {
+          _logBroken = true;
+        }
+        try {
           await _logSink.close();
         } on Object {
           _logBroken = true;

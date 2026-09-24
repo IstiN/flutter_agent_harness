@@ -487,9 +487,14 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     if (token != null && token.isCancelled) {
       return const Err(ExecutionError(ExecutionErrorCode.aborted, 'aborted'));
     }
-    final io.IOSink sink;
+    final io.RandomAccessFile logFile;
     try {
-      sink = io.File(logPath).openWrite(mode: io.FileMode.append);
+      // Issue #925: same guarded eager open as LocalShell.startShellJob.
+      // `File.openWrite` under a try/catch was false safety — the open
+      // starts eagerly but its failure is async and unowned, so open- and
+      // write-class errors (missing dir, permissions, ENOSPC) escaped to
+      // the zone mid-job.
+      logFile = await io.File(logPath).open(mode: io.FileMode.append);
     } on Object catch (error) {
       return Err(
         ExecutionError(
@@ -503,13 +508,17 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       id: id,
       command: command,
       logPath: logPath,
-      logWriter: sink.write,
+      // SandboxShellJob serializes writers (RandomAccessFile allows one op
+      // at a time) and consumes write errors.
+      logWriter: logFile.writeString,
       closeLog: () async {
-        // Issue #925: a broken log sink must not break the settle path —
-        // completeWith awaits this; an escaping error left the job
-        // unsettled (stuck on the job board) forever.
-        await sink.flush().catchError((Object _) {});
-        await sink.close().catchError((Object _) {});
+        // Issue #925: a broken log sink must not break the settle path.
+        try {
+          await logFile.flush();
+        } on Object {}
+        try {
+          await logFile.close();
+        } on Object {}
       },
     );
     // An outer abort stops the job too (same contract as the local shell).
