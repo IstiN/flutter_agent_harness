@@ -91,7 +91,8 @@ void main() {
             'passes (got $passes — per-line OutputMsgs are back)',
       );
     } finally {
-      keys.add([0x03]); // ctrl+c quits the TUI.
+      keys.add([0x03]); // press 1 arms the double-press window (#830)…
+      keys.add([0x03]); // …press 2 quits the TUI
       await run;
       await keys.close();
     }
@@ -128,7 +129,8 @@ void main() {
               'trailing write must render after the earlier one',
         );
       } finally {
-        keys.add([0x03]); // ctrl+c quits the TUI.
+        keys.add([0x03]); // press 1 arms the double-press window (#830)…
+        keys.add([0x03]); // …press 2 quits the TUI
         await run;
         await keys.close();
       }
