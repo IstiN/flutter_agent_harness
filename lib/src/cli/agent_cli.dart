@@ -28,6 +28,7 @@ import '../dap/dap_hub_snapshot.dart';
 import 'agent_event_handler.dart';
 import 'ansi_markdown.dart';
 import 'path_candidates.dart';
+import 'status_line_git_probe.dart';
 import 'tui_status_line.dart'
     show
         StatusLineConfig,

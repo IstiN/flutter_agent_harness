@@ -7,6 +7,7 @@
 library;
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/cli/status_line_git_probe.dart';
 import 'package:flutter_agent_harness/src/cli/tui_text_width.dart'
     show tuiTextWidth;
 import 'package:flutter_agent_harness/src/cli/tui_theme.dart' show TuiTheme;
@@ -111,6 +112,40 @@ void main() {
         ),
       );
       expect(kStatusLineSegments['model']!(leveled, noSuffixSpec)!.text, 'm1');
+    });
+
+    test('model renders provider / model (#920)', () {
+      const s = StatusLineSnapshot(
+        cwd: '/',
+        modelName: 'glm-5.3',
+        providerName: 'zai',
+      );
+      expect(
+        kStatusLineSegments['model']!(s, _defaultSpec())!.text,
+        'zai / glm-5.3',
+      );
+      // No provider label: the bare model (the pre-#920 shape).
+      const bare = StatusLineSnapshot(cwd: '/', modelName: 'glm-5.3');
+      expect(
+        kStatusLineSegments['model']!(bare, _defaultSpec())!.text,
+        'glm-5.3',
+      );
+      // An empty label counts as absent.
+      const blank = StatusLineSnapshot(
+        cwd: '/',
+        modelName: 'glm-5.3',
+        providerName: '',
+      );
+      expect(
+        kStatusLineSegments['model']!(blank, _defaultSpec())!.text,
+        'glm-5.3',
+      );
+    });
+
+    test('stream stays hidden while working (#920: the composer header '
+        'owns the spinner)', () {
+      const working = StatusLineSnapshot(cwd: '/', idle: false);
+      expect(kStatusLineSegments['stream']!(working, _defaultSpec()), isNull);
     });
   });
 
@@ -911,6 +946,89 @@ M  staged-one
       );
       expect(git.branch, isNull);
       expect(git.untracked, 1);
+    });
+
+    test('detached HEAD stays branch-less, keeps dirty counts (#920)', () {
+      final git = parseGitStatusPorcelain('## HEAD (no branch)\n M a\n');
+      expect(git.branch, isNull);
+      expect(git.unstaged, 1);
+    });
+  });
+
+  group('git probe seam (#920)', () {
+    Future<void> pump() => Future<void>.delayed(Duration.zero);
+
+    test('polls once per ttl, serves the cache between frames', () async {
+      var runs = 0;
+      var clock = DateTime(2026, 9, 24, 12);
+      final probe = StatusLineGitProbe(
+        run: (cwd) async {
+          runs++;
+          return '## main...origin/main\n M a\n';
+        },
+        now: () => clock,
+      );
+      // First frame: the poll is in flight, git renders hidden.
+      expect(probe.current('/r'), isNull);
+      await pump();
+      expect(probe.current('/r')!.branch, 'main');
+      expect(probe.current('/r')!.unstaged, 1);
+      expect(probe.current('/r')!.branch, 'main');
+      expect(runs, 1, reason: 'cached between frames within the ttl');
+      clock = clock.add(const Duration(seconds: 6));
+      expect(
+        probe.current('/r')!.branch,
+        'main',
+        reason: 'a stale hit still serves the cached value',
+      );
+      await pump();
+      expect(runs, 2, reason: 'the expired ttl kicked exactly one re-poll');
+    });
+
+    test('failure hides the segment and caches the negative', () async {
+      var runs = 0;
+      var clock = DateTime(2026, 9, 24, 12);
+      final probe = StatusLineGitProbe(
+        run: (cwd) async {
+          runs++;
+          return null; // not a repo / no git / timeout
+        },
+        now: () => clock,
+      );
+      expect(probe.current('/r'), isNull);
+      await pump();
+      expect(runs, 1);
+      expect(probe.current('/r'), isNull);
+      expect(runs, 1, reason: 'the negative caches within the ttl too');
+      clock = clock.add(const Duration(seconds: 6));
+      await pump();
+      probe.current('/r');
+      await pump();
+      expect(runs, 2, reason: 'and re-polls after the ttl');
+    });
+
+    test('cwd switch re-probes immediately', () async {
+      final probed = <String>[];
+      var clock = DateTime(2026, 9, 24, 12);
+      final probe = StatusLineGitProbe(
+        run: (cwd) async {
+          probed.add(cwd);
+          return '## main\n';
+        },
+        now: () => clock,
+      );
+      probe.current('/a');
+      await pump();
+      expect(probe.current('/a')!.branch, 'main');
+      expect(probed, ['/a']);
+      probe.current('/b');
+      await pump();
+      expect(probed, [
+        '/a',
+        '/b',
+      ], reason: 'a cwd switch polls without waiting for the ttl');
+      expect(probe.current('/b')!.branch, 'main');
+      expect(probed, hasLength(2));
     });
   });
 }
