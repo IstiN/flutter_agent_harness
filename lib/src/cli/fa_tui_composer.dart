@@ -317,8 +317,18 @@ extension _TuiComposerLayout on FaTuiModel {
   int _writeStatusBand(StringBuffer b) {
     final snapshot = callbacks.statusSnapshot!();
     final engine = callbacks.statusLineEngine!;
-    final spans = engine.renderSpans(snapshot, termWidth);
-    final raw = spans.map((s) => s.$1).join();
+    // Mid-run fold badge (issue #438 AC3): «compacted and still working»
+    // must be distinguishable from «hung» at a glance. It LEADS the row —
+    // the transient service state matters more than the static cwd, and
+    // narrow terminals truncate the tail (the legacy footer prepended the
+    // same badge; the #831 band carries it the same way). It clears when
+    // the turn settles (the counter resets with the receipt on screen).
+    final badge = snapshot.autoFoldCount == 0
+        ? ''
+        : '[auto-compacted${snapshot.autoFoldCount > 1 ? ' ×${snapshot.autoFoldCount}' : ''}'
+            ' · continuing] ';
+    final spans = engine.renderSpans(snapshot, termWidth - tuiTextWidth(badge));
+    final raw = badge + spans.map((s) => s.$1).join();
     if (tuiTextWidth(raw) > termWidth) {
       _writeBeltRow(b, raw);
       return 1;
@@ -342,6 +352,7 @@ extension _TuiComposerLayout on FaTuiModel {
     // 450 ms tween never engages — the host snapshot carries no
     // timestamps (the #837 review retired the dead fade plumbing).
     final brandT = snapshot.idle ? 0.0 : 1.0;
+    if (badge.isNotEmpty) row.write(_dim(badge));
     for (final span in spans) {
       _writeBandSpan(
         row,

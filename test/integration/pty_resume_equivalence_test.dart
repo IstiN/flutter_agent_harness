@@ -98,7 +98,9 @@ final _turns = [
 final _sgr = RegExp(r'\x1b\[[0-9;]*[A-Za-z]');
 
 /// A live duration cell: `· 3s`, `· 12.4ms` — replay shows `· —`.
-final _durationCell = RegExp(r'·\s*\d+(?:\.\d+)?(?:ms|s)');
+// The live settled card carries the elapsed meta (`… 0s`, `… 12.4ms` —
+// the trailing cell); replay paints the `—` stand-in (issue #446 point 2).
+final _durationCell = RegExp(r'\s\d+(?:\.\d+)?(?:ms|s)$');
 
 /// A background-job board card (`bash sh-1-ab12 · done · 0.3s`): the board
 /// re-prints settled cards on resume, mid-turn on live — dropped from both

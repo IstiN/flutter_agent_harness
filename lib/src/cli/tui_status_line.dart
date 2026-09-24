@@ -153,6 +153,12 @@ final class StatusLineSnapshot {
   /// and drives the `pi` brand fade toward its dim endpoint.
   final bool idle;
 
+  /// Mid-run auto-compaction folds (issue #438 AC3): zero hides the band's
+  /// leading fold badge; N > 1 renders the multiplicity suffix. The badge
+  /// leads the row (the transient service state outranks the static cwd on
+  /// narrow terminals) and clears when the turn settles.
+  final int autoFoldCount;
+
   /// Milliseconds since the last idle↔working flip; `null` = no flip
   /// observed (the brand mark sits at its endpoint). Drives the 450 ms
   /// brand fade (see [statusLineBrandFadeT]).
@@ -184,6 +190,7 @@ final class StatusLineSnapshot {
     this.hostname,
     this.idle = true,
     this.idleChangedAgoMs,
+    this.autoFoldCount = 0,
   });
 
   /// Live context pressure as a percent (0–100+); `null` when the window

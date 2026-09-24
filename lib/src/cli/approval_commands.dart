@@ -564,6 +564,7 @@ extension ApprovalCommands on AgentCli {
       costUsd: cost > 0 ? cost : null,
       sessionId: _session?.cachedId,
       idle: !isBusy,
+      autoFoldCount: _autoFoldCount,
     );
   }
 
