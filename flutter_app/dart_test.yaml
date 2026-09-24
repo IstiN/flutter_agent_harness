@@ -3,3 +3,10 @@ tags:
     # Integration tests spawn real processes (test/cli_visual runs the real
     # Fa CLI in a PTY) and are excluded from the pre-commit gate. Run them
     # manually with: flutter test test/cli_visual --tags integration
+  omp-capture:
+    # omp REFERENCE capture (issue #810): boots the pinned omp build
+    # (can1357/oh-my-pi @ df624f56b) under the PTY harness and writes the
+    # committed twins to ../../test/integration/screenshots/omp_ref/.
+    # Manual-only (needs bun + OMP_CHECKOUT); CI only diffs the committed
+    # fixtures. Never selected by default runs or --tags integration:
+    # flutter test test/cli_visual/omp_ref_capture_test.dart --tags omp-capture

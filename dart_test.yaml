@@ -26,3 +26,12 @@ tags:
     # Perf gates (issue #262): generate large fixtures and assert open
     # budgets. Selected by --tags integration in CI; run standalone with
     # dart test --tags perf
+  reg-parity:
+    # omp REG parity suite (issue #810): structural diff of the committed
+    # omp reference twins vs fa's pure-Dart engine renders. Fast, hermetic
+    # (no PTY, no network), SKIPs when the fixtures are not captured yet.
+    # Merge-blocking through the EXISTING legs: ci.yml test-core (dart test
+    # runs it) and the pty-visual job (fa_omp_reg_visual_test.dart) both
+    # aggregate into Quality gate; the pre-commit hook's test-core stage
+    # runs the same suite, so hook/CI marker parity holds with no new
+    # stage. Standalone: dart test test/cli/omp_reg_parity_test.dart
