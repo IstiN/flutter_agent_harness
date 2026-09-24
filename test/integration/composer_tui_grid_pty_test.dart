@@ -51,6 +51,8 @@ baseUrl: ${server.baseUrl}
 mode: code
 approvalMode: yolo
 allowedTools: []
+tui:
+  classic: true  # the grid/chrome suites pin the classic TUI design (see #467); the band redesign (#805-#807) has its own surface
 ''');
 
       final harness = await FaCliHarness.spawn(
@@ -186,6 +188,8 @@ baseUrl: ${server.baseUrl}
 mode: code
 approvalMode: yolo
 allowedTools: []
+tui:
+  classic: true  # the grid/chrome suites pin the classic TUI design (see #467); the band redesign (#805-#807) has its own surface
 ''');
       final workspace = Directory('/tmp/fa467ws2')..createSync(recursive: true);
       addTearDown(() => workspace.deleteSync(recursive: true));
@@ -294,6 +298,8 @@ baseUrl: ${server.baseUrl}
 mode: code
 approvalMode: yolo
 allowedTools: []
+tui:
+  classic: true  # the grid/chrome suites pin the classic TUI design (see #467); the band redesign (#805-#807) has its own surface
 ''');
       final workspace = Directory('/tmp/fa503ws')..createSync(recursive: true);
       addTearDown(() => workspace.deleteSync(recursive: true));
