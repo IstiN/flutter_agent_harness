@@ -226,6 +226,68 @@ spec: {backend: kernel, allowDegrade: true}
       expect(spec.allowDegrade, isTrue);
     });
 
+    test('withAllowDegrade copies every field and flips only the flag', () {
+      const spec = CubeSpec(
+        name: 'locked',
+        description: 'desc',
+        backend: CubeBackendMode.kernel,
+      );
+      final optIn = spec.withAllowDegrade();
+      expect(optIn.allowDegrade, isTrue);
+      expect(optIn.name, spec.name);
+      expect(optIn.description, spec.description);
+      expect(optIn.backend, CubeBackendMode.kernel);
+      expect(optIn.tools, spec.tools);
+      expect(optIn.network, spec.network);
+      expect(optIn.filesystem, spec.filesystem);
+      expect(optIn.env, spec.env);
+      expect(optIn.resources, spec.resources);
+      expect(optIn.cache, spec.cache);
+      // The original stays refusal-by-default.
+      expect(spec.allowDegrade, isFalse);
+      // The opt-in is reversible (back to the safe default).
+      expect(optIn.withAllowDegrade(allowDegrade: false).allowDegrade, isFalse);
+    });
+
+    test('withAllowDegrade is exhaustive against future CubeSpec fields', () {
+      // A fully-populated manifest (every section set). The copy must be
+      // indistinguishable from a spec parsed with the flag baked in —
+      // toCanonicalMap() renders the WHOLE spec, so a future field that
+      // is parsed but missed by withAllowDegrade's copy breaks this.
+      const full = '''
+apiVersion: fa/v1
+kind: Cube
+metadata:
+  name: web-scraper
+  description: "Fetches pages"
+spec:
+  backend: kernel
+  tools:
+    allow: [curl, "git*"]
+    deny: ["git push"]
+  network:
+    allow: [{host: "*.example.com", ports: [80, 443]}]
+    deny: [{host: "*", ports: [22]}]
+  filesystem:
+    workspace: /workspace
+    mounts:
+      - {path: /usr/bin, access: ro}
+      - {path: ~/.ssh, access: deny}
+  env:
+    - {name: FAH_MODE, value: sandboxed}
+    - {name: SCRAPER_KEY, valueFrom: "env:API_KEY"}
+  resources:
+    limits: {cpu: "50%", memory: 512Mi}
+    timeout: 3600s
+  cache:
+    paths: [/workspace/.cache]
+    ttl: 24h
+''';
+      final optIn = parse(full).withAllowDegrade();
+      final baked = parse('$full  allowDegrade: true\n');
+      expect(optIn.toCanonicalMap(), baked.toCanonicalMap());
+    });
+
     test('a non-bool allowDegrade is rejected', () {
       expect(
         () => parse('''

@@ -551,6 +551,10 @@ final class _KernelRun {
       profilePath,
     );
     if (rename.isErr) {
+      // Best-effort hygiene: a failed rename must not leak its temp file
+      // (repeated staging failures would otherwise accumulate
+      // `<profile>.<instance>-<n>.tmp` orphans forever).
+      await fs.remove(tmp, force: true);
       stagingError = 'profile staging failed: ${rename.errorOrNull!.message}';
       return false;
     }
