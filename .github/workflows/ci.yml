@@ -702,6 +702,30 @@ jobs:
         with:
           pattern: integration-json-shard-*
           path: integration-json-shards
+      # Issue #928 review: same discipline as faui's assert_shard_manifest —
+      # the 2 selections must cover exactly the integration-tagged suite
+      # (browser-ext excluded, it owns browser-ext.yml), pairwise disjoint,
+      # every unit on disk. Fails loudly BEFORE the ratchets read shard data.
+      - name: Assert integration shard manifest (union/disjoint/exists)
+        run: |
+          python3 - <<'EOF'
+          import glob, json, os, sys
+          sys.path.insert(0, 'scripts')
+          from shard_files import file_has_tag
+          manifest = json.load(open('scripts/test_integration_shards.json'))
+          shards = manifest['shards']
+          units = [u for s in shards for u in s]
+          on_disk = {p.replace(os.sep, '/') for p in glob.glob('test/**/*_test.dart', recursive=True)
+                     if '/browser_ext/' not in p.replace(os.sep, '/')
+                     and file_has_tag(p, 'integration')}
+          assert len(units) == len(set(units)), f"duplicate unit in manifest: {units}"
+          assert not (set(shards[0]) & set(shards[1])), f"shard overlap: {set(shards[0]) & set(shards[1])}"
+          missing = on_disk - set(units)
+          assert not missing, f"integration-tagged files missing from manifest (never sharded): {sorted(missing)}"
+          gone = set(units) - on_disk
+          assert not gone, f"manifest units not on disk: {sorted(gone)}"
+          print(f"integration manifest OK: {len(units)} units, disjoint, == suite on disk")
+          EOF
       - name: Merge shard coverage (union DA hits per file, NOT cat)
         run: |
           count=$(ls pty-coverage-shards/*/lcov.info | wc -l | tr -d ' ')

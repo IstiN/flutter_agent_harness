@@ -44,51 +44,20 @@ import json
 import os
 import sys
 
+from junit_from_dart_json import iter_test_spans
+
 TOLERANCE = 0.10  # suite total may regress up to 10% vs baseline before failing
 TOP_N = 10
-
-
-def parse_tests(json_paths):
-    """Yield (suite_path, test_name, duration_seconds) from dart json events.
-
-    Same span logic as junit_from_dart_json.py: paired testStart/testDone,
-    hidden pseudo-tests (e.g. "loading <file>") excluded, torn lines skipped.
-    """
-    for json_path in json_paths:
-        suites = {}  # suiteID -> path
-        starts = {}  # testID -> (name, suite path, start ms)
-        with open(json_path, encoding="utf-8") as fh:
-            for raw in fh:
-                line = raw.strip()
-                if not line:
-                    continue
-                try:
-                    ev = json.loads(line)
-                except json.JSONDecodeError:
-                    continue  # torn/partial line — never fatal for timing
-                kind = ev.get("type")
-                if kind == "suite":
-                    suites[ev["suite"]["id"]] = ev["suite"].get("path", "")
-                elif kind == "testStart":
-                    starts[ev["test"]["id"]] = (
-                        ev["test"].get("name", ""),
-                        suites.get(ev["test"]["suiteID"], ""),
-                        ev["time"],
-                    )
-                elif kind == "testDone":
-                    tid = ev["testID"]
-                    if tid in starts and not ev.get("hidden", False):
-                        name, path, t0 = starts.pop(tid)
-                        yield path, name, max((ev["time"] - t0) / 1000.0, 0.0)
 
 
 def summarize(json_paths):
     """-> (suite_totals {path: s}, test_rows [(suite, name, s)])."""
     suite_totals = {}
     test_rows = []
-    for path, name, dur in parse_tests(json_paths):
-        suite_totals[path] = suite_totals.get(path, 0.0) + dur
-        test_rows.append((path, name, dur))
+    for json_path in json_paths:
+        for path, name, dur, _failed in iter_test_spans(json_path):
+            suite_totals[path] = suite_totals.get(path, 0.0) + dur
+            test_rows.append((path, name, dur))
     return suite_totals, test_rows
 
 
@@ -228,6 +197,16 @@ def main() -> int:
         return 1 if refused else 0
 
     baseline = load_baseline(args.baseline)
+    # Issue #928 review: a budgeted suite that STOPS running (renamed,
+    # retagged, dropped from the manifest) must not silently exit the
+    # ratchet — absence is a failure, removal is a reviewed baseline edit.
+    for path in sorted(baseline["suites"]):
+        if path not in suite_totals:
+            failures.append(
+                f"FAIL: budgeted suite did not run: `{path}` — renamed, "
+                "retagged or dropped from the leg? Restore it, or remove "
+                "its budget in a reviewed PR."
+            )
     for path, name, dur in test_rows:
         budget = baseline["per_test"].get(path, {}).get(name)
         if budget is not None and dur > budget + 1e-9:

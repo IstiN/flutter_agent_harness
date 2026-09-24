@@ -197,15 +197,24 @@ jobs:
           dart test --tags integration --exclude-tags browser-ext \
             --coverage=coverage \
             --file-reporter="json:test-results/integration.json"
-      # Issue #928: junit durations are the keyed-run evidence a reviewed
-      # budget-tightening PR consumes (live-provider suites stay unbudgeted
-      # until this artifact exists); the gate below is CHECK-ONLY — no
-      # scheduled workflow may rewrite the baseline.
+      # Issue #928 review: the file-reporter writes the json even on a RED
+      # leg — convert + upload must not be chained into the failing step.
+      # The RAW dart json is the machine-parseable form the gate itself
+      # consumes (one format, both sides): a budget-tightening PR downloads
+      # `integration-json` and runs check_test_durations.py --update-baseline
+      # on it; junit stays for the human/rebalancer view.
       - name: junit durations (budget-tightening evidence)
-        run: |
-          python3 scripts/junit_from_dart_json.py \
-            test-results/integration.json \
-            test-results/junit-integration.xml
+        if: always()
+        run: >-
+          python3 scripts/junit_from_dart_json.py
+          test-results/integration.json
+          test-results/junit-integration.xml
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: integration-json
+          path: test-results/integration.json
+          retention-days: 14
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
