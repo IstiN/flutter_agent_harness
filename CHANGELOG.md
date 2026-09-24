@@ -1,7 +1,6 @@
 # Changelog
 
-## 1.0.468
-
+## Unreleased
 
 - fix(env): `LocalExecutionEnv` forwards `renamePath` — kernel-mode cube
   exec was dead since #803's atomic profile restage (the
@@ -30,6 +29,10 @@
   coverage ratchet and the Terminal-visual PTY suite — now run on every
   PR (aggregate Quality gate, same secret shape as the nightly/gardener
   so the ratchet measures the same surface; `#781`).
+
+## 1.0.468
+
+
 - feat(tui): the omp status bar engine (#805). **Behavior note**: the
   `tui:` config section is now parsed strictly — an unknown key under
   `tui:` (e.g. a typo'd `theme2:` left behind by hand-editing) throws
