@@ -33,7 +33,7 @@ void main() {
   // Skip decision is made BEFORE the tests are declared: flutter_test has
   // no runtime skip-from-setUpAll, and the PTY legs must never boot
   // without their fixtures (issue #810).
-  final repoRoot0 = _findRepoRoot();
+  final repoRoot0 = findRepoRoot();
   final refDir0 = Directory('$repoRoot0/test/integration/screenshots/omp_ref');
   final fixturesReady =
       refDir0.existsSync() &&
@@ -208,6 +208,21 @@ void _diffTurnChrome(
       )
       .length;
 
+  // The turn anchor must be on screen on BOTH sides — a stale or
+  // mis-captured twin (turn never rendered) would compare vacuously
+  // otherwise (issue #810 review).
+  expect(
+    ompLines.join('\n'),
+    contains(anchor),
+    reason:
+        '$name: omp reference twin is missing the turn anchor — the '
+        'twin was captured before the turn rendered; re-capture',
+  );
+  expect(
+    faLines.join('\n'),
+    contains(anchor),
+    reason: '$name: fa screen is missing the turn anchor',
+  );
   expect(
     chromeRows(faLines),
     chromeRows(ompLines),
@@ -272,17 +287,4 @@ void _pixelCompareBand(String faShotsDir, String name, String repoRoot) {
     greaterThanOrEqualTo(0.8),
     reason: 'fa band pixels diverge from the omp reference at y=$bandY',
   );
-}
-
-/// Walks up to the flutter_agent repo root (marker: bin/fah.dart).
-String _findRepoRoot() {
-  var dir = Directory.current;
-  while (true) {
-    if (File('${dir.path}/bin/fah.dart').existsSync()) return dir.path;
-    final parent = dir.parent;
-    if (parent.path == dir.path) {
-      throw StateError('repo root (bin/fah.dart) not found from cwd');
-    }
-    dir = parent;
-  }
 }

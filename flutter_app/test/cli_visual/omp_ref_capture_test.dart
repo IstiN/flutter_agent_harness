@@ -13,7 +13,9 @@
 ///   1. bun on PATH (or OMP_BUN=/path/to/bun) — omp runs on bun;
 ///   2. `OMP_CHECKOUT` pointing at a checkout of oh-my-pi at the pinned
 ///      commit — the test SKIPs with a named reason otherwise;
-///   3. run: cd flutter_app && flutter test \
+///   3. `OMP_CAPTURE=1` — explicit opt-in, because the capture OVERWRITES
+///      the committed twins in place; without it the test SKIPs;
+///   4. run: cd flutter_app && flutter test \
 ///        test/cli_visual/omp_ref_capture_test.dart --tags omp-capture
 /// CI only diffs the committed fixtures against fa's renders (the REG
 /// legs); it never boots omp. When the omp pin moves, re-capture with this
@@ -25,9 +27,11 @@ import 'dart:io';
 
 import 'package:fa_llm_mock/fa_llm_mock.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 
 import '../golden/golden_test_helper.dart';
 import 'cli_visual_harness.dart';
+import 'omp_reg_normalizer.dart';
 import 'omp_reg_scenarios.dart';
 
 void main() {
@@ -56,6 +60,13 @@ void main() {
       '/usr/local/bin/bun, OMP_BUN) — omp cannot boot without it',
     );
   }
+  if (Platform.environment['OMP_CAPTURE'] != '1') {
+    missing0.add(
+      'OMP_CAPTURE=1 not set — the capture overwrites the committed '
+      'test/integration/screenshots/omp_ref/ twins in place, so it needs '
+      'an explicit opt-in (issue #810 review)',
+    );
+  }
   // flutter_test's skip is bool-only; the reason travels in the name so
   // CI logs still say WHY (issue #810).
   final canCapture = missing0.isEmpty;
@@ -76,7 +87,7 @@ void main() {
     // booting anything (issue #810).
     if (!canCapture) return;
     await ensureGoldenFonts();
-    repoRoot = _findRepoRoot();
+    repoRoot = findRepoRoot();
     ompCheckout = ompCheckoutEnv!;
     bunBin = bun0!;
     server = await MockLlmServer.start(
@@ -174,9 +185,58 @@ void main() {
       return result.stdout.toString().trim();
     }))!;
 
+    // COST-SEGMENT POLICY (issue #810 review): the mock model is pinned to
+    // a zero-cost flat override, and BOTH sides must hide the cost segment
+    // — fa hides unpriced spend; omp's formatBillingSummary returns
+    // undefined at $0.00 with a flat override (no subscription, no
+    // premium requests, no tariff). Enforce it HERE, at capture time, so
+    // a policy drift surfaces in this manual run and never as a red
+    // merge-blocking CI leg.
+    final barTwin = File('$outDir/02_status_bar_default.txt');
+    final ompBar = findStatusBarRow(
+      barTwin.readAsLinesSync(),
+      kRegSeparatorGlyphs['powerline-thin']!,
+    );
+    expect(
+      ompBar,
+      isNotNull,
+      reason:
+          'captured omp boot screen has no status bar — wrong frame '
+          'captured or the status line moved',
+    );
+    final ompBarScrubbed = scrubVolatile(ompBar!);
+    expect(
+      ompBarScrubbed.contains('<cost>') || ompBar.contains('\$'),
+      isFalse,
+      reason:
+          'omp renders a cost segment for the zero-priced mock — the '
+          'cost-segment policy changed (fa hides unpriced spend). Reconcile '
+          'the policy in omp_reg_scenarios/models.yml + '
+          'renderFaDefaultBar BEFORE committing these twins (issue #810). '
+          'Bar: ${ompBarScrubbed.isEmpty ? ompBar : ompBarScrubbed}',
+    );
+
+    // Record the actual rendered PNG size: terminal `columns`/`rows` are
+    // CELLS, the PNG is raster pixels — different units, no fixed
+    // multiplier (issue #810 review). The REG suite asserts every twin
+    // against these numbers.
+    final barPng = img.decodePng(
+      File('$outDir/02_status_bar_default.png').readAsBytesSync(),
+    )!;
+
+    final ompCommit = (await tester.runAsync(() async {
+      final result = await Process.run('git', [
+        '-C',
+        ompCheckout,
+        'rev-parse',
+        'HEAD',
+      ]);
+      return result.stdout.toString().trim();
+    }))!;
+
     File('$outDir/provenance.json').writeAsStringSync(
       const JsonEncoder.withIndent('  ').convert({
-        'omp_commit': kRegOmpCommit,
+        'omp_commit': ompCommit,
         'captured_at': DateTime.now().toUtc().toIso8601String(),
         'omp_version': _ompVersion(harness.screenText),
         'bun_version': bunVersion,
@@ -190,7 +250,8 @@ void main() {
         'geometry': {
           'columns': harness.terminal.viewWidth,
           'rows': harness.terminal.viewHeight,
-          'pixel_ratio': 2,
+          'render_width': barPng.width,
+          'render_height': barPng.height,
         },
       }),
     );
@@ -199,6 +260,13 @@ void main() {
 
 /// models.yml (omp `docs/models.md`) registering the mock as provider
 /// `mockcap` with one text model — the id both CLIs address.
+///
+/// COST POLICY: the explicit `cost:` block is a FLAT-PRICE override at
+/// zero (models.md: "explicit model cost ... is a flat-price override and
+/// disables inherited time-based pricing"). At $0.00 with no subscription
+/// and no tariff, omp's formatBillingSummary yields no visible cost
+/// segment — matching fa, which hides unpriced spend. The capture test
+/// enforces the hidden-cost invariant on every run (issue #810 review).
 String _modelsYaml(String baseUrl) =>
     '''
 providers:
@@ -239,17 +307,4 @@ String? _findBun() {
     if (File(path).existsSync()) return path;
   }
   return null;
-}
-
-/// Walks up to the flutter_agent repo root (marker: bin/fah.dart).
-String _findRepoRoot() {
-  var dir = Directory.current;
-  while (true) {
-    if (File('${dir.path}/bin/fah.dart').existsSync()) return dir.path;
-    final parent = dir.parent;
-    if (parent.path == dir.path) {
-      throw StateError('repo root (bin/fah.dart) not found from cwd');
-    }
-    dir = parent;
-  }
 }

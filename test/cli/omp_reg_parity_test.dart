@@ -34,7 +34,7 @@ import '../../flutter_app/test/cli_visual/omp_reg_normalizer.dart';
 import '../../flutter_app/test/cli_visual/omp_reg_scenarios.dart';
 
 void main() {
-  final repoRoot = _findRepoRoot();
+  final repoRoot = findRepoRoot();
   final refDir = Directory('$repoRoot/test/integration/screenshots/omp_ref');
   final glyph = kRegSeparatorGlyphs['powerline-thin']!;
 
@@ -56,7 +56,7 @@ void main() {
   test('provenance pins the captured omp commit and scenario list', () {
     expect(
       provenance!['omp_commit'],
-      startsWith(kRegOmpCommit.substring(0, 9)),
+      startsWith(kRegOmpCommit),
       reason: 'fixtures must be regenerated when the omp pin moves',
     );
     expect(
@@ -85,24 +85,46 @@ void main() {
     expect(pngs, equals(txts), reason: 'twins must pair: same stems');
   }, skip: skipReason);
 
-  test('png twins decode and share the captured geometry at 2x pixels', () {
+  test('png twins decode at the captured render size, uniformly', () {
+    // `columns`/`rows` in provenance are terminal CELLS; PNG size is
+    // raster pixels — different units, no fixed multiplier (cell size
+    // depends on font metrics). The capture therefore records the actual
+    // render size, and this suite asserts every twin decodes to exactly
+    // that (issue #810 review).
     final geometry = provenance?['geometry'] as Map<String, dynamic>?;
-    final columns = geometry?['columns'] as int?;
-    final rows = geometry?['rows'] as int?;
-    final pixelRatio = (geometry?['pixel_ratio'] as int?) ?? 2;
+    final renderWidth = geometry?['render_width'] as int?;
+    final renderHeight = geometry?['render_height'] as int?;
+    expect(
+      renderWidth,
+      isNotNull,
+      reason:
+          'provenance.geometry must record render_width '
+          '(the capture writes it from the saved PNG)',
+    );
+    expect(
+      renderHeight,
+      isNotNull,
+      reason:
+          'provenance.geometry must record render_height '
+          '(the capture writes it from the saved PNG)',
+    );
     for (final png in refDir.listSync().whereType<File>().where(
       (f) => f.path.endsWith('.png'),
     )) {
       final decoded = img.decodePng(png.readAsBytesSync())!;
       expect(
         decoded.width,
-        columns! * pixelRatio,
-        reason: '${_stem(png.path)}: width must be columns × ratio',
+        renderWidth,
+        reason:
+            '${_stem(png.path)}: width differs from the captured '
+            'render size — mixed-geometry fixture set',
       );
       expect(
         decoded.height,
-        rows! * pixelRatio,
-        reason: '${_stem(png.path)}: height must be rows × ratio',
+        renderHeight,
+        reason:
+            '${_stem(png.path)}: height differs from the captured '
+            'render size — mixed-geometry fixture set',
       );
     }
   }, skip: skipReason);
@@ -182,11 +204,14 @@ void main() {
 /// Renders fa's default-preset status bar through the production engine
 /// with the capture scenario's scripted snapshot: the mock's model name, a
 /// git-clean sandbox cwd (both sides hide the git segment), yolo mode, the
-/// 200k context window at the boot usage, and NO cost — the mock provider
-/// is unpriced, and fa hides unpriced spend instead of showing $0.00. No
-/// session name either: the capture boots omp with --no-session, so the
-/// session segment is hidden on both sides. Raw width-exact line — the
-/// string the TUI band composer paints.
+/// 200k context window at the boot usage, and NO cost — the mock is a
+/// zero-cost flat override in models.yml, omp's cost segment hides at
+/// $0.00 for flat overrides (verified against omp status-line sources:
+/// formatBillingSummary returns undefined), and fa hides unpriced spend.
+/// The invariant is enforced at capture time. No session name either: the
+/// capture boots omp with --no-session, so the session segment is hidden
+/// on both sides. Raw width-exact line — the string the TUI band composer
+/// paints.
 String renderFaDefaultBar({required int columns}) {
   final snapshot = StatusLineSnapshot(
     cwd: '/reg-sandbox-cwd',
@@ -203,16 +228,3 @@ String _stem(String path) => path
     .split(Platform.pathSeparator)
     .last
     .replaceAll(RegExp(r'\.(png|txt)$'), '');
-
-/// Walks up to the flutter_agent repo root (marker: bin/fah.dart).
-String _findRepoRoot() {
-  var dir = Directory.current;
-  while (true) {
-    if (File('${dir.path}/bin/fah.dart').existsSync()) return dir.path;
-    final parent = dir.parent;
-    if (parent.path == dir.path) {
-      throw StateError('repo root (bin/fah.dart) not found from cwd');
-    }
-    dir = parent;
-  }
-}

@@ -7,12 +7,33 @@
 /// Keep the mock model id / prompts in sync with the root REG suite
 /// (`test/cli/omp_reg_parity_test.dart`), which scripts the same snapshot
 /// into fa's status-line engine.
+///
+/// MUST STAY FLUTTER-FREE: this file (and omp_reg_normalizer.dart) are
+/// imported by the plain-dart root REG suite via a relative cross-package
+/// path — any flutter import here breaks `dart test` at the repo root.
 library;
 
+import 'dart:io';
+
 /// The omp build the reference fixtures were captured against
-/// (`can1357/oh-my-pi`). Provenance.json must pin the same commit; the root
-/// REG suite asserts it.
-const kRegOmpCommit = 'df624f56b';
+/// (`can1357/oh-my-pi`), full sha. provenance.json must pin the same
+/// commit; the root REG suite asserts it.
+const kRegOmpCommit = 'df624f56b0508c51067a70422606cac898ac2bcb';
+
+/// Walks up to the flutter_agent repo root (marker: bin/fah.dart). The one
+/// shared copy — used by the capture test, both REG visual legs, the root
+/// REG suite and the older visual tests (issue #810 review).
+String findRepoRoot() {
+  var dir = Directory.current;
+  while (true) {
+    if (File('${dir.path}/bin/fah.dart').existsSync()) return dir.path;
+    final parent = dir.parent;
+    if (parent.path == dir.path) {
+      throw StateError('repo root (bin/fah.dart) not found from cwd');
+    }
+    dir = parent;
+  }
+}
 
 /// The mock provider's model id, used on BOTH sides:
 /// - omp: booted with `--model mockcap/$kRegModelId` against the mock;

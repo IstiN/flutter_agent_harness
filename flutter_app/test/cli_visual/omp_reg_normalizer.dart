@@ -11,6 +11,10 @@
 ///
 /// Pure string math — no IO, no clock — so the normalizer is unit-testable
 /// in plain `dart test` (issue #810's only unit-test surface).
+///
+/// MUST STAY FLUTTER-FREE: imported by the plain-dart root REG suite via a
+/// relative cross-package path — any flutter import here breaks
+/// `dart test` at the repo root.
 library;
 
 /// Separator glyphs the status bar may use, by preset separator style
@@ -40,6 +44,12 @@ final List<(Pattern, String)> kVolatilePatterns = [
   // Token counts: the VALUE scrubs, the unit stays ('<tok> tok',
   // '<tok> tok/s') — the unit is the structural trace of the segment.
   (RegExp(r'\b\d+(?:,\d{3})*(?:\.\d+)?k?(?= tok)'), '<tok>'),
+  // Paths BEFORE the generic numeric rules: any path containing a
+  // standalone digit segment ("/logs/2024/run") must be claimed whole by
+  // this rule, not shredded into `<path><num><path>` (issue #810 review).
+  // The pattern is anchored on path starts ("~", ".", "/"), so it cannot
+  // eat numbers inside plain words.
+  (RegExp(r'(?:~|\.)?/[A-Za-z0-9._@/-]{2,}'), '<path>'),
   // Numbers with thousands separators next ("1,234"), then k-suffixed
   // magnitudes ("12.3k"), then the context gauge percent ("23%"), then
   // bare numbers.
@@ -47,9 +57,6 @@ final List<(Pattern, String)> kVolatilePatterns = [
   (RegExp(r'\b\d+(?:\.\d+)?k\b'), '<num>'),
   (RegExp(r'\b\d+%'), '<pct>%'),
   (RegExp(r'\b\d+\b'), '<num>'),
-  // Paths: home-abbreviated ("~/x/y"), repo-relative ("./x"), absolute
-  // ("/a/b"), and bare path fragments the segments show.
-  (RegExp(r'(?:~|\.)?/[A-Za-z0-9._@/-]{2,}'), '<path>'),
 ];
 
 /// Scrubs [text]: every volatile value becomes its placeholder so two
