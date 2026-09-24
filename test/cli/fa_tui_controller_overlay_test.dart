@@ -6,7 +6,8 @@ import 'package:dart_tui/dart_tui.dart';
 import 'package:flutter_agent_harness/src/cli/composer_overlay.dart'
     show groupOf;
 import 'package:flutter_agent_harness/src/cli/agent_hub_tui.dart';
-import 'package:flutter_agent_harness/src/cli/fuzzy_matcher.dart' show scoreFuzzy;
+import 'package:flutter_agent_harness/src/cli/fuzzy_matcher.dart'
+    show scoreFuzzy;
 import 'package:flutter_agent_harness/src/tools/ask_tool.dart' show AskOption;
 import 'package:flutter_agent_harness/src/cli/fa_tui.dart';
 import 'package:flutter_agent_harness/src/cli/tui_prompt.dart';
@@ -68,6 +69,7 @@ void main() {
       pathCandidates: pathCandidates,
     );
   }
+
   group('FaTuiController pre-run queueing', () {
     test('sendOutput before run buffers and flushes without a program', () {
       // Pre-run sends flush straight into the pending queue (the program
@@ -708,17 +710,24 @@ void main() {
       expect(actions, ['back']);
     });
 
-    test('ctrl+c aborts and quits even with the overlay open', () {
+    test('ctrl+c double-press works with the overlay open (issue #830)', () {
       var interrupted = false;
       var model = FaTuiModel(
         callbacks: hubCallbacks(onInterrupt: () => interrupted = true),
         isExited: () => false,
         hub: tree(),
       );
-      final (next, cmd) = model.update(ctrl('c'));
+      // Press 1: abort + hint, overlay and process stay. The only Cmd is
+      // the window-expiry scheduler — never a quit.
+      final (first, firstCmd) = model.update(ctrl('c'));
       expect(interrupted, isTrue);
-      expect(identical(next, model), isTrue, reason: 'state untouched');
-      expect(cmd, isNotNull, reason: 'the quit command');
+      expect(firstCmd, isNotNull, reason: 'press 1 arms the timed hint');
+      expect((first as FaTuiModel).ctrlCArmed, isTrue);
+      // Press 2 within the window: the quit command (legacy fallback —
+      // no onCtrlCExit seam on this bare host).
+      final (second, secondCmd) = first.update(ctrl('c'));
+      expect((second as FaTuiModel).ctrlCArmed, isFalse);
+      expect(secondCmd, isNotNull, reason: 'the quit command');
     });
 
     test('a host re-push carries the selection', () {

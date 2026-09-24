@@ -122,7 +122,8 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 200));
         expect(exited, isFalse,
             reason: 'a run error must never exit the TUI app (#355)');
-        keys.add([0x03]);
+        keys.add([0x03]); // press 1 arms the double-press window (#830)…
+        keys.add([0x03]); // …press 2 quits the TUI
         await run.timeout(const Duration(seconds: 10));
       } finally {
         await io.close();

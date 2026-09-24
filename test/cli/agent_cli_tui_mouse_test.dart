@@ -73,7 +73,8 @@ Future<void> _bootAndDrive({
   final run = cli.run();
   try {
     await waitForIt(probe);
-    keys.add([0x03]); // ctrl+c — the TUI's normal-mode quit key.
+    keys.add([0x03]); // ctrl+c press 1: arms the double-press window (#830)
+    keys.add([0x03]); // press 2 within the window quits the TUI
     await run;
   } finally {
     await io.close();
