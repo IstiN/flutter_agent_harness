@@ -214,7 +214,8 @@ void main() {
           reason: '0x13 reached the agent as a steered user message',
         );
 
-        keys.add([0x03]); // ctrl+c quits the TUI.
+        keys.add([0x03]); // press 1 arms the double-press window (#830)…
+        keys.add([0x03]); // …press 2 quits the TUI
         await run;
       } finally {
         await keys.close();
@@ -338,7 +339,8 @@ void main() {
           ),
           isTrue,
         );
-        keys.add([0x03]);
+        keys.add([0x03]); // press 1 arms the double-press window (#830)…
+        keys.add([0x03]); // …press 2 quits the TUI
         await run;
       } finally {
         await keys.close();

@@ -2376,36 +2376,59 @@ Future<void> _runApp(List<String> args) async {
     }
   }
 
+  // Double-press Ctrl+C exit, interactive arm (issue #830): SIGINT-parity
+  // teardown the TUI's ctrl+c press 2 also triggers via
+  // [AgentCli.onCtrlCExitRequest] — abort-if-running bounded, session
+  // resume hint, exit 130. The exit code is guaranteed: teardown steps
+  // may not throw the caller into an unhandled-error death, so the whole
+  // body runs under finally (the old single-press path's safety net).
+  Future<void> exitInteractive130() async {
+    try {
+      terminalIo.resetRawMode();
+      stdout.writeln();
+      // Restore terminal modes (mouse tracking off, alt-screen exit,
+      // cursor show) BEFORE exit(130) — otherwise the shell prompt
+      // inherits mouse reporting and wheel scrolls print escapes.
+      await resetTerminalForShell();
+      if (cli.isBusy) {
+        terminalIo.fireInterrupt();
+        await cli.waitForIdle();
+      }
+      await cli.deleteSessionIfEmpty();
+      // Real stdout, not io: the TUI is being torn down by this very
+      // exit — an io-routed line would land in a dead transcript. A
+      // session with nothing persisted prints the honest no-op line —
+      // "resume this session with ..." would point at a deleted file.
+      final hint = await cli.sessionResumeHint();
+      stdout.writeln(hint ?? kNothingToResumeHint);
+      await stdout.flush();
+    } finally {
+      exit(130);
+    }
+  }
+
+  cli.onCtrlCExitRequest = () => unawaited(exitInteractive130());
+
   final sigintSub = ProcessSignal.sigint.watch().listen((_) {
     final wasBusy = cli.isBusy;
-    switch (sigintAction(headless: headlessPrompt != null)) {
+    switch (cli.sigintPolicy.press(headless: headlessPrompt != null)) {
+      case SigintAction.interruptAndStay:
+        // Press 1 (issue #830): abort the in-flight run (bounded) and
+        // STAY ALIVE — the next press inside the window exits. The TUI
+        // gets the footer hint + idle-composer clear via the model; line
+        // mode prints a dim stderr line.
+        if (wasBusy) terminalIo.fireInterrupt();
+        final tui = cli.tuiController;
+        if (tui != null) {
+          tui.armInterruptHint();
+        } else {
+          stderr.writeln(
+            dimCtrlCExitHint(supportsAnsiEscapes: stdout.supportsAnsiEscapes),
+          );
+        }
       case SigintAction.exitInteractive:
-        // Ctrl+C exits exactly like /exit: abort any in-flight run first
-        // (bounded — a stuck provider cannot wedge the exit), let the
-        // partial transcript persist, then print the resume hint. Esc
-        // inside the TUI stays the abort-without-exit key.
-        terminalIo.resetRawMode();
-        stdout.writeln();
-        unawaited(
-          Future(() async {
-            // Restore terminal modes (mouse tracking off, alt-screen exit,
-            // cursor show) BEFORE exit(130) — otherwise the shell prompt
-            // inherits mouse reporting and wheel scrolls print escapes.
-            await resetTerminalForShell();
-            if (wasBusy) {
-              terminalIo.fireInterrupt();
-              await cli.waitForIdle();
-            }
-            await cli.deleteSessionIfEmpty();
-            // Real stdout, not io: the TUI is being torn down by this very
-            // exit — an io-routed line would land in a dead transcript.
-            final hint = await cli.sessionResumeHint();
-            if (hint != null) stdout.writeln(hint);
-            await stdout.flush();
-          }).whenComplete(() => exit(130)),
-        );
+        unawaited(exitInteractive130());
       case SigintAction.exitHeadless:
-
         // Headless graceful abort (issue #155): fire the interrupt, then
         // let the RUN settle — [AgentCli.waitForIdle] tracks the REPL's
         // settle future, which headless never starts, so the run future
