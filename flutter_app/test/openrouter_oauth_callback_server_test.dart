@@ -40,14 +40,17 @@ void main() {
   /// listening socket (and a same-machine sibling isolate winning the
   /// just-freed ephemeral port) can lag the await by a tick — gh-781. A
   /// port that never frees still fails, loudly, at the end of the budget.
+  /// The budget is main's (~2s: 20 × 100ms), kept generous on purpose —
+  /// this leg runs on every PR now, so a tight budget would be a new
+  /// load-flake surface, not a guard.
   Future<HttpServer> rebindReleasedPort(int port) async {
     Object? lastError;
-    for (var attempt = 0; attempt < 10; attempt++) {
+    for (var attempt = 0; attempt < 20; attempt++) {
       try {
         return await HttpServer.bind(InternetAddress.loopbackIPv4, port);
       } on SocketException catch (error) {
         lastError = error;
-        await Future<void>.delayed(const Duration(milliseconds: 25));
+        await Future<void>.delayed(const Duration(milliseconds: 100));
       }
     }
     fail('port $port was never freed for the rebind check: $lastError');
