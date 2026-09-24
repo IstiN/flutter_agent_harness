@@ -12,9 +12,11 @@
 /// Pure string math — no IO, no clock — so the normalizer is unit-testable
 /// in plain `dart test` (issue #810's only unit-test surface).
 ///
-/// MUST STAY FLUTTER-FREE: imported by the plain-dart root REG suite via a
-/// relative cross-package path — any flutter import here breaks
-/// `dart test` at the repo root.
+/// MUST STAY FLUTTER-FREE: this lives in the root package's `lib/src/cli/`
+/// and is imported by the plain-dart root REG suite (`test/cli/`) and by
+/// the flutter_app visual legs via `package:flutter_agent_harness/...` —
+/// any flutter import here breaks the root suite, and no cross-package
+/// relative import survives static gates on a main checkout (issue #810).
 library;
 
 /// Separator glyphs the status bar may use, by preset separator style

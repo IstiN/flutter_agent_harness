@@ -1,6 +1,6 @@
 import 'package:test/test.dart';
 
-import '../../flutter_app/test/cli_visual/omp_reg_normalizer.dart';
+import 'package:flutter_agent_harness/src/cli/omp_reg_normalizer.dart';
 
 void main() {
   // The glyph transport-mangles as an empty string in hand-typed

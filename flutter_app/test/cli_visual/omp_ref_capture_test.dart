@@ -31,8 +31,8 @@ import 'package:image/image.dart' as img;
 
 import '../golden/golden_test_helper.dart';
 import 'cli_visual_harness.dart';
-import 'omp_reg_normalizer.dart';
-import 'omp_reg_scenarios.dart';
+import 'package:flutter_agent_harness/src/cli/omp_reg_normalizer.dart';
+import 'package:flutter_agent_harness/src/cli/omp_reg_scenarios.dart';
 
 void main() {
   // Skip decision BEFORE test declaration (flutter_test has no runtime

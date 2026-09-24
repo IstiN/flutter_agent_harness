@@ -8,9 +8,11 @@
 /// (`test/cli/omp_reg_parity_test.dart`), which scripts the same snapshot
 /// into fa's status-line engine.
 ///
-/// MUST STAY FLUTTER-FREE: this file (and omp_reg_normalizer.dart) are
-/// imported by the plain-dart root REG suite via a relative cross-package
-/// path — any flutter import here breaks `dart test` at the repo root.
+/// MUST STAY FLUTTER-FREE: this file (and omp_reg_normalizer.dart) live in
+/// the root package's `lib/src/cli/` and are imported by the plain-dart
+/// root REG suite and the flutter_app visual legs via
+/// `package:flutter_agent_harness/...` — any flutter import here breaks
+/// the root suite (issue #810).
 library;
 
 import 'dart:io';

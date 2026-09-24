@@ -30,8 +30,8 @@ import 'package:flutter_agent_harness/src/cli/tui_status_line.dart';
 import 'package:image/image.dart' as img;
 import 'package:test/test.dart';
 
-import '../../flutter_app/test/cli_visual/omp_reg_normalizer.dart';
-import '../../flutter_app/test/cli_visual/omp_reg_scenarios.dart';
+import 'package:flutter_agent_harness/src/cli/omp_reg_normalizer.dart';
+import 'package:flutter_agent_harness/src/cli/omp_reg_scenarios.dart';
 
 void main() {
   final repoRoot = findRepoRoot();
