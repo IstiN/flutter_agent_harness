@@ -236,8 +236,18 @@ extension _TuiRowRenderers on FaTuiModel {
     row = _writeBusyRow(b, row);
     row = _writeQueueRows(b, row, plan);
     row = _writeAttachmentChips(b, row, plan);
-    b.writeln(_dim('─' * termWidth));
-    return row + 1 - baseRow;
+    // Band composer (#806): the top rule retires with the legacy chrome —
+    // the status band IS the composer's frame (omp verticalChrome: 1, the
+    // rule + gap collapse into the band's own row). The gate is the FRAME
+    // SHAPE, not the bare config flag: prompt frames replace the composer
+    // with the legacy prompt zone (whose budget still charges the rule),
+    // so only a band COMPOSER frame retires it. Classic keeps it
+    // byte-identically.
+    if (!(_bandAttached && prompt == null)) {
+      b.writeln(_dim('─' * termWidth));
+      row++;
+    }
+    return row - baseRow;
   }
 
   /// The background-job board's live region (issue #429): dim summary +
