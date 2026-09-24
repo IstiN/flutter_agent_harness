@@ -192,13 +192,32 @@ jobs:
           python-version: '3.x'
       - run: dart pub get
       - name: dart test --tags integration (excluding browser-ext — it owns browser-ext.yml)
-        run: >-
-          dart test --tags integration --exclude-tags browser-ext
-          --coverage=coverage
+        run: |
+          mkdir -p test-results
+          dart test --tags integration --exclude-tags browser-ext \
+            --coverage=coverage \
+            --file-reporter="json:test-results/integration.json"
+      # Issue #928: junit durations are the keyed-run evidence a reviewed
+      # budget-tightening PR consumes (live-provider suites stay unbudgeted
+      # until this artifact exists); the gate below is CHECK-ONLY — no
+      # scheduled workflow may rewrite the baseline.
+      - name: junit durations (budget-tightening evidence)
+        run: |
+          python3 scripts/junit_from_dart_json.py \
+            test-results/integration.json \
+            test-results/junit-integration.xml
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: junit-integration
+          path: test-results/junit-integration.xml
+          retention-days: 14
       - name: Format coverage to lcov
         run: dart run coverage:format_coverage --lcov -i coverage -o coverage/lcov.info
       - name: CLI coverage ratchet (lib/src/cli/**, baseline only up)
         run: python3 scripts/check_cli_coverage.py
+      - name: Test duration budget gate (issue #928, check-only on schedule)
+        run: python3 scripts/check_test_durations.py --baseline scripts/test_duration_baseline.json test-results/integration.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cli-coverage-lcov

@@ -1,0 +1,19 @@
+{
+  "_meta": {
+    "issue": 928,
+    "seeded": "2026-09-24 no-key local run (M-class arm64), --tags integration --exclude-tags browser-ext,llm",
+    "metric": "suite total = sum of per-test spans (dart test json reporter)",
+    "seed_policy": "suites budgeted ONLY when every test passed locally with a meaningful span (sub-second totals are silent early-return skips, not measurements); PTY-spawn suites hitting the hardcoded /tmp/fa_pty_cwd (part 3.1) and all llm-tagged suites are UNBUDGETED until the first keyed junit-integration artifact; tighten via check_test_durations.py --update-baseline in a reviewed PR",
+    "ratchet": "down-only via check_test_durations.py --update-baseline; raises require a hand-edited reviewed PR",
+    "note": "no scheduled workflow writes this file"
+  },
+  "suites": {
+    "test/integration/dap_cli_e2e_test.dart": 24.3,
+    "test/integration/dap_start_test.dart": 12.6,
+    "test/integration/headless_tools_flag_test.dart": 16.3,
+    "test/integration/poisoned_provider_boot_test.dart": 38.5,
+    "test/integration/trajectory/cli_integration_test.dart": 48.4,
+    "test/integration/trajectory/perf_open_gate_test.dart": 9.0
+  },
+  "per_test": {}
+}
