@@ -86,6 +86,7 @@ final class RateLimitInfo {
     this.resetsInSeconds,
     this.eligiblePromo,
     this.limitKind,
+    this.brand,
     this.retryAfter,
     this.rawBody = '',
   });
@@ -113,6 +114,11 @@ final class RateLimitInfo {
   /// or the provider's own limit name), when the headers named one.
   final String? limitKind;
 
+  /// The provider display name enriching the plan title (`ChatGPT` on the
+  /// codex adapter). `null` — the generic parse layer — keeps the title
+  /// neutral: any endpoint or proxy can answer a 429 with a plan body.
+  final String? brand;
+
   /// The provider-suggested wait parsed from the `Retry-After` header.
   final Duration? retryAfter;
 
@@ -127,9 +133,25 @@ final class RateLimitInfo {
     if (resetsInSeconds != null) 'resetsInSeconds': resetsInSeconds,
     if (eligiblePromo != null) 'eligiblePromo': eligiblePromo,
     if (limitKind != null) 'limitKind': limitKind,
+    if (brand != null) 'brand': brand,
     if (retryAfter != null) 'retryAfterMs': retryAfter!.inMilliseconds,
     'rawBody': rawBody,
   };
+
+  /// Returns a copy enriched with the provider display name for the plan
+  /// title. Only a branded adapter sets it — the codex endpoint IS the
+  /// ChatGPT surface; the shared parse layer stays provider-neutral.
+  RateLimitInfo withBrand(String brand) => RateLimitInfo(
+    errorType: errorType,
+    planType: planType,
+    resetsAt: resetsAt,
+    resetsInSeconds: resetsInSeconds,
+    eligiblePromo: eligiblePromo,
+    limitKind: limitKind,
+    retryAfter: retryAfter,
+    rawBody: rawBody,
+    brand: brand,
+  );
 
   factory RateLimitInfo.fromJson(Map<String, dynamic> json) => RateLimitInfo(
     errorType: json['errorType'] as String?,
@@ -143,6 +165,7 @@ final class RateLimitInfo {
     resetsInSeconds: json['resetsInSeconds'] as int?,
     eligiblePromo: json['eligiblePromo'] as String?,
     limitKind: json['limitKind'] as String?,
+    brand: json['brand'] as String?,
     retryAfter: json['retryAfterMs'] is int
         ? Duration(milliseconds: json['retryAfterMs'] as int)
         : null,
@@ -272,9 +295,14 @@ Duration? _resetCountdown(RateLimitInfo info, DateTime? now) {
 String _rateLimitTitle(RateLimitInfo info, bool ru) {
   if (info.planType case final plan? when plan.isNotEmpty) {
     final capitalized = plan[0].toUpperCase() + plan.substring(1);
+    // Neutral by default: the generic parse layer decodes 429s from ANY
+    // provider/proxy — only a branded adapter (codex) names its vendor.
+    final brand = info.brand;
     return ru
-        ? 'Лимит плана $capitalized ChatGPT исчерпан.'
-        : 'ChatGPT $capitalized plan limit reached.';
+        ? 'Лимит плана $capitalized${brand == null ? '' : ' $brand'} '
+              'исчерпан.'
+        : '${brand == null ? '' : '$brand '}$capitalized plan limit '
+              'reached.';
   }
   final kind = switch (info.limitKind) {
     null || '' => '',

@@ -20,6 +20,7 @@ void main() {
       expect(info.resetsAt, DateTime.utc(2026, 10, 19, 19, 49, 31));
       expect(info.resetsInSeconds, 2280562);
       expect(info.eligiblePromo, isNull);
+      expect(info.brand, isNull, reason: 'the generic parse layer is neutral');
       expect(info.rawBody, clipBody);
     });
 
@@ -48,7 +49,10 @@ void main() {
   group('formatRateLimitMessage — the human line (AC2)', () {
     test('en: names the plan, human reset units, next step — never raw', () {
       final message = formatRateLimitMessage(clipInfo());
-      expect(message, contains('ChatGPT Free plan limit reached.'));
+      // Neutral: the generic parse layer serves ANY provider (a proxy
+      // reusing the codex schema must not claim ChatGPT).
+      expect(message, contains('Free plan limit reached.'));
+      expect(message.contains('ChatGPT'), isFalse, reason: message);
       expect(message, contains(' — in 26 days.'));
       expect(message, contains('Next: switch to a model or provider'));
       expect(message.contains('{'), isFalse, reason: message);
@@ -58,10 +62,34 @@ void main() {
 
     test('ru: the goal wording family with human units', () {
       final message = formatRateLimitMessage(clipInfo(), localeCode: 'ru');
-      expect(message, contains('Лимит плана Free ChatGPT исчерпан.'));
+      expect(message, contains('Лимит плана Free исчерпан.'));
+      expect(message.contains('ChatGPT'), isFalse, reason: message);
       expect(message, contains('через 26 дней'));
       expect(message, contains('Далее: переключитесь'));
       expect(message.contains('{'), isFalse, reason: message);
+    });
+
+    test('a branded adapter enriches the plan title (codex surfaces)', () {
+      final branded = clipInfo().withBrand('ChatGPT');
+      expect(
+        formatRateLimitMessage(branded),
+        contains('ChatGPT Free plan limit reached.'),
+      );
+      expect(
+        formatRateLimitMessage(branded, localeCode: 'ru'),
+        contains('Лимит плана Free ChatGPT исчерпан.'),
+      );
+      // Titles without a plan stay neutral even when branded.
+      final kindOnly = parseRateLimitInfo(
+        statusCode: 429,
+        body: 'rate limited',
+        headerResetsAt: 2000000000,
+        limitKind: 'primary',
+      )!;
+      expect(
+        formatRateLimitMessage(kindOnly.withBrand('ChatGPT')),
+        contains('Rate limit reached (primary limit).'),
+      );
     });
 
     test('eligible promo gets its one-line mention', () {
@@ -247,12 +275,13 @@ void main() {
         usage: Usage.zero,
         stopReason: StopReason.error,
         errorMessage: '429: ${formatRateLimitMessage(clipInfo())}',
-        rateLimit: clipInfo(),
+        rateLimit: clipInfo().withBrand('ChatGPT'),
         timestamp: DateTime.utc(2026, 9, 24),
       );
       final restored = AssistantMessage.fromJson(message.toJson());
       expect(restored.rateLimit?.rawBody, clipBody);
       expect(restored.rateLimit?.planType, 'free');
+      expect(restored.rateLimit?.brand, 'ChatGPT');
       expect(restored.errorMessage!.contains('{'), isFalse);
     });
   });

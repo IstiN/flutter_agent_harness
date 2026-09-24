@@ -52,6 +52,8 @@ void main() {
             planType: 'free',
             resetsAt: resetsAt,
             resetsInSeconds: 2280562,
+            // The codex adapter brands the plan title (withBrand).
+            brand: 'ChatGPT',
             rawBody: rawPayload,
           ),
           timestamp: DateTime(2026),

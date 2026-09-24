@@ -369,6 +369,9 @@ final class _ChatGptCodexSession {
   /// body or the `x-codex-*` headers — and renders human at the shared
   /// choke point ([formatProviderError]). The raw payload stays on
   /// `rateLimit.rawBody` for diagnostics, out of the rendered message.
+  /// This endpoint IS the ChatGPT surface, so the plan title carries the
+  /// [RateLimitInfo.withBrand] enrichment; the shared parse layer itself
+  /// stays provider-neutral.
   Future<ProviderHttpError> _httpError(http.StreamedResponse response) async {
     final body = await response.stream.bytesToString();
     var message = body;
@@ -376,7 +379,7 @@ final class _ChatGptCodexSession {
         ? parseCodexRateLimits(response.headers)
         : null;
     final headerReset = codex?.primary?.resetsAt ?? codex?.secondary?.resetsAt;
-    final rateLimit = parseRateLimitInfo(
+    var rateLimit = parseRateLimitInfo(
       statusCode: response.statusCode,
       body: body,
       headers: response.headers,
@@ -384,8 +387,13 @@ final class _ChatGptCodexSession {
       limitKind: headerReset == null || codex == null
           ? null
           : codex.limitName ??
-                (codex.secondary?.resetsAt != null ? 'secondary' : 'primary'),
+                // Name the window that actually supplied the reset —
+                // when both are advertised, that is primary.
+                (codex.primary?.resetsAt == headerReset
+                    ? 'primary'
+                    : 'secondary'),
     );
+    if (rateLimit != null) rateLimit = rateLimit.withBrand('ChatGPT');
     // Issue #705 E5: a grammar-shaped 400 never stays bare — name the
     // suspect outbound item and the recovery path, so a session that still
     // fails after sanitize reports WHY instead of looping on a raw 400.

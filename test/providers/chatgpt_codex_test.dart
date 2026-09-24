@@ -1059,5 +1059,41 @@ void main() {
       expect(info.limitKind, 'primary');
       expect(info.rawBody, 'slow down');
     });
+
+    test('both windows advertised: the label names the window it came from',
+        () async {
+      final client = http_testing.MockClient.streaming(
+        (request, requestBody) async => http.StreamedResponse(
+          Stream.value(utf8.encode('slow down')),
+          429,
+          headers: {
+            'content-type': 'text/plain',
+            'x-codex-primary-used-percent': '80',
+            'x-codex-primary-reset-at': '2000000000',
+            'x-codex-secondary-used-percent': '100',
+            'x-codex-secondary-reset-at': '1990000000',
+          },
+        ),
+      );
+      final events = await streamChatGptCodex(
+        chatGptModel,
+        simpleContext(),
+        credentials: credentials.encode(),
+        client: client,
+      ).toList();
+
+      final error = events.whereType<ErrorEvent>().single;
+      // The rendered stamp prefers the primary window — the label must
+      // agree with it (round-1 CR: it used to say "secondary").
+      final message = error.error.errorMessage!;
+      expect(message, contains('(primary limit)'));
+      expect(message.contains('secondary'), isFalse, reason: message);
+      final info = error.error.rateLimit!;
+      expect(info.limitKind, 'primary');
+      expect(
+        info.resetsAt,
+        DateTime.fromMillisecondsSinceEpoch(2000000000 * 1000, isUtc: true),
+      );
+    });
   });
 }
