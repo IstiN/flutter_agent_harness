@@ -347,6 +347,29 @@ void main() {
       },
     );
 
+    test(
+      'a bare "spending" mention is not budget exhaustion (review #929)',
+      () {
+        // A one-off gateway body that merely mentions the word stays
+        // retryable — the bare-word net would have turned it terminal.
+        expect(
+          isBudgetExhaustion(
+            errorMsg(
+              '500: billing service logged spending for this account, '
+              'please try again later',
+            ),
+          ),
+          isFalse,
+        );
+        // A per-minute spend cap heals on its own — rate-limit rotation
+        // material, never a dead-until-reset budget death.
+        expect(
+          isBudgetExhaustion(errorMsg('429: spending per minute exceeded')),
+          isFalse,
+        );
+      },
+    );
+
     test('only error stops classify', () {
       expect(
         isBudgetExhaustion(errorMsg('spending limit', stop: StopReason.stop)),

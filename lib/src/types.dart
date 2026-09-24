@@ -83,7 +83,7 @@ void Function(String reason)? onUnknownFinishReason;
 /// budget refills on its reset date, never on a retry — every retry layer
 /// treats this class as terminal for the dead entry.
 final _budgetExhaustionPatterns = [
-  RegExp(r'spending', caseSensitive: false),
+  RegExp(r'spending.?limit', caseSensitive: false),
   RegExp(r'budget.?limit', caseSensitive: false),
   RegExp(r'budget.?reset', caseSensitive: false),
   RegExp(r'insufficient.?quota', caseSensitive: false),

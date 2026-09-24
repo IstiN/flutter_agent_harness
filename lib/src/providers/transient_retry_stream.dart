@@ -79,13 +79,13 @@ final _rateLimitGuardPatterns = [
 
 /// Whether [message] is a transient failure worth replaying: socket-level
 /// drops and gateway 5xx. Rate limits stay with the roles layer (the
-/// `FallbackStreamFunction` rotation policy — checked FIRST, a 429 may
-/// quote "please try again later"), budget/spending exhaustion is terminal
-/// (issue #926 — checked before the transport nets, a gateway-wrapped
-/// budget error quotes "500 … please try again later"), auth failures
-/// stand, context overflow belongs to compaction, and the idle watchdog's
-/// own `TimeoutException` wording deliberately does NOT match (that error
-/// means "the endpoint went silent", which a retry re-arms anyway).
+/// `FallbackStreamFunction` rotation policy — a 429 may quote "please try
+/// again later"), budget/spending exhaustion is terminal and wins over
+/// every net below it (issue #926 — a gateway-wrapped budget error quotes
+/// "500 … please try again later"), auth failures stand, context overflow
+/// belongs to compaction, and the idle watchdog's own `TimeoutException`
+/// wording deliberately does NOT match (that error means "the endpoint
+/// went silent", which a retry re-arms anyway).
 bool isTransientNetworkError(AssistantMessage message) {
   if (message.stopReason != StopReason.error) return false;
   final text = message.errorMessage;

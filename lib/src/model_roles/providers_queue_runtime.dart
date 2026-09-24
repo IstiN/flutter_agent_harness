@@ -37,9 +37,17 @@ QueueDeath? classifyQueueDeath(ErrorEvent event) {
   if (text == null || text.isEmpty) return null;
 
   // Budget/spending exhaustion (issue #926): the entry is dead until the
-  // budget reset — advance at once, no ladder, no cooldown, and the
-  // provider's budget wording rides the switch event. Checked BEFORE the
-  // terminal finish_reason veto (a budget death is not a content stop).
+  // budget reset — advance at once, no ladder, and the provider's budget
+  // wording rides the switch event. Checked BEFORE the terminal
+  // finish_reason veto (a budget death is not a content stop).
+  //
+  // Policy note (review #929): `immediate` deliberately benches the entry
+  // with NO cooldown — reset-date-aware benching needs the structured
+  // surface tracked in #898 — so the queue pays at most ONE cheap probe
+  // per call against the dead head before failing over. Never sleeps,
+  // never a ladder: the #926 flooding is gone, and the queue editor's
+  // `recovering`/`healthy` badge must not be read as "will succeed"
+  // while the budget stays exhausted.
   if (isBudgetExhaustion(event.error)) {
     return const QueueDeath(kind: QueueDeathKind.quota, immediate: true);
   }
