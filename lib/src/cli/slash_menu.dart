@@ -187,7 +187,7 @@ const builtinSlashCommands = <String, String>{
   '/code': 'switch to coding mode',
   '/architect': 'switch to architect mode',
   '/review': 'switch to review mode',
-  '/help': 'this help',
+  '/help': '[filter] — command summary (/help hotkeys: key table)',
   '!': '<command> — run a shell command directly',
 };
 
