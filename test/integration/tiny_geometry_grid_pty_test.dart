@@ -70,9 +70,11 @@ allowedTools: []
         for (var i = 0; i < grid.length; i++) 'R$i |${grid[i]}|',
       ].join('\n') + '\nRAW:\n' + harness.rawTail;
       // Status exactly once, and it is the bottom non-blank row.
+      // The band: exactly once, directly above the empty gutter row
+      // (#831 band layout — the rule + dim footer are retired).
       final statusRows = [
         for (final row in grid)
-          if (row.contains(' · turn ')) row,
+          if (row.trimLeft().startsWith('>_') && row.contains(' > ')) row,
       ];
       expect(statusRows.length, 1,
           reason: 'status exactly once; screen:\n$screen');
@@ -80,13 +82,10 @@ allowedTools: []
       while (last > 0 && grid[last].trim().isEmpty) {
         last--;
       }
-      expect(grid[last].contains(' · turn '), isTrue,
-          reason: 'status is the bottom row; screen:\n$screen');
-      // The input frame: a full-width rule immediately above the status,
-      // and the draft lives between the two bottom rules.
-      final rule = '─' * 100;
-      expect(grid[last - 1].trim(), rule,
-          reason: 'rule above status; screen:\n$screen');
+      expect(grid[last].trimRight().startsWith('╰─'), isTrue,
+          reason: 'the empty gutter ends the frame; screen:\n$screen');
+      expect(grid[last - 1], statusRows.single,
+          reason: 'the band sits directly above the gutter; screen:\n$screen');
       expect(
         grid.sublist(0, last - 1).any((l) => l.contains('draft')),
         isTrue,

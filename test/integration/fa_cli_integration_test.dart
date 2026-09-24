@@ -33,8 +33,9 @@ void main() {
       expect(screen, contains('[Context]'));
       expect(screen, contains('[Model]'));
       expect(screen, contains('test-model'));
-      // The TUI status line (the input zone has no `fa>` prefix in TUI mode).
-      expect(screen, contains('ctx'));
+      // The TUI status band (the input zone has no `fa>` prefix in TUI
+      // mode); the context segment renders `N%/window` (#831).
+      expect(screen, contains('%/'));
     });
 
     test(

@@ -53,27 +53,19 @@ void main() {
         'gate-echo-marker-reply',
         timeout: const Duration(seconds: 30),
       );
-      fa.sendCtrlC();
-      // Linux PTY flake (CI legs): a single ^C byte can race the TUI's
-      // render loop and the process then dies by signal (exitCode < 0)
-      // instead of the clean exit(130). The #355 contract is "Ctrl+C
-      // quits the REPL BOUNDED" — a second ^C after a grace beat, and
-      // any process death inside the window counts; only a process that
-      // is STILL ALIVE at the end of the budget fails (a wedge).
+      // #830 double-press contract (universal — SSH sessions included):
+      // press 1 arms the exit window, press 2 within it exits 130. Any
+      // process death inside the budget counts; only a process that is
+      // STILL ALIVE at the end of the budget fails (a wedge).
       // `stillAlive` is a sentinel: exitCode is a Future<int>, so the
       // timeout can't return null — the sentinel keeps it null-free.
+      fa.sendCtrlC(); // press 1: arm
+      fa.sendCtrlC(); // press 2 within the window: exit
       const stillAlive = -999;
-      var code = await fa.pty.exitCode.timeout(
-        const Duration(seconds: 5),
+      final code = await fa.pty.exitCode.timeout(
+        const Duration(seconds: 10),
         onTimeout: () => stillAlive,
       );
-      if (identical(code, stillAlive)) {
-        fa.sendCtrlC();
-        code = await fa.pty.exitCode.timeout(
-          const Duration(seconds: 10),
-          onTimeout: () => stillAlive,
-        );
-      }
       expect(
         identical(code, stillAlive),
         isFalse,

@@ -71,14 +71,16 @@ allowedTools: []
     final grid = _grid(harness);
     expect(grid, hasLength(24), reason: 'frame fills exactly the terminal');
 
-    // (a) the status row is WHOLE on the last physical row.
-    final status = grid.last;
-    expect(status, contains(' · turn '), reason: grid.join('\n'));
+    // (a) the status band is WHOLE, pinned above the composer gutter.
+    final bandIdx = grid.indexWhere(
+        (l) => l.trimLeft().startsWith('>_') && l.contains(' > '));
+    expect(bandIdx, greaterThanOrEqualTo(0), reason: grid.join('\n'));
+    final status = grid[bandIdx];
     expect(status, contains('mock-model'));
     expect(
-      status.trimLeft().startsWith('/'),
+      status.trimLeft().startsWith('>_Fa > '),
       isTrue,
-      reason: 'status opens with the cwd, not foreign text',
+      reason: 'status opens with the pi segment, not foreign text',
     );
 
     // (b) no spinner/elapsed glyph inside the status text.
@@ -86,16 +88,11 @@ allowedTools: []
       expect(status, isNot(contains(glyph)));
     }
 
-    // (c) the input frame is intact on its own rows: exactly two
-    // full-width rules with an untouched (empty) composer zone between
-    // them — no board/busy/status bleed into the composer.
-    final rules = <int>[
-      for (var i = 0; i < grid.length; i++)
-        if (grid[i].trim() == '─' * 80) i,
-    ];
-    expect(rules, hasLength(2), reason: 'input frame: top + bottom rule');
-    final zone = grid.sublist(rules.first + 1, rules.last);
+    // (c) the composer zone is intact below the band: exactly one empty
+    // gutter row — no board/busy/status bleed into the composer (#831
+    // band layout; the legacy rule pair is retired).
+    final zone = grid.sublist(bandIdx + 1);
     expect(zone, hasLength(1), reason: 'composer zone: ${grid.join("\n")}');
-    expect(zone.single.trim(), isEmpty, reason: 'empty composer row');
+    expect(zone.single.trim(), startsWith('╰─'), reason: 'empty gutter row');
   });
 }

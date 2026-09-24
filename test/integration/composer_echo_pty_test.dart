@@ -130,29 +130,21 @@ allowedTools: []
             reason: 'row exceeds the width:\n${dump(gridA)}');
       }
 
-      // ── (4) footer on its own last row, rule above it ───────────────────
-      var last = gridA.length - 1;
-      while (last > 0 && gridA[last].trim().isEmpty) {
-        last--;
-      }
-      expect(gridA[last], contains(' · turn '),
-          reason: 'footer is the last row:\n${dump(gridA)}');
-      expect(gridA[last - 1].trim(), '─' * columns,
-          reason: 'the input frame rule separates composer and footer');
+      // ── (4) band between the transcript and the input zone ─────────────
+      // (#831 band layout: the legacy bottom rule + dim footer retired.)
+      final bandIdx = gridA.indexWhere(
+          (l) => l.trimLeft().startsWith('>_') && l.contains(' > '));
+      expect(bandIdx, greaterThanOrEqualTo(0),
+          reason: 'status band painted:\n${dump(gridA)}');
+      expect(gridA[bandIdx], contains('mock-model'),
+          reason: 'the band carries the model segment:\n${dump(gridA)}');
 
-      // ── (1) composer input row: cursor only, zero submitted text ────────
-      final rule = '─' * columns;
-      final rules = <int>[
-        for (var i = 0; i < gridA.length; i++)
-          if (gridA[i].trim() == rule) i,
-      ];
-      expect(rules.length, greaterThanOrEqualTo(2),
-          reason: 'input frame rules visible:\n${dump(gridA)}');
-      final composerRegion =
-          gridA.sublist(rules[rules.length - 2] + 1, rules.last);
-      expect(composerRegion, <String>[''],
-          reason: 'the input row is a single EMPTY row (physical cursor '
-              'only — never the submitted text):\n${dump(gridA)}');
+      // ── (1) composer input zone: cursor only, zero submitted text ──────
+      final composerRegion = gridA.sublist(bandIdx + 1);
+      expect(composerRegion.map((l) => l.replaceAll(' ', '')).join(),
+          '╰─',
+          reason: 'the input zone holds only the empty gutter (physical '
+              'cursor — never the submitted text):\n${dump(gridA)}');
 
       // ── (2) the sent echo appears EXACTLY ONCE, above the ticker ────────
       final busyRows = <int>[

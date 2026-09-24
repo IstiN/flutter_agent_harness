@@ -96,18 +96,17 @@ void main() {
       expect(harness.screenText, contains('DAP_MASTER_SECRET'));
 
       // Regression: plugin output must land in the TRANSCRIPT, above the
-      // input frame — a raw-io bypass left it in the composer zone (and a
-      // typed character would splice into it mid-text).
+      // composer zone — a raw-io bypass left it in the composer zone (and
+      // a typed character would splice into it mid-text). The status band
+      // is the transcript/composer boundary (#831; the legacy input frame
+      // rule this probe used is retired).
       final lines = harness.viewportLines;
-      final statusRow = lines.lastIndexWhere((l) => l.contains('turn 0'));
-      expect(statusRow, greaterThan(0));
-      final inputFrameRow = lines
-          .sublist(0, statusRow)
-          .lastIndexWhere((l) => l.trim().startsWith('─'));
-      expect(inputFrameRow, greaterThan(0));
+      final bandRow = lines.lastIndexWhere(
+          (l) => l.trimLeft().startsWith('>_') && l.contains(' > '));
+      expect(bandRow, greaterThan(0));
       final aboutRow = lines.indexWhere((l) => l.contains('zero-knowledge'));
       expect(aboutRow, greaterThan(0));
-      expect(aboutRow, lessThan(inputFrameRow));
+      expect(aboutRow, lessThan(bandRow));
 
       await harness.runSlashCommand('/exit');
       await harness.waitForOutput();

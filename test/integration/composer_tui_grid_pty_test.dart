@@ -5,8 +5,9 @@
 // the RENDERED GRID at 100x40 AND narrow 80x24:
 //
 //   1. a long composed input soft-wraps across rows;
-//   2. the footer/status row appears EXACTLY once, on its own bottom row,
-//      never merged with the composer or the ticker row;
+//   2. the status band appears EXACTLY once, on its own row between the
+//      transcript and the input zone (#831 band layout), never merged with
+//      the composer or the ticker row;
 //   3. the ticker row updates IN PLACE — the grid diff between two ticks
 //      touches only the busy row, and inside it only the spinner glyph and
 //      the seconds cell;
@@ -331,7 +332,6 @@ allowedTools: []
       final grid = [
         for (final line in harness.viewportLines) line.trimRight(),
       ];
-      final rule = '─' * columns;
       String screenShot() => grid.join('\n');
 
       // The frame fits the glass: no overrun, no hardware scroll.

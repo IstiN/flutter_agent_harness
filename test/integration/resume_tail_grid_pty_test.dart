@@ -114,8 +114,8 @@ void main() {
       addTearDown(harness.close);
 
       // The banner's [Model] block scrolls off a flooded 24-row glass —
-      // the status row is the boot marker that always exists.
-      await harness.waitForText(' · ctx ', timeout: const Duration(seconds: 90));
+      // the status band is the boot marker that always exists (#831).
+      await harness.waitForText('>_Fa > ', timeout: const Duration(seconds: 90));
       await harness.waitForOutput(
         settleMs: 700,
         timeout: const Duration(seconds: 20),

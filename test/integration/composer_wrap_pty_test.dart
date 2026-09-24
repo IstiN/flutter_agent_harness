@@ -76,18 +76,22 @@ allowedTools: []
     final rows = [
       for (final line in harness.viewportLines) line.trimRight(),
     ];
-    final rule = '─' * 80;
-    final rules = <int>[
-      for (var i = 0; i < rows.length; i++)
-        if (rows[i].trim() == rule) i,
-    ];
-    expect(rules.length, greaterThanOrEqualTo(2), reason: 'input zone frame');
-    final region = rows.sublist(rules[rules.length - 2] + 1, rules.last);
+    // (#831 band layout) the input zone is the gutter-prefixed rows below
+    // the status band: `╰─ ` on the first row, three spaces on wraps.
+    final bandIdx = rows.indexWhere(
+        (l) => l.trimLeft().startsWith('>_') && l.contains(' > '));
+    expect(bandIdx, greaterThanOrEqualTo(0), reason: 'status band visible');
+    String stripGutter(String l) {
+      final t = l.trimRight();
+      return t.startsWith('╰─') ? t.substring(2) : t.replaceFirst(RegExp('^   '), '');
+    }
+
+    final region = rows.sublist(bandIdx + 1).map(stripGutter).toList();
 
     // The busy row really is on screen (we are mid-run) — accept any live
     // label: generic 'Working…' or the phase label ('Running bash…').
     expect(
-      rows.take(rules[rules.length - 2]).any(
+      rows.take(bandIdx + 1).any(
         (l) =>
             l.contains('Working') ||
             l.contains('Running') ||
@@ -95,7 +99,7 @@ allowedTools: []
       ),
       isTrue,
       reason: 'the fake turn must still be running; screen:\n'
-          '${rows.take(rules[rules.length - 2] + 1).join("\n")}',
+          '${rows.take(bandIdx + 1).join("\n")}',
     );
 
     // Full text visible, wrapped: the region's space-stripped character
@@ -111,11 +115,18 @@ allowedTools: []
     // Wrapped, not one long row: ~200 chars at 80 cols must span 3 rows.
     expect(region.length, 3, reason: 'region rows: ${region.join(" | ")}');
 
-    // Zero artifacts at row ends: the rules bracketing the region are
-    // EXACTLY full-width rules (a stray digit or leftover fragment would
-    // survive the trim), and every region row fits the viewport.
-    expect(rows[rules[rules.length - 2]].trim(), rule);
-    expect(rows[rules.last].trim(), rule);
+    // Zero artifacts at row ends: the gutter rows carry exactly the
+    // composer gutter (a stray digit or leftover fragment would survive
+    // the strip), and every region row fits the viewport.
+    for (final raw in rows.sublist(bandIdx + 1)) {
+      expect(
+        raw.trimRight().startsWith('╰─') ||
+            raw.startsWith('   ') ||
+            raw.trim().isEmpty,
+        isTrue,
+        reason: 'every input-zone row is gutter-prefixed: "$raw"',
+      );
+    }
     for (final row in region) {
       expect(row.runes.length, lessThanOrEqualTo(80));
       expect(row, isNot(contains('sleep')));
@@ -123,11 +134,12 @@ allowedTools: []
     }
 
     // The cursor renders at the TRUE end of the composed text: last region
-    // row, one cell past the final glyph (grapheme-aware col math).
+    // row, one cell past the final glyph (grapheme-aware col math) — past
+    // the three-cell wrap gutter on that row.
     final buffer = harness.terminal.buffer;
-    final cursorRelRow = buffer.cursorY - (rules[rules.length - 2] + 1);
+    final cursorRelRow = buffer.cursorY - (bandIdx + 1);
     expect(cursorRelRow, 2, reason: 'cursor on the last wrapped row');
-    expect(buffer.cursorX, region.last.runes.length,
+    expect(buffer.cursorX, 3 + region.last.runes.length,
         reason: 'cursor one cell past the final glyph');
   });
 }
