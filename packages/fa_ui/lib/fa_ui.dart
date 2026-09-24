@@ -20,6 +20,8 @@ export 'src/chat/fa_chat_host.dart';
 export 'src/chat/fa_adaptive_header.dart';
 export 'src/chat/fa_chat_screen.dart';
 export 'src/chat/fa_chat_service.dart';
+export 'src/chat/fa_run_status_row.dart';
+export 'src/chat/run_phase.dart';
 export 'src/chat/markdown_style.dart';
 export 'src/chat/media_player.dart';
 export 'src/chat/media_tool_names.dart';

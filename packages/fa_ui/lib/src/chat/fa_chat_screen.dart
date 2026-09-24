@@ -38,6 +38,7 @@ import 'fa_adaptive_header.dart';
 import 'fa_chat_features.dart';
 import 'fa_chat_host.dart';
 import 'fa_chat_service.dart';
+import 'fa_run_status_row.dart';
 import 'markdown_style.dart';
 import 'media_player.dart';
 import 'secret_request_sheet.dart';
@@ -1276,6 +1277,14 @@ class _FaChatScreenState extends State<FaChatScreen>
                   : strings.chatLoadNewerCount('$historyBelow'),
               tappable: !_historyLoading,
             ),
+          // The live phase/tool status row (issue #865): sits directly
+          // above the composer, subscribes to the service itself (message
+          // changes alone must flip it, the screen rebuilds only on flag
+          // changes) and hides itself the frame the run ends.
+          FaRunStatusRow(
+            key: const ValueKey('faChatRunStatusRow'),
+            service: widget.service,
+          ),
           composerBuilder != null
               ? composerBuilder(context, widget.service, _dropBridge)
               : ChatComposer(
