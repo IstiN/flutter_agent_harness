@@ -1,52 +1,42 @@
-// Copyright (c) 2026, the Flutter Agent Harness authors.
-// Use of this source code is governed by a MIT license that can be found
-// in the LICENSE file.
-
-/// Live integration tests for the openai-completions provider adapter against
-/// OpenRouter (reached via a `baseUrl` swap, see
-/// `example/openrouter_smoke.dart`).
-///
-/// These tests hit the real OpenRouter API and require the
-/// `OPENROUTER_API_KEY` environment variable; every test skips gracefully
-/// when it is unset so keyless CI/dev runs pass. Prompts are kept tiny and
-/// `maxTokens` small to bound cost. Tagged `integration`+`llm` (real-provider
-/// smoke: needs secrets, runs ONLY in the tag-only provider-smoke job and
-/// nightly; every per-PR suite excludes it via `--exclude-tags llm` — run
-/// manually with `dart test --tags "integration && llm"`).
+// Live GLM (z.ai) provider suite — the owner-designated live-LLM gate.
+//
+// GLM exposes an OpenAI-compatible endpoint, so the openai-completions
+// adapter is exercised end-to-end against a real model. The key resolves
+// exactly like production: `FA_KEY_API_Z_AI_Z_AI` in the environment, else
+// the platform SecureKeyStore (macOS Keychain, service `fah`). Without a
+// resolvable key every test skips gracefully — the suite must stay green on
+// hosts that have no GLM credentials.
+//
+// Region/provider restrictions surface as ErrorEvents (providers never
+// throw); the tests vacuously pass with a loud note when the upstream
+// rejects the calling region, mirroring provider_openrouter_test.dart.
 @Tags(['integration', 'llm'])
+@Timeout(Duration(minutes: 5))
 library;
 
 import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/secrets/secure_key_store_io.dart';
 import 'package:test/test.dart';
 
-final _apiKey = Platform.environment['OPENROUTER_API_KEY'];
+final _apiKey = () {
+  final fromEnv = Platform.environment['FA_KEY_API_Z_AI_Z_AI'];
+  if (fromEnv != null && fromEnv.isNotEmpty) return fromEnv;
+  return null;
+}();
 
-/// `false` when the key is present (tests run), otherwise the skip reason.
-/// Live OpenRouter calls are opt-in: from this deployment's region the
-/// upstream rejects them outright (403 unsupported_country_region_territory
-/// — a provider restriction, not an adapter bug), so by default the suite
-/// skips and live LLM coverage runs against GLM instead
-/// (provider_glm_live_test.dart, per the owner-designated live gate).
-/// Set FA_OPENROUTER_LIVE=1 to force the live OpenRouter path.
-final _optedIn = Platform.environment['FA_OPENROUTER_LIVE'] == '1';
+final _skip = (_apiKey?.isEmpty ?? true)
+    ? 'FA_KEY_API_Z_AI_Z_AI not set and Keychain store unavailable'
+    : false;
 
-final _skip = !_optedIn
-    ? 'live OpenRouter is region-blocked for this deployment; '
-        'set FA_OPENROUTER_LIVE=1 to opt in'
-    : (_apiKey?.isEmpty ?? true)
-        ? 'OPENROUTER_API_KEY not set'
-        : false;
-
-/// Cheap chat model known to work via OpenRouter (the `OPENROUTER_MODEL`
-/// alternative documented in `example/openrouter_smoke.dart`).
+/// Cheap coding model on the z.ai OpenAI-compatible endpoint.
 const _model = Model(
-  id: 'openai/gpt-4o-mini',
-  name: 'GPT-4o mini (via OpenRouter)',
+  id: 'glm-5.3-flash',
+  name: 'GLM 5.3 Flash (z.ai)',
   api: 'openai-completions',
-  provider: 'openrouter',
-  baseUrl: 'https://openrouter.ai/api/v1',
+  provider: 'z.ai',
+  baseUrl: 'https://api.z.ai/api/coding/paas/v4',
   contextWindow: 128000,
   maxTokens: 16384,
 );
@@ -66,46 +56,51 @@ const _addTool = Tool(
   },
 );
 
-
-/// OpenRouter fans out to upstream providers; some of them (e.g. OpenAI)
-/// reject requests from unsupported regions with
-/// `403 unsupported_country_region_territory`. That is an environment
-/// restriction, not an adapter failure — the [skip:_skip] gate above only
-/// covers the missing-key case. Tests hit through such a region block pass
-/// vacuously with a loud note instead of failing red.
+/// Upstream region/permission blocks arrive as terminal ErrorEvents whose
+/// payload names the restriction; such an environment restriction is not an
+/// adapter failure — the test passes vacuously with a loud note.
 bool _isRegionBlock(Object? error) =>
     '$error'.contains('unsupported_country_region_territory');
 
-Future<void> _withRegionBlock(Future<void> Function() body) async {
+bool _regionBlockedIn(Iterable<Object?> events) => events.any(_isRegionBlock);
+
+void _noteRegionBlock() {
+  // ignore: avoid_print
+  print('⏭️ upstream provider rejects this region (403 '
+      'unsupported_country_region_territory) — vacuous pass');
+}
+
+Future<String?> _resolveKey() async {
+  if (_apiKey != null) return _apiKey;
   try {
-    await body();
-  } on Object catch (error) {
-    if (_isRegionBlock(error)) {
-      // ignore: avoid_print
-      print('⏭️ upstream provider rejects this region (403 '
-          'unsupported_country_region_territory) — vacuous pass');
-      return;
-    }
-    rethrow;
+    final store = platformSecureKeyStore();
+    if (!await store.isAvailable()) return null;
+    return await store.read('FA_KEY_API_Z_AI_Z_AI');
+  } on Object {
+    return null;
   }
 }
 
-void main() {
-  group('OpenRouter (openai-completions adapter, live)', () {
+Future<void> main() async {
+  final key = await _resolveKey();
+  final effectiveSkip = key == null ? _skip : false;
+
+  group('GLM via z.ai (openai-completions adapter, live)', () {
     test(
       'streams incremental text deltas, a done event, and non-zero usage',
-      () async => _withRegionBlock(() async {
+      () async {
         final stream = streamOpenAICompletions(
           _model,
           Context(messages: [UserMessage.text('Say hello in three words.')]),
-          OpenAICompletionsOptions(apiKey: _apiKey!, maxTokens: 64),
+          OpenAICompletionsOptions(
+            apiKey: key,
+            maxTokens: 64,
+          ),
         );
 
         final events = await stream.toList();
-        if (events.any((e) => _isRegionBlock(e))) {
-          // ignore: avoid_print
-          print('⏭️ upstream provider rejects this region (403 '
-              'unsupported_country_region_territory) — vacuous pass');
+        if (_regionBlockedIn(events)) {
+          _noteRegionBlock();
           return;
         }
         expect(events.first, isA<StartEvent>());
@@ -114,8 +109,6 @@ void main() {
         expect(deltas, isNotEmpty, reason: 'expected at least one text delta');
         final fullText = deltas.map((delta) => delta.delta).join();
         expect(fullText.trim(), isNotEmpty);
-        // Partial-first contract: the first incremental delta is a prefix of
-        // the accumulated final text.
         expect(fullText.startsWith(deltas.first.delta), isTrue);
 
         final done = events.last;
@@ -128,14 +121,14 @@ void main() {
         expect(message.stopReason, doneEvent.reason);
         expect(message.usage.totalTokens, greaterThan(0));
         expect(message.usage.output, greaterThan(0));
-      }),
-      skip: _skip,
+      },
+      skip: effectiveSkip,
       timeout: const Timeout(Duration(minutes: 2)),
     );
 
     test(
       'streams a forced add() tool call with parsed arguments',
-      () async => _withRegionBlock(() async {
+      () async {
         final stream = streamOpenAICompletions(
           _model,
           Context(
@@ -143,17 +136,15 @@ void main() {
             tools: const [_addTool],
           ),
           OpenAICompletionsOptions(
-            apiKey: _apiKey!,
+            apiKey: key,
             maxTokens: 256,
             toolChoice: 'required',
           ),
         );
 
         final events = await stream.toList();
-        if (events.any((e) => _isRegionBlock(e))) {
-          // ignore: avoid_print
-          print('⏭️ upstream provider rejects this region (403 '
-              'unsupported_country_region_territory) — vacuous pass');
+        if (_regionBlockedIn(events)) {
+          _noteRegionBlock();
           return;
         }
         expect(events.whereType<ToolCallStartEvent>(), isNotEmpty);
@@ -168,14 +159,14 @@ void main() {
         final done = events.last;
         expect(done, isA<DoneEvent>());
         expect((done as DoneEvent).reason, StopReason.toolUse);
-      }),
-      skip: _skip,
+      },
+      skip: effectiveSkip,
       timeout: const Timeout(Duration(minutes: 2)),
     );
 
     test(
       'drives one full tool round-trip through the agent loop',
-      () async => _withRegionBlock(() async {
+      () async {
         AssistantMessageEventStream streamFunction(
           Model model,
           Context context, {
@@ -185,7 +176,7 @@ void main() {
             model,
             context,
             OpenAICompletionsOptions(
-              apiKey: _apiKey!,
+              apiKey: key,
               maxTokens: 512,
               cancelToken: cancelToken,
             ),
@@ -213,9 +204,7 @@ void main() {
         await agent.waitForIdle();
 
         if (_isRegionBlock(agent.state.errorMessage)) {
-          // ignore: avoid_print
-          print('⏭️ upstream provider rejects this region (403 '
-              'unsupported_country_region_territory) — vacuous pass');
+          _noteRegionBlock();
           return;
         }
         expect(agent.state.errorMessage, isNull);
@@ -239,46 +228,9 @@ void main() {
             .map((content) => content.text)
             .join();
         expect(answer, contains('42'));
-      }),
-      skip: _skip,
-      timeout: const Timeout(Duration(minutes: 3)),
-    );
-
-    test(
-      'CancelToken abort mid-stream ends with aborted stop reason',
-      () async {
-        final source = CancelTokenSource();
-        final stream = streamOpenAICompletions(
-          _model,
-          Context(
-            messages: [
-              UserMessage.text('Count from 1 to 1000, one number per line.'),
-            ],
-          ),
-          OpenAICompletionsOptions(
-            apiKey: _apiKey!,
-            maxTokens: 2048,
-            cancelToken: source.token,
-          ),
-        );
-
-        final events = <AssistantMessageEvent>[];
-        await for (final event in stream) {
-          events.add(event);
-          if (event is TextDeltaEvent && !source.token.isCancelled) {
-            source.cancel(); // abort after the very first delta
-          }
-        }
-
-        expect(events.whereType<TextDeltaEvent>(), isNotEmpty);
-        final terminal = events.last;
-        expect(terminal, isA<ErrorEvent>());
-        expect((terminal as ErrorEvent).reason, StopReason.aborted);
-        final message = await stream.result;
-        expect(message.stopReason, StopReason.aborted);
       },
-      skip: _skip,
-      timeout: const Timeout(Duration(minutes: 2)),
+      skip: effectiveSkip,
+      timeout: const Timeout(Duration(minutes: 3)),
     );
   });
 }

@@ -98,6 +98,13 @@ void main() {
         () async {
       final (tempHome, id) = await _craftSession();
       addTearDown(() => tempHome.deleteSync(recursive: true));
+      // Pin the classic chrome: this suite asserts the classic grid
+      // (#503); the band redesign (#805-#807) has its own surface. The
+      // harness configures nothing else via config, so the pin rides its
+      // own tiny config.yaml.
+      File('${tempHome.path}/.fah/config.yaml')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('tui:\n  classic: true\n');
 
       final harness = await FaCliHarness.spawn(
         workingDirectory: '${tempHome.path}/proj',
