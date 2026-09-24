@@ -5,6 +5,12 @@ part of 'fa_tui.dart';
 /// the extension sees the model's private members (issue #467).
 
 extension _TuiComposerLayout on FaTuiModel {
+  /// The band composer attachment (#806): the host supplies a snapshot
+  /// builder + the status-line engine unless the `tui.classic` kill
+  /// switch pinned the legacy chrome.
+  bool get _bandAttached =>
+      callbacks.statusSnapshot != null && callbacks.statusLineEngine != null;
+
   /// The input block's height in PHYSICAL rows: the text soft-wraps to the
   /// terminal width, so a long single line occupies several rows. All
   /// layout math (viewport height, cursor homing) must use this count —
@@ -37,11 +43,54 @@ extension _TuiComposerLayout on FaTuiModel {
   /// history row is reserved ahead of the optional chrome whenever the
   /// transcript is non-empty: the live edge (the sent echo / newest answer
   /// line) must stay on screen even on a squeezed frame.
-  _FramePlan _framePlanFor(int width, int height) {
-    const mandatory =
+  /// The mandatory fixed-chrome row count for the current frame shape.
+  /// Band composer (#806): the top band replaces the composer's top
+  /// rule, bottom rule and status footer — the chrome below the scroll
+  /// indicator shrinks from three rows to one (the band) and the freed
+  /// rows go to history. Prompt mode keeps the legacy layout (the
+  /// prompt zone replaces the composer; its footer stays).
+  int get _mandatoryChromeRows {
+    const legacyMandatory =
         1 /* progress indicator */ +
         2 /* input frame rules */ +
         1 /* status row */;
+    const bandMandatory =
+        1 /* progress indicator */ +
+        1 /* top status band (always owns its row — omp verticalChrome: 1) */;
+    return _bandAttached && prompt == null ? bandMandatory : legacyMandatory;
+  }
+
+  /// The optional sections' wanted row counts, in consumption order
+  /// (issue #496): board, waiting, scheduled, chips, queue, sticky.
+  (int, int, int, int, int, int) _optionalSectionWants(int width) {
+    final boardWanted = jobBoardLines.length;
+    final waitingWanted = _waitingRowLines().length;
+    final scheduledWanted = scheduledCount > 0 ? 1 : 0;
+    final chipsWanted = attachments.isEmpty ? 0 : attachments.length + 1;
+    final queueWanted = queue.isEmpty ? 0 : queue.length + 2;
+    final stickyWanted = _stickyActive ? _formattedStickyRows(width).length : 0;
+    return (
+      boardWanted,
+      waitingWanted,
+      scheduledWanted,
+      chipsWanted,
+      queueWanted,
+      stickyWanted,
+    );
+  }
+
+  /// The queue block's progressive yield: the hint row drops first, then
+  /// the OLDEST queued rows — the `queued (N)` header is the "your typing
+  /// is not lost" contract and yields last within the block.
+  (int, bool, bool) _queueYield(int take, int wanted) => (
+    take >= wanted ? queue.length : (take - 1).clamp(0, queue.length),
+    take > 0,
+    take >= wanted,
+  );
+
+  _FramePlan _framePlanFor(int width, int height) {
+    final inPrompt = prompt != null;
+    final mandatory = _mandatoryChromeRows;
     // The scroll-progress indicator row ALWAYS paints — the percent rule
     // while the follow latch is detached, a blank row while following
     // (skipping it shifted every later row on scroll). Its row is the
@@ -53,7 +102,6 @@ extension _TuiComposerLayout on FaTuiModel {
     // the prompt path for the input window, the never-painted bottom rule
     // AND the status row twice, so the frame under-filled and left a dead
     // band above the glass).
-    final inPrompt = prompt != null;
     final promptH = inPrompt ? tuiPromptRowCount(prompt!, width) + 1 : 0;
     final (inputVisible, inputOffset) = inPrompt
         ? (0, 0)
@@ -62,16 +110,21 @@ extension _TuiComposerLayout on FaTuiModel {
         mandatory -
         (inPrompt ? 1 : 0) /* the input zone's bottom rule never paints */ +
         (busy ? 1 : 0) + _menuReservedLines + promptH + inputVisible;
-    final boardWanted = jobBoardLines.length;
-    final waitingWanted = _waitingRowLines().length;
-    final scheduledWanted = scheduledCount > 0 ? 1 : 0;
-    final chipsWanted = attachments.isEmpty ? 0 : attachments.length + 1;
-    final queueWanted = queue.isEmpty ? 0 : queue.length + 2;
-    final stickyWanted =
-        _stickyActive ? _formattedStickyRows(width).length : 0;
+    final (
+      boardWanted,
+      waitingWanted,
+      scheduledWanted,
+      chipsWanted,
+      queueWanted,
+      stickyWanted,
+    ) = _optionalSectionWants(width);
     final optionalWanted =
-        boardWanted + waitingWanted + scheduledWanted + chipsWanted +
-        queueWanted + stickyWanted;
+        boardWanted +
+        waitingWanted +
+        scheduledWanted +
+        chipsWanted +
+        queueWanted +
+        stickyWanted;
     var budget = (height - fixed).clamp(0, height);
     // Reserve a small live-edge tail (the sent echo lines + the newest
     // tool card) ONLY when the optional chrome would otherwise swallow the
@@ -91,14 +144,10 @@ extension _TuiComposerLayout on FaTuiModel {
     final scheduled = section(scheduledWanted);
     final chips = section(chipsWanted);
     final queueTake = section(queueWanted);
-    // The queue block yields progressively: the hint row drops first, then
-    // the OLDEST queued rows — the `queued (N)` header is the "your typing
-    // is not lost" contract and yields last within the block.
-    final queueVisible = queueTake >= queueWanted
-        ? queue.length
-        : (queueTake - 1).clamp(0, queue.length);
-    final queueHeader = queueTake > 0;
-    final queueHint = queueTake >= queueWanted;
+    final (queueVisible, queueHeader, queueHint) = _queueYield(
+      queueTake,
+      queueWanted,
+    );
     // The pinned echo is quantized all-or-nothing: a lone pin rule reads
     // as a glitch. When it does not fit, the row stays with history.
     // The taken rows LEAVE the consumable budget — history shrinks by
@@ -136,8 +185,10 @@ extension _TuiComposerLayout on FaTuiModel {
     // painted frame overran the glass, the terminal scrolled and the
     // composer row painted over the status row with the frame rules gone.
     final wanted = _inputLineCount;
-    final cap = (height - fixedChrome - (busy ? 1 : 0))
-        .clamp(1, height == 0 ? 1 : height);
+    final cap = (height - fixedChrome - (busy ? 1 : 0)).clamp(
+      1,
+      height == 0 ? 1 : height,
+    );
     final visible = wanted < cap ? wanted : cap;
     return (visible, _inputWindowOffset(visible));
   }
@@ -186,9 +237,133 @@ extension _TuiComposerLayout on FaTuiModel {
   /// cells the new content covers. Both operations are cell-width aware
   /// (grapheme clusters): UTF-16 padding underpads any status carrying wide
   /// characters and stale cells survive on the right.
-  String _statusRow() => _dim(
-    tuiPadRight(tuiFitWidth(callbacks.statusLine(), termWidth), termWidth),
-  );
+  ///
+  /// While the double-press Ctrl+C window is armed (issue #830), the dim
+  /// `press ctrl+c again to exit` hint replaces the status line; the next
+  /// keypress disarms and the status returns.
+  String _statusRow() => ctrlCArmed
+      ? _dim(tuiPadRight(kCtrlCExitHint, termWidth))
+      : _dim(
+          tuiPadRight(
+            tuiFitWidth(callbacks.statusLine(), termWidth),
+            termWidth,
+          ),
+        );
+
+  /// The E1 belt: the engine's ladder is width-exact; a resize race
+  /// truncates as the last resort so the row can never hardware-wrap.
+  /// Pad after the cut — a truncated wide grapheme can leave the row
+  /// short, and stale cells survive on the right of a short row.
+  void _writeBeltRow(StringBuffer b, String raw) {
+    b.writeln(_dim(tuiPadRight(tuiFitWidth(raw, termWidth), termWidth)));
+  }
+
+  /// One rendered span: the role style through the write-time seam, the
+  /// band tint behind it unless the band is transparent.
+  void _writeBandSpan(
+    StringBuffer row,
+    (String, StatusLineRoleKey) span,
+    TuiTheme theme, {
+    required bool idle,
+    required double brandT,
+    required RgbColor? bandBg,
+  }) {
+    final style = statusLineStyle(
+      span.$2,
+      theme: theme,
+      idle: idle,
+      brandT: brandT,
+    );
+    final c = FaThemeController.instance;
+    row
+      ..write(
+        c.sgrPrefix(
+          bandBg == null ? style : style.copyWith(backgroundRgb: bandBg),
+        ),
+      )
+      ..write(span.$1);
+  }
+
+  /// The trailing gap: a transparent band resets and pads plain (the
+  /// terminal background shows through); a filled band paints the bandBg
+  /// fill flush to the right edge — either way the row stays full-width
+  /// so stale cells die.
+  void _writeBandGap(
+    StringBuffer row,
+    int pad,
+    Style fill, {
+    required bool transparent,
+  }) {
+    if (pad <= 0) return;
+    final c = FaThemeController.instance;
+    if (transparent) {
+      // Reset first so the gap is plain terminal background.
+      if (c.profile != null) row.write('\x1b[0m');
+      row.write(' ' * pad);
+    } else {
+      row
+        ..write(c.sgrPrefix(fill))
+        ..write(' ' * pad);
+    }
+  }
+
+  /// The status band row (#806): the omp band attachment — the host
+  /// snapshot renders as a flush-left filled powerline band with a soft
+  /// opening cap (nerd symbol table only; omp's font-safe table ships no
+  /// cap), no frame, rules or corners. The band always owns its row (omp
+  /// `verticalChrome: 1`) even when the engine has nothing to render.
+  /// Colors flow through [statusLineStyle]/[kStatusLineRoles] at write
+  /// time; width math runs on the raw strings (rule #279 E1).
+  int _writeStatusBand(StringBuffer b) {
+    final snapshot = callbacks.statusSnapshot!();
+    final engine = callbacks.statusLineEngine!;
+    final spans = engine.renderSpans(snapshot, termWidth);
+    final raw = spans.map((s) => s.$1).join();
+    if (tuiTextWidth(raw) > termWidth) {
+      _writeBeltRow(b, raw);
+      return 1;
+    }
+    final c = FaThemeController.instance;
+    final theme = c.current;
+    // omp `transparent`: no band fill and no end cap — the terminal
+    // background shows through the gap (the #831 round-2 writer fix,
+    // mirrored here).
+    final transparent = engine.spec.transparent;
+    final fill = kStatusLineRoles[StatusLineRoleKey.bandBg]!(theme);
+    final bandBg = transparent ? null : fill.backgroundRgb;
+    final row = StringBuffer();
+    if (bandBg != null && engine.spec.nerdSymbols) {
+      // The soft opening cap painted band-bg-as-fg (omp `useBgAsFg`).
+      row
+        ..write(c.sgrPrefix(Style(foregroundRgb: bandBg)))
+        ..write('\u{e0b6}');
+    }
+    // The brand spans dim with the idle flag. Binary on purpose: the
+    // 450 ms tween never engages — the host snapshot carries no
+    // timestamps (the #837 review retired the dead fade plumbing).
+    final brandT = snapshot.idle ? 0.0 : 1.0;
+    for (final span in spans) {
+      _writeBandSpan(
+        row,
+        span,
+        theme,
+        idle: snapshot.idle,
+        brandT: brandT,
+        bandBg: bandBg,
+      );
+    }
+    _writeBandGap(
+      row,
+      termWidth - tuiTextWidth(raw),
+      fill,
+      transparent: transparent,
+    );
+    // Close the last span's SGR — only when styling is on (NO_COLOR
+    // keeps the band shape-only, zero escapes).
+    if (c.profile != null && !transparent) row.write('\x1b[0m');
+    b.writeln(row.toString());
+    return 1;
+  }
 
   /// The framed input lines with horizontal cursor-window scrolling; returns
   /// the cursor's input line index and screen column for the cursor home.
@@ -214,21 +389,87 @@ extension _TuiComposerLayout on FaTuiModel {
     );
     for (var i = 0; i < visible.length; i++) {
       if (i > 0) b.writeln();
+      if (_activeGutterWidth > 0) {
+        // omp band.ts renderRow: the gutter rides every composer row —
+        // the border-colored `╰─ ` cue on the first, a plain indent on
+        // the continuations (omp `gutter.continuation`).
+        b.write(
+          i == 0 ? _borderMuted(_composerGutter) : ' ' * _activeGutterWidth,
+        );
+      }
       b.write(visible[i]);
     }
-    b.writeln();
+    // Classic separates the input from the bottom rule + footer below;
+    // the band frame ENDS at the input (the band is above), so no
+    // trailing row — an over-painted frame would crop from the top and
+    // desync the hit-region rows from the painted ones.
+    if (!_bandAttached) b.writeln();
     final inWindow = cursorRow - start;
     return (inWindow < 0 ? 0 : inWindow, cursorCol);
   }
 
-  /// The input text soft-wrapped to the terminal width (the whole prompt
+  /// The gutter width that actually paints: band rows carry the 3-cell
+  /// `╰─ ` cue only when the terminal affords cue + one content cell —
+  /// under 4 columns the band degrades to full-width rows. The painter,
+  /// the wrap width, the caret home and the click mapping all read this
+  /// ONE value so they can never disagree.
+  int get _activeGutterWidth =>
+      (_bandAttached && termWidth >= _composerGutterWidth + 1)
+      ? _composerGutterWidth
+      : 0;
+
+  /// The wrap width for the composer's input text: band mode wraps at the
+  /// CONTENT width (the gutter owns its columns, omp `lineContentWidth`);
+  /// legacy wraps at the full width. [_wrappedInput] and [_inputLineCount]
+  /// share it so the row count the budget pays for and the rows the
+  /// painter writes can never disagree.
+  int get _lineWrapWidth {
+    final gutter = _activeGutterWidth;
+    final content = termWidth - gutter;
+    return content < 1 ? 1 : content;
+  }
+
+  /// The cursor's row index WITHIN [lineRows] and its CELL column —
+  /// code-unit arithmetic lies once wide graphemes or dropped break
+  /// spaces enter the line (issue #467), so the column measures the text
+  /// width of the row's prefix.
+  (int, int) _cursorCellInRows(
+    List<WrappedComposerRow> lineRows,
+    String logicalLine,
+    int cursorColInLine,
+  ) {
+    var rowIdx = 0;
+    for (var r = 1; r < lineRows.length; r++) {
+      if (lineRows[r].startUnit <= cursorColInLine) rowIdx = r;
+    }
+    final col = tuiTextWidth(
+      logicalLine.substring(lineRows[rowIdx].startUnit, cursorColInLine),
+    );
+    return (rowIdx, col);
+  }
+
+  /// True when the cursor rests exactly one row past the last full-width
+  /// row of its logical line (#467).
+  bool _cursorRestsPastFullRow(
+    List<WrappedComposerRow> lineRows,
+    String logicalLine,
+    int cursorColInLine,
+    int rowIdx,
+    int cursorCol,
+  ) {
+    return cursorColInLine == logicalLine.length &&
+        cursorColInLine > 0 &&
+        cursorCol == _lineWrapWidth &&
+        rowIdx == lineRows.length - 1;
+  }
+
+  /// The input text soft-wrapped to the wrap width (the whole prompt
   /// stays visible as a paragraph — no horizontal clipping), plus the
   /// cursor's row/column inside the wrapped block. A cursor sitting exactly
   /// past a full-width chunk gets the empty trailing row it points at, so
-  /// the row count is cursor-dependent — [_inputLineCount] uses this same
-  /// computation and the two never disagree.
+  /// the row count is cursor-dependent.
   (List<String>, int, int) _wrappedInput() {
-    final width = termWidth < 1 ? 1 : termWidth;
+    final width = _lineWrapWidth;
     final logical = inputText.split('\n');
     final beforeCursor = inputText.substring(0, cursor);
     final cursorLogicalLine = '\n'.allMatches(beforeCursor).length;
@@ -243,21 +484,20 @@ extension _TuiComposerLayout on FaTuiModel {
     for (var i = 0; i < logical.length; i++) {
       final lineRows = wrapComposerRows(logical[i], width);
       if (i == cursorLogicalLine) {
-        // The row whose buffer offset holds the cursor, and the cursor's
-        // CELL column inside it — code-unit arithmetic lies once wide
-        // graphemes or dropped break spaces enter the line (issue #467).
-        var rowIdx = 0;
-        for (var r = 1; r < lineRows.length; r++) {
-          if (lineRows[r].startUnit <= cursorColInLine) rowIdx = r;
-        }
-        cursorRow = rows.length + rowIdx;
-        cursorCol = tuiTextWidth(
-          logical[i].substring(lineRows[rowIdx].startUnit, cursorColInLine),
+        final (rowIdx, col) = _cursorCellInRows(
+          lineRows,
+          logical[i],
+          cursorColInLine,
         );
-        if (cursorColInLine == logical[i].length &&
-            cursorColInLine > 0 &&
-            cursorCol == width &&
-            rowIdx == lineRows.length - 1) {
+        cursorRow = rows.length + rowIdx;
+        cursorCol = col;
+        if (_cursorRestsPastFullRow(
+          lineRows,
+          logical[i],
+          cursorColInLine,
+          rowIdx,
+          col,
+        )) {
           // The cursor rests one row past the last full-width row.
           lineRows.add(WrappedComposerRow('', cursorColInLine));
           cursorRow = rows.length + lineRows.length - 1;

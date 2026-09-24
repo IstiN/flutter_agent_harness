@@ -33,6 +33,7 @@ import '../tools/load_modes.dart';
 import 'custom_providers.dart';
 import '../task/subagent_heartbeat.dart';
 import 'links_config.dart';
+import 'tui_status_line.dart';
 
 /// Parses the `providerTimeouts:` section: provider watchdog overrides
 /// (see [ProviderTimeoutsOverride]). Strict — a bad schema throws
@@ -252,6 +253,8 @@ final class CliConfig {
     this.powerSleepPrevention,
     this.powerHold,
     this.tuiTheme,
+    this.tuiClassic = false,
+    this.statusLine,
     this.links = const LinksConfig(),
   });
 
@@ -261,6 +264,9 @@ final class CliConfig {
     // parsed once, strictly (issues #325/#326).
     final powerSection = parsePowerSection(map['power']);
     final agentSection = _parseAgentSection(map['agent']);
+    // The tui section (issue #805) is strict: theme, classic kill
+    // switch and statusLine parsed once, schema errors throw.
+    final tui = parseTuiSection(map['tui']);
     return CliConfig(
       // Issue #772: the persisted provider identity is the catalog KIND.
       // Old name-shaped values (`chatgpt`, `chatgpt.com`) canonicalize on
@@ -285,10 +291,11 @@ final class CliConfig {
           : ModelRolesConfig.fromYaml(map),
       // The theme section: `tui.theme` names a built-in or user TUI theme;
       // unknown names surface at boot (the default applies instead).
-      tuiTheme: switch (map['tui']) {
-        final YamlMap tui => tui['theme'] as String?,
-        _ => null,
-      },
+      tuiTheme: tui.theme,
+      // The classic-chrome kill switch + statusLine section (issue #805);
+      // the renderer wires them in S3.
+      tuiClassic: tui.classic,
+      statusLine: tui.statusLine,
       // The ttsr section is parsed strictly too (bad rules must surface).
       ttsr: map['ttsr'] == null
           ? null
@@ -606,6 +613,17 @@ final class CliConfig {
   /// theme; an unknown name warns at boot and keeps the default.
   final String? tuiTheme;
 
+  /// The classic-chrome kill switch (`tui.classic`, issue #805): when
+  /// set, S3's composer renders the legacy `_statusLine()` footer
+  /// byte-identically instead of the omp status bar. Parsed here so the
+  /// key validates strictly; consumed by the S3 rendering concern.
+  final bool tuiClassic;
+
+  /// The statusLine section (`tui.statusLine`, issue #805): preset or
+  /// custom segment groups + separator + options. `null` = the default
+  /// preset. Consumed by [TuiStatusLine] via [resolveStatusLineSpec].
+  final StatusLineConfig? statusLine;
+
   /// The `links:` section (issue #691): the single source of truth for
   /// product/store links — the app banners, the CLI (`fa config get
   /// links.…`) and the site generator all resolve the same values.
@@ -647,6 +665,8 @@ final class CliConfig {
       powerSleepPrevention: powerSleepPrevention,
       powerHold: powerHold,
       tuiTheme: tuiTheme,
+      tuiClassic: tuiClassic,
+      statusLine: statusLine,
       links: links,
     );
   }
@@ -674,9 +694,19 @@ final class CliConfig {
     return buffer.toString();
   }
 
-  /// The `tui:` section, only when a theme is persisted.
-  String _tuiSectionYaml() =>
-      tuiTheme == null ? '' : 'tui:\n  theme: $tuiTheme\n';
+  /// The `tui:` section, only the persisted parts (theme, classic kill
+  /// switch, statusLine); the file stays minimal.
+  String _tuiSectionYaml() {
+    final statusLineYaml = statusLine?.toYaml();
+    if (tuiTheme == null && !tuiClassic &&
+        (statusLineYaml == null || statusLineYaml.isEmpty)) {
+      return '';
+    }
+    return 'tui:\n'
+        '${tuiTheme == null ? '' : '  theme: $tuiTheme\n'}'
+        '${tuiClassic ? '  classic: true\n' : ''}'
+        '${statusLineYaml ?? ''}';
+  }
 
   String _modelSectionsYaml() {
     final buffer = StringBuffer();

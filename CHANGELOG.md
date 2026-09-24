@@ -1,5 +1,49 @@
 # Changelog
 
+## 1.0.472
+
+
+- fix(env): `LocalExecutionEnv` forwards `renamePath` — kernel-mode cube
+  exec was dead since #803's atomic profile restage (the
+  `RenamableFileSystem` capability probe failed at the base env), making
+  every kernel-backend bash call fail with "profile staging failed" and
+  keeping the macOS nested-rw integration gate red on darwin dev
+  machines. Capability restored + unit regression; the full
+  `fa_cube_integration_test` suite is green again through real
+  sandbox-exec.
+- fix(781): green the nightly, nightly parity at PR time. Five
+  `cli_visual` regressions red on main for days are fixed at the test
+  layer — the product behavior was already correct in each case:
+  sandbox-HOME (`#508`) can never have a working keychain so `key set`
+  honestly reports `could not save`; the `/agents` hub overlay
+  (`#316`) never carried the picker's `mail:N` cue (hub rows now
+  append ` · mail:N` via a re-entrancy-guarded fabric peek, refresh-only
+  re-push can never force the overlay open); the secret-sheet rename hint
+  copy changed in `#627`; the markdown-table and sibling tests shared one
+  fixed port whose leak cascaded into an unreadable `SocketException`
+  (ephemeral ports now); the seeded-fleet fixture lied about liveness
+  (a seeded `running` row is zombie-settled to `failed` at boot, `#332`,
+  which reordered the tree under arrow navigation — seed `idle`).
+  `bin/fah.dart` lost a duplicated remote-catalog preload (merge artifact
+  from `#411`+`#448`) that double-awaited boot latency up to +10s
+  offline. CI: the two nightly-only legs — PTY/CLI integration + CLI
+  coverage ratchet and the Terminal-visual PTY suite — now run on every
+  PR (aggregate Quality gate, same secret shape as the nightly/gardener
+  so the ratchet measures the same surface; `#781`).
+
+## 1.0.468
+
+
+- feat(tui): the omp status bar engine (#805). **Behavior note**: the
+  `tui:` config section is now parsed strictly — an unknown key under
+  `tui:` (e.g. a typo'd `theme2:` left behind by hand-editing) throws
+  `ConfigException` at boot instead of being silently ignored. Remove
+  the unknown key; the error message lists the known ones
+  (`theme`, `classic`, `statusLine`). New `tui.statusLine:` section
+  configures the status bar (preset | custom groups | separator |
+  segmentOptions | transparent); unknown *segment ids* there are
+  warned and dropped at boot, not fatal.
+
 ## 1.0.457
 
 
@@ -4144,6 +4188,25 @@
 - hotfix: restore factory pin — 882 wrote an empty sha (uses: @ / factory_ref: empty) (#884)
 - chore: pin factory 34097f0 + publish fa-state.json (agents#512) (#883)
 - chore: pin factory d7d7308 — duplicate-dispatch guard (agents#511) (#882)
+
+## 1.0.467
+
+- ci: factory pin c6eb4eb → 7fe0a64 (agents #522 — publish fix + time-travel history) (#901)
+- test: retry the port-release proof-bind in openrouter oauth timeout test (#885)
+- feat(tui): transcript chrome - Box frames, dividers, bordered tool cards (#807) (#828)
+
+## 1.0.469
+
+- fix(tui): address #834 review threads - alignment, chord labels, /help summary, TUI-leg pin (#859)
+- chore(deps): bump the github-actions group with 10 updates (#853)
+
+## 1.0.471
+
+- security(sep-07): rotate release-signing trust anchor — the #814 keypair died with its ephemeral CI runner (#902)
+
+## Unreleased
+
+## Unreleased
 
 ## Unreleased
 

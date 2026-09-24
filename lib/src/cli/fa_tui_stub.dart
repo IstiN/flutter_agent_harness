@@ -17,9 +17,11 @@ library;
 
 import 'agent_hub_tui.dart';
 import 'paste_image.dart';
+import 'sigint_action.dart';
 import 'termios_guard.dart' show SttyRunner;
 import 'tui_prompt.dart';
 import 'tui_repl.dart' show MenuItem, TuiProgramHooks;
+import 'tui_status_line.dart' show StatusLineSnapshot, TuiStatusLine;
 
 /// Stub mirror of fa_tui.dart's busy forensic sink (never fires here).
 void Function(String line)? faTuiBusyDiagnostics;
@@ -35,6 +37,7 @@ final class FaTuiCallbacks {
     required this.statusLine,
     required this.prompt,
     this.onInterrupt,
+    this.onCtrlCExit,
     this.isShiftPressed,
     this.opensPicker,
     this.onPickerSelected,
@@ -43,6 +46,8 @@ final class FaTuiCallbacks {
     this.pathCandidates,
     this.onHubAction,
     this.readClipboardImage,
+    this.statusSnapshot,
+    this.statusLineEngine,
   });
 
   final Future<void> Function(String line, {List<TuiImageAttachment> images})
@@ -52,7 +57,13 @@ final class FaTuiCallbacks {
   final List<MenuItem> Function(String filter, int width) buildModelMenu;
   final String Function() statusLine;
   final String prompt;
+
+  /// Band composer seam (#806). Always null here — the web stub keeps
+  /// the legacy composer; see fa_tui.dart for the real contract.
+  final StatusLineSnapshot Function()? statusSnapshot;
+  final TuiStatusLine? statusLineEngine;
   final void Function()? onInterrupt;
+  final void Function()? onCtrlCExit;
   final bool Function()? isShiftPressed;
   final bool Function(String key)? opensPicker;
   final Future<void> Function(String pickerId, String key)? onPickerSelected;
@@ -79,6 +90,7 @@ final class FaTuiController {
     bool mouseCapture = true,
     bool? syncOutput,
     SttyRunner? sttyRunner,
+    SigintPolicy? sigintPolicy,
   });
 
   final FaTuiCallbacks callbacks;
@@ -157,6 +169,10 @@ final class FaTuiController {
   Future<List<String>> drainQueue() async => const [];
 
   void clearQueue() {}
+
+  /// No-op on web. Mirrors the dart_tui controller's method so agent_cli
+  /// call sites compile for BOTH targets (issue #830 double-press hint).
+  void armInterruptHint() {}
 
   Future<void> run() async {}
 }

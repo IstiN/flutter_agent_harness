@@ -28,6 +28,12 @@ import '../dap/dap_hub_snapshot.dart';
 import 'agent_event_handler.dart';
 import 'ansi_markdown.dart';
 import 'path_candidates.dart';
+import 'tui_status_line.dart'
+    show
+        StatusLineConfig,
+        StatusLineSnapshot,
+        TuiStatusLine,
+        resolveStatusLineSpec;
 import 'browser_bridge_commands.dart';
 import '../browser/browser_tools.dart';
 import 'headless_prompt.dart';
@@ -36,6 +42,7 @@ import 'stream_json.dart';
 import 'key_event.dart';
 import 'key_status.dart';
 import 'provider_error_text.dart';
+import 'sigint_action.dart';
 import '../agent/agent_loop.dart';
 import '../session/windowed_session_storage.dart' show WindowedSessionStorage;
 import '../trajectory/event_projection.dart'
@@ -210,6 +217,7 @@ import 'scripted_test_stream.dart';
 import 'tui_replay.dart';
 import 'tui_repl.dart';
 import 'tui_theme.dart';
+import 'tui_chrome.dart';
 import 'termios_guard.dart';
 
 export '../model_roles/provider_catalog.dart' show providerStreamFunction;
@@ -270,8 +278,7 @@ class AgentCli {
     Future<void> Function(Duration)? waitingSleep,
   }) : io = useTui && io.supportsRawMode ? _TuiCliIO(io) : io,
        _style = _Style(enabled: useColor),
-       _markdownSurface =
-           markdownSurface ?? const MarkdownSurface(),
+       _markdownSurface = markdownSurface ?? const MarkdownSurface(),
        _waitingClock = waitingClock ?? DateTime.now,
        _waitingSleep =
            waitingSleep ?? ((Duration d) => Future<void>.delayed(d)),
@@ -964,6 +971,13 @@ class AgentCli {
   /// `/cube use`; never cleared by `/cube off` (a reload re-applies it).
   String? _cubeSource;
 
+  /// Whether the remembered source was activated with `--allow-degrade`
+  /// via an explicit `/cube use` (SEC-05: policy-degrade opt-in for
+  /// kernel specs); `/cube reload` re-applies it to the re-resolved
+  /// spec. Only `/cube use` sets it — a settings-hub selection resets
+  /// it, so a degrade can never leak into another source.
+  bool _cubeUseAllowDegrade = false;
+
   /// The last fetched [DapHubSnapshot] — rendered by the settings hub's
   /// DAP / Hub row and the `/settings` summary, refreshed before each
   /// render and at the top of the DAP flow. Null until fetched or when no
@@ -1114,31 +1128,31 @@ class AgentCli {
   var _rolesDriven = false;
   final _usage = UsageAccumulator();
 
-  // Issue #277 agents-hub driver state (see agent_hub_cli.dart). The
-  // projection accumulates per-agent running spans; the panel log keeps
-  // the deferred (btw) panel history; the subscriptions are lazy so a
-  // session that never opens the hub still gets task-block rendering.
+  // Issue #277 hub driver state (see agent_hub_cli.dart): the projection
+  // accumulates running spans; the panel log keeps deferred (btw) history;
+  // lazy subscriptions keep task-block rendering for hub-less sessions.
   final AgentHubProjection _hubProjection = AgentHubProjection();
   final DeferredPanelLog _hubPanels = DeferredPanelLog();
 
-  /// Issue #429: the per-session background-job board — truthful phases,
-  /// per-turn collapse, records for reload. Replaced wholesale on session
-  /// resume by rehydration.
+  /// Issue #429: per-session background-job board (truthful phases,
+  /// per-turn collapse, reload records) — replaced wholesale on resume.
   ShellJobBoard _jobBoard = ShellJobBoard();
 
-  /// The registry-persist serialization tail (issue #539) — see
-  /// `_persistJobBoard` in the hub driver extension.
+  /// Registry-persist serialization tail (issue #539; see `_persistJobBoard` in the driver).
   Future<void> _persistChain = Future.value();
   final DateTime _hubMainStartedAt = DateTime.now();
   String? _hubTranscriptId;
   Timer? _hubFollowTimer;
   StreamSubscription<dynamic>? _hubSubagentEventsSub;
   StreamSubscription<dynamic>? _hubTaskStartsSub;
+  /// Hub tree `mail:N` marker counts (async peek → refresh-only re-push
+  /// by the driver extension, which cannot hold fields — state here).
+  final Map<String, int> _hubMailCounts = <String, int>{};
+  bool _hubMailRefreshInFlight = false;
 
-  // Issue #437 steering delivery tracking. A mid-run steer is persisted
-  // at accept and queued here until the agent loop merges it at a step
-  // boundary (identity match on the queued message) or the leftover
-  // settle runs/drops it; the wake paths deliver recovered records.
+  // Issue #437 steering delivery: a steer persists at accept and queues
+  // here until the loop merges it at a step boundary (identity match) or
+  // the settle leftover drops it; wake paths deliver recovered records.
   final List<PendingSteering> _pendingSteering = [];
 
   /// Last agent event time — the run heartbeat. A busy run silent past
@@ -1292,6 +1306,22 @@ class AgentCli {
   /// Reference to the active TUI controller so asynchronous model-list updates
   /// can refresh the picker while it is open.
   FaTuiController? _tuiController;
+
+  /// The active TUI controller for the SIGINT handler in `bin/fah.dart`:
+  /// press 1 of the double-press contract (issue #830) reaches the model
+  /// through it (composer clear + footer hint). Null in line mode.
+  FaTuiController? get tuiController => _tuiController;
+
+  /// The process-wide double-press Ctrl+C window (issue #830): the SIGINT
+  /// handler and the TUI's ctrl+c KeyMsg path resolve THIS instance, so
+  /// the two input paths can never disagree (ACX.5).
+  final SigintPolicy sigintPolicy = SigintPolicy();
+
+  /// The SIGINT-parity exit the TUI's ctrl+c press 2 triggers
+  /// (issue #830): abort-if-running bounded, session resume hint,
+  /// exit 130. `bin/fah.dart` installs the real routine; null leaves the
+  /// legacy plain-quit fallback.
+  void Function()? onCtrlCExitRequest;
 
   /// Whether the current run was pushed to consumers as stalled (issue
   /// #514): the edge flag keeps the banner to ONE print per stall
@@ -1724,6 +1754,7 @@ class AgentCli {
       mouseCapture: config.tuiMouseCapture,
       syncOutput: config.tuiSyncOutput,
       sttyRunner: config.sttyRunner,
+      sigintPolicy: sigintPolicy,
       callbacks: FaTuiCallbacks(
         onSubmit: (line, {images = const []}) =>
             _handleTuiSubmit(controller, line, images),
@@ -1731,6 +1762,15 @@ class AgentCli {
         buildSlashMenu: _buildSlashMenu,
         buildModelMenu: _buildModelMenu,
         statusLine: _statusLine,
+        // The band composer (#806): the omp status line attaches as the
+        // composer's top band unless the `tui.classic` kill switch pins
+        // the legacy chrome (byte-identical rule + dim footer).
+        statusSnapshot: config.tuiClassic ? null : _statusLineSnapshot,
+        statusLineEngine: config.tuiClassic
+            ? null
+            : TuiStatusLine(
+                spec: resolveStatusLineSpec(config.statusLine),
+              ),
         prompt: prompt,
         onInterrupt: () {
           // Marks the drain loop to discard queued messages (kimi-cli drops
@@ -1738,6 +1778,10 @@ class AgentCli {
           _abortRequested = true;
           if (isBusy) _agent.abort();
         },
+        // Double-press Ctrl+C press 2 (issue #830): the same SIGINT-parity
+        // exit the host's SIGINT handler runs — abort-if-running bounded,
+        // session resume hint, exit 130.
+        onCtrlCExit: onCtrlCExitRequest,
         isShiftPressed: config.isShiftPressed,
         opensPicker: (key) => const {
           '/sessions',

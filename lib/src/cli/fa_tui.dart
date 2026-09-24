@@ -7,6 +7,10 @@ import 'dart:io'
 // The composer's editor types come from the vendored tui_editor.dart
 // (issue #613): hosted dart_tui exports none, so this file compiles
 // against BOTH resolutions.
+// The vendored dart_tui exports no Style surface (issue #613) — same
+// direct-src import tui_theme.dart uses.
+// ignore: implementation_imports
+import 'package:dart_tui/src/bubbles/style.dart' show Style;
 import 'package:dart_tui/dart_tui.dart' hide stripAnsi;
 import 'package:meta/meta.dart';
 
@@ -19,7 +23,15 @@ import 'package:characters/characters.dart';
 import 'tui_editor.dart';
 import 'tui_hit_regions.dart';
 import 'tui_prompt.dart';
+import 'tui_status_line.dart'
+    show
+        StatusLineRoleKey,
+        StatusLineSnapshot,
+        TuiStatusLine,
+        kStatusLineRoles,
+        statusLineStyle;
 import 'tui_theme.dart';
+import 'tui_chrome.dart';
 import 'termios_guard.dart' show SttyRunner;
 import 'tui_repl.dart' show MenuItem, QueuedMessage, TuiProgramHooks, stripAnsi;
 import 'system_notice_render.dart';
@@ -28,8 +40,13 @@ import 'tui_text_width.dart'
 import '../messaging/scheduled_messages.dart' show ScheduledMessageQueue;
 import 'paste_image.dart';
 import 'tui_key_hints.dart';
+import 'sigint_action.dart';
+
+part 'fa_tui_slash_menu.dart';
 
 part 'fa_tui_messages.dart';
+part 'fa_tui_heartbeat.dart';
+part 'fa_tui_interrupt.dart';
 part 'fa_tui_hub.dart';
 part 'fa_tui_mouse.dart';
 part 'fa_tui_rows.dart';
@@ -63,6 +80,17 @@ String _accent2(String s) => tuiAccent2(s);
 String _accent2Plain(String s) => tuiAccent2Soft(s);
 String _dim(String s) => tuiDim(s);
 
+/// The composer gutter / chrome border color (#806 band composer).
+String _borderMuted(String s) => FaThemeController.instance.borderMuted(s);
+
+/// The omp prompt gutter (band.ts `defaultPromptGutter`): the first
+/// composer row's leading cue in the border color; continuation rows
+/// indent by the same width (omp `gutter.continuation`).
+const String _composerGutter = '╰─ ';
+
+/// `tuiTextWidth('╰─ ')` — narrow-cell box glyphs + one space.
+const int _composerGutterWidth = 3;
+
 /// Host callbacks supplied by [AgentCli] to the dart_tui REPL.
 final class FaTuiCallbacks {
   const FaTuiCallbacks({
@@ -73,6 +101,7 @@ final class FaTuiCallbacks {
     required this.statusLine,
     required this.prompt,
     this.onInterrupt,
+    this.onCtrlCExit,
     this.isShiftPressed,
     this.opensPicker,
     this.onPickerSelected,
@@ -81,6 +110,8 @@ final class FaTuiCallbacks {
     this.pathCandidates,
     this.onHubAction,
     this.readClipboardImage,
+    this.statusSnapshot,
+    this.statusLineEngine,
   });
 
   /// Called when the user submits a non-empty input line. [images] carries
@@ -102,11 +133,30 @@ final class FaTuiCallbacks {
   /// One-line status shown above the input line.
   final String Function() statusLine;
 
+  /// Host-built status-bar frame data (issue #806, the S3 band
+  /// attachment): the host resolves the snapshot per frame tick — the
+  /// TUI layer performs zero fetches and zero subprocess calls. NULL
+  /// means the legacy composer (the `tui.classic` kill switch, or the
+  /// web stub): the dim one-line footer stays, byte-identical.
+  final StatusLineSnapshot Function()? statusSnapshot;
+
+  /// The status-line engine (spec resolved once from `tui.statusLine`
+  /// config). Supplied together with [statusSnapshot]; the band writer
+  /// renders it per frame at the composer's top.
+  final TuiStatusLine? statusLineEngine;
+
   /// The input prompt (e.g. `fa> `).
   final String prompt;
 
   /// Called on Ctrl-C while the agent is busy.
   final void Function()? onInterrupt;
+
+  /// Double-press Ctrl+C exit (issue #830): press 2 within the window
+  /// resolved [SigintAction.exitInteractive] — the host runs the
+  /// SIGINT-parity exit (abort-if-running bounded, session resume hint,
+  /// exit 130). Null falls back to a plain `quit()` (exit 0), the
+  /// single-press behavior this issue replaced.
+  final void Function()? onCtrlCExit;
 
   /// Host-provided Shift modifier check (e.g. macOS Core Graphics via FFI).
   /// When null, Shift+Enter is not specially handled.
@@ -246,8 +296,12 @@ final class FaTuiModel extends Model {
     this.scheduledTickPending = false,
     this.frameNonce = 0,
     this.hub,
+    SigintPolicy? sigintPolicy,
+    this.ctrlCArmed = false,
+    this.ctrlCGeneration = 0,
     DateTime Function()? now,
   }) : nowFn = now ?? DateTime.now,
+       sigintPolicy = sigintPolicy ?? SigintPolicy(),
        editor = editor ?? const TuiLineEditor.empty();
 
   final FaTuiCallbacks callbacks;
@@ -275,6 +329,24 @@ final class FaTuiModel extends Model {
 
   /// The open agents-hub overlay state (issue #277); null when closed.
   final FaHubState? hub;
+
+  /// The double-press Ctrl+C contract (issue #830). The host passes the
+  /// process-wide instance so the SIGINT path (bin/fah.dart) and this
+  /// KeyMsg path resolve ONE window state (ACX.5); the default builds a
+  /// policy on this model's own clock ([now]) so model-driven tests get
+  /// injectable time for free.
+  final SigintPolicy sigintPolicy;
+
+  /// Press 1 landed inside the window: the prompt-zone footer row shows
+  /// the dim [kCtrlCExitHint] instead of the status line until the next
+  /// keypress.
+  final bool ctrlCArmed;
+
+  /// Double-press window generation: bumped on every press-1 arm. The
+  /// expiry timer stamps its arm's generation, so a stale timer from a
+  /// previous arm can never kill a freshly re-armed window (issue #830
+  /// re-review regression fix — press 2 silently stopped exiting).
+  final int ctrlCGeneration;
 
   /// Persistent viewport scroll offset (0 = top). Snapped to the bottom on
   /// new output while [followTail] holds; kept (clamped) otherwise.
@@ -665,6 +737,8 @@ final class FaTuiModel extends Model {
     Object? historyDraft = _unset,
     FaHubState? hub,
     bool clearHub = false,
+    bool? ctrlCArmed,
+    int? ctrlCGeneration,
   }) {
     final copy = FaTuiModel(
       callbacks: callbacks,
@@ -722,6 +796,9 @@ final class FaTuiModel extends Model {
           ? this.historyDraft
           : historyDraft as String?,
       hub: clearHub ? null : (hub ?? this.hub),
+      sigintPolicy: sigintPolicy,
+      ctrlCArmed: ctrlCArmed ?? this.ctrlCArmed,
+      ctrlCGeneration: ctrlCGeneration ?? this.ctrlCGeneration,
       // Every copy is a new model state: bump the frame nonce so the view's
       // cursor line always differs after a change (see [frameNonce]).
       frameNonce: frameNonce + 1,
@@ -776,35 +853,6 @@ final class FaTuiModel extends Model {
         ? copyWith(busyLastEventMs: DateTime.now().millisecondsSinceEpoch)
         : this;
     return self._updateWithHeartbeat(msg);
-  }
-
-  (Model, Cmd?) _updateWithHeartbeat(Msg msg) {
-    final scheduled = _updateScheduled(msg);
-    if (scheduled != null) return scheduled;
-    // Output is handled before the exit check so trailing writes (e.g. the
-    // 'bye' line from /exit) still render before the program quits; the host
-    // sends _QuitRequestedMsg once it has marked exit.
-    if (msg is OutputMsg) return _handleOutputMsg(msg);
-    // Busy/spinner messages are handled before the exit check for the same
-    // reason as output: /exit arrives wrapped in sendBusy(true/false) calls,
-    // and quitting here would land in the same drained batch as the farewell
-    // output and skip its render. The host's delayed _QuitRequestedMsg is
-    // the only quit path that matters.
-    if (msg is BusyMsg) return _handleBusyMsg(msg);
-    // Issue #804: the vendored program's OSC 11 background reply lands
-    // before the exit check — a late reply must still re-resolve the
-    // palette (and paint via the theme-swap cache reset) even while busy.
-    if (msg is BackgroundColorMsg) return _handleBackgroundProbe(msg);
-    if (msg is RunStalledMsg) return _handleRunStalled(msg);
-    if (msg is SpinnerTickMsg) return _handleSpinnerTick();
-    if (msg is DrainQueueMsg) return _handleDrainQueue(msg);
-    if (msg is ClearQueueMsg) return _handleClearQueue();
-    if (msg is OpenPromptMsg) {
-      _promptCompleter = msg.completer;
-      return (copyWith(prompt: TuiPromptState(msg.spec)), null);
-    }
-    if (isExited()) return (this, () => quit());
-    return _updateAfterExitCheck(msg);
   }
 
   /// Scheduled/waiting dispatch group ([_updateWithHeartbeat] prefix):
@@ -1051,13 +1099,26 @@ final class FaTuiModel extends Model {
   }
 
   /// Terminal events: resizes, mouse wheel scrolling, pastes, keys.
+  /// Mouse and pastes route through the double-press window too (issue
+  /// #830 review): the contract says "any other key/input", and a paste
+  /// between two presses must never turn press 2 into an exit.
   (Model, Cmd?) _handleTerminalMsg(Msg msg) {
     if (msg is WindowSizeMsg) return _handleWindowSize(msg);
-    if (msg is MouseClickMsg) return _handleMouseClick(msg);
-    if (msg is MouseMotionMsg) return _handleMouseMotion(msg);
-    if (msg is MouseReleaseMsg) return _handleMouseRelease(msg);
-    if (msg is MouseWheelMsg) return _handleMouseWheel(msg);
-    if (msg is PasteMsg) return _handlePaste(msg);
+    if (msg is MouseClickMsg) {
+      return _withFreshCtrlCWindow(msg, () => _handleMouseClick(msg));
+    }
+    if (msg is MouseMotionMsg) {
+      return _withFreshCtrlCWindow(msg, () => _handleMouseMotion(msg));
+    }
+    if (msg is MouseReleaseMsg) {
+      return _withFreshCtrlCWindow(msg, () => _handleMouseRelease(msg));
+    }
+    if (msg is MouseWheelMsg) {
+      return _withFreshCtrlCWindow(msg, () => _handleMouseWheel(msg));
+    }
+    if (msg is PasteMsg) {
+      return _withFreshCtrlCWindow(msg, () => _handlePaste(msg));
+    }
     return _handleKeyMsg(msg);
   }
 
@@ -1070,10 +1131,16 @@ final class FaTuiModel extends Model {
     if (msg is KeyPressMsg &&
         msg.keyEvent.code == KeyCode.rune &&
         msg.keyEvent.text.length > 1) {
-      return _handleMultiCharRunes(msg);
+      return _withFreshCtrlCWindow(msg, () => _handleMultiCharRunes(msg));
     }
 
-    if (msg is KeyMsg) return _handleKey(msg);
+    if (msg is KeyMsg) {
+      return _withFreshCtrlCWindow(
+        msg,
+        () => _handleKey(msg),
+        keepWindow: msg.key == 'ctrl+c',
+      );
+    }
     return (this, null);
   }
 
@@ -1276,151 +1343,6 @@ final class FaTuiModel extends Model {
         _handleEditKey(msg);
   }
 
-  /// Slash/menu mode: arrows navigate, enter/tab accept, esc closes, and
-  /// typing keeps editing the input so `/models` can be typed in full.
-  (Model, Cmd?) _handleSlashMenuKey(KeyMsg msg) {
-    return _handleSlashMenuNavKey(msg) ??
-        _handleSlashMenuAcceptKey(msg) ??
-        _handleSlashMenuEditKey(msg);
-  }
-
-  /// Path-completion overlay keys: Tab accepts, arrows navigate, esc
-  /// closes; everything else falls through (Enter SUBMITS, editing edits).
-  (Model, Cmd?)? _handlePathMenuKey(KeyMsg msg) {
-    switch (msg.key) {
-      case 'tab':
-        return _acceptSlashMenuItem();
-      case 'esc':
-        return (copyWith(menuOpen: false, menuTokenStart: -1), null);
-      case 'up':
-      case 'down':
-        return _handleSlashMenuNavKey(msg);
-      default:
-        return null;
-    }
-  }
-
-  /// Slash-menu navigation keys (esc/up/down); null when the key belongs to
-  /// the accept or edit clusters.
-  (Model, Cmd?)? _handleSlashMenuNavKey(KeyMsg msg) {
-    switch (msg.key) {
-      case 'esc':
-        return (copyWith(menuOpen: false, menuTokenStart: -1), null);
-      case 'up':
-        return (
-          copyWith(menuSelected: menuSelected > 0 ? menuSelected - 1 : 0),
-          null,
-        );
-      case 'down':
-        return (
-          copyWith(
-            menuSelected: menuSelected < menuItems.length - 1
-                ? menuSelected + 1
-                : menuSelected,
-          ),
-          null,
-        );
-      default:
-        return null;
-    }
-  }
-
-  /// Slash-menu accept keys (enter/tab); null for every other key.
-  (Model, Cmd?)? _handleSlashMenuAcceptKey(KeyMsg msg) {
-    switch (msg.key) {
-      case 'enter':
-      case 'tab':
-        return _acceptSlashMenuItem();
-      default:
-        return null;
-    }
-  }
-
-  /// Slash-menu edit keys: backspace and typed characters keep editing the
-  /// input so `/models` can be typed in full.
-  (Model, Cmd?) _handleSlashMenuEditKey(KeyMsg msg) {
-    switch (msg.key) {
-      case 'backspace':
-        if (cursor > 0 && inputText.isNotEmpty) {
-          return (
-            _updateMenuForInput(copyWith(editor: editor.backspace())),
-            null,
-          );
-        }
-        return (this, null);
-      default:
-        final text = msg.keyEvent.text;
-        if (text.isNotEmpty && text.length == 1) {
-          return (
-            _updateMenuForInput(copyWith(editor: editor.insert(text))),
-            null,
-          );
-        }
-        return (this, null);
-    }
-  }
-
-  /// Slash-menu accept (enter/tab): fills the input with the picked command,
-  /// or switches into the models picker, or submits picker-opening commands
-  /// (/sessions, /mode, /approval) immediately.
-  (Model, Cmd?) _acceptSlashMenuItem() {
-    if (menuItems.isEmpty) return (this, null);
-    final item = menuItems[menuSelected];
-    if (item.key == '/model' || item.key == '/models') {
-      return (
-        copyWith(
-          menuModelMode: true,
-          menuItems: callbacks.buildModelMenu('', termWidth),
-          menuSelected: 0,
-          modelFilter: '',
-          pickerId: 'models',
-          pickerTitle: '',
-        ),
-        null,
-      );
-    }
-    // Commands that open a host-side picker (/sessions, /mode,
-    // /approval) submit immediately instead of filling the input.
-    if (callbacks.opensPicker?.call(item.key) ?? false) {
-      return (
-        copyWith(menuOpen: false, inputText: '', cursor: 0, pickerId: ''),
-        () async {
-          await callbacks.onSubmit(item.key, images: const []);
-          return null;
-        },
-      );
-    }
-    // Token splice (issue #275): replace just the completed token — an
-    // `@`-fragment or a shell word after '!' — with the chosen path plus a
-    // trailing space that ends the token. Slash commands (tokenStart == 0,
-    // line-start) keep the legacy whole-input replace below.
-    if (menuTokenStart > 0) {
-      final head = inputText.substring(0, menuTokenStart);
-      final tail = inputText.substring(
-        cursor.clamp(menuTokenStart, inputText.length),
-      );
-      final inserted = '${item.key} ';
-      return (
-        copyWith(
-          inputText: head + inserted + tail,
-          cursor: menuTokenStart + inserted.length,
-          menuOpen: false,
-          menuTokenStart: -1,
-        ),
-        null,
-      );
-    }
-    return (
-      copyWith(
-        inputText: item.key,
-        cursor: item.key.length,
-        menuOpen: false,
-        menuTokenStart: -1,
-      ),
-      null,
-    );
-  }
-
   /// Normal-mode control keys (submit/steer/newline/interrupt/abort); null
   /// when the key belongs to another cluster.
   (Model, Cmd?)? _handleControlKey(KeyMsg msg) {
@@ -1468,23 +1390,9 @@ final class FaTuiModel extends Model {
     }
   }
 
-  /// Normal-mode interrupt keys (ctrl+c quits, esc aborts the run); null
-  /// when the key belongs to another cluster.
-  (Model, Cmd?)? _handleInterruptKeys(KeyMsg msg) {
-    switch (msg.key) {
-      case 'ctrl+c':
-        callbacks.onInterrupt?.call();
-        return (this, () => quit());
-      case 'esc':
-        // Escape aborts the streaming run (pi's keybinding); a no-op when
-        // idle because the host only aborts while busy. Unlike Ctrl+C it
-        // never quits the program.
-        callbacks.onInterrupt?.call();
-        return (this, null);
-      default:
-        return null;
-    }
-  }
+  /// ONE implementation of a ctrl+c press for every key path (normal mode
+  /// and the hub overlay — issue #830) lives in fa_tui_interrupt.dart, as
+  /// do the other double-press members.
 
   /// Queue-row keys while a run streams: ctrl+x deletes the last queued
   /// row (issue #275 AC2). Idle ctrl+x is NOT handled here — it stays an
@@ -1862,7 +1770,20 @@ final class FaTuiModel extends Model {
   /// so the markdown formatter leaves them alone). Two blank lines follow:
   /// the first is consumed by the run's first output line (thinking or the
   /// `>_Fa` prefix), leaving one visible empty line after the user message.
+  ///
+  /// Chrome mode (issue #807) drops the rule — the omp bubble band IS the
+  /// turn separator — and wraps the input in [tuiUserBubble] (blank band
+  /// rows above/below, one leading space per row). The pre-styled contract
+  /// is shared: rows carry the bg SGR marker and the view re-pads/repaints.
   List<String> _echoAppend(List<String> lines, String text) {
+    if (tuiChromeEnabled) {
+      final appended = _appendOutput(
+        lines,
+        tuiUserBubble(text.split('\n')).join('\n'),
+        true,
+      );
+      return _appendOutput(appended, '', true);
+    }
     final rule = _dim('─' * termWidth);
     final styledInput = text.split('\n').map(tuiUserMessageLine).join('\n');
     final appended = _appendOutput(lines, '$rule\n$styledInput', true);
@@ -1885,7 +1806,6 @@ final class FaTuiModel extends Model {
     final images = keepAttachments
         ? const <TuiImageAttachment>[]
         : List<TuiImageAttachment>.of(attachments);
-    final rule = _dim('─' * termWidth);
     // Empty submits (guided-flow "keep the default" answers) skip the
     // message echo — an empty backgrounded block would read as a glitch.
     if (inputText.isEmpty) {
@@ -1897,27 +1817,14 @@ final class FaTuiModel extends Model {
           menuTokenStart: -1,
           attachments: keepAttachments ? null : const [],
         ),
-        () async {
-          await callbacks.onSubmit(text, images: images);
-          return null;
-        },
+        _submitCmd(text, images),
       );
     }
     final echoed = _echoAppend(outputLines, inputText);
     // Shell-style input history: plain messages only (no slash/bang
     // commands), consecutive duplicates collapsed, capped at 100.
     final history = _recordInputHistory(inputHistory, text);
-    // The pinned echo for long answers (Copilot-style): rule + the first
-    // input line, truncated to the width with an ellipsis marking any
-    // remainder — a multi-line message or one simply longer than a row
-    // (a bare long line previously got visually cut without any marker).
-    // The ellipsis is stored PLAIN: the sticky formatter paints it with
-    // the current theme at emit time; a baked dim SGR would freeze the
-    // old palette after a mid-session /theme switch (issue #279 E1).
-    final firstLine = inputText.split('\n').first;
-    final fits = firstLine.length <= termWidth - 3 || termWidth <= 3;
-    final shown = fits ? firstLine : firstLine.substring(0, termWidth - 3);
-    final more = inputText.contains('\n') || !fits ? ' …' : '';
+    final (sticky, stickyEchoLineCount) = _pinnedEcho(inputText);
     final cleared = copyWith(
       inputText: '',
       cursor: 0,
@@ -1927,9 +1834,9 @@ final class FaTuiModel extends Model {
       outputLines: echoed,
       menuOpen: false,
       menuTokenStart: -1,
-      stickyLines: [rule, '${tuiUserMessageLine(shown)}$more'],
+      stickyLines: sticky,
       stickyIndex: outputLines.length,
-      stickyEchoLineCount: 2 + inputText.split('\n').length,
+      stickyEchoLineCount: stickyEchoLineCount,
       attachments: keepAttachments ? null : const [],
     );
     return (
@@ -1940,11 +1847,38 @@ final class FaTuiModel extends Model {
         scrollOffset: cleared._scrollBottom(cleared._wrappedLines()),
         followTail: true,
       ),
-      () async {
-        await callbacks.onSubmit(text, images: images);
-        return null;
-      },
+      _submitCmd(text, images),
     );
+  }
+
+  /// The host-submit command both submit shapes end with.
+  Cmd _submitCmd(String text, List<TuiImageAttachment> images) => () async {
+    await callbacks.onSubmit(text, images: images);
+    return null;
+  };
+
+  /// The pinned echo for long answers (Copilot-style) and its echo-line
+  /// count: the first input line, truncated to the width with an ellipsis
+  /// marking any remainder — a multi-line message or one simply longer
+  /// than a row (a bare long line previously got visually cut without any
+  /// marker). The ellipsis is stored PLAIN: the sticky formatter paints it
+  /// with the current theme at emit time; a baked dim SGR would freeze the
+  /// old palette after a mid-session /theme switch (issue #279 E1).
+  /// Chrome mode pins the bubble's leading band rows (issue #807); the
+  /// echo grows by the second band row. Pinned rows are pre-styled bubble
+  /// rows, so the sticky painter re-themes them like any echo line.
+  (List<String>, int) _pinnedEcho(String text) {
+    final firstLine = text.split('\n').first;
+    // Cell-width math (issue #859 family): UTF-16 length both mis-measures
+    // wide glyphs and can split a surrogate pair mid-echo.
+    final budget = termWidth - 3;
+    final fits = tuiTextWidth(firstLine) <= budget || termWidth <= 3;
+    final shown = fits ? firstLine : tuiFitWidth(firstLine, budget);
+    final more = text.contains('\n') || !fits ? ' …' : '';
+    final sticky = tuiChromeEnabled
+        ? [tuiUserMessageLine(''), tuiUserMessageLine(' $shown$more')]
+        : [_dim('─' * termWidth), '${tuiUserMessageLine(shown)}$more'];
+    return (sticky, (tuiChromeEnabled ? 3 : 2) + text.split('\n').length);
   }
 
   /// The input history after recording [text]: plain messages only (no
@@ -2070,6 +2004,10 @@ final class FaTuiModel extends Model {
           hub!,
           width: termWidth,
           height: _viewportHeight,
+          // Press 1 under the overlay (issue #830 review): the composer's
+          // status row is covered, so the armed hint takes the hub's own
+          // footer hint row until the window expires or input resets it.
+          footerHint: ctrlCArmed ? kCtrlCExitHint : null,
         ),
         cursor: null,
         mouseMode: _viewMouseMode,
@@ -2123,19 +2061,45 @@ final class FaTuiModel extends Model {
     // sitting on the status line while the dialog had focus.
     if (prompt != null) return _promptModeView(b);
 
-    final (cursorInputLine, cursorScreenCol) = _writeInputLines(b, row, plan);
-    b.writeln(_dim('─' * termWidth));
-    // The status line stays plain; the busy indicator lives above the input.
-    b.write(_statusRow());
+    // Band composer (#806): the status line attaches as the composer's
+    // TOP band (omp band.ts `statusAttachment: "top-band"`) and the
+    // legacy bottom rule + dim status footer retire. Prompt mode keeps
+    // the legacy layout — the prompt zone replaces the composer, and its
+    // status footer is not composer chrome.
+    final bandFrame = _bandAttached && prompt == null;
+    int cursorInputLine;
+    int cursorScreenCol;
+    if (bandFrame) {
+      row += _writeStatusBand(b);
+      (cursorInputLine, cursorScreenCol) = _writeInputLines(b, row, plan);
+    } else {
+      (cursorInputLine, cursorScreenCol) = _writeInputLines(b, row, plan);
+      b.writeln(_dim('─' * termWidth));
+      // The status line stays plain; the busy indicator lives above the input.
+      b.write(_statusRow());
+    }
 
     // One snapshot serves both consumers: newline counting for the cursor
     // row math (O(n) scan, ZERO allocations — the old split('\n') built a
     // List<String> of every physical row on every frame just to take its
     // length) and the frame body itself.
     final body = _cropToGlass(b.toString());
-    final inputStartRow = _lineCount(body) - 2 - plan.input;
+    // The first input row's screen row. Legacy: the tail is rule + input
+    // + bottom rule + status (the last row unterminated), so two painted
+    // rows sit below the input block. Band: the band sits ABOVE the
+    // input and the input's last row ends the frame unterminated — the
+    // first input row is the LAST `plan.input` rows of the body, nothing
+    // paints between band and input (the off-by-one homed the caret one
+    // row BELOW its text).
+    final inputStartRow = bandFrame
+        ? _lineCount(body) - plan.input
+        : _lineCount(body) - 2 - plan.input;
     final cursorRow = inputStartRow + cursorInputLine;
-    final cursorX = cursorScreenCol;
+    // Band mode: the caret aligns with the text AFTER the gutter's cells
+    // (zero when the terminal is too narrow to afford the gutter).
+    final cursorX = bandFrame
+        ? cursorScreenCol + _activeGutterWidth
+        : cursorScreenCol;
     // Pickers (models, sessions, mode, approval, provider, settings, wizard
     // steps) never show the physical cursor: generic pickers ignore typing
     // entirely, and the models picker's type-to-filter echoes into the
@@ -2463,10 +2427,16 @@ final class FaTuiController {
     this.mouseCapture = true,
     this.syncOutput,
     this.sttyRunner,
-  });
+    SigintPolicy? sigintPolicy,
+  }) : sigintPolicy = sigintPolicy ?? SigintPolicy();
 
   final FaTuiCallbacks callbacks;
   final bool Function() isExited;
+
+  /// The double-press Ctrl+C window (issue #830) shared with the host's
+  /// SIGINT handler; defaults to a fresh policy when the host does not
+  /// pass one.
+  final SigintPolicy sigintPolicy;
 
   /// Whether the TUI captures the mouse (wheel scrolling); when false the
   /// terminal keeps its native text selection. See
@@ -2493,6 +2463,7 @@ final class FaTuiController {
     isExited: isExited,
     mouseCapture: mouseCapture,
     forceSyncUpdates: syncOutput == true,
+    sigintPolicy: sigintPolicy,
   );
   late final Program _program = Program(
     options: [
@@ -2634,6 +2605,14 @@ final class FaTuiController {
   /// issue #275). The strip disappearing is the user's confirmation.
   void clearQueue() {
     _send(const ClearQueueMsg());
+  }
+
+  /// SIGINT press 1 of the double-press contract (issue #830): the host
+  /// aborted the in-flight run itself and stays alive — the model clears
+  /// the idle composer and shows the dim `press ctrl+c again to exit`
+  /// footer hint until the next keypress.
+  void armInterruptHint() {
+    _send(const InterruptArmedMsg());
   }
 
   Future<void> run() async {

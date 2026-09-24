@@ -34,6 +34,28 @@ void main() {
     addTearDown(server.close);
   });
 
+  /// Proves [port] was released by binding it again.
+  ///
+  /// The bind is retried briefly: the kernel-side release of the old
+  /// listening socket (and a same-machine sibling isolate winning the
+  /// just-freed ephemeral port) can lag the await by a tick — gh-781. A
+  /// port that never frees still fails, loudly, at the end of the budget.
+  /// The budget is main's (~2s: 20 × 100ms), kept generous on purpose —
+  /// this leg runs on every PR now, so a tight budget would be a new
+  /// load-flake surface, not a guard.
+  Future<HttpServer> rebindReleasedPort(int port) async {
+    Object? lastError;
+    for (var attempt = 0; attempt < 20; attempt++) {
+      try {
+        return await HttpServer.bind(InternetAddress.loopbackIPv4, port);
+      } on SocketException catch (error) {
+        lastError = error;
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+    }
+    fail('port $port was never freed for the rebind check: $lastError');
+  }
+
   group('OpenRouterOAuthCallbackServer', () {
     test('start binds loopback and serves the callback URL', () {
       expect(url, startsWith('http://127.0.0.1:'));
@@ -145,18 +167,35 @@ void main() {
       expect(await timedOut.waitForCode(), isNull);
       expect(sw.elapsed, greaterThan(const Duration(milliseconds: 40)));
       expect(timedOut.callbackUrl, isNull);
-      // The timeout closes the socket asynchronously (`unawaited(close())`
-      // in the timer callback), so the release is only observable after
-      // awaiting close() — rebinding any earlier races the release and
-      // flakes under CI load with "the shared flag to bind()" (observed on
-      // the pre-merge validation run).
+      // The timeout path closes the socket itself (`unawaited(close())` in
+      // the timer callback), and that close nulls the server field BEFORE
+      // the socket is released — so close() landing on top of it must
+      // chain the in-flight release. Before the chain, this await returned
+      // with the port still bound and the rebind below raced the release,
+      // dying with "The shared flag to bind() needs to be `true` …" under
+      // CI load (gh-781, shard-0 validation run).
       await timedOut.close();
       // The port is released: a bind on the same port succeeds.
-      await HttpServer.bind(
-        InternetAddress.loopbackIPv4,
-        Uri.parse(url2).port,
-      ).then((s) => s.close());
+      final rebound = await rebindReleasedPort(Uri.parse(url2).port);
+      await rebound.close();
     });
+
+    test(
+      'a close landing while another close is in flight awaits the release',
+      () async {
+        final closing = OpenRouterOAuthCallbackServer();
+        final url3 = await closing.start();
+        final port = Uri.parse(url3).port;
+        // The exact shape of the timeout path: one close kicked off
+        // fire-and-forget (it nulls the server field immediately), then a
+        // second close — and the awaited one must chain the first, so the
+        // rebind below cannot race the release.
+        unawaited(closing.close());
+        await closing.close();
+        final rebound = await rebindReleasedPort(port);
+        await rebound.close();
+      },
+    );
 
     test('starting again rebinds and closes the previous socket', () async {
       final firstPort = Uri.parse(url).port;
@@ -165,11 +204,11 @@ void main() {
 
       expect(Uri.parse(secondUrl).port, isNot(firstPort));
       expect(server.callbackUrl, secondUrl);
-      // The first server's port is free again.
-      await HttpServer.bind(
-        InternetAddress.loopbackIPv4,
-        firstPort,
-      ).then((s) => s.close());
+      // The first server's port is free again (start() awaits the release
+      // through close()), and the previous session's timeout timer is
+      // cancelled — it must not fire into the new session.
+      final rebound = await rebindReleasedPort(firstPort);
+      await rebound.close();
     });
 
     test(

@@ -311,6 +311,32 @@ final class CliVisualHarness {
     Duration timeout = const Duration(seconds: 10),
   }) => _live(() => waitForText(pattern, timeout: timeout));
 
+  /// Waits until the PAINTED terminal screen contains [pattern] (real-async
+  /// wrapped) and returns the screen text. Unlike [liveWaitForText] this
+  /// never matches the raw byte stream, so a returned frame is one the
+  /// renderer has actually shown — anchor keypresses and screenText
+  /// assertions here when raw-match racing bit a test (load-flake family:
+  /// the raw buffer streams picker bytes before the widget paints/focuses,
+  /// so an Enter keyed on a raw match can fall into the void).
+  Future<String> liveWaitForScreen(
+    Pattern pattern, {
+    Duration timeout = const Duration(seconds: 10),
+  }) => _live(() async {
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      final screen = screenText;
+      if (screen.contains(pattern)) {
+        return screen;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+    throw TimeoutException(
+      'Timed out waiting for "$pattern" on screen.\n--- screen ---\n'
+      '$screenText\n--- raw tail ---\n${_rawTail()}',
+      timeout,
+    );
+  });
+
   /// Lets pending output settle (real-async wrapped) — the variant test
   /// bodies must use; plain [waitForOutput] would freeze in the fake zone.
   Future<String> settle({
