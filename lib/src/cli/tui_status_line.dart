@@ -47,8 +47,10 @@ import 'tui_theme.dart';
 /// One git working-tree state, resolved host-side (the git watcher seam:
 /// `git status --porcelain` through the bash seam, TTL-cached). A null
 /// branch with every count 0 (or a null [StatusLineGit]) hides the git
-/// segment — outside a repo, or a failed probe. A detached HEAD arrives
-/// as a short sha in [branch]. Never crashes the bar.
+/// segment — outside a repo, or a failed probe. A detached HEAD reports
+/// a null [branch] — the segment shows dirty counts only (since #920:
+/// git's literal `## HEAD (no branch)` header is never adopted as a
+/// name). Never crashes the bar.
 final class StatusLineGit {
   final String? branch;
 
@@ -1129,8 +1131,9 @@ String _homeAbbreviatedFit(
 }
 
 /// Parses `git status --porcelain` output (the git watcher seam's
-/// fixture format) into counts + branch (from `## branch...` header;
-/// detached heads report the short sha). Pure — the host runs git.
+/// fixture format) into counts + branch (from the `## branch` header;
+/// a detached HEAD reports a null branch — dirty counts only). Pure —
+/// the host runs git.
 StatusLineGit parseGitStatusPorcelain(String output) {
   var staged = 0;
   var unstaged = 0;

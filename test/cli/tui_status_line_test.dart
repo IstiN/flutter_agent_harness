@@ -1007,29 +1007,102 @@ M  staged-one
       expect(runs, 2, reason: 'and re-polls after the ttl');
     });
 
-    test('cwd switch re-probes immediately', () async {
-      final probed = <String>[];
-      var clock = DateTime(2026, 9, 24, 12);
-      final probe = StatusLineGitProbe(
-        run: (cwd) async {
-          probed.add(cwd);
-          return '## main\n';
-        },
-        now: () => clock,
-      );
-      probe.current('/a');
-      await pump();
-      expect(probe.current('/a')!.branch, 'main');
-      expect(probed, ['/a']);
-      probe.current('/b');
-      await pump();
-      expect(probed, [
-        '/a',
-        '/b',
-      ], reason: 'a cwd switch polls without waiting for the ttl');
-      expect(probe.current('/b')!.branch, 'main');
-      expect(probed, hasLength(2));
-    });
+    test(
+      'cwd switch re-probes immediately and flips the served branch',
+      () async {
+        final probed = <String>[];
+        var clock = DateTime(2026, 9, 24, 12);
+        final probe = StatusLineGitProbe(
+          run: (cwd) async {
+            probed.add(cwd);
+            return cwd == '/a' ? '## main\n' : '## feature\n';
+          },
+          now: () => clock,
+        );
+        probe.current('/a');
+        await pump();
+        expect(probe.current('/a')!.branch, 'main');
+        expect(probed, ['/a']);
+        probe.current('/b');
+        await pump();
+        expect(
+          probe.current('/b')!.branch,
+          'feature',
+          reason: 'the switch must flip the served value to /b’s own state',
+        );
+        expect(probed, [
+          '/a',
+          '/b',
+        ], reason: 'a cwd switch polls without waiting for the ttl');
+        expect(probe.current('/b')!.branch, 'feature');
+        expect(probed, hasLength(2));
+      },
+    );
+
+    test(
+      'repo → non-repo switch hides the segment after the failed probe',
+      () async {
+        final outputs = <String, String?>{
+          '/a': '## main...origin/main\n M a\n',
+          '/b': null, // not a repo
+        };
+        final probe = StatusLineGitProbe(
+          run: (cwd) async => outputs[cwd],
+          now: () => DateTime(2026, 9, 24, 12),
+        );
+        probe.current('/a');
+        await pump();
+        expect(probe.current('/a')!.branch, 'main');
+        probe.current('/b');
+        await pump();
+        expect(
+          probe.current('/b'),
+          isNull,
+          reason: 'the failed probe for /b must hide git, not serve /a’s state',
+        );
+      },
+    );
+
+    test(
+      'a transient failure clears the stale value in the same cwd',
+      () async {
+        var fail = false;
+        var clock = DateTime(2026, 9, 24, 12);
+        final probe = StatusLineGitProbe(
+          run: (cwd) async => fail ? null : '## main\n',
+          now: () => clock,
+        );
+        probe.current('/r');
+        await pump();
+        expect(probe.current('/r')!.branch, 'main');
+        fail = true;
+        clock = clock.add(const Duration(seconds: 6));
+        expect(
+          probe.current('/r')!.branch,
+          'main',
+          reason: 'the stale value still serves while the re-poll is in flight',
+        );
+        await pump();
+        expect(
+          probe.current('/r'),
+          isNull,
+          reason: 'the failed re-poll is the freshest truth — git hides',
+        );
+      },
+    );
+
+    test(
+      'a throwing runner is a failure, never an unhandled async error',
+      () async {
+        final probe = StatusLineGitProbe(
+          run: (cwd) async => throw StateError('injected runner blew up'),
+          now: () => DateTime(2026, 9, 24, 12),
+        );
+        expect(probe.current('/r'), isNull);
+        await pump();
+        expect(probe.current('/r'), isNull);
+      },
+    );
   });
 }
 

@@ -19,19 +19,27 @@ typedef GitStatusRunner = Future<String?> Function(String cwd);
 /// The default runner: `git --no-optional-locks status --porcelain -b`
 /// (v1 porcelain — [parseGitStatusPorcelain]'s fixture format, `-b` for
 /// the `## branch` header). `--no-optional-locks` keeps the probe from
-/// contending with the user's own git work; the timeout bounds a wedged
-/// filesystem so the band composer can never stall on it.
+/// contending with the user's own git work.
+///
+/// The deadline bounds the PROCESS, not just the await: `Future.timeout`
+/// cannot cancel the spawned git, so a wedged filesystem would leave one
+/// orphan per ttl cycle. Kill at the deadline instead (#923 round 1).
 Future<String?> _runGitStatus(String cwd) async {
   try {
-    final result = await Process.run('git', const [
+    final proc = await Process.start('git', const [
       '--no-optional-locks',
       'status',
       '--porcelain',
       '-b',
-    ], workingDirectory: cwd).timeout(const Duration(seconds: 3));
-    return result.exitCode == 0 ? result.stdout as String : null;
+    ], workingDirectory: cwd);
+    final killTimer = Timer(const Duration(seconds: 3), proc.kill);
+    unawaited(proc.stderr.drain<void>()); // never block the pipe on stderr
+    final stdout = await proc.stdout.transform(systemEncoding.decoder).join();
+    final exitCode = await proc.exitCode;
+    killTimer.cancel();
+    return exitCode == 0 ? stdout : null;
   } on Object {
-    return null;
+    return null; // no git binary, killed at the deadline, stream error
   }
 }
 
@@ -62,8 +70,9 @@ final class StatusLineGitProbe {
   /// The cached state for [cwd] — sync and never blocking: the first
   /// frames render `git` hidden, the branch appears once the first poll
   /// lands and the band repaints. A cwd switch re-probes immediately; a
-  /// null result (outside a repo, failure) caches for [ttl] like any
-  /// other, so a non-repo directory never polls more than once per ttl.
+  /// null result (outside a repo, failure) hides the segment and only
+  /// throttles the NEXT poll to [ttl], so a non-repo directory never
+  /// polls more than once per ttl.
   StatusLineGit? current(String cwd) {
     if (!_inFlight &&
         (_probedCwd != cwd || _now().difference(_fetchedAt) >= ttl)) {
@@ -75,11 +84,17 @@ final class StatusLineGitProbe {
   }
 
   Future<void> _refresh(String cwd) async {
-    final output = await _run(cwd);
+    String? output;
+    try {
+      output = await _run(cwd);
+    } on Object {
+      output = null; // a throwing custom runner is a failure, not a crash
+    }
     _inFlight = false;
     _fetchedAt = _now();
-    // Single flight: _probedCwd cannot change mid-refresh (current()
-    // is gated on !_inFlight), so this result is always the newest.
-    if (output != null) _value = parseGitStatusPorcelain(output);
+    // A failure is the freshest truth for this cwd: the previous value
+    // must stop rendering (without this clear, repo A's branch sticks
+    // forever after a move to a non-repo — #923 round 1, blocking).
+    _value = output == null ? null : parseGitStatusPorcelain(output);
   }
 }
