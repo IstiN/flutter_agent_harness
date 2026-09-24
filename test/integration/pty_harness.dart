@@ -56,6 +56,13 @@ final class FaCliHarness {
     const path = '/tmp/fa_pty_cwd';
     final dir = Directory(path);
     if (!dir.existsSync()) dir.createSync(recursive: true);
+    // Match the checkout's shape: the CLI's git-root discovery (and the
+    // lib/src/cli branches behind it) only runs inside a repository. With a
+    // bare tmp dir those paths go unexercised and the cli coverage ratchet
+    // (baseline only up) regresses (~0.2pp observed on fa-m5).
+    if (!Directory('${dir.path}/.git').existsSync()) {
+      Process.runSync('git', ['init', '-q', dir.path]);
+    }
     return dir;
   }
 

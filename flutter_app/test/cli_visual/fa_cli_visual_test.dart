@@ -132,14 +132,16 @@ void main() {
         timeout: const Duration(seconds: 15),
       );
       // Type the filter one character at a time, verifying the picker title
-      // absorbed each keystroke: on a loaded runner the title can paint
-      // before the filter input is attached, and a blind sendText('zzz')
-      // loses all three keys (fa-m5: two consecutive red CI runs — the
-      // frame showed the unfiltered '[Select model]' list).
+      // absorbed each keystroke. On a loaded runner the picker can paint
+      // before its filter grabs keyboard focus, and the keystroke falls
+      // through into the composer (failure frame: '╰─ z' under an
+      // unfiltered '[Select model]' list) — erase the leak (DEL) and retry
+      // until the filter takes the key.
       var typed = '';
       for (final ch in 'zzz'.split('')) {
         var absorbed = false;
-        for (var attempt = 0; attempt < 3 && !absorbed; attempt++) {
+        for (var attempt = 0; attempt < 6 && !absorbed; attempt++) {
+          await harness.settle(settleMs: 250);
           harness.sendText(ch);
           try {
             await harness.liveWaitForText(
@@ -148,7 +150,9 @@ void main() {
             );
             absorbed = true;
           } on TimeoutException {
-            // keystroke lost during the picker's input attach — resend
+            // Focus had not attached yet — the char leaked into the
+            // composer; erase it so retries never compound into garbage.
+            harness.sendText('\x7f');
           }
         }
         expect(absorbed, isTrue, reason: 'filter keystroke "$ch" never landed');
