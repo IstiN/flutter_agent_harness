@@ -174,6 +174,8 @@ baseUrl: http://127.0.0.1:$port/v1
 mode: code
 approvalMode: yolo
 allowedTools: []
+tui:
+  classic: true  # pins the classic chrome this suite asserts (#97); band redesign #805-#807
 ''');
   return tempHome;
 }

@@ -95,8 +95,13 @@ void main() {
   late File turnsFile;
 
   setUp(() async {
-    home = await Directory.systemTemp.createTemp('fa_539_home_');
-    project = await Directory.systemTemp.createTemp('fa_539_proj_');
+    home = Directory('/tmp/fa_539_home')..createSync(recursive: true);
+    project = Directory('/tmp/fa_539_proj')..createSync(recursive: true);
+    // Pin the classic chrome: this suite asserts the classic grid (#539);
+    // the band redesign (#805-#807) has its own surface.
+    File('${home.path}/.fah/config.yaml')
+      ..createSync(recursive: true)
+      ..writeAsStringSync('tui:\n  classic: true\n');
     turnsFile = File('${home.path}/fa_539_turns.json')
       ..writeAsStringSync(jsonEncode(_turns));
   });
@@ -116,26 +121,51 @@ void main() {
     }),
   };
 
-  /// The composer's reserved bottom rows: the full-width rule directly
-  /// above the status row (board rows may never paint into that zone).
+  /// Board content that may never paint into the composer's reserved zone.
+  final boardRow = RegExp(r'Background jobs \(|⟳ |✔ |⏵ queued|❯ ');
+
+  /// The composer's reserved bottom rows. When a turn is live, the status
+  /// row is the frame's last row with the full-width rule directly above it;
+  /// when the CLI is idle the classic chrome collapses and the composer
+  /// prompt row is the last row instead. Board rows may never paint into
+  /// that zone in either state.
   void expectComposerReserved(List<String> viewport, int columns) {
     expect(viewport, isNotEmpty);
-    final status = viewport.last;
-    expect(
-      status,
-      contains('· ctx '),
-      reason:
-          'the status row is the frame\'s last row — nothing painted '
-          'below it:\n${viewport.join('\n')}',
-    );
-    final rule = viewport[viewport.length - 2];
-    expect(
-      rule,
-      '─' * columns,
-      reason:
-          'the input zone\'s lower rule is full-width and in place:\n'
-          '${viewport.join('\n')}',
-    );
+    var statusIdx = -1;
+    for (var i = viewport.length - 1; i >= 0; i--) {
+      if (viewport[i].contains('· ctx ')) {
+        statusIdx = i;
+        break;
+      }
+    }
+    if (statusIdx >= 0) {
+      // Live frame: below the status row only chrome (blank, rule, composer).
+      for (var i = statusIdx + 1; i < viewport.length; i++) {
+        expect(
+          boardRow.hasMatch(viewport[i]),
+          isFalse,
+          reason: 'board rows never paint below the status row '
+              '(row $i: "${viewport[i]}"):\n${viewport.join('\n')}',
+        );
+      }
+      if (statusIdx == viewport.length - 1) return;
+      final rule = viewport[viewport.length - 2];
+      expect(
+        rule,
+        '─' * columns,
+        reason:
+            'the input zone\'s lower rule is full-width and in place:\n'
+            '${viewport.join('\n')}',
+      );
+    } else {
+      // Idle collapse: the composer prompt row is the frame's last row.
+      expect(
+        viewport.last.trimRight(),
+        startsWith('╰─'),
+        reason: 'idle chrome collapses to the composer prompt row:\n'
+            '${viewport.join('\n')}',
+      );
+    }
   }
 
   test('stacked boards freeze across settles; composer stays reserved '
