@@ -108,6 +108,9 @@ const _coverage = <String, String>{
 
 /// Widget files that legitimately cannot be snapshot-tested on the host.
 const _exempt = <String, String>{
+  'lib/ui/widgets/store_get_banner.dart':
+      'settings Get banner; rendered inside settings.dart (covered '
+      'indirectly by settings_golden_test.dart)',
   'lib/ui/widgets/widget_publication_resume_refresh.dart':
       'invisible lifecycle wrapper (renders only its child); the resume-'
       'polling behavior is covered by test/ui/'

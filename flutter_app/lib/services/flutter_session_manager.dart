@@ -773,9 +773,26 @@ final class FlutterSessionManager extends ChangeNotifier {
       // stale local listing must never read as success. Pinned to THIS
       // session's service: the slot is already removed, so `active` is
       // unreliable here.
-      final stillListed = (await _deleteAuthority(
-        managed.service,
-      )).any((m) => m.id == sessionId);
+      final bool stillListed;
+      try {
+        stillListed = (await _deleteAuthority(
+          managed.service,
+        )).any((m) => m.id == sessionId);
+      } on Object catch (error) {
+        // An unreachable listing can NEVER read as "gone" (review round
+        // 2): fail the delete by name instead of assuming success.
+        debugPrint(
+          '[fah][sessions] delete: id=$sessionId outcome=failed '
+          '(session store unreachable during verify: $error)',
+        );
+        notifyListeners();
+        throw SessionDeleteException(
+          sessionId,
+          reason:
+              'the session store could not be reached to verify '
+              'the delete',
+        );
+      }
       if (stillListed) {
         const failure = 'still in the session store after the delete';
         debugPrint(
@@ -802,78 +819,141 @@ final class FlutterSessionManager extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// The listing authority a delete resolves and verifies against (issue
-  /// #863 review): hosted surfaces (extension panel / relay shell) keep the
-  /// session files in the service worker's storage, so only the host
-  /// service's listing can tell whether a delete really happened; local
-  /// surfaces use the merged roots listing.
+  /// The listing authority a delete verifies against (issue #863 review):
+  /// hosted surfaces (extension panel / relay shell) keep the session
+  /// files in the service worker's storage, so only the host service's
+  /// listing can tell whether a delete really happened; local surfaces use
+  /// the merged roots listing.
   ///
   /// [service] pins the authority to a specific session's service — during
   /// [closeSession] the manager slot is already removed, so [active] cannot
   /// be consulted there.
+  ///
+  /// This call NEVER swallows host errors (review round 2): unlike
+  /// [_listViaHostService], a broken host listing throws — during a delete
+  /// verification an empty result must mean "gone", never "listing
+  /// unreachable, assume fine".
   Future<List<SessionMetadata>> _deleteAuthority([
     AgentService? service,
   ]) async {
     final target = service ?? active?.service;
-    if (_isHostedListing(target)) return _listViaHostService(target!);
+    if (_isHostedListing(target)) return target!.listSessions();
     return _listAcrossRoots();
   }
+
+  /// Whether the ACTIVE service is a hosted relay (extension panel / relay
+  /// shell): the sidebar's persisted rows come from the host service's
+  /// storage, which this surface has no delete path into — the UI gates
+  /// the Delete affordance instead of offering a permanent dead-end
+  /// (issue #863 review round 2).
+  bool get isHostedListing => _isHostedListing(active?.service);
 
   /// Deletes a session outright: a live one is closed (aborting any run)
   /// with its file removed; a persisted-only one ([metadata]) is deleted
   /// straight from the repo. Powers the sidebar tile menu.
   ///
   /// Issue #863: no silent outcomes. An id that resolves neither live nor
-  /// in the delete authority's listing throws [SessionDeleteException]
+  /// in any delete authority's listing throws [SessionDeleteException]
   /// (and notifies so hosts rebuild the list from the source of truth), a
   /// successful delete is verified against a FRESH listing of that same
   /// authority, and every attempt logs `[fah][sessions] delete` with the
   /// id + outcome.
+  ///
+  /// The authority is keyed off ROW ORIGIN, not the active slot (review
+  /// round 2, mixed mode #327): a row the local store knows is a local
+  /// delete even when the active slot is a hosted relay; only a row the
+  /// local store doesn't know falls through to the host service's listing.
   Future<void> deleteSession(String id, {SessionMetadata? metadata}) async {
     debugPrint(
       '[fah][sessions] delete: id=$id outcome=attempt '
       '(live=${_sessions.containsKey(id)}, '
       'persisted=${metadata != null ? 'caller-supplied' : 'resolve'}, '
-      'hosted=${_isHostedListing(active?.service)})',
+      'hosted=$isHostedListing)',
     );
     if (_sessions.containsKey(id)) {
       await closeSession(id, deleteFile: true); // notifies on completion
       return;
     }
-    final authority = await _deleteAuthority();
+
+    // Row origin: local store first. Caller-supplied [metadata] counts as
+    // a local row only when the local store confirms the id — a hosted
+    // row passed by a caller has a synthetic path the local repo cannot
+    // touch, and deleting it must fall through to the host authority.
+    final localRows = await _listAcrossRoots();
     final SessionMetadata? resolved =
-        metadata ?? authority.where((m) => m.id == id).firstOrNull;
-    if (resolved == null) {
-      debugPrint(
-        '[fah][sessions] delete: id=$id outcome=not-found '
-        '(not live, not in the session store — surfacing instead of '
-        'silently keeping the row)',
-      );
-      // Not a pass: hosts listening rebuild from the source of truth, so
-      // the stale row goes even though nothing was deleted here.
+        (metadata != null && localRows.any((m) => m.id == id))
+        ? metadata
+        : localRows.where((m) => m.id == id).firstOrNull;
+    if (resolved != null) {
+      try {
+        await _repo.delete(resolved, actor: 'app:sidebar');
+      } on Object catch (error) {
+        debugPrint('[fah][sessions] delete: id=$id outcome=failed ($error)');
+        notifyListeners();
+        rethrow;
+      }
+      // Verify against a FRESH local listing (issue #863 AC1/AC3), not
+      // the caller's cached rows.
+      if ((await _listAcrossRoots()).any((m) => m.id == id)) {
+        const failure = 'still in the session store after the delete';
+        debugPrint('[fah][sessions] delete: id=$id outcome=failed ($failure)');
+        notifyListeners();
+        throw SessionDeleteException(id, reason: failure);
+      }
+      debugPrint('[fah][sessions] delete: id=$id outcome=ok');
       notifyListeners();
-      throw SessionDeleteException(id);
+      return;
     }
-    try {
-      await _repo.delete(resolved, actor: 'app:sidebar');
-    } on Object catch (error) {
-      debugPrint('[fah][sessions] delete: id=$id outcome=failed ($error)');
-      notifyListeners();
-      rethrow;
-    }
-    // Verify against the SAME authority that resolved the delete (issue
-    // #863 review + AC1/AC3): a FRESH listing, not the caller's cached
-    // rows — on hosted surfaces the stale local listing would pass while
-    // the service worker still holds the session.
-    final stillListed = (await _deleteAuthority()).any((m) => m.id == id);
-    if (stillListed) {
-      const failure = 'still in the session store after the delete';
+
+    // Unknown locally: the host service is the only remaining authority.
+    final hosted = active?.service;
+    if (_isHostedListing(hosted)) {
+      final List<SessionMetadata> hostRows;
+      try {
+        // No swallowing during a delete (review round 2): a broken host
+        // listing must fail the delete, never read as "already gone".
+        hostRows = await _deleteAuthority(hosted);
+      } on Object catch (error) {
+        debugPrint(
+          '[fah][sessions] delete: id=$id outcome=failed '
+          '(session store unreachable during verify: $error)',
+        );
+        notifyListeners();
+        throw SessionDeleteException(
+          id,
+          reason:
+              'the session store could not be reached to verify '
+              'the delete',
+        );
+      }
+      if (hostRows.where((m) => m.id == id).isEmpty) {
+        debugPrint(
+          '[fah][sessions] delete: id=$id outcome=not-found '
+          '(not live, not in the local store or the host listing — '
+          'surfacing instead of silently keeping the row)',
+        );
+        notifyListeners();
+        throw SessionDeleteException(id);
+      }
+      // A hosted row has no delete path from this surface: the files
+      // live in the service worker's storage. The UI gates the menu
+      // entry; direct callers get the named failure instead of a
+      // dead-end no-op.
+      const failure =
+          'lives in the host service storage — not deletable from '
+          'this surface';
       debugPrint('[fah][sessions] delete: id=$id outcome=failed ($failure)');
       notifyListeners();
       throw SessionDeleteException(id, reason: failure);
     }
-    debugPrint('[fah][sessions] delete: id=$id outcome=ok');
+
+    debugPrint(
+      '[fah][sessions] delete: id=$id outcome=not-found '
+      '(not live, not in the local store, no host service — surfacing '
+      'instead of silently keeping the row)',
+    );
     notifyListeners();
+    throw SessionDeleteException(id);
   }
 
   /// Creates a fresh session when the active one is closed and none remain.

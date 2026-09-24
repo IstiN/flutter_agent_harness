@@ -500,6 +500,7 @@
   "sidebarAppsHeader": "Apps",
   "sidebarCancel": "Cancel",
   "sidebarDelete": "Delete",
+  "sidebarDeleteUnavailable": "Delete unavailable — session lives in the host app",
   "sidebarDeletePersistedContent": "Session {id}",
   "sidebarDeleteSessionContent": "This removes the saved session permanently.",
   "sidebarDeleteSessionFailed": "Could not delete session: {error}",

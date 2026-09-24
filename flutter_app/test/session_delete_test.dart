@@ -111,11 +111,19 @@ final class _HostedService extends AgentService {
 
   List<SessionMetadata> rows = const [];
 
+  /// When set, [listSessions] throws it — the broken-service-worker shape
+  /// (review round 2: an unreachable listing must never read as "gone").
+  Object? throwOnList;
+
   @override
-  Future<List<SessionMetadata>> listSessions() async => rows;
+  Future<List<SessionMetadata>> listSessions() async {
+    final boom = throwOnList;
+    if (boom != null) throw boom;
+    return rows;
+  }
 }
 
-AgentService _hostedService(ExecutionEnv env, List<SessionMetadata> rows) {
+_HostedService _hostedService(ExecutionEnv env, List<SessionMetadata> rows) {
   return _HostedService(
     agent: Agent(
       model: Model(
@@ -368,45 +376,42 @@ void main() {
       },
     );
 
-    test(
-      'hosted session: verification goes through the host service listing '
-      'and a still-listed id is a named failure, never a silent ok',
-      () async {
-        final hosted = _hostedService(env, [
-          SessionMetadata(
-            id: 'sw-archived-1',
-            createdAt: DateTime(2026),
-            cwd: 'test',
-            path: '/session-sw-archived-1.jsonl',
-            metadata: const {'archived': true},
-          ),
-        ]);
-        // Any active hosted slot flips the manager into hosted authority.
-        manager.addSession('local-slot', hosted);
-        var notified = 0;
-        manager.addListener(() => notified++);
-        final logs = captureLogs();
+    test('hosted session: a hosted row is a named dead-end failure — never a '
+        'local ok, never a stale-listing pass', () async {
+      final hosted = _hostedService(env, [
+        SessionMetadata(
+          id: 'sw-archived-1',
+          createdAt: DateTime(2026),
+          cwd: 'test',
+          path: '/session-sw-archived-1.jsonl',
+          metadata: const {'archived': true},
+        ),
+      ]);
+      // Any active hosted slot flips the manager onto the hosted authority.
+      manager.addSession('local-slot', hosted);
+      var notified = 0;
+      manager.addListener(() => notified++);
+      final logs = captureLogs();
 
-        await expectLater(
-          manager.deleteSession('sw-archived-1'),
-          throwsA(
-            isA<SessionDeleteException>().having(
-              (e) => e.reason,
-              'reason',
-              contains('still in the session store'),
-            ),
+      await expectLater(
+        manager.deleteSession('sw-archived-1'),
+        throwsA(
+          isA<SessionDeleteException>().having(
+            (e) => e.reason,
+            'reason',
+            contains('not deletable from this surface'),
           ),
-        );
+        ),
+      );
 
-        // The local listing is empty on hosted surfaces — a stale local
-        // check would have passed (or claimed not-found). The failure must
-        // come from the host authority instead.
-        expect(logs.join('\n'), contains('outcome=failed'));
-        expect(logs.join('\n'), isNot(contains('outcome=ok')));
-        expect(logs.join('\n'), isNot(contains('outcome=not-found')));
-        expect(notified, greaterThan(0));
-      },
-    );
+      // The local listing is empty on hosted surfaces — a stale local
+      // check would have claimed ok or not-found. The failure must come
+      // from the host authority and be honest about the dead end.
+      expect(logs.join('\n'), contains('outcome=failed'));
+      expect(logs.join('\n'), isNot(contains('outcome=ok')));
+      expect(logs.join('\n'), isNot(contains('outcome=not-found')));
+      expect(notified, greaterThan(0));
+    });
 
     test('hosted live session: the host still listing it after close is a '
         'named failure, not outcome=ok', () async {
@@ -437,6 +442,93 @@ void main() {
       expect(logs.join('\n'), contains('outcome=failed'));
       expect(logs.join('\n'), isNot(contains('outcome=ok')));
       expect(notified, greaterThan(0));
+    });
+
+    test('a broken host listing fails the delete by name — it never reads as '
+        '"already gone"', () async {
+      final hosted = _hostedService(env, const []);
+      hosted.throwOnList = StateError('service worker gone');
+      manager.addSession('local-slot', hosted);
+      var notified = 0;
+      manager.addListener(() => notified++);
+      final logs = captureLogs();
+
+      await expectLater(
+        manager.deleteSession('sw-archived-1'),
+        throwsA(
+          isA<SessionDeleteException>().having(
+            (e) => e.reason,
+            'reason',
+            contains('could not be reached to verify the delete'),
+          ),
+        ),
+      );
+
+      expect(logs.join('\n'), contains('outcome=failed'));
+      expect(logs.join('\n'), isNot(contains('outcome=ok')));
+      expect(notified, greaterThan(0));
+    });
+
+    test('a broken host listing fails a LIVE delete by name too', () async {
+      final hosted = _hostedService(env, [
+        SessionMetadata(
+          id: 'sw-live-1',
+          createdAt: DateTime(2026),
+          cwd: 'test',
+          path: '/session-sw-live-1.jsonl',
+        ),
+      ]);
+      hosted.throwOnList = StateError('service worker gone');
+      manager.addSession('sw-live-1', hosted);
+      var notified = 0;
+      manager.addListener(() => notified++);
+      final logs = captureLogs();
+
+      await expectLater(
+        manager.deleteSession('sw-live-1'),
+        throwsA(
+          isA<SessionDeleteException>().having(
+            (e) => e.reason,
+            'reason',
+            contains('could not be reached to verify the delete'),
+          ),
+        ),
+      );
+
+      expect(logs.join('\n'), contains('outcome=failed'));
+      expect(logs.join('\n'), isNot(contains('outcome=ok')));
+      expect(notified, greaterThan(0));
+    });
+
+    test('mixed mode: a local row deletes locally even with a hosted active '
+        'slot (authority keyed off row origin, #327)', () async {
+      final metadata = await persistSession(
+        'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa8',
+        userText: 'local row',
+      );
+      // The host service is live and lists OTHER sessions — under
+      // active-slot keying this delete would consult the host listing,
+      // miss the local id and claim not-found.
+      final hosted = _hostedService(env, [
+        SessionMetadata(
+          id: 'sw-someone-else',
+          createdAt: DateTime(2026),
+          cwd: 'test',
+          path: '/session-sw-someone-else.jsonl',
+          metadata: const {'archived': true},
+        ),
+      ]);
+      manager.addSession('sw-hosted-live', hosted);
+      final logs = captureLogs();
+
+      await manager.deleteSession(metadata.id);
+
+      expect((await env.exists(metadata.path)).valueOrNull, isFalse);
+      expect(
+        (await repo.list()).map((m) => m.id),
+        isNot(contains(metadata.id)),
+      );
+      expect(logs.join('\n'), contains('outcome=ok'));
     });
   });
 }

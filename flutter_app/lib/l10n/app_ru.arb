@@ -497,6 +497,7 @@
   "sidebarAppsHeader": "Приложения",
   "sidebarCancel": "Отмена",
   "sidebarDelete": "Удалить",
+  "sidebarDeleteUnavailable": "Удаление недоступно — сессия живёт в хост-приложении",
   "sidebarDeletePersistedContent": "Сессия {id}",
   "sidebarDeleteSessionContent": "Сохранённая сессия будет удалена безвозвратно.",
   "sidebarDeleteSessionFailed": "Не удалось удалить сессию: {error}",

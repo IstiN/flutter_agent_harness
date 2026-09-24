@@ -180,10 +180,10 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
     if (store != null) {
       unawaited(store.setExpanded(parentId, !expanded));
     } else {
-      (expanded ? _localExpandedParents : _localCollapsedParents)
-          .remove(parentId);
-      (expanded ? _localCollapsedParents : _localExpandedParents)
-          .add(parentId);
+      (expanded ? _localExpandedParents : _localCollapsedParents).remove(
+        parentId,
+      );
+      (expanded ? _localCollapsedParents : _localExpandedParents).add(parentId);
     }
     setState(() {});
   }
@@ -805,6 +805,11 @@ Future<void> showSessionActionsMenu(
   VoidCallback? onDeleted,
 }) async {
   final l10n = context.l10n;
+  // Hosted rows (extension panel / relay shell) live in the service
+  // worker's storage — this surface has no delete path into it. Offer the
+  // honest "not deletable here" tile instead of a permanent dead-end
+  // (issue #863 review round 2).
+  final hostedListing = manager.isHostedListing;
   final overlayBox =
       Overlay.of(context).context.findRenderObject()! as RenderBox;
   final action = await showMenu<String>(
@@ -822,12 +827,21 @@ Future<void> showSessionActionsMenu(
         ),
       ),
       PopupMenuItem(
-        value: 'delete',
+        value: hostedListing ? null : 'delete',
+        enabled: !hostedListing,
         child: Row(
           children: [
             const Icon(Icons.delete_outline, size: 16),
             const SizedBox(width: 8),
-            Text(l10n.sidebarDelete),
+            // Expanded: the gated reason is long — it wraps inside the
+            // menu instead of overflowing on narrow surfaces.
+            Expanded(
+              child: Text(
+                hostedListing
+                    ? l10n.sidebarDeleteUnavailable
+                    : l10n.sidebarDelete,
+              ),
+            ),
           ],
         ),
       ),
@@ -866,6 +880,9 @@ Future<void> _deleteSession(
   required SessionMetadata? persisted,
   VoidCallback? onDeleted,
 }) async {
+  // Defense in depth for the gated menu entry (issue #863 review round
+  // 2): a hosted row has no delete path from this surface.
+  if (manager.isHostedListing) return;
   final l10n = context.l10n;
   final title = namesStore?.titleFor(sessionId);
   final confirmed = await showDialog<bool>(
@@ -1034,7 +1051,10 @@ class SessionTile extends StatelessWidget {
                   const SizedBox(width: 8),
                 const SizedBox(width: 10),
                 if (subagent) ...[
-                  SubagentMark(size: 12, color: colors.dim.withValues(alpha: 0.8)),
+                  SubagentMark(
+                    size: 12,
+                    color: colors.dim.withValues(alpha: 0.8),
+                  ),
                   const SizedBox(width: 6),
                 ],
                 Expanded(
@@ -1124,9 +1144,7 @@ class SessionTile extends StatelessWidget {
                               children: [
                                 AnimatedRotation(
                                   turns: expanded ? 0.25 : 0,
-                                  duration: const Duration(
-                                    milliseconds: 120,
-                                  ),
+                                  duration: const Duration(milliseconds: 120),
                                   child: Icon(
                                     Icons.keyboard_arrow_right,
                                     size: 14,
@@ -1191,4 +1209,3 @@ class SessionTile extends StatelessWidget {
     );
   }
 }
-
