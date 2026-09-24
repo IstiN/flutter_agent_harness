@@ -4194,6 +4194,11 @@
 - test: retry the port-release proof-bind in openrouter oauth timeout test (#885)
 - feat(tui): transcript chrome - Box frames, dividers, bordered tool cards (#807) (#828)
 
+## 1.0.469
+
+- fix(tui): address #834 review threads - alignment, chord labels, /help summary, TUI-leg pin (#859)
+- chore(deps): bump the github-actions group with 10 updates (#853)
+
 ## Unreleased
 
 ## Unreleased
