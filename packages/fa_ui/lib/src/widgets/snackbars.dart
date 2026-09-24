@@ -110,7 +110,7 @@ class _FahErrorCopyButtonState extends State<FahErrorCopyButton> {
     final strings = FaChatStrings.of(context);
     return Tooltip(
       message: switch (_feedback) {
-        _CopyFeedback.copied => strings.chatMessageCopiedToClipboard,
+        _CopyFeedback.copied => strings.errorCopiedToClipboard,
         _CopyFeedback.failed => strings.errorCopyFailedTooltip,
         _CopyFeedback.idle => strings.errorCopyTooltip,
       },
