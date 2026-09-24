@@ -119,8 +119,12 @@ extension _TuiComposerLayout on FaTuiModel {
       stickyWanted,
     ) = _optionalSectionWants(width);
     final optionalWanted =
-        boardWanted + waitingWanted + scheduledWanted + chipsWanted +
-        queueWanted + stickyWanted;
+        boardWanted +
+        waitingWanted +
+        scheduledWanted +
+        chipsWanted +
+        queueWanted +
+        stickyWanted;
     var budget = (height - fixed).clamp(0, height);
     // Reserve a small live-edge tail (the sent echo lines + the newest
     // tool card) ONLY when the optional chrome would otherwise swallow the
@@ -181,8 +185,10 @@ extension _TuiComposerLayout on FaTuiModel {
     // painted frame overran the glass, the terminal scrolled and the
     // composer row painted over the status row with the frame rules gone.
     final wanted = _inputLineCount;
-    final cap = (height - fixedChrome - (busy ? 1 : 0))
-        .clamp(1, height == 0 ? 1 : height);
+    final cap = (height - fixedChrome - (busy ? 1 : 0)).clamp(
+      1,
+      height == 0 ? 1 : height,
+    );
     final visible = wanted < cap ? wanted : cap;
     return (visible, _inputWindowOffset(visible));
   }
@@ -231,9 +237,18 @@ extension _TuiComposerLayout on FaTuiModel {
   /// cells the new content covers. Both operations are cell-width aware
   /// (grapheme clusters): UTF-16 padding underpads any status carrying wide
   /// characters and stale cells survive on the right.
-  String _statusRow() => _dim(
-    tuiPadRight(tuiFitWidth(callbacks.statusLine(), termWidth), termWidth),
-  );
+  ///
+  /// While the double-press Ctrl+C window is armed (issue #830), the dim
+  /// `press ctrl+c again to exit` hint replaces the status line; the next
+  /// keypress disarms and the status returns.
+  String _statusRow() => ctrlCArmed
+      ? _dim(tuiPadRight(kCtrlCExitHint, termWidth))
+      : _dim(
+          tuiPadRight(
+            tuiFitWidth(callbacks.statusLine(), termWidth),
+            termWidth,
+          ),
+        );
 
   /// The E1 belt: the engine's ladder is width-exact; a resize race
   /// truncates as the last resort so the row can never hardware-wrap.
