@@ -1,8 +1,13 @@
-# Weekly CLI-coverage gardener (issue #177 follow-up): re-measures the
-# terminal/PTY integration suites' coverage of lib/src/cli/** and, when it
-# grew, commits the higher baseline to main — the nightly ratchet
-# (check_cli_coverage.py) then enforces the new floor. Coverage can only
-# ratchet UP; a silent regression in terminal-test coverage reddens nightly.
+# Weekly CLI-coverage gardener (issue #177 follow-up, reworked by #927):
+# re-measures the terminal/PTY integration suites' coverage of lib/src/cli/**
+# and, when it grew, files/updates an issue assigned to ai-teammate asking
+# for the baseline raise. The baseline itself NO LONGER auto-commits: every
+# bump of scripts/cli_coverage_baseline.txt lands only through a reviewed PR
+# whose per-PR ratchet gate (ci.yml's pty-integration leg) passes green, and
+# each bump must be traceable to a merged PTY test with real frame
+# assertions (#927 contract). The nightly ratchet (check_cli_coverage.py)
+# still enforces the committed floor — coverage can only ratchet UP, a
+# silent regression in terminal-test coverage reddens nightly.
 name: CLI coverage gardener
 
 on:
@@ -12,17 +17,14 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
-  measure-and-bump:
-    name: Measure CLI coverage, bump baseline if higher
+  measure-and-file:
+    name: Measure CLI coverage, file raise-to-X issue if higher
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # RELEASE_PAT so the pushed commit triggers downstream workflows
-          # (GITHUB_TOKEN pushes never do). Absent → measure-only, no push.
-          token: ${{ secrets.RELEASE_PAT }}
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         with:
           sdk: stable
@@ -43,25 +45,24 @@ jobs:
 
       - run: dart run coverage:format_coverage --lcov -i coverage -o coverage/lcov.info
 
-      - name: Bump baseline when coverage grew
+      - name: File coverage-growth issue when measured exceeds baseline
         env:
-          HAS_PAT: ${{ secrets.RELEASE_PAT != '' }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           measured=$(python3 scripts/check_cli_coverage.py --print | head -1 | grep -oE '[0-9]+\.[0-9]+')
           baseline=$(cat scripts/cli_coverage_baseline.txt)
           echo "measured=$measured baseline=$baseline"
-          if python3 -c "exit(0 if float('$measured') > float('$baseline') else 1)"; then
-            echo "$measured" > scripts/cli_coverage_baseline.txt
-            if [ "$HAS_PAT" = "true" ]; then
-              git config user.name "github-actions[bot]"
-              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-              git add scripts/cli_coverage_baseline.txt
-              git commit -m "chore(coverage): CLI terminal-test baseline $baseline -> $measured (ratchet up)"
-              git push
-            else
-              echo "::notice::RELEASE_PAT not configured — baseline bump not pushed"
-              git checkout -- scripts/cli_coverage_baseline.txt || true
-            fi
-          else
+          if ! python3 -c "exit(0 if float('$measured') > float('$baseline') else 1)"; then
             echo "No growth — baseline stays $baseline"
+            exit 0
+          fi
+          title="raise coverage to $measured"
+          body="$(printf 'Weekly CLI-coverage gardener measured **%s**%% on lib/src/cli/** — above the committed floor of **%s**%% (scripts/cli_coverage_baseline.txt).\n\nPer the #927 contract the baseline never auto-commits: land the raise through a reviewed PR that\n- updates scripts/cli_coverage_baseline.txt to %s,\n- passes the per-PR pty-integration ratchet gate green, and\n- traces every bump to a merged PTY test with real frame assertions.\n' "$measured" "$baseline" "$measured")"
+          number=$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "in:title \"$title\"" --json number --jq '.[0].number // empty')
+          if [ -n "$number" ]; then
+            gh issue edit "$number" -R "$GITHUB_REPOSITORY" --body "$body"
+            echo "updated issue #$number"
+          else
+            gh issue create -R "$GITHUB_REPOSITORY" --assignee ai-teammate --title "$title" --body "$body"
+            echo "filed raise-to-$measured issue"
           fi
