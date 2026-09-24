@@ -15,7 +15,9 @@ extension on AgentCli {
       '${_style.dim('v$_version')}',
     );
     io.writeln(
-      _style.dim('escape interrupt · ctrl+c clear/exit · / commands · ! bash'),
+      _style.dim(
+        'esc interrupt · ctrl+c clear · double ctrl+c exit · / commands · ! bash',
+      ),
     );
     io.writeln(_style.dim('Press /help to show full commands and resources.'));
     io.writeln('');
