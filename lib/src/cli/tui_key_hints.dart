@@ -9,6 +9,10 @@
 /// the CLI entry point and overridable in tests.
 library;
 
+import 'dart:math' as math;
+
+import 'tui_text_width.dart';
+
 /// A key chord in canonical form: lowercase fa keystroke id with `+`-joined
 /// modifiers (`ctrl+x`, `alt+enter`), or the bare key (`enter`, `↑`, `1`).
 final class TuiChord {
@@ -16,21 +20,15 @@ final class TuiChord {
 
   const TuiChord(this.canonical);
 
-  /// Normalizes free-form chord text: `Ctrl-X`, `shift enter`, `↑` and
-  /// `ctrl+x` all parse to the same chord.
+  /// Normalizes free-form chord text: `Ctrl-X`, `shift enter`, `↑`,
+  /// `Option+P` and `ctrl+x` all parse to the same chord — per part, so
+  /// modified display spellings (`ctrl+↑`, `ctrl+pgdn`) normalize too.
   factory TuiChord.parse(String text) {
-    var t = text.trim().toLowerCase();
-    for (final e in _glyphs.entries) {
-      if (t == e.value) t = e.key;
-    }
-    t = t.replaceAll(RegExp(r'[\s_-]+'), '+');
-    // Mac display labels normalize back to the canonical modifier ids.
-    t = t.replaceFirst(RegExp(r'^(option|opt)(\+|$)'), 'alt+');
-    t = t.replaceFirst(RegExp(r'^(cmd|command)(\+|$)'), 'super+');
-    t = t.replaceFirst(RegExp(r'^pgdn(\+|$)'), 'pgdown+');
-    if (t.startsWith('+')) t = t.substring(1);
-    if (t.endsWith('+')) t = t.substring(0, t.length - 1);
-    return TuiChord(t);
+    final raw = text.trim().toLowerCase().replaceAll(RegExp(r'[\s_-]+'), '+');
+    final parts = [
+      for (final p in raw.split('+')) _glyphFromDisplay[p] ?? _keyAliases[p] ?? p,
+    ]..removeWhere((p) => p.isEmpty);
+    return TuiChord(parts.join('+'));
   }
 
   /// Compact hint-row form (`ctrl+x`, the `↑/↓` building block) — lowercase,
@@ -45,7 +43,7 @@ final class TuiChord {
     final mods = _modifierLabels(darwin);
     final labels = [
       for (final m in parts.take(parts.length - 1)) mods[m] ?? _titleKey(m),
-      parts.length == 1 ? _keyLabels[key] ?? _titleKey(key) : _titleKey(key),
+      _keyLabels[key] ?? _titleKey(key),
     ];
     return labels.join('+');
   }
@@ -67,6 +65,22 @@ const _glyphs = {
   'down': '↓',
   'left': '←',
   'right': '→',
+};
+
+/// Display glyph → canonical id (`↑` → `up`), so chord text parses like it
+/// displays — bare or modified (`ctrl+↑`).
+final _glyphFromDisplay = {
+  for (final e in _glyphs.entries) e.value: e.key,
+};
+
+/// Free-text spellings that normalize to canonical ids (`Option+P` →
+/// `alt+p`, `PgDn` → `pgdown`).
+const _keyAliases = {
+  'option': 'alt',
+  'opt': 'alt',
+  'cmd': 'super',
+  'command': 'super',
+  'pgdn': 'pgdown',
 };
 
 Map<String, String> _modifierLabels(bool darwin) => {
@@ -280,13 +294,17 @@ const _scopeTitles = {
 ///   `NO_COLOR`).
 /// - `false` (line mode): plain ASCII — `[Scope]` headers and a fixed
 ///   key column, no markup, no escapes.
+///
+/// Pass [bindings] to render a custom row set (test seam); defaults to
+/// [kTuiKeybindings].
 List<String> tuiHotkeyTableLines({
   bool markdown = false,
   bool? darwin,
+  List<TuiKeybinding> bindings = kTuiKeybindings,
 }) {
   final isDarwin = darwin ?? tuiKeyHintDarwin;
   final rows = [
-    for (final b in kTuiKeybindings)
+    for (final b in bindings)
       (
         binding: b,
         keys: [for (final c in b.chords) c.display(darwin: isDarwin)].join(' / '),
@@ -298,8 +316,12 @@ List<String> tuiHotkeyTableLines({
     '',
   ];
   // Plain mode pads the key column to the widest entry of the whole table —
-  // computed up front, so descriptions align across sections.
-  final keyColumn = rows.fold<int>(0, (w, r) => r.keys.length > w ? r.keys.length : w);
+  // computed up front in display cells (a wide key under-pads its row when
+  // measured in UTF-16 units; ambiguous-width arrows stay terminal-dependent
+  // in line mode by design), so descriptions align across sections.
+  // `tuiPadRight` uses the same measurement.
+  final keyColumn =
+      rows.fold<int>(0, (w, r) => math.max(w, tuiTextWidth(r.keys)));
   var lastScope = '';
   for (final r in rows) {
     if (r.binding.scope != lastScope) {
@@ -317,7 +339,7 @@ List<String> tuiHotkeyTableLines({
     lines.add(
       markdown
           ? '| `${r.keys}` | ${r.binding.description} |'
-          : '  ${r.keys.padRight(keyColumn)}  ${r.binding.description}',
+          : '  ${tuiPadRight(r.keys, keyColumn)}  ${r.binding.description}',
     );
   }
   return lines;
