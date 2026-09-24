@@ -49,6 +49,43 @@ export 'src/cli/cli_config.dart'
 export 'src/cli/pi_mode.dart';
 export 'src/cli/links_config.dart'
     show LinksConfig, defaultAppStoreUrl, defaultSiteUrl, defaultTestFlightUrl;
+export 'src/cli/tui_status_line.dart'
+    show
+        LaidSegment,
+        StatusLineConfig,
+        StatusLineGaugeLevel,
+        StatusLineGit,
+        StatusLineRoleKey,
+        StatusLineSegmentOptions,
+        StatusLineSeparator,
+        StatusLineSeparatorStyle,
+        StatusLineSnapshot,
+        StatusLineSpec,
+        StatusSpan,
+        TuiSectionConfig,
+        TuiStatusLine,
+        abbreviateSegmentPath,
+        formatStatusLineClock,
+        formatStatusLineDuration,
+        formatStatusLinePercent,
+        getSeparator,
+        kStatusLinePresetNames,
+        kStatusLinePresets,
+        kStatusLineRoles,
+        kStatusLineSegmentIds,
+        kStatusLineSegments,
+        parseGitStatusPorcelain,
+        parseSegmentOptions,
+        parseStatusLineConfig,
+        parseStatusLineSeparator,
+        parseTuiSection,
+        renderStatusLine,
+        renderStatusLineSpans,
+        resolveStatusLineSpec,
+        statusLineBrandFadeT,
+        statusLineGaugeLevel,
+        statusLineGaugeMinWidth,
+        statusLineStyle;
 export 'src/cli/links_surface.dart'
     show
         StoreBannerView,
