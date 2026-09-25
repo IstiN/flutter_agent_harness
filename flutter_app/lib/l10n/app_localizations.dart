@@ -3869,8 +3869,50 @@ abstract class AppLocalizations {
   /// Network search field hint
   ///
   /// In en, this message translates to:
-  /// **'Search networks…'**
+  /// **'Search networks'**
   String get networkSearchHint;
+
+  /// Sign-in dialog title, button and sidebar row
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in'**
+  String get networkSignInTitle;
+
+  /// Sign-in dialog helper note
+  ///
+  /// In en, this message translates to:
+  /// **'This uses your network account — dev login while the OAuth flow is pending.'**
+  String get networkSignInHelper;
+
+  /// Sign-in dialog login field label
+  ///
+  /// In en, this message translates to:
+  /// **'Login'**
+  String get networkLoginLabel;
+
+  /// Sidebar account row: sign-out action
+  ///
+  /// In en, this message translates to:
+  /// **'Sign out'**
+  String get networkSignOut;
+
+  /// Sidebar account row label when the login is unknown
+  ///
+  /// In en, this message translates to:
+  /// **'Account'**
+  String get networkAccountFallback;
+
+  /// Sidebar section label for the public-networks directory
+  ///
+  /// In en, this message translates to:
+  /// **'Public networks'**
+  String get networkPublicSection;
+
+  /// Public directory row: member count
+  ///
+  /// In en, this message translates to:
+  /// **'{count} members'**
+  String networkPublicMembers(Object count);
 
   /// Empty state when the wallet has no memberships
   ///

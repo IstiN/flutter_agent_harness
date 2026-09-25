@@ -59,6 +59,13 @@ class FakeHttpClient extends http.BaseClient {
   final List<http.Response> _responses = [];
   int _index = 0;
 
+  /// Out-of-band response for `GET /api/networks/public`. The networks
+  /// sidebar probes the public directory on init — a probe must never
+  /// consume the scripted queue (it fires before any user-driven call),
+  /// so this endpoint is served out-of-band: [publicNetworksResponse]
+  /// when set, otherwise the "not deployed" 404.
+  http.Response? publicNetworksResponse;
+
   /// Queues the next response.
   void respond(
     int status, {
@@ -76,10 +83,17 @@ class FakeHttpClient extends http.BaseClient {
       url: request.url,
       body: utf8.decode(bodyBytes),
     ));
-    if (_index >= _responses.length) {
-      throw StateError('unexpected request: ${request.method} ${request.url}');
+    var res = _responses.elementAtOrNull(_index);
+    if (request.url.path == '/api/networks/public') {
+      res = publicNetworksResponse ?? http.Response('{"error":{}}', 404);
+    } else {
+      if (res == null) {
+        throw StateError(
+          'unexpected request: ${request.method} ${request.url}',
+        );
+      }
+      _index++;
     }
-    final res = _responses[_index++];
     return http.StreamedResponse(
       Stream<Uint8List>.value(res.bodyBytes),
       res.statusCode,

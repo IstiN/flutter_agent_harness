@@ -54,7 +54,49 @@ void main() {
       );
       expect(n.admins, isNull);
       expect(n.publicChannels, isEmpty);
+      expect(n.isPublic, isFalse);
       expect(n.createdAt, isNull);
+    });
+
+    test('the public-directory flag parses', () {
+      final n = Network.fromJson(
+        jsonDecode(
+              '{"id":"net1","name":"fa-team","ownerId":"u1","public":true}',
+            )
+            as Map<String, Object?>,
+      );
+      expect(n.isPublic, isTrue);
+    });
+  });
+
+  group('PublicNetworkInfo.fromJson', () {
+    test('directory item with int counts (deployed contract)', () {
+      final p = PublicNetworkInfo.fromJson(
+        jsonDecode(
+              '{"id":"pub-1","name":"open-hub","publicChannels":3,'
+              '"memberCount":42}',
+            )
+            as Map<String, Object?>,
+      );
+      expect(p.id, 'pub-1');
+      expect(p.name, 'open-hub');
+      expect(p.publicChannelCount, 3);
+      expect(p.memberCount, 42);
+    });
+
+    test('counts are optional; id + name are required', () {
+      final p = PublicNetworkInfo.fromJson(
+        jsonDecode('{"id":"pub-2","name":"agents-lab"}')
+            as Map<String, Object?>,
+      );
+      expect(p.publicChannelCount, isNull);
+      expect(p.memberCount, isNull);
+      expect(
+        () => PublicNetworkInfo.fromJson(
+          jsonDecode('{"name":"x"}') as Map<String, Object?>,
+        ),
+        throwsFormatException,
+      );
     });
   });
 

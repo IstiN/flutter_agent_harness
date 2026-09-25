@@ -123,16 +123,18 @@ class FaNetworkClient {
     return Network.fromJson(_decodeMap(res));
   }
 
-  /// `PATCH /api/networks/{id}` — rename / rotate password (owner/admin).
+  /// `PATCH /api/networks/{id}` — rename / rotate password / toggle the
+  /// public-directory listing (owner/admin).
   Future<Network> updateNetwork(
     String networkId, {
     String? name,
     String? password,
+    bool? isPublic,
   }) async {
     final res = await _request(
       'PATCH',
       '/api/networks/$networkId',
-      body: {'''name''': ?name, '''password''': ?password},
+      body: {'''name''': ?name, '''password''': ?password, 'public': ?isPublic},
       management: true,
       expected: {200},
     );
@@ -146,6 +148,44 @@ class FaNetworkClient {
     management: true,
     expected: {204},
   ).then((_) {});
+
+  /// `GET /api/networks/public?limit&cursor` — the public-networks
+  /// directory (deployed contract, issue #955 iteration 2): ANONYMOUS
+  /// (no tokens sent; rate-limited 30/min with 429 + Retry-After),
+  /// `limit` defaults to 50 server-side (max 200), `cursor` is opaque
+  /// (a malformed cursor silently restarts at the first page). The
+  /// response is `{"items": [...], "nextCursor": ""}` — [nextCursor] is
+  /// null on the last page. Returns null on any [FaNetworkException]
+  /// (404/429/...) so the UI silently hides the section — it never
+  /// throws into the widget tree.
+  Future<({List<PublicNetworkInfo> items, String? nextCursor})?>
+  listPublicNetworks({int? limit, String? cursor}) async {
+    try {
+      final res = await _request(
+        'GET',
+        '/api/networks/public',
+        query: {'''limit''': ?limit?.toString(), '''cursor''': ?cursor},
+        auth: false,
+        expected: {200},
+      );
+      final json = _decodeMap(res);
+      final items = json['items'] is List
+          ? (json['items']! as List)
+                .whereType<Map>()
+                .map(
+                  (e) => PublicNetworkInfo.fromJson(e.cast<String, Object?>()),
+                )
+                .toList()
+          : <PublicNetworkInfo>[];
+      final next = json['nextCursor'];
+      return (
+        items: items,
+        nextCursor: next is String && next.isNotEmpty ? next : null,
+      );
+    } on FaNetworkException {
+      return null;
+    }
+  }
 
   // ---------------------------------------------------------------- admins
 

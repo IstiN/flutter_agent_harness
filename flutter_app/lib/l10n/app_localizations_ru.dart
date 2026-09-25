@@ -2207,7 +2207,31 @@ class AppLocalizationsRu extends AppLocalizations {
   String get networkBackTooltip => 'Назад';
 
   @override
-  String get networkSearchHint => 'Поиск сетей…';
+  String get networkSearchHint => 'Поиск сетей';
+
+  @override
+  String get networkSignInTitle => 'Войти';
+
+  @override
+  String get networkSignInHelper =>
+      'Используется ваш сетевой аккаунт — вход для разработки, пока OAuth-флоу в работе.';
+
+  @override
+  String get networkLoginLabel => 'Логин';
+
+  @override
+  String get networkSignOut => 'Выйти';
+
+  @override
+  String get networkAccountFallback => 'Аккаунт';
+
+  @override
+  String get networkPublicSection => 'Публичные сети';
+
+  @override
+  String networkPublicMembers(Object count) {
+    return 'Участников: $count';
+  }
 
   @override
   String get networkEmptyTitle => 'Пока нет сетей';

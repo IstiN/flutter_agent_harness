@@ -58,6 +58,40 @@ final class NetworkSessionManager extends ChangeNotifier {
   /// network creation — guests never see those affordances).
   bool get hasJwt => _jwt != null && _jwt!.isNotEmpty;
 
+  /// The login the JWT was minted for (in memory only — the JWT is
+  /// session-scoped, never persisted; issue #955 iteration 2).
+  String? get accountLogin => _accountLogin;
+  String? _accountLogin;
+
+  /// Signs in with the network account: `POST /api/dev/login` (the dev
+  /// mock while the OAuth flow is pending) and holds the returned JWT in
+  /// memory. Throws [FaNetworkException] with the server's message on
+  /// failure; the JWT is left untouched.
+  Future<void> signIn({required String login, required String password}) async {
+    final token = await FaNetworkClient(
+      baseUrl: _baseUrl,
+      httpClient: _http,
+    ).devLogin(login: login, password: password);
+    _jwt = token;
+    _accountLogin = login;
+    notifyListeners();
+  }
+
+  /// Drops the in-memory JWT (live member sessions keep their own
+  /// session tokens — this only loses the management affordances).
+  void signOut() {
+    _jwt = null;
+    _accountLogin = null;
+    notifyListeners();
+  }
+
+  /// The public-networks directory (`GET /api/networks/public`); null
+  /// when the endpoint errors/rate-limits — the sidebar hides the
+  /// section then.
+  Future<({List<PublicNetworkInfo> items, String? nextCursor})?>
+  listPublicNetworks({int? limit, String? cursor}) =>
+      _newClient().listPublicNetworks(limit: limit, cursor: cursor);
+
   /// Re-reads wallet-driven UI after an out-of-band wallet mutation
   /// (e.g. a wallet import replacing the contents in place).
   void walletExternallyUpdated() => notifyListeners();

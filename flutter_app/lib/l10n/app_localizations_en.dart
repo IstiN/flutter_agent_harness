@@ -2179,7 +2179,31 @@ class AppLocalizationsEn extends AppLocalizations {
   String get networkBackTooltip => 'Back';
 
   @override
-  String get networkSearchHint => 'Search networks…';
+  String get networkSearchHint => 'Search networks';
+
+  @override
+  String get networkSignInTitle => 'Sign in';
+
+  @override
+  String get networkSignInHelper =>
+      'This uses your network account — dev login while the OAuth flow is pending.';
+
+  @override
+  String get networkLoginLabel => 'Login';
+
+  @override
+  String get networkSignOut => 'Sign out';
+
+  @override
+  String get networkAccountFallback => 'Account';
+
+  @override
+  String get networkPublicSection => 'Public networks';
+
+  @override
+  String networkPublicMembers(Object count) {
+    return '$count members';
+  }
 
   @override
   String get networkEmptyTitle => 'No networks yet';

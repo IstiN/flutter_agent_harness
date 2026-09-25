@@ -76,6 +76,7 @@ class Network {
     required this.ownerId,
     this.admins,
     this.publicChannels = const [],
+    this.isPublic = false,
     this.createdAt,
   });
 
@@ -84,6 +85,11 @@ class Network {
   final String ownerId;
   final List<String>? admins;
   final List<String> publicChannels;
+
+  /// Listed in the public-networks directory (`GET /api/networks/public`)
+  /// — "public" is a catalog listing, NOT open join (the password is
+  /// still required). Owner/admin toggles it via `PATCH .../networks/{id}`.
+  final bool isPublic;
   final DateTime? createdAt;
 
   factory Network.fromJson(Map<String, Object?> json) => Network(
@@ -92,6 +98,7 @@ class Network {
     ownerId: _str(json['ownerId']),
     admins: _strList(json['admins']),
     publicChannels: _strList(json['publicChannels']) ?? const [],
+    isPublic: _bool(json['public']),
     createdAt: _date(json['createdAt']),
   );
 }
@@ -356,4 +363,44 @@ class WakeupDispatch {
     outcome: _str(json['outcome']),
     note: _strOrNull(json['note']),
   );
+}
+
+/// One entry of the public-networks directory (`GET /api/networks/public`
+/// — deployed contract, issue #955 iteration 2). Items carry exactly four
+/// fields (`id`, `name`, `publicChannels`, `memberCount` — the latter two
+/// are INTs, no passwords/ownerId); parsing stays tolerant: only [id] and
+/// [name] are required so interim server shapes never break the client.
+class PublicNetworkInfo {
+  const PublicNetworkInfo({
+    required this.id,
+    required this.name,
+    this.publicChannelCount,
+    this.memberCount,
+  });
+
+  final String id;
+  final String name;
+
+  /// Number of public channels (wire: `publicChannels` as an int count).
+  final int? publicChannelCount;
+
+  /// Member count, when the server reports it.
+  final int? memberCount;
+
+  factory PublicNetworkInfo.fromJson(Map<String, Object?> json) {
+    final id = json['id'];
+    final name = json['name'];
+    if (id is! String || id.isEmpty || name is! String) {
+      throw FormatException(
+        'PublicNetworkInfo: "id" and "name" are required strings',
+        json,
+      );
+    }
+    return PublicNetworkInfo(
+      id: id,
+      name: name,
+      publicChannelCount: _intOrNull(json['publicChannels']),
+      memberCount: _intOrNull(json['memberCount']),
+    );
+  }
 }

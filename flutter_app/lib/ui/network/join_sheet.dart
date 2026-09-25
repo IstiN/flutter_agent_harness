@@ -20,6 +20,7 @@ Future<void> showJoinSheet(
   BuildContext context, {
   required NetworkModeController controller,
   required NetworkSessionManager manager,
+  String? initialNetworkId,
 }) {
   final wide = MediaQuery.sizeOf(context).width >= kWideLayoutBreakpoint;
   if (wide) {
@@ -28,7 +29,11 @@ Future<void> showJoinSheet(
       builder: (_) => Dialog(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 440),
-          child: JoinSheet(controller: controller, manager: manager),
+          child: JoinSheet(
+            controller: controller,
+            manager: manager,
+            initialNetworkId: initialNetworkId,
+          ),
         ),
       ),
     );
@@ -41,7 +46,11 @@ Future<void> showJoinSheet(
       padding: EdgeInsets.only(
         bottom: MediaQuery.viewInsetsOf(sheetContext).bottom,
       ),
-      child: JoinSheet(controller: controller, manager: manager),
+      child: JoinSheet(
+        controller: controller,
+        manager: manager,
+        initialNetworkId: initialNetworkId,
+      ),
     ),
   );
 }
@@ -51,13 +60,22 @@ Future<void> showJoinSheet(
 /// prefills id + password. With a JWT set, the display name is locked to
 /// the account (the server decides) and the field hides.
 class JoinSheet extends StatefulWidget {
-  const JoinSheet({super.key, required this.controller, required this.manager});
+  const JoinSheet({
+    super.key,
+    required this.controller,
+    required this.manager,
+    this.initialNetworkId,
+  });
 
   /// The mode controller — a successful join enters the network.
   final NetworkModeController controller;
 
   /// The session manager performing the join.
   final NetworkSessionManager manager;
+
+  /// Prefills the network id (the public-directory's Join button) and
+  /// focuses the password field — the id is known, the password is not.
+  final String? initialNetworkId;
 
   @override
   State<JoinSheet> createState() => _JoinSheetState();
@@ -78,6 +96,8 @@ class _JoinSheetState extends State<JoinSheet> {
     _nameController = TextEditingController(
       text: widget.manager.wallet.displayName,
     );
+    final initialId = widget.initialNetworkId;
+    if (initialId != null) _idController.text = initialId;
   }
 
   @override
@@ -196,6 +216,9 @@ class _JoinSheetState extends State<JoinSheet> {
           TextField(
             controller: _passwordController,
             obscureText: true,
+            // A prefilled id (the public directory's Join) lands the caret
+            // straight on the password — the only thing left to type.
+            autofocus: widget.initialNetworkId != null,
             decoration: InputDecoration(
               labelText: context.l10n.networkPasswordLabel,
               isDense: true,

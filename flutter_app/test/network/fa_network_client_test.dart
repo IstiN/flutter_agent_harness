@@ -207,6 +207,67 @@ void main() {
       expect(jsonDecode(req.body), {'name': 'new-name'});
     });
 
+    test('updateNetwork toggles the public-directory listing', () async {
+      httpClient.respond(
+        200,
+        body:
+            '{"id":"net1","name":"fa-team","ownerId":"u1",'
+            '"publicChannels":[],"public":true}',
+      );
+      final n = await client.updateNetwork('net1', isPublic: true);
+      expect(n.isPublic, isTrue);
+      expect(jsonDecode(httpClient.requests.single.body), {'public': true});
+    });
+
+    test('listPublicNetworks is anonymous and parses the envelope', () async {
+      client = build(jwtToken: 'jwt-tok', sessionToken: 'sess-tok');
+      httpClient.respond(
+        200,
+        body:
+            '{"items":[{"id":"pub-1","name":"open-hub",'
+            '"publicChannels":3,"memberCount":42}],"nextCursor":"p2"}',
+      );
+      final page = await client.listPublicNetworks(limit: 10, cursor: 'p1');
+      expect(page, isNotNull);
+      expect(page!.items.single.id, 'pub-1');
+      expect(page.items.single.name, 'open-hub');
+      expect(page.items.single.publicChannelCount, 3);
+      expect(page.items.single.memberCount, 42);
+      expect(page.nextCursor, 'p2');
+      final req = httpClient.requests.single;
+      expect(req.method, 'GET');
+      expect(req.url.path, '/api/networks/public');
+      expect(req.url.queryParameters, {'limit': '10', 'cursor': 'p1'});
+      // Anonymous route: no bearer even when both tokens are set.
+      expect(req.headers.containsKey('authorization'), isFalse);
+    });
+
+    test('listPublicNetworks: an empty nextCursor is the last page', () async {
+      httpClient.respond(200, body: '{"items":[],"nextCursor":""}');
+      final page = await client.listPublicNetworks();
+      expect(page, isNotNull);
+      expect(page!.items, isEmpty);
+      expect(page.nextCursor, isNull);
+      expect(httpClient.requests.single.url.query, isEmpty);
+    });
+
+    test(
+      'listPublicNetworks returns null on 404/429 instead of throwing',
+      () async {
+        httpClient.respond(
+          404,
+          body: '{"error":{"code":"not_found","message":"nope"}}',
+        );
+        expect(await client.listPublicNetworks(), isNull);
+        httpClient.respond(
+          429,
+          body: '{"error":{"code":"throttled","message":"slow down"}}',
+          headers: {'retry-after': '30'},
+        );
+        expect(await client.listPublicNetworks(), isNull);
+      },
+    );
+
     test('deleteNetwork accepts 204', () async {
       httpClient.respond(204);
       await client.deleteNetwork('net1');
