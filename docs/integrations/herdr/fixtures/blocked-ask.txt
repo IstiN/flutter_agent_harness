@@ -1,0 +1,11 @@
+⠋ Working…      3s
+┌─ Ask ────────────────────────────────────────────────────────────────────────┐
+│ Question 1 of 1                                                              │
+│ Which database should the migration target?                                  │
+│ 1. > Postgres *                                                              │
+│      keeps the current host                                                  │
+│ 2.   SQLite                                                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ ↑/↓ navigate · number to select · space for free text · enter confirm · esc …│
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘

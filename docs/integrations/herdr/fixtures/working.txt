@@ -1,0 +1,3 @@
+  ~/work/proj · main · mock-model · ctx 4% (8k/200k)
+╰─ 
+⠙ Working…                    12s · run
