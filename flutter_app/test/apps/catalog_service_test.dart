@@ -19,11 +19,11 @@ import 'package:http/testing.dart';
 /// access, and zip stores DOS time at 2-second granularity — a fixture
 /// re-encoded across a tick boundary produced different bytes than the
 /// sealed probe, so the catalog's sha256 no longer matched the served zip
-/// (the hosted-runner-only flake, gh-938/#944/#950). With the time pinned,
+/// (the hosted-runner-only flake, gh-938/#944). With the time pinned,
 /// every build of the same fixture is byte-identical — the sealed probe
 /// and the download path both re-run [zipOf], whose every entry carries
-/// the pinned time — so no platform skip is needed and the Linux leg
-/// #950 had to silence runs again.
+/// the pinned time — so no platform skip is needed, and the Linux-only
+/// runtime skip #950 introduced (kept in #954) is dropped here.
 const _pinnedZipModTime = 315532800; // 1980-01-01T00:00:00Z (DOS epoch floor)
 
 http.Client fakeServer(Map<String, dynamic> catalog) {

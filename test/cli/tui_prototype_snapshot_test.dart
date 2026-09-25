@@ -1,4 +1,9 @@
 @Tags(['integration'])
+// Issue #943 review: the 60 s waitFor below must be able to FIRE —
+// package:test's default 30 s per-test timeout would kill the test in
+// the 30-60 s band the budget exists for. 2 minutes covers the whole
+// suite's boot+interaction budget with margin.
+@Timeout(Duration(minutes: 2))
 library;
 
 import 'dart:async';

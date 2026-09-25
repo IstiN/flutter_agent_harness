@@ -99,14 +99,20 @@ void main() {
     'serve onto a taken port that frees mid-retry: bind succeeds, exit 0',
     () async {
       // Issue #943 vector 2: an overlapping run's predecessor holds the
-      // port for a few hundred ms. The taker closes inside the first
-      // backoff window (<150 ms), so attempt 2 binds and the serve
-      // proceeds — the retry path (not the hard exit-1).
+      // port for a few hundred ms. The blocker closes on its FIRST
+      // ACCEPTED CONNECTION — attempt 1's healthz probe — so the close
+      // is deterministic (attempt 1: bind fails, probe dies; attempt 2:
+      // binds) no matter how slow the serve prelude is on a loaded
+      // runner.
       final port = await freePort();
       final blocker = await ServerSocket.bind('127.0.0.1', port);
-      final sub = blocker.listen((socket) => socket.destroy());
+      final firstConnection = Completer<void>();
+      final sub = blocker.listen((socket) {
+        socket.destroy();
+        if (!firstConnection.isCompleted) firstConnection.complete();
+      });
       unawaited(
-        Future<void>.delayed(const Duration(milliseconds: 50), () async {
+        firstConnection.future.then((_) async {
           await sub.cancel();
           await blocker.close();
         }),
