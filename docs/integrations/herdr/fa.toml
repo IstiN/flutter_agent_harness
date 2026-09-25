@@ -1,0 +1,143 @@
+# fa (flutter_agent_harness) detection manifest for herdr.
+#
+# Upstream home: herdrdev/herdr `src/detect/manifests/fa.toml` (+ the
+# `distribution/agent-detection/` copy). This file is the canonical fa-side
+# source; `test/integration/herdr_detection_test.dart` classifies the
+# committed fixture transcripts (same directory, `fixtures/`) with a
+# transliteration of herdr's engine, so chrome changes that break detection
+# fail here before the upstream manifest ships.
+#
+# Chrome references (issue #818):
+# - S3 band composer (#806): the status band attaches as the composer's top
+#   band; the resting prompt paints the border-muted `╰─ ` gutter.
+# - Busy row: `<braille spinner> <label> <elapsed>` with FIXED cells — label
+#   is `Working…` (or a phase label like `Compacting context…`, or
+#   `Stalled…`), the elapsed cell ends in `s`, `m`, `h` or `+`.
+# - Prompt zone (`lib/src/cli/tui_prompt.dart`): a bordered sheet
+#   (`┌─ <Header> ─…┐`) rendered bottom-anchored whenever the agent needs a
+#   human decision — approvals (`Approval`), secret requests (`Secret`,
+#   body `Credential request`), ask sheets (`Ask`), provider wizard inputs
+#   (`Input`, `Password`).
+# - Classic chrome (`tui.classic: true`, #805): the legacy dim footer — a
+#   full-width `─` rule, the `_statusLine()` row
+#   (`<cwd> · ctx N% (T/W) · Ntok · turn N · provider/model`) and the
+#   `fa> ` input prompt. The busy row is chrome-independent (S3 and classic
+#   both render it), so classic users classify working via `busy_row`.
+#
+# `done` needs no rule: it is herdr's seen-state (a pane observed working
+# that later reads idle), derived from `visible_working` + `visible_idle`.
+
+id = "fa"
+version = "2026.09.24.1"
+min_engine_version = 2
+updated_at = "2026-09-24T00:00:00Z"
+aliases = ["flutter_agent_harness", "herdr:fa"]
+
+# --- blocked: the prompt-zone sheets. The frame is bottom-anchored (it
+# replaces the composer), so the last rows carry the header; the sheet rules
+# outrank the working rules because a visible sheet means the run is paused
+# on the user even while the busy row still spins behind it.
+
+[[rules]]
+id = "approval_sheet"
+state = "blocked"
+priority = 220
+region = "bottom_non_empty_lines(24)"
+visible_blocker = true
+line_regex = ['^┌─ Approval ─']
+
+[[rules]]
+id = "secret_sheet"
+state = "blocked"
+priority = 220
+region = "bottom_non_empty_lines(24)"
+visible_blocker = true
+any = [
+  { line_regex = ['^┌─ Secret ─'] },
+  { contains = ["Credential request"] },
+]
+
+[[rules]]
+id = "ask_sheet"
+state = "blocked"
+priority = 215
+region = "bottom_non_empty_lines(24)"
+visible_blocker = true
+line_regex = ['^┌─ Ask ─']
+
+[[rules]]
+id = "input_sheet"
+state = "blocked"
+priority = 215
+region = "bottom_non_empty_lines(24)"
+visible_blocker = true
+any = [
+  { line_regex = ['^┌─ Input ─'] },
+  { line_regex = ['^┌─ Password ─'] },
+]
+
+[[rules]]
+id = "host_menu_selection"
+state = "blocked"
+priority = 210
+region = "bottom_non_empty_lines(6)"
+visible_blocker = true
+contains = ["waiting for your selection"]
+
+# --- working: the live busy row (spinner prefix + fixed elapsed cell).
+# Interactive runs always append a provenance suffix after the elapsed cell
+# (`12s · run`, optionally ` · quiet Nm`) — agent_cli.dart sends
+# `source: 'run'` and fa_tui_rows.dart appends ` · <source>` — so the
+# elapsed cell is matched with the suffix OPTIONAL, never anchored away.
+
+[[rules]]
+id = "busy_row"
+state = "working"
+priority = 120
+region = "bottom_non_empty_lines(6)"
+visible_working = true
+line_regex = ['^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] ', '[0-9]+(s|m|h\+|h[0-9]{2}m)( ·.*)?[ ]*$']
+
+[[rules]]
+id = "working_literal"
+state = "working"
+priority = 100
+region = "whole_recent"
+visible_working = true
+any = [
+  { contains = ["Working…"] },
+  { contains = ["Stalled…"] },
+]
+
+# --- idle: the resting composer. The S3 gutter outranks the loose
+# `working_literal` fallback so a transcript that merely quotes `Working…`
+# cannot outvote the live prompt cue on the screen the agent actually
+# rests at; classic chrome keys on its rule + status footer pair.
+
+[[rules]]
+id = "composer_gutter"
+state = "idle"
+priority = 150
+region = "bottom_non_empty_lines(6)"
+visible_idle = true
+line_regex = ['^╰─ ']
+# The gutter stays painted while the busy row spins below it (the band
+# composer never unmounts), so idle must lose to every live signal: a
+# spinner prefix or the open host picker suppresses the rule outright —
+# priority arbitration alone would pick 150 over the working rules.
+not = [
+  { line_regex = ['^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] '] },
+  { contains = ["waiting for your selection"] },
+]
+
+[[rules]]
+id = "classic_status_footer"
+state = "idle"
+priority = 130
+region = "bottom_non_empty_lines(8)"
+visible_idle = true
+line_regex = ['^─{10,} *$']
+contains = ["· ctx ", "· turn "]
+not = [
+  { line_regex = ['^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] '] },
+]
