@@ -327,6 +327,41 @@ void main() {
       await run;
     });
 
+    test('/approval autopilot: renamed unattended mode, legacy alias kept', () async {
+      final cli = cliFor([], approvalMode: ApprovalMode.yolo);
+      final run = cli.run();
+      io.sendLine('/approval');
+      await _waitFor(
+        () => io.out.toString().contains(
+          'approval modes: always-ask, write, yolo, autopilot',
+        ),
+      );
+      io.sendLine('/approval autopilot');
+      await _waitFor(
+        () => io.out.toString().contains('approval mode set to autopilot'),
+      );
+      expect(cli.approval.mode, ApprovalMode.unattended);
+      // The pre-rename spelling keeps working (persisted configs, muscle
+      // memory): same mode, labeled autopilot.
+      io.sendLine('/approval write');
+      await _waitFor(
+        () => io.out.toString().contains('approval mode set to write'),
+      );
+      expect(cli.approval.mode, ApprovalMode.write);
+      io.sendLine('/approval unattended');
+      await _waitFor(() => cli.approval.mode == ApprovalMode.unattended);
+      // The unknown-mode hint names the new spelling.
+      io.sendLine('/approval bogus');
+      await _waitFor(
+        () => io.out.toString().contains(
+          '(want always-ask|write|yolo|autopilot)',
+        ),
+      );
+      expect(cli.approval.mode, ApprovalMode.unattended);
+      io.sendLine('/exit');
+      await run;
+    });
+
     test('/allow adds a known tool and lists the set', () async {
       var changes = 0;
       final cli = cliFor([], onApprovalChanged: () => changes++);

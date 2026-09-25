@@ -558,7 +558,7 @@ SKILLS AND CONTEXT FILES
   /sessions          list all sessions across workspaces
   /resume            switch to the most recent session
   /rename-session <n> rename the current session
-  /approval [mode]   show or set tool approval (always-ask|write|yolo|unattended)
+  /approval [mode]   show or set tool approval (always-ask|write|yolo|autopilot)
   /settings          settings hub: provider, model, approval, mode, cube
                      sandbox, keys, MCP (interactive picker in the TUI,
                      summary in line mode)
@@ -634,5 +634,8 @@ String _buildFilterNote() {
 String _providerSectionSuffix() {
   const define = String.fromEnvironment('FA_PROVIDERS');
   if (define.isEmpty || define == 'all' || define == '*') return '';
+  return ' (enabled in this build: $define)';
+}
+== '*') return '';
   return ' (enabled in this build: $define)';
 }

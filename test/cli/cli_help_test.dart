@@ -132,7 +132,7 @@ void main() {
       // Approvals.
       'always-ask',
       'yolo',
-      'unattended',
+      'autopilot',
       '/approval',
       '/settings',
       '/allow',

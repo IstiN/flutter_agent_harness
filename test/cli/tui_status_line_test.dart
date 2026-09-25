@@ -766,6 +766,69 @@ M  staged-one
       expect(kStatusLineRoles.keys.toSet(), StatusLineRoleKey.values.toSet());
     });
 
+    test('mode segment: autopilot rides the dedicated highlight role', () {
+      final render = kStatusLineSegments['mode']!;
+      final spec = _defaultSpec();
+      final autopilot = render(
+        const StatusLineSnapshot(
+          cwd: '/',
+          modelName: 'm',
+          approvalMode: 'autopilot',
+        ),
+        spec,
+      );
+      expect(autopilot, isNotNull);
+      expect(autopilot!.text, 'autopilot');
+      expect(autopilot.spans.single, ('autopilot', StatusLineRoleKey.autopilot));
+
+      // Every other approval mode keeps the quiet mode role, unchanged.
+      final yolo = render(
+        const StatusLineSnapshot(
+          cwd: '/',
+          modelName: 'm',
+          approvalMode: 'yolo',
+        ),
+        spec,
+      );
+      expect(yolo!.spans.single, ('yolo', StatusLineRoleKey.mode));
+    });
+
+    test('mode segment: autopilot keeps the load-mode tail muted', () {
+      final render = kStatusLineSegments['mode']!;
+      final seg = render(
+        const StatusLineSnapshot(
+          cwd: '/',
+          modelName: 'm',
+          approvalMode: 'autopilot',
+          agentLoadMode: 'omp',
+        ),
+        _defaultSpec(),
+      );
+      expect(seg!.spans, [
+        ('autopilot', StatusLineRoleKey.autopilot),
+        (' omp', StatusLineRoleKey.mode),
+      ]);
+    });
+
+    test('autopilot highlight resolves to the accent and never idle-dims', () {
+      final theme = TuiTheme.catppuccin;
+      final accent = kStatusLineRoles[StatusLineRoleKey.autopilot]!(theme);
+      expect(accent.foregroundRgb, theme.accent.foregroundRgb);
+      // The highlight is the point (gh-946): it survives the idle dim that
+      // quiets every other non-brand span.
+      expect(
+        identical(
+          statusLineStyle(
+            StatusLineRoleKey.autopilot,
+            theme: theme,
+            idle: true,
+          ),
+          accent,
+        ),
+        isTrue,
+      );
+    });
+
     test('registries are unmodifiable', () {
       expect(
         () => kStatusLineSegments['pi'] = _renderPiForTest,

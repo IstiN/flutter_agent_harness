@@ -652,7 +652,9 @@ const sharedSettingMetadata = <SharedSetting, _SettingMeta>{
     cliRef: 'approvalMode',
     appRef: 'ApprovalModeStore',
     yamlKeys: ['approvalMode'],
-    description: 'Tool-approval mode (always-ask / write / yolo / unattended).',
+    description:
+        'Tool-approval mode (always-ask / write / yolo / autopilot; '
+        'legacy alias: unattended).',
   ),
   SharedSetting.modelDefault: _SettingMeta(
     cliRef: 'providerKind',
