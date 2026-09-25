@@ -11,7 +11,11 @@ import 'package:fa_llm/fa_llm.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show CustomProviderRegistry, copilotDispatchHint, fetchModelsForEndpoint;
 import 'package:fa_ui/fa_ui.dart'
-    show CopilotConnectCallbacks, CopilotConnectResult, showCopilotConnectSheet;
+    show
+        CopilotConnectCallbacks,
+        CopilotConnectResult,
+        showCopilotConnectSheet,
+        showFahErrorSnack;
 
 /// Runs the full GitHub Copilot connect flow: the device-flow sheet (real
 /// fa_llm wiring unless [callbacks] is injected — the device flow needs no
@@ -43,13 +47,10 @@ Future<bool> runCopilotConnectFlow({
     // github.com serves no CORS headers; the browser build cannot run the
     // device flow — say so instead of failing mid-sheet.
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'GitHub Copilot sign-in is not available on web — use the '
-            'desktop or mobile app.',
-          ),
-        ),
+      showFahErrorSnack(
+        context,
+        'GitHub Copilot sign-in is not available on web — use the '
+        'desktop or mobile app.',
       );
     }
     return false;

@@ -387,16 +387,12 @@ class _ChatScreenState extends State<ChatScreen> {
               widget.lastConnectionStore ?? LastConnectionStore.inMemory(),
         );
         if (!context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              ok
-                  ? 'Authorization successful — try sending your message again.'
-                  : 'Authorization cancelled.',
-            ),
-            duration: const Duration(seconds: 4),
-          ),
-        );
+        ok
+            ? fa_ui.showFahSnack(
+                context,
+                'Authorization successful — try sending your message again.',
+              )
+            : fa_ui.showFahErrorSnack(context, 'Authorization cancelled.');
       },
       audioControllerFactory: widget.audioControllerFactory,
       wallpaperBuilder: (_) => const FahWallpaper(),
