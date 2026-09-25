@@ -9,11 +9,11 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/codemie_extension_signin.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/relay/ext_runtime.dart';
-import 'package:fa/services/provider_registry.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart'
     if (dart.library.html) 'package:fa/services/oauth_cli_flow_stubs.dart';
 import 'package:fa/ui/screens/codemie_sso_pickers.dart';
+import 'package:fa_ui/fa_ui.dart';
 
 /// The per-surface sign-in hops of the CodeMie SSO flow (issue #476): the
 /// macOS CLI flow, the iOS `ASWebAuthenticationSession`, the extension
@@ -147,18 +147,14 @@ Future<void> saveCodemieConnection({
 
 /// Non-blocking status hint for the desktop sign-in: the system browser is
 /// about to open. The context might come from a dialog that was popped (the
-/// preset picker) — a missing Scaffold must not crash the flow.
+/// preset picker) — [showFahSnack] no-ops without a messenger, so the flow
+/// never crashes on the cosmetic hint.
 void showCodeMieBrowserHint(BuildContext context) {
-  try {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Opening browser for CodeMie sign-in…'),
-        duration: Duration(seconds: 3),
-      ),
-    );
-  } on Object {
-    // No Scaffold ancestor — the snackbar is cosmetic, not critical.
-  }
+  showFahSnack(
+    context,
+    'Opening browser for CodeMie sign-in…',
+    duration: const Duration(seconds: 3),
+  );
 }
 
 /// macOS desktop SSO: starts a local callback server, opens the system
@@ -396,13 +392,10 @@ void _popExtensionWaitDialog(BuildContext context) {
 }
 
 void _snackExtensionNotCompleted(BuildContext context) {
-  ScaffoldMessenger.of(context).showSnackBar(
-    const SnackBar(
-      content: Text(
-        'CodeMie sign-in did not complete — no live session appeared '
-        'within the wait window (or it was cancelled). Try again.',
-      ),
-    ),
+  showFahErrorSnack(
+    context,
+    'CodeMie sign-in did not complete — no live session appeared '
+    'within the wait window (or it was cancelled). Try again.',
   );
 }
 

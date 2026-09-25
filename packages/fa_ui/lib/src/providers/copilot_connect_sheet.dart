@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
+import '../widgets/snackbars.dart';
 
 /// The host-injected Copilot auth chain. Every step is a function so tests
 /// run the sheet without any network; the app wires the real fa_llm
@@ -194,9 +195,7 @@ class _CopilotConnectSheetState extends State<_CopilotConnectSheet> {
       mode: LaunchMode.externalApplication,
     );
     if (launched || !mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(FaUiStrings.of(context).copilotOpenManually)),
-    );
+    showFahSnack(context, FaUiStrings.of(context).copilotOpenManually);
   }
 
   /// The form's Connect button: fetch the endpoint's models, then show the
@@ -449,9 +448,7 @@ class _CopilotConnectSheetState extends State<_CopilotConnectSheet> {
           TextField(
             controller: _modelController,
             onChanged: (value) => setState(() => _modelId = value.trim()),
-            decoration: InputDecoration(
-              labelText: strings.copilotModelLabel,
-            ),
+            decoration: InputDecoration(labelText: strings.copilotModelLabel),
           ),
         ],
         const SizedBox(height: 12),
