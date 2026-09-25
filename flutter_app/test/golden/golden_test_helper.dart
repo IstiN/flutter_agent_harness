@@ -11,6 +11,7 @@ library;
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -91,10 +92,40 @@ Future<void> pumpGolden(
   }
 }
 
-/// Asserts the current frame matches `test/golden/goldens/<name>.png`.
+/// Asserts the current frame matches `test/goldens/<name>.png`.
 Future<void> expectGolden(WidgetTester tester, String name) {
   return expectLater(
     find.byType(MaterialApp),
     matchesGoldenFile('goldens/$name.png'),
   );
+}
+
+/// Fails when any visible text is painted with the test fallback font.
+///
+/// A [TextStyle] that REPLACES a themed label style (ButtonStyle.textStyle,
+/// `styleFrom(textStyle: …)`, snackbar/tooltip content styles) drops the
+/// themed fontFamily, and the engine then paints the glyphs with its default
+/// font — solid Ahem placeholder blocks in goldens, a foreign system font on
+/// devices (issue #947). Every themed style carries an explicit family (the
+/// textTheme is built with `.apply(fontFamily: …)`), so a null family on a
+/// rendered paragraph is always this bug.
+void expectRealFontText(WidgetTester tester) {
+  final offenders = <String>{};
+  for (final renderObject in tester.allRenderObjects
+      .whereType<RenderParagraph>()) {
+    final plain = renderObject.text.toPlainText().trim();
+    final family = renderObject.text.style?.fontFamily;
+    if (plain.isNotEmpty && (family == null || family.isEmpty)) {
+      offenders.add(
+        '"${plain.length > 40 ? '${plain.substring(0, 40)}…' : plain}"',
+      );
+    }
+  }
+  if (offenders.isNotEmpty) {
+    fail(
+      'Text painted with the test fallback font (family-less resolved '
+      'TextStyle — add fontFamily to the overriding style, mirroring the '
+      'button themes in app_theme.dart): ${offenders.take(10).join(', ')}',
+    );
+  }
 }
