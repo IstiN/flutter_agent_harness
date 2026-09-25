@@ -664,7 +664,7 @@ void main() {
             {'build-ios', 'submit-ios'},
             {},
             85,
-            6000,
+            6600,
             240,
           ),
           'cli': (

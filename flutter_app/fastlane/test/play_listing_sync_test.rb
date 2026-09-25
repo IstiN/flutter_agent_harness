@@ -37,7 +37,8 @@ if $PROGRAM_NAME == __FILE__
   # delete/upload/list images → commit/delete-edit.
   class FakePlayHttp
     attr_reader :calls, :store, :committed
-    attr_accessor :upload_sha_override, :token_response, :remote_languages, :post_commit_drift
+    attr_accessor :upload_sha_override, :token_response, :remote_languages,
+                  :post_commit_drift, :post_commit_reverse
 
     def initialize
       @calls = []
@@ -70,6 +71,9 @@ if $PROGRAM_NAME == __FILE__
         if !@committed.empty? && @post_commit_drift == [m[1], m[2]]
           images += [{ sha256: Digest::SHA256.hexdigest("drift-junk") }]
         end
+        # Post-commit order injection: the committed listing serves the same
+        # image set in a different order (the ordering failure mode).
+        images.reverse! if !@committed.empty? && @post_commit_reverse == [m[1], m[2]]
         { status: 200, body: { images: images }.to_json }
       when method == :Post && url.end_with?(":commit")
         @committed << url
@@ -243,6 +247,54 @@ if $PROGRAM_NAME == __FILE__
     verify_edit_discarded = http.calls.any? { |m, u| m == :Delete && u.end_with?("/edits/edit1") }
     raise "FAIL: the read-only verify edit must be discarded" unless verify_edit_discarded
     ok("post-commit edits.images.list drift fails the job loudly")
+  end
+
+  # ── console-only locale: screenshots self-heal, single images don't care ──
+  Dir.mktmpdir do |root|
+    http = FakePlayHttp.new
+    http.remote_languages = %w[de-DE en-US ru-RU]
+    metadata_dir = metadata_dir_with_goldens(root)
+    # A locale added in Play Console only (de-DE: no repo metadata dir)
+    # inherits stale screenshots from whatever locale was cloned in the
+    # console. The sync must clear EVERY de-DE screenshot slot (self-heal)
+    # but never touch de-DE icon/featureGraphic (no goldens to push, and
+    # the verify gate must not read those slots either).
+    http.store[["de-DE", "icon"]] << Digest::SHA256.hexdigest("icon-de")
+    http.store[["de-DE", "featureGraphic"]] << Digest::SHA256.hexdigest("fg-junk")
+    http.store[["de-DE", "phoneScreenshots"]] << Digest::SHA256.hexdigest("stale-de")
+    summary = PlayListingSync.sync_and_verify!(metadata_dir: metadata_dir, json_key: service_account_json,
+                                               package_name: "dev.fa1.app", http: http)
+    raise "FAIL: stale de-DE phone screenshot must be cleared" unless
+      http.calls.any? { |m, u| m == :Delete && u.include?("/listings/de-DE/images/phoneScreenshots") }
+    raise "FAIL: de-DE icon must not be deleted or uploaded" unless
+      http.calls.none? { |m, u| m != :Get && u.include?("/listings/de-DE/images/icon") }
+    raise "FAIL: de-DE featureGraphic must not be deleted or uploaded" unless
+      http.calls.none? { |m, u| m != :Get && u.include?("/listings/de-DE/images/featureGraphic") }
+    raise "FAIL: verify must not read de-DE single-image slots" unless
+      http.calls.none? { |m, u| m == :Get && u =~ %r{/listings/de-DE/images/(icon|featureGraphic)\z} }
+    ok("console-only locale: screenshot slots cleared, single images untouched")
+  end
+
+  # ── post-commit ordering drift fails the job ────────────────────────────
+  Dir.mktmpdir do |root|
+    http = FakePlayHttp.new
+    metadata_dir = metadata_dir_with_goldens(root)
+    # Same sha set, served in a different order after commit (Play reordering
+    # or partial replace): the verify gate must catch it, not just per-image
+    # sha equality.
+    http.post_commit_reverse = %w[en-US phoneScreenshots]
+    begin
+      PlayListingSync.sync_and_verify!(metadata_dir: metadata_dir, json_key: service_account_json,
+                                       package_name: "dev.fa1.app", http: http)
+      raise "FAIL: reordered listing must raise"
+    rescue RuntimeError => e
+      unless e.message.include?("order") && e.message.include?("en-US/phoneScreenshots")
+        raise "FAIL: wrong error, got: #{e.message}"
+      end
+    end
+    order_edit_discarded = http.calls.any? { |m, u| m == :Delete && u.end_with?("/edits/edit1") }
+    raise "FAIL: the read-only verify edit must be discarded" unless order_edit_discarded
+    ok("post-commit screenshot order drift fails the job loudly")
   end
 
   # ── auth failure is loud ────────────────────────────────────────────────

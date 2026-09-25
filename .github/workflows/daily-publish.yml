@@ -328,9 +328,9 @@ jobs:
           # test), never by "first run in the window", with newest-match +
           # the 30s window; a wedged run is cancelled and re-dispatched
           # once (with the same distinct inputs → same distinct title).
-          # Budget 110m = child worst-case 90m (#351: version 10 +
-          # build-android 45 + submit-android 30 + listing deploy ~5m)
-          # + 20m margin.
+          # Budget 110m = child worst-case 85m (#351: version 10 +
+          # build-android 45 + submit-android 30; the #947 listing
+          # deploy rides the submit-android job's slack) + 25m margin.
           rc=0
           bash scripts/dispatch_and_watch.sh build-mobile.yml \
             --repo "${GITHUB_REPOSITORY}" --ref main \
