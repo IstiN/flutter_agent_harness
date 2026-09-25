@@ -3,19 +3,19 @@
 @Timeout(Duration(minutes: 5))
 library;
 
-import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
+import 'fa_cli_fixtures.dart';
 import 'pty_harness.dart';
 
 void main() {
   group('Fa CLI integration', () {
     test('boot shows banner and status line', () async {
-      final tempHome = _tempHome();
+      final tempHome = makeTempHome();
       // 120 cols: the status line renders `cwd · ctx …` — an 80-col PTY
       // right-truncates `ctx` away when the checkout lives under a deep
       // path (e.g. .worktrees/<name>), which is ambient, not a defect.
@@ -40,7 +40,7 @@ void main() {
     test(
       '/settings > provider shows Edit/Delete picker for saved provider',
       () async {
-        final tempHome = _tempHomeWithProvider();
+        final tempHome = makeTempHomeWithProvider();
         final harness = await FaCliHarness.spawn(
           extraEnv: {'HOME': tempHome.path},
         );
@@ -82,7 +82,7 @@ void main() {
     test(
       '/settings > provider delete removes provider with confirmation',
       () async {
-        final tempHome = _tempHomeWithProvider();
+        final tempHome = makeTempHomeWithProvider();
         final harness = await FaCliHarness.spawn(
           extraEnv: {'HOME': tempHome.path},
         );
@@ -130,7 +130,7 @@ void main() {
     );
 
     test('/approval always-ask switches the approval mode', () async {
-      final tempHome = _tempHomeWithApproval();
+      final tempHome = makeTempHomeWithApproval();
       final harness = await FaCliHarness.spawn(
         extraEnv: {'HOME': tempHome.path},
       );
@@ -149,96 +149,10 @@ void main() {
       );
     });
 
-    test(
-      'shift+enter inserts a newline (kitty + modifyOtherKeys wires)',
-      () async {
-        // Shift+Enter reached the CLI three ways depending on the terminal:
-        // bare CR (macOS CG poll covers that), the kitty CSI-u encoding, and
-        // xterm modifyOtherKeys. dart_tui requests the encodings at startup
-        // (CSI =1;1u + modifyOtherKeys=2); this test drives the REAL binary
-        // over a PTY and asserts both wire formats land as a newline.
-        final tempHome = _tempHome();
-        final harness = await FaCliHarness.spawn(
-          extraEnv: {'HOME': tempHome.path},
-        );
-        addTearDown(() async {
-          await harness.close();
-          tempHome.deleteSync(recursive: true);
-        });
-        await harness.waitForBoot();
-
-        // The keyboard-enhancement requests went out at startup: this is what
-        // makes a supporting terminal actually SEND the disambiguated keys.
-        expect(harness.rawOutput, contains('\x1b[=1;1u'));
-        expect(harness.rawOutput, contains('\x1b[>4;2m'));
-
-        // kitty keyboard protocol: CSI 13;2 u (Enter + shift modifier).
-        await expectNewline(harness, '\x1b[13;2u');
-        // xterm modifyOtherKeys: CSI 27;2;13 ~ (shift+enter as a ~-key).
-        await expectNewline(harness, '\x1b[27;2;13~');
-        // Legacy ESC CR encoding (terminals without protocol support, e.g.
-        // Warp's passthrough) — decoded as alt+enter.
-        await expectNewline(harness, '\x1b\r');
-        // Raw Ctrl+O control byte (0x0F): the universal legacy wire —
-        // a plain control character, so it works in EVERY terminal.
-        await expectNewline(harness, '\x0f');
-      },
-    );
-    test(
-      'shift+enter survives a default-termios PTY (ICRNL on — issue #77)',
-      () async {
-        // Real PTY hosts (IDE embedded terminals, e.g. yoloit) deliver
-        // Shift+Enter as ESC CR, and their default termios has ICRNL on —
-        // the kernel line discipline rewrites the CR to LF before fa reads
-        // it. fa must clear ICRNL at TUI startup (stty -icrnl) so the ESC CR
-        // wire arrives intact; the parser also decodes the translated ESC LF
-        // as alt+enter for hosts where stty is unavailable. The raw:true
-        // harness above can never see this failure class — this suite runs
-        // the same wire matrix against the kernel-default termios.
-        final tempHome = _tempHome();
-        final harness = await FaCliHarness.spawn(
-          extraEnv: {'HOME': tempHome.path},
-          raw: false,
-        );
-        addTearDown(() async {
-          await harness.close();
-          tempHome.deleteSync(recursive: true);
-        });
-        await harness.waitForBoot();
-
-        // The exact yoloit wire: ESC CR, ICRNL rewrites it to ESC LF when
-        // fa failed to clear the flag (AC1).
-        await expectNewline(harness, '\x1b\r');
-        // The translated wire itself (AC2): ESC LF decodes as alt+enter —
-        // the fallback for hosts that reset termios under us or where stty
-        // is unavailable.
-        await expectNewline(harness, '\x1b\n');
-        // No regression under ICRNL-on termios (AC4/AC5): protocol wires and
-        // the Ctrl+O fallback still insert newlines.
-        await expectNewline(harness, '\x1b[13;2u');
-        await expectNewline(harness, '\x1b[27;2;13~');
-        await expectNewline(harness, '\x0f');
-
-        // Plain Enter still SUBMITS under the default-termios PTY (AC4):
-        // /exit closes the REPL — the process must actually go away.
-        // runSlashCommand's pauses keep the menu-close Escape and the
-        // submitting CR in separate reads (together they would decode as
-        // alt+enter — the very wire this test asserts a newline for).
-        await harness.runSlashCommand('/exit');
-        await harness.pty.exitCode.timeout(
-          const Duration(seconds: 20),
-          onTimeout: () => throw TimeoutException(
-            'fa did not exit on plain-CR /exit submit',
-            const Duration(seconds: 20),
-          ),
-        );
-      },
-    );
-
     test('/terminal-setup prints per-terminal Shift+Enter guidance', () async {
       // The command rides the info-command dispatch table; this drives the
       // REAL binary to prove the whole path (dispatch → renderer → output).
-      final tempHome = _tempHome();
+      final tempHome = makeTempHome();
       final harness = await FaCliHarness.spawn(
         extraEnv: {'HOME': tempHome.path},
       );
@@ -255,63 +169,8 @@ void main() {
       );
     });
 
-    test(
-      'double Esc during thinking streaming aborts the run (issue #46)',
-      () async {
-        // Two Escape presses landing in ONE stdin chunk (a fast
-        // double-tap) used to decode as a single unknown key and BOTH were
-        // swallowed — the abort never fired and the TUI kept streaming
-        // with no visible reaction ("not responding"). The real binary is
-        // driven over a PTY against a mock endpoint that streams
-        // reasoning deltas slowly, so the abort window stays open.
-        final mock = _SlowThinkingMockServer();
-        await mock.start();
-        final tempHome = _tempHomeForMock(mock.port);
-        final harness = await FaCliHarness.spawn(
-          extraEnv: {'HOME': tempHome.path},
-        );
-        addTearDown(() async {
-          await harness.close();
-          tempHome.deleteSync(recursive: true);
-          await mock.close();
-        });
-        await harness.waitForBoot();
-
-        harness.sendText('hello');
-        await harness.waitForOutput(settleMs: 200);
-        harness.sendEnter();
-        // The mock starts streaming reasoning deltas immediately; the busy
-        // row is the TUI's marker for the in-flight run.
-        await harness.waitForText(
-          'Working',
-          timeout: const Duration(seconds: 30),
-        );
-
-        // ONE write carrying both presses — the exact wire shape of a fast
-        // double-tap that the decoder used to swallow whole.
-        harness.sendText('\x1b\x1b');
-
-        // The run must abort promptly: the provider surfaces the abort and
-        // the CLI prints the aborted turn, retiring the busy row.
-        await harness.waitForText(
-          'abort',
-          timeout: const Duration(seconds: 15),
-        );
-        final deadline = DateTime.now().add(const Duration(seconds: 10));
-        while (DateTime.now().isBefore(deadline)) {
-          if (!harness.screenText.contains('Working')) break;
-          await Future<void>.delayed(const Duration(milliseconds: 100));
-        }
-        expect(
-          harness.screenText.contains('Working'),
-          isFalse,
-          reason: 'busy row still up after the double-Esc abort',
-        );
-      },
-    );
-
     test('prompt zone frame is aligned (regression)', () async {
-      final tempHome = _tempHome();
+      final tempHome = makeTempHome();
       final harness = await FaCliHarness.spawn(
         extraEnv: {'HOME': tempHome.path},
       );
@@ -360,7 +219,7 @@ void main() {
     });
 
     test('/model switch is scoped to the launch folder', () async {
-      final tempHome = _tempHome();
+      final tempHome = makeTempHome();
       final sessionsRoot = Directory.systemTemp.createTempSync('fa_sess_');
       // The CLI resolves its cwd through getcwd(), which canonicalizes the
       // /var → /private/var symlink on macOS; use the resolved paths for
@@ -434,416 +293,5 @@ void main() {
       await h3.close();
       tempHome.deleteSync(recursive: true);
     });
-
-    group('approval prompt selector', () {
-      test(
-        'Cyrillic char becomes a note, 1 approves once through the PTY',
-        () async {
-          final mock = _MockOpenAiServer();
-          await mock.start();
-          addTearDown(mock.close);
-          final tempHome = _tempHomeForMock(mock.port);
-          final harness = await FaCliHarness.spawn(
-            extraEnv: {'HOME': tempHome.path, 'OPENAI_API_KEY': 'test-key'},
-          );
-          addTearDown(() async {
-            await harness.close();
-            tempHome.deleteSync(recursive: true);
-          });
-          await harness.waitForBoot();
-
-          // The mock's first answer is a bash tool call — always-ask gates
-          // it with the approval prompt.
-          harness.sendText('make the file');
-          harness.sendEnter();
-          await harness.waitForText(
-            'Approve once',
-            timeout: const Duration(seconds: 30),
-          );
-
-          // The live-bug scenario: with a Cyrillic layout the physical y
-          // key produces a different character, and typed characters used
-          // to be swallowed into the note buffer while the decision never
-          // resolved. They must still arrive as a note, AND a
-          // layout-proof key must decide.
-          harness.sendText('е');
-          await harness.waitForText(
-            'note: е',
-            timeout: const Duration(seconds: 10),
-          );
-          harness.sendText('1');
-          await harness.waitForText(
-            'turn-complete',
-            timeout: const Duration(seconds: 30),
-          );
-          // The approval really executed the command: the second model
-          // request carries the tool result with the echo's output.
-          expect(
-            mock.bodies[1].contains('ECHO-RAN-123'),
-            isTrue,
-            reason: 'approved bash call must have run',
-          );
-        },
-      );
-
-      test('arrow keys move the selection, Enter confirms the deny', () async {
-        final mock = _MockOpenAiServer();
-        await mock.start();
-        addTearDown(mock.close);
-        final tempHome = _tempHomeForMock(mock.port);
-        final harness = await FaCliHarness.spawn(
-          extraEnv: {'HOME': tempHome.path, 'OPENAI_API_KEY': 'test-key'},
-        );
-        addTearDown(() async {
-          await harness.close();
-          tempHome.deleteSync(recursive: true);
-        });
-        await harness.waitForBoot();
-
-        harness.sendText('make the file');
-        harness.sendEnter();
-        await harness.waitForText(
-          'Approve once',
-          timeout: const Duration(seconds: 30),
-        );
-        // Deny is the default highlight: move up to "Approve once" and
-        // back down to deny, then confirm with Enter. The selector marker
-        // is ASCII '>' — the old ▸ glyph shifted padded rows (issue #109).
-        harness.sendArrowUp();
-        await harness.waitForText(
-          '2. > Always approve',
-          timeout: const Duration(seconds: 10),
-        );
-        harness.sendArrowDown();
-        await harness.waitForText(
-          '3. > Deny',
-          timeout: const Duration(seconds: 10),
-        );
-        harness.sendEnter();
-        // The deny lands: the turn completes WITHOUT the command ever
-        // running — the second model request carries the denial, not
-        // the echo's output.
-        await harness.waitForText(
-          'turn-complete',
-          timeout: const Duration(seconds: 30),
-        );
-        // The tool result message carries the denial, not the echo's
-        // stdout.
-        final secondRequest =
-            jsonDecode(mock.bodies[1]) as Map<String, dynamic>;
-        final toolResults = (secondRequest['messages'] as List)
-            .whereType<Map<String, dynamic>>()
-            .where((m) => m['role'] == 'tool')
-            .toList();
-        expect(toolResults, hasLength(1));
-        final resultText = (toolResults.single['content'] as String)
-            .toLowerCase();
-        expect(resultText, contains('denied'));
-        expect(resultText, isNot(contains('echo-ran-123')));
-      });
-    });
   });
-}
-
-/// Types `a{n}b`, sends [rawKey], types `c{n}d`, and asserts `c{n}d` landed
-/// on a row BELOW `a{n}b` (a newline was inserted) without submitting the
-/// composer. Each call gets a UNIQUE numeric marker — earlier variants leave
-/// stale `a…b`/`c…d` rows on the viewport (and loaded CI runners repaint
-/// partial frames), so shared markers make the row measurement race with
-/// history; unique markers can only ever match the CURRENT composer render.
-/// Backspaces the buffer clean afterwards so variants can share one harness.
-Future<void> expectNewline(FaCliHarness harness, String rawKey) async {
-  _newlineVariant++;
-  final ab = 'a${_newlineVariant}b';
-  final cd = 'c${_newlineVariant}d';
-  harness.sendText(ab);
-  await harness.waitForOutput(settleMs: 200);
-  harness.sendText(rawKey);
-  await harness.waitForOutput(settleMs: 300);
-  harness.sendText(cd);
-  await harness.waitForOutput(settleMs: 300);
-  // Search from the END of the viewport: the composer re-renders in
-  // place as it grows, so a stale earlier frame (with cd already typed
-  // but the newline not yet rendered) can sit ABOVE the current one —
-  // first-match indexWhere would pin cd to that ghost row.
-  final abRow = harness.viewportLines.lastIndexWhere((l) => l.contains(ab));
-  final cdRow = harness.viewportLines.lastIndexWhere((l) => l.contains(cd));
-  expect(
-    abRow,
-    greaterThanOrEqualTo(0),
-    reason: 'input prefix lost on screen for $rawKey',
-  );
-  expect(
-    cdRow,
-    greaterThan(abRow),
-    reason:
-        '"$cd" must land on a row BELOW "$ab" (newline inserted), '
-        'got rows ab=$abRow cd=$cdRow for $rawKey',
-  );
-  expect(
-    harness.screenText.contains('$ab$cd'),
-    isFalse,
-    reason: 'shift+enter submitted instead of newline for $rawKey',
-  );
-  // Reset the input for the next variant: backspace over the tail, then
-  // over the newline and the head (marker-length aware — the variant
-  // number widens the markers as it grows).
-  for (var i = 0; i < ab.length + cd.length + 1; i++) {
-    harness.sendBackspace();
-  }
-  await harness.waitForOutput(settleMs: 150);
-}
-
-int _newlineVariant = 0;
-
-/// Creates a temp HOME with a minimal keyless config (yolo mode so tests
-/// never hit an approval gate).
-Directory _tempHome() {
-  final tempHome = Directory.systemTemp.createTempSync('fa_test_');
-  File('${tempHome.path}/.fah/config.yaml')
-    ..createSync(recursive: true)
-    ..writeAsStringSync('''
-provider: openai-completions
-model: test-model
-baseUrl: http://localhost:9999/v1
-mode: code
-approvalMode: yolo
-allowedTools: []
-tui:
-  classic: true  # pins the classic chrome the boot status-line assert needs (band redesign #805-#807 has its own surface)
-''');
-  return tempHome;
-}
-
-/// Creates a temp HOME with a saved custom provider in the registry.
-Directory _tempHomeWithProvider() {
-  final tempHome = Directory.systemTemp.createTempSync('fa_test_');
-  File('${tempHome.path}/.fah/config.yaml')
-    ..createSync(recursive: true)
-    ..writeAsStringSync('''
-provider: openai-completions
-model: test-model
-baseUrl: http://localhost:9999/v1
-mode: code
-approvalMode: yolo
-allowedTools: []
-customProviders:
-  - name: test-provider
-    apiType: openai
-    baseUrl: http://localhost:9999/v1
-    modelId: test-model
-''');
-  return tempHome;
-}
-
-/// Creates a temp HOME with always-ask approval mode.
-Directory _tempHomeWithApproval() {
-  final tempHome = Directory.systemTemp.createTempSync('fa_test_');
-  File('${tempHome.path}/.fah/config.yaml')
-    ..createSync(recursive: true)
-    ..writeAsStringSync('''
-provider: openai-completions
-model: test-model
-baseUrl: http://localhost:9999/v1
-mode: code
-approvalMode: always-ask
-allowedTools: []
-''');
-  return tempHome;
-}
-
-/// Creates a temp HOME pointing the provider at the local mock server with
-/// always-ask approval gating.
-Directory _tempHomeForMock(int port) {
-  final tempHome = Directory.systemTemp.createTempSync('fa_test_');
-  File('${tempHome.path}/.fah/config.yaml')
-    ..createSync(recursive: true)
-    ..writeAsStringSync('''
-provider: openai-completions
-model: test-model
-baseUrl: http://127.0.0.1:$port/v1
-mode: code
-approvalMode: always-ask
-allowedTools: []
-''');
-  return tempHome;
-}
-
-/// A tiny OpenAI-compatible SSE server: the first request answers with a
-/// scripted bash tool call, every later one with a plain text answer.
-final class _MockOpenAiServer {
-  HttpServer? _server;
-  final List<String> bodies = [];
-
-  int get port => _server!.port;
-
-  Future<void> start() async {
-    _server = await HttpServer.bind('127.0.0.1', 0);
-    _server!.listen((request) async {
-      // The boot-time model-cache refresh must not consume a scripted
-      // chat turn.
-      if (request.method == 'GET' && request.uri.path.endsWith('/models')) {
-        request.response.headers.contentType = ContentType.json;
-        request.response.write(jsonEncode({'object': 'list', 'data': []}));
-        await request.response.close();
-        return;
-      }
-      if (request.method != 'POST' ||
-          !request.uri.path.endsWith('/chat/completions')) {
-        request.response.statusCode = HttpStatus.notFound;
-        await request.response.close();
-        return;
-      }
-      final body = await utf8.decoder.bind(request).join();
-      bodies.add(body);
-      final n = bodies.length - 1;
-      request.response.headers.contentType = ContentType(
-        'text',
-        'event-stream',
-      );
-      final chunks = n == 0 ? _toolCallChunks() : _textChunks();
-      for (final chunk in chunks) {
-        // A blank line terminates each SSE event — without it the decoder
-        // concatenates every data line into one unreadable payload.
-        request.response.write('data: $chunk\n\n');
-      }
-      request.response.write('data: [DONE]\n\n');
-      await request.response.close();
-    });
-  }
-
-  Future<void> close() async {
-    await _server?.close(force: true);
-  }
-
-  static List<String> _toolCallChunks() => [
-    jsonEncode({
-      'id': 'chatcmpl-1',
-      'object': 'chat.completion.chunk',
-      'choices': [
-        {
-          'index': 0,
-          'delta': {
-            'role': 'assistant',
-            'tool_calls': [
-              {
-                'index': 0,
-                'id': 'call_1',
-                'type': 'function',
-                'function': {'name': 'bash', 'arguments': ''},
-              },
-            ],
-          },
-          'finish_reason': null,
-        },
-      ],
-    }),
-    jsonEncode({
-      'choices': [
-        {
-          'index': 0,
-          'delta': {
-            'tool_calls': [
-              {
-                'index': 0,
-                'function': {'arguments': '{"command": "echo ECHO-RAN-123"}'},
-              },
-            ],
-          },
-          'finish_reason': null,
-        },
-      ],
-    }),
-    jsonEncode({
-      'choices': [
-        {'index': 0, 'delta': {}, 'finish_reason': 'tool_calls'},
-      ],
-    }),
-  ];
-
-  static List<String> _textChunks() => [
-    jsonEncode({
-      'id': 'chatcmpl-2',
-      'object': 'chat.completion.chunk',
-      'choices': [
-        {
-          'index': 0,
-          'delta': {'role': 'assistant', 'content': 'turn-complete'},
-          'finish_reason': null,
-        },
-      ],
-    }),
-    jsonEncode({
-      'choices': [
-        {'index': 0, 'delta': {}, 'finish_reason': 'stop'},
-      ],
-    }),
-  ];
-}
-
-/// An OpenAI-compatible SSE mock that streams `reasoning_content` deltas
-/// SLOWLY (one every 150ms for ~15s, for every chat request) so a test has
-/// a long window to interact with the run mid-thinking-stream. The abort
-/// under test closes the stream before the script finishes.
-final class _SlowThinkingMockServer {
-  HttpServer? _server;
-
-  int get port => _server!.port;
-
-  Future<void> start() async {
-    _server = await HttpServer.bind('127.0.0.1', 0);
-    _server!.listen((request) async {
-      if (request.method == 'GET' && request.uri.path.endsWith('/models')) {
-        request.response.headers.contentType = ContentType.json;
-        request.response.write(jsonEncode({'object': 'list', 'data': []}));
-        await request.response.close();
-        return;
-      }
-      if (request.method != 'POST' ||
-          !request.uri.path.endsWith('/chat/completions')) {
-        request.response.statusCode = HttpStatus.notFound;
-        await request.response.close();
-        return;
-      }
-      await utf8.decoder.bind(request).join();
-      request.response.headers.contentType = ContentType(
-        'text',
-        'event-stream',
-      );
-      Map<String, dynamic> chunk(String reasoning) => {
-        'id': 'chatcmpl-think',
-        'object': 'chat.completion.chunk',
-        'model': 'test-model',
-        'choices': [
-          {
-            'index': 0,
-            'delta': {'reasoning_content': reasoning},
-            'finish_reason': null,
-          },
-        ],
-      };
-      for (var i = 0; i < 100; i++) {
-        request.response.write('data: ${jsonEncode(chunk('t$i '))}\n\n');
-        await request.response.flush();
-        await Future<void>.delayed(const Duration(milliseconds: 150));
-      }
-      request.response.write(
-        'data: ${jsonEncode({
-          'choices': [
-            {
-              'index': 0,
-              'delta': {'content': 'done'},
-              'finish_reason': 'stop',
-            },
-          ],
-        })}\n\n',
-      );
-      request.response.write('data: [DONE]\n\n');
-      await request.response.close();
-    });
-  }
-
-  Future<void> close() async {
-    await _server?.close(force: true);
-  }
 }
