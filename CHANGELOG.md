@@ -4239,6 +4239,21 @@
 
 - feat(chat): live phase/tool status row above the composer (#865) (#897)
 
+## 1.0.476
+
+- feat(818): herdr integration - detection manifest, skill surface, session resume (#911)
+- fix(951): re-enable lazy-interpreter Linux leg — group proven green on hosted ubuntu, 'env shift' was green-test debug output (#960)
+- chore(crap-gate): temporarily exclude coverage-orphaned catalog/wasm builtins from the ratchet (pipeline release) (#956)
+- fix: valid Linux-only runtime skips (#950/#953 artifacts) — closing-brace group(skip:), no reformat (#954)
+- fix(wasm): #952 syntax fixup — group(skip:) with block body is invalid; use setUpAll+Skip (#953)
+- test(wasm): Linux-only skip for lazy-interpreter group — hosted-ubuntu env shift gh-951 (#952)
+- fix(crap-gate): catalog_service flake skip must be Linux-only — unconditional @Skip killed macOS coverage (CRAP 272 > 30, fa#911) (#950)
+- ci: SM kicker — no cancel-in-progress (global group cancelled cross-PR, stamping CANCELLED checks) (#945)
+- gh-938 WIP auto-save 2026-09-25T05-39-30 (#942)
+- gh-937 ai/gh-869 (PR #899) regresses job_board_stability: 'stacked boards' expects 1 board, gets 0 — deterministic, quiet box (#940)
+- ci: bump factory pack pins to dmtools-agents#d99fc8c — 'blocked' label support (fa #939) (#941)
+- feat(ui): one-tap copy affordance on every error surface (#899)
+
 ## Unreleased
 
 ## Unreleased
