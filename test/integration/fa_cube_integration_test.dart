@@ -1,6 +1,7 @@
 @TestOn('vm')
 @Tags(['integration'])
 @Timeout(Duration(minutes: 5))
+@Skip('infra: #936 shared /tmp race (PathNotFound on cleanup)')
 library;
 
 import 'dart:io';
