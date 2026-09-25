@@ -133,14 +133,19 @@ Future<Uint8List> _captureZip(String id) async {
 }
 
 void main() {
-  // gh-938/#944: hosted-runner-only flake — skip at runtime on Linux
-  // (hosted ubuntu) only. macOS coverage leg MUST run this suite: it is
-  // the coverage provider for catalog_service.dart in the CRAP ratchet.
-  if (Platform.isLinux) {
-    throw Skip('infra: #936 hosted-runner flake (Linux leg only)');
-  }
-
+  // gh-938/#944: hosted-runner-only flake (root cause #943) — skip on
+  // Linux (hosted ubuntu), the only place it fires. This is a real
+  // runner-level skip: `throw Skip` from main() aborts file LOADING (a
+  // load error, not a skip) and reds the ubuntu flutter-tests shards —
+  // the only coverage legs the app-crap-gate merges (there is NO macOS
+  // coverage leg, see the file header). While skipped here,
+  // catalog_service_coverage_test.dart keeps the CRAP ratchet fed on
+  // every platform; unskip once #943 lands.
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  final skipOnLinux = Platform.isLinux
+      ? 'infra: #936 hosted-runner flake (Linux leg only)'
+      : null;
 
   group('catalog asset URL construction', () {
     test('catalog fetch hits exactly one slash before catalog.json', () async {
@@ -216,7 +221,7 @@ void main() {
         'https://example.com/assets/catalog.json',
       );
     });
-  });
+  }, skip: skipOnLinux);
 
   group('CatalogEntry.fromJson platforms', () {
     Map<String, dynamic> base() =>
@@ -246,7 +251,7 @@ void main() {
       final json = base()..['platforms'] = ['ios', 42, null, 'macos'];
       expect(CatalogEntry.fromJson(json).platforms, ['ios', 'macos']);
     });
-  });
+  }, skip: skipOnLinux);
 
   group('CatalogService.fetchCatalog', () {
     test('parses entries and stamps freshness', () async {
@@ -377,7 +382,7 @@ void main() {
       expect(hits, 1);
       expect(result.entries, hasLength(2));
     });
-  });
+  }, skip: skipOnLinux);
 
   group('CatalogService.downloadWidget', () {
     test('unpacks the single-root archive into relative paths', () async {
@@ -520,7 +525,7 @@ void main() {
         throwsA(isA<CatalogError>()),
       );
     });
-  });
+  }, skip: skipOnLinux);
 
   group('web platform policy', () {
     // release-assets.githubusercontent.com sends NO CORS headers, so
@@ -734,5 +739,5 @@ void main() {
         'widget.js',
       ]);
     });
-  });
+  }, skip: skipOnLinux);
 }
