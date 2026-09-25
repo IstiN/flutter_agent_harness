@@ -1593,8 +1593,16 @@ class _FaChatScreenState extends State<FaChatScreen>
           (states) =>
               states.contains(WidgetState.selected) ? colors.text : colors.dim,
         ),
-        textStyle: const WidgetStatePropertyAll(
-          TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+        // fontFamily is required: a widget-level textStyle replaces
+        // labelLarge outright, so a family-less style falls back to the
+        // platform font (issue #947 — Ahem placeholder bars in the store
+        // goldens). Same contract as the button themes in app_theme.dart.
+        textStyle: WidgetStatePropertyAll(
+          TextStyle(
+            fontFamily: FaUiThemeProvider.of(context).fontFamily ?? 'Inter',
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+          ),
         ),
       ),
     );

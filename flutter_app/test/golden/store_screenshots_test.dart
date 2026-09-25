@@ -251,6 +251,9 @@ Future<void> _pumpStore(
       home: StoreFrame(screen: screen, lang: locale.languageCode, child: child),
     ),
   );
+  // Issue #947: no Ahem placeholder blocks may reach a store golden —
+  // a family-less label style falls back to the test font.
+  expectRealFontText(tester);
 }
 
 Future<void> _expectStore(
