@@ -35,7 +35,7 @@ Map<String, dynamic> entryJson({
     'manifest': 'https://raw.test/m/manifest.json',
     'js': 'https://raw.test/w/widget.js',
   },
-  List<String>? platforms,
+  List<Object?>? platforms,
   Object? permissions = const {'network': false, 'allowedCommands': ['ls']},
 }) => {
   'id': id,
@@ -121,7 +121,7 @@ MockClient catalogServer(
 
 /// A client that always fails at the transport level (offline / DNS).
 MockClient deadClient() => MockClient(
-  (request) => Future.error(const http.ClientException('offline')),
+  (request) => Future.error(http.ClientException('offline')),
 );
 
 void main() {
@@ -539,7 +539,7 @@ void main() {
 
   group('downloadWidget (web source path)', () {
     CatalogEntry webEntry([
-      Map<String, dynamic> Function(Map<String, dynamic>)? mutate,
+      void Function(Map<String, dynamic>)? mutate,
     ]) {
       final json = entryJson();
       mutate?.call(json);
@@ -555,7 +555,7 @@ void main() {
     }) => MockClient((request) async {
       requested.add(request.url.toString());
       if (throwOnFetch) {
-        return Future.error(const http.ClientException('socket closed'));
+        return Future.error(http.ClientException('socket closed'));
       }
       if (request.url.path.endsWith('manifest.json')) {
         return http.Response(manifestBody, 200);
@@ -794,9 +794,7 @@ void main() {
         }),
       );
       final stale = await service.fetchCatalog();
-      final files = await service.downloadWidgetHealing(
-        CatalogEntry.fromJson(stale.entries.single),
-      );
+      final files = await service.downloadWidgetHealing(stale.entries.single);
       expect(utf8.decode(files['widget.js']!), contains('/* b */'));
       expect(catalogCalls, 2, reason: 'one stale fetch + one forced refetch');
     });
