@@ -380,8 +380,9 @@ APPROVALS
     write        auto-approve read+write, prompt for exec
     yolo         auto-approve everything (default) — except critical bash
                  patterns (e.g. rm -rf /, force pushes), which still prompt
-    unattended   auto-approve everything, critical patterns included — never
-                 asks; for runs without a user present (overnight/automation)
+    autopilot    auto-approve everything, critical patterns included — never
+                 asks; for runs without a user present (overnight/automation);
+                 the old `unattended` spelling is still accepted
   /approval [mode] shows or sets the mode (persisted); /allow <tool>
   always-allows one tool (persisted). Prompt answers: y = once, n = deny,
   a = always for that tool. Non-interactive runs (headless or piped stdin)
@@ -634,8 +635,5 @@ String _buildFilterNote() {
 String _providerSectionSuffix() {
   const define = String.fromEnvironment('FA_PROVIDERS');
   if (define.isEmpty || define == 'all' || define == '*') return '';
-  return ' (enabled in this build: $define)';
-}
-== '*') return '';
   return ' (enabled in this build: $define)';
 }

@@ -779,7 +779,10 @@ M  staged-one
       );
       expect(autopilot, isNotNull);
       expect(autopilot!.text, 'autopilot');
-      expect(autopilot.spans.single, ('autopilot', StatusLineRoleKey.autopilot));
+      expect(autopilot.spans.single, (
+        'autopilot',
+        StatusLineRoleKey.autopilot,
+      ));
 
       // Every other approval mode keeps the quiet mode role, unchanged.
       final yolo = render(

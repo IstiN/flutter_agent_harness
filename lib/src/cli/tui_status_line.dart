@@ -35,6 +35,7 @@ import 'dart:collection' show UnmodifiableMapView;
 import 'package:dart_tui/src/bubbles/style.dart' show RgbColor, Style;
 import 'package:yaml/yaml.dart';
 
+import '../approval/approval.dart' show kAutopilotLabel;
 import '../exceptions.dart';
 import '../trajectory/formatters.dart' show formatTokens;
 import 'tui_text_width.dart';
@@ -225,6 +226,12 @@ enum StatusLineRoleKey {
   /// the S3 writer paints behind the rendered spans. Additive key — the
   /// S1 token merge re-points the lambda, never removes the key.
   bandBg,
+
+  /// The approval-mode segment when autopilot (gh-946): the one mode that
+  /// auto-approves everything, critical patterns included — highlighted
+  /// with the accent (and exempt from the idle dim) so a never-asks
+  /// session reads at a glance.
+  autopilot,
 }
 
 /// The statusLine role TABLE (issue #805 seam): maps each role key onto an
@@ -1239,10 +1246,7 @@ LaidSegment? _renderMode(StatusLineSnapshot s, StatusLineSpec spec) {
       if (hasLoad) (' $load', StatusLineRoleKey.mode),
     ]);
   }
-  final parts = [
-    if (hasApproval) approval,
-    if (hasLoad) load,
-  ];
+  final parts = [if (hasApproval) approval, if (hasLoad) load];
   return LaidSegment('mode', [(parts.join(' '), StatusLineRoleKey.mode)]);
 }
 

@@ -380,17 +380,20 @@ void main() {
       expect(approvalModeFromLabel(null), isNull);
     });
 
-    test('unattended is labeled autopilot; unattended stays a legacy alias', () {
-      // gh-946: the CLI spelling of the never-blocks mode is `autopilot`.
-      expect(ApprovalMode.unattended.label, 'autopilot');
-      expect(approvalModeFromLabel('autopilot'), ApprovalMode.unattended);
-      // Persisted configs and hosts written before the rename keep loading.
-      expect(approvalModeFromLabel('unattended'), ApprovalMode.unattended);
-      // The other labels are unchanged.
-      expect(ApprovalMode.alwaysAsk.label, 'always-ask');
-      expect(ApprovalMode.write.label, 'write');
-      expect(ApprovalMode.yolo.label, 'yolo');
-    });
+    test(
+      'unattended is labeled autopilot; unattended stays a legacy alias',
+      () {
+        // gh-946: the CLI spelling of the never-blocks mode is `autopilot`.
+        expect(ApprovalMode.unattended.label, 'autopilot');
+        expect(approvalModeFromLabel('autopilot'), ApprovalMode.unattended);
+        // Persisted configs and hosts written before the rename keep loading.
+        expect(approvalModeFromLabel('unattended'), ApprovalMode.unattended);
+        // The other labels are unchanged.
+        expect(ApprovalMode.alwaysAsk.label, 'always-ask');
+        expect(ApprovalMode.write.label, 'write');
+        expect(ApprovalMode.yolo.label, 'yolo');
+      },
+    );
   });
 
   group('bash critical-pattern escalation', () {
