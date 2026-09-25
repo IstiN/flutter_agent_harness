@@ -1,4 +1,9 @@
 tags:
+  # gh-938: while #936 is open, 12 infra-flaky skips carry `infra: #936` in
+  # their reason (10 file-level `@Skip` + 2 `skip:` params — see
+  # test/cli/tui_prototype_snapshot_test.dart et al. and
+  # flutter_app/test/apps/catalog_service_test.dart). Ledger + re-enable
+  # sweep: `grep -rn "infra: #936" test flutter_app/test flutter_app/crap4dart.yaml`
   integration:
     # Integration tests spawn real processes / network and are excluded from the
     # pre-commit gate. Run them manually with: dart test --tags integration
