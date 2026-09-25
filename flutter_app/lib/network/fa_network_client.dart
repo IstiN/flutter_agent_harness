@@ -285,11 +285,17 @@ class FaNetworkClient {
     required String id,
     required String payload,
     List<String>? mentions,
+    String? senderKey,
   }) async {
     final res = await _request(
       'POST',
       '/api/channels/$channelId/messages',
-      body: {'id': id, 'payload': payload, '''mentions''': ?mentions},
+      body: {
+        'id': id,
+        'payload': payload,
+        '''mentions''': ?mentions,
+        '''senderKey''': ?senderKey,
+      },
       expected: {202},
     );
     return Envelope.fromJson(_decodeMap(res));

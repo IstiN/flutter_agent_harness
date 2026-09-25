@@ -143,6 +143,14 @@ final class NetworkSession extends ChangeNotifier {
     unawaited(_ws.connect());
   }
 
+  /// Adds a freshly created channel to the local list (the manager's
+  /// `createChannel` calls this) and notifies — the rail updates live.
+  void addChannel(Channel channel) {
+    if (channels.any((c) => c.id == channel.id)) return;
+    channels = [...channels, channel];
+    notifyListeners();
+  }
+
   /// Opens a channel: first history page + socket subscription.
   Future<void> openChannel(String channelId) async {
     final state = channelStates.putIfAbsent(channelId, ChannelState.new);
@@ -217,6 +225,7 @@ final class NetworkSession extends ChangeNotifier {
       id: envelopeId,
       payload: payload,
       mentions: mentions,
+      senderKey: _wallet.identityPub,
     );
   }
 

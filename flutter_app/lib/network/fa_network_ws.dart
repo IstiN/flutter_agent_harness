@@ -211,6 +211,7 @@ class FaNetworkWs {
     required String id,
     required String payload,
     List<String>? mentions,
+    String? senderKey,
   }) {
     final frame = <String, Object?>{
       'type': 'envelope.send',
@@ -218,6 +219,7 @@ class FaNetworkWs {
       'id': id,
       'payload': payload,
       '''mentions''': ?mentions,
+      '''senderKey''': ?senderKey,
     };
     if (_connected) {
       _sendNow(frame);

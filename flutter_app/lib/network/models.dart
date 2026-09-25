@@ -198,6 +198,7 @@ class Envelope {
     required this.senderId,
     required this.payload,
     this.mentions,
+    this.senderKey,
     this.createdAt,
   });
 
@@ -211,6 +212,11 @@ class Envelope {
 
   /// Mentioned agent ids (identity metadata only; drives wake-ups).
   final List<String>? mentions;
+
+  /// The sender's current X25519 pubkey (base64, directory metadata per
+  /// the contract — never message content). Absent = unknown; fall back
+  /// to a self-describing payload wrapper (fanet1) or whois.
+  final String? senderKey;
   final DateTime? createdAt;
 
   factory Envelope.fromJson(Map<String, Object?> json) => Envelope(
@@ -219,6 +225,7 @@ class Envelope {
     senderId: _str(json['senderId']),
     payload: _str(json['payload']),
     mentions: _strList(json['mentions']),
+    senderKey: _strOrNull(json['senderKey']),
     createdAt: _date(json['createdAt']),
   );
 
@@ -228,6 +235,7 @@ class Envelope {
     'senderId': senderId,
     'payload': payload,
     '''mentions''': ?mentions,
+    '''senderKey''': ?senderKey,
     'createdAt': ?createdAt?.toIso8601String(),
   };
 }

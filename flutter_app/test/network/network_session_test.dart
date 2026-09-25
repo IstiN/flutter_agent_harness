@@ -342,6 +342,7 @@ void main() {
       );
       expect(frame['channelId'], 'c1');
       expect(frame['id'], state.messages.single.envelopeId);
+      expect(frame['senderKey'], wallet.identityPub); // contract senderKey
       final payload = frame['payload']! as String;
       expect(payload, isNot(contains('hello channel'))); // ciphertext only
 
