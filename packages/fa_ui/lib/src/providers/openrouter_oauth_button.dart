@@ -7,6 +7,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../strings/fa_ui_strings.dart';
+import '../widgets/snackbars.dart';
 
 /// Callback invoked with the OpenRouter API key minted by the OAuth flow.
 typedef OpenRouterOAuthSuccessCallback = void Function(String apiKey);
@@ -128,18 +129,16 @@ class OpenRouterOAuthButton extends StatelessWidget {
       }
     } on ConfigException catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(strings.settingsOpenRouterOAuthError(e.message)),
-          ),
+        showFahErrorSnack(
+          context,
+          strings.settingsOpenRouterOAuthError(e.message),
         );
       }
     } on Object catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(strings.settingsOpenRouterOAuthError(e.toString())),
-          ),
+        showFahErrorSnack(
+          context,
+          strings.settingsOpenRouterOAuthError(e.toString()),
         );
       }
     }

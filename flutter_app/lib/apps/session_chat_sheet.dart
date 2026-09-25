@@ -18,7 +18,9 @@ import 'package:fa_ui/fa_ui.dart'
         FaHeaderAction,
         FaTypingFooter,
         TrajectoryController,
-        TrajectoryScreen;
+        TrajectoryScreen,
+        showFahErrorSnack,
+        showFahSnack;
 
 import 'package:path/path.dart' as p;
 
@@ -296,16 +298,12 @@ class SessionChatSheetState extends State<SessionChatSheet>
           widget.lastConnectionStore ?? LastConnectionStore.inMemory(),
     );
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          ok
-              ? 'Authorization successful — try sending your message again.'
-              : 'Authorization cancelled.',
-        ),
-        duration: const Duration(seconds: 4),
-      ),
-    );
+    ok
+        ? showFahSnack(
+            context,
+            'Authorization successful — try sending your message again.',
+          )
+        : showFahErrorSnack(context, 'Authorization cancelled.');
   }
 
   List<FlutterManagedSession> get _liveSessions => widget.manager.sessions;
@@ -741,12 +739,9 @@ class SessionChatSheetState extends State<SessionChatSheet>
   void _showSessionTooLarge(SessionMetadata metadata) {
     if (!mounted) return;
     final sizeMb = (metadata.sizeBytes ?? 0) / (1024 * 1024);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          context.l10n.sessionTooLargeTitle(sizeMb.toStringAsFixed(0)),
-        ),
-      ),
+    showFahErrorSnack(
+      context,
+      context.l10n.sessionTooLargeTitle(sizeMb.toStringAsFixed(0)),
     );
   }
 
@@ -1454,11 +1449,10 @@ class SessionChatSheetState extends State<SessionChatSheet>
     if (service == null) return;
     await Clipboard.setData(ClipboardData(text: service.transcriptMarkdown()));
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.l10n.chatCopiedToClipboard),
-          duration: const Duration(seconds: 2),
-        ),
+      showFahSnack(
+        context,
+        context.l10n.chatCopiedToClipboard,
+        duration: const Duration(seconds: 2),
       );
     }
   }

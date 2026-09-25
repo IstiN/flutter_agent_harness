@@ -299,7 +299,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     unawaited(_ensureNamesStore());
     unawaited(_ensureUiPrefs());
     // Issue #381: boot skipped an oversized last-active session — say so
-    // instead of the old silent swap; the action opens it windowed.
+    // instead of the old silent swap; windowed open stays on the sidebar.
     showBootOversizeNotice(
       context,
       manager: widget.manager,
@@ -663,20 +663,21 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   /// (like the info dialog's change button); false = cancelled/failed.
   Future<bool> _applyPickedMount(AgentService service) async {
     final l10n = context.l10n;
-    final messenger = ScaffoldMessenger.of(context);
     final String? picked;
     try {
       picked = await pickAndApplyProjectMount(
         env: service.env,
         onApplied: () => service.refreshProjectMountPrompt(),
-        onAccessDenied: () => messenger.showSnackBar(
-          SnackBar(content: Text(l10n.filesFolderAccessDenied)),
-        ),
+        onAccessDenied: () {
+          if (mounted) {
+            showFahErrorSnack(context, l10n.filesFolderAccessDenied);
+          }
+        },
       );
     } on Object catch (e) {
-      messenger.showSnackBar(
-        SnackBar(content: Text(l10n.filesFolderPickerError(e.toString()))),
-      );
+      if (mounted) {
+        showFahErrorSnack(context, l10n.filesFolderPickerError(e.toString()));
+      }
       return false;
     }
     return picked != null;
@@ -807,14 +808,10 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
 
   void _showSessionTooLarge(SessionMetadata metadata) {
     if (!mounted) return;
-    final messenger = ScaffoldMessenger.maybeOf(context);
     final sizeMb = (metadata.sizeBytes ?? 0) / (1024 * 1024);
-    messenger?.showSnackBar(
-      SnackBar(
-        content: Text(
-          context.l10n.sessionTooLargeTitle(sizeMb.toStringAsFixed(0)),
-        ),
-      ),
+    showFahErrorSnack(
+      context,
+      context.l10n.sessionTooLargeTitle(sizeMb.toStringAsFixed(0)),
     );
   }
 
@@ -824,14 +821,11 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   ) {
     debugPrint('[fah][shell] ${metadata.id} driven elsewhere: $error');
     if (!mounted) return;
-    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-      SnackBar(
-        content: Text(
-          context.l10n.sessionDrivenElsewhere(
-            leaseOwnerLabel(error.lease.host),
-            error.lease.pid,
-          ),
-        ),
+    showFahErrorSnack(
+      context,
+      context.l10n.sessionDrivenElsewhere(
+        leaseOwnerLabel(error.lease.host),
+        error.lease.pid,
       ),
     );
   }
@@ -1075,12 +1069,10 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
         ),
       TextButton(
         onPressed: () async {
-          final messenger = ScaffoldMessenger.of(dialogContext);
           final address = _mailboxAddress(service);
           await Clipboard.setData(ClipboardData(text: address));
-          messenger.showSnackBar(
-            SnackBar(content: Text(l10n.workspaceDialogMailboxCopied)),
-          );
+          if (!dialogContext.mounted) return;
+          showFahSnack(dialogContext, l10n.workspaceDialogMailboxCopied);
         },
         child: Text(l10n.workspaceDialogMailboxCopy),
       ),
