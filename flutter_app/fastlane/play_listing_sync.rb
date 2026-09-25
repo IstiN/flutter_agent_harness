@@ -88,13 +88,22 @@ module PlayListingSync
     end
   end
 
-  # The post-sync state the listing must have: sha256 sets per
-  # [locale, type] — the repo goldens where they exist, empty where they
-  # do not (ru-RU tenInch, dropped locales).
+  # The post-sync state the listing must have: sha256 SEQUENCES per
+  # [locale, type] in listing order (local_images sorts — file name order
+  # IS the Play listing order) — the repo goldens where they exist, empty
+  # where they do not (ru-RU tenInch, dropped locales).
+  #
+  # icon/featureGraphic are single-slot brand assets and Play Console does
+  # not allow an empty icon on a listing locale, so for locales the repo
+  # does NOT ship they are "don't care": a console-created locale keeps
+  # its icon/feature graphic (the sync only clears + enforces the
+  # screenshot sets there — issue #947 review).
   def expected_state(metadata_dir, remote_locales)
+    repo = repo_locales(metadata_dir)
     all_locales(metadata_dir, remote_locales).to_h do |locale|
-      [locale, MANAGED_TYPES.to_h { |type|
-        [type, local_images(metadata_dir, locale, type).map { |path| sha256(path) }.sort]
+      types = repo.include?(locale) ? MANAGED_TYPES : SCREENSHOT_TYPES
+      [locale, types.to_h { |type|
+        [type, local_images(metadata_dir, locale, type).map { |path| sha256(path) }]
       }]
     end
   end
@@ -150,12 +159,14 @@ module PlayListingSync
     problems = []
     expected_state(metadata_dir, remote_locales).each do |locale, by_type|
       by_type.each do |type, want|
+        # Sequence compare (no sort): uploads go out in listing order, so
+        # a Play-side reordering (02_… shown before 01_…) must fail too.
         got = list_images!(http, package_name, edit_id, locale, type, auth)
-              .map { |image| image["sha256"] }.compact.sort
+              .map { |image| image["sha256"] }.compact
         next if got == want
 
         problems << "  #{locale}/#{type}: remote has #{got.size} image(s), " \
-                    "expected #{want.size} (sha256 mismatch)"
+                    "expected #{want.size} (sha256 or listing-order mismatch)"
       end
     end
     delete_edit!(http, package_name, edit_id, auth) # read-only edit — discard
@@ -279,16 +290,24 @@ module PlayListingSync
   # Minimal HTTPS JSON/binary transport with bounded 5xx/time-out retries.
   # The unit tests substitute a fake with the same `request` signature.
   class Http
-    RETRIABLE = [Net::OpenTimeout, Net::ReadTimeout, Errno::ECONNRESET, EOFError].freeze
+    # A received 5xx response — retriable exactly like a transport
+    # timeout, but named so nobody mistakes it for one.
+    class HttpServerError < StandardError; end
+
+    RETRIABLE = [
+      Net::OpenTimeout, Net::ReadTimeout, Errno::ECONNRESET, EOFError,
+      HttpServerError
+    ].freeze
 
     def request(method, url, headers: {}, body: nil, content_type: nil)
       tries = 0
       begin
         tries += 1
         res = perform(method, url, headers, body, content_type)
-        return { status: res.code.to_i, body: res.body.to_s } if res.code.to_i < 500 || tries >= 3
+        status = res.code.to_i
+        return { status: status, body: res.body.to_s } if status < 500 || tries >= 3
 
-        raise Net::ReadTimeout, "HTTP #{res.code}"
+        raise HttpServerError, "HTTP #{status}"
       rescue *RETRIABLE
         raise if tries >= 3
 
