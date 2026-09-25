@@ -99,20 +99,26 @@ void main() {
     'serve onto a taken port that frees mid-retry: bind succeeds, exit 0',
     () async {
       // Issue #943 vector 2: an overlapping run's predecessor holds the
-      // port for a few hundred ms. The blocker closes on its FIRST
-      // ACCEPTED CONNECTION — attempt 1's healthz probe — so the close
-      // is deterministic (attempt 1: bind fails, probe dies; attempt 2:
-      // binds) no matter how slow the serve prelude is on a loaded
-      // runner.
+      // port for a few hundred ms. hubServe connects to this port TWICE
+      // before a successful bind: the idempotency PRE-probe at the top
+      // of hubServe (accept 1), then attempt 1's mid-retry healthz
+      // probe after the bind fails (accept 2). The blocker closes on
+      // the SECOND accept — so the close is deterministic AND the
+      // retry path is genuinely exercised: attempt 1 cannot bind, and
+      // exit 0 is only reachable via attempt 2+.
       final port = await freePort();
       final blocker = await ServerSocket.bind('127.0.0.1', port);
-      final firstConnection = Completer<void>();
+      var accepts = 0;
+      final secondAccepted = Completer<void>();
       final sub = blocker.listen((socket) {
         socket.destroy();
-        if (!firstConnection.isCompleted) firstConnection.complete();
+        accepts++;
+        if (accepts == 2 && !secondAccepted.isCompleted) {
+          secondAccepted.complete();
+        }
       });
       unawaited(
-        firstConnection.future.then((_) async {
+        secondAccepted.future.then((_) async {
           await sub.cancel();
           await blocker.close();
         }),
