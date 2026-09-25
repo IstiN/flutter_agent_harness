@@ -41,8 +41,14 @@ permissions:
   checks: read
 
 concurrency:
+  # Global group, but NO cancel-in-progress (fa #911 diagnosis, 2026-09-25):
+  # a push on ANY PR branch used to kill the in-flight kicker for every
+  # other branch, leaving sm-liveness/head-completeness check-runs stamped
+  # CANCELLED on random heads ("Cancelled after 6s") and polluting PR
+  # check rolls repo-wide. The kicker jobs are seconds-cheap watchdogs —
+  # let them queue instead of cancelling; a bounded backlog is harmless.
   group: sm-kicker
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   GH_TOKEN: ${{ github.token }}
