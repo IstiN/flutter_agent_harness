@@ -44,7 +44,7 @@ final _turns = [
           'id': 'c1-$i',
           'name': 'bash',
           'arguments': {
-            'command': 'sleep ${4 + i} && echo p539-wave1-$i',
+            'command': 'sleep ${1 + i} && echo p539-wave1-$i',
             'background': true,
           },
         },
