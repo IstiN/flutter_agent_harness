@@ -2,6 +2,9 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+// ignore_for_file: prefer_initializing_formals — named private
+// parameters cannot be initializing formals in Dart.
+
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -154,7 +157,7 @@ final class NetworkSession extends ChangeNotifier {
   /// Opens a channel: first history page + socket subscription.
   Future<void> openChannel(String channelId) async {
     final state = channelStates.putIfAbsent(channelId, ChannelState.new);
-    unawaited(Future(() => _ws.subscribe(channelId)));
+    _ws.subscribe(channelId);
     if (state.historyResolved || state.loading) return;
     await _loadHistoryPage(channelId, state);
   }
@@ -356,10 +359,15 @@ final class NetworkSession extends ChangeNotifier {
 
   /// Tears the session down (leave/network switch): socket closed, event
   /// subscription cancelled. The wallet keeps every key (I1).
+  ///
+  /// Fire-and-forget: stream cancel/close futures resolve on the zone's
+  /// event queue, which wedges `testWidgets`'s implicit end-of-test pump —
+  /// teardown is best-effort and needs no completion guarantee.
   Future<void> close() async {
-    await _events?.cancel();
+    final events = _events;
     _events = null;
-    await _ws.disconnect();
+    if (events != null) unawaited(events.cancel());
+    unawaited(_ws.disconnect());
   }
 
   @override

@@ -2,6 +2,9 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+// ignore_for_file: prefer_initializing_formals — named private
+// parameters cannot be initializing formals in Dart.
+
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
@@ -42,6 +45,14 @@ final class NetworkSessionManager extends ChangeNotifier {
 
   /// The ai-native JWT (management routes + authed join); null = guest.
   set jwt(String? token) => _jwt = token;
+
+  /// Whether an ai-native JWT is set (drives management-only UI like
+  /// network creation — guests never see those affordances).
+  bool get hasJwt => _jwt != null && _jwt!.isNotEmpty;
+
+  /// Re-reads wallet-driven UI after an out-of-band wallet mutation
+  /// (e.g. a wallet import replacing the contents in place).
+  void walletExternallyUpdated() => notifyListeners();
 
   /// Ensures the wallet identity exists (first-run onboarding calls this
   /// with the human's chosen display name).
@@ -110,6 +121,40 @@ final class NetworkSessionManager extends ChangeNotifier {
 
   FaNetworkClient _newClient() =>
       FaNetworkClient(baseUrl: _baseUrl, httpClient: _http, jwtToken: _jwt);
+
+  /// Creates a network (management route — requires a JWT); the caller
+  /// becomes owner and is joined immediately with the one-time join
+  /// credentials. Returns the live session.
+  Future<NetworkSession> createNetwork({
+    required String name,
+    required String password,
+  }) async {
+    final client = _newClient()..session = _sessionToken;
+    final result = await client.createNetwork(name: name, password: password);
+    final networkId = result.network.id;
+    return join(
+      networkId: networkId,
+      password: result.joinCredentials?.password ?? password,
+    );
+  }
+
+  /// Creates a channel inside [networkId] (management route — public
+  /// channels require owner/admin) and reflects it into the live session's
+  /// channel list when one is running.
+  Future<Channel> createChannel(
+    String networkId, {
+    required String name,
+    bool isPublic = false,
+  }) async {
+    final client = _newClient()..session = _sessionToken;
+    final channel = await client.createChannel(
+      networkId,
+      name: name,
+      isPublic: isPublic,
+    );
+    sessions[networkId]?.addChannel(channel);
+    return channel;
+  }
 
   NetworkSession _startSession(
     String networkId,

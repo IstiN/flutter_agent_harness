@@ -2158,4 +2158,191 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get storeBannerDismiss => 'Hide banner';
+
+  @override
+  String get networkModeLocal => 'Local';
+
+  @override
+  String get networkModeNetwork => 'Network';
+
+  @override
+  String get networkWelcomeTitle => 'Welcome to Fa networks';
+
+  @override
+  String get networkWelcomeBody =>
+      'Pick a display name — other members see it next to your messages.';
+
+  @override
+  String get networkContinue => 'Continue';
+
+  @override
+  String get networkNetworksTitle => 'Networks';
+
+  @override
+  String get networkBackTooltip => 'Back';
+
+  @override
+  String get networkSearchHint => 'Search networks…';
+
+  @override
+  String get networkEmptyTitle => 'No networks yet';
+
+  @override
+  String get networkJoinFirst => 'Join your first network';
+
+  @override
+  String get networkNoMatches => 'No matches';
+
+  @override
+  String get networkCreateNetwork => 'Create a network';
+
+  @override
+  String get networkNameLabel => 'Name';
+
+  @override
+  String get networkPasswordLabel => 'Password';
+
+  @override
+  String get networkCreate => 'Create';
+
+  @override
+  String get networkJoinTitle => 'Join a network';
+
+  @override
+  String get networkJoinLinkLabel => 'Join link';
+
+  @override
+  String get networkJoinFill => 'Fill';
+
+  @override
+  String get networkIdLabel => 'Network id';
+
+  @override
+  String get networkDisplayNameLabel => 'Display name';
+
+  @override
+  String get networkDisplayNameLocked => 'Display name locked to your account.';
+
+  @override
+  String get networkJoinRequired => 'Network id and password are required.';
+
+  @override
+  String networkJoinInvalidCredentials(Object message) {
+    return 'Invalid credentials — $message';
+  }
+
+  @override
+  String networkJoinRetryAfter(Object seconds) {
+    return ' Try again in ${seconds}s.';
+  }
+
+  @override
+  String get networkJoin => 'Join';
+
+  @override
+  String get networkSelectChannel => 'Select a channel';
+
+  @override
+  String get networkReconnecting =>
+      'Reconnecting — messages will send when back.';
+
+  @override
+  String networkMessageHint(Object channel) {
+    return 'Message $channel';
+  }
+
+  @override
+  String get networkNewChannel => 'New channel';
+
+  @override
+  String networkOnlineCount(Object count) {
+    return '$count online';
+  }
+
+  @override
+  String get networkFilterAll => 'All';
+
+  @override
+  String get networkFilterShowcases => 'Showcases';
+
+  @override
+  String get networkConnecting => 'Connecting…';
+
+  @override
+  String get networkNoChannels => 'No channels';
+
+  @override
+  String get networkChannelOptions => 'Channel options';
+
+  @override
+  String get networkAddAgent => 'Add agent…';
+
+  @override
+  String get networkShowcasePublic => 'Showcase (public)';
+
+  @override
+  String get networkAddAgentTitle => 'Add an agent';
+
+  @override
+  String get networkAddAgentWarning =>
+      'Share out-of-band — anyone with this string can read the channel.';
+
+  @override
+  String get networkAddAgentNoKeys =>
+      'No keys for this channel on this device.';
+
+  @override
+  String get networkInviteCopied => 'Invite copied to clipboard.';
+
+  @override
+  String get networkCopy => 'Copy';
+
+  @override
+  String get networkClose => 'Close';
+
+  @override
+  String get networkWalletTooltip => 'Wallet';
+
+  @override
+  String get networkWalletExport => 'Export wallet';
+
+  @override
+  String get networkWalletImport => 'Import wallet';
+
+  @override
+  String get networkWalletExported =>
+      'Wallet exported — JSON copied to clipboard.';
+
+  @override
+  String networkWalletExportFailed(Object error) {
+    return 'Export failed: $error';
+  }
+
+  @override
+  String get networkWalletImported => 'Wallet imported.';
+
+  @override
+  String get networkPassphraseLabel => 'Passphrase';
+
+  @override
+  String get networkPassphraseRepeatLabel => 'Repeat passphrase';
+
+  @override
+  String get networkPassphraseEmpty => 'Passphrase must not be empty.';
+
+  @override
+  String get networkPassphraseMismatch => 'Passphrases do not match.';
+
+  @override
+  String get networkExport => 'Export';
+
+  @override
+  String get networkImport => 'Import';
+
+  @override
+  String get networkWalletJsonLabel => 'Exported wallet JSON';
+
+  @override
+  String get networkWalletImportWarning =>
+      'Importing replaces the wallet on this device.';
 }

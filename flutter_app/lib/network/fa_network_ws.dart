@@ -246,6 +246,11 @@ class FaNetworkWs {
 
   /// Closes the socket and stops reconnecting until [connect] is called.
   /// Queued outbound frames and channel subscriptions are kept.
+  ///
+  /// The socket teardown is fire-and-forget: cancel/close futures resolve
+  /// on the zone's event queue, and awaiting them inside `testWidgets`'s
+  /// FakeAsync wedges the implicit end-of-test pump. Disconnect is a
+  /// best-effort teardown; nothing needs the completion guarantees.
   Future<void> disconnect() async {
     _manualClose = true;
     _reconnectTimer?.cancel();
@@ -253,17 +258,18 @@ class FaNetworkWs {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
     _connected = false;
-    await _subscription?.cancel();
+    final subscription = _subscription;
     _subscription = null;
+    if (subscription != null) unawaited(subscription.cancel());
     final channel = _channel;
     _channel = null;
-    await channel?.sink.close();
+    if (channel != null) unawaited(channel.sink.close());
   }
 
   /// [disconnect] plus closes the [events] stream.
   Future<void> dispose() async {
     await disconnect();
-    await _events.close();
+    unawaited(_events.close());
   }
 
   // ------------------------------------------------------------------ open
@@ -283,7 +289,7 @@ class FaNetworkWs {
     }
     _connecting = false;
     if (_manualClose || _events.isClosed) {
-      await channel.sink.close();
+      unawaited(channel.sink.close());
       return;
     }
     _channel = channel;

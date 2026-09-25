@@ -406,6 +406,21 @@ final class KeyWallet {
     await _persist();
   }
 
+  /// Replaces the whole contents with [other]'s and persists (wallet
+  /// import): the live wallet object stays in place, so every holder
+  /// (session manager, UI) sees the imported identity/keys/memberships
+  /// without a restart.
+  Future<void> replaceWith(KeyWallet other) async {
+    _identity = other._identity;
+    _channels
+      ..clear()
+      ..addAll(other._channels);
+    _networks
+      ..clear()
+      ..addAll(other._networks);
+    await _persist();
+  }
+
   /// The stored keys for `<networkId>/<channel>`, or null.
   ({String pub, String priv})? channelKeysFor(
     String networkId,

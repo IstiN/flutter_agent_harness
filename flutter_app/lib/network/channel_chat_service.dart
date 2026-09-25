@@ -18,22 +18,22 @@ import 'network_session.dart';
 /// Pair it with `FaChatFeatures.minimal()`: no sandbox, no attachments,
 /// no approvals — a channel is plain text-in/text-out.
 final class ChannelChatService implements FaChatService {
-  ChannelChatService({
-    required NetworkSession session,
-    required String channelId,
-  }) : _session = session,
-       _channelId = channelId {
-    _session.addListener(_onSessionChanged);
+  ChannelChatService({required this.session, required this.channelId}) {
+    session.addListener(_onSessionChanged);
   }
 
-  final NetworkSession _session;
-  final String _channelId;
+  /// The session this service renders; exposed for the page's listeners.
+  final NetworkSession session;
+
+  /// The channel inside [session].
+  final String channelId;
+
   final ApprovalManager _approval = ApprovalManager();
 
   final _listeners = <void Function()>[];
 
   ChannelState get _state =>
-      _session.channelStates.putIfAbsent(_channelId, ChannelState.new);
+      session.channelStates.putIfAbsent(channelId, ChannelState.new);
 
   void _onSessionChanged() => _notify();
 
@@ -44,7 +44,7 @@ final class ChannelChatService implements FaChatService {
   }
 
   /// Releases the session subscription (the chat screen disposes us).
-  void dispose() => _session.removeListener(_onSessionChanged);
+  void dispose() => session.removeListener(_onSessionChanged);
 
   // ------------------------------------------------------------ Listenable
 
@@ -71,7 +71,7 @@ final class ChannelChatService implements FaChatService {
   ];
 
   String _senderName(String senderId) {
-    final member = _session.roster[senderId];
+    final member = session.roster[senderId];
     final name = member?.displayName;
     return (name == null || name.isEmpty) ? senderId : name;
   }
@@ -88,7 +88,7 @@ final class ChannelChatService implements FaChatService {
   // ---------------------------------------------------------------- sending
 
   @override
-  Future<void> sendText(String text) => _session.sendText(_channelId, text);
+  Future<void> sendText(String text) => session.sendText(channelId, text);
 
   @override
   Future<void> sendAttachments({
@@ -114,7 +114,7 @@ final class ChannelChatService implements FaChatService {
   bool get isStreaming => false;
 
   @override
-  String? get error => _session.error;
+  String? get error => session.error;
 
   @override
   List<String> get pendingSteerTexts => const [];
@@ -160,7 +160,7 @@ final class ChannelChatService implements FaChatService {
   int? get historyAboveCount => _state.historyAboveCount;
 
   @override
-  Future<void> loadOlderHistory() => _session.loadOlder(_channelId);
+  Future<void> loadOlderHistory() => session.loadOlder(channelId);
 
   @override
   String? get historyLoadError => _state.loadError;

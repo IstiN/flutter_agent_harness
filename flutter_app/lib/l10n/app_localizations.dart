@@ -3829,6 +3829,348 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Hide banner'**
   String get storeBannerDismiss;
+
+  /// Network-mode chip: the local (classic) mode segment
+  ///
+  /// In en, this message translates to:
+  /// **'Local'**
+  String get networkModeLocal;
+
+  /// Network-mode chip: the network mode segment
+  ///
+  /// In en, this message translates to:
+  /// **'Network'**
+  String get networkModeNetwork;
+
+  /// First-run network onboarding title
+  ///
+  /// In en, this message translates to:
+  /// **'Welcome to Fa networks'**
+  String get networkWelcomeTitle;
+
+  /// First-run network onboarding body
+  ///
+  /// In en, this message translates to:
+  /// **'Pick a display name — other members see it next to your messages.'**
+  String get networkWelcomeBody;
+
+  /// Onboarding continue button
+  ///
+  /// In en, this message translates to:
+  /// **'Continue'**
+  String get networkContinue;
+
+  /// Network picker header / sidebar title
+  ///
+  /// In en, this message translates to:
+  /// **'Networks'**
+  String get networkNetworksTitle;
+
+  /// Network home back button tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Back'**
+  String get networkBackTooltip;
+
+  /// Network search field hint
+  ///
+  /// In en, this message translates to:
+  /// **'Search networks…'**
+  String get networkSearchHint;
+
+  /// Empty state when the wallet has no memberships
+  ///
+  /// In en, this message translates to:
+  /// **'No networks yet'**
+  String get networkEmptyTitle;
+
+  /// Empty state CTA
+  ///
+  /// In en, this message translates to:
+  /// **'Join your first network'**
+  String get networkJoinFirst;
+
+  /// Search with no matching memberships
+  ///
+  /// In en, this message translates to:
+  /// **'No matches'**
+  String get networkNoMatches;
+
+  /// Create-network button and dialog title
+  ///
+  /// In en, this message translates to:
+  /// **'Create a network'**
+  String get networkCreateNetwork;
+
+  /// Name field label (create network/channel dialogs)
+  ///
+  /// In en, this message translates to:
+  /// **'Name'**
+  String get networkNameLabel;
+
+  /// Password field label
+  ///
+  /// In en, this message translates to:
+  /// **'Password'**
+  String get networkPasswordLabel;
+
+  /// Create dialog confirm button
+  ///
+  /// In en, this message translates to:
+  /// **'Create'**
+  String get networkCreate;
+
+  /// Join sheet title and join-button tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Join a network'**
+  String get networkJoinTitle;
+
+  /// Join sheet: join link field label
+  ///
+  /// In en, this message translates to:
+  /// **'Join link'**
+  String get networkJoinLinkLabel;
+
+  /// Join sheet: fill form from pasted link
+  ///
+  /// In en, this message translates to:
+  /// **'Fill'**
+  String get networkJoinFill;
+
+  /// Join sheet: network id field label
+  ///
+  /// In en, this message translates to:
+  /// **'Network id'**
+  String get networkIdLabel;
+
+  /// Display name field label
+  ///
+  /// In en, this message translates to:
+  /// **'Display name'**
+  String get networkDisplayNameLabel;
+
+  /// Join sheet note when a JWT pins the display name
+  ///
+  /// In en, this message translates to:
+  /// **'Display name locked to your account.'**
+  String get networkDisplayNameLocked;
+
+  /// Join sheet validation error
+  ///
+  /// In en, this message translates to:
+  /// **'Network id and password are required.'**
+  String get networkJoinRequired;
+
+  /// Join sheet error when the server rejects the credentials
+  ///
+  /// In en, this message translates to:
+  /// **'Invalid credentials — {message}'**
+  String networkJoinInvalidCredentials(Object message);
+
+  /// Rate-limit suffix appended to the join error
+  ///
+  /// In en, this message translates to:
+  /// **' Try again in {seconds}s.'**
+  String networkJoinRetryAfter(Object seconds);
+
+  /// Join sheet confirm button
+  ///
+  /// In en, this message translates to:
+  /// **'Join'**
+  String get networkJoin;
+
+  /// Empty chat pane placeholder
+  ///
+  /// In en, this message translates to:
+  /// **'Select a channel'**
+  String get networkSelectChannel;
+
+  /// Offline banner above the channel chat
+  ///
+  /// In en, this message translates to:
+  /// **'Reconnecting — messages will send when back.'**
+  String get networkReconnecting;
+
+  /// Channel composer input hint
+  ///
+  /// In en, this message translates to:
+  /// **'Message {channel}'**
+  String networkMessageHint(Object channel);
+
+  /// Create-channel button tooltip and dialog title
+  ///
+  /// In en, this message translates to:
+  /// **'New channel'**
+  String get networkNewChannel;
+
+  /// Live member count under the network name
+  ///
+  /// In en, this message translates to:
+  /// **'{count} online'**
+  String networkOnlineCount(Object count);
+
+  /// Channel filter pill: all channels
+  ///
+  /// In en, this message translates to:
+  /// **'All'**
+  String get networkFilterAll;
+
+  /// Channel filter pill: public showcases only
+  ///
+  /// In en, this message translates to:
+  /// **'Showcases'**
+  String get networkFilterShowcases;
+
+  /// Channel rail placeholder while the session connects
+  ///
+  /// In en, this message translates to:
+  /// **'Connecting…'**
+  String get networkConnecting;
+
+  /// Channel rail empty state
+  ///
+  /// In en, this message translates to:
+  /// **'No channels'**
+  String get networkNoChannels;
+
+  /// Channel overflow menu tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Channel options'**
+  String get networkChannelOptions;
+
+  /// Channel overflow menu item opening the agent invite
+  ///
+  /// In en, this message translates to:
+  /// **'Add agent…'**
+  String get networkAddAgent;
+
+  /// Create-channel dialog: public toggle
+  ///
+  /// In en, this message translates to:
+  /// **'Showcase (public)'**
+  String get networkShowcasePublic;
+
+  /// Agent invite dialog title
+  ///
+  /// In en, this message translates to:
+  /// **'Add an agent'**
+  String get networkAddAgentTitle;
+
+  /// Agent invite dialog security warning
+  ///
+  /// In en, this message translates to:
+  /// **'Share out-of-band — anyone with this string can read the channel.'**
+  String get networkAddAgentWarning;
+
+  /// Agent invite placeholder when the wallet holds no channel keys
+  ///
+  /// In en, this message translates to:
+  /// **'No keys for this channel on this device.'**
+  String get networkAddAgentNoKeys;
+
+  /// Snack after copying the agent invite
+  ///
+  /// In en, this message translates to:
+  /// **'Invite copied to clipboard.'**
+  String get networkInviteCopied;
+
+  /// Copy invite button
+  ///
+  /// In en, this message translates to:
+  /// **'Copy'**
+  String get networkCopy;
+
+  /// Close dialog button
+  ///
+  /// In en, this message translates to:
+  /// **'Close'**
+  String get networkClose;
+
+  /// Wallet overflow menu tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Wallet'**
+  String get networkWalletTooltip;
+
+  /// Wallet menu item and export dialog title
+  ///
+  /// In en, this message translates to:
+  /// **'Export wallet'**
+  String get networkWalletExport;
+
+  /// Wallet menu item and import dialog title
+  ///
+  /// In en, this message translates to:
+  /// **'Import wallet'**
+  String get networkWalletImport;
+
+  /// Snack after a successful wallet export
+  ///
+  /// In en, this message translates to:
+  /// **'Wallet exported — JSON copied to clipboard.'**
+  String get networkWalletExported;
+
+  /// Error snack after a failed wallet export
+  ///
+  /// In en, this message translates to:
+  /// **'Export failed: {error}'**
+  String networkWalletExportFailed(Object error);
+
+  /// Snack after a successful wallet import
+  ///
+  /// In en, this message translates to:
+  /// **'Wallet imported.'**
+  String get networkWalletImported;
+
+  /// Passphrase field label
+  ///
+  /// In en, this message translates to:
+  /// **'Passphrase'**
+  String get networkPassphraseLabel;
+
+  /// Second passphrase field label
+  ///
+  /// In en, this message translates to:
+  /// **'Repeat passphrase'**
+  String get networkPassphraseRepeatLabel;
+
+  /// Export dialog validation error
+  ///
+  /// In en, this message translates to:
+  /// **'Passphrase must not be empty.'**
+  String get networkPassphraseEmpty;
+
+  /// Export dialog validation error
+  ///
+  /// In en, this message translates to:
+  /// **'Passphrases do not match.'**
+  String get networkPassphraseMismatch;
+
+  /// Export dialog confirm button
+  ///
+  /// In en, this message translates to:
+  /// **'Export'**
+  String get networkExport;
+
+  /// Import dialog confirm button
+  ///
+  /// In en, this message translates to:
+  /// **'Import'**
+  String get networkImport;
+
+  /// Import dialog: JSON paste field label
+  ///
+  /// In en, this message translates to:
+  /// **'Exported wallet JSON'**
+  String get networkWalletJsonLabel;
+
+  /// Import dialog warning note
+  ///
+  /// In en, this message translates to:
+  /// **'Importing replaces the wallet on this device.'**
+  String get networkWalletImportWarning;
 }
 
 class _AppLocalizationsDelegate

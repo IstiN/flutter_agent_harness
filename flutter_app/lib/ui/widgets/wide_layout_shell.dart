@@ -9,6 +9,8 @@ import 'package:fa/apps/app_tile_host.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa/network/network_mode.dart';
+import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/sandbox/env_factory.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
@@ -23,6 +25,7 @@ import 'package:fa/services/session_names_store.dart';
 import 'package:fa/services/upload.dart';
 
 import 'package:fa/ui/screens/app_launcher_screen.dart';
+import 'package:fa/ui/network/network_mode_chip.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/quick_model_chip.dart';
@@ -58,6 +61,8 @@ class WideLayoutShell extends StatefulWidget {
     this.videoControllerFactory,
     this.tileEngineFactory,
     this.sessionPrefsStore,
+    this.networkMode,
+    this.networkSessions,
   });
 
   final FlutterSessionManager manager;
@@ -76,6 +81,12 @@ class WideLayoutShell extends StatefulWidget {
   /// Per-parent expand/collapse persistence for the sessions tree (issue
   /// #426). Null → the shell lazily loads one from the shared env.
   final SessionUiPrefsStore? sessionPrefsStore;
+
+  /// Network mode (issue #955): when both are provided, the brand header
+  /// carries the Local | Network mode chip — the entry into the network
+  /// surface. Null (tests, non-network hosts) keeps the classic header.
+  final NetworkModeController? networkMode;
+  final NetworkSessionManager? networkSessions;
 
   @override
   State<WideLayoutShell> createState() => _WideLayoutShellState();
@@ -479,6 +490,14 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
             ),
           ),
           const Spacer(),
+          if (widget.networkMode != null && widget.networkSessions != null)
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: NetworkModeChip(
+                controller: widget.networkMode!,
+                manager: widget.networkSessions!,
+              ),
+            ),
           IconButton(
             icon: const Icon(Icons.chevron_left),
             onPressed: () => setState(() => _sidebarCollapsed = true),

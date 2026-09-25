@@ -2186,4 +2186,192 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get storeBannerDismiss => 'Скрыть';
+
+  @override
+  String get networkModeLocal => 'Локально';
+
+  @override
+  String get networkModeNetwork => 'Сеть';
+
+  @override
+  String get networkWelcomeTitle => 'Добро пожаловать в сети Fa';
+
+  @override
+  String get networkWelcomeBody =>
+      'Выберите отображаемое имя — другие участники увидят его рядом с вашими сообщениями.';
+
+  @override
+  String get networkContinue => 'Продолжить';
+
+  @override
+  String get networkNetworksTitle => 'Сети';
+
+  @override
+  String get networkBackTooltip => 'Назад';
+
+  @override
+  String get networkSearchHint => 'Поиск сетей…';
+
+  @override
+  String get networkEmptyTitle => 'Пока нет сетей';
+
+  @override
+  String get networkJoinFirst => 'Присоединитесь к своей первой сети';
+
+  @override
+  String get networkNoMatches => 'Ничего не найдено';
+
+  @override
+  String get networkCreateNetwork => 'Создать сеть';
+
+  @override
+  String get networkNameLabel => 'Название';
+
+  @override
+  String get networkPasswordLabel => 'Пароль';
+
+  @override
+  String get networkCreate => 'Создать';
+
+  @override
+  String get networkJoinTitle => 'Присоединиться к сети';
+
+  @override
+  String get networkJoinLinkLabel => 'Ссылка-приглашение';
+
+  @override
+  String get networkJoinFill => 'Заполнить';
+
+  @override
+  String get networkIdLabel => 'Идентификатор сети';
+
+  @override
+  String get networkDisplayNameLabel => 'Отображаемое имя';
+
+  @override
+  String get networkDisplayNameLocked =>
+      'Отображаемое имя привязано к вашему аккаунту.';
+
+  @override
+  String get networkJoinRequired => 'Укажите идентификатор сети и пароль.';
+
+  @override
+  String networkJoinInvalidCredentials(Object message) {
+    return 'Неверные учётные данные — $message';
+  }
+
+  @override
+  String networkJoinRetryAfter(Object seconds) {
+    return ' Повторите через $seconds с.';
+  }
+
+  @override
+  String get networkJoin => 'Присоединиться';
+
+  @override
+  String get networkSelectChannel => 'Выберите канал';
+
+  @override
+  String get networkReconnecting =>
+      'Переподключение — сообщения будут отправлены после восстановления связи.';
+
+  @override
+  String networkMessageHint(Object channel) {
+    return 'Написать в $channel';
+  }
+
+  @override
+  String get networkNewChannel => 'Новый канал';
+
+  @override
+  String networkOnlineCount(Object count) {
+    return '$count в сети';
+  }
+
+  @override
+  String get networkFilterAll => 'Все';
+
+  @override
+  String get networkFilterShowcases => 'Витрины';
+
+  @override
+  String get networkConnecting => 'Подключение…';
+
+  @override
+  String get networkNoChannels => 'Нет каналов';
+
+  @override
+  String get networkChannelOptions => 'Параметры канала';
+
+  @override
+  String get networkAddAgent => 'Добавить агента…';
+
+  @override
+  String get networkShowcasePublic => 'Витрина (публичный)';
+
+  @override
+  String get networkAddAgentTitle => 'Добавить агента';
+
+  @override
+  String get networkAddAgentWarning =>
+      'Передавайте эту строку только напрямую — любой, у кого она есть, сможет читать канал.';
+
+  @override
+  String get networkAddAgentNoKeys =>
+      'На этом устройстве нет ключей для этого канала.';
+
+  @override
+  String get networkInviteCopied => 'Приглашение скопировано в буфер обмена.';
+
+  @override
+  String get networkCopy => 'Копировать';
+
+  @override
+  String get networkClose => 'Закрыть';
+
+  @override
+  String get networkWalletTooltip => 'Кошелёк';
+
+  @override
+  String get networkWalletExport => 'Экспортировать кошелёк';
+
+  @override
+  String get networkWalletImport => 'Импортировать кошелёк';
+
+  @override
+  String get networkWalletExported =>
+      'Кошелёк экспортирован — JSON скопирован в буфер обмена.';
+
+  @override
+  String networkWalletExportFailed(Object error) {
+    return 'Не удалось экспортировать: $error';
+  }
+
+  @override
+  String get networkWalletImported => 'Кошелёк импортирован.';
+
+  @override
+  String get networkPassphraseLabel => 'Парольная фраза';
+
+  @override
+  String get networkPassphraseRepeatLabel => 'Повторите парольную фразу';
+
+  @override
+  String get networkPassphraseEmpty => 'Парольная фраза не должна быть пустой.';
+
+  @override
+  String get networkPassphraseMismatch => 'Парольные фразы не совпадают.';
+
+  @override
+  String get networkExport => 'Экспортировать';
+
+  @override
+  String get networkImport => 'Импортировать';
+
+  @override
+  String get networkWalletJsonLabel => 'JSON экспортированного кошелька';
+
+  @override
+  String get networkWalletImportWarning =>
+      'Импорт заменит кошелёк на этом устройстве.';
 }
