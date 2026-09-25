@@ -36,14 +36,19 @@ import 'package:xterm/xterm.dart';
 /// Spawns the Fa CLI as a subprocess with a PTY, feeds output to an xterm
 /// terminal emulator, and provides keystroke sending + output capture.
 final class FaCliHarness {
-  FaCliHarness._({
-    required this.pty,
-    required this.terminal,
-    required this.columns,
-    required this.rows,
-  });
+  FaCliHarness._(
+    this.pty,
+    this.terminal,
+    this.columns,
+    this.rows,
+    this._ownedCwd,
+  );
 
-  /// Short fixed CWD used when the caller does not pin [spawn]'s
+  /// The spawn-created default CWD (null when the caller passed
+  /// [spawn]'s `workingDirectory` — then nothing is owned or cleaned).
+  Directory? _ownedCwd;
+
+  /// Short per-spawn CWD used when the caller does not pin [spawn]'s
   /// workingDirectory. The CLI derives its session slug from the CWD, and on
   /// CI runners the checkout path is so long that the boot banner
   /// (`/Users/.../flutter_agent_harness` + the `.fah/sessions/<slug>` block)
@@ -52,16 +57,22 @@ final class FaCliHarness {
   /// from the assertions. Suites that need a specific CWD pass it
   /// explicitly; package resolution stays on the repo either way (the
   /// script path is absolute).
+  ///
+  /// Unique per spawn (issue #931 part 3.1, harness piece): every test gets
+  /// its own root, so the in-suite `--concurrency=4` (part 3.3) can never
+  /// race two CLIs through one shared git-init/config-write directory (the
+  /// #936 incident class). The full session/dir-race program stays in #948.
   static Directory _shortDefaultCwd() {
-    const path = '/tmp/fa_pty_cwd';
-    final dir = Directory(path);
-    if (!dir.existsSync()) dir.createSync(recursive: true);
+    final dir = Directory.systemTemp.createTempSync('fa_pty_cwd_');
     // Match the checkout's shape: the CLI's git-root discovery (and the
     // lib/src/cli branches behind it) only runs inside a repository. With a
     // bare tmp dir those paths go unexercised and the cli coverage ratchet
-    // (baseline only up) regresses (~0.2pp observed on fa-m5).
-    if (!Directory('${dir.path}/.git').existsSync()) {
-      Process.runSync('git', ['init', '-q', dir.path]);
+    // (baseline only up) regresses (~0.2pp observed on fa-m5). Fail loudly:
+    // a silent bare-dir fallback would quietly degrade every test on the
+    // runner instead of one.
+    final git = Process.runSync('git', ['init', '-q', dir.path]);
+    if (git.exitCode != 0) {
+      throw StateError('git init failed for harness cwd ${dir.path}: ${git.stderr}');
     }
     return dir;
   }
@@ -97,6 +108,10 @@ final class FaCliHarness {
     // FA_BIN (test-only seam): run a prebuilt binary (e.g. the AOT bundle
     // from `dart build cli`) instead of JIT `dart bin/fah.dart` — perf
     // probes must measure what install_local.sh actually ships.
+    // Own the default CWD when the caller did not pin one, so close()/
+    // hardKill() can remove it (review #963: a fresh git-init'd root per
+    // spawn must not accumulate across runs on persistent hosts).
+    final ownedCwd = workingDirectory == null ? _shortDefaultCwd() : null;
     final faBin = extraEnv?['FA_BIN'];
     final pty = PseudoTerminal.start(
       faBin ?? 'dart',
@@ -114,7 +129,7 @@ final class FaCliHarness {
         ],
         ...args,
       ],
-      workingDirectory: workingDirectory ?? _shortDefaultCwd().path,
+      workingDirectory: ownedCwd?.path ?? workingDirectory,
       environment: env,
       raw: raw,
     );
@@ -124,10 +139,11 @@ final class FaCliHarness {
     final terminal = Terminal(maxLines: rows * 4);
     if (columns != 80 || rows != 24) terminal.resize(columns, rows);
     final harness = FaCliHarness._(
-      pty: pty,
-      terminal: terminal,
-      columns: columns,
-      rows: rows,
+      pty,
+      terminal,
+      columns,
+      rows,
+      ownedCwd,
     );
     harness.startListening();
     // Answer the CLI's terminal queries (device attributes etc.) so it
@@ -192,6 +208,22 @@ final class FaCliHarness {
     pty.kill(ProcessSignal.sigkill);
     await pty.exitCode.timeout(const Duration(seconds: 5), onTimeout: () => -1);
     await _outputSub?.cancel();
+    _releaseOwnedCwd();
+  }
+
+  /// Removes the spawn-created default CWD, if any. Best-effort and
+  /// idempotent: teardown must never break because a file inside stayed
+  /// locked (the CLI or a child agent may still hold an fd); a left-behind
+  /// directory is preferable to masking a real test failure.
+  void _releaseOwnedCwd() {
+    final dir = _ownedCwd;
+    if (dir == null) return;
+    _ownedCwd = null;
+    try {
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
+    } on FileSystemException {
+      // Left behind on purpose.
+    }
   }
 
   /// Sends Ctrl+C.
@@ -338,5 +370,6 @@ final class FaCliHarness {
     pty.kill();
     await pty.exitCode.timeout(const Duration(seconds: 5), onTimeout: () => -1);
     await _outputSub?.cancel();
+    _releaseOwnedCwd();
   }
 }
