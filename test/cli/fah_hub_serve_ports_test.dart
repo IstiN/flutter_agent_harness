@@ -26,7 +26,7 @@ import 'package:test/test.dart';
 
 import '../../bin/fah_dap_command.dart' show envHubPidFile;
 import '../../bin/fah_hub_serve.dart';
-import 'test_ports.dart';
+import '../hub/test_ports.dart';
 
 const timeout = Timeout(Duration(seconds: 20));
 

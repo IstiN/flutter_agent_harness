@@ -20,7 +20,6 @@
 /// bind it themselves get the hub's shared/retry safety net.
 library;
 
-import 'dart:io';
 import 'dart:math';
 
 /// The lowest port the allocator hands out (above the privileged range).

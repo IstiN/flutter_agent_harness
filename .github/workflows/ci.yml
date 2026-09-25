@@ -547,6 +547,11 @@ jobs:
       - name: python3 available
         run: python3 --version
       - run: dart pub get
+      # gh-936: a cancelled predecessor's orphans (PTY CLI children,
+      # dart-test runners, /tmp dirs, ports) poisoned the successor —
+      # kill them BEFORE this leg's suite starts.
+      - name: Leg-start orphan preflight (gh-936)
+        run: ./scripts/pty_leg_preflight.sh
       - name: dart test --tags integration (excluding browser-ext)
         run: >-
           dart test --tags integration --exclude-tags browser-ext
@@ -578,6 +583,10 @@ jobs:
       # a root package config it resolves the package to the pub-cache copy
       # (an old published build) and the CLI dies before the first frame.
       - run: dart pub get
+      # gh-936: same orphan class as the pty-integration leg — the visual
+      # suite also spawns `dart bin/fah.dart` in a PTY.
+      - name: Leg-start orphan preflight (gh-936)
+        run: ./scripts/pty_leg_preflight.sh
       - name: flutter test test/cli_visual --tags integration
         run: cd flutter_app && flutter test test/cli_visual --tags integration
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

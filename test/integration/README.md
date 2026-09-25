@@ -30,6 +30,29 @@ cd flutter_app && flutter test test/cli_visual --tags integration
   output, xterm screen model)
 - `fa_cli_integration_test.dart` — test scenarios
 
+## Hygiene (gh-936)
+
+Two overlapping runs of these suites on one runner used to share fixed
+`/tmp` paths and race hub ports — cancelled runs poisoned their
+successors. The rules that keep legs green:
+
+1. **Unique dirs.** Everything a suite creates comes from
+   `FaCliHarness.uniqueTempDir(prefix)` or the harness's own per-run
+   root (`fa_pty_*`) — NEVER a fixed `/tmp/fa_<issue>_*` path. Register
+   deletion with `addTearDown` so it runs on failure; the harness sweeps
+   its run root on SIGINT/SIGTERM (cancellation), and the CI leg-start
+   preflight (`scripts/pty_leg_preflight.sh`) kills a predecessor's
+   orphans and sweeps leftovers.
+2. **Unique ports.** A port NUMBER needed ahead of the bind (child
+   `fa hub serve` spawns, "dead hub" URLs) comes from
+   `test/hub/test_ports.dart` `claimTestPort()` — never the bind-close
+   dance, which two runs started together walk in lockstep. Hubs bind
+   with `shared: true` and retry with backoff (`LocalHub.start`), so a
+   residual collision degrades instead of hard-failing
+   (`test/hub/local_hub_bind_test.dart` pins all three bind behaviors).
+3. **Overlap stays green.** `pty_overlap_regression_test.dart` runs two
+   concurrent full PTY lifecycles as the in-suite acceptance proxy.
+
 ## Writing new tests
 
 1. Spawn: `final harness = await FaCliHarness.spawn(extraEnv: {'HOME': tempHome.path})`
