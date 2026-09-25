@@ -933,10 +933,10 @@ Future<void> _deleteSession(
     }
   } on Object catch (error) {
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(l10n.sidebarDeleteSessionFailed(error.toString())),
-        ),
+      showFahErrorSnack(
+        context,
+        l10n.sidebarDeleteSessionFailed(error.toString()),
+        sessionId: sessionId,
       );
     }
   }

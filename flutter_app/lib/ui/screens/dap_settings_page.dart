@@ -326,9 +326,7 @@ class _DapHubPageState extends State<DapHubPage> {
 
   /// The shared save-failure note (connection, bookmark, binding, switch).
   void _showSaveFailed() {
-    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-      SnackBar(content: Text(context.l10n.settingsDapSaveFailed)),
-    );
+    faui.showFahErrorSnack(context, context.l10n.settingsDapSaveFailed);
   }
 
   @override
@@ -1259,9 +1257,7 @@ class _AgentNetworkSectionState extends State<AgentNetworkSection> {
       name: _name.text,
     );
     if (mounted) {
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        SnackBar(content: Text(context.l10n.settingsAgentNetworkSaved)),
-      );
+      faui.showFahSnack(context, context.l10n.settingsAgentNetworkSaved);
     }
     setState(() => _saving = false);
     await _refreshPeers();

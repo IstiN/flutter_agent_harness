@@ -12,7 +12,8 @@ import 'package:fa/services/keychain_store.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
-import 'package:fa_ui/fa_ui.dart' show pushFaPage;
+import 'package:fa_ui/fa_ui.dart'
+    show pushFaPage, showFahErrorSnack, showFahSnack;
 import 'package:url_launcher/url_launcher.dart' as url_launcher;
 
 /// Runs the full AIIN (aiin.by) connect flow:
@@ -81,7 +82,8 @@ Future<bool> runAiinConnectFlow({
       reauthenticateFor: reauthenticateFor,
     );
   }
-  final desktop = !kIsWeb &&
+  final desktop =
+      !kIsWeb &&
       (defaultTargetPlatform == TargetPlatform.macOS ||
           defaultTargetPlatform == TargetPlatform.windows ||
           defaultTargetPlatform == TargetPlatform.linux);
@@ -143,9 +145,11 @@ Future<bool> runAiinWebConnect({
   // (the hosted callback page posts the code back; both AIIN hosts send
   // `access-control-allow-origin: *`). Progress lands in SnackBars —
   // the popup opens before any await, inside the tap gesture.
-  void webStatus(String message) {
+  void webStatus(String message, {bool error = false}) {
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      error
+          ? showFahErrorSnack(context, message)
+          : showFahSnack(context, message);
     }
     debugPrint('[AIIN web] $message');
   }
@@ -164,8 +168,7 @@ Future<bool> runAiinWebConnect({
   );
   if (result == null) {
     final failure = coordinator.lastFailure ?? '';
-    if ((failure == 'timeout' || failure == 'cancelled') &&
-        context.mounted) {
+    if ((failure == 'timeout' || failure == 'cancelled') && context.mounted) {
       final pasted = await _pasteAiinKeyFallback(context);
       if (pasted == null) return false;
       if (!context.mounted) return false;
@@ -214,11 +217,10 @@ Future<bool> _runAiinDesktopConnect(
   CustomProvider? reauthenticateFor,
 }) async {
   if (!context.mounted) return false;
-  ScaffoldMessenger.of(context).showSnackBar(
-    const SnackBar(
-      content: Text('Opening browser for AIIN sign-in…'),
-      duration: Duration(seconds: 3),
-    ),
+  showFahSnack(
+    context,
+    'Opening browser for AIIN sign-in…',
+    duration: const Duration(seconds: 3),
   );
 
   final result = aiinConnectFn != null
@@ -448,9 +450,8 @@ class _AiinKeyPasteDialogState extends State<_AiinKeyPasteDialog> {
               hintText: 'sk-aiin-…',
               labelText: 'API key',
             ),
-            onChanged: (value) => setState(
-              () => _valid = isValidAiinApiKey(value),
-            ),
+            onChanged: (value) =>
+                setState(() => _valid = isValidAiinApiKey(value)),
           ),
         ],
       ),
@@ -520,9 +521,7 @@ class _AiinModelPickerPageState extends State<_AiinModelPickerPage> {
                       ),
                     ),
                   ),
-                  Expanded(
-                    child: _AiinModelList(models: _filtered(models)),
-                  ),
+                  Expanded(child: _AiinModelList(models: _filtered(models))),
                 ],
               ),
       ),
