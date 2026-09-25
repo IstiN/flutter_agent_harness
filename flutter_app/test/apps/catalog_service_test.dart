@@ -129,12 +129,6 @@ Future<Uint8List> _captureZip(String id) async {
 }
 
 void main() {
-  // gh-938/#944: hosted-runner-only flake — skip at runtime on Linux
-  // (hosted ubuntu) only. macOS coverage leg MUST run this suite: it is
-  // the coverage provider for catalog_service.dart in the CRAP ratchet.
-  if (Platform.isLinux) {
-    throw Skip('infra: #936 hosted-runner flake (Linux leg only)');
-  }
 
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -212,7 +206,7 @@ void main() {
         'https://example.com/assets/catalog.json',
       );
     });
-  });
+  }, skip: Platform.isLinux ? 'infra: #936 hosted-runner flake (Linux leg only)' : null);
 
   group('CatalogEntry.fromJson platforms', () {
     Map<String, dynamic> base() =>
@@ -242,7 +236,7 @@ void main() {
       final json = base()..['platforms'] = ['ios', 42, null, 'macos'];
       expect(CatalogEntry.fromJson(json).platforms, ['ios', 'macos']);
     });
-  });
+  }, skip: Platform.isLinux ? 'infra: #936 hosted-runner flake (Linux leg only)' : null);
 
   group('CatalogService.fetchCatalog', () {
     test('parses entries and stamps freshness', () async {
@@ -373,7 +367,7 @@ void main() {
       expect(hits, 1);
       expect(result.entries, hasLength(2));
     });
-  });
+  }, skip: Platform.isLinux ? 'infra: #936 hosted-runner flake (Linux leg only)' : null);
 
   group('CatalogService.downloadWidget', () {
     test('unpacks the single-root archive into relative paths', () async {
@@ -516,7 +510,7 @@ void main() {
         throwsA(isA<CatalogError>()),
       );
     });
-  });
+  }, skip: Platform.isLinux ? 'infra: #936 hosted-runner flake (Linux leg only)' : null);
 
   group('web platform policy', () {
     // release-assets.githubusercontent.com sends NO CORS headers, so
@@ -730,5 +724,5 @@ void main() {
         'widget.js',
       ]);
     });
-  });
+  }, skip: Platform.isLinux ? 'infra: #936 hosted-runner flake (Linux leg only)' : null);
 }
