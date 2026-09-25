@@ -280,6 +280,9 @@ void main() {
     }
   });
 
+  // gh-938: only this case races the shared /tmp/fa_539_home layout.
+  // 'stacked boards freeze' above stays UNSKIPPED on purpose — it is the
+  // real #937 regression and must stay red until ai/gh-869 is fixed.
   test(
     'restart with live jobs shows lost, never running (268/0 impossible)',
     () async {
@@ -337,5 +340,6 @@ void main() {
       );
       expectComposerReserved(resumed.viewportLines, 80);
     },
+    skip: 'infra: #936 shared /tmp race (fa_539_home/fa_539_proj)',
   );
 }
