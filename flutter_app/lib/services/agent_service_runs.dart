@@ -80,46 +80,7 @@ extension AgentServiceRuns on AgentService {
       if (_disposed) return;
       _notify();
     });
-    // Post-settle leftover steering (issue #958, the CLI's settle drain):
-    // a message steered into the run's final stream missed every boundary
-    // poll — an async-result that landed there must still re-enter, or the
-    // settled subagent's report sits queued until the user's next ping. A
-    // user abort drops it instead (they said stop).
-    unawaited(
-      run.whenComplete(() async {
-        if (_disposed || _abortRequested) {
-          pendingSteerTexts.clear();
-          _agent.clearSteeringQueue();
-          return;
-        }
-        if (!_agent.hasSteering) return;
-        final leftover = _agent
-            .drainSteeringQueue()
-            .map(_messageTextOf)
-            .where((t) => t.trim().isNotEmpty)
-            .toList();
-        if (leftover.isEmpty) return;
-        await sendText(leftover.join('\n\n'));
-      }),
-    );
   }
-}
-
-/// The plain text of a transcript message (steering leftovers are all
-/// user-kind), '' when there is none.
-String _messageTextOf(Message message) {
-  final content = switch (message) {
-    UserMessage() => message.content,
-    _ => '',
-  };
-  return content is String
-      ? content
-      : content is List<ContentBlock>
-      ? [
-          for (final block in content)
-            if (block is TextContent) block.text,
-        ].join('\n')
-      : '';
 }
 
 /// The `completeOnce` system prompt: the host-app briefing plus every
