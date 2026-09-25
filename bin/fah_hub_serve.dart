@@ -219,6 +219,46 @@ String? hubLanSecretRefusal({required String? bind, required String? secret}) {
       'or set DAP_HUB_SECRET (a LAN-reachable hub must not run open)';
 }
 
+/// The outcome of the bounded bind-retry window (issue #943, vector 2).
+enum _BindOutcome {
+  /// The hub bound its port and may serve.
+  bound,
+
+  /// A hub came up on the port mid-retry — the idempotent no-op exit.
+  alreadyRunning,
+
+  /// Every attempt hit a genuinely foreign holder (non-HTTP blocker).
+  refused,
+}
+
+/// Binds [hub] on [port], retrying with backoff (issue #943): an
+/// overlapping run's predecessor may still hold the port for a few
+/// seconds (dying hub, TIME_WAIT) — retry instead of hard-failing, and
+/// if a hub comes up on the port mid-retry, report the idempotent
+/// "already running" outcome. A genuinely foreign holder (non-HTTP
+/// blocker) ends [_BindOutcome.refused] after the bounded window, with
+/// the last [SocketException] for the message.
+Future<(_BindOutcome, SocketException?)> _bindWithRetry(
+  LocalHub hub,
+  int port,
+) async {
+  const attempts = 5;
+  for (var attempt = 1;; attempt++) {
+    try {
+      await hub.start();
+      return (_BindOutcome.bound, null);
+    } on SocketException catch (error) {
+      final lastAttempt = attempt >= attempts;
+      final live = lastAttempt ? false : await hubHealthz(port);
+      if (live) return (_BindOutcome.alreadyRunning, error);
+      if (lastAttempt) return (_BindOutcome.refused, error);
+      await Future<void>.delayed(
+        Duration(milliseconds: 150 << (attempt - 1)), // 150,300,600,1200
+      );
+    }
+  }
+}
+
 /// Serves the hub: idempotent against a live one, pid-state
 /// bookkeeping for `fa dap stop`, then the serve loop ([serveLoop] is
 /// the seam tests cut short; production blocks until killed).
@@ -248,37 +288,19 @@ Future<int> hubServe(
     stateFile: stateFile,
     relayAllowAnyHost: spec.relayAllowAnyHost,
   );
-  // Bind retry with backoff (issue #943, vector 2): an overlapping run's
-  // predecessor may still hold the port for a few seconds (dying hub,
-  // TIME_WAIT) — retry instead of hard-failing, and if a hub comes up on
-  // the port mid-retry, take the idempotent "already running" exit. A
-  // genuinely foreign holder (non-HTTP blocker) still exits 1 after the
-  // bounded window.
-  const attempts = 5;
-  for (var attempt = 1;; attempt++) {
-    try {
-      await hub.start();
-      break;
-    } on SocketException catch (error) {
-      final lastAttempt = attempt >= attempts;
-      final live = lastAttempt ? false : await hubHealthz(spec.port);
-      if (live) {
-        stdout.writeln(
-          'DAP hub already running on ws://127.0.0.1:${spec.port}/ws',
-        );
-        return 0;
-      }
-      if (lastAttempt) {
-        stderr.writeln(
-          'hub: cannot bind 127.0.0.1:${spec.port} ($error) — '
-          'something else holds the port',
-        );
-        return 1;
-      }
-      await Future<void>.delayed(
-        Duration(milliseconds: 150 << (attempt - 1)), // 150,300,600,1200
+  final (outcome, bindError) = await _bindWithRetry(hub, spec.port);
+  switch (outcome) {
+    case _BindOutcome.alreadyRunning:
+      stdout.writeln('DAP hub already running on ws://127.0.0.1:${spec.port}/ws');
+      return 0;
+    case _BindOutcome.refused:
+      stderr.writeln(
+        'hub: cannot bind 127.0.0.1:${spec.port} ($bindError) — '
+        'something else holds the port',
       );
-    }
+      return 1;
+    case _BindOutcome.bound:
+      break;
   }
   // The pid/state file (issue #304): lets `fa dap stop` work from ANY
   // CLI instance (not just the spawner) exactly once, with no zombie
