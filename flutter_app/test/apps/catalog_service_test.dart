@@ -1,6 +1,10 @@
-// gh-938: hosted-runner-only flake (green on main in adjacent runs).
-@Skip('infra: #936 hosted-runner flake')
+// gh-938/#944: hosted-runner-only flake (green on main in adjacent runs).
+// RUNTIME skip on Linux only: an unconditional @Skip also silenced the
+// test on the macOS coverage leg, dropping flutter_app coverage for
+// catalog_service.dart to 0 and exploding the CRAP ratchet (16^2+16=272
+// > 30) for EVERY PR (fa #911 diagnosis). macOS keeps running it.
 library;
+import 'dart:io' show Platform;
 
 import 'dart:convert';
 import 'dart:typed_data';
@@ -125,6 +129,13 @@ Future<Uint8List> _captureZip(String id) async {
 }
 
 void main() {
+  // gh-938/#944: hosted-runner-only flake — skip at runtime on Linux
+  // (hosted ubuntu) only. macOS coverage leg MUST run this suite: it is
+  // the coverage provider for catalog_service.dart in the CRAP ratchet.
+  if (Platform.isLinux) {
+    throw Skip('infra: #936 hosted-runner flake (Linux leg only)');
+  }
+
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('catalog asset URL construction', () {
