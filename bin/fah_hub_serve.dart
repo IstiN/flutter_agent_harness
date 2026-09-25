@@ -219,7 +219,8 @@ String? hubLanSecretRefusal({required String? bind, required String? secret}) {
       'or set DAP_HUB_SECRET (a LAN-reachable hub must not run open)';
 }
 
-/// The outcome of the bounded bind-retry window (issue #943, vector 2).
+/// The outcome of one bind attempt or the bounded retry window
+/// (issue #943, vector 2).
 enum _BindOutcome {
   /// The hub bound its port and may serve.
   bound,
@@ -229,6 +230,31 @@ enum _BindOutcome {
 
   /// Every attempt hit a genuinely foreign holder (non-HTTP blocker).
   refused,
+
+  /// The port was still held; another attempt follows.
+  retry,
+}
+
+Duration _bindBackoff(int attempt) =>
+    Duration(milliseconds: 150 << (attempt - 1)); // 150,300,600,1200
+
+/// One bind attempt. On a [SocketException]: the last attempt is a
+/// hard [_BindOutcome.refused]; otherwise a live /healthz on the port
+/// means a hub came up mid-retry ([_BindOutcome.alreadyRunning]) and
+/// anything else asks for another round ([_BindOutcome.retry]).
+Future<(_BindOutcome, SocketException?)> _bindAttempt(
+  LocalHub hub,
+  int port,
+  bool lastAttempt,
+) async {
+  try {
+    await hub.start();
+    return (_BindOutcome.bound, null);
+  } on SocketException catch (error) {
+    if (lastAttempt) return (_BindOutcome.refused, error);
+    if (await hubHealthz(port)) return (_BindOutcome.alreadyRunning, error);
+    return (_BindOutcome.retry, error);
+  }
 }
 
 /// Binds [hub] on [port], retrying with backoff (issue #943): an
@@ -243,20 +269,15 @@ Future<(_BindOutcome, SocketException?)> _bindWithRetry(
   int port,
 ) async {
   const attempts = 5;
-  for (var attempt = 1;; attempt++) {
-    try {
-      await hub.start();
-      return (_BindOutcome.bound, null);
-    } on SocketException catch (error) {
-      final lastAttempt = attempt >= attempts;
-      final live = lastAttempt ? false : await hubHealthz(port);
-      if (live) return (_BindOutcome.alreadyRunning, error);
-      if (lastAttempt) return (_BindOutcome.refused, error);
-      await Future<void>.delayed(
-        Duration(milliseconds: 150 << (attempt - 1)), // 150,300,600,1200
-      );
-    }
+  SocketException? lastError;
+  for (var attempt = 1; attempt <= attempts; attempt++) {
+    final (outcome, error) =
+        await _bindAttempt(hub, port, attempt == attempts);
+    if (outcome != _BindOutcome.retry) return (outcome, error);
+    lastError = error;
+    await Future<void>.delayed(_bindBackoff(attempt));
   }
+  return (_BindOutcome.refused, lastError);
 }
 
 /// Serves the hub: idempotent against a live one, pid-state
@@ -301,6 +322,8 @@ Future<int> hubServe(
       return 1;
     case _BindOutcome.bound:
       break;
+    case _BindOutcome.retry:
+      break; // unreachable: _bindWithRetry never returns retry
   }
   // The pid/state file (issue #304): lets `fa dap stop` work from ANY
   // CLI instance (not just the spawner) exactly once, with no zombie
