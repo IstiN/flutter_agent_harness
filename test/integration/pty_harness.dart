@@ -25,6 +25,16 @@
 ///   so `PUB_CACHE` must be passed through explicitly when HOME is
 ///   overridden (otherwise `dart run` cannot see the pub cache), and API
 ///   keys from the developer's real environment never leak into tests.
+///
+/// Hygiene (gh-936): everything this harness creates lives under a
+/// per-RUN unique root — `runRoot` is `Directory.systemTemp.createTemp
+/// ('fa_pty_')`, the default CWD is a unique subdir of it per spawn, and
+/// [uniqueTempDir] replaces the old shared fixed `/tmp/fa_*` paths. Two
+/// overlapping runs of a suite therefore never share (and delete from
+/// under each other) directories; the run root is swept on SIGINT/SIGTERM
+/// so a cancelled run does not leak it, and the CI leg-start preflight
+/// (`scripts/pty_leg_preflight.sh`) kills a cancelled predecessor's
+/// orphaned CLI processes before they can poison the next dispatch.
 library;
 
 import 'dart:async';
@@ -209,6 +219,11 @@ final class FaCliHarness {
 
   /// The PTY height in rows.
   final int rows;
+
+  /// The directory the CLI was spawned in — the caller's pin, or a unique
+  /// per-spawn default under the per-run root (gh-936). Exposed so the
+  /// uniqueness contract can be asserted in tests.
+  final String? workingDirectory;
 
   /// Accumulated raw output (with ANSI escape sequences).
   final _rawBuffer = StringBuffer();

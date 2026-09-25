@@ -35,8 +35,9 @@ void main() {
       // Short cwd so the status row's tail (ctx · tokens · turn · model)
       // is visible even at 80 columns — the row is fit-truncated from the
       // tail and a long workspace path would hide the asserted markers.
-      final workspace = Directory('/tmp/fa467ws')
-        ..createSync(recursive: true);
+      // Unique per test — fixed /tmp paths collided across overlapping
+      // runs (gh-936).
+      final workspace = FaCliHarness.uniqueTempDir('fa_pty_467ws_');
       addTearDown(() => workspace.deleteSync(recursive: true));
       final server = await MockLlmServer.start()
         ..enqueueToolCall('bash', '{"command": "sleep 15"}')
@@ -191,7 +192,7 @@ allowedTools: []
 tui:
   classic: true  # the grid/chrome suites pin the classic TUI design (see #467); the band redesign (#805-#807) has its own surface
 ''');
-      final workspace = Directory('/tmp/fa467ws2')..createSync(recursive: true);
+      final workspace = FaCliHarness.uniqueTempDir('fa_pty_467ws2_');
       addTearDown(() => workspace.deleteSync(recursive: true));
 
       final harness = await FaCliHarness.spawn(
@@ -301,7 +302,7 @@ allowedTools: []
 tui:
   classic: true  # the grid/chrome suites pin the classic TUI design (see #467); the band redesign (#805-#807) has its own surface
 ''');
-      final workspace = Directory('/tmp/fa503ws')..createSync(recursive: true);
+      final workspace = FaCliHarness.uniqueTempDir('fa_pty_503ws_');
       addTearDown(() => workspace.deleteSync(recursive: true));
 
       final harness = await FaCliHarness.spawn(

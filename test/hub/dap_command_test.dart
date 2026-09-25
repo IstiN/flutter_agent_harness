@@ -19,6 +19,7 @@ import 'package:test/test.dart';
 
 import '../../bin/fah_dap_command.dart';
 import '../../bin/hub_fabric_repository.dart' show hubFabricWired;
+import 'test_ports.dart';
 
 const timeout = Timeout(Duration(seconds: 20));
 
@@ -38,14 +39,9 @@ void main() {
     }
   });
 
-  /// A free loopback port (bind-close dance).
-  Future<int> freePort() async {
-    final probe = LocalHub(port: 0);
-    await probe.start();
-    final port = probe.url.port;
-    await probe.stop();
-    return port;
-  }
+  /// A run-unique loopback port claim (the old bind-close dance raced
+  /// sibling runs' ephemeral allocations — gh-936).
+  Future<int> freePort() => Future<int>.value(claimTestPort());
 
   File stateFileFor() =>
       defaultHubStateFile(home: tempHome.path, environment: const {});

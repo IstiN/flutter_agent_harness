@@ -8,12 +8,14 @@
 @Timeout(Duration(minutes: 5))
 library;
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:test/test.dart';
 
 import '../../bin/fah_hub_plugin.dart';
 import '../hub/fake_hub.dart';
+import '../hub/test_ports.dart';
 import 'pty_harness.dart';
 
 void main() {
@@ -355,12 +357,29 @@ Future<void> _selectMenuOption(FaCliHarness harness, String key) async {
 /// A dead local-hub url for the one-step start/stop surface: the menu's
 /// state probe must never see the machine's real zero-config 8787 hub
 /// (or a CI neighbor) — the tests pin the STOPPED state deterministically.
+/// A run-unique port claim replaces the old bind-close dance (two
+/// overlapping runs picked the same just-released ephemeral port, and a
+/// sibling run's hub then looked RUNNING to this test — gh-936); a quick
+/// connect probe re-verifies nothing answered in the meantime.
 Future<String> deadLocalHubUrl() async {
-  final probe = FakeHub();
-  await probe.start();
-  final port = probe.url.port;
-  await probe.stop();
-  return 'ws://127.0.0.1:$port/ws';
+  while (true) {
+    final port = claimTestPort();
+    var occupied = false;
+    try {
+      final socket = await Socket.connect(
+        '127.0.0.1',
+        port,
+        timeout: const Duration(milliseconds: 200),
+      );
+      socket.destroy();
+      occupied = true;
+    } on SocketException {
+      occupied = false; // connect refused — exactly the dead port we want
+    } on TimeoutException {
+      occupied = true; // a silent listener: avoid it too
+    }
+    if (!occupied) return 'ws://127.0.0.1:$port/ws';
+  }
 }
 
 /// A temp HOME with a minimal config (no real API key needed) and an

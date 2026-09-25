@@ -63,6 +63,16 @@ final _liveBoard = RegExp(r'Background jobs \(10\) · (\d+) running');
 /// Any live running count above zero — forbidden on the final frame.
 final _stuckRunning = RegExp(r'[1-9]\d* running');
 
+/// Best-effort teardown delete — a directory already gone (a crashed
+/// spawn, a lost race) must never fail the cleanup itself.
+void _deleteQuietly(Directory dir) {
+  try {
+    if (dir.existsSync()) dir.deleteSync(recursive: true);
+  } on Object {
+    // Leftovers are swept by the leg-start preflight.
+  }
+}
+
 void main() {
   test(
     'ten background bash jobs start, count down on camera, drain to '
@@ -70,11 +80,16 @@ void main() {
     () async {
       // Short fixed dirs: the classic status-row tail ('· ctx', ' · turn ')
       // is truncated by long macOS temp paths.
-      final home = Directory('/tmp/fa_573_home')..createSync(recursive: true);
-      final project = Directory('/tmp/fa_573_proj')
-        ..createSync(recursive: true);
-      addTearDown(() => home.delete(recursive: true));
-      addTearDown(() => project.delete(recursive: true));
+      // Unique per test — fixed /tmp paths collided across overlapping
+      // runs (gh-936).
+      final home = FaCliHarness.uniqueTempDir('fa_pty_573_home_');
+      final project = FaCliHarness.uniqueTempDir('fa_pty_573_proj_');
+      addTearDown(
+        () => _deleteQuietly(home),
+      );
+      addTearDown(
+        () => _deleteQuietly(project),
+      );
       // Pin the classic chrome: this suite asserts the pre-#805 classic
       // grid; the band redesign (#805-#807) has its own surface. The
       // provider comes from env vars only, so the pin is a tiny config.

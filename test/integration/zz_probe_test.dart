@@ -8,7 +8,9 @@ import 'pty_harness.dart';
 void main() {
   test('probe: dump the idle + busy screen at 80x24', () async {
     final tempHome = Directory.systemTemp.createTempSync('fa_probe_');
-    final workspace = Directory('/tmp/fa_probe_ws')..createSync(recursive: true);
+    // Unique per test — fixed /tmp paths collided across overlapping
+    // runs (gh-936).
+    final workspace = FaCliHarness.uniqueTempDir('fa_pty_probe_ws_');
     addTearDown(() => workspace.deleteSync(recursive: true));
     final server = await MockLlmServer.start()
       ..enqueueToolCall('bash', '{"command": "sleep 6"}')

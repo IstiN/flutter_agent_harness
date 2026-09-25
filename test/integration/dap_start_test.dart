@@ -12,6 +12,7 @@ import 'package:flutter_agent_harness/src/hub/local_hub.dart';
 import 'package:test/test.dart';
 
 import '../../bin/fah_hub_plugin.dart';
+import '../hub/test_ports.dart';
 
 class _CapturingIo implements PluginIO {
   final lines = <String>[];
@@ -36,14 +37,9 @@ void main() {
     if (await tempHome.exists()) tempHome.deleteSync(recursive: true);
   });
 
-  /// Finds a free loopback port (bind-close dance).
-  Future<int> freePort() async {
-    final probe = LocalHub(port: 0);
-    await probe.start();
-    final port = probe.url.port;
-    await probe.stop();
-    return port;
-  }
+  /// Finds a free loopback port: a run-unique claim (the old bind-close
+  /// dance raced sibling runs' ephemeral allocations — gh-936).
+  Future<int> freePort() => Future<int>.value(claimTestPort());
 
   (SlashCommand, _CapturingIo, Map<String, String>) registerHost({
     required String localHubUrl,

@@ -14,9 +14,10 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:fa_hub_client/fa_hub_client.dart' as client;
-import 'package:flutter_agent_harness/io.dart' show LocalHub;
 import 'package:flutter_agent_harness/src/hub/dap_local_hub_state.dart';
 import 'package:test/test.dart';
+
+import '../hub/test_ports.dart';
 
 void main() {
   late Directory tempHome;
@@ -24,11 +25,10 @@ void main() {
 
   setUp(() async {
     tempHome = await Directory.systemTemp.createTemp('fah-dap-e2e-');
-    // A free loopback port (bind-close dance).
-    final probe = LocalHub(port: 0);
-    await probe.start();
-    port = probe.url.port;
-    await probe.stop();
+    // A run-unique port claim: the old bind-close dance raced a sibling
+    // run's ephemeral allocation — the loser's spawned hub hard-failed
+    // on bind and the test's fa attached to the FOREIGN hub (gh-936).
+    port = claimTestPort();
   });
 
   tearDown(() async {

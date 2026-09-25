@@ -38,7 +38,9 @@ void main() {
         () async {
       final tempHome = Directory.systemTemp.createTempSync('fa_tui_496_');
       // Short cwd so the footer's tail markers stay visible at 80 columns.
-      final workspace = Directory('/tmp/fa496ws')..createSync(recursive: true);
+      // Unique per test — fixed /tmp paths collided across overlapping
+      // runs (gh-936).
+      final workspace = FaCliHarness.uniqueTempDir('fa_pty_496ws_');
       addTearDown(() => workspace.deleteSync(recursive: true));
       final server = await MockLlmServer.start()
         // Turn 1 seeds the job board with a collapsed turn of inline

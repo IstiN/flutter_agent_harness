@@ -95,8 +95,11 @@ void main() {
   late File turnsFile;
 
   setUp(() async {
-    home = Directory('/tmp/fa_539_home')..createSync(recursive: true);
-    project = Directory('/tmp/fa_539_proj')..createSync(recursive: true);
+    // Unique per test: the old fixed /tmp/fa_539_* paths collided across
+    // overlapping runs — one deleted while the other's CLI still used
+    // them (PathNotFoundException — gh-936).
+    home = FaCliHarness.uniqueTempDir('fa_pty_539_home_');
+    project = FaCliHarness.uniqueTempDir('fa_pty_539_proj_');
     // Pin the classic chrome: this suite asserts the classic grid (#539);
     // the band redesign (#805-#807) has its own surface.
     File('${home.path}/.fah/config.yaml')
@@ -107,8 +110,8 @@ void main() {
   });
 
   tearDown(() async {
-    await home.delete(recursive: true);
-    await project.delete(recursive: true);
+    if (home.existsSync()) await home.delete(recursive: true);
+    if (project.existsSync()) await project.delete(recursive: true);
   });
 
   Map<String, String> env() => {

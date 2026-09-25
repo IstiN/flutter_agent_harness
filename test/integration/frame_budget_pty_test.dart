@@ -25,7 +25,9 @@ void main() {
   test('E2E-1 #479 AC3: 80x24, four live jobs — status whole, composer '
       'intact, board visible, frame on the glass', () async {
     final tempHome = Directory.systemTemp.createTempSync('fa_tui_479_pty_');
-    final workspace = Directory('/tmp/fa479ws')..createSync(recursive: true);
+    // Unique per test — fixed /tmp paths collided across overlapping
+    // runs (gh-936).
+    final workspace = FaCliHarness.uniqueTempDir('fa_pty_479ws_');
     addTearDown(() => workspace.deleteSync(recursive: true));
     final server = await MockLlmServer.start()
       ..enqueueToolCall('bash', '{"command": "sleep 40", "background": true}')

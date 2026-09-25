@@ -221,8 +221,10 @@ void main() {
     // Short fixed dirs (#446): long macOS temp paths wrap mid-path and
     // desync the two frames' wrap continuations; /tmp keeps every row on
     // one physical line.
-    home = Directory('/tmp/fa_446_home')..createSync(recursive: true);
-    project = Directory('/tmp/fa_446_proj')..createSync(recursive: true);
+    // Unique per test — fixed /tmp paths collided across overlapping
+    // runs (gh-936).
+    home = FaCliHarness.uniqueTempDir('fa_pty_446_home_');
+    project = FaCliHarness.uniqueTempDir('fa_pty_446_proj_');
     // Pin the classic chrome: this suite asserts the classic transcript
     // grammar; the band redesign (#805-#807) has its own surface. The
     // harness configures providers via FA_PROVIDER_CONFIG env only, so the
@@ -235,8 +237,8 @@ void main() {
   });
 
   tearDown(() async {
-    await home.delete(recursive: true);
-    await project.delete(recursive: true);
+    if (home.existsSync()) await home.delete(recursive: true);
+    if (project.existsSync()) await project.delete(recursive: true);
   });
 
   Map<String, String> env() => {
