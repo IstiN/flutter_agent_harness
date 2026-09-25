@@ -1,16 +1,12 @@
-// gh-938/#944: hosted-runner-only flake (green on main in adjacent runs;
-// root cause tracked in #943). RUNTIME skip on Linux only — hosted ubuntu
-// is where the flake fires, and those runners are ALSO the only coverage
-// legs the app-crap-gate merges (the flutter-tests shards run
-// ubuntu-24.04-arm; there is NO macOS coverage leg — the earlier
-// "macOS keeps running it" rationale was wrong, fa#911 follow-up).
-// Skipping here dropped catalog_service.dart to 0% coverage, exploding
-// the CRAP ratchet (16^2+16 = 272 > 30) on every PR. The ratchet stays
-// fed by catalog_service_coverage_test.dart, which runs unconditionally
-// on every platform; unskip this suite once #943 lands.
+// gh-938/#944: hosted-runner-only flake (green on main in adjacent runs).
+// RUNTIME skip on Linux only: an unconditional @Skip also silenced the
+// test on the macOS coverage leg, dropping flutter_app coverage for
+// catalog_service.dart to 0 and exploding the CRAP ratchet (16^2+16=272
+// > 30) for EVERY PR (fa #911 diagnosis). macOS keeps running it.
 library;
-import 'dart:convert';
 import 'dart:io' show Platform;
+
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
@@ -133,19 +129,8 @@ Future<Uint8List> _captureZip(String id) async {
 }
 
 void main() {
-  // gh-938/#944: hosted-runner-only flake (root cause #943) — skip on
-  // Linux (hosted ubuntu), the only place it fires. This is a real
-  // runner-level skip: `throw Skip` from main() aborts file LOADING (a
-  // load error, not a skip) and reds the ubuntu flutter-tests shards —
-  // the only coverage legs the app-crap-gate merges (there is NO macOS
-  // coverage leg, see the file header). While skipped here,
-  // catalog_service_coverage_test.dart keeps the CRAP ratchet fed on
-  // every platform; unskip once #943 lands.
-  TestWidgetsFlutterBinding.ensureInitialized();
 
-  final skipOnLinux = Platform.isLinux
-      ? 'infra: #936 hosted-runner flake (Linux leg only)'
-      : null;
+  TestWidgetsFlutterBinding.ensureInitialized();
 
   group('catalog asset URL construction', () {
     test('catalog fetch hits exactly one slash before catalog.json', () async {
@@ -221,7 +206,7 @@ void main() {
         'https://example.com/assets/catalog.json',
       );
     });
-  }, skip: skipOnLinux);
+  }, skip: Platform.isLinux ? 'infra: #936 hosted-runner flake (Linux leg only)' : null);
 
   group('CatalogEntry.fromJson platforms', () {
     Map<String, dynamic> base() =>
@@ -251,7 +236,7 @@ void main() {
       final json = base()..['platforms'] = ['ios', 42, null, 'macos'];
       expect(CatalogEntry.fromJson(json).platforms, ['ios', 'macos']);
     });
-  }, skip: skipOnLinux);
+  }, skip: Platform.isLinux ? 'infra: #936 hosted-runner flake (Linux leg only)' : null);
 
   group('CatalogService.fetchCatalog', () {
     test('parses entries and stamps freshness', () async {
@@ -382,7 +367,7 @@ void main() {
       expect(hits, 1);
       expect(result.entries, hasLength(2));
     });
-  }, skip: skipOnLinux);
+  }, skip: Platform.isLinux ? 'infra: #936 hosted-runner flake (Linux leg only)' : null);
 
   group('CatalogService.downloadWidget', () {
     test('unpacks the single-root archive into relative paths', () async {
@@ -525,7 +510,7 @@ void main() {
         throwsA(isA<CatalogError>()),
       );
     });
-  }, skip: skipOnLinux);
+  }, skip: Platform.isLinux ? 'infra: #936 hosted-runner flake (Linux leg only)' : null);
 
   group('web platform policy', () {
     // release-assets.githubusercontent.com sends NO CORS headers, so
@@ -739,5 +724,5 @@ void main() {
         'widget.js',
       ]);
     });
-  }, skip: skipOnLinux);
+  }, skip: Platform.isLinux ? 'infra: #936 hosted-runner flake (Linux leg only)' : null);
 }
