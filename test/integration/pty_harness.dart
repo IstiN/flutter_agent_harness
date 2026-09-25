@@ -84,9 +84,6 @@ final class FaCliHarness {
     return dir;
   }
 
-  /// The per-spawn temp CWD this harness created (null when the caller
-  /// passed an explicit [workingDirectory] and owns the dir itself).
-  final Directory? _ownedCwd;
   var _closed = false;
 
   /// Spawns the Fa CLI with a PTY of fixed size.
@@ -135,7 +132,6 @@ final class FaCliHarness {
     // spawn must not accumulate across runs on persistent hosts).
     final ownedCwd = workingDirectory == null ? _shortDefaultCwd() : null;
     final faBin = extraEnv?['FA_BIN'];
-    final ownedCwd = workingDirectory == null ? _shortDefaultCwd() : null;
     final pty = PseudoTerminal.start(
       faBin ?? 'dart',
       // Absolute script path so a non-default [workingDirectory] still
