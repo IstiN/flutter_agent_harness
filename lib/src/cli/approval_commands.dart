@@ -813,7 +813,7 @@ extension ApprovalCommands on AgentCli {
       ),
     );
     if (_exited) return;
-    final message = _buildAsyncResultMessage(job);
+    final message = taskAsyncResultNotice(job);
     if (isBusy) {
       // Mid-run: the steering queue delivers it at the next step boundary
       // (omp's non-interrupting aside between requests).
@@ -821,44 +821,6 @@ extension ApprovalCommands on AgentCli {
     } else {
       _startRun(message);
     }
-  }
-
-  /// The async-result message re-injected into the parent conversation when
-  /// a background job settles (omp's `<system-notice>` + `<task-result>`
-  /// envelope, reduced: no artifact spill — the pointer is `agent://<id>`).
-  static const _asyncResultPreviewChars = 4000;
-
-  String _buildAsyncResultMessage(TaskJob job) {
-    final result = job.result;
-    final buffer = StringBuffer()
-      ..writeln('<system-notice>')
-      ..writeln(
-        'Background agent ${job.id} (${job.agent}) finished with status: '
-        '${job.status.name}.',
-      )
-      ..writeln('Task: ${job.task}')
-      ..writeln()
-      ..write(
-        '<task-result id="${job.id}" agent="${job.agent}" '
-        'status="${job.status.name}">',
-      );
-    final output = result?.output ?? '';
-    if (output.isNotEmpty) {
-      buffer
-        ..writeln()
-        ..writeln(
-          output.length > _asyncResultPreviewChars
-              ? '${output.substring(0, _asyncResultPreviewChars)}\n…\n'
-                    '[Full output: agent://${job.id}]'
-              : output,
-        );
-    }
-    final error = result?.error;
-    if (error != null) buffer.write('\nerror: $error');
-    buffer
-      ..write('\n</task-result>')
-      ..write('\n</system-notice>');
-    return buffer.toString();
   }
 
   /// `/tasks [cancel <id>]` — lists the session's background agents and
