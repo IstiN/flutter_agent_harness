@@ -122,32 +122,36 @@ if $PROGRAM_NAME == __FILE__
   ok("validate-only: every upload skip flag on (auth + track validated only)")
 
   # ── supply options: store-listing lane (issue #289, play_store) ────────
-  # The listing lane never ships a binary: AABs ride upload_only, this one
-  # uploads metadata texts + images (icon/featureGraphic) + screenshots.
+  # The listing lane never ships a binary: AABs ride upload_only. Since
+  # #947 the images never ride SUPPLY either — Play appends screenshot
+  # uploads, so stale shots survived every supply upload (the Sep 24
+  # rejection). Images go through PlayListingSync (whole set replaced per
+  # locale + device type, verified via edits.images.list), so supply
+  # always skips them and only carries the metadata TEXTS.
   listing = PlayUploadPreflight.supply_listing_options(
     track: "internal", metadata: true, images: true, validate_only: false)
   raise "FAIL: listing lane must never upload an AAB" unless
     listing[:skip_upload_aab] == true && !listing.key?(:aab)
-  raise "FAIL: listing defaults must upload metadata + images + screenshots" unless
-    listing[:skip_upload_metadata] == false && listing[:skip_upload_images] == false &&
-    listing[:skip_upload_screenshots] == false
+  raise "FAIL: listing must upload the metadata texts" unless listing[:skip_upload_metadata] == false
+  raise "FAIL: listing images must ride PlayListingSync, never supply" unless
+    listing[:skip_upload_images] == true && listing[:skip_upload_screenshots] == true
   raise "FAIL: listing lane must not invent release notes" unless
     listing[:skip_upload_changelogs] == true
   raise "FAIL: track not mapped on the listing options" unless listing[:track] == "internal"
-  ok("listing options: no binary, metadata + images + screenshots on")
+  ok("listing options: no binary, texts via supply, images via PlayListingSync")
 
   # Env gates split content types (the store-metadata.yml android leg).
   texts_only = PlayUploadPreflight.supply_listing_options(
     track: "internal", metadata: true, images: false, validate_only: false)
-  raise "FAIL: images=false must skip images + screenshots, keep metadata" unless
-    texts_only[:skip_upload_images] == true && texts_only[:skip_upload_screenshots] == true &&
-    texts_only[:skip_upload_metadata] == false
+  raise "FAIL: images=false must keep the texts flowing" unless texts_only[:skip_upload_metadata] == false
+  raise "FAIL: images must never ride supply regardless of the gate" unless
+    texts_only[:skip_upload_images] == true && texts_only[:skip_upload_screenshots] == true
   ok("listing options: images=false skips images + screenshots only")
 
   images_only = PlayUploadPreflight.supply_listing_options(
     track: "internal", metadata: false, images: true, validate_only: false)
   raise "FAIL: metadata=false must skip texts, keep images" unless
-    images_only[:skip_upload_metadata] == true && images_only[:skip_upload_images] == false
+    images_only[:skip_upload_metadata] == true && images_only[:skip_upload_images] == true
   ok("listing options: metadata=false skips texts only")
 
   listing_dry = PlayUploadPreflight.supply_listing_options(
