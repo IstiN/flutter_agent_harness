@@ -41,21 +41,81 @@ final class FaCliHarness {
     required this.terminal,
     required this.columns,
     required this.rows,
+    this.workingDirectory,
   });
 
-  /// Short fixed CWD used when the caller does not pin [spawn]'s
-  /// workingDirectory. The CLI derives its session slug from the CWD, and on
-  /// CI runners the checkout path is so long that the boot banner
+  /// The per-RUN unique root under the system temp (gh-936): every run of
+  /// a suite creates its own `Directory.systemTemp.createTemp('fa_pty_')`
+  /// lazily on first use, so two overlapping runs (a cancelled CI dispatch
+  /// and its successor on the same runner) can never share — and delete
+  /// from under each other — fixed `/tmp` paths. The root is swept on
+  /// SIGINT/SIGTERM (POSIX), the shape a cancelled `dart test` delivers,
+  /// so the cleanup survives test failure and cancellation alike; an
+  /// orderly completion leaves the root to the OS tmp cleaner and the
+  /// leg-start preflight sweep (`scripts/pty_leg_preflight.sh`).
+  static Directory? _runRoot;
+
+  /// Sequence number for per-spawn default CWDs under the run root.
+  static int _cwdSeq = 0;
+
+  /// The run's unique root, created on first use.
+  static Directory get runRoot {
+    final existing = _runRoot;
+    if (existing != null) return existing;
+    final root = Directory.systemTemp.createTempSync('fa_pty_');
+    _runRoot = root;
+    _watchFatalSignals(root);
+    return root;
+  }
+
+  /// Sweeps [dir] best-effort — a lost race with a live process (the
+  /// signal arrives mid-boot) must never crash the handler.
+  static void _sweepQuietly(Directory dir) {
+    try {
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
+    } on Object {
+      // Best-effort: the leg-start preflight sweeps the leftovers.
+    }
+  }
+
+  /// Registers the run-root sweep on SIGINT/SIGTERM (POSIX only — the
+  /// watch raises on Windows). The handler MUST exit: swallowing the
+  /// signal would block the runner's cancellation entirely.
+  static void _watchFatalSignals(Directory root) {
+    if (Platform.isWindows) return;
+    for (final signal in [ProcessSignal.sigint, ProcessSignal.sigterm]) {
+      signal.watch().listen((_) {
+        _sweepQuietly(root);
+        exit(128 + signal.signalNumber);
+      });
+    }
+  }
+
+  /// A unique per-test directory under the system temp. The suites used
+  /// to share FIXED `/tmp/fa_<issue>_{home,proj,ws}` paths; two
+  /// overlapping runs then deleted each other's dirs mid-test
+  /// (`PathNotFoundException: Deletion failed, path = '/tmp/fa_539_home'`
+  /// — gh-936). Caller owns deletion: register it with `addTearDown`, so
+  /// the cleanup runs even when the test fails.
+  static Directory uniqueTempDir(String prefix) =>
+      Directory.systemTemp.createTempSync(prefix);
+
+  /// A unique short CWD for one spawn (the caller does not pin one).
+  ///
+  /// The CLI derives its session slug from the CWD, and on CI runners the
+  /// checkout path is so long that the boot banner
   /// (`/Users/.../flutter_agent_harness` + the `.fah/sessions/<slug>` block)
   /// wraps over a dozen rows and floods an 80x24 frame — fa-m5-3's slug
   /// alone ate 6 rows, hiding the credential sheet and half the job board
-  /// from the assertions. Suites that need a specific CWD pass it
-  /// explicitly; package resolution stays on the repo either way (the
-  /// script path is absolute).
+  /// from the assertions. Unique per SPAWN inside the per-RUN root: two
+  /// concurrent default-CWD harnesses (one run) and two runs never share
+  /// a cwd, so a deleted dir can never pull the ground from under a live
+  /// CLI (`Getting current working directory failed` — gh-936). Package
+  /// resolution stays on the repo either way (the script path is
+  /// absolute).
   static Directory _shortDefaultCwd() {
-    const path = '/tmp/fa_pty_cwd';
-    final dir = Directory(path);
-    if (!dir.existsSync()) dir.createSync(recursive: true);
+    final dir = Directory('${runRoot.path}/cwd-${_cwdSeq++}')
+      ..createSync(recursive: true);
     // Match the checkout's shape: the CLI's git-root discovery (and the
     // lib/src/cli branches behind it) only runs inside a repository. With a
     // bare tmp dir those paths go unexercised and the cli coverage ratchet
@@ -98,6 +158,7 @@ final class FaCliHarness {
     // from `dart build cli`) instead of JIT `dart bin/fah.dart` — perf
     // probes must measure what install_local.sh actually ships.
     final faBin = extraEnv?['FA_BIN'];
+    final cwd = workingDirectory ?? _shortDefaultCwd().path;
     final pty = PseudoTerminal.start(
       faBin ?? 'dart',
       // Absolute script path so a non-default [workingDirectory] still
@@ -114,7 +175,7 @@ final class FaCliHarness {
         ],
         ...args,
       ],
-      workingDirectory: workingDirectory ?? _shortDefaultCwd().path,
+      workingDirectory: cwd,
       environment: env,
       raw: raw,
     );
@@ -128,6 +189,7 @@ final class FaCliHarness {
       terminal: terminal,
       columns: columns,
       rows: rows,
+      workingDirectory: cwd,
     );
     harness.startListening();
     // Answer the CLI's terminal queries (device attributes etc.) so it

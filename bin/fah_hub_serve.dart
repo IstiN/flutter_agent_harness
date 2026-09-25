@@ -253,6 +253,7 @@ Future<int> hubServe(
   } on SocketException catch (error) {
     stderr.writeln(
       'hub: cannot bind 127.0.0.1:${spec.port} ($error) — '
+      'still held after ${hub.bindMaxAttempts} bind attempts: '
       'something else holds the port',
     );
     return 1;

@@ -64,6 +64,52 @@ HubState readHubState(File file) {
 /// invalid file counts as "no password".
 String? readHubStateSecret(File file) => readHubState(file).masterSecret;
 
+/// Default bind-retry budget for [LocalHub.start] (gh-936): five attempts
+/// spanning ~1.5 s of backoff ride out a port held by a dying process
+/// (a cancelled run's hub between close and exit) without turning the
+/// start into a hard failure.
+const int hubBindMaxAttempts = 5;
+
+/// The base wait of the bind-retry backoff — doubled every attempt
+/// (100, 200, 400, 800 ms over the default five attempts).
+const Duration hubBindBackoffBase = Duration(milliseconds: 100);
+
+/// Binds an HTTP server with [shared] semantics (gh-936), retrying with
+/// exponential backoff while the port is held by SOMETHING ELSE.
+///
+/// Why `shared: true` by default: two overlapping runs of the same suite
+/// (a cancelled CI dispatch and its successor, two local test legs) both
+/// reach for the same fixed/allocated loopback port, and without
+/// SO_REUSEPORT the loser hard-fails with "Shared flag to bind() needs
+/// to be true if binding multiple times" — the failure that red four
+/// PTY legs in one night (gh-936). A shared bind makes overlapping hubs
+/// coexist; the `fa hub serve` idempotence probe (healthz before bind)
+/// keeps the ordinary double-start calm, so the residual split-bind
+/// window (two SIMULTANEOUS starts) degrades instead of crashing.
+/// Callers that need an exclusive bind pass `shared: false` — the retry
+/// then still absorbs transient holders before surfacing the failure.
+Future<HttpServer> bindHttpServerWithRetry(
+  InternetAddress address,
+  int port, {
+  required bool shared,
+  int attempts = hubBindMaxAttempts,
+  Duration backoff = hubBindBackoffBase,
+}) async {
+  assert(attempts >= 1, 'attempts must be at least 1');
+  SocketException? lastError;
+  for (var attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await HttpServer.bind(address, port, shared: shared);
+    } on SocketException catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        await Future<void>.delayed(backoff * attempt);
+      }
+    }
+  }
+  throw lastError!;
+}
+
 /// Monotonic per-process write counter for [writeHubState]'s unique
 /// temp names.
 int _hubStateWriteSeq = 0;
@@ -193,6 +239,8 @@ class LocalHub {
     this.bind = 'loopback',
     this._masterSecret,
     this._stateFile,
+    this.bindMaxAttempts = hubBindMaxAttempts,
+    this.bindBackoff = hubBindBackoffBase,
     this.relayAllowAnyHost = false,
     this.relayConcurrency = 4,
     this.relayQueueLimit = 32,
@@ -200,6 +248,14 @@ class LocalHub {
     this.relayConnectTimeout = relayDefaultConnectTimeout,
     this.relayIdleTimeout = relayDefaultIdleTimeout,
   }) : assert(
+         bindMaxAttempts >= 1,
+         'bindMaxAttempts must be at least 1',
+       ),
+       assert(
+         bindBackoff > Duration.zero,
+         'bindBackoff must be positive',
+       ),
+       assert(
          relayConcurrency > 0,
          'relayConcurrency must be positive — 0 wedges the pool forever',
        ),
@@ -216,6 +272,16 @@ class LocalHub {
 
   /// The port to bind (`0` = ephemeral, tests).
   final int port;
+
+  /// Bind-retry budget (gh-936): a port held by a DYING process (a
+  /// cancelled run's hub still between close and exit, a TIME_WAIT
+  /// lingerer) must not hard-fail the start — the bind retries
+  /// [bindMaxAttempts] times with [bindBackoff] exponential backoff
+  /// before giving up. Injected so tests can shrink the wait.
+  final int bindMaxAttempts;
+
+  /// The base wait of the bind-retry backoff (doubled every attempt).
+  final Duration bindBackoff;
 
   /// Relay destination dev opt-in (issue #792 AC3): when true, the
   /// `/relay` destination allowlist is lifted so a development taskpane
@@ -334,9 +400,12 @@ class LocalHub {
 
   Future<void> start() async {
     _loadState();
-    _server = await HttpServer.bind(
+    _server = await bindHttpServerWithRetry(
       bind == 'lan' ? InternetAddress.anyIPv4 : InternetAddress.loopbackIPv4,
       port,
+      shared: true,
+      attempts: bindMaxAttempts,
+      backoff: bindBackoff,
     );
     // Issue #792: the relay authenticates on EVERY scope. A protected hub
     // demands its master secret; an open loopback hub still gets an
