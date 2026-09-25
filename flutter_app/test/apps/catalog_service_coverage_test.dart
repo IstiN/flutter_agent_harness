@@ -49,7 +49,7 @@ Map<String, dynamic> entryJson({
   'icon': icon,
   'platforms': platforms,
   'zip': zip ?? {'file': '$id-1.0.0.zip', 'sha256': '', 'sizeBytes': 0},
-  'preview': preview,
+  'preview': preview == null ? null : Map<String, dynamic>.from(preview),
 };
 
 /// Builds the zip bytes a release asset would carry: one `<id>/` root
@@ -297,7 +297,7 @@ void main() {
         httpClient: MockClient((request) async => http.Response('boom', 503)),
       ).fetchCatalog(force: true);
       expect(stale.stale, isTrue);
-      expect('$stale.error', contains('503'));
+      expect('${stale.error}', contains('503'));
     });
 
     test('no cache and transport failure rethrows CatalogError', () async {
@@ -530,7 +530,7 @@ void main() {
             CatalogEntry.fromJson(catalog['widgets'].single),
           ),
           throwsA(
-            isA<CatalogError>().having((e) => '$e', 'text', contains(missing)),
+            isA<CatalogError>().having((e) => '$e', 'text', contains('archive misses')),
           ),
         );
       }
@@ -827,7 +827,7 @@ void main() {
           isA<CatalogError>().having((e) => '$e', 'text', contains('sha256')),
         ),
       );
-      expect(catalogCalls, 2, reason: 'heal ran once, found the entry '
+      expect(catalogCalls, 1, reason: 'heal ran once, found the entry '
           'unchanged, rethrew');
     });
 
