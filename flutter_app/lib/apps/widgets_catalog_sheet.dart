@@ -12,6 +12,7 @@ import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -194,10 +195,9 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
       );
       if (mounted) {
         setState(() => _installing.remove(entry.id));
-        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-          SnackBar(
-            content: Text(context.l10n.widgetsCatalogInstallFailed('$error')),
-          ),
+        showFahErrorSnack(
+          context,
+          context.l10n.widgetsCatalogInstallFailed('$error'),
         );
       }
       return false;
@@ -217,9 +217,7 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
       await _refreshInstalled();
       setState(() {});
     } else {
-      ScaffoldMessenger.maybeOf(
-        context,
-      )?.showSnackBar(SnackBar(content: Text(context.l10n.commonError)));
+      showFahErrorSnack(context, context.l10n.commonError);
     }
   }
 
@@ -233,9 +231,7 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
     }
     if (app == null) {
       if (mounted) {
-        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-          SnackBar(content: Text(context.l10n.widgetsCatalogNotInstalled)),
-        );
+        showFahErrorSnack(context, context.l10n.widgetsCatalogNotInstalled);
       }
       return;
     }

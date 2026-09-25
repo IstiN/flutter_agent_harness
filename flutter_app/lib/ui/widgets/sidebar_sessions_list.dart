@@ -180,10 +180,10 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
     if (store != null) {
       unawaited(store.setExpanded(parentId, !expanded));
     } else {
-      (expanded ? _localExpandedParents : _localCollapsedParents)
-          .remove(parentId);
-      (expanded ? _localCollapsedParents : _localExpandedParents)
-          .add(parentId);
+      (expanded ? _localExpandedParents : _localCollapsedParents).remove(
+        parentId,
+      );
+      (expanded ? _localCollapsedParents : _localExpandedParents).add(parentId);
     }
     setState(() {});
   }
@@ -916,10 +916,10 @@ Future<void> _deleteSession(
     }
   } on Object catch (error) {
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(l10n.sidebarDeleteSessionFailed(error.toString())),
-        ),
+      showFahErrorSnack(
+        context,
+        l10n.sidebarDeleteSessionFailed(error.toString()),
+        sessionId: sessionId,
       );
     }
   }
@@ -1034,7 +1034,10 @@ class SessionTile extends StatelessWidget {
                   const SizedBox(width: 8),
                 const SizedBox(width: 10),
                 if (subagent) ...[
-                  SubagentMark(size: 12, color: colors.dim.withValues(alpha: 0.8)),
+                  SubagentMark(
+                    size: 12,
+                    color: colors.dim.withValues(alpha: 0.8),
+                  ),
                   const SizedBox(width: 6),
                 ],
                 Expanded(
@@ -1124,9 +1127,7 @@ class SessionTile extends StatelessWidget {
                               children: [
                                 AnimatedRotation(
                                   turns: expanded ? 0.25 : 0,
-                                  duration: const Duration(
-                                    milliseconds: 120,
-                                  ),
+                                  duration: const Duration(milliseconds: 120),
                                   child: Icon(
                                     Icons.keyboard_arrow_right,
                                     size: 14,
@@ -1191,4 +1192,3 @@ class SessionTile extends StatelessWidget {
     );
   }
 }
-

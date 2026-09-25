@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa_ui/src/utils/page_presentation.dart';
+import '../widgets/snackbars.dart';
 
 /// The settings "Agents" section: the live subagent tree — the main
 /// orchestrator row plus every retained child with its status, task preview,
@@ -278,19 +279,16 @@ class _AgentDetailPageState extends State<AgentDetailPage> {
       await widget.send(widget.handle.id, message);
       _messageCtrl.clear();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Message sent — agent resumed'), // l10n:ignore
-            duration: Duration(seconds: 2),
-          ),
+        showFahSnack(
+          context,
+          'Message sent — agent resumed', // l10n:ignore
+          duration: const Duration(seconds: 2),
         );
       }
       await _load();
     } on Object catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('error: $error')), // l10n:ignore
-        );
+        showFahErrorSnack(context, 'error: $error'); // l10n:ignore
       }
     } finally {
       if (mounted) setState(() => _sending = false);

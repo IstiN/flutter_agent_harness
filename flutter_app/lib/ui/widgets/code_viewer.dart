@@ -4,6 +4,7 @@ import 'package:re_highlight/languages/all.dart';
 import 'package:re_highlight/re_highlight.dart';
 
 import 'package:fa/ui/widgets/syntax_theme.dart';
+import 'package:fa_ui/fa_ui.dart';
 
 /// Singleton highlighter registered with all built-in languages.
 final Highlight _highlight = Highlight()
@@ -176,28 +177,34 @@ class _CodeEditorState extends State<CodeEditor> {
     });
     if (result.isOk) {
       widget.onSaved?.call();
-      _showSnackBar(
+      _showSnack(
         // l10n:ignore
-        const SnackBar(
-          // l10n:ignore
-          content: Text('Saved'), // l10n:ignore
-          duration: Duration(seconds: 1),
-        ),
+        'Saved', // l10n:ignore
+        duration: const Duration(seconds: 1),
       );
     } else {
       setState(() {
         _error = result.errorOrNull?.message ?? 'Save failed';
       });
-      _showSnackBar(
-        // l10n:ignore
-        SnackBar(content: Text('Save failed: $_error')), // l10n:ignore
-      );
+      // l10n:ignore
+      _showSnack('Save failed: $_error', error: true); // l10n:ignore
     }
   }
 
-  /// Shows [snack] when still mounted (the write hopped async).
-  void _showSnackBar(SnackBar snack) {
-    if (mounted) ScaffoldMessenger.of(context).showSnackBar(snack);
+  /// Shows [message] as a snack when still mounted (the write hopped async).
+  void _showSnack(String message, {bool error = false, Duration? duration}) {
+    if (!mounted) return;
+    error
+        ? showFahErrorSnack(
+            context,
+            message,
+            duration: duration ?? const Duration(seconds: 4),
+          )
+        : showFahSnack(
+            context,
+            message,
+            duration: duration ?? const Duration(seconds: 4),
+          );
   }
 
   @override
