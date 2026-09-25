@@ -13,6 +13,7 @@ import 'package:fa_ui/src/providers/provider_preset.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
 import 'package:fa_ui/src/utils/page_presentation.dart';
+import '../widgets/snackbars.dart';
 
 /// Builds the connect page of an on-device provider (engine download,
 /// progress, token field — all host territory). The page must call
@@ -169,9 +170,7 @@ class DefaultChatModelSection extends StatelessWidget {
                   );
                 } catch (error) {
                   if (!context.mounted) return;
-                  ScaffoldMessenger.of(
-                    context,
-                  ).showSnackBar(SnackBar(content: Text(error.toString())));
+                  showFahErrorSnack(context, error.toString());
                 }
               },
               child: Padding(

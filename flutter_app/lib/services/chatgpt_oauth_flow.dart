@@ -11,11 +11,9 @@ import 'package:flutter_agent_harness/io.dart'
 import 'package:url_launcher/url_launcher.dart' as url_launcher;
 
 import 'package:fa/services/agent_service.dart';
-import 'package:fa/services/keychain_store.dart';
 import 'package:fa/services/last_connection.dart';
-import 'package:fa/services/provider_registry.dart';
-import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/ui/screens/chatgpt_oauth_webview.dart';
+import 'package:fa_ui/fa_ui.dart';
 
 /// Runs the full ChatGPT OAuth flow:
 ///
@@ -118,9 +116,7 @@ String? _unsupportedMessage(bool Function()? platformSupportedFn) {
 /// `false`.
 bool _refuse(BuildContext context, String message) {
   if (context.mounted) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    showFahErrorSnack(context, message);
   }
   return false;
 }
@@ -143,11 +139,10 @@ Future<ChatGptOAuthCredentials?> _acquireCredentials(
       exchangeFn: exchangeFn,
     );
   }
-  ScaffoldMessenger.of(context).showSnackBar(
-    const SnackBar(
-      content: Text('Opening browser for ChatGPT sign-in…'),
-      duration: Duration(seconds: 3),
-    ),
+  showFahSnack(
+    context,
+    'Opening browser for ChatGPT sign-in…',
+    duration: const Duration(seconds: 3),
   );
   return runChatGptOAuthCliFlow(
     onStatus: (msg) => debugPrint('[ChatGPT OAuth] $msg'),

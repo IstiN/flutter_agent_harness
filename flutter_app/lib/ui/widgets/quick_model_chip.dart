@@ -16,7 +16,8 @@ import 'package:fa_ui/fa_ui.dart'
         FaUiHost,
         MediaSlotEditorResult,
         MediaSlotProviderPickerPage,
-        pushFaPage;
+        pushFaPage,
+        showFahErrorSnack;
 
 /// The quick model-switch chip shared by BOTH layout headers (issue #167):
 /// the wide shell's chat header and the mobile session panel render the
@@ -188,9 +189,7 @@ Future<void> openQuickModelPicker(
     await service.reconfigure(agentConfig);
   } on ProviderConnectionException catch (error) {
     if (!context.mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(error.message)));
+    showFahErrorSnack(context, error.message);
     return;
   }
   await lastConnectionStore?.saveFromConfig(agentConfig);

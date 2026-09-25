@@ -11,6 +11,7 @@ import 'package:fa/services/project_mount_flow.dart';
 import 'package:fa/services/upload.dart';
 import 'package:fa/services/upload_picker_stub.dart'
     if (dart.library.html) 'package:fa/services/upload_picker_web.dart';
+import 'package:fa_ui/fa_ui.dart' hide formatFileSize;
 
 /// The default [ProjectFolderOps] on supported platforms (macOS), else null.
 ProjectFolderOps? _defaultProjectFolderOps() =>
@@ -127,18 +128,15 @@ class _FileBrowserState extends State<FileBrowser> {
         onApplied: () => widget.onProjectMountChanged?.call(),
         onAccessDenied: () {
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(context.l10n.filesFolderAccessDenied)),
-            );
+            showFahErrorSnack(context, context.l10n.filesFolderAccessDenied);
           }
         },
       );
     } on Object catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(context.l10n.filesFolderPickerError(e.toString())),
-          ),
+        showFahErrorSnack(
+          context,
+          context.l10n.filesFolderPickerError(e.toString()),
         );
       }
       return;
@@ -302,12 +300,15 @@ class _FileBrowserState extends State<FileBrowser> {
     }
   }
 
-  void _showSnack(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(content: Text(message), duration: const Duration(seconds: 3)),
-      );
+  void _showSnack(String message, {bool error = false}) {
+    error
+        ? showFahErrorSnack(
+            context,
+            message,
+            duration: const Duration(seconds: 3),
+            hideCurrent: true,
+          )
+        : showFahSnack(context, message, duration: const Duration(seconds: 3));
   }
 
   /// Runs one iCloud merge of the sandbox sessions/apps trees and reports
@@ -337,7 +338,7 @@ class _FileBrowserState extends State<FileBrowser> {
   }
 
   void _showSyncUnavailable() =>
-      _showSnack(context.l10n.filesICloudSyncUnavailable);
+      _showSnack(context.l10n.filesICloudSyncUnavailable, error: true);
 
   void _showSyncDone(ICloudSyncReport report) => _showSnack(
     context.l10n.filesICloudSyncDone(
@@ -348,7 +349,7 @@ class _FileBrowserState extends State<FileBrowser> {
   );
 
   void _showSyncFailed(Object e) =>
-      _showSnack(context.l10n.filesICloudSyncFailed(e.toString()));
+      _showSnack(context.l10n.filesICloudSyncFailed(e.toString()), error: true);
 
   /// Picks files and writes them into the currently viewed folder of the
   /// sandbox filesystem, so the agent can work with them right away.
@@ -359,7 +360,9 @@ class _FileBrowserState extends State<FileBrowser> {
     try {
       picked = await picker.pick();
     } on Object catch (e) {
-      if (mounted) _showSnack(context.l10n.filesUploadFailed(e.toString()));
+      if (mounted) {
+        _showSnack(context.l10n.filesUploadFailed(e.toString()), error: true);
+      }
       return;
     }
     if (picked.isEmpty || !mounted) return;
@@ -370,7 +373,7 @@ class _FileBrowserState extends State<FileBrowser> {
       message: (total, max) => context.l10n.uploadTooLarge(max, total),
     );
     if (sizeError != null) {
-      _showSnack(sizeError);
+      _showSnack(sizeError, error: true);
       return;
     }
 

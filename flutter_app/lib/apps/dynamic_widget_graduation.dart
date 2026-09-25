@@ -7,11 +7,11 @@ import 'package:fa/apps/dynamic_messages.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/github_account_store.dart';
-import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/widget_publication_store.dart';
 import 'package:fa/services/widget_publish_service.dart';
 import 'package:fa/ui/widgets/github_account_section.dart';
 import 'package:fa/ui/widgets/widget_publish_sheet.dart';
+import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 
 /// One-tap "save as app" (issue #102 AC7), shared by EVERY dynamic-widget
@@ -80,15 +80,9 @@ Future<String?> installGraduatedWidget(
 @visibleForTesting
 void showGraduationSnackbar(BuildContext context, String? appId) {
   final l10n = context.l10n;
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(
-      content: Text(
-        appId == null
-            ? l10n.dynamicMessagesSaveFailed
-            : l10n.dynamicMessagesSaved(appId),
-      ),
-    ),
-  );
+  appId == null
+      ? showFahErrorSnack(context, l10n.dynamicMessagesSaveFailed)
+      : showFahSnack(context, l10n.dynamicMessagesSaved(appId));
 }
 
 /// The publish-sheet collaborators for a freshly graduated app: the GitHub
