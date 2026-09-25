@@ -53,7 +53,7 @@ def uncovered_units(covered: set, root: str) -> list:
 
 
 def file_has_tag(path: str, tag: str) -> bool:
-    """True when the file's @Tags([...]) annotation names `tag`."""
+    """True when the file's real (non-comment) code names `tag` in @Tags([...])."""
     try:
         with open(path, encoding="utf-8") as f:
             head = f.read()
@@ -61,7 +61,13 @@ def file_has_tag(path: str, tag: str) -> bool:
         return False
     # Full read: a truncated scan would silently drop a tagged file from
     # the bin-pack safety net; @Tags lives anywhere in the file's metadata.
-    return re.search(r"@Tags\s*\(\s*\[[^\]]*['\"]" + re.escape(tag) + r"['\"]", head) is not None
+    # But match CODE only — strip the `//` portion of every line first. A
+    # `///` doc comment that merely MENTIONS `@Tags(['io', 'integration'])`
+    # once phantom-tagged test/cli/fah_hub_serve_dispatch_test.dart into
+    # the integration manifest (review #963): the file has no integration
+    # tag and the shard step runs zero tests from it.
+    code = "\n".join(re.sub(r"//.*", "", line) for line in head.splitlines())
+    return re.search(r"@Tags\s*\(\s*\[[^\]]*['\"]" + re.escape(tag) + r"['\"]", code) is not None
 
 
 def uncovered_files(covered: set, root: str, exclude: list,
