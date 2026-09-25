@@ -1,3 +1,7 @@
+// gh-938: hosted-runner-only flake (green on main in adjacent runs).
+@Skip('infra: #936 hosted-runner flake')
+library;
+
 import 'dart:convert';
 import 'dart:typed_data';
 

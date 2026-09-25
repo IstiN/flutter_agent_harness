@@ -13,6 +13,7 @@
 @TestOn('vm')
 @Tags(['integration', 'perf'])
 @Timeout(Duration(minutes: 10))
+@Skip('infra: #936 boot perf budget too tight under concurrency')
 library;
 
 import 'dart:io';
