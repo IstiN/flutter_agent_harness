@@ -1,0 +1,12 @@
+⠋ Working…      3s
+┌─ Approval ───────────────────────────────────────────────────────────────────┐
+│ Tool: bash                                                                   │
+│ Tier: exec                                                                   │
+│ exec tier requires approval in mode: code                                    │
+│ Args: command=rm -rf ./build                                                 │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ 1/2/3/y/a/n answer · other keys type a note · esc = deny                     │
+│ 1.   Approve once (y)                                                        │
+│ 2.   Always approve (a)                                                      │
+│ 3. > Deny (n)                                                                │
+└──────────────────────────────────────────────────────────────────────────────┘
