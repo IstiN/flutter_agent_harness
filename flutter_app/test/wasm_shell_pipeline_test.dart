@@ -710,15 +710,6 @@ void main() {
     });
   });
 
-  // gh-951: fails 3/3 on hosted ubuntu since 2026-09-25 06:47 UTC
-  // ('Bad state: no scripted instance' / PanicException) with ZERO code
-  // changes (no wasm/deps commits in 18h; green at 04:35 UTC). Env shift,
-  // not product. Linux-hosted-only runtime skip so the macOS coverage leg
-  // keeps running it (lesson from the #942 unconditional-@Skip CRAP storm).
-  // gh-951: Linux-only skip via the group's closing named arg — the only
-  // runtime-skip form that is valid with a block body on this runner
-  // ('throw Skip' in main() = load failure; in setUpAll = failed). macOS
-  // coverage leg keeps running the group (#942 lesson).
   group('lazy interpreter loading (issue #640)', () {
 
     /// A shell with the eight eager modules only; heavy interpreters are
@@ -794,5 +785,5 @@ void main() {
       expect(r.valueOrNull!.exitCode, 1);
       expect(r.valueOrNull!.stderr, contains('no lazy loader'));
     });
-  }, skip: io.Platform.isLinux ? 'infra: gh-951 hosted-ubuntu wasm env shift' : null);
+  });
 }
