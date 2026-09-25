@@ -113,15 +113,18 @@ class ThemePacksSection extends StatelessWidget {
     if (files.isEmpty) return;
     final result = await store.installFromZip(files.first.bytes);
     if (!context.mounted) return;
-    _showResult(context, _importMessage(result, context.l10n));
+    _showResult(
+      context,
+      _importMessage(result, context.l10n),
+      error: result.spec == null,
+    );
   }
 
   /// The import snackbar body: success shows the pack name, any per-file
   /// warnings are appended below it; a failed spec parse lists the
   /// reasons. Static and pure so the message contract is unit-testable.
   static String _importMessage(
-    ({ThemePackSpec? spec, List<String> reasons, List<String> warnings})
-    result,
+    ({ThemePackSpec? spec, List<String> reasons, List<String> warnings}) result,
     AppLocalizations l10n,
   ) {
     if (result.spec == null) {
@@ -134,10 +137,18 @@ class ThemePacksSection extends StatelessWidget {
         '${result.warnings.join('\n')}';
   }
 
-  void _showResult(BuildContext context, String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), duration: const Duration(seconds: 6)),
-    );
+  void _showResult(BuildContext context, String message, {bool error = false}) {
+    error
+        ? faui.showFahErrorSnack(
+            context,
+            message,
+            duration: const Duration(seconds: 6),
+          )
+        : faui.showFahSnack(
+            context,
+            message,
+            duration: const Duration(seconds: 6),
+          );
   }
 
   Future<void> _remove(
@@ -185,16 +196,12 @@ class ThemePacksSection extends StatelessWidget {
       children: [
         _headerRow(context, theme, store, canPick),
         const SizedBox(height: 4),
-        Text(
-          context.l10n.themePacksSubtitle,
-          style: theme.textTheme.bodySmall,
-        ),
+        Text(context.l10n.themePacksSubtitle, style: theme.textTheme.bodySmall),
         RadioGroup<String?>(
           groupValue: controller.packId,
           onChanged: (id) => controller.setPack(
             id,
-            hasWallpaper:
-                id != null && store.byId(id)?.spec.wallpaper != null,
+            hasWallpaper: id != null && store.byId(id)?.spec.wallpaper != null,
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -250,8 +257,7 @@ class ThemePacksSection extends StatelessWidget {
       value: pack.id,
       title: Text(pack.name),
       subtitle:
-          (pack.spec.wallpaper == null &&
-              pack.spec.contrastWarnings.isEmpty)
+          (pack.spec.wallpaper == null && pack.spec.contrastWarnings.isEmpty)
           ? null
           : _packNotes(context, theme, pack),
       secondary: IconButton(
@@ -442,23 +448,19 @@ class _CompactionSectionState extends State<CompactionSection> {
       );
       if (!mounted) return;
       _reload();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.l10n.settingsCompactionSaved(file)),
-          duration: const Duration(seconds: 4),
-        ),
+      faui.showFahSnack(
+        context,
+        context.l10n.settingsCompactionSaved(file),
+        duration: const Duration(seconds: 4),
       );
     } on Object catch (error) {
       // A refused write (validation, no home dir) surfaces verbatim —
       // the config files are never left half-edited.
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            context.l10n.settingsCompactionSaveFailed(error.toString()),
-          ),
-          duration: const Duration(seconds: 6),
-        ),
+      faui.showFahErrorSnack(
+        context,
+        context.l10n.settingsCompactionSaveFailed(error.toString()),
+        duration: const Duration(seconds: 6),
       );
     }
   }
@@ -730,21 +732,19 @@ class _ProviderQueueSectionState extends State<ProviderQueueSection> {
       );
       if (!mounted) return;
       _reload();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.l10n.settingsQueueSaved(file)),
-          duration: const Duration(seconds: 4),
-        ),
+      faui.showFahSnack(
+        context,
+        context.l10n.settingsQueueSaved(file),
+        duration: const Duration(seconds: 4),
       );
     } on Object catch (error) {
       // A refused write (env wins, validation) surfaces verbatim — the
       // config files are never left half-edited.
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.l10n.settingsQueueSaveFailed(error.toString())),
-          duration: const Duration(seconds: 6),
-        ),
+      faui.showFahErrorSnack(
+        context,
+        context.l10n.settingsQueueSaveFailed(error.toString()),
+        duration: const Duration(seconds: 6),
       );
     }
   }
@@ -819,11 +819,10 @@ class _ProviderQueueSectionState extends State<ProviderQueueSection> {
       );
     } on ArgumentError catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(context.l10n.settingsQueueSaveFailed('$error')),
-            duration: const Duration(seconds: 6),
-          ),
+        faui.showFahErrorSnack(
+          context,
+          context.l10n.settingsQueueSaveFailed('$error'),
+          duration: const Duration(seconds: 6),
         );
       }
       return null;
