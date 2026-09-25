@@ -197,7 +197,7 @@ Map<String, Object> run(int id, String title, String createdAt) => {
   'displayTitle': title,
 };
 
-const playTitle = 'build-mobile (app_only/none)';
+const playTitle = 'build-mobile (all/none)';
 const testflightTitle = 'build-mobile (none/all)';
 
 void main() {
@@ -215,7 +215,7 @@ void main() {
           '--budget-seconds',
           '30',
           '-f',
-          'android_content=app_only',
+          'android_content=all',
           '-f',
           'ios_content=none',
         ],
@@ -243,7 +243,7 @@ void main() {
         dw.log,
         anyElement(
           contains(
-            'workflow run build-mobile.yml --repo OWNER/REPO --ref main -f android_content=app_only -f ios_content=none',
+            'workflow run build-mobile.yml --repo OWNER/REPO --ref main -f android_content=all -f ios_content=none',
           ),
         ),
       );
@@ -257,7 +257,7 @@ void main() {
           '--title',
           playTitle,
           '-f',
-          'android_content=app_only',
+          'android_content=all',
         ],
         {
           'runs.json': runJson([
@@ -287,7 +287,7 @@ void main() {
           '--title',
           playTitle,
           '-f',
-          'android_content=app_only',
+          'android_content=all',
         ],
         {
           'runs.json': runJson([
@@ -351,7 +351,7 @@ void main() {
             '--title',
             playTitle,
             '-f',
-            'android_content=app_only',
+            'android_content=all',
           ],
           {
             'runs.json': runJson([run(111, playTitle, iso(-2))]),
@@ -383,7 +383,7 @@ void main() {
             '--budget-seconds',
             '1',
             '-f',
-            'android_content=app_only',
+            'android_content=all',
           ],
           {
             // Attempt 1: run 111 wedged in_progress; after cancel, view
@@ -432,7 +432,7 @@ void main() {
           '--budget-seconds',
           '1',
           '-f',
-          'android_content=app_only',
+          'android_content=all',
         ],
         {
           'runs.json': runJson([run(111, playTitle, iso(-10))]),
@@ -581,7 +581,7 @@ void main() {
         );
         expect(
           dispatchStepRun('play'),
-          contains("--title 'build-mobile (app_only/none)'"),
+          contains("--title 'build-mobile (all/none)'"),
         );
         expect(
           dispatchStepRun('cli'),
