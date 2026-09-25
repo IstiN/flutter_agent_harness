@@ -1,0 +1,3 @@
+✔ Wrote lib/src/cli/fa_tui_rows.dart
+  ~/work/proj · main · mock-model · ctx 4% (8k/200k)
+╰─ 
