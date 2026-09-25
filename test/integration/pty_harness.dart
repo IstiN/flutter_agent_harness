@@ -43,7 +43,7 @@ final class FaCliHarness {
     required this.rows,
   });
 
-  /// Short fixed CWD used when the caller does not pin [spawn]'s
+  /// Short per-spawn CWD used when the caller does not pin [spawn]'s
   /// workingDirectory. The CLI derives its session slug from the CWD, and on
   /// CI runners the checkout path is so long that the boot banner
   /// (`/Users/.../flutter_agent_harness` + the `.fah/sessions/<slug>` block)
@@ -52,17 +52,18 @@ final class FaCliHarness {
   /// from the assertions. Suites that need a specific CWD pass it
   /// explicitly; package resolution stays on the repo either way (the
   /// script path is absolute).
+  ///
+  /// Unique per spawn (issue #931 part 3.1, harness piece): every test gets
+  /// its own root, so the in-suite `--concurrency=4` (part 3.3) can never
+  /// race two CLIs through one shared git-init/config-write directory (the
+  /// #936 incident class). The full session/dir-race program stays in #948.
   static Directory _shortDefaultCwd() {
-    const path = '/tmp/fa_pty_cwd';
-    final dir = Directory(path);
-    if (!dir.existsSync()) dir.createSync(recursive: true);
+    final dir = Directory.systemTemp.createTempSync('fa_pty_cwd_');
     // Match the checkout's shape: the CLI's git-root discovery (and the
     // lib/src/cli branches behind it) only runs inside a repository. With a
     // bare tmp dir those paths go unexercised and the cli coverage ratchet
     // (baseline only up) regresses (~0.2pp observed on fa-m5).
-    if (!Directory('${dir.path}/.git').existsSync()) {
-      Process.runSync('git', ['init', '-q', dir.path]);
-    }
+    Process.runSync('git', ['init', '-q', dir.path]);
     return dir;
   }
 

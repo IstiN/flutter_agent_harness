@@ -12,6 +12,12 @@ tags:
     # secrets. They carry `integration` too and run ONLY in the tag-only
     # provider-smoke job (v* tags) and nightly — every per-PR suite excludes
     # them: dart test --exclude-tags llm
+    #
+    # Rate limiting (issue #931 part 3.3): package:test forbids `concurrency`
+    # in tag overrides (test_core _disallow('concurrency') for tag scopes, v1.32),
+    # so the pin lives on the CI invocations: the per-PR integration shards run
+    # `--concurrency=4`, which bounds concurrent live-provider tests to 4 (they
+    # previously ran at the default = CPU count).
   pty:
     # Child-agent-spawn PTY tests (issue #553): the test drives a full task
     # tool spawn — a second CLI process whose boot/JIT time is unbounded on a
