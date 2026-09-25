@@ -17,6 +17,7 @@ import 'package:fa/ui/network/network_mode_chip.dart';
 import 'package:fa/ui/network/networks_sidebar.dart';
 import 'package:fa/ui/network/quick_switcher.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
+import 'package:fa/ui/widgets/wide_layout_shell.dart' show faIsMacOSDesktop;
 
 /// The network-mode surface (issue #955), swapped in by `faHomeScreen`
 /// when the mode controller says [AppMode.network]:
@@ -121,7 +122,10 @@ class _NetworkHomePageState extends State<NetworkHomePage> {
         ? null
         : (wallet.networks[networkId]?.name ?? networkId);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 8, 12, 8),
+      // macOS: the traffic lights float over the window's top strip
+      // (fullSizeContentView) — clear them exactly like the local shell's
+      // sidebar header does.
+      padding: EdgeInsets.fromLTRB(8, faIsMacOSDesktop ? 32 : 8, 12, 8),
       child: Row(
         children: [
           if (networkId != null)
