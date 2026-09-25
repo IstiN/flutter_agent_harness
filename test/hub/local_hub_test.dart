@@ -47,13 +47,32 @@ void main() {
     });
 
     test(
-      'binding a taken port throws (the serve command probes first)',
+      'binding the same port twice coexists (shared bind — gh-936): '
+      'overlapping runs never hard-fail on bind',
       () async {
         final first = LocalHub(port: 0);
         await first.start();
         addTearDown(first.stop);
+        // The old contract threw SocketException here ("Shared flag to
+        // bind() needs to be true…") — the red-leg signature gh-936
+        // removes. Two shared binds coexist; the serve command still
+        // probes /healthz first so the ordinary double-start stays a
+        // calm no-op. An EXCLUSIVE holder (shared: false) still fails
+        // the bind after the retry budget — pinned in
+        // local_hub_bind_test.dart.
         final second = LocalHub(port: first.url.port);
-        await expectLater(second.start(), throwsA(isA<SocketException>()));
+        await second.start();
+        addTearDown(second.stop);
+        final client = HttpClient()
+          ..connectionTimeout = const Duration(seconds: 2);
+        addTearDown(client.close);
+        final response = await (await client.get(
+          '127.0.0.1',
+          first.url.port,
+          '/healthz',
+        )).close();
+        expect(response.statusCode, 200);
+        await response.drain<void>();
       },
     );
 
