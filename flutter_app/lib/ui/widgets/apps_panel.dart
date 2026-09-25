@@ -256,9 +256,7 @@ class _AppsPanelState extends State<AppsPanel> {
     if (removed) {
       await _reloadApps();
     } else {
-      ScaffoldMessenger.maybeOf(
-        context,
-      )?.showSnackBar(SnackBar(content: Text('Could not remove ${app.name}.')));
+      showFahErrorSnack(context, 'Could not remove ${app.name}.');
     }
   }
 

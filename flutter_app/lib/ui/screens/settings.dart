@@ -2357,9 +2357,7 @@ class ResetAppsSection extends StatelessWidget {
     final store = appsStore ?? AppsStore(service.env);
     final removed = await store.resetToFactory();
     if (context.mounted) {
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        SnackBar(content: Text(l10n.settingsResetAppsDone(removed))),
-      );
+      faui.showFahSnack(context, l10n.settingsResetAppsDone(removed));
     }
   }
 
@@ -2618,9 +2616,7 @@ class DebugLogsSection extends StatelessWidget {
   Future<void> _copyLogs(BuildContext context) async {
     await Clipboard.setData(ClipboardData(text: AppLog.dump()));
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(context.l10n.settingsDebugLogsCopied)),
-    );
+    faui.showFahSnack(context, context.l10n.settingsDebugLogsCopied);
   }
 
   /// Non-fatal test error into Crashlytics: proves the whole pipeline
@@ -2628,9 +2624,11 @@ class DebugLogsSection extends StatelessWidget {
   /// app. Native (JSC-level) crash capture rides the same native SDK init.
   Future<void> _sendTestReport(BuildContext context) async {
     String message;
+    var isError = false;
     try {
       if (Firebase.apps.isEmpty) {
         message = context.l10n.settingsTestCrashReportNoFirebase;
+        isError = true;
       } else {
         await FirebaseCrashlytics.instance.recordError(
           StateError('Crashlytics pipeline test (non-fatal)'),
@@ -2643,11 +2641,12 @@ class DebugLogsSection extends StatelessWidget {
       }
     } on Object catch (error) {
       message = '$error';
+      isError = true;
     }
     if (!context.mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    isError
+        ? faui.showFahErrorSnack(context, message)
+        : faui.showFahSnack(context, message);
   }
 }
 

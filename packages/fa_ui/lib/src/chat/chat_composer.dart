@@ -18,6 +18,7 @@ import 'fa_chat_host.dart';
 import 'fa_chat_service.dart';
 import 'fa_glyphs.dart';
 import 'upload_utils.dart';
+import '../widgets/snackbars.dart';
 
 /// The chat composer: attachment chips + staging into the sandbox `uploads/`
 /// folder, the queued-steer chips, the text field, the voice-input mic
@@ -295,10 +296,9 @@ class ChatComposerState extends State<ChatComposer>
   /// skipped with a notice (E2).
   Future<void> stageDroppedFiles(List<FaChatUploadFile> files) async {
     final strings = FaChatStrings.of(context);
-    final sizeError = uploadBatchSizeError(
-      [for (final file in files) (name: file.name, bytes: file.bytes)],
-      message: (total, max) => strings.uploadTooLarge(max, total),
-    );
+    final sizeError = uploadBatchSizeError([
+      for (final file in files) (name: file.name, bytes: file.bytes),
+    ], message: (total, max) => strings.uploadTooLarge(max, total));
     if (sizeError != null) {
       _showSnack(sizeError);
       return;
@@ -321,9 +321,7 @@ class ChatComposerState extends State<ChatComposer>
     for (final file in files) {
       if (file.path.isNotEmpty && Directory(file.path).existsSync()) {
         if (!mounted) return;
-        _showSnack(
-          FaChatStrings.of(context).chatDropFolderRejected(file.name),
-        );
+        _showSnack(FaChatStrings.of(context).chatDropFolderRejected(file.name));
         continue;
       }
       final Uint8List bytes;
@@ -586,11 +584,14 @@ class ChatComposerState extends State<ChatComposer>
   }
 
   void _showSnack(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(content: Text(message), duration: const Duration(seconds: 3)),
-      );
+    // Every composer snack is a failure/limit notice — all carry the copy
+    // affordance (issue #869).
+    showFahErrorSnack(
+      context,
+      message,
+      duration: const Duration(seconds: 3),
+      hideCurrent: true,
+    );
   }
 
   void _showAttachmentSheet() {

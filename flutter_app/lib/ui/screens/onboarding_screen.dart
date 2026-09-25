@@ -1481,9 +1481,7 @@ class _P2State extends State<_P2> {
   void _showFlowError(Object e) {
     debugPrint('[onboarding] provider flow failed: $e');
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not open the provider setup: $e')),
-      );
+      faui.showFahErrorSnack(context, 'Could not open the provider setup: $e');
     }
   }
 
