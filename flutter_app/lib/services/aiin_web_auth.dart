@@ -74,7 +74,7 @@ final class AiinWebAuthCoordinator {
   /// [openFn] / [navigateFn] / [client] / [timeout] are injectable for
   /// tests.
   Future<AiinConnectResult?> connect({
-    void Function(String)? onStatus,
+    void Function(String, {bool error})? onStatus,
     http.Client? client,
     bool Function()? openFn,
     void Function(String url)? navigateFn,
@@ -87,8 +87,11 @@ final class AiinWebAuthCoordinator {
     final opened = openFn != null ? openFn() : openAiinOAuthPopup();
     if (!opened) {
       lastFailure = 'popup_blocked';
-      onStatus?.call('The browser blocked the sign-in popup — allow popups '
-          'and try again.');
+      onStatus?.call(
+        'The browser blocked the sign-in popup — allow popups '
+        'and try again.',
+        error: true,
+      );
       return null;
     }
     // The state is OURS (one-time random) — the hosted page echoes it
@@ -111,19 +114,25 @@ final class AiinWebAuthCoordinator {
       callback = await _completer!.future.timeout(timeout ?? this.timeout);
     } on TimeoutException {
       lastFailure = 'timeout';
-      onStatus?.call('No AIIN callback received (timeout or cancelled)');
+      onStatus?.call(
+        'No AIIN callback received (timeout or cancelled)',
+        error: true,
+      );
       _reset();
       return null;
     }
     _reset();
     if (callback.code == null || callback.code!.isEmpty) {
       lastFailure = 'cancelled';
-      onStatus?.call('AIIN sign-in cancelled');
+      onStatus?.call('AIIN sign-in cancelled', error: true);
       return null;
     }
     if (callback.state != state) {
       lastFailure = 'state_mismatch';
-      onStatus?.call('AIIN sign-in callback was invalid (state mismatch)');
+      onStatus?.call(
+        'AIIN sign-in callback was invalid (state mismatch)',
+        error: true,
+      );
       return null;
     }
     return _finish(
@@ -137,7 +146,7 @@ final class AiinWebAuthCoordinator {
   Future<AiinConnectResult?> _finish({
     required String code,
     required String state,
-    required void Function(String)? onStatus,
+    required void Function(String, {bool error})? onStatus,
     required http.Client? client,
   }) async {
     try {
@@ -158,7 +167,7 @@ final class AiinWebAuthCoordinator {
       );
     } on AiinAuthException catch (error) {
       lastFailure = error.message;
-      onStatus?.call('AIIN setup failed: ${error.message}');
+      onStatus?.call('AIIN setup failed: ${error.message}', error: true);
       return null;
     }
   }

@@ -23,21 +23,18 @@ import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/launcher_layout_store.dart';
-import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_names_store.dart';
-import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/widget_publication_store.dart';
 import 'package:fa/services/widget_publish_service.dart';
 import 'package:fa/ui/widgets/github_account_section.dart';
 import 'package:fa/ui/widgets/widget_publish_sheet.dart';
 import 'package:fa/services/upload.dart';
-import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
-import 'package:fa/ui/widgets/media_player.dart';
 import 'package:fa/ui/widgets/fah_wallpaper.dart';
 import 'package:fa/ui/widgets/span_grid_delegate.dart';
+import 'package:fa_ui/fa_ui.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart'
     show faAppBar, faIsMacOSDesktop;
 
@@ -450,7 +447,6 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     _previewInsert(details.data, targetKey, fx);
   }
 
-
   /// One drop onto the slot of [targetKey]: folder-add on folder tiles,
   /// folder-create when the center-band hover armed folder intent, reorder
   /// elsewhere (left half inserts before, right half after — the same math
@@ -742,8 +738,9 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   /// on the next apps reload.
   Future<void> _removeApp(JsAppInfo app) async {
     final l10n = context.l10n;
-    final appName =
-        app.displayName(Localizations.localeOf(context).toLanguageTag());
+    final appName = app.displayName(
+      Localizations.localeOf(context).toLanguageTag(),
+    );
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -768,9 +765,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     if (removed) {
       await _reloadApps();
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.launcherRestoreDemoAppFailed)),
-      );
+      showFahErrorSnack(context, l10n.launcherRestoreDemoAppFailed);
     }
   }
 
@@ -793,15 +788,9 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   }
 
   void _showRestoreResult(bool restored) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          restored
-              ? context.l10n.launcherRestoreDemoAppDone
-              : context.l10n.launcherRestoreDemoAppFailed,
-        ),
-      ),
-    );
+    restored
+        ? showFahSnack(context, context.l10n.launcherRestoreDemoAppDone)
+        : showFahErrorSnack(context, context.l10n.launcherRestoreDemoAppFailed);
   }
 
   // Registry of tile render boxes so [_onDrop] can translate the global
@@ -823,9 +812,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       // Never a silent dead tile: log + show why the app did not open.
       AppLog.i('apps', 'open app FAILED: ${app.id} — $error');
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.l10n.launcherOpenAppError('$error'))),
-      );
+      showFahErrorSnack(context, context.l10n.launcherOpenAppError('$error'));
     }
   }
 
@@ -1175,9 +1162,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
           AppIcon(app: app, env: widget.manager.env, size: 32),
           const SizedBox(height: 6),
           Text(
-            app.displayName(
-              Localizations.localeOf(context).toLanguageTag(),
-            ),
+            app.displayName(Localizations.localeOf(context).toLanguageTag()),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: Theme.of(context).textTheme.bodySmall,
@@ -1723,8 +1708,9 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
 
   Future<void> _showSeedError(JsAppInfo app, String error) async {
     final l10n = context.l10n;
-    final appName =
-        app.displayName(Localizations.localeOf(context).toLanguageTag());
+    final appName = app.displayName(
+      Localizations.localeOf(context).toLanguageTag(),
+    );
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
