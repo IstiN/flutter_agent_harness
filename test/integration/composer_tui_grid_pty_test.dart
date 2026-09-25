@@ -37,7 +37,7 @@ void main() {
       // tail and a long workspace path would hide the asserted markers.
       // Unique per test — fixed /tmp paths collided across overlapping
       // runs (gh-936).
-      final workspace = FaCliHarness.uniqueTempDir('fa_pty_467ws_');
+      final workspace = FaCliHarness.uniqueTempDir('f467w');
       addTearDown(() => workspace.deleteSync(recursive: true));
       final server = await MockLlmServer.start()
         ..enqueueToolCall('bash', '{"command": "sleep 15"}')
@@ -192,7 +192,7 @@ allowedTools: []
 tui:
   classic: true  # the grid/chrome suites pin the classic TUI design (see #467); the band redesign (#805-#807) has its own surface
 ''');
-      final workspace = FaCliHarness.uniqueTempDir('fa_pty_467ws2_');
+      final workspace = FaCliHarness.uniqueTempDir('f467x');
       addTearDown(() => workspace.deleteSync(recursive: true));
 
       final harness = await FaCliHarness.spawn(
@@ -302,7 +302,7 @@ allowedTools: []
 tui:
   classic: true  # the grid/chrome suites pin the classic TUI design (see #467); the band redesign (#805-#807) has its own surface
 ''');
-      final workspace = FaCliHarness.uniqueTempDir('fa_pty_503ws_');
+      final workspace = FaCliHarness.uniqueTempDir('f503w');
       addTearDown(() => workspace.deleteSync(recursive: true));
 
       final harness = await FaCliHarness.spawn(

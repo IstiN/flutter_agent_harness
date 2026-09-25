@@ -98,8 +98,8 @@ void main() {
     // Unique per test: the old fixed /tmp/fa_539_* paths collided across
     // overlapping runs — one deleted while the other's CLI still used
     // them (PathNotFoundException — gh-936).
-    home = FaCliHarness.uniqueTempDir('fa_pty_539_home_');
-    project = FaCliHarness.uniqueTempDir('fa_pty_539_proj_');
+    home = FaCliHarness.uniqueTempDir('f539h');
+    project = FaCliHarness.uniqueTempDir('f539p');
     // Pin the classic chrome: this suite asserts the classic grid (#539);
     // the band redesign (#805-#807) has its own surface.
     File('${home.path}/.fah/config.yaml')

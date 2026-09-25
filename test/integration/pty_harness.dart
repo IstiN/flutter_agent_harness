@@ -54,28 +54,70 @@ final class FaCliHarness {
     this.workingDirectory,
   });
 
-  /// The per-RUN unique root under the system temp (gh-936): every run of
-  /// a suite creates its own `Directory.systemTemp.createTemp('fa_pty_')`
-  /// lazily on first use, so two overlapping runs (a cancelled CI dispatch
-  /// and its successor on the same runner) can never share — and delete
-  /// from under each other — fixed `/tmp` paths. The root is swept on
-  /// SIGINT/SIGTERM (POSIX), the shape a cancelled `dart test` delivers,
-  /// so the cleanup survives test failure and cancellation alike; an
-  /// orderly completion leaves the root to the OS tmp cleaner and the
-  /// leg-start preflight sweep (`scripts/pty_leg_preflight.sh`).
+  /// The per-RUN unique root under `/tmp` (gh-936): every run of a suite
+  /// creates its own short, randomly-named `fa_pty_<rand>` root lazily on
+  /// first use, so two overlapping runs (a cancelled CI dispatch and its
+  /// successor on the same runner) can never share — and delete from
+  /// under each other — fixed `/tmp` paths. The root doubles as the
+  /// default spawn CWD (short, git-shaped — see [_defaultCwd]) and is
+  /// swept on SIGINT/SIGTERM (POSIX), the shape a cancelled `dart test`
+  /// delivers, so the cleanup survives test failure and cancellation
+  /// alike; an orderly completion leaves the root to the OS tmp cleaner
+  /// and the leg-start preflight sweep (`scripts/pty_leg_preflight.sh`).
+  ///
+  /// SHORT by design: the classic status row renders the cwd verbatim and
+  /// elides the TAIL (the provider/model segment the suites assert), so a
+  /// long `Directory.systemTemp` path (macOS `/var/folders/...`) or a
+  /// long name pushes assertions off the 80-column glass.
   static Directory? _runRoot;
 
-  /// Sequence number for per-spawn default CWDs under the run root.
-  static int _cwdSeq = 0;
+  static final Random _random = Random.secure();
 
-  /// The run's unique root, created on first use.
+  static const _nameChars =
+      '[REDACTED:High Entropy String]';
+
+  /// A short random name suffix (base36) — uniqueness comes from this,
+  /// not from long prefixes.
+  static String _randSuffix() => List.generate(
+        4,
+        (_) => _nameChars[_random.nextInt(_nameChars.length)],
+      ).join();
+
+  /// The run's unique root — also the default spawn CWD. Created once per
+  /// process; never deleted mid-run (a shared cwd across a run's harnesses
+  /// is harmless: session state lives under each test's HOME), so the
+  /// old failure mode — a tearDown deleting a dir another test's CLI
+  /// still uses — has no surface here.
   static Directory get runRoot {
     final existing = _runRoot;
     if (existing != null) return existing;
-    final root = Directory.systemTemp.createTempSync('fa_pty_');
+    // /tmp directly: short paths, and the same shape the fixed
+    // /tmp/fa_pty_cwd had — just unique per run.
+    final base = Directory('/tmp').existsSync() ? '/tmp' : null;
+    late final Directory root;
+    while (true) {
+      final candidate = Directory(
+        '${base ?? Directory.systemTemp.path}/fa_pty_${_randSuffix()}',
+      );
+      if (candidate.existsSync()) continue;
+      candidate.createSync(recursive: true);
+      root = candidate;
+      break;
+    }
     _runRoot = root;
+    _initGitShape(root);
     _watchFatalSignals(root);
     return root;
+  }
+
+  /// Gives [dir] the checkout's shape: the CLI's git-root discovery (and
+  /// the lib/src/cli branches behind it) only runs inside a repository.
+  /// With a bare tmp dir those paths go unexercised and the cli coverage
+  /// ratchet (baseline only up) regresses (~0.2pp observed on fa-m5).
+  static void _initGitShape(Directory dir) {
+    if (!Directory('${dir.path}/.git').existsSync()) {
+      Process.runSync('git', ['init', '-q', dir.path]);
+    }
   }
 
   /// Sweeps [dir] best-effort — a lost race with a live process (the
@@ -101,39 +143,36 @@ final class FaCliHarness {
     }
   }
 
-  /// A unique per-test directory under the system temp. The suites used
-  /// to share FIXED `/tmp/fa_<issue>_{home,proj,ws}` paths; two
-  /// overlapping runs then deleted each other's dirs mid-test
-  /// (`PathNotFoundException: Deletion failed, path = '/tmp/fa_539_home'`
-  /// — gh-936). Caller owns deletion: register it with `addTearDown`, so
-  /// the cleanup runs even when the test fails.
-  static Directory uniqueTempDir(String prefix) =>
-      Directory.systemTemp.createTempSync(prefix);
-
-  /// A unique short CWD for one spawn (the caller does not pin one).
-  ///
-  /// The CLI derives its session slug from the CWD, and on CI runners the
-  /// checkout path is so long that the boot banner
-  /// (`/Users/.../flutter_agent_harness` + the `.fah/sessions/<slug>` block)
-  /// wraps over a dozen rows and floods an 80x24 frame — fa-m5-3's slug
-  /// alone ate 6 rows, hiding the credential sheet and half the job board
-  /// from the assertions. Unique per SPAWN inside the per-RUN root: two
-  /// concurrent default-CWD harnesses (one run) and two runs never share
-  /// a cwd, so a deleted dir can never pull the ground from under a live
-  /// CLI (`Getting current working directory failed` — gh-936). Package
-  /// resolution stays on the repo either way (the script path is
-  /// absolute).
-  static Directory _shortDefaultCwd() {
-    final dir = Directory('${runRoot.path}/cwd-${_cwdSeq++}')
-      ..createSync(recursive: true);
-    // Match the checkout's shape: the CLI's git-root discovery (and the
-    // lib/src/cli branches behind it) only runs inside a repository. With a
-    // bare tmp dir those paths go unexercised and the cli coverage ratchet
-    // (baseline only up) regresses (~0.2pp observed on fa-m5).
-    if (!Directory('${dir.path}/.git').existsSync()) {
-      Process.runSync('git', ['init', '-q', dir.path]);
+  /// A unique per-test directory under `/tmp`: `<prefix><4 random chars>`
+  /// (e.g. `/tmp/f539hX7GQ`). The old fixed `/tmp/fa_<issue>_*` paths
+  /// collided across overlapping runs — one deleted while the other's
+  /// CLI still used them (`PathNotFoundException: Deletion failed,
+  /// path = '/tmp/fa_539_home'` — gh-936). KEEP [prefix] SHORT (≤ 5
+  /// chars): the path becomes a spawn cwd and the status row asserts
+  /// depend on the whole thing staying ≤ ~14 chars. Caller owns deletion:
+  /// register it with `addTearDown`, so the cleanup runs even when the
+  /// test fails.
+  static Directory uniqueTempDir(String prefix) {
+    while (true) {
+      final dir = Directory('/tmp/$prefix${_randSuffix()}');
+      if (dir.existsSync()) continue;
+      dir.createSync(recursive: true);
+      return dir;
     }
-    return dir;
+  }
+
+  /// The default CWD when the caller does not pin [spawn]'s
+  /// workingDirectory: the per-run root — short (the boot banner wraps
+  /// the cwd + session-slug block over a dozen rows on CI's long
+  /// checkout paths; fa-m5-3's slug alone ate 6 rows, hiding the
+  /// credential sheet and half the job board from the assertions),
+  /// unique per run, and git-shaped. Suites that need a specific CWD
+  /// pass it explicitly; package resolution stays on the repo either way
+  /// (the script path is absolute).
+  static Directory _defaultCwd() {
+    final root = runRoot;
+    _initGitShape(root); // idempotent; guards an in-flight SIGINT sweep
+    return root;
   }
 
   /// Spawns the Fa CLI with a PTY of fixed size.
@@ -168,7 +207,7 @@ final class FaCliHarness {
     // from `dart build cli`) instead of JIT `dart bin/fah.dart` — perf
     // probes must measure what install_local.sh actually ships.
     final faBin = extraEnv?['FA_BIN'];
-    final cwd = workingDirectory ?? _shortDefaultCwd().path;
+    final cwd = workingDirectory ?? _defaultCwd().path;
     final pty = PseudoTerminal.start(
       faBin ?? 'dart',
       // Absolute script path so a non-default [workingDirectory] still
@@ -416,4 +455,5 @@ final class FaCliHarness {
     await pty.exitCode.timeout(const Duration(seconds: 5), onTimeout: () => -1);
     await _outputSub?.cancel();
   }
+}
 }

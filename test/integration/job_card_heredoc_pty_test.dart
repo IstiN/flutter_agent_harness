@@ -66,8 +66,8 @@ void main() {
   setUp(() async {
     // Unique per test — fixed /tmp paths collided across overlapping
     // runs (gh-936).
-    home = FaCliHarness.uniqueTempDir('fa_pty_599_home_');
-    project = FaCliHarness.uniqueTempDir('fa_pty_599_proj_');
+    home = FaCliHarness.uniqueTempDir('f599h');
+    project = FaCliHarness.uniqueTempDir('f599p');
     // Pin the classic chrome: this suite asserts the classic grid (#599);
     // the band redesign (#805-#807) has its own surface.
     File('${home.path}/.fah/config.yaml')

@@ -82,8 +82,8 @@ void main() {
       // is truncated by long macOS temp paths.
       // Unique per test — fixed /tmp paths collided across overlapping
       // runs (gh-936).
-      final home = FaCliHarness.uniqueTempDir('fa_pty_573_home_');
-      final project = FaCliHarness.uniqueTempDir('fa_pty_573_proj_');
+      final home = FaCliHarness.uniqueTempDir('f573h');
+      final project = FaCliHarness.uniqueTempDir('f573p');
       addTearDown(
         () => _deleteQuietly(home),
       );

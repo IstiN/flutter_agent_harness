@@ -27,7 +27,7 @@ void main() {
     final tempHome = Directory.systemTemp.createTempSync('fa_tui_479_pty_');
     // Unique per test — fixed /tmp paths collided across overlapping
     // runs (gh-936).
-    final workspace = FaCliHarness.uniqueTempDir('fa_pty_479ws_');
+    final workspace = FaCliHarness.uniqueTempDir('f479w');
     addTearDown(() => workspace.deleteSync(recursive: true));
     final server = await MockLlmServer.start()
       ..enqueueToolCall('bash', '{"command": "sleep 40", "background": true}')

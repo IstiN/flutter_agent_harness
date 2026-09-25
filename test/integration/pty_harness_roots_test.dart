@@ -18,42 +18,35 @@ import 'package:test/test.dart';
 import 'pty_harness.dart';
 
 void main() {
-  test('the run root is unique per run and lives under the system temp',
-      () {
+  test('the run root is unique per run, short, and under /tmp', () {
     final root = FaCliHarness.runRoot;
-    expect(root.path, startsWith(Directory.systemTemp.path));
-    expect(
-      Directory.systemTemp.listSync().whereType<Directory>().map((d) => d.path),
-      contains(root.path),
-    );
+    expect(root.path, startsWith('/tmp'),
+        reason: 'short paths — the status row renders the cwd verbatim and '
+            'elides the asserted tail segments on long paths');
     expect(root.basenameSync(), startsWith('fa_pty_'),
         reason: 'the leg-start preflight sweeps this exact prefix');
+    expect(root.basenameSync().length, lessThanOrEqualTo(14),
+        reason: 'the root doubles as the default cwd: keep it short');
     expect(root.existsSync(), isTrue);
   });
 
-  test('default-CWD spawns get unique, git-shaped dirs under the run root',
+  test('default-CWD spawns share the per-run root with the checkout shape',
       () async {
     final first = await FaCliHarness.spawn(args: ['--help']);
     addTearDown(first.close);
     final second = await FaCliHarness.spawn(args: ['--help']);
     addTearDown(second.close);
 
-    expect(first.workingDirectory, isNotNull);
-    expect(second.workingDirectory, isNotNull);
-    expect(second.workingDirectory, isNot(first.workingDirectory),
-        reason: 'two concurrent default-CWD spawns never share a cwd');
-    for (final cwd in [first.workingDirectory!, second.workingDirectory!]) {
-      expect(cwd, startsWith(FaCliHarness.runRoot.path),
-          reason: 'the cwd lives inside the per-run root');
-      expect(Directory('$cwd/.git').existsSync(), isTrue,
-          reason: 'the cwd keeps the checkout shape (git root discovery)');
-    }
+    expect(first.workingDirectory, FaCliHarness.runRoot.path);
+    expect(second.workingDirectory, FaCliHarness.runRoot.path);
+    expect(Directory('${first.workingDirectory}/.git').existsSync(), isTrue,
+        reason: 'the cwd keeps the checkout shape (git root discovery)');
   });
 
   test('uniqueTempDir never repeats a path and survives failure cleanup',
       () {
     final dirs = [
-      for (var i = 0; i < 3; i++) FaCliHarness.uniqueTempDir('fa_pty_test_'),
+      for (var i = 0; i < 3; i++) FaCliHarness.uniqueTempDir('froot'),
     ];
     addTearDown(() {
       for (final dir in dirs) {
@@ -64,7 +57,9 @@ void main() {
         reason: 'no two callers ever share a directory');
     for (final dir in dirs) {
       expect(dir.existsSync(), isTrue);
-      expect(dir.basenameSync(), startsWith('fa_pty_test_'));
+      expect(dir.basenameSync(), startsWith('froot'));
+      expect(dir.path.length, lessThanOrEqualTo('/tmp/'.length + 5 + 4),
+          reason: 'suite cwd paths stay short for the status row');
     }
   });
 }

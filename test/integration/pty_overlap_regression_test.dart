@@ -42,7 +42,7 @@ void main() {
 /// Returns 'green', or the failure description.
 Future<String> _runSuite(String session) async {
   final server = await MockLlmServer.start()..enqueueText('reply for $session');
-  final home = FaCliHarness.uniqueTempDir('fa_pty_overlap_${session}_home_');
+  final home = FaCliHarness.uniqueTempDir('ovl-$session');
   try {
     File('${home.path}/.fah/config.yaml')
       ..createSync(recursive: true)

@@ -33,7 +33,7 @@ void main() {
     // retry continues the turn.
     // Unique per test — fixed /tmp paths collided across overlapping
     // runs (gh-936).
-    final workspace = FaCliHarness.uniqueTempDir('fa_pty_badge_ws_');
+    final workspace = FaCliHarness.uniqueTempDir('fbadg');
     for (var i = 1; i <= 8; i++) {
       File(
         '${workspace.path}/big$i.txt',

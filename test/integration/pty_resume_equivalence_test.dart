@@ -223,8 +223,8 @@ void main() {
     // one physical line.
     // Unique per test — fixed /tmp paths collided across overlapping
     // runs (gh-936).
-    home = FaCliHarness.uniqueTempDir('fa_pty_446_home_');
-    project = FaCliHarness.uniqueTempDir('fa_pty_446_proj_');
+    home = FaCliHarness.uniqueTempDir('f446h');
+    project = FaCliHarness.uniqueTempDir('f446p');
     // Pin the classic chrome: this suite asserts the classic transcript
     // grammar; the band redesign (#805-#807) has its own surface. The
     // harness configures providers via FA_PROVIDER_CONFIG env only, so the

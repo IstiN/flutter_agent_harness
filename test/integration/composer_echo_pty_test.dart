@@ -40,7 +40,7 @@ void main() {
       // Short cwd so the footer's tail markers stay visible at 80 columns.
       // Unique per test — fixed /tmp paths collided across overlapping
       // runs (gh-936).
-      final workspace = FaCliHarness.uniqueTempDir('fa_pty_496ws_');
+      final workspace = FaCliHarness.uniqueTempDir('f496w');
       addTearDown(() => workspace.deleteSync(recursive: true));
       final server = await MockLlmServer.start()
         // Turn 1 seeds the job board with a collapsed turn of inline
