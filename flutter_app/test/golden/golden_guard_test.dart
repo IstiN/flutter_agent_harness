@@ -133,6 +133,10 @@ const _exempt = <String, String>{
       'sidebar sessions list; rendered inside wide_layout_shell (covered indirectly)',
   'lib/ui/widgets/code_viewer.dart':
       'syntax-highlighted code view; rendered inside file_preview (covered indirectly)',
+  'lib/ui/widgets/store_get_banner.dart':
+      'platform-gated App Store Get banner (renders only on the web/macOS '
+      'Get surface, never under the test env default platform); needs a '
+      'dedicated platform-override golden from the #691 banner work',
   'lib/apps/app_tile_host.dart':
       'tile widget engine; live JS tiles — no host golden (the engine '
       'needs a real JSRuntime, exercised in widget tests instead)',
