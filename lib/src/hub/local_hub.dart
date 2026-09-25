@@ -334,9 +334,15 @@ class LocalHub {
 
   Future<void> start() async {
     _loadState();
+    // shared: true (issue #943, vector 2): the bind itself must never be
+    // the hard failure an overlapping run turns into — hubServe layers a
+    // healthz-aware retry on top, so a dying predecessor's port is picked
+    // up (or its successor reports "already running") instead of both
+    // runs red.
     _server = await HttpServer.bind(
       bind == 'lan' ? InternetAddress.anyIPv4 : InternetAddress.loopbackIPv4,
       port,
+      shared: true,
     );
     // Issue #792: the relay authenticates on EVERY scope. A protected hub
     // demands its master secret; an open loopback hub still gets an

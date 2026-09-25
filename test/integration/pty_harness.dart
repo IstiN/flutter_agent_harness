@@ -58,10 +58,17 @@ final class FaCliHarness {
   /// explicitly; package resolution stays on the repo either way (the
   /// script path is absolute).
   ///
-  /// Unique per spawn (issue #931 part 3.1, harness piece): every test gets
-  /// its own root, so the in-suite `--concurrency=4` (part 3.3) can never
-  /// race two CLIs through one shared git-init/config-write directory (the
-  /// #936 incident class). The full session/dir-race program stays in #948.
+  /// Unique per spawn (issue #931 part 3.1 + issue #943 vector 1): every
+  /// test gets its own root — no in-suite concurrency races two CLIs
+  /// through one shared git-init/config-write directory, and no run's
+  /// teardown deletes a FIXED root (the old `/tmp/fa_pty_cwd`) under
+  /// another run's live ext process. The full session/dir-race program
+  /// landed here via #948.
+  /// The old fixed `/tmp/fa_pty_cwd` was shared by EVERY run of EVERY PR's
+  /// PTY leg: one run's teardown deleted it under another run's live ext
+  /// process (`PathNotFoundException: Getting current working directory
+  /// failed`). A unique `Directory.systemTemp` dir per spawn plus the
+  /// [FaCliHarness]-owned cleanup below kills that race class.
   static Directory _shortDefaultCwd() {
     final dir = Directory.systemTemp.createTempSync('fa_pty_cwd_');
     // Match the checkout's shape: the CLI's git-root discovery (and the
@@ -76,6 +83,11 @@ final class FaCliHarness {
     }
     return dir;
   }
+
+  /// The per-spawn temp CWD this harness created (null when the caller
+  /// passed an explicit [workingDirectory] and owns the dir itself).
+  final Directory? _ownedCwd;
+  var _closed = false;
 
   /// Spawns the Fa CLI with a PTY of fixed size.
   ///
@@ -103,6 +115,16 @@ final class FaCliHarness {
       // explicitly. Without this a HOME override breaks package resolution.
       if (Platform.environment['PUB_CACHE'] != null)
         'PUB_CACHE': Platform.environment['PUB_CACHE']!,
+      // Hub hygiene (issue #943, vector 2): pin the CLI's hub client and
+      // local-hub URLs to a dead loopback port so a boot NEVER dials — or
+      // auto-starts against — the zero-config 8787, where another run's
+      // orphaned hub would silently adopt this fa instance (foreign tasks
+      // in captured frames). Loopback-refused is instant, so the boot-time
+      // dial fails in microseconds and stays quieter than the old
+      // "not configured" hint. Tests that exercise the hub pass their own
+      // URLs via [extraEnv] (spread after these).
+      'DAP_HUB_URL': 'ws://127.0.0.1:1/ws',
+      'DAP_LOCAL_HUB_URL': 'ws://127.0.0.1:1/ws',
       ...?extraEnv,
     };
     // FA_BIN (test-only seam): run a prebuilt binary (e.g. the AOT bundle
@@ -113,6 +135,7 @@ final class FaCliHarness {
     // spawn must not accumulate across runs on persistent hosts).
     final ownedCwd = workingDirectory == null ? _shortDefaultCwd() : null;
     final faBin = extraEnv?['FA_BIN'];
+    final ownedCwd = workingDirectory == null ? _shortDefaultCwd() : null;
     final pty = PseudoTerminal.start(
       faBin ?? 'dart',
       // Absolute script path so a non-default [workingDirectory] still
@@ -365,8 +388,11 @@ final class FaCliHarness {
 
   /// Kills the CLI process, cancels the output subscription (otherwise an
   /// open stream keeps the test runner's event loop alive), and waits for
-  /// the process to exit.
+  /// the process to exit. Deletes the harness-owned temp CWD only AFTER
+  /// the process is dead — never under a live CLI (issue #936 vector 1).
   Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
     pty.kill();
     await pty.exitCode.timeout(const Duration(seconds: 5), onTimeout: () => -1);
     await _outputSub?.cancel();

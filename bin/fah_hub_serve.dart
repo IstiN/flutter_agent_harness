@@ -248,14 +248,37 @@ Future<int> hubServe(
     stateFile: stateFile,
     relayAllowAnyHost: spec.relayAllowAnyHost,
   );
-  try {
-    await hub.start();
-  } on SocketException catch (error) {
-    stderr.writeln(
-      'hub: cannot bind 127.0.0.1:${spec.port} ($error) — '
-      'something else holds the port',
-    );
-    return 1;
+  // Bind retry with backoff (issue #943, vector 2): an overlapping run's
+  // predecessor may still hold the port for a few seconds (dying hub,
+  // TIME_WAIT) — retry instead of hard-failing, and if a hub comes up on
+  // the port mid-retry, take the idempotent "already running" exit. A
+  // genuinely foreign holder (non-HTTP blocker) still exits 1 after the
+  // bounded window.
+  const attempts = 5;
+  for (var attempt = 1;; attempt++) {
+    try {
+      await hub.start();
+      break;
+    } on SocketException catch (error) {
+      final lastAttempt = attempt >= attempts;
+      final live = lastAttempt ? false : await hubHealthz(spec.port);
+      if (live) {
+        stdout.writeln(
+          'DAP hub already running on ws://127.0.0.1:${spec.port}/ws',
+        );
+        return 0;
+      }
+      if (lastAttempt) {
+        stderr.writeln(
+          'hub: cannot bind 127.0.0.1:${spec.port} ($error) — '
+          'something else holds the port',
+        );
+        return 1;
+      }
+      await Future<void>.delayed(
+        Duration(milliseconds: 150 << (attempt - 1)), // 150,300,600,1200
+      );
+    }
   }
   // The pid/state file (issue #304): lets `fa dap stop` work from ANY
   // CLI instance (not just the spawner) exactly once, with no zombie
@@ -349,14 +372,22 @@ void Function() hubTerminateHandler(
 
 /// Wires the terminate signals to [hubTerminateHandler]; returns the
 /// live subscriptions so a caller's teardown can cancel them.
+///
+/// [watchSignals] is the test seam (issue #943): the "wired but not
+/// fired" leg injects no subscriptions so a hosted runner's stray
+/// SIGINT/SIGTERM (orphan cleanup) cannot fire the graceful exit
+/// mid-test. Production wiring (real signals) is unchanged.
 List<StreamSubscription<ProcessSignal>> wireHubTerminate(
   LocalHub hub,
   File pidFile, {
   void Function(int code) exitProcess = exit,
+  List<StreamSubscription<ProcessSignal>> Function(
+    void Function() onTerminate,
+  )? watchSignals,
 }) {
   final signalSubs = <StreamSubscription<ProcessSignal>>[];
   signalSubs.addAll(
-    watchHubTerminateSignals(
+    (watchSignals ?? watchHubTerminateSignals)(
       hubTerminateHandler(hub, pidFile, signalSubs, exitProcess: exitProcess),
     ),
   );

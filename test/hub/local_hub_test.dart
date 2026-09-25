@@ -47,13 +47,34 @@ void main() {
     });
 
     test(
-      'binding a taken port throws (the serve command probes first)',
+      'binding a TAKEN port shares it (the serve command probes first)',
       () async {
+        // Issue #943: LocalHub binds with shared: true, so a second hub on
+        // a taken port no longer throws at THIS layer — the bind must not
+        // be the hard failure an overlapping run turns into. The
+        // idempotency gate is `fa hub serve`'s /healthz probe (plus its
+        // bind retry), pinned in fah_hub_serve_ports_test.dart: a foreign
+        // NON-shared holder still fails the bind there, and a live fa hub
+        // answers the probe ("already running").
         final first = LocalHub(port: 0);
         await first.start();
         addTearDown(first.stop);
+        final client = HttpClient();
+        addTearDown(client.close);
+        Future<bool> healthz() async {
+          final request = await client.get('127.0.0.1', first.url.port, '/healthz');
+          final response = await request.close();
+          await response.drain<void>();
+          return response.statusCode == 200;
+        }
+
+        expect(await healthz(), isTrue);
         final second = LocalHub(port: first.url.port);
-        await expectLater(second.start(), throwsA(isA<SocketException>()));
+        await second.start();
+        expect(second.url.port, first.url.port);
+        await second.stop();
+        // The first hub keeps serving after the sharer leaves.
+        expect(await healthz(), isTrue);
       },
     );
 

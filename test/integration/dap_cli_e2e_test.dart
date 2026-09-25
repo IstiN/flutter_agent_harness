@@ -7,7 +7,6 @@
 @TestOn('vm')
 @Tags(['integration'])
 @Timeout(Duration(minutes: 5))
-@Skip('infra: #936 shared /tmp cwd race (fa_pty_cwd deleted under a live ext process)')
 library;
 
 import 'dart:async';

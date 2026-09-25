@@ -1,6 +1,5 @@
 @Tags(['integration'])
 @Timeout(Duration(minutes: 5))
-@Skip('infra: #936 CLI boot timeout under load')
 /// Issue #115: the CLI interactive mode (TUI) visualizes pending scheduled
 /// follow-up messages (`schedule_message`) on top of the "Working…" row —
 /// and keeps showing them while idle until they fire.
