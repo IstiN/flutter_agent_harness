@@ -23,6 +23,11 @@ dedicated per-PR gate stage (no-key legs) plus the tag-only provider smoke.
 --exclude STR
 drops paths containing STR (e.g. golden — host-locked suites stay out of
 the shards even when a PR adds one post-rebalance, issue #283 E4).
+--tags TAG (issue #931, integration shards)
+inverts the integration exclusion: only files whose @Tags annotation names
+TAG are bin-packed as uncovered, so an INTEGRATION manifest (e.g.
+scripts/test_integration_shards.json) auto-runs a PR's new integration
+tests — and never swallows untagged core files.
 
 Pure stdlib.
 """
@@ -30,6 +35,7 @@ Pure stdlib.
 import glob
 import json
 import os
+import re
 import sys
 
 
@@ -46,13 +52,45 @@ def uncovered_units(covered: set, root: str) -> list:
     return out
 
 
-def uncovered_files(covered: set, root: str, exclude: list) -> list:
-    """Individual test files missing from a file-level manifest, as (path, 1)."""
+def file_has_tag(path: str, tag: str) -> bool:
+    """True when the file's real (non-comment) code names `tag` in @Tags([...])."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            head = f.read()
+    except OSError:
+        return False
+    # Full read: a truncated scan would silently drop a tagged file from
+    # the bin-pack safety net; @Tags lives anywhere in the file's metadata.
+    # But match CODE only — strip the `//` portion of every line first. A
+    # `///` doc comment that merely MENTIONS `@Tags(['io', 'integration'])`
+    # once phantom-tagged test/cli/fah_hub_serve_dispatch_test.dart into
+    # the integration manifest (review #963): the file has no integration
+    # tag and the shard step runs zero tests from it.
+    code = "\n".join(re.sub(r"//.*", "", line) for line in head.splitlines())
+    return re.search(r"@Tags\s*\(\s*\[[^\]]*['\"]" + re.escape(tag) + r"['\"]", code) is not None
+
+
+def uncovered_files(covered: set, root: str, exclude: list,
+                    required_tag=None) -> list:
+    """Individual test files missing from a file-level manifest, as (path, 1).
+
+    Default (no required_tag): files under test/ excluding integration and
+    --exclude matches — the core/faui manifests. With required_tag (e.g.
+    the integration shards, issue #931): only files whose @Tags annotation
+    names the tag — an integration manifest must never bin-pack untagged
+    core files (they would be filtered out by --tags anyway, but selecting
+    them is noise) and must NOT skip test/integration.
+    """
     out = []
     for path in sorted(glob.glob(os.path.join(root, "**", "*_test.dart"), recursive=True)):
         norm = path.replace(os.sep, "/")
-        if "/integration/" in norm or any(x in norm for x in exclude):
-            continue  # integration runs in its own CI job; excludes stay out
+        if any(x in norm for x in exclude):
+            continue
+        if required_tag is None:
+            if "/integration/" in norm:
+                continue  # integration runs in its own CI job; excludes stay out
+        elif not file_has_tag(path, required_tag):
+            continue
         if norm not in covered:
             out.append((norm, 1))
     return out
@@ -71,14 +109,21 @@ def bin_pack_by_count(units: list, n: int) -> list:
 def main() -> int:
     argv = sys.argv[1:]
     exclude = []
-    while "--exclude" in argv:
-        i = argv.index("--exclude")
-        try:
-            exclude.append(argv[i + 1])
-        except IndexError:
-            print("ERROR: --exclude needs a value", file=sys.stderr)
-            return 2
-        del argv[i:i + 2]
+    tags = []
+    while "--exclude" in argv or "--tags" in argv:
+        for flag, sink in (("--exclude", exclude), ("--tags", tags)):
+            while flag in argv:
+                i = argv.index(flag)
+                try:
+                    sink.append(argv[i + 1])
+                except IndexError:
+                    print(f"ERROR: {flag} needs a value", file=sys.stderr)
+                    return 2
+                del argv[i:i + 2]
+    if len(tags) > 1:
+        print("ERROR: --tags supports one value (multi-tag "
+              "selection is not defined for shard manifests)", file=sys.stderr)
+        return 2
     if len(argv) != 2:
         print(__doc__.strip(), file=sys.stderr)
         return 2
@@ -104,7 +149,8 @@ def main() -> int:
                      for s in shards for u in s)
     if file_level:
         # File-level manifest (issue #283): bin-pack uncovered FILES.
-        extra = uncovered_files(covered, "test", exclude)
+        extra = uncovered_files(covered, "test", exclude,
+                                required_tag=(tags[0] if tags else None))
     else:
         extra = uncovered_units(covered, "test")
     if extra:
