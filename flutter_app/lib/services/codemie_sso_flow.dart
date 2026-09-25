@@ -7,10 +7,10 @@ import 'package:flutter/material.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/codemie_sso_flow_steps.dart';
 import 'package:fa/services/last_connection.dart';
-import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/relay/ext_runtime.dart';
 import 'package:fa/ui/screens/codemie_sso_pickers.dart';
 import 'package:fa/ui/screens/codemie_sso_webview.dart';
+import 'package:fa_ui/fa_ui.dart';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
@@ -82,7 +82,10 @@ Future<bool> runCodemieSsoFlow({
   }
 
   // ── Step 1: SSO ─────────────────────────────────────────────────────
-  final credentials = await (authenticate ?? _authenticate)(flowContext, orgUrl);
+  final credentials = await (authenticate ?? _authenticate)(
+    flowContext,
+    orgUrl,
+  );
   if (credentials == null || !flowContext.mounted) {
     return false; // cancelled / timed out
   }
@@ -116,15 +119,12 @@ Future<bool> _webSignin({
     );
   }
   if (context.mounted) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'CodeMie sign-in needs the desktop or mobile app '
-          '(a localhost callback server), or the browser extension '
-          '(cookie sign-in). Use a key-based provider in the plain '
-          'web build.',
-        ),
-      ),
+    showFahErrorSnack(
+      context,
+      'CodeMie sign-in needs the desktop or mobile app '
+      '(a localhost callback server), or the browser extension '
+      '(cookie sign-in). Use a key-based provider in the plain '
+      'web build.',
     );
   }
   return false;
