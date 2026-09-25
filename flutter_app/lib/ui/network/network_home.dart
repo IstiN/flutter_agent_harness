@@ -15,6 +15,7 @@ import 'package:fa/ui/network/channel_rail.dart';
 import 'package:fa/ui/network/network_chat_page.dart';
 import 'package:fa/ui/network/network_mode_chip.dart';
 import 'package:fa/ui/network/networks_sidebar.dart';
+import 'package:fa/ui/network/quick_switcher.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 
 /// The network-mode surface (issue #955), swapped in by `faHomeScreen`
@@ -91,15 +92,19 @@ class _NetworkHomePageState extends State<NetworkHomePage> {
     final wide = MediaQuery.sizeOf(context).width >= kWideLayoutBreakpoint;
     final networkId = widget.controller.networkId;
     final channelId = widget.controller.channelId;
-    return Scaffold(
-      backgroundColor: colors.bg,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _buildHeader(colors, wide, networkId, channelId),
-            Divider(height: 1, color: colors.border),
-            Expanded(child: _buildContent(wide, networkId, channelId)),
-          ],
+    return NetworkQuickSwitcher(
+      controller: widget.controller,
+      manager: widget.manager,
+      child: Scaffold(
+        backgroundColor: colors.bg,
+        body: SafeArea(
+          child: Column(
+            children: [
+              _buildHeader(colors, wide, networkId, channelId),
+              Divider(height: 1, color: colors.border),
+              Expanded(child: _buildContent(wide, networkId, channelId)),
+            ],
+          ),
         ),
       ),
     );

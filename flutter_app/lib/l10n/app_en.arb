@@ -938,6 +938,8 @@
   "@networkCreate": { "description": "Create dialog confirm button" },
   "networkJoinTitle": "Join a network",
   "@networkJoinTitle": { "description": "Join sheet title and join-button tooltip" },
+  "networkQuickSwitcherTitle": "Quick switch",
+  "@networkQuickSwitcherTitle": { "description": "⌘K quick-switcher dialog title" },
   "networkJoinLinkLabel": "Join link",
   "@networkJoinLinkLabel": { "description": "Join sheet: join link field label" },
   "networkJoinFill": "Fill",

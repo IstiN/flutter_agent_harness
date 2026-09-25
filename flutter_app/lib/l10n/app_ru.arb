@@ -869,6 +869,7 @@
   "networkPasswordLabel": "Пароль",
   "networkCreate": "Создать",
   "networkJoinTitle": "Присоединиться к сети",
+  "networkQuickSwitcherTitle": "Быстрый переход",
   "networkJoinLinkLabel": "Ссылка-приглашение",
   "networkJoinFill": "Заполнить",
   "networkIdLabel": "Идентификатор сети",

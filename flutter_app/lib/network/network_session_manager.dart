@@ -5,6 +5,8 @@
 // ignore_for_file: prefer_initializing_formals — named private
 // parameters cannot be initializing formals in Dart.
 
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
@@ -41,6 +43,12 @@ final class NetworkSessionManager extends ChangeNotifier {
   /// The live sessions by network id.
   final Map<String, NetworkSession> sessions = {};
 
+  /// Joins in flight, coalesced by network id: a controller-change silent
+  /// resume (the home page's `_ensureSession`) racing an explicit
+  /// join/resume (sidebar tap, ⌘N switch) must not join the same network
+  /// twice.
+  final Map<String, Future<NetworkSession>> _joinsInFlight = {};
+
   KeyWallet get wallet => _wallet;
 
   /// The ai-native JWT (management routes + authed join); null = guest.
@@ -62,8 +70,26 @@ final class NetworkSessionManager extends ChangeNotifier {
   /// Joins [networkId] with [password] (guest join when no JWT is set,
   /// authed join otherwise — the server locks the display name then),
   /// records the membership + password in the wallet, and starts the
-  /// session. Returns the live session.
+  /// session. Returns the live session. Concurrent joins of the same
+  /// network coalesce into one in-flight call.
   Future<NetworkSession> join({
+    required String networkId,
+    required String password,
+    String? displayName,
+  }) {
+    final inFlight = _joinsInFlight[networkId];
+    if (inFlight != null) return inFlight;
+    final future = _join(
+      networkId: networkId,
+      password: password,
+      displayName: displayName,
+    );
+    _joinsInFlight[networkId] = future;
+    future.whenComplete(() => _joinsInFlight.remove(networkId)).ignore();
+    return future;
+  }
+
+  Future<NetworkSession> _join({
     required String networkId,
     required String password,
     String? displayName,

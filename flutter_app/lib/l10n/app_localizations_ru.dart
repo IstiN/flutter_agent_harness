@@ -2237,6 +2237,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get networkJoinTitle => 'Присоединиться к сети';
 
   @override
+  String get networkQuickSwitcherTitle => 'Быстрый переход';
+
+  @override
   String get networkJoinLinkLabel => 'Ссылка-приглашение';
 
   @override

@@ -3926,6 +3926,12 @@ abstract class AppLocalizations {
   /// **'Join a network'**
   String get networkJoinTitle;
 
+  /// ⌘K quick-switcher dialog title
+  ///
+  /// In en, this message translates to:
+  /// **'Quick switch'**
+  String get networkQuickSwitcherTitle;
+
   /// Join sheet: join link field label
   ///
   /// In en, this message translates to:

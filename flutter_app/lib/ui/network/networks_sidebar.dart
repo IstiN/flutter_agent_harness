@@ -12,6 +12,7 @@ import 'package:fa/network/fa_network_client.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/network/wallet_export.dart' show WalletKdfParams;
+import 'package:fa/ui/network/create_network_dialog.dart';
 import 'package:fa/ui/network/join_sheet.dart';
 import 'package:fa/ui/network/wallet_menu.dart';
 
@@ -70,25 +71,6 @@ class _NetworksSidebarState extends State<NetworksSidebar> {
     }
   }
 
-  Future<void> _createNetwork() async {
-    final created = await showDialog<({String name, String password})>(
-      context: context,
-      builder: (_) => const _CreateNetworkDialog(),
-    );
-    if (created == null || !mounted) return;
-    try {
-      final session = await widget.manager.createNetwork(
-        name: created.name,
-        password: created.password,
-      );
-      await widget.controller.enterNetwork(session.networkId);
-    } on FaNetworkException catch (e) {
-      if (mounted) showFahErrorSnack(context, e.message);
-    } on Object catch (e) {
-      if (mounted) showFahErrorSnack(context, '$e');
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
@@ -130,7 +112,13 @@ class _NetworksSidebarState extends State<NetworksSidebar> {
             alignment: Alignment.centerLeft,
             child: TextButton.icon(
               key: const ValueKey('createNetworkButton'),
-              onPressed: () => unawaited(_createNetwork()),
+              onPressed: () => unawaited(
+                runCreateNetworkFlow(
+                  context,
+                  controller: widget.controller,
+                  manager: widget.manager,
+                ),
+              ),
               icon: const Icon(Icons.add, size: 16),
               label: Text(context.l10n.networkCreateNetwork),
             ),
@@ -318,67 +306,6 @@ class _MembershipTile extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-/// The create-network dialog (owner flow; requires a JWT — the button is
-/// only shown then). Returns the name + password, or null when cancelled.
-class _CreateNetworkDialog extends StatefulWidget {
-  const _CreateNetworkDialog();
-
-  @override
-  State<_CreateNetworkDialog> createState() => _CreateNetworkDialogState();
-}
-
-class _CreateNetworkDialogState extends State<_CreateNetworkDialog> {
-  final _name = TextEditingController();
-  final _password = TextEditingController();
-
-  @override
-  void dispose() {
-    _name.dispose();
-    _password.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(context.l10n.networkCreateNetwork),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: _name,
-            decoration: InputDecoration(
-              labelText: context.l10n.networkNameLabel,
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _password,
-            obscureText: true,
-            decoration: InputDecoration(
-              labelText: context.l10n.networkPasswordLabel,
-            ),
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(context.l10n.commonCancel),
-        ),
-        FilledButton(
-          onPressed: () {
-            final name = _name.text.trim();
-            if (name.isEmpty || _password.text.isEmpty) return;
-            Navigator.of(context).pop((name: name, password: _password.text));
-          },
-          child: Text(context.l10n.networkCreate),
-        ),
-      ],
     );
   }
 }

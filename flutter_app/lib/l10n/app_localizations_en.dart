@@ -2209,6 +2209,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get networkJoinTitle => 'Join a network';
 
   @override
+  String get networkQuickSwitcherTitle => 'Quick switch';
+
+  @override
   String get networkJoinLinkLabel => 'Join link';
 
   @override
