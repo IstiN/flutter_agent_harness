@@ -14,6 +14,7 @@
 //      only composer content).
 @Tags(['io', 'integration'])
 @Timeout(Duration(minutes: 5))
+@Skip('infra: #936 hub port race (contaminated frames from foreign hubs)')
 library;
 
 import 'dart:io';

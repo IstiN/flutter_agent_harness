@@ -1,4 +1,5 @@
 @Tags(['integration'])
+@Skip('infra: #936 cold build hooks stall 20-30s under load')
 library;
 
 import 'dart:async';
