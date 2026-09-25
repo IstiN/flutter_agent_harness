@@ -17,6 +17,7 @@
 @TestOn('vm')
 @Tags(['integration', 'perf'])
 @Timeout(Duration(minutes: 10))
+@Skip('infra: #936 open perf budget too tight under concurrency')
 library;
 
 import 'dart:convert';
