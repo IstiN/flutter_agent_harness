@@ -95,7 +95,11 @@ final class StatusLineSnapshot {
   /// [StatusLineSegmentOptions.showThinkingLevel] is on).
   final String? thinkingLevel;
 
-  /// Approval mode label for `mode` (`yolo`, `write`, …).
+  /// Approval mode label for `mode` (`yolo`, `write`, …). Must be the CLI
+  /// label (`ApprovalModeLabel.label`), NOT the enum name — the autopilot
+  /// highlight matches this string against [kAutopilotLabel] exactly; a
+  /// host that feeds `.name` (`unattended`) silently renders as a plain
+  /// muted mode with no highlight.
   final String? approvalMode;
 
   /// Agent load mode label for `mode` (`omp`, `pi`, …; `default` renders

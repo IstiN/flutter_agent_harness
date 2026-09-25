@@ -36,7 +36,8 @@ library;
 /// Every shared settings concept that must exist on both platforms unless
 /// explicitly exempted.
 enum SharedSetting {
-  /// Tool-approval mode (always-ask / write / yolo / unattended).
+  /// Tool-approval mode (always-ask / write / yolo / autopilot — the
+  /// CLI label of the internal `unattended` enum).
   approvalMode,
 
   /// The default chat model (provider, modelId, baseUrl, apiKey).

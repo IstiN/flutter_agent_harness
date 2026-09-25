@@ -1,12 +1,16 @@
-// gh-938/#944: hosted-runner-only flake (green on main in adjacent runs).
-// RUNTIME skip on Linux only: an unconditional @Skip also silenced the
-// test on the macOS coverage leg, dropping flutter_app coverage for
-// catalog_service.dart to 0 and exploding the CRAP ratchet (16^2+16=272
-// > 30) for EVERY PR (fa #911 diagnosis). macOS keeps running it.
+// gh-938/#944: hosted-runner-only flake (green on main in adjacent runs;
+// root cause tracked in #943). RUNTIME skip on Linux only — hosted ubuntu
+// is where the flake fires, and those runners are ALSO the only coverage
+// legs the app-crap-gate merges (the flutter-tests shards run
+// ubuntu-24.04-arm; there is NO macOS coverage leg — the earlier
+// "macOS keeps running it" rationale was wrong, fa#911 follow-up).
+// Skipping here dropped catalog_service.dart to 0% coverage, exploding
+// the CRAP ratchet (16^2+16 = 272 > 30) on every PR. The ratchet stays
+// fed by catalog_service_coverage_test.dart, which runs unconditionally
+// on every platform; unskip this suite once #943 lands.
 library;
-import 'dart:io' show Platform;
-
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
