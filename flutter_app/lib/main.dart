@@ -380,9 +380,12 @@ Widget faHomeScreen({
   LauncherLayoutStore? layoutStore,
   AppsStore? appsStore,
 
-  /// Network mode (issue #955): when both are provided and the controller
-  /// says [AppMode.network], the home renders [NetworkHomePage] instead of
-  /// the local shell. When absent (tests, non-network hosts) the home is
+  /// Network mode (issue #955): the WIDE home never swaps — the
+  /// [WideLayoutShell] consumes the mode internally (sidebar shows the
+  /// networks list, the center the network surface). The NARROW home
+  /// swaps to [NetworkHomePage] when the controller says
+  /// [AppMode.network] (the mobile list → channels → chat navigation
+  /// pattern). When absent (tests, non-network hosts) the home is
   /// byte-identical to the classic local tree (AC-N1).
   NetworkModeController? networkMode,
   NetworkSessionManager? networkSessions,
@@ -433,7 +436,9 @@ Widget faHomeScreen({
   );
   final mode = networkMode;
   final sessions = networkSessions;
-  if (mode == null || sessions == null) return localHome;
+  // Wide: the shell consumes the mode internally (sidebar/center swap in
+  // place) — the full-tree swap is the NARROW pattern only.
+  if (mode == null || sessions == null || isWide) return localHome;
   return ListenableBuilder(
     listenable: mode,
     builder: (context, _) => mode.mode == AppMode.network

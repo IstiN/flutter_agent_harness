@@ -2198,10 +2198,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get networkWelcomeBody =>
-      'Выберите отображаемое имя — другие участники увидят его рядом с вашими сообщениями.';
-
-  @override
-  String get networkContinue => 'Продолжить';
+      'Присоединитесь к существующей сети или создайте свою — каналы и витрины откроются здесь.';
 
   @override
   String get networkNetworksTitle => 'Сети';
@@ -2292,10 +2289,14 @@ class AppLocalizationsRu extends AppLocalizations {
   }
 
   @override
-  String get networkFilterAll => 'Все';
+  String get networkChannelsSection => 'Каналы';
 
   @override
-  String get networkFilterShowcases => 'Витрины';
+  String get networkShowcasesSection => 'Витрины';
+
+  @override
+  String get networkShowcaseReadOnly =>
+      'Здесь могут писать только владелец сети и администраторы.';
 
   @override
   String get networkConnecting => 'Подключение…';

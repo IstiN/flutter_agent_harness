@@ -25,7 +25,10 @@ import 'package:fa/services/session_names_store.dart';
 import 'package:fa/services/upload.dart';
 
 import 'package:fa/ui/screens/app_launcher_screen.dart';
+import 'package:fa/ui/network/network_center.dart';
 import 'package:fa/ui/network/network_mode_chip.dart';
+import 'package:fa/ui/network/networks_sidebar.dart';
+import 'package:fa/ui/network/quick_switcher.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/quick_model_chip.dart';
@@ -330,56 +333,88 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     super.dispose();
   }
 
+  /// True when the network mode is active and wired (issue #955): the
+  /// shell swaps the sidebar's sessions list for the networks list and
+  /// the center chat for the network center — never the whole screen.
+  bool get _inNetworkMode {
+    final mode = widget.networkMode;
+    return mode != null &&
+        widget.networkSessions != null &&
+        mode.mode == AppMode.network;
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
     // Material ancestor is REQUIRED — without it, Text widgets get the
     // debug-mode yellow double-underline style.
+    final mode = widget.networkMode;
+    final sessions = widget.networkSessions;
     return Material(
       color: colors.bg,
-      child: Row(
-        children: [
-          // Left: collapsible sidebar (width user-resizable, issue #426).
-          AnimatedContainer(
-            duration: _sidebarDragging
-                ? Duration.zero
-                : const Duration(milliseconds: 200),
-            curve: Curves.easeInOut,
-            width: _sidebarCollapsed ? 60 : _sidebarWidth,
-            decoration: BoxDecoration(
-              border: Border(right: BorderSide(color: colors.border)),
+      child: mode == null || sessions == null
+          ? _buildBody(colors)
+          : ListenableBuilder(
+              // The mode chip toggles local ⇄ network in place: the
+              // sidebar body and center swap, the shell stays.
+              listenable: mode,
+              builder: (context, _) {
+                final body = _buildBody(colors);
+                return _inNetworkMode
+                    ? NetworkQuickSwitcher(
+                        controller: mode,
+                        manager: sessions,
+                        child: body,
+                      )
+                    : body;
+              },
             ),
-            child: _buildSidebar(colors),
+    );
+  }
+
+  Widget _buildBody(FahColors colors) {
+    return Row(
+      children: [
+        // Left: collapsible sidebar (width user-resizable, issue #426).
+        AnimatedContainer(
+          duration: _sidebarDragging
+              ? Duration.zero
+              : const Duration(milliseconds: 200),
+          curve: Curves.easeInOut,
+          width: _sidebarCollapsed ? 60 : _sidebarWidth,
+          decoration: BoxDecoration(
+            border: Border(right: BorderSide(color: colors.border)),
           ),
-          // Drag handle: resizes the sessions sidebar.
-          if (!_sidebarCollapsed)
-            _PaneDragHandle(
-              key: kSidebarDragHandleKey,
-              onDrag: (dx) => setState(() {
-                _sidebarDragging = true;
-                _sidebarWidth = (_sidebarWidth + dx).clamp(
-                  SessionUiPrefsStore.minSidebarWidth,
-                  SessionUiPrefsStore.maxSidebarWidth,
-                );
-              }),
-              onDragEnd: (_) => _onSidebarDragEnd(),
-            ),
-          // Center: chat (always visible when a session is active).
-          Expanded(child: _buildChatArea(colors)),
-          // Drag handle: resizes the apps panel.
+          child: _buildSidebar(colors),
+        ),
+        // Drag handle: resizes the sessions sidebar.
+        if (!_sidebarCollapsed)
           _PaneDragHandle(
+            key: kSidebarDragHandleKey,
             onDrag: (dx) => setState(() {
-              _appsPanelWidth = (_appsPanelWidth - dx).clamp(
-                _appsPanelMinWidth,
-                _appsPanelMaxWidth,
+              _sidebarDragging = true;
+              _sidebarWidth = (_sidebarWidth + dx).clamp(
+                SessionUiPrefsStore.minSidebarWidth,
+                SessionUiPrefsStore.maxSidebarWidth,
               );
             }),
+            onDragEnd: (_) => _onSidebarDragEnd(),
           ),
-          // Right: apps panel — a nested Navigator so launched apps push
-          // within the panel instead of replacing the whole screen.
-          SizedBox(width: _appsPanelWidth, child: _buildAppsArea()),
-        ],
-      ),
+        // Center: chat (always visible when a session is active).
+        Expanded(child: _buildChatArea(colors)),
+        // Drag handle: resizes the apps panel.
+        _PaneDragHandle(
+          onDrag: (dx) => setState(() {
+            _appsPanelWidth = (_appsPanelWidth - dx).clamp(
+              _appsPanelMinWidth,
+              _appsPanelMaxWidth,
+            );
+          }),
+        ),
+        // Right: apps panel — a nested Navigator so launched apps push
+        // within the panel instead of replacing the whole screen.
+        SizedBox(width: _appsPanelWidth, child: _buildAppsArea()),
+      ],
     );
   }
 
@@ -412,26 +447,40 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
           children: [
             _buildBrandHeader(colors),
             Expanded(
-              child: ListenableBuilder(
-                // The DAP inbound binding badge re-renders the list when
-                // the binding loads/changes (settings page, first load).
-                listenable: DapBindingStore.instance,
-                builder: (context, _) => SidebarSessionsList(
-                  manager: widget.manager,
-                  sessionNamesStore: widget.sessionNamesStore ?? _namesStore,
-                  prefsStore: widget.sessionPrefsStore ?? _uiPrefs,
-                  collapsed: _sidebarCollapsed,
-                  onNewSession: _newSession,
-                  onSessionTap: () => setState(() {}),
-                  persistedSessions: _persistedSessions,
-                  sessionInfoNames: _jsonlNames,
-                  onOpenPersisted: _openPersistedSession,
-                  onOpenLiveSession: _openLiveSession,
-                  hubBoundSessionId: DapBindingStore.instance.boundSessionId,
-                  pendingSessionId: _pendingOpenId,
-                  selectedSessionId: _selectedSessionId,
-                ),
-              ),
+              child: _inNetworkMode
+                  // Network mode swaps the SIDEBAR CONTENT, not the
+                  // screen (owner feedback on #955): the memberships list
+                  // takes the sessions list's place; the brand row (with
+                  // the mode chip) and the Files/Settings nav stay.
+                  ? _sidebarCollapsed
+                        ? const SizedBox.shrink()
+                        : NetworksSidebar(
+                            controller: widget.networkMode!,
+                            manager: widget.networkSessions!,
+                          )
+                  : ListenableBuilder(
+                      // The DAP inbound binding badge re-renders the list
+                      // when the binding loads/changes (settings page,
+                      // first load).
+                      listenable: DapBindingStore.instance,
+                      builder: (context, _) => SidebarSessionsList(
+                        manager: widget.manager,
+                        sessionNamesStore:
+                            widget.sessionNamesStore ?? _namesStore,
+                        prefsStore: widget.sessionPrefsStore ?? _uiPrefs,
+                        collapsed: _sidebarCollapsed,
+                        onNewSession: _newSession,
+                        onSessionTap: () => setState(() {}),
+                        persistedSessions: _persistedSessions,
+                        sessionInfoNames: _jsonlNames,
+                        onOpenPersisted: _openPersistedSession,
+                        onOpenLiveSession: _openLiveSession,
+                        hubBoundSessionId:
+                            DapBindingStore.instance.boundSessionId,
+                        pendingSessionId: _pendingOpenId,
+                        selectedSessionId: _selectedSessionId,
+                      ),
+                    ),
             ),
             Divider(height: 1, thickness: 1, color: colors.border),
             _buildNavItems(colors),
@@ -468,6 +517,53 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
               constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
               tooltip: 'Expand', // l10n:ignore
             ),
+          ],
+        ),
+      );
+    }
+
+    final mode = widget.networkMode;
+    final sessions = widget.networkSessions;
+    // With the network wiring present the brand row also carries the mode
+    // chip — it gets its own row (the chip does not fit beside the brand
+    // mark at the default sidebar width).
+    if (mode != null && sessions != null) {
+      return Padding(
+        // macOS: extra top padding to clear the floating traffic lights
+        // (the content now extends to the window top — no global strip).
+        padding: EdgeInsets.fromLTRB(16, _isMacOS ? 32 : 16, 8, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                brandIcon,
+                const SizedBox(width: 10),
+                Text(
+                  'Fa', // l10n:ignore
+                  style: TextStyle(
+                    color: colors.text,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.chevron_left),
+                  onPressed: () => setState(() => _sidebarCollapsed = true),
+                  iconSize: 20,
+                  color: colors.dim,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 32,
+                    minHeight: 32,
+                  ),
+                  tooltip: 'Collapse', // l10n:ignore
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            NetworkModeChip(controller: mode, manager: sessions),
           ],
         ),
       );
@@ -542,6 +638,22 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   // ---------------------------------------------------------------------------
 
   Widget _buildChatArea(FahColors colors) {
+    // Network mode (issue #955): the center shows the network surface —
+    // the welcome empty state (join/create) or the channel rail beside
+    // the channel chat — inside THIS shell, never a takeover. The top
+    // inset clears the macOS window-drag strip exactly like the chat
+    // header below.
+    final networkMode = widget.networkMode;
+    final networkSessions = widget.networkSessions;
+    if (_inNetworkMode && networkMode != null && networkSessions != null) {
+      return Padding(
+        padding: EdgeInsets.only(top: _isMacOS ? 28 : 0),
+        child: NetworkCenterPane(
+          controller: networkMode,
+          manager: networkSessions,
+        ),
+      );
+    }
     final active = widget.manager.active;
     if (active == null) {
       return _buildPlaceholder(colors);

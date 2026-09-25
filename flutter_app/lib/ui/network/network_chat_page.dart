@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/network/channel_chat_service.dart';
+import 'package:fa/network/models.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session.dart';
 import 'package:fa/network/network_session_manager.dart';
@@ -94,6 +95,22 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
     return channelId;
   }
 
+  /// A showcase (public channel) is read-only for regular members — only
+  /// the owner/admins post (the rail's Showcases section).
+  bool _isReadOnlyShowcase(NetworkSession session, String channelId) {
+    Channel? channel;
+    for (final c in session.channels) {
+      if (c.id == channelId) channel = c;
+    }
+    if (channel == null || !channel.isPublic) return false;
+    final memberClass = widget
+        .manager
+        .wallet
+        .networks[widget.controller.networkId]
+        ?.memberClass;
+    return memberClass != 'owner' && memberClass != 'admin';
+  }
+
   @override
   Widget build(BuildContext context) {
     final chat = _chat;
@@ -120,10 +137,13 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
                   features: const FaChatFeatures.minimal(),
                   title: label,
                   showAppBar: false,
-                  composerBuilder: (context, service, drop) => ChannelComposer(
-                    service: service,
-                    hint: context.l10n.networkMessageHint(label),
-                  ),
+                  composerBuilder: (context, service, drop) =>
+                      _isReadOnlyShowcase(session, chatFor.$2)
+                      ? const _ShowcaseReadOnlyNote()
+                      : ChannelComposer(
+                          service: service,
+                          hint: context.l10n.networkMessageHint(label),
+                        ),
                 ),
               ),
             ),
@@ -157,6 +177,37 @@ class _OfflineBanner extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// The read-only note replacing the composer in a showcase (public
+/// channel) for regular members — only the owner/admins post.
+class _ShowcaseReadOnlyNote extends StatelessWidget {
+  const _ShowcaseReadOnlyNote();
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 6, 12, 16),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.public, size: 16, color: colors.dim),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                context.l10n.networkShowcaseReadOnly,
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 12, color: colors.dim),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

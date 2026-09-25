@@ -105,17 +105,22 @@ void main() {
       await rig.session.close();
     });
 
-    testWidgets('the Showcases pill keeps public channels only', (
+    testWidgets('the list splits into Channels and Showcases sections', (
       tester,
     ) async {
       final rig = await _rig(tester);
-      await tester.tap(find.text('Showcases'));
-      await tester.pump();
-      expect(find.text('general'), findsNothing);
-      expect(find.text('launch'), findsOneWidget);
-      await tester.tap(find.text('All'));
-      await tester.pump();
-      expect(find.text('general'), findsOneWidget);
+      expect(find.text('CHANNELS'), findsOneWidget);
+      expect(find.text('SHOWCASES'), findsOneWidget);
+      // The private channel sits under Channels, the public one under
+      // Showcases.
+      expect(
+        tester.getTopLeft(find.text('general')).dy,
+        greaterThan(tester.getTopLeft(find.text('CHANNELS')).dy),
+      );
+      expect(
+        tester.getTopLeft(find.text('launch')).dy,
+        greaterThan(tester.getTopLeft(find.text('SHOWCASES')).dy),
+      );
       await rig.session.close();
     });
 

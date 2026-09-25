@@ -12,6 +12,7 @@ import 'package:fa/network/fa_network_client.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/ui/network/channel_rail.dart';
+import 'package:fa/ui/network/network_center.dart';
 import 'package:fa/ui/network/network_chat_page.dart';
 import 'package:fa/ui/network/network_mode_chip.dart';
 import 'package:fa/ui/network/networks_sidebar.dart';
@@ -19,18 +20,21 @@ import 'package:fa/ui/network/quick_switcher.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart' show faIsMacOSDesktop;
 
-/// The network-mode surface (issue #955), swapped in by `faHomeScreen`
-/// when the mode controller says [AppMode.network]:
+/// The NARROW network-mode surface (issue #955), swapped in by
+/// `faHomeScreen` when the mode controller says [AppMode.network] (wide
+/// desktops never see this page — the [WideLayoutShell] swaps its sidebar
+/// and center in place instead):
 ///
 /// - no network selected → the network picker ([NetworksSidebar]:
-///   memberships, search, join/create, wallet menu);
-/// - network selected → the channel rail plus, on wide layouts, the chat
-///   side by side (narrow shows rail OR chat, with a back button);
+///   memberships, search, join/create, wallet menu) — this IS the first
+///   screen, there is no identity onboarding gate (identity is created
+///   lazily at join/send);
+/// - network selected → the channel rail, with a back button to the
+///   picker;
 /// - channel selected → [NetworkChatPage].
 ///
 /// The header always carries the [NetworkModeChip] (the way back to the
-/// local surface). A wallet without an identity shows the inline
-/// onboarding first (display name → [NetworkSessionManager.ensureIdentity]).
+/// local surface).
 class NetworkHomePage extends StatefulWidget {
   const NetworkHomePage({
     super.key,
@@ -72,12 +76,8 @@ class _NetworkHomePageState extends State<NetworkHomePage> {
   /// re-join with the wallet password. Fire-and-forget; failures surface
   /// as a snackbar and leave the picker reachable.
   Future<void> _ensureSession() async {
-    final networkId = widget.controller.networkId;
-    if (networkId == null) return;
-    if (widget.manager.sessions.containsKey(networkId)) return;
-    if (widget.manager.wallet.networks[networkId]?.password == null) return;
     try {
-      await widget.manager.resume(networkId);
+      await ensureNetworkSession(widget.controller, widget.manager);
     } on StateError catch (e) {
       if (mounted) showFahErrorSnack(context, e.message);
     } on FaNetworkException catch (e) {
@@ -90,7 +90,6 @@ class _NetworkHomePageState extends State<NetworkHomePage> {
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
-    final wide = MediaQuery.sizeOf(context).width >= kWideLayoutBreakpoint;
     final networkId = widget.controller.networkId;
     final channelId = widget.controller.channelId;
     return NetworkQuickSwitcher(
@@ -101,9 +100,9 @@ class _NetworkHomePageState extends State<NetworkHomePage> {
         body: SafeArea(
           child: Column(
             children: [
-              _buildHeader(colors, wide, networkId, channelId),
+              _buildHeader(colors, networkId, channelId),
               Divider(height: 1, color: colors.border),
-              Expanded(child: _buildContent(wide, networkId, channelId)),
+              Expanded(child: _buildContent(networkId, channelId)),
             ],
           ),
         ),
@@ -111,12 +110,7 @@ class _NetworkHomePageState extends State<NetworkHomePage> {
     );
   }
 
-  Widget _buildHeader(
-    FahColors colors,
-    bool wide,
-    String? networkId,
-    String? channelId,
-  ) {
+  Widget _buildHeader(FahColors colors, String? networkId, String? channelId) {
     final wallet = widget.manager.wallet;
     final networkName = networkId == null
         ? null
@@ -165,27 +159,13 @@ class _NetworkHomePageState extends State<NetworkHomePage> {
     );
   }
 
-  Widget _buildContent(bool wide, String? networkId, String? channelId) {
-    // First-run onboarding: no identity yet → the display-name gate.
-    if (!widget.manager.wallet.hasIdentity) {
-      return _IdentityOnboarding(manager: widget.manager);
-    }
+  Widget _buildContent(String? networkId, String? channelId) {
     if (networkId == null) {
-      // The network picker (welcome + memberships grid/sidebar content).
-      return wide
-          ? Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 520),
-                child: NetworksSidebar(
-                  controller: widget.controller,
-                  manager: widget.manager,
-                ),
-              ),
-            )
-          : NetworksSidebar(
-              controller: widget.controller,
-              manager: widget.manager,
-            );
+      // The network picker — the first screen of the narrow flow.
+      return NetworksSidebar(
+        controller: widget.controller,
+        manager: widget.manager,
+      );
     }
     final session = widget.manager.sessions[networkId];
     if (session == null) {
@@ -193,117 +173,11 @@ class _NetworkHomePageState extends State<NetworkHomePage> {
       // one — the snackbar already said why).
       return const Center(child: CircularProgressIndicator());
     }
-    final rail = ChannelRail(
-      controller: widget.controller,
-      manager: widget.manager,
-    );
-    if (!wide) {
-      return channelId == null
-          ? rail
-          : NetworkChatPage(
-              controller: widget.controller,
-              manager: widget.manager,
-            );
-    }
-    return Row(
-      children: [
-        SizedBox(width: 280, child: rail),
-        VerticalDivider(width: 1, color: FahColors.of(context).border),
-        Expanded(
-          child: channelId == null
-              ? Center(
-                  child: Text(
-                    context.l10n.networkSelectChannel,
-                    style: TextStyle(color: FahColors.of(context).dim),
-                  ),
-                )
-              : NetworkChatPage(
-                  controller: widget.controller,
-                  manager: widget.manager,
-                ),
-        ),
-      ],
-    );
-  }
-}
-
-/// The inline first-run onboarding: a display name field creating the
-/// device identity ([NetworkSessionManager.ensureIdentity]). Nothing else
-/// is reachable before an identity exists — every join/sign needs it.
-class _IdentityOnboarding extends StatefulWidget {
-  const _IdentityOnboarding({required this.manager});
-
-  final NetworkSessionManager manager;
-
-  @override
-  State<_IdentityOnboarding> createState() => _IdentityOnboardingState();
-}
-
-class _IdentityOnboardingState extends State<_IdentityOnboarding> {
-  final _name = TextEditingController();
-  bool _busy = false;
-
-  @override
-  void dispose() {
-    _name.dispose();
-    super.dispose();
-  }
-
-  Future<void> _continue() async {
-    final name = _name.text.trim();
-    if (name.isEmpty) return;
-    setState(() => _busy = true);
-    try {
-      await widget.manager.ensureIdentity(displayName: name);
-      widget.manager.walletExternallyUpdated();
-    } on Object catch (e) {
-      if (mounted) {
-        setState(() => _busy = false);
-        showFahErrorSnack(context, '$e');
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 360),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                context.l10n.networkWelcomeTitle,
-                style: Theme.of(
-                  context,
-                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                context.l10n.networkWelcomeBody,
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _name,
-                decoration: InputDecoration(
-                  labelText: context.l10n.networkDisplayNameLabel,
-                ),
-                onSubmitted: (_) => unawaited(_continue()),
-              ),
-              const SizedBox(height: 16),
-              FilledButton(
-                key: const ValueKey('identityContinue'),
-                onPressed: _busy ? null : () => unawaited(_continue()),
-                child: Text(context.l10n.networkContinue),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+    return channelId == null
+        ? ChannelRail(controller: widget.controller, manager: widget.manager)
+        : NetworkChatPage(
+            controller: widget.controller,
+            manager: widget.manager,
+          );
   }
 }

@@ -18,9 +18,10 @@ import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/ui/network/add_agent_dialog.dart';
 
 /// The channel rail of a selected network (issue #955): a presence header
-/// (live member count), an All | Showcases pill filter, and the channel
-/// list — lock icon for private, globe for public. Private channels carry
-/// an overflow menu with the AC-B17 "Add agent" invite.
+/// (live member count), then the channel list split into two sections —
+/// Channels (private, lock icon) and Showcases (public, globe icon).
+/// Private channels carry an overflow menu with the AC-B17 "Add agent"
+/// invite.
 class ChannelRail extends StatefulWidget {
   const ChannelRail({
     super.key,
@@ -39,9 +40,6 @@ class ChannelRail extends StatefulWidget {
 }
 
 class _ChannelRailState extends State<ChannelRail> {
-  /// Pill filter: false = all channels, true = showcases (public) only.
-  bool _showcasesOnly = false;
-
   NetworkSession? get _session =>
       widget.manager.sessions[widget.controller.networkId];
 
@@ -119,9 +117,15 @@ class _ChannelRailState extends State<ChannelRail> {
               .where((m) => m.presence == Presence.live)
               .length;
     final all = session?.channels ?? const <Channel>[];
-    final channels = _showcasesOnly
-        ? all.where((c) => c.isPublic).toList()
-        : all;
+    final regular = all.where((c) => !c.isPublic).toList();
+    final showcases = all.where((c) => c.isPublic).toList();
+    // One list, two sections: Channels then Showcases.
+    final rows = <Object>[
+      if (regular.isNotEmpty) _Section.channels,
+      ...regular,
+      if (showcases.isNotEmpty) _Section.showcases,
+      ...showcases,
+    ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -171,24 +175,6 @@ class _ChannelRailState extends State<ChannelRail> {
             ],
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-          child: Row(
-            children: [
-              _Pill(
-                label: context.l10n.networkFilterAll,
-                selected: !_showcasesOnly,
-                onTap: () => setState(() => _showcasesOnly = false),
-              ),
-              const SizedBox(width: 6),
-              _Pill(
-                label: context.l10n.networkFilterShowcases,
-                selected: _showcasesOnly,
-                onTap: () => setState(() => _showcasesOnly = true),
-              ),
-            ],
-          ),
-        ),
         Expanded(
           child: session == null
               ? Center(
@@ -197,7 +183,7 @@ class _ChannelRailState extends State<ChannelRail> {
                     style: TextStyle(color: colors.dim),
                   ),
                 )
-              : channels.isEmpty
+              : rows.isEmpty
               ? Center(
                   child: Text(
                     context.l10n.networkNoChannels,
@@ -205,14 +191,29 @@ class _ChannelRailState extends State<ChannelRail> {
                   ),
                 )
               : ListView.builder(
-                  itemCount: channels.length,
-                  itemBuilder: (context, index) => _ChannelTile(
-                    key: ValueKey('channel:${channels[index].id}'),
-                    channel: channels[index],
-                    selected: widget.controller.channelId == channels[index].id,
-                    wallet: widget.manager.wallet,
-                    onTap: () => unawaited(_openChannel(channels[index].id)),
-                  ),
+                  itemCount: rows.length,
+                  itemBuilder: (context, index) {
+                    final row = rows[index];
+                    if (row is _Section) {
+                      return _SectionHeader(
+                        key: ValueKey('section:${row.name}'),
+                        label: switch (row) {
+                          _Section.channels =>
+                            context.l10n.networkChannelsSection,
+                          _Section.showcases =>
+                            context.l10n.networkShowcasesSection,
+                        },
+                      );
+                    }
+                    final channel = row as Channel;
+                    return _ChannelTile(
+                      key: ValueKey('channel:${channel.id}'),
+                      channel: channel,
+                      selected: widget.controller.channelId == channel.id,
+                      wallet: widget.manager.wallet,
+                      onTap: () => unawaited(_openChannel(channel.id)),
+                    );
+                  },
                 ),
         ),
       ],
@@ -220,44 +221,27 @@ class _ChannelRailState extends State<ChannelRail> {
   }
 }
 
-class _Pill extends StatelessWidget {
-  const _Pill({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
+/// The channel-list section a header row stands for.
+enum _Section { channels, showcases }
+
+/// A section header in the channel list (Channels / Showcases).
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({super.key, required this.label});
 
   final String label;
-  final bool selected;
-  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
-    final isLight = Theme.of(context).brightness == Brightness.light;
-    return Material(
-      color: selected
-          ? (isLight ? const Color(0xFFEEF2FF) : colors.panelAlt)
-          : Colors.transparent,
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: selected ? colors.indigo : colors.border),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              color: selected
-                  ? (isLight ? colors.indigo : colors.teal)
-                  : colors.dim,
-            ),
-          ),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      child: Text(
+        label.toUpperCase(),
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.6,
+          color: colors.dim,
         ),
       ),
     );

@@ -206,6 +206,12 @@ final class NetworkSession extends ChangeNotifier {
     List<String>? mentions,
   }) async {
     final channel = _channelById(channelId);
+    // Identity is lazy (no onboarding gate): a send on a wallet without
+    // an identity creates it silently with the member's display name —
+    // signing needs the keypair, blocking the UI is never an option.
+    if (!_wallet.hasIdentity) {
+      await _wallet.createIfMissing(displayName: identity.displayName);
+    }
     // The envelope id doubles as the fanet1 AAD frame id: the sender
     // generates the client uuid and binds ciphertext + envelope to it.
     final envelopeId = _uuid.v4();

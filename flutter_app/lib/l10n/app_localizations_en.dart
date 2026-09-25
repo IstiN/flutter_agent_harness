@@ -2170,10 +2170,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get networkWelcomeBody =>
-      'Pick a display name — other members see it next to your messages.';
-
-  @override
-  String get networkContinue => 'Continue';
+      'Join an existing network or create your own — channels and showcases open here.';
 
   @override
   String get networkNetworksTitle => 'Networks';
@@ -2263,10 +2260,14 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get networkFilterAll => 'All';
+  String get networkChannelsSection => 'Channels';
 
   @override
-  String get networkFilterShowcases => 'Showcases';
+  String get networkShowcasesSection => 'Showcases';
+
+  @override
+  String get networkShowcaseReadOnly =>
+      'Only the network owner and admins can post here.';
 
   @override
   String get networkConnecting => 'Connecting…';

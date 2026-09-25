@@ -62,8 +62,10 @@ final class NetworkSessionManager extends ChangeNotifier {
   /// (e.g. a wallet import replacing the contents in place).
   void walletExternallyUpdated() => notifyListeners();
 
-  /// Ensures the wallet identity exists (first-run onboarding calls this
-  /// with the human's chosen display name).
+  /// Ensures the wallet identity exists (the join sheet pre-creates it
+  /// with the human's chosen display name; [join] itself also creates it
+  /// lazily from the join display name, and a send on an identity-less
+  /// wallet creates it silently — there is no onboarding gate).
   Future<void> ensureIdentity({String displayName = ''}) =>
       _wallet.createIfMissing(displayName: displayName);
 
@@ -94,6 +96,11 @@ final class NetworkSessionManager extends ChangeNotifier {
     required String password,
     String? displayName,
   }) async {
+    // Identity is lazy (no onboarding gate): the join's display name
+    // seeds the device identity when the wallet has none yet.
+    if (!_wallet.hasIdentity) {
+      await _wallet.createIfMissing(displayName: displayName ?? '');
+    }
     final client = _newClient();
     final result = await client.joinNetwork(
       networkId,

@@ -3842,23 +3842,17 @@ abstract class AppLocalizations {
   /// **'Network'**
   String get networkModeNetwork;
 
-  /// First-run network onboarding title
+  /// Network mode welcome title (wide empty state)
   ///
   /// In en, this message translates to:
   /// **'Welcome to Fa networks'**
   String get networkWelcomeTitle;
 
-  /// First-run network onboarding body
+  /// Network mode welcome body (wide empty state)
   ///
   /// In en, this message translates to:
-  /// **'Pick a display name — other members see it next to your messages.'**
+  /// **'Join an existing network or create your own — channels and showcases open here.'**
   String get networkWelcomeBody;
-
-  /// Onboarding continue button
-  ///
-  /// In en, this message translates to:
-  /// **'Continue'**
-  String get networkContinue;
 
   /// Network picker header / sidebar title
   ///
@@ -4016,17 +4010,23 @@ abstract class AppLocalizations {
   /// **'{count} online'**
   String networkOnlineCount(Object count);
 
-  /// Channel filter pill: all channels
+  /// Channel rail section header: regular (private) channels
   ///
   /// In en, this message translates to:
-  /// **'All'**
-  String get networkFilterAll;
+  /// **'Channels'**
+  String get networkChannelsSection;
 
-  /// Channel filter pill: public showcases only
+  /// Channel rail section header: public showcases
   ///
   /// In en, this message translates to:
   /// **'Showcases'**
-  String get networkFilterShowcases;
+  String get networkShowcasesSection;
+
+  /// Read-only note shown instead of the composer in a showcase channel for regular members
+  ///
+  /// In en, this message translates to:
+  /// **'Only the network owner and admins can post here.'**
+  String get networkShowcaseReadOnly;
 
   /// Channel rail placeholder while the session connects
   ///
