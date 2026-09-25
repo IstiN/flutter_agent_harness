@@ -492,6 +492,142 @@ void main() {
     });
   });
 
+  group('auth endpoints (issue #955 iteration 3)', () {
+    test('oauthProviders parses a bare list, anonymously', () async {
+      httpClient.respond(200, body: '["google","github"]');
+      final providers = await build().oauthProviders();
+      expect(providers, ['google', 'github']);
+      final req = httpClient.requests.single;
+      expect(req.url.path, '/api/oauth-proxy/providers');
+      expect(req.headers.containsKey('authorization'), isFalse);
+    });
+
+    test('oauthProviders parses {providers:[...]} and '
+        '{enabledProviders:[...]}', () async {
+      httpClient.respond(200, body: '{"providers":["apple"]}');
+      expect(await build().oauthProviders(), ['apple']);
+
+      httpClient.respond(
+        200,
+        body: '{"authenticationMode":"oauth","enabledProviders":["microsoft"]}',
+      );
+      expect(await build().oauthProviders(), ['microsoft']);
+    });
+
+    test(
+      'oauthInitiate posts the proxy contract and parses auth_url',
+      () async {
+        httpClient.respond(
+          200,
+          body:
+              '{"auth_url":"https://accounts.google.com/o/oauth2?state=st-1",'
+              '"state":"st-1","expires_in":600}',
+        );
+        final result = await build().oauthInitiate(
+          provider: 'google',
+          redirectUri: Uri.parse('http://127.0.0.1:0/callback'),
+        );
+        expect(result.authUrl.host, 'accounts.google.com');
+        expect(result.state, 'st-1');
+        expect(result.expiresIn, 600);
+        final req = httpClient.requests.single;
+        expect(req.url.path, '/api/oauth-proxy/initiate');
+        expect(jsonDecode(req.body), {
+          'provider': 'google',
+          'client_redirect_uri': 'http://127.0.0.1:0/callback',
+          'client_type': 'desktop',
+          'environment': 'prod',
+        });
+        expect(req.headers.containsKey('authorization'), isFalse);
+      },
+    );
+
+    test('oauthExchange posts code+state and folds expiresIn into an '
+        'absolute instant', () async {
+      httpClient.respond(
+        200,
+        body:
+            '{"accessToken":"at-1","refreshToken":"rt-1","expiresIn":3600,'
+            '"refreshExpiresIn":86400,"tokenType":"Bearer"}',
+      );
+      final now = DateTime.utc(2026, 2, 1, 12);
+      final bundle = await build().oauthExchange(
+        code: 'temp-1',
+        state: 'st-1',
+        now: now,
+      );
+      expect(bundle.accessToken, 'at-1');
+      expect(bundle.refreshToken, 'rt-1');
+      expect(bundle.expiresAt, now.add(const Duration(hours: 1)));
+      expect(bundle.refreshExpiresAt, now.add(const Duration(days: 1)));
+      final req = httpClient.requests.single;
+      expect(req.url.path, '/api/oauth-proxy/exchange');
+      expect(jsonDecode(req.body), {'code': 'temp-1', 'state': 'st-1'});
+    });
+
+    test('oauthExchange surfaces the server error shape', () async {
+      httpClient.respond(
+        400,
+        body:
+            '{"error":{"code":"invalid_grant",'
+            '"message":"code expired or unknown"}}',
+      );
+      await expectLater(
+        build().oauthExchange(code: 'bad', state: 'st-1'),
+        throwsA(
+          isA<FaNetworkException>()
+              .having((e) => e.statusCode, 'statusCode', 400)
+              .having((e) => e.code, 'code', 'invalid_grant')
+              .having((e) => e.message, 'message', 'code expired or unknown'),
+        ),
+      );
+    });
+
+    test('refreshTokens posts the refresh token and tolerates a missing '
+        'refresh lifetime', () async {
+      httpClient.respond(
+        200,
+        body: '{"accessToken":"at-2","refreshToken":"rt-2","expiresIn":3600}',
+      );
+      final now = DateTime.utc(2026, 2, 1, 12);
+      final bundle = await build().refreshTokens('rt-1', now: now);
+      expect(bundle.accessToken, 'at-2');
+      expect(bundle.refreshExpiresAt, isNull);
+      final req = httpClient.requests.single;
+      expect(req.url.path, '/api/auth/refresh');
+      expect(jsonDecode(req.body), {'refreshToken': 'rt-1'});
+    });
+
+    test('authUser sends the explicit Bearer token and parses the '
+        'profile', () async {
+      httpClient.respond(
+        200,
+        body:
+            '{"authenticated":true,"id":"u1","email":"a@b.dev",'
+            '"name":"Alice","pictureUrl":"https://img/a.png",'
+            '"provider":"google"}',
+      );
+      final profile = await build(jwtToken: 'jwt-other').authUser('at-1');
+      expect(profile.id, 'u1');
+      expect(profile.email, 'a@b.dev');
+      expect(profile.name, 'Alice');
+      expect(profile.pictureUrl, 'https://img/a.png');
+      expect(profile.provider, 'google');
+      final req = httpClient.requests.single;
+      expect(req.url.path, '/api/auth/user');
+      expect(req.headers['authorization'], 'Bearer at-1');
+    });
+
+    test('authUser throws when the profile carries neither name nor '
+        'email', () async {
+      httpClient.respond(200, body: '{"authenticated":true,"id":"u1"}');
+      await expectLater(
+        build().authUser('at-1'),
+        throwsA(isA<FormatException>()),
+      );
+    });
+  });
+
   group('error mapping', () {
     Future<FaNetworkException> capture(
       int status, {

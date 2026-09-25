@@ -6,6 +6,7 @@ import 'dart:convert';
 
 import 'package:fa/network/envelope_codec.dart';
 import 'package:fa/network/key_wallet.dart';
+import 'package:fa/network/models.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -193,5 +194,82 @@ void main() {
         expect(reloaded.networks['net9']!.name, 'File Net');
       },
     );
+  });
+
+  group('account (OAuth tokens, issue #955 iteration 3)', () {
+    WalletAccount account() => WalletAccount(
+      provider: 'google',
+      login: 'a@b.dev',
+      displayName: 'Alice',
+      accessToken: 'at-1',
+      refreshToken: 'rt-1',
+      accessExpiresAt: DateTime.utc(2026, 2, 1, 13),
+      refreshExpiresAt: DateTime.utc(2026, 3, 1),
+    );
+
+    test('saveAccount → persist → reload roundtrip', () async {
+      final backend = MemoryWalletBackend();
+      final wallet = await KeyWallet.load(backend);
+      await wallet.saveAccount(account());
+      expect(wallet.account!.login, 'a@b.dev');
+
+      final reloaded = await KeyWallet.load(backend);
+      final reloadedAccount = reloaded.account!;
+      expect(reloadedAccount.provider, 'google');
+      expect(reloadedAccount.login, 'a@b.dev');
+      expect(reloadedAccount.displayName, 'Alice');
+      expect(reloadedAccount.accessToken, 'at-1');
+      expect(reloadedAccount.refreshToken, 'rt-1');
+      expect(reloadedAccount.accessExpiresAt, DateTime.utc(2026, 2, 1, 13));
+      expect(reloadedAccount.refreshExpiresAt, DateTime.utc(2026, 3, 1));
+    });
+
+    test('an old wallet without the account field loads fine', () {
+      final wallet = KeyWallet.fromJsonString(
+        '{"v":1,"identity":{"pub":"p","priv":"s","displayName":"me"},'
+        '"channels":{},"networks":{}}',
+      );
+      expect(wallet.hasIdentity, isTrue);
+      expect(wallet.account, isNull);
+      // Re-serializing adds no account key.
+      expect(wallet.toJson().containsKey('account'), isFalse);
+    });
+
+    test('a malformed account entry is skipped, the wallet still loads', () {
+      final wallet = KeyWallet.fromJsonString(
+        '{"v":1,"identity":{"pub":"p","priv":"s"},'
+        '"channels":{},"networks":{},'
+        '"account":{"provider":"google"}}', // no tokens/expiry
+      );
+      expect(wallet.hasIdentity, isTrue);
+      expect(wallet.account, isNull);
+    });
+
+    test('clearAccount drops the account and persists', () async {
+      final backend = MemoryWalletBackend();
+      final wallet = await KeyWallet.load(backend);
+      await wallet.saveAccount(account());
+      await wallet.clearAccount();
+      expect(wallet.account, isNull);
+      final reloaded = await KeyWallet.load(backend);
+      expect(reloaded.account, isNull);
+    });
+
+    test('withTokens swaps the token fields only', () {
+      final updated = account().withTokens(
+        TokenBundle(
+          accessToken: 'at-2',
+          refreshToken: 'rt-2',
+          expiresAt: DateTime.utc(2026, 2, 2),
+        ),
+      );
+      expect(updated.accessToken, 'at-2');
+      expect(updated.refreshToken, 'rt-2');
+      expect(updated.accessExpiresAt, DateTime.utc(2026, 2, 2));
+      expect(updated.refreshExpiresAt, isNull);
+      expect(updated.login, 'a@b.dev');
+      expect(updated.displayName, 'Alice');
+      expect(updated.provider, 'google');
+    });
   });
 }

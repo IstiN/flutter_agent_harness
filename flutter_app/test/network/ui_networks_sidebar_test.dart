@@ -204,6 +204,11 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
 
+      // The dev login lives in the collapsed developer section now.
+      await tester.tap(find.text('Developer (local only)'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
       await tester.enterText(
         find.byKey(const ValueKey('signInLogin')),
         'alice',

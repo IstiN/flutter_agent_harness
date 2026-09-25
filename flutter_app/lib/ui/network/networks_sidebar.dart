@@ -196,9 +196,16 @@ class _NetworksSidebarState extends State<NetworksSidebar> {
     );
   }
 
-  /// Sign-in row (guest) or the signed-in account with a sign-out action.
+  /// Sign-in row (guest) and/or the account row: a live JWT or a stored
+  /// wallet account both show the account (an expired stored session is
+  /// annotated, and the sign-in row stays for re-auth).
   Widget _buildAccountArea(FahColors colors) {
     final manager = widget.manager;
+    final accountLabel =
+        manager.accountDisplayName ??
+        manager.accountLogin ??
+        context.l10n.networkAccountFallback;
+    final showAccount = manager.hasJwt || manager.accountDisplayName != null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -219,8 +226,8 @@ class _NetworksSidebarState extends State<NetworksSidebar> {
                 ],
               ),
             ),
-          )
-        else
+          ),
+        if (showAccount)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
             child: Row(
@@ -232,17 +239,31 @@ class _NetworksSidebarState extends State<NetworksSidebar> {
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Text(
-                    manager.accountLogin ?? context.l10n.networkAccountFallback,
-                    key: const ValueKey('accountLabel'),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: colors.text, fontSize: 13),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        accountLabel,
+                        key: const ValueKey('accountLabel'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: colors.text, fontSize: 13),
+                      ),
+                      if (manager.sessionExpired)
+                        Text(
+                          context.l10n.networkSessionExpired,
+                          key: const ValueKey('sessionExpiredNote'),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: colors.error, fontSize: 11),
+                        ),
+                    ],
                   ),
                 ),
                 TextButton(
                   key: const ValueKey('signOutButton'),
-                  onPressed: manager.signOut,
+                  onPressed: () => unawaited(manager.signOut()),
                   child: Text(context.l10n.networkSignOut),
                 ),
               ],

@@ -3881,8 +3881,38 @@ abstract class AppLocalizations {
   /// Sign-in dialog helper note
   ///
   /// In en, this message translates to:
-  /// **'This uses your network account — dev login while the OAuth flow is pending.'**
+  /// **'Sign in with your ai-native.cloud account to create and manage networks.'**
   String get networkSignInHelper;
+
+  /// Sign-in dialog OAuth provider button
+  ///
+  /// In en, this message translates to:
+  /// **'Continue with {provider}'**
+  String networkSignInWithProvider(Object provider);
+
+  /// Sign-in dialog note while the browser OAuth flow is open
+  ///
+  /// In en, this message translates to:
+  /// **'Complete the sign-in in your browser…'**
+  String get networkSignInWaiting;
+
+  /// Sign-in dialog collapsed section with the dev-login form
+  ///
+  /// In en, this message translates to:
+  /// **'Developer (local only)'**
+  String get networkSignInDeveloperSection;
+
+  /// Sign-in dialog note on iOS/Android replacing the provider buttons
+  ///
+  /// In en, this message translates to:
+  /// **'Provider sign-in is unavailable here until the fa:// redirect is allowlisted on the server — only the developer login below works for now.'**
+  String get networkSignInMobileNote;
+
+  /// Sidebar account row note when the stored tokens can no longer be refreshed
+  ///
+  /// In en, this message translates to:
+  /// **'Session expired — sign in again.'**
+  String get networkSessionExpired;
 
   /// Sign-in dialog login field label
   ///

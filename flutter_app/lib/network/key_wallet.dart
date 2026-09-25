@@ -5,8 +5,10 @@
 /// Device-only key wallet for fa_network.
 ///
 /// Contents (JSON v1): the device identity X25519 keypair, per-channel
-/// X25519 keypairs keyed `'<networkId>/<channel>'`, and per-network join
-/// metadata keyed `'<networkId>'`. Session tokens are NEVER stored here
+/// X25519 keypairs keyed `'<networkId>/<channel>'`, per-network join
+/// metadata keyed `'<networkId>'`, and the signed-in ai-native account
+/// (OAuth tokens — device-only like the keys, an extension of the I1
+/// invariant). fa_network session tokens are NEVER stored here
 /// (memory-only per contract E7).
 ///
 /// Invariant I2: key material is never logged — nothing in this file
@@ -23,6 +25,7 @@ import 'package:fa_ui/fa_ui.dart' show KeychainStore;
 import 'package:flutter_agent_harness/src/env/execution_env.dart';
 
 import 'envelope_codec.dart';
+import 'models.dart';
 
 /// Storage abstraction for [KeyWallet]: one JSON document in, one out.
 abstract interface class WalletBackend {
@@ -232,6 +235,100 @@ final class NetworkEntry {
   };
 }
 
+/// The signed-in ai-native account stored in the wallet (issue #955
+/// iteration 3): the OAuth provider, the login (email), the display name,
+/// and the token bundle. The access/refresh tokens are device-only
+/// exactly like the key material (the I1 invariant extends to them — the
+/// wallet is the device's only secret store, and REG-NOLEAK covers the
+/// keys; the tokens travel solely as the `Authorization` header they are
+/// minted for).
+final class WalletAccount {
+  /// Creates an account entry.
+  const WalletAccount({
+    required this.provider,
+    required this.login,
+    required this.displayName,
+    required this.accessToken,
+    required this.refreshToken,
+    required this.accessExpiresAt,
+    this.refreshExpiresAt,
+  });
+
+  /// The OAuth provider (`google`, `github`, `microsoft`, `apple`).
+  final String provider;
+
+  /// The account login (the provider email).
+  final String login;
+
+  /// The human-readable display name (the wire's `name`).
+  final String displayName;
+
+  /// The bearer access token (the ai-native JWT).
+  final String accessToken;
+
+  /// The refresh token for `POST /api/auth/refresh`.
+  final String refreshToken;
+
+  /// When [accessToken] expires (UTC).
+  final DateTime accessExpiresAt;
+
+  /// When [refreshToken] expires (UTC); null = no server-declared limit.
+  final DateTime? refreshExpiresAt;
+
+  /// Copies this account with the tokens from [tokens] (after a refresh).
+  WalletAccount withTokens(TokenBundle tokens) => WalletAccount(
+    provider: provider,
+    login: login,
+    displayName: displayName,
+    accessToken: tokens.accessToken,
+    refreshToken: tokens.refreshToken,
+    accessExpiresAt: tokens.expiresAt,
+    refreshExpiresAt: tokens.refreshExpiresAt,
+  );
+
+  /// Tolerant parse; returns `null` when the entry is malformed.
+  static WalletAccount? tryFromJson(Object? json) {
+    if (json is! Map) return null;
+    final provider = json['provider'];
+    final accessToken = json['accessToken'];
+    final refreshToken = json['refreshToken'];
+    final accessExpiresAt = json['accessExpiresAt'] is String
+        ? DateTime.tryParse(json['accessExpiresAt']! as String)
+        : null;
+    if (provider is! String ||
+        accessToken is! String ||
+        refreshToken is! String ||
+        accessExpiresAt == null) {
+      return null;
+    }
+    return WalletAccount(
+      provider: provider,
+      login: json['login'] is String ? json['login']! as String : '',
+      displayName: json['displayName'] is String
+          ? json['displayName']! as String
+          : '',
+      accessToken: accessToken,
+      refreshToken: refreshToken,
+      accessExpiresAt: accessExpiresAt.toUtc(),
+      refreshExpiresAt: json['refreshExpiresAt'] is String
+          ? DateTime.tryParse(json['refreshExpiresAt']! as String)?.toUtc()
+          : null,
+    );
+  }
+
+  /// Serializes to JSON (timestamps as ISO-8601 UTC).
+  Map<String, Object?> toJson() => {
+    'provider': provider,
+    'login': login,
+    'displayName': displayName,
+    'accessToken': accessToken,
+    'refreshToken': refreshToken,
+    'accessExpiresAt': accessExpiresAt.toUtc().toIso8601String(),
+    if (refreshExpiresAt case final expiry?)
+      'refreshExpiresAt': expiry.toUtc().toIso8601String(),
+  };
+}
+
 /// The device-only fa_network key wallet. Mutations update the in-memory
 /// state and, when a [WalletBackend] is attached, persist automatically.
 final class KeyWallet {
@@ -240,18 +337,22 @@ final class KeyWallet {
     WalletIdentity? identity,
     Map<String, ChannelKeys>? channels,
     Map<String, NetworkEntry>? networks,
+    WalletAccount? account,
   })
     // ignore: prefer_initializing_formals
     : _backend = backend,
        // ignore: prefer_initializing_formals
        _identity = identity,
        _channels = Map.of(channels ?? const {}),
-       _networks = Map.of(networks ?? const {});
+       _networks = Map.of(networks ?? const {}),
+       // ignore: prefer_initializing_formals
+       _account = account;
 
   WalletBackend? _backend;
   WalletIdentity? _identity;
   final Map<String, ChannelKeys> _channels;
   final Map<String, NetworkEntry> _networks;
+  WalletAccount? _account;
 
   /// Loads the wallet from [backend]. With no stored data, returns an
   /// empty wallet (call [createIfMissing] next). Throws [FormatException]
@@ -270,6 +371,7 @@ final class KeyWallet {
       identity: _parseIdentity(decoded['identity']),
       channels: _parseChannels(decoded['channels']),
       networks: _parseNetworks(decoded['networks']),
+      account: WalletAccount.tryFromJson(decoded['account']),
     );
   }
 
@@ -279,6 +381,7 @@ final class KeyWallet {
     identity: _parseIdentity(json['identity']),
     channels: _parseChannels(json['channels']),
     networks: _parseNetworks(json['networks']),
+    account: WalletAccount.tryFromJson(json['account']),
   );
 
   /// Parses a wallet JSON string. Throws [FormatException] on garbage.
@@ -336,6 +439,9 @@ final class KeyWallet {
   /// Unmodifiable view of network metadata, keyed by networkId.
   Map<String, NetworkEntry> get networks => Map.unmodifiable(_networks);
 
+  /// The stored ai-native account (OAuth sign-in), or null.
+  WalletAccount? get account => _account;
+
   /// Serializes the wallet to JSON v1.
   Map<String, Object?> toJson() => {
     'v': 1,
@@ -346,6 +452,7 @@ final class KeyWallet {
     'networks': {
       for (final entry in _networks.entries) entry.key: entry.value.toJson(),
     },
+    if (_account case final account?) 'account': account.toJson(),
   };
 
   /// The wallet as a JSON string.
@@ -399,6 +506,19 @@ final class KeyWallet {
     await _persist();
   }
 
+  /// Stores the ai-native account (provider sign-in) and persists.
+  Future<void> saveAccount(WalletAccount account) async {
+    _account = account;
+    await _persist();
+  }
+
+  /// Drops the stored ai-native account (sign-out) and persists.
+  Future<void> clearAccount() async {
+    if (_account == null) return;
+    _account = null;
+    await _persist();
+  }
+
   /// Removes a network and all of its channel keys, then persists.
   Future<void> removeNetwork(String networkId) async {
     _networks.remove(networkId);
@@ -418,6 +538,7 @@ final class KeyWallet {
     _networks
       ..clear()
       ..addAll(other._networks);
+    _account = other._account;
     await _persist();
   }
 

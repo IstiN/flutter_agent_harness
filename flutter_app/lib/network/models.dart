@@ -404,3 +404,110 @@ class PublicNetworkInfo {
     );
   }
 }
+
+/// An OAuth token set from the ai-native auth endpoints (issue #955,
+/// iteration 3): `POST /api/oauth-proxy/exchange` and
+/// `POST /api/auth/refresh` answer in the dmtools form
+/// `{accessToken, refreshToken, expiresIn, refreshExpiresIn,
+/// tokenType: "Bearer"}`. The relative `expiresIn` seconds are folded
+/// into absolute UTC instants at parse time ([now] is the test seam).
+final class TokenBundle {
+  const TokenBundle({
+    required this.accessToken,
+    required this.refreshToken,
+    required this.expiresAt,
+    this.refreshExpiresAt,
+  });
+
+  /// The bearer access token (the ai-native JWT).
+  final String accessToken;
+
+  /// The refresh token for `POST /api/auth/refresh`.
+  final String refreshToken;
+
+  /// When [accessToken] expires (UTC).
+  final DateTime expiresAt;
+
+  /// When [refreshToken] expires (UTC); null = no server-declared limit.
+  final DateTime? refreshExpiresAt;
+
+  /// Tolerant parse: throws [FormatException] when the token strings are
+  /// missing, treats absent/malformed lifetimes as 0 seconds.
+  factory TokenBundle.fromJson(Map<String, Object?> json, {DateTime? now}) {
+    final accessToken = json['accessToken'];
+    final refreshToken = json['refreshToken'];
+    if (accessToken is! String || refreshToken is! String) {
+      throw FormatException(
+        'TokenBundle: "accessToken"/"refreshToken" are required strings',
+        json,
+      );
+    }
+    final base = now ?? DateTime.now();
+    final expiresIn = switch (json['expiresIn']) {
+      final num n => n.toInt(),
+      _ => 0,
+    };
+    final refreshExpiresIn = switch (json['refreshExpiresIn']) {
+      final num n => n.toInt(),
+      _ => null,
+    };
+    return TokenBundle(
+      accessToken: accessToken,
+      refreshToken: refreshToken,
+      expiresAt: base.add(Duration(seconds: expiresIn)).toUtc(),
+      refreshExpiresAt: refreshExpiresIn != null
+          ? base.add(Duration(seconds: refreshExpiresIn)).toUtc()
+          : null,
+    );
+  }
+}
+
+/// The signed-in ai-native account profile (`GET /api/auth/user`,
+/// issue #955 iteration 3). [name] is the display name (the wire's
+/// `name` field); [email] doubles as the account login.
+final class AuthProfile {
+  const AuthProfile({
+    required this.id,
+    required this.email,
+    required this.name,
+    this.pictureUrl,
+    this.provider,
+  });
+
+  /// The account id (wire: `id`).
+  final String id;
+
+  /// The account email — the sidebar/login label.
+  final String email;
+
+  /// The display name (wire: `name`).
+  final String name;
+
+  /// Avatar URL, when the provider reports one.
+  final String? pictureUrl;
+
+  /// The OAuth provider the account signed in through.
+  final String? provider;
+
+  /// Tolerant parse: everything defaults to empty/null so interim server
+  /// shapes never break the client; a profile with neither [name] nor
+  /// [email] is meaningless, so that case throws a [FormatException].
+  factory AuthProfile.fromJson(Map<String, Object?> json) {
+    final id = _str(json['id']);
+    final email = _str(json['email']);
+    final name = _str(json['name']);
+    if (name.isEmpty && email.isEmpty) {
+      throw FormatException(
+        'AuthProfile: "name" and "email" are both missing',
+        json,
+      );
+    }
+    return AuthProfile(
+      id: id,
+      email: email,
+      name: name.isNotEmpty ? name : email,
+      pictureUrl: _strOrNull(json['pictureUrl']),
+      provider: _strOrNull(json['provider']),
+    );
+  }
+}

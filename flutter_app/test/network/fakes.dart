@@ -66,6 +66,11 @@ class FakeHttpClient extends http.BaseClient {
   /// when set, otherwise the "not deployed" 404.
   http.Response? publicNetworksResponse;
 
+  /// Out-of-band response for `GET /api/oauth-proxy/providers` (the
+  /// sign-in dialog probes it on open) — [oauthProvidersResponse] when
+  /// set, otherwise a 404 that drives the dialog's known-four fallback.
+  http.Response? oauthProvidersResponse;
+
   /// Queues the next response.
   void respond(
     int status, {
@@ -86,6 +91,8 @@ class FakeHttpClient extends http.BaseClient {
     var res = _responses.elementAtOrNull(_index);
     if (request.url.path == '/api/networks/public') {
       res = publicNetworksResponse ?? http.Response('{"error":{}}', 404);
+    } else if (request.url.path == '/api/oauth-proxy/providers') {
+      res = oauthProvidersResponse ?? http.Response('{"error":{}}', 404);
     } else {
       if (res == null) {
         throw StateError(

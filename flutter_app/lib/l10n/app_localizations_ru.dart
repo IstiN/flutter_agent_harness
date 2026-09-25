@@ -2214,7 +2214,25 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get networkSignInHelper =>
-      'Используется ваш сетевой аккаунт — вход для разработки, пока OAuth-флоу в работе.';
+      'Войдите через аккаунт ai-native.cloud, чтобы создавать сети и управлять ими.';
+
+  @override
+  String networkSignInWithProvider(Object provider) {
+    return 'Продолжить через $provider';
+  }
+
+  @override
+  String get networkSignInWaiting => 'Завершите вход в браузере…';
+
+  @override
+  String get networkSignInDeveloperSection => 'Разработчик (только локально)';
+
+  @override
+  String get networkSignInMobileNote =>
+      'Вход через провайдера здесь недоступен, пока редирект fa:// не добавлен в список разрешённых на сервере — пока работает только вход для разработчика ниже.';
+
+  @override
+  String get networkSessionExpired => 'Сессия истекла — войдите снова.';
 
   @override
   String get networkLoginLabel => 'Логин';

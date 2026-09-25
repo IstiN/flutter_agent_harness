@@ -440,6 +440,118 @@ class FaNetworkClient {
     return token;
   }
 
+  // ------------------------------------------------------------------ auth
+
+  /// `GET /api/oauth-proxy/providers` — the OAuth providers this deploy
+  /// has configured (issue #955 iteration 3). Anonymous. Tolerant parse:
+  /// accepts a bare JSON list, `{providers: [...]}`, or
+  /// `{enabledProviders: [...]}` (the `/api/auth/config` shape).
+  Future<List<String>> oauthProviders() async {
+    final res = await _request(
+      'GET',
+      '/api/oauth-proxy/providers',
+      auth: false,
+      expected: {200},
+    );
+    final decoded = jsonDecode(res.body);
+    List<String> names(Object? value) =>
+        value is List ? value.whereType<String>().toList() : const [];
+    if (decoded is List) return names(decoded);
+    if (decoded is Map) {
+      return names(decoded['providers'] ?? decoded['enabledProviders']);
+    }
+    throw FormatException(
+      'oauthProviders: unexpected JSON (${decoded.runtimeType})',
+      res.body,
+    );
+  }
+
+  /// `POST /api/oauth-proxy/initiate` — starts the OAuth flow for
+  /// [provider]; the returned [authUrl] is opened in the system browser,
+  /// which redirects back to [redirectUri] with `?code&state`
+  /// (desktop loopback per RFC 8252: `http://127.0.0.1:<port>/callback`
+  /// is always allowlisted). Anonymous.
+  Future<({Uri authUrl, String state, int expiresIn})> oauthInitiate({
+    required String provider,
+    required Uri redirectUri,
+    String clientType = 'desktop',
+    String environment = 'prod',
+  }) async {
+    final res = await _request(
+      'POST',
+      '/api/oauth-proxy/initiate',
+      body: {
+        'provider': provider,
+        'client_redirect_uri': redirectUri.toString(),
+        'client_type': clientType,
+        'environment': environment,
+      },
+      auth: false,
+      expected: {200},
+    );
+    final json = _decodeMap(res);
+    final authUrl = json['auth_url'];
+    final state = json['state'];
+    if (authUrl is! String || state is! String) {
+      throw FormatException(
+        'oauthInitiate: "auth_url"/"state" are required strings',
+        res.body,
+      );
+    }
+    final expiresIn = json['expires_in'];
+    return (
+      authUrl: Uri.parse(authUrl),
+      state: state,
+      expiresIn: expiresIn is num ? expiresIn.toInt() : 0,
+    );
+  }
+
+  /// `POST /api/oauth-proxy/exchange` — swaps the temporary callback
+  /// [code] (+ the initiate [state]) for the real token set. Anonymous.
+  Future<TokenBundle> oauthExchange({
+    required String code,
+    required String state,
+    DateTime? now,
+  }) async {
+    final res = await _request(
+      'POST',
+      '/api/oauth-proxy/exchange',
+      body: {'code': code, 'state': state},
+      auth: false,
+      expected: {200},
+    );
+    return TokenBundle.fromJson(_decodeMap(res), now: now);
+  }
+
+  /// `POST /api/auth/refresh` — trades [refreshToken] for a fresh token
+  /// set. Anonymous (the refresh token IS the credential).
+  Future<TokenBundle> refreshTokens(
+    String refreshToken, {
+    DateTime? now,
+  }) async {
+    final res = await _request(
+      'POST',
+      '/api/auth/refresh',
+      body: {'refreshToken': refreshToken},
+      auth: false,
+      expected: {200},
+    );
+    return TokenBundle.fromJson(_decodeMap(res), now: now);
+  }
+
+  /// `GET /api/auth/user` with an explicit Bearer [accessToken] (the
+  /// freshly exchanged token — the client's stored tokens are NOT sent).
+  Future<AuthProfile> authUser(String accessToken) async {
+    final res = await _request(
+      'GET',
+      '/api/auth/user',
+      auth: false,
+      headers: {'authorization': 'Bearer $accessToken'},
+      expected: {200},
+    );
+    return AuthProfile.fromJson(_decodeMap(res));
+  }
+
   // -------------------------------------------------------------- internal
 
   Uri _uri(String path, Map<String, String>? query) {
@@ -461,19 +573,21 @@ class FaNetworkClient {
     Map<String, String>? query,
     bool management = false,
     bool auth = true,
+    Map<String, String>? headers,
     required Set<int> expected,
   }) async {
     final uri = _uri(path, query);
-    final headers = <String, String>{
+    final requestHeaders = <String, String>{
       'content-type': 'application/json',
       'accept': 'application/json',
+      ...?headers,
     };
     if (auth) {
       final token = _token(management: management);
-      if (token != null) headers['authorization'] = 'Bearer $token';
+      if (token != null) requestHeaders['authorization'] = 'Bearer $token';
     }
     final encodedBody = body == null ? null : jsonEncode(body);
-    final request = http.Request(method, uri)..headers.addAll(headers);
+    final request = http.Request(method, uri)..headers.addAll(requestHeaders);
     if (encodedBody != null) request.body = encodedBody;
     final streamed = await _http.send(request);
     final response = await http.Response.fromStream(streamed);

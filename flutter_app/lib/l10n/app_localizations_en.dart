@@ -2186,7 +2186,25 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get networkSignInHelper =>
-      'This uses your network account — dev login while the OAuth flow is pending.';
+      'Sign in with your ai-native.cloud account to create and manage networks.';
+
+  @override
+  String networkSignInWithProvider(Object provider) {
+    return 'Continue with $provider';
+  }
+
+  @override
+  String get networkSignInWaiting => 'Complete the sign-in in your browser…';
+
+  @override
+  String get networkSignInDeveloperSection => 'Developer (local only)';
+
+  @override
+  String get networkSignInMobileNote =>
+      'Provider sign-in is unavailable here until the fa:// redirect is allowlisted on the server — only the developer login below works for now.';
+
+  @override
+  String get networkSessionExpired => 'Session expired — sign in again.';
 
   @override
   String get networkLoginLabel => 'Login';

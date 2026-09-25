@@ -13,6 +13,7 @@
 /// boot is semantics-preserving.
 library;
 
+import 'dart:async';
 import 'dart:ui' show PlatformDispatcher;
 
 import 'package:fa/firebase_options.dart';
@@ -252,6 +253,10 @@ Future<BootStores> loadBootStores(ExecutionEnv env) async {
     baseUrl: Uri.parse(faNetworkBaseUrl),
     wallet: networkWallet,
   );
+  // Restore the persisted ai-native account (issue #955 iteration 3):
+  // an unexpired token becomes the JWT, an expired one is refreshed
+  // silently. Fire-and-forget — boot never blocks on the network.
+  unawaited(networkSessions.restoreAccount());
   return BootStores(
     env: env,
     sessionKeys: sessionKeys,

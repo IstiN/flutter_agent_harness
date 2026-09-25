@@ -10,6 +10,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+import 'auth_flow.dart';
+import 'auth_loopback.dart';
 import 'fa_network_client.dart';
 import 'fa_network_ws.dart';
 import 'key_wallet.dart';
@@ -26,16 +28,27 @@ final class NetworkSessionManager extends ChangeNotifier {
     http.Client? httpClient,
     WsConnector? wsConnector,
     String? jwtToken,
+    Future<Uri> Function(Uri authUrl)? waitForCallback,
+    DateTime Function()? clock,
   }) : _baseUrl = baseUrl,
        _wallet = wallet,
        _http = httpClient ?? http.Client(),
        _connector = wsConnector ?? const WebSocketChannelConnector(),
+       _waitForCallback = waitForCallback ?? waitForOAuthCallback,
+       _clock = clock ?? DateTime.now,
        _jwt = jwtToken;
 
   final Uri _baseUrl;
   final KeyWallet _wallet;
   final http.Client _http;
   final WsConnector _connector;
+
+  /// The OAuth browser-callback seam: the desktop loopback listener in
+  /// production, a fake in tests (never binds a real port there).
+  final Future<Uri> Function(Uri authUrl) _waitForCallback;
+
+  /// The clock seam for the token-expiry checks (test-friendly).
+  final DateTime Function() _clock;
 
   String? _jwt;
   String? _sessionToken;
@@ -58,10 +71,112 @@ final class NetworkSessionManager extends ChangeNotifier {
   /// network creation — guests never see those affordances).
   bool get hasJwt => _jwt != null && _jwt!.isNotEmpty;
 
-  /// The login the JWT was minted for (in memory only — the JWT is
-  /// session-scoped, never persisted; issue #955 iteration 2).
-  String? get accountLogin => _accountLogin;
+  /// The login the JWT was minted for: the wallet account's email after
+  /// an OAuth sign-in (the tokens persist in the wallet), else the dev
+  /// login from [signIn] (in memory only; issue #955).
+  String? get accountLogin {
+    final walletLogin = _wallet.account?.login;
+    if (walletLogin != null && walletLogin.isNotEmpty) return walletLogin;
+    return _accountLogin;
+  }
+
   String? _accountLogin;
+
+  /// The wallet account's display name (the wire's `name`); null when no
+  /// OAuth account is stored.
+  String? get accountDisplayName {
+    final account = _wallet.account;
+    if (account == null) return null;
+    if (account.displayName.isNotEmpty) return account.displayName;
+    return account.login.isNotEmpty ? account.login : null;
+  }
+
+  /// True when a stored account's tokens have expired beyond refresh
+  /// (or the silent refresh failed): the UI keeps the account row and
+  /// marks the session expired instead of hiding it.
+  bool get sessionExpired => _sessionExpired;
+  bool _sessionExpired = false;
+
+  /// The OAuth providers the server has configured
+  /// (`GET /api/oauth-proxy/providers`) — the sign-in dialog falls back
+  /// to the known four when this fails.
+  Future<List<String>> oauthProviders() => _newClient().oauthProviders();
+
+  /// Signs in through the real ai-native.cloud OAuth flow for [provider]
+  /// (issue #955 iteration 3): initiate → browser → loopback callback →
+  /// exchange, then fetches the profile, persists the account + tokens
+  /// into the wallet, and holds the access token as the JWT.
+  Future<void> signInWithProvider(
+    String provider, {
+    String clientType = 'desktop',
+    String environment = 'prod',
+  }) async {
+    final client = _newClient();
+    final tokens = await NetworkAuthFlow(client: client).signIn(
+      provider: provider,
+      clientType: clientType,
+      environment: environment,
+      waitForCallback: _waitForCallback,
+    );
+    // The profile call is best-effort: the tokens alone are a working
+    // sign-in; the sidebar just falls back to the provider name.
+    AuthProfile? profile;
+    try {
+      profile = await client.authUser(tokens.accessToken);
+    } on Object {
+      profile = null;
+    }
+    await _wallet.saveAccount(
+      WalletAccount(
+        provider: provider,
+        login: profile?.email ?? '',
+        displayName: profile?.name ?? '',
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        accessExpiresAt: tokens.expiresAt,
+        refreshExpiresAt: tokens.refreshExpiresAt,
+      ),
+    );
+    _jwt = tokens.accessToken;
+    _sessionExpired = false;
+    notifyListeners();
+  }
+
+  /// Restores the wallet account on app start/resume: an unexpired
+  /// access token becomes the JWT directly; an expired one is refreshed
+  /// silently via `POST /api/auth/refresh`. A refresh failure (or a dead
+  /// refresh token) leaves the account in the wallet but flips
+  /// [sessionExpired] — the sidebar keeps showing the account with a
+  /// "session expired" note instead of dropping it.
+  Future<void> restoreAccount() async {
+    final account = _wallet.account;
+    if (account == null) return;
+    final now = _clock().toUtc();
+    if (account.accessExpiresAt.isAfter(now)) {
+      _jwt = account.accessToken;
+      _sessionExpired = false;
+      notifyListeners();
+      return;
+    }
+    final refreshExpiry = account.refreshExpiresAt;
+    if (refreshExpiry != null && !refreshExpiry.isAfter(now)) {
+      _sessionExpired = true;
+      notifyListeners();
+      return;
+    }
+    try {
+      final tokens = await _newClient().refreshTokens(
+        account.refreshToken,
+        now: _clock(),
+      );
+      await _wallet.saveAccount(account.withTokens(tokens));
+      _jwt = tokens.accessToken;
+      _sessionExpired = false;
+    } on Object {
+      _sessionExpired = true;
+    }
+    notifyListeners();
+  }
 
   /// Signs in with the network account: `POST /api/dev/login` (the dev
   /// mock while the OAuth flow is pending) and holds the returned JWT in
@@ -74,14 +189,18 @@ final class NetworkSessionManager extends ChangeNotifier {
     ).devLogin(login: login, password: password);
     _jwt = token;
     _accountLogin = login;
+    _sessionExpired = false;
     notifyListeners();
   }
 
-  /// Drops the in-memory JWT (live member sessions keep their own
-  /// session tokens — this only loses the management affordances).
-  void signOut() {
+  /// Drops the JWT and the stored wallet account (live member sessions
+  /// keep their own session tokens — this only loses the management
+  /// affordances).
+  Future<void> signOut() async {
     _jwt = null;
     _accountLogin = null;
+    _sessionExpired = false;
+    await _wallet.clearAccount();
     notifyListeners();
   }
 
