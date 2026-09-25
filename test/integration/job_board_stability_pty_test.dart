@@ -31,6 +31,14 @@ import 'pty_harness.dart';
 const _replyOne = 'wave one launched for pty539';
 const _replyTwo = 'wave two launched for pty539';
 
+/// Wave one's first sleep (seconds): its jobs settle at base+1 .. base+5,
+/// staggered ~1 s apart. The base keeps every job alive well past boot +
+/// two scripted turns + harness polling (~10 s worst on fa-m5-class
+/// runners) — with the original 5..9 s window the whole bucket could
+/// settle and drain BEFORE the freeze proof's `before` capture, leaving
+/// no frozen `· older` row to assert on (gh-937).
+const int _waveOneSleepBase = 20;
+
 /// Run 1 = turn 1 (five live jobs) + turn 2 (text, ends the run).
 /// Run 2 = turn 3 (five more live jobs) + turn 4 (text, ends the run;
 /// repeats as the wrap-around). Wave one's sleeps are staggered so its
@@ -44,7 +52,7 @@ final _turns = [
           'id': 'c1-$i',
           'name': 'bash',
           'arguments': {
-            'command': 'sleep ${4 + i} && echo p539-wave1-$i',
+            'command': 'sleep ${_waveOneSleepBase + i} && echo p539-wave1-$i',
             'background': true,
           },
         },
@@ -205,7 +213,9 @@ void main() {
       // ── wave two: the first bucket ages out while still live ─────────
       harness.sendText('run wave two');
       harness.sendEnter();
-      await harness.waitForText(
+      // The screen is the assertion contract (the frame is what freezes);
+      // a raw-text match can fire before the row is even painted.
+      await harness.waitForScreen(
         _olderRow,
         timeout: const Duration(seconds: 60),
       );
@@ -213,7 +223,7 @@ void main() {
       final before = harness.viewportLines;
       expectComposerReserved(before, columns);
 
-      // ── wave one's jobs settle under the camera (sleeps 5..9 s) ──────
+      // ── wave one's jobs settle under the camera (sleeps 21..25 s) ────
       // The printed `· older` row is a frozen snapshot: after the FIRST
       // settle lands (four jobs still live), it must not have moved — the
       // unfrozen board would re-derive `· 4 running · 1 done` here.
@@ -223,7 +233,7 @@ void main() {
       expect(beforeOlder, hasLength(1), reason: 'frame before:\n$before');
       await harness.waitForText(
         _firstSettle,
-        timeout: const Duration(seconds: 30),
+        timeout: const Duration(seconds: 60),
       );
       await harness.waitForOutput(settleMs: 300);
       final mid = harness.viewportLines;
@@ -241,7 +251,7 @@ void main() {
       // terminal summary card, and the aged row leaves the live region.
       await harness.waitForText(
         _settledCardBody,
-        timeout: const Duration(seconds: 30),
+        timeout: const Duration(seconds: 60),
       );
       await harness.waitForOutput(settleMs: 300);
       final after = harness.viewportLines;
