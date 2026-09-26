@@ -378,6 +378,37 @@ void main() {
       },
     );
 
+    test('round-1 T3: the update branch honors the explicit name over the '
+        'pre-resolved entry (id kept)', () async {
+      final env = MemoryExecutionEnv();
+      final registry = await ProviderRegistry.load(env);
+      final existing = await registry.add(
+        name: 'Stale resolution',
+        baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+        modelId: 'old-model',
+      );
+
+      await saveCodemieConnection(
+        registry: registry,
+        service: null,
+        lastConnectionStore: LastConnectionStore.inMemory(),
+        orgUrl: 'https://codemie.lab.epam.com',
+        baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+        modelId: 'gpt-x',
+        key: 'codemie_access_token=tok-3',
+        // A caller whose `existing` was resolved by URL (or any other
+        // pre-#977 heuristic) plus a user-typed name: the typed name
+        // wins on the SAME id — never silently dropped.
+        name: 'User typed name',
+        existing: existing,
+      );
+
+      expect(registry.providers, hasLength(1));
+      expect(registry.providers.single.id, existing.id);
+      expect(registry.providers.single.name, 'User typed name');
+      expect(registry.providers.single.modelId, 'gpt-x');
+    });
+
     test(
       'keyless extension contract: the remembered key stays EMPTY',
       () async {
@@ -724,6 +755,93 @@ void main() {
       expect(provider.requiresKey, isFalse);
       expect(service.reconfigured!.apiKey, '');
     });
+
+    testWidgets(
+      'round-1 T4: the re-login lands on the host-NAMED entry, never the '
+      'first-by-URL entry (multi-account determinism)',
+      (tester) async {
+        final env = MemoryExecutionEnv();
+        final registry = await ProviderRegistry.load(env);
+        // 'work' shares the URL and was inserted FIRST — the old
+        // first-by-URL lookup would have refreshed THIS account.
+        final work = await registry.add(
+          name: 'work',
+          baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+          modelId: 'm-work',
+        );
+        registry.rememberKey(work.id, 'work-cookie');
+        // The host-named entry the extension save carries.
+        final host = await registry.add(
+          name: 'codemie.lab.epam.com',
+          baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+          modelId: 'm-host',
+        );
+        final service = _RecordingService(env);
+        var completed = false;
+
+        await pumpBranch(
+          tester,
+          registry: registry,
+          service: service,
+          poll: ({required orgUrl, required cancelled}) async => const [
+            'm1',
+            'm2',
+          ],
+          pick: (models, {preselected, allowCancel = false}) async {
+            // The model preselect also comes from the by-NAME target.
+            expect(preselected, 'm-host');
+            return 'm2';
+          },
+          onDone: (ok) => completed = ok,
+        );
+        await tester.pumpAndSettle();
+
+        expect(completed, isTrue);
+        expect(registry.providers, hasLength(2));
+        // The host-named entry took the update…
+        final updated = registry.byName('codemie.lab.epam.com')!;
+        expect(updated.id, host.id);
+        expect(updated.modelId, 'm2');
+        // …and 'work' is untouched — its account, model and key survive.
+        final untouched = registry.byName('work')!;
+        expect(untouched.id, work.id);
+        expect(untouched.modelId, 'm-work');
+        expect(registry.keyFor(work.id), 'work-cookie');
+      },
+    );
+
+    testWidgets(
+      'round-1 T4: a host-named entry on a DIFFERENT endpoint is a clash — '
+      'clean abort, no duplicate minted',
+      (tester) async {
+        final env = MemoryExecutionEnv();
+        final registry = await ProviderRegistry.load(env);
+        await registry.add(
+          name: 'codemie.lab.epam.com',
+          baseUrl: 'https://other-codemie.example.com/api/v1',
+          modelId: 'm1',
+        );
+        var completed = false;
+
+        await pumpBranch(
+          tester,
+          registry: registry,
+          poll: ({required orgUrl, required cancelled}) async => const ['m1'],
+          pick: (models, {preselected, allowCancel = false}) async => 'm1',
+          onDone: (ok) => completed = ok,
+        );
+        await tester.pumpAndSettle();
+
+        expect(completed, isFalse);
+        // Nothing added, the clashing entry untouched.
+        expect(registry.providers, hasLength(1));
+        expect(
+          registry.providers.single.baseUrl,
+          'https://other-codemie.example.com/api/v1',
+        );
+        expect(find.byType(SnackBar), findsOneWidget);
+      },
+    );
 
     testWidgets(
       'the wait dialog Cancel flips the flag the poll sees; no session → snackbar',

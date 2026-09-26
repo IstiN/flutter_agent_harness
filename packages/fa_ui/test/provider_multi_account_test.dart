@@ -153,36 +153,76 @@ void main() {
     },
   );
 
+  testWidgets('a renamed entry re-adds through its endpoint: the preset editor '
+      'prefills the existing entry name (the `_entryForBaseUrl` contract)', (
+    tester,
+  ) async {
+    final registry = ProviderRegistry.inMemory();
+    final renamed = await registry.add(
+      name: 'Renamed Router',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      modelId: 'm1',
+    );
+    await _pump(tester, AddProviderPresetPickerPage(registry: registry));
+    await tester.tap(find.text('OpenRouter'));
+    await tester.pumpAndSettle();
+
+    // The editor prefill carries the RENAMED entry, not the preset label.
+    expect(
+      tester.widget<TextField>(_editorField('Name')).controller!.text,
+      'Renamed Router',
+    );
+    await tester.enterText(_editorField('API key (optional)'), 'rk-1');
+    await _scrollToSave(tester);
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    // The re-add landed on the existing entry — no duplicate, key lands
+    // on the SAME id (the landing provably ran).
+    expect(registry.providers, hasLength(1));
+    expect(registry.providers.single.id, renamed.id);
+    expect(registry.providers.single.name, 'Renamed Router');
+    expect(registry.keyFor(renamed.id), 'rk-1');
+  });
+
   testWidgets(
-    'a renamed entry re-adds through its endpoint: the preset editor '
-    'prefills the existing entry name (the `_entryForBaseUrl` contract)',
+    '(round-1 T1) EDIT mode rejects renaming onto a sibling name on the '
+    'SAME endpoint — create-only is the same-endpoint takeover',
     (tester) async {
       final registry = ProviderRegistry.inMemory();
-      final renamed = await registry.add(
-        name: 'Renamed Router',
+      final work = await registry.add(
+        name: 'OpenRouter Work',
         baseUrl: 'https://openrouter.ai/api/v1',
-        modelId: 'm1',
+        modelId: 'a',
       );
-      await _pump(tester, AddProviderPresetPickerPage(registry: registry));
-      await tester.tap(find.text('OpenRouter'));
+      final personal = await registry.add(
+        name: 'OpenRouter Personal',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        modelId: 'b',
+      );
+      await _pump(tester, ProvidersSection(registry: registry));
+
+      // Edit the Personal entry through its section row.
+      await tester.tap(find.text('OpenRouter Personal'));
       await tester.pumpAndSettle();
 
-      // The editor prefill carries the RENAMED entry, not the preset label.
-      expect(
-        tester.widget<TextField>(_editorField('Name')).controller!.text,
-        'Renamed Router',
-      );
-      await tester.enterText(_editorField('API key (optional)'), 'rk-1');
+      // Rename it onto the Work entry's name — rejected inline, nothing
+      // saved: two same-name entries would break every by-name landing.
+      await tester.enterText(_editorField('Name'), 'OpenRouter Work');
       await _scrollToSave(tester);
       await tester.tap(find.text('Save'));
-      await tester.pumpAndSettle();
+      await tester.pump();
 
-      // The re-add landed on the existing entry — no duplicate, key lands
-      // on the SAME id (the landing provably ran).
-      expect(registry.providers, hasLength(1));
-      expect(registry.providers.single.id, renamed.id);
-      expect(registry.providers.single.name, 'Renamed Router');
-      expect(registry.keyFor(renamed.id), 'rk-1');
+      expect(
+        find.textContaining(
+          'already used by a provider on https://openrouter.ai/api/v1',
+        ),
+        findsOneWidget,
+      );
+      expect(find.byType(ProviderEditorPage), findsOneWidget);
+      expect(registry.providers, hasLength(2));
+      expect(registry.byName('OpenRouter Work')!.id, work.id);
+      expect(registry.byName('OpenRouter Personal')!.id, personal.id);
     },
   );
 }

@@ -296,15 +296,22 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
     }
     // CLI-parity name rule (issue #977, `_askConnectProviderName`): a name
     // already used by an entry on a DIFFERENT endpoint is rejected — two
-    // providers cannot share a name, or pickers become ambiguous. The same
-    // name on the SAME endpoint is the re-connect shape and lands as an
-    // update (see [landProviderResult]); editing an entry skips its own id.
+    // providers cannot share a name, or pickers become ambiguous.
+    //
+    // The same name on the SAME endpoint is only legal in CREATE mode —
+    // the re-connect shape that lands as an update
+    // ([landProviderResult]). In EDIT mode ([initial] set) ANY clash with
+    // another entry is rejected: a rename onto a sibling's name (same
+    // endpoint or not) would leave two same-name entries and every
+    // by-name landing would then mis-target (round-1 review).
     final registry = widget.registry;
     if (registry != null) {
       final clash = registry.byName(name);
+      final sameEndpointTakeover =
+          widget.initial == null && clash != null && clash.baseUrl == baseUrl;
       if (clash != null &&
           clash.id != widget.initial?.id &&
-          clash.baseUrl != baseUrl) {
+          !sameEndpointTakeover) {
         setState(
           () => _error = strings.settingsProviderNameClash(clash.baseUrl),
         );
