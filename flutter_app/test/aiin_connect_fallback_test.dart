@@ -1,12 +1,15 @@
-// The AIIN connect flow's paste-key fallback: when the AIIN OAuth proxy
-// rejects our redirect ("client_redirect_uri is not allowed"), the flow
-// must still complete — cabinet key paste → model pick → provider saved.
+// The AIIN connect flow's paste-key fallback: when the automatic sign-in
+// does not complete (the mobile sign-in cancelled or failed to start), the
+// flow must still complete — cabinet key paste → model pick → provider
+// saved. Android is the default test target and runs the mobile branch
+// (issue #976); a null `aiinConnectFn` result triggers the fallback.
 import 'package:fa/services/aiin_connect_flow.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 void main() {
   // Android counts as a KeychainStore surface now (issue #329) and tests
@@ -58,9 +61,7 @@ void main() {
       registry: registry,
       service: null,
       lastConnectionStore: LastConnectionStore.inMemory(),
-      aiinOpenPopupFn: () => true,
-      aiinNavigatePopupFn: (_) {},
-      aiinWebTimeout: const Duration(milliseconds: 200),
+      aiinConnectFn: () async => _fakeConnectResult(),
       aiinModelsFetcher: (baseUrl, {required apiKey}) async => [
         'moonshotai/kimi-k2',
         'deepseek-ai/deepseek-v3',
@@ -69,11 +70,7 @@ void main() {
       ],
     );
 
-    // Redirect blocked → paste-key dialog → paste a valid key.
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'sk-aiin-test-1234567890');
-    await tester.pump();
-    await tester.tap(find.text('Connect'));
+    // Sign-in succeeded → the model picker shows the full list and count.
     await tester.pumpAndSettle();
 
     // The picker shows the full list and the live count.
@@ -123,11 +120,8 @@ void main() {
       registry: registry,
       service: null,
       lastConnectionStore: LastConnectionStore.inMemory(),
-      // The test VM has no dart:html — simulate a real popup; the callback
-      // never arrives, so the short timeout lands in the paste-key path.
-      aiinOpenPopupFn: () => true,
-      aiinNavigatePopupFn: (_) {},
-      aiinWebTimeout: const Duration(milliseconds: 200),
+      // The sign-in did not complete (cancelled/failed) → paste-key path.
+      aiinConnectFn: () async => null,
     );
 
     // The paste-key dialog appears (initiate was rejected).
@@ -204,9 +198,8 @@ void main() {
       registry: registry,
       service: null,
       lastConnectionStore: LastConnectionStore.inMemory(),
-      aiinOpenPopupFn: () => true,
-      aiinNavigatePopupFn: (_) {},
-      aiinWebTimeout: const Duration(milliseconds: 200),
+      // Sign-in failed → paste-key dialog → paste the fresh key.
+      aiinConnectFn: () async => null,
       reauthenticateFor: existing,
     );
 
@@ -225,3 +218,22 @@ void main() {
     expect(registry.keyFor(existing.id), 'sk-aiin-new-9999999999');
   });
 }
+
+/// A fake automatic sign-in result driving the model-pick tail without the
+/// network (the same contract `aiin_web_auth_test` runs against).
+AiinConnectResult _fakeConnectResult() => AiinConnectResult(
+      apiKey: const AiinApiKey(
+        raw: 'sk-aiin-fake-key-0000000001',
+        id: 'key-1',
+        prefix: 'sk-aiin-fake',
+        createdAt: '2026-09-26T00:00:00Z',
+      ),
+      tokens: const AiinOAuthTokens(
+        accessToken: 'jwt-a',
+        refreshToken: 'jwt-b',
+        tokenType: 'Bearer',
+        expiresIn: 3600,
+        refreshExpiresIn: 86400,
+      ),
+      email: null,
+    );

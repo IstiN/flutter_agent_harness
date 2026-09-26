@@ -3,6 +3,8 @@ import 'package:http/http.dart' as http;
 
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'
+    show MethodChannel, MissingPluginException, PlatformException;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart'
     if (dart.library.html) 'package:fa/services/oauth_cli_flow_stubs.dart';
@@ -24,9 +26,15 @@ import 'package:url_launcher/url_launcher.dart' as url_launcher;
 /// temporary code is exchanged for AIIN JWTs, and an `sk-aiin-…` API key is
 /// registered automatically — no copy-pasting keys.
 ///
-/// **Web/iOS/Android** — an honest "not yet available" note (the loopback
-/// callback server needs the desktop app; the AIIN key can still be pasted
-/// as a custom provider).
+/// **Mobile (iOS/Android)** — issue #976: the SAME loopback flow, opened in
+/// the platform browser surface. iOS opens the hosted sign-in page in an
+/// `ASWebAuthenticationSession` system sheet (via the `fah/web_auth_session`
+/// channel — an embedded WebView would break Google sign-in); the sheet
+/// dismisses itself when the callback lands. Android opens the external
+/// browser, whose `http://localhost` redirect reaches the on-device loopback
+/// server. A failure falls back to the cabinet paste-key path.
+///
+/// **Web** — the popup OAuth round-trip ([runAiinWebConnect], issue #486).
 ///
 /// After the connect, the flow picks a model from the public `/v1/models`
 /// list, saves the provider as a custom entry named after the account email
@@ -82,15 +90,33 @@ Future<bool> runAiinConnectFlow({
       reauthenticateFor: reauthenticateFor,
     );
   }
+  final platform = defaultTargetPlatform;
   final desktop =
       !kIsWeb &&
-      (defaultTargetPlatform == TargetPlatform.macOS ||
-          defaultTargetPlatform == TargetPlatform.windows ||
-          defaultTargetPlatform == TargetPlatform.linux);
+      (platform == TargetPlatform.macOS ||
+          platform == TargetPlatform.windows ||
+          platform == TargetPlatform.linux);
+  final mobile =
+      !kIsWeb &&
+      (platform == TargetPlatform.iOS || platform == TargetPlatform.android);
   final fallbackKeys = SessionKeysScope.maybeOf(context);
+  if (mobile) {
+    return runAiinMobileConnect(
+      context: context,
+      registry: registry,
+      service: service,
+      lastConnectionStore: lastConnectionStore,
+      sessionKeysStore: sessionKeysStore,
+      keychainStore: keychainStore,
+      aiinConnectFn: aiinConnectFn,
+      aiinHttpClient: aiinHttpClient,
+      aiinModelsFetcher: aiinModelsFetcher,
+      reauthenticateFor: reauthenticateFor,
+    );
+  }
   if (!desktop) {
-    // Loopback callbacks are impossible here and the AIIN proxy currently
-    // blocks cross-device redirects — paste the cabinet key instead.
+    // No browser surface to complete the loopback round-trip with (web is
+    // handled above, mobile above) — paste the cabinet key instead.
     if (!context.mounted) return false;
     final pasted = await _pasteAiinKeyFallback(context);
     if (pasted == null) return false;
@@ -266,6 +292,116 @@ Future<bool> _runAiinDesktopConnect(
   );
 }
 
+/// The `fah/web_auth_session` method channel (implemented in
+/// `ios/Runner/AppDelegate.swift`): a system `ASWebAuthenticationSession`.
+/// The same channel the CodeMie SSO flow drives.
+const _webAuthSessionChannel = MethodChannel('fah/web_auth_session');
+
+/// Opens [url] in the iOS auth-session sheet. Resolves `true` when the
+/// sheet CLOSES — a user dismissal cancels the session (the loopback wait
+/// keeps running, desktop parity), and the callback dismissal completes it
+/// right after the code landed. A sheet that cannot even start throws —
+/// the mobile branch falls straight to the paste fallback.
+Future<bool> _openAiinAuthSession(String url) =>
+    _webAuthSessionChannel
+        .invokeMethod<String>('authenticate', {'url': url})
+        .then((_) => true);
+
+/// Dismisses the active auth-session sheet (the callback landed on the
+/// flow's loopback server). Best-effort: the sheet may already be gone.
+Future<void> _dismissAiinAuthSession() async {
+  try {
+    await _webAuthSessionChannel.invokeMethod<void>('cancel');
+  } on Object {
+    // The sheet was never opened or is already dismissed.
+  }
+}
+
+/// The mobile browser branch (issue #976): the SAME loopback CLI flow as
+/// desktop, opened in the platform browser surface. iOS the
+/// `ASWebAuthenticationSession` system sheet — it shares Safari's cookies
+/// and passkey support, and Google refuses OAuth inside embedded WebViews;
+/// the `http://localhost` redirect loads the flow's own callback server
+/// inside the sheet and [_dismissAiinAuthSession] closes it. Android the
+/// external browser, whose localhost redirect reaches the on-device server
+/// directly. Public step seam (the #476 recipe): VM tests drive this with
+/// an iOS platform override and a mocked channel.
+Future<bool> runAiinMobileConnect({
+  required BuildContext context,
+  required ProviderRegistry registry,
+  required AgentService? service,
+  required LastConnectionStore lastConnectionStore,
+  SessionKeysStore? sessionKeysStore,
+  KeychainStore? keychainStore,
+  Future<AiinConnectResult?> Function()? aiinConnectFn,
+  http.Client? aiinHttpClient,
+  Future<List<String>> Function(String baseUrl, {required String apiKey})?
+  aiinModelsFetcher,
+  CustomProvider? reauthenticateFor,
+}) async {
+  if (!context.mounted) return false;
+  showFahSnack(
+    context,
+    'Opening AIIN sign-in…',
+    duration: const Duration(seconds: 3),
+  );
+
+  final authSession = defaultTargetPlatform == TargetPlatform.iOS;
+  AiinConnectResult? result;
+  try {
+    result = aiinConnectFn != null
+        ? await aiinConnectFn()
+        : await runAiinConnectCliFlow(
+            onStatus: (message) => debugPrint('[AIIN mobile] $message'),
+            client: aiinHttpClient,
+            openBrowserFn: authSession
+                ? _openAiinAuthSession
+                : (url) => url_launcher.launchUrl(
+                    Uri.parse(url),
+                    mode: url_launcher.LaunchMode.externalApplication,
+                  ),
+            onCallback: authSession ? _dismissAiinAuthSession : null,
+          );
+  } on PlatformException {
+    // The auth session could not start (no presentation context) or the
+    // native channel is missing (stale host) — the cabinet + paste-key
+    // path still completes the connect.
+    result = null;
+  } on MissingPluginException {
+    result = null;
+  }
+  if (result == null && context.mounted) {
+    final pasted = await _pasteAiinKeyFallback(context);
+    if (pasted == null) return false;
+    if (!context.mounted) return false;
+    return _finishAiinConnect(
+      context,
+      registry: registry,
+      service: service,
+      lastConnectionStore: lastConnectionStore,
+      sessionKeysStore: sessionKeysStore,
+      keychainStore: keychainStore,
+      apiKey: pasted,
+      aiinModelsFetcher: aiinModelsFetcher,
+      reauthenticateFor: reauthenticateFor,
+    );
+  }
+  if (result == null) return false;
+  if (!context.mounted) return false;
+  return _finishAiinConnect(
+    context,
+    registry: registry,
+    service: service,
+    lastConnectionStore: lastConnectionStore,
+    sessionKeysStore: sessionKeysStore,
+    keychainStore: keychainStore,
+    apiKey: result.apiKey.raw,
+    accountLabel: result.email,
+    aiinModelsFetcher: aiinModelsFetcher,
+    reauthenticateFor: reauthenticateFor,
+  );
+}
+
 /// The shared post-connect continuation: model pick from the public
 /// `/v1/models`, a named registry entry (the account email), entry-scoped
 /// key persistence, and the service reconnect. Returns whether the flow
@@ -427,7 +563,7 @@ class _AiinKeyPasteDialogState extends State<_AiinKeyPasteDialog> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            'AIIN currently blocks automatic sign-in redirects. '
+            'The automatic sign-in did not complete. '
             'Create an API key in the AIIN cabinet and paste it here.',
           ),
           const SizedBox(height: 8),

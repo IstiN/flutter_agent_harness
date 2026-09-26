@@ -49,6 +49,7 @@ Never runChatGptOAuthCliFlow({
 Never runAiinConnectCliFlow({
   required void Function(String) onStatus,
   Future<bool> Function(String)? openBrowserFn,
+  void Function()? onCallback,
   Duration? timeout,
 }) => throw UnsupportedError(
   'AIIN sign-in is not supported on the web platform.',

@@ -135,6 +135,13 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
   http.Client? client,
   String authBaseUrl = aiinAuthBaseUrl,
   Duration timeout = const Duration(minutes: 5),
+
+  /// Called when the loopback callback lands, before the exchange. The
+  /// mobile auth-session sheet dismisses itself here: the session does
+  /// not intercept the `http://localhost` redirect (it loads the callback
+  /// server for real), so the sheet must be closed programmatically to
+  /// hand the user back to the app. Optional — desktop callers skip it.
+  void Function()? onCallback,
 }) async {
   final server = AiinCallbackServer();
   final redirectUri = await server.start(timeout: timeout);
@@ -150,8 +157,17 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
       authBaseUrl: authBaseUrl,
     );
     onStatus('listening for the AIIN callback on $redirectUri');
-    await _openAiinBrowser(loginUrl.toString(), openBrowserFn, onStatus);
-    final callback = await server.waitForCallback();
+    // Arm the callback wait and the browser surface CONCURRENTLY: the
+    // mobile auth session resolves its open future only when the sheet
+    // CLOSES, and the sheet is dismissed through [onCallback] — awaiting
+    // the open first would deadlock the mobile flow. Open FAILURES (the
+    // session cannot start) surface promptly through the race instead of
+    // stalling until the callback timeout.
+    final callbackFuture = server.waitForCallback();
+    final opened = _openAiinBrowser(loginUrl.toString(), openBrowserFn, onStatus);
+    final callback = await _firstCallbackOrOpenError(callbackFuture, opened);
+    onCallback?.call();
+    await opened;
     return await _settleAiinCallback(
       callback,
       state,
@@ -165,6 +181,27 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
   } finally {
     await server.close();
   }
+}
+
+/// Resolves with the first of [callbackFuture] (a landed callback or the
+/// timeout) or an [opened] failure — whichever comes first. A late open
+/// error after the callback won is swallowed: the dismissal already closed
+/// the surface and the flow is settling.
+Future<AiinCallback?> _firstCallbackOrOpenError(
+  Future<AiinCallback?> callbackFuture,
+  Future<void> opened,
+) {
+  final openError = Completer<Never>();
+  unawaited(
+    opened.then(
+      (_) {},
+      onError: (Object error, StackTrace stackTrace) {
+        if (!openError.isCompleted) openError.completeError(error, stackTrace);
+      },
+    ),
+  );
+  openError.future.ignore();
+  return Future.any([callbackFuture, openError.future]);
 }
 
 /// Opens the system browser, falling back to printing the URL when no
