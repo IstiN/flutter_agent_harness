@@ -99,8 +99,8 @@ class DefaultChatModelSection extends StatelessWidget {
 
   /// Host-provided builder for the "Add provider" page (preset picker).
   /// When null, [MediaSlotProviderPickerPage] builds the same
-  /// [AddProviderPresetPickerPage] from its registry via
-  /// [pushAddProviderFlow] (issue #975).
+  /// `AddProviderPresetPickerPage` from its registry via
+  /// `pushAddProviderFlow` (issue #975).
   final WidgetBuilder? addProviderPage;
 
   String _activeProviderLabel(BuildContext context) {
