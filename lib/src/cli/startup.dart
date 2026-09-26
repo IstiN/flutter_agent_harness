@@ -269,6 +269,62 @@ Set<String> secureKeyPreloadNames(CliConfig saved, {required String? baseUrl}) {
   };
 }
 
+/// Fresh-install detection (issue #969): true when NO saved custom provider
+/// exists AND no provider key resolves anywhere — no catalog env name (nor
+/// its rotation stack) in the environment, and nothing in the preloaded
+/// secure-store snapshot. This is the state where the REPL would otherwise
+/// boot into the default provider's "no key set" banner noise with no way
+/// to configure one except discovering `/provider` first. Every stored
+/// snapshot name counts as a resolved key (the host preloads exactly the
+/// provider slots: catalog name backups, endpoint-scoped names, media
+/// slots, role apiKeyNames) — conservative: anything configured means the
+/// user is not fresh and the wizard must not hijack the boot.
+///
+/// The executable's boot glue (`bin/fah.dart`) ANDs this pure decision with
+/// conditions the snapshot cannot see — enumerate there when touching the
+/// glue so the two levels stay in sync:
+///
+/// - not headless (`-p`/positional prompt args and `--output` events mode
+///   never get the wizard; the headless hard key gate stays untouched);
+/// - no per-folder model restore pending, no explicit `--provider`/`--model`
+///   /`--base-url`, no `FA_PROVIDER_*` preconfig, no roles resolution, no
+///   provider queue — an explicitly driven boot is not fresh;
+/// - the saved default entry is undisturbed: default `providerKind`
+///   (`openai-completions`) and default catalog `baseUrl` (a pointed
+///   elsewhere entry is a configured provider);
+/// - no `--session <name>` resume (a named resumed boot is never fresh)
+///   and no pi harness mode (`--pi`/`FA_PI_MODE`/`agent.mode: pi` — the
+///   benchmark profile stays deterministic).
+bool freshInstallProviderState({
+  required Iterable<CustomProviderEntry> customProviders,
+  required SecureKeyCache keys,
+  Map<String, String>? env,
+}) {
+  // The snapshot answers first: an O(1) read that covers every store slot,
+  // while the env sweep below costs O(env entries × catalog base names).
+  if (keys.names.isNotEmpty) return false;
+  if (customProviders.isNotEmpty) return false;
+  final environment = env ?? Platform.environment;
+  final bases = {
+    for (final spec in providerCatalog.values) ...spec.apiKeyEnvNames,
+  };
+  // One sweep: exact base names plus rotation stacks (`NAME_2`, `NAME_3`,
+  // …) — a base prefix + `_` + digits only (empty values never count).
+  for (final entry in environment.entries) {
+    if (entry.value.isEmpty) continue;
+    for (final base in bases) {
+      if (entry.key == base) return false;
+      if (entry.key.length > base.length &&
+          entry.key.startsWith(base) &&
+          entry.key.codeUnitAt(base.length) == 0x5f &&
+          int.tryParse(entry.key.substring(base.length + 1)) != null) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 /// Collects the secrets snapshot for the model-roles resolver: every
 /// provider catalog env name plus its rotation stack (`NAME`, `NAME_2`,
 /// `NAME_3`, ...), plus any base name referenced by an explicit

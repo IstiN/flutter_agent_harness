@@ -2021,6 +2021,38 @@ Future<void> _runApp(List<String> args) async {
     width: io.columns,
   );
 
+  // Fresh install (issue #969): an interactive REPL boot with NOTHING
+  // configured — no saved custom providers, no persisted provider switch,
+  // no explicit provider/model/endpoint declaration, no roles or queue
+  // driving the boot, and no key resolving anywhere — opens the guided
+  // add-provider wizard before the first prompt instead of the default
+  // provider's "no key set" banner noise. Headless (-p / prompt args)
+  // never gets the flag; its hard key gate stays byte-identical. Two
+  // explicit boot modes are also excluded: a named `--session` resume is
+  // never a fresh install, and the pi benchmark profile (`--pi` /
+  // FA_PI_MODE / `agent.mode: pi`) must stay deterministic.
+  final freshInstallProviderFlow = headlessPrompt == null &&
+      !applyFolderModel &&
+      parsed.model == null &&
+      !parsed.providerExplicit &&
+      parsed.baseUrl == null &&
+      faPreconfig == null &&
+      !defaultRoleResolved &&
+      queueRuntime == null &&
+      effective.session == null &&
+      harnessMode == null &&
+      saved.providerKind == 'openai-completions' &&
+      saved.baseUrl == providerCatalog['openrouter']!.defaultBaseUrl &&
+      // The customProviders emptiness mirrors the pure decision's first
+      // check (startup.dart) on purpose: the unit-tested function owns the
+      // semantics; the glue names the term it gates on for readability.
+      saved.customProviders.isEmpty &&
+      freshInstallProviderState(
+        customProviders: saved.customProviders,
+        keys: keyCache,
+        env: Platform.environment,
+      );
+
   cli = AgentCli(
     // Same source of truth as the palette (issue #778 round 2): chrome
     // (status line, keyhints, warnings) styles iff the resolved theme
@@ -2086,6 +2118,7 @@ Future<void> _runApp(List<String> args) async {
       // headless branch).
       customProviders: CustomProviderRegistry(saved.customProviders)
         ..mergeNotes.forEach(stderr.writeln),
+      freshInstallProviderFlow: freshInstallProviderFlow,
       sessionRoot: sessionRoot,
       // Backend agent mode (issue #155): a graceful SIGTERM/SIGINT
       // cancel leaves a resumable partial transcript.

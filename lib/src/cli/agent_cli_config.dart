@@ -64,6 +64,7 @@ final class AgentCliConfig {
     this.onProviderChanged,
     this.secureKeys,
     this.customProviders,
+    this.freshInstallProviderFlow = false,
     this.onSecretStored,
     this.onSecretGranted,
     this.onModeChanged,
@@ -428,6 +429,15 @@ final class AgentCliConfig {
   /// without one) disables saved providers — the wizard still switches but
   /// adds nothing to the list.
   final CustomProviderRegistry? customProviders;
+
+  /// Fresh-install boot (issue #969): the executable computed that NOTHING
+  /// is configured — no saved custom providers, no persisted provider
+  /// switch, and no key resolving anywhere (env or the secure store) — and
+  /// this is an interactive REPL boot. The REPL then opens the guided
+  /// add-provider wizard (the same flow `/provider custom` opens) before
+  /// the first prompt. Never set for headless runs; the CLI re-checks
+  /// `CliIO.isInteractive`, so piped input never sees the wizard either.
+  final bool freshInstallProviderFlow;
 
   /// Called when the user stores a secret via `/key set`, so the executable
   /// can redact the value from tool results and session files.
