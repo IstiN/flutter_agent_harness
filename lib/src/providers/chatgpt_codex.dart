@@ -10,6 +10,7 @@ import '../cancel_token.dart';
 import '../context.dart';
 import '../event_stream.dart';
 import '../model.dart';
+import '../rate_limit_info.dart';
 import '../session/uuid.dart';
 import '../types.dart';
 import 'chatgpt_oauth.dart';
@@ -363,22 +364,36 @@ final class _ChatGptCodexSession {
     return null;
   }
 
-  /// Builds the error for a non-200 response; a 429 carries the Codex
-  /// rate-limit reset time when the backend advertises one.
+  /// Builds the error for a non-200 response; a 429 decodes into a
+  /// structured [RateLimitInfo] (issue #867) — reset advertised in the
+  /// body or the `x-codex-*` headers — and renders human at the shared
+  /// choke point ([formatProviderError]). The raw payload stays on
+  /// `rateLimit.rawBody` for diagnostics, out of the rendered message.
+  /// This endpoint IS the ChatGPT surface, so the plan title carries the
+  /// [RateLimitInfo.withBrand] enrichment; the shared parse layer itself
+  /// stays provider-neutral.
   Future<ProviderHttpError> _httpError(http.StreamedResponse response) async {
     final body = await response.stream.bytesToString();
     var message = body;
-    if (response.statusCode == 429) {
-      final limits = parseCodexRateLimits(response.headers);
-      final resetsAt = limits?.primary?.resetsAt ?? limits?.secondary?.resetsAt;
-      if (resetsAt != null) {
-        final resets = DateTime.fromMillisecondsSinceEpoch(
-          resetsAt * 1000,
-          isUtc: true,
-        ).toIso8601String();
-        message = 'rate limited; resets at $resets\n$body';
-      }
-    }
+    final codex = response.statusCode == 429
+        ? parseCodexRateLimits(response.headers)
+        : null;
+    final headerReset = codex?.primary?.resetsAt ?? codex?.secondary?.resetsAt;
+    var rateLimit = parseRateLimitInfo(
+      statusCode: response.statusCode,
+      body: body,
+      headers: response.headers,
+      headerResetsAt: headerReset,
+      limitKind: headerReset == null || codex == null
+          ? null
+          : codex.limitName ??
+                // Name the window that actually supplied the reset —
+                // when both are advertised, that is primary.
+                (codex.primary?.resetsAt == headerReset
+                    ? 'primary'
+                    : 'secondary'),
+    );
+    if (rateLimit != null) rateLimit = rateLimit.withBrand('ChatGPT');
     // Issue #705 E5: a grammar-shaped 400 never stays bare — name the
     // suspect outbound item and the recovery path, so a session that still
     // fails after sanitize reports WHY instead of looping on a raw 400.
@@ -388,7 +403,10 @@ final class _ChatGptCodexSession {
     return ProviderHttpError(
       response.statusCode,
       message,
-      retryAfter: parseRetryAfter(response.headers['retry-after']),
+      // Case-insensitive, like the structured parse above — a canonical
+      // `Retry-After:` (HTTP/1.1 casing) must reach the rotation cooldown.
+      retryAfter: parseRetryAfter(_header(response.headers, 'retry-after')),
+      rateLimit: rateLimit,
     );
   }
 
