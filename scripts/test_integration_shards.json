@@ -168,6 +168,7 @@
       "test/integration/yolo_rm_critical_e2e_test.dart": 100.0,
       "test/js_ext/integration/crap_guard_qjs_test.dart": 100.0,
       "test/js_ext/integration/parity_engine_test.dart": 100.0
-    }
+    },
+    "refresh": "re-tune weights/shards from the junit-integration-shard-* artifacts of a keyed ci.yml/nightly leg (runner truth) in a reviewed PR"
   }
 }
