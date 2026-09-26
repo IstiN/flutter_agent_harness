@@ -546,6 +546,9 @@ class _FaChatScreenState extends State<FaChatScreen>
         MediaQuery.sizeOf(context).width < kWideLayoutBreakpoint;
     if (!clampActive && !_userNearBottom) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      // The screen may be gone by the time the frame lands (mode switch,
+      // page swap) — a defunct State has no usable context.
+      if (!mounted) return;
       // Issue #379: while the current turn holds a live (un-interacted)
       // widget, the follow clamps to keep the widget's leading edge
       // inside the viewport instead of pinning the tail. Manual scroll
