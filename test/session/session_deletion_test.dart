@@ -10,6 +10,7 @@ library;
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
@@ -138,6 +139,116 @@ void main() {
     });
   });
 
+  group('delete guarantees (issue #863)', () {
+    test('AC1: delete removes the file; a fresh list has no such id', () async {
+      final metadata = await seedSession('aaaaaaaaaaaaaaaaaaaaaaaaaaaa1001');
+      await repo.delete(metadata, actor: 'test:ac1');
+
+      expect((await fs.exists(metadata.path)).valueOrNull, isFalse);
+      expect(
+        (await repo.list()).where((m) => m.id == metadata.id),
+        isEmpty,
+      );
+    });
+
+    test('a backend that renames nothing still deletes via copy+delete', () async {
+      // The decorator gap behind issue #863 ("renamePath not supported by
+      // Instance of 'LocalExecutionEnv'"): the base reports the rename
+      // capability but fails it as notSupported. The delete must still
+      // really happen — trash copy first, then the unlink.
+      final env = _NoRenameEnv();
+      final noRenameRepo = JsonlSessionRepo(
+        fs: env,
+        sessionsRoot: '/sessions',
+        processId: 4242,
+        now: () => clock,
+      );
+      final session = await noRenameRepo.create(
+        JsonlSessionCreateOptions(id: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaa1002', cwd: '/proj'),
+      );
+      await env.appendFile((await session.getMetadata()).path, '{"record":"real"}\n');
+      final metadata = await session.getMetadata();
+
+      await noRenameRepo.delete(metadata, actor: 'test:copy-delete');
+
+      expect((await env.exists(metadata.path)).valueOrNull, isFalse);
+      final trash = (await env.listDir('/sessions/.trash')).valueOrNull!;
+      expect(trash, hasLength(1));
+      expect(
+        (await env.readTextFile(trash.single.path)).valueOrNull,
+        contains('"record":"real"'),
+      );
+      final raw = (await env.readTextFile('/sessions/session_ops.journal'))
+          .valueOrNull!;
+      expect(raw, contains('"result":"copy-delete"'));
+      expect(
+        await noRenameRepo.list().then((l) => l.where((m) => m.id == metadata.id)),
+        isEmpty,
+      );
+    });
+
+    test('copy+delete refuses sessions over the trash-copy budget', () async {
+      // The fallback stages the trash copy in RAM; an oversized session
+      // must fail the delete by name instead of spiking memory by the
+      // full file size (issue #863 review).
+      final env = _NoRenameEnv();
+      final noRenameRepo = JsonlSessionRepo(
+        fs: env,
+        sessionsRoot: '/sessions',
+        processId: 4242,
+        maxTrashCopyBytes: 8,
+        now: () => clock,
+      );
+      final session = await noRenameRepo.create(
+        JsonlSessionCreateOptions(id: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaa1004', cwd: '/proj'),
+      );
+      await env.appendFile(
+        (await session.getMetadata()).path,
+        '{"record":"way over the eight-byte budget"}\n',
+      );
+      final metadata = await session.getMetadata();
+
+      await expectLater(
+        noRenameRepo.delete(metadata, actor: 'test:oversized'),
+        throwsA(
+          isA<SessionException>().having(
+            (e) => e.message,
+            'message',
+            contains('too large to stage the trash copy'),
+          ),
+        ),
+      );
+
+      // Refused, not deleted: the file stays and no trash copy exists.
+      expect((await env.exists(metadata.path)).valueOrNull, isTrue);
+      expect((await env.listDir('/sessions/.trash')).valueOrNull, isEmpty);
+    });
+
+    test('E3: a backend that removes nothing fails loudly, not silently', () async {
+      final env = _LyingRemoveEnv();
+      final lyingRepo = JsonlSessionRepo(
+        fs: env,
+        sessionsRoot: '/sessions',
+        processId: 4242,
+        now: () => clock,
+      );
+      final metadata = await lyingRepo
+          .create(JsonlSessionCreateOptions(id: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaa1003', cwd: '/proj'))
+          .then((s) => s.getMetadata());
+
+      await expectLater(
+        lyingRepo.delete(metadata, actor: 'test:lying'),
+        throwsA(
+          isA<SessionException>()
+              .having((e) => e.code, 'code', SessionErrorCode.storage)
+              .having((e) => e.message, 'message', contains('still exists')),
+        ),
+      );
+      // The file survived (the backend lied) — the refusal is the point.
+      expect((await env.exists(metadata.path)).valueOrNull, isTrue);
+    });
+  });
+
   group('live-session guard (AC2)', () {
     late FileSessionPresenceStore presence;
     late JsonlSessionRepo guardedRepo;
@@ -253,4 +364,77 @@ void main() {
       );
     });
   });
+}
+
+/// A base that declares the rename capability but fails the operation as
+/// `notSupported` — the decorator/env gap behind issue #863 (the desktop
+/// trash move died on exactly this error).
+final class _NoRenameEnv implements FileSystem, RenamableFileSystem {
+  _NoRenameEnv() : _base = MemoryFileSystem(cwd: '/');
+
+  final MemoryFileSystem _base;
+
+  @override
+  String get cwd => _base.cwd;
+  @override
+  Future<Result<String, FileError>> absolutePath(String path) =>
+      _base.absolutePath(path);
+  @override
+  Future<Result<String, FileError>> joinPath(List<String> parts) =>
+      _base.joinPath(parts);
+  @override
+  Future<Result<String, FileError>> readTextFile(String path) =>
+      _base.readTextFile(path);
+  @override
+  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
+      _base.readBinaryFile(path);
+  @override
+  Future<Result<List<String>, FileError>> readTextLines(
+    String path, {
+    int? maxLines,
+  }) => _base.readTextLines(path, maxLines: maxLines);
+  @override
+  Future<Result<void, FileError>> writeFile(String path, String content) =>
+      _base.writeFile(path, content);
+  @override
+  Future<Result<void, FileError>> writeBinaryFile(
+    String path,
+    Uint8List content,
+  ) => _base.writeBinaryFile(path, content);
+  @override
+  Future<Result<void, FileError>> appendFile(String path, String content) =>
+      _base.appendFile(path, content);
+  @override
+  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
+      _base.fileInfo(path);
+  @override
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
+      _base.listDir(path);
+  @override
+  Future<Result<bool, FileError>> exists(String path) => _base.exists(path);
+  @override
+  Future<Result<void, FileError>> createDir(String path, {bool recursive = true}) =>
+      _base.createDir(path, recursive: recursive);
+  @override
+  Future<Result<void, FileError>> remove(
+    String path, {
+    bool recursive = false,
+    bool force = false,
+  }) => _base.remove(path, recursive: recursive, force: force);
+  @override
+  Future<Result<void, FileError>> renamePath(String from, String to) async =>
+      Err(FileError(FileErrorCode.notSupported, 'rename disabled', path: from));
+}
+
+/// The same rename-less base, but `remove` lies about succeeding (issue
+/// #863 E3: a backend that reports success and removes nothing).
+final class _LyingRemoveEnv extends _NoRenameEnv {
+  _LyingRemoveEnv() : super();
+
+  @override
+  Future<Result<void, FileError>> remove(
+    String path, {
+    bool recursive = false,
+    bool force = false,
+  }) async => const Ok(null);
 }

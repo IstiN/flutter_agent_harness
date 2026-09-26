@@ -66,6 +66,34 @@ final class SessionTooLargeException implements Exception {
       '(${metadata.sizeBytes} bytes > $limitBytes limit)';
 }
 
+/// A session delete failed (issue #863): the id resolved to nothing (a
+/// stale drawer row, deleted elsewhere, or an env/repo mismatch) or the
+/// delete did not stick. The UI surfaces this instead of keeping the row
+/// silently — a delete is never a silent no-op.
+final class SessionDeleteException implements Exception {
+  /// Creates the exception.
+  SessionDeleteException(
+    this.sessionId, {
+    this.reason =
+        'is not in the '
+        'session store (stale row — nothing was deleted)',
+  });
+
+  /// The id that could not be deleted.
+  final String sessionId;
+
+  /// What went wrong, in user-visible words.
+  final String reason;
+
+  @override
+  String toString() {
+    // Ids are not guaranteed to be ≥ 8 chars; never throw while
+    // formatting a failure the sidebar is about to render.
+    final short = sessionId.length < 8 ? sessionId : sessionId.substring(0, 8);
+    return 'Session $short… $reason';
+  }
+}
+
 /// Opening this session for DRIVE was refused: another host holds a
 /// live ownership lease (#428). No takeover exists — the app opens the
 /// session as a VIEWER (attach path) and the composer mails the owner.
@@ -720,15 +748,71 @@ final class FlutterSessionManager extends ChangeNotifier {
     if (_heldLeasePath != null) _releaseDriveLease();
     managed.service.abort();
     if (deleteFile) {
-      final metadata = (await _repo.list())
+      // E2 (issue #863): let the aborted run's final persist settle BEFORE
+      // the file disappears, or that persist recreates it as an orphan.
+      await managed.service.waitForIdle();
+      // Resolve across ALL roots (issue #863 review): the session file may
+      // live in a shared/App-Group root the single-root `_repo.list()`
+      // misses — that miss read as "already gone" while the file survived.
+      final metadata = (await _listAcrossRoots())
           .where((m) => m.id == sessionId)
           .firstOrNull;
       // A session deleted from another surface (or a file cleaned up
       // under us) must not crash the close — the manager forgets it
       // either way.
       if (metadata != null) {
-        await _repo.delete(metadata, actor: 'app:close');
+        try {
+          await _repo.delete(metadata, actor: 'app:close');
+        } on Object catch (error) {
+          debugPrint(
+            '[fah][sessions] delete: id=$sessionId outcome=failed ($error)',
+          );
+          // Same contract as the not-found branch: a failed delete still
+          // resyncs hosts before the error surfaces.
+          notifyListeners();
+          rethrow;
+        }
       }
+      // Verify with the SAME authority the delete acted on (issue #863
+      // review): hosted rows live in the service worker's storage — a
+      // stale local listing must never read as success. Pinned to THIS
+      // session's service: the slot is already removed, so `active` is
+      // unreliable here.
+      final bool stillListed;
+      try {
+        stillListed = (await _deleteAuthority(
+          managed.service,
+        )).any((m) => m.id == sessionId);
+      } on Object catch (error) {
+        // An unreachable listing can NEVER read as "gone" (review round
+        // 2): fail the delete by name instead of assuming success.
+        debugPrint(
+          '[fah][sessions] delete: id=$sessionId outcome=failed '
+          '(session store unreachable during verify: $error)',
+        );
+        notifyListeners();
+        throw SessionDeleteException(
+          sessionId,
+          reason:
+              'the session store could not be reached to verify '
+              'the delete',
+        );
+      }
+      if (stillListed) {
+        const failure = 'still in the session store after the delete';
+        debugPrint(
+          '[fah][sessions] delete: id=$sessionId outcome=failed ($failure)',
+        );
+        notifyListeners();
+        throw SessionDeleteException(sessionId, reason: failure);
+      }
+      debugPrint(
+        metadata != null
+            ? '[fah][sessions] delete: id=$sessionId outcome=ok (closed '
+                  'live session, file removed)'
+            : '[fah][sessions] delete: id=$sessionId outcome=ok (no file '
+                  'left to delete — already gone)',
+      );
     } else {
       // A session nobody wrote to leaves no file behind.
       await managed.service.deleteSessionIfEmpty();
@@ -740,19 +824,148 @@ final class FlutterSessionManager extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// The listing authority a delete verifies against (issue #863 review):
+  /// hosted surfaces (extension panel / relay shell) keep the session
+  /// files in the service worker's storage, so only the host service's
+  /// listing can tell whether a delete really happened; local surfaces use
+  /// the merged roots listing.
+  ///
+  /// [service] pins the authority to a specific session's service — during
+  /// [closeSession] the manager slot is already removed, so [active] cannot
+  /// be consulted there.
+  ///
+  /// This call NEVER swallows host errors (review round 2): unlike
+  /// [_listViaHostService], a broken host listing throws — during a delete
+  /// verification an empty result must mean "gone", never "listing
+  /// unreachable, assume fine".
+  Future<List<SessionMetadata>> _deleteAuthority([
+    AgentService? service,
+  ]) async {
+    final target = service ?? active?.service;
+    if (_isHostedListing(target)) return target!.listSessions();
+    return _listAcrossRoots();
+  }
+
+  /// Whether the ACTIVE service is a hosted relay (extension panel / relay
+  /// shell): the sidebar's persisted rows come from the host service's
+  /// storage, which this surface has no delete path into — the UI gates
+  /// the Delete affordance instead of offering a permanent dead-end
+  /// (issue #863 review round 2).
+  bool get isHostedListing => _isHostedListing(active?.service);
+
   /// Deletes a session outright: a live one is closed (aborting any run)
-  /// with its file removed; a persisted-only one ([metadata]) is deleted
-  /// straight from the repo. Powers the sidebar tile menu.
+  /// with its file removed; a persisted-only one is resolved fresh from
+  /// the session store and deleted — the freshly listed row is what gets
+  /// removed (a stale caller path must not strand a deletable session,
+  /// review round 4). A caller-supplied [metadata] is accepted for
+  /// logging/back-compat only; it never selects the deleted path. Powers
+  /// the sidebar tile menu.
+  ///
+  /// Issue #863: no silent outcomes. An id that resolves neither live nor
+  /// in any delete authority's listing throws [SessionDeleteException]
+  /// (and notifies so hosts rebuild the list from the source of truth), a
+  /// successful delete is verified against a FRESH listing of that same
+  /// authority, and every attempt logs `[fah][sessions] delete` with the
+  /// id + outcome.
+  ///
+  /// The authority is keyed off ROW ORIGIN, not the active slot (review
+  /// round 2, mixed mode #327): a row the local store knows is a local
+  /// delete even when the active slot is a hosted relay; only a row the
+  /// local store doesn't know falls through to the host service's listing.
   Future<void> deleteSession(String id, {SessionMetadata? metadata}) async {
+    debugPrint(
+      '[fah][sessions] delete: id=$id outcome=attempt '
+      '(live=${_sessions.containsKey(id)}, '
+      'persisted=${metadata != null ? 'caller-supplied' : 'resolve'}, '
+      'hosted=$isHostedListing)',
+    );
     if (_sessions.containsKey(id)) {
-      await closeSession(id, deleteFile: true);
+      await closeSession(id, deleteFile: true); // notifies on completion
       return;
     }
-    final SessionMetadata? resolved =
-        metadata ?? (await _repo.list()).where((m) => m.id == id).firstOrNull;
-    if (resolved == null) return; // already gone (deleted elsewhere)
-    await _repo.delete(resolved, actor: 'app:sidebar');
+
+    // Row origin: local store first, and the FRESH row is the only thing
+    // this branch deletes. A hosted row passed by a caller has a synthetic
+    // path the local repo cannot touch — an id the local store doesn't
+    // confirm falls through to the host authority below. And when it IS
+    // confirmed, the freshly listed row wins over the caller's cached
+    // metadata: a stale cached path (#426's relink moves files) would
+    // journal `missing` on a dead path while the fresh-listing verify
+    // still finds the id at its real one, failing a deletable delete.
+    final localRows = await _listAcrossRoots();
+    final SessionMetadata? resolved = localRows
+        .where((m) => m.id == id)
+        .firstOrNull;
+    if (resolved != null) {
+      try {
+        await _repo.delete(resolved, actor: 'app:sidebar');
+      } on Object catch (error) {
+        debugPrint('[fah][sessions] delete: id=$id outcome=failed ($error)');
+        notifyListeners();
+        rethrow;
+      }
+      // Verify against a FRESH local listing (issue #863 AC1/AC3), not
+      // the caller's cached rows.
+      if ((await _listAcrossRoots()).any((m) => m.id == id)) {
+        const failure = 'still in the session store after the delete';
+        debugPrint('[fah][sessions] delete: id=$id outcome=failed ($failure)');
+        notifyListeners();
+        throw SessionDeleteException(id, reason: failure);
+      }
+      debugPrint('[fah][sessions] delete: id=$id outcome=ok');
+      notifyListeners();
+      return;
+    }
+
+    // Unknown locally: the host service is the only remaining authority.
+    final hosted = active?.service;
+    if (_isHostedListing(hosted)) {
+      final List<SessionMetadata> hostRows;
+      try {
+        // No swallowing during a delete (review round 2): a broken host
+        // listing must fail the delete, never read as "already gone".
+        hostRows = await _deleteAuthority(hosted);
+      } on Object catch (error) {
+        debugPrint(
+          '[fah][sessions] delete: id=$id outcome=failed '
+          '(session store unreachable during verify: $error)',
+        );
+        notifyListeners();
+        throw SessionDeleteException(
+          id,
+          reason:
+              'the session store could not be reached to verify '
+              'the delete',
+        );
+      }
+      if (hostRows.where((m) => m.id == id).isEmpty) {
+        debugPrint(
+          '[fah][sessions] delete: id=$id outcome=not-found '
+          '(not live, not in the local store or the host listing — '
+          'surfacing instead of silently keeping the row)',
+        );
+        notifyListeners();
+        throw SessionDeleteException(id);
+      }
+      // A hosted row has no delete path from this surface: the files
+      // live in the service worker's storage. The UI gates the menu
+      // entry; direct callers get the named failure instead of a
+      // dead-end no-op.
+      const failure =
+          'lives in the host service storage — not deletable from '
+          'this surface';
+      debugPrint('[fah][sessions] delete: id=$id outcome=failed ($failure)');
+      notifyListeners();
+      throw SessionDeleteException(id, reason: failure);
+    }
+
+    debugPrint(
+      '[fah][sessions] delete: id=$id outcome=not-found '
+      '(not live, not in the local store, no host service — surfacing '
+      'instead of silently keeping the row)',
+    );
     notifyListeners();
+    throw SessionDeleteException(id);
   }
 
   /// Creates a fresh session when the active one is closed and none remain.

@@ -1540,6 +1540,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sidebarDelete => 'Delete';
 
   @override
+  String get sidebarDeleteUnavailable =>
+      'Delete unavailable — session lives in the host app';
+
+  @override
   String sidebarDeletePersistedContent(Object id) {
     return 'Session $id';
   }
