@@ -2353,6 +2353,23 @@ class AppLocalizationsEn extends AppLocalizations {
   String get networkAddAgentFormatEnv => 'Env (CI)';
 
   @override
+  String get networkAddAgentFormatDap => 'DAP';
+
+  @override
+  String get networkAddAgentEnroll => 'Enroll agent';
+
+  @override
+  String get networkAddAgentEnrollHint =>
+      'Enrollment mints a unique, revocable credential — the secret is shown ONCE: copy it now. Re-enrolling the same name rotates it.';
+
+  @override
+  String get networkAddAgentEnrollNeedSignIn =>
+      'Sign in to the network to enroll agents';
+
+  @override
+  String get networkAddAgentNameInvalid => '3–64 chars: a-z, 0-9, hyphens';
+
+  @override
   String get networkAddAgentEnvHint =>
       'Env vars for a CI runner (GitHub Actions) — the link already carries the network id + password (or the channel keys); nothing else to fill in. Reserved for the upcoming CLI network mode — desktop and mobile agents use the link.';
 
