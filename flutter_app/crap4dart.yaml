@@ -80,7 +80,12 @@ crap:
   # (_ChannelRailState._createChannel, CC 8 @ 0% cov). Restore to 30.0 via
   # the linked issue.
   # raise-issue: gh-992
-  threshold: 75.0
+  # Restored (gh-992, 2026-09-27): the agents/enroll DAP-tab rework
+  # (fcd2d0232) covered the #955 network UI — 5 enroll dialog groups +
+  # channel_rail/chat_page call-site suites, 72 focused tests; re-measured
+  # on the full local flutter lcov (3292 green): max CRAP 30.0, the
+  # threshold follows back down 75.0 → 30.0. Only down.
+  threshold: 30.0
 
 coverage:
   # The CI app-crap-gate job merges the two flutter-tests shard reports
