@@ -494,12 +494,31 @@ jobs:
           fi
 
   pty-integration:
-    name: PTY/CLI integration + cli coverage (PR)
+    # Issue #931 part 2: the leg was ONE job (~40 min hosted, the CI
+    # critical path); it is now 3 duration-balanced shards
+    # (scripts/test_integration_shards.json, file-level units). New
+    # integration-tagged files bin-pack in at runtime
+    # (shard_files.py --tags integration), so a PR adding one never
+    # silently skips it. Explicit --concurrency=4 bounds in-suite
+    # parallelism (part 3.3 — package:test forbids `concurrency` in
+    # dart_test.yaml tag overrides, so the knob lives here; it bounds
+    # concurrent live-provider tests PER JOB — the cross-leg ceiling with
+    # the linux leg is documented on the llm tag in dart_test.yaml).
+    # Per-shard coverage artifacts merge in pty-coverage-gate —
+    # a single shard's ratchet would see partial lib/src/cli coverage
+    # and false-regress. Each shard also emits the dart json
+    # file-reporter: junit feeds rebalancing/budget-tightening PRs, the
+    # raw json feeds the #928 duration gate (pty-coverage-gate below).
+    name: PTY/CLI integration (shard ${{ matrix.shard }}/3)
     runs-on: ${{ fromJSON(needs.runner-pick.outputs.pty_integration) }}
     needs: [changes, runner-pick]
-    timeout-minutes: 60
+    timeout-minutes: 30
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
     env:
       # SAME secret shape as nightly.yml's pty-integration leg and the
       # Trust model (review 2026-09-23): this is the first pull_request-time
@@ -512,17 +531,11 @@ jobs:
       # RELEASE_PAT to same-repo PRs; documented here so the assumption is
       # explicit, not implicit.
       #
-      # SAME secret shape as nightly.yml's pty-integration leg and the
-      # coverage-gardener that bumps the baseline: the live-provider legs
-      # (unlocked by these keys) load extra lib/src/cli surface into the
-      # measurement, so a no-key run measures a DIFFERENT — higher —
-      # number and would pass while the nightly fails. Missing keys (forks)
-      # self-skip those legs gracefully; the gate stays honest either way.
-      # coverage-gardener that bumps the baseline: the live-provider legs
-      # (unlocked by these keys) load extra lib/src/cli surface into the
-      # measurement, so a no-key run measures a DIFFERENT — higher —
-      # number and would pass while the nightly fails. Missing keys (forks)
-      # self-skip those legs gracefully; the gate stays honest either way.
+      # The live-provider legs (unlocked by these keys) load extra
+      # lib/src/cli surface into the coverage measurement, so a no-key run
+      # measures a DIFFERENT — higher-numbered — regression and would pass
+      # while the nightly fails. Missing keys (forks) self-skip those legs
+      # gracefully; the gate stays honest either way.
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
@@ -542,19 +555,196 @@ jobs:
       # on every macOS runner (hosted layout assumption) and overwrites
       # RUNNER_TOOL_CACHE, so on self-hosted macs without a 'runner' user it
       # dies with "mkdir: /Users/runner: Permission denied". The only python
-      # consumer here is the pure-python coverage ratchet below — system
-      # python3 (CLT on macOS, preinstalled on hosted images) suffices.
+      # consumers here are the pure-python shard selector, the junit
+      # converter and the duration-gate step below — system python3
+      # (CLT on macOS, preinstalled on hosted images) suffices.
       - name: python3 available
         run: python3 --version
       - run: dart pub get
-      - name: dart test --tags integration (excluding browser-ext)
+      - name: dart test --tags integration (shard ${{ matrix.shard }}/3)
+        run: |
+          targets=$(python3 scripts/shard_files.py scripts/test_integration_shards.json ${{ matrix.shard }} --tags integration --exclude browser_ext)
+          echo "shard targets: $targets"
+          mkdir -p test-results
+          dart test --tags integration --exclude-tags browser-ext \
+            --concurrency=4 \
+            --coverage=coverage \
+            --file-reporter="json:test-results/integration-shard-${{ matrix.shard }}.json" \
+            $targets
+      # The file-reporter writes the json even on a RED leg — convert +
+      # upload must not be chained into the failing step (#928 review):
+      # timing evidence is exactly what red runs need to keep.
+      - name: junit durations (shard ${{ matrix.shard }})
+        if: always()
         run: >-
-          dart test --tags integration --exclude-tags browser-ext
-          --coverage=coverage
-      - name: Format coverage to lcov
+          python3 scripts/junit_from_dart_json.py
+          test-results/integration-shard-${{ matrix.shard }}.json
+          test-results/junit-integration-shard-${{ matrix.shard }}.xml
+      # Raw dart json for the #928 duration gate (per-test spans incl. suite
+      # paths); junit is the human/rebalancer-facing form of the same data.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: integration-json-shard-${{ matrix.shard }}
+          path: test-results/integration-shard-${{ matrix.shard }}.json
+          retention-days: 2
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: junit-integration-shard-${{ matrix.shard }}
+          path: test-results/junit-integration-shard-${{ matrix.shard }}.xml
+          retention-days: 7
+      # coverage/ is written incrementally — a red leg still formats and
+      # uploads so the gate below merges what ran.
+      - name: Format coverage to lcov (shard ${{ matrix.shard }})
+        if: always()
         run: dart run coverage:format_coverage --lcov -i coverage -o coverage/lcov.info
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: pty-coverage-shard-${{ matrix.shard }}
+          path: coverage/lcov.info
+          retention-days: 2
+
+  # Issue #931 part 2: standing Linux leg. The dart-level PTY/CLI suite is
+  # Linux-capable by design (ubuntu is its designed hosted fallback —
+  # runner-pick below already routes the mac leg here under pool
+  # saturation); it now ALSO runs on hosted arm64 IN PARALLEL with the
+  # fa-m5 minis on EVERY invocation, unconditioned by path like the mac
+  # leg. Motivation: 2026-09-24 the shared Mac box hit load 13-17 and
+  # stretched the PTY legs to ~80 min — the hosted pool is separate
+  # capacity no mini-pool saturation can starve, and a linux-only
+  # regression now red-blocks the PR that caused it instead of the
+  # nightly. Same suite, same shards, same --concurrency bound; NO
+  # coverage: the cli-coverage ratchet stays wired to the mac-owned leg
+  # (the baseline's measurement environment — nightly feeds the gardener
+  # from a mac-or-fallback run with keys), and NO file-reporter for the
+  # same reason: the #928 duration gate consumes the mac leg's json only
+  # (both legs run the same suites; mixing them would double-count).
+  # arm64: pure-dart jobs route here per the runner-split note at the top
+  # of this file (free, separate capacity pool); pty2 allocates PTYs
+  # through libc openpty FFI — arch-independent.
+  pty-integration-linux:
+    name: PTY/CLI integration (linux, shard ${{ matrix.shard }}/3)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
+    env:
+      # Same secret shape as the mac leg: same-repo PRs get the keys, forks
+      # self-skip the live-provider legs gracefully.
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
+        with:
+          sdk: stable
+      - run: dart pub get
+
+      - name: Native-assets hook cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .dart_tool/hooks_runner/shared
+          key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: dart test --tags integration (linux, shard ${{ matrix.shard }}/3)
+        run: |
+          targets=$(python3 scripts/shard_files.py scripts/test_integration_shards.json ${{ matrix.shard }} --tags integration --exclude browser_ext)
+          echo "shard targets: $targets"
+          dart test --tags integration --exclude-tags browser-ext \
+            --concurrency=4 \
+            $targets
+
+  # Coverage home for the SHARDED pty-integration leg (mirrors
+  # faui-coverage): the 3 shard lcovs merge into ONE report (union DA hits
+  # per file, NOT cat — a single shard's ratchet would see partial
+  # lib/src/cli coverage and false-regress), then the CLI coverage ratchet
+  # runs on the merged report, and the duration-budget gate (issue #928
+  # Part 1, this PR) consumes the mac leg's three dart-json shard reports:
+  # per-suite totals vs scripts/test_duration_baseline.json (down-only
+  # ratchet, >10% suite regression or a per-test budget breach fails the
+  # merge) and the top-10 slowest tests land in the job summary on every
+  # run. The gate NEVER rewrites the baseline — budgets move only through
+  # reviewed PRs running check_test_durations.py --update-baseline locally
+  # against an integration-json artifact.
+  pty-coverage-gate:
+    name: PTY gates (coverage ratchet + duration budget, merged shards)
+    runs-on: ubuntu-24.04-arm
+    needs: [pty-integration]
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.x'
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: pty-coverage-shard-*
+          path: pty-coverage-shards
+      # Same discipline as the core/faui shards' assert_shard_manifest: the 3
+      # selections must cover exactly the integration-tagged suite
+      # (browser-ext excluded, it owns browser-ext.yml), pairwise disjoint,
+      # every unit on disk. Fails loudly BEFORE the ratchet reads shard data.
+      - name: Assert integration shard manifest (union/disjoint/exists)
+        run: python3 scripts/assert_shard_manifest.py scripts/test_integration_shards.json --shards 3 --tags integration --exclude browser_ext
+      # Mac-leg dart json for the #928 duration gate below.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: integration-json-shard-*
+          path: integration-json-shards
+      # Issue #928 review: same discipline as faui's assert_shard_manifest —
+      # the 2 selections must cover exactly the integration-tagged suite
+      # (browser-ext excluded, it owns browser-ext.yml), pairwise disjoint,
+      # every unit on disk. Fails loudly BEFORE the ratchets read shard data.
+      - name: Assert integration shard manifest (union/disjoint/exists)
+        run: |
+          python3 - <<'EOF'
+          import glob, json, os, sys
+          sys.path.insert(0, 'scripts')
+          from shard_files import file_has_tag
+          manifest = json.load(open('scripts/test_integration_shards.json'))
+          shards = manifest['shards']
+          units = [u for s in shards for u in s]
+          on_disk = {p.replace(os.sep, '/') for p in glob.glob('test/**/*_test.dart', recursive=True)
+                     if '/browser_ext/' not in p.replace(os.sep, '/')
+                     and file_has_tag(p, 'integration')}
+          assert len(units) == len(set(units)), f"duplicate unit in manifest: {units}"
+          assert not (set(shards[0]) & set(shards[1])), f"shard overlap: {set(shards[0]) & set(shards[1])}"
+          missing = on_disk - set(units)
+          assert not missing, f"integration-tagged files missing from manifest (never sharded): {sorted(missing)}"
+          gone = set(units) - on_disk
+          assert not gone, f"manifest units not on disk: {sorted(gone)}"
+          print(f"integration manifest OK: {len(units)} units, disjoint, == suite on disk")
+          EOF
+      - name: Merge shard coverage (union DA hits per file, NOT cat)
+        run: |
+          count=$(ls pty-coverage-shards/*/lcov.info | wc -l | tr -d ' ')
+          if [ "$count" != "3" ]; then
+            echo "::error::expected 3 pty shard coverage reports, got $count"
+            exit 1
+          fi
+          mkdir -p coverage
+          python3 scripts/merge_lcov.py \
+            -o coverage/lcov.merged.info \
+            pty-coverage-shards/*/lcov.info
       - name: CLI coverage ratchet (lib/src/cli/**, baseline only up)
-        run: python3 scripts/check_cli_coverage.py
+        run: python3 scripts/check_cli_coverage.py --lcov coverage/lcov.merged.info
+      - name: Test duration budget gate (issue #928, ratchet only down)
+        run: |
+          ls integration-json-shards/*
+          python3 scripts/check_test_durations.py \
+            --baseline scripts/test_duration_baseline.json \
+            integration-json-shards/*/integration-shard-*.json
 
   pty-visual:
     name: Terminal visual (PTY screenshots, PR)
@@ -1758,7 +1948,7 @@ jobs:
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, pty-integration, pty-visual, supply-chain, dep-audit, installer-verify]
+    needs: [changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, pty-integration, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-verify]
     if: always()
     timeout-minutes: 5
     permissions:
@@ -1785,6 +1975,8 @@ jobs:
           echo "integ-mock    = ${{ needs.integration-mock.result }}"
           echo "hostile-env   = ${{ needs.hostile-env.result }}"
           echo "pty-integ     = ${{ needs.pty-integration.result }}"
+          echo "pty-integ-linux = ${{ needs.pty-integration-linux.result }}"
+          echo "pty-gates     = ${{ needs.pty-coverage-gate.result }}"
           echo "pty-visual    = ${{ needs.pty-visual.result }}"
           echo "supply-chain  = ${{ needs.supply-chain.result }}"
           echo "dep-audit     = ${{ needs.dep-audit.result }}"
@@ -1812,6 +2004,8 @@ jobs:
           R_INTEG: ${{ needs.integration-mock.result }}
           R_HOSTILE: ${{ needs.hostile-env.result }}
           R_PTY_INTEG: ${{ needs.pty-integration.result }}
+          R_PTY_LINUX: ${{ needs.pty-integration-linux.result }}
+          R_PTY_GATES: ${{ needs.pty-coverage-gate.result }}
           R_PTY_VISUAL: ${{ needs.pty-visual.result }}
           R_INSTALLER_VERIFY: ${{ needs.installer-verify.result }}
         run: |
@@ -1838,7 +2032,7 @@ jobs:
                     "cli-visual-settings:$R_CLI_VISUAL" "build-web:$R_BUILD_WEB" \
                     "build-android:$R_BUILD_ANDROID" "build-ios:$R_BUILD_IOS" "build-macos:$R_BUILD_MACOS" \
                     "integration-mock:$R_INTEG" "hostile-env:$R_HOSTILE" \
-                    "pty-integration:$R_PTY_INTEG" "pty-visual:$R_PTY_VISUAL" \
+                    "pty-integration:$R_PTY_INTEG" "pty-integration-linux:$R_PTY_LINUX" "pty-coverage-gate:$R_PTY_GATES" "pty-visual:$R_PTY_VISUAL" \
                     "installer-verify:$R_INSTALLER_VERIFY"; do
             name="${kv%%:*}"; r="${kv#*:}"
             if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then
@@ -1932,12 +2126,14 @@ jobs:
     name: Watchdog (degraded-runner retrigger)
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # pty-integration/pty-visual ride along (review 2026-09-23): they are
-    # the two longest legs (60/45 min, macOS) and without being in `needs`
-    # the watchdog fires before they settle — a degraded-runner timeout on
-    # either would land after the scan and never get its one-shot
+    # pty-integration/pty-visual/pty-integration-linux ride along (review
+    # 2026-09-23, #963): the longest legs. The mac shards are no longer
+    # reliably last to settle (their timeout dropped 60 -> 30), so the
+    # linux shards (30-min timeout, hosted pool) must be in `needs` too or
+    # the watchdog fires before they settle — a degraded-runner timeout
+    # there would land after the scan and never get its one-shot
     # empty-commit retrigger. Cost: the watchdog waits for them.
-    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, test-faui, pty-integration, pty-visual]
+    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, test-faui, pty-integration, pty-integration-linux, pty-visual]
     # Same-repo PRs only: the empty-commit retrigger pushes to the PR branch,
     # which this token cannot do for a fork's ref.
     if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
