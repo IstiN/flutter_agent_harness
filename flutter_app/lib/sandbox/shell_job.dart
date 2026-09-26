@@ -41,9 +41,10 @@ final class SandboxShellJob implements ShellJob {
 
   @override
   final String logPath;
-  @override
+
   /// No host process on the sandboxed shell: the sweep has nothing to
   /// record for web/WASI jobs.
+  @override
   int? get pid => null;
 
   /// The token the job's script runs under; [stop] cancels it. Callers wire

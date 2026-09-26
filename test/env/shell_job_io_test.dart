@@ -140,6 +140,10 @@ void main() {
           );
         },
         (Object error, StackTrace _) {
+          // A failing expect() throws TestFailure inside the zone: surface
+          // it through the normal test channel instead of the
+          // 'unhandled zone error escaped' label.
+          if (error is TestFailure) throw error;
           zoneError = error;
         },
       );
