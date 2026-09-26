@@ -172,5 +172,32 @@ void main() {
         await rig.session.close();
       },
     );
+
+    testWidgets(
+      'network header person-add opens the whole-network agent invite',
+      (tester) async {
+        final rig = await _rig(tester);
+        expect(
+          find.byKey(const ValueKey('networkAddAgentButton')),
+          findsOneWidget,
+        );
+        await tester.tap(find.byKey(const ValueKey('networkAddAgentButton')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+
+        expect(find.byType(AddAgentDialog), findsOneWidget);
+        // No channel in context → the scope switch is hidden and the
+        // payload is the network join link.
+        expect(find.byKey(const ValueKey('inviteScope')), findsNothing);
+        final payload = tester
+            .widget<Text>(find.byKey(const ValueKey('agentInvite')))
+            .data!;
+        expect(
+          payload,
+          startsWith('https://network.fa1.dev/join?network=net1'),
+        );
+        await rig.session.close();
+      },
+    );
   });
 }
