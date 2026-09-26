@@ -5,7 +5,7 @@
 /// canvas: a dark gradient in the app palette with two soft accent glows,
 /// a localized headline + subtitle on top, and the app screen below,
 /// clipped into a rounded "device" card with a border and a soft shadow.
-/// The output PNGs are committed under `test/goldens/store/<lang>/<device>/`
+/// The output PNGs are committed under `test/golden/goldens/store/<lang>/<device>/`
 /// and uploaded to App Store Connect by the `app_store` fastlane lanes, so
 /// the localized copy lives here (en + ru) — never in the upload pipeline.
 library;

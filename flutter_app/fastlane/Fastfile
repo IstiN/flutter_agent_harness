@@ -24,6 +24,7 @@
 #         Distribution cert) and MACOS_BUNDLE_ID overrides dev.fa1.app.
 
 require_relative "appstore_preflight"
+require_relative "play_listing_sync"
 require_relative "play_upload_preflight"
 require_relative "version_floor"
 
@@ -876,21 +877,39 @@ platform :android do
     # test/play_store_listing_guard_test.dart). Never a binary — AABs ride
     # upload_only — and never changelogs (Play release notes need a
     # version code and belong to the binary upload).
+    #
+    # Issue #947: supply only APPENDS screenshot uploads, which is how the
+    # old "The first…" screenshot survived on the live listing after the
+    # repo goldens were fixed. The images go through PlayListingSync: the
+    # whole set is replaced per locale + device type (stale shots deleted,
+    # ru-RU tenInch and other dropped sets cleared) and the committed
+    # state is verified via edits.images.list — a mismatch fails the lane.
     do_metadata = ENV.fetch("PLAY_DEPLOY_METADATA", "true") == "true"
     do_images = ENV.fetch("PLAY_DEPLOY_IMAGES", "true") == "true"
     repo_root = File.expand_path("..", __dir__)
     track = PlayUploadPreflight.track!(ENV)
     validate_only = PlayUploadPreflight.validate_only?(ENV)
+    json_key = PlayUploadPreflight.play_json_key!(ENV)
+    package_name = PlayUploadPreflight.package_name!(repo_root)
     UI.message("Play store listing deploy: metadata=#{do_metadata}, images=#{do_images}, track=#{track}, validate_only=#{validate_only}")
 
+    if do_images && !validate_only
+      store_summary_line(
+        PlayListingSync.sync_and_verify!(
+          metadata_dir: File.expand_path("metadata/android", __dir__),
+          json_key: json_key,
+          package_name: package_name
+        )
+      )
+    end
     upload_to_play_store(
       PlayUploadPreflight
         .supply_listing_options(
           track: track, metadata: do_metadata, images: do_images,
           validate_only: validate_only
         )
-        .merge(json_key_data: PlayUploadPreflight.play_json_key!(ENV),
-               package_name: PlayUploadPreflight.package_name!(repo_root))
+        .merge(json_key_data: json_key,
+               package_name: package_name)
     )
     if validate_only
       UI.success("✅ Play listing validate-only pass: authenticated, track '#{track}' resolved — nothing uploaded")

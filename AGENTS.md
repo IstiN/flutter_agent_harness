@@ -1662,4 +1662,10 @@ in `lib/src/parity/settings_registry.dart` with a comment explaining WHY.
   play_store` in `flutter_app` (env gates `PLAY_DEPLOY_METADATA`/
   `PLAY_DEPLOY_IMAGES`, `PLAY_VALIDATE_ONLY=1` dry-run; Play service-account
   secret `PLAY_STORE_SERVICE_ACCOUNT_JSON`) or the `store-metadata.yml`
-  android leg (`android_content`: none/metadata_only/images_only/all).
+  android leg (`android_content`: none/metadata_only/images_only/all). Images
+  never ride supply (it only APPENDS uploads — issue #947): the `play_store`
+  lane pushes them through `play_listing_sync.rb`, which replaces the whole
+  image set per locale + device type (dropped sets are cleared) and verifies
+  the committed goldens against `edits.images.list`. The daily
+  `daily-publish.yml` play leg dispatches `build-mobile.yml` with
+  `android_content=all`, so every release train redeploys the listing.

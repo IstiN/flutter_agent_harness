@@ -587,6 +587,11 @@ void main() {
   });
 
   group('dap hub goldens', () {
+    // Other golden files stub AgentService.maybeCurrent and leak it into
+    // this suite (statics share one VM); the plain dap frames render the
+    // "no network on this platform" path, which requires the service to be
+    // absent — reset the leak before each frame.
+    setUp(() => AgentService.maybeCurrent = null);
     final connected = DapHubSnapshot(
       supported: true,
       url: 'ws://hub.example.com/ws',
