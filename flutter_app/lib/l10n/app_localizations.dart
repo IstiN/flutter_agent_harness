@@ -4181,8 +4181,14 @@ abstract class AppLocalizations {
   /// Agent invite note under the env format
   ///
   /// In en, this message translates to:
-  /// **'Hub-only launch line for a runner (GitHub Actions): fill in the hub master secret — the channel keys ride the import command. The provider is the runner’s own fa config.'**
+  /// **'Hub-only launch line for a runner (GitHub Actions): type the hub master secret once, then copy each key=value row. The channel keys ride the import command; the provider is the runner’s own fa config.'**
   String get networkAddAgentEnvHint;
+
+  /// Hint inside the editable hub master secret field of the Add agent dialog (Env format).
+  ///
+  /// In en, this message translates to:
+  /// **'hub master secret'**
+  String get networkAddAgentSecretHint;
 
   /// Agent invite hint for the network scope
   ///
