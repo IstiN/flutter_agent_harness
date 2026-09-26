@@ -1,0 +1,20 @@
+{
+  "_meta": {
+    "issue": 928,
+    "seeded": "2026-09-24 no-key local run (M-class arm64), --tags integration --exclude-tags browser-ext,llm",
+    "metric": "suite total = sum of per-test spans (dart test json reporter)",
+    "seed_policy": "suites budgeted ONLY when every test passed locally with a meaningful span (sub-second totals are silent early-return skips, not measurements)",
+    "provisional": "budgets are measured_local x 2.0 \u2014 a hardware-class buffer until the first RUNNER-class data lands: download the integration-json artifact from a keyed ci.yml/nightly pty leg and run scripts/check_test_durations.py --update-baseline on it in a reviewed PR (ratchet only tightens); any suite needing a HIGHER budget than this seed requires a hand-edited reviewed PR",
+    "ratchet": "down-only via check_test_durations.py --update-baseline; raises require a hand-edited reviewed PR",
+    "note": "no scheduled workflow writes this file"
+  },
+  "suites": {
+    "test/integration/dap_cli_e2e_test.dart": 40.4,
+    "test/integration/dap_start_test.dart": 21.0,
+    "test/integration/headless_tools_flag_test.dart": 27.1,
+    "test/integration/poisoned_provider_boot_test.dart": 64.2,
+    "test/integration/trajectory/cli_integration_test.dart": 80.7,
+    "test/integration/trajectory/perf_open_gate_test.dart": 15.0
+  },
+  "per_test": {}
+}
