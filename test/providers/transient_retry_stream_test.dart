@@ -85,6 +85,28 @@ void main() {
         isTrue,
       );
     });
+
+    test('budget/spending exhaustion is never transient (issue #926)', () {
+      expect(
+        isTransientNetworkError(
+          errorMsg(
+            '403: CodeMie monthly budget limit reached (\$150.08 / \$150.00)',
+          ),
+        ),
+        isFalse,
+      );
+      // A gateway-wrapped budget error quotes transport words — the budget
+      // check must win, or the wrapper re-arms the loop the issue reports.
+      expect(
+        isTransientNetworkError(
+          errorMsg(
+            '500: Internal network failure — spending limit reached, '
+            'please try again later',
+          ),
+        ),
+        isFalse,
+      );
+    });
   });
 
   group('transientRetryStreamFunction', () {
@@ -193,6 +215,39 @@ void main() {
       expect(message.stopReason, StopReason.error);
       expect(message.errorMessage, '401 unauthorized');
     });
+
+    test(
+      'a budget error is terminal — verbatim, no retries (issue #926)',
+      () async {
+        var calls = 0;
+        final wrapped = transientRetryStreamFunction((
+          model,
+          context, {
+          cancelToken,
+        }) {
+          calls++;
+          return failWith(
+            '403: CodeMie monthly budget limit reached '
+            '(\$150.08 / \$150.00). Next budget reset: 01/10/2026',
+          );
+        });
+
+        final message = await wrapped(
+          testModel,
+          const Context(messages: []),
+        ).result;
+
+        expect(calls, 1, reason: 'a dead budget never heals on a retry');
+        expect(message.stopReason, StopReason.error);
+        // The provider's budget wording IS the user notice — no exhaustion
+        // story may bury it.
+        expect(message.errorMessage, contains('budget limit reached'));
+        expect(
+          message.errorMessage,
+          isNot(startsWith('Provider call failed after')),
+        );
+      },
+    );
 
     test('an exhausted budget forwards the last failure', () async {
       var calls = 0;

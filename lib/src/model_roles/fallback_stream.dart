@@ -575,6 +575,12 @@ final class _AttemptBuffer {
         immediate: death.immediate,
       );
     }
+    // Issue #926: budget/spending exhaustion is dead until the budget
+    // reset — no paid retries, advance to the next chain entry at once
+    // (the modelFallback notice carries the provider's budget wording).
+    if (event.reason == StopReason.error && isBudgetExhaustion(event.error)) {
+      return _Retryable(event.retryAfter, event.error, immediate: true);
+    }
     if (event.reason == StopReason.error &&
         isRateLimitOrQuota(event.error, retryAfter: event.retryAfter)) {
       // Not forwarded: the buffer is discarded and the chain retries.

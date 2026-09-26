@@ -77,12 +77,36 @@ FinishReasonClass classifyFinishReason(String reason) {
 /// vendor words can join the classification table. Null keeps it silent.
 void Function(String reason)? onUnknownFinishReason;
 
+/// Budget/spending exhaustion wordings (issue #926): the personal-budget
+/// limit responses CodeMie returns when the monthly spending budget is used
+/// up (`insufficient_quota` is OpenAI's billing-exhausted wording). A
+/// budget refills on its reset date, never on a retry — every retry layer
+/// treats this class as terminal for the dead entry.
+final _budgetExhaustionPatterns = [
+  RegExp(r'spending.?limit', caseSensitive: false),
+  RegExp(r'budget.?limit', caseSensitive: false),
+  RegExp(r'budget.?reset', caseSensitive: false),
+  RegExp(r'insufficient.?quota', caseSensitive: false),
+];
+
+/// Whether [message]'s error text reports budget/spending exhaustion
+/// (issue #926): the entry is dead until the budget reset — a retry loop
+/// against it only burns requests and floods logs.
+bool isBudgetExhaustion(AssistantMessage message) {
+  if (message.stopReason != StopReason.error) return false;
+  final text = message.errorMessage;
+  if (text == null || text.isEmpty) return false;
+  return _budgetExhaustionPatterns.any((pattern) => pattern.hasMatch(text));
+}
+
 /// The structured retry verdict the wire finish_reason carries, or null
 /// when the failure has no finish_reason (HTTP-level errors, socket cuts,
 /// truncation) and the message-text nets decide instead. TERMINAL vetoes
-/// every retry.
+/// every retry. Budget/spending exhaustion (issue #926) is TERMINAL
+/// regardless of the wire form.
 FinishReasonClass? finishReasonRetryClass(AssistantMessage message) {
   if (message.stopReason != StopReason.error) return null;
+  if (isBudgetExhaustion(message)) return FinishReasonClass.terminal;
   // Scoped to the openai-completions finish_reason family: its error
   // wording is the marker that the wire word came through the vocabulary
   // this table catalogues. Other adapters set rawStopReason too (Google
