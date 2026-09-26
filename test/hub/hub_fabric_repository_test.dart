@@ -126,6 +126,18 @@ void main() {
     );
   }, timeout: timeout);
 
+  test('directory falls back to empty when the hub drops mid-query', () async {
+    final (adapter, plugin) = await newFabric();
+    expect(plugin.agentId, isNotNull);
+    // Simulate the hub being gone: presenceQuery's waiter is failed with
+    // StateError('connection closed') — the directory must degrade to an
+    // empty roster (the composite falls back to the file fabric), never
+    // throw into a background poller.
+    await hub.stop();
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(await adapter.directory(), isEmpty);
+  }, timeout: timeout);
+
   test('the adapter serves exactly one inbox — the hub identity\'s; the '
       'COMPOSITE guards which fabric mailbox reaches it', () async {
     final (adapter, plugin) = await newFabric();

@@ -13,7 +13,6 @@ import 'package:fa/network/models.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session.dart';
 import 'package:fa/network/network_session_manager.dart';
-import 'package:fa/network/key_wallet.dart';
 
 import 'add_agent_dialog.dart';
 
@@ -136,7 +135,7 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
             _ChannelHeader(
               channel: channel,
               label: label,
-              wallet: widget.manager.wallet,
+              manager: widget.manager,
             ),
             if (session.networkOffline) const _OfflineBanner(),
             Expanded(
@@ -327,12 +326,12 @@ class _ChannelHeader extends StatelessWidget {
   const _ChannelHeader({
     required this.channel,
     required this.label,
-    required this.wallet,
+    required this.manager,
   });
 
   final Channel? channel;
   final String label;
-  final KeyWallet wallet;
+  final NetworkSessionManager manager;
 
   @override
   Widget build(BuildContext context) {
@@ -372,7 +371,8 @@ class _ChannelHeader extends StatelessWidget {
                 showDialog<void>(
                   context: context,
                   builder: (_) => AddAgentDialog(
-                    wallet: wallet,
+                    wallet: manager.wallet,
+                    manager: manager,
                     networkId: channel.networkId,
                     channel: channel,
                   ),
