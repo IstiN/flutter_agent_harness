@@ -2420,4 +2420,17 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String get networkWalletImportWarning =>
       'Импорт заменит кошелёк на этом устройстве.';
+
+  @override
+  String get networkNameHint => 'строчные буквы, цифры, дефисы; 3–64 символа';
+
+  @override
+  String get networkPasswordHint => '8–128 символов';
+
+  @override
+  String get networkNameInvalid =>
+      '3–64 символа: строчные буквы, цифры, дефисы (начинай с буквы или цифры)';
+
+  @override
+  String get networkPasswordInvalid => 'Пароль: 8–128 символов';
 }

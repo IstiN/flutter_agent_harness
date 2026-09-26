@@ -4249,6 +4249,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Importing replaces the wallet on this device.'**
   String get networkWalletImportWarning;
+
+  /// Network name helper text (server rule)
+  ///
+  /// In en, this message translates to:
+  /// **'lowercase letters, digits, hyphens; 3–64 chars'**
+  String get networkNameHint;
+
+  /// Network password helper text (server rule)
+  ///
+  /// In en, this message translates to:
+  /// **'8–128 characters'**
+  String get networkPasswordHint;
+
+  /// Network name validation error
+  ///
+  /// In en, this message translates to:
+  /// **'Use 3–64 chars: lowercase letters, digits, hyphens (start with a letter or digit)'**
+  String get networkNameInvalid;
+
+  /// Network password validation error
+  ///
+  /// In en, this message translates to:
+  /// **'Password must be 8–128 characters'**
+  String get networkPasswordInvalid;
 }
 
 class _AppLocalizationsDelegate

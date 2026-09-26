@@ -2391,4 +2391,18 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get networkWalletImportWarning =>
       'Importing replaces the wallet on this device.';
+
+  @override
+  String get networkNameHint =>
+      'lowercase letters, digits, hyphens; 3–64 chars';
+
+  @override
+  String get networkPasswordHint => '8–128 characters';
+
+  @override
+  String get networkNameInvalid =>
+      'Use 3–64 chars: lowercase letters, digits, hyphens (start with a letter or digit)';
+
+  @override
+  String get networkPasswordInvalid => 'Password must be 8–128 characters';
 }

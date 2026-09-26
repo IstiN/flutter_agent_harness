@@ -56,12 +56,39 @@ class CreateNetworkDialog extends StatefulWidget {
 class _CreateNetworkDialogState extends State<CreateNetworkDialog> {
   final _name = TextEditingController();
   final _password = TextEditingController();
+  String? _nameError;
+  String? _passwordError;
+
+  /// The server's exact rules (fa_network `validNetworkName` /
+  /// `validNetworkCreate`): a lowercase slug and an 8–128 char password —
+  /// validated client-side so the user never round-trips a 400.
+  static final _namePattern = RegExp(
+    r'^[a-z0-9][a-z0-9-]*[REDACTED:Sensitive Value]',
+  );
 
   @override
   void dispose() {
     _name.dispose();
     _password.dispose();
     super.dispose();
+  }
+
+  void _submit() {
+    final name = _name.text.trim();
+    final password = _password.text;
+    final nameError =
+        (name.length < 3 || name.length > 64 || !_namePattern.hasMatch(name))
+        ? context.l10n.networkNameInvalid
+        : null;
+    final passwordError = (password.length < 8 || password.length > 128)
+        ? context.l10n.networkPasswordInvalid
+        : null;
+    setState(() {
+      _nameError = nameError;
+      _passwordError = passwordError;
+    });
+    if (nameError != null || passwordError != null) return;
+    Navigator.of(context).pop((name: name, password: _password.text));
   }
 
   @override
@@ -73,16 +100,22 @@ class _CreateNetworkDialogState extends State<CreateNetworkDialog> {
         children: [
           TextField(
             controller: _name,
+            onSubmitted: (_) => _submit(),
             decoration: InputDecoration(
               labelText: context.l10n.networkNameLabel,
+              helperText: context.l10n.networkNameHint,
+              errorText: _nameError,
             ),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _password,
             obscureText: true,
+            onSubmitted: (_) => _submit(),
             decoration: InputDecoration(
               labelText: context.l10n.networkPasswordLabel,
+              helperText: context.l10n.networkPasswordHint,
+              errorText: _passwordError,
             ),
           ),
         ],
@@ -94,11 +127,7 @@ class _CreateNetworkDialogState extends State<CreateNetworkDialog> {
         ),
         FilledButton(
           key: const ValueKey('createNetworkConfirm'),
-          onPressed: () {
-            final name = _name.text.trim();
-            if (name.isEmpty || _password.text.isEmpty) return;
-            Navigator.of(context).pop((name: name, password: _password.text));
-          },
+          onPressed: _submit,
           child: Text(context.l10n.networkCreate),
         ),
       ],
