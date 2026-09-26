@@ -143,6 +143,23 @@ class _ChannelRailState extends State<ChannelRail> {
                   ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
                 ),
               ),
+              if (networkId != null)
+                IconButton(
+                  key: const ValueKey('networkAddAgentButton'),
+                  icon: Icon(Icons.person_add_alt, size: 20, color: colors.dim),
+                  tooltip: context.l10n.networkAddAgent,
+                  onPressed: () => unawaited(
+                    showDialog<void>(
+                      context: context,
+                      builder: (_) => AddAgentDialog(
+                        wallet: widget.manager.wallet,
+                        networkId: networkId,
+                        channel: null,
+                        initialScope: AgentInviteScope.network,
+                      ),
+                    ),
+                  ),
+                ),
               if (_canCreateChannel)
                 IconButton(
                   key: const ValueKey('createChannelButton'),
