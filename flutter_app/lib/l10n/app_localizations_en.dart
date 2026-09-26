@@ -2162,4 +2162,323 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get storeBannerDismiss => 'Hide banner';
+
+  @override
+  String get networkModeLocal => 'Local';
+
+  @override
+  String get networkModeNetwork => 'Network';
+
+  @override
+  String get networkWelcomeTitle => 'Welcome to Fa networks';
+
+  @override
+  String get networkWelcomeBody =>
+      'Join an existing network or create your own — channels and showcases open here.';
+
+  @override
+  String get networkNetworksTitle => 'Networks';
+
+  @override
+  String get networkBackTooltip => 'Back';
+
+  @override
+  String get networkSearchHint => 'Search networks';
+
+  @override
+  String get networkSignInTitle => 'Sign in';
+
+  @override
+  String get networkSignInHelper =>
+      'Sign in with your ai-native.cloud account to create and manage networks.';
+
+  @override
+  String networkSignInWithProvider(Object provider) {
+    return 'Continue with $provider';
+  }
+
+  @override
+  String get networkSignInWaiting => 'Complete the sign-in in your browser…';
+
+  @override
+  String get networkSignInDeveloperSection => 'Developer (local only)';
+
+  @override
+  String get networkSignInMobileNote =>
+      'Provider sign-in is unavailable here until the fa:// redirect is allowlisted on the server — only the developer login below works for now.';
+
+  @override
+  String get networkSessionExpired => 'Session expired — sign in again.';
+
+  @override
+  String get networkLoginLabel => 'Login';
+
+  @override
+  String get networkSignOut => 'Sign out';
+
+  @override
+  String get networkAccountFallback => 'Account';
+
+  @override
+  String get networkPublicSection => 'Public networks';
+
+  @override
+  String networkPublicMembers(Object count) {
+    return '$count members';
+  }
+
+  @override
+  String get networkEmptyTitle => 'No networks yet';
+
+  @override
+  String get networkJoinFirst => 'Join your first network';
+
+  @override
+  String get networkNoMatches => 'No matches';
+
+  @override
+  String get networkCreateNetwork => 'Create a network';
+
+  @override
+  String get networkNameLabel => 'Name';
+
+  @override
+  String get networkPasswordLabel => 'Password';
+
+  @override
+  String get networkCreate => 'Create';
+
+  @override
+  String get networkJoinTitle => 'Join a network';
+
+  @override
+  String get networkQuickSwitcherTitle => 'Quick switch';
+
+  @override
+  String get networkJoinLinkLabel => 'Join link';
+
+  @override
+  String get networkJoinFill => 'Fill';
+
+  @override
+  String get networkIdLabel => 'Network id';
+
+  @override
+  String get networkDisplayNameLabel => 'Display name';
+
+  @override
+  String get networkDisplayNameLocked => 'Display name locked to your account.';
+
+  @override
+  String get networkJoinRequired => 'Network id and password are required.';
+
+  @override
+  String networkJoinInvalidCredentials(Object message) {
+    return 'Invalid credentials — $message';
+  }
+
+  @override
+  String networkJoinRetryAfter(Object seconds) {
+    return ' Try again in ${seconds}s.';
+  }
+
+  @override
+  String get networkJoin => 'Join';
+
+  @override
+  String get networkSelectChannel => 'Select a channel';
+
+  @override
+  String get networkReconnecting =>
+      'Reconnecting — messages will send when back.';
+
+  @override
+  String networkMessageHint(Object channel) {
+    return 'Message $channel';
+  }
+
+  @override
+  String get networkNewChannel => 'New channel';
+
+  @override
+  String networkOnlineCount(Object count) {
+    return '$count online';
+  }
+
+  @override
+  String get networkChannelsSection => 'Channels';
+
+  @override
+  String get networkShowcasesSection => 'Showcases';
+
+  @override
+  String get networkShowcaseReadOnly =>
+      'Public showcase — read-only preview. Join the network to participate.';
+
+  @override
+  String get networkConnecting => 'Connecting…';
+
+  @override
+  String get networkNoChannels => 'No channels';
+
+  @override
+  String get networkChannelOptions => 'Channel options';
+
+  @override
+  String get networkAddAgent => 'Add agent…';
+
+  @override
+  String get networkShowcasePublic => 'Showcase (public)';
+
+  @override
+  String get networkAddAgentTitle => 'Add an agent';
+
+  @override
+  String get networkAddAgentWarning =>
+      'Share out-of-band — anyone with this string can read the channel.';
+
+  @override
+  String get networkAddAgentNoKeys =>
+      'No keys for this channel on this device.';
+
+  @override
+  String get networkAddAgentScopeChannel => 'This channel';
+
+  @override
+  String get networkAddAgentScopeNetwork => 'Whole network';
+
+  @override
+  String get networkAddAgentFormatLink => 'Link (app)';
+
+  @override
+  String get networkAddAgentFormatCli => 'CLI command';
+
+  @override
+  String get networkAddAgentFormatEnv => 'Env (CI)';
+
+  @override
+  String get networkAddAgentEnvHint =>
+      'A launch line for the CLI harness on a runner (GitHub Actions): fill in your provider pair and the hub master secret — the channel keys ride the import command.';
+
+  @override
+  String get networkAddAgentNetworkHint =>
+      'The agent joins as a full member and sees every channel in the network.';
+
+  @override
+  String get networkAddAgentNetworkNoPassword =>
+      'The network password is not on this device — the link will ask for it.';
+
+  @override
+  String get networkAddAgentCliHint =>
+      'The command works against hubs with direct DAP access (e.g. the local stand); CLI join for production fa_network is coming.';
+
+  @override
+  String get networkAddAgentNetworkCliHint =>
+      'CLI network join is not shipped yet — share the link for now.';
+
+  @override
+  String get networkInviteCopied => 'Invite copied to clipboard.';
+
+  @override
+  String get networkCopy => 'Copy';
+
+  @override
+  String get networkClose => 'Close';
+
+  @override
+  String get networkWalletTooltip => 'Wallet';
+
+  @override
+  String get networkWalletExport => 'Export wallet';
+
+  @override
+  String get networkWalletImport => 'Import wallet';
+
+  @override
+  String get networkWalletExported =>
+      'Wallet exported — JSON copied to clipboard.';
+
+  @override
+  String networkWalletExportFailed(Object error) {
+    return 'Export failed: $error';
+  }
+
+  @override
+  String get networkWalletImported => 'Wallet imported.';
+
+  @override
+  String get networkPassphraseLabel => 'Passphrase';
+
+  @override
+  String get networkPassphraseRepeatLabel => 'Repeat passphrase';
+
+  @override
+  String get networkPassphraseEmpty => 'Passphrase must not be empty.';
+
+  @override
+  String get networkPassphraseMismatch => 'Passphrases do not match.';
+
+  @override
+  String get networkExport => 'Export';
+
+  @override
+  String get networkImport => 'Import';
+
+  @override
+  String get networkWalletJsonLabel => 'Exported wallet JSON';
+
+  @override
+  String get networkWalletImportWarning =>
+      'Importing replaces the wallet on this device.';
+
+  @override
+  String get networkNameHint => 'A display name — becomes a lowercase slug';
+
+  @override
+  String get networkPasswordHint => '8–128 characters';
+
+  @override
+  String get networkNameInvalid =>
+      'Needs 3–64 chars after slugifying (letters, digits, hyphens)';
+
+  @override
+  String get networkPasswordInvalid => 'Password must be 8–128 characters';
+
+  @override
+  String get networkListPublic => 'List in the public directory';
+
+  @override
+  String get networkDelete => 'Delete network…';
+
+  @override
+  String get networkDeleteTitle => 'Delete this network?';
+
+  @override
+  String get networkDeleteBody =>
+      'The network, its channels and all messages are deleted for everyone. This cannot be undone.';
+
+  @override
+  String get networkDeleted => 'Network deleted';
+
+  @override
+  String networkSlugPreview(Object slug) {
+    return 'Will be created as: $slug';
+  }
+
+  @override
+  String get networkSignInToCreate => 'Sign in to create a network';
+
+  @override
+  String get networkShowcaseUnavailable =>
+      'This network is not publicly available';
+
+  @override
+  String get networkShowcaseReadOnlyBadge => 'read-only';
+
+  @override
+  String get networkBackToNetworks => 'Back to networks';
+
+  @override
+  String get networkAddAgentPublicHint =>
+      'Anyone with this link can read the channel — it is public. Agents join keyless.';
 }

@@ -5,6 +5,8 @@
 import 'dart:async';
 
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa/network/network_mode.dart';
+import 'package:fa/network/network_session_manager.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -31,6 +33,7 @@ import 'package:fa/ui/widgets/widget_publish_sheet.dart';
 import 'package:fa/services/upload.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
+import 'package:fa/ui/network/network_mode_chip.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/widgets/fah_wallpaper.dart';
 import 'package:fa/ui/widgets/span_grid_delegate.dart';
@@ -70,6 +73,8 @@ class AppLauncherScreen extends StatefulWidget {
     this.tileEngineFactory,
     this.hideChatSheet = false,
     this.restoreAppsMode = false,
+    this.networkMode,
+    this.networkSessions,
   });
 
   /// The multi-session manager owning the active [AgentService].
@@ -120,6 +125,12 @@ class AppLauncherScreen extends StatefulWidget {
   /// chat sheet; forwarded from [faHomeScreen]. Tests/goldens keep the
   /// default false — the apps grid stays the deterministic resting state.
   final bool restoreAppsMode;
+
+  /// Network mode (issue #955): when both are provided, the launcher
+  /// header carries the Local | Network mode chip. Null (tests, non-
+  /// network hosts) keeps the classic header.
+  final NetworkModeController? networkMode;
+  final NetworkSessionManager? networkSessions;
 
   @override
   State<AppLauncherScreen> createState() => _AppLauncherScreenState();
@@ -1023,6 +1034,14 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
               ),
               const SizedBox(width: 8),
               _buildSessionChip(colors),
+              if (widget.networkMode != null &&
+                  widget.networkSessions != null) ...[
+                const SizedBox(width: 8),
+                NetworkModeChip(
+                  controller: widget.networkMode!,
+                  manager: widget.networkSessions!,
+                ),
+              ],
             ],
           ),
         ),

@@ -647,7 +647,7 @@
   "@githubBrowserCodeHint": {
     "description": "Hint of the one-time-code field on the Browser tab"
   },
-"sessionDrivenElsewhere": "Сессией управляет {host} (pid {pid}) — вы просматриваете. Ваши сообщения будут переданы живому агенту.",
+  "sessionDrivenElsewhere": "Сессией управляет {host} (pid {pid}) — вы просматриваете. Ваши сообщения будут переданы живому агенту.",
   "@sessionDrivenElsewhere": {
     "description": "Уведомление наблюдателя, когда живая аренда владения блокирует открытие сессии для управления (#428)",
     "placeholders": {
@@ -818,7 +818,7 @@
   "@settingsCompactionDocs": {
     "description": "Link to the compaction documentation from the settings section (issue #287)"
   },
-    "settingsQueueTitle": "Очередь провайдеров",
+  "settingsQueueTitle": "Очередь провайдеров",
   "settingsQueueHelper": "Упорядоченная цепочка провайдеров: когда текущий умирает (квота, авторизация, сеть, таймаут, битый поток, 5xx, плохой finish), следующий перехватывает работу, а победитель закрепляется на сессию. Применяется со следующего запуска.",
   "settingsQueueEmpty": "Очередь не задана — применяется одиночный провайдер/модель. Добавьте запись, чтобы собрать цепочку.",
   "settingsQueueScopeEnv": "действует из переменной окружения FA_PROVIDERS_QUEUE — правьте её (здесь только чтение)",
@@ -843,15 +843,173 @@
   "mobileConsentStatusOff": "Служба специальных возможностей: выключена",
   "mobileConsentStoreUnavailable": "Автоматизация устройства недоступна в этой сборке Fa.",
   "storeBannerTitle": "Fa в App Store",
-  "@storeBannerTitle": { "description": "In-app Get banner: title" },
+  "@storeBannerTitle": {
+    "description": "In-app Get banner: title"
+  },
   "storeBannerBody": "Релиз в App Store платный — он финансирует разработку. Бета в TestFlight бесплатна навсегда.",
-  "@storeBannerBody": { "description": "In-app Get banner: paid vs free-forever-beta messaging" },
+  "@storeBannerBody": {
+    "description": "In-app Get banner: paid vs free-forever-beta messaging"
+  },
   "storeBannerAndroidSoon": "Android: скоро",
-  "@storeBannerAndroidSoon": { "description": "In-app Get banner: the Android slot while links.play is unset" },
+  "@storeBannerAndroidSoon": {
+    "description": "In-app Get banner: the Android slot while links.play is unset"
+  },
   "storeBannerCta": "Открыть в App Store",
-  "@storeBannerCta": { "description": "In-app Get banner: the primary CTA button" },
+  "@storeBannerCta": {
+    "description": "In-app Get banner: the primary CTA button"
+  },
   "storeBannerBeta": "или присоединяйтесь к бесплатной бете в TestFlight",
-  "@storeBannerBeta": { "description": "In-app Get banner: the secondary beta link" },
+  "@storeBannerBeta": {
+    "description": "In-app Get banner: the secondary beta link"
+  },
   "storeBannerDismiss": "Скрыть",
-  "@storeBannerDismiss": { "description": "In-app Get banner: dismiss tooltip/label" }
+  "@storeBannerDismiss": {
+    "description": "In-app Get banner: dismiss tooltip/label"
+  },
+  "networkModeLocal": "Локально",
+  "networkModeNetwork": "Сеть",
+  "networkWelcomeTitle": "Добро пожаловать в сети Fa",
+  "networkWelcomeBody": "Присоединитесь к существующей сети или создайте свою — каналы и витрины откроются здесь.",
+  "networkNetworksTitle": "Сети",
+  "networkBackTooltip": "Назад",
+  "networkSearchHint": "Поиск сетей",
+  "networkSignInTitle": "Войти",
+  "networkSignInHelper": "Войдите через аккаунт ai-native.cloud, чтобы создавать сети и управлять ими.",
+  "networkSignInWithProvider": "Продолжить через {provider}",
+  "networkSignInWaiting": "Завершите вход в браузере…",
+  "networkSignInDeveloperSection": "Разработчик (только локально)",
+  "networkSignInMobileNote": "Вход через провайдера здесь недоступен, пока редирект fa:// не добавлен в список разрешённых на сервере — пока работает только вход для разработчика ниже.",
+  "networkSessionExpired": "Сессия истекла — войдите снова.",
+  "networkLoginLabel": "Логин",
+  "networkSignOut": "Выйти",
+  "networkAccountFallback": "Аккаунт",
+  "networkPublicSection": "Публичные сети",
+  "networkPublicMembers": "Участников: {count}",
+  "networkEmptyTitle": "Пока нет сетей",
+  "networkJoinFirst": "Присоединитесь к своей первой сети",
+  "networkNoMatches": "Ничего не найдено",
+  "networkCreateNetwork": "Создать сеть",
+  "networkNameLabel": "Название",
+  "networkPasswordLabel": "Пароль",
+  "networkCreate": "Создать",
+  "networkJoinTitle": "Присоединиться к сети",
+  "networkQuickSwitcherTitle": "Быстрый переход",
+  "networkJoinLinkLabel": "Ссылка-приглашение",
+  "networkJoinFill": "Заполнить",
+  "networkIdLabel": "Идентификатор сети",
+  "networkDisplayNameLabel": "Отображаемое имя",
+  "networkDisplayNameLocked": "Отображаемое имя привязано к вашему аккаунту.",
+  "networkJoinRequired": "Укажите идентификатор сети и пароль.",
+  "networkJoinInvalidCredentials": "Неверные учётные данные — {message}",
+  "networkJoinRetryAfter": " Повторите через {seconds} с.",
+  "networkJoin": "Присоединиться",
+  "networkSelectChannel": "Выберите канал",
+  "networkReconnecting": "Переподключение — сообщения будут отправлены после восстановления связи.",
+  "networkMessageHint": "Написать в {channel}",
+  "networkNewChannel": "Новый канал",
+  "networkOnlineCount": "{count} в сети",
+  "networkChannelsSection": "Каналы",
+  "networkShowcasesSection": "Витрины",
+  "networkShowcaseReadOnly": "Публичная витрина — только чтение. Присоединитесь к сети, чтобы участвовать.",
+  "networkConnecting": "Подключение…",
+  "networkNoChannels": "Нет каналов",
+  "networkChannelOptions": "Параметры канала",
+  "networkAddAgent": "Добавить агента…",
+  "networkShowcasePublic": "Витрина (публичный)",
+  "networkAddAgentTitle": "Добавить агента",
+  "networkAddAgentWarning": "Передавайте эту строку только напрямую — любой, у кого она есть, сможет читать канал.",
+  "networkAddAgentNoKeys": "На этом устройстве нет ключей для этого канала.",
+  "networkAddAgentScopeChannel": "Этот канал",
+  "networkAddAgentScopeNetwork": "Вся сеть",
+  "networkAddAgentFormatLink": "Ссылка (приложение)",
+  "networkAddAgentFormatCli": "CLI-команда",
+  "networkAddAgentFormatEnv": "Env (CI)",
+  "networkAddAgentEnvHint": "Строка запуска CLI-harness на раннере (GitHub Actions): подставь свою пару провайдер+модель и мастер-секрет хаба — ключи канала приезжают командой import.",
+  "networkAddAgentNetworkHint": "Агент входит полным участником и видит все каналы сети.",
+  "networkAddAgentNetworkNoPassword": "Пароль сети недоступен на этом устройстве — при входе ссылка запросит его.",
+  "networkAddAgentCliHint": "Команда работает для хабов с прямым DAP-доступом (например, локальный стенд); CLI-вход на production fa_network — в разработке.",
+  "networkAddAgentNetworkCliHint": "CLI-подключение к сети пока не готово — используйте ссылку.",
+  "networkInviteCopied": "Приглашение скопировано в буфер обмена.",
+  "networkCopy": "Копировать",
+  "networkClose": "Закрыть",
+  "networkWalletTooltip": "Кошелёк",
+  "networkWalletExport": "Экспортировать кошелёк",
+  "networkWalletImport": "Импортировать кошелёк",
+  "networkWalletExported": "Кошелёк экспортирован — JSON скопирован в буфер обмена.",
+  "networkWalletExportFailed": "Не удалось экспортировать: {error}",
+  "networkWalletImported": "Кошелёк импортирован.",
+  "networkPassphraseLabel": "Парольная фраза",
+  "networkPassphraseRepeatLabel": "Повторите парольную фразу",
+  "networkPassphraseEmpty": "Парольная фраза не должна быть пустой.",
+  "networkPassphraseMismatch": "Парольные фразы не совпадают.",
+  "networkExport": "Экспортировать",
+  "networkImport": "Импортировать",
+  "networkWalletJsonLabel": "JSON экспортированного кошелька",
+  "networkWalletImportWarning": "Импорт заменит кошелёк на этом устройстве.",
+  "networkNameHint": "Отображаемое имя — станет lowercase-slug",
+  "@networkNameHint": {
+    "description": "Network name helper text (server rule)"
+  },
+  "networkPasswordHint": "8–128 символов",
+  "@networkPasswordHint": {
+    "description": "Network password helper text (server rule)"
+  },
+  "networkNameInvalid": "После слага нужно 3–64 символа (буквы, цифры, дефисы)",
+  "@networkNameInvalid": {
+    "description": "Network name validation error"
+  },
+  "networkPasswordInvalid": "Пароль: 8–128 символов",
+  "@networkPasswordInvalid": {
+    "description": "Network password validation error"
+  },
+  "networkListPublic": "Показывать в публичном каталоге",
+  "@networkListPublic": {
+    "description": "Create-network dialog checkbox — publish the network in the public catalog"
+  },
+  "networkDelete": "Удалить сеть…",
+  "@networkDelete": {
+    "description": "Network row menu item (owner only)"
+  },
+  "networkDeleteTitle": "Удалить эту сеть?",
+  "@networkDeleteTitle": {
+    "description": "Delete-network confirmation title"
+  },
+  "networkDeleteBody": "Сеть, её каналы и все сообщения будут удалены для всех. Это действие нельзя отменить.",
+  "@networkDeleteBody": {
+    "description": "Delete-network confirmation body"
+  },
+  "networkDeleted": "Сеть удалена",
+  "@networkDeleted": {
+    "description": "Snackbar after a network was deleted"
+  },
+  "networkSlugPreview": "Будет создана как: {slug}",
+  "@networkSlugPreview": {
+    "description": "Live slug preview under the network name field",
+    "placeholders": {
+      "slug": {}
+    }
+  },
+  "networkSignInToCreate": "Войдите, чтобы создать сеть",
+  "@networkSignInToCreate": {
+    "description": "Snackbar when create is attempted without a JWT"
+  },
+  "networkShowcaseUnavailable": "Эта сеть недоступна публично",
+  "@networkShowcaseUnavailable": {
+    "description": "Anonymous showcase: generic 404 (non-public or unknown network)"
+  },
+  "networkShowcaseReadOnlyBadge": "только чтение",
+  "@networkShowcaseReadOnlyBadge": {
+    "description": "Badge in the showcase header"
+  },
+  "@networkShowcaseReadOnly": {
+    "description": "Composer replacement in the anonymous showcase"
+  },
+  "networkBackToNetworks": "Назад к сетям",
+  "@networkBackToNetworks": {
+    "description": "Showcase back-button tooltip"
+  },
+  "networkAddAgentPublicHint": "Эту ссылку видят все — канал публичный. Агенты подключаются без ключей.",
+  "@networkAddAgentPublicHint": {
+    "description": "Agent invite dialog hint for public (keyless) channels"
+  }
 }
