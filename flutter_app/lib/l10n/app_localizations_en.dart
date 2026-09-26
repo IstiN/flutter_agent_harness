@@ -2353,17 +2353,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get networkAddAgentFormatEnv => 'Env (CI)';
 
   @override
-  String get networkAddAgentFormatDap => 'DAP';
-
-  @override
-  String get networkAddAgentDapHint =>
-      'Pure DAP clients (`fa dap`) that know nothing about fa_network — point them at a DAP hub directly. The master secret belongs to THAT hub, not to fa_network.';
-
-  @override
-  String get networkAddAgentSecretHint =>
-      'The DAP hub\'s master secret — paste yours before copying';
-
-  @override
   String get networkAddAgentEnvHint =>
       'Env vars for a CI runner (GitHub Actions) — the link already carries the network id + password (or the channel keys); nothing else to fill in. Reserved for the upcoming CLI network mode — desktop and mobile agents use the link.';
 

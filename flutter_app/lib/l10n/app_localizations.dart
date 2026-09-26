@@ -4178,24 +4178,6 @@ abstract class AppLocalizations {
   /// **'Env (CI)'**
   String get networkAddAgentFormatEnv;
 
-  /// Agent invite format segment: pure-DAP client env (self-hosted DAP hub)
-  ///
-  /// In en, this message translates to:
-  /// **'DAP'**
-  String get networkAddAgentFormatDap;
-
-  /// Agent invite note under the pure-DAP format
-  ///
-  /// In en, this message translates to:
-  /// **'Pure DAP clients (`fa dap`) that know nothing about fa_network — point them at a DAP hub directly. The master secret belongs to THAT hub, not to fa_network.'**
-  String get networkAddAgentDapHint;
-
-  /// Agent invite hint for the editable DAP master secret field
-  ///
-  /// In en, this message translates to:
-  /// **'The DAP hub\'s master secret — paste yours before copying'**
-  String get networkAddAgentSecretHint;
-
   /// Agent invite note under the env format
   ///
   /// In en, this message translates to:

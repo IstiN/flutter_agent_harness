@@ -2382,17 +2382,6 @@ class AppLocalizationsRu extends AppLocalizations {
   String get networkAddAgentFormatEnv => 'Env (CI)';
 
   @override
-  String get networkAddAgentFormatDap => 'DAP';
-
-  @override
-  String get networkAddAgentDapHint =>
-      'Чистые DAP-клиенты (`fa dap`), которые ничего не знают про fa_network — подключайте их к DAP-хабу напрямую. Мастер-секрет принадлежит ТОМУ хабу, а не fa_network.';
-
-  @override
-  String get networkAddAgentSecretHint =>
-      'Мастер-секрет DAP-хаба — вставьте свой перед копированием';
-
-  @override
   String get networkAddAgentEnvHint =>
       'Env-переменные для CI-раннера (GitHub Actions) — ссылка уже несёт id сети и пароль (или ключи канала), ничего дописывать не нужно. Зарезервировано под будущий сетевой режим CLI — десктопные и мобильные агенты используют ссылку.';
 
