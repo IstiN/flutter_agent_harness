@@ -116,6 +116,14 @@ dependencies:
   crypto: ^3.0.3
   dartssh2: ^2.22.2
 
+  # Network mode (issue #955): fa_network REST+WS client and the 'fanet1'
+  # envelope crypto (X25519/HKDF/ChaCha20-Poly1305, DAP/1 recipe).
+  cryptography: ^2.7.0
+  web_socket_channel: ^2.4.0
+  # Argon2id KDF for the passphrase-encrypted KeyWallet export (pure Dart,
+  # web-safe); only the KDF is used, AEAD stays on package:cryptography.
+  pointycastle: ^4.0.0
+
   # On-device Gemma 4 inference (iOS/Android via FFI, web via @litert-lm/core,
   # .litertlm engine). Imported only from lib/gemma/ behind conditional
   # imports — host tests never touch the plugin.
@@ -153,6 +161,8 @@ dependencies:
   # Deep-link handling for mobile OAuth callbacks (fah://oauth/openrouter).
   app_links: ^6.4.0
   firebase_crashlytics: 5.2.6
+  # WS channel abstraction for the fa_network realtime socket.
+  stream_channel: ^2.1.0
 
 dev_dependencies:
   # Mock seam for url_launcher in widget/golden tests.

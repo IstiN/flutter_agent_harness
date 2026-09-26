@@ -13,10 +13,14 @@
 /// boot is semantics-preserving.
 library;
 
+import 'dart:async';
 import 'dart:ui' show PlatformDispatcher;
 
 import 'package:fa/firebase_options.dart';
 import 'package:fa/l10n/app_localizations.dart';
+import 'package:fa/network/key_wallet.dart';
+import 'package:fa/network/network_mode.dart';
+import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/sandbox/env_factory.dart';
 import 'package:fa/sandbox/wasm_setup_stub.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -69,6 +73,9 @@ final class BootStores {
     required this.taskModels,
     required this.onDeviceConfig,
     required this.imagePreviews,
+    required this.networkWallet,
+    required this.networkMode,
+    required this.networkSessions,
   });
 
   /// The shared execution env (also on [BootStores] so the routes stage
@@ -107,6 +114,15 @@ final class BootStores {
 
   /// The image-preview preference store.
   final ImagePreviewStore imagePreviews;
+
+  /// The fa_network device key wallet (issue #955).
+  final KeyWallet networkWallet;
+
+  /// The local ↔ network mode navigation state machine (issue #955).
+  final NetworkModeController networkMode;
+
+  /// The fa_network session owner (join/resume/leave, issue #955).
+  final NetworkSessionManager networkSessions;
 }
 
 /// The boot pipeline. `main()` constructs it with the app's routes stage
@@ -229,6 +245,19 @@ Future<BootStores> loadBootStores(ExecutionEnv env) async {
   // fa_ui's provider UI resolves named keys through the app's chain
   // (dart-defines → saved keys → .env), exactly like the connection form.
   FaUiHost.keyResolver = (name) => settingsKeyEnv(name, sessionKeys);
+  // Network mode (issue #955): the device wallet (keychain-first, file
+  // fallback), the persisted mode picker state, and the session manager.
+  final networkWallet = await _loadNetworkWallet(env);
+  final networkMode = NetworkModeController(await NetworkModeStore.load(env));
+  final networkSessions = NetworkSessionManager(
+    baseUrl: Uri.parse(faNetworkBaseUrl),
+    authBaseUrl: Uri.parse(faAuthBaseUrl),
+    wallet: networkWallet,
+  );
+  // Restore the persisted ai-native account (issue #955 iteration 3):
+  // an unexpired token becomes the JWT, an expired one is refreshed
+  // silently. Fire-and-forget — boot never blocks on the network.
+  unawaited(networkSessions.restoreAccount());
   return BootStores(
     env: env,
     sessionKeys: sessionKeys,
@@ -242,7 +271,46 @@ Future<BootStores> loadBootStores(ExecutionEnv env) async {
     taskModels: taskModels,
     onDeviceConfig: onDeviceConfig,
     imagePreviews: imagePreviews,
+    networkWallet: networkWallet,
+    networkMode: networkMode,
+    networkSessions: networkSessions,
   );
+}
+
+/// The fa_network REST base URL; overridable with
+/// `--dart-define=FA_NETWORK_URL=…` (staging, self-hosted hubs).
+const faNetworkBaseUrl = String.fromEnvironment(
+  'FA_NETWORK_URL',
+  defaultValue: 'https://network.fa1.dev',
+);
+
+/// The ai-native auth service base URL (`/api/auth/*` + `/api/oauth-proxy/*`
+/// live there — the fa_network relay does NOT proxy them). Overridable with
+/// `--dart-define=FA_AUTH_URL=…` (staging, local auth deploys).
+const faAuthBaseUrl = String.fromEnvironment(
+  'FA_AUTH_URL',
+  defaultValue: 'https://ai-native.cloud',
+);
+
+/// Loads the fa_network device wallet (issue #955): the platform keychain
+/// when supported, the sandbox file otherwise. A broken backend or corrupt
+/// wallet JSON falls back (keychain → file → in-memory) — boot must never
+/// crash on wallet I/O, and the corrupt file is never overwritten (the
+/// in-memory fallback has no backend attached, so nothing persists over it).
+Future<KeyWallet> _loadNetworkWallet(ExecutionEnv env) async {
+  if (KeychainStore.isSupported) {
+    try {
+      return await KeyWallet.load(KeychainWalletBackend());
+    } on Object catch (e) {
+      debugPrint('[fah] network wallet keychain load failed: $e');
+    }
+  }
+  try {
+    return await KeyWallet.load(FileWalletBackend(env));
+  } on Object catch (e) {
+    debugPrint('[fah] network wallet file load failed: $e');
+    return KeyWallet.load(MemoryWalletBackend());
+  }
 }
 
 /// The telemetry stage: analytics (strictly optional), the fa_ui chat-event
