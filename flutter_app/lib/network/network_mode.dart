@@ -118,9 +118,23 @@ class NetworkModeController extends ChangeNotifier {
 
   final NetworkModeStore _store;
 
+  /// Transient (never persisted) anonymous showcase browsing: a public
+  /// network id being previewed read-only, without a join. Set by
+  /// [viewShowcase], cleared by any real navigation.
+  String? get showcaseNetworkId => _showcaseNetworkId;
+  String? _showcaseNetworkId;
+
   AppMode get mode => _store.mode;
   String? get networkId => _store.lastNetworkId;
   String? get channelId => _store.lastChannelId;
+
+  /// Opens the anonymous read-only showcase of a public network (no
+  /// membership, no keys — the catalog tile tap). Stays in network mode
+  /// with no selected network; the picker stays reachable behind it.
+  Future<void> viewShowcase(String networkId) async {
+    _showcaseNetworkId = networkId;
+    await _apply(mode: AppMode.network, networkId: null, channelId: null);
+  }
 
   /// Enters network mode on [networkId] (channel cleared).
   Future<void> enterNetwork(String networkId) =>
@@ -130,9 +144,12 @@ class NetworkModeController extends ChangeNotifier {
   Future<void> selectChannel(String channelId) =>
       _apply(mode: AppMode.network, networkId: networkId, channelId: channelId);
 
-  /// Back to the networks picker (stays in network mode).
-  Future<void> backToNetworks() =>
-      _apply(mode: AppMode.network, networkId: null, channelId: null);
+  /// Back to the networks picker (stays in network mode). Also closes
+  /// the anonymous showcase preview.
+  Future<void> backToNetworks() {
+    _showcaseNetworkId = null;
+    return _apply(mode: AppMode.network, networkId: null, channelId: null);
+  }
 
   /// Back to the channel rail of the current network.
   Future<void> backToChannels() =>
@@ -147,6 +164,9 @@ class NetworkModeController extends ChangeNotifier {
     required String? networkId,
     required String? channelId,
   }) async {
+    // Any real navigation (network enter/back, local exit) leaves the
+    // showcase preview; only viewShowcase itself sets it.
+    if (networkId != null || mode == AppMode.local) _showcaseNetworkId = null;
     await _store.setState(
       mode: mode,
       lastNetworkId: networkId,

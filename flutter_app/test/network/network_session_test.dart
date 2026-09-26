@@ -241,6 +241,49 @@ void main() {
       expect(session.roster['other-1']?.presence, Presence.live);
     });
 
+    test('public showcase channels bypass E2E both ways', () async {
+      final wallet = await walletWithChannel(
+        channelPub: channelKeys.pub,
+        channelPriv: channelKeys.priv,
+      );
+      const publicChannels =
+          '[{"id":"pc1","networkId":"net1","name":"lobby","public":true}]';
+      final httpClient = FakeHttpClient()
+        ..respond(200, body: publicChannels)
+        ..respond(200, body: membersBody)
+        ..respond(
+          200,
+          body:
+              '{"items":[{"id":"e-9","channelId":"pc1","senderId":"other-1",'
+              '"payload":"aGVsbG8tdmlzaXRvcg=="}],"nextCursor":""}',
+        );
+      final connector = FakeWsConnector();
+      final session = buildSession(
+        httpClient: httpClient,
+        connector: connector,
+        wallet: wallet,
+      );
+      addTearDown(session.close);
+
+      await session.start();
+      await session.openChannel('pc1');
+      await pumpEventQueue();
+
+      // base64("hello-visitor") renders as-is — no chankey involved.
+      final state = session.channelStates['pc1']!;
+      expect(state.messages.single.text, 'hello-visitor');
+
+      // Sending into a public channel writes the raw payload convention.
+      await session.sendText('pc1', 'hi all');
+      final frame = connector.channels.single.sentFrames.lastWhere(
+        (f) => f['type'] == 'envelope.send',
+      );
+      expect(
+        utf8.decode(base64Decode(frame['payload']! as String)),
+        contains('"text":"hi all"'),
+      );
+    });
+
     test('network.drain rebuilds channels + open-channel history', () async {
       final wallet = await walletWithChannel(
         channelPub: channelKeys.pub,

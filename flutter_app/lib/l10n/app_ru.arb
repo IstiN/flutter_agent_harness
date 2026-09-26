@@ -944,5 +944,13 @@
   "networkSlugPreview": "Будет создана как: {slug}",
   "@networkSlugPreview": { "description": "Live slug preview under the network name field", "placeholders": { "slug": {} } },
   "networkSignInToCreate": "Войдите, чтобы создать сеть",
-  "@networkSignInToCreate": { "description": "Snackbar when create is attempted without a JWT" }
+  "@networkSignInToCreate": { "description": "Snackbar when create is attempted without a JWT" },
+  "networkShowcaseUnavailable": "Эта сеть недоступна публично",
+  "@networkShowcaseUnavailable": { "description": "Anonymous showcase: generic 404 (non-public or unknown network)" },
+  "networkShowcaseReadOnlyBadge": "только чтение",
+  "@networkShowcaseReadOnlyBadge": { "description": "Badge in the showcase header" },
+  "networkShowcaseReadOnly": "Публичная витрина — только чтение. Присоединитесь к сети, чтобы участвовать.",
+  "@networkShowcaseReadOnly": { "description": "Composer replacement in the anonymous showcase" },
+  "networkBackToNetworks": "Назад к сетям",
+  "@networkBackToNetworks": { "description": "Showcase back-button tooltip" }
 }

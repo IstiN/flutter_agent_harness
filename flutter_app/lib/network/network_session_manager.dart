@@ -18,6 +18,7 @@ import '../services/app_log.dart';
 import 'key_wallet.dart';
 import 'models.dart';
 import 'network_session.dart';
+import 'showcase_viewer.dart';
 
 /// Owns the [KeyWallet] and every live [NetworkSession] (issue #955):
 /// join, silent resume, leave. One manager per app run; the UI binds to it
@@ -310,6 +311,17 @@ final class NetworkSessionManager extends ChangeNotifier {
     }
     return join(networkId: networkId, password: password);
   }
+
+  /// An anonymous showcase viewer for a public network — shares the base
+  /// URL + http client, carries no tokens (anonymous reads only).
+  ShowcaseViewer newShowcaseViewer(String networkId) => ShowcaseViewer(
+    networkId: networkId,
+    client: FaNetworkClient(
+      baseUrl: _baseUrl,
+      authBaseUrl: _authBaseUrl,
+      httpClient: _http,
+    ),
+  );
 
   /// An already-known live session, or null.
   NetworkSession? operator [](String networkId) => sessions[networkId];

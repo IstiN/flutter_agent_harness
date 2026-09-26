@@ -241,8 +241,8 @@ class Envelope {
     'channelId': channelId,
     'senderId': senderId,
     'payload': payload,
-    '''mentions''': ?mentions,
-    '''senderKey''': ?senderKey,
+    'mentions': ?mentions,
+    'senderKey': ?senderKey,
     'createdAt': ?createdAt?.toIso8601String(),
   };
 }
@@ -370,6 +370,36 @@ class WakeupDispatch {
 /// fields (`id`, `name`, `publicChannels`, `memberCount` — the latter two
 /// are INTs, no passwords/ownerId); parsing stays tolerant: only [id] and
 /// [name] are required so interim server shapes never break the client.
+/// The anonymous showcase listing of a public network
+/// (`GET /api/networks/{id}/showcase`): its public channels, readable
+/// without join or password.
+final class Showcase {
+  const Showcase({
+    required this.id,
+    required this.name,
+    required this.channels,
+  });
+
+  factory Showcase.fromJson(Map<String, Object?> json) => Showcase(
+    id: json['id'] as String? ?? '',
+    name: json['name'] as String? ?? '',
+    channels: [
+      for (final c in (json['channels'] as List? ?? const []))
+        if (c is Map)
+          Channel(
+            id: c['id'] as String? ?? '',
+            networkId: json['id'] as String? ?? '',
+            name: c['name'] as String?,
+            isPublic: true,
+          ),
+    ],
+  );
+
+  final String id;
+  final String name;
+  final List<Channel> channels;
+}
+
 class PublicNetworkInfo {
   const PublicNetworkInfo({
     required this.id,

@@ -4094,10 +4094,10 @@ abstract class AppLocalizations {
   /// **'Showcases'**
   String get networkShowcasesSection;
 
-  /// Read-only note shown instead of the composer in a showcase channel for regular members
+  /// Composer replacement in the anonymous showcase
   ///
   /// In en, this message translates to:
-  /// **'Only the network owner and admins can post here.'**
+  /// **'Public showcase — read-only preview. Join the network to participate.'**
   String get networkShowcaseReadOnly;
 
   /// Channel rail placeholder while the session connects
@@ -4315,6 +4315,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Sign in to create a network'**
   String get networkSignInToCreate;
+
+  /// Anonymous showcase: generic 404 (non-public or unknown network)
+  ///
+  /// In en, this message translates to:
+  /// **'This network is not publicly available'**
+  String get networkShowcaseUnavailable;
+
+  /// Badge in the showcase header
+  ///
+  /// In en, this message translates to:
+  /// **'read-only'**
+  String get networkShowcaseReadOnlyBadge;
+
+  /// Showcase back-button tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Back to networks'**
+  String get networkBackToNetworks;
 }
 
 class _AppLocalizationsDelegate

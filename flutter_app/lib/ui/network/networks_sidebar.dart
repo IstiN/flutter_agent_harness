@@ -393,6 +393,8 @@ class _NetworksSidebarState extends State<NetworksSidebar> {
             _PublicNetworkTile(
               key: ValueKey('publicNetwork:${network.id}'),
               network: network,
+              onView: () =>
+                  unawaited(widget.controller.viewShowcase(network.id)),
               onJoin: () => unawaited(_openJoinSheet(networkId: network.id)),
             ),
         ],
@@ -550,10 +552,14 @@ class _PublicNetworkTile extends StatelessWidget {
   const _PublicNetworkTile({
     super.key,
     required this.network,
+    required this.onView,
     required this.onJoin,
   });
 
   final PublicNetworkInfo network;
+
+  /// Whole-row tap: the anonymous read-only showcase preview.
+  final VoidCallback onView;
   final VoidCallback onJoin;
 
   @override
@@ -562,42 +568,47 @@ class _PublicNetworkTile extends StatelessWidget {
     final memberCount = network.memberCount;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        child: Row(
-          children: [
-            Icon(Icons.public, size: 16, color: colors.dim),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    network.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: colors.text, fontSize: 13),
-                  ),
-                  if (memberCount != null)
+      child: InkWell(
+        key: ValueKey('publicView:${network.id}'),
+        borderRadius: BorderRadius.circular(10),
+        onTap: onView,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          child: Row(
+            children: [
+              Icon(Icons.public, size: 16, color: colors.dim),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
                     Text(
-                      context.l10n.networkPublicMembers(memberCount),
+                      network.name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: colors.dim.withValues(alpha: 0.7),
-                        fontSize: 11,
-                      ),
+                      style: TextStyle(color: colors.text, fontSize: 13),
                     ),
-                ],
+                    if (memberCount != null)
+                      Text(
+                        context.l10n.networkPublicMembers(memberCount),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: colors.dim.withValues(alpha: 0.7),
+                          fontSize: 11,
+                        ),
+                      ),
+                  ],
+                ),
               ),
-            ),
-            TextButton(
-              key: ValueKey('publicJoin:${network.id}'),
-              onPressed: onJoin,
-              child: Text(context.l10n.networkJoin),
-            ),
-          ],
+              TextButton(
+                key: ValueKey('publicJoin:${network.id}'),
+                onPressed: onJoin,
+                child: Text(context.l10n.networkJoin),
+              ),
+            ],
+          ),
         ),
       ),
     );

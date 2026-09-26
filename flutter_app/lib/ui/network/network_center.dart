@@ -14,6 +14,7 @@ import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/ui/network/channel_rail.dart';
 import 'package:fa/ui/network/create_network_dialog.dart';
 import 'package:fa/ui/network/join_sheet.dart';
+import 'package:fa/ui/network/showcase_page.dart';
 import 'package:fa/ui/network/network_chat_page.dart';
 
 /// Silently re-joins the selected network when a restored selection (boot
@@ -94,6 +95,14 @@ class _NetworkCenterPaneState extends State<NetworkCenterPane> {
       builder: (context, _) {
         final networkId = widget.controller.networkId;
         if (networkId == null) {
+          // Anonymous showcase preview wins over the empty state (the
+          // catalog tile tap sets it without joining).
+          if (widget.controller.showcaseNetworkId != null) {
+            return ShowcasePage(
+              controller: widget.controller,
+              manager: widget.manager,
+            );
+          }
           return _NetworkEmptyState(
             controller: widget.controller,
             manager: widget.manager,

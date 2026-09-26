@@ -2338,7 +2338,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get networkShowcaseReadOnly =>
-      'Здесь могут писать только владелец сети и администраторы.';
+      'Публичная витрина — только чтение. Присоединитесь к сети, чтобы участвовать.';
 
   @override
   String get networkConnecting => 'Подключение…';
@@ -2457,4 +2457,13 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get networkSignInToCreate => 'Войдите, чтобы создать сеть';
+
+  @override
+  String get networkShowcaseUnavailable => 'Эта сеть недоступна публично';
+
+  @override
+  String get networkShowcaseReadOnlyBadge => 'только чтение';
+
+  @override
+  String get networkBackToNetworks => 'Назад к сетям';
 }

@@ -218,8 +218,8 @@ class FaNetworkWs {
       'channelId': channelId,
       'id': id,
       'payload': payload,
-      '''mentions''': ?mentions,
-      '''senderKey''': ?senderKey,
+      'mentions': ?mentions,
+      'senderKey': ?senderKey,
     };
     if (_connected) {
       _sendNow(frame);

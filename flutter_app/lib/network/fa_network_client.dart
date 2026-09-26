@@ -120,7 +120,7 @@ class FaNetworkClient {
     final res = await _request(
       'POST',
       '/api/networks/$networkId/join',
-      body: {'password': password, '''displayName''': ?displayName},
+      body: {'password': password, 'displayName': ?displayName},
       management: true, // authed join locks the display name to the JWT
       expected: {200},
     );
@@ -148,7 +148,7 @@ class FaNetworkClient {
     final res = await _request(
       'PATCH',
       '/api/networks/$networkId',
-      body: {'''name''': ?name, '''password''': ?password, 'public': ?isPublic},
+      body: {'name': ?name, 'password': ?password, 'public': ?isPublic},
       management: true,
       expected: {200},
     );
@@ -178,7 +178,7 @@ class FaNetworkClient {
       final res = await _request(
         'GET',
         '/api/networks/public',
-        query: {'''limit''': ?limit?.toString(), '''cursor''': ?cursor},
+        query: {'limit': ?limit?.toString(), 'cursor': ?cursor},
         auth: false,
         expected: {200},
       );
@@ -258,11 +258,7 @@ class FaNetworkClient {
     final res = await _request(
       'POST',
       '/api/networks/$networkId/channels',
-      body: {
-        'name': name,
-        'public': isPublic,
-        '''retentionDays''': ?retentionDays,
-      },
+      body: {'name': name, 'public': isPublic, 'retentionDays': ?retentionDays},
       management: true,
       expected: {201},
     );
@@ -295,11 +291,11 @@ class FaNetworkClient {
       'PATCH',
       '/api/channels/$channelId',
       body: {
-        '''name''': ?name,
+        'name': ?name,
         'public': ?isPublic,
-        '''acl''': ?acl,
-        '''retentionDays''': ?retentionDays,
-        '''clearRetention''': ?clearRetention,
+        'acl': ?acl,
+        'retentionDays': ?retentionDays,
+        'clearRetention': ?clearRetention,
       },
       management: true,
       expected: {200},
@@ -322,14 +318,38 @@ class FaNetworkClient {
     String channelId, {
     String? cursor,
     int? limit,
+
+    /// Anonymous showcase read: NO bearer at all (a public channel of a
+    /// public network is served tokenless; a present-but-invalid token
+    /// would earn a 401 instead of the oracle-free 404).
+    bool anonymous = false,
   }) async {
     final res = await _request(
       'GET',
       '/api/channels/$channelId/messages',
-      query: {'''cursor''': ?cursor, 'limit': ?limit?.toString()},
+      query: {'cursor': ?cursor, 'limit': ?limit?.toString()},
+      auth: !anonymous,
       expected: {200},
     );
     return MessagePage.fromJson(_decodeMap(res));
+  }
+
+  /// `GET /api/networks/{id}/showcase` — anonymous browsing entry of a
+  /// public network (its public channels). Returns null on the generic
+  /// 404 (unknown or non-public — no existence oracle, by contract).
+  Future<Showcase?> getShowcase(String networkId) async {
+    try {
+      final res = await _request(
+        'GET',
+        '/api/networks/$networkId/showcase',
+        auth: false,
+        expected: {200},
+      );
+      return Showcase.fromJson(_decodeMap(res));
+    } on FaNetworkException catch (e) {
+      if (e.statusCode == 404) return null;
+      rethrow;
+    }
   }
 
   /// `POST /api/channels/{id}/messages` — relay-accept an envelope
@@ -347,8 +367,8 @@ class FaNetworkClient {
       body: {
         'id': id,
         'payload': payload,
-        '''mentions''': ?mentions,
-        '''senderKey''': ?senderKey,
+        'mentions': ?mentions,
+        'senderKey': ?senderKey,
       },
       expected: {202},
     );
@@ -393,8 +413,8 @@ class FaNetworkClient {
       '/api/networks/$networkId/agents/$agentId/wakeups',
       body: {
         'url': url,
-        '''secret''': ?secret,
-        '''debounceSeconds''': ?debounceSeconds,
+        'secret': ?secret,
+        'debounceSeconds': ?debounceSeconds,
       },
       management: true,
       expected: {201},

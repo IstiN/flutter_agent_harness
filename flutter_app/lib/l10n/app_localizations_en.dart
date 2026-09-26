@@ -2309,7 +2309,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get networkShowcaseReadOnly =>
-      'Only the network owner and admins can post here.';
+      'Public showcase — read-only preview. Join the network to participate.';
 
   @override
   String get networkConnecting => 'Connecting…';
@@ -2428,4 +2428,14 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get networkSignInToCreate => 'Sign in to create a network';
+
+  @override
+  String get networkShowcaseUnavailable =>
+      'This network is not publicly available';
+
+  @override
+  String get networkShowcaseReadOnlyBadge => 'read-only';
+
+  @override
+  String get networkBackToNetworks => 'Back to networks';
 }

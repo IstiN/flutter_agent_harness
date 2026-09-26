@@ -15,6 +15,7 @@ import 'fa_network_client.dart';
 import 'fa_network_ws.dart';
 import 'key_wallet.dart';
 import 'models.dart';
+import 'showcase_viewer.dart';
 
 /// One decrypted channel message, ready for the chat UI.
 final class ChannelMessage {
@@ -244,6 +245,8 @@ final class NetworkSession extends ChangeNotifier {
   );
 
   Future<String> _encrypt(Channel channel, String text, String frameId) async {
+    // Public showcase channels have no chankey: raw payload by contract.
+    if (channel.isPublic) return encodePublicChannelText(text);
     final senderIdentity = await _wallet.identityKeyPair();
     final channelKeys = _wallet.channelKeysFor(networkId, channel.id);
     if (channelKeys == null) {
@@ -262,6 +265,19 @@ final class NetworkSession extends ChangeNotifier {
 
   Future<ChannelMessage> _decode(Envelope envelope) async {
     final isOwn = envelope.senderId == identity.id;
+    final known = channels.where((c) => c.id == envelope.channelId);
+    // Public showcase channels have no chankey at all: the payload is
+    // base64(raw message) (fa_network showcase contract).
+    if (known.isNotEmpty && known.first.isPublic) {
+      return ChannelMessage(
+        envelopeId: envelope.id,
+        senderId: envelope.senderId,
+        senderPub: '',
+        text: decodePublicChannelPayload(envelope.payload),
+        isOwn: isOwn,
+        createdAt: envelope.createdAt,
+      );
+    }
     final keys = _wallet.channelKeysFor(networkId, envelope.channelId);
     if (keys == null) {
       return ChannelMessage(

@@ -1088,5 +1088,13 @@
   "networkSlugPreview": "Will be created as: {slug}",
   "@networkSlugPreview": { "description": "Live slug preview under the network name field", "placeholders": { "slug": {} } },
   "networkSignInToCreate": "Sign in to create a network",
-  "@networkSignInToCreate": { "description": "Snackbar when create is attempted without a JWT" }
+  "@networkSignInToCreate": { "description": "Snackbar when create is attempted without a JWT" },
+  "networkShowcaseUnavailable": "This network is not publicly available",
+  "@networkShowcaseUnavailable": { "description": "Anonymous showcase: generic 404 (non-public or unknown network)" },
+  "networkShowcaseReadOnlyBadge": "read-only",
+  "@networkShowcaseReadOnlyBadge": { "description": "Badge in the showcase header" },
+  "networkShowcaseReadOnly": "Public showcase — read-only preview. Join the network to participate.",
+  "@networkShowcaseReadOnly": { "description": "Composer replacement in the anonymous showcase" },
+  "networkBackToNetworks": "Back to networks",
+  "@networkBackToNetworks": { "description": "Showcase back-button tooltip" }
 }
