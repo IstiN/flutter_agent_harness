@@ -393,30 +393,34 @@ class ChatComposerState extends State<ChatComposer>
     unawaited(widget.service.discardStagedAttachment(removed.path));
   }
 
-  /// Ctrl/Cmd+Enter sends. The key event is handled here (a Focus
-  /// ancestor) so it never reaches the IME — left alone it would land in
-  /// the field as a newline (the action is `newline` now, see the
-  /// TextField below).
-  ///
-  /// Bare Enter — the touch return key or a hardware key — is NOT handled
-  /// here: with `TextInputAction.newline` the IME inserts the line break
-  /// itself, which keeps an in-flight composing run (e.g. Cyrillic
-  /// autocorrect) intact.
+  /// Enter sends; Shift+Enter inserts a newline (issue #973). The key
+  /// event is handled here (a Focus ancestor) so plain Enter never reaches
+  /// the IME — with the field's `TextInputAction.newline` the IME would
+  /// turn it into a line break. Shift+Enter falls through untouched: the
+  /// IME inserts the break itself, which keeps an in-flight composing run
+  /// (e.g. Cyrillic autocorrect) intact — Shift alone means newline;
+  /// Cmd/Ctrl+Enter sends with or without Shift (the pre-fix precedence).
+  /// Touch keyboards deliver the return key through the IME as a text
+  /// delta under that same `newline` action — no hardware key event
+  /// reaches this handler, so the mobile newline behavior is unchanged.
   ///
   /// Cmd/Ctrl+V is smart paste (the YoLoIT pattern): a clipboard image is
   /// staged as an upload chip, long or multi-line text becomes a staged
   /// `.txt` chip, and only short single-line text is pasted inline.
   KeyEventResult _handleComposerKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
-    if (event.logicalKey == LogicalKeyboardKey.enter &&
-        (HardwareKeyboard.instance.isMetaPressed ||
-            HardwareKeyboard.instance.isControlPressed)) {
+    final keyboard = HardwareKeyboard.instance;
+    final isEnter = event.logicalKey == LogicalKeyboardKey.enter ||
+        event.logicalKey == LogicalKeyboardKey.numpadEnter;
+    if (isEnter &&
+        (!keyboard.isShiftPressed ||
+            keyboard.isMetaPressed ||
+            keyboard.isControlPressed)) {
       unawaited(_send(_textController.text));
       return KeyEventResult.handled;
     }
     if (event.logicalKey == LogicalKeyboardKey.keyV &&
-        (HardwareKeyboard.instance.isMetaPressed ||
-            HardwareKeyboard.instance.isControlPressed)) {
+        (keyboard.isMetaPressed || keyboard.isControlPressed)) {
       unawaited(_handleSmartPaste());
       return KeyEventResult.handled;
     }
@@ -840,11 +844,10 @@ class ChatComposerState extends State<ChatComposer>
                             ),
                             filled: true,
                           ),
-                          // Multiline: Enter (touch return key or
-                          // hardware key) inserts a line break; the field
+                          // Multiline: Shift+Enter (hardware) or the
+                          // touch return key inserts a line break; plain
+                          // Enter sends (_handleComposerKey). The field
                           // grows 1→6 lines and then scrolls internally.
-                          // Submit lives on the send button and
-                          // Ctrl/Cmd+Enter (_handleComposerKey).
                           keyboardType: TextInputType.multiline,
                           textInputAction: TextInputAction.newline,
                           maxLines: 6,
