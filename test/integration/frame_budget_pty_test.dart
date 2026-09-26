@@ -25,7 +25,14 @@ void main() {
   test('E2E-1 #479 AC3: 80x24, four live jobs — status whole, composer '
       'intact, board visible, frame on the glass', () async {
     final tempHome = Directory.systemTemp.createTempSync('fa_tui_479_pty_');
-    final workspace = Directory('/tmp').createTempSync('fa479ws');
+    // Unique SHORT cwd (the #936/#938 race class). The name must stay
+    // <= 7 chars: the status row is tail-truncated and this suite asserts
+    // the model slug ('openai/mock-model', AC3 "status whole") — the mac
+    // minis resolve /tmp to /private/tmp/<name>, so the resolved path
+    // must keep the pre-sweep 20-char budget ('f' + 6 random = 7);
+    // 'fa479wsXXXXXX' (26) pushed the slug behind the ellipsis on
+    // fa-m5 (run 36237226828 shard 2).
+    final workspace = Directory('/tmp').createTempSync('f');
     addTearDown(() => workspace.deleteSync(recursive: true));
     final server = await MockLlmServer.start()
       ..enqueueToolCall('bash', '{"command": "sleep 40", "background": true}')
