@@ -110,10 +110,18 @@ void main() {
     // this copy's CLI mid-boot (the [Model] banner never arrives →
     // waitForBoot timeout) and then breaks its own tearDown
     // (PathNotFoundException). Observed on main (run 36224616919).
-    // systemTemp keeps each run self-contained; the unique HOME also stops
-    // session state from a crashed prior run leaking into the next.
-    home = await Directory.systemTemp.createTemp('fa_539_home_');
-    project = await Directory.systemTemp.createTemp('fa_539_proj_');
+    // Uniqueness also stops session state from a crashed prior run leaking
+    // into the next.
+    //
+    // Under /tmp, NOT Directory.systemTemp: on the mac minis systemTemp
+    // resolves to a ~77-char /private/var/folders/... path, and the status
+    // row renders `<cwd> · ctx N% ...` clipped at the glass — the long cwd
+    // eats the `· ctx ` marker expectComposerReserved() sniffs, so a live
+    // frame misclassifies as idle (run 36232635161, the 80-col leg). The
+    // resolved /tmp path (/private/tmp/fa_539_p_XXXXXXXX) keeps the marker
+    // inside the glass; /tmp already was this suite's platform contract.
+    home = await Directory('/tmp').createTemp('fa_539_h_');
+    project = await Directory('/tmp').createTemp('fa_539_p_');
     // Pin the classic chrome: this suite asserts the classic grid (#539);
     // the band redesign (#805-#807) has its own surface.
     File('${home.path}/.fah/config.yaml')
