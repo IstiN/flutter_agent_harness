@@ -225,9 +225,8 @@ void _registerNetworkScopeGroup() {
       expect(find.byKey(const ValueKey('inviteCliHint')), findsOneWidget);
     });
 
-    testWidgets('env format: import + FA_PROVIDER/DAP launch line (channel)', (
-      tester,
-    ) async {
+    testWidgets('env format: channel invite + agent name (no secrets to '
+        'fill in)', (tester) async {
       await pump(tester, wallet: await buildWallet());
       await tester.tap(find.text('Env (CI)'));
       await tester.pump();
@@ -235,20 +234,21 @@ void _registerNetworkScopeGroup() {
       final payload = tester
           .widget<Text>(find.byKey(const ValueKey('agentInvite')))
           .data!;
-      expect(payload, startsWith("fa dap import 'wss://hub.fa1.dev/ws"));
-      expect(payload, contains(' && DAP_HUB_URL=wss://hub.fa1.dev/ws '));
-      // Hub-only line: no provider vars — that is the runner's own fa
-      // config, never the invite's business.
+      expect(payload, startsWith("FA_CHANNEL_URL='wss://hub.fa1.dev/ws"));
+      // The invite IS the whole credential — no master secret, no
+      // provider vars: the runner's provider is its own fa config.
       expect(payload.contains('FA_PROVIDER'), isFalse);
-      expect(payload, contains("DAP_MASTER_SECRET='<hub master secret>' "));
-      expect(payload, contains('DAP_AGENT_NAME=general-agent fa'));
+      expect(payload.contains('MASTER_SECRET'), isFalse);
+      expect(payload, contains('FA_AGENT_NAME=general-agent fa'));
       expect(find.byKey(const ValueKey('inviteEnvHint')), findsOneWidget);
     });
 
-    testWidgets('env format on the network scope: no import, fa-agent name', (
-      tester,
-    ) async {
-      await pump(tester, wallet: await buildWallet(password: 'sekret42'));
+    testWidgets('env format on the network scope: the join link carries '
+        'the network id + password', (tester) async {
+      await pump(
+        tester,
+        wallet: await buildWallet(password: '[REDACTED:Sensitive Value]'),
+      );
       await tester.tap(find.text('Whole network'));
       await tester.pump();
       await tester.tap(find.text('Env (CI)'));
@@ -258,9 +258,13 @@ void _registerNetworkScopeGroup() {
           .widget<Text>(find.byKey(const ValueKey('agentInvite')))
           .data!;
       expect(payload.startsWith('fa dap import'), isFalse);
-      expect(payload, startsWith('DAP_HUB_URL=wss://hub.fa1.dev/ws '));
+      expect(
+        payload,
+        startsWith("FA_NETWORK_URL='https://network.fa1.dev/join?network=net1"),
+      );
       expect(payload.contains('FA_PROVIDER'), isFalse);
-      expect(payload, contains('DAP_AGENT_NAME=fa-agent fa'));
+      expect(payload.contains('MASTER_SECRET'), isFalse);
+      expect(payload, contains('FA_AGENT_NAME=fa-agent fa'));
     });
 
     testWidgets('CLI format on the network scope shares the plain link', (
@@ -292,59 +296,55 @@ void _registerNetworkScopeGroup() {
       await tester.tap(find.text('Env (CI)'));
       await tester.pump();
 
+      final invite = tester
+          .widget<Text>(find.byKey(const ValueKey('envRow:FA_CHANNEL_URL')))
+          .data!;
+      expect(invite, startsWith('FA_CHANNEL_URL=wss://hub.fa1.dev/ws'));
       expect(
         tester
-            .widget<Text>(find.byKey(const ValueKey('envRow:DAP_HUB_URL')))
+            .widget<Text>(find.byKey(const ValueKey('envRow:FA_AGENT_NAME')))
             .data,
-        'DAP_HUB_URL=wss://hub.fa1.dev/ws',
+        'FA_AGENT_NAME=general-agent',
       );
       expect(
-        tester
-            .widget<Text>(find.byKey(const ValueKey('envRow:DAP_AGENT_NAME')))
-            .data,
-        'DAP_AGENT_NAME=general-agent',
+        find.byKey(const ValueKey('envRow:DAP_MASTER_SECRET')),
+        findsNothing,
       );
-      expect(find.byKey(const ValueKey('envRow:IMPORT')), findsOneWidget);
 
       final clipboard = FakeClipboard()..install(tester);
-      await tester.tap(find.byKey(const ValueKey('envCopy:DAP_HUB_URL')));
+      await tester.tap(find.byKey(const ValueKey('envCopy:FA_CHANNEL_URL')));
       await tester.pump();
-      expect(clipboard.text, 'DAP_HUB_URL=wss://hub.fa1.dev/ws');
+      expect(clipboard.text, invite);
 
-      await tester.tap(find.byKey(const ValueKey('envCopy:DAP_AGENT_NAME')));
+      await tester.tap(find.byKey(const ValueKey('envCopy:FA_AGENT_NAME')));
       await tester.pump();
-      expect(clipboard.text, 'DAP_AGENT_NAME=general-agent');
+      expect(clipboard.text, 'FA_AGENT_NAME=general-agent');
     });
 
-    testWidgets('env format: the typed secret lands in the line and its '
-        'row copy', (tester) async {
+    testWidgets('env format on the network scope: the FA_NETWORK_URL row '
+        'carries the join link with the password', (tester) async {
       await pump(
         tester,
         wallet: await buildWallet(password: '[REDACTED:Sensitive Value]'),
       );
+      await tester.tap(find.text('Whole network'));
+      await tester.pump();
       await tester.tap(find.text('Env (CI)'));
       await tester.pump();
 
-      await tester.enterText(
-        find.byKey(const ValueKey('envRow:DAP_MASTER_SECRET')),
-        's3cr3t',
-      );
-      await tester.pump();
-
-      final payload = tester
-          .widget<Text>(find.byKey(const ValueKey('agentInvite')))
+      final row = tester
+          .widget<Text>(find.byKey(const ValueKey('envRow:FA_NETWORK_URL')))
           .data!;
-      expect(payload, contains("DAP_MASTER_SECRET='s3cr3t'"));
-      expect(payload.contains('FA_PROVIDER'), isFalse);
+      expect(
+        row,
+        startsWith('FA_NETWORK_URL=https://network.fa1.dev/join?network=net1'),
+      );
+      expect(row, contains('#pw='));
 
       final clipboard = FakeClipboard()..install(tester);
-      await tester.ensureVisible(
-        find.byKey(const ValueKey('envCopy:DAP_MASTER_SECRET')),
-      );
+      await tester.tap(find.byKey(const ValueKey('envCopy:FA_NETWORK_URL')));
       await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('envCopy:DAP_MASTER_SECRET')));
-      await tester.pump();
-      expect(clipboard.text, 'DAP_MASTER_SECRET=s3cr3t');
+      expect(clipboard.text, row);
     });
 
     testWidgets('a network-scope dialog without a channel hides the scope '
