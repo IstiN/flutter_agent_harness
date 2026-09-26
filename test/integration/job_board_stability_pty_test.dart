@@ -318,7 +318,7 @@ void main() {
   });
 
   // gh-938: this case raced the shared /tmp/fa_539_home layout — moot since
-  // setUp moved both roots to unique systemTemp dirs (the #936 class fix
+  // setUp moved both roots to unique dirs under /tmp (the #936 class fix
   // above), so the skip is dropped. 'stacked boards freeze' above stays
   // UNSKIPPED on purpose — it is the real #937 regression and must stay red
   // until ai/gh-869 is fixed.
