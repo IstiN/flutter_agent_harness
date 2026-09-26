@@ -11,7 +11,9 @@
 The resulting junit-shard-N.xml artifacts are what
 .github/workflows/shard-rebalance.yml consumes for duration-based shard
 rebalancing (scripts/rebalance_shards.py --from-junit): `classname` is the
-suite path, which is what the rebalancer matches units by.
+suite path, which is what the rebalancer matches units by. Since issue
+#928 the SAME span walk (iter_test_spans) also feeds the duration budget
+gate — one parser, both formats, no drift.
 
 Only real tests are emitted: groups arrive as "group" events (never
 testStart), and the "loading <file>" pseudo-test is filtered by its hidden
@@ -28,10 +30,16 @@ import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
 
 
-def convert(json_path: str, xml_path: str) -> int:
+def iter_test_spans(json_path):
+    """Yield (suite_path, test_name, duration_seconds, failed) per test.
+
+    The canonical dart-json span walk: paired testStart/testDone, hidden
+    pseudo-tests excluded, torn/partial lines skipped (never fatal for
+    timing data). Consumed by this converter AND
+    scripts/check_test_durations.py.
+    """
     suites = {}  # suiteID -> test file path
     starts = {}  # testID -> (name, suite path, start ms)
-    cases = []   # (name, suite path, duration_seconds, failed)
     with open(json_path, encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
@@ -43,7 +51,7 @@ def convert(json_path: str, xml_path: str) -> int:
                 continue  # torn/partial line — never fatal for timing data
             kind = ev.get("type")
             if kind == "suite":
-                suites[ev["suite"]["id"]] = ev["suite"]["path"]
+                suites[ev["suite"]["id"]] = ev["suite"].get("path", "")
             elif kind == "testStart":
                 starts[ev["test"]["id"]] = (
                     ev["test"].get("name", ""),
@@ -56,12 +64,16 @@ def convert(json_path: str, xml_path: str) -> int:
                     name, path, t0 = starts.pop(tid)
                     dur = max((ev["time"] - t0) / 1000.0, 0.0)
                     failed = ev.get("result") in ("failure", "error")
-                    cases.append((name, path, dur, failed))
+                    yield path, name, dur, failed
+
+
+def convert(json_path: str, xml_path: str) -> int:
+    cases = list(iter_test_spans(json_path))
     suite = ET.Element("testsuite", {
         "name": json_path,
         "tests": str(len(cases)),
     })
-    for name, path, dur, failed in cases:
+    for path, name, dur, failed in cases:
         tc = ET.SubElement(suite, "testcase",
                            {"name": escape(name), "classname": path,
                             "time": f"{dur:.3f}"})
