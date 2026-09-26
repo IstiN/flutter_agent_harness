@@ -387,6 +387,27 @@ class FaNetworkClient {
     return _decodeList(res, NetworkAgent.fromJson);
   }
 
+  /// `POST /api/networks/{id}/agents/enroll` — mints a one-time,
+  /// name-bound DAP credential for a pure-DAP agent (management class
+  /// ONLY: owner/admin; a plain member earns 403 `forbidden_by_class`,
+  /// an invalid name 400 `invalid_credentials`, an offline hub 503
+  /// `hub_unavailable`). The returned [AgentEnrollment.clientSecret] is
+  /// shown exactly once — never stored server-side; re-enrolling the
+  /// same name silently ROTATES it.
+  Future<AgentEnrollment> enrollAgent(
+    String networkId, {
+    required String name,
+  }) async {
+    final res = await _request(
+      'POST',
+      '/api/networks/$networkId/agents/enroll',
+      body: {'name': name},
+      management: true,
+      expected: {201},
+    );
+    return AgentEnrollment.fromJson(_decodeMap(res));
+  }
+
   // --------------------------------------------------------------- wakeups
 
   /// `GET /api/networks/{id}/agents/{agentId}/wakeups` (owner/admin).
