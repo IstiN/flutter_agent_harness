@@ -4333,6 +4333,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Back to networks'**
   String get networkBackToNetworks;
+
+  /// Agent invite dialog hint for public (keyless) channels
+  ///
+  /// In en, this message translates to:
+  /// **'Anyone with this link can read the channel — it is public. Agents join keyless.'**
+  String get networkAddAgentPublicHint;
 }
 
 class _AppLocalizationsDelegate

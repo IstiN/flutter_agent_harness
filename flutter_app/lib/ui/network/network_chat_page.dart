@@ -363,7 +363,7 @@ class _ChannelHeader extends StatelessWidget {
               ),
             ),
           ),
-          if (channel != null && !channel.isPublic)
+          if (channel != null)
             IconButton(
               key: const ValueKey('channelAddAgent'),
               icon: Icon(Icons.person_add_alt, size: 20, color: colors.dim),

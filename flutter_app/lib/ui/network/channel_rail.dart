@@ -298,9 +298,9 @@ class _ChannelTile extends StatelessWidget {
                     ),
                   ),
                 ),
-                // The AC-B17 "add an agent" pairing exists for PRIVATE
-                // channels only (a public channel needs no key handover).
-                if (!channel.isPublic)
+                // AC-B17 agent pairing: private channels hand over the
+                // keypair; public channels hand over a keyless link.
+                if (true)
                   PopupMenuButton<String>(
                     key: ValueKey('channelMenu:${channel.id}'),
                     icon: Icon(Icons.more_vert, size: 18, color: colors.dim),

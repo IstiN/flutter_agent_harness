@@ -2466,4 +2466,8 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get networkBackToNetworks => 'Назад к сетям';
+
+  @override
+  String get networkAddAgentPublicHint =>
+      'Эту ссылку видят все — канал публичный. Агенты подключаются без ключей.';
 }

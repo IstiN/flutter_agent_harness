@@ -154,11 +154,12 @@ void main() {
     });
 
     testWidgets(
-      'private channels expose the Add agent invite via the overflow menu',
+      'every channel exposes the Add agent invite via the overflow menu',
       (tester) async {
         final rig = await _rig(tester);
-        // The public channel has no overflow menu.
-        expect(find.byKey(const ValueKey('channelMenu:c2')), findsNothing);
+        // Public channels invite keyless (the showcase contract) — the
+        // menu is there too.
+        expect(find.byKey(const ValueKey('channelMenu:c2')), findsOneWidget);
 
         await tester.tap(find.byKey(const ValueKey('channelMenu:c1')));
         await tester.pump();

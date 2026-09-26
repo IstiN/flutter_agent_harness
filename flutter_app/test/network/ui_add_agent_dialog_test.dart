@@ -54,13 +54,17 @@ void main() {
           .data!;
 
       expect(invite, startsWith('wss://hub.fa1.dev/ws'));
-      expect(invite, contains('channel=general'));
+      expect(
+        invite,
+        contains('channel=c1'),
+        reason: 'fa_network relays onto DAP channels named by id',
+      );
       final fragmentStart = invite.indexOf('#');
       expect(fragmentStart, greaterThan(0));
       // The private key material appears ONLY after the '#' fragment —
       // never in the wire-visible part of the URI (RFC 3986).
       final parsed = parseAgentInvite(invite);
-      expect(parsed.channel, 'general');
+      expect(parsed.channel, 'c1');
       expect(parsed.pub, isNotEmpty);
       expect(invite.substring(0, fragmentStart), isNot(contains('priv=')));
       expect(
@@ -72,6 +76,39 @@ void main() {
         find.textContaining('anyone with this string can read the channel'),
         findsOneWidget,
       );
+    });
+
+    testWidgets('public channel: keyless invite with the channel id', (
+      tester,
+    ) async {
+      const channel = Channel(
+        id: 'pc9',
+        networkId: 'net1',
+        name: 'lobby',
+        isPublic: true,
+      );
+      final wallet = await walletWithChannel(
+        channelPub: channelKeys.pub,
+        channelPriv: channelKeys.priv,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          home: Scaffold(
+            body: AddAgentDialog(
+              wallet: wallet,
+              networkId: 'net1',
+              channel: channel,
+            ),
+          ),
+        ),
+      );
+      final invite = tester
+          .widget<Text>(find.byKey(const ValueKey('agentInvite')))
+          .data!;
+      expect(invite, contains('channel=pc9'));
+      expect(invite, isNot(contains('#')), reason: 'no key material');
+      expect(find.byKey(const ValueKey('copyInvite')), findsOneWidget);
     });
 
     testWidgets('the invite leaves the device only via the user Copy', (

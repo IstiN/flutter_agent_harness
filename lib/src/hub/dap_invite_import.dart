@@ -21,8 +21,8 @@ final class DapInviteImport {
   const DapInviteImport({
     required this.hubUrl,
     required this.channel,
-    required this.pub,
-    required this.priv,
+    this.pub,
+    this.priv,
   });
 
   /// The hub websocket URL the agent dials (fragment stripped — the
@@ -32,9 +32,10 @@ final class DapInviteImport {
   /// The channel to join.
   final String channel;
 
-  /// Channel X25519 keypair, base64 (32 raw bytes each).
-  final String pub;
-  final String priv;
+  /// Channel X25519 keypair, base64/base64url (32 raw bytes each) — null
+  /// for a PUBLIC channel invite (keyless by the showcase contract).
+  final String? pub;
+  final String? priv;
 }
 
 /// Strict parser — hostile or malformed strings are rejected with a
@@ -59,15 +60,15 @@ DapInviteImport parseDapInviteImport(String raw) {
   if (channel == null || channel.isEmpty) {
     throw const FormatException('missing ?channel= query parameter');
   }
-  if (uri.fragment.isEmpty) {
-    throw const FormatException(
-      'missing #pub=…&priv=… fragment — the invite carries the channel '
-      'key in the fragment',
-    );
+  // The fragment carries the keypair for PRIVATE channels; public
+  // channels (the showcase contract) have no chankey and no fragment.
+  String? pub;
+  String? priv;
+  if (uri.fragment.isNotEmpty) {
+    final params = Uri.splitQueryString(uri.fragment);
+    pub = _keyParam(params, 'pub');
+    priv = _keyParam(params, 'priv');
   }
-  final params = Uri.splitQueryString(uri.fragment);
-  final pub = _keyParam(params, 'pub');
-  final priv = _keyParam(params, 'priv');
   return DapInviteImport(
     hubUrl: uri.removeFragment().toString(),
     channel: channel,
@@ -83,7 +84,8 @@ String _keyParam(Map<String, String> params, String name) {
   }
   final List<int> bytes;
   try {
-    bytes = base64Decode(value);
+    // The app emits base64url (URL-safe fragment); plain base64 accepted.
+    bytes = base64Url.decode(base64Url.normalize(value));
   } on Object {
     throw FormatException('fragment parameter $name= is not base64');
   }

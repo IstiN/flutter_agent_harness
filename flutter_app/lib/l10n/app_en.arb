@@ -654,7 +654,7 @@
   "@githubBrowserCodeHint": {
     "description": "Hint of the one-time-code field on the Browser tab"
   },
-"sessionDrivenElsewhere": "Driven by {host} (pid {pid}) — you are viewing. Your messages are delivered to the live agent.",
+  "sessionDrivenElsewhere": "Driven by {host} (pid {pid}) — you are viewing. Your messages are delivered to the live agent.",
   "@sessionDrivenElsewhere": {
     "description": "Viewer notice when a live ownership lease blocks opening a session for drive (#428)",
     "placeholders": {
@@ -847,254 +847,493 @@
   "@settingsCompactionDocs": {
     "description": "Link to the compaction documentation from the settings section (issue #287)"
   },
-    "settingsQueueTitle": "Provider queue",
-  "@settingsQueueTitle": { "description": "Title of the Settings provider-queue section (issue #418)" },
+  "settingsQueueTitle": "Provider queue",
+  "@settingsQueueTitle": {
+    "description": "Title of the Settings provider-queue section (issue #418)"
+  },
   "settingsQueueHelper": "An ordered chain of providers: when the current provider dies (quota, auth, network, timeout, malformed stream, 5xx, bad finish), the next takes over and the winner sticks for the session. Applies from the next run.",
-  "@settingsQueueHelper": { "description": "Explainer under the queue section title (issue #418)" },
+  "@settingsQueueHelper": {
+    "description": "Explainer under the queue section title (issue #418)"
+  },
   "settingsQueueEmpty": "No provider queue — the single provider/model boot applies. Add an entry to build the chain.",
-  "@settingsQueueEmpty": { "description": "Empty-state caption (issue #418)" },
+  "@settingsQueueEmpty": {
+    "description": "Empty-state caption (issue #418)"
+  },
   "settingsQueueScopeEnv": "effective from the FA_PROVIDERS_QUEUE environment variable — edit the env to change it (read-only here)",
-  "@settingsQueueScopeEnv": { "description": "Env-wins caption; the env scope is read-only (issue #418)" },
+  "@settingsQueueScopeEnv": {
+    "description": "Env-wins caption; the env scope is read-only (issue #418)"
+  },
   "settingsQueueUnsupported": "Not configurable on the web — there is no config file or environment here.",
-  "@settingsQueueUnsupported": { "description": "Web stub note (issue #418)" },
+  "@settingsQueueUnsupported": {
+    "description": "Web stub note (issue #418)"
+  },
   "settingsQueueAdd": "Add entry",
-  "@settingsQueueAdd": { "description": "Button adding a queue entry (issue #418)" },
+  "@settingsQueueAdd": {
+    "description": "Button adding a queue entry (issue #418)"
+  },
   "settingsQueueAddTitle": "Add queue entry",
-  "@settingsQueueAddTitle": { "description": "Title of the queue provider/model picker (issue #418, two-step flow #693)" },
+  "@settingsQueueAddTitle": {
+    "description": "Title of the queue provider/model picker (issue #418, two-step flow #693)"
+  },
   "settingsQueueMoveUp": "Move up",
-  "@settingsQueueMoveUp": { "description": "Reorder tooltip (issue #418)" },
+  "@settingsQueueMoveUp": {
+    "description": "Reorder tooltip (issue #418)"
+  },
   "settingsQueueMoveDown": "Move down",
-  "@settingsQueueMoveDown": { "description": "Reorder tooltip (issue #418)" },
+  "@settingsQueueMoveDown": {
+    "description": "Reorder tooltip (issue #418)"
+  },
   "settingsQueueRemove": "Remove",
-  "@settingsQueueRemove": { "description": "Remove tooltip (issue #418)" },
+  "@settingsQueueRemove": {
+    "description": "Remove tooltip (issue #418)"
+  },
   "settingsQueueSaved": "Queue saved to {file} — applies from the next run.",
-  "@settingsQueueSaved": { "placeholders": { "file": { "type": "String" } } },
+  "@settingsQueueSaved": {
+    "placeholders": {
+      "file": {
+        "type": "String"
+      }
+    }
+  },
   "settingsQueueSaveFailed": "Could not save the queue: {error}",
-  "@settingsQueueSaveFailed": { "placeholders": { "error": { "type": "String" } } },
+  "@settingsQueueSaveFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "themePackImportFailed": "Theme pack rejected",
   "settingsMobileAutomation": "Device automation",
-  "@settingsMobileAutomation": { "description": "Settings tile opening the device-automation consent screen" },
+  "@settingsMobileAutomation": {
+    "description": "Settings tile opening the device-automation consent screen"
+  },
   "mobileConsentTitle": "Device automation",
-  "@mobileConsentTitle": { "description": "Title of the device-automation consent screen" },
+  "@mobileConsentTitle": {
+    "description": "Title of the device-automation consent screen"
+  },
   "mobileConsentWhat": "Enabling this lets the Fa accessibility service read the screen content and perform taps and typing on your behalf, so Fa can drive apps and settings for you.",
-  "@mobileConsentWhat": { "description": "Consent body: what the accessibility service enables" },
+  "@mobileConsentWhat": {
+    "description": "Consent body: what the accessibility service enables"
+  },
   "mobileConsentOffByDefault": "The service is off by default — nothing runs until you turn it on here.",
-  "@mobileConsentOffByDefault": { "description": "Consent body: default state" },
+  "@mobileConsentOffByDefault": {
+    "description": "Consent body: default state"
+  },
   "mobileConsentDisableHint": "You can disable it any time with one tap in Fa settings.",
-  "@mobileConsentDisableHint": { "description": "Consent body: one-tap disable promise" },
+  "@mobileConsentDisableHint": {
+    "description": "Consent body: one-tap disable promise"
+  },
   "mobileConsentPrivacy": "Your data stays on the device: only the messages you exchange are sent inline to the model you configured.",
-  "@mobileConsentPrivacy": { "description": "Consent body: data-leave-device scope" },
+  "@mobileConsentPrivacy": {
+    "description": "Consent body: data-leave-device scope"
+  },
   "mobileConsentEnable": "Enable — open system settings",
-  "@mobileConsentEnable": { "description": "Button sending the user to system accessibility settings" },
+  "@mobileConsentEnable": {
+    "description": "Button sending the user to system accessibility settings"
+  },
   "mobileConsentDisable": "Disable",
-  "@mobileConsentDisable": { "description": "One-tap disable button" },
+  "@mobileConsentDisable": {
+    "description": "One-tap disable button"
+  },
   "mobileConsentStatusOn": "Accessibility service: on",
-  "@mobileConsentStatusOn": { "description": "Status row when the service is enabled" },
+  "@mobileConsentStatusOn": {
+    "description": "Status row when the service is enabled"
+  },
   "mobileConsentStatusOff": "Accessibility service: off",
-  "@mobileConsentStatusOff": { "description": "Status row when the service is disabled" },
+  "@mobileConsentStatusOff": {
+    "description": "Status row when the service is disabled"
+  },
   "mobileConsentStoreUnavailable": "Device automation is not available in this build of Fa.",
-  "@mobileConsentStoreUnavailable": { "description": "Defensive message on store builds, where the consent surface never appears" },
+  "@mobileConsentStoreUnavailable": {
+    "description": "Defensive message on store builds, where the consent surface never appears"
+  },
   "storeBannerTitle": "Get Fa on the App Store",
-  "@storeBannerTitle": { "description": "In-app Get banner: title" },
+  "@storeBannerTitle": {
+    "description": "In-app Get banner: title"
+  },
   "storeBannerBody": "The App Store release is paid — it funds development. The TestFlight beta is free forever.",
-  "@storeBannerBody": { "description": "In-app Get banner: paid vs free-forever-beta messaging" },
+  "@storeBannerBody": {
+    "description": "In-app Get banner: paid vs free-forever-beta messaging"
+  },
   "storeBannerAndroidSoon": "Android: coming soon",
-  "@storeBannerAndroidSoon": { "description": "In-app Get banner: the Android slot while links.play is unset" },
+  "@storeBannerAndroidSoon": {
+    "description": "In-app Get banner: the Android slot while links.play is unset"
+  },
   "storeBannerCta": "Open the App Store",
-  "@storeBannerCta": { "description": "In-app Get banner: the primary CTA button" },
+  "@storeBannerCta": {
+    "description": "In-app Get banner: the primary CTA button"
+  },
   "storeBannerBeta": "or join the free TestFlight beta",
-  "@storeBannerBeta": { "description": "In-app Get banner: the secondary beta link" },
+  "@storeBannerBeta": {
+    "description": "In-app Get banner: the secondary beta link"
+  },
   "storeBannerDismiss": "Hide banner",
-  "@storeBannerDismiss": { "description": "In-app Get banner: dismiss tooltip/label" },
+  "@storeBannerDismiss": {
+    "description": "In-app Get banner: dismiss tooltip/label"
+  },
   "networkModeLocal": "Local",
-  "@networkModeLocal": { "description": "Network-mode chip: the local (classic) mode segment" },
+  "@networkModeLocal": {
+    "description": "Network-mode chip: the local (classic) mode segment"
+  },
   "networkModeNetwork": "Network",
-  "@networkModeNetwork": { "description": "Network-mode chip: the network mode segment" },
+  "@networkModeNetwork": {
+    "description": "Network-mode chip: the network mode segment"
+  },
   "networkWelcomeTitle": "Welcome to Fa networks",
-  "@networkWelcomeTitle": { "description": "Network mode welcome title (wide empty state)" },
+  "@networkWelcomeTitle": {
+    "description": "Network mode welcome title (wide empty state)"
+  },
   "networkWelcomeBody": "Join an existing network or create your own — channels and showcases open here.",
-  "@networkWelcomeBody": { "description": "Network mode welcome body (wide empty state)" },
+  "@networkWelcomeBody": {
+    "description": "Network mode welcome body (wide empty state)"
+  },
   "networkNetworksTitle": "Networks",
-  "@networkNetworksTitle": { "description": "Network picker header / sidebar title" },
+  "@networkNetworksTitle": {
+    "description": "Network picker header / sidebar title"
+  },
   "networkBackTooltip": "Back",
-  "@networkBackTooltip": { "description": "Network home back button tooltip" },
+  "@networkBackTooltip": {
+    "description": "Network home back button tooltip"
+  },
   "networkSearchHint": "Search networks",
-  "@networkSearchHint": { "description": "Network search field hint" },
+  "@networkSearchHint": {
+    "description": "Network search field hint"
+  },
   "networkSignInTitle": "Sign in",
-  "@networkSignInTitle": { "description": "Sign-in dialog title, button and sidebar row" },
+  "@networkSignInTitle": {
+    "description": "Sign-in dialog title, button and sidebar row"
+  },
   "networkSignInHelper": "Sign in with your ai-native.cloud account to create and manage networks.",
-  "@networkSignInHelper": { "description": "Sign-in dialog helper note" },
+  "@networkSignInHelper": {
+    "description": "Sign-in dialog helper note"
+  },
   "networkSignInWithProvider": "Continue with {provider}",
   "@networkSignInWithProvider": {
     "description": "Sign-in dialog OAuth provider button",
-    "placeholders": { "provider": {} }
+    "placeholders": {
+      "provider": {}
+    }
   },
   "networkSignInWaiting": "Complete the sign-in in your browser…",
-  "@networkSignInWaiting": { "description": "Sign-in dialog note while the browser OAuth flow is open" },
+  "@networkSignInWaiting": {
+    "description": "Sign-in dialog note while the browser OAuth flow is open"
+  },
   "networkSignInDeveloperSection": "Developer (local only)",
-  "@networkSignInDeveloperSection": { "description": "Sign-in dialog collapsed section with the dev-login form" },
+  "@networkSignInDeveloperSection": {
+    "description": "Sign-in dialog collapsed section with the dev-login form"
+  },
   "networkSignInMobileNote": "Provider sign-in is unavailable here until the fa:// redirect is allowlisted on the server — only the developer login below works for now.",
-  "@networkSignInMobileNote": { "description": "Sign-in dialog note on iOS/Android replacing the provider buttons" },
+  "@networkSignInMobileNote": {
+    "description": "Sign-in dialog note on iOS/Android replacing the provider buttons"
+  },
   "networkSessionExpired": "Session expired — sign in again.",
-  "@networkSessionExpired": { "description": "Sidebar account row note when the stored tokens can no longer be refreshed" },
+  "@networkSessionExpired": {
+    "description": "Sidebar account row note when the stored tokens can no longer be refreshed"
+  },
   "networkLoginLabel": "Login",
-  "@networkLoginLabel": { "description": "Sign-in dialog login field label" },
+  "@networkLoginLabel": {
+    "description": "Sign-in dialog login field label"
+  },
   "networkSignOut": "Sign out",
-  "@networkSignOut": { "description": "Sidebar account row: sign-out action" },
+  "@networkSignOut": {
+    "description": "Sidebar account row: sign-out action"
+  },
   "networkAccountFallback": "Account",
-  "@networkAccountFallback": { "description": "Sidebar account row label when the login is unknown" },
+  "@networkAccountFallback": {
+    "description": "Sidebar account row label when the login is unknown"
+  },
   "networkPublicSection": "Public networks",
-  "@networkPublicSection": { "description": "Sidebar section label for the public-networks directory" },
+  "@networkPublicSection": {
+    "description": "Sidebar section label for the public-networks directory"
+  },
   "networkPublicMembers": "{count} members",
   "@networkPublicMembers": {
     "description": "Public directory row: member count",
-    "placeholders": { "count": {} }
+    "placeholders": {
+      "count": {}
+    }
   },
   "networkEmptyTitle": "No networks yet",
-  "@networkEmptyTitle": { "description": "Empty state when the wallet has no memberships" },
+  "@networkEmptyTitle": {
+    "description": "Empty state when the wallet has no memberships"
+  },
   "networkJoinFirst": "Join your first network",
-  "@networkJoinFirst": { "description": "Empty state CTA" },
+  "@networkJoinFirst": {
+    "description": "Empty state CTA"
+  },
   "networkNoMatches": "No matches",
-  "@networkNoMatches": { "description": "Search with no matching memberships" },
+  "@networkNoMatches": {
+    "description": "Search with no matching memberships"
+  },
   "networkCreateNetwork": "Create a network",
-  "@networkCreateNetwork": { "description": "Create-network button and dialog title" },
+  "@networkCreateNetwork": {
+    "description": "Create-network button and dialog title"
+  },
   "networkNameLabel": "Name",
-  "@networkNameLabel": { "description": "Name field label (create network/channel dialogs)" },
+  "@networkNameLabel": {
+    "description": "Name field label (create network/channel dialogs)"
+  },
   "networkPasswordLabel": "Password",
-  "@networkPasswordLabel": { "description": "Password field label" },
+  "@networkPasswordLabel": {
+    "description": "Password field label"
+  },
   "networkCreate": "Create",
-  "@networkCreate": { "description": "Create dialog confirm button" },
+  "@networkCreate": {
+    "description": "Create dialog confirm button"
+  },
   "networkJoinTitle": "Join a network",
-  "@networkJoinTitle": { "description": "Join sheet title and join-button tooltip" },
+  "@networkJoinTitle": {
+    "description": "Join sheet title and join-button tooltip"
+  },
   "networkQuickSwitcherTitle": "Quick switch",
-  "@networkQuickSwitcherTitle": { "description": "⌘K quick-switcher dialog title" },
+  "@networkQuickSwitcherTitle": {
+    "description": "⌘K quick-switcher dialog title"
+  },
   "networkJoinLinkLabel": "Join link",
-  "@networkJoinLinkLabel": { "description": "Join sheet: join link field label" },
+  "@networkJoinLinkLabel": {
+    "description": "Join sheet: join link field label"
+  },
   "networkJoinFill": "Fill",
-  "@networkJoinFill": { "description": "Join sheet: fill form from pasted link" },
+  "@networkJoinFill": {
+    "description": "Join sheet: fill form from pasted link"
+  },
   "networkIdLabel": "Network id",
-  "@networkIdLabel": { "description": "Join sheet: network id field label" },
+  "@networkIdLabel": {
+    "description": "Join sheet: network id field label"
+  },
   "networkDisplayNameLabel": "Display name",
-  "@networkDisplayNameLabel": { "description": "Display name field label" },
+  "@networkDisplayNameLabel": {
+    "description": "Display name field label"
+  },
   "networkDisplayNameLocked": "Display name locked to your account.",
-  "@networkDisplayNameLocked": { "description": "Join sheet note when a JWT pins the display name" },
+  "@networkDisplayNameLocked": {
+    "description": "Join sheet note when a JWT pins the display name"
+  },
   "networkJoinRequired": "Network id and password are required.",
-  "@networkJoinRequired": { "description": "Join sheet validation error" },
+  "@networkJoinRequired": {
+    "description": "Join sheet validation error"
+  },
   "networkJoinInvalidCredentials": "Invalid credentials — {message}",
   "@networkJoinInvalidCredentials": {
     "description": "Join sheet error when the server rejects the credentials",
-    "placeholders": { "message": {} }
+    "placeholders": {
+      "message": {}
+    }
   },
   "networkJoinRetryAfter": " Try again in {seconds}s.",
   "@networkJoinRetryAfter": {
     "description": "Rate-limit suffix appended to the join error",
-    "placeholders": { "seconds": {} }
+    "placeholders": {
+      "seconds": {}
+    }
   },
   "networkJoin": "Join",
-  "@networkJoin": { "description": "Join sheet confirm button" },
+  "@networkJoin": {
+    "description": "Join sheet confirm button"
+  },
   "networkSelectChannel": "Select a channel",
-  "@networkSelectChannel": { "description": "Empty chat pane placeholder" },
+  "@networkSelectChannel": {
+    "description": "Empty chat pane placeholder"
+  },
   "networkReconnecting": "Reconnecting — messages will send when back.",
-  "@networkReconnecting": { "description": "Offline banner above the channel chat" },
+  "@networkReconnecting": {
+    "description": "Offline banner above the channel chat"
+  },
   "networkMessageHint": "Message {channel}",
   "@networkMessageHint": {
     "description": "Channel composer input hint",
-    "placeholders": { "channel": {} }
+    "placeholders": {
+      "channel": {}
+    }
   },
   "networkNewChannel": "New channel",
-  "@networkNewChannel": { "description": "Create-channel button tooltip and dialog title" },
+  "@networkNewChannel": {
+    "description": "Create-channel button tooltip and dialog title"
+  },
   "networkOnlineCount": "{count} online",
   "@networkOnlineCount": {
     "description": "Live member count under the network name",
-    "placeholders": { "count": {} }
+    "placeholders": {
+      "count": {}
+    }
   },
   "networkChannelsSection": "Channels",
-  "@networkChannelsSection": { "description": "Channel rail section header: regular (private) channels" },
+  "@networkChannelsSection": {
+    "description": "Channel rail section header: regular (private) channels"
+  },
   "networkShowcasesSection": "Showcases",
-  "@networkShowcasesSection": { "description": "Channel rail section header: public showcases" },
-  "networkShowcaseReadOnly": "Only the network owner and admins can post here.",
-  "@networkShowcaseReadOnly": { "description": "Read-only note shown instead of the composer in a showcase channel for regular members" },
+  "@networkShowcasesSection": {
+    "description": "Channel rail section header: public showcases"
+  },
+  "networkShowcaseReadOnly": "Public showcase — read-only preview. Join the network to participate.",
+  "@networkShowcaseReadOnly": {
+    "description": "Composer replacement in the anonymous showcase"
+  },
   "networkConnecting": "Connecting…",
-  "@networkConnecting": { "description": "Channel rail placeholder while the session connects" },
+  "@networkConnecting": {
+    "description": "Channel rail placeholder while the session connects"
+  },
   "networkNoChannels": "No channels",
-  "@networkNoChannels": { "description": "Channel rail empty state" },
+  "@networkNoChannels": {
+    "description": "Channel rail empty state"
+  },
   "networkChannelOptions": "Channel options",
-  "@networkChannelOptions": { "description": "Channel overflow menu tooltip" },
+  "@networkChannelOptions": {
+    "description": "Channel overflow menu tooltip"
+  },
   "networkAddAgent": "Add agent…",
-  "@networkAddAgent": { "description": "Channel overflow menu item opening the agent invite" },
+  "@networkAddAgent": {
+    "description": "Channel overflow menu item opening the agent invite"
+  },
   "networkShowcasePublic": "Showcase (public)",
-  "@networkShowcasePublic": { "description": "Create-channel dialog: public toggle" },
+  "@networkShowcasePublic": {
+    "description": "Create-channel dialog: public toggle"
+  },
   "networkAddAgentTitle": "Add an agent",
-  "@networkAddAgentTitle": { "description": "Agent invite dialog title" },
+  "@networkAddAgentTitle": {
+    "description": "Agent invite dialog title"
+  },
   "networkAddAgentWarning": "Share out-of-band — anyone with this string can read the channel.",
-  "@networkAddAgentWarning": { "description": "Agent invite dialog security warning" },
+  "@networkAddAgentWarning": {
+    "description": "Agent invite dialog security warning"
+  },
   "networkAddAgentNoKeys": "No keys for this channel on this device.",
-  "@networkAddAgentNoKeys": { "description": "Agent invite placeholder when the wallet holds no channel keys" },
+  "@networkAddAgentNoKeys": {
+    "description": "Agent invite placeholder when the wallet holds no channel keys"
+  },
   "networkInviteCopied": "Invite copied to clipboard.",
-  "@networkInviteCopied": { "description": "Snack after copying the agent invite" },
+  "@networkInviteCopied": {
+    "description": "Snack after copying the agent invite"
+  },
   "networkCopy": "Copy",
-  "@networkCopy": { "description": "Copy invite button" },
+  "@networkCopy": {
+    "description": "Copy invite button"
+  },
   "networkClose": "Close",
-  "@networkClose": { "description": "Close dialog button" },
+  "@networkClose": {
+    "description": "Close dialog button"
+  },
   "networkWalletTooltip": "Wallet",
-  "@networkWalletTooltip": { "description": "Wallet overflow menu tooltip" },
+  "@networkWalletTooltip": {
+    "description": "Wallet overflow menu tooltip"
+  },
   "networkWalletExport": "Export wallet",
-  "@networkWalletExport": { "description": "Wallet menu item and export dialog title" },
+  "@networkWalletExport": {
+    "description": "Wallet menu item and export dialog title"
+  },
   "networkWalletImport": "Import wallet",
-  "@networkWalletImport": { "description": "Wallet menu item and import dialog title" },
+  "@networkWalletImport": {
+    "description": "Wallet menu item and import dialog title"
+  },
   "networkWalletExported": "Wallet exported — JSON copied to clipboard.",
-  "@networkWalletExported": { "description": "Snack after a successful wallet export" },
+  "@networkWalletExported": {
+    "description": "Snack after a successful wallet export"
+  },
   "networkWalletExportFailed": "Export failed: {error}",
   "@networkWalletExportFailed": {
     "description": "Error snack after a failed wallet export",
-    "placeholders": { "error": {} }
+    "placeholders": {
+      "error": {}
+    }
   },
   "networkWalletImported": "Wallet imported.",
-  "@networkWalletImported": { "description": "Snack after a successful wallet import" },
+  "@networkWalletImported": {
+    "description": "Snack after a successful wallet import"
+  },
   "networkPassphraseLabel": "Passphrase",
-  "@networkPassphraseLabel": { "description": "Passphrase field label" },
+  "@networkPassphraseLabel": {
+    "description": "Passphrase field label"
+  },
   "networkPassphraseRepeatLabel": "Repeat passphrase",
-  "@networkPassphraseRepeatLabel": { "description": "Second passphrase field label" },
+  "@networkPassphraseRepeatLabel": {
+    "description": "Second passphrase field label"
+  },
   "networkPassphraseEmpty": "Passphrase must not be empty.",
-  "@networkPassphraseEmpty": { "description": "Export dialog validation error" },
+  "@networkPassphraseEmpty": {
+    "description": "Export dialog validation error"
+  },
   "networkPassphraseMismatch": "Passphrases do not match.",
-  "@networkPassphraseMismatch": { "description": "Export dialog validation error" },
+  "@networkPassphraseMismatch": {
+    "description": "Export dialog validation error"
+  },
   "networkExport": "Export",
-  "@networkExport": { "description": "Export dialog confirm button" },
+  "@networkExport": {
+    "description": "Export dialog confirm button"
+  },
   "networkImport": "Import",
-  "@networkImport": { "description": "Import dialog confirm button" },
+  "@networkImport": {
+    "description": "Import dialog confirm button"
+  },
   "networkWalletJsonLabel": "Exported wallet JSON",
-  "@networkWalletJsonLabel": { "description": "Import dialog: JSON paste field label" },
+  "@networkWalletJsonLabel": {
+    "description": "Import dialog: JSON paste field label"
+  },
   "networkWalletImportWarning": "Importing replaces the wallet on this device.",
-  "@networkWalletImportWarning": { "description": "Import dialog warning note" },
+  "@networkWalletImportWarning": {
+    "description": "Import dialog warning note"
+  },
   "networkNameHint": "A display name — becomes a lowercase slug",
-  "@networkNameHint": { "description": "Network name helper text (server rule)" },
+  "@networkNameHint": {
+    "description": "Network name helper text (server rule)"
+  },
   "networkPasswordHint": "8–128 characters",
-  "@networkPasswordHint": { "description": "Network password helper text (server rule)" },
+  "@networkPasswordHint": {
+    "description": "Network password helper text (server rule)"
+  },
   "networkNameInvalid": "Needs 3–64 chars after slugifying (letters, digits, hyphens)",
-  "@networkNameInvalid": { "description": "Network name validation error" },
+  "@networkNameInvalid": {
+    "description": "Network name validation error"
+  },
   "networkPasswordInvalid": "Password must be 8–128 characters",
-  "@networkPasswordInvalid": { "description": "Network password validation error" },
+  "@networkPasswordInvalid": {
+    "description": "Network password validation error"
+  },
   "networkListPublic": "List in the public directory",
-  "@networkListPublic": { "description": "Create-network dialog checkbox \u2014 publish the network in the public catalog" },
+  "@networkListPublic": {
+    "description": "Create-network dialog checkbox — publish the network in the public catalog"
+  },
   "networkDelete": "Delete network…",
-  "@networkDelete": { "description": "Network row menu item (owner only)" },
+  "@networkDelete": {
+    "description": "Network row menu item (owner only)"
+  },
   "networkDeleteTitle": "Delete this network?",
-  "@networkDeleteTitle": { "description": "Delete-network confirmation title" },
+  "@networkDeleteTitle": {
+    "description": "Delete-network confirmation title"
+  },
   "networkDeleteBody": "The network, its channels and all messages are deleted for everyone. This cannot be undone.",
-  "@networkDeleteBody": { "description": "Delete-network confirmation body" },
+  "@networkDeleteBody": {
+    "description": "Delete-network confirmation body"
+  },
   "networkDeleted": "Network deleted",
-  "@networkDeleted": { "description": "Snackbar after a network was deleted" },
+  "@networkDeleted": {
+    "description": "Snackbar after a network was deleted"
+  },
   "networkSlugPreview": "Will be created as: {slug}",
-  "@networkSlugPreview": { "description": "Live slug preview under the network name field", "placeholders": { "slug": {} } },
+  "@networkSlugPreview": {
+    "description": "Live slug preview under the network name field",
+    "placeholders": {
+      "slug": {}
+    }
+  },
   "networkSignInToCreate": "Sign in to create a network",
-  "@networkSignInToCreate": { "description": "Snackbar when create is attempted without a JWT" },
+  "@networkSignInToCreate": {
+    "description": "Snackbar when create is attempted without a JWT"
+  },
   "networkShowcaseUnavailable": "This network is not publicly available",
-  "@networkShowcaseUnavailable": { "description": "Anonymous showcase: generic 404 (non-public or unknown network)" },
+  "@networkShowcaseUnavailable": {
+    "description": "Anonymous showcase: generic 404 (non-public or unknown network)"
+  },
   "networkShowcaseReadOnlyBadge": "read-only",
-  "@networkShowcaseReadOnlyBadge": { "description": "Badge in the showcase header" },
-  "networkShowcaseReadOnly": "Public showcase — read-only preview. Join the network to participate.",
-  "@networkShowcaseReadOnly": { "description": "Composer replacement in the anonymous showcase" },
+  "@networkShowcaseReadOnlyBadge": {
+    "description": "Badge in the showcase header"
+  },
   "networkBackToNetworks": "Back to networks",
-  "@networkBackToNetworks": { "description": "Showcase back-button tooltip" }
+  "@networkBackToNetworks": {
+    "description": "Showcase back-button tooltip"
+  },
+  "networkAddAgentPublicHint": "Anyone with this link can read the channel — it is public. Agents join keyless.",
+  "@networkAddAgentPublicHint": {
+    "description": "Agent invite dialog hint for public (keyless) channels"
+  }
 }

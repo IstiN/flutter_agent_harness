@@ -11,11 +11,13 @@ import 'package:fa/network/invite_codec.dart';
 import 'package:fa/network/key_wallet.dart';
 import 'package:fa/network/models.dart';
 
-/// The AC-B17 minimal agent pairing (issue #955): shows the agent invite
-/// string for a PRIVATE channel — `wss://<hub>?channel=<name>#pub=…&priv=…`.
-/// The channel keys travel in the URI fragment (client-side only per
-/// RFC 3986) and the string never leaves the device except through the
-/// user's explicit Copy.
+/// The AC-B17 minimal agent pairing (issue #955): the agent invite
+/// string for a channel. PRIVATE channels carry the keypair in the URI
+/// fragment — `wss://<hub>?channel=<id>#pub=…&priv=…` (client-side only
+/// per RFC 3986); PUBLIC channels have no chankey (showcase contract), so
+/// their invite is the bare `wss://<hub>?channel=<id>`. The channel id is
+/// what fa_network relays onto the DAP hub. The string never leaves the
+/// device except through the user's explicit Copy.
 class AddAgentDialog extends StatelessWidget {
   const AddAgentDialog({
     super.key,
@@ -34,17 +36,24 @@ class AddAgentDialog extends StatelessWidget {
   /// The network the channel belongs to.
   final String networkId;
 
-  /// The private channel the agent is invited into.
+  /// The channel the agent is invited into.
   final Channel channel;
 
-  /// The invite string, or null when this device holds no keys for the
-  /// channel (an owner who never opened it, an imported wallet, …).
+  /// The invite string. Public channels are always invitable (no keys
+  /// exist); private channels need the keypair in this device's wallet —
+  /// null when absent (an imported wallet, a keyless membership, …).
   String? get invite {
+    if (channel.isPublic) {
+      return buildPublicAgentInvite(
+        hubUri: Uri.parse(hubUrl),
+        channel: channel.id,
+      );
+    }
     final keys = wallet.channelKeysFor(networkId, channel.id);
     if (keys == null) return null;
     return buildAgentInvite(
       hubUri: Uri.parse(hubUrl),
-      channel: channel.name ?? channel.id,
+      channel: channel.id,
       pub: keys.pub,
       priv: keys.priv,
     );
@@ -61,8 +70,13 @@ class AddAgentDialog extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            context.l10n.networkAddAgentWarning,
-            style: TextStyle(color: colors.error, fontSize: 13),
+            channel.isPublic
+                ? context.l10n.networkAddAgentPublicHint
+                : context.l10n.networkAddAgentWarning,
+            style: TextStyle(
+              color: channel.isPublic ? colors.dim : colors.error,
+              fontSize: 13,
+            ),
           ),
           const SizedBox(height: 12),
           Container(

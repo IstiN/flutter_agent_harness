@@ -1020,13 +1020,18 @@ Future<int> runDapImport(
   }
   final env = environment ?? Platform.environment;
   final homeDir = home ?? client.defaultHome(env);
-  final channelsFile =
-      env[client.envChannelsFile] ?? '$homeDir/.dap/channels.json';
-  await client.persistChannelKeys(
-    channelsFile,
-    invite.channel,
-    client.ChannelKeys(pub: invite.pub, priv: invite.priv),
-  );
+  // Private-channel invites carry the keypair (persisted into the shared
+  // channels file — auto-join flows through it); public-channel invites
+  // are keyless — the channel lands on the remembered-rooms list only.
+  if (invite.pub != null && invite.priv != null) {
+    final channelsFile =
+        env[client.envChannelsFile] ?? '$homeDir/.dap/channels.json';
+    await client.persistChannelKeys(
+      channelsFile,
+      invite.channel,
+      client.ChannelKeys(pub: invite.pub!, priv: invite.priv!),
+    );
+  }
 
   final configFile = client.defaultDapConfigFile(home, env);
   final configuredUrl = client.readDapConfig(configFile)['url'];

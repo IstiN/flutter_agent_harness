@@ -2438,4 +2438,8 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get networkBackToNetworks => 'Back to networks';
+
+  @override
+  String get networkAddAgentPublicHint =>
+      'Anyone with this link can read the channel — it is public. Agents join keyless.';
 }

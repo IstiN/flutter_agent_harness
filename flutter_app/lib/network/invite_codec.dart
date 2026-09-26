@@ -151,6 +151,26 @@ String buildAgentInvite({
       .toString();
 }
 
+/// Builds a PUBLIC-channel agent invite: `wss://<hub>?channel=<id>` with
+/// NO key material (public channels have no chankey — payloads are raw
+/// by the showcase contract). Strict on the same invariants.
+String buildPublicAgentInvite({required Uri hubUri, required String channel}) {
+  if (hubUri.scheme != 'wss') {
+    throw AgentInviteFormatException(
+      "agent invite scheme must be wss, got '\${hubUri.scheme}'",
+    );
+  }
+  if (hubUri.host.isEmpty) {
+    throw AgentInviteFormatException('agent invite is missing the host');
+  }
+  if (channel.isEmpty) {
+    throw AgentInviteFormatException('agent invite channel is empty');
+  }
+  final query = Map.of(hubUri.queryParameters);
+  query['channel'] = channel;
+  return hubUri.replace(query: Uri(queryParameters: query).query).toString();
+}
+
 /// Parses a network join link of the form
 /// `https://<host>/join?network=<id>#pw=<urlsafe password>`.
 ///

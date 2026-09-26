@@ -47,7 +47,6 @@ void main() {
       ('http scheme', 'https://h/ws?channel=c#pub=$pub&priv=$priv', 'wss'),
       ('no host', 'wss://?channel=c#pub=$pub&priv=$priv', 'host'),
       ('no channel', 'wss://h/ws#pub=$pub&priv=$priv', 'channel'),
-      ('no fragment', 'wss://h/ws?channel=c', 'fragment'),
       ('bad pub', 'wss://h/ws?channel=c#pub=AA==&priv=$priv', '32 bytes'),
       ('not base64', 'wss://h/ws?channel=c#pub=%%%&priv=$priv', 'base64'),
       ('empty', '', 'wss'),
@@ -105,6 +104,41 @@ void main() {
       final transcript = lines.join('\n');
       expect(transcript, contains('#vvv'));
       expect(transcript, isNot(contains(priv))); // I2: priv never echoes
+    });
+
+    test(
+      'keyless public invite: remembered room, no keypair written',
+      () async {
+        expect(
+          await run(['import', 'wss://hub.fa1.dev/ws?channel=showcase']),
+          0,
+        );
+
+        expect(
+          await File('${home.path}/.dap/channels.json').exists(),
+          isFalse,
+          reason: 'a public channel has no chankey to persist',
+        );
+        final config =
+            jsonDecode(
+                  await File('${home.path}/.dap/config.json').readAsString(),
+                )
+                as Map<String, dynamic>;
+        expect(config['channels'], contains('showcase'));
+        expect(config['url'], 'wss://hub.fa1.dev/ws?channel=showcase');
+      },
+    );
+
+    test('base64url keys from the app invite decode', () {
+      // 32 bytes whose standard base64 would carry '+'/'/' — the app
+      // fragment is URL-safe.
+      final urlSafe = List<int>.filled(32, 251); // 0xfb → '+' in base64
+      final key = base64UrlEncode(urlSafe);
+      final parsed = parseDapInviteImport(
+        'wss://hub.fa1.dev/ws?channel=c#pub=$key&priv=$key',
+      );
+      expect(parsed.pub, key);
+      expect(parsed.priv, key);
     });
 
     test('keeps an existing hub url, reports the difference', () async {
