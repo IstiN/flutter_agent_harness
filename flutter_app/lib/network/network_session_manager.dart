@@ -351,6 +351,16 @@ final class NetworkSessionManager extends ChangeNotifier {
     jwtToken: _jwt,
   );
 
+  /// Enrolls a pure-DAP agent into [networkId] under [name] (management
+  /// route — the ai-native JWT is required; throws [StateError] when not
+  /// signed in). The returned [AgentEnrollment.clientSecret] is shown
+  /// exactly once; re-enrolling the same name silently rotates it.
+  Future<AgentEnrollment> enrollAgent(String networkId, String name) {
+    final jwt = _jwt;
+    if (jwt == null || jwt.isEmpty) throw StateError('not signed in');
+    return _newClient().enrollAgent(networkId, name: name);
+  }
+
   /// Creates a network (management route — requires a JWT); the caller
   /// becomes owner and is joined immediately with the one-time join
   /// credentials. When [isPublic] the network is then listed in the
