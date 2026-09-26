@@ -58,10 +58,6 @@ class AddAgentDialog extends StatefulWidget {
   /// the whole network (the scope switch is hidden).
   final Channel? channel;
 
-  /// The env var name shown as the master-secret field's prefix — an
-  /// identifier, not prose, so it stays a constant rather than an l10n key.
-  static const masterSecretPrefix = 'DAP_MASTER_SECRET=';
-
   /// The scope the dialog opens on (channel scope by default).
   final AgentInviteScope initialScope;
 
@@ -73,24 +69,12 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
   late AgentInviteScope _scope;
   AgentInviteFormat _format = AgentInviteFormat.link;
 
-  /// The hub master secret — a RUNNER-side value this dialog never holds:
-  /// the user types it here once, then copies it row-by-row (or inside the
-  /// full launch line). Never persisted.
-  late final TextEditingController _secretCtrl;
-
   @override
   void initState() {
     super.initState();
     _scope = widget.channel == null
         ? AgentInviteScope.network
         : widget.initialScope;
-    _secretCtrl = TextEditingController()..addListener(() => setState(() {}));
-  }
-
-  @override
-  void dispose() {
-    _secretCtrl.dispose();
-    super.dispose();
   }
 
   /// One monospace `key=value` line with its own copy button.
@@ -165,27 +149,21 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
       _scope == AgentInviteScope.channel ? _channelInvite : _networkInvite;
 
   /// What the user copies: the bare link, the CLI one-liner wrapping it
-  /// (`fa dap import '…'`), or the hub-only env launch line for CI
-  /// runners: `fa dap import '…' && DAP_HUB_URL=…
-  /// DAP_MASTER_SECRET=… DAP_AGENT_NAME=… fa`. Provider/model config is
-  /// the runner's own business (fa config / its own env) — the invite
-  /// line carries ONLY the hub connection; the master secret stays a
-  /// placeholder (a runner-side value this dialog never holds).
+  /// (`fa dap import '…'`), or the env launch line for a CI runner. The
+  /// invite itself IS the whole credential — the network join link
+  /// carries the network id + password, the channel invite the chankey
+  /// pair — so the env line needs no secret placeholder at all:
+  /// `FA_NETWORK_URL='…' FA_AGENT_NAME=… fa` / `FA_CHANNEL_URL='…'
+  /// FA_AGENT_NAME=… fa` (reserved for the CLI network mode).
   String? get _payload {
     final invite = _invite;
     if (invite == null) return null;
     if (_format == AgentInviteFormat.link) return invite;
     if (_format == AgentInviteFormat.env) {
-      final import = _scope == AgentInviteScope.channel
-          ? "fa dap import '$invite' && "
-          : '';
-      final secret = _secretCtrl.text.isEmpty
-          ? '<hub master secret>'
-          : _secretCtrl.text;
-      return "$import"
-          'DAP_HUB_URL=${AddAgentDialog.hubUrl} '
-          "DAP_MASTER_SECRET='$secret' "
-          'DAP_AGENT_NAME=$_agentName fa';
+      final key = _scope == AgentInviteScope.network
+          ? 'FA_NETWORK_URL'
+          : 'FA_CHANNEL_URL';
+      return "$key='$invite' FA_AGENT_NAME=$_agentName fa";
     }
     if (_scope == AgentInviteScope.network) return invite;
     return "fa dap import '$invite'";
@@ -294,68 +272,26 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
               ),
               const SizedBox(height: 8),
               // Per-variable rows with their own copy buttons — CI/CD
-              // secrets/vars are pasted one key=value at a time.
-              if (_scope == AgentInviteScope.channel && _invite != null)
+              // secrets/vars are pasted one key=value at a time. The
+              // invite row IS the whole credential (network id + password
+              // in the join link / chankey pair in the channel invite) —
+              // no master secret exists on the fa_network side.
+              if (_invite != null)
                 _envCopyRow(
                   context,
-                  keyName: 'IMPORT',
-                  display: "fa dap import '$_invite'",
-                  copyText: "fa dap import '$_invite'",
+                  keyName: _scope == AgentInviteScope.network
+                      ? 'FA_NETWORK_URL'
+                      : 'FA_CHANNEL_URL',
+                  display:
+                      '${_scope == AgentInviteScope.network ? 'FA_NETWORK_URL' : 'FA_CHANNEL_URL'}=$_invite',
+                  copyText:
+                      '${_scope == AgentInviteScope.network ? 'FA_NETWORK_URL' : 'FA_CHANNEL_URL'}=$_invite',
                 ),
               _envCopyRow(
                 context,
-                keyName: 'DAP_HUB_URL',
-                display: 'DAP_HUB_URL=${AddAgentDialog.hubUrl}',
-                copyText: 'DAP_HUB_URL=${AddAgentDialog.hubUrl}',
-              ),
-              _envCopyRow(
-                context,
-                keyName: 'DAP_AGENT_NAME',
-                display: 'DAP_AGENT_NAME=$_agentName',
-                copyText: 'DAP_AGENT_NAME=$_agentName',
-              ),
-              // The master secret is a runner-side value: the user types
-              // it here once, then copies the pair (the full line below
-              // picks the typed value up too).
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      key: const ValueKey('envRow:DAP_MASTER_SECRET'),
-                      controller: _secretCtrl,
-                      style: const TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 12,
-                      ),
-                      decoration: InputDecoration(
-                        isDense: true,
-                        prefixText: AddAgentDialog.masterSecretPrefix,
-                        prefixStyle: const TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 12,
-                        ),
-                        hintText: l10n.networkAddAgentSecretHint,
-                        border: const OutlineInputBorder(),
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    key: const ValueKey('envCopy:DAP_MASTER_SECRET'),
-                    icon: const Icon(Icons.copy, size: 16),
-                    tooltip: l10n.networkCopy,
-                    visualDensity: VisualDensity.compact,
-                    onPressed: () async {
-                      await Clipboard.setData(
-                        ClipboardData(
-                          text: 'DAP_MASTER_SECRET=${_secretCtrl.text}',
-                        ),
-                      );
-                      if (context.mounted) {
-                        showFahSnack(context, l10n.networkInviteCopied);
-                      }
-                    },
-                  ),
-                ],
+                keyName: 'FA_AGENT_NAME',
+                display: 'FA_AGENT_NAME=$_agentName',
+                copyText: 'FA_AGENT_NAME=$_agentName',
               ),
             ],
             if (_format == AgentInviteFormat.cli &&
