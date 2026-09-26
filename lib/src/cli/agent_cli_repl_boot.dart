@@ -1,9 +1,11 @@
-/// The REPL entries of [AgentCli]: the line-mode read-dispatch loop, the
-/// TUI boot, and their boot-time helpers (session resume hint, idle wait,
-/// empty-session cleanup, TUI controller wiring). Split out of
-/// `agent_cli.dart` to keep that file under the repo's 2800-line size
-/// gate. Same library (a `part of`), so the extension sees the class's
-/// private members.
+/// The REPL entries of [AgentCli]: the line-mode read-dispatch loop and
+/// the TUI boot (with `_setTuiIo`/`_createTuiController`). Their public
+/// helpers — `sessionResumeHint`, `waitForIdle`, `deleteSessionIfEmpty` —
+/// stay class members of `agent_cli.dart`: callers outside this library
+/// (the executable's SIGINT path, tests) cannot see a private extension.
+/// Split out of `agent_cli.dart` to keep that file under the repo's
+/// 2800-line size gate. Same library (a `part of`), so the extension sees
+/// the class's private members.
 part of 'agent_cli.dart';
 
 /// Implementation members of [AgentCli] for the REPL entries.
