@@ -245,15 +245,11 @@ void _registerNetworkScopeGroup() {
 
     testWidgets('env format on the network scope: the join link carries '
         'the network id + password', (tester) async {
-      await pump(
-        tester,
-        wallet: await buildWallet(password: '[REDACTED:Sensitive Value]'),
-      );
+      await pump(tester, wallet: await buildWallet(password: 'pw'));
       await tester.tap(find.text('Whole network'));
       await tester.pump();
       await tester.tap(find.text('Env (CI)'));
       await tester.pump();
-
       final payload = tester
           .widget<Text>(find.byKey(const ValueKey('agentInvite')))
           .data!;
@@ -262,6 +258,10 @@ void _registerNetworkScopeGroup() {
         payload,
         startsWith("FA_NETWORK_URL='https://network.fa1.dev/join?network=net1"),
       );
+      // The password is split OUT of the URL into its own variable — CI
+      // keeps the link a plain var and masks the password as a secret.
+      expect(payload.contains('#pw='), isFalse);
+      expect(payload, contains("FA_NETWORK_PASSWORD='pw' "));
       expect(payload.contains('FA_PROVIDER'), isFalse);
       expect(payload.contains('MASTER_SECRET'), isFalse);
       expect(payload, contains('FA_AGENT_NAME=fa-agent fa'));
@@ -289,10 +289,7 @@ void _registerNetworkScopeGroup() {
     testWidgets('env format: per-variable rows copy individually', (
       tester,
     ) async {
-      await pump(
-        tester,
-        wallet: await buildWallet(password: '[REDACTED:Sensitive Value]'),
-      );
+      await pump(tester, wallet: await buildWallet(password: 'pw'));
       await tester.tap(find.text('Env (CI)'));
       await tester.pump();
 
@@ -321,12 +318,9 @@ void _registerNetworkScopeGroup() {
       expect(clipboard.text, 'FA_AGENT_NAME=general-agent');
     });
 
-    testWidgets('env format on the network scope: the FA_NETWORK_URL row '
-        'carries the join link with the password', (tester) async {
-      await pump(
-        tester,
-        wallet: await buildWallet(password: '[REDACTED:Sensitive Value]'),
-      );
+    testWidgets('env format on the network scope: URL row has no '
+        'password, the password is its own row', (tester) async {
+      await pump(tester, wallet: await buildWallet(password: 'pw'));
       await tester.tap(find.text('Whole network'));
       await tester.pump();
       await tester.tap(find.text('Env (CI)'));
@@ -335,21 +329,32 @@ void _registerNetworkScopeGroup() {
       final row = tester
           .widget<Text>(find.byKey(const ValueKey('envRow:FA_NETWORK_URL')))
           .data!;
-      expect(
-        row,
-        startsWith('FA_NETWORK_URL=https://network.fa1.dev/join?network=net1'),
-      );
-      expect(row, contains('#pw='));
+      expect(row, 'FA_NETWORK_URL=https://network.fa1.dev/join?network=net1');
+      final passwordRow = tester
+          .widget<Text>(
+            find.byKey(const ValueKey('envRow:FA_NETWORK_PASSWORD')),
+          )
+          .data!;
+      expect(passwordRow, 'FA_NETWORK_PASSWORD=pw');
 
       final clipboard = FakeClipboard()..install(tester);
       await tester.tap(find.byKey(const ValueKey('envCopy:FA_NETWORK_URL')));
       await tester.pump();
       expect(clipboard.text, row);
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('envCopy:FA_NETWORK_PASSWORD')),
+      );
+      await tester.pump();
+      await tester.tap(
+        find.byKey(const ValueKey('envCopy:FA_NETWORK_PASSWORD')),
+      );
+      await tester.pump();
+      expect(clipboard.text, passwordRow);
     });
 
     testWidgets('a network-scope dialog without a channel hides the scope '
         'switch', (tester) async {
-      final wallet = await buildWallet(password: '[REDACTED:Sensitive Value]');
+      final wallet = await buildWallet(password: 'pw');
       await tester.pumpWidget(
         MaterialApp(
           theme: buildFahTheme(),
