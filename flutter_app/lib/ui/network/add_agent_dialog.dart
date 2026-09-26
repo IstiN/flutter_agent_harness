@@ -7,9 +7,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa/network/fa_network_client.dart';
 import 'package:fa/network/invite_codec.dart';
 import 'package:fa/network/key_wallet.dart';
 import 'package:fa/network/models.dart';
+import 'package:fa/network/network_session_manager.dart';
 
 /// What the invited agent gets access to (issue #955 steering): the ONE
 /// channel (chankey E2E in the fragment) or the WHOLE network (join
@@ -36,6 +38,7 @@ class AddAgentDialog extends StatefulWidget {
   const AddAgentDialog({
     super.key,
     required this.wallet,
+    required this.manager,
     required this.networkId,
     required this.channel,
     this.initialScope = AgentInviteScope.channel,
@@ -51,6 +54,10 @@ class AddAgentDialog extends StatefulWidget {
 
   /// The device wallet holding the channel keys and the network password.
   final KeyWallet wallet;
+
+  /// The session manager — the DAP tab enrolls agents through it (the
+  /// management JWT lives there; guests cannot enroll).
+  final NetworkSessionManager manager;
 
   /// The network the channel belongs to.
   final String networkId;
@@ -71,13 +78,31 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
   late AgentInviteScope _scope;
   AgentInviteFormat _format = AgentInviteFormat.link;
 
-  /// The DAP format's editable master secret (the invite format for
-  /// pure-DAP clients connecting to a self-hosted hub).
-  final _secretCtrl = TextEditingController();
+  /// The DAP tab's editable agent name (prefilled with the [_agentName]
+  /// suggestion); enrollment mints a name-bound credential for it.
+  late final TextEditingController _agentNameCtrl;
 
-  /// The env-var prefix on the master-secret row (a const so the l10n
+  /// The one-time credential returned by the enroll call (null until the
+  /// user enrolls — the secret is shown ONCE, here and nowhere else).
+  AgentEnrollment? _enrollment;
+
+  /// The last enrollment failure's message (inline error under the row).
+  String? _enrollError;
+
+  /// True while the enroll request is in flight (the button disables).
+  bool _enrolling = false;
+
+  /// The deployed backend's agent-name rule (3–64 chars: lowercase,
+  /// digits, hyphens; starts alnum).
+  static final RegExp _agentNamePattern = RegExp(r'^[a-z0-9][a-z0-9-]{2,63}$');
+
+  /// The env-var prefixes on the credential rows (consts so the l10n
   /// guard's literal scan stays quiet).
-  static const masterSecretPrefix = 'DAP_MASTER_SECRET=';
+  static const hubUrlPrefix = 'DAP_HUB_URL=';
+  static const clientSecretPrefix = 'DAP_CLIENT_SECRET=';
+  static const agentNamePrefix = 'DAP_AGENT_NAME=';
+
+  bool get _agentNameValid => _agentNamePattern.hasMatch(_agentNameCtrl.text);
 
   @override
   void initState() {
@@ -85,11 +110,12 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
     _scope = widget.channel == null
         ? AgentInviteScope.network
         : widget.initialScope;
+    _agentNameCtrl = TextEditingController(text: _agentName);
   }
 
   @override
   void dispose() {
-    _secretCtrl.dispose();
+    _agentNameCtrl.dispose();
     super.dispose();
   }
 
@@ -184,10 +210,12 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
   /// `FA_NETWORK_URL='…' FA_NETWORK_PASSWORD='…' FA_AGENT_NAME=… fa` /
   /// `FA_CHANNEL_URL='…' FA_AGENT_NAME=… fa` (reserved for the CLI
   /// network mode). The DAP format is for pure-DAP clients that know
-  /// nothing about fa_network: the plain `fa dap` env contract
-  /// (DAP_HUB_URL / DAP_MASTER_SECRET / DAP_AGENT_NAME) pointed at a
-  /// self-hosted DAP hub — the master secret belongs to THAT hub, so it
-  /// is an editable field, never the network password.
+  /// nothing about fa_network: the DEPLOYED agent-enrollment backend
+  /// mints a one-time, name-bound credential (`POST
+  /// /api/networks/{id}/agents/enroll`, owner/admin only) — the payload
+  /// is the DAP env launch line built from THAT response
+  /// (`DAP_HUB_URL` / `DAP_CLIENT_SECRET` / `DAP_AGENT_NAME`). The hub
+  /// master secret is banned from this UI: enrollment replaces it.
   String? get _payload {
     final invite = _invite;
     if (invite == null) return null;
@@ -203,17 +231,43 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
       return "FA_CHANNEL_URL='$invite' FA_AGENT_NAME=$_agentName fa";
     }
     if (_format == AgentInviteFormat.dap) {
+      final enrollment = _enrollment;
+      if (enrollment == null) return null;
       final import = _scope == AgentInviteScope.channel
           ? "fa dap import '$invite' && "
           : '';
-      final secret = _secretCtrl.text.isEmpty
-          ? '<hub master secret>'
-          : _secretCtrl.text;
-      return '${import}DAP_HUB_URL=${AddAgentDialog.hubUrl} '
-          "DAP_MASTER_SECRET='$secret' DAP_AGENT_NAME=$_agentName fa";
+      return '$import$hubUrlPrefix${enrollment.hubUrl} '
+          "$clientSecretPrefix'${enrollment.clientSecret}' "
+          '$agentNamePrefix${enrollment.name} fa';
     }
     if (_scope == AgentInviteScope.network) return invite;
     return "fa dap import '$invite'";
+  }
+
+  /// Enrolls the typed agent name through the session manager (management
+  /// route — owner/admin JWT required). The one-time credential lands in
+  /// [_enrollment]; failures surface inline as [_enrollError].
+  Future<void> _enroll() async {
+    setState(() {
+      _enrolling = true;
+      _enrollError = null;
+    });
+    try {
+      final enrollment = await widget.manager.enrollAgent(
+        widget.networkId,
+        _agentNameCtrl.text,
+      );
+      if (!mounted) return;
+      setState(() => _enrollment = enrollment);
+    } on FaNetworkException catch (e) {
+      if (!mounted) return;
+      setState(() => _enrollError = e.message);
+    } on Object catch (e) {
+      if (!mounted) return;
+      setState(() => _enrollError = e.toString());
+    } finally {
+      if (mounted) setState(() => _enrolling = false);
+    }
   }
 
   /// Suggested DAP_AGENT_NAME: a runner-friendly slug of the channel
@@ -358,70 +412,86 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
             if (_format == AgentInviteFormat.dap) ...[
               const SizedBox(height: 8),
               Text(
-                l10n.networkAddAgentDapHint,
+                l10n.networkAddAgentEnrollHint,
                 key: const ValueKey('inviteDapHint'),
                 style: TextStyle(color: colors.dim, fontSize: 12),
               ),
               const SizedBox(height: 8),
-              if (_scope == AgentInviteScope.channel && _invite != null)
-                _envCopyRow(
-                  context,
-                  keyName: 'IMPORT',
-                  display: "fa dap import '$_invite'",
-                  copyText: "fa dap import '$_invite'",
-                ),
-              _envCopyRow(
-                context,
-                keyName: 'DAP_HUB_URL',
-                display: 'DAP_HUB_URL=${AddAgentDialog.hubUrl}',
-                copyText: 'DAP_HUB_URL=${AddAgentDialog.hubUrl}',
-              ),
-              _envCopyRow(
-                context,
-                keyName: 'DAP_AGENT_NAME',
-                display: 'DAP_AGENT_NAME=$_agentName',
-                copyText: 'DAP_AGENT_NAME=$_agentName',
-              ),
-              // The master secret belongs to the user's own DAP hub (not
-              // fa_network), so it is an editable field — like the CLI's
-              // dap-setup --secret flag.
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      key: const ValueKey('envRow:DAP_MASTER_SECRET'),
-                      controller: _secretCtrl,
-                      onChanged: (_) => setState(() {}),
-                      style: const TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 12,
-                      ),
-                      decoration: InputDecoration(
-                        isDense: true,
-                        prefixText: masterSecretPrefix,
-                        hintText: l10n.networkAddAgentSecretHint,
-                        hintStyle: TextStyle(color: colors.dim, fontSize: 12),
+              if (!widget.manager.hasJwt)
+                Text(
+                  l10n.networkAddAgentEnrollNeedSignIn,
+                  key: const ValueKey('enrollNeedSignIn'),
+                  style: TextStyle(color: colors.error, fontSize: 13),
+                )
+              else ...[
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        key: const ValueKey('agentNameField'),
+                        controller: _agentNameCtrl,
+                        onChanged: (_) => setState(() {}),
+                        style: const TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 12,
+                        ),
+                        decoration: InputDecoration(
+                          isDense: true,
+                          errorText: _agentNameValid
+                              ? null
+                              : l10n.networkAddAgentNameInvalid,
+                        ),
                       ),
                     ),
-                  ),
-                  IconButton(
-                    key: const ValueKey('envCopy:DAP_MASTER_SECRET'),
-                    icon: const Icon(Icons.copy, size: 16),
-                    tooltip: l10n.networkCopy,
-                    visualDensity: VisualDensity.compact,
-                    onPressed: () async {
-                      await Clipboard.setData(
-                        ClipboardData(
-                          text: '$masterSecretPrefix${_secretCtrl.text}',
-                        ),
-                      );
-                      if (context.mounted) {
-                        showFahSnack(context, l10n.networkInviteCopied);
-                      }
-                    },
+                    const SizedBox(width: 8),
+                    FilledButton(
+                      key: const ValueKey('enrollAgent'),
+                      onPressed: _agentNameValid && !_enrolling
+                          ? _enroll
+                          : null,
+                      child: Text(l10n.networkAddAgentEnroll),
+                    ),
+                  ],
+                ),
+                if (_enrollError != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    _enrollError!,
+                    key: const ValueKey('enrollError'),
+                    style: TextStyle(color: colors.error, fontSize: 12),
                   ),
                 ],
-              ),
+                // The one-time credential panel — the secret is shown
+                // here, once; re-enrolling the same name rotates it.
+                if (_enrollment != null) ...[
+                  const SizedBox(height: 8),
+                  if (_scope == AgentInviteScope.channel && _invite != null)
+                    _envCopyRow(
+                      context,
+                      keyName: 'IMPORT',
+                      display: "fa dap import '$_invite'",
+                      copyText: "fa dap import '$_invite'",
+                    ),
+                  _envCopyRow(
+                    context,
+                    keyName: 'DAP_HUB_URL',
+                    display: '$hubUrlPrefix${_enrollment!.hubUrl}',
+                    copyText: '$hubUrlPrefix${_enrollment!.hubUrl}',
+                  ),
+                  _envCopyRow(
+                    context,
+                    keyName: 'DAP_CLIENT_SECRET',
+                    display: '$clientSecretPrefix${_enrollment!.clientSecret}',
+                    copyText: '$clientSecretPrefix${_enrollment!.clientSecret}',
+                  ),
+                  _envCopyRow(
+                    context,
+                    keyName: 'DAP_AGENT_NAME',
+                    display: '$agentNamePrefix${_enrollment!.name}',
+                    copyText: '$agentNamePrefix${_enrollment!.name}',
+                  ),
+                ],
+              ],
             ],
             if (_format == AgentInviteFormat.cli &&
                 _scope == AgentInviteScope.channel) ...[
@@ -451,7 +521,13 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
                 border: Border.all(color: colors.border),
               ),
               child: Text(
-                payload ?? l10n.networkAddAgentNoKeys,
+                payload ??
+                    (_format == AgentInviteFormat.dap
+                        // Pre-enrollment (or signed out): explain that
+                        // enrollment mints the unique, revocable
+                        // credential instead of showing a payload.
+                        ? l10n.networkAddAgentEnrollHint
+                        : l10n.networkAddAgentNoKeys),
                 key: const ValueKey('agentInvite'),
                 style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
               ),

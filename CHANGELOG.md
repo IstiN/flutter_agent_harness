@@ -4254,6 +4254,53 @@
 - ci: bump factory pack pins to dmtools-agents#d99fc8c — 'blocked' label support (fa #939) (#941)
 - feat(ui): one-tap copy affordance on every error surface (#899)
 
+## 1.0.478
+
+- feat: #955 Add agent DAP tab mints unique credentials via agents/enroll
+- feat(fanet): align with the deployed agents/enroll contract
+- fix: #988 hub teardown StateError('connection closed') is not a crash
+- feat: lib/src/fanet — fa_network REST client for the CLI network mode
+- chore(ci): flutter_app CRAP threshold 30.0 -> 75.0 temp raise (owner call, gh-992) (#993)
+- chore(factory): pin dmtools-agents to 6b953f8 (dup-dispatch guard fix #539) (#991)
+- feat: #955 pure-DAP invite format for clients without fa_network
+- feat: #955 env split — network password is its own variable
+- fix: #988 guard hub presence queries — a drop mid-query must not escape
+- fix: #955 env invite is the network credential — drop DAP_MASTER_SECRET
+- feat: #955 env vars as per-row copy + network-level Add agent
+- fix: #955 env format is hub-only — drop the provider vars
+- chore(ci): lower CLI coverage baseline 11.9 -> 11.0 (owner call, unblock merge train) (#989)
+- chore: regenerated l10n for the Add-agent scope/format strings
+- feat: #955 Add-agent env format — CI runner launch line
+- Add a test-duration budget gate on the PTY/CLI critical path (on top of #963's 3-shard leg) (#932)
+- feat: #955 Add-agent invite — scope (channel/network) × format (link/CLI)
+- chore(factory): pin factory to 6a7544c (agentDocsCoverage versions.json fix, dmtools-agents#533) (#987)
+- feat: #955 keyless agent invites for public channels + channel-id invites
+- chore(factory): pin factory to 2e8d366 (mutex-leak fix, dmtools-agents#531) (#980)
+- chore(ci): quarantine flaky job_board_stability PTY test (gh-982) — unblock main (#983)
+- fix(app): #955 WS auth header never sent + unhandled-error storm
+- feat(app): #955 channel header with the discoverable Add agent action
+- feat(cli): #955 fa dap import — ingest the app's add-agent invite
+- feat(app): #955 adopt fa_network chat-order pagination
+- feat(app): #955 anonymous showcase browsing (public networks)
+- chore(factory): pin factory to 7dd967a (merge-leg pullRequestId fix, dmtools-agents#529) (#972)
+- feat(app): #955 network diagnostics via AppLog (no secrets)
+- fix(app): #955 management routes never fall back to a session token
+- feat(app): #955 friendly create dialog — wider, auto-slugify, full errors
+- feat(app): #955 public-directory checkbox on create + owner network delete
+- feat(app): #955 create-network dialog validates the server's exact rules
+- fix(app): #955 TokenBundle accepts the real snake_case exchange shape
+- fix(app): #955 OAuth loopback — never rewrite the provider auth URL
+- chore: factory pin bump d99fc8c → ac8b718 (lockstep) (#966)
+- fix(app): #955 route ai-native auth calls to the auth host, not the relay
+- feat(app): #955 real ai-native OAuth sign-in (loopback RFC 8252)
+- feat(app): #955 sidebar style parity, first-class sign-in, public directory
+- feat(app): #955 network mode lives in the shell sidebar (owner UX rework)
+- fix(app): #955 network header clears the macOS traffic lights
+- feat(app): #955 ⌘K quick switcher + REG-NOLEAK key-leak scan
+- feat(app): #955 network mode UI — Local|Network chip, networks sidebar, Grok-style channel chat
+- feat(app): #955 adopt contract senderKey — envelopes carry the sender X25519 pub
+- feat(app): #955 network mode engine — fa_network client, WS, fanet1 crypto, KeyWallet, sessions
+
 ## Unreleased
 
 ## Unreleased
