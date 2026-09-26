@@ -581,8 +581,11 @@ class FaNetworkClient {
         : uri.replace(queryParameters: query);
   }
 
+  /// Management routes accept ONLY an ai-native JWT (a session token can
+  /// never manage — sending one just produces a confusing `invalid
+  /// token`); member routes accept a session token first, then a JWT.
   String? _token({required bool management}) =>
-      management ? (_jwt ?? _session) : (_session ?? _jwt);
+      management ? _jwt : (_session ?? _jwt);
 
   Future<http.Response> _request(
     String method,

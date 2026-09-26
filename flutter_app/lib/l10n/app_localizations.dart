@@ -4309,6 +4309,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Will be created as: {slug}'**
   String networkSlugPreview(Object slug);
+
+  /// Snackbar when create is attempted without a JWT
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in to create a network'**
+  String get networkSignInToCreate;
 }
 
 class _AppLocalizationsDelegate

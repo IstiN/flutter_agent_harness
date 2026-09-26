@@ -167,6 +167,26 @@ void main() {
       },
     );
 
+    test('management routes never fall back to a session token (a bare '
+        'session token earns a confusing invalid token 401 — send no '
+        'header instead)', () async {
+      final sessionOnly = FaNetworkClient(
+        baseUrl: Uri.parse('https://network.fa1.dev'),
+        httpClient: httpClient,
+        sessionToken: 'st-1',
+      );
+      httpClient.respond(
+        401,
+        body:
+            '{"error":{"code":"unauthorized","message":"auth token required"}}',
+      );
+      await expectLater(
+        sessionOnly.createNetwork(name: 'fa-team', password: 'supersecret1'),
+        throwsA(isA<FaNetworkException>()),
+      );
+      expect(httpClient.requests.single.headers['authorization'], isNull);
+    });
+
     test(
       'joinNetwork posts password+displayName and parses JoinResult',
       () async {

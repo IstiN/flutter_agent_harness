@@ -2425,4 +2425,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String networkSlugPreview(Object slug) {
     return 'Will be created as: $slug';
   }
+
+  @override
+  String get networkSignInToCreate => 'Sign in to create a network';
 }

@@ -31,6 +31,12 @@ Future<void> runCreateNetworkFlow(
 }) async {
   final created = await showCreateNetworkDialog(context);
   if (created == null || !context.mounted) return;
+  // Never round-trip a management call without a JWT — the relay would
+  // 401 'invalid token' on a bare session token.
+  if (!manager.hasJwt) {
+    showFahErrorSnack(context, context.l10n.networkSignInToCreate);
+    return;
+  }
   try {
     final session = await manager.createNetwork(
       name: created.name,

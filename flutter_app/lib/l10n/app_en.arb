@@ -1086,5 +1086,7 @@
   "networkDeleted": "Network deleted",
   "@networkDeleted": { "description": "Snackbar after a network was deleted" },
   "networkSlugPreview": "Will be created as: {slug}",
-  "@networkSlugPreview": { "description": "Live slug preview under the network name field", "placeholders": { "slug": {} } }
+  "@networkSlugPreview": { "description": "Live slug preview under the network name field", "placeholders": { "slug": {} } },
+  "networkSignInToCreate": "Sign in to create a network",
+  "@networkSignInToCreate": { "description": "Snackbar when create is attempted without a JWT" }
 }

@@ -2454,4 +2454,7 @@ class AppLocalizationsRu extends AppLocalizations {
   String networkSlugPreview(Object slug) {
     return 'Будет создана как: $slug';
   }
+
+  @override
+  String get networkSignInToCreate => 'Войдите, чтобы создать сеть';
 }

@@ -942,5 +942,7 @@
   "networkDeleted": "Сеть удалена",
   "@networkDeleted": { "description": "Snackbar after a network was deleted" },
   "networkSlugPreview": "Будет создана как: {slug}",
-  "@networkSlugPreview": { "description": "Live slug preview under the network name field", "placeholders": { "slug": {} } }
+  "@networkSlugPreview": { "description": "Live slug preview under the network name field", "placeholders": { "slug": {} } },
+  "networkSignInToCreate": "Войдите, чтобы создать сеть",
+  "@networkSignInToCreate": { "description": "Snackbar when create is attempted without a JWT" }
 }
