@@ -177,5 +177,45 @@ void main() {
       });
       expect(escaped, isFalse);
     });
+
+    test(
+      'abandonment cancels the raw subscription (no leaked pipeline)',
+      () async {
+        // The other half of the fix: the swallow must not come at the price
+        // of a pipeline that stays attached. The done forward is what
+        // unsticks the lazy async* cancellation; after the watchdog fires
+        // and the link closes, the raw subscription must actually tear down.
+        var rawCancelled = false;
+        final controller = StreamController<List<int>>(
+          onCancel: () async {
+            rawCancelled = true;
+          },
+        ); // silent until the post-timeout link close below
+        final iterator = createSseIterator(
+          _responseFromBytes(controller.stream),
+          null,
+          idleTimeout: const Duration(milliseconds: 40),
+        );
+        await expectLater(
+          iterator.moveNext(),
+          throwsA(isA<TimeoutException>()),
+        );
+        unawaited(controller.close()); // the dying link's socket close
+        // Anchored polling, bounded: the raw subscription's cancel rides the
+        // lazy async* chain (onDone → generator exit → chain cancel →
+        // body.onCancel → rawSub.cancel).
+        final deadline = DateTime.now().add(const Duration(seconds: 5));
+        while (!rawCancelled && DateTime.now().isBefore(deadline)) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+        expect(
+          rawCancelled,
+          isTrue,
+          reason:
+              'the abandoned pipeline must tear down its raw '
+              'subscription, not stay attached to the socket',
+        );
+      },
+    );
   });
 }

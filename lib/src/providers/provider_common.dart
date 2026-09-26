@@ -777,7 +777,10 @@ StreamIterator<ServerSentEvent> createSseIterator(
   );
   rawSub = response.stream.listen(
     (data) {
-      if (!abandoned) body.add(data);
+      // isClosed mirrors onError: a misbehaving source emitting after the
+      // done forward would throw StateError inside this handler — the
+      // same handlerless-crash class this sink exists to prevent.
+      if (!abandoned && !body.isClosed) body.add(data);
     },
     onError: (Object error, StackTrace stackTrace) {
       if (abandoned || (cancelToken?.isCancelled ?? false) || body.isClosed) {
@@ -796,13 +799,12 @@ StreamIterator<ServerSentEvent> createSseIterator(
     onAbandon: abandon,
   );
   if (cancelToken != null) {
+    // cancel() is already quiet — no extra swallow needed here.
     unawaited(
-      cancelToken.onCancel
-          .then((_) {
-            abandon();
-            return iterator.cancel();
-          })
-          .then((_) {}, onError: (Object _) {}),
+      cancelToken.onCancel.then((_) {
+        abandon();
+        return iterator.cancel();
+      }),
     );
   }
   return iterator;
@@ -830,13 +832,24 @@ class _IdleWatchdogSseIterator implements StreamIterator<ServerSentEvent> {
   Future<bool> moveNext() {
     _timer?.cancel();
     final completer = Completer<bool>();
+    final Future<bool> inner;
+    try {
+      inner = _inner.moveNext();
+    } catch (error, stackTrace) {
+      // Sync misuse throw (StreamIterator's 'Already waiting'): fail the
+      // caller WITHOUT arming the timer — an orphaned timer would later
+      // complete this completer unlistened in the root zone, the exact
+      // crash class of issue #921.
+      completer.completeError(error, stackTrace);
+      return completer.future;
+    }
     _timer = Timer(_idleTimeout, () {
       if (completer.isCompleted) return;
       // Abandon before cancelling so the byte sink swallows the dying
       // link's error, and quiet-cancel: the cancel future rides that
       // dying pipeline and may itself fail (issue #921).
       onAbandon?.call();
-      _quietCancel(_inner.cancel());
+      unawaited(_quietCancel(_inner.cancel()));
       completer.completeError(
         TimeoutException(
           'no events from the endpoint for '
@@ -846,7 +859,7 @@ class _IdleWatchdogSseIterator implements StreamIterator<ServerSentEvent> {
       );
     });
     unawaited(
-      _inner.moveNext().then(
+      inner.then(
         (value) {
           _timer?.cancel();
           if (!completer.isCompleted) completer.complete(value);
@@ -866,14 +879,17 @@ class _IdleWatchdogSseIterator implements StreamIterator<ServerSentEvent> {
   Future<void> cancel() {
     _timer?.cancel();
     onAbandon?.call();
-    return _inner.cancel();
+    // The quieted future IS the contract: the abandoned pipeline is by
+    // definition noise, so a caller's `await iterator.cancel()` can never
+    // see a dying-pipeline cancel failure (issue #921).
+    return _quietCancel(_inner.cancel());
   }
 }
 
 /// Awaits a cancellation whose pipeline may be dying: its failure is noise
 /// (issue #921) — swallowed, never an unawaited-error crash.
-void _quietCancel(Future<void> cancel) {
-  unawaited(cancel.then((_) {}, onError: (Object _) {}));
+Future<void> _quietCancel(Future<void> cancel) {
+  return cancel.then((_) {}, onError: (Object _) {});
 }
 
 /// Mutable accumulation state for one streamed assistant message.
