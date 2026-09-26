@@ -59,7 +59,10 @@ final class HubFabricRepository
     if (toId.startsWith('#')) return toId;
     final me = _agentId;
     if (me != null && toId == me) return null; // our own fabric mailbox
-    final roster = await _repo!.client.presenceQuery();
+    // A hub drop mid-query fails the waiter ('connection closed') — fall
+    // back to the file fabric instead of letting it escape (issue #988).
+    final roster = await _presenceRoster();
+    if (roster == null) return null;
     for (final agent in roster) {
       if (agent.agentId == toId) return toId; // exact id wins
     }
@@ -68,6 +71,16 @@ final class HubFabricRepository
     // dap_dm resolver; an ambiguous name falls through to the file fabric
     // where the session-name resolution owns it.
     return byName.length == 1 ? byName.single.agentId : null;
+  }
+
+  /// The hub roster, or null when the query fails (drop mid-query,
+  /// reconnect in flight) — callers fall back to the file fabric.
+  Future<List<hub.AgentInfo>?> _presenceRoster() async {
+    try {
+      return await _repo!.client.presenceQuery();
+    } on Object {
+      return null;
+    }
   }
 
   @override
