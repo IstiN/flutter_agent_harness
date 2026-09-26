@@ -63,8 +63,7 @@ Future<void> ensureGoldenFonts() async {
 ///
 /// After settling, [expectRealFontText] runs on the pumped frame: any
 /// family-less paragraph (test-fallback Ahem bars in goldens) fails the
-/// test — pass [guardRealFont] = false only for frames that legitimately
-/// render unthemed text.
+/// test.
 Future<void> pumpGolden(
   WidgetTester tester,
   Widget child, {
@@ -76,10 +75,6 @@ Future<void> pumpGolden(
   /// False for frames with infinite animations (spinners): settles by
   /// pumping one frame instead of pumpAndSettle, which would time out.
   bool settle = true,
-
-  /// False to skip the family-less-text guard (issue #947) — only for
-  /// frames that legitimately render unthemed text.
-  bool guardRealFont = true,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
@@ -99,9 +94,7 @@ Future<void> pumpGolden(
   } else {
     await tester.pump();
   }
-  if (guardRealFont) {
-    expectRealFontText(tester);
-  }
+  expectRealFontText(tester);
 }
 
 /// Asserts the current frame matches `test/golden/goldens/<name>.png`.
