@@ -219,11 +219,12 @@ void main() {
   late File turnsFile;
 
   setUp(() async {
-    // Short fixed dirs (#446): long macOS temp paths wrap mid-path and
-    // desync the two frames' wrap continuations; /tmp keeps every row on
-    // one physical line.
-    home = Directory('/tmp/fa_446_home')..createSync(recursive: true);
-    project = Directory('/tmp/fa_446_proj')..createSync(recursive: true);
+    // Unique SHORT dirs (the #936/#938 class — fixed /tmp paths race
+    // concurrent suite copies). Long macOS temp paths wrap mid-path and
+    // desync the two frames' wrap continuations (#446); /tmp keeps every
+    // row on one physical line.
+    home = Directory('/tmp').createTempSync('fa446h');
+    project = Directory('/tmp').createTempSync('fa446p');
     // Pin the classic chrome: this suite asserts the classic transcript
     // grammar; the band redesign (#805-#807) has its own surface. The
     // harness configures providers via FA_PROVIDER_CONFIG env only, so the

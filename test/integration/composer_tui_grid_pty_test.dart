@@ -33,11 +33,14 @@ void main() {
   for (final (columns, rowsCount) in [(100, 40), (80, 24)]) {
     test('grid integrity mid-run at ${columns}x$rowsCount', () async {
       final tempHome = Directory.systemTemp.createTempSync('fa_tui_467_grid_');
-      // Short cwd so the status row's tail (ctx · tokens · turn · model)
-      // is visible even at 80 columns — the row is fit-truncated from the
-      // tail and a long workspace path would hide the asserted markers.
-      final workspace = Directory('/tmp/fa467ws')
-        ..createSync(recursive: true);
+      // Unique SHORT cwd (the #936/#938 race class — the fixed /tmp/fa467ws
+      // raced the loop's own second width test under --concurrency=4).
+      // /tmp with a 1-char prefix keeps the resolved mac path
+      // (/private/tmp/<name>, 20 chars) byte-length-equal to the old fixed
+      // dir: the status row is tail-truncated and line 122 asserts the
+      // model slug at 80 columns — 'fa467wsXXXXXX' (26) erodes the slug's
+      // margin as the ctx segment grows mid-run.
+      final workspace = Directory('/tmp').createTempSync('f');
       addTearDown(() => workspace.deleteSync(recursive: true));
       final server = await MockLlmServer.start()
         ..enqueueToolCall('bash', '{"command": "sleep 15"}')
@@ -192,7 +195,7 @@ allowedTools: []
 tui:
   classic: true  # the grid/chrome suites pin the classic TUI design (see #467); the band redesign (#805-#807) has its own surface
 ''');
-      final workspace = Directory('/tmp/fa467ws2')..createSync(recursive: true);
+      final workspace = Directory('/tmp').createTempSync('f');
       addTearDown(() => workspace.deleteSync(recursive: true));
 
       final harness = await FaCliHarness.spawn(
@@ -302,7 +305,7 @@ allowedTools: []
 tui:
   classic: true  # the grid/chrome suites pin the classic TUI design (see #467); the band redesign (#805-#807) has its own surface
 ''');
-      final workspace = Directory('/tmp/fa503ws')..createSync(recursive: true);
+      final workspace = Directory('/tmp').createTempSync('f');
       addTearDown(() => workspace.deleteSync(recursive: true));
 
       final harness = await FaCliHarness.spawn(
