@@ -34,6 +34,7 @@ import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/apps/dynamic_messages.dart';
 import 'package:fa/apps/open_app_tool.dart';
+import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/sandbox/env_factory.dart';
 import 'package:fa/services/approval_mode_store.dart';
 import 'package:fa/services/platform_http_client.dart';

@@ -284,6 +284,15 @@ void main() {
       expect(restored.rateLimit?.brand, 'ChatGPT');
       expect(restored.errorMessage!.contains('{'), isFalse);
     });
+
+    test('an empty rawBody round-trips without an empty-string key', () {
+      final info = const RateLimitInfo(planType: 'free');
+      final json = info.toJson();
+      expect(json.containsKey('rawBody'), isFalse);
+      final restored = RateLimitInfo.fromJson(json);
+      expect(restored.rawBody, '');
+      expect(restored.planType, 'free');
+    });
   });
 
   group('parseRetryAfter (moved verbatim, issue #867)', () {

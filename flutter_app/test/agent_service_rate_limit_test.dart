@@ -149,4 +149,21 @@ void main() {
     expect(tile.content, contains('Next: switch to a model or provider'));
     expect(tile.content.contains('{'), isFalse);
   });
+
+  testWidgets(
+    'an unsupported device locale still speaks English via the app resolution',
+    (tester) async {
+      tester.platformDispatcher.localeTestValue = const Locale('fr');
+      late final FahChatMessage tile;
+      await tester.runAsync(() async {
+        final service = await pumpService();
+        await service.sendText('hi');
+        await service.waitForIdle();
+        tile = errorTileOf(service);
+      });
+
+      expect(tile.content, contains('ChatGPT Free plan limit reached.'));
+      expect(tile.content, contains('Next: switch to a model or provider'));
+    },
+  );
 }

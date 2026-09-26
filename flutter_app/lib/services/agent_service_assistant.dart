@@ -96,8 +96,12 @@ extension AgentServiceAssistant on AgentService {
       final text = info != null
           ? formatRateLimitMessage(
               info,
-              localeCode:
-                  WidgetsBinding.instance.platformDispatcher.locale.languageCode,
+              // The app's locale decision, not the bare platform value —
+              // empty device locales and overrides resolve like everywhere
+              // else (issue #867 thread).
+              localeCode: resolveAppLocale(
+                WidgetsBinding.instance.platformDispatcher.locale,
+              ).languageCode,
             )
           : message.errorMessage ?? 'Run failed (${StopReason.error.name})';
       error = text;

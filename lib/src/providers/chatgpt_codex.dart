@@ -403,7 +403,9 @@ final class _ChatGptCodexSession {
     return ProviderHttpError(
       response.statusCode,
       message,
-      retryAfter: parseRetryAfter(response.headers['retry-after']),
+      // Case-insensitive, like the structured parse above — a canonical
+      // `Retry-After:` (HTTP/1.1 casing) must reach the rotation cooldown.
+      retryAfter: parseRetryAfter(_header(response.headers, 'retry-after')),
       rateLimit: rateLimit,
     );
   }

@@ -247,12 +247,8 @@ class MyApp extends StatelessWidget {
             // then throws "Incorrect locale information provided" and the
             // app never boots. Fall back to English for a bogus device
             // locale.
-            localeResolutionCallback: (deviceLocale, supported) {
-              if (deviceLocale == null || deviceLocale.languageCode.isEmpty) {
-                return const Locale('en');
-              }
-              return basicLocaleListResolution([deviceLocale], supported);
-            },
+            localeResolutionCallback: (deviceLocale, supported) =>
+                resolveAppLocale(deviceLocale),
             navigatorObservers: analytics != null
                 ? [FirebaseAnalyticsObserver(analytics: analytics!)]
                 : const <NavigatorObserver>[],

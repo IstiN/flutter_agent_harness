@@ -1095,5 +1095,32 @@ void main() {
         DateTime.fromMillisecondsSinceEpoch(2000000000 * 1000, isUtc: true),
       );
     });
+
+    test('canonical Retry-After casing reaches both parses identically',
+        () async {
+      final client = http_testing.MockClient.streaming(
+        (request, requestBody) async => http.StreamedResponse(
+          Stream.value(utf8.encode('slow down')),
+          429,
+          headers: {
+            'content-type': 'text/plain',
+            // HTTP/1.1 canonical casing: the direct map index used to miss
+            // it while the structured parse (case-insensitive) saw it, so
+            // the rotation cooldown silently fell back to the default.
+            'Retry-After': '120',
+          },
+        ),
+      );
+      final events = await streamChatGptCodex(
+        chatGptModel,
+        simpleContext(),
+        credentials: credentials.encode(),
+        client: client,
+      ).toList();
+
+      final error = events.whereType<ErrorEvent>().single;
+      expect(error.retryAfter, const Duration(minutes: 2));
+      expect(error.error.rateLimit?.retryAfter, const Duration(minutes: 2));
+    });
   });
 }

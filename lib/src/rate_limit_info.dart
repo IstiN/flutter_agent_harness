@@ -135,7 +135,7 @@ final class RateLimitInfo {
     if (limitKind != null) 'limitKind': limitKind,
     if (brand != null) 'brand': brand,
     if (retryAfter != null) 'retryAfterMs': retryAfter!.inMilliseconds,
-    'rawBody': rawBody,
+    if (rawBody.isNotEmpty) 'rawBody': rawBody,
   };
 
   /// Returns a copy enriched with the provider display name for the plan
