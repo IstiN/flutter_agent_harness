@@ -747,13 +747,16 @@ Duration get effectiveProviderStreamIdleTimeout =>
 /// `: comment` heartbeat gateways use to keep wedged generations alive.
 /// Event-level silence per `moveNext` is the honest signal.
 ///
-/// Cancellation through the `async*` [SseDecoder] is lazy: the cancel future
-/// only completes once the generator body resumes, so the response-body
-/// subscription can still be active when `runProviderStream` force-closes
-/// the owned HTTP client on abort. The injected "connection closed" error
-/// is therefore swallowed here whenever [cancelToken] is cancelled; real
-/// mid-stream errors (token not cancelled) propagate to the adapter's
-/// try/catch unchanged.
+/// The raw body subscription is owned here with a stable error sink
+/// (issue #921): the `async*` [SseDecoder] cannot finish cancelling while
+/// it is suspended awaiting input, so after the SSE iteration is abandoned
+/// (idle watchdog, abort) the byte pipeline stays attached to the socket —
+/// and a flaky link's late failure arriving in that window used to find a
+/// handlerless chain and kill the process ('fa crashed: ClientException:
+/// Connection closed while receiving data'). Late errors now land in the
+/// owned `onError` and are swallowed once the stream is abandoned; live
+/// errors ride into the pipeline for the adapter's try/catch. Done is
+/// always forwarded: it is what unsticks the pending lazy cancellation.
 StreamIterator<ServerSentEvent> createSseIterator(
   http.StreamedResponse response,
   CancelToken? cancelToken, {
@@ -761,20 +764,48 @@ StreamIterator<ServerSentEvent> createSseIterator(
 }) {
   final effectiveIdleTimeout =
       idleTimeout ?? effectiveProviderStreamIdleTimeout;
-  Stream<List<int>> stream = response.stream;
-  if (cancelToken != null) {
-    stream = stream.handleError((Object error) {
-      if (!cancelToken.isCancelled) {
-        throw error;
-      }
-    });
-  }
-  final inner = StreamIterator(
-    stream.transform(utf8.decoder).transform(const SseDecoder()),
+  var abandoned = false;
+  void abandon() => abandoned = true;
+  StreamSubscription<List<int>>? rawSub;
+  final body = StreamController<List<int>>(
+    onPause: () => rawSub?.pause(),
+    onResume: () => rawSub?.resume(),
+    onCancel: () {
+      abandon();
+      return rawSub?.cancel() ?? Future<void>.value();
+    },
   );
-  final iterator = _IdleWatchdogSseIterator(inner, effectiveIdleTimeout);
+  rawSub = response.stream.listen(
+    (data) {
+      // isClosed mirrors onError: a misbehaving source emitting after the
+      // done forward would throw StateError inside this handler — the
+      // same handlerless-crash class this sink exists to prevent.
+      if (!abandoned && !body.isClosed) body.add(data);
+    },
+    onError: (Object error, StackTrace stackTrace) {
+      if (abandoned || (cancelToken?.isCancelled ?? false) || body.isClosed) {
+        return; // the link's death rattle after abandonment — noise.
+      }
+      body.addError(error, stackTrace);
+    },
+    onDone: body.close,
+  );
+  final inner = StreamIterator(
+    body.stream.transform(utf8.decoder).transform(const SseDecoder()),
+  );
+  final iterator = _IdleWatchdogSseIterator(
+    inner,
+    effectiveIdleTimeout,
+    onAbandon: abandon,
+  );
   if (cancelToken != null) {
-    unawaited(cancelToken.onCancel.then((_) => unawaited(iterator.cancel())));
+    // cancel() is already quiet — no extra swallow needed here.
+    unawaited(
+      cancelToken.onCancel.then((_) {
+        abandon();
+        return iterator.cancel();
+      }),
+    );
   }
   return iterator;
 }
@@ -783,10 +814,15 @@ StreamIterator<ServerSentEvent> createSseIterator(
 /// after [idleTimeout] without a decoded SSE event, and cancels the inner
 /// subscription on fire so the dead connection is released.
 class _IdleWatchdogSseIterator implements StreamIterator<ServerSentEvent> {
-  _IdleWatchdogSseIterator(this._inner, this._idleTimeout);
+  _IdleWatchdogSseIterator(this._inner, this._idleTimeout, {this.onAbandon});
 
   final StreamIterator<ServerSentEvent> _inner;
   final Duration _idleTimeout;
+
+  /// Called before any cancel so the byte sink starts swallowing late
+  /// transport errors (issue #921).
+  final void Function()? onAbandon;
+
   Timer? _timer;
 
   @override
@@ -796,9 +832,24 @@ class _IdleWatchdogSseIterator implements StreamIterator<ServerSentEvent> {
   Future<bool> moveNext() {
     _timer?.cancel();
     final completer = Completer<bool>();
+    final Future<bool> inner;
+    try {
+      inner = _inner.moveNext();
+    } catch (error, stackTrace) {
+      // Sync misuse throw (StreamIterator's 'Already waiting'): fail the
+      // caller WITHOUT arming the timer — an orphaned timer would later
+      // complete this completer unlistened in the root zone, the exact
+      // crash class of issue #921.
+      completer.completeError(error, stackTrace);
+      return completer.future;
+    }
     _timer = Timer(_idleTimeout, () {
       if (completer.isCompleted) return;
-      unawaited(_inner.cancel());
+      // Abandon before cancelling so the byte sink swallows the dying
+      // link's error, and quiet-cancel: the cancel future rides that
+      // dying pipeline and may itself fail (issue #921).
+      onAbandon?.call();
+      unawaited(_quietCancel(_inner.cancel()));
       completer.completeError(
         TimeoutException(
           'no events from the endpoint for '
@@ -808,7 +859,7 @@ class _IdleWatchdogSseIterator implements StreamIterator<ServerSentEvent> {
       );
     });
     unawaited(
-      _inner.moveNext().then(
+      inner.then(
         (value) {
           _timer?.cancel();
           if (!completer.isCompleted) completer.complete(value);
@@ -827,8 +878,18 @@ class _IdleWatchdogSseIterator implements StreamIterator<ServerSentEvent> {
   @override
   Future<void> cancel() {
     _timer?.cancel();
-    return _inner.cancel();
+    onAbandon?.call();
+    // The quieted future IS the contract: the abandoned pipeline is by
+    // definition noise, so a caller's `await iterator.cancel()` can never
+    // see a dying-pipeline cancel failure (issue #921).
+    return _quietCancel(_inner.cancel());
   }
+}
+
+/// Awaits a cancellation whose pipeline may be dying: its failure is noise
+/// (issue #921) — swallowed, never an unawaited-error crash.
+Future<void> _quietCancel(Future<void> cancel) {
+  return cancel.then((_) {}, onError: (Object _) {});
 }
 
 /// Mutable accumulation state for one streamed assistant message.

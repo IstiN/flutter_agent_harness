@@ -13,6 +13,11 @@ http.StreamedResponse _responseFromBytes(Stream<List<int>> bytes) {
   );
 }
 
+final _connectionClosed = http.ClientException(
+  'Connection closed while receiving data',
+  Uri.parse('https://api.z.ai/api/coding/paas/v4/chat/completions'),
+);
+
 void main() {
   group('createSseIterator idle watchdog', () {
     test('heartbeat comment bytes do NOT reset the idle timer', () async {
@@ -77,5 +82,140 @@ void main() {
       await expectLater(iterator.moveNext(), throwsA(isA<TimeoutException>()));
       await controller.close();
     });
+  });
+
+  // Issue #921: '[CLI] Fa crashing during low internet connection'.
+  // The async* SseDecoder cannot finish cancelling while it is suspended
+  // awaiting input, so after the SSE iteration is abandoned (idle watchdog,
+  // abort) the byte pipeline stays attached to the socket. A flaky link's
+  // late failure arriving in that window used to find a handlerless chain
+  // and escaped to the root zone: 'fa crashed: ClientException: Connection
+  // closed while receiving data'. Every abandonment must swallow it.
+  group('createSseIterator post-abandonment errors (issue #921)', () {
+    Future<bool> runGuarded(Future<void> Function() body) async {
+      var escaped = false;
+      await runZonedGuarded(body, (_, _) => escaped = true);
+      // Let any late zone delivery surface before the caller asserts.
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      return escaped;
+    }
+
+    test('idle-watchdog timeout then dying link does not crash', () async {
+      // The field shape: the endpoint goes silent, the watchdog fires and
+      // abandons the stream (it does NOT cancel the cancel token), then the
+      // link reports its failure.
+      final controller = StreamController<List<int>>(); // never emits
+      final iterator = createSseIterator(
+        _responseFromBytes(controller.stream),
+        null,
+        idleTimeout: const Duration(milliseconds: 60),
+      );
+      final escaped = await runGuarded(() async {
+        await expectLater(
+          iterator.moveNext(),
+          throwsA(isA<TimeoutException>()),
+        );
+        controller.addError(_connectionClosed);
+        unawaited(controller.close());
+      });
+      expect(
+        escaped,
+        isFalse,
+        reason:
+            'post-timeout transport errors must '
+            'be swallowed, not crash the process',
+      );
+    });
+
+    test('cancel mid-stream then dying link does not crash', () async {
+      final controller = StreamController<List<int>>();
+      final iterator = createSseIterator(
+        _responseFromBytes(controller.stream),
+        null,
+        idleTimeout: const Duration(seconds: 30),
+      );
+      final escaped = await runGuarded(() async {
+        final moveNext = iterator.moveNext();
+        controller.add(utf8.encode('data: {"delta":1}\n\n'));
+        expect(await moveNext, isTrue);
+        // Abandon mid-stream; inject the transport failure while the
+        // async* chain's cancellation is still settling.
+        final cancelFuture = iterator.cancel();
+        controller.addError(_connectionClosed);
+        unawaited(controller.close());
+        await cancelFuture;
+      });
+      expect(
+        escaped,
+        isFalse,
+        reason:
+            'post-cancel transport errors must '
+            'be swallowed, not crash the process',
+      );
+    });
+
+    test('token abort still swallows the connection-closed error', () async {
+      // Preserved behavior (documented on createSseIterator): the abort
+      // path's injected connection-closed error is swallowed.
+      final source = CancelTokenSource();
+      final controller = StreamController<List<int>>();
+      final iterator = createSseIterator(
+        _responseFromBytes(controller.stream),
+        source.token,
+        idleTimeout: const Duration(seconds: 30),
+      );
+      final escaped = await runGuarded(() async {
+        final moveNext = iterator.moveNext();
+        controller.add(utf8.encode('data: {"delta":1}\n\n'));
+        expect(await moveNext, isTrue);
+        source.cancel();
+        // The abort path force-closes the client right after; the dying
+        // socket's error must stay swallowed.
+        controller.addError(_connectionClosed);
+        unawaited(controller.close());
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      });
+      expect(escaped, isFalse);
+    });
+
+    test(
+      'abandonment cancels the raw subscription (no leaked pipeline)',
+      () async {
+        // The other half of the fix: the swallow must not come at the price
+        // of a pipeline that stays attached. The done forward is what
+        // unsticks the lazy async* cancellation; after the watchdog fires
+        // and the link closes, the raw subscription must actually tear down.
+        var rawCancelled = false;
+        final controller = StreamController<List<int>>(
+          onCancel: () async {
+            rawCancelled = true;
+          },
+        ); // silent until the post-timeout link close below
+        final iterator = createSseIterator(
+          _responseFromBytes(controller.stream),
+          null,
+          idleTimeout: const Duration(milliseconds: 40),
+        );
+        await expectLater(
+          iterator.moveNext(),
+          throwsA(isA<TimeoutException>()),
+        );
+        unawaited(controller.close()); // the dying link's socket close
+        // Anchored polling, bounded: the raw subscription's cancel rides the
+        // lazy async* chain (onDone → generator exit → chain cancel →
+        // body.onCancel → rawSub.cancel).
+        final deadline = DateTime.now().add(const Duration(seconds: 5));
+        while (!rawCancelled && DateTime.now().isBefore(deadline)) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+        expect(
+          rawCancelled,
+          isTrue,
+          reason:
+              'the abandoned pipeline must tear down its raw '
+              'subscription, not stay attached to the socket',
+        );
+      },
+    );
   });
 }
