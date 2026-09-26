@@ -342,6 +342,13 @@ class AddProviderPresetPickerPage extends StatelessWidget {
         // provider with custom names are a first-class use case.
         final providerPreset = _matchProviderPreset(preset.key);
         final editable = providerPreset == ProviderPreset.custom;
+        final reg = registry;
+        // Issue #977, CLI `_entryForBaseUrl` parity: an entry already
+        // serving this preset's endpoint prefills the name, so a re-add
+        // keeps the (possibly renamed) entry's identity and lands as an
+        // update instead of duplicating it.
+        final targetUrl = providerPreset.baseUrl ?? preset.baseUrl;
+        final existing = targetUrl == null ? null : reg?.byBaseUrl(targetUrl);
         // A key resolved through the host's chain (env / secure store /
         // saved keys) counts as saved — the editor shows the keep-note.
         final namedKey = editable
@@ -355,7 +362,7 @@ class AddProviderPresetPickerPage extends StatelessWidget {
           ProviderEditorPage(
             title: preset.name,
             preset: editable ? null : providerPreset,
-            prefillName: editable ? preset.name : null,
+            prefillName: existing?.name ?? (editable ? preset.name : null),
             prefillBaseUrl: editable ? preset.baseUrl : null,
             hasSavedKey: hasSavedKey,
             keyHelpUrl: preset.keyHelpUrl,
@@ -366,19 +373,10 @@ class AddProviderPresetPickerPage extends StatelessWidget {
           ),
         );
         if (result == null || result.deleted) return;
-        // Persist the new provider.
-        final reg = registry;
+        // Persist the new provider (a same-endpoint name clash lands as an
+        // update — see [landProviderResult]).
         if (reg != null) {
-          await reg.add(
-            name: result.name,
-            baseUrl: result.baseUrl,
-            modelId: result.modelId,
-          );
-          if (result.apiKey.isNotEmpty) {
-            // The registry assigns the id; re-read the last-added.
-            final added = reg.providers.last;
-            reg.rememberKey(added.id, result.apiKey);
-          }
+          await landProviderResult(reg, result);
         }
         if (context.mounted) Navigator.of(context).pop(true);
     }

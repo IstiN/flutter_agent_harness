@@ -324,6 +324,7 @@ void main() {
           baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
           modelId: 'gpt-x',
           key: 'codemie_access_token=tok-1',
+          name: 'codemie.lab.epam.com',
         );
 
         final provider = registry.providers.single;
@@ -365,6 +366,7 @@ void main() {
           baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
           modelId: 'gpt-x',
           key: 'codemie_access_token=tok-2',
+          name: 'Custom name',
           existing: existing,
         );
 
@@ -391,6 +393,7 @@ void main() {
           baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
           modelId: 'm1',
           key: '',
+          name: 'codemie.lab.epam.com',
         );
 
         final provider = registry.providers.single;
@@ -419,6 +422,7 @@ void main() {
           baseUrl: 'https://codemie.local:8443/code-assistant-api/v1',
           modelId: 'm1',
           key: 'c=1',
+          name: 'codemie.local:8443',
         );
 
         expect(registry.providers.single.name, 'codemie.local:8443');
@@ -448,6 +452,7 @@ void main() {
           baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
           modelId: 'gpt-x',
           key: 'codemie_access_token=SECRET-VALUE',
+          name: 'codemie.lab.epam.com',
         );
 
         expect(logs.join('\n'), isNot(contains('SECRET-VALUE')));
@@ -460,96 +465,91 @@ void main() {
       },
     );
 
-    test(
-      'issue #623: a successful connect resolves the auth-expired cards '
-      'in the transcript',
-      () async {
-        final env = MemoryExecutionEnv();
-        final registry = await ProviderRegistry.load(env);
-        final service = _RecordingService(env);
-        // The transcript state the card's Authorize tap runs from: a user
-        // turn, the failed run's auth-expired card, TWO of them across a
-        // double expiry (a single-card test can hide a multi-card miss),
-        // and a live assistant reply after the newest card.
-        service.messages.addAll([
-          FaChatMessage(role: 'user', content: 'summarize the doc'),
-          FaChatMessage(
-            role: 'tool',
-            toolName: 'error',
-            isError: true,
-            content: 'older expiry — [[auth-expired:codemie]]',
-          ),
-          FaChatMessage(role: 'assistant', content: 'partial answer'),
-          FaChatMessage(
-            role: 'tool',
-            toolName: 'error',
-            isError: true,
-            content: 'CodeMie session expired — the endpoint answered the '
-                'API call with the SSO login page. [[auth-expired:codemie]]',
-          ),
-        ]);
+    test('issue #623: a successful connect resolves the auth-expired cards '
+        'in the transcript', () async {
+      final env = MemoryExecutionEnv();
+      final registry = await ProviderRegistry.load(env);
+      final service = _RecordingService(env);
+      // The transcript state the card's Authorize tap runs from: a user
+      // turn, the failed run's auth-expired card, TWO of them across a
+      // double expiry (a single-card test can hide a multi-card miss),
+      // and a live assistant reply after the newest card.
+      service.messages.addAll([
+        FaChatMessage(role: 'user', content: 'summarize the doc'),
+        FaChatMessage(
+          role: 'tool',
+          toolName: 'error',
+          isError: true,
+          content: 'older expiry — [[auth-expired:codemie]]',
+        ),
+        FaChatMessage(role: 'assistant', content: 'partial answer'),
+        FaChatMessage(
+          role: 'tool',
+          toolName: 'error',
+          isError: true,
+          content:
+              'CodeMie session expired — the endpoint answered the '
+              'API call with the SSO login page. [[auth-expired:codemie]]',
+        ),
+      ]);
 
-        await saveCodemieConnection(
-          registry: registry,
-          service: service,
-          lastConnectionStore: LastConnectionStore.inMemory(),
-          orgUrl: 'https://codemie.lab.epam.com',
-          baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
-          modelId: 'gpt-x',
-          key: 'codemie_access_token=tok-1',
-        );
+      await saveCodemieConnection(
+        registry: registry,
+        service: service,
+        lastConnectionStore: LastConnectionStore.inMemory(),
+        orgUrl: 'https://codemie.lab.epam.com',
+        baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+        modelId: 'gpt-x',
+        key: 'codemie_access_token=tok-1',
+        name: 'codemie.lab.epam.com',
+      );
 
-        // No auth-expired card survives the successful sign-in.
-        expect(
-          service.messages.where(
-            (m) => authExpiredProvider(m.content) != null,
-          ),
-          isEmpty,
-        );
-        // ONE system note replaces the cards…
-        final notes = service.messages
-            .where(
-              (m) =>
-                  m.role == 'system' &&
-                  m.content.contains('Authorization successful'),
-            )
-            .toList();
-        expect(notes, hasLength(1));
-        // …sitting where the NEWEST card was (right after the live reply,
-        // which shifts up once the older card is dropped).
-        expect(service.messages.indexOf(notes.single), 2);
-        // The surrounding transcript keeps its shape.
-        expect(service.messages[0].role, 'user');
-        expect(service.messages[1].role, 'assistant');
-      },
-    );
+      // No auth-expired card survives the successful sign-in.
+      expect(
+        service.messages.where((m) => authExpiredProvider(m.content) != null),
+        isEmpty,
+      );
+      // ONE system note replaces the cards…
+      final notes = service.messages
+          .where(
+            (m) =>
+                m.role == 'system' &&
+                m.content.contains('Authorization successful'),
+          )
+          .toList();
+      expect(notes, hasLength(1));
+      // …sitting where the NEWEST card was (right after the live reply,
+      // which shifts up once the older card is dropped).
+      expect(service.messages.indexOf(notes.single), 2);
+      // The surrounding transcript keeps its shape.
+      expect(service.messages[0].role, 'user');
+      expect(service.messages[1].role, 'assistant');
+    });
 
-    test(
-      'issue #623: a connect with no auth-expired cards in the transcript '
-      'appends nothing',
-      () async {
-        final env = MemoryExecutionEnv();
-        final registry = await ProviderRegistry.load(env);
-        final service = _RecordingService(env);
-        service.messages.addAll([
-          FaChatMessage(role: 'user', content: 'hello'),
-          FaChatMessage(role: 'assistant', content: 'hi!'),
-        ]);
+    test('issue #623: a connect with no auth-expired cards in the transcript '
+        'appends nothing', () async {
+      final env = MemoryExecutionEnv();
+      final registry = await ProviderRegistry.load(env);
+      final service = _RecordingService(env);
+      service.messages.addAll([
+        FaChatMessage(role: 'user', content: 'hello'),
+        FaChatMessage(role: 'assistant', content: 'hi!'),
+      ]);
 
-        await saveCodemieConnection(
-          registry: registry,
-          service: service,
-          lastConnectionStore: LastConnectionStore.inMemory(),
-          orgUrl: 'https://codemie.lab.epam.com',
-          baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
-          modelId: 'gpt-x',
-          key: 'codemie_access_token=tok-1',
-        );
+      await saveCodemieConnection(
+        registry: registry,
+        service: service,
+        lastConnectionStore: LastConnectionStore.inMemory(),
+        orgUrl: 'https://codemie.lab.epam.com',
+        baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+        modelId: 'gpt-x',
+        key: 'codemie_access_token=tok-1',
+        name: 'codemie.lab.epam.com',
+      );
 
-        // Settings re-logins and first connects must not spam a note.
-        expect(service.messages, hasLength(2));
-      },
-    );
+      // Settings re-logins and first connects must not spam a note.
+      expect(service.messages, hasLength(2));
+    });
   });
 
   group('lenient fetches — network errors degrade to empty, never crash', () {
@@ -856,11 +856,113 @@ void main() {
       await tester.tap(find.text('Connect'));
       await tester.pumpAndSettle();
 
+      // The #977 name step: prefilled with the org host — Continue keeps it.
+      await tester.tap(find.text('Continue'));
+      await tester.pumpAndSettle();
+
       expect(await done.future, isTrue);
       expect(registry.providers.single.modelId, 'gpt-x');
+      expect(registry.providers.single.name, 'codemie.lab.epam.com');
       expect(service.reconfigured!.modelId, 'gpt-x');
       expect(store.connection!.modelId, 'gpt-x');
     });
+
+    testWidgets(
+      'issue #977: a second account on the same org becomes its OWN entry '
+      '(a fresh name adds, the first account survives)',
+      (tester) async {
+        final env = MemoryExecutionEnv();
+        final registry = await ProviderRegistry.load(env);
+        final first = await registry.add(
+          name: 'codemie.lab.epam.com',
+          baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+          modelId: 'gpt-x',
+        );
+        registry.rememberKey(first.id, 'codemie_access_token=first-account');
+        final done = Completer<bool>();
+
+        await pumpFlow(
+          tester: tester,
+          done: done,
+          registry: registry,
+          service: _RecordingService(env),
+          authenticate: (_, __) async => _credentials(),
+        );
+        await tester.pumpAndSettle();
+
+        // Fresh login MUST pick: confirm, then name the SECOND account.
+        await tester.enterText(find.byType(TextField), 'gpt-y');
+        await tester.tap(find.text('Connect'));
+        await tester.pumpAndSettle();
+
+        // The dialog prefills the existing entry's name; a fresh name is a
+        // separate account.
+        expect(find.byType(TextField), findsOneWidget);
+        await tester.enterText(find.byType(TextField), 'work');
+        await tester.tap(find.text('Continue'));
+        await tester.pumpAndSettle();
+
+        expect(await done.future, isTrue);
+        expect(registry.providers, hasLength(2));
+        final second = registry.providers.singleWhere((p) => p.name == 'work');
+        expect(
+          second.baseUrl,
+          'https://codemie.lab.epam.com/code-assistant-api/v1',
+          // Same org endpoint — two accounts coexist on it.
+        );
+        expect(second.modelId, 'gpt-y');
+        expect(registry.keyFor(second.id), 'codemie_access_token=aaa.bbb.ccc');
+        // The first account's entry is untouched.
+        expect(registry.byName('codemie.lab.epam.com')!.id, first.id);
+        expect(registry.keyFor(first.id), 'codemie_access_token=first-account');
+      },
+    );
+
+    testWidgets(
+      'issue #977: a name used by another ENDPOINT is rejected inline, '
+      'then a usable name lands',
+      (tester) async {
+        final env = MemoryExecutionEnv();
+        final registry = await ProviderRegistry.load(env);
+        await registry.add(
+          name: 'work',
+          baseUrl: 'https://other.example.com/v1',
+          modelId: 'm1',
+        );
+        final done = Completer<bool>();
+
+        await pumpFlow(
+          tester: tester,
+          done: done,
+          registry: registry,
+          service: _RecordingService(env),
+          authenticate: (_, __) async => _credentials(),
+        );
+        await tester.pumpAndSettle();
+
+        await tester.enterText(find.byType(TextField), 'gpt-x');
+        await tester.tap(find.text('Connect'));
+        await tester.pumpAndSettle();
+
+        // The clash: 'work' belongs to another endpoint — rejected inline.
+        await tester.enterText(find.byType(TextField), 'work');
+        await tester.tap(find.text('Continue'));
+        await tester.pump();
+
+        expect(
+          find.textContaining('already used by https://other.example.com/v1'),
+          findsOneWidget,
+        );
+        // The dialog is still up — pick another name.
+        await tester.enterText(find.byType(TextField), 'codemie.lab.epam.com');
+        await tester.tap(find.text('Continue'));
+        await tester.pumpAndSettle();
+
+        expect(await done.future, isTrue);
+        expect(registry.providers, hasLength(2));
+        expect(registry.providers.last.name, 'codemie.lab.epam.com');
+      },
+    );
 
     testWidgets('cancel at step 1 aborts without saving', (tester) async {
       final env = MemoryExecutionEnv();
@@ -902,61 +1004,69 @@ void main() {
     });
   });
 
-  group('runCodemieSsoFlow — issue #586: the prompt outlives transcript churn', () {
-    testWidgets(
-      'an LLM-delta rebuild mid-flow keeps the authorize prompt up until the user acts',
-      (tester) async {
-        final env = MemoryExecutionEnv();
-        final registry = await ProviderRegistry.load(env);
-        final service = _RecordingService(env);
-        final store = LastConnectionStore.inMemory();
-        final done = Completer<bool>();
-        // Holds the flow inside the post-SSO network hop until the churn
-        // has fired — the window where the sheet's context dies.
-        final projectsGate = Completer<List<String>>();
+  group(
+    'runCodemieSsoFlow — issue #586: the prompt outlives transcript churn',
+    () {
+      testWidgets(
+        'an LLM-delta rebuild mid-flow keeps the authorize prompt up until the user acts',
+        (tester) async {
+          final env = MemoryExecutionEnv();
+          final registry = await ProviderRegistry.load(env);
+          final service = _RecordingService(env);
+          final store = LastConnectionStore.inMemory();
+          final done = Completer<bool>();
+          // Holds the flow inside the post-SSO network hop until the churn
+          // has fired — the window where the sheet's context dies.
+          final projectsGate = Completer<List<String>>();
 
-        await tester.pumpWidget(
-          MaterialApp(
-            home: _TranscriptHost(
-              done: done,
-              registry: registry,
-              service: service,
-              store: store,
-              authenticate: (_, __) async => _expiredCredentials(),
-              fetchProjects: (_, __) => projectsGate.future,
-              models: const ['m1'],
+          await tester.pumpWidget(
+            MaterialApp(
+              home: _TranscriptHost(
+                done: done,
+                registry: registry,
+                service: service,
+                store: store,
+                authenticate: (_, __) async => _expiredCredentials(),
+                fetchProjects: (_, __) => projectsGate.future,
+                models: const ['m1'],
+              ),
             ),
-          ),
-        );
-        await tester.pump(); // flow started; authenticate resolved; in _projectStep
+          );
+          await tester
+              .pump(); // flow started; authenticate resolved; in _projectStep
 
-        // The LLM replies mid-flow: the transcript rebuilds and the
-        // subtree owning the flow's context is disposed.
-        service.fireLlmMessageEvent();
-        await tester.pump();
+          // The LLM replies mid-flow: the transcript rebuilds and the
+          // subtree owning the flow's context is disposed.
+          service.fireLlmMessageEvent();
+          await tester.pump();
 
-        projectsGate.complete(const []);
-        await tester.pumpAndSettle();
+          projectsGate.complete(const []);
+          await tester.pumpAndSettle();
 
-        // The authorize prompt (the model picker — the step that demands
-        // the user's action) must be up, and STAY up while the transcript
-        // keeps rebuilding underneath it.
-        expect(find.text('Connect'), findsOneWidget);
-        await tester.pump();
-        await tester.pump();
-        expect(find.text('Connect'), findsOneWidget);
+          // The authorize prompt (the model picker — the step that demands
+          // the user's action) must be up, and STAY up while the transcript
+          // keeps rebuilding underneath it.
+          expect(find.text('Connect'), findsOneWidget);
+          await tester.pump();
+          await tester.pump();
+          expect(find.text('Connect'), findsOneWidget);
 
-        // The user acts: the pick lands, the flow completes, the provider
-        // is saved and the service reconfigured.
-        await tester.enterText(find.byType(TextField), 'gpt-x');
-        await tester.tap(find.text('Connect'));
-        await tester.pumpAndSettle();
+          // The user acts: the pick lands, the flow completes, the provider
+          // is saved and the service reconfigured.
+          await tester.enterText(find.byType(TextField), 'gpt-x');
+          await tester.tap(find.text('Connect'));
+          await tester.pumpAndSettle();
 
-        expect(await done.future, isTrue);
-        expect(registry.providers.single.modelId, 'gpt-x');
-        expect(service.reconfigured!.modelId, 'gpt-x');
-        expect(store.connection!.modelId, 'gpt-x');
-      },
-    );
-  });
+          // The #977 name step — Continue keeps the org-host prefill.
+          await tester.tap(find.text('Continue'));
+          await tester.pumpAndSettle();
+
+          expect(await done.future, isTrue);
+          expect(registry.providers.single.modelId, 'gpt-x');
+          expect(service.reconfigured!.modelId, 'gpt-x');
+          expect(store.connection!.modelId, 'gpt-x');
+        },
+      );
+    },
+  );
 }

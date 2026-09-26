@@ -32,6 +32,86 @@ String codeMieHostFromUrl(String url) {
   return 'codemie';
 }
 
+/// The CLI-parity provider-name step (issue #977, `_askConnectProviderName`):
+/// a dialog prefilled with [initial] — the existing entry's name on a
+/// re-login, the org host otherwise — asking what to call this CodeMie
+/// connection. A name already used by an entry on a DIFFERENT endpoint is
+/// rejected inline (two providers cannot share a name); a name free, or
+/// belonging to an entry on this very endpoint (the re-login / second
+/// account shape), is returned.
+///
+/// Returns the resolved name, or null on cancel — the caller substitutes
+/// [initial] (SSO credentials are already minted at this point, so a cancel
+/// must not abort the connect; the CLI does the same for OAuth/SSO flows).
+Future<String?> showCodeMieNamePrompt(
+  BuildContext context, {
+  required ProviderRegistry registry,
+  required String baseUrl,
+  required String initial,
+}) {
+  var error = '';
+  return showDialog<String>(
+    context: context,
+    barrierDismissible: false,
+    builder: (dialogContext) {
+      final controller = TextEditingController(text: initial);
+      return StatefulBuilder(
+        builder: (dialogContext, setState) {
+          void submit() {
+            final name = controller.text.trim();
+            if (name.isEmpty) {
+              // Empty = keep the suggested name (the CLI's bare Enter).
+              Navigator.of(dialogContext).pop(initial);
+              return;
+            }
+            final clash = registry.byName(name);
+            if (clash != null && clash.baseUrl != baseUrl) {
+              setState(
+                () => error =
+                    'Name "$name" is already used by ${clash.baseUrl} — '
+                    'pick another name',
+              );
+              return;
+            }
+            Navigator.of(dialogContext).pop(name);
+          }
+
+          return AlertDialog(
+            title: const Text('Name this CodeMie connection'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  onSubmitted: (_) => submit(),
+                  decoration: const InputDecoration(labelText: 'Provider name'),
+                ),
+                if (error.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    error,
+                    style: TextStyle(
+                      color: Theme.of(dialogContext).colorScheme.error,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(onPressed: submit, child: const Text('Continue')),
+            ],
+          );
+        },
+      );
+    },
+  );
+}
+
 /// Nulls out an empty string — an empty pick means "cancel", not ''.
 String? nonEmptyCodeMieId(String? id) => (id == null || id.isEmpty) ? null : id;
 
@@ -95,7 +175,10 @@ Future<List<String>> fetchCodeMieModelsLenient(
 /// a re-login keeps id and name) and reconfigures [service], then persists
 /// the last connection.
 ///
-/// The credential-assembly contract: [key] is the session cookie string for
+/// [name] is the CLI-parity display name (issue #977): the name step's
+/// resolved value — the existing entry's name on a re-login, a fresh name
+/// for a second account on the same org, the org host otherwise. The
+/// credential-assembly contract: [key] is the session cookie string for
 /// the SSO surfaces and the EMPTY string for the extension branch (cookie
 /// jar auth, a bearer key never exists there).
 Future<void> saveCodemieConnection({
@@ -106,9 +189,9 @@ Future<void> saveCodemieConnection({
   required String baseUrl,
   required String modelId,
   required String key,
+  required String name,
   CustomProvider? existing,
 }) async {
-  final name = codeMieHostFromUrl(orgUrl);
   if (existing != null) {
     final updated = CustomProvider(
       id: existing.id,
@@ -345,6 +428,7 @@ Future<bool> _completeExtensionSignin({
     baseUrl: baseUrl,
     modelId: modelId,
     key: '', // cookie-jar auth — a bearer key never exists here
+    name: existing?.name ?? codeMieHostFromUrl(orgUrl),
     existing: existing,
   );
   return true;
