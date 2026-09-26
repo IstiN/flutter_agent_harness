@@ -2013,7 +2013,10 @@ Future<void> _runApp(List<String> args) async {
   // driving the boot, and no key resolving anywhere — opens the guided
   // add-provider wizard before the first prompt instead of the default
   // provider's "no key set" banner noise. Headless (-p / prompt args)
-  // never gets the flag; its hard key gate stays byte-identical.
+  // never gets the flag; its hard key gate stays byte-identical. Two
+  // explicit boot modes are also excluded: a named `--session` resume is
+  // never a fresh install, and the pi benchmark profile (`--pi` /
+  // FA_PI_MODE / `agent.mode: pi`) must stay deterministic.
   final freshInstallProviderFlow = headlessPrompt == null &&
       !applyFolderModel &&
       parsed.model == null &&
@@ -2022,9 +2025,14 @@ Future<void> _runApp(List<String> args) async {
       faPreconfig == null &&
       !defaultRoleResolved &&
       queueRuntime == null &&
-      saved.customProviders.isEmpty &&
+      effective.session == null &&
+      harnessMode == null &&
       saved.providerKind == 'openai-completions' &&
       saved.baseUrl == providerCatalog['openrouter']!.defaultBaseUrl &&
+      // The customProviders emptiness mirrors the pure decision's first
+      // check (startup.dart) on purpose: the unit-tested function owns the
+      // semantics; the glue names the term it gates on for readability.
+      saved.customProviders.isEmpty &&
       freshInstallProviderState(
         customProviders: saved.customProviders,
         keys: keyCache,

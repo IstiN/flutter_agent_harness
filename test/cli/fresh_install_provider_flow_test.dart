@@ -151,6 +151,13 @@ void main() {
     await waitForIt(
       () => io.out.toString().contains('switched provider to openai'),
     );
+    // The wizard completes OUTSIDE the dispatch loop — the loop is parked
+    // reading the next line when the last answer lands, so only the flow's
+    // own completion can restore the idle prompt (round-1 review: it never
+    // reappeared and the user had to submit a line blind). On a fresh boot
+    // the prompt has never printed before this point, so its first
+    // appearance here proves the redraw.
+    await waitForIt(() => io.out.toString().contains('fa>'));
     io.sendLine('/exit');
     await run;
 
@@ -162,6 +169,39 @@ void main() {
     expect(store.map['FA_KEY_PROXY_EXAMPLE_COM_WORK'], 'sk-fresh-key-1');
     expect(io.out.toString(), isNot(contains('sk-fresh-key-1')));
     expect(changes, hasLength(1));
+  });
+
+  test('cancelling the boot wizard (Ctrl-C) keeps the default boot usable '
+      'and restores the idle prompt', () async {
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final changes = <(String, String)>[];
+    final store = FakeSecureKeyStore();
+    final keys = SecureKeyCache(store);
+    await keys.probe();
+    final cli = cliFor(
+      fake.call,
+      freshInstallProviderFlow: true,
+      onProviderChanged: (kind, key) async => changes.add((kind, key)),
+      secureKeys: keys,
+    );
+    final run = cli.run();
+
+    await waitForIt(() => io.out.toString().contains('type a number:'));
+    io.interrupt(); // Ctrl-C on the first question
+    await waitForIt(
+      () => io.out.toString().contains('custom provider setup cancelled'),
+    );
+    // The cancel path restores the prompt too — without the redraw the
+    // REPL looks dead until the user submits a line blind.
+    await waitForIt(() => io.out.toString().contains('fa>'));
+
+    // Nothing applied: no provider switch, no persisted key. The REPL is
+    // still usable — /exit goes through the normal path.
+    expect(changes, isEmpty);
+    expect(store.map, isEmpty);
+    io.sendLine('/exit');
+    await run;
+    expect(io.out.toString(), isNot(contains('switched provider')));
   });
 
   test('a boot without the fresh-install flag never opens the wizard',
