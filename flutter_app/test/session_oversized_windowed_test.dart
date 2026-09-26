@@ -456,20 +456,38 @@ void main() {
 
     // "Load earlier" pages up: one chunk covers the remaining 100
     // records, so the head lands in the view. The list opens scrolled
-    // to the tail - bring the pinned banner on-screen first.
+    // to the tail, and the banner reveals on scroll-to-top only
+    // (issue #974) — drag to the oldest edge until it appears. The
+    // transcript is the surface's only reversed vertical scrollable
+    // (reversed chat list: axisDirection up); chrome scrollables must
+    // not eat the drags.
+    final transcript = find
+        .byWidgetPredicate(
+          (w) => w is Scrollable && w.axisDirection == AxisDirection.up,
+        )
+        .first;
     await tester.scrollUntilVisible(
-      find.textContaining('Load earlier').first,
-      -100,
-      scrollable: find.byType(Scrollable).first,
-      maxScrolls: 20,
+      find.textContaining('Load earlier'),
+      500,
+      scrollable: transcript,
+      maxScrolls: 120,
     );
     await tester.pumpAndSettle();
     await tester.tap(find.textContaining('Load earlier').first);
     await tester.pumpAndSettle();
-    // The head decoded into the service (300 = full file); the pinned
-    // "Load earlier" banner turned into its terminal state in place.
+    // The head decoded into the service (300 = full file); the
+    // "Load earlier" banner turned into its terminal state in place —
+    // which reveals on scroll-to-top too, so drag to the new oldest
+    // edge to see it (issue #974).
     expect(manager.active!.service.messages, hasLength(300));
     expect(manager.active!.service.historyAboveCount, 0);
+    await tester.scrollUntilVisible(
+      find.textContaining('Beginning of session'),
+      500,
+      scrollable: transcript,
+      maxScrolls: 120,
+    );
+    await tester.pumpAndSettle();
     expect(find.textContaining('Load earlier'), findsNothing);
     expect(find.textContaining('Beginning of session'), findsOneWidget);
   });

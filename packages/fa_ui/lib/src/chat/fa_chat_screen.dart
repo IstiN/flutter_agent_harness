@@ -312,6 +312,39 @@ class _FaChatScreenState extends State<FaChatScreen>
   int? _historyBelow;
   int? _historyTotal;
 
+  /// Reveal-on-top gate (issue #974): the "Load earlier" sticker is a
+  /// top-of-transcript affordance, so it renders only while the viewport
+  /// sits at (or near) the oldest edge. Mirrors [_revealedNow] purely as
+  /// a rebuild trigger — [_updateTopReveal] rebuilds when the live
+  /// computation flips.
+  bool _topBannerRevealed = true;
+
+  /// How close to the oldest edge (px) the viewport must park for the
+  /// top banner to reveal.
+  static const double _topRevealSlack = 64;
+
+  /// The live reveal computation: a REVERSED list keeps the oldest edge
+  /// at maxScrollExtent, so "parked at the top" is pixels within the
+  /// slack of it. A transcript that fits the viewport (or has not laid
+  /// out yet) has no scroll range and always reveals.
+  bool get _revealedNow {
+    if (!_chatScrollController.hasClients) return true;
+    final position = _chatScrollController.position;
+    return position.pixels >= position.maxScrollExtent - _topRevealSlack;
+  }
+
+  /// Rebuilds when the reveal gate flips. Wired to the transcript's
+  /// scroll position (drags, programmatic jumps) and — through the
+  /// [ScrollMetricsNotification] listener in [build] — to layout-time
+  /// extent changes (first attach, paged-in pages), which never produce
+  /// a position change to listen to.
+  void _updateTopReveal() {
+    final revealed = _revealedNow;
+    if (revealed != _topBannerRevealed && mounted) {
+      setState(() => _topBannerRevealed = revealed);
+    }
+  }
+
   /// Whether the file browser side panel is expanded (wide layouts only).
   bool _filesPanelOpen = false;
 
@@ -428,6 +461,7 @@ class _FaChatScreenState extends State<FaChatScreen>
     FaChatHost.track('screen_opened', {'screen_name': 'chat'});
     _chatController = InMemoryChatController();
     _chatScrollController.addListener(_trackNearBottom);
+    _chatScrollController.addListener(_updateTopReveal);
     _subscribeToService(widget.service);
     if (widget.features.trajectory) _trajectory;
     _isStreaming = widget.service.isStreaming;
@@ -949,6 +983,12 @@ class _FaChatScreenState extends State<FaChatScreen>
       debugPrint('chat sync failed: $e\n$stack');
     } finally {
       _isSyncing = false;
+      // The sync may have attached the list (first message) or changed
+      // the scroll extents (a paged-in page) — re-measure the reveal
+      // gate on the laid-out frame (issue #974).
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _updateTopReveal();
+      });
     }
   }
 
@@ -1200,69 +1240,84 @@ class _FaChatScreenState extends State<FaChatScreen>
                   !(historyAbove == 0 && _historyLoadError == null),
             ),
           Expanded(
-            child: NotificationListener<ScrollNotification>(
+            // Layout-time extent changes (first list attach, a paged-in
+            // page) never move the scroll position, so the reveal-on-top
+            // gate (issue #974) listens for them here; post-framed — the
+            // notification dispatches mid-layout.
+            child: NotificationListener<ScrollMetricsNotification>(
               onNotification: (notification) {
-                _trackUserScroll(notification);
+                if (notification.depth != 0) return false;
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted) _updateTopReveal();
+                });
                 return false;
               },
-              child: Chat(
-                currentUserId: 'user',
-                resolveUser: _resolveUser,
-                chatController: _chatController,
-                // With a wallpaper layer the transcript surface paints
-                // transparent so the layer underneath shows through (E2: the
-                // layer itself owns the color fallback when the image is gone).
-                backgroundColor: wallpaper == null
-                    ? null
-                    : const Color(0x00000000),
-                builders: Builders(
-                  textMessageBuilder: _buildTextMessage,
-                  customMessageBuilder: _buildCustomMessage,
-                  chatAnimatedListBuilder: (context, itemBuilder) =>
-                      ChatAnimatedList(
-                        itemBuilder: itemBuilder,
-                        scrollController: _chatScrollController,
-                        // Reversed list (the learn.ai pattern): index 0 is the
-                        // newest message, the list starts AT the bottom — no
-                        // initial scroll-to-end, no jump, or "stuck mid-list"
-                        // on long transcripts. New rows grow upwards, exactly
-                        // like a chat.
-                        reversed: true,
-                        // The initial history load (and big external reloads)
-                        // renders without the per-row insert animation cascade;
-                        // live messages keep the default animation. 1ms instead
-                        // of a true zero: a zero duration leaves the package's
-                        // initial-scroll timer unsettled inside fake_async
-                        // test bindings.
-                        insertAnimationDurationResolver: (_) =>
-                            _suppressInsertAnimations
-                            ? const Duration(milliseconds: 1)
-                            : const Duration(milliseconds: 250),
-                        // The typing indicator lives IN the list (issue #459):
-                        // in a reversed scroll view the bottom sliver renders
-                        // visually LAST — below the newest message, right
-                        // above the composer — scrolling away with the
-                        // content instead of pinning above the input bar.
-                        bottomSliver: _isStreaming
-                            ? const SliverToBoxAdapter(
-                                key: ValueKey('faChatTypingFooter'),
-                                child: FaTypingFooter(),
-                              )
-                            : null,
-                      ),
-                  // While streaming with an empty transcript the footer is the
-                  // only item (E1) — the package's default "No messages yet"
-                  // overlay would stack under it; idle keeps the default.
-                  emptyChatListBuilder: (context) => _isStreaming
-                      ? const SizedBox.shrink()
-                      : const EmptyChatList(),
-                  composerBuilder: (_) => const SizedBox.shrink(),
+              child: NotificationListener<ScrollNotification>(
+                onNotification: (notification) {
+                  _trackUserScroll(notification);
+                  return false;
+                },
+                child: Chat(
+                  currentUserId: 'user',
+                  resolveUser: _resolveUser,
+                  chatController: _chatController,
+                  // With a wallpaper layer the transcript surface paints
+                  // transparent so the layer underneath shows through (E2: the
+                  // layer itself owns the color fallback when the image is gone).
+                  backgroundColor: wallpaper == null
+                      ? null
+                      : const Color(0x00000000),
+                  builders: Builders(
+                    textMessageBuilder: _buildTextMessage,
+                    customMessageBuilder: _buildCustomMessage,
+                    chatAnimatedListBuilder: (context, itemBuilder) =>
+                        ChatAnimatedList(
+                          itemBuilder: itemBuilder,
+                          scrollController: _chatScrollController,
+                          // Reversed list (the learn.ai pattern): index 0 is the
+                          // newest message, the list starts AT the bottom — no
+                          // initial scroll-to-end, no jump, or "stuck mid-list"
+                          // on long transcripts. New rows grow upwards, exactly
+                          // like a chat.
+                          reversed: true,
+                          // The initial history load (and big external reloads)
+                          // renders without the per-row insert animation cascade;
+                          // live messages keep the default animation. 1ms instead
+                          // of a true zero: a zero duration leaves the package's
+                          // initial-scroll timer unsettled inside fake_async
+                          // test bindings.
+                          insertAnimationDurationResolver: (_) =>
+                              _suppressInsertAnimations
+                              ? const Duration(milliseconds: 1)
+                              : const Duration(milliseconds: 250),
+                          // The typing indicator lives IN the list (issue #459):
+                          // in a reversed scroll view the bottom sliver renders
+                          // visually LAST — below the newest message, right
+                          // above the composer — scrolling away with the
+                          // content instead of pinning above the input bar.
+                          bottomSliver: _isStreaming
+                              ? const SliverToBoxAdapter(
+                                  key: ValueKey('faChatTypingFooter'),
+                                  child: FaTypingFooter(),
+                                )
+                              : null,
+                        ),
+                    // While streaming with an empty transcript the footer is the
+                    // only item (E1) — the package's default "No messages yet"
+                    // overlay would stack under it; idle keeps the default.
+                    emptyChatListBuilder: (context) => _isStreaming
+                        ? const SizedBox.shrink()
+                        : const EmptyChatList(),
+                    composerBuilder: (_) => const SizedBox.shrink(),
+                  ),
+                  theme: Theme.of(context).brightness == Brightness.light
+                      ? buildFahChatThemeLight(
+                          uiTheme: FaUiThemeProvider.of(context),
+                        )
+                      : buildFahChatTheme(
+                          uiTheme: FaUiThemeProvider.of(context),
+                        ),
                 ),
-                theme: Theme.of(context).brightness == Brightness.light
-                    ? buildFahChatThemeLight(
-                        uiTheme: FaUiThemeProvider.of(context),
-                      )
-                    : buildFahChatTheme(uiTheme: FaUiThemeProvider.of(context)),
               ),
             ),
           ),
@@ -1340,6 +1395,10 @@ class _FaChatScreenState extends State<FaChatScreen>
   /// above); a windowed host always shows it — count, spinner, or the
   /// terminal "Beginning of session" state (E6).
   ///
+  /// Reveal-on-top (issue #974): the banner only renders while the
+  /// viewport is parked at the oldest edge (or the transcript fits) —
+  /// never over the live tail.
+  ///
   /// Empty-session escape (issue #223): with no transcript rows loaded
   /// and nothing above the window there is nothing to page in, so no
   /// banner renders — even while the background count is still in flight
@@ -1347,6 +1406,7 @@ class _FaChatScreenState extends State<FaChatScreen>
   /// header-only or single-record session (a "1 of 0"/"1 of 1" banner is
   /// nonsense over an already-complete transcript).
   bool _topBannerVisible(int? historyAbove) {
+    if (!_revealedNow) return false;
     final total = _historyTotal;
     if (historyAbove != null &&
         historyAbove <= 0 &&

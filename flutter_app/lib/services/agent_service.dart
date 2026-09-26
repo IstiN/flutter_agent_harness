@@ -1859,9 +1859,11 @@ class AgentService extends ChangeNotifier
   /// ([FaChatService.historyAboveCount]): `null` while the background
   /// count is still running or unknown (right after a jump), `0` once
   /// the whole transcript is loaded, `N` — what the "Load earlier"
-  /// banner shows.
+  /// banner shows. A full-open session has no pages above anything —
+  /// it reports the contract's complete-transcript `0`, so the banner
+  /// never renders on it (issue #974: the first-message sticker).
   @override
-  int? get historyAboveCount => _historyAboveCount;
+  int? get historyAboveCount => _windowed == null ? 0 : _historyAboveCount;
   int? _historyAboveCount;
 
   /// Hidden-range drill-in (issue #385 F4): resolves a compacted row's
