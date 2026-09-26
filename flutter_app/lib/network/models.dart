@@ -432,10 +432,13 @@ final class TokenBundle {
   final DateTime? refreshExpiresAt;
 
   /// Tolerant parse: throws [FormatException] when the token strings are
-  /// missing, treats absent/malformed lifetimes as 0 seconds.
+  /// missing, treats absent/malformed lifetimes as 0 seconds. Accepts BOTH
+  /// the snake_case the auth service actually returns
+  /// (`access_token`/`expires_in` — see IstiN/auth OAuthExchange) and the
+  /// camelCase the fa_network docs name.
   factory TokenBundle.fromJson(Map<String, Object?> json, {DateTime? now}) {
-    final accessToken = json['accessToken'];
-    final refreshToken = json['refreshToken'];
+    final accessToken = json['accessToken'] ?? json['access_token'];
+    final refreshToken = json['refreshToken'] ?? json['refresh_token'];
     if (accessToken is! String || refreshToken is! String) {
       throw FormatException(
         'TokenBundle: "accessToken"/"refreshToken" are required strings',
@@ -443,11 +446,12 @@ final class TokenBundle {
       );
     }
     final base = now ?? DateTime.now();
-    final expiresIn = switch (json['expiresIn']) {
+    final expiresIn = switch (json['expiresIn'] ?? json['expires_in']) {
       final num n => n.toInt(),
       _ => 0,
     };
-    final refreshExpiresIn = switch (json['refreshExpiresIn']) {
+    final refreshExpiresIn = switch (json['refreshExpiresIn'] ??
+        json['refresh_expires_in']) {
       final num n => n.toInt(),
       _ => null,
     };
