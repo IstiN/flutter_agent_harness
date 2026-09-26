@@ -7,10 +7,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
+import 'package:fa_ui/src/providers/add_provider_picker.dart';
 import 'package:fa_ui/src/providers/connection.dart' show FaChatModelConfig;
 import 'package:fa_ui/src/providers/default_chat_model.dart'
     show FaOnDeviceRoute;
-import 'package:fa_ui/src/providers/provider_editor_page.dart';
 import 'package:fa_ui/src/providers/provider_preset.dart';
 import 'package:fa_ui/src/providers/voice_presets.dart';
 import 'package:fa_ui/src/stores/media_models_store.dart';
@@ -95,8 +95,10 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
   /// overrides don't).
   final List<FaOnDeviceRoute> onDeviceRoutes;
 
-  /// A host-provided "Add provider" page builder (the full preset picker
-  /// with SSO/OAuth tiles). Null uses the plain [pushProviderEditor].
+  /// A host-provided "Add provider" page builder — the preset picker with
+  /// the host's SSO/OAuth tiles. When null, the same
+  /// [AddProviderPresetPickerPage] is built from this picker's registry
+  /// (issue #975: every add-provider entry opens the ONE settings flow).
   final WidgetBuilder? addProviderPage;
 
   @override
@@ -293,29 +295,25 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
     );
   }
 
-  /// Adds a provider through the shared create page and continues straight
-  /// to its model page.
+  /// Adds a provider through the ONE add-provider flow (issue #975): the
+  /// settings preset picker — the host builder adds the SSO/OAuth/on-device
+  /// tiles, the fallback builds the same page from this picker's registry.
+  /// The registry listener refreshes this list when it returns.
   Future<void> _addProvider(
     BuildContext context,
     ProviderRegistry registry,
   ) async {
-    // The host's full picker (SSO/OAuth/on-device tiles) owns its flows —
-    // the registry listener refreshes this list when it returns.
     final hostPage = addProviderPage;
-    if (hostPage != null) {
-      await Navigator.of(
-        context,
-      ).push(MaterialPageRoute<void>(builder: hostPage));
-      return;
-    }
-    final added = await pushProviderEditor(
-      context,
-      registry,
-      title: FaUiStrings.of(context).settingsAddProvider,
-      modelsFetcher: modelsFetcher,
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (routeContext) => hostPage != null
+            ? hostPage(routeContext)
+            : AddProviderPresetPickerPage(
+                registry: registry,
+                modelsFetcher: modelsFetcher,
+              ),
+      ),
     );
-    if (added == null || !context.mounted) return;
-    await _openModelPage(context, registry, added);
   }
 }
 

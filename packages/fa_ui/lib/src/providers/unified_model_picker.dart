@@ -7,9 +7,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
+import 'package:fa_ui/src/providers/add_provider_picker.dart';
 import 'package:fa_ui/src/providers/connection.dart';
 import 'package:fa_ui/src/providers/default_chat_model.dart';
-import 'package:fa_ui/src/providers/provider_editor_page.dart';
 import 'package:fa_ui/src/providers/provider_preset.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/stores/session_keys_store.dart';
@@ -95,8 +95,10 @@ class UnifiedModelPickerPage extends StatefulWidget {
   /// Display labels for non-endpoint provider kinds (on-device backends).
   final Map<String, String> providerKindLabels;
 
-  /// A host-provided widget builder for the "Add provider" page (preset
-  /// picker). When null, a simple [pushProviderEditor] is used.
+  /// A host-provided widget builder for the "Add provider" page — the
+  /// preset picker with the host's SSO/OAuth tiles. When null, the same
+  /// [AddProviderPresetPickerPage] is built from this picker's registry
+  /// (issue #975: every add-provider entry opens the ONE settings flow).
   final WidgetBuilder? addProviderPage;
 
   @override
@@ -518,25 +520,23 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
                           ),
                           title: Text(strings.settingsAddProvider),
                           onTap: () async {
-                            if (widget.addProviderPage != null) {
-                              await Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (_) =>
-                                      widget.addProviderPage!(context),
-                                ),
-                              );
-                              if (mounted) _fetchAllModels();
-                            } else {
-                              await pushProviderEditor(
-                                context,
-                                widget.registry ?? ProviderRegistry.inMemory(),
-                                title: strings.settingsAddProvider,
-                              );
-                              if (mounted) {
-                                setState(() => _loading = true);
-                                _fetchAllModels();
-                              }
-                            }
+                            // The ONE add-provider flow (issue #975): the
+                            // settings preset picker — the host builder adds
+                            // the SSO/OAuth/on-device tiles, the fallback
+                            // builds the same page from this picker's
+                            // registry. Models refetch when it returns.
+                            final hostPage = widget.addProviderPage;
+                            await Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (routeContext) => hostPage != null
+                                    ? hostPage(routeContext)
+                                    : AddProviderPresetPickerPage(
+                                        registry: widget.registry,
+                                        modelsFetcher: widget.modelsFetcher,
+                                      ),
+                              ),
+                            );
+                            if (mounted) _fetchAllModels();
                           },
                         ),
                       ],
