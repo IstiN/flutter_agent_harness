@@ -13,7 +13,7 @@ import 'fakes.dart';
 /// The canned `POST /api/oauth-proxy/initiate` response.
 const initiateBody =
     '{"auth_url":"https://accounts.google.com/o/oauth2/auth?state=st-1&'
-    'redirect_uri=http%3A%2F%2F127.0.0.1%3A0%2Fcallback",'
+    'redirect_uri=https%3A%2F%2Fai-native.cloud%2Flogin%2Foauth2%2Fcode%2Fgoogle",'
     '"state":"st-1","expires_in":600}';
 
 /// The canned `POST /api/oauth-proxy/exchange` response.
@@ -34,20 +34,30 @@ void main() {
       Uri? launched;
       final tokens = await flow.signIn(
         provider: 'google',
-        waitForCallback: (authUrl) async {
+        startReceiver: () async =>
+            FakeOAuthReceiver(callbackUri: kFakeOAuthCallback),
+        openUrl: (authUrl) async {
           launched = authUrl;
-          return Uri.parse(
-            'http://127.0.0.1:5555/callback?code=temp-1&state=st-1',
-          );
         },
       );
 
-      // The initiate answer is what gets opened in the browser.
+      // The initiate answer is what gets opened in the browser —
+      // VERBATIM (its redirect_uri is the auth service's provider
+      // callback; rewriting it is a Google redirect_uri_mismatch 400).
       expect(launched!.host, 'accounts.google.com');
-      expect(httpClient.requests[0].url.path, '/api/oauth-proxy/initiate');
       expect(
-        jsonDecode(httpClient.requests[0].body),
-        containsPair('provider', 'google'),
+        launched!.queryParameters['redirect_uri'],
+        'https://ai-native.cloud/login/oauth2/code/google',
+      );
+      expect(httpClient.requests[0].url.path, '/api/oauth-proxy/initiate');
+      final initiateRequest =
+          jsonDecode(httpClient.requests[0].body) as Map<String, Object?>;
+      expect(initiateRequest, containsPair('provider', 'google'));
+      // The loopback (real ephemeral port) is registered as
+      // client_redirect_uri BEFORE the auth URL exists.
+      expect(
+        initiateRequest['client_redirect_uri'],
+        'http://127.0.0.1:5555/callback',
       );
       // The exchange wires the callback code + the initiate state.
       expect(httpClient.requests[1].url.path, '/api/oauth-proxy/exchange');
@@ -71,9 +81,12 @@ void main() {
         await expectLater(
           flow.signIn(
             provider: 'google',
-            waitForCallback: (_) async => Uri.parse(
-              'http://127.0.0.1:5555/callback?code=temp-1&state=WRONG',
+            startReceiver: () async => FakeOAuthReceiver(
+              callbackUri: Uri.parse(
+                'http://127.0.0.1:5555/callback?code=temp-1&state=WRONG',
+              ),
             ),
+            openUrl: (_) async {},
           ),
           throwsA(
             isA<AuthFlowException>().having(
@@ -96,8 +109,10 @@ void main() {
       await expectLater(
         flow.signIn(
           provider: 'github',
-          waitForCallback: (_) async =>
-              Uri.parse('http://127.0.0.1:5555/callback?state=st-1'),
+          startReceiver: () async => FakeOAuthReceiver(
+            callbackUri: Uri.parse('http://127.0.0.1:5555/callback?state=st-1'),
+          ),
+          openUrl: (_) async {},
         ),
         throwsA(isA<AuthFlowException>()),
       );
@@ -113,10 +128,13 @@ void main() {
       await expectLater(
         flow.signIn(
           provider: 'google',
-          waitForCallback: (_) async => Uri.parse(
-            'http://127.0.0.1:5555/callback?error=access_denied&'
-            'error_description=Denied&state=st-1',
+          startReceiver: () async => FakeOAuthReceiver(
+            callbackUri: Uri.parse(
+              'http://127.0.0.1:5555/callback?error=access_denied&'
+              'error_description=Denied&state=st-1',
+            ),
           ),
+          openUrl: (_) async {},
         ),
         throwsA(
           isA<AuthFlowException>().having(
@@ -143,9 +161,9 @@ void main() {
       await expectLater(
         flow.signIn(
           provider: 'google',
-          waitForCallback: (_) async => Uri.parse(
-            'http://127.0.0.1:5555/callback?code=temp-1&state=st-1',
-          ),
+          startReceiver: () async =>
+              FakeOAuthReceiver(callbackUri: kFakeOAuthCallback),
+          openUrl: (_) async {},
         ),
         throwsA(
           isA<FaNetworkException>().having(

@@ -26,10 +26,6 @@ const _profileBody =
     '{"authenticated":true,"id":"u1","email":"a@b.dev","name":"Alice",'
     '"provider":"google"}';
 
-/// A waiter resolving with a well-formed loopback callback.
-Future<Uri> _fakeCallback(Uri authUrl) async =>
-    Uri.parse('http://127.0.0.1:5555/callback?code=temp-1&state=st-1');
-
 Future<NetworkSessionManager> _manager({
   KeyWallet? wallet,
   FakeHttpClient? httpClient,
@@ -39,7 +35,8 @@ Future<NetworkSessionManager> _manager({
   wallet: wallet ?? await KeyWallet.load(MemoryWalletBackend()),
   httpClient: httpClient ?? FakeHttpClient(),
   wsConnector: FakeWsConnector(),
-  waitForCallback: _fakeCallback,
+  startReceiver: () async => FakeOAuthReceiver(callbackUri: kFakeOAuthCallback),
+  openUrl: (_) async {},
   clock: clock,
 );
 

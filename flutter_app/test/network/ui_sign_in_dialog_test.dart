@@ -28,16 +28,16 @@ const _profileBody =
 
 Future<NetworkSessionManager> _manager(
   FakeHttpClient httpClient, {
-  Future<Uri> Function(Uri authUrl)? waitForCallback,
+  FakeOAuthReceiver? receiver,
+  void Function(Uri)? onOpenUrl,
 }) async => NetworkSessionManager(
   baseUrl: testBase,
   wallet: await KeyWallet.load(MemoryWalletBackend()),
   httpClient: httpClient,
   wsConnector: FakeWsConnector(),
-  waitForCallback:
-      waitForCallback ??
-      ((_) async =>
-          Uri.parse('http://127.0.0.1:5555/callback?code=temp-1&state=st-1')),
+  startReceiver: () async =>
+      receiver ?? FakeOAuthReceiver(callbackUri: kFakeOAuthCallback),
+  openUrl: (url) async => onOpenUrl?.call(url),
 );
 
 Widget _launcher(NetworkSessionManager manager) => MaterialApp(
@@ -143,11 +143,8 @@ void main() {
         var launched = false;
         final manager = await _manager(
           httpClient,
-          waitForCallback: (_) async {
+          onOpenUrl: (_) {
             launched = true;
-            return Uri.parse(
-              'http://127.0.0.1:5555/callback?code=temp-1&state=st-1',
-            );
           },
         );
 

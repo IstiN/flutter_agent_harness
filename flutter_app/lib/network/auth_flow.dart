@@ -21,30 +21,41 @@ final class AuthFlowException implements Exception {
   String toString() => 'AuthFlowException: $message';
 }
 
+/// A bound callback receiver for the OAuth flow: the [redirectUri] is
+/// handed to `/api/oauth-proxy/initiate` as `client_redirect_uri`
+/// BEFORE the auth URL exists (the port is ephemeral per RFC 8252), and
+/// [callback] resolves with the final `/callback?code&state` URI once the
+/// browser lands back. [close] releases the listener (idempotent).
+abstract interface class OAuthCallbackReceiver {
+  /// The loopback URI the client registered for this flow.
+  Uri get redirectUri;
+
+  /// Resolves with the callback URI (or throws on timeout).
+  Future<Uri> get callback;
+
+  /// Tears the listener down (never awaited inside fake-async tests).
+  void close();
+}
+
 /// The ai-native.cloud OAuth sign-in flow (issue #955 iteration 3),
-/// pure sequencing with the platform seam injected:
+/// pure sequencing with the platform seams injected:
 ///
-/// 1. `POST /api/oauth-proxy/initiate` for [provider] → the provider's
-///    authorization URL + the CSRF `state`.
-/// 2. [waitForCallback] opens the URL and resolves with the loopback
-///    callback URI (`?code&state`) — the desktop loopback listener is the
-///    production implementation; tests inject a fake.
-/// 3. The callback's `state` must match the initiate state (CSRF guard).
-/// 4. `POST /api/oauth-proxy/exchange` swaps the temporary code for the
+/// 1. [startReceiver] binds the callback endpoint — the ephemeral port is
+///    known HERE, so `/initiate` receives the real `client_redirect_uri`.
+/// 2. `POST /api/oauth-proxy/initiate` for [provider] → the provider's
+///    authorization URL + the CSRF `state`. The returned URL is opened
+///    VERBATIM — its baked `redirect_uri` is the auth service's own
+///    provider callback (`{BaseURL}/login/oauth2/code/<provider>`), the
+///    only URI the provider's OAuth app allows; the browser finally lands
+///    on our loopback via the service's proxy redirect.
+/// 3. [openUrl] opens the authorization URL in the system browser.
+/// 4. The callback's `state` must match the initiate state (CSRF guard).
+/// 5. `POST /api/oauth-proxy/exchange` swaps the temporary code for the
 ///    token bundle.
 final class NetworkAuthFlow {
   const NetworkAuthFlow({required FaNetworkClient client}) : _client = client;
 
   final FaNetworkClient _client;
-
-  /// The loopback redirect placeholder handed to `/initiate`. The real
-  /// port is only known once the loopback listener binds (ephemeral port
-  /// per RFC 8252), so the listener rewrites the port inside the
-  /// launched URL — the deploy allowlists any `127.0.0.1` port and the
-  /// exchange takes only `code`+`state`.
-  static final Uri defaultRedirectUri = Uri.parse(
-    'http://127.0.0.1:0/callback',
-  );
 
   /// Runs the flow and returns the token bundle. Throws
   /// [AuthFlowException] on a callback error/state mismatch/missing code,
@@ -53,32 +64,38 @@ final class NetworkAuthFlow {
     required String provider,
     String clientType = 'desktop',
     String environment = 'prod',
-    Uri? redirectUri,
-    required Future<Uri> Function(Uri authUrl) waitForCallback,
+    required Future<OAuthCallbackReceiver> Function() startReceiver,
+    required Future<void> Function(Uri authUrl) openUrl,
   }) async {
-    final initiated = await _client.oauthInitiate(
-      provider: provider,
-      redirectUri: redirectUri ?? defaultRedirectUri,
-      clientType: clientType,
-      environment: environment,
-    );
-    final callback = await waitForCallback(initiated.authUrl);
-    final error = callback.queryParameters['error'];
-    if (error != null && error.isNotEmpty) {
-      throw AuthFlowException(
-        callback.queryParameters['error_description'] ?? error,
+    final receiver = await startReceiver();
+    try {
+      final initiated = await _client.oauthInitiate(
+        provider: provider,
+        redirectUri: receiver.redirectUri,
+        clientType: clientType,
+        environment: environment,
       );
+      await openUrl(initiated.authUrl);
+      final callback = await receiver.callback;
+      final error = callback.queryParameters['error'];
+      if (error != null && error.isNotEmpty) {
+        throw AuthFlowException(
+          callback.queryParameters['error_description'] ?? error,
+        );
+      }
+      final state = callback.queryParameters['state'];
+      if (state != initiated.state) {
+        throw const AuthFlowException(
+          'sign-in state mismatch — the callback did not come from this flow',
+        );
+      }
+      final code = callback.queryParameters['code'];
+      if (code == null || code.isEmpty) {
+        throw const AuthFlowException('the sign-in callback carried no code');
+      }
+      return await _client.oauthExchange(code: code, state: initiated.state);
+    } finally {
+      receiver.close();
     }
-    final state = callback.queryParameters['state'];
-    if (state != initiated.state) {
-      throw const AuthFlowException(
-        'sign-in state mismatch — the callback did not come from this flow',
-      );
-    }
-    final code = callback.queryParameters['code'];
-    if (code == null || code.isEmpty) {
-      throw const AuthFlowException('the sign-in callback carried no code');
-    }
-    return _client.oauthExchange(code: code, state: initiated.state);
   }
 }

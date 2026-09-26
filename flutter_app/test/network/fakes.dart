@@ -11,6 +11,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:fa/network/auth_flow.dart';
 import 'package:fa/network/envelope_codec.dart';
 import 'package:fa/network/fa_network_client.dart';
 import 'package:fa/network/fa_network_ws.dart';
@@ -261,3 +262,36 @@ NetworkSession buildSession({
     wallet: wallet,
   );
 }
+
+/// A fake OAuth callback receiver (auth_flow seam): fixed loopback
+/// redirect URI, [callback] resolves with [callbackUri] (or throws
+/// [callbackError]); [closed] records teardown.
+class FakeOAuthReceiver implements OAuthCallbackReceiver {
+  FakeOAuthReceiver({this.callbackUri, this.callbackError});
+
+  /// The URI [callback] resolves with (null → a null URI completes).
+  final Uri? callbackUri;
+
+  /// When set, [callback] throws it instead of resolving.
+  final Object? callbackError;
+
+  @override
+  final Uri redirectUri = Uri.parse('http://127.0.0.1:5555/callback');
+
+  bool closed = false;
+
+  @override
+  Future<Uri> get callback {
+    final error = callbackError;
+    if (error != null) return Future.error(error);
+    return Future.value(callbackUri);
+  }
+
+  @override
+  void close() => closed = true;
+}
+
+/// The default well-formed callback URI for sign-in tests.
+final Uri kFakeOAuthCallback = Uri.parse(
+  'http://127.0.0.1:5555/callback?code=temp-1&state=st-1',
+);

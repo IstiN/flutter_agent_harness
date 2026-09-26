@@ -29,14 +29,16 @@ final class NetworkSessionManager extends ChangeNotifier {
     http.Client? httpClient,
     WsConnector? wsConnector,
     String? jwtToken,
-    Future<Uri> Function(Uri authUrl)? waitForCallback,
+    Future<OAuthCallbackReceiver> Function()? startReceiver,
+    Future<void> Function(Uri authUrl)? openUrl,
     DateTime Function()? clock,
   }) : _baseUrl = baseUrl,
        _authBaseUrl = authBaseUrl,
        _wallet = wallet,
        _http = httpClient ?? http.Client(),
        _connector = wsConnector ?? const WebSocketChannelConnector(),
-       _waitForCallback = waitForCallback ?? waitForOAuthCallback,
+       _startReceiver = startReceiver ?? startOAuthCallbackReceiver,
+       _openUrl = openUrl ?? openAuthUrl,
        _clock = clock ?? DateTime.now,
        _jwt = jwtToken;
 
@@ -49,9 +51,10 @@ final class NetworkSessionManager extends ChangeNotifier {
   final http.Client _http;
   final WsConnector _connector;
 
-  /// The OAuth browser-callback seam: the desktop loopback listener in
-  /// production, a fake in tests (never binds a real port there).
-  final Future<Uri> Function(Uri authUrl) _waitForCallback;
+  /// The OAuth seams: the desktop loopback receiver + browser opener in
+  /// production, fakes in tests (never bind a real port there).
+  final Future<OAuthCallbackReceiver> Function() _startReceiver;
+  final Future<void> Function(Uri authUrl) _openUrl;
 
   /// The clock seam for the token-expiry checks (test-friendly).
   final DateTime Function() _clock;
@@ -122,7 +125,8 @@ final class NetworkSessionManager extends ChangeNotifier {
       provider: provider,
       clientType: clientType,
       environment: environment,
-      waitForCallback: _waitForCallback,
+      startReceiver: _startReceiver,
+      openUrl: _openUrl,
     );
     // The profile call is best-effort: the tokens alone are a working
     // sign-in; the sidebar just falls back to the provider name.
