@@ -1,10 +1,4 @@
-// gh-938/#944: hosted-runner-only flake (green on main in adjacent runs).
-// RUNTIME skip on Linux only: an unconditional @Skip also silenced the
-// test on the macOS coverage leg, dropping flutter_app coverage for
-// catalog_service.dart to 0 and exploding the CRAP ratchet (16^2+16=272
-// > 30) for EVERY PR (fa #911 diagnosis). macOS keeps running it.
 library;
-import 'dart:io' show Platform;
 
 import 'dart:convert';
 import 'dart:typed_data';
@@ -19,6 +13,19 @@ import 'package:http/testing.dart';
 
 /// Builds a fake release asset server: catalog.json plus per-widget zips
 /// laid out `<id>/<file>` exactly like the publish workflow produces.
+///
+/// Zip builds are PINNED to a fixed mod time (issue #943): archive 4.x
+/// initializes `ArchiveFile.lastModTime` to `DateTime.now()` at first
+/// access, and zip stores DOS time at 2-second granularity — a fixture
+/// re-encoded across a tick boundary produced different bytes than the
+/// sealed probe, so the catalog's sha256 no longer matched the served zip
+/// (the hosted-runner-only flake, gh-938/#944). With the time pinned,
+/// every build of the same fixture is byte-identical — the sealed probe
+/// and the download path both re-run [zipOf], whose every entry carries
+/// the pinned time — so no platform skip is needed, and the Linux-only
+/// runtime skip #950 introduced (kept in #954) is dropped here.
+const _pinnedZipModTime = 315532800; // 1980-01-01T00:00:00Z (DOS epoch floor)
+
 http.Client fakeServer(Map<String, dynamic> catalog) {
   Uint8List zipOf(String id) {
     final archive = Archive();
@@ -33,7 +40,10 @@ http.Client fakeServer(Map<String, dynamic> catalog) {
     final sorted = files.keys.toList()..sort();
     for (final name in sorted) {
       final data = files[name]!;
-      archive.addFile(ArchiveFile(name, data.length, data));
+      archive.addFile(
+        ArchiveFile(name, data.length, data)
+          ..lastModTime = _pinnedZipModTime,
+      );
     }
     return Uint8List.fromList(ZipEncoder().encode(archive));
   }
@@ -129,6 +139,11 @@ Future<Uint8List> _captureZip(String id) async {
 }
 
 void main() {
+  // No platform skip: the zip mod-time pin (issue #943) makes the
+  // sealed-probe vs download bytes identical by construction — what
+  // #950 routed around with a Linux-only runtime skip and #954 kept
+  // as per-test `skip: Platform.isLinux ? … : null`. With the pin the
+  // premise is gone, so those clauses are dropped here too.
 
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -206,7 +221,7 @@ void main() {
         'https://example.com/assets/catalog.json',
       );
     });
-  }, skip: Platform.isLinux ? 'infra: #936 hosted-runner flake (Linux leg only)' : null);
+  });
 
   group('CatalogEntry.fromJson platforms', () {
     Map<String, dynamic> base() =>
@@ -236,7 +251,7 @@ void main() {
       final json = base()..['platforms'] = ['ios', 42, null, 'macos'];
       expect(CatalogEntry.fromJson(json).platforms, ['ios', 'macos']);
     });
-  }, skip: Platform.isLinux ? 'infra: #936 hosted-runner flake (Linux leg only)' : null);
+  });
 
   group('CatalogService.fetchCatalog', () {
     test('parses entries and stamps freshness', () async {
@@ -367,7 +382,7 @@ void main() {
       expect(hits, 1);
       expect(result.entries, hasLength(2));
     });
-  }, skip: Platform.isLinux ? 'infra: #936 hosted-runner flake (Linux leg only)' : null);
+  });
 
   group('CatalogService.downloadWidget', () {
     test('unpacks the single-root archive into relative paths', () async {
@@ -510,7 +525,7 @@ void main() {
         throwsA(isA<CatalogError>()),
       );
     });
-  }, skip: Platform.isLinux ? 'infra: #936 hosted-runner flake (Linux leg only)' : null);
+  });
 
   group('web platform policy', () {
     // release-assets.githubusercontent.com sends NO CORS headers, so
@@ -724,5 +739,5 @@ void main() {
         'widget.js',
       ]);
     });
-  }, skip: Platform.isLinux ? 'infra: #936 hosted-runner flake (Linux leg only)' : null);
+  });
 }

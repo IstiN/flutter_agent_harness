@@ -1,5 +1,9 @@
 @Tags(['integration'])
-@Skip('infra: #936 cold build hooks stall 20-30s under load')
+// Issue #943 review: the 60 s waitFor below must be able to FIRE —
+// package:test's default 30 s per-test timeout would kill the test in
+// the 30-60 s band the budget exists for. 2 minutes covers the whole
+// suite's boot+interaction budget with margin.
+@Timeout(Duration(minutes: 2))
 library;
 
 import 'dart:async';
@@ -26,7 +30,12 @@ final class _OutputCollector {
 
   Future<String> waitFor(
     Pattern pattern, {
-    Duration timeout = const Duration(seconds: 20),
+    // 60 s (issue #943): the prototype's first frame pays the native-assets
+    // build-hook cost; cold hooks cost 20-30 s on a loaded runner and blew
+    // the old 20 s default (issue #936 vector 3 — CI now prewarms the
+    // hooks, this is the headroom that keeps a cold cache from failing the
+    // leg anyway).
+    Duration timeout = const Duration(seconds: 60),
   }) async {
     final completer = Completer<String>();
     Timer? timer;

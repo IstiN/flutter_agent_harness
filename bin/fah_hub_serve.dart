@@ -219,6 +219,67 @@ String? hubLanSecretRefusal({required String? bind, required String? secret}) {
       'or set DAP_HUB_SECRET (a LAN-reachable hub must not run open)';
 }
 
+/// The outcome of one bind attempt or the bounded retry window
+/// (issue #943, vector 2).
+enum _BindOutcome {
+  /// The hub bound its port and may serve.
+  bound,
+
+  /// A hub came up on the port mid-retry — the idempotent no-op exit.
+  alreadyRunning,
+
+  /// Every attempt hit a genuinely foreign holder (non-HTTP blocker).
+  refused,
+
+  /// The port was still held; another attempt follows.
+  retry,
+}
+
+Duration _bindBackoff(int attempt) =>
+    Duration(milliseconds: 150 << (attempt - 1)); // 150,300,600,1200
+
+/// One bind attempt. On a [SocketException]: the last attempt is a
+/// hard [_BindOutcome.refused]; otherwise a live /healthz on the port
+/// means a hub came up mid-retry ([_BindOutcome.alreadyRunning]) and
+/// anything else asks for another round ([_BindOutcome.retry]).
+Future<(_BindOutcome, SocketException?)> _bindAttempt(
+  LocalHub hub,
+  int port,
+  bool lastAttempt,
+) async {
+  try {
+    await hub.start();
+    return (_BindOutcome.bound, null);
+  } on SocketException catch (error) {
+    if (lastAttempt) return (_BindOutcome.refused, error);
+    if (await hubHealthz(port)) return (_BindOutcome.alreadyRunning, error);
+    return (_BindOutcome.retry, error);
+  }
+}
+
+/// Binds [hub] on [port], retrying with backoff (issue #943): an
+/// overlapping run's predecessor may still hold the port for a few
+/// seconds (dying hub, TIME_WAIT) — retry instead of hard-failing, and
+/// if a hub comes up on the port mid-retry, report the idempotent
+/// "already running" outcome. A genuinely foreign holder (non-HTTP
+/// blocker) ends [_BindOutcome.refused] after the bounded window, with
+/// the last [SocketException] for the message.
+Future<(_BindOutcome, SocketException?)> _bindWithRetry(
+  LocalHub hub,
+  int port,
+) async {
+  const attempts = 5;
+  SocketException? lastError;
+  for (var attempt = 1; attempt <= attempts; attempt++) {
+    final (outcome, error) =
+        await _bindAttempt(hub, port, attempt == attempts);
+    if (outcome != _BindOutcome.retry) return (outcome, error);
+    lastError = error;
+    await Future<void>.delayed(_bindBackoff(attempt));
+  }
+  return (_BindOutcome.refused, lastError);
+}
+
 /// Serves the hub: idempotent against a live one, pid-state
 /// bookkeeping for `fa dap stop`, then the serve loop ([serveLoop] is
 /// the seam tests cut short; production blocks until killed).
@@ -248,14 +309,21 @@ Future<int> hubServe(
     stateFile: stateFile,
     relayAllowAnyHost: spec.relayAllowAnyHost,
   );
-  try {
-    await hub.start();
-  } on SocketException catch (error) {
-    stderr.writeln(
-      'hub: cannot bind 127.0.0.1:${spec.port} ($error) — '
-      'something else holds the port',
-    );
-    return 1;
+  final (outcome, bindError) = await _bindWithRetry(hub, spec.port);
+  switch (outcome) {
+    case _BindOutcome.alreadyRunning:
+      stdout.writeln('DAP hub already running on ws://127.0.0.1:${spec.port}/ws');
+      return 0;
+    case _BindOutcome.refused:
+      stderr.writeln(
+        'hub: cannot bind 127.0.0.1:${spec.port} ($bindError) — '
+        'something else holds the port',
+      );
+      return 1;
+    case _BindOutcome.bound:
+      break;
+    case _BindOutcome.retry:
+      break; // unreachable: _bindWithRetry never returns retry
   }
   // The pid/state file (issue #304): lets `fa dap stop` work from ANY
   // CLI instance (not just the spawner) exactly once, with no zombie
@@ -349,14 +417,22 @@ void Function() hubTerminateHandler(
 
 /// Wires the terminate signals to [hubTerminateHandler]; returns the
 /// live subscriptions so a caller's teardown can cancel them.
+///
+/// [watchSignals] is the test seam (issue #943): the "wired but not
+/// fired" leg injects no subscriptions so a hosted runner's stray
+/// SIGINT/SIGTERM (orphan cleanup) cannot fire the graceful exit
+/// mid-test. Production wiring (real signals) is unchanged.
 List<StreamSubscription<ProcessSignal>> wireHubTerminate(
   LocalHub hub,
   File pidFile, {
   void Function(int code) exitProcess = exit,
+  List<StreamSubscription<ProcessSignal>> Function(
+    void Function() onTerminate,
+  )? watchSignals,
 }) {
   final signalSubs = <StreamSubscription<ProcessSignal>>[];
   signalSubs.addAll(
-    watchHubTerminateSignals(
+    (watchSignals ?? watchHubTerminateSignals)(
       hubTerminateHandler(hub, pidFile, signalSubs, exitProcess: exitProcess),
     ),
   );

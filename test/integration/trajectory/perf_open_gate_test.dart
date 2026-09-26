@@ -17,7 +17,6 @@
 @TestOn('vm')
 @Tags(['integration', 'perf'])
 @Timeout(Duration(minutes: 10))
-@Skip('infra: #936 open perf budget too tight under concurrency')
 library;
 
 import 'dart:convert';
@@ -177,17 +176,17 @@ Future<void> main() async {
     // 1 s. Render is O(n) printing and reported, not budgeted.
     expect(buildMs, lessThanOrEqualTo(1000));
     // Whole open pipeline (parse + projection + render). Budget
-    // recalibrated 4000 -> 6000 from CI data, not per-commit tuning: this
-    // gate is PR-only and the trajectory code it measures is identical to
-    // main. Observed totalMs over four consecutive runs (GitHub runs
-    // 34756684875, 34757563776, 34758642826, 34759682841):
-    // 5098 / 5010 / 5098 / 4737 — stable at ~4.7-5.1 s on CI runners, so
-    // the old 4000 ms line sat below the real, unchanging baseline and
-    // failed spuriously. 6000 keeps ~1 s of headroom over the observed
-    // ceiling; a regression past THAT still trips the gate. (The DoD
-    // budget from #262 is the buildMs <= 1000 line above; per-merge
-    // trending is wired by #305/#303.)
-    expect(totalMs, lessThanOrEqualTo(6000));
+    // recalibrated 4000 -> 6000 (runs 34756684875, 34757563776,
+    // 34758642826, 34759682841: 5098 / 5010 / 5098 / 4737 — stable at
+    // ~4.7-5.1 s idle on CI runners) and now 6000 -> 9000 (issue #943):
+    // 6000 was the idle p95 +17%, which concurrent-CI load on the spawned
+    // `dart run` blew past (the #938 skip). Local clean reference
+    // (2026-09-25, M4 Pro): total=2433 ms — CI idle ≈ 2x local, busy adds
+    // another ~1.5-2x, so 9000 ≈ idle p95 × 1.8 with headroom, while the
+    // O(n²) regression class this gate guards (#262) still trips it by
+    // multiples. buildMs stays the sharp DoD line; per-merge trending is
+    // wired by #305/#303.
+    expect(totalMs, lessThanOrEqualTo(9000));
     // ignore: avoid_print
     print(
       'perf-gate: ${sizeMb.toStringAsFixed(1)} MB, parse=${parseMs}ms '

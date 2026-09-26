@@ -103,8 +103,12 @@ void main() {
   late File turnsFile;
 
   setUp(() async {
-    home = Directory('/tmp/fa_539_home')..createSync(recursive: true);
-    project = Directory('/tmp/fa_539_proj')..createSync(recursive: true);
+    // Issue #943 (vector 1): unique per-RUN roots. The old hardcoded
+    // /tmp/fa_539_home + /tmp/fa_539_proj were shared by every PR's PTY
+    // leg — one run's tearDown deleted them under another run's live ext
+    // processes (PathNotFoundException: Deletion failed, /tmp/fa_539_home).
+    home = Directory.systemTemp.createTempSync('fa_539_home_');
+    project = Directory.systemTemp.createTempSync('fa_539_proj_');
     // Pin the classic chrome: this suite asserts the classic grid (#539);
     // the band redesign (#805-#807) has its own surface.
     File('${home.path}/.fah/config.yaml')
@@ -115,8 +119,17 @@ void main() {
   });
 
   tearDown(() async {
-    await home.delete(recursive: true);
-    await project.delete(recursive: true);
+    // Failure-safe cleanup (issue #943): the run's own verdict must never
+    // hinge on whether a straggler ext process still holds a root — a
+    // unique-per-run root can only leave /tmp residue, never poison the
+    // next run.
+    for (final dir in [home, project]) {
+      try {
+        dir.deleteSync(recursive: true);
+      } on FileSystemException {
+        // Straggler holds it; /tmp reclaims the unique dir.
+      }
+    }
   });
 
   Map<String, String> env() => {
@@ -352,6 +365,9 @@ void main() {
       );
       expectComposerReserved(resumed.viewportLines, 80);
     },
-    skip: 'infra: #936 shared /tmp race (fa_539_home/fa_539_proj)',
+    // Issue #943: re-enabled — the /tmp/fa_539_* race it died of is gone
+    // (unique per-run roots + failure-safe cleanup above). The OTHER
+    // scenario's skip ('stacked boards freeze', #937) stays: a real
+    // product regression, deliberately not re-enabled here.
   );
 }

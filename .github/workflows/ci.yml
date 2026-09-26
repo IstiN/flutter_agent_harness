@@ -404,6 +404,13 @@ jobs:
           key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
           restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
 
+      # Issue #943 (vector 3): warm the build hooks before the first test
+      # process boots fa (same rationale as the pty-integration leg).
+      - name: Prewarm build hooks + fa boot
+        run: |
+          dart bin/fah.dart --help > /dev/null
+          dart run bin/fah.dart --help > /dev/null
+
       - name: dart test test/integration (excluding llm, browser-ext, perf, pty)
         run: dart test test/integration --exclude-tags llm,browser-ext,perf,pty
 
@@ -561,6 +568,16 @@ jobs:
       - name: python3 available
         run: python3 --version
       - run: dart pub get
+      # Issue #943 (vector 3): one warm fa boot before the PTY shards. The
+      # first `dart` invocation pays the native-assets build hooks (20-30 s
+      # under load) — paid HERE instead of inside a test's boot timeout
+      # (tui_prototype_snapshot ×5 on 2026-09-24). Both invocation shapes
+      # the tests use (file path + `dart run`) are warmed; every shard of
+      # this matrix job does it, so each shard process meets a warm cache.
+      - name: Prewarm build hooks + fa boot
+        run: |
+          dart bin/fah.dart --help > /dev/null
+          dart run bin/fah.dart --help > /dev/null
       - name: dart test --tags integration (shard ${{ matrix.shard }}/3)
         run: |
           targets=$(python3 scripts/shard_files.py scripts/test_integration_shards.json ${{ matrix.shard }} --tags integration --exclude browser_ext)
@@ -768,6 +785,13 @@ jobs:
       # a root package config it resolves the package to the pub-cache copy
       # (an old published build) and the CLI dies before the first frame.
       - run: dart pub get
+      # Issue #943 (vector 3): warm the build hooks — the cli_visual harness
+      # spawns `dart bin/fah.dart` from the repo root and its boot budget
+      # must not pay the cold-hook cost (tui_prototype_snapshot ×5).
+      - name: Prewarm build hooks + fa boot
+        run: |
+          dart bin/fah.dart --help > /dev/null
+          dart run bin/fah.dart --help > /dev/null
       - name: flutter test test/cli_visual --tags integration
         run: cd flutter_app && flutter test test/cli_visual --tags integration
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
