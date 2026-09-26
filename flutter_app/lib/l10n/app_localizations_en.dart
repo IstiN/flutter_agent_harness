@@ -2393,15 +2393,14 @@ class AppLocalizationsEn extends AppLocalizations {
       'Importing replaces the wallet on this device.';
 
   @override
-  String get networkNameHint =>
-      'lowercase letters, digits, hyphens; 3–64 chars';
+  String get networkNameHint => 'A display name — becomes a lowercase slug';
 
   @override
   String get networkPasswordHint => '8–128 characters';
 
   @override
   String get networkNameInvalid =>
-      'Use 3–64 chars: lowercase letters, digits, hyphens (start with a letter or digit)';
+      'Needs 3–64 chars after slugifying (letters, digits, hyphens)';
 
   @override
   String get networkPasswordInvalid => 'Password must be 8–128 characters';
@@ -2421,4 +2420,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get networkDeleted => 'Network deleted';
+
+  @override
+  String networkSlugPreview(Object slug) {
+    return 'Will be created as: $slug';
+  }
 }

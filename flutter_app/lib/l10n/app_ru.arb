@@ -923,11 +923,11 @@
   "networkImport": "Импортировать",
   "networkWalletJsonLabel": "JSON экспортированного кошелька",
   "networkWalletImportWarning": "Импорт заменит кошелёк на этом устройстве.",
-  "networkNameHint": "строчные буквы, цифры, дефисы; 3–64 символа",
+  "networkNameHint": "Отображаемое имя — станет lowercase-slug",
   "@networkNameHint": { "description": "Network name helper text (server rule)" },
   "networkPasswordHint": "8–128 символов",
   "@networkPasswordHint": { "description": "Network password helper text (server rule)" },
-  "networkNameInvalid": "3–64 символа: строчные буквы, цифры, дефисы (начинай с буквы или цифры)",
+  "networkNameInvalid": "После слага нужно 3–64 символа (буквы, цифры, дефисы)",
   "@networkNameInvalid": { "description": "Network name validation error" },
   "networkPasswordInvalid": "Пароль: 8–128 символов",
   "@networkPasswordInvalid": { "description": "Network password validation error" },
@@ -940,5 +940,7 @@
   "networkDeleteBody": "Сеть, её каналы и все сообщения будут удалены для всех. Это действие нельзя отменить.",
   "@networkDeleteBody": { "description": "Delete-network confirmation body" },
   "networkDeleted": "Сеть удалена",
-  "@networkDeleted": { "description": "Snackbar after a network was deleted" }
+  "@networkDeleted": { "description": "Snackbar after a network was deleted" },
+  "networkSlugPreview": "Будет создана как: {slug}",
+  "@networkSlugPreview": { "description": "Live slug preview under the network name field", "placeholders": { "slug": {} } }
 }

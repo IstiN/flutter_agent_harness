@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/network/fa_network_client.dart';
 import 'package:fa/network/network_mode.dart';
+import 'package:fa/network/slugify.dart';
 import 'package:fa/network/network_session_manager.dart';
 
 /// Opens the create-network dialog; returns the name + password +
@@ -61,12 +62,11 @@ class _CreateNetworkDialogState extends State<CreateNetworkDialog> {
   String? _passwordError;
   bool _isPublic = false;
 
-  /// The server's exact rules (fa_network `validNetworkName` /
-  /// `validNetworkCreate`): a lowercase slug and an 8–128 char password —
-  /// validated client-side so the user never round-trips a 400.
-  static final _namePattern = RegExp(
-    r'^[a-z0-9][a-z0-9-]*[REDACTED:Sensitive Value]',
-  );
+  @override
+  void initState() {
+    super.initState();
+    _name.addListener(() => setState(() {})); // live slug preview
+  }
 
   @override
   void dispose() {
@@ -76,12 +76,11 @@ class _CreateNetworkDialogState extends State<CreateNetworkDialog> {
   }
 
   void _submit() {
-    final name = _name.text.trim();
+    // The human types a display name; the server wants a slug — fold it
+    // (live preview under the field shows the result as they type).
+    final slug = slugifyNetworkName(_name.text.trim());
     final password = _password.text;
-    final nameError =
-        (name.length < 3 || name.length > 64 || !_namePattern.hasMatch(name))
-        ? context.l10n.networkNameInvalid
-        : null;
+    final nameError = slug == null ? context.l10n.networkNameInvalid : null;
     final passwordError = (password.length < 8 || password.length > 128)
         ? context.l10n.networkPasswordInvalid
         : null;
@@ -92,49 +91,69 @@ class _CreateNetworkDialogState extends State<CreateNetworkDialog> {
     if (nameError != null || passwordError != null) return;
     Navigator.of(
       context,
-    ).pop((name: name, password: _password.text, isPublic: _isPublic));
+    ).pop((name: slug, password: _password.text, isPublic: _isPublic));
   }
 
   @override
   Widget build(BuildContext context) {
+    final slug = slugifyNetworkName(_name.text.trim());
+    final showPreview = slug != null && slug != _name.text.trim().toLowerCase();
     return AlertDialog(
       title: Text(context.l10n.networkCreateNetwork),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: _name,
-            onSubmitted: (_) => _submit(),
-            decoration: InputDecoration(
-              labelText: context.l10n.networkNameLabel,
-              helperText: context.l10n.networkNameHint,
-              errorText: _nameError,
+      content: SizedBox(
+        width: 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _name,
+              onSubmitted: (_) => _submit(),
+              decoration: InputDecoration(
+                labelText: context.l10n.networkNameLabel,
+                helperText: context.l10n.networkNameHint,
+                helperMaxLines: 2,
+                errorText: _nameError,
+                errorMaxLines: 2,
+              ),
             ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _password,
-            obscureText: true,
-            onSubmitted: (_) => _submit(),
-            decoration: InputDecoration(
-              labelText: context.l10n.networkPasswordLabel,
-              helperText: context.l10n.networkPasswordHint,
-              errorText: _passwordError,
+            if (showPreview)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    context.l10n.networkSlugPreview(slug),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _password,
+              obscureText: true,
+              onSubmitted: (_) => _submit(),
+              decoration: InputDecoration(
+                labelText: context.l10n.networkPasswordLabel,
+                helperText: context.l10n.networkPasswordHint,
+                helperMaxLines: 2,
+                errorText: _passwordError,
+                errorMaxLines: 2,
+              ),
             ),
-          ),
-          CheckboxListTile(
-            key: const ValueKey('createNetworkPublic'),
-            contentPadding: EdgeInsets.zero,
-            controlAffinity: ListTileControlAffinity.leading,
-            dense: true,
-            title: Text(
-              context.l10n.networkListPublic,
-              style: Theme.of(context).textTheme.bodyMedium,
+            CheckboxListTile(
+              key: const ValueKey('createNetworkPublic'),
+              contentPadding: EdgeInsets.zero,
+              controlAffinity: ListTileControlAffinity.leading,
+              dense: true,
+              title: Text(
+                context.l10n.networkListPublic,
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              value: _isPublic,
+              onChanged: (value) => setState(() => _isPublic = value ?? false),
             ),
-            value: _isPublic,
-            onChanged: (value) => setState(() => _isPublic = value ?? false),
-          ),
-        ],
+          ],
+        ),
       ),
       actions: [
         TextButton(

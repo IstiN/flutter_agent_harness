@@ -1067,11 +1067,11 @@
   "@networkWalletJsonLabel": { "description": "Import dialog: JSON paste field label" },
   "networkWalletImportWarning": "Importing replaces the wallet on this device.",
   "@networkWalletImportWarning": { "description": "Import dialog warning note" },
-  "networkNameHint": "lowercase letters, digits, hyphens; 3–64 chars",
+  "networkNameHint": "A display name — becomes a lowercase slug",
   "@networkNameHint": { "description": "Network name helper text (server rule)" },
   "networkPasswordHint": "8–128 characters",
   "@networkPasswordHint": { "description": "Network password helper text (server rule)" },
-  "networkNameInvalid": "Use 3–64 chars: lowercase letters, digits, hyphens (start with a letter or digit)",
+  "networkNameInvalid": "Needs 3–64 chars after slugifying (letters, digits, hyphens)",
   "@networkNameInvalid": { "description": "Network name validation error" },
   "networkPasswordInvalid": "Password must be 8–128 characters",
   "@networkPasswordInvalid": { "description": "Network password validation error" },
@@ -1084,5 +1084,7 @@
   "networkDeleteBody": "The network, its channels and all messages are deleted for everyone. This cannot be undone.",
   "@networkDeleteBody": { "description": "Delete-network confirmation body" },
   "networkDeleted": "Network deleted",
-  "@networkDeleted": { "description": "Snackbar after a network was deleted" }
+  "@networkDeleted": { "description": "Snackbar after a network was deleted" },
+  "networkSlugPreview": "Will be created as: {slug}",
+  "@networkSlugPreview": { "description": "Live slug preview under the network name field", "placeholders": { "slug": {} } }
 }

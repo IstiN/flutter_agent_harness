@@ -4253,7 +4253,7 @@ abstract class AppLocalizations {
   /// Network name helper text (server rule)
   ///
   /// In en, this message translates to:
-  /// **'lowercase letters, digits, hyphens; 3–64 chars'**
+  /// **'A display name — becomes a lowercase slug'**
   String get networkNameHint;
 
   /// Network password helper text (server rule)
@@ -4265,7 +4265,7 @@ abstract class AppLocalizations {
   /// Network name validation error
   ///
   /// In en, this message translates to:
-  /// **'Use 3–64 chars: lowercase letters, digits, hyphens (start with a letter or digit)'**
+  /// **'Needs 3–64 chars after slugifying (letters, digits, hyphens)'**
   String get networkNameInvalid;
 
   /// Network password validation error
@@ -4303,6 +4303,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Network deleted'**
   String get networkDeleted;
+
+  /// Live slug preview under the network name field
+  ///
+  /// In en, this message translates to:
+  /// **'Will be created as: {slug}'**
+  String networkSlugPreview(Object slug);
 }
 
 class _AppLocalizationsDelegate

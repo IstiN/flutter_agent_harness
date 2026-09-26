@@ -2422,14 +2422,14 @@ class AppLocalizationsRu extends AppLocalizations {
       'Импорт заменит кошелёк на этом устройстве.';
 
   @override
-  String get networkNameHint => 'строчные буквы, цифры, дефисы; 3–64 символа';
+  String get networkNameHint => 'Отображаемое имя — станет lowercase-slug';
 
   @override
   String get networkPasswordHint => '8–128 символов';
 
   @override
   String get networkNameInvalid =>
-      '3–64 символа: строчные буквы, цифры, дефисы (начинай с буквы или цифры)';
+      'После слага нужно 3–64 символа (буквы, цифры, дефисы)';
 
   @override
   String get networkPasswordInvalid => 'Пароль: 8–128 символов';
@@ -2449,4 +2449,9 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get networkDeleted => 'Сеть удалена';
+
+  @override
+  String networkSlugPreview(Object slug) {
+    return 'Будет создана как: $slug';
+  }
 }

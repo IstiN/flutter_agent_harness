@@ -157,23 +157,28 @@ void main() {
       await tester.pump();
     }
 
-    testWidgets('validates the server rules inline: slug name + 8-char '
-        'password, public checkbox rides along', (tester) async {
+    testWidgets('display names slugify live; unusable names + short '
+        'passwords fail inline; public checkbox rides along', (tester) async {
       await pumpDialog(tester);
 
-      // Slug violation + short password → inline errors, dialog stays open.
-      await tester.enterText(find.byType(TextField).first, 'My Net!');
+      // A human display name folds into the server's slug live.
+      await tester.enterText(find.byType(TextField).first, 'My Network');
+      await tester.pump();
+      expect(find.text('Will be created as: my-network'), findsOneWidget);
+
+      // Nothing slugifiable + a short password → inline errors, dialog
+      // stays open.
+      await tester.enterText(find.byType(TextField).first, '!!!');
       await tester.enterText(find.byType(TextField).at(1), 'short');
       await tester.tap(find.byKey(const ValueKey('createNetworkConfirm')));
       await tester.pump();
       expect(
-        find.textContaining('lowercase letters, digits, hyphens'),
-        findsWidgets,
+        find.textContaining('Needs 3–64 chars after slugifying'),
+        findsOneWidget,
       );
       expect(find.text('Password must be 8–128 characters'), findsOneWidget);
 
-      // Valid input + the public checkbox → the dialog closes with the
-      // full record.
+      // Valid input + the public checkbox.
       await tester.enterText(find.byType(TextField).first, 'my-net');
       await tester.enterText(find.byType(TextField).at(1), 'supersecret1');
       await tester.tap(find.byKey(const ValueKey('createNetworkPublic')));
