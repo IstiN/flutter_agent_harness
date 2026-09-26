@@ -1562,8 +1562,9 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
   MockLlmServer); the tag-only `integration` job is just the llm provider
   smoke and `publish` waits on it. `nightly.yml` runs the full monolith +
   PTY/CLI integration (full real-provider suite with secrets) +
-  terminal-visual suites; `coverage-gardener.yml` bumps the only-up CLI
-  coverage baseline weekly.
+  terminal-visual suites; `coverage-gardener.yml` measures the only-up CLI
+  coverage weekly and files an ai-teammate "raise coverage to X" issue —
+  the baseline itself only moves through a reviewed PR (issue #927).
 
 ## Cross-platform parity
 
