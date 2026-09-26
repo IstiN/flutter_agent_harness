@@ -47,8 +47,10 @@ import 'tui_theme.dart';
 /// One git working-tree state, resolved host-side (the git watcher seam:
 /// `git status --porcelain` through the bash seam, TTL-cached). A null
 /// branch with every count 0 (or a null [StatusLineGit]) hides the git
-/// segment — outside a repo, or a failed probe. A detached HEAD arrives
-/// as a short sha in [branch]. Never crashes the bar.
+/// segment — outside a repo, or a failed probe. A detached HEAD reports
+/// a null [branch] — the segment shows dirty counts only (since #920:
+/// git's literal `## HEAD (no branch)` header is never adopted as a
+/// name). Never crashes the bar.
 final class StatusLineGit {
   final String? branch;
 
@@ -89,6 +91,12 @@ final class StatusLineSnapshot {
 
   /// Active model id/name; `null` hides the `model` segment.
   final String? modelName;
+
+  /// Provider display label for `model` (the host's `_statusProviderLabel`
+  /// policy: a saved custom entry's name beats the catalog protocol kind);
+  /// rendered as `provider / model` when non-empty, the bare model
+  /// otherwise (issue #920).
+  final String? providerName;
 
   /// Thinking-level suffix for `model` (rendered only when
   /// [StatusLineSegmentOptions.showThinkingLevel] is on).
@@ -163,6 +171,7 @@ final class StatusLineSnapshot {
     this.homeDir,
     this.workRoot,
     this.modelName,
+    this.providerName,
     this.thinkingLevel,
     this.approvalMode,
     this.agentLoadMode,
@@ -564,8 +573,9 @@ const List<String> kStatusLinePresetNames = [
 ];
 
 /// The omp 27 segment ids (`schema.ts` `STATUS_LINE_SEGMENT_IDS`). Ids
-/// with no fa counterpart data (`usage`, `collab`, `stream`, `vim`,
-/// `cache_hit`) stay valid and render hidden — custom configs referencing
+/// with no fa counterpart data (`usage`, `collab`, `vim`, `cache_hit`)
+/// — and `stream`, hidden since #920 (the composer header owns the
+/// spinner) — stay valid and render hidden: custom configs referencing
 /// them keep working (umbrella D2, E7).
 const List<String> kStatusLineSegmentIds = [
   'pi',
@@ -1121,8 +1131,9 @@ String _homeAbbreviatedFit(
 }
 
 /// Parses `git status --porcelain` output (the git watcher seam's
-/// fixture format) into counts + branch (from `## branch...` header;
-/// detached heads report the short sha). Pure — the host runs git.
+/// fixture format) into counts + branch (from the `## branch` header;
+/// a detached HEAD reports a null branch — dirty counts only). Pure —
+/// the host runs git.
 StatusLineGit parseGitStatusPorcelain(String output) {
   var staged = 0;
   var unstaged = 0;
@@ -1134,7 +1145,12 @@ StatusLineGit parseGitStatusPorcelain(String output) {
       final header = line.substring(3);
       // An initial repo has no branch yet (`## No commits yet on main`);
       // report branch-less rather than adopting the sentence as a name.
-      if (header.startsWith('No commits yet')) continue;
+      // Same for git's literal detached output (`## HEAD (no branch)`) —
+      // the segment shows dirty counts only until a branch is detectable.
+      if (header.startsWith('No commits yet') ||
+          header.startsWith('HEAD (no branch)')) {
+        continue;
+      }
       final dot = header.indexOf('...');
       final bracket = header.indexOf('[');
       branch = header
@@ -1211,7 +1227,11 @@ LaidSegment? _renderVim(StatusLineSnapshot s, StatusLineSpec spec) {
 LaidSegment? _renderModel(StatusLineSnapshot s, StatusLineSpec spec) {
   final model = s.modelName;
   if (model == null || model.isEmpty) return null;
-  final spans = <StatusSpan>[(model, StatusLineRoleKey.model)];
+  final provider = s.providerName;
+  final label = provider == null || provider.isEmpty
+      ? model
+      : '$provider / $model';
+  final spans = <StatusSpan>[(label, StatusLineRoleKey.model)];
   if (spec.options.showThinkingLevel) {
     final level = s.thinkingLevel;
     if (level != null && level.isNotEmpty) {
@@ -1414,9 +1434,10 @@ LaidSegment? _renderHostname(StatusLineSnapshot s, StatusLineSpec spec) {
 LaidSegment? _renderUsage(StatusLineSnapshot s, StatusLineSpec spec) => null;
 LaidSegment? _renderCollab(StatusLineSnapshot s, StatusLineSpec spec) => null;
 LaidSegment? _renderStream(StatusLineSnapshot s, StatusLineSpec spec) {
-  // Spinner glyph only while streaming; idle has no data → hidden.
-  if (s.idle) return null;
-  return const LaidSegment('stream', [('…', StatusLineRoleKey.output)]);
+  // Issue #920: the lone `…` glyph duplicated the composer header's
+  // Working… spinner one row above — ~5 cells of the band spent on
+  // noise. The id stays valid and renders hidden (E7), like `usage`.
+  return null;
 }
 
 LaidSegment? _renderCacheRead(StatusLineSnapshot s, StatusLineSpec spec) =>
