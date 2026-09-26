@@ -1632,7 +1632,12 @@ class AgentCli {
     // straight from the line stream (the dispatch loop is not running yet).
     final lineIterator = StreamIterator<String>(io.lines);
     await _maybePromptSkillsAccess(lineIterator: lineIterator);
-    _writeIdlePrompt();
+    // Fresh install (issue #969): nothing configured, no key anywhere —
+    // open the guided add-provider wizard before the first prompt. The
+    // dispatch loop below answers its prompts (the pre-loop lineIterator
+    // cannot route to `_pendingPromptAnswer`).
+    _maybeStartFreshInstallProviderFlow();
+    if (!_providerFlowActive) _writeIdlePrompt();
     while (await lineIterator.moveNext()) {
       var line = lineIterator.current;
       // A fresh user line clears the abort marker: the settle path already
@@ -1727,7 +1732,13 @@ class AgentCli {
     // The visible-waiting row lights up on boot too (issue #450): armed
     // timers from previous runs + the restart-honesty note.
     unawaited(_waiting.push());
-    unawaited(_maybePromptSkillsAccess());
+    // Consent first; the fresh-install wizard (issue #969) chains after it
+    // so two wizard pickers never race for one answer completer.
+    unawaited(
+      _maybePromptSkillsAccess().then(
+        (_) => _maybeStartFreshInstallProviderFlow(),
+      ),
+    );
 
     // An ambiguous `--session <name>` (same name in several folders or
     // several in one): the scoped choice picker over the first frame —

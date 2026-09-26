@@ -269,6 +269,37 @@ Set<String> secureKeyPreloadNames(CliConfig saved, {required String? baseUrl}) {
   };
 }
 
+/// Fresh-install detection (issue #969): true when NO saved custom provider
+/// exists AND no provider key resolves anywhere — no catalog env name (nor
+/// its rotation stack) in the environment, and nothing in the preloaded
+/// secure-store snapshot. This is the state where the REPL would otherwise
+/// boot into the default provider's "no key set" banner noise with no way
+/// to configure one except discovering `/provider` first. Every stored
+/// snapshot name counts as a resolved key (the host preloads exactly the
+/// provider slots: catalog name backups, endpoint-scoped names, media
+/// slots, role apiKeyNames) — conservative: anything configured means the
+/// user is not fresh and the wizard must not hijack the boot.
+bool freshInstallProviderState({
+  required Iterable<CustomProviderEntry> customProviders,
+  required SecureKeyCache keys,
+  Map<String, String>? env,
+}) {
+  if (customProviders.isNotEmpty) return false;
+  final environment = env ?? Platform.environment;
+  for (final base in {
+    for (final spec in providerCatalog.values) ...spec.apiKeyEnvNames,
+  }) {
+    if ((environment[base] ?? '').isNotEmpty) return false;
+    final rotation = RegExp('^${RegExp.escape(base)}_\\d+\$');
+    for (final entry in environment.entries) {
+      if (rotation.hasMatch(entry.key) && entry.value.isNotEmpty) {
+        return false;
+      }
+    }
+  }
+  return keys.names.isEmpty;
+}
+
 /// Collects the secrets snapshot for the model-roles resolver: every
 /// provider catalog env name plus its rotation stack (`NAME`, `NAME_2`,
 /// `NAME_3`, ...), plus any base name referenced by an explicit

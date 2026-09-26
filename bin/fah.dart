@@ -2007,6 +2007,30 @@ Future<void> _runApp(List<String> args) async {
     width: io.columns,
   );
 
+  // Fresh install (issue #969): an interactive REPL boot with NOTHING
+  // configured — no saved custom providers, no persisted provider switch,
+  // no explicit provider/model/endpoint declaration, no roles or queue
+  // driving the boot, and no key resolving anywhere — opens the guided
+  // add-provider wizard before the first prompt instead of the default
+  // provider's "no key set" banner noise. Headless (-p / prompt args)
+  // never gets the flag; its hard key gate stays byte-identical.
+  final freshInstallProviderFlow = headlessPrompt == null &&
+      !applyFolderModel &&
+      parsed.model == null &&
+      !parsed.providerExplicit &&
+      parsed.baseUrl == null &&
+      faPreconfig == null &&
+      !defaultRoleResolved &&
+      queueRuntime == null &&
+      saved.customProviders.isEmpty &&
+      saved.providerKind == 'openai-completions' &&
+      saved.baseUrl == providerCatalog['openrouter']!.defaultBaseUrl &&
+      freshInstallProviderState(
+        customProviders: saved.customProviders,
+        keys: keyCache,
+        env: Platform.environment,
+      );
+
   cli = AgentCli(
     // Same source of truth as the palette (issue #778 round 2): chrome
     // (status line, keyhints, warnings) styles iff the resolved theme
@@ -2072,6 +2096,7 @@ Future<void> _runApp(List<String> args) async {
       // headless branch).
       customProviders: CustomProviderRegistry(saved.customProviders)
         ..mergeNotes.forEach(stderr.writeln),
+      freshInstallProviderFlow: freshInstallProviderFlow,
       sessionRoot: sessionRoot,
       // Backend agent mode (issue #155): a graceful SIGTERM/SIGINT
       // cancel leaves a resumable partial transcript.

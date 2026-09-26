@@ -49,6 +49,18 @@ extension on AgentCli {
     );
   }
 
+  /// Fresh-install gate (issue #969): the executable flagged a REPL boot
+  /// with nothing configured and no key anywhere — open the same guided
+  /// add-provider wizard `/provider custom` opens, before the first
+  /// prompt, so the user adds a provider instead of staring at the
+  /// default provider's "no key set" noise. Fire-and-forget like every
+  /// flow start: the REPL loop answers the prompts. Piped input (and
+  /// headless, which never gets the flag) never enters the wizard.
+  void _maybeStartFreshInstallProviderFlow() {
+    if (!config.freshInstallProviderFlow || !io.isInteractive) return;
+    _startProviderFlow();
+  }
+
   /// The Edit/Delete picker for a custom provider entry.
   Future<void> _providerEditOrDelete(CustomProviderEntry entry) async {
     io.writeln('provider ${entry.name} (${entry.baseUrl})');
