@@ -13,6 +13,9 @@ import 'package:fa/network/models.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session.dart';
 import 'package:fa/network/network_session_manager.dart';
+import 'package:fa/network/key_wallet.dart';
+
+import 'add_agent_dialog.dart';
 
 /// The channel chat surface (issue #955): the shared [FaChatScreen] over a
 /// [ChannelChatService] with `FaChatFeatures.minimal()` — plain text
@@ -89,10 +92,14 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
   }
 
   String _channelLabel(NetworkSession session, String channelId) {
+    return _channel(session, channelId)?.name ?? channelId;
+  }
+
+  Channel? _channel(NetworkSession session, String channelId) {
     for (final channel in session.channels) {
-      if (channel.id == channelId) return channel.name ?? channel.id;
+      if (channel.id == channelId) return channel;
     }
-    return channelId;
+    return null;
   }
 
   /// A showcase (public channel) is read-only for regular members — only
@@ -123,8 +130,14 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
     return ListenableBuilder(
       listenable: session,
       builder: (context, _) {
+        final channel = _channel(session, chatFor.$2);
         return Column(
           children: [
+            _ChannelHeader(
+              channel: channel,
+              label: label,
+              wallet: widget.manager.wallet,
+            ),
             if (session.networkOffline) const _OfflineBanner(),
             Expanded(
               child: FaChatStringsScope(
@@ -302,6 +315,71 @@ class _ChannelComposerState extends State<ChannelComposer> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// The slim channel header: lock/globe + name, and for private channels
+/// the add-agent action (AC-B17) — the discoverable entry point the
+/// rail's overflow menu mirrors.
+class _ChannelHeader extends StatelessWidget {
+  const _ChannelHeader({
+    required this.channel,
+    required this.label,
+    required this.wallet,
+  });
+
+  final Channel? channel;
+  final String label;
+  final KeyWallet wallet;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    final channel = this.channel;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: colors.border)),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            channel?.isPublic ?? false ? Icons.public : Icons.lock_outline,
+            size: 16,
+            color: colors.dim,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: colors.text,
+              ),
+            ),
+          ),
+          if (channel != null && !channel.isPublic)
+            IconButton(
+              key: const ValueKey('channelAddAgent'),
+              icon: Icon(Icons.person_add_alt, size: 20, color: colors.dim),
+              tooltip: context.l10n.networkAddAgent,
+              onPressed: () => unawaited(
+                showDialog<void>(
+                  context: context,
+                  builder: (_) => AddAgentDialog(
+                    wallet: wallet,
+                    networkId: channel.networkId,
+                    channel: channel,
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

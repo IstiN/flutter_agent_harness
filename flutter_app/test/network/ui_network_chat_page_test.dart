@@ -15,6 +15,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
 
+import 'package:fa/ui/network/add_agent_dialog.dart';
+
 void main() {
   group('NetworkChatPage', () {
     late ({String pub, String priv}) channelKeys;
@@ -134,6 +136,18 @@ void main() {
       expect(frame['payload']! as String, isNot(contains('hello channel')));
       await rig.session.close();
     });
+
+    testWidgets(
+      'private channels expose Add agent in the header (AC-B17 entry)',
+      (tester) async {
+        final rig = await pumpChat(tester);
+        expect(find.byKey(const ValueKey('channelAddAgent')), findsOneWidget);
+        await tester.tap(find.byKey(const ValueKey('channelAddAgent')));
+        await tester.pumpAndSettle();
+        expect(find.byType(AddAgentDialog), findsOneWidget);
+        await rig.session.close();
+      },
+    );
 
     testWidgets('network.offline shows the reconnecting banner', (
       tester,
