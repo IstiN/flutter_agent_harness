@@ -1556,6 +1556,10 @@ class AppLocalizationsRu extends AppLocalizations {
   String get sidebarDelete => 'Удалить';
 
   @override
+  String get sidebarDeleteUnavailable =>
+      'Удаление недоступно — сессия живёт в хост-приложении';
+
+  @override
   String sidebarDeletePersistedContent(Object id) {
     return 'Сессия $id';
   }
