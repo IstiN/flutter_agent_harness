@@ -236,9 +236,10 @@ void _registerNetworkScopeGroup() {
           .widget<Text>(find.byKey(const ValueKey('agentInvite')))
           .data!;
       expect(payload, startsWith("fa dap import 'wss://hub.fa1.dev/ws"));
-      expect(payload, contains(' && FA_PROVIDER_TYPE=anthropic '));
-      expect(payload, contains("FA_PROVIDER_CONFIG='{"));
-      expect(payload, contains('DAP_HUB_URL=wss://hub.fa1.dev/ws '));
+      expect(payload, contains(' && DAP_HUB_URL=wss://hub.fa1.dev/ws '));
+      // Hub-only line: no provider vars — that is the runner's own fa
+      // config, never the invite's business.
+      expect(payload.contains('FA_PROVIDER'), isFalse);
       expect(payload, contains("DAP_MASTER_SECRET='<hub master secret>' "));
       expect(payload, contains('DAP_AGENT_NAME=general-agent fa'));
       expect(find.byKey(const ValueKey('inviteEnvHint')), findsOneWidget);
@@ -257,7 +258,8 @@ void _registerNetworkScopeGroup() {
           .widget<Text>(find.byKey(const ValueKey('agentInvite')))
           .data!;
       expect(payload.startsWith('fa dap import'), isFalse);
-      expect(payload, startsWith('FA_PROVIDER_TYPE=anthropic '));
+      expect(payload, startsWith('DAP_HUB_URL=wss://hub.fa1.dev/ws '));
+      expect(payload.contains('FA_PROVIDER'), isFalse);
       expect(payload, contains('DAP_AGENT_NAME=fa-agent fa'));
     });
 

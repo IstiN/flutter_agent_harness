@@ -101,12 +101,12 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
       _scope == AgentInviteScope.channel ? _channelInvite : _networkInvite;
 
   /// What the user copies: the bare link, the CLI one-liner wrapping it
-  /// (`fa dap import '…'`), or the env-var launch line for CI runners:
-  /// `fa dap import '…' && FA_PROVIDER_TYPE=… FA_PROVIDER_CONFIG='…'
-  /// DAP_HUB_URL=… DAP_MASTER_SECRET=… DAP_AGENT_NAME=… fa` — the vars
-  /// the CLI harness documents (cli_help §Env preconfig + the DAP hub
-  /// plugin). The provider pair and the hub master secret are
-  /// runner-side values this dialog cannot know: placeholders.
+  /// (`fa dap import '…'`), or the hub-only env launch line for CI
+  /// runners: `fa dap import '…' && DAP_HUB_URL=…
+  /// DAP_MASTER_SECRET=… DAP_AGENT_NAME=… fa`. Provider/model config is
+  /// the runner's own business (fa config / its own env) — the invite
+  /// line carries ONLY the hub connection; the master secret stays a
+  /// placeholder (a runner-side value this dialog never holds).
   String? get _payload {
     final invite = _invite;
     if (invite == null) return null;
@@ -115,12 +115,7 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
       final import = _scope == AgentInviteScope.channel
           ? "fa dap import '$invite' && "
           : '';
-      const providerConfig =
-          '{"baseUrl":"http://your-litellm:8080/anthropic",'
-          '"model":"your-model","apiKeyEnvVar":"MY_API_KEY"}';
       return "$import"
-          'FA_PROVIDER_TYPE=anthropic '
-          "FA_PROVIDER_CONFIG='$providerConfig' "
           'DAP_HUB_URL=${AddAgentDialog.hubUrl} '
           "DAP_MASTER_SECRET='<hub master secret>' "
           'DAP_AGENT_NAME=$_agentName fa';
