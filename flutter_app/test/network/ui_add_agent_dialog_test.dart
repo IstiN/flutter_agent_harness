@@ -377,4 +377,127 @@ void _registerNetworkScopeGroup() {
       expect(payload, startsWith('https://network.fa1.dev/join?network=net1'));
     });
   });
+
+  group('dap format (pure DAP clients)', () {
+    late ({String pub, String priv}) channelKeys;
+
+    setUp(() async {
+      channelKeys = await EnvelopeCodec.newX25519KeyPair();
+    });
+
+    Future<KeyWallet> buildWallet() async {
+      final wallet = await KeyWallet.load(MemoryWalletBackend());
+      await wallet.createIfMissing(displayName: 'Me');
+      await wallet.addNetwork(networkId: 'net1', name: 'fa-team');
+      await wallet.addChannelKeys(
+        networkId: 'net1',
+        channel: 'c1',
+        pub: channelKeys.pub,
+        priv: channelKeys.priv,
+      );
+      return wallet;
+    }
+
+    Future<void> pump(WidgetTester tester, {required KeyWallet wallet}) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          home: Scaffold(
+            body: AddAgentDialog(
+              wallet: wallet,
+              networkId: 'net1',
+              channel: Channel(id: 'c1', networkId: 'net1', name: 'general'),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+    }
+
+    testWidgets('channel scope: import + DAP_* rows; the typed secret '
+        'lands in the payload', (tester) async {
+      await pump(tester, wallet: await buildWallet());
+      await tester.tap(find.text('DAP'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('envRow:IMPORT')), findsOneWidget);
+      expect(find.byKey(const ValueKey('envRow:DAP_HUB_URL')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('envRow:DAP_AGENT_NAME')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('envRow:DAP_MASTER_SECRET')),
+        findsOneWidget,
+      );
+      // No fa_network variables in the pure-DAP format.
+      expect(find.byKey(const ValueKey('envRow:FA_CHANNEL_URL')), findsNothing);
+
+      // The placeholder stands until the user pastes the hub's secret.
+      var payload = tester
+          .widget<Text>(find.byKey(const ValueKey('agentInvite')))
+          .data!;
+      expect(payload, startsWith('fa dap import '));
+      expect(payload, contains('DAP_HUB_URL=wss://hub.fa1.dev/ws'));
+      expect(payload, contains("DAP_MASTER_SECRET='<hub master secret>'"));
+      expect(payload, contains('DAP_AGENT_NAME=general-agent fa'));
+
+      final secretField = find.byKey(
+        const ValueKey('envRow:DAP_MASTER_SECRET'),
+      );
+      await tester.ensureVisible(secretField);
+      await tester.pumpAndSettle();
+      await tester.enterText(secretField, 'hub-secret');
+      await tester.pumpAndSettle();
+      payload = tester
+          .widget<Text>(find.byKey(const ValueKey('agentInvite')))
+          .data!;
+      expect(payload, contains("DAP_MASTER_SECRET='hub-secret'"));
+    });
+
+    testWidgets('the master secret row copies as key=value', (tester) async {
+      final clipboard = FakeClipboard()..install(tester);
+      await pump(tester, wallet: await buildWallet());
+      await tester.tap(find.text('DAP'));
+      await tester.pumpAndSettle();
+      final secretField = find.byKey(
+        const ValueKey('envRow:DAP_MASTER_SECRET'),
+      );
+      await tester.ensureVisible(secretField);
+      await tester.pumpAndSettle();
+      await tester.enterText(secretField, 'hub-secret');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('envCopy:DAP_MASTER_SECRET')));
+      expect(clipboard.text, 'DAP_MASTER_SECRET=hub-secret');
+    });
+
+    testWidgets('network scope: no import row, the DAP vars stay', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          home: Scaffold(
+            body: AddAgentDialog(
+              wallet: await buildWallet(),
+              networkId: 'net1',
+              channel: null,
+              initialScope: AgentInviteScope.network,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.tap(find.text('DAP'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('envRow:IMPORT')), findsNothing);
+      expect(find.byKey(const ValueKey('envRow:DAP_HUB_URL')), findsOneWidget);
+      final payload = tester
+          .widget<Text>(find.byKey(const ValueKey('agentInvite')))
+          .data!;
+      expect(payload, startsWith('DAP_HUB_URL='));
+      expect(payload, isNot(contains('fa dap import')));
+    });
+  });
 }
