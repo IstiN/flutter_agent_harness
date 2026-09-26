@@ -4148,6 +4148,66 @@ abstract class AppLocalizations {
   /// **'No keys for this channel on this device.'**
   String get networkAddAgentNoKeys;
 
+  /// Agent invite scope segment: channel-only access
+  ///
+  /// In en, this message translates to:
+  /// **'This channel'**
+  String get networkAddAgentScopeChannel;
+
+  /// Agent invite scope segment: full network membership
+  ///
+  /// In en, this message translates to:
+  /// **'Whole network'**
+  String get networkAddAgentScopeNetwork;
+
+  /// Agent invite format segment: bare link for apps
+  ///
+  /// In en, this message translates to:
+  /// **'Link (app)'**
+  String get networkAddAgentFormatLink;
+
+  /// Agent invite format segment: ready fa CLI one-liner
+  ///
+  /// In en, this message translates to:
+  /// **'CLI command'**
+  String get networkAddAgentFormatCli;
+
+  /// Agent invite format segment: env-var launch line for CI runners
+  ///
+  /// In en, this message translates to:
+  /// **'Env (CI)'**
+  String get networkAddAgentFormatEnv;
+
+  /// Agent invite note under the env format
+  ///
+  /// In en, this message translates to:
+  /// **'A launch line for the CLI harness on a runner (GitHub Actions): fill in your provider pair and the hub master secret — the channel keys ride the import command.'**
+  String get networkAddAgentEnvHint;
+
+  /// Agent invite hint for the network scope
+  ///
+  /// In en, this message translates to:
+  /// **'The agent joins as a full member and sees every channel in the network.'**
+  String get networkAddAgentNetworkHint;
+
+  /// Agent invite note when the join link carries no password
+  ///
+  /// In en, this message translates to:
+  /// **'The network password is not on this device — the link will ask for it.'**
+  String get networkAddAgentNetworkNoPassword;
+
+  /// Agent invite note under the CLI format (channel scope)
+  ///
+  /// In en, this message translates to:
+  /// **'The command works against hubs with direct DAP access (e.g. the local stand); CLI join for production fa_network is coming.'**
+  String get networkAddAgentCliHint;
+
+  /// Agent invite note under the CLI format (network scope)
+  ///
+  /// In en, this message translates to:
+  /// **'CLI network join is not shipped yet — share the link for now.'**
+  String get networkAddAgentNetworkCliHint;
+
   /// Snack after copying the agent invite
   ///
   /// In en, this message translates to:

@@ -2338,6 +2338,41 @@ class AppLocalizationsEn extends AppLocalizations {
       'No keys for this channel on this device.';
 
   @override
+  String get networkAddAgentScopeChannel => 'This channel';
+
+  @override
+  String get networkAddAgentScopeNetwork => 'Whole network';
+
+  @override
+  String get networkAddAgentFormatLink => 'Link (app)';
+
+  @override
+  String get networkAddAgentFormatCli => 'CLI command';
+
+  @override
+  String get networkAddAgentFormatEnv => 'Env (CI)';
+
+  @override
+  String get networkAddAgentEnvHint =>
+      'A launch line for the CLI harness on a runner (GitHub Actions): fill in your provider pair and the hub master secret — the channel keys ride the import command.';
+
+  @override
+  String get networkAddAgentNetworkHint =>
+      'The agent joins as a full member and sees every channel in the network.';
+
+  @override
+  String get networkAddAgentNetworkNoPassword =>
+      'The network password is not on this device — the link will ask for it.';
+
+  @override
+  String get networkAddAgentCliHint =>
+      'The command works against hubs with direct DAP access (e.g. the local stand); CLI join for production fa_network is coming.';
+
+  @override
+  String get networkAddAgentNetworkCliHint =>
+      'CLI network join is not shipped yet — share the link for now.';
+
+  @override
   String get networkInviteCopied => 'Invite copied to clipboard.';
 
   @override

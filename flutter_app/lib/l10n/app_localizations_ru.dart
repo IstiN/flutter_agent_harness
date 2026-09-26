@@ -2367,6 +2367,41 @@ class AppLocalizationsRu extends AppLocalizations {
       'На этом устройстве нет ключей для этого канала.';
 
   @override
+  String get networkAddAgentScopeChannel => 'Этот канал';
+
+  @override
+  String get networkAddAgentScopeNetwork => 'Вся сеть';
+
+  @override
+  String get networkAddAgentFormatLink => 'Ссылка (приложение)';
+
+  @override
+  String get networkAddAgentFormatCli => 'CLI-команда';
+
+  @override
+  String get networkAddAgentFormatEnv => 'Env (CI)';
+
+  @override
+  String get networkAddAgentEnvHint =>
+      'Строка запуска CLI-harness на раннере (GitHub Actions): подставь свою пару провайдер+модель и мастер-секрет хаба — ключи канала приезжают командой import.';
+
+  @override
+  String get networkAddAgentNetworkHint =>
+      'Агент входит полным участником и видит все каналы сети.';
+
+  @override
+  String get networkAddAgentNetworkNoPassword =>
+      'Пароль сети недоступен на этом устройстве — при входе ссылка запросит его.';
+
+  @override
+  String get networkAddAgentCliHint =>
+      'Команда работает для хабов с прямым DAP-доступом (например, локальный стенд); CLI-вход на production fa_network — в разработке.';
+
+  @override
+  String get networkAddAgentNetworkCliHint =>
+      'CLI-подключение к сети пока не готово — используйте ссылку.';
+
+  @override
   String get networkInviteCopied => 'Приглашение скопировано в буфер обмена.';
 
   @override
