@@ -100,8 +100,8 @@ void main() {
     });
   });
 
-  group('FanetClient.mintDapSession', () {
-    test('POSTs with Bearer auth and parses the DAP session (200)', () async {
+  group('FanetClient.enrollAgent', () {
+    test('POSTs with Bearer auth and parses the enrollment (201)', () async {
       http.Request? captured;
       final client = FanetClient(
         baseUrl: 'https://network.fa1.dev',
@@ -109,68 +109,106 @@ void main() {
           captured = request;
           return http.Response(
             jsonEncode({
-              'dapUrl': 'wss://dap.fa1.dev/ws',
-              'agentName': 'agent-7',
-              'clientSecret': 'sec-9',
-              'env': {'FA_AGENT_NAME': 'agent-7'},
+              'name': 'ops-bot',
+              'hubUrl': 'wss://hub.fa1.dev/ws',
+              'clientSecret': 'sk_abc123',
+              'enrolledAt': '2025-12-01T10:00:00Z',
+              'note': 'store clientSecret now - never stored again',
               'extra': 'ignored',
-            }),
-            200,
-          );
-        }),
-      );
-
-      final session = await client.mintDapSession(
-        'net-1',
-        sessionToken: 'tok-abc',
-        scope: FanetDapScope.channel,
-        channelId: 'ch-42',
-        name: 'my-agent',
-      );
-
-      expect(session.dapUrl, 'wss://dap.fa1.dev/ws');
-      expect(session.agentName, 'agent-7');
-      expect(session.clientSecret, 'sec-9');
-      expect(session.env, {'FA_AGENT_NAME': 'agent-7'});
-      expect(captured!.method, 'POST');
-      expect(
-        captured!.url,
-        Uri.parse('https://network.fa1.dev/api/networks/net-1/dap-sessions'),
-      );
-      expect(captured!.headers['authorization'], 'Bearer tok-abc');
-      expect(jsonDecode(captured!.body), {
-        'scope': 'channel',
-        'channelId': 'ch-42',
-        'name': 'my-agent',
-      });
-    });
-
-    test('accepts 201 and omits optional body fields', () async {
-      http.Request? captured;
-      final client = FanetClient(
-        baseUrl: 'https://network.fa1.dev',
-        client: http_testing.MockClient((request) async {
-          captured = request;
-          return http.Response(
-            jsonEncode({
-              'dapUrl': 'wss://dap.fa1.dev/ws',
-              'agentName': 'agent-1',
-              'clientSecret': 'sec-1',
             }),
             201,
           );
         }),
       );
 
-      final session = await client.mintDapSession(
+      final enrollment = await client.enrollAgent(
         'net-1',
-        sessionToken: 'tok',
-        scope: FanetDapScope.network,
+        token: 'owner-jwt',
+        name: 'ops-bot',
       );
 
-      expect(session.env, isNull);
-      expect(jsonDecode(captured!.body), {'scope': 'network'});
+      expect(enrollment.name, 'ops-bot');
+      expect(enrollment.hubUrl, 'wss://hub.fa1.dev/ws');
+      expect(enrollment.clientSecret, 'sk_abc123');
+      expect(enrollment.enrolledAt, '2025-12-01T10:00:00Z');
+      expect(enrollment.note, 'store clientSecret now - never stored again');
+      expect(captured!.method, 'POST');
+      expect(
+        captured!.url,
+        Uri.parse('https://network.fa1.dev/api/networks/net-1/agents/enroll'),
+      );
+      expect(captured!.headers['authorization'], 'Bearer owner-jwt');
+      expect(jsonDecode(captured!.body), {'name': 'ops-bot'});
     });
+
+    test('URL-encodes the network id in the path', () async {
+      http.Request? captured;
+      final client = FanetClient(
+        baseUrl: 'https://network.fa1.dev',
+        client: http_testing.MockClient((request) async {
+          captured = request;
+          return http.Response(
+            jsonEncode({
+              'name': 'ops-bot',
+              'hubUrl': 'wss://hub.fa1.dev/ws',
+              'clientSecret': 'sk_abc123',
+              'enrolledAt': '2025-12-01T10:00:00Z',
+            }),
+            201,
+          );
+        }),
+      );
+
+      await client.enrollAgent('net/1', token: 'jwt', name: 'ops-bot');
+
+      expect(captured!.url.path, '/api/networks/net%2F1/agents/enroll');
+    });
+
+    test('throws FanetApiException on 200 (201 only)', () async {
+      final client = FanetClient(
+        baseUrl: 'https://network.fa1.dev',
+        client: http_testing.MockClient(
+          (request) async => http.Response('{}', 200),
+        ),
+      );
+
+      await expectLater(
+        client.enrollAgent('net-1', token: 'jwt', name: 'ops-bot'),
+        throwsA(
+          isA<FanetApiException>().having(
+            (e) => e.statusCode,
+            'statusCode',
+            200,
+          ),
+        ),
+      );
+    });
+
+    test(
+      'throws FanetApiException on 400 (invalid_credentials name)',
+      () async {
+        final client = FanetClient(
+          baseUrl: 'https://network.fa1.dev',
+          client: http_testing.MockClient(
+            (request) async =>
+                http.Response('{"error":"invalid_credentials"}', 400),
+          ),
+        );
+
+        await expectLater(
+          client.enrollAgent('net-1', token: 'jwt', name: 'Bad_Name'),
+          throwsA(
+            isA<FanetApiException>()
+                .having((e) => e.statusCode, 'statusCode', 400)
+                .having(
+                  (e) => e.bodyExcerpt,
+                  'bodyExcerpt',
+                  contains('invalid_credentials'),
+                ),
+          ),
+        );
+      },
+    );
 
     test('throws FanetApiException on 401', () async {
       final client = FanetClient(
@@ -181,11 +219,7 @@ void main() {
       );
 
       await expectLater(
-        client.mintDapSession(
-          'net-1',
-          sessionToken: 'expired',
-          scope: FanetDapScope.network,
-        ),
+        client.enrollAgent('net-1', token: 'expired', name: 'ops-bot'),
         throwsA(
           isA<FanetApiException>()
               .having((e) => e.statusCode, 'statusCode', 401)
@@ -198,98 +232,48 @@ void main() {
       );
     });
 
-    test('throws FanetApiException on 404', () async {
-      final client = FanetClient(
-        baseUrl: 'https://network.fa1.dev',
-        client: http_testing.MockClient(
-          (request) async => http.Response('not found', 404),
-        ),
-      );
-
-      await expectLater(
-        client.mintDapSession(
-          'no-such-net',
-          sessionToken: 'tok',
-          scope: FanetDapScope.network,
-        ),
-        throwsA(
-          isA<FanetApiException>().having(
-            (e) => e.statusCode,
-            'statusCode',
-            404,
+    test(
+      'throws FanetApiException on 403 (member token is not enough)',
+      () async {
+        final client = FanetClient(
+          baseUrl: 'https://network.fa1.dev',
+          client: http_testing.MockClient(
+            (request) async => http.Response('{"error":"forbidden"}', 403),
           ),
-        ),
-      );
-    });
-  });
+        );
 
-  group('FanetClient.revokeDapSession', () {
-    test('DELETEs with Bearer auth and accepts 204', () async {
-      http.Request? captured;
-      final client = FanetClient(
-        baseUrl: 'https://network.fa1.dev',
-        client: http_testing.MockClient((request) async {
-          captured = request;
-          return http.Response('', 204);
-        }),
-      );
+        await expectLater(
+          client.enrollAgent('net-1', token: 'member-token', name: 'ops-bot'),
+          throwsA(
+            isA<FanetApiException>()
+                .having((e) => e.statusCode, 'statusCode', 403)
+                .having(
+                  (e) => e.bodyExcerpt,
+                  'bodyExcerpt',
+                  contains('forbidden'),
+                ),
+          ),
+        );
+      },
+    );
 
-      await client.revokeDapSession(
-        'net-1',
-        sessionToken: 'tok-abc',
-        agentName: 'agent-7',
-      );
-
-      expect(captured!.method, 'DELETE');
-      expect(
-        captured!.url,
-        Uri.parse(
-          'https://network.fa1.dev/api/networks/net-1/dap-sessions/agent-7',
-        ),
-      );
-      expect(captured!.headers['authorization'], 'Bearer tok-abc');
-    });
-
-    test('URL-encodes the agent name in the path', () async {
-      http.Request? captured;
-      final client = FanetClient(
-        baseUrl: 'https://network.fa1.dev',
-        client: http_testing.MockClient((request) async {
-          captured = request;
-          return http.Response('', 204);
-        }),
-      );
-
-      await client.revokeDapSession(
-        'net-1',
-        sessionToken: 'tok',
-        agentName: 'agent/7',
-      );
-
-      expect(captured!.url.path, '/api/networks/net-1/dap-sessions/agent%2F7');
-    });
-
-    test('throws FanetApiException on non-204 status', () async {
+    test('throws FanetApiException on 503 (hub unavailable)', () async {
       final client = FanetClient(
         baseUrl: 'https://network.fa1.dev',
         client: http_testing.MockClient(
-          (request) async => http.Response('{"error":"not a member"}', 403),
+          (request) async => http.Response('{"error":"hub_unavailable"}', 503),
         ),
       );
 
       await expectLater(
-        client.revokeDapSession(
-          'net-1',
-          sessionToken: 'tok',
-          agentName: 'agent-7',
-        ),
+        client.enrollAgent('net-1', token: 'jwt', name: 'ops-bot'),
         throwsA(
           isA<FanetApiException>()
-              .having((e) => e.statusCode, 'statusCode', 403)
+              .having((e) => e.statusCode, 'statusCode', 503)
               .having(
                 (e) => e.bodyExcerpt,
                 'bodyExcerpt',
-                contains('not a member'),
+                contains('hub_unavailable'),
               ),
         ),
       );

@@ -12,20 +12,6 @@ import 'package:http/http.dart' as http;
 
 import 'fanet_models.dart';
 
-/// Scope of a minted DAP session.
-enum FanetDapScope {
-  /// Session is bound to a single channel (requires a channel id).
-  channel('channel'),
-
-  /// Session spans the whole network.
-  network('network');
-
-  const FanetDapScope(this.wireName);
-
-  /// The value sent in the `scope` request field.
-  final String wireName;
-}
-
 /// Base class for fa_network REST failures. Sealed so consumers can
 /// exhaustively switch on the failure kind (shaped after
 /// `AgentHarnessException` in `lib/src/exceptions.dart`).
@@ -102,50 +88,32 @@ final class FanetClient {
     return FanetJoinResult.fromJson(_jsonObject(response));
   }
 
-  /// Mints a DAP session in [networkId], authenticated with the
-  /// [sessionToken] from [joinNetwork].
+  /// Enrolls an agent [name] in [networkId], authenticated with an
+  /// owner/admin-class [token] (management JWT or owner/admin sessionToken —
+  /// a plain member sessionToken gets `403`).
   ///
-  /// `POST /api/networks/{id}/dap-sessions` with body
-  /// `{scope, channelId?, name?}`; accepts `200` or `201`.
-  Future<FanetDapSession> mintDapSession(
+  /// `POST /api/networks/{id}/agents/enroll` with body `{name}`; expects
+  /// `201` only. There is no revoke/delete endpoint: to rotate (and thereby
+  /// revoke) an agent's secret, call [enrollAgent] again with the same
+  /// [name] — re-enrollment silently returns a fresh `201` enrollment and
+  /// the old secret dies. A `503` means the hub is offline (the error body
+  /// may carry `hub_unavailable`); invalid names (`FanetAgentName.isValid`)
+  /// get `400` with `invalid_credentials`.
+  Future<FanetAgentEnrollment> enrollAgent(
     String networkId, {
-    required String sessionToken,
-    required FanetDapScope scope,
-    String? channelId,
-    String? name,
+    required String token,
+    required String name,
   }) async {
     final response = await _client.post(
-      _uri('/api/networks/${Uri.encodeComponent(networkId)}/dap-sessions'),
+      _uri('/api/networks/${Uri.encodeComponent(networkId)}/agents/enroll'),
       headers: {
         'content-type': 'application/json',
-        'authorization': 'Bearer $sessionToken',
+        'authorization': 'Bearer $token',
       },
-      body: jsonEncode({
-        'scope': scope.wireName,
-        'channelId': ?channelId,
-        'name': ?name,
-      }),
+      body: jsonEncode({'name': name}),
     );
-    _expectStatus(response, const {200, 201}, 'mintDapSession($networkId)');
-    return FanetDapSession.fromJson(_jsonObject(response));
-  }
-
-  /// Revokes the DAP session of [agentName] in [networkId].
-  ///
-  /// `DELETE /api/networks/{id}/dap-sessions/{agentName}`; expects `204`.
-  Future<void> revokeDapSession(
-    String networkId, {
-    required String sessionToken,
-    required String agentName,
-  }) async {
-    final response = await _client.delete(
-      _uri(
-        '/api/networks/${Uri.encodeComponent(networkId)}'
-        '/dap-sessions/${Uri.encodeComponent(agentName)}',
-      ),
-      headers: {'authorization': 'Bearer $sessionToken'},
-    );
-    _expectStatus(response, const {204}, 'revokeDapSession($agentName)');
+    _expectStatus(response, const {201}, 'enrollAgent($name)');
+    return FanetAgentEnrollment.fromJson(_jsonObject(response));
   }
 
   Uri _uri(String path) => Uri.parse('$baseUrl$path');

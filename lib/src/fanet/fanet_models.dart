@@ -30,63 +30,73 @@ final class FanetJoinResult {
   }
 }
 
-/// A DAP session minted by `POST /api/networks/{id}/dap-sessions`.
-final class FanetDapSession {
-  /// Creates a DAP session value.
-  const FanetDapSession({
-    required this.dapUrl,
-    required this.agentName,
+/// Validation for fa_network agent names, matching the server-side rule
+/// (`^[a-z0-9][a-z0-9-]{2,63}$` — 3–64 chars, lowercase letters, digits and
+/// hyphens, must start with a letter or digit). Reused by the UI.
+abstract final class FanetAgentName {
+  static final _pattern = RegExp(r'^[a-z0-9][a-z0-9-]{2,63}$');
+
+  /// Whether [name] is a valid fa_network agent name. Invalid names are
+  /// rejected by the server with `400 invalid_credentials`.
+  static bool isValid(String name) => _pattern.hasMatch(name);
+}
+
+/// An agent enrolled via `POST /api/networks/{id}/agents/enroll`.
+///
+/// The [clientSecret] is returned exactly once, at enrollment time, and is
+/// never stored or returned again by the server — persist it immediately.
+/// To rotate (which also revokes the old secret), simply enroll the same
+/// [name] again: re-enrollment returns the same `201` shape with a fresh
+/// secret; there is no 409 and no delete endpoint.
+final class FanetAgentEnrollment {
+  /// Creates an agent enrollment value.
+  const FanetAgentEnrollment({
+    required this.name,
+    required this.hubUrl,
     required this.clientSecret,
-    this.env,
+    required this.enrolledAt,
+    this.note,
   });
 
+  /// The enrolled agent name (identity on the hub).
+  final String name;
+
   /// WebSocket URL of the DAP hub to connect to.
-  final String dapUrl;
+  final String hubUrl;
 
-  /// The agent identity reserved for this session on the hub.
-  final String agentName;
-
-  /// The secret proving ownership of [agentName] when connecting.
+  /// The secret proving ownership of [name] when connecting. Returned once;
+  /// store it now.
   final String clientSecret;
 
-  /// Suggested environment variables for the CLI process, if the server
-  /// provided any.
-  final Map<String, String>? env;
+  /// Enrollment timestamp, RFC3339 UTC (always `Z`, no microseconds). Kept
+  /// as a raw string.
+  final String enrolledAt;
 
-  /// Parses the mint response, ignoring extra fields.
+  /// Server-side advisory note (e.g. the store-the-secret warning), if any.
+  final String? note;
+
+  /// Parses the enroll response, ignoring extra fields.
   ///
-  /// Throws a [FormatException] when a required field (`dapUrl`,
-  /// `agentName`, `clientSecret`) is missing or not a non-empty string, or
-  /// when `env` is present but not a JSON object.
-  factory FanetDapSession.fromJson(Map<String, Object?> json) {
+  /// Throws a [FormatException] when a required field (`name`, `hubUrl`,
+  /// `clientSecret`, `enrolledAt`) is missing or not a non-empty string.
+  factory FanetAgentEnrollment.fromJson(Map<String, Object?> json) {
     String required(String key) {
       final value = json[key];
       if (value is! String || value.isEmpty) {
         throw FormatException(
-          'fa_network DAP session response is missing "$key": $json',
+          'fa_network agent enrollment response is missing "$key": $json',
         );
       }
       return value;
     }
 
-    final envJson = json['env'];
-    Map<String, String>? env;
-    if (envJson != null) {
-      if (envJson is! Map) {
-        throw FormatException(
-          'fa_network DAP session "env" must be a JSON object: $json',
-        );
-      }
-      env = {
-        for (final entry in envJson.entries)
-          entry.key.toString(): entry.value.toString(),
-      };
-    }
-    return FanetDapSession(
-      dapUrl: required('dapUrl'),
-      agentName: required('agentName'),
+    final noteJson = json['note'];
+    return FanetAgentEnrollment(
+      name: required('name'),
+      hubUrl: required('hubUrl'),
       clientSecret: required('clientSecret'),
-      env: env,
+      enrolledAt: required('enrolledAt'),
+      note: noteJson is String ? noteJson : null,
     );
   }
 }
