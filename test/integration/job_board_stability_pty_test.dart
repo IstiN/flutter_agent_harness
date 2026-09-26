@@ -103,8 +103,17 @@ void main() {
   late File turnsFile;
 
   setUp(() async {
-    home = Directory('/tmp/fa_539_home')..createSync(recursive: true);
-    project = Directory('/tmp/fa_539_proj')..createSync(recursive: true);
+    // UNIQUE per-run roots (the #936 class): the former fixed
+    // /tmp/fa_539_home + /tmp/fa_539_proj paths race every concurrently
+    // running copy of this suite — the 3 PTY shards share the mini pool, so
+    // a sibling's setUp/tearDown recreating or deleting the fixed dir wedges
+    // this copy's CLI mid-boot (the [Model] banner never arrives →
+    // waitForBoot timeout) and then breaks its own tearDown
+    // (PathNotFoundException). Observed on main (run 36224616919).
+    // systemTemp keeps each run self-contained; the unique HOME also stops
+    // session state from a crashed prior run leaking into the next.
+    home = await Directory.systemTemp.createTemp('fa_539_home_');
+    project = await Directory.systemTemp.createTemp('fa_539_proj_');
     // Pin the classic chrome: this suite asserts the classic grid (#539);
     // the band redesign (#805-#807) has its own surface.
     File('${home.path}/.fah/config.yaml')
@@ -227,9 +236,19 @@ void main() {
       // The printed `· older` row is a frozen snapshot: after the FIRST
       // settle lands (four jobs still live), it must not have moved — the
       // unfrozen board would re-derive `· 4 running · 1 done` here.
-      final beforeOlder = before
+      // The frozen-snapshot contract (issue #539) is the row's printed
+      // CONTENT — counts may never move while its jobs settle. The captured
+      // line's TRAILING SPACES are VT paint residue (whatever longer line
+      // last occupied that screen row, cleared or kept by a later
+      // `\x1b[K`), invisible to the user and timing-dependent under the
+      // concurrency=4 shards: the 120-col leg failed on a byte-identical
+      // text row that merely lost its residue between the two captures
+      // (run 36226403947). Assert on trimmed lines.
+      List<String> olderRowsOf(List<String> frame) => frame
           .where((l) => l.contains('· older') && l.contains('(5)'))
+          .map((l) => l.trimRight())
           .toList();
+      final beforeOlder = olderRowsOf(before);
       expect(beforeOlder, hasLength(1), reason: 'frame before:\n$before');
       await harness.waitForText(
         _firstSettle,
@@ -239,7 +258,7 @@ void main() {
       final mid = harness.viewportLines;
       expectComposerReserved(mid, columns);
       expect(
-        mid.where((l) => l.contains('· older') && l.contains('(5)')).toList(),
+        olderRowsOf(mid),
         beforeOlder,
         reason:
             'the printed `· older` row never changes counts while its '
@@ -290,9 +309,11 @@ void main() {
     }
   });
 
-  // gh-938: only this case races the shared /tmp/fa_539_home layout.
-  // 'stacked boards freeze' above stays UNSKIPPED on purpose — it is the
-  // real #937 regression and must stay red until ai/gh-869 is fixed.
+  // gh-938: this case raced the shared /tmp/fa_539_home layout — moot since
+  // setUp moved both roots to unique systemTemp dirs (the #936 class fix
+  // above), so the skip is dropped. 'stacked boards freeze' above stays
+  // UNSKIPPED on purpose — it is the real #937 regression and must stay red
+  // until ai/gh-869 is fixed.
   test(
     'restart with live jobs shows lost, never running (268/0 impossible)',
     () async {
@@ -350,6 +371,5 @@ void main() {
       );
       expectComposerReserved(resumed.viewportLines, 80);
     },
-    skip: 'infra: #936 shared /tmp race (fa_539_home/fa_539_proj)',
   );
 }
