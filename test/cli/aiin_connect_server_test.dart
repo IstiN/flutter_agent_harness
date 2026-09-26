@@ -97,6 +97,33 @@ void main() {
     expect(statussJoined(statuses), isNot(contains('sk-aiin-')));
   });
 
+  test('onCallback fires when the callback lands (the mobile auth-session '
+      'sheet dismisses here)', () async {
+    var dismissed = false;
+    final result = await runAiinConnectCliFlow(
+      onStatus: (_) {},
+      openBrowserFn: fakeBrowser(code: 'c-1'),
+      client: mockAiinBackend(),
+      onCallback: () => dismissed = true,
+    );
+    expect(result, isNotNull);
+    expect(dismissed, isTrue);
+  });
+
+  test('onCallback also fires on the timeout (a stale sheet closes too)',
+      () async {
+    var dismissed = false;
+    final result = await runAiinConnectCliFlow(
+      onStatus: (_) {},
+      openBrowserFn: (url) async => true, // opened, never redirected
+      client: mockAiinBackend(),
+      timeout: const Duration(milliseconds: 100),
+      onCallback: () => dismissed = true,
+    );
+    expect(result, isNull);
+    expect(dismissed, isTrue);
+  });
+
   test('the browser receives the hosted /login URL with our redirect and '
       'state embedded', () async {
     final client = mockAiinBackend();
