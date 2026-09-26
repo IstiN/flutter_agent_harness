@@ -211,6 +211,28 @@ Future<bool> _completeSignIn({
   );
   if (modelId == null || !context.mounted) return false;
 
+  // Issue #977: the CLI-parity name step. The user names the connection
+  // (existing entry's name on a re-login, the org host otherwise); a
+  // different name on the same org mints a SECOND account entry instead of
+  // overwriting the first. Cancel falls back to the prefill — the SSO
+  // credentials are already minted (the CLI's OAuth/SSO convention).
+  final suggestedName = existing?.name ?? codeMieHostFromUrl(orgUrl);
+  final name =
+      await showCodeMieNamePrompt(
+        context,
+        registry: registry,
+        baseUrl: baseUrl,
+        initial: suggestedName,
+      ) ??
+      suggestedName;
+  // Landing by NAME (the CLI registry's `add`-replaces-on-name-clash rule):
+  // the entry carrying the chosen name on this endpoint is the update
+  // target — a kept prefill re-logins in place, a fresh name adds.
+  final target = registry.byName(name);
+  final existingByName = (target != null && target.baseUrl == baseUrl)
+      ? target
+      : null;
+
   await saveCodemieConnection(
     registry: registry,
     service: service,
@@ -219,7 +241,8 @@ Future<bool> _completeSignIn({
     baseUrl: baseUrl,
     modelId: modelId,
     key: cookie,
-    existing: existing,
+    name: name,
+    existing: existingByName,
   );
   return true;
 }
