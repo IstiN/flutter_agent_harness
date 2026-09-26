@@ -380,8 +380,9 @@ APPROVALS
     write        auto-approve read+write, prompt for exec
     yolo         auto-approve everything (default) — except critical bash
                  patterns (e.g. rm -rf /, force pushes), which still prompt
-    unattended   auto-approve everything, critical patterns included — never
-                 asks; for runs without a user present (overnight/automation)
+    autopilot    auto-approve everything, critical patterns included — never
+                 asks; for runs without a user present (overnight/automation);
+                 the old `unattended` spelling is still accepted
   /approval [mode] shows or sets the mode (persisted); /allow <tool>
   always-allows one tool (persisted). Prompt answers: y = once, n = deny,
   a = always for that tool. Non-interactive runs (headless or piped stdin)
@@ -558,7 +559,7 @@ SKILLS AND CONTEXT FILES
   /sessions          list all sessions across workspaces
   /resume            switch to the most recent session
   /rename-session <n> rename the current session
-  /approval [mode]   show or set tool approval (always-ask|write|yolo|unattended)
+  /approval [mode]   show or set tool approval (always-ask|write|yolo|autopilot)
   /settings          settings hub: provider, model, approval, mode, cube
                      sandbox, keys, MCP (interactive picker in the TUI,
                      summary in line mode)

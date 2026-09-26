@@ -2043,7 +2043,7 @@ class AgentCli {
       'always-ask': 'prompt before every write/exec tool call',
       'write': 'auto-approve writes, prompt for exec',
       'yolo': 'auto-approve everything (critical bash still prompts)',
-      'unattended':
+      'autopilot':
           'auto-approve everything, never asks — for runs without a user',
     };
     final items = [

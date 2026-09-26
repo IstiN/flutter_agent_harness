@@ -98,14 +98,14 @@ class FaAgent(BaseInstalledAgent):
                 "fi; fi || true"
             ),
         )
-        # No user is present during benchmark runs; unattended skips the
+        # No user is present during benchmark runs; autopilot skips the
         # critical-pattern bash interceptor that headless mode would deny.
         await self.exec_as_agent(
             environment,
             command=(
                 "mkdir -p ~/.fah && "
                 "grep -q approvalMode ~/.fah/config.yaml 2>/dev/null || "
-                "printf 'approvalMode: unattended\\n' > ~/.fah/config.yaml"
+                "printf 'approvalMode: autopilot\\n' > ~/.fah/config.yaml"
             ),
         )
         await self.exec_as_agent(environment, command="fa --version")
