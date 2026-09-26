@@ -1202,6 +1202,38 @@
   "@networkAddAgentNoKeys": {
     "description": "Agent invite placeholder when the wallet holds no channel keys"
   },
+  "networkAddAgentScopeChannel": "This channel",
+  "@networkAddAgentScopeChannel": {
+    "description": "Agent invite scope segment: channel-only access"
+  },
+  "networkAddAgentScopeNetwork": "Whole network",
+  "@networkAddAgentScopeNetwork": {
+    "description": "Agent invite scope segment: full network membership"
+  },
+  "networkAddAgentFormatLink": "Link (app)",
+  "@networkAddAgentFormatLink": {
+    "description": "Agent invite format segment: bare link for apps"
+  },
+  "networkAddAgentFormatCli": "CLI command",
+  "@networkAddAgentFormatCli": {
+    "description": "Agent invite format segment: ready fa CLI one-liner"
+  },
+  "networkAddAgentNetworkHint": "The agent joins as a full member and sees every channel in the network.",
+  "@networkAddAgentNetworkHint": {
+    "description": "Agent invite hint for the network scope"
+  },
+  "networkAddAgentNetworkNoPassword": "The network password is not on this device — the link will ask for it.",
+  "@networkAddAgentNetworkNoPassword": {
+    "description": "Agent invite note when the join link carries no password"
+  },
+  "networkAddAgentCliHint": "The command works against hubs with direct DAP access (e.g. the local stand); CLI join for production fa_network is coming.",
+  "@networkAddAgentCliHint": {
+    "description": "Agent invite note under the CLI format (channel scope)"
+  },
+  "networkAddAgentNetworkCliHint": "CLI network join is not shipped yet — share the link for now.",
+  "@networkAddAgentNetworkCliHint": {
+    "description": "Agent invite note under the CLI format (network scope)"
+  },
   "networkInviteCopied": "Invite copied to clipboard.",
   "@networkInviteCopied": {
     "description": "Snack after copying the agent invite"
