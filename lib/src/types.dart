@@ -11,6 +11,8 @@
 ///   fragment while a tool call streams; pi tracks this in adapter-local state.
 library;
 
+import 'rate_limit_info.dart';
+
 /// Why the assistant message stream terminated.
 ///
 /// Ported from pi's `StopReason` union.
@@ -509,6 +511,7 @@ final class AssistantMessage implements Message {
     required this.stopReason,
     this.rawStopReason,
     this.errorMessage,
+    this.rateLimit,
     required this.timestamp,
   });
 
@@ -549,6 +552,12 @@ final class AssistantMessage implements Message {
   /// [StopReason.error] or [StopReason.aborted].
   final String? errorMessage;
 
+  /// The structured decode of a 429 rate-limit failure (issue #867), when
+  /// the provider surfaced one. Carried on the error event so every surface
+  /// renders from the structure; [RateLimitInfo.rawBody] stays diagnostics-
+  /// only and never reaches a render.
+  final RateLimitInfo? rateLimit;
+
   /// When this message was created (pi stores Unix milliseconds; Dart uses
   /// [DateTime]).
   @override
@@ -565,6 +574,7 @@ final class AssistantMessage implements Message {
     StopReason? stopReason,
     String? rawStopReason,
     String? errorMessage,
+    RateLimitInfo? rateLimit,
     DateTime? timestamp,
   }) {
     return AssistantMessage(
@@ -578,6 +588,7 @@ final class AssistantMessage implements Message {
       stopReason: stopReason ?? this.stopReason,
       rawStopReason: rawStopReason ?? this.rawStopReason,
       errorMessage: errorMessage ?? this.errorMessage,
+      rateLimit: rateLimit ?? this.rateLimit,
       timestamp: timestamp ?? this.timestamp,
     );
   }
@@ -600,6 +611,7 @@ final class AssistantMessage implements Message {
     'stopReason': stopReason.name,
     if (rawStopReason != null) 'rawStopReason': rawStopReason,
     if (errorMessage != null) 'errorMessage': errorMessage,
+    if (rateLimit != null) 'rateLimit': rateLimit!.toJson(),
     'timestamp': timestamp.millisecondsSinceEpoch,
   };
 
@@ -624,6 +636,9 @@ final class AssistantMessage implements Message {
         ),
         rawStopReason: json['rawStopReason'] as String?,
         errorMessage: json['errorMessage'] as String?,
+        rateLimit: json['rateLimit'] is Map<String, dynamic>
+            ? RateLimitInfo.fromJson(json['rateLimit'] as Map<String, dynamic>)
+            : null,
         timestamp: DateTime.fromMillisecondsSinceEpoch(
           json['timestamp'] as int? ?? 0,
         ),

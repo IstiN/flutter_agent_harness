@@ -1022,7 +1022,8 @@ void main() {
       final error = events.whereType<ErrorEvent>().single;
       expect(error.error.errorMessage, contains('ChatGPT response failed'));
     });
-    test('a 429 error message includes the Codex reset time', () async {
+    test('a 429 error message speaks human and carries the structured reset',
+        () async {
       final client = http_testing.MockClient.streaming(
         (request, requestBody) async => http.StreamedResponse(
           Stream.value(utf8.encode('slow down')),
@@ -1041,18 +1042,85 @@ void main() {
         client: client,
       ).toList();
 
-      final message = events.whereType<ErrorEvent>().single.error.errorMessage!;
+      final error = events.whereType<ErrorEvent>().single;
+      final message = error.error.errorMessage!;
       expect(message, contains('429'));
-      expect(message, contains('rate limited; resets at'));
+      expect(message, contains('Rate limit reached'));
+      // No raw payload fragment reaches the rendered line (issue #867).
+      expect(message.contains('{'), isFalse);
+      expect(message, contains(RegExp(r'— in \d+ days')));
+      // The structured reset rides the event for surface rendering.
+      final info = error.error.rateLimit;
+      expect(info, isNotNull);
       expect(
-        message,
-        contains(
-          DateTime.fromMillisecondsSinceEpoch(
-            2000000000 * 1000,
-            isUtc: true,
-          ).toIso8601String(),
+        info!.resetsAt,
+        DateTime.fromMillisecondsSinceEpoch(2000000000 * 1000, isUtc: true),
+      );
+      expect(info.limitKind, 'primary');
+      expect(info.rawBody, 'slow down');
+    });
+
+    test('both windows advertised: the label names the window it came from',
+        () async {
+      final client = http_testing.MockClient.streaming(
+        (request, requestBody) async => http.StreamedResponse(
+          Stream.value(utf8.encode('slow down')),
+          429,
+          headers: {
+            'content-type': 'text/plain',
+            'x-codex-primary-used-percent': '80',
+            'x-codex-primary-reset-at': '2000000000',
+            'x-codex-secondary-used-percent': '100',
+            'x-codex-secondary-reset-at': '1990000000',
+          },
         ),
       );
+      final events = await streamChatGptCodex(
+        chatGptModel,
+        simpleContext(),
+        credentials: credentials.encode(),
+        client: client,
+      ).toList();
+
+      final error = events.whereType<ErrorEvent>().single;
+      // The rendered stamp prefers the primary window — the label must
+      // agree with it (round-1 CR: it used to say "secondary").
+      final message = error.error.errorMessage!;
+      expect(message, contains('(primary limit)'));
+      expect(message.contains('secondary'), isFalse, reason: message);
+      final info = error.error.rateLimit!;
+      expect(info.limitKind, 'primary');
+      expect(
+        info.resetsAt,
+        DateTime.fromMillisecondsSinceEpoch(2000000000 * 1000, isUtc: true),
+      );
+    });
+
+    test('canonical Retry-After casing reaches both parses identically',
+        () async {
+      final client = http_testing.MockClient.streaming(
+        (request, requestBody) async => http.StreamedResponse(
+          Stream.value(utf8.encode('slow down')),
+          429,
+          headers: {
+            'content-type': 'text/plain',
+            // HTTP/1.1 canonical casing: the direct map index used to miss
+            // it while the structured parse (case-insensitive) saw it, so
+            // the rotation cooldown silently fell back to the default.
+            'Retry-After': '120',
+          },
+        ),
+      );
+      final events = await streamChatGptCodex(
+        chatGptModel,
+        simpleContext(),
+        credentials: credentials.encode(),
+        client: client,
+      ).toList();
+
+      final error = events.whereType<ErrorEvent>().single;
+      expect(error.retryAfter, const Duration(minutes: 2));
+      expect(error.error.rateLimit?.retryAfter, const Duration(minutes: 2));
     });
   });
 }
