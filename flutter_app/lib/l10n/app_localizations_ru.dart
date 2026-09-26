@@ -2383,7 +2383,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get networkAddAgentEnvHint =>
-      'Строка запуска CLI-harness на раннере (GitHub Actions): подставь свою пару провайдер+модель и мастер-секрет хаба — ключи канала приезжают командой import.';
+      'Хаб-строка запуска для раннера (GitHub Actions): подставь мастер-секрет хаба — ключи канала приезжают командой import. Провайдер настраивается fa-конфигом самого раннера.';
 
   @override
   String get networkAddAgentNetworkHint =>
