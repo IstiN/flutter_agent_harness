@@ -14,6 +14,7 @@ import 'auth_flow.dart';
 import 'auth_loopback.dart';
 import 'fa_network_client.dart';
 import 'fa_network_ws.dart';
+import '../services/app_log.dart';
 import 'key_wallet.dart';
 import 'models.dart';
 import 'network_session.dart';
@@ -165,6 +166,10 @@ final class NetworkSessionManager extends ChangeNotifier {
     if (account.accessExpiresAt.isAfter(now)) {
       _jwt = account.accessToken;
       _sessionExpired = false;
+      AppLog.i(
+        'fa_network',
+        'account restored from wallet (access token fresh)',
+      );
       notifyListeners();
       return;
     }
@@ -182,8 +187,10 @@ final class NetworkSessionManager extends ChangeNotifier {
       await _wallet.saveAccount(account.withTokens(tokens));
       _jwt = tokens.accessToken;
       _sessionExpired = false;
-    } on Object {
+      AppLog.i('fa_network', 'account restored via refresh');
+    } on Object catch (e) {
       _sessionExpired = true;
+      AppLog.i('fa_network', 'account refresh FAILED: $e');
     }
     notifyListeners();
   }
@@ -266,6 +273,10 @@ final class NetworkSessionManager extends ChangeNotifier {
       await _wallet.createIfMissing(displayName: displayName ?? '');
     }
     final client = _newClient();
+    AppLog.i(
+      'fa_network',
+      'join $networkId (jwt=${_jwt != null}, displayName=${displayName ?? "-"})',
+    );
     final result = await client.joinNetwork(
       networkId,
       password: password,
@@ -277,6 +288,11 @@ final class NetworkSessionManager extends ChangeNotifier {
       memberClass: result.identity.memberClass.name,
       displayName: result.identity.displayName,
       password: password,
+    );
+    AppLog.i(
+      'fa_network',
+      'join $networkId OK as ${result.identity.memberClass.name} '
+          '"${result.identity.displayName}"',
     );
     return _startSession(networkId, result, client);
   }

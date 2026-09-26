@@ -6,6 +6,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../services/app_log.dart';
 import 'models.dart';
 
 /// Error raised by [FaNetworkClient] for any non-success response.
@@ -617,7 +618,22 @@ class FaNetworkClient {
     final streamed = await _http.send(request);
     final response = await http.Response.fromStream(streamed);
     if (!expected.contains(response.statusCode)) {
-      throw _errorFor(response);
+      // Diagnostics without secrets: which token CLASS rode the request
+      // (jwt/session/none), never its value.
+      final sent = auth
+          ? (_token(management: management) != null
+                ? (management
+                      ? (_jwt != null ? 'jwt' : 'session')
+                      : (_session != null ? 'session' : 'jwt'))
+                : 'none')
+          : 'off';
+      final error = _errorFor(response);
+      AppLog.i(
+        'fa_network',
+        '$method $path → ${response.statusCode} ${error.code} '
+            '(bearer=$sent): ${error.message}',
+      );
+      throw error;
     }
     return response;
   }
