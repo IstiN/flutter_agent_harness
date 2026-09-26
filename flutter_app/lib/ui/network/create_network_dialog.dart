@@ -10,14 +10,14 @@ import 'package:fa/network/fa_network_client.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session_manager.dart';
 
-/// Opens the create-network dialog; returns the name + password, or null
-/// when cancelled.
-Future<({String name, String password})?> showCreateNetworkDialog(
-  BuildContext context,
-) => showDialog<({String name, String password})>(
-  context: context,
-  builder: (_) => const CreateNetworkDialog(),
-);
+/// Opens the create-network dialog; returns the name + password +
+/// public-directory flag, or null when cancelled.
+Future<({String name, String password, bool isPublic})?>
+showCreateNetworkDialog(BuildContext context) =>
+    showDialog<({String name, String password, bool isPublic})>(
+      context: context,
+      builder: (_) => const CreateNetworkDialog(),
+    );
 
 /// The full create-network flow (owner flow; requires a JWT — callers only
 /// offer it then): prompt for name + password, create via the manager
@@ -34,6 +34,7 @@ Future<void> runCreateNetworkFlow(
     final session = await manager.createNetwork(
       name: created.name,
       password: created.password,
+      isPublic: created.isPublic,
     );
     await controller.enterNetwork(session.networkId);
   } on FaNetworkException catch (e) {
@@ -58,6 +59,7 @@ class _CreateNetworkDialogState extends State<CreateNetworkDialog> {
   final _password = TextEditingController();
   String? _nameError;
   String? _passwordError;
+  bool _isPublic = false;
 
   /// The server's exact rules (fa_network `validNetworkName` /
   /// `validNetworkCreate`): a lowercase slug and an 8–128 char password —
@@ -88,7 +90,9 @@ class _CreateNetworkDialogState extends State<CreateNetworkDialog> {
       _passwordError = passwordError;
     });
     if (nameError != null || passwordError != null) return;
-    Navigator.of(context).pop((name: name, password: _password.text));
+    Navigator.of(
+      context,
+    ).pop((name: name, password: _password.text, isPublic: _isPublic));
   }
 
   @override
@@ -117,6 +121,18 @@ class _CreateNetworkDialogState extends State<CreateNetworkDialog> {
               helperText: context.l10n.networkPasswordHint,
               errorText: _passwordError,
             ),
+          ),
+          CheckboxListTile(
+            key: const ValueKey('createNetworkPublic'),
+            contentPadding: EdgeInsets.zero,
+            controlAffinity: ListTileControlAffinity.leading,
+            dense: true,
+            title: Text(
+              context.l10n.networkListPublic,
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            value: _isPublic,
+            onChanged: (value) => setState(() => _isPublic = value ?? false),
           ),
         ],
       ),

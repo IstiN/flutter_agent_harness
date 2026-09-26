@@ -1074,5 +1074,15 @@
   "networkNameInvalid": "Use 3–64 chars: lowercase letters, digits, hyphens (start with a letter or digit)",
   "@networkNameInvalid": { "description": "Network name validation error" },
   "networkPasswordInvalid": "Password must be 8–128 characters",
-  "@networkPasswordInvalid": { "description": "Network password validation error" }
+  "@networkPasswordInvalid": { "description": "Network password validation error" },
+  "networkListPublic": "List in the public directory",
+  "@networkListPublic": { "description": "Create-network dialog checkbox \u2014 publish the network in the public catalog" },
+  "networkDelete": "Delete network…",
+  "@networkDelete": { "description": "Network row menu item (owner only)" },
+  "networkDeleteTitle": "Delete this network?",
+  "@networkDeleteTitle": { "description": "Delete-network confirmation title" },
+  "networkDeleteBody": "The network, its channels and all messages are deleted for everyone. This cannot be undone.",
+  "@networkDeleteBody": { "description": "Delete-network confirmation body" },
+  "networkDeleted": "Network deleted",
+  "@networkDeleted": { "description": "Snackbar after a network was deleted" }
 }

@@ -930,5 +930,15 @@
   "networkNameInvalid": "3–64 символа: строчные буквы, цифры, дефисы (начинай с буквы или цифры)",
   "@networkNameInvalid": { "description": "Network name validation error" },
   "networkPasswordInvalid": "Пароль: 8–128 символов",
-  "@networkPasswordInvalid": { "description": "Network password validation error" }
+  "@networkPasswordInvalid": { "description": "Network password validation error" },
+  "networkListPublic": "Показывать в публичном каталоге",
+  "@networkListPublic": { "description": "Create-network dialog checkbox \u2014 publish the network in the public catalog" },
+  "networkDelete": "Удалить сеть…",
+  "@networkDelete": { "description": "Network row menu item (owner only)" },
+  "networkDeleteTitle": "Удалить эту сеть?",
+  "@networkDeleteTitle": { "description": "Delete-network confirmation title" },
+  "networkDeleteBody": "Сеть, её каналы и все сообщения будут удалены для всех. Это действие нельзя отменить.",
+  "@networkDeleteBody": { "description": "Delete-network confirmation body" },
+  "networkDeleted": "Сеть удалена",
+  "@networkDeleted": { "description": "Snackbar after a network was deleted" }
 }

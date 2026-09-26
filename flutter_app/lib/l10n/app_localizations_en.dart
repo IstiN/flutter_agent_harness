@@ -2405,4 +2405,20 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get networkPasswordInvalid => 'Password must be 8–128 characters';
+
+  @override
+  String get networkListPublic => 'List in the public directory';
+
+  @override
+  String get networkDelete => 'Delete network…';
+
+  @override
+  String get networkDeleteTitle => 'Delete this network?';
+
+  @override
+  String get networkDeleteBody =>
+      'The network, its channels and all messages are deleted for everyone. This cannot be undone.';
+
+  @override
+  String get networkDeleted => 'Network deleted';
 }

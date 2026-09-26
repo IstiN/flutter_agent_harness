@@ -4273,6 +4273,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Password must be 8–128 characters'**
   String get networkPasswordInvalid;
+
+  /// Create-network dialog checkbox — publish the network in the public catalog
+  ///
+  /// In en, this message translates to:
+  /// **'List in the public directory'**
+  String get networkListPublic;
+
+  /// Network row menu item (owner only)
+  ///
+  /// In en, this message translates to:
+  /// **'Delete network…'**
+  String get networkDelete;
+
+  /// Delete-network confirmation title
+  ///
+  /// In en, this message translates to:
+  /// **'Delete this network?'**
+  String get networkDeleteTitle;
+
+  /// Delete-network confirmation body
+  ///
+  /// In en, this message translates to:
+  /// **'The network, its channels and all messages are deleted for everyone. This cannot be undone.'**
+  String get networkDeleteBody;
+
+  /// Snackbar after a network was deleted
+  ///
+  /// In en, this message translates to:
+  /// **'Network deleted'**
+  String get networkDeleted;
 }
 
 class _AppLocalizationsDelegate

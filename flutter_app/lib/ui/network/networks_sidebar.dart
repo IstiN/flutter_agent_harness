@@ -367,6 +367,12 @@ class _NetworksSidebarState extends State<NetworksSidebar> {
               name: entry.value.name,
               selected: widget.controller.networkId == entry.key,
               status: _statusOf(entry.key),
+              isOwner: entry.value.memberClass == 'owner',
+              onDelete: entry.value.memberClass == 'owner'
+                  ? () => unawaited(
+                      _confirmDeleteNetwork(entry.key, entry.value.name),
+                    )
+                  : null,
               onTap: () => unawaited(_openNetwork(entry.key)),
             ),
         if (public != null) ...[
@@ -394,6 +400,45 @@ class _NetworksSidebarState extends State<NetworksSidebar> {
     );
   }
 
+  /// Owner-only network deletion: confirm, DELETE on the relay, drop the
+  /// local membership + keys, and leave the deleted network's view.
+  Future<void> _confirmDeleteNetwork(String networkId, String name) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(dialogContext.l10n.networkDeleteTitle),
+        content: Text('"$name"\n\n${dialogContext.l10n.networkDeleteBody}'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(dialogContext.l10n.commonCancel),
+          ),
+          FilledButton(
+            key: const ValueKey('confirmDeleteNetwork'),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(dialogContext).colorScheme.error,
+            ),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(dialogContext.l10n.networkDelete),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await widget.manager.deleteNetwork(networkId);
+      if (!mounted) return;
+      if (widget.controller.networkId == networkId) {
+        await widget.controller.backToNetworks();
+      }
+      if (mounted) showFahSnack(context, context.l10n.networkDeleted);
+    } on FaNetworkException catch (e) {
+      if (mounted) showFahErrorSnack(context, e.message);
+    } on Object catch (e) {
+      if (mounted) showFahErrorSnack(context, '$e');
+    }
+  }
+
   _MembershipStatus _statusOf(String networkId) {
     final session = widget.manager.sessions[networkId];
     if (session == null) return _MembershipStatus.idle;
@@ -416,6 +461,8 @@ class _MembershipTile extends StatelessWidget {
     required this.selected,
     required this.status,
     required this.onTap,
+    this.isOwner = false,
+    this.onDelete,
   });
 
   final String networkId;
@@ -423,6 +470,12 @@ class _MembershipTile extends StatelessWidget {
   final bool selected;
   final _MembershipStatus status;
   final VoidCallback onTap;
+
+  /// Owner-only: enables the trailing delete menu.
+  final bool isOwner;
+
+  /// Owner-only: delete the network (confirmed by the caller).
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -465,6 +518,22 @@ class _MembershipTile extends StatelessWidget {
                     ),
                   ),
                 ),
+                if (isOwner && onDelete != null)
+                  PopupMenuButton<String>(
+                    key: const ValueKey('networkRowMenu'),
+                    iconSize: 16,
+                    padding: EdgeInsets.zero,
+                    icon: Icon(Icons.more_vert, size: 16, color: colors.dim),
+                    itemBuilder: (context) => [
+                      PopupMenuItem<String>(
+                        value: 'delete',
+                        child: Text(context.l10n.networkDelete),
+                      ),
+                    ],
+                    onSelected: (value) {
+                      if (value == 'delete') onDelete!();
+                    },
+                  ),
               ],
             ),
           ),

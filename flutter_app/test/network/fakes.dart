@@ -56,7 +56,10 @@ final class FakeClipboard {
 
 /// A scripted HTTP client: queues responses in order, records requests.
 class FakeHttpClient extends http.BaseClient {
-  final List<({String method, Uri url, String body})> requests = [];
+  final List<
+    ({String method, Uri url, String body, Map<String, String> headers})
+  >
+  requests = [];
   final List<http.Response> _responses = [];
   int _index = 0;
 
@@ -88,6 +91,7 @@ class FakeHttpClient extends http.BaseClient {
       method: request.method,
       url: request.url,
       body: utf8.decode(bodyBytes),
+      headers: request.headers,
     ));
     var res = _responses.elementAtOrNull(_index);
     if (request.url.path == '/api/networks/public') {

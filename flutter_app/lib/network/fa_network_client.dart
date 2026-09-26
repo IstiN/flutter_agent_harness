@@ -101,7 +101,9 @@ class FaNetworkClient {
     final json = _decodeMap(res);
     final credentials = json['joinCredentials'];
     return (
-      network: Network.fromJson(json),
+      network: Network.fromJson(
+        (json['network'] as Map? ?? const {}).cast<String, Object?>(),
+      ),
       joinCredentials: credentials is Map
           ? JoinCredentials.fromJson(credentials.cast<String, Object?>())
           : null,

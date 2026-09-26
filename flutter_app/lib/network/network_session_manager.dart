@@ -325,18 +325,34 @@ final class NetworkSessionManager extends ChangeNotifier {
 
   /// Creates a network (management route — requires a JWT); the caller
   /// becomes owner and is joined immediately with the one-time join
-  /// credentials. Returns the live session.
+  /// credentials. When [isPublic] the network is then listed in the
+  /// public directory (PATCH, owner privilege). Returns the live session.
   Future<NetworkSession> createNetwork({
     required String name,
     required String password,
+    bool isPublic = false,
   }) async {
     final client = _newClient()..session = _sessionToken;
     final result = await client.createNetwork(name: name, password: password);
     final networkId = result.network.id;
+    if (isPublic) {
+      await client.updateNetwork(networkId, isPublic: true);
+    }
     return join(
       networkId: networkId,
       password: result.joinCredentials?.password ?? password,
     );
+  }
+
+  /// Deletes the network (management route — owner JWT required; the
+  /// server's 403 surfaces for non-owners), then drops the local session,
+  /// wallet membership and channel keys.
+  Future<void> deleteNetwork(String networkId) async {
+    await _newClient().deleteNetwork(networkId);
+    final session = sessions.remove(networkId);
+    if (session != null) await session.close();
+    await _wallet.removeNetwork(networkId);
+    notifyListeners();
   }
 
   /// Creates a channel inside [networkId] (management route — public

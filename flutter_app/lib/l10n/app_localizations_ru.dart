@@ -2433,4 +2433,20 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get networkPasswordInvalid => 'Пароль: 8–128 символов';
+
+  @override
+  String get networkListPublic => 'Показывать в публичном каталоге';
+
+  @override
+  String get networkDelete => 'Удалить сеть…';
+
+  @override
+  String get networkDeleteTitle => 'Удалить эту сеть?';
+
+  @override
+  String get networkDeleteBody =>
+      'Сеть, её каналы и все сообщения будут удалены для всех. Это действие нельзя отменить.';
+
+  @override
+  String get networkDeleted => 'Сеть удалена';
 }

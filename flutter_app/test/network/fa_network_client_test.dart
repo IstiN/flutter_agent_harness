@@ -143,9 +143,11 @@ void main() {
       () async {
         httpClient.respond(
           201,
+          // The server's real envelope: {network: {...}, joinCredentials: {...}}
+          // (fa_network internal/server/networks.go createNetwork).
           body:
-              '{"id":"net1","name":"fa-team","ownerId":"u1",'
-              '"publicChannels":[],'
+              '{"network":{"id":"net1","name":"fa-team","ownerId":"u1",'
+              '"publicChannels":[]},'
               '"joinCredentials":{"networkId":"net1","password":"pw123456"}}',
         );
         final result = await client.createNetwork(
