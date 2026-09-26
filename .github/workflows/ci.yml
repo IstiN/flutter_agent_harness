@@ -548,6 +548,20 @@ jobs:
       - name: Self-hosted toolcache redirect (fa-m5)
         if: startsWith(runner.name, 'fa-m5')
         run: echo "RUNNER_TOOL_CACHE=${{ runner.workspace }}/toolcache" >> "$GITHUB_ENV"
+      # Shared-box pub-cache isolation (flake fix — run 36258687531): the
+      # fa-m5 minis all share ONE user pub cache (~/.pub-cache) with every
+      # concurrent job AND the box owner's local builds. A concurrent cache
+      # mutation yanked image-4.10.1 sources mid-compile and exit-254'd
+      # headless_tools_flag_test ("Error when reading
+      # .pub-cache/.../luminance_threshold_cmd.dart") while the same
+      # compile passed seconds later. Give each fa-m5 job a private cache
+      # under the per-job temp root (runner-cleaned); `dart pub get` below
+      # repopulates it (~1 min) and every spawned CLI sees it because the
+      # PTY/headless harnesses forward PUB_CACHE explicitly. Hosted runners
+      # are single-job VMs — the default cache is already private there.
+      - name: Job-private pub cache (fa-m5 shared box)
+        if: startsWith(runner.name, 'fa-m5')
+        run: echo "PUB_CACHE=$RUNNER_TEMP/pub-cache" >> "$GITHUB_ENV"
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         with:
           sdk: stable
