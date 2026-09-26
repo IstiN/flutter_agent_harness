@@ -2387,10 +2387,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get networkAddAgentEnvHint =>
-      'Хаб-строка запуска для раннера (GitHub Actions): впиши мастер-секрет хаба один раз и копируй строки key=value по одной. Ключи канала приезжают командой import; провайдер настраивается fa-конфигом самого раннера.';
-
-  @override
-  String get networkAddAgentSecretHint => 'мастер-секрет хаба';
+      'Env-переменные для CI-раннера (GitHub Actions) — ссылка уже несёт id сети и пароль (или ключи канала), ничего дописывать не нужно. Зарезервировано под будущий сетевой режим CLI — десктопные и мобильные агенты используют ссылку.';
 
   @override
   String get networkAddAgentNetworkHint =>
