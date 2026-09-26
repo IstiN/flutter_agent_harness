@@ -27,6 +27,7 @@ Future<
     NetworkSession session,
     KeyWallet wallet,
     FakeHttpClient httpClient,
+    FakeHttpClient managerHttp,
   })
 >
 _rig(WidgetTester tester, {String memberClass = 'member'}) async {
@@ -60,10 +61,11 @@ _rig(WidgetTester tester, {String memberClass = 'member'}) async {
     mode: AppMode.network,
     networkId: 'net1',
   );
+  final managerHttp = FakeHttpClient();
   final manager = NetworkSessionManager(
     baseUrl: testBase,
     wallet: wallet,
-    httpClient: FakeHttpClient(),
+    httpClient: managerHttp,
     wsConnector: FakeWsConnector(),
   );
   manager.sessions['net1'] = session;
@@ -87,6 +89,7 @@ _rig(WidgetTester tester, {String memberClass = 'member'}) async {
     session: session,
     wallet: wallet,
     httpClient: httpClient,
+    managerHttp: managerHttp,
   );
 }
 
@@ -199,5 +202,110 @@ void main() {
         await rig.session.close();
       },
     );
+  });
+
+  group('ChannelRail create channel', () {
+    Future<void> openDialog(WidgetTester tester) async {
+      await tester.tap(find.byKey(const ValueKey('createChannelButton')));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('owner creates a channel: POST + local keys + auto-open', (
+      tester,
+    ) async {
+      final rig = await _rig(tester, memberClass: 'owner');
+      rig.managerHttp.respond(
+        201,
+        body:
+            '{"id":"c9","networkId":"net1","name":"war-room",'
+            '"public":true}',
+      );
+      // The auto-open's first history page (session http client).
+      rig.httpClient.respond(200, body: '{"items":[],"nextCursor":""}');
+
+      await openDialog(tester);
+      await tester.enterText(find.byType(TextField), 'war-room');
+      await tester.tap(find.byType(SwitchListTile)); // public showcase
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Create'));
+      await tester.pumpAndSettle();
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+
+      final post = rig.managerHttp.requests.single;
+      expect(post.method, 'POST');
+      expect(post.url.path, '/api/networks/net1/channels');
+      expect(post.body, contains('"name":"war-room"'));
+      expect(post.body, contains('"public":true'));
+      // The keypair is generated and stored locally (E2E, invariant I1)…
+      expect(rig.wallet.channelKeysFor('net1', 'c9'), isNotNull);
+      // …the rail reflects the new channel and it is auto-opened.
+      expect(find.text('war-room'), findsOneWidget);
+      expect(rig.controller.channelId, 'c9');
+      expect(
+        rig.httpClient.requests.last.url.path,
+        '/api/channels/c9/messages',
+      );
+      await rig.session.close();
+    });
+
+    testWidgets('cancelling the dialog sends nothing', (tester) async {
+      final rig = await _rig(tester, memberClass: 'owner');
+
+      await openDialog(tester);
+      await tester.enterText(find.byType(TextField), 'war-room');
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+
+      expect(rig.managerHttp.requests, isEmpty);
+      await rig.session.close();
+    });
+
+    testWidgets('an empty name keeps the dialog open and sends nothing', (
+      tester,
+    ) async {
+      final rig = await _rig(tester, memberClass: 'owner');
+
+      await openDialog(tester);
+      await tester.tap(find.text('Create'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(rig.managerHttp.requests, isEmpty);
+      await rig.session.close();
+    });
+
+    testWidgets('a server rejection surfaces as a snackbar', (tester) async {
+      final rig = await _rig(tester, memberClass: 'owner');
+      rig.managerHttp.respond(
+        403,
+        body: '{"error":{"code":"forbidden","message":"owner only"}}',
+      );
+
+      await openDialog(tester);
+      await tester.enterText(find.byType(TextField), 'war-room');
+      await tester.tap(find.text('Create'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('owner only'), findsOneWidget);
+      expect(rig.wallet.channelKeysFor('net1', 'c9'), isNull);
+      await rig.session.close();
+    });
+
+    testWidgets('a malformed response surfaces the generic error', (
+      tester,
+    ) async {
+      final rig = await _rig(tester, memberClass: 'owner');
+      rig.managerHttp.respond(201, body: 'not json');
+
+      await openDialog(tester);
+      await tester.enterText(find.byType(TextField), 'war-room');
+      await tester.tap(find.text('Create'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('FormatException'), findsOneWidget);
+      await rig.session.close();
+    });
   });
 }
