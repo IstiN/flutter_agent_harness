@@ -10,7 +10,10 @@ import 'package:fa/services/relay/ext_runtime.dart';
 import 'package:fa/services/relay/relay_probe.dart';
 import 'package:fa/boot/app_boot.dart';
 import 'package:fa/boot/boot_config_codec.dart';
+import 'package:fa/network/network_mode.dart';
+import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/ui/app_theme.dart';
+import 'package:fa/ui/network/network_home.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:fa/ui/widgets/widget_publication_resume_refresh.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
@@ -107,6 +110,8 @@ Future<void> bootAppRoutes(
       taskModelsStore: stores.taskModels,
       onDeviceConfigStore: stores.onDeviceConfig,
       imagePreviewStore: stores.imagePreviews,
+      networkMode: stores.networkMode,
+      networkSessions: stores.networkSessions,
       analytics: analytics,
     ),
   );
@@ -151,6 +156,8 @@ class MyApp extends StatelessWidget {
     this.gemmaEngine,
     this.transformersJsEngine,
     this.analytics,
+    this.networkMode,
+    this.networkSessions,
   });
 
   /// The shared execution env; `null` lets [AgentService.create] build the
@@ -215,6 +222,15 @@ class MyApp extends StatelessWidget {
   /// Firebase Analytics instance; null when Firebase is not initialized
   /// (e.g., tests or placeholder firebase_options.dart).
   final FirebaseAnalytics? analytics;
+
+  /// The network-mode state machine (issue #955); null disables network
+  /// mode entirely (tests, hosts that never boot the network stores) and
+  /// the home renders exactly the classic local tree.
+  final NetworkModeController? networkMode;
+
+  /// The fa_network session manager (issue #955); must accompany
+  /// [networkMode].
+  final NetworkSessionManager? networkSessions;
 
   /// Fallback for [themeController] when none is injected (tests): a single
   /// shared in-memory controller so every [MyApp] build sees the same one.
@@ -288,6 +304,8 @@ class MyApp extends StatelessWidget {
               webLlmEngine: webLlmEngine,
               gemmaEngine: gemmaEngine,
               transformersJsEngine: transformersJsEngine,
+              networkMode: networkMode,
+              networkSessions: networkSessions,
             ),
           ),
         );
@@ -358,12 +376,24 @@ Widget faHomeScreen({
   LauncherLayoutStore? layoutStore,
   AppsStore? appsStore,
 
+  /// Network mode (issue #955): the WIDE home never swaps — the
+  /// [WideLayoutShell] consumes the mode internally (sidebar shows the
+  /// networks list, the center the network surface). The NARROW home
+  /// swaps to [NetworkHomePage] when the controller says
+  /// [AppMode.network] (the mobile list → channels → chat navigation
+  /// pattern). When absent (tests, non-network hosts) the home is
+  /// byte-identical to the classic local tree (AC-N1).
+  NetworkModeController? networkMode,
+  NetworkSessionManager? networkSessions,
+
   /// Restore the persisted apps↔chat surface mode on the narrow home
   /// (issue #224): true for the real production homes, false in tests.
   bool restoreAppsMode = false,
 }) {
   final isWide = MediaQuery.sizeOf(context).width >= kWideLayoutBreakpoint;
-  return WidgetPublicationResumeRefresher(
+  // The classic local home — built exactly as before; the network gate
+  // below swaps the WHOLE surface, never the local tree's structure.
+  final localHome = WidgetPublicationResumeRefresher(
     env: manager.env,
     child: isWide
         ? WideLayoutShell(
@@ -379,6 +409,8 @@ Widget faHomeScreen({
             tileEngineFactory: tileEngineFactory,
             layoutStore: layoutStore,
             appsStore: appsStore,
+            networkMode: networkMode,
+            networkSessions: networkSessions,
           )
         : AppLauncherScreen(
             manager: manager,
@@ -394,7 +426,20 @@ Widget faHomeScreen({
             layoutStore: layoutStore,
             appsStore: appsStore,
             restoreAppsMode: restoreAppsMode,
+            networkMode: networkMode,
+            networkSessions: networkSessions,
           ),
+  );
+  final mode = networkMode;
+  final sessions = networkSessions;
+  // Wide: the shell consumes the mode internally (sidebar/center swap in
+  // place) — the full-tree swap is the NARROW pattern only.
+  if (mode == null || sessions == null || isWide) return localHome;
+  return ListenableBuilder(
+    listenable: mode,
+    builder: (context, _) => mode.mode == AppMode.network
+        ? NetworkHomePage(controller: mode, manager: sessions)
+        : localHome,
   );
 }
 
@@ -422,6 +467,8 @@ class BootstrapScreen extends StatefulWidget {
     this.webLlmEngine,
     this.gemmaEngine,
     this.transformersJsEngine,
+    this.networkMode,
+    this.networkSessions,
   });
 
   /// The shared execution env handed to [AgentService.create].
@@ -453,6 +500,13 @@ class BootstrapScreen extends StatefulWidget {
   final WebLlmEngineApi? webLlmEngine;
   final GemmaEngineApi? gemmaEngine;
   final TransformersJsEngineApi? transformersJsEngine;
+
+  /// Network mode (issue #955), forwarded to [faHomeScreen].
+  final NetworkModeController? networkMode;
+
+  /// The fa_network session manager (issue #955), forwarded with
+  /// [networkMode].
+  final NetworkSessionManager? networkSessions;
 
   @override
   State<BootstrapScreen> createState() => _BootstrapScreenState();
@@ -579,6 +633,8 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
               manager: manager,
               registry: registry,
               restoreAppsMode: true,
+              networkMode: widget.networkMode,
+              networkSessions: widget.networkSessions,
             ),
           ),
         );
@@ -634,6 +690,8 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
             registry: widget.registry,
             lastConnectionStore: widget.lastConnectionStore,
             restoreAppsMode: true,
+            networkMode: widget.networkMode,
+            networkSessions: widget.networkSessions,
           ),
         ),
       );
@@ -667,6 +725,8 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
       env: widget.env,
       registry: widget.registry,
       lastConnectionStore: widget.lastConnectionStore,
+      networkMode: widget.networkMode,
+      networkSessions: widget.networkSessions,
     );
   }
 
@@ -684,6 +744,8 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
       webLlmEngine: widget.webLlmEngine,
       gemmaEngine: widget.gemmaEngine,
       transformersJsEngine: widget.transformersJsEngine,
+      networkMode: widget.networkMode,
+      networkSessions: widget.networkSessions,
     );
   }
 
@@ -799,11 +861,21 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
 /// showed an infinite spinner when session creation failed (a FutureBuilder
 /// error has no data). Errors now surface with a retry.
 class _EmptyManagerHome extends StatefulWidget {
-  const _EmptyManagerHome({this.env, this.registry, this.lastConnectionStore});
+  const _EmptyManagerHome({
+    this.env,
+    this.registry,
+    this.lastConnectionStore,
+    this.networkMode,
+    this.networkSessions,
+  });
 
   final ExecutionEnv? env;
   final ProviderRegistry? registry;
   final LastConnectionStore? lastConnectionStore;
+
+  /// Network mode (issue #955), forwarded to [faHomeScreen].
+  final NetworkModeController? networkMode;
+  final NetworkSessionManager? networkSessions;
 
   /// A placeholder session so the home never lands empty: user always has
   /// an active session, apps render + open, the sessions list shows
@@ -867,6 +939,8 @@ class _EmptyManagerHomeState extends State<_EmptyManagerHome> {
         registry: widget.registry,
         lastConnectionStore: widget.lastConnectionStore,
         restoreAppsMode: true,
+        networkMode: widget.networkMode,
+        networkSessions: widget.networkSessions,
       );
     }
     final error = _error;
@@ -926,6 +1000,8 @@ class SetupScreen extends StatelessWidget {
     this.gemmaEngine,
     this.transformersJsEngine,
     this.isWeb,
+    this.networkMode,
+    this.networkSessions,
   });
 
   /// The shared execution env handed to [AgentService.create].
@@ -951,6 +1027,13 @@ class SetupScreen extends StatelessWidget {
   /// Overrides `kIsWeb` for tests that need to exercise the web provider
   /// picker on a host test platform.
   final bool? isWeb;
+
+  /// Network mode (issue #955), forwarded to [faHomeScreen].
+  final NetworkModeController? networkMode;
+
+  /// The fa_network session manager (issue #955), forwarded with
+  /// [networkMode].
+  final NetworkSessionManager? networkSessions;
 
   Future<void> _connect(BuildContext context, AgentConfig config) async {
     // An on-device connect marks the engine configured — its provider row
@@ -1032,6 +1115,8 @@ class SetupScreen extends StatelessWidget {
           registry: registry,
           lastConnectionStore: lastConnectionStore,
           restoreAppsMode: true,
+          networkMode: networkMode,
+          networkSessions: networkSessions,
         ),
       ),
     );
