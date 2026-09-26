@@ -398,10 +398,11 @@ class ChatComposerState extends State<ChatComposer>
   /// the IME — with the field's `TextInputAction.newline` the IME would
   /// turn it into a line break. Shift+Enter falls through untouched: the
   /// IME inserts the break itself, which keeps an in-flight composing run
-  /// (e.g. Cyrillic autocorrect) intact. Touch keyboards deliver the
-  /// return key through the IME as a text delta under that same `newline`
-  /// action — no hardware key event reaches this handler, so the mobile
-  /// newline behavior is unchanged.
+  /// (e.g. Cyrillic autocorrect) intact — Shift alone means newline;
+  /// Cmd/Ctrl+Enter sends with or without Shift (the pre-fix precedence).
+  /// Touch keyboards deliver the return key through the IME as a text
+  /// delta under that same `newline` action — no hardware key event
+  /// reaches this handler, so the mobile newline behavior is unchanged.
   ///
   /// Cmd/Ctrl+V is smart paste (the YoLoIT pattern): a clipboard image is
   /// staged as an upload chip, long or multi-line text becomes a staged
@@ -411,7 +412,10 @@ class ChatComposerState extends State<ChatComposer>
     final keyboard = HardwareKeyboard.instance;
     final isEnter = event.logicalKey == LogicalKeyboardKey.enter ||
         event.logicalKey == LogicalKeyboardKey.numpadEnter;
-    if (isEnter && !keyboard.isShiftPressed) {
+    if (isEnter &&
+        (!keyboard.isShiftPressed ||
+            keyboard.isMetaPressed ||
+            keyboard.isControlPressed)) {
       unawaited(_send(_textController.text));
       return KeyEventResult.handled;
     }

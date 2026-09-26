@@ -78,6 +78,49 @@ void main() {
 
       expect(service.sentTexts, ['draft']);
       expect(field(tester).controller!.text, isEmpty);
+
+      // Shift+Cmd+Enter keeps the pre-fix precedence: any Cmd/Ctrl combo
+      // sends, Shift alone means newline (review round 1).
+      await tester.enterText(find.byType(TextField), 'shifted');
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.pump();
+      expect(service.sentTexts.last, 'shifted');
+
+      // The Ctrl half of the modifier check.
+      await tester.enterText(find.byType(TextField), 'ctrld');
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+      expect(service.sentTexts.last, 'ctrld');
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets('desktop: numpad Enter sends; empty-field Enter is handled '
+      'but a no-op', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    try {
+      final service = await pump(tester);
+
+      final emptyHandled = await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(emptyHandled, isTrue);
+      expect(service.sentTexts, isEmpty);
+      expect(field(tester).controller!.text, isEmpty);
+
+      await tester.enterText(find.byType(TextField), 'num');
+      final numpadHandled =
+          await tester.sendKeyEvent(LogicalKeyboardKey.numpadEnter);
+      await tester.pump();
+      expect(numpadHandled, isTrue);
+      expect(service.sentTexts, ['num']);
+      expect(field(tester).controller!.text, isEmpty);
     } finally {
       debugDefaultTargetPlatformOverride = null;
     }
