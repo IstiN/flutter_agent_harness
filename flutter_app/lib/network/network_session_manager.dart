@@ -25,12 +25,14 @@ final class NetworkSessionManager extends ChangeNotifier {
   NetworkSessionManager({
     required Uri baseUrl,
     required KeyWallet wallet,
+    Uri? authBaseUrl,
     http.Client? httpClient,
     WsConnector? wsConnector,
     String? jwtToken,
     Future<Uri> Function(Uri authUrl)? waitForCallback,
     DateTime Function()? clock,
   }) : _baseUrl = baseUrl,
+       _authBaseUrl = authBaseUrl,
        _wallet = wallet,
        _http = httpClient ?? http.Client(),
        _connector = wsConnector ?? const WebSocketChannelConnector(),
@@ -39,6 +41,10 @@ final class NetworkSessionManager extends ChangeNotifier {
        _jwt = jwtToken;
 
   final Uri _baseUrl;
+
+  /// The ai-native auth service base (null = the client's default
+  /// https://ai-native.cloud).
+  final Uri? _authBaseUrl;
   final KeyWallet _wallet;
   final http.Client _http;
   final WsConnector _connector;
@@ -185,6 +191,7 @@ final class NetworkSessionManager extends ChangeNotifier {
   Future<void> signIn({required String login, required String password}) async {
     final token = await FaNetworkClient(
       baseUrl: _baseUrl,
+      authBaseUrl: _authBaseUrl,
       httpClient: _http,
     ).devLogin(login: login, password: password);
     _jwt = token;
@@ -305,8 +312,12 @@ final class NetworkSessionManager extends ChangeNotifier {
     notifyListeners();
   }
 
-  FaNetworkClient _newClient() =>
-      FaNetworkClient(baseUrl: _baseUrl, httpClient: _http, jwtToken: _jwt);
+  FaNetworkClient _newClient() => FaNetworkClient(
+    baseUrl: _baseUrl,
+    authBaseUrl: _authBaseUrl,
+    httpClient: _http,
+    jwtToken: _jwt,
+  );
 
   /// Creates a network (management route — requires a JWT); the caller
   /// becomes owner and is joined immediately with the one-time join

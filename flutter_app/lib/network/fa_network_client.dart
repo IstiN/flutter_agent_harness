@@ -45,14 +45,25 @@ class FaNetworkClient {
   FaNetworkClient({
     required this.baseUrl,
     required http.Client httpClient,
+    Uri? authBaseUrl,
     String? jwtToken,
     String? sessionToken,
-  }) : _http = httpClient,
+  }) : authBaseUrl = authBaseUrl ?? _defaultAuthBaseUrl,
+       _http = httpClient,
        _jwt = jwtToken,
        _session = sessionToken;
 
+  /// The ai-native auth service default host (`/api/auth/*` +
+  /// `/api/oauth-proxy/*` live there, NOT on the fa_network relay).
+  static final Uri _defaultAuthBaseUrl = Uri.parse('https://ai-native.cloud');
+
   /// REST base, e.g. `https://network.fa1.dev` (trailing slashes tolerated).
   final Uri baseUrl;
+
+  /// The ai-native auth service base (oauth-proxy + /api/auth/*). Separate
+  /// from [baseUrl]: the relay does not proxy auth routes — calling them
+  /// on the relay 404s.
+  final Uri authBaseUrl;
   final http.Client _http;
 
   String? _jwt;
@@ -451,6 +462,7 @@ class FaNetworkClient {
       'GET',
       '/api/oauth-proxy/providers',
       auth: false,
+      authService: true,
       expected: {200},
     );
     final decoded = jsonDecode(res.body);
@@ -487,6 +499,7 @@ class FaNetworkClient {
         'environment': environment,
       },
       auth: false,
+      authService: true,
       expected: {200},
     );
     final json = _decodeMap(res);
@@ -518,6 +531,7 @@ class FaNetworkClient {
       '/api/oauth-proxy/exchange',
       body: {'code': code, 'state': state},
       auth: false,
+      authService: true,
       expected: {200},
     );
     return TokenBundle.fromJson(_decodeMap(res), now: now);
@@ -534,6 +548,7 @@ class FaNetworkClient {
       '/api/auth/refresh',
       body: {'refreshToken': refreshToken},
       auth: false,
+      authService: true,
       expected: {200},
     );
     return TokenBundle.fromJson(_decodeMap(res), now: now);
@@ -546,6 +561,7 @@ class FaNetworkClient {
       'GET',
       '/api/auth/user',
       auth: false,
+      authService: true,
       headers: {'authorization': 'Bearer $accessToken'},
       expected: {200},
     );
@@ -554,10 +570,10 @@ class FaNetworkClient {
 
   // -------------------------------------------------------------- internal
 
-  Uri _uri(String path, Map<String, String>? query) {
-    final base = baseUrl.toString().replaceAll(RegExp(r'/+$'), '');
+  Uri _uri(String path, Map<String, String>? query, {Uri? base}) {
+    final baseStr = (base ?? baseUrl).toString().replaceAll(RegExp(r'/+$'), '');
     final rel = path.startsWith('/') ? path : '/$path';
-    final uri = Uri.parse('$base$rel');
+    final uri = Uri.parse('$baseStr$rel');
     return query == null || query.isEmpty
         ? uri
         : uri.replace(queryParameters: query);
@@ -574,9 +590,13 @@ class FaNetworkClient {
     bool management = false,
     bool auth = true,
     Map<String, String>? headers,
+
+    /// Route to the ai-native auth service ([authBaseUrl]) instead of the
+    /// fa_network relay — `/api/auth/*` and `/api/oauth-proxy/*` live there.
+    bool authService = false,
     required Set<int> expected,
   }) async {
-    final uri = _uri(path, query);
+    final uri = _uri(path, query, base: authService ? authBaseUrl : null);
     final requestHeaders = <String, String>{
       'content-type': 'application/json',
       'accept': 'application/json',

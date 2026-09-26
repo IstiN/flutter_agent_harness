@@ -251,6 +251,7 @@ Future<BootStores> loadBootStores(ExecutionEnv env) async {
   final networkMode = NetworkModeController(await NetworkModeStore.load(env));
   final networkSessions = NetworkSessionManager(
     baseUrl: Uri.parse(faNetworkBaseUrl),
+    authBaseUrl: Uri.parse(faAuthBaseUrl),
     wallet: networkWallet,
   );
   // Restore the persisted ai-native account (issue #955 iteration 3):
@@ -281,6 +282,14 @@ Future<BootStores> loadBootStores(ExecutionEnv env) async {
 const faNetworkBaseUrl = String.fromEnvironment(
   'FA_NETWORK_URL',
   defaultValue: 'https://network.fa1.dev',
+);
+
+/// The ai-native auth service base URL (`/api/auth/*` + `/api/oauth-proxy/*`
+/// live there — the fa_network relay does NOT proxy them). Overridable with
+/// `--dart-define=FA_AUTH_URL=…` (staging, local auth deploys).
+const faAuthBaseUrl = String.fromEnvironment(
+  'FA_AUTH_URL',
+  defaultValue: 'https://ai-native.cloud',
 );
 
 /// Loads the fa_network device wallet (issue #955): the platform keychain
