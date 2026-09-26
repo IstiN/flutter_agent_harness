@@ -2354,7 +2354,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get networkAddAgentEnvHint =>
-      'A launch line for the CLI harness on a runner (GitHub Actions): fill in your provider pair and the hub master secret — the channel keys ride the import command.';
+      'Hub-only launch line for a runner (GitHub Actions): fill in the hub master secret — the channel keys ride the import command. The provider is the runner’s own fa config.';
 
   @override
   String get networkAddAgentNetworkHint =>

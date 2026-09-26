@@ -4181,7 +4181,7 @@ abstract class AppLocalizations {
   /// Agent invite note under the env format
   ///
   /// In en, this message translates to:
-  /// **'A launch line for the CLI harness on a runner (GitHub Actions): fill in your provider pair and the hub master secret — the channel keys ride the import command.'**
+  /// **'Hub-only launch line for a runner (GitHub Actions): fill in the hub master secret — the channel keys ride the import command. The provider is the runner’s own fa config.'**
   String get networkAddAgentEnvHint;
 
   /// Agent invite hint for the network scope
