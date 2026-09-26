@@ -1666,9 +1666,6 @@ Future<void> _seedHubFleet(
   });
 }
 
-/// Walks up from the CWD until a directory containing `bin/fah.dart` is
-/// found — the flutter_agent repo root regardless of where the test runner
-/// was started from.
 /// Creates a temp HOME with a saved custom provider.
 Directory _tempHomeWithProvider() {
   final tempHome = Directory.systemTemp.createTempSync('fa_test_');
