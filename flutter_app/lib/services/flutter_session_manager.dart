@@ -854,8 +854,12 @@ final class FlutterSessionManager extends ChangeNotifier {
   bool get isHostedListing => _isHostedListing(active?.service);
 
   /// Deletes a session outright: a live one is closed (aborting any run)
-  /// with its file removed; a persisted-only one ([metadata]) is deleted
-  /// straight from the repo. Powers the sidebar tile menu.
+  /// with its file removed; a persisted-only one is resolved fresh from
+  /// the session store and deleted — the freshly listed row is what gets
+  /// removed (a stale caller path must not strand a deletable session,
+  /// review round 4). A caller-supplied [metadata] is accepted for
+  /// logging/back-compat only; it never selects the deleted path. Powers
+  /// the sidebar tile menu.
   ///
   /// Issue #863: no silent outcomes. An id that resolves neither live nor
   /// in any delete authority's listing throws [SessionDeleteException]

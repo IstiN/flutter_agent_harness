@@ -652,9 +652,50 @@ void main() {
   testWidgets('a delete that does not stick surfaces the named failure '
       '(issue #863 AC2/E3)', (tester) async {
     final real = await persistSession(userText: 'haunted');
-    // The row's cached metadata points at a path that no longer resolves —
-    // the stale-row/env-mismatch shape from the issue. The session itself
-    // is still listed, so nothing was really deleted.
+    // A foreign live heartbeat makes the id undeletable here (issue #522
+    // live guard): the repo refuses by name, the snackbar fires, and the
+    // session survives. (The stale-cached-path shape this IT used to pin
+    // now deletes for real — round 4 re-resolves the fresh row — so that
+    // contract is pinned by the widget test below.)
+    final staleRow = SessionMetadata(
+      id: real.id,
+      createdAt: real.createdAt,
+      cwd: real.cwd,
+      path: '/sessions/gone-dir/stale-copy.jsonl',
+      lastUpdatedAt: real.lastUpdatedAt,
+    );
+    await FileSessionPresenceStore(
+      env: env,
+      root: '/sessions',
+    ).register(real.id, pid: 9999);
+
+    await tester.pumpWidget(
+      harness(
+        names: SessionNamesStore.inMemory({real.id: 'Haunted'}),
+        persisted: [staleRow],
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.more_horiz).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+    await tester.pumpAndSettle();
+
+    // The failure is NAMED in the UI — never a silent no-op.
+    expect(find.textContaining('Could not delete session'), findsOneWidget);
+    // And the surviving session was not lost silently either.
+    expect((await repo.list()).where((m) => m.id == real.id), isNotEmpty);
+  });
+
+  testWidgets('a stale cached path deletes for real: the fresh row wins '
+      '(review round 4)', (tester) async {
+    final real = await persistSession(userText: 'moved on disk');
+    // The caller's row points at a path that no longer resolves (the file
+    // was relinked, #426). The manager must delete the FRESHLY listed row,
+    // not the caller's stale path — pinned here at the UI layer.
     final staleRow = SessionMetadata(
       id: real.id,
       createdAt: real.createdAt,
@@ -678,10 +719,10 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
     await tester.pumpAndSettle();
 
-    // The failure is NAMED in the UI — never a silent no-op.
-    expect(find.textContaining('Could not delete session'), findsOneWidget);
-    // And the surviving session was not lost silently either.
-    expect((await repo.list()).where((m) => m.id == real.id), isNotEmpty);
+    // No failure snackbar: the id resolved from the fresh listing and the
+    // real file is gone.
+    expect(find.textContaining('Could not delete session'), findsNothing);
+    expect((await repo.list()).where((m) => m.id == real.id), isEmpty);
   });
 
   testWidgets('after a delete the list rebuilds from the repo listing, not '
