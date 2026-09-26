@@ -86,7 +86,12 @@ final class SessionDeleteException implements Exception {
   final String reason;
 
   @override
-  String toString() => 'Session ${sessionId.substring(0, 8)}… $reason';
+  String toString() {
+    // Ids are not guaranteed to be ≥ 8 chars; never throw while
+    // formatting a failure the sidebar is about to render.
+    final short = sessionId.length < 8 ? sessionId : sessionId.substring(0, 8);
+    return 'Session $short… $reason';
+  }
 }
 
 /// Opening this session for DRIVE was refused: another host holds a
@@ -875,15 +880,18 @@ final class FlutterSessionManager extends ChangeNotifier {
       return;
     }
 
-    // Row origin: local store first. Caller-supplied [metadata] counts as
-    // a local row only when the local store confirms the id — a hosted
-    // row passed by a caller has a synthetic path the local repo cannot
-    // touch, and deleting it must fall through to the host authority.
+    // Row origin: local store first, and the FRESH row is the only thing
+    // this branch deletes. A hosted row passed by a caller has a synthetic
+    // path the local repo cannot touch — an id the local store doesn't
+    // confirm falls through to the host authority below. And when it IS
+    // confirmed, the freshly listed row wins over the caller's cached
+    // metadata: a stale cached path (#426's relink moves files) would
+    // journal `missing` on a dead path while the fresh-listing verify
+    // still finds the id at its real one, failing a deletable delete.
     final localRows = await _listAcrossRoots();
-    final SessionMetadata? resolved =
-        (metadata != null && localRows.any((m) => m.id == id))
-        ? metadata
-        : localRows.where((m) => m.id == id).firstOrNull;
+    final SessionMetadata? resolved = localRows
+        .where((m) => m.id == id)
+        .firstOrNull;
     if (resolved != null) {
       try {
         await _repo.delete(resolved, actor: 'app:sidebar');

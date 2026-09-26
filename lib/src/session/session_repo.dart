@@ -174,6 +174,7 @@ final class JsonlSessionRepo implements SessionRepo {
     this.timingLog,
     this.presenceStore,
     this.processId,
+    this.maxTrashCopyBytes = defaultMaxTrashCopyBytes,
     DateTime Function()? now,
   }) : _sessionsRootInput = sessionsRoot,
        now = now ?? DateTime.now;
@@ -208,6 +209,17 @@ final class JsonlSessionRepo implements SessionRepo {
   /// sessions never exhaust fds; ≥ 2 so latency overlaps (E4 pins the VM
   /// floor at 2 cores).
   static const int _listConcurrency = 16;
+
+  /// Trash-copy budget for the rename-less copy+delete fallback (issue
+  /// #863 review): the fallback has no streaming write on the [FileSystem]
+  /// interface, so it stages the whole trash copy in RAM. Sessions over
+  /// this size refuse the delete instead of spiking memory by the full
+  /// file size — on exactly the low-RAM web/mobile shells that run
+  /// rename-less backends. Mirrors the app-side load budget (64 MiB).
+  static const int defaultMaxTrashCopyBytes = 64 * 1024 * 1024;
+
+  /// The configured trash-copy budget (see [defaultMaxTrashCopyBytes]).
+  final int maxTrashCopyBytes;
 
   Future<String> _getSessionsRoot() async {
     final cached = _sessionsRoot;
@@ -499,6 +511,21 @@ final class JsonlSessionRepo implements SessionRepo {
       // supported by Instance of 'LocalExecutionEnv'"): copy+delete so the
       // delete happens for real — trash copy first, then the unlink, both
       // journaled via the intent line below.
+      final info = _fsOrThrow(
+        await _fs.fileInfo(path),
+        'Failed to stat session $path for the trash copy',
+      );
+      if (info.size > maxTrashCopyBytes) {
+        // The fallback stages the trash copy in RAM (no streaming write
+        // on the FileSystem interface); refuse oversized sessions instead
+        // of spiking a low-RAM device (issue #863 review).
+        throw SessionException(
+          'Session $path (${info.size} bytes) is too large to stage the '
+          'trash copy on a rename-less backend (limit $maxTrashCopyBytes '
+          'bytes); delete it from a host with rename support',
+          code: SessionErrorCode.storage,
+        );
+      }
       await _journal(
         root,
         op: op,

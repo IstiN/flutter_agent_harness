@@ -895,7 +895,11 @@ Future<void> _deleteSession(
         children: [
           Text(
             title ??
-                l10n.sidebarDeletePersistedContent(sessionId.substring(0, 8)),
+                l10n.sidebarDeletePersistedContent(
+                  sessionId.length < 8
+                      ? sessionId
+                      : sessionId.substring(0, 8),
+                ),
             style: const TextStyle(fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 8),

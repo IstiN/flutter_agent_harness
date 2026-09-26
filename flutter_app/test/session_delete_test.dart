@@ -530,5 +530,37 @@ void main() {
       );
       expect(logs.join('\n'), contains('outcome=ok'));
     });
+
+    test('a caller-supplied STALE row loses to the freshly listed local '
+        'row — relink moves files (#426), review round 3', () async {
+      final metadata = await persistSession(
+        'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa9',
+        userText: 'moved on disk',
+      );
+      // Relink: the file moves; the caller still holds the old path.
+      final movedPath = metadata.path.replaceFirst(
+        '${metadata.id}.jsonl',
+        'relinked-${metadata.id}.jsonl',
+      );
+      expect(
+        (await env.renamePath(metadata.path, movedPath)).isOk,
+        isTrue,
+      );
+      final logs = captureLogs();
+
+      // Pre-fix this threw 'still in the session store': the stale path
+      // journaled `missing` while the fresh listing still found the id.
+      await manager.deleteSession(metadata.id, metadata: metadata);
+
+      expect((await env.exists(movedPath)).valueOrNull, isFalse);
+      expect(logs.join('\n'), contains('outcome=ok'));
+    });
+
+    test('SessionDeleteException formats ids shorter than 8 chars '
+        '(review round 1-3)', () {
+      final error = SessionDeleteException('abc', reason: 'gone');
+      expect(error.toString(), contains('Session abc'));
+      expect(error.toString(), contains('gone'));
+    });
   });
 }

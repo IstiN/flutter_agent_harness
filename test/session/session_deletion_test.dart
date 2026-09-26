@@ -187,6 +187,43 @@ void main() {
       );
     });
 
+    test('copy+delete refuses sessions over the trash-copy budget', () async {
+      // The fallback stages the trash copy in RAM; an oversized session
+      // must fail the delete by name instead of spiking memory by the
+      // full file size (issue #863 review).
+      final env = _NoRenameEnv();
+      final noRenameRepo = JsonlSessionRepo(
+        fs: env,
+        sessionsRoot: '/sessions',
+        processId: 4242,
+        maxTrashCopyBytes: 8,
+        now: () => clock,
+      );
+      final session = await noRenameRepo.create(
+        JsonlSessionCreateOptions(id: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaa1004', cwd: '/proj'),
+      );
+      await env.appendFile(
+        (await session.getMetadata()).path,
+        '{"record":"way over the eight-byte budget"}\n',
+      );
+      final metadata = await session.getMetadata();
+
+      await expectLater(
+        noRenameRepo.delete(metadata, actor: 'test:oversized'),
+        throwsA(
+          isA<SessionException>().having(
+            (e) => e.message,
+            'message',
+            contains('too large to stage the trash copy'),
+          ),
+        ),
+      );
+
+      // Refused, not deleted: the file stays and no trash copy exists.
+      expect((await env.exists(metadata.path)).valueOrNull, isTrue);
+      expect((await env.listDir('/sessions/.trash')).valueOrNull, isEmpty);
+    });
+
     test('E3: a backend that removes nothing fails loudly, not silently', () async {
       final env = _LyingRemoveEnv();
       final lyingRepo = JsonlSessionRepo(
