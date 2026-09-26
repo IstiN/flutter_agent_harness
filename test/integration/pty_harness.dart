@@ -33,6 +33,25 @@ import 'dart:io';
 import 'package:pty2/pty2.dart';
 import 'package:xterm/xterm.dart';
 
+/// The visible viewport with each line's trailing blank cells stripped —
+/// the CONTENT-faithful view for cross-frame equality (gh-982).
+///
+/// The two dart_tui paint paths disagree about row tails
+/// (vendor/dart_tui/lib/src/renderer.dart): the scroll fast path ends
+/// every painted row with an erase (`_paintRow` → `CSI K`; the emulator's
+/// erased cells become empty and vanish from `BufferLine.getText`), while
+/// the cell-diff path (`_diffAndEmit`) writes only changed cells and never
+/// erases the tail — whatever an earlier full repaint materialized there
+/// (explicit space cells) stays. Which history a logical row carries
+/// depends on the renderer's frame-shift heuristics, i.e. on platform
+/// timing: macOS/fa-m5 and linux produced different histories for the
+/// same scenario and the frozen `· older` board row failed a raw list
+/// equality despite byte-identical counts. Raw [FaCliHarness.viewportLines]
+/// equality is only valid for genuinely full-width rows (the composer
+/// rule); compare content frames for everything else.
+List<String> frameContentLines(List<String> viewport) =>
+    [for (final line in viewport) line.trimRight()];
+
 /// Spawns the Fa CLI as a subprocess with a PTY, feeds output to an xterm
 /// terminal emulator, and provides keystroke sending + output capture.
 final class FaCliHarness {
@@ -353,6 +372,10 @@ final class FaCliHarness {
     }
     return lines;
   }
+
+  /// [viewportLines] with each line's trailing blank cells stripped —
+  /// the CONTENT-faithful view for cross-frame equality (gh-982).
+  List<String> get viewportContentLines => frameContentLines(viewportLines);
 
   /// The terminal screen as text lines (ANSI-stripped, empty lines dropped).
   List<String> get screenLines => [
