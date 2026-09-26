@@ -9,9 +9,10 @@ import 'dart:math';
 // ignore: depend_on_referenced_packages
 import 'package:stream_channel/stream_channel.dart';
 // ignore: depend_on_referenced_packages
-import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'models.dart';
+import 'ws_connector_io.dart'
+    if (dart.library.js_interop) 'ws_connector_web.dart';
 
 /// Events pushed on [FaNetworkWs.events]. Parsed server→client frames.
 sealed class WsEvent {
@@ -76,60 +77,11 @@ abstract interface class WsConnector {
   Future<StreamChannel<String>> connect(Uri wsUri, Map<String, String> headers);
 }
 
-/// Default connector backed by `package:web_socket_channel` (web-safe).
-///
-/// NOTE: the browser WebSocket API cannot set arbitrary headers, so this
-/// connector cannot attach the `Authorization` header from [connect] on
-/// web. Deployments that need header auth must provide a custom
-/// [WsConnector].
-class WebSocketChannelConnector implements WsConnector {
-  const WebSocketChannelConnector();
+/// The default platform connector: real `Authorization` headers on
+/// VM/desktop, headerless (server 401s) on web until the contract grows
+/// a browser-compatible auth path.
+typedef WebSocketChannelConnector = PlatformWsConnector;
 
-  @override
-  Future<StreamChannel<String>> connect(
-    Uri wsUri,
-    Map<String, String> headers,
-  ) async {
-    final channel = WebSocketChannel.connect(wsUri);
-    return StreamChannel<String>(
-      channel.stream.cast<String>(),
-      _StringSink(channel.sink),
-    );
-  }
-}
-
-/// Narrows a dynamic WebSocket sink to a `StreamSink<String>`.
-class _StringSink implements StreamSink<String> {
-  _StringSink(this._inner);
-
-  final WebSocketSink _inner;
-
-  @override
-  void add(String event) => _inner.add(event);
-
-  @override
-  void addError(Object error, [StackTrace? stackTrace]) =>
-      _inner.addError(error, stackTrace);
-
-  @override
-  Future<void> addStream(Stream<String> stream) => _inner.addStream(stream);
-
-  @override
-  Future<void> close() => _inner.close();
-
-  @override
-  Future<void> get done => _inner.done;
-}
-
-/// Realtime fa_network session over `/ws` (fa_network/docs/openapi.yaml).
-///
-/// - Reconnects with capped exponential backoff + jitter after the server
-///   drops the socket (never after a manual [disconnect]).
-/// - Resubscribes previously subscribed channels after each reconnect.
-/// - Outbound frames sent while disconnected are queued in memory and
-///   flushed once, in order, on the next successful connect.
-/// - Sends a `ping` every [heartbeat] (30s by default).
-/// - Malformed frames surface as [WsError] events; the stream never throws.
 class FaNetworkWs {
   FaNetworkWs({
     required this.baseUrl,

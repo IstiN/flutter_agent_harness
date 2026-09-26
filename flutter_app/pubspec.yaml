@@ -161,12 +161,12 @@ dependencies:
   # Deep-link handling for mobile OAuth callbacks (fah://oauth/openrouter).
   app_links: ^6.4.0
   firebase_crashlytics: 5.2.6
+  # WS channel abstraction for the fa_network realtime socket.
+  stream_channel: ^2.1.0
 
 dev_dependencies:
   # Mock seam for url_launcher in widget/golden tests.
   url_launcher_platform_interface: ^2.3.2
-  # Fake WS channels for the network-mode test harness (test/network/).
-  stream_channel: ^2.1.0
   flutter_test:
     sdk: flutter
   integration_test:

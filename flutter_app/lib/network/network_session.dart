@@ -156,10 +156,15 @@ final class NetworkSession extends ChangeNotifier {
   }
 
   /// Opens a channel: first history page + socket subscription.
+  ///
+  /// The history load yields to the event loop before notifying: callers
+  /// reach this from `initState`/build-adjacent paths, and a synchronous
+  /// `notifyListeners` there trips Flutter's build-phase invariant.
   Future<void> openChannel(String channelId) async {
     final state = channelStates.putIfAbsent(channelId, ChannelState.new);
     _ws.subscribe(channelId);
     if (state.historyResolved || state.loading) return;
+    await Future<void>.microtask(() {});
     await _loadHistoryPage(channelId, state);
   }
 
