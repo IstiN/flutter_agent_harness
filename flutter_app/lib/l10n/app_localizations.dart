@@ -3829,6 +3829,576 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Hide banner'**
   String get storeBannerDismiss;
+
+  /// Network-mode chip: the local (classic) mode segment
+  ///
+  /// In en, this message translates to:
+  /// **'Local'**
+  String get networkModeLocal;
+
+  /// Network-mode chip: the network mode segment
+  ///
+  /// In en, this message translates to:
+  /// **'Network'**
+  String get networkModeNetwork;
+
+  /// Network mode welcome title (wide empty state)
+  ///
+  /// In en, this message translates to:
+  /// **'Welcome to Fa networks'**
+  String get networkWelcomeTitle;
+
+  /// Network mode welcome body (wide empty state)
+  ///
+  /// In en, this message translates to:
+  /// **'Join an existing network or create your own — channels and showcases open here.'**
+  String get networkWelcomeBody;
+
+  /// Network picker header / sidebar title
+  ///
+  /// In en, this message translates to:
+  /// **'Networks'**
+  String get networkNetworksTitle;
+
+  /// Network home back button tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Back'**
+  String get networkBackTooltip;
+
+  /// Network search field hint
+  ///
+  /// In en, this message translates to:
+  /// **'Search networks'**
+  String get networkSearchHint;
+
+  /// Sign-in dialog title, button and sidebar row
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in'**
+  String get networkSignInTitle;
+
+  /// Sign-in dialog helper note
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in with your ai-native.cloud account to create and manage networks.'**
+  String get networkSignInHelper;
+
+  /// Sign-in dialog OAuth provider button
+  ///
+  /// In en, this message translates to:
+  /// **'Continue with {provider}'**
+  String networkSignInWithProvider(Object provider);
+
+  /// Sign-in dialog note while the browser OAuth flow is open
+  ///
+  /// In en, this message translates to:
+  /// **'Complete the sign-in in your browser…'**
+  String get networkSignInWaiting;
+
+  /// Sign-in dialog collapsed section with the dev-login form
+  ///
+  /// In en, this message translates to:
+  /// **'Developer (local only)'**
+  String get networkSignInDeveloperSection;
+
+  /// Sign-in dialog note on iOS/Android replacing the provider buttons
+  ///
+  /// In en, this message translates to:
+  /// **'Provider sign-in is unavailable here until the fa:// redirect is allowlisted on the server — only the developer login below works for now.'**
+  String get networkSignInMobileNote;
+
+  /// Sidebar account row note when the stored tokens can no longer be refreshed
+  ///
+  /// In en, this message translates to:
+  /// **'Session expired — sign in again.'**
+  String get networkSessionExpired;
+
+  /// Sign-in dialog login field label
+  ///
+  /// In en, this message translates to:
+  /// **'Login'**
+  String get networkLoginLabel;
+
+  /// Sidebar account row: sign-out action
+  ///
+  /// In en, this message translates to:
+  /// **'Sign out'**
+  String get networkSignOut;
+
+  /// Sidebar account row label when the login is unknown
+  ///
+  /// In en, this message translates to:
+  /// **'Account'**
+  String get networkAccountFallback;
+
+  /// Sidebar section label for the public-networks directory
+  ///
+  /// In en, this message translates to:
+  /// **'Public networks'**
+  String get networkPublicSection;
+
+  /// Public directory row: member count
+  ///
+  /// In en, this message translates to:
+  /// **'{count} members'**
+  String networkPublicMembers(Object count);
+
+  /// Empty state when the wallet has no memberships
+  ///
+  /// In en, this message translates to:
+  /// **'No networks yet'**
+  String get networkEmptyTitle;
+
+  /// Empty state CTA
+  ///
+  /// In en, this message translates to:
+  /// **'Join your first network'**
+  String get networkJoinFirst;
+
+  /// Search with no matching memberships
+  ///
+  /// In en, this message translates to:
+  /// **'No matches'**
+  String get networkNoMatches;
+
+  /// Create-network button and dialog title
+  ///
+  /// In en, this message translates to:
+  /// **'Create a network'**
+  String get networkCreateNetwork;
+
+  /// Name field label (create network/channel dialogs)
+  ///
+  /// In en, this message translates to:
+  /// **'Name'**
+  String get networkNameLabel;
+
+  /// Password field label
+  ///
+  /// In en, this message translates to:
+  /// **'Password'**
+  String get networkPasswordLabel;
+
+  /// Create dialog confirm button
+  ///
+  /// In en, this message translates to:
+  /// **'Create'**
+  String get networkCreate;
+
+  /// Join sheet title and join-button tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Join a network'**
+  String get networkJoinTitle;
+
+  /// ⌘K quick-switcher dialog title
+  ///
+  /// In en, this message translates to:
+  /// **'Quick switch'**
+  String get networkQuickSwitcherTitle;
+
+  /// Join sheet: join link field label
+  ///
+  /// In en, this message translates to:
+  /// **'Join link'**
+  String get networkJoinLinkLabel;
+
+  /// Join sheet: fill form from pasted link
+  ///
+  /// In en, this message translates to:
+  /// **'Fill'**
+  String get networkJoinFill;
+
+  /// Join sheet: network id field label
+  ///
+  /// In en, this message translates to:
+  /// **'Network id'**
+  String get networkIdLabel;
+
+  /// Display name field label
+  ///
+  /// In en, this message translates to:
+  /// **'Display name'**
+  String get networkDisplayNameLabel;
+
+  /// Join sheet note when a JWT pins the display name
+  ///
+  /// In en, this message translates to:
+  /// **'Display name locked to your account.'**
+  String get networkDisplayNameLocked;
+
+  /// Join sheet validation error
+  ///
+  /// In en, this message translates to:
+  /// **'Network id and password are required.'**
+  String get networkJoinRequired;
+
+  /// Join sheet error when the server rejects the credentials
+  ///
+  /// In en, this message translates to:
+  /// **'Invalid credentials — {message}'**
+  String networkJoinInvalidCredentials(Object message);
+
+  /// Rate-limit suffix appended to the join error
+  ///
+  /// In en, this message translates to:
+  /// **' Try again in {seconds}s.'**
+  String networkJoinRetryAfter(Object seconds);
+
+  /// Join sheet confirm button
+  ///
+  /// In en, this message translates to:
+  /// **'Join'**
+  String get networkJoin;
+
+  /// Empty chat pane placeholder
+  ///
+  /// In en, this message translates to:
+  /// **'Select a channel'**
+  String get networkSelectChannel;
+
+  /// Offline banner above the channel chat
+  ///
+  /// In en, this message translates to:
+  /// **'Reconnecting — messages will send when back.'**
+  String get networkReconnecting;
+
+  /// Channel composer input hint
+  ///
+  /// In en, this message translates to:
+  /// **'Message {channel}'**
+  String networkMessageHint(Object channel);
+
+  /// Create-channel button tooltip and dialog title
+  ///
+  /// In en, this message translates to:
+  /// **'New channel'**
+  String get networkNewChannel;
+
+  /// Live member count under the network name
+  ///
+  /// In en, this message translates to:
+  /// **'{count} online'**
+  String networkOnlineCount(Object count);
+
+  /// Channel rail section header: regular (private) channels
+  ///
+  /// In en, this message translates to:
+  /// **'Channels'**
+  String get networkChannelsSection;
+
+  /// Channel rail section header: public showcases
+  ///
+  /// In en, this message translates to:
+  /// **'Showcases'**
+  String get networkShowcasesSection;
+
+  /// Composer replacement in the anonymous showcase
+  ///
+  /// In en, this message translates to:
+  /// **'Public showcase — read-only preview. Join the network to participate.'**
+  String get networkShowcaseReadOnly;
+
+  /// Channel rail placeholder while the session connects
+  ///
+  /// In en, this message translates to:
+  /// **'Connecting…'**
+  String get networkConnecting;
+
+  /// Channel rail empty state
+  ///
+  /// In en, this message translates to:
+  /// **'No channels'**
+  String get networkNoChannels;
+
+  /// Channel overflow menu tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Channel options'**
+  String get networkChannelOptions;
+
+  /// Channel overflow menu item opening the agent invite
+  ///
+  /// In en, this message translates to:
+  /// **'Add agent…'**
+  String get networkAddAgent;
+
+  /// Create-channel dialog: public toggle
+  ///
+  /// In en, this message translates to:
+  /// **'Showcase (public)'**
+  String get networkShowcasePublic;
+
+  /// Agent invite dialog title
+  ///
+  /// In en, this message translates to:
+  /// **'Add an agent'**
+  String get networkAddAgentTitle;
+
+  /// Agent invite dialog security warning
+  ///
+  /// In en, this message translates to:
+  /// **'Share out-of-band — anyone with this string can read the channel.'**
+  String get networkAddAgentWarning;
+
+  /// Agent invite placeholder when the wallet holds no channel keys
+  ///
+  /// In en, this message translates to:
+  /// **'No keys for this channel on this device.'**
+  String get networkAddAgentNoKeys;
+
+  /// Agent invite scope segment: channel-only access
+  ///
+  /// In en, this message translates to:
+  /// **'This channel'**
+  String get networkAddAgentScopeChannel;
+
+  /// Agent invite scope segment: full network membership
+  ///
+  /// In en, this message translates to:
+  /// **'Whole network'**
+  String get networkAddAgentScopeNetwork;
+
+  /// Agent invite format segment: bare link for apps
+  ///
+  /// In en, this message translates to:
+  /// **'Link (app)'**
+  String get networkAddAgentFormatLink;
+
+  /// Agent invite format segment: ready fa CLI one-liner
+  ///
+  /// In en, this message translates to:
+  /// **'CLI command'**
+  String get networkAddAgentFormatCli;
+
+  /// Agent invite format segment: env-var launch line for CI runners
+  ///
+  /// In en, this message translates to:
+  /// **'Env (CI)'**
+  String get networkAddAgentFormatEnv;
+
+  /// Agent invite note under the env format
+  ///
+  /// In en, this message translates to:
+  /// **'Hub-only launch line for a runner (GitHub Actions): fill in the hub master secret — the channel keys ride the import command. The provider is the runner’s own fa config.'**
+  String get networkAddAgentEnvHint;
+
+  /// Agent invite hint for the network scope
+  ///
+  /// In en, this message translates to:
+  /// **'The agent joins as a full member and sees every channel in the network.'**
+  String get networkAddAgentNetworkHint;
+
+  /// Agent invite note when the join link carries no password
+  ///
+  /// In en, this message translates to:
+  /// **'The network password is not on this device — the link will ask for it.'**
+  String get networkAddAgentNetworkNoPassword;
+
+  /// Agent invite note under the CLI format (channel scope)
+  ///
+  /// In en, this message translates to:
+  /// **'The command works against hubs with direct DAP access (e.g. the local stand); CLI join for production fa_network is coming.'**
+  String get networkAddAgentCliHint;
+
+  /// Agent invite note under the CLI format (network scope)
+  ///
+  /// In en, this message translates to:
+  /// **'CLI network join is not shipped yet — share the link for now.'**
+  String get networkAddAgentNetworkCliHint;
+
+  /// Snack after copying the agent invite
+  ///
+  /// In en, this message translates to:
+  /// **'Invite copied to clipboard.'**
+  String get networkInviteCopied;
+
+  /// Copy invite button
+  ///
+  /// In en, this message translates to:
+  /// **'Copy'**
+  String get networkCopy;
+
+  /// Close dialog button
+  ///
+  /// In en, this message translates to:
+  /// **'Close'**
+  String get networkClose;
+
+  /// Wallet overflow menu tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Wallet'**
+  String get networkWalletTooltip;
+
+  /// Wallet menu item and export dialog title
+  ///
+  /// In en, this message translates to:
+  /// **'Export wallet'**
+  String get networkWalletExport;
+
+  /// Wallet menu item and import dialog title
+  ///
+  /// In en, this message translates to:
+  /// **'Import wallet'**
+  String get networkWalletImport;
+
+  /// Snack after a successful wallet export
+  ///
+  /// In en, this message translates to:
+  /// **'Wallet exported — JSON copied to clipboard.'**
+  String get networkWalletExported;
+
+  /// Error snack after a failed wallet export
+  ///
+  /// In en, this message translates to:
+  /// **'Export failed: {error}'**
+  String networkWalletExportFailed(Object error);
+
+  /// Snack after a successful wallet import
+  ///
+  /// In en, this message translates to:
+  /// **'Wallet imported.'**
+  String get networkWalletImported;
+
+  /// Passphrase field label
+  ///
+  /// In en, this message translates to:
+  /// **'Passphrase'**
+  String get networkPassphraseLabel;
+
+  /// Second passphrase field label
+  ///
+  /// In en, this message translates to:
+  /// **'Repeat passphrase'**
+  String get networkPassphraseRepeatLabel;
+
+  /// Export dialog validation error
+  ///
+  /// In en, this message translates to:
+  /// **'Passphrase must not be empty.'**
+  String get networkPassphraseEmpty;
+
+  /// Export dialog validation error
+  ///
+  /// In en, this message translates to:
+  /// **'Passphrases do not match.'**
+  String get networkPassphraseMismatch;
+
+  /// Export dialog confirm button
+  ///
+  /// In en, this message translates to:
+  /// **'Export'**
+  String get networkExport;
+
+  /// Import dialog confirm button
+  ///
+  /// In en, this message translates to:
+  /// **'Import'**
+  String get networkImport;
+
+  /// Import dialog: JSON paste field label
+  ///
+  /// In en, this message translates to:
+  /// **'Exported wallet JSON'**
+  String get networkWalletJsonLabel;
+
+  /// Import dialog warning note
+  ///
+  /// In en, this message translates to:
+  /// **'Importing replaces the wallet on this device.'**
+  String get networkWalletImportWarning;
+
+  /// Network name helper text (server rule)
+  ///
+  /// In en, this message translates to:
+  /// **'A display name — becomes a lowercase slug'**
+  String get networkNameHint;
+
+  /// Network password helper text (server rule)
+  ///
+  /// In en, this message translates to:
+  /// **'8–128 characters'**
+  String get networkPasswordHint;
+
+  /// Network name validation error
+  ///
+  /// In en, this message translates to:
+  /// **'Needs 3–64 chars after slugifying (letters, digits, hyphens)'**
+  String get networkNameInvalid;
+
+  /// Network password validation error
+  ///
+  /// In en, this message translates to:
+  /// **'Password must be 8–128 characters'**
+  String get networkPasswordInvalid;
+
+  /// Create-network dialog checkbox — publish the network in the public catalog
+  ///
+  /// In en, this message translates to:
+  /// **'List in the public directory'**
+  String get networkListPublic;
+
+  /// Network row menu item (owner only)
+  ///
+  /// In en, this message translates to:
+  /// **'Delete network…'**
+  String get networkDelete;
+
+  /// Delete-network confirmation title
+  ///
+  /// In en, this message translates to:
+  /// **'Delete this network?'**
+  String get networkDeleteTitle;
+
+  /// Delete-network confirmation body
+  ///
+  /// In en, this message translates to:
+  /// **'The network, its channels and all messages are deleted for everyone. This cannot be undone.'**
+  String get networkDeleteBody;
+
+  /// Snackbar after a network was deleted
+  ///
+  /// In en, this message translates to:
+  /// **'Network deleted'**
+  String get networkDeleted;
+
+  /// Live slug preview under the network name field
+  ///
+  /// In en, this message translates to:
+  /// **'Will be created as: {slug}'**
+  String networkSlugPreview(Object slug);
+
+  /// Snackbar when create is attempted without a JWT
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in to create a network'**
+  String get networkSignInToCreate;
+
+  /// Anonymous showcase: generic 404 (non-public or unknown network)
+  ///
+  /// In en, this message translates to:
+  /// **'This network is not publicly available'**
+  String get networkShowcaseUnavailable;
+
+  /// Badge in the showcase header
+  ///
+  /// In en, this message translates to:
+  /// **'read-only'**
+  String get networkShowcaseReadOnlyBadge;
+
+  /// Showcase back-button tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Back to networks'**
+  String get networkBackToNetworks;
+
+  /// Agent invite dialog hint for public (keyless) channels
+  ///
+  /// In en, this message translates to:
+  /// **'Anyone with this link can read the channel — it is public. Agents join keyless.'**
+  String get networkAddAgentPublicHint;
 }
 
 class _AppLocalizationsDelegate
