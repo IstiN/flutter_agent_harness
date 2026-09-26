@@ -174,6 +174,7 @@ final class JsonlSessionRepo implements SessionRepo {
     this.timingLog,
     this.presenceStore,
     this.processId,
+    this.maxTrashCopyBytes = defaultMaxTrashCopyBytes,
     DateTime Function()? now,
   }) : _sessionsRootInput = sessionsRoot,
        now = now ?? DateTime.now;
@@ -208,6 +209,17 @@ final class JsonlSessionRepo implements SessionRepo {
   /// sessions never exhaust fds; ≥ 2 so latency overlaps (E4 pins the VM
   /// floor at 2 cores).
   static const int _listConcurrency = 16;
+
+  /// Trash-copy budget for the rename-less copy+delete fallback (issue
+  /// #863 review): the fallback has no streaming write on the [FileSystem]
+  /// interface, so it stages the whole trash copy in RAM. Sessions over
+  /// this size refuse the delete instead of spiking memory by the full
+  /// file size — on exactly the low-RAM web/mobile shells that run
+  /// rename-less backends. Mirrors the app-side load budget (64 MiB).
+  static const int defaultMaxTrashCopyBytes = 64 * 1024 * 1024;
+
+  /// The configured trash-copy budget (see [defaultMaxTrashCopyBytes]).
+  final int maxTrashCopyBytes;
 
   Future<String> _getSessionsRoot() async {
     final cached = _sessionsRoot;
@@ -433,6 +445,12 @@ final class JsonlSessionRepo implements SessionRepo {
   /// place — never gone. Backends without a rename primitive (pure web)
   /// fall back to a journaled remove: the intent line lands BEFORE the
   /// unlink so even that path names its culprit.
+  ///
+  /// Issue #863: a rename that fails as `notSupported` (a decorator env
+  /// advertising the capability its delegate lacks) falls back to
+  /// copy+delete so the session is still really deleted, and every
+  /// success path is verified — a backend that reports success but left
+  /// the file in place raises instead of passing as a silent no-op.
   Future<void> _softDelete(
     String path, {
     required String op,
@@ -469,6 +487,7 @@ final class JsonlSessionRepo implements SessionRepo {
         await _fs.remove(path, force: true),
         'Failed to delete session $path',
       );
+      await _verifyGone(path);
       return;
     }
     final trashDir = _fsOrThrow(
@@ -479,19 +498,83 @@ final class JsonlSessionRepo implements SessionRepo {
       await _fs.createDir(trashDir, recursive: true),
       'Failed to create trash directory',
     );
-    _fsOrThrow(
-      await (_fs as RenamableFileSystem).renamePath(path, trashPath),
-      'Failed to move session $path to trash $trashPath',
+    final renamed = await (_fs as RenamableFileSystem).renamePath(
+      path,
+      trashPath,
     );
-    await _journal(
-      root,
-      op: op,
-      path: path,
-      sessionId: sessionId,
-      actor: actor,
-      result: 'trash',
-      trash: trashPath,
+    if (renamed.isErr) {
+      final error = renamed.errorOrNull!;
+      if (error.code != FileErrorCode.notSupported) {
+        _fsOrThrow(renamed, 'Failed to move session $path to trash $trashPath');
+      }
+      // The decorator/rename gap behind issue #863 ("renamePath not
+      // supported by Instance of 'LocalExecutionEnv'"): copy+delete so the
+      // delete happens for real — trash copy first, then the unlink, both
+      // journaled via the intent line below.
+      final info = _fsOrThrow(
+        await _fs.fileInfo(path),
+        'Failed to stat session $path for the trash copy',
+      );
+      if (info.size > maxTrashCopyBytes) {
+        // The fallback stages the trash copy in RAM (no streaming write
+        // on the FileSystem interface); refuse oversized sessions instead
+        // of spiking a low-RAM device (issue #863 review).
+        throw SessionException(
+          'Session $path (${info.size} bytes) is too large to stage the '
+          'trash copy on a rename-less backend (limit $maxTrashCopyBytes '
+          'bytes); delete it from a host with rename support',
+          code: SessionErrorCode.storage,
+        );
+      }
+      await _journal(
+        root,
+        op: op,
+        path: path,
+        sessionId: sessionId,
+        actor: actor,
+        result: 'copy-delete',
+      );
+      final bytes = _fsOrThrow(
+        await _fs.readBinaryFile(path),
+        'Failed to read session $path for the trash copy',
+      );
+      _fsOrThrow(
+        await _fs.writeBinaryFile(trashPath, bytes),
+        'Failed to write trash copy $trashPath',
+      );
+      _fsOrThrow(
+        await _fs.remove(path, force: true),
+        'Failed to delete session $path',
+      );
+    } else {
+      await _journal(
+        root,
+        op: op,
+        path: path,
+        sessionId: sessionId,
+        actor: actor,
+        result: 'trash',
+        trash: trashPath,
+      );
+    }
+    await _verifyGone(path);
+  }
+
+  /// Issue #863 (E3): a delete that "succeeded" but left the file (env/repo
+  /// path mismatch, lying backend) is a named failure — never a silent
+  /// success.
+  Future<void> _verifyGone(String path) async {
+    final gone = _fsOrThrow(
+      await _fs.exists(path),
+      'Failed to verify deletion of session $path',
     );
+    if (gone) {
+      throw SessionException(
+        'Session $path still exists after delete — the backend reported '
+        'success but removed nothing',
+        code: SessionErrorCode.storage,
+      );
+    }
   }
 
   /// `<root>/.trash/<timestamp>_<basename>` — the stamp keeps repeated

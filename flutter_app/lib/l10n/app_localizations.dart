@@ -2792,6 +2792,12 @@ abstract class AppLocalizations {
   /// **'Delete'**
   String get sidebarDelete;
 
+  /// No description provided for @sidebarDeleteUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete unavailable — session lives in the host app'**
+  String get sidebarDeleteUnavailable;
+
   /// No description provided for @sidebarDeletePersistedContent.
   ///
   /// In en, this message translates to:

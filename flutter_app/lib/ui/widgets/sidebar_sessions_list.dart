@@ -805,6 +805,11 @@ Future<void> showSessionActionsMenu(
   VoidCallback? onDeleted,
 }) async {
   final l10n = context.l10n;
+  // Hosted rows (extension panel / relay shell) live in the service
+  // worker's storage — this surface has no delete path into it. Offer the
+  // honest "not deletable here" tile instead of a permanent dead-end
+  // (issue #863 review round 2).
+  final hostedListing = manager.isHostedListing;
   final overlayBox =
       Overlay.of(context).context.findRenderObject()! as RenderBox;
   final action = await showMenu<String>(
@@ -822,12 +827,21 @@ Future<void> showSessionActionsMenu(
         ),
       ),
       PopupMenuItem(
-        value: 'delete',
+        value: hostedListing ? null : 'delete',
+        enabled: !hostedListing,
         child: Row(
           children: [
             const Icon(Icons.delete_outline, size: 16),
             const SizedBox(width: 8),
-            Text(l10n.sidebarDelete),
+            // Expanded: the gated reason is long — it wraps inside the
+            // menu instead of overflowing on narrow surfaces.
+            Expanded(
+              child: Text(
+                hostedListing
+                    ? l10n.sidebarDeleteUnavailable
+                    : l10n.sidebarDelete,
+              ),
+            ),
           ],
         ),
       ),
@@ -866,6 +880,9 @@ Future<void> _deleteSession(
   required SessionMetadata? persisted,
   VoidCallback? onDeleted,
 }) async {
+  // Defense in depth for the gated menu entry (issue #863 review round
+  // 2): a hosted row has no delete path from this surface.
+  if (manager.isHostedListing) return;
   final l10n = context.l10n;
   final title = namesStore?.titleFor(sessionId);
   final confirmed = await showDialog<bool>(
@@ -878,7 +895,11 @@ Future<void> _deleteSession(
         children: [
           Text(
             title ??
-                l10n.sidebarDeletePersistedContent(sessionId.substring(0, 8)),
+                l10n.sidebarDeletePersistedContent(
+                  sessionId.length < 8
+                      ? sessionId
+                      : sessionId.substring(0, 8),
+                ),
             style: const TextStyle(fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 8),

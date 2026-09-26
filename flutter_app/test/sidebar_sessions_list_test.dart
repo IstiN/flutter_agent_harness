@@ -64,6 +64,99 @@ AgentService _fakeService(ExecutionEnv env) {
   );
 }
 
+/// A hosted relay service (extension panel / relay shell): [liveSessionId]
+/// non-null flips the manager onto hosted semantics — the sidebar's delete
+/// entry gates on it (issue #863 review round 2).
+final class _HostedFakeService extends AgentService {
+  _HostedFakeService({required super.env, required this.rows})
+    : super(
+        agent: Agent(
+          model: Model(
+            id: 'test-model',
+            api: 'test-api',
+            provider: 'test',
+            baseUrl: 'https://example.com',
+            contextWindow: 100000,
+            maxTokens: 4096,
+          ),
+          systemPrompt: 'You are Fa.',
+          streamFunction: _singleTextResponse('ok'),
+          toolRegistry: ToolRegistry(const []),
+        ),
+        sessionsRoot: '/sessions',
+        config: AgentConfig(
+          providerKind: 'test',
+          modelId: 'test-model',
+          baseUrl: 'https://example.com',
+          apiKey: '',
+        ),
+      );
+
+  final List<SessionMetadata> rows;
+
+  @override
+  String? get liveSessionId => 'sw-live-1';
+
+  @override
+  Future<List<SessionMetadata>> listSessions() async => rows;
+}
+
+/// A minimal host holding the sidebar's persisted list and rebuilding it
+/// from the manager's SOURCE-OF-TRUTH listing on every manager change —
+/// the same contract [WideLayoutShell]'s sidebar and the chat sheet's
+/// drawer follow (issue #863 AC3).
+class _ReloadingHost extends StatefulWidget {
+  const _ReloadingHost({
+    required this.manager,
+    required this.initial,
+    this.names,
+  });
+
+  final FlutterSessionManager manager;
+  final List<SessionMetadata> initial;
+  final SessionNamesStore? names;
+
+  @override
+  State<_ReloadingHost> createState() => _ReloadingHostState();
+}
+
+class _ReloadingHostState extends State<_ReloadingHost> {
+  late List<SessionMetadata> _persisted = widget.initial;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.manager.addListener(_reload);
+  }
+
+  Future<void> _reload() async {
+    final all = await widget.manager.listPersistedSessions();
+    if (mounted) setState(() => _persisted = all);
+  }
+
+  @override
+  void dispose() {
+    widget.manager.removeListener(_reload);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      theme: buildFahTheme(),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: Scaffold(
+        body: SidebarSessionsList(
+          manager: widget.manager,
+          sessionNamesStore: widget.names,
+          persistedSessions: _persisted,
+        ),
+      ),
+    );
+  }
+}
+
 void main() {
   setUpAll(() async {
     await initializeDateFormatting('en');
@@ -556,6 +649,201 @@ void main() {
     expect(manager.active!.id, isNot(meta.id));
   });
 
+  testWidgets('a delete that does not stick surfaces the named failure '
+      '(issue #863 AC2/E3)', (tester) async {
+    final real = await persistSession(userText: 'haunted');
+    // A foreign live heartbeat makes the id undeletable here (issue #522
+    // live guard): the repo refuses by name, the snackbar fires, and the
+    // session survives. (The stale-cached-path shape this IT used to pin
+    // now deletes for real — round 4 re-resolves the fresh row — so that
+    // contract is pinned by the widget test below.)
+    final staleRow = SessionMetadata(
+      id: real.id,
+      createdAt: real.createdAt,
+      cwd: real.cwd,
+      path: '/sessions/gone-dir/stale-copy.jsonl',
+      lastUpdatedAt: real.lastUpdatedAt,
+    );
+    await FileSessionPresenceStore(
+      env: env,
+      root: '/sessions',
+    ).register(real.id, pid: 9999);
+
+    await tester.pumpWidget(
+      harness(
+        names: SessionNamesStore.inMemory({real.id: 'Haunted'}),
+        persisted: [staleRow],
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.more_horiz).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+    await tester.pumpAndSettle();
+
+    // The failure is NAMED in the UI — never a silent no-op.
+    expect(find.textContaining('Could not delete session'), findsOneWidget);
+    // And the surviving session was not lost silently either.
+    expect((await repo.list()).where((m) => m.id == real.id), isNotEmpty);
+  });
+
+  testWidgets('a stale cached path deletes for real: the fresh row wins '
+      '(review round 4)', (tester) async {
+    final real = await persistSession(userText: 'moved on disk');
+    // The caller's row points at a path that no longer resolves (the file
+    // was relinked, #426). The manager must delete the FRESHLY listed row,
+    // not the caller's stale path — pinned here at the UI layer.
+    final staleRow = SessionMetadata(
+      id: real.id,
+      createdAt: real.createdAt,
+      cwd: real.cwd,
+      path: '/sessions/gone-dir/stale-copy.jsonl',
+      lastUpdatedAt: real.lastUpdatedAt,
+    );
+
+    await tester.pumpWidget(
+      harness(
+        names: SessionNamesStore.inMemory({real.id: 'Haunted'}),
+        persisted: [staleRow],
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.more_horiz).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+    await tester.pumpAndSettle();
+
+    // No failure snackbar: the id resolved from the fresh listing and the
+    // real file is gone.
+    expect(find.textContaining('Could not delete session'), findsNothing);
+    expect((await repo.list()).where((m) => m.id == real.id), isEmpty);
+  });
+
+  testWidgets('after a delete the list rebuilds from the repo listing, not '
+      'the cached rows (issue #863 AC3)', (tester) async {
+    final gone = await persistSession(userText: 'vanish');
+    final stay = await persistSession(userText: 'stay');
+    // Hermetic listing: no shared App Group root leaking dev-box sessions.
+    final local = FlutterSessionManager(
+      env: env,
+      sessionsRoot: '/sessions',
+      includeSharedSessionRoots: false,
+    );
+
+    await tester.pumpWidget(
+      _ReloadingHost(
+        manager: local,
+        initial: [gone, stay],
+        names: SessionNamesStore.inMemory({gone.id: 'Vanish', stay.id: 'Stay'}),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Vanish'), findsOneWidget);
+
+    // The persisted tail sorts newest-activity first: open the menu on the
+    // VANISH tile explicitly, not just the first row.
+    final vanishTile = find
+        .ancestor(of: find.text('Vanish'), matching: find.byType(SessionTile))
+        .first;
+    await tester.tap(
+      find.descendant(of: vanishTile, matching: find.byIcon(Icons.more_horiz)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+    await tester.pumpAndSettle();
+
+    // The host reloaded from the source of truth: the deleted row is gone
+    // without any manual onDeleted nudge, the survivor stays.
+    expect(find.text('Vanish'), findsNothing);
+    expect(find.text('Stay'), findsOneWidget);
+  });
+
+  testWidgets('hosted listing: the delete entry is gated with the honest '
+      '"not deletable here" tile (issue #863 review round 2)', (tester) async {
+    final hosted = _HostedFakeService(env: env, rows: const []);
+    manager.addSession('sw-live-1', hosted); // flips the manager hosted
+    final hostedRow = SessionMetadata(
+      id: 'sw-archived-1',
+      createdAt: DateTime(2026),
+      cwd: 'test',
+      path: '/session-sw-archived-1.jsonl',
+      metadata: const {'archived': true},
+    );
+
+    await tester.pumpWidget(
+      harness(
+        persisted: [hostedRow],
+        sessionInfoNames: {hostedRow.id: 'Hosted session'},
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.more_horiz).first);
+    await tester.pumpAndSettle();
+
+    // The gated tile: disabled, with the honest reason instead of "Delete".
+    const gatedLabel = 'Delete unavailable — session lives in the host app';
+    final gatedTile = tester.widget<PopupMenuItem<String>>(
+      find
+          .ancestor(
+            of: find.textContaining('Delete unavailable'),
+            matching: find.byType(PopupMenuItem<String>),
+          )
+          .first,
+    );
+    expect(gatedTile.enabled, isFalse);
+    // Rename stays available.
+    final renameTile = tester.widget<PopupMenuItem<String>>(
+      find
+          .ancestor(
+            of: find.text('Rename session'),
+            matching: find.byType(PopupMenuItem<String>),
+          )
+          .first,
+    );
+    expect(renameTile.enabled, isTrue);
+
+    // Tapping the gated tile does nothing: no confirm dialog, no delete.
+    await tester.tap(find.textContaining('Delete unavailable'));
+    await tester.pumpAndSettle();
+    expect(find.text('Delete session?'), findsNothing);
+    expect(find.text(gatedLabel), findsOneWidget);
+  });
+
+  testWidgets('local listing keeps the enabled Delete entry '
+      '(gate is hosted-only)', (tester) async {
+    final meta = await persistSession(userText: 'plain local');
+    await tester.pumpWidget(harness(persisted: [meta]));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.more_horiz).first);
+    await tester.pumpAndSettle();
+
+    final deleteTile = tester.widget<PopupMenuItem<String>>(
+      find
+          .ancestor(
+            of: find.text('Delete'),
+            matching: find.byType(PopupMenuItem<String>),
+          )
+          .first,
+    );
+    expect(deleteTile.enabled, isTrue);
+    expect(find.textContaining('Delete unavailable'), findsNothing);
+
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+    // The confirm dialog opens — the affordance is really live.
+    expect(find.text('Delete session?'), findsOneWidget);
+  });
+
   /// Regression for the user-reported bug: clicking an OLDER session in the
   /// sidebar must NOT teleport it to the top of the list (the old pending
   /// jump-to-top parked a "1:08 PM" row above a fresher "8:42 PM" row). The
@@ -932,8 +1220,9 @@ void main() {
     }
 
     testWidgets('child groups render collapsed by default '
-        '(issue #426 user review: subagents stay folded until tapped)',
-        (tester) async {
+        '(issue #426 user review: subagents stay folded until tapped)', (
+      tester,
+    ) async {
       final main = await persistSession(userText: 'main');
       final childA = await persistChild(parentId: main.id);
       final childB = await persistChild(parentId: main.id);
@@ -996,8 +1285,9 @@ void main() {
       expect(find.text('agent 3'), findsOneWidget);
     });
 
-    testWidgets('the badge collapses the child list and expands it back',
-      (tester) async {
+    testWidgets('the badge collapses the child list and expands it back', (
+      tester,
+    ) async {
       final main = await persistSession(userText: 'main');
       final child = await persistChild(parentId: main.id);
 
@@ -1062,7 +1352,10 @@ void main() {
       // "Restart": a brand-new store instance re-reading the same env, a
       // brand-new manager — the expanded choice sticks.
       final revived = await SessionUiPrefsStore.load(env);
-      final manager2 = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
+      final manager2 = FlutterSessionManager(
+        env: env,
+        sessionsRoot: '/sessions',
+      );
       addTearDown(manager2.dispose);
       await tester.pumpWidget(
         MaterialApp(
@@ -1191,10 +1484,12 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      final menuInkWell = find.ancestor(
-        of: find.byIcon(Icons.more_horiz),
-        matching: find.byType(InkWell),
-      ).first;
+      final menuInkWell = find
+          .ancestor(
+            of: find.byIcon(Icons.more_horiz),
+            matching: find.byType(InkWell),
+          )
+          .first;
       final size = tester.getSize(menuInkWell);
       expect(size.width, greaterThanOrEqualTo(36));
       expect(size.height, greaterThanOrEqualTo(36));
@@ -1222,10 +1517,9 @@ void main() {
       await tester.pumpAndSettle();
 
       // The branch glyph rides INSIDE the pill, next to the count.
-      final pill = find.ancestor(
-        of: find.text('1'),
-        matching: find.byType(Container),
-      ).first;
+      final pill = find
+          .ancestor(of: find.text('1'), matching: find.byType(Container))
+          .first;
       expect(
         find.descendant(of: pill, matching: find.byType(SubagentMark)),
         findsOneWidget,
