@@ -178,3 +178,8 @@ factory-agents/
 # source of truth there, only derivatives are ignored (memory/.gitignore).
 /input/
 /outputs/
+
+# omp REFERENCE screen twins (issue #810): committed capture artifacts the
+# REG parity suite diffs — exempted from the *.txt screenshot ignores above
+# (last rule wins). The capture test overwrites them in place.
+!test/integration/screenshots/omp_ref/**
