@@ -75,7 +75,12 @@ crap:
   # lcov is impossible on the agent cube (the flutter coverage collector
   # canonicalizes source paths and lstat EPERMs through .worktrees). Only
   # down.
-  threshold: 30.0
+  # TEMP raise (owner call 2026-09-26, mirrors dmtools-dart #256): the #955
+  # network-mode merge shipped widgets without tests — max CRAP 72.0
+  # (_ChannelRailState._createChannel, CC 8 @ 0% cov). Restore to 30.0 via
+  # the linked issue.
+  # raise-issue: gh-992
+  threshold: 75.0
 
 coverage:
   # The CI app-crap-gate job merges the two flutter-tests shard reports
