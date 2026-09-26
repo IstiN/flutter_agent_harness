@@ -12,7 +12,11 @@ Three checks over every `crap4dart.yaml` in the repo:
 3. Only-down (AC3): a config's `crap.threshold` may never RISE above the
    threshold recorded in git history at the base ref — the ratchet, like
    the coverage baseline, goes only down. New config files (bootstrap)
-   are allowed.
+   are allowed. ONE sanctioned escape: a config whose file carries a
+   `# raise-issue: gh-<N>` comment (linking the open restore issue) may
+   rise temporarily — the issue is the compensation (owner policy:
+   red-on-main gates get a documented raise + a restore issue, never a
+   silent config edit).
 
 Usage:
   python3 scripts/check_crap_guards.py                 # badge + parity
@@ -44,6 +48,11 @@ README = "README.md"
 # config (E1). Extra package-specific excludes (e.g. core's vendor/**)
 # are allowed and unchecked.
 GENERATED_EXCLUDES = {"**.g.dart", "**.freezed.dart", "**.mocks.dart", "build/**"}
+
+# Sanctioned temporary-raise marker (AC3 escape hatch): a config carrying
+# `# raise-issue: gh-<N>` may rise above its base-ref threshold — the linked
+# open issue is the restore commitment (owner policy, see docstring AC3).
+RAISE_ISSUE_MARKER = re.compile(r"#\s*raise-issue:\s*(?:gh-)?\d+")
 
 
 def parse_config(path: Path):
@@ -153,9 +162,13 @@ def check_only_down(root: Path, base_ref: str):
         if base is None:
             continue  # new config (bootstrap) — nothing recorded yet
         if current[0] > base + 1e-9:
+            text = (root / rel).read_text(encoding="utf-8")
+            if RAISE_ISSUE_MARKER.search(text):
+                continue  # sanctioned temporary raise — restore issue linked
             failures.append(
                 f"{rel}: threshold rose {base} -> {current[0]} since {base_ref} "
-                f"— the CRAP ratchet is only-down; fix code, not config"
+                f"— the CRAP ratchet is only-down; fix code, not config "
+                f"(or link a restore issue via `# raise-issue: gh-<N>`)"
             )
     return failures
 
