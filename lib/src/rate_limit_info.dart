@@ -206,7 +206,15 @@ RateLimitInfo? parseRateLimitInfo({
   }
   String? text(String key) =>
       payload?[key] is String ? payload![key] as String : null;
-  int? intOf(String key) => payload?[key] is int ? payload![key] as int : null;
+  int? intOf(String key) {
+    final value = payload?[key];
+    // Gateways and proxies in front of codex-shaped backends frequently
+    // serialize numeric fields as strings; parse those instead of
+    // silently dropping the advertised reset (review round 2).
+    if (value is int) return value;
+    if (value is String) return int.tryParse(value);
+    return null;
+  }
   final resetsAtUnix = intOf('resets_at') ?? headerResetsAt;
   return RateLimitInfo(
     errorType: text('type'),
@@ -297,11 +305,15 @@ String _rateLimitTitle(RateLimitInfo info, bool ru) {
     final capitalized = plan[0].toUpperCase() + plan.substring(1);
     // Neutral by default: the generic parse layer decodes 429s from ANY
     // provider/proxy — only a branded adapter (codex) names its vendor.
-    final brand = info.brand;
+    // Blank/whitespace values (a future adapter deriving the name from
+    // config) keep the title well-formed — no double or leading space
+    // (review round 2).
+    final brand = info.brand?.trim();
+    final hasBrand = brand != null && brand.isNotEmpty;
     return ru
-        ? 'Лимит плана $capitalized${brand == null ? '' : ' $brand'} '
+        ? 'Лимит плана $capitalized${hasBrand ? ' $brand' : ''} '
               'исчерпан.'
-        : '${brand == null ? '' : '$brand '}$capitalized plan limit '
+        : '${hasBrand ? '$brand ' : ''}$capitalized plan limit '
               'reached.';
   }
   final kind = switch (info.limitKind) {

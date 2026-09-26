@@ -44,6 +44,30 @@ void main() {
       expect(info.limitKind, 'secondary');
       expect(info.planType, isNull);
     });
+
+    test('string-serialized numeric fields still surface the reset', () {
+      // Gateways and proxies in front of codex-shaped backends frequently
+      // serialize numeric fields as strings (review round 2); the
+      // advertised reset must not silently degrade to "Try again later.".
+      const stringified =
+          '{"error":{"type":"usage_limit_reached","plan_type":"free",'
+          '"resets_at":"1792439371","resets_in_seconds":"2280562"}}';
+      final info = parseRateLimitInfo(statusCode: 429, body: stringified)!;
+      expect(info.resetsInSeconds, 2280562);
+      expect(info.resetsAt, DateTime.utc(2026, 10, 19, 19, 49, 31));
+
+      // Non-numeric strings still degrade exactly as before — no throw.
+      const junk =
+          '{"error":{"plan_type":"free","resets_in_seconds":"soon"}}';
+      expect(
+        parseRateLimitInfo(statusCode: 429, body: junk)!.resetsInSeconds,
+        isNull,
+      );
+      expect(
+        parseRateLimitInfo(statusCode: 429, body: junk)!.resetsAt,
+        isNull,
+      );
+    });
   });
 
   group('formatRateLimitMessage — the human line (AC2)', () {
@@ -90,6 +114,25 @@ void main() {
         formatRateLimitMessage(kindOnly.withBrand('ChatGPT')),
         contains('Rate limit reached (primary limit).'),
       );
+    });
+
+    test('a blank or whitespace brand renders without stray spaces', () {
+      // Defensive hygiene (review round 2): a future adapter may derive
+      // the brand from config; an empty/whitespace value must keep the
+      // title well-formed — no double or leading space.
+      for (final brand in const ['', '   ']) {
+        final en = formatRateLimitMessage(clipInfo().withBrand(brand));
+        expect(en, contains('Free plan limit reached.'));
+        expect(en.startsWith(' '), isFalse, reason: en);
+        expect(en.contains('  '), isFalse, reason: en);
+        final ru = formatRateLimitMessage(
+          clipInfo().withBrand(brand),
+          localeCode: 'ru',
+        );
+        expect(ru, contains('Лимит плана Free исчерпан.'));
+        expect(ru.startsWith(' '), isFalse, reason: ru);
+        expect(ru.contains('  '), isFalse, reason: ru);
+      }
     });
 
     test('eligible promo gets its one-line mention', () {
