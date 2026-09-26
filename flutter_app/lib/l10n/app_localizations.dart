@@ -4184,17 +4184,29 @@ abstract class AppLocalizations {
   /// **'DAP'**
   String get networkAddAgentFormatDap;
 
-  /// Agent invite note under the pure-DAP format
+  /// Agent invite: button that enrolls the typed agent name against the fa_network backend (DAP format)
   ///
   /// In en, this message translates to:
-  /// **'Pure DAP clients (`fa dap`) that know nothing about fa_network — point them at a DAP hub directly. The master secret belongs to THAT hub, not to fa_network.'**
-  String get networkAddAgentDapHint;
+  /// **'Enroll agent'**
+  String get networkAddAgentEnroll;
 
-  /// Agent invite hint for the editable DAP master secret field
+  /// Agent invite note under the pure-DAP format explaining the one-time secret and rotation
   ///
   /// In en, this message translates to:
-  /// **'The DAP hub\'s master secret — paste yours before copying'**
-  String get networkAddAgentSecretHint;
+  /// **'Enrollment mints a unique, revocable credential — the secret is shown ONCE: copy it now. Re-enrolling the same name rotates it.'**
+  String get networkAddAgentEnrollHint;
+
+  /// Agent invite note shown on the DAP format when there is no signed-in network account
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in to the network to enroll agents'**
+  String get networkAddAgentEnrollNeedSignIn;
+
+  /// Agent invite inline error for an invalid agent name on the DAP format
+  ///
+  /// In en, this message translates to:
+  /// **'3–64 chars: a-z, 0-9, hyphens'**
+  String get networkAddAgentNameInvalid;
 
   /// Agent invite note under the env format
   ///

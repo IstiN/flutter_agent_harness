@@ -2356,12 +2356,18 @@ class AppLocalizationsEn extends AppLocalizations {
   String get networkAddAgentFormatDap => 'DAP';
 
   @override
-  String get networkAddAgentDapHint =>
-      'Pure DAP clients (`fa dap`) that know nothing about fa_network — point them at a DAP hub directly. The master secret belongs to THAT hub, not to fa_network.';
+  String get networkAddAgentEnroll => 'Enroll agent';
 
   @override
-  String get networkAddAgentSecretHint =>
-      'The DAP hub\'s master secret — paste yours before copying';
+  String get networkAddAgentEnrollHint =>
+      'Enrollment mints a unique, revocable credential — the secret is shown ONCE: copy it now. Re-enrolling the same name rotates it.';
+
+  @override
+  String get networkAddAgentEnrollNeedSignIn =>
+      'Sign in to the network to enroll agents';
+
+  @override
+  String get networkAddAgentNameInvalid => '3–64 chars: a-z, 0-9, hyphens';
 
   @override
   String get networkAddAgentEnvHint =>

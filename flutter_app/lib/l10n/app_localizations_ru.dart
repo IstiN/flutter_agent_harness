@@ -2385,12 +2385,18 @@ class AppLocalizationsRu extends AppLocalizations {
   String get networkAddAgentFormatDap => 'DAP';
 
   @override
-  String get networkAddAgentDapHint =>
-      'Чистые DAP-клиенты (`fa dap`), которые ничего не знают про fa_network — подключайте их к DAP-хабу напрямую. Мастер-секрет принадлежит ТОМУ хабу, а не fa_network.';
+  String get networkAddAgentEnroll => 'Заэнроллить агента';
 
   @override
-  String get networkAddAgentSecretHint =>
-      'Мастер-секрет DAP-хаба — вставьте свой перед копированием';
+  String get networkAddAgentEnrollHint =>
+      'Выдача создаёт уникальный отзываемый секрет — он показывается ОДИН раз: скопируйте его сейчас. Повторная выдача с тем же именем меняет секрет.';
+
+  @override
+  String get networkAddAgentEnrollNeedSignIn =>
+      'Войдите в сеть, чтобы выдавать доступ агентам';
+
+  @override
+  String get networkAddAgentNameInvalid => '3–64 символа: a-z, 0-9, дефис';
 
   @override
   String get networkAddAgentEnvHint =>
