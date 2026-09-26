@@ -1,17 +1,34 @@
 // Copyright (c) 2026, the Flutter Agent Harness authors.
-// Use of this source code is governed by a MIT license that can be found
+// Use of this source code is governed by an MIT license that can be found
 // in the LICENSE file.
+
+import 'dart:convert';
 
 import 'package:fa/network/envelope_codec.dart';
 import 'package:fa/network/invite_codec.dart';
 import 'package:fa/network/key_wallet.dart';
 import 'package:fa/network/models.dart';
+import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/network/add_agent_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
+
+/// A session manager over the test fakes — the AddAgentDialog enrolls
+/// agents through it (the management JWT lives there).
+Future<NetworkSessionManager> buildManager({
+  required KeyWallet wallet,
+  FakeHttpClient? httpClient,
+  String? jwt,
+}) async => NetworkSessionManager(
+  baseUrl: testBase,
+  wallet: wallet,
+  httpClient: httpClient ?? FakeHttpClient(),
+  wsConnector: FakeWsConnector(),
+  jwtToken: jwt,
+);
 
 void main() {
   _registerNetworkScopeGroup();
@@ -35,6 +52,7 @@ void main() {
       );
       final dialog = AddAgentDialog(
         wallet: wallet,
+        manager: await buildManager(wallet: wallet),
         networkId: 'net1',
         channel: channel,
       );
@@ -99,6 +117,7 @@ void main() {
           home: Scaffold(
             body: AddAgentDialog(
               wallet: wallet,
+              manager: await buildManager(wallet: wallet),
               networkId: 'net1',
               channel: channel,
             ),
@@ -166,6 +185,7 @@ void _registerNetworkScopeGroup() {
           home: Scaffold(
             body: AddAgentDialog(
               wallet: wallet,
+              manager: await buildManager(wallet: wallet),
               networkId: 'net1',
               channel: Channel(
                 id: 'c1',
@@ -361,6 +381,7 @@ void _registerNetworkScopeGroup() {
           home: Scaffold(
             body: AddAgentDialog(
               wallet: wallet,
+              manager: await buildManager(wallet: wallet),
               networkId: 'net1',
               channel: null,
               initialScope: AgentInviteScope.network,
@@ -378,12 +399,19 @@ void _registerNetworkScopeGroup() {
     });
   });
 
-  group('dap format (pure DAP clients)', () {
+  group('dap format (enroll-based agent credentials)', () {
     late ({String pub, String priv}) channelKeys;
 
     setUp(() async {
       channelKeys = await EnvelopeCodec.newX25519KeyPair();
     });
+
+    /// A canned `POST /api/networks/net1/agents/enroll` 201 response.
+    const enrollBody =
+        '{"name":"general-agent","hubUrl":"wss://hub.fa1.dev/ws",'
+        '"clientSecret":"sk_enroll_123",'
+        '"enrolledAt":"2026-02-03T04:05:06Z",'
+        '"note":"store clientSecret now"}';
 
     Future<KeyWallet> buildWallet() async {
       final wallet = await KeyWallet.load(MemoryWalletBackend());
@@ -398,13 +426,18 @@ void _registerNetworkScopeGroup() {
       return wallet;
     }
 
-    Future<void> pump(WidgetTester tester, {required KeyWallet wallet}) async {
+    Future<void> pumpDap(
+      WidgetTester tester, {
+      required KeyWallet wallet,
+      required NetworkSessionManager manager,
+    }) async {
       await tester.pumpWidget(
         MaterialApp(
           theme: buildFahTheme(),
           home: Scaffold(
             body: AddAgentDialog(
               wallet: wallet,
+              manager: manager,
               networkId: 'net1',
               channel: Channel(id: 'c1', networkId: 'net1', name: 'general'),
             ),
@@ -412,74 +445,184 @@ void _registerNetworkScopeGroup() {
         ),
       );
       await tester.pump();
+      await tester.tap(find.text('DAP'));
+      await tester.pumpAndSettle();
     }
 
-    testWidgets('channel scope: import + DAP_* rows; the typed secret '
-        'lands in the payload', (tester) async {
-      await pump(tester, wallet: await buildWallet());
-      await tester.tap(find.text('DAP'));
-      await tester.pumpAndSettle();
+    FilledButton enrollButton(WidgetTester tester) =>
+        tester.widget<FilledButton>(find.byKey(const ValueKey('enrollAgent')));
 
-      expect(find.byKey(const ValueKey('envRow:IMPORT')), findsOneWidget);
-      expect(find.byKey(const ValueKey('envRow:DAP_HUB_URL')), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('envRow:DAP_AGENT_NAME')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('envRow:DAP_MASTER_SECRET')),
-        findsOneWidget,
-      );
-      // No fa_network variables in the pure-DAP format.
-      expect(find.byKey(const ValueKey('envRow:FA_CHANNEL_URL')), findsNothing);
-
-      // The placeholder stands until the user pastes the hub's secret.
-      var payload = tester
-          .widget<Text>(find.byKey(const ValueKey('agentInvite')))
-          .data!;
-      expect(payload, startsWith('fa dap import '));
-      expect(payload, contains('DAP_HUB_URL=wss://hub.fa1.dev/ws'));
-      expect(payload, contains("DAP_MASTER_SECRET='<hub master secret>'"));
-      expect(payload, contains('DAP_AGENT_NAME=general-agent fa'));
-
-      final secretField = find.byKey(
-        const ValueKey('envRow:DAP_MASTER_SECRET'),
-      );
-      await tester.ensureVisible(secretField);
-      await tester.pumpAndSettle();
-      await tester.enterText(secretField, 'hub-secret');
-      await tester.pumpAndSettle();
-      payload = tester
-          .widget<Text>(find.byKey(const ValueKey('agentInvite')))
-          .data!;
-      expect(payload, contains("DAP_MASTER_SECRET='hub-secret'"));
-    });
-
-    testWidgets('the master secret row copies as key=value', (tester) async {
-      final clipboard = FakeClipboard()..install(tester);
-      await pump(tester, wallet: await buildWallet());
-      await tester.tap(find.text('DAP'));
-      await tester.pumpAndSettle();
-      final secretField = find.byKey(
-        const ValueKey('envRow:DAP_MASTER_SECRET'),
-      );
-      await tester.ensureVisible(secretField);
-      await tester.pumpAndSettle();
-      await tester.enterText(secretField, 'hub-secret');
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('envCopy:DAP_MASTER_SECRET')));
-      expect(clipboard.text, 'DAP_MASTER_SECRET=hub-secret');
-    });
-
-    testWidgets('network scope: no import row, the DAP vars stay', (
+    testWidgets('an invalid agent name shows the inline error and disables '
+        'enroll; the payload area shows the enroll note until then', (
       tester,
     ) async {
+      final wallet = await buildWallet();
+      final manager = await buildManager(wallet: wallet, jwt: 'jwt-1');
+      await pumpDap(tester, wallet: wallet, manager: manager);
+
+      // The prefilled suggestion is valid → enroll is enabled.
+      expect(enrollButton(tester).onPressed, isNotNull);
+      // No credential yet: the payload area explains enrollment instead.
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey('agentInvite')))
+            .data!
+            .contains('copy it now'),
+        isTrue,
+      );
+
+      final field = find.byKey(const ValueKey('agentNameField'));
+      await tester.ensureVisible(field);
+      await tester.pumpAndSettle();
+      await tester.enterText(field, 'Bad_Name!');
+      await tester.pumpAndSettle();
+      expect(find.text('3–64 chars: a-z, 0-9, hyphens'), findsOneWidget);
+      expect(enrollButton(tester).onPressed, isNull);
+
+      await tester.enterText(field, 'ops-bot-2');
+      await tester.pumpAndSettle();
+      expect(find.text('3–64 chars: a-z, 0-9, hyphens'), findsNothing);
+      expect(enrollButton(tester).onPressed, isNotNull);
+    });
+
+    testWidgets('successful enroll renders the one-time credential rows, '
+        'the combined payload, and row copy', (tester) async {
+      final clipboard = FakeClipboard()..install(tester);
+      final wallet = await buildWallet();
+      final http = FakeHttpClient();
+      http.respond(201, body: enrollBody);
+      final manager = await buildManager(
+        wallet: wallet,
+        httpClient: http,
+        jwt: 'jwt-1',
+      );
+      await pumpDap(tester, wallet: wallet, manager: manager);
+
+      final enroll = find.byKey(const ValueKey('enrollAgent'));
+      await tester.ensureVisible(enroll);
+      await tester.pumpAndSettle();
+      await tester.tap(enroll);
+      await tester.pumpAndSettle();
+
+      // The management call: JWT bearer + the agent name.
+      final req = http.requests.single;
+      expect(req.method, 'POST');
+      expect(req.url.path, '/api/networks/net1/agents/enroll');
+      expect(req.headers['authorization'], 'Bearer jwt-1');
+      expect(jsonDecode(req.body), {'name': 'general-agent'});
+
+      // The one-time credential panel.
+      expect(find.byKey(const ValueKey('envRow:IMPORT')), findsOneWidget);
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey('envRow:DAP_HUB_URL')))
+            .data,
+        'DAP_HUB_URL=wss://hub.fa1.dev/ws',
+      );
+      expect(
+        tester
+            .widget<Text>(
+              find.byKey(const ValueKey('envRow:DAP_CLIENT_SECRET')),
+            )
+            .data,
+        'DAP_CLIENT_SECRET=sk_enroll_123',
+      );
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey('envRow:DAP_AGENT_NAME')))
+            .data,
+        'DAP_AGENT_NAME=general-agent',
+      );
+      // The hub master secret is gone from this UI entirely.
+      expect(
+        find.byKey(const ValueKey('envRow:DAP_MASTER_SECRET')),
+        findsNothing,
+      );
+
+      // The combined payload: channel import first, then the DAP env.
+      final payload = tester
+          .widget<Text>(find.byKey(const ValueKey('agentInvite')))
+          .data!;
+      expect(payload, startsWith("fa dap import 'wss://hub.fa1.dev/ws"));
+      expect(payload, contains(' && DAP_HUB_URL=wss://hub.fa1.dev/ws'));
+      expect(payload, contains("DAP_CLIENT_SECRET='sk_enroll_123'"));
+      expect(payload, contains('DAP_AGENT_NAME=general-agent fa'));
+
+      // Row-level copy puts the bare key=value on the clipboard.
+      final secretCopy = find.byKey(
+        const ValueKey('envCopy:DAP_CLIENT_SECRET'),
+      );
+      await tester.ensureVisible(secretCopy);
+      await tester.pumpAndSettle();
+      await tester.tap(secretCopy);
+      await tester.pump();
+      expect(clipboard.text, 'DAP_CLIENT_SECRET=sk_enroll_123');
+    });
+
+    testWidgets('an enrollment failure surfaces the server message inline', (
+      tester,
+    ) async {
+      final wallet = await buildWallet();
+      final http = FakeHttpClient();
+      http.respond(
+        403,
+        body:
+            '{"error":{"code":"forbidden_by_class",'
+            '"message":"owner or admin only"}}',
+      );
+      final manager = await buildManager(
+        wallet: wallet,
+        httpClient: http,
+        jwt: 'jwt-1',
+      );
+      await pumpDap(tester, wallet: wallet, manager: manager);
+
+      final enroll = find.byKey(const ValueKey('enrollAgent'));
+      await tester.ensureVisible(enroll);
+      await tester.pumpAndSettle();
+      await tester.tap(enroll);
+      await tester.pumpAndSettle();
+
+      final error = tester
+          .widget<Text>(find.byKey(const ValueKey('enrollError')))
+          .data!;
+      expect(error, contains('owner or admin only'));
+      expect(
+        find.byKey(const ValueKey('envRow:DAP_CLIENT_SECRET')),
+        findsNothing,
+      );
+    });
+
+    testWidgets('without a sign-in the DAP tab shows the sign-in note', (
+      tester,
+    ) async {
+      final wallet = await buildWallet();
+      final manager = await buildManager(wallet: wallet); // no JWT
+      await pumpDap(tester, wallet: wallet, manager: manager);
+
+      expect(find.byKey(const ValueKey('enrollNeedSignIn')), findsOneWidget);
+      expect(find.byKey(const ValueKey('enrollAgent')), findsNothing);
+      expect(find.byKey(const ValueKey('agentNameField')), findsNothing);
+    });
+
+    testWidgets('network scope: no import row, the enrolled DAP vars stay', (
+      tester,
+    ) async {
+      final wallet = await buildWallet();
+      final http = FakeHttpClient();
+      http.respond(201, body: enrollBody);
+      final manager = await buildManager(
+        wallet: wallet,
+        httpClient: http,
+        jwt: 'jwt-1',
+      );
       await tester.pumpWidget(
         MaterialApp(
           theme: buildFahTheme(),
           home: Scaffold(
             body: AddAgentDialog(
-              wallet: await buildWallet(),
+              wallet: wallet,
+              manager: manager,
               networkId: 'net1',
               channel: null,
               initialScope: AgentInviteScope.network,
@@ -491,8 +634,17 @@ void _registerNetworkScopeGroup() {
       await tester.tap(find.text('DAP'));
       await tester.pumpAndSettle();
 
+      final enroll = find.byKey(const ValueKey('enrollAgent'));
+      await tester.ensureVisible(enroll);
+      await tester.pumpAndSettle();
+      await tester.tap(enroll);
+      await tester.pumpAndSettle();
+
       expect(find.byKey(const ValueKey('envRow:IMPORT')), findsNothing);
-      expect(find.byKey(const ValueKey('envRow:DAP_HUB_URL')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('envRow:DAP_CLIENT_SECRET')),
+        findsOneWidget,
+      );
       final payload = tester
           .widget<Text>(find.byKey(const ValueKey('agentInvite')))
           .data!;
