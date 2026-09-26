@@ -30,6 +30,7 @@ import 'package:fa_hub_client/fa_hub_client.dart' as client;
 import 'package:flutter_agent_harness/io.dart'
     show defaultHubStateFile, readHubState, writeHubState;
 
+import 'package:flutter_agent_harness/src/hub/dap_invite_import.dart';
 import 'package:flutter_agent_harness/src/hub/dap_local_hub_state.dart';
 
 export 'package:flutter_agent_harness/src/hub/dap_local_hub_state.dart';
@@ -898,10 +899,24 @@ Future<int> runDapCommand(
   DapSecretPrompt? secretPrompt,
   void Function(String line)? out,
 }) async {
-  const usage = 'usage: fa dap start [--port N] | fa dap stop | fa dap status';
+  const usage =
+      'usage: fa dap start [--port N] | fa dap stop | fa dap status | '
+      'fa dap import <invite>';
   if (args.isEmpty) {
     stdout.writeln(usage);
     return 1;
+  }
+  // `fa dap import <invite>` — onboarding to a REMOTE hub channel from
+  // the Fa app's add-agent invite (issue #955, AC-B17): persists the
+  // channel keypair into the shared channels file and remembers the hub
+  // url. Not part of the local-hub controller dispatch.
+  if (args.first == 'import') {
+    return runDapImport(
+      args.sublist(1),
+      home: home,
+      environment: environment,
+      out: out,
+    );
   }
   final sub = dapSubcommands[args.first];
   final invocation = sub == null ? null : parseDapInvocation(args.sublist(1));
@@ -975,4 +990,67 @@ void writeSecretFile0600(File file, String body) {
     // No chmod here: keep the content, keep the umask mode.
   }
   file.writeAsStringSync(body, mode: FileMode.write, flush: true);
+}
+
+/// `fa dap import <invite>` — ingests the Fa app's add-agent invite
+/// (`wss://host/ws?channel=C#pub=P&priv=K`, issue #955 AC-B17): persists
+/// the channel keypair into the shared channels file (auto-join on every
+/// later launch flows through it) and remembers the hub url in
+/// `~/.dap/config.json` when none is configured yet — an existing hub
+/// url is never clobbered, only reported.
+///
+/// The private key is never echoed (I2).
+Future<int> runDapImport(
+  List<String> args, {
+  String? home,
+  Map<String, String>? environment,
+  void Function(String line)? out,
+}) async {
+  final say = out ?? stdout.writeln;
+  if (args.length != 1) {
+    say('usage: fa dap import <wss://host/ws?channel=C#pub=P&priv=K>');
+    return 1;
+  }
+  final DapInviteImport invite;
+  try {
+    invite = parseDapInviteImport(args.single);
+  } on FormatException catch (e) {
+    say('dap import: invalid invite — ${e.message}');
+    return 1;
+  }
+  final env = environment ?? Platform.environment;
+  final homeDir = home ?? client.defaultHome(env);
+  // Private-channel invites carry the keypair (persisted into the shared
+  // channels file — auto-join flows through it); public-channel invites
+  // are keyless — the channel lands on the remembered-rooms list only.
+  if (invite.pub != null && invite.priv != null) {
+    final channelsFile =
+        env[client.envChannelsFile] ?? '$homeDir/.dap/channels.json';
+    await client.persistChannelKeys(
+      channelsFile,
+      invite.channel,
+      client.ChannelKeys(pub: invite.pub!, priv: invite.priv!),
+    );
+  }
+
+  final configFile = client.defaultDapConfigFile(home, env);
+  final configuredUrl = client.readDapConfig(configFile)['url'];
+  if (configuredUrl is String && configuredUrl.isNotEmpty) {
+    if (configuredUrl != invite.hubUrl) {
+      say(
+        'note: ~/.dap/config.json keeps its hub url ($configuredUrl); '
+        'the invite hub is ${invite.hubUrl} — switch with dap_connect '
+        'when the agent should dial that hub',
+      );
+    }
+  } else {
+    await client.persistDapConfig(url: invite.hubUrl, file: configFile);
+  }
+  await client.persistDapConfig(channels: [invite.channel], file: configFile);
+
+  say(
+    'imported channel invite: #${invite.channel} @ ${invite.hubUrl} '
+    '(pub ${invite.pub}) — the agent joins it on its next launch',
+  );
+  return 0;
 }

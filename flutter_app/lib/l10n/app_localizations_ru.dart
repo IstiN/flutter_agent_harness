@@ -2186,4 +2186,323 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get storeBannerDismiss => 'Скрыть';
+
+  @override
+  String get networkModeLocal => 'Локально';
+
+  @override
+  String get networkModeNetwork => 'Сеть';
+
+  @override
+  String get networkWelcomeTitle => 'Добро пожаловать в сети Fa';
+
+  @override
+  String get networkWelcomeBody =>
+      'Присоединитесь к существующей сети или создайте свою — каналы и витрины откроются здесь.';
+
+  @override
+  String get networkNetworksTitle => 'Сети';
+
+  @override
+  String get networkBackTooltip => 'Назад';
+
+  @override
+  String get networkSearchHint => 'Поиск сетей';
+
+  @override
+  String get networkSignInTitle => 'Войти';
+
+  @override
+  String get networkSignInHelper =>
+      'Войдите через аккаунт ai-native.cloud, чтобы создавать сети и управлять ими.';
+
+  @override
+  String networkSignInWithProvider(Object provider) {
+    return 'Продолжить через $provider';
+  }
+
+  @override
+  String get networkSignInWaiting => 'Завершите вход в браузере…';
+
+  @override
+  String get networkSignInDeveloperSection => 'Разработчик (только локально)';
+
+  @override
+  String get networkSignInMobileNote =>
+      'Вход через провайдера здесь недоступен, пока редирект fa:// не добавлен в список разрешённых на сервере — пока работает только вход для разработчика ниже.';
+
+  @override
+  String get networkSessionExpired => 'Сессия истекла — войдите снова.';
+
+  @override
+  String get networkLoginLabel => 'Логин';
+
+  @override
+  String get networkSignOut => 'Выйти';
+
+  @override
+  String get networkAccountFallback => 'Аккаунт';
+
+  @override
+  String get networkPublicSection => 'Публичные сети';
+
+  @override
+  String networkPublicMembers(Object count) {
+    return 'Участников: $count';
+  }
+
+  @override
+  String get networkEmptyTitle => 'Пока нет сетей';
+
+  @override
+  String get networkJoinFirst => 'Присоединитесь к своей первой сети';
+
+  @override
+  String get networkNoMatches => 'Ничего не найдено';
+
+  @override
+  String get networkCreateNetwork => 'Создать сеть';
+
+  @override
+  String get networkNameLabel => 'Название';
+
+  @override
+  String get networkPasswordLabel => 'Пароль';
+
+  @override
+  String get networkCreate => 'Создать';
+
+  @override
+  String get networkJoinTitle => 'Присоединиться к сети';
+
+  @override
+  String get networkQuickSwitcherTitle => 'Быстрый переход';
+
+  @override
+  String get networkJoinLinkLabel => 'Ссылка-приглашение';
+
+  @override
+  String get networkJoinFill => 'Заполнить';
+
+  @override
+  String get networkIdLabel => 'Идентификатор сети';
+
+  @override
+  String get networkDisplayNameLabel => 'Отображаемое имя';
+
+  @override
+  String get networkDisplayNameLocked =>
+      'Отображаемое имя привязано к вашему аккаунту.';
+
+  @override
+  String get networkJoinRequired => 'Укажите идентификатор сети и пароль.';
+
+  @override
+  String networkJoinInvalidCredentials(Object message) {
+    return 'Неверные учётные данные — $message';
+  }
+
+  @override
+  String networkJoinRetryAfter(Object seconds) {
+    return ' Повторите через $seconds с.';
+  }
+
+  @override
+  String get networkJoin => 'Присоединиться';
+
+  @override
+  String get networkSelectChannel => 'Выберите канал';
+
+  @override
+  String get networkReconnecting =>
+      'Переподключение — сообщения будут отправлены после восстановления связи.';
+
+  @override
+  String networkMessageHint(Object channel) {
+    return 'Написать в $channel';
+  }
+
+  @override
+  String get networkNewChannel => 'Новый канал';
+
+  @override
+  String networkOnlineCount(Object count) {
+    return '$count в сети';
+  }
+
+  @override
+  String get networkChannelsSection => 'Каналы';
+
+  @override
+  String get networkShowcasesSection => 'Витрины';
+
+  @override
+  String get networkShowcaseReadOnly =>
+      'Публичная витрина — только чтение. Присоединитесь к сети, чтобы участвовать.';
+
+  @override
+  String get networkConnecting => 'Подключение…';
+
+  @override
+  String get networkNoChannels => 'Нет каналов';
+
+  @override
+  String get networkChannelOptions => 'Параметры канала';
+
+  @override
+  String get networkAddAgent => 'Добавить агента…';
+
+  @override
+  String get networkShowcasePublic => 'Витрина (публичный)';
+
+  @override
+  String get networkAddAgentTitle => 'Добавить агента';
+
+  @override
+  String get networkAddAgentWarning =>
+      'Передавайте эту строку только напрямую — любой, у кого она есть, сможет читать канал.';
+
+  @override
+  String get networkAddAgentNoKeys =>
+      'На этом устройстве нет ключей для этого канала.';
+
+  @override
+  String get networkAddAgentScopeChannel => 'Этот канал';
+
+  @override
+  String get networkAddAgentScopeNetwork => 'Вся сеть';
+
+  @override
+  String get networkAddAgentFormatLink => 'Ссылка (приложение)';
+
+  @override
+  String get networkAddAgentFormatCli => 'CLI-команда';
+
+  @override
+  String get networkAddAgentFormatEnv => 'Env (CI)';
+
+  @override
+  String get networkAddAgentEnvHint =>
+      'Строка запуска CLI-harness на раннере (GitHub Actions): подставь свою пару провайдер+модель и мастер-секрет хаба — ключи канала приезжают командой import.';
+
+  @override
+  String get networkAddAgentNetworkHint =>
+      'Агент входит полным участником и видит все каналы сети.';
+
+  @override
+  String get networkAddAgentNetworkNoPassword =>
+      'Пароль сети недоступен на этом устройстве — при входе ссылка запросит его.';
+
+  @override
+  String get networkAddAgentCliHint =>
+      'Команда работает для хабов с прямым DAP-доступом (например, локальный стенд); CLI-вход на production fa_network — в разработке.';
+
+  @override
+  String get networkAddAgentNetworkCliHint =>
+      'CLI-подключение к сети пока не готово — используйте ссылку.';
+
+  @override
+  String get networkInviteCopied => 'Приглашение скопировано в буфер обмена.';
+
+  @override
+  String get networkCopy => 'Копировать';
+
+  @override
+  String get networkClose => 'Закрыть';
+
+  @override
+  String get networkWalletTooltip => 'Кошелёк';
+
+  @override
+  String get networkWalletExport => 'Экспортировать кошелёк';
+
+  @override
+  String get networkWalletImport => 'Импортировать кошелёк';
+
+  @override
+  String get networkWalletExported =>
+      'Кошелёк экспортирован — JSON скопирован в буфер обмена.';
+
+  @override
+  String networkWalletExportFailed(Object error) {
+    return 'Не удалось экспортировать: $error';
+  }
+
+  @override
+  String get networkWalletImported => 'Кошелёк импортирован.';
+
+  @override
+  String get networkPassphraseLabel => 'Парольная фраза';
+
+  @override
+  String get networkPassphraseRepeatLabel => 'Повторите парольную фразу';
+
+  @override
+  String get networkPassphraseEmpty => 'Парольная фраза не должна быть пустой.';
+
+  @override
+  String get networkPassphraseMismatch => 'Парольные фразы не совпадают.';
+
+  @override
+  String get networkExport => 'Экспортировать';
+
+  @override
+  String get networkImport => 'Импортировать';
+
+  @override
+  String get networkWalletJsonLabel => 'JSON экспортированного кошелька';
+
+  @override
+  String get networkWalletImportWarning =>
+      'Импорт заменит кошелёк на этом устройстве.';
+
+  @override
+  String get networkNameHint => 'Отображаемое имя — станет lowercase-slug';
+
+  @override
+  String get networkPasswordHint => '8–128 символов';
+
+  @override
+  String get networkNameInvalid =>
+      'После слага нужно 3–64 символа (буквы, цифры, дефисы)';
+
+  @override
+  String get networkPasswordInvalid => 'Пароль: 8–128 символов';
+
+  @override
+  String get networkListPublic => 'Показывать в публичном каталоге';
+
+  @override
+  String get networkDelete => 'Удалить сеть…';
+
+  @override
+  String get networkDeleteTitle => 'Удалить эту сеть?';
+
+  @override
+  String get networkDeleteBody =>
+      'Сеть, её каналы и все сообщения будут удалены для всех. Это действие нельзя отменить.';
+
+  @override
+  String get networkDeleted => 'Сеть удалена';
+
+  @override
+  String networkSlugPreview(Object slug) {
+    return 'Будет создана как: $slug';
+  }
+
+  @override
+  String get networkSignInToCreate => 'Войдите, чтобы создать сеть';
+
+  @override
+  String get networkShowcaseUnavailable => 'Эта сеть недоступна публично';
+
+  @override
+  String get networkShowcaseReadOnlyBadge => 'только чтение';
+
+  @override
+  String get networkBackToNetworks => 'Назад к сетям';
+
+  @override
+  String get networkAddAgentPublicHint =>
+      'Эту ссылку видят все — канал публичный. Агенты подключаются без ключей.';
 }
