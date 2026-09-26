@@ -142,28 +142,45 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
     );
   }
 
-  bool get _hasNetworkPassword =>
-      widget.wallet.networks[widget.networkId]?.password?.isNotEmpty ?? false;
+  /// The network password from the wallet (null when this device does
+  /// not hold it). The env format splits it OUT of the URL so CI can
+  /// keep the link a plain variable and the password a masked secret.
+  String? get _networkPassword =>
+      widget.wallet.networks[widget.networkId]?.password;
+
+  /// The join link WITHOUT the password fragment — the CI-safe URL row.
+  String get _networkUrlNoPassword => buildNetworkJoinLink(
+    host: Uri.parse(AddAgentDialog.networkJoinHost),
+    networkId: widget.networkId,
+  );
+
+  bool get _hasNetworkPassword => _networkPassword?.isNotEmpty ?? false;
 
   String? get _invite =>
       _scope == AgentInviteScope.channel ? _channelInvite : _networkInvite;
 
   /// What the user copies: the bare link, the CLI one-liner wrapping it
   /// (`fa dap import '…'`), or the env launch line for a CI runner. The
-  /// invite itself IS the whole credential — the network join link
-  /// carries the network id + password, the channel invite the chankey
-  /// pair — so the env line needs no secret placeholder at all:
-  /// `FA_NETWORK_URL='…' FA_AGENT_NAME=… fa` / `FA_CHANNEL_URL='…'
-  /// FA_AGENT_NAME=… fa` (reserved for the CLI network mode).
+  /// link/CLI formats keep the canonical credential-in-fragment shape
+  /// (the fragment never leaves the device over the wire); the ENV
+  /// format splits the network password OUT into its own variable so CI
+  /// can mask it as a secret while the URL stays a plain variable:
+  /// `FA_NETWORK_URL='…' FA_NETWORK_PASSWORD='…' FA_AGENT_NAME=… fa` /
+  /// `FA_CHANNEL_URL='…' FA_AGENT_NAME=… fa` (reserved for the CLI
+  /// network mode).
   String? get _payload {
     final invite = _invite;
     if (invite == null) return null;
     if (_format == AgentInviteFormat.link) return invite;
     if (_format == AgentInviteFormat.env) {
-      final key = _scope == AgentInviteScope.network
-          ? 'FA_NETWORK_URL'
-          : 'FA_CHANNEL_URL';
-      return "$key='$invite' FA_AGENT_NAME=$_agentName fa";
+      if (_scope == AgentInviteScope.network) {
+        final password = _hasNetworkPassword
+            ? "FA_NETWORK_PASSWORD='$_networkPassword' "
+            : '';
+        return "FA_NETWORK_URL='$_networkUrlNoPassword' "
+            '${password}FA_AGENT_NAME=$_agentName fa';
+      }
+      return "FA_CHANNEL_URL='$invite' FA_AGENT_NAME=$_agentName fa";
     }
     if (_scope == AgentInviteScope.network) return invite;
     return "fa dap import '$invite'";
@@ -273,19 +290,28 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
               const SizedBox(height: 8),
               // Per-variable rows with their own copy buttons — CI/CD
               // secrets/vars are pasted one key=value at a time. The
-              // invite row IS the whole credential (network id + password
-              // in the join link / chankey pair in the channel invite) —
-              // no master secret exists on the fa_network side.
-              if (_invite != null)
+              // network password is its OWN row: the URL stays a plain
+              // variable, the password goes into masked CI secrets.
+              if (_scope == AgentInviteScope.network) ...[
                 _envCopyRow(
                   context,
-                  keyName: _scope == AgentInviteScope.network
-                      ? 'FA_NETWORK_URL'
-                      : 'FA_CHANNEL_URL',
-                  display:
-                      '${_scope == AgentInviteScope.network ? 'FA_NETWORK_URL' : 'FA_CHANNEL_URL'}=$_invite',
-                  copyText:
-                      '${_scope == AgentInviteScope.network ? 'FA_NETWORK_URL' : 'FA_CHANNEL_URL'}=$_invite',
+                  keyName: 'FA_NETWORK_URL',
+                  display: 'FA_NETWORK_URL=$_networkUrlNoPassword',
+                  copyText: 'FA_NETWORK_URL=$_networkUrlNoPassword',
+                ),
+                if (_hasNetworkPassword)
+                  _envCopyRow(
+                    context,
+                    keyName: 'FA_NETWORK_PASSWORD',
+                    display: 'FA_NETWORK_PASSWORD=$_networkPassword',
+                    copyText: 'FA_NETWORK_PASSWORD=$_networkPassword',
+                  ),
+              ] else if (_invite != null)
+                _envCopyRow(
+                  context,
+                  keyName: 'FA_CHANNEL_URL',
+                  display: 'FA_CHANNEL_URL=$_invite',
+                  copyText: 'FA_CHANNEL_URL=$_invite',
                 ),
               _envCopyRow(
                 context,
