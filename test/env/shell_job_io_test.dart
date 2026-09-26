@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -114,6 +115,44 @@ void main() {
         expect(job.exitCode, 0);
       },
     );
+
+    test('an unwritable job log fails cleanly instead of crashing with an '
+        'unhandled error (issue #925)', () async {
+      // The log path's parent is a regular file, so the open fails with
+      // ENOTDIR — the same FileSystemException class as the ticket's
+      // ENOSPC. Pre-fix the open ran unowned inside `File.openWrite` and
+      // the error escaped to the root-zone handler (fatal for fa) while
+      // the job never settled.
+      final blocker = File('${tempDir.path}/bash_jobs')
+        ..writeAsStringSync('not a directory\n');
+      Object? zoneError;
+      await runZonedGuarded(
+        () async {
+          final started = await env.startShellJob(
+            'echo hi',
+            id: 'sh-7',
+            logPath: '${blocker.path}/sh-7.log',
+          );
+          expect(started.isErr, isTrue);
+          expect(
+            started.errorOrNull!.message,
+            contains('cannot open job log file'),
+          );
+        },
+        (Object error, StackTrace _) {
+          // A failing expect() throws TestFailure inside the zone: surface
+          // it through the normal test channel instead of the
+          // 'unhandled zone error escaped' label.
+          if (error is TestFailure) throw error;
+          zoneError = error;
+        },
+      );
+      // An escaping error still needs an event-loop turn to surface.
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      if (zoneError != null) {
+        fail('unhandled zone error escaped: $zoneError');
+      }
+    });
   });
   group('job stop kills the whole process tree (issue #517)', () {
     // Per-run fractional seconds keep the ps scan unique to this run, and

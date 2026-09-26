@@ -768,9 +768,15 @@ final class LocalShell implements Shell, BackgroundShell {
       }
     }
     if (liveStdin == null) unawaited(process.stdin.close());
-    final IOSink logSink;
+    final RandomAccessFile logSink;
     try {
-      logSink = File(logPath).openWrite(mode: FileMode.append);
+      // Issue #925: open the log eagerly and guard it HERE. `File.openWrite`
+      // starts its open lazily-but-eagerly with no owner for the failure —
+      // an error (missing directory, permissions, ENOSPC) surfaced as an
+      // unlistened future and reached the root-zone handler, killing the
+      // whole fa process. An awaited open turns every open-class failure
+      // into this clean Err instead.
+      logSink = await File(logPath).open(mode: FileMode.append);
     } on Object catch (error) {
       process.kill();
       return Err(
@@ -815,8 +821,23 @@ final class _LocalShellJob implements ShellJob {
     // wait and then cancel the subscriptions.
     final stdoutDone = Completer<void>();
     final stderrDone = Completer<void>();
+    // Issue #925: a log write failure (disk full, removed file, closed
+    // handle) must never escape into the zone — the error of every write
+    // is consumed here and the job keeps running headless, its log frozen
+    // at the last successful chunk. RandomAccessFile allows one op at a
+    // time, so writes serialize through the chain and the settle path
+    // drains it before flush/close.
     void fanOut(String chunk) {
-      _logSink.write(chunk);
+      if (!_logBroken) {
+        _writeChain = _writeChain
+            .then((_) => _logSink.writeString(chunk))
+            .then(
+              (_) {},
+              onError: (Object _) {
+                _logBroken = true;
+              },
+            );
+      }
       _output.add(chunk);
     }
 
@@ -862,15 +883,39 @@ final class _LocalShellJob implements ShellJob {
         await _stderrSub.cancel();
         unawaited(_process.stdin.close().catchError((_) {}));
         await _output.close();
-        await _logSink.flush();
-        await _logSink.close();
+        // Issue #925: the settle path runs inside an unawaited future — a
+        // throwing flush/close escaped to the root zone AND left _settled
+        // incomplete (the job board showed the job as running forever).
+        // Drain pending writes first (RAF allows one op at a time), then
+        // swallow every sink failure and settle regardless.
+        await _writeChain;
+        // Guarded separately so a failed flush never skips close() — a
+        // leaked RAF fd would live for the whole fa process (issue #925).
+        try {
+          await _logSink.flush();
+        } on Object {
+          _logBroken = true;
+        }
+        try {
+          await _logSink.close();
+        } on Object {
+          _logBroken = true;
+        }
         _settled.complete();
       }),
     );
   }
 
   final Process _process;
-  final IOSink _logSink;
+  final RandomAccessFile _logSink;
+
+  /// Set on the first log-sink failure (issue #925): the job keeps
+  /// running but its log stays frozen at the last successful write.
+  bool _logBroken = false;
+
+  /// Serialized log writes (issue #925): RandomAccessFile forbids
+  /// overlapping ops, and the settle path drains this before flush/close.
+  Future<void> _writeChain = Future<void>.value();
 
   /// Whether the job is its own session/process-group leader (`setsid`
   /// spawn) — stop() then signals the whole group, not a pid walk.
