@@ -281,5 +281,95 @@ void _registerNetworkScopeGroup() {
         findsOneWidget,
       );
     });
+
+    testWidgets('env format: per-variable rows copy individually', (
+      tester,
+    ) async {
+      await pump(
+        tester,
+        wallet: await buildWallet(password: '[REDACTED:Sensitive Value]'),
+      );
+      await tester.tap(find.text('Env (CI)'));
+      await tester.pump();
+
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey('envRow:DAP_HUB_URL')))
+            .data,
+        'DAP_HUB_URL=wss://hub.fa1.dev/ws',
+      );
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey('envRow:DAP_AGENT_NAME')))
+            .data,
+        'DAP_AGENT_NAME=general-agent',
+      );
+      expect(find.byKey(const ValueKey('envRow:IMPORT')), findsOneWidget);
+
+      final clipboard = FakeClipboard()..install(tester);
+      await tester.tap(find.byKey(const ValueKey('envCopy:DAP_HUB_URL')));
+      await tester.pump();
+      expect(clipboard.text, 'DAP_HUB_URL=wss://hub.fa1.dev/ws');
+
+      await tester.tap(find.byKey(const ValueKey('envCopy:DAP_AGENT_NAME')));
+      await tester.pump();
+      expect(clipboard.text, 'DAP_AGENT_NAME=general-agent');
+    });
+
+    testWidgets('env format: the typed secret lands in the line and its '
+        'row copy', (tester) async {
+      await pump(
+        tester,
+        wallet: await buildWallet(password: '[REDACTED:Sensitive Value]'),
+      );
+      await tester.tap(find.text('Env (CI)'));
+      await tester.pump();
+
+      await tester.enterText(
+        find.byKey(const ValueKey('envRow:DAP_MASTER_SECRET')),
+        's3cr3t',
+      );
+      await tester.pump();
+
+      final payload = tester
+          .widget<Text>(find.byKey(const ValueKey('agentInvite')))
+          .data!;
+      expect(payload, contains("DAP_MASTER_SECRET='s3cr3t'"));
+      expect(payload.contains('FA_PROVIDER'), isFalse);
+
+      final clipboard = FakeClipboard()..install(tester);
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('envCopy:DAP_MASTER_SECRET')),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('envCopy:DAP_MASTER_SECRET')));
+      await tester.pump();
+      expect(clipboard.text, 'DAP_MASTER_SECRET=s3cr3t');
+    });
+
+    testWidgets('a network-scope dialog without a channel hides the scope '
+        'switch', (tester) async {
+      final wallet = await buildWallet(password: '[REDACTED:Sensitive Value]');
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          home: Scaffold(
+            body: AddAgentDialog(
+              wallet: wallet,
+              networkId: 'net1',
+              channel: null,
+              initialScope: AgentInviteScope.network,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('inviteScope')), findsNothing);
+      final payload = tester
+          .widget<Text>(find.byKey(const ValueKey('agentInvite')))
+          .data!;
+      expect(payload, startsWith('https://network.fa1.dev/join?network=net1'));
+    });
   });
 }
