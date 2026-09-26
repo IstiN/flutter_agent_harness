@@ -297,22 +297,19 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
 
   /// Adds a provider through the ONE add-provider flow (issue #975): the
   /// settings preset picker — the host builder adds the SSO/OAuth/on-device
-  /// tiles, the fallback builds the same page from this picker's registry.
-  /// The registry listener refreshes this list when it returns.
+  /// tiles, the fallback builds the same page (this picker's on-device
+  /// routes ride along) from this picker's registry. The registry listener
+  /// refreshes this list when it returns.
   Future<void> _addProvider(
     BuildContext context,
     ProviderRegistry registry,
   ) async {
-    final hostPage = addProviderPage;
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (routeContext) => hostPage != null
-            ? hostPage(routeContext)
-            : AddProviderPresetPickerPage(
-                registry: registry,
-                modelsFetcher: modelsFetcher,
-              ),
-      ),
+    await pushAddProviderFlow(
+      context,
+      hostPage: addProviderPage,
+      registry: registry,
+      modelsFetcher: modelsFetcher,
+      onDeviceRoutes: onDeviceRoutes,
     );
   }
 }

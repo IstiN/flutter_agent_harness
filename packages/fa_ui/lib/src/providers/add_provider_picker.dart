@@ -176,6 +176,30 @@ bool addProviderPresetEnabled(AddProviderPreset preset) {
   return spec.visible && harness.providerEnabledInBuild(spec.name);
 }
 
+/// Pushes the ONE add-provider flow (issue #975): the host's preset picker
+/// when [hostPage] is given (the SSO/OAuth/on-device tile injection point),
+/// else the same [AddProviderPresetPickerPage] built from [registry] — so
+/// the fallback never offers less than the picker it was opened from
+/// ([onDeviceRoutes] ride along). Every add-provider entry routes through
+/// this helper; adding a knob happens once, here.
+Future<void> pushAddProviderFlow(
+  BuildContext context, {
+  WidgetBuilder? hostPage,
+  ProviderRegistry? registry,
+  harness.ModelsEndpointFetcher? modelsFetcher,
+  List<FaOnDeviceRoute> onDeviceRoutes = const [],
+}) => Navigator.of(context).push(
+  MaterialPageRoute<void>(
+    builder: (routeContext) => hostPage != null
+        ? hostPage(routeContext)
+        : AddProviderPresetPickerPage(
+            registry: registry,
+            modelsFetcher: modelsFetcher,
+            onDeviceRoutes: onDeviceRoutes,
+          ),
+  ),
+);
+
 /// The "Add provider" preset picker: a list of quick-add templates that
 /// route to the matching setup flow.
 ///

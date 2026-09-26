@@ -511,34 +511,30 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
                             ),
                             onTap: () => _openOnDevice(route),
                           ),
-                        const Divider(),
-                        // Add provider.
-                        ListTile(
-                          leading: Icon(
-                            Icons.add,
-                            color: theme.colorScheme.primary,
+                        if (widget.registry != null) ...[
+                          const Divider(),
+                          // Add provider. Needs a registry to save into —
+                          // hidden when the host embeds the picker without
+                          // one (a null registry would silently discard
+                          // the add).
+                          ListTile(
+                            leading: Icon(
+                              Icons.add,
+                              color: theme.colorScheme.primary,
+                            ),
+                            title: Text(strings.settingsAddProvider),
+                            onTap: () async {
+                              await pushAddProviderFlow(
+                                context,
+                                hostPage: widget.addProviderPage,
+                                registry: widget.registry,
+                                modelsFetcher: widget.modelsFetcher,
+                                onDeviceRoutes: widget.onDeviceProviders,
+                              );
+                              if (mounted) _fetchAllModels();
+                            },
                           ),
-                          title: Text(strings.settingsAddProvider),
-                          onTap: () async {
-                            // The ONE add-provider flow (issue #975): the
-                            // settings preset picker — the host builder adds
-                            // the SSO/OAuth/on-device tiles, the fallback
-                            // builds the same page from this picker's
-                            // registry. Models refetch when it returns.
-                            final hostPage = widget.addProviderPage;
-                            await Navigator.of(context).push(
-                              MaterialPageRoute<void>(
-                                builder: (routeContext) => hostPage != null
-                                    ? hostPage(routeContext)
-                                    : AddProviderPresetPickerPage(
-                                        registry: widget.registry,
-                                        modelsFetcher: widget.modelsFetcher,
-                                      ),
-                              ),
-                            );
-                            if (mounted) _fetchAllModels();
-                          },
-                        ),
+                        ],
                       ],
                     ),
             ),
