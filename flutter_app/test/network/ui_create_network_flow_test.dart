@@ -167,6 +167,13 @@ void main() {
       expect(manager.wallet.networks['net9'], isNotNull);
       expect(controller.networkId, 'net9');
       expect(controller.mode, AppMode.network);
+
+      // Close the flow-created session IN THE TEST BODY: its ws heartbeat
+      // Timer (FaNetworkWs._startHeartbeat, 30s periodic) must be cancelled
+      // before the fake_async end-of-test pending-timer check — the
+      // addTearDown(manager.disconnectAll) safety net fires too late
+      // (sibling convention: `await session.close()` in-body).
+      await manager.disconnectAll();
     });
 
     testWidgets('a server rejection surfaces as a snackbar', (tester) async {
