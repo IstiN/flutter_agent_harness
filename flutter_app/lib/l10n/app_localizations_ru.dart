@@ -2382,6 +2382,23 @@ class AppLocalizationsRu extends AppLocalizations {
   String get networkAddAgentFormatEnv => 'Env (CI)';
 
   @override
+  String get networkAddAgentFormatDap => 'DAP';
+
+  @override
+  String get networkAddAgentEnroll => 'Заэнроллить агента';
+
+  @override
+  String get networkAddAgentEnrollHint =>
+      'Выдача создаёт уникальный отзываемый секрет — он показывается ОДИН раз: скопируйте его сейчас. Повторная выдача с тем же именем меняет секрет.';
+
+  @override
+  String get networkAddAgentEnrollNeedSignIn =>
+      'Войдите в сеть, чтобы выдавать доступ агентам';
+
+  @override
+  String get networkAddAgentNameInvalid => '3–64 символа: a-z, 0-9, дефис';
+
+  @override
   String get networkAddAgentEnvHint =>
       'Env-переменные для CI-раннера (GitHub Actions) — ссылка уже несёт id сети и пароль (или ключи канала), ничего дописывать не нужно. Зарезервировано под будущий сетевой режим CLI — десктопные и мобильные агенты используют ссылку.';
 
