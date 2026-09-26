@@ -225,6 +225,42 @@ void _registerNetworkScopeGroup() {
       expect(find.byKey(const ValueKey('inviteCliHint')), findsOneWidget);
     });
 
+    testWidgets('env format: import + FA_PROVIDER/DAP launch line (channel)', (
+      tester,
+    ) async {
+      await pump(tester, wallet: await buildWallet());
+      await tester.tap(find.text('Env (CI)'));
+      await tester.pump();
+
+      final payload = tester
+          .widget<Text>(find.byKey(const ValueKey('agentInvite')))
+          .data!;
+      expect(payload, startsWith("fa dap import 'wss://hub.fa1.dev/ws"));
+      expect(payload, contains(' && FA_PROVIDER_TYPE=anthropic '));
+      expect(payload, contains("FA_PROVIDER_CONFIG='{"));
+      expect(payload, contains('DAP_HUB_URL=wss://hub.fa1.dev/ws '));
+      expect(payload, contains("DAP_MASTER_SECRET='<hub master secret>' "));
+      expect(payload, contains('DAP_AGENT_NAME=general-agent fa'));
+      expect(find.byKey(const ValueKey('inviteEnvHint')), findsOneWidget);
+    });
+
+    testWidgets('env format on the network scope: no import, fa-agent name', (
+      tester,
+    ) async {
+      await pump(tester, wallet: await buildWallet(password: 'sekret42'));
+      await tester.tap(find.text('Whole network'));
+      await tester.pump();
+      await tester.tap(find.text('Env (CI)'));
+      await tester.pump();
+
+      final payload = tester
+          .widget<Text>(find.byKey(const ValueKey('agentInvite')))
+          .data!;
+      expect(payload.startsWith('fa dap import'), isFalse);
+      expect(payload, startsWith('FA_PROVIDER_TYPE=anthropic '));
+      expect(payload, contains('DAP_AGENT_NAME=fa-agent fa'));
+    });
+
     testWidgets('CLI format on the network scope shares the plain link', (
       tester,
     ) async {

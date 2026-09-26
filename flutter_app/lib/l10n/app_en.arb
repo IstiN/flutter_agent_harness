@@ -1218,6 +1218,14 @@
   "@networkAddAgentFormatCli": {
     "description": "Agent invite format segment: ready fa CLI one-liner"
   },
+  "networkAddAgentFormatEnv": "Env (CI)",
+  "@networkAddAgentFormatEnv": {
+    "description": "Agent invite format segment: env-var launch line for CI runners"
+  },
+  "networkAddAgentEnvHint": "A launch line for the CLI harness on a runner (GitHub Actions): fill in your provider pair and the hub master secret — the channel keys ride the import command.",
+  "@networkAddAgentEnvHint": {
+    "description": "Agent invite note under the env format"
+  },
   "networkAddAgentNetworkHint": "The agent joins as a full member and sees every channel in the network.",
   "@networkAddAgentNetworkHint": {
     "description": "Agent invite hint for the network scope"
