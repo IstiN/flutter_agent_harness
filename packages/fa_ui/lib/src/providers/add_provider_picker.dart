@@ -180,8 +180,12 @@ bool addProviderPresetEnabled(AddProviderPreset preset) {
 /// when [hostPage] is given (the SSO/OAuth/on-device tile injection point),
 /// else the same [AddProviderPresetPickerPage] built from [registry] — so
 /// the fallback never offers less than the picker it was opened from
-/// ([onDeviceRoutes] ride along). Every add-provider entry routes through
-/// this helper; adding a knob happens once, here.
+/// ([onDeviceRoutes] ride along).
+///
+/// Every host-or-fallback ROUTING of the add-provider flow goes through
+/// this helper; adding a knob happens once, here. (The canonical
+/// Settings → Providers → Add entry is the destination, not a router — it
+/// constructs [AddProviderPresetPickerPage] directly by design.)
 Future<void> pushAddProviderFlow(
   BuildContext context, {
   WidgetBuilder? hostPage,
