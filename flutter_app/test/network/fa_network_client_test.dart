@@ -447,6 +447,90 @@ void main() {
       expect(agents.single.wakeupRegistered, isTrue);
     });
 
+    group('enrollAgent', () {
+      const enrollBody =
+          '{"name":"ops-bot","hubUrl":"wss://hub.fa1.dev/ws",'
+          '"clientSecret":"sk_enroll_123",'
+          '"enrolledAt":"2026-02-03T04:05:06Z",'
+          '"note":"store clientSecret now - never returned again"}';
+
+      test('posts the name as a management call and parses the one-time '
+          'credential', () async {
+        client = build(jwtToken: 'jwt-1', sessionToken: 'sess-1');
+        httpClient.respond(201, body: enrollBody);
+        final enrollment = await client.enrollAgent('net1', name: 'ops-bot');
+        expect(enrollment.name, 'ops-bot');
+        expect(enrollment.hubUrl, 'wss://hub.fa1.dev/ws');
+        expect(enrollment.clientSecret, 'sk_enroll_123');
+        expect(enrollment.enrolledAt, '2026-02-03T04:05:06Z');
+        expect(enrollment.note, contains('never returned again'));
+        final req = httpClient.requests.single;
+        expect(req.method, 'POST');
+        expect(req.url.path, '/api/networks/net1/agents/enroll');
+        expect(jsonDecode(req.body), {'name': 'ops-bot'});
+        // Management class only — the JWT wins over the session token.
+        expect(req.headers['authorization'], 'Bearer jwt-1');
+      });
+
+      test('tolerates a missing note', () async {
+        httpClient.respond(
+          201,
+          body:
+              '{"name":"ops-bot","hubUrl":"wss://hub.fa1.dev/ws",'
+              '"clientSecret":"sk_enroll_123",'
+              '"enrolledAt":"2026-02-03T04:05:06Z"}',
+        );
+        final enrollment = await client.enrollAgent('net1', name: 'ops-bot');
+        expect(enrollment.note, isNull);
+      });
+
+      Future<FaNetworkException> captureEnrollError(
+        int status,
+        String body,
+      ) async {
+        httpClient.respond(status, body: body);
+        try {
+          await client.enrollAgent('net1', name: 'ops-bot');
+        } on FaNetworkException catch (e) {
+          return e;
+        }
+        fail('expected FaNetworkException');
+      }
+
+      test(
+        '403 forbidden_by_class surfaces the server code + message',
+        () async {
+          final e = await captureEnrollError(
+            403,
+            '{"error":{"code":"forbidden_by_class",'
+            '"message":"owner or admin only"}}',
+          );
+          expect(e.statusCode, 403);
+          expect(e.code, 'forbidden_by_class');
+          expect(e.message, 'owner or admin only');
+        },
+      );
+
+      test('400 invalid_credentials (bad name) maps its code', () async {
+        final e = await captureEnrollError(
+          400,
+          '{"error":{"code":"invalid_credentials",'
+          '"message":"invalid agent name"}}',
+        );
+        expect(e.statusCode, 400);
+        expect(e.code, 'invalid_credentials');
+      });
+
+      test('503 hub_unavailable maps its code', () async {
+        final e = await captureEnrollError(
+          503,
+          '{"error":{"code":"hub_unavailable","message":"hub offline"}}',
+        );
+        expect(e.statusCode, 503);
+        expect(e.code, 'hub_unavailable');
+      });
+    });
+
     test('getWakeup parses the registration', () async {
       httpClient.respond(
         200,

@@ -197,6 +197,48 @@ class NetworkAgent {
   );
 }
 
+/// The one-time agent enrollment credential returned by
+/// `POST /api/networks/{id}/agents/enroll` (owner/admin only). The
+/// [clientSecret] is name-bound (the agent's dap/1 hello name MUST equal
+/// [name]) and is returned EXACTLY ONCE — it is never stored server-side
+/// and never returned again; re-enrolling the same name silently ROTATES
+/// it (the old secret dies).
+final class AgentEnrollment {
+  const AgentEnrollment({
+    required this.name,
+    required this.hubUrl,
+    required this.clientSecret,
+    required this.enrolledAt,
+    this.note,
+  });
+
+  /// The enrolled agent name (`^[a-z0-9][a-z0-9-]{2,63}$`).
+  final String name;
+
+  /// The DAP hub URL the agent connects to (e.g. `wss://hub.fa1.dev/ws`).
+  final String hubUrl;
+
+  /// The one-time client secret (`sk_…`) — copy it now or lose it.
+  final String clientSecret;
+
+  /// The enrollment timestamp (RFC 3339 UTC).
+  final String enrolledAt;
+
+  /// The server's storage/rotation note (informational).
+  final String? note;
+
+  /// Tolerant parse: everything defaults to empty/null so interim server
+  /// shapes never break the client.
+  factory AgentEnrollment.fromJson(Map<String, Object?> json) =>
+      AgentEnrollment(
+        name: _str(json['name']),
+        hubUrl: _str(json['hubUrl']),
+        clientSecret: _str(json['clientSecret']),
+        enrolledAt: _str(json['enrolledAt']),
+        note: _strOrNull(json['note']),
+      );
+}
+
 /// A relayed message envelope. [payload] is base64 opaque E2E ciphertext.
 class Envelope {
   const Envelope({

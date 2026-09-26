@@ -164,7 +164,11 @@ final class HubFabricRepository
   Future<List<MailboxEntry>> directory() async {
     final repo = _repo;
     if (repo == null) return const [];
-    final roster = await repo.client.presenceQuery();
+    // Same guard as resolveTarget: a hub drop mid-query (the client fails
+    // the waiter with StateError('connection closed')) must fall back to
+    // the file fabric, never crash the caller (ffb6aa67b pattern).
+    final roster = await _presenceRoster();
+    if (roster == null) return const [];
     return [
       for (final agent in roster)
         MailboxEntry(

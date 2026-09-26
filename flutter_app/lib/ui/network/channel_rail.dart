@@ -10,7 +10,6 @@ import 'package:flutter/material.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/network/envelope_codec.dart';
 import 'package:fa/network/fa_network_client.dart';
-import 'package:fa/network/key_wallet.dart';
 import 'package:fa/network/models.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session.dart';
@@ -153,6 +152,7 @@ class _ChannelRailState extends State<ChannelRail> {
                       context: context,
                       builder: (_) => AddAgentDialog(
                         wallet: widget.manager.wallet,
+                        manager: widget.manager,
                         networkId: networkId,
                         channel: null,
                         initialScope: AgentInviteScope.network,
@@ -227,7 +227,7 @@ class _ChannelRailState extends State<ChannelRail> {
                       key: ValueKey('channel:${channel.id}'),
                       channel: channel,
                       selected: widget.controller.channelId == channel.id,
-                      wallet: widget.manager.wallet,
+                      manager: widget.manager,
                       onTap: () => unawaited(_openChannel(channel.id)),
                     );
                   },
@@ -270,13 +270,13 @@ class _ChannelTile extends StatelessWidget {
     super.key,
     required this.channel,
     required this.selected,
-    required this.wallet,
+    required this.manager,
     required this.onTap,
   });
 
   final Channel channel;
   final bool selected;
-  final KeyWallet wallet;
+  final NetworkSessionManager manager;
   final VoidCallback onTap;
 
   @override
@@ -328,7 +328,8 @@ class _ChannelTile extends StatelessWidget {
                           showDialog<void>(
                             context: context,
                             builder: (_) => AddAgentDialog(
-                              wallet: wallet,
+                              wallet: manager.wallet,
+                              manager: manager,
                               networkId: channel.networkId,
                               channel: channel,
                             ),
