@@ -458,14 +458,12 @@ void main() {
     // records, so the head lands in the view. The list opens scrolled
     // to the tail, and the banner reveals on scroll-to-top only
     // (issue #974) — drag to the oldest edge until it appears. The
-    // transcript is the surface's only reversed vertical scrollable
-    // (reversed chat list: axisDirection up); chrome scrollables must
-    // not eat the drags.
-    final transcript = find
-        .byWidgetPredicate(
-          (w) => w is Scrollable && w.axisDirection == AxisDirection.up,
-        )
-        .first;
+    // transcript's scrollable is found through the list's key, not
+    // tree order, so chrome scrollables can never eat the drags.
+    final transcript = find.descendant(
+      of: find.byKey(const ValueKey('faChatTranscriptList')),
+      matching: find.byType(Scrollable),
+    );
     await tester.scrollUntilVisible(
       find.textContaining('Load earlier'),
       500,

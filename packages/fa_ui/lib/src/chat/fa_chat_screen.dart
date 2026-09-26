@@ -314,10 +314,10 @@ class _FaChatScreenState extends State<FaChatScreen>
 
   /// Reveal-on-top gate (issue #974): the "Load earlier" sticker is a
   /// top-of-transcript affordance, so it renders only while the viewport
-  /// sits at (or near) the oldest edge. Mirrors [_revealedNow] purely as
-  /// a rebuild trigger — [_updateTopReveal] rebuilds when the live
-  /// computation flips.
-  bool _topBannerRevealed = true;
+  /// sits at (or near) the oldest edge. Starts hidden: nothing renders
+  /// until a measurement establishes where the viewport actually sits
+  /// (kills the one-frame banner flash on windowed opens).
+  bool _topBannerRevealed = false;
 
   /// How close to the oldest edge (px) the viewport must park for the
   /// top banner to reveal.
@@ -325,11 +325,16 @@ class _FaChatScreenState extends State<FaChatScreen>
 
   /// The live reveal computation: a REVERSED list keeps the oldest edge
   /// at maxScrollExtent, so "parked at the top" is pixels within the
-  /// slack of it. A transcript that fits the viewport (or has not laid
-  /// out yet) has no scroll range and always reveals.
+  /// slack of it. A transcript that fits the viewport (or has no list at
+  /// all yet) has no scroll range and always reveals; a client that
+  /// attached but has not been laid out counts as measured-elsewhere
+  /// (its extents are unreadable) and reveals for the same reason.
   bool get _revealedNow {
     if (!_chatScrollController.hasClients) return true;
     final position = _chatScrollController.position;
+    // maxScrollExtent throws before applyContentDimensions runs — treat
+    // the unmeasured client as trivially at top.
+    if (!position.hasContentDimensions) return true;
     return position.pixels >= position.maxScrollExtent - _topRevealSlack;
   }
 
@@ -1242,8 +1247,11 @@ class _FaChatScreenState extends State<FaChatScreen>
           Expanded(
             // Layout-time extent changes (first list attach, a paged-in
             // page) never move the scroll position, so the reveal-on-top
-            // gate (issue #974) listens for them here; post-framed — the
-            // notification dispatches mid-layout.
+            // gate (issue #974) listens for them here. The framework
+            // defers the dispatch until after the frame completes (a
+            // mid-layout dispatch would be useless); the post-frame
+            // re-measure keeps the gate in sync regardless of when a
+            // given Flutter version dispatches it.
             child: NotificationListener<ScrollMetricsNotification>(
               onNotification: (notification) {
                 if (notification.depth != 0) return false;
@@ -1272,6 +1280,10 @@ class _FaChatScreenState extends State<FaChatScreen>
                     customMessageBuilder: _buildCustomMessage,
                     chatAnimatedListBuilder: (context, itemBuilder) =>
                         ChatAnimatedList(
+                          // Tests target the transcript's scrollable
+                          // through this key (E2E scroll-to-top for the
+                          // reveal-on-top banner) instead of tree order.
+                          key: const ValueKey('faChatTranscriptList'),
                           itemBuilder: itemBuilder,
                           scrollController: _chatScrollController,
                           // Reversed list (the learn.ai pattern): index 0 is the
@@ -1397,7 +1409,9 @@ class _FaChatScreenState extends State<FaChatScreen>
   ///
   /// Reveal-on-top (issue #974): the banner only renders while the
   /// viewport is parked at the oldest edge (or the transcript fits) —
-  /// never over the live tail.
+  /// never over the live tail. Reads the measured cache, not the live
+  /// getter: until the first post-frame measurement lands the banner
+  /// stays hidden, so a windowed open never flashes it on frame one.
   ///
   /// Empty-session escape (issue #223): with no transcript rows loaded
   /// and nothing above the window there is nothing to page in, so no
@@ -1406,7 +1420,7 @@ class _FaChatScreenState extends State<FaChatScreen>
   /// header-only or single-record session (a "1 of 0"/"1 of 1" banner is
   /// nonsense over an already-complete transcript).
   bool _topBannerVisible(int? historyAbove) {
-    if (!_revealedNow) return false;
+    if (!_topBannerRevealed) return false;
     final total = _historyTotal;
     if (historyAbove != null &&
         historyAbove <= 0 &&
