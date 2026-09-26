@@ -97,11 +97,13 @@ final class ShowcaseViewer extends ChangeNotifier {
         cursor: _cursors[channelId],
         anonymous: true,
       );
+      // Chat-order pagination: ascending pages; the first page is the
+      // newest tail, older pages prepend as a block.
       final list = messages.putIfAbsent(channelId, () => []);
-      for (final envelope in page.items.reversed) {
+      final decoded = <ShowcaseMessage>[];
+      for (final envelope in page.items) {
         if (!_seen.add(envelope.id)) continue;
-        list.insert(
-          0,
+        decoded.add(
           ShowcaseMessage(
             id: envelope.id,
             senderId: envelope.senderId,
@@ -110,6 +112,7 @@ final class ShowcaseViewer extends ChangeNotifier {
           ),
         );
       }
+      list.insertAll(0, decoded);
       _cursors[channelId] = (page.nextCursor?.isEmpty ?? true)
           ? null
           : page.nextCursor;

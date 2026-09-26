@@ -66,25 +66,26 @@ void main() {
         ..respond(
           200,
           body: jsonEncode({
-            // Server pages newest-first; e-new listed twice (at-least-once).
+            // Chat-order contract: pages ascending oldest-first;
+            // e-new listed twice (at-least-once).
             'items': [
-              {
-                'id': 'e-new',
-                'channelId': 'c1',
-                'senderId': 'other-1',
-                'payload': payloadNew,
-              },
-              {
-                'id': 'e-new',
-                'channelId': 'c1',
-                'senderId': 'other-1',
-                'payload': payloadNew,
-              },
               {
                 'id': 'e-old',
                 'channelId': 'c1',
                 'senderId': 'other-1',
                 'payload': payloadOld,
+              },
+              {
+                'id': 'e-new',
+                'channelId': 'c1',
+                'senderId': 'other-1',
+                'payload': payloadNew,
+              },
+              {
+                'id': 'e-new',
+                'channelId': 'c1',
+                'senderId': 'other-1',
+                'payload': payloadNew,
               },
             ],
             'nextCursor': '',
@@ -424,16 +425,16 @@ void main() {
           body: jsonEncode({
             'items': [
               {
-                'id': 'e-1',
-                'channelId': 'c1',
-                'senderId': 'other-1',
-                'payload': payload,
-              },
-              {
                 'id': 'e-garbage',
                 'channelId': 'c1',
                 'senderId': 'other-1',
                 'payload': base64Encode(utf8.encode('garbage')),
+              },
+              {
+                'id': 'e-1',
+                'channelId': 'c1',
+                'senderId': 'other-1',
+                'payload': payload,
               },
             ],
             'nextCursor': '',

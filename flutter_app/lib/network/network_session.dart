@@ -179,14 +179,16 @@ final class NetworkSession extends ChangeNotifier {
         channelId,
         cursor: state.nextCursor,
       );
-      // History pages arrive newest-first; prepend each as served so the
-      // store stays oldest-first, with id-dedupe on the way in.
+      // Chat-order pagination (fa_network contract): pages arrive
+      // ascending oldest→newest; the first (cursor-less) page IS the
+      // newest tail, later pages are strictly older and prepend as a
+      // block. An empty nextCursor = the bottom of history (no older).
+      final decoded = <ChannelMessage>[];
       for (final envelope in page.items) {
-        if (state.seen.contains(envelope.id)) continue;
-        final message = await _decode(envelope);
-        state.seen.add(envelope.id);
-        state.messages.insert(0, message);
+        if (!state.seen.add(envelope.id)) continue;
+        decoded.add(await _decode(envelope));
       }
+      state.messages.insertAll(0, decoded);
       state.nextCursor = (page.nextCursor?.isEmpty ?? true)
           ? null
           : page.nextCursor;
@@ -372,6 +374,11 @@ final class NetworkSession extends ChangeNotifier {
     }
     for (final entry in channelStates.entries) {
       final state = entry.value;
+      // Chat-order history: the fresh cursor-less page is the NEWEST
+      // tail — it cannot be prepended onto the old list, so the store is
+      // rebuilt from it (older pages re-page in via Load earlier).
+      state.messages.clear();
+      state.seen.clear();
       state.nextCursor = null;
       state.historyResolved = false;
       await _loadHistoryPage(entry.key, state);
