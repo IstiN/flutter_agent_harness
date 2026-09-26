@@ -1223,7 +1223,12 @@
   "@networkAddAgentFormatEnv": {
     "description": "Agent invite format segment: env-var launch line for CI runners"
   },
-  "networkAddAgentEnvHint": "Hub-only launch line for a runner (GitHub Actions): fill in the hub master secret — the channel keys ride the import command. The provider is the runner\u2019s own fa config.",
+  "networkAddAgentEnvHint": "Hub-only launch line for a runner (GitHub Actions): type the hub master secret once, then copy each key=value row. The channel keys ride the import command; the provider is the runner\u2019s own fa config.",
+  "networkAddAgentSecretHint": "hub master secret",
+  "@networkAddAgentSecretHint": {
+    "description": "Hint inside the editable hub master secret field of the Add agent dialog (Env format).",
+    "placeholders": {}
+  },
   "@networkAddAgentEnvHint": {
     "description": "Agent invite note under the env format"
   },
