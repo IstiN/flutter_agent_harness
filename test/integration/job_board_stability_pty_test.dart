@@ -227,7 +227,11 @@ void main() {
       // The printed `· older` row is a frozen snapshot: after the FIRST
       // settle lands (four jobs still live), it must not have moved — the
       // unfrozen board would re-derive `· 4 running · 1 done` here.
-      final beforeOlder = before
+      // Compared as CONTENT frames (gh-982): raw viewport equality also
+      // compares xterm buffer-cell materialization, which the two dart_tui
+      // paint paths leave differently depending on frame history — the
+      // macOS/fa-m5 flake failed raw equality on byte-identical counts.
+      final beforeOlder = frameContentLines(before)
           .where((l) => l.contains('· older') && l.contains('(5)'))
           .toList();
       expect(beforeOlder, hasLength(1), reason: 'frame before:\n$before');
@@ -239,7 +243,9 @@ void main() {
       final mid = harness.viewportLines;
       expectComposerReserved(mid, columns);
       expect(
-        mid.where((l) => l.contains('· older') && l.contains('(5)')).toList(),
+        frameContentLines(mid)
+            .where((l) => l.contains('· older') && l.contains('(5)'))
+            .toList(),
         beforeOlder,
         reason:
             'the printed `· older` row never changes counts while its '
@@ -288,13 +294,13 @@ void main() {
         onTimeout: () => -1,
       );
     }
-  }, skip: 'flake: gh-982 macOS/fa-m5 shard red while linux green; '
-      'quarantined to unblock main — fix the flake and re-enable');
+  });
 
   // gh-938: only this case races the shared /tmp/fa_539_home layout.
-  // 'stacked boards freeze' above is QUARANTINED under gh-982: it is the
-  // real #937 regression, but it flakes on macOS/fa-m5 (linux green) and
-  // red-blocks the whole factory — re-enable it with the ai/gh-869 fix.
+  // 'stacked boards freeze' above was QUARANTINED under gh-982 and is
+  // re-enabled: the macOS/fa-m5 flake was the raw viewport equality
+  // comparing xterm buffer-cell materialization across the dart_tui
+  // paint paths (fixed via frameContentLines), not a board regression.
   test(
     'restart with live jobs shows lost, never running (268/0 impossible)',
     () async {
