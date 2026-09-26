@@ -1222,6 +1222,18 @@
   "@networkAddAgentFormatEnv": {
     "description": "Agent invite format segment: env-var launch line for CI runners"
   },
+  "networkAddAgentFormatDap": "DAP",
+  "@networkAddAgentFormatDap": {
+    "description": "Agent invite format segment: pure-DAP client env (self-hosted DAP hub)"
+  },
+  "networkAddAgentDapHint": "Pure DAP clients (`fa dap`) that know nothing about fa_network — point them at a DAP hub directly. The master secret belongs to THAT hub, not to fa_network.",
+  "@networkAddAgentDapHint": {
+    "description": "Agent invite note under the pure-DAP format"
+  },
+  "networkAddAgentSecretHint": "The DAP hub's master secret — paste yours before copying",
+  "@networkAddAgentSecretHint": {
+    "description": "Agent invite hint for the editable DAP master secret field"
+  },
   "networkAddAgentEnvHint": "Env vars for a CI runner (GitHub Actions) — the link already carries the network id + password (or the channel keys); nothing else to fill in. Reserved for the upcoming CLI network mode — desktop and mobile agents use the link.",
   "@networkAddAgentEnvHint": {
     "description": "Agent invite note under the env format"
