@@ -923,7 +923,7 @@
   "networkAddAgentFormatLink": "Ссылка (приложение)",
   "networkAddAgentFormatCli": "CLI-команда",
   "networkAddAgentFormatEnv": "Env (CI)",
-  "networkAddAgentEnvHint": "Строка запуска CLI-harness на раннере (GitHub Actions): подставь свою пару провайдер+модель и мастер-секрет хаба — ключи канала приезжают командой import.",
+  "networkAddAgentEnvHint": "Хаб-строка запуска для раннера (GitHub Actions): подставь мастер-секрет хаба — ключи канала приезжают командой import. Провайдер настраивается fa-конфигом самого раннера.",
   "networkAddAgentNetworkHint": "Агент входит полным участником и видит все каналы сети.",
   "networkAddAgentNetworkNoPassword": "Пароль сети недоступен на этом устройстве — при входе ссылка запросит его.",
   "networkAddAgentCliHint": "Команда работает для хабов с прямым DAP-доступом (например, локальный стенд); CLI-вход на production fa_network — в разработке.",
