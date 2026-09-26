@@ -139,8 +139,13 @@ class SessionSearchField extends StatefulWidget {
     super.key,
     this.focusNode,
     this.controller,
+    this.hintText,
     required this.onQueryChanged,
   });
+
+  /// Hint override for non-session lists reusing this field (the networks
+  /// sidebar searches memberships). Defaults to "Search sessions".
+  final String? hintText;
 
   /// Focus node for the text field; owned by the host when provided, so
   /// keyboard shortcuts can focus the field from anywhere.
@@ -235,7 +240,7 @@ class _SessionSearchFieldState extends State<SessionSearchField> {
         style: const TextStyle(fontSize: 13),
         decoration: InputDecoration(
           isDense: true,
-          hintText: context.l10n.sidebarSearchHint,
+          hintText: widget.hintText ?? context.l10n.sidebarSearchHint,
           prefixIcon: Icon(Icons.search, size: 18, color: colors.dim),
           suffixIcon: _controller.text.isEmpty
               ? null
