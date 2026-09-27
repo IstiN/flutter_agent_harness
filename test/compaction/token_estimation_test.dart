@@ -519,14 +519,15 @@ void main() {
         effectiveContextWindow: window,
         reserveTokens: reserve,
         systemPrompt: 'a' * 4000, // 1000 tokens
-        tools: const [tool],
+        tools: [tool],
       );
-      final overhead = estimateRequestOverheadTokens('a' * 4000, const [tool]);
+      final overhead = estimateRequestOverheadTokens('a' * 4000, [tool]);
       // The parity identity: transcript budget + overhead + reserve must
       // reassemble the window, so the meter (transcript + overhead) can
       // never read past window − reserve on a fresh resume.
       expect(budget + overhead + reserve, window);
-      expect(budget, window - reserve - 1000 - overhead);
+      // The overhead already prices the prompt in — subtracted once.
+      expect(budget, window - reserve - overhead);
     });
 
     test('no prompt and no tools: budget = window − reserve', () {
@@ -546,13 +547,13 @@ void main() {
         effectiveContextWindow: window,
         reserveTokens: reserve,
         systemPrompt: prompt,
-        tools: const [tool],
+        tools: [tool],
       );
       expect(
         budget,
         window -
             reserve -
-            estimateRequestOverheadTokens(prompt, const [tool]),
+            estimateRequestOverheadTokens(prompt, [tool]),
       );
     });
 
@@ -637,10 +638,10 @@ void main() {
         msg('giant', 'e9', 'g' * 20000),
         ...msgs(49, from: 10),
       ];
-      for (var i = 10; i < branch.length; i++) {
+      for (var i = 11; i < branch.length; i++) {
         branch[i] = msg(
           branch[i].id,
-          i == 10 ? 'giant' : branch[i - 1].id,
+          i == 11 ? 'giant' : branch[i - 1].id,
           'a' * 400,
         );
       }
@@ -649,11 +650,14 @@ void main() {
       final kept = branch.sublist(cut);
       final estimate = estimateProjectedBranchTokens(kept);
       // The giant (which alone would push the tally to 9900) is NOT
-      // accepted: the old block-granular stop landed on whatever doubling
-      // block crossed, tens of thousands of tokens past the budget.
+      // accepted: the walk stops BEFORE it — the kept tail is the 49
+      // small records (4900). The old block-granular stop landed on
+      // whatever doubling block crossed, tens of thousands of tokens
+      // past the budget.
       expect(estimate, 4900);
       expect(estimate, lessThanOrEqualTo(budget));
       expect(kept, hasLength(49));
+      expect(kept.any((r) => r.id == 'giant'), isFalse);
     });
 
     test('hidden records price as markers in the cut arithmetic (same '
