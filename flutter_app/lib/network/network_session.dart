@@ -25,6 +25,7 @@ final class ChannelMessage {
     required this.senderPub,
     required this.text,
     required this.isOwn,
+    this.senderName,
     this.createdAt,
   });
 
@@ -33,6 +34,11 @@ final class ChannelMessage {
 
   /// The fa_network member id of the sender.
   final String senderId;
+
+  /// The sender's display name when known from the envelope itself
+  /// (hub-originated frames carry the enrolled DAP agent name —
+  /// fa_network#2); the roster remains the source for member senders.
+  final String? senderName;
 
   /// The sender's X25519 pubkey from the fanet1 frame ('' when the
   /// envelope could not be decrypted).
@@ -282,6 +288,7 @@ final class NetworkSession extends ChangeNotifier {
         envelopeId: envelope.id,
         senderId: envelope.senderId,
         senderPub: '',
+        senderName: envelope.senderName,
         text: decodePublicChannelPayload(envelope.payload),
         isOwn: isOwn,
         createdAt: envelope.createdAt,
@@ -293,6 +300,7 @@ final class NetworkSession extends ChangeNotifier {
         envelopeId: envelope.id,
         senderId: envelope.senderId,
         senderPub: '',
+        senderName: envelope.senderName,
         text: null,
         isOwn: isOwn,
         createdAt: envelope.createdAt,
@@ -314,6 +322,7 @@ final class NetworkSession extends ChangeNotifier {
         envelopeId: envelope.id,
         senderId: envelope.senderId,
         senderPub: decoded.senderPub,
+        senderName: envelope.senderName,
         text: decoded.plaintext,
         isOwn: isOwn,
         createdAt: envelope.createdAt,
@@ -323,6 +332,7 @@ final class NetworkSession extends ChangeNotifier {
         envelopeId: envelope.id,
         senderId: envelope.senderId,
         senderPub: '',
+        senderName: envelope.senderName,
         text: null,
         isOwn: isOwn,
         createdAt: envelope.createdAt,
