@@ -1666,6 +1666,10 @@ Future<void> _runApp(List<String> args) async {
             customProviders: saved.customProviders,
             defaultRoleResolved: defaultRoleResolved,
             interactive: headlessPrompt == null,
+            // The restored folder state's saved entry (gh-1000 AC1): its
+            // own key slot resolves FIRST — the account the session
+            // actually ran on, never a same-endpoint twin.
+            pinnedKeyName: folderPinnedEntry?.keyName,
           );
   } on ConfigException catch (error) {
     _fail(error.message);
@@ -1951,6 +1955,9 @@ Future<void> _runApp(List<String> args) async {
       providerKind: cli.providerKind,
       modelId: cli.agent.state.model.id,
       baseUrl: cli.agent.state.model.baseUrl,
+      // The active saved entry (gh-1000): the pin makes the next restore
+      // land on the same account's key, not the first endpoint match.
+      customProvider: cli.activeCustomProviderName,
     );
   }
 
@@ -2075,6 +2082,10 @@ Future<void> _runApp(List<String> args) async {
       // Marathon-session resume parses its multi-hundred-MB tail off the
       // UI isolate (issue #503); the isolate executor is IO-only.
       parseExecutor: const IsolateSessionParseExecutor(),
+      // The folder state's saved provider entry (gh-1000 AC1): the CLI
+      // starts with that entry active — its key slot serves the restored
+      // model and its name shows in the status bar.
+      activeCustomName: folderPinnedEntry?.name,
       model: model,
       apiKey: apiKey,
       providerKind: provider,
