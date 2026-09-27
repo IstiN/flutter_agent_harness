@@ -26,6 +26,10 @@ final class SandboxShellJob implements ShellJob {
   final _cancelSource = CancelTokenSource();
   final _settled = Completer<void>();
   Future<void> _writeChain = Future<void>.value();
+
+  /// Whether the log writer failed once (issue #925): stop feeding it —
+  /// the job keeps running headless, mirroring the local shell job.
+  bool _logBroken = false;
   int? _exitCode;
   String? _stopReason;
 
@@ -37,10 +41,10 @@ final class SandboxShellJob implements ShellJob {
 
   @override
   final String logPath;
-  @override
 
   /// No host process on the sandboxed shell: the sweep has nothing to
   /// record for web/WASI jobs.
+  @override
   int? get pid => null;
 
   /// The token the job's script runs under; [stop] cancels it. Callers wire
@@ -71,42 +75,77 @@ final class SandboxShellJob implements ShellJob {
   bool writeStdin(String data) => false;
 
   /// Appends one output chunk to the log, serialized so concurrent
-  /// stdout/stderr chunks keep their arrival order.
+  /// stdout/stderr chunks keep their arrival order. A failing log writer
+  /// marks the log broken (further writes are skipped) instead of
+  /// poisoning the chain — completeWith drains it before settling
+  /// (issue #925: a broken log must never kill the host or hang the job).
   void writeLog(String chunk) {
-    _writeChain = _writeChain.then((_) => _logWriter(chunk));
+    if (_logBroken) return;
+    _writeChain = _writeChain.then((_) => _logWriter(chunk)).catchError((
+      Object _,
+    ) {
+      _logBroken = true;
+    });
   }
 
   /// Completes the job from the script's exec result (called by the owning
-  /// shell's detached run). Idempotent; the first completion wins.
+  /// shell's detached run). Idempotent; the first completion wins. Never
+  /// throws and always settles — a broken log (issue #925) may freeze the
+  /// log content, never the job lifecycle.
   Future<void> completeWith(
     Result<ShellExecResult, ExecutionError> result,
   ) async {
     if (_exitCode != null) return;
-    if (result.isErr) {
-      final error = result.errorOrNull!;
-      if (error.code != ExecutionErrorCode.aborted) {
-        // Surface backend failures in the log, not just the exit code.
-        writeLog('[job error: $error]\n');
-      }
+    _noteBackendFailure(result);
+    try {
+      await _writeChain;
+      await _closeLogQuietly();
+      _applyOutcome(result);
+    } finally {
+      _settled.complete();
     }
-    await _writeChain;
-    await _closeLog?.call();
+  }
+
+  /// Surfaces backend failures in the log, not just the exit code.
+  void _noteBackendFailure(Result<ShellExecResult, ExecutionError> result) {
+    if (!result.isErr) return;
+    final error = result.errorOrNull!;
+    if (error.code != ExecutionErrorCode.aborted) {
+      writeLog('[job error: $error]\n');
+    }
+  }
+
+  /// Drains the close hook; a throwing log close must not escape into the
+  /// zone or leave the job unsettled (issue #925).
+  Future<void> _closeLogQuietly() async {
+    try {
+      await _closeLog?.call();
+    } on Object {}
+  }
+
+  /// Exit codes for a failed exec result, by error code.
+  static const _errorExitCodes = <ExecutionErrorCode, int>{
+    ExecutionErrorCode.aborted: 143,
+    ExecutionErrorCode.timeout: 124,
+  };
+
+  /// Stop reasons recorded for a failed exec result, by error code.
+  static const _errorStopReasons = <ExecutionErrorCode, String>{
+    ExecutionErrorCode.aborted: 'cancelled',
+    ExecutionErrorCode.timeout: 'timeout',
+  };
+
+  /// Maps the exec result onto exit code and stop reason (first-completion
+  /// wins: a [stop] reason recorded earlier is never overwritten).
+  void _applyOutcome(Result<ShellExecResult, ExecutionError> result) {
     if (result.isOk) {
       _exitCode = result.valueOrNull!.exitCode;
-    } else {
-      final error = result.errorOrNull!;
-      _exitCode = switch (error.code) {
-        ExecutionErrorCode.aborted => 143,
-        ExecutionErrorCode.timeout => 124,
-        _ => 1,
-      };
-      if (error.code == ExecutionErrorCode.aborted) {
-        _stopReason ??= 'cancelled';
-      } else if (error.code == ExecutionErrorCode.timeout) {
-        _stopReason ??= 'timeout';
-      }
+      return;
     }
-    _settled.complete();
+    final code = result.errorOrNull!.code;
+    _exitCode = _errorExitCodes[code] ?? 1;
+    final reason = _errorStopReasons[code];
+    if (reason != null) _stopReason ??= reason;
   }
 
   @override
