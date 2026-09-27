@@ -248,6 +248,7 @@ class Envelope {
     required this.payload,
     this.mentions,
     this.senderKey,
+    this.senderName,
     this.createdAt,
   });
 
@@ -266,6 +267,11 @@ class Envelope {
   /// the contract — never message content). Absent = unknown; fall back
   /// to a self-describing payload wrapper (fanet1) or whois.
   final String? senderKey;
+
+  /// The sender's display name when the relay knows it (hub-originated
+  /// envelopes carry the enrolled DAP agent name — fa_network#2). Absent
+  /// for member-originated envelopes and legacy frames.
+  final String? senderName;
   final DateTime? createdAt;
 
   factory Envelope.fromJson(Map<String, Object?> json) => Envelope(
@@ -275,6 +281,7 @@ class Envelope {
     payload: _str(json['payload']),
     mentions: _strList(json['mentions']),
     senderKey: _strOrNull(json['senderKey']),
+    senderName: _strOrNull(json['senderName']),
     createdAt: _date(json['createdAt']),
   );
 
@@ -285,6 +292,7 @@ class Envelope {
     'payload': payload,
     'mentions': ?mentions,
     'senderKey': ?senderKey,
+    'senderName': ?senderName,
     'createdAt': ?createdAt?.toIso8601String(),
   };
 }
