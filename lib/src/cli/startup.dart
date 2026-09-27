@@ -257,9 +257,23 @@ Set<String> roleKeyNames(ModelRolesConfig rolesConfig) {
       for (final override in rolesConfig.pathOverrides)
         ...refsOf(override.roles),
     ])
-      if (ref.baseUrl != null)
+      if (_refNeedsEndpointSlot(ref))
         CustomProviderRegistry.keyNameFor(ref.baseUrl!),
   };
+}
+
+/// Whether [ref] pins a NON-default endpoint — the roles resolver then
+/// probes the endpoint-scoped `FA_KEY_<HOST>` slot for it (gh-1000 AC5),
+/// so the snapshot must carry that slot. A catalog-default pin resolves
+/// through the provider's env-name chain instead and adds no slot
+/// (mirroring [ModelRolesResolver._endpointScopedKeyName] exactly: the
+/// ref's OWN spec decides); an unknown provider skips in the resolver and
+/// consumes no key, so it adds no slot either.
+bool _refNeedsEndpointSlot(ModelRef ref) {
+  final baseUrl = ref.baseUrl;
+  if (baseUrl == null) return false;
+  final spec = resolveCliProviderSpec(ref.provider, honorBuildFilter: true);
+  return spec != null && baseUrl != spec.defaultBaseUrl;
 }
 
 /// Every provider key name the startup snapshot must preload: each catalog

@@ -228,11 +228,17 @@ void main() {
       await run;
     }
 
-    AgentCli pinnedCliFactory({
+    // Async: the secure cache mirrors the real boot preload (reads hit the
+    // snapshot, never live store spawns).
+    Future<AgentCli> pinnedCliFactory({
       required String sessionName,
       CustomProviderRegistry? registry,
       FakeSecureKeyStore? store,
-    }) {
+    }) async {
+      final keyCache = SecureKeyCache(store ?? FakeSecureKeyStore());
+      await keyCache.preload(
+        store == null ? const <String>[] : store.map.keys.toList(),
+      );
       return AgentCli(
         config: AgentCliConfig(
           model: Model(
@@ -248,7 +254,7 @@ void main() {
           sessionRoot: '/sessions',
           sessionName: sessionName,
           customProviders: registry,
-          secureKeys: SecureKeyCache(store ?? FakeSecureKeyStore()),
+          secureKeys: keyCache,
         ),
         io: freshIo(),
         streamFunction: _singleTextResponse('ok'),
@@ -275,7 +281,7 @@ void main() {
             FakeSecureKeyStore()
               ..map[iraKeyName] = 'ira-key'
               ..map[kimiMeKeyName] = 'me-key';
-        final second = pinnedCliFactory(
+        final second = await pinnedCliFactory(
           sessionName: 'twin',
           registry: twinRegistry(),
           store: store,
@@ -287,9 +293,18 @@ void main() {
         await run;
 
         expect(second.agent.state.model.id, 'k3-256k');
-        // Name-pinned, NOT first-endpoint-match (which would be ira-1).
+        // Name-pinned, NOT first-endpoint-match (which would be ira-1):
+        // the active binding names kimi_me in the status bar, its row is
+        // the (current) one, and its OWN key slot serves the session.
         expect(second.activeCustomProviderName, 'kimi_me');
-        expect(io.out.toString(), contains('kimi_me (current)'));
+        expect(second.agent.state.model.baseUrl, kimiUrl);
+        expect(
+          io.out.toString(),
+          contains('kimi_me — https://api.kimi.com/coding/v1 · '
+              'k3-256k (current)'),
+        );
+        expect(io.out.toString(), contains('kimi_me/k3-256k'));
+        expect(io.out.toString(), contains('key: $kimiMeKeyName'));
         expect(io.out.toString(), isNot(contains('no longer configured')));
       },
     );
@@ -309,7 +324,7 @@ void main() {
           customProvider: 'kimi_me',
         );
 
-        final second = pinnedCliFactory(
+        final second = await pinnedCliFactory(
           sessionName: 'store-key',
           registry: twinRegistry(),
           store: FakeSecureKeyStore()..map[kimiMeKeyName] = 'me-key',
@@ -342,7 +357,7 @@ void main() {
           customProvider: 'kimi_me',
         );
 
-        final second = pinnedCliFactory(
+        final second = await pinnedCliFactory(
           sessionName: 'no-key',
           registry: twinRegistry(),
           store: FakeSecureKeyStore(),
@@ -374,7 +389,7 @@ void main() {
           customProvider: 'gone-provider',
         );
 
-        final second = pinnedCliFactory(
+        final second = await pinnedCliFactory(
           sessionName: 'renamed',
           registry: twinRegistry(),
           store: FakeSecureKeyStore()..map[kimiMeKeyName] = 'me-key',
@@ -406,7 +421,7 @@ void main() {
           baseUrl: kimiUrl,
         );
 
-        final second = pinnedCliFactory(
+        final second = await pinnedCliFactory(
           sessionName: 'legacy',
           registry: twinRegistry(),
           store: FakeSecureKeyStore()..map[kimiMeKeyName] = 'me-key',

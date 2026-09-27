@@ -131,13 +131,15 @@ Future<FolderModelState?> loadFolderModelState(
       return null;
     }
     if (baseUrl != null && baseUrl is! String) return null;
+    // A non-string pin (a hand-edited state file) degrades to NO pin — the
+    // state itself stays servable and restores endpoint-keyed (AC4
+    // tolerance; the pin is an optimization over the endpoint match).
     final customProvider = decoded['customProvider'];
-    if (customProvider != null && customProvider is! String) return null;
     return FolderModelState(
       providerKind: providerKind,
       modelId: modelId,
       baseUrl: baseUrl as String?,
-      customProvider: customProvider as String?,
+      customProvider: customProvider is String ? customProvider : null,
     );
   } on FormatException {
     return null;

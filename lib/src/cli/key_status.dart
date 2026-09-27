@@ -351,9 +351,17 @@ final class KeyStatusRenderer {
         '/key set $keyName <value>$login';
   }
 
-  /// Whether [baseUrl] IS some catalog spec's default endpoint.
+  /// Whether [baseUrl] IS the current provider kind's own default
+  /// endpoint. ONLY there is the generic roles hint honest: a
+  /// catalog-default pin resolves through the provider's env-name chain
+  /// (no endpoint slot — mirroring the resolver). Any other endpoint is a
+  /// custom binding whose endpoint-scoped slot the resolver actually
+  /// probes (gh-1000 AC2/AC5) — the hint must name that slot, not claim
+  /// "environment only".
   bool _isCatalogDefaultEndpoint(String baseUrl) =>
-      providerCatalog.values.any((spec) => spec.defaultBaseUrl == baseUrl);
+      resolveCliProviderSpec(providerKind, honorBuildFilter: true)
+          ?.defaultBaseUrl ==
+      baseUrl;
 
   /// The saved custom entry serving [baseUrl]: the active entry when it
   /// matches (two accounts can share one endpoint — the active one is the

@@ -215,7 +215,9 @@ void main() {
       String? activeCustomName,
     }) async {
       final keys = SecureKeyCache(store ?? FakeSecureKeyStore());
-      await keys.preload(const []);
+      await keys.preload(
+        store == null ? const [] : store.map.keys.toList(),
+      );
       return KeyStatusRenderer(
         rolesDriven: true,
         providerKind: 'openai-completions',
