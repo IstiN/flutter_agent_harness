@@ -20,8 +20,7 @@ void main() {
   for (final rowsCount in [10, 8]) {
     test('bottom chrome complete at 100x$rowsCount mid-run with echo', () async {
       final tempHome = Directory.systemTemp.createTempSync('fa_tui_tiny_');
-      final workspace = Directory('/tmp/fatinyws')
-        ..createSync(recursive: true);
+      final workspace = Directory('/tmp').createTempSync('fatiny');
       addTearDown(() => workspace.deleteSync(recursive: true));
       final server = await MockLlmServer.start()
         ..enqueueToolCall('bash', '{"command": "sleep 20"}')
