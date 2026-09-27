@@ -26,7 +26,7 @@ name: 'AI Teammate'
 
 run-name: >-
   ${{ github.event_name == 'workflow_dispatch' &&
-      (github.event.inputs.pr != '' &&
+      ((github.event.inputs.pr || '') != '' &&
        format('▶ {0} (SM) · pr-{1}', github.event.inputs.leg, github.event.inputs.pr) ||
        format('▶ {0} (SM) · gh-{1}', github.event.inputs.leg, github.event.inputs.issue)) ||
       format('{0} · gh-{1}: {2}',
@@ -72,7 +72,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: ai-teammate-issue-${{ github.event.issue.number || github.event.inputs.issue }}
+  # PR-anchored dispatches (#544/#687) carry no issue — fall back to the pr
+  # input so each PR keeps its OWN group ('ai-teammate-issue-pr-266');
+  # without it every PR-anchored run shares the empty group and serializes
+  # across unrelated PRs.
+  group: ai-teammate-issue-${{ github.event.issue.number || github.event.inputs.issue || format('pr-{0}', github.event.inputs.pr) }}
   cancel-in-progress: false
 
 jobs:
