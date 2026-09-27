@@ -68,11 +68,12 @@ void main() {
     'ten background bash jobs start, count down on camera, drain to '
     '0 running (#573 review)',
     () async {
-      // Short fixed dirs: the classic status-row tail ('· ctx', ' · turn ')
-      // is truncated by long macOS temp paths.
-      final home = Directory('/tmp/fa_573_home')..createSync(recursive: true);
-      final project = Directory('/tmp/fa_573_proj')
-        ..createSync(recursive: true);
+      // Unique SHORT dirs (the #936/#938 class — fixed /tmp paths race
+      // concurrent suite copies on the shared minis). The classic
+      // status-row tail ('· ctx', ' · turn ') is truncated by long macOS
+      // temp paths, so the roots stay under /tmp.
+      final home = Directory('/tmp').createTempSync('fa573h');
+      final project = Directory('/tmp').createTempSync('fa573p');
       addTearDown(() => home.delete(recursive: true));
       addTearDown(() => project.delete(recursive: true));
       // Pin the classic chrome: this suite asserts the pre-#805 classic
