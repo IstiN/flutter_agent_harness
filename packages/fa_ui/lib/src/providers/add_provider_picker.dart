@@ -329,6 +329,9 @@ class AddProviderPresetPickerPage extends StatelessWidget {
           registry ?? ProviderRegistry.inMemory(),
           title: FaUiStrings.of(context).settingsAddProvider,
           modelsFetcher: modelsFetcher,
+          // Not a boarding context (issue #1020 gates onboarding only) —
+          // the model stays optional here, as everywhere but onboarding.
+          requireModel: false,
         );
         if (context.mounted) Navigator.of(context).pop(true);
         return;
