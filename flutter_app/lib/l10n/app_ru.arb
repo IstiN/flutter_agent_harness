@@ -919,6 +919,7 @@
   "networkAddAgentTitle": "Добавить агента",
   "networkAddAgentWarning": "Передавайте эту строку только напрямую — любой, у кого она есть, сможет читать канал.",
   "networkAddAgentNoKeys": "На этом устройстве нет ключей для этого канала.",
+  "networkAddAgentNoChannelKeys": "В кошельке нет ключей каналов — агент увидит каналы только после инвайта ключа",
   "networkAddAgentScopeChannel": "Этот канал",
   "networkAddAgentScopeNetwork": "Вся сеть",
   "networkAddAgentFormatLink": "Ссылка (приложение)",

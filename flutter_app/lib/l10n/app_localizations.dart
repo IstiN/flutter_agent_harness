@@ -4154,6 +4154,12 @@ abstract class AppLocalizations {
   /// **'No keys for this channel on this device.'**
   String get networkAddAgentNoKeys;
 
+  /// Network-scope agent invite note when the wallet can produce no channel invites to bundle
+  ///
+  /// In en, this message translates to:
+  /// **'No channel keys in this wallet — the agent will see channels only after a key invite'**
+  String get networkAddAgentNoChannelKeys;
+
   /// Agent invite scope segment: channel-only access
   ///
   /// In en, this message translates to:

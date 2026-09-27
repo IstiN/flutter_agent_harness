@@ -2342,6 +2342,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'No keys for this channel on this device.';
 
   @override
+  String get networkAddAgentNoChannelKeys =>
+      'No channel keys in this wallet — the agent will see channels only after a key invite';
+
+  @override
   String get networkAddAgentScopeChannel => 'This channel';
 
   @override

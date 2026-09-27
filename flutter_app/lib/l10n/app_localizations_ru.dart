@@ -2371,6 +2371,10 @@ class AppLocalizationsRu extends AppLocalizations {
       'На этом устройстве нет ключей для этого канала.';
 
   @override
+  String get networkAddAgentNoChannelKeys =>
+      'В кошельке нет ключей каналов — агент увидит каналы только после инвайта ключа';
+
+  @override
   String get networkAddAgentScopeChannel => 'Этот канал';
 
   @override

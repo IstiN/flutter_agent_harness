@@ -1203,6 +1203,10 @@
   "@networkAddAgentNoKeys": {
     "description": "Agent invite placeholder when the wallet holds no channel keys"
   },
+  "networkAddAgentNoChannelKeys": "No channel keys in this wallet — the agent will see channels only after a key invite",
+  "@networkAddAgentNoChannelKeys": {
+    "description": "Network-scope agent invite note when the wallet can produce no channel invites to bundle"
+  },
   "networkAddAgentScopeChannel": "This channel",
   "@networkAddAgentScopeChannel": {
     "description": "Agent invite scope segment: channel-only access"
