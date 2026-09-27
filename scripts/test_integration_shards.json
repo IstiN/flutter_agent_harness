@@ -88,7 +88,7 @@
   "meta": {
     "generated": "2026-09-25",
     "sources": "per-file wall: serial no-key run on arm64 (json file-reporter, this PR); PTY-denied-sandbox files from #932's measured seed baseline or the owner-stated 2.5 min fa_cli_integration figure split 7/2/2/1; 100s default elsewhere",
-    "note": "3-way split of the PTY/CLI critical path; file-level units. New integration-tagged files bin-pack in at runtime via shard_files.py --tags integration.",
+    "note": "3-way split of the PTY/CLI critical path; file-level units. New integration-tagged files bin-pack in at runtime via shard_files.py --tags integration. gh-1005 (2026-09-30): the manifest is audited macOS-free (the only macOS-gated assertion, fa_cube_integration_test's kernel nested-rw probe, passes on Linux; the real macOS kernel E2E lives in test/cube/backends on cube-kernel-live) — ONE consolidated hosted-linux leg (ci.yml pty-integration-linux) runs it; the parallel fa-m5 mac leg is retired.",
     "weights": {
       "test/cli/ext_engine_process_test.dart": 100.0,
       "test/cli/fah_hub_serve_ports_test.dart": 100.0,
