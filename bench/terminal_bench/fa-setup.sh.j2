@@ -8,10 +8,10 @@ tar -xzf /installed-agent/fa-bundle.tar.gz -C /opt/fa
 chmod +x /opt/fa/bin/fah
 ln -sf /opt/fa/bin/fah /usr/local/bin/fa
 
-# No user is present during benchmark runs; unattended skips the
+# No user is present during benchmark runs; autopilot skips the
 # critical-pattern bash interceptor that headless mode would deny.
 mkdir -p ~/.fah
 grep -q approvalMode ~/.fah/config.yaml 2>/dev/null ||
-    printf 'approvalMode: unattended\n' > ~/.fah/config.yaml
+    printf 'approvalMode: autopilot\n' > ~/.fah/config.yaml
 
 fa --version
