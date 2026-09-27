@@ -103,22 +103,18 @@ void main() {
   late File turnsFile;
 
   setUp(() async {
-    // UNIQUE per-run roots (the #936 class): the former fixed
-    // /tmp/fa_539_home + /tmp/fa_539_proj paths race every concurrently
-    // running copy of this suite — the 3 PTY shards share the mini pool, so
-    // a sibling's setUp/tearDown recreating or deleting the fixed dir wedges
-    // this copy's CLI mid-boot (the [Model] banner never arrives →
-    // waitForBoot timeout) and then breaks its own tearDown
-    // (PathNotFoundException). Observed on main (run 36224616919).
-    // Uniqueness also stops session state from a crashed prior run leaking
-    // into the next.
+    // Issue #943 (vector 1): unique per-RUN roots. The old hardcoded
+    // /tmp/fa_539_home + /tmp/fa_539_proj were shared by every copy of
+    // this suite — one run's tearDown deleting them under another's live
+    // CLI wedges the boot ([Model] never arrives) and then breaks its own
+    // teardown (PathNotFoundException). Observed on main (run 36224616919).
     //
     // Under /tmp, NOT Directory.systemTemp: on the mac minis systemTemp
     // resolves to a ~77-char /private/var/folders/... path, and the status
     // row renders `<cwd> · ctx N% ...` clipped at the glass — the long cwd
     // eats the `· ctx ` marker expectComposerReserved() sniffs, so a live
     // frame misclassifies as idle (run 36232635161, the 80-col leg). The
-    // resolved /tmp path (/private/tmp/fa_539_p_XXXXXXXX) keeps the marker
+    // resolved /tmp path (/private/tmp/fa_539_XXXXXX) keeps the marker
     // inside the glass; /tmp already was this suite's platform contract.
     home = await Directory('/tmp').createTemp('fa_539_h_');
     project = await Directory('/tmp').createTemp('fa_539_p_');
@@ -132,8 +128,17 @@ void main() {
   });
 
   tearDown(() async {
-    await home.delete(recursive: true);
-    await project.delete(recursive: true);
+    // Failure-safe cleanup (issue #943): the run's own verdict must never
+    // hinge on whether a straggler ext process still holds a root — a
+    // unique-per-run root can only leave /tmp residue, never poison the
+    // next run.
+    for (final dir in [home, project]) {
+      try {
+        dir.deleteSync(recursive: true);
+      } on FileSystemException {
+        // Straggler holds it; /tmp reclaims the unique dir.
+      }
+    }
   });
 
   Map<String, String> env() => {
@@ -244,19 +249,14 @@ void main() {
       // The printed `· older` row is a frozen snapshot: after the FIRST
       // settle lands (four jobs still live), it must not have moved — the
       // unfrozen board would re-derive `· 4 running · 1 done` here.
-      // The frozen-snapshot contract (issue #539) is the row's printed
-      // CONTENT — counts may never move while its jobs settle. The captured
-      // line's TRAILING SPACES are VT paint residue (whatever longer line
-      // last occupied that screen row, cleared or kept by a later
-      // `\x1b[K`), invisible to the user and timing-dependent under the
-      // concurrency=4 shards: the 120-col leg failed on a byte-identical
-      // text row that merely lost its residue between the two captures
-      // (run 36226403947). Assert on trimmed lines.
-      List<String> olderRowsOf(List<String> frame) => frame
+      // Compared as CONTENT frames (gh-982): raw viewport equality also
+      // compares xterm buffer-cell materialization, which the two dart_tui
+      // paint paths leave differently depending on frame history — the
+      // macOS/fa-m5 flake failed raw equality on byte-identical counts.
+      final beforeOlder = frameContentLines(before)
           .where((l) => l.contains('· older') && l.contains('(5)'))
           .map((l) => l.trimRight())
           .toList();
-      final beforeOlder = olderRowsOf(before);
       expect(beforeOlder, hasLength(1), reason: 'frame before:\n$before');
       await harness.waitForText(
         _firstSettle,
@@ -266,7 +266,9 @@ void main() {
       final mid = harness.viewportLines;
       expectComposerReserved(mid, columns);
       expect(
-        olderRowsOf(mid),
+        frameContentLines(mid)
+            .where((l) => l.contains('· older') && l.contains('(5)'))
+            .toList(),
         beforeOlder,
         reason:
             'the printed `· older` row never changes counts while its '
@@ -315,15 +317,13 @@ void main() {
         onTimeout: () => -1,
       );
     }
-  },);
+  });
 
-  // gh-938: this case raced the shared /tmp/fa_539_home layout — moot since
-  // setUp moved both roots to unique dirs under /tmp (the #936 class fix
-  // above), so the skip is dropped. 'stacked boards freeze' above was
-  // quarantined on main as gh-982 (macOS/fa-m5 red, linux green): the same
-  // unique-roots fix re-enables it here — it ran green on the mini in run
-  // 36237226828 shard 0. It guards the real #937 regression and stays
-  // UNSKIPPED on purpose so a regression cannot hide (ai/gh-869).
+  // gh-938: only this case races the shared /tmp/fa_539_home layout.
+  // 'stacked boards freeze' above was QUARANTINED under gh-982 and is
+  // re-enabled: the macOS/fa-m5 flake was the raw viewport equality
+  // comparing xterm buffer-cell materialization across the dart_tui
+  // paint paths (fixed via frameContentLines), not a board regression.
   test(
     'restart with live jobs shows lost, never running (268/0 impossible)',
     () async {
@@ -381,5 +381,9 @@ void main() {
       );
       expectComposerReserved(resumed.viewportLines, 80);
     },
+    // Issue #943: re-enabled — the /tmp/fa_539_* race it died of is gone
+    // (unique per-run roots + failure-safe cleanup above). The OTHER
+    // scenario ('stacked boards freeze', #937) is re-enabled too, via the
+    // gh-982 fix (frameContentLines) on top of the same unique roots.
   );
 }

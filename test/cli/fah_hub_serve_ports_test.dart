@@ -16,6 +16,7 @@
 @Tags(['io', 'integration'])
 library;
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_agent_harness/io.dart'
@@ -93,6 +94,55 @@ void main() {
     );
     expect(code, 1);
   }, timeout: timeout);
+
+  test(
+    'serve onto a taken port that frees mid-retry: bind succeeds, exit 0',
+    () async {
+      // Issue #943 vector 2: an overlapping run's predecessor holds the
+      // port for a few hundred ms. hubServe connects to this port TWICE
+      // before a successful bind: the idempotency PRE-probe at the top
+      // of hubServe (accept 1), then attempt 1's mid-retry healthz
+      // probe after the bind fails (accept 2). The blocker closes on
+      // the SECOND accept — so the close is deterministic AND the
+      // retry path is genuinely exercised: attempt 1 cannot bind, and
+      // exit 0 is only reachable via attempt 2+.
+      final port = await freePort();
+      final blocker = await ServerSocket.bind('127.0.0.1', port);
+      var accepts = 0;
+      final secondAccepted = Completer<void>();
+      final sub = blocker.listen((socket) {
+        socket.destroy();
+        accepts++;
+        if (accepts == 2 && !secondAccepted.isCompleted) {
+          secondAccepted.complete();
+        }
+      });
+      unawaited(
+        secondAccepted.future.then((_) async {
+          await sub.cancel();
+          await blocker.close();
+        }),
+      );
+      addTearDown(() async {
+        await sub.cancel();
+        await blocker.close();
+      });
+      final pidFile = File('${tempHome.path}/hub.pid');
+      var loopRan = 0;
+      final code = await runHubCommand(
+        ['serve', '--port', '$port'],
+        home: tempHome.path,
+        environment: {envHubPidFile: pidFile.path},
+        serveLoop: (hub, _) async {
+          loopRan++;
+          await hub.stop();
+        },
+      );
+      expect(code, 0);
+      expect(loopRan, 1, reason: 'the retried bind went on to serve');
+    },
+    timeout: timeout,
+  );
 
   test(
     'serve happy path: hub up + protected, pid state written, exit 0',
