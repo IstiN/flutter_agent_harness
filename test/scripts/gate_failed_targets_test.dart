@@ -64,7 +64,7 @@ Future<String> runOnLog(String log) async {
   addTearDown(() => dir.deleteSync(recursive: true));
   final file = File('${dir.path}/log.json')..writeAsStringSync(log);
   final (out, code) = await runScript([file.path]);
-  expect(code, 0, reason: 'stderr: ${await ''}');
+  expect(code, 0);
   return out;
 }
 
