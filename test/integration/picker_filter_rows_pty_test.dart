@@ -18,7 +18,6 @@
 @TestOn('vm')
 @Tags(['io', 'integration'])
 @Timeout(Duration(minutes: 5))
-@Skip('infra: #936 hub port race (no shared:true)')
 library;
 
 import 'dart:io';
