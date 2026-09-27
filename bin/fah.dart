@@ -222,6 +222,7 @@ void _handleUncaughtError(Object error, StackTrace stackTrace) {
       final buffer = StringBuffer()
         ..writeln('timestamp: $timestamp')
         ..writeln('version: $version')
+        ..writeln('type: ${error.runtimeType}')
         ..writeln('error: $error')
         ..writeln('stack:')
         ..writeln(stackTrace);

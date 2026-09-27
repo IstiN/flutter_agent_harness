@@ -66,14 +66,18 @@ final class ChannelChatService implements FaChatService {
           role: 'assistant',
           content: message.text == null
               ? '_(unable to decrypt this message)_'
-              : '**${_senderName(message.senderId)}**\n\n${message.text}',
+              : '**${_senderName(message)}**\n\n${message.text}',
         ),
   ];
 
-  String _senderName(String senderId) {
-    final member = session.roster[senderId];
+  String _senderName(ChannelMessage message) {
+    // The envelope-carried name wins (hub-originated DAP agents are not in
+    // the fa_network roster — fa_network#2); members resolve via roster.
+    final claimed = message.senderName;
+    if (claimed != null && claimed.isNotEmpty) return claimed;
+    final member = session.roster[message.senderId];
     final name = member?.displayName;
-    return (name == null || name.isEmpty) ? senderId : name;
+    return (name == null || name.isEmpty) ? message.senderId : name;
   }
 
   @override
@@ -81,7 +85,7 @@ final class ChannelChatService implements FaChatService {
       .map(
         (m) => m.isOwn
             ? '**You**: ${m.text ?? ''}'
-            : '**${_senderName(m.senderId)}**: ${m.text ?? '(undecryptable)'}',
+            : '**${_senderName(m)}**: ${m.text ?? '(undecryptable)'}',
       )
       .join('\n\n');
 

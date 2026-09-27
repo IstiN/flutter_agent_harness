@@ -119,7 +119,9 @@ final class NetworkSessionManager extends ChangeNotifier {
   /// into the wallet, and holds the access token as the JWT.
   Future<void> signInWithProvider(
     String provider, {
-    String clientType = 'desktop',
+    // The browser flow runs in a popup with an origin redirect — the
+    // service keys provider-app allowlists off client_type.
+    String clientType = kIsWeb ? 'web' : 'desktop',
     String environment = 'prod',
   }) async {
     final client = _newClient();

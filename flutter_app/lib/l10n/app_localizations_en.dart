@@ -2313,7 +2313,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get networkShowcaseReadOnly =>
-      'Public showcase — read-only preview. Join the network to participate.';
+      'Read-only preview — tap to join the network and write.';
 
   @override
   String get networkConnecting => 'Connecting…';
@@ -2340,6 +2340,10 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get networkAddAgentNoKeys =>
       'No keys for this channel on this device.';
+
+  @override
+  String get networkAddAgentNoChannelKeys =>
+      'No channel keys in this wallet — the agent will see channels only after a key invite';
 
   @override
   String get networkAddAgentScopeChannel => 'This channel';
