@@ -5,8 +5,13 @@
 /// 'fanet1' channel envelope crypto — DAP/1-compatible primitives.
 ///
 /// The DAP/1 primitives (X25519 ECDH → HKDF-SHA256 → ChaCha20-Poly1305,
-/// AAD `dap1|<frameId>|<channelName>`) are ported mechanically from
+/// AAD `dap1|<frameId>|<aadTarget>`) are ported mechanically from
 /// `fa_hub_client-0.2.8/lib/src/hub/payload_crypto.dart` (MIT license).
+///
+/// AAD contract (#1002): `<aadTarget>` is the channel **id** — the hub-side
+/// channel name — so pure-DAP agents (who know only the hub name) can
+/// produce valid envelopes. Frames written before this contract used the
+/// fa_network display name; decrypt accepts those via `legacyAadTarget`.
 /// That file is NOT imported: its package barrel pulls in `dart:io`, which
 /// would break the web build of this app.
 ///
@@ -85,11 +90,16 @@ final class EnvelopeCodec {
 
   /// Encrypts [plaintext] for the channel whose members hold the private
   /// key matching [channelPub]. Returns the base64 'fanet1' frame.
+  ///
+  /// [aadTarget] rides the AEAD AAD (`dap1|<frameId>|<aadTarget>`). It
+  /// MUST be the channel **id** — the hub-side name — so pure-DAP agents
+  /// (who know only the hub channel name, never the fa_network display
+  /// name) can produce a valid AAD; see flutter_agent_harness#1002.
   Future<String> encrypt({
     required SimpleKeyPair senderIdentity,
     required SimplePublicKey channelPub,
     required String frameId,
-    required String channelName,
+    required String aadTarget,
     required String plaintext,
   }) async {
     final key = await _deriveKey(senderIdentity, channelPub, frameId);
@@ -100,7 +110,7 @@ final class EnvelopeCodec {
       utf8.encode(plaintext),
       secretKey: SecretKey(key),
       nonce: nonce,
-      aad: utf8.encode('dap1|$frameId|$channelName'),
+      aad: utf8.encode('dap1|$frameId|$aadTarget'),
     );
     final senderPub = await senderIdentity.extractPublicKey();
     return base64Encode([
@@ -113,14 +123,44 @@ final class EnvelopeCodec {
   }
 
   /// Decrypts a 'fanet1' frame produced by [encrypt]. [frameId] and
-  /// [channelName] must equal the sender's (they are AEAD AAD).
+  /// [aadTarget] must equal the sender's (they are AEAD AAD).
+  ///
+  /// [aadTarget] is the channel **id** (the post-#1002 contract). Frames
+  /// written before the AAD contract moved to ids were sealed with the
+  /// channel display NAME: pass it as [legacyAadTarget] and it is tried
+  /// after the id fails.
   ///
   /// Returns the sender's base64 X25519 pubkey and the plaintext.
   /// Throws [EnvelopeCryptoException] on any failure.
   Future<({String senderPub, String plaintext})> decrypt({
     required SimpleKeyPair channelKeyPair,
     required String frameId,
-    required String channelName,
+    required String aadTarget,
+    required String payloadB64,
+    String? legacyAadTarget,
+  }) async {
+    try {
+      return await _decryptWithAad(
+        channelKeyPair: channelKeyPair,
+        frameId: frameId,
+        aadTarget: aadTarget,
+        payloadB64: payloadB64,
+      );
+    } on EnvelopeCryptoException {
+      if (legacyAadTarget == null || legacyAadTarget == aadTarget) rethrow;
+      return _decryptWithAad(
+        channelKeyPair: channelKeyPair,
+        frameId: frameId,
+        aadTarget: legacyAadTarget,
+        payloadB64: payloadB64,
+      );
+    }
+  }
+
+  Future<({String senderPub, String plaintext})> _decryptWithAad({
+    required SimpleKeyPair channelKeyPair,
+    required String frameId,
+    required String aadTarget,
     required String payloadB64,
   }) async {
     try {
@@ -146,7 +186,7 @@ final class EnvelopeCodec {
       final clear = await _aead.decrypt(
         box,
         secretKey: SecretKey(key),
-        aad: utf8.encode('dap1|$frameId|$channelName'),
+        aad: utf8.encode('dap1|$frameId|$aadTarget'),
       );
       return (
         senderPub: base64Encode(spk.bytes),

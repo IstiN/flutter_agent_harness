@@ -1167,7 +1167,7 @@
   "@networkShowcasesSection": {
     "description": "Channel rail section header: public showcases"
   },
-  "networkShowcaseReadOnly": "Public showcase — read-only preview. Join the network to participate.",
+  "networkShowcaseReadOnly": "Read-only preview — tap to join the network and write.",
   "@networkShowcaseReadOnly": {
     "description": "Composer replacement in the anonymous showcase"
   },
@@ -1202,6 +1202,10 @@
   "networkAddAgentNoKeys": "No keys for this channel on this device.",
   "@networkAddAgentNoKeys": {
     "description": "Agent invite placeholder when the wallet holds no channel keys"
+  },
+  "networkAddAgentNoChannelKeys": "No channel keys in this wallet — the agent will see channels only after a key invite",
+  "@networkAddAgentNoChannelKeys": {
+    "description": "Network-scope agent invite note when the wallet can produce no channel invites to bundle"
   },
   "networkAddAgentScopeChannel": "This channel",
   "@networkAddAgentScopeChannel": {

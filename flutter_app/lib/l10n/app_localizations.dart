@@ -4103,7 +4103,7 @@ abstract class AppLocalizations {
   /// Composer replacement in the anonymous showcase
   ///
   /// In en, this message translates to:
-  /// **'Public showcase — read-only preview. Join the network to participate.'**
+  /// **'Read-only preview — tap to join the network and write.'**
   String get networkShowcaseReadOnly;
 
   /// Channel rail placeholder while the session connects
@@ -4153,6 +4153,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No keys for this channel on this device.'**
   String get networkAddAgentNoKeys;
+
+  /// Network-scope agent invite note when the wallet can produce no channel invites to bundle
+  ///
+  /// In en, this message translates to:
+  /// **'No channel keys in this wallet — the agent will see channels only after a key invite'**
+  String get networkAddAgentNoChannelKeys;
 
   /// Agent invite scope segment: channel-only access
   ///
