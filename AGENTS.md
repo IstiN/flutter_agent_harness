@@ -8,7 +8,8 @@ factual: paths, commands, invariants — no essays.
 - `lib/` — the `flutter_agent_harness` package (pure Dart core). `test/`
   mirrors it. `prompts/` — all LLM prompts as Markdown (see rules below).
 - `lib/src/approval/` — tool approval gate: tiers (read/write/exec),
-  session modes (always-ask/write/yolo/unattended), per-tool overrides,
+  session modes (always-ask/write/yolo/autopilot — the CLI label of the
+  `unattended` enum), per-tool overrides,
   critical-pattern
   `bash` interceptor, per-turn grants (`grantForTurn(allow:, deny:)` —
   skill `allowed-tools`/`disallowed-tools` manifest keys ride these for one
