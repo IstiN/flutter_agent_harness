@@ -3,7 +3,8 @@
 # and, when it grew, files/updates an issue assigned to ai-teammate asking
 # for the baseline raise. The baseline itself NO LONGER auto-commits: every
 # bump of scripts/cli_coverage_baseline.txt lands only through a reviewed PR
-# whose per-PR ratchet gate (ci.yml's pty-integration leg) passes green, and
+# whose per-PR ratchet gate (gh-1005: ci.yml's pty-integration-linux leg,
+# the single hosted-linux PTY leg) passes green, and
 # each bump must be traceable to a merged PTY test with real frame
 # assertions (#927 contract). The nightly ratchet (check_cli_coverage.py)
 # still enforces the committed floor — coverage can only ratchet UP, a
@@ -22,7 +23,10 @@ permissions:
 jobs:
   measure-and-file:
     name: Measure CLI coverage, file raise-to-X issue if higher
-    runs-on: ubuntu-latest
+    # gh-1005: measure on the SAME environment the per-PR ratchet measures —
+    # ubuntu-24.04-arm (pure-dart job per the runner-split note; OS-identical
+    # line hits to the x64 queue).
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
@@ -57,7 +61,7 @@ jobs:
             exit 0
           fi
           title="raise coverage to $measured"
-          body="$(printf 'Weekly CLI-coverage gardener measured **%s**%% on lib/src/cli/** — above the committed floor of **%s**%% (scripts/cli_coverage_baseline.txt).\n\nPer the #927 contract the baseline never auto-commits: land the raise through a reviewed PR that\n- updates scripts/cli_coverage_baseline.txt to %s,\n- passes the per-PR pty-integration ratchet gate green, and\n- traces every bump to a merged PTY test with real frame assertions.\n' "$measured" "$baseline" "$measured")"
+          body="$(printf 'Weekly CLI-coverage gardener measured **%s**%% on lib/src/cli/** — above the committed floor of **%s**%% (scripts/cli_coverage_baseline.txt).\n\nPer the #927 contract the baseline never auto-commits: land the raise through a reviewed PR that\n- updates scripts/cli_coverage_baseline.txt to %s,\n- passes the per-PR pty-integration-linux ratchet gate green, and\n- traces every bump to a merged PTY test with real frame assertions.\n' "$measured" "$baseline" "$measured")"
           number=$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "in:title \"raise coverage to\"" --json number,createdAt --jq 'sort_by(.createdAt) | map(.number) | last // empty')
           if [ -n "$number" ]; then
             gh issue edit "$number" -R "$GITHUB_REPOSITORY" --title "$title" --body "$body"
