@@ -376,7 +376,7 @@ extension ApprovalCommands on AgentCli {
   void _handleApprovalMode(String rest) {
     if (rest.isEmpty) {
       io.writeln('approval mode: ${_approval.mode.label}');
-      io.writeln('approval modes: always-ask, write, yolo, unattended');
+      io.writeln('approval modes: always-ask, write, yolo, $kAutopilotLabel');
       final allowed = _approval.alwaysAllowedTools;
       io.writeln(
         'always-allowed tools: ${allowed.isEmpty ? '(none)' : allowed.join(', ')}',
@@ -387,7 +387,7 @@ extension ApprovalCommands on AgentCli {
     if (mode == null) {
       io.writeln(
         'unknown approval mode: $rest '
-        '(want always-ask|write|yolo|unattended)',
+        '(want always-ask|write|yolo|$kAutopilotLabel)',
       );
       return;
     }
@@ -551,7 +551,7 @@ extension ApprovalCommands on AgentCli {
       cwd: _env.cwd,
       homeDir: config.homeDir,
       modelName: _agent.state.model.id,
-      approvalMode: _approval.mode.name,
+      approvalMode: _approval.mode.label,
       agentLoadMode: config.agentLoadMode,
       contextTokens: _liveContextTokens(),
       contextWindow: _effectiveContextWindow,
