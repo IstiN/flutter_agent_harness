@@ -1,8 +1,12 @@
-# Runner split (2026-09-22): PURE-DART jobs -> ubuntu-24.04-arm (public repo:
-# free, SEPARATE capacity pool from the x64 queue). Flutter jobs stay x64 —
-# Flutter ships NO official linux-arm64 SDK (stable 3.47.5 manifest is x64
-# only; subosito/flutter-action fails 'version: any architecture: arm64').
-# cube-kernel-live -> self-hosted M5 (fa-m5-1, user LaunchAgent).
+# Runner split (gh-1005, 2026-09-30): pure-Dart AND all PTY/terminal jobs ->
+# ubuntu-24.04-arm (public repo: free, SEPARATE capacity pool from the x64
+# queue). Flutter-test legs on arm64 bootstrap the SDK via git clone — Flutter
+# ships NO official linux-arm64 SDK (stable manifest is x64 only;
+# subosito/flutter-action fails 'version: any architecture: arm64'); x64
+# Flutter jobs keep the action. The self-hosted M5 pool is ONE runner
+# (fa-m5-1, user LaunchAgent) reserved for genuinely macOS-only work:
+# cube-kernel-live. PR PTY legs (integration shards, coverage/duration gates,
+# Terminal visual) run hosted-Linux only and never wait on fa-m5-1.
 name: CI
 
 on:
@@ -459,67 +463,47 @@ jobs:
   # Main remains backstopped by nightly.yml.
   # ─────────────────────────────────────────────────────────────────────────
   # ─────────────────────────────────────────────────────────────────────────
-  # PTY runner picker: prefer the self-hosted fa-m5 minis (dedicated hardware,
-  # warm caches, no VM boot, no port contention — the hosted pty-integration
-  # leg loses 20-40 min to queue+load flake), fall back to the hosted labels
-  # when the pool is busy. GitHub has no OR in runs-on (an array is AND), so
-  # the choice happens HERE by counting in-progress jobs already parked on
-  # fa-m5 runners (jobs API, actions:read — no admin token needed).
+  # gh-1005 (2026-09-30): the PTY legs are hosted-Linux ONLY. The audit of
+  # the whole shard manifest (scripts/test_integration_shards.json) found
+  # ZERO genuinely macOS-specific tests: the PTY harness allocates terminals
+  # via libc openpty FFI (package:pty2 — OS/arch independent), no suite
+  # depends on zsh defaults or /bin/bash 3.2 quirks, and the one macOS-only
+  # assertion (fa_cube_integration_test.dart's SBPL kernel nested-rw probe)
+  # is `if (Platform.isMacOS)`-guarded inside a test that passes on Linux.
+  # The genuinely macOS-only terminal behavior keeps its dedicated gates:
+  # cube-kernel-live (above) runs the real sandbox-exec E2E (test/cube/
+  # backends) on fa-m5-1, and the mac-only CLI lines (shift_hid CoreGraphics
+  # probe, stty -f device flag) stay unit-covered on ubuntu
+  # (test/cli/shift_hid_test.dart, fa_tui_controller_overlay_test.dart).
+  # Consequence: the fa-m5 runner-pick probe (M5_POOL) is GONE and the mac
+  # leg merged INTO the linux leg below — ONE sharded PTY/CLI integration
+  # job on ubuntu-24.04-arm that now also carries the per-shard coverage +
+  # dart-json/junit reporting the gate consumes. A PR validation's PTY legs
+  # never wait on fa-m5-1; hosted macOS (10x minute cost) is never used.
   # ─────────────────────────────────────────────────────────────────────────
-  runner-pick:
-    name: Pick PTY runners (fa-m5 or hosted fallback)
-    runs-on: ubuntu-latest
-    needs: changes
-    timeout-minutes: 3
-    permissions:
-      actions: read
-    outputs:
-      pty_integration: ${{ steps.pick.outputs.pty_integration }}
-      pty_visual: ${{ steps.pick.outputs.pty_visual }}
-    steps:
-      - name: Probe fa-m5 pool and pick
-        id: pick
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          M5_POOL: '1'
-        run: |
-          busy=0
-          for rid in $(gh api "repos/$REPO/actions/runs?status=in_progress&per_page=100" --jq '.workflow_runs[].id'); do
-            n=$(gh api "repos/$REPO/actions/runs/$rid/jobs" --jq '[.jobs[] | select(.status == "in_progress" and ((.runner_name // "") | startswith("fa-m5")))] | length' || echo 0)
-            busy=$((busy + n))
-          done
-          free=$((M5_POOL - busy))
-          if [ "$free" -ge 1 ]; then
-            echo "pool: $free free of $M5_POOL fa-m5 -> self-hosted"
-            echo 'pty_integration=["self-hosted","macos-m5"]' >> "$GITHUB_OUTPUT"
-            echo 'pty_visual=["self-hosted","macos-m5"]' >> "$GITHUB_OUTPUT"
-          else
-            echo "pool: $free free of $M5_POOL fa-m5 -> hosted fallback"
-            echo 'pty_integration=["ubuntu-latest"]' >> "$GITHUB_OUTPUT"
-            echo 'pty_visual=["macos-latest"]' >> "$GITHUB_OUTPUT"
-          fi
-
-  pty-integration:
-    # Issue #931 part 2: the leg was ONE job (~40 min hosted, the CI
-    # critical path); it is now 3 duration-balanced shards
-    # (scripts/test_integration_shards.json, file-level units). New
-    # integration-tagged files bin-pack in at runtime
+  pty-integration-linux:
+    # THE PR PTY/CLI integration leg (gh-1005: the former mac leg merged in;
+    # before that, issue #931 part 2 sharded ONE ~40-min job into 3
+    # duration-balanced shards — scripts/test_integration_shards.json,
+    # file-level units). New integration-tagged files bin-pack in at runtime
     # (shard_files.py --tags integration), so a PR adding one never
     # silently skips it. Explicit --concurrency=4 bounds in-suite
     # parallelism (part 3.3 — package:test forbids `concurrency` in
     # dart_test.yaml tag overrides, so the knob lives here; it bounds
-    # concurrent live-provider tests PER JOB — the cross-leg ceiling with
-    # the linux leg is documented on the llm tag in dart_test.yaml).
+    # concurrent live-provider tests PER JOB — the rate-limit rationale is
+    # documented on the llm tag in dart_test.yaml).
     # Per-shard coverage artifacts merge in pty-coverage-gate —
     # a single shard's ratchet would see partial lib/src/cli coverage
     # and false-regress. Each shard also emits the dart json
     # file-reporter: junit feeds rebalancing/budget-tightening PRs, the
     # raw json feeds the #928 duration gate (pty-coverage-gate below).
-    name: PTY/CLI integration (shard ${{ matrix.shard }}/3)
-    runs-on: ${{ fromJSON(needs.runner-pick.outputs.pty_integration) }}
-    needs: [changes, runner-pick]
-    timeout-minutes: 30
+    name: PTY/CLI integration (linux, shard ${{ matrix.shard }}/3)
+    runs-on: ubuntu-24.04-arm
+    # 40 > 30: the leg now carries the coverage + file-reporter overhead the
+    # old mac leg had (the coverage-free linux twin never paid it) and arm64
+    # Graviton cores run somewhat slower than the M-series minis did — margin
+    # without stretching the watchdog much.
+    timeout-minutes: 40
     permissions:
       contents: read
     strategy:
@@ -527,11 +511,10 @@ jobs:
       matrix:
         shard: [0, 1, 2]
     env:
-      # SAME secret shape as nightly.yml's pty-integration leg and the
-      # Trust model (review 2026-09-23): this is the first pull_request-time
-      # leg in ci.yml that receives real provider secrets. GitHub withholds
-      # secrets from forks, so external contributions never see them — but
-      # every SAME-REPO branch runs this suite with the keys in its process
+      # Secret shape (review 2026-09-23): this is the pull_request-time leg
+      # that receives real provider secrets. GitHub withholds secrets from
+      # forks, so external contributions never see them — but every
+      # SAME-REPO branch runs this suite with the keys in its process
       # environment before human review (this repo's agent-authored-branch
       # model). The marginal escalation vs the nightly (same suites, same
       # keys, post-merge on main) is small and the watchdog already hands
@@ -540,59 +523,39 @@ jobs:
       #
       # The live-provider legs (unlocked by these keys) load extra
       # lib/src/cli surface into the coverage measurement, so a no-key run
-      # measures a DIFFERENT — higher-numbered — regression and would pass
-      # while the nightly fails. Missing keys (forks) self-skip those legs
-      # gracefully; the gate stays honest either way.
+      # measures a DIFFERENT — lower-numbered — value; missing keys (forks)
+      # self-skip those legs gracefully and the gate stays honest either
+      # way.
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
       OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # Self-hosted fa-m5 minis have no /Users/runner home — setup-* would
-      # try to mkdir the hosted toolcache and die. Redirect it to a stable
-      # per-runner path (warm across runs); hosted runners are untouched.
-      - name: Self-hosted toolcache redirect (fa-m5)
-        if: startsWith(runner.name, 'fa-m5')
-        run: echo "RUNNER_TOOL_CACHE=${{ runner.workspace }}/toolcache" >> "$GITHUB_ENV"
-      # Shared-box pub-cache isolation (flake fix — run 36258687531): the
-      # fa-m5 minis all share ONE user pub cache (~/.pub-cache) with every
-      # concurrent job AND the box owner's local builds. A concurrent cache
-      # mutation yanked image-4.10.1 sources mid-compile and exit-254'd
-      # headless_tools_flag_test ("Error when reading
-      # .pub-cache/.../luminance_threshold_cmd.dart") while the same
-      # compile passed seconds later. Give each fa-m5 job a private cache
-      # under the per-job temp root (runner-cleaned); `dart pub get` below
-      # repopulates it (~1 min) and every spawned CLI sees it because the
-      # PTY/headless harnesses forward PUB_CACHE explicitly. Hosted runners
-      # are single-job VMs — the default cache is already private there.
-      - name: Job-private pub cache (fa-m5 shared box)
-        if: startsWith(runner.name, 'fa-m5')
-        run: echo "PUB_CACHE=$RUNNER_TEMP/pub-cache" >> "$GITHUB_ENV"
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         with:
           sdk: stable
-      # setup-python hardcodes AGENT_TOOLSDIRECTORY=/Users/runner/hostedtoolcache
-      # on every macOS runner (hosted layout assumption) and overwrites
-      # RUNNER_TOOL_CACHE, so on self-hosted macs without a 'runner' user it
-      # dies with "mkdir: /Users/runner: Permission denied". The only python
-      # consumers here are the pure-python shard selector, the junit
-      # converter and the duration-gate step below — system python3
-      # (CLT on macOS, preinstalled on hosted images) suffices.
-      - name: python3 available
-        run: python3 --version
       - run: dart pub get
+
+      - name: Native-assets hook cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .dart_tool/hooks_runner/shared
+          key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
+
       # Issue #943 (vector 3): one warm fa boot before the PTY shards. The
       # first `dart` invocation pays the native-assets build hooks (20-30 s
       # under load) — paid HERE instead of inside a test's boot timeout
       # (tui_prototype_snapshot ×5 on 2026-09-24). Both invocation shapes
       # the tests use (file path + `dart run`) are warmed; every shard of
-      # this matrix job does it, so each shard process meets a warm cache.
+      # this matrix job does it, so each shard process meets a warm cache
+      # and the duration gate below measures warm-boot truth.
       - name: Prewarm build hooks + fa boot
         run: |
           dart bin/fah.dart --help > /dev/null
           dart run bin/fah.dart --help > /dev/null
-      - name: dart test --tags integration (shard ${{ matrix.shard }}/3)
+      - name: dart test --tags integration (linux, shard ${{ matrix.shard }}/3)
         run: |
           targets=$(python3 scripts/shard_files.py scripts/test_integration_shards.json ${{ matrix.shard }} --tags integration --exclude browser_ext)
           echo "shard targets: $targets"
@@ -641,79 +604,26 @@ jobs:
           path: coverage/lcov.info
           retention-days: 2
 
-  # Issue #931 part 2: standing Linux leg. The dart-level PTY/CLI suite is
-  # Linux-capable by design (ubuntu is its designed hosted fallback —
-  # runner-pick below already routes the mac leg here under pool
-  # saturation); it now ALSO runs on hosted arm64 IN PARALLEL with the
-  # fa-m5 minis on EVERY invocation, unconditioned by path like the mac
-  # leg. Motivation: 2026-09-24 the shared Mac box hit load 13-17 and
-  # stretched the PTY legs to ~80 min — the hosted pool is separate
-  # capacity no mini-pool saturation can starve, and a linux-only
-  # regression now red-blocks the PR that caused it instead of the
-  # nightly. Same suite, same shards, same --concurrency bound; NO
-  # coverage: the cli-coverage ratchet stays wired to the mac-owned leg
-  # (the baseline's measurement environment — nightly feeds the gardener
-  # from a mac-or-fallback run with keys), and NO file-reporter for the
-  # same reason: the #928 duration gate consumes the mac leg's json only
-  # (both legs run the same suites; mixing them would double-count).
-  # arm64: pure-dart jobs route here per the runner-split note at the top
-  # of this file (free, separate capacity pool); pty2 allocates PTYs
-  # through libc openpty FFI — arch-independent.
-  pty-integration-linux:
-    name: PTY/CLI integration (linux, shard ${{ matrix.shard }}/3)
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [0, 1, 2]
-    env:
-      # Same secret shape as the mac leg: same-repo PRs get the keys, forks
-      # self-skip the live-provider legs gracefully.
-      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-      OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
-        with:
-          sdk: stable
-      - run: dart pub get
-
-      - name: Native-assets hook cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .dart_tool/hooks_runner/shared
-          key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
-          restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: dart test --tags integration (linux, shard ${{ matrix.shard }}/3)
-        run: |
-          targets=$(python3 scripts/shard_files.py scripts/test_integration_shards.json ${{ matrix.shard }} --tags integration --exclude browser_ext)
-          echo "shard targets: $targets"
-          dart test --tags integration --exclude-tags browser-ext \
-            --concurrency=4 \
-            $targets
-
-  # Coverage home for the SHARDED pty-integration leg (mirrors
+  # Coverage home for the SHARDED pty-integration-linux leg (mirrors
   # faui-coverage): the 3 shard lcovs merge into ONE report (union DA hits
   # per file, NOT cat — a single shard's ratchet would see partial
   # lib/src/cli coverage and false-regress), then the CLI coverage ratchet
   # runs on the merged report, and the duration-budget gate (issue #928
-  # Part 1, this PR) consumes the mac leg's three dart-json shard reports:
+  # Part 1) consumes the leg's three dart-json shard reports:
   # per-suite totals vs scripts/test_duration_baseline.json (down-only
   # ratchet, >10% suite regression or a per-test budget breach fails the
   # merge) and the top-10 slowest tests land in the job summary on every
   # run. The gate NEVER rewrites the baseline — budgets move only through
   # reviewed PRs running check_test_durations.py --update-baseline locally
-  # against an integration-json artifact.
+  # against an integration-json artifact. gh-1005: the measurement
+  # environment moved mac -> ubuntu-24.04-arm together with the leg (the
+  # coverage-gardener already measured on ubuntu); a baseline re-seat, if
+  # the first linux runs sit below the floor, takes the same reviewed-PR
+  # path.
   pty-coverage-gate:
     name: PTY gates (coverage ratchet + duration budget, merged shards)
     runs-on: ubuntu-24.04-arm
-    needs: [pty-integration]
+    needs: [pty-integration-linux]
     timeout-minutes: 5
     permissions:
       contents: read
@@ -732,35 +642,11 @@ jobs:
       # every unit on disk. Fails loudly BEFORE the ratchet reads shard data.
       - name: Assert integration shard manifest (union/disjoint/exists)
         run: python3 scripts/assert_shard_manifest.py scripts/test_integration_shards.json --shards 3 --tags integration --exclude browser_ext
-      # Mac-leg dart json for the #928 duration gate below.
+      # The leg's dart json reports for the #928 duration gate below.
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: integration-json-shard-*
           path: integration-json-shards
-      # Issue #928 review: same discipline as faui's assert_shard_manifest —
-      # the 2 selections must cover exactly the integration-tagged suite
-      # (browser-ext excluded, it owns browser-ext.yml), pairwise disjoint,
-      # every unit on disk. Fails loudly BEFORE the ratchets read shard data.
-      - name: Assert integration shard manifest (union/disjoint/exists)
-        run: |
-          python3 - <<'EOF'
-          import glob, json, os, sys
-          sys.path.insert(0, 'scripts')
-          from shard_files import file_has_tag
-          manifest = json.load(open('scripts/test_integration_shards.json'))
-          shards = manifest['shards']
-          units = [u for s in shards for u in s]
-          on_disk = {p.replace(os.sep, '/') for p in glob.glob('test/**/*_test.dart', recursive=True)
-                     if '/browser_ext/' not in p.replace(os.sep, '/')
-                     and file_has_tag(p, 'integration')}
-          assert len(units) == len(set(units)), f"duplicate unit in manifest: {units}"
-          assert not (set(shards[0]) & set(shards[1])), f"shard overlap: {set(shards[0]) & set(shards[1])}"
-          missing = on_disk - set(units)
-          assert not missing, f"integration-tagged files missing from manifest (never sharded): {sorted(missing)}"
-          gone = set(units) - on_disk
-          assert not gone, f"manifest units not on disk: {sorted(gone)}"
-          print(f"integration manifest OK: {len(units)} units, disjoint, == suite on disk")
-          EOF
       - name: Merge shard coverage (union DA hits per file, NOT cat)
         run: |
           count=$(ls pty-coverage-shards/*/lcov.info | wc -l | tr -d ' ')
@@ -790,19 +676,41 @@ jobs:
             --baseline scripts/test_duration_baseline.json \
             integration-json-shards/*/integration-shard-*.json
 
+  # gh-1005: Terminal visual is platform-independent and pinned to hosted
+  # linux arm64. Evidence: every assertion reads the xterm terminal BUFFER /
+  # screen text (never pixels — each PNG even ships a .txt twin "for
+  # pixel-independent verification"), rendering goes through the BUNDLED
+  # JetBrainsMono font (no host system fonts), and pty2 allocates the PTY
+  # via libc openpty FFI. Nothing needs macOS — the old fa-m5 / macos-latest
+  # routing (10x hosted-macOS minute cost, single-runner queue risk) is
+  # gone; the nightly keeps an eyeball-only screenshot leg.
   pty-visual:
     name: Terminal visual (PTY screenshots, PR)
-    runs-on: ${{ fromJSON(needs.runner-pick.outputs.pty_visual) }}
-    needs: [changes, runner-pick]
+    runs-on: ubuntu-24.04-arm
+    needs: changes
     timeout-minutes: 45
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+      # arm64: no official linux-arm64 release tarball (x64-only manifest) —
+      # subosito/flutter-action cannot fetch stable here. Git bootstrap
+      # (same as the flutter-tests leg): flutter_tools pulls the official
+      # arm64 Dart SDK itself.
+      - name: Flutter SDK (arm64 git bootstrap)
+        shell: bash
+        run: |
+          git clone --depth 1 -b stable https://github.com/flutter/flutter.git "$HOME/flutter"
+          echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/flutter/bin:$PATH"
+          flutter --version
+          flutter precache
+      - name: Pub cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          channel: stable
-          cache: true
+          path: ~/.pub-cache
+          key: pubcache-flutter-${{ runner.os }}-${{ hashFiles('**/pubspec.yaml') }}
+          restore-keys: pubcache-flutter-${{ runner.os }}-
       - name: Create placeholder .env asset
         working-directory: flutter_app
         run: touch .env
@@ -1386,21 +1294,37 @@ jobs:
   # Aggregate required check: branch protection requires ONE stable context.
   # Skipped legs (path-filtered out) count as pass — a docs PR must go green
   # on static alone.
+  # gh-1005: pinned to hosted linux arm64 alongside pty-visual — same
+  # platform-independence evidence (buffer/screen-text assertions, bundled
+  # JetBrainsMono, openpty PTYs); PTY screenshots need no macOS, hosted or
+  # self-hosted.
   cli-visual-settings:
     name: Settings screenshots (PTY)
-    runs-on: macos-latest
+    runs-on: ubuntu-24.04-arm
     needs: changes
     if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+      # arm64 git bootstrap (no official linux-arm64 Flutter tarball) — same
+      # as the flutter-tests and pty-visual legs.
+      - name: Flutter SDK (arm64 git bootstrap)
+        shell: bash
+        run: |
+          git clone --depth 1 -b stable https://github.com/flutter/flutter.git "$HOME/flutter"
+          echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/flutter/bin:$PATH"
+          flutter --version
+          flutter precache
+      - name: Pub cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          channel: stable
-          cache: true
+          path: ~/.pub-cache
+          key: pubcache-flutter-${{ runner.os }}-${{ hashFiles('**/pubspec.yaml') }}
+          restore-keys: pubcache-flutter-${{ runner.os }}-
 
       # Same placeholder assets the nightly cli-visual job and the ubuntu
       # flutter-tests leg create (see those jobs for the why).
@@ -1999,7 +1923,7 @@ jobs:
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, pty-integration, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-verify]
+    needs: [changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-verify]
     if: always()
     timeout-minutes: 5
     permissions:
@@ -2025,7 +1949,6 @@ jobs:
           echo "build-macos   = ${{ needs.build-macos.result }}"
           echo "integ-mock    = ${{ needs.integration-mock.result }}"
           echo "hostile-env   = ${{ needs.hostile-env.result }}"
-          echo "pty-integ     = ${{ needs.pty-integration.result }}"
           echo "pty-integ-linux = ${{ needs.pty-integration-linux.result }}"
           echo "pty-gates     = ${{ needs.pty-coverage-gate.result }}"
           echo "pty-visual    = ${{ needs.pty-visual.result }}"
@@ -2054,7 +1977,6 @@ jobs:
           R_BUILD_MACOS: ${{ needs.build-macos.result }}
           R_INTEG: ${{ needs.integration-mock.result }}
           R_HOSTILE: ${{ needs.hostile-env.result }}
-          R_PTY_INTEG: ${{ needs.pty-integration.result }}
           R_PTY_LINUX: ${{ needs.pty-integration-linux.result }}
           R_PTY_GATES: ${{ needs.pty-coverage-gate.result }}
           R_PTY_VISUAL: ${{ needs.pty-visual.result }}
@@ -2083,7 +2005,7 @@ jobs:
                     "cli-visual-settings:$R_CLI_VISUAL" "build-web:$R_BUILD_WEB" \
                     "build-android:$R_BUILD_ANDROID" "build-ios:$R_BUILD_IOS" "build-macos:$R_BUILD_MACOS" \
                     "integration-mock:$R_INTEG" "hostile-env:$R_HOSTILE" \
-                    "pty-integration:$R_PTY_INTEG" "pty-integration-linux:$R_PTY_LINUX" "pty-coverage-gate:$R_PTY_GATES" "pty-visual:$R_PTY_VISUAL" \
+                    "pty-integration-linux:$R_PTY_LINUX" "pty-coverage-gate:$R_PTY_GATES" "pty-visual:$R_PTY_VISUAL" \
                     "installer-verify:$R_INSTALLER_VERIFY"; do
             name="${kv%%:*}"; r="${kv#*:}"
             if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then
@@ -2177,14 +2099,12 @@ jobs:
     name: Watchdog (degraded-runner retrigger)
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # pty-integration/pty-visual/pty-integration-linux ride along (review
-    # 2026-09-23, #963): the longest legs. The mac shards are no longer
-    # reliably last to settle (their timeout dropped 60 -> 30), so the
-    # linux shards (30-min timeout, hosted pool) must be in `needs` too or
-    # the watchdog fires before they settle — a degraded-runner timeout
-    # there would land after the scan and never get its one-shot
+    # pty-integration-linux/pty-visual ride along (review 2026-09-23, #963;
+    # gh-1005 retired the mac shards): the longest legs. They must be in
+    # `needs` or the watchdog fires before they settle — a degraded-runner
+    # timeout there would land after the scan and never get its one-shot
     # empty-commit retrigger. Cost: the watchdog waits for them.
-    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, test-faui, pty-integration, pty-integration-linux, pty-visual]
+    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, test-faui, pty-integration-linux, pty-visual]
     # Same-repo PRs only: the empty-commit retrigger pushes to the PR branch,
     # which this token cannot do for a fork's ref.
     if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
