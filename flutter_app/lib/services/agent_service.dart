@@ -837,15 +837,14 @@ class AgentService extends ChangeNotifier
     }
     // Wire the task tool's child surface: all tools except `task` itself
     // and the child-only pair the executor injects per spawn — passing them
-    // through makes `_childToolRegistry` register `reply` twice and every
-    // child dies with "Duplicate tool name" (the CLI passes coreTools,
-    // which never contains them).
+    // through registers `reply` twice and every child dies with
+    // "Duplicate tool name" (the CLI passes coreTools, which never
+    // contains them).
     final childSurface = registry.tools
         .where(
           (t) =>
               t.name != taskToolName &&
-              t.name != 'reply' &&
-              t.name != 'agent_message',
+              !childInjectedToolNames.contains(t.name),
         )
         .cast<AgentTool>()
         .toList();
@@ -2258,11 +2257,6 @@ class AgentService extends ChangeNotifier
   /// conversation as an async-result notice (see `_onTaskJobCompleted`).
   StreamSubscription<TaskJob>? _taskCompletionsSub;
 
-  /// Set by [abort], cleared by the next real [sendText]: steering queued
-  /// by an aborted run is dropped (the user said stop), never resurrected
-  /// by the post-settle drain (issue #958).
-  var _abortRequested = false;
-
   /// Opt-in for the real app bootstrap (main.dart): the periodic watcher
   /// never starts in tests (a pending periodic Timer fails flutter_test's
   /// invariants), so it is off by default.
@@ -2335,7 +2329,6 @@ class AgentService extends ChangeNotifier
     // Real user input resets the inbox wake streak (the ping-pong guard);
     // the watcher itself calls sendText with the flag set.
     if (!_inboxWakeRunning) _inboxWakeStreak = 0;
-    _abortRequested = false;
     // A fresh user text gets a fresh over-window auto-continuation budget.
     _overWindowAutoResumed = false;
     _clearError();
@@ -2505,10 +2498,7 @@ class AgentService extends ChangeNotifier
 
   /// Aborts the current run, if any.
   @override
-  void abort() {
-    _abortRequested = true;
-    _agent.abort();
-  }
+  void abort() => _agent.abort();
 
   /// Serializes `_persist` runs so concurrent triggers never double-append
   /// the same message.

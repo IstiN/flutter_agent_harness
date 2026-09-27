@@ -13,6 +13,8 @@
 /// - mid-run: a child settling under a busy parent is delivered at the
 ///   next step boundary (steered).
 
+library;
+
 import 'dart:async';
 
 import 'package:fa/services/agent_service.dart';

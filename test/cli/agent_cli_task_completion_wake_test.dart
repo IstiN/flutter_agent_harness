@@ -67,6 +67,10 @@ class _CompletionRouter {
   final List<List<AssistantMessageEvent>> _wakeTurns;
   final contexts = <Context>[];
 
+  /// Completes when the router serves the parent's bash turn — the long
+  /// tool call the parent parks on while the child settles underneath.
+  final bashTurnServed = Completer<void>();
+
   AssistantMessageEventStream call(
     Model model,
     Context context, {
@@ -110,42 +114,17 @@ class _CompletionRouter {
     final events = _spawnTurns.isNotEmpty
         ? _spawnTurns.removeAt(0)
         : textTurn('noted.');
+    if (events.any(
+      (event) => event is ToolCallEndEvent && event.toolCall.name == 'bash',
+    )) {
+      bashTurnServed.complete();
+    }
     for (final event in events) {
       stream.push(event);
     }
     stream.end();
     return stream;
   }
-}
-
-/// A [Shell] whose `exec` parks on a gate — the parent mid-turn wedge.
-class _GatedShell implements Shell {
-  final _gate = Completer<void>();
-
-  void release() => _gate.complete();
-
-  bool get isPending => !_gate.isCompleted;
-
-  @override
-  Future<Result<ShellExecResult, ExecutionError>> exec(
-    String command, {
-    ShellExecOptions? options,
-  }) async {
-    await _gate.future;
-    return const Ok(ShellExecResult(stdout: '', stderr: '', exitCode: 0));
-  }
-}
-
-Future<void> _waitForIt(
-  bool Function() condition, {
-  String reason = 'condition',
-  int seconds = 20,
-}) async {
-  for (var i = 0; i < seconds * 200; i++) {
-    if (condition()) return;
-    await Future<void>.delayed(const Duration(milliseconds: 5));
-  }
-  fail('timed out waiting: $reason');
 }
 
 void main() {
@@ -174,7 +153,7 @@ void main() {
     );
     final run = cli.run();
     io.sendLine('/help');
-    await _waitForIt(
+    await waitForIt(
       () => io.out.toString().contains('/tasks'),
       reason: 'REPL is up',
     );
@@ -210,7 +189,7 @@ void main() {
       final (cli, run) = await bootedCli(stream.call);
 
       io.sendLine('spawn both children');
-      await _waitForIt(
+      await waitForIt(
         () =>
             cli.taskConfig.jobManager.job('alpha') != null &&
             cli.taskConfig.jobManager.job('beta') != null,
@@ -218,20 +197,19 @@ void main() {
       );
       // The spawn turn ends while the children still run — the repro's
       // idle state.
-      await _waitForIt(() => !cli.isBusy, reason: 'the spawn turn settles');
+      await waitForIt(() => !cli.isBusy, reason: 'the spawn turn settles');
       expect(cli.isBusy, isFalse);
 
       // NO user ping. The children settle on their own; each settlement
       // must re-enter the parent: the first as a fresh wake run, the
       // second as steering delivered within it.
-      await _waitForIt(
+      await waitForIt(
         () => stream.contexts.any(
           (context) =>
               lastUserText(context).contains('<task-result') &&
               lastUserText(context).contains('alpha'),
         ),
-        reason: 'the settled child re-enters as an async-result run',
-        seconds: 15,
+        reason: 'the settled child re-enters as an async-result run'
       );
       final wake = stream.contexts.lastWhere(
         (context) =>
@@ -251,20 +229,19 @@ void main() {
         contains('<system-notice>'),
         reason: 'the wake prompt IS the async-result notice',
       );
-      await _waitForIt(
+      await waitForIt(
         () => io.out.toString().contains('results acknowledged'),
         reason: 'the wake run reaches the model and answers',
       );
       // The second child's result must reach the parent too — steered into
       // the wake run or a follow-up wake run, never dropped.
-      await _waitForIt(
+      await waitForIt(
         () => stream.contexts.any(
           (context) =>
               lastUserText(context).contains('<task-result') &&
               lastUserText(context).contains('beta'),
         ),
-        reason: 'the second child re-enters as well',
-        seconds: 15,
+        reason: 'the second child re-enters as well'
       );
 
       io.sendLine('/exit');
@@ -277,7 +254,7 @@ void main() {
     'next step boundary (issue #958, busy path)',
     timeout: const Timeout(Duration(seconds: 120)),
     () async {
-      final gate = _GatedShell();
+      final gate = GatedShell();
       final stream = _CompletionRouter(
         childMarkers: const ['TASKMARK-gamma'],
         spawnTurns: [
@@ -297,34 +274,32 @@ void main() {
       final (cli, run) = await bootedCli(stream.call, shell: gate);
 
       io.sendLine('spawn gamma then run the long step');
-      await _waitForIt(
+      await waitForIt(
         () => cli.taskConfig.jobManager.job('gamma') != null,
         reason: 'the background child registers',
       );
-      await _waitForIt(
-        () => gate.isPending,
+      await waitForIt(
+        () => stream.bashTurnServed.isCompleted,
         reason: 'the parent is parked mid-turn on the long tool call',
       );
       expect(cli.isBusy, isTrue);
 
       // The child settles WHILE the parent is mid-turn: the async-result
       // must steer, and the boundary after the tool call must deliver it.
-      await _waitForIt(
+      await waitForIt(
         () =>
             cli.taskConfig.jobManager.job('gamma')!.status ==
             TaskJobStatus.completed,
-        reason: 'the child settles under the busy parent',
-        seconds: 15,
+        reason: 'the child settles under the busy parent'
       );
       gate.release();
-      await _waitForIt(
+      await waitForIt(
         () => stream.contexts.any(
           (context) => lastUserText(context).contains('<task-result'),
         ),
-        reason: 'the async-result is delivered at the next step boundary',
-        seconds: 15,
+        reason: 'the async-result is delivered at the next step boundary'
       );
-      await _waitForIt(() => !cli.isBusy, reason: 'the turn settles');
+      await waitForIt(() => !cli.isBusy, reason: 'the turn settles');
 
       io.sendLine('/exit');
       await run;
