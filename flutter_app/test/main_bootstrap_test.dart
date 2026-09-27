@@ -119,6 +119,31 @@ void main() {
       expect(config!.apiKey, isEmpty);
     });
 
+    test('a model-less connection does not restore (issue #1020)', () async {
+      // The z.ai report: a provider registered without a model persisted a
+      // model-less last connection — restoring it boots an unusable chat,
+      // so the boot falls back to the setup form instead.
+      const keyless = LastConnection(
+        providerKind: 'openai-completions',
+        modelId: '',
+        baseUrl: 'http://localhost:11434/v1',
+      );
+      final registry = ProviderRegistry.inMemory();
+      await registry.add(
+        name: 'Local',
+        baseUrl: keyless.baseUrl!,
+        modelId: '',
+      );
+      expect(
+        restorableBootConfig(
+          connection: keyless,
+          registry: registry,
+          sessionKeysStore: null,
+        ),
+        isNull,
+      );
+    });
+
     test('a google (Gemini) connection restores with GOOGLE_API_KEY', () {
       final config = restorableBootConfig(
         connection: const LastConnection(

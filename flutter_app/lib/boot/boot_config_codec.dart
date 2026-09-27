@@ -43,6 +43,10 @@ AgentConfig? restorableBootConfig({
   final baseUrl = connection?.baseUrl ?? '';
   if (connection == null ||
       baseUrl.isEmpty ||
+      // Issue #1020: a model-less connection is the exact wrong state the
+      // boarding gate exists for — restoring it boots an unusable chat.
+      // Fall back to the setup form, where the model row names itself.
+      connection.modelId.isEmpty ||
       _isOnDeviceKind(connection.providerKind)) {
     return null;
   }

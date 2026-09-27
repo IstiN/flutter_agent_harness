@@ -25,10 +25,15 @@ Future<CustomProvider?> pushProviderEditor(
   ProviderRegistry registry, {
   required String title,
   ModelsEndpointFetcher? modelsFetcher,
+  bool requireModel = false,
 }) async {
   final result = await pushFaPage<ProviderEditorResult>(
     context,
-    ProviderEditorPage(title: title, modelsFetcher: modelsFetcher),
+    ProviderEditorPage(
+      title: title,
+      modelsFetcher: modelsFetcher,
+      requireModel: requireModel,
+    ),
   );
   if (result == null || result.deleted) return null;
   final provider = await registry.add(
@@ -91,7 +96,8 @@ final class ProviderEditorResult {
 ///
 /// - **create** ([preset] and [initial] null): collects a new
 ///   [CustomProvider] — name and base URL required, model id optional (a
-///   provider may have no model yet), key optional.
+///   provider may have no model yet) unless [requireModel] is set, key
+///   optional.
 /// - **edit** ([initial] set): edits that provider; the key field is
 ///   write-only — it starts empty and an empty save keeps the current key
 ///   ([hasSavedKey] shows a note). A Delete action pops
@@ -120,6 +126,7 @@ class ProviderEditorPage extends StatefulWidget {
     this.keyHelpUrl,
     this.onReauthenticate,
     this.modelsFetcher,
+    this.requireModel = false,
   });
 
   /// App bar title (`Add provider` / `Edit provider` / the preset label).
@@ -179,6 +186,13 @@ class ProviderEditorPage extends StatefulWidget {
   /// `/models` fetch override (tests), forwarded to the model selector the
   /// model row opens.
   final ModelsEndpointFetcher? modelsFetcher;
+
+  /// Refuses a model-less save (issue #1020): a boarding flow cannot
+  /// leave the editor without a chat model — an empty model id pops the
+  /// same inline error as the other required fields. Settings keeps the
+  /// default `false` (a provider row without a model is legitimate
+  /// there; the default-chat-model flow picks one later).
+  final bool requireModel;
 
   @override
   State<ProviderEditorPage> createState() => _ProviderEditorPageState();
@@ -257,6 +271,12 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
     }
     if (baseUrl.isEmpty) {
       setState(() => _error = strings.settingsBaseUrlRequired);
+      return;
+    }
+    // Boarding flows (issue #1020) cannot leave without a chat model —
+    // the same inline error the name/base-URL checks use.
+    if (widget.requireModel && modelId.isEmpty) {
+      setState(() => _error = strings.settingsModelIdRequired);
       return;
     }
     // The model id is optional: a provider may have no model yet (the
@@ -376,7 +396,7 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    _isPreset
+                    _isPreset || widget.requireModel
                         ? strings.settingsModelIdLabel
                         : strings.settingsModelIdOptionalLabel,
                   ),
