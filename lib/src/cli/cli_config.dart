@@ -439,8 +439,8 @@ final class CliConfig {
   final String baseUrl;
   final String mode;
 
-  /// Approval mode label (`always-ask`, `write`, `yolo`, `unattended`);
-  /// parsed with
+  /// Approval mode label (`always-ask`, `write`, `yolo`, `autopilot` —
+  /// the pre-rename `unattended` spelling still parses); parsed with
   /// `approvalModeFromLabel` from `lib/src/approval/`.
   final String approvalMode;
 
