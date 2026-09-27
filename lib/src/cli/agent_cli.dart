@@ -1158,6 +1158,7 @@ class AgentCli {
   Timer? _hubFollowTimer;
   StreamSubscription<dynamic>? _hubSubagentEventsSub;
   StreamSubscription<dynamic>? _hubTaskStartsSub;
+
   /// Hub tree `mail:N` marker counts (async peek → refresh-only re-push
   /// by the driver extension, which cannot hold fields — state here).
   final Map<String, int> _hubMailCounts = <String, int>{};
@@ -1785,9 +1786,7 @@ class AgentCli {
         statusSnapshot: config.tuiClassic ? null : _statusLineSnapshot,
         statusLineEngine: config.tuiClassic
             ? null
-            : TuiStatusLine(
-                spec: resolveStatusLineSpec(config.statusLine),
-              ),
+            : TuiStatusLine(spec: resolveStatusLineSpec(config.statusLine)),
         prompt: prompt,
         onInterrupt: () {
           // Marks the drain loop to discard queued messages (kimi-cli drops

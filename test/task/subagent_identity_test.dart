@@ -19,8 +19,6 @@ library;
 import 'dart:async';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter_agent_harness/src/env/memory_execution_env.dart';
-import 'package:flutter_agent_harness/src/task/subagent_scope.dart';
 import 'package:test/test.dart';
 
 const _model = Model(
@@ -62,10 +60,7 @@ List<AssistantMessageEvent> _textTurn(String text) {
 List<AssistantMessageEvent> _toolTurn(String name, Map<String, dynamic> args) {
   final empty = _assistant();
   final call = ToolCall(id: 'call-1', name: name, arguments: args);
-  final partial = _assistant(
-    content: [call],
-    stopReason: StopReason.toolUse,
-  );
+  final partial = _assistant(content: [call], stopReason: StopReason.toolUse);
   return [
     StartEvent(partial: empty),
     ToolCallStartEvent(contentIndex: 0, partial: empty),
@@ -213,12 +208,12 @@ _pairWiring(
 }) {
   router.route('alpha', [
     () => _gated(alphaTurn, betaRan.future),
-    () => _immediate([_textTurn('done')]),
+    () => _immediate(_textTurn('done')),
   ]);
   router.route('beta', [
     () {
       betaRan.complete();
-      return _gated([_textTurn('beta done')], alphaDone.future);
+      return _gated(_textTurn('beta done'), alphaDone.future);
     },
   ]);
   final alpha = executor.runSpawn(
@@ -238,8 +233,10 @@ void main() {
   group('subagent scope zone', () {
     test('publishes the id inside the scope, nothing outside', () {
       expect(activeSubagentId(), isNull);
-      expect(runWithSubagentScope('child-7', () => activeSubagentId()),
-          'child-7');
+      expect(
+        runWithSubagentScope('child-7', () => activeSubagentId()),
+        'child-7',
+      );
       expect(activeSubagentId(), isNull);
     });
 
@@ -256,8 +253,10 @@ void main() {
       'agent_message from child X is delivered with sender X, not a sibling',
       () async {
         final fabric = _FakeFabric();
-        final manager = SubagentManager(parentSessionId: 'sess', messaging: fabric)
-          ..mailboxPrefix = 'sess';
+        final manager = SubagentManager(
+          parentSessionId: 'sess',
+          messaging: fabric,
+        )..mailboxPrefix = 'sess';
         final router = _Router();
         final executor = _executor(manager, router);
         final betaRan = Completer<void>();
@@ -290,8 +289,10 @@ void main() {
 
     test('reply is recorded on the calling child, not a sibling', () async {
       final fabric = _FakeFabric();
-      final manager = SubagentManager(parentSessionId: 'sess', messaging: fabric)
-        ..mailboxPrefix = 'sess';
+      final manager = SubagentManager(
+        parentSessionId: 'sess',
+        messaging: fabric,
+      )..mailboxPrefix = 'sess';
       final router = _Router();
       final executor = _executor(manager, router);
       final betaRan = Completer<void>();
@@ -309,8 +310,10 @@ void main() {
         'alpha explicit answer',
         reason: 'gh-970: the reply used to land on the last-started sibling',
       );
-      final betaId = (await manager.handles.length) > 1
-          ? manager.handles.map((h) => h.id).firstWhere((id) => id != alphaResult.id)
+      final betaId = manager.handles.length > 1
+          ? manager.handles
+                .map((h) => h.id)
+                .firstWhere((id) => id != alphaResult.id)
           : null;
       if (betaId != null) {
         expect(manager[betaId]!.lastReply, isNull);
@@ -342,8 +345,10 @@ void main() {
           clock: () => now,
         );
         final fabric = _FakeFabric();
-        final manager = SubagentManager(parentSessionId: 'sess', messaging: fabric)
-          ..mailboxPrefix = 'sess';
+        final manager = SubagentManager(
+          parentSessionId: 'sess',
+          messaging: fabric,
+        )..mailboxPrefix = 'sess';
         final router = _Router();
         // The same wiring hosts use: the shared schedule_message tool reads
         // the subagent scope at call time to resolve "your own mailbox".
@@ -407,7 +412,10 @@ void main() {
   group('gh-970 wake sweep for children with pending mail', () {
     test('resumes completed and idle children holding inbox mail', () async {
       final fabric = _FakeFabric();
-      final manager = SubagentManager(parentSessionId: 'sess', messaging: fabric);
+      final manager = SubagentManager(
+        parentSessionId: 'sess',
+        messaging: fabric,
+      );
       Future<void> register(String id, SubagentStatus status) async {
         await manager.register(id: id, name: id, agentType: 'task', task: 't');
         await manager.update(id, status: status);
@@ -419,14 +427,14 @@ void main() {
       await register('failed-child', SubagentStatus.failed);
       await register('quiet-child', SubagentStatus.completed);
       Future<void> mail(String id) => fabric.send(
-            AgentMessage(
-              id: 'm-$id',
-              fromId: 'somewhere',
-              toId: manager.mailboxOf(id),
-              text: 'wake up',
-              sentAt: '2026-09-26T10:00:00Z',
-            ),
-          );
+        AgentMessage(
+          id: 'm-$id',
+          fromId: 'somewhere',
+          toId: manager.mailboxOf(id),
+          text: 'wake up',
+          sentAt: '2026-09-26T10:00:00Z',
+        ),
+      );
       await mail('done-child');
       await mail('idle-child');
       await mail('running-child');
@@ -444,7 +452,10 @@ void main() {
 
     test('a wake in flight is not duplicated while it runs', () async {
       final fabric = _FakeFabric();
-      final manager = SubagentManager(parentSessionId: 'sess', messaging: fabric);
+      final manager = SubagentManager(
+        parentSessionId: 'sess',
+        messaging: fabric,
+      );
       await manager.register(
         id: 'a1',
         name: 'a1',
@@ -477,40 +488,48 @@ void main() {
       // pinned here, not redelivery.
     });
 
-    test('a throwing wake retires the child instead of spinning the sweep',
-        () async {
-      final fabric = _FakeFabric();
-      final manager = SubagentManager(parentSessionId: 'sess', messaging: fabric);
-      await manager.register(
-        id: 'a1',
-        name: 'a1',
-        agentType: 'task',
-        task: 't',
-      );
-      await manager.update('a1', status: SubagentStatus.completed);
-      await fabric.send(
-        AgentMessage(
-          id: 'm1',
-          fromId: 'x',
-          toId: manager.mailboxOf('a1'),
-          text: 'hello',
-          sentAt: '2026-09-26T10:00:00Z',
-        ),
-      );
-      var attempts = 0;
-      manager.wakeChild = (id) async {
-        attempts++;
-        throw StateError('unreadable session');
-      };
-      await manager.wakeChildrenWithPendingMail();
-      await Future<void>.delayed(Duration.zero);
-      expect(await manager.wakeChildrenWithPendingMail(), 0);
-      expect(attempts, 1);
-    });
+    test(
+      'a throwing wake retires the child instead of spinning the sweep',
+      () async {
+        final fabric = _FakeFabric();
+        final manager = SubagentManager(
+          parentSessionId: 'sess',
+          messaging: fabric,
+        );
+        await manager.register(
+          id: 'a1',
+          name: 'a1',
+          agentType: 'task',
+          task: 't',
+        );
+        await manager.update('a1', status: SubagentStatus.completed);
+        await fabric.send(
+          AgentMessage(
+            id: 'm1',
+            fromId: 'x',
+            toId: manager.mailboxOf('a1'),
+            text: 'hello',
+            sentAt: '2026-09-26T10:00:00Z',
+          ),
+        );
+        var attempts = 0;
+        manager.wakeChild = (id) async {
+          attempts++;
+          throw StateError('unreadable session');
+        };
+        await manager.wakeChildrenWithPendingMail();
+        await Future<void>.delayed(Duration.zero);
+        expect(await manager.wakeChildrenWithPendingMail(), 0);
+        expect(attempts, 1);
+      },
+    );
 
     test('a settled wake re-arms the child for its next reminder', () async {
       final fabric = _FakeFabric();
-      final manager = SubagentManager(parentSessionId: 'sess', messaging: fabric);
+      final manager = SubagentManager(
+        parentSessionId: 'sess',
+        messaging: fabric,
+      );
       await manager.register(
         id: 'a1',
         name: 'a1',

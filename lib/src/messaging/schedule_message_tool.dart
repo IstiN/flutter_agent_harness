@@ -33,6 +33,7 @@ Duration? parseDelay(String spec) {
 
 AgentTool scheduleMessageTool(
   ScheduledMessageQueue queue, {
+
   /// The calling agent's own mailbox when it is NOT the host's main agent
   /// (gh-970): a subagent scheduling a self-reminder must default to its
   /// OWN mailbox — the queue's `selfMailbox` always resolves the host's

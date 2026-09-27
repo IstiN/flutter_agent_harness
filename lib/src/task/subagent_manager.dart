@@ -178,9 +178,11 @@ final class SubagentManager {
       _wakingChildren.add(id);
       started++;
       unawaited(
-        wake(id).catchError((Object _) {
-          _unwakeableChildren.add(id);
-        }).whenComplete(() => _wakingChildren.remove(id)),
+        wake(id)
+            .catchError((Object _) {
+              _unwakeableChildren.add(id);
+            })
+            .whenComplete(() => _wakingChildren.remove(id)),
       );
     }
     return started;
