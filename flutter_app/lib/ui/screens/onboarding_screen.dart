@@ -1550,6 +1550,10 @@ class _P2State extends State<_P2> {
       context,
       registry,
       title: preset.name,
+      // Issue #1020: boarding cannot leave without a chat model — the
+      // editor refuses a model-less save instead of unlocking the step
+      // into an unusable chat.
+      requireModel: true,
     );
     if (provider == null) return false;
     await _saveConnection(provider.baseUrl, provider.modelId, '');
@@ -1595,6 +1599,10 @@ class _P2State extends State<_P2> {
     return faui.ProviderEditorPage(
       title: preset.name,
       preset: editable ? null : presetMode,
+      // Issue #1020: same boarding gate as the custom editor — Z.AI/Kimi
+      // prefill name/URL but no model, and a model-less save must not
+      // unlock the step.
+      requireModel: true,
       prefillName: editable ? preset.name : null,
       prefillBaseUrl: editable ? preset.baseUrl : null,
       keyHelpUrl: preset.keyHelpUrl,
@@ -1625,6 +1633,13 @@ class _P2State extends State<_P2> {
   Future<void> _saveConnection(String baseUrl, String modelId, String apiKey) {
     final store = widget.lastConnectionStore;
     if (store == null) return Future<void>.value();
+    // Belt-and-braces under the editor's requireModel gate (issue #1020
+    // review): boarding must never persist a model-less connection, even
+    // if a future flow pops the editor without the flag.
+    assert(
+      modelId.isNotEmpty,
+      'boarding must never persist a model-less connection (#1020)',
+    );
     return store.saveFromConfig(
       AgentConfig(
         providerKind: 'openai-completions',

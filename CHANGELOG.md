@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## 1.0.483
+
 
 - fix(install): the pinned default is now the `vpinned` RELEASE MARKER —
   no committed pin at all. `install-config.yaml` `pinned_cli_version`
@@ -4362,6 +4363,8 @@
 - chore: pin factory 5e2a8051 (session quarantine) (#1024)
 - chore: pin factory a18361b2 (red-park + dryRun + dup-guard + teammate watchdog) (#1023)
 - chore(factory): bump dmtools-agents to b44b5493 — latch-skip + stamp links + auto-anchor fallback (#547/#548/#549) in lockstep (#1019)
+
+## Unreleased
 
 ## Unreleased
 
