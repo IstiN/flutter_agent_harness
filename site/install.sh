@@ -125,7 +125,7 @@ target="$install_dir/$BINARY"
 # SEC-07 (#795): the default install is PINNED to a known-good release.
 # FA_VERSION overrides it explicitly (FA_VERSION=latest tracks the moving
 # latest release); the resolved version is always printed.
-FA_VERSION="${FA_VERSION:-0.1.452}"
+FA_VERSION="${FA_VERSION:-1.0.480}"
 # Release tags are v-prefixed (releases/download/vX.Y.Z); accept both spellings.
 case "$FA_VERSION" in
   latest|v*) ;;
