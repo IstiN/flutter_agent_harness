@@ -187,9 +187,7 @@ tui:
             'press 2 inside the fresh window must exit the REPL '
             '(issue #830); exit code $code',
       );
-    }, skip: 'flake: gh-1014 SIGINT press-window timing under runner '
-        'load; quarantined to unblock validation — fix the timing '
-        'flake and re-enable');
+    });
   });
 
   group('headless SIGINT pin (ACX.4)', () {
