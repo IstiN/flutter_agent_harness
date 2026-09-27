@@ -146,7 +146,10 @@ void main() {
       expect(field, findsOneWidget);
 
       await tester.enterText(field, 'hello channel');
-      await tester.tap(find.byKey(const ValueKey('channelSend')));
+      // The shared ChatComposer chrome: the filled send button carries
+      // the localized send tooltip (the 'composerTrailingSend' key only
+      // exists in the one-action swap slot).
+      await tester.tap(find.byTooltip('Send'));
       for (var i = 0; i < 6; i++) {
         await tester.pump(const Duration(milliseconds: 20));
       }
