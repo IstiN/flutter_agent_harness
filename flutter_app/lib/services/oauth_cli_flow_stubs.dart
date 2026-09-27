@@ -47,12 +47,17 @@ Never runChatGptOAuthCliFlow({
   'ChatGPT sign-in is not supported on the web platform.',
 );
 
+/// Web stub of the IO implementation's surface-cancel exception — never
+/// constructed on the web (the AIIN flow throws before any surface opens).
+final class AiinSurfaceClosedException implements Exception {}
+
 /// Always throws on the web — the AIIN connect flow needs a local server.
 Never runAiinConnectCliFlow({
   required void Function(String) onStatus,
   http.Client? client,
   Future<bool> Function(String)? openBrowserFn,
   void Function()? onCallback,
+  bool cancelWhenOpenSettles = false,
   Duration? timeout,
 }) => throw UnsupportedError(
   'AIIN sign-in is not supported on the web platform.',

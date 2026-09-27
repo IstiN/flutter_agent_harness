@@ -268,8 +268,11 @@ void main() {
   });
 
   /// Mocks the iOS `fah/web_auth_session` channel: [behavior] answers the
-  /// `authenticate` call; `cancel` completes the pending session with null
-  /// (the real sheet's canceledLogin path). Returns the mutable harness.
+  /// `authenticate` call — a non-null return completes the session with
+  /// it (the native complete-with-callback-url path); throwing makes the
+  /// session fail to start. `cancel` completes the pending session with
+  /// null (the real sheet's canceledLogin path). Returns the mutable
+  /// harness.
   ({
     String? Function() openedUrl,
     int Function() cancelCount,
@@ -287,8 +290,12 @@ void main() {
         final url = (call.arguments as Map)['url'] as String;
         opened.add(url);
         session = Completer<Object?>();
-        // The sheet answers only when it CLOSES (cancel below).
-        behavior(url);
+        // The sheet answers only when it CLOSES (cancel below, or the
+        // behavior completing it with a callback URL).
+        final answer = behavior(url);
+        if (answer != null && !session!.isCompleted) {
+          session!.complete(answer);
+        }
         return session!.future;
       }
       if (call.method == 'cancel') {
@@ -339,6 +346,12 @@ void main() {
         for (var i = 0; i < 100 && harness.openedUrl() == null; i++) {
           await Future<void>.delayed(const Duration(milliseconds: 20));
         }
+        expect(
+          harness.openedUrl(),
+          isNotNull,
+          reason: 'the auth session never opened (cancels='
+              '${harness.cancelCount()})',
+        );
         final login = Uri.parse(harness.openedUrl()!);
         expect(login.host, 'auth.aiin.by');
         expect(login.path, '/login');
