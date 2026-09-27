@@ -37,8 +37,13 @@ void main() {
     test('composer echo stays out of the input row at $columns x$rowsCount',
         () async {
       final tempHome = Directory.systemTemp.createTempSync('fa_tui_496_');
-      // Short cwd so the footer's tail markers stay visible at 80 columns.
-      final workspace = Directory('/tmp/fa496ws')..createSync(recursive: true);
+      // Unique SHORT cwd (the #936/#938 class): the former fixed
+      // /tmp/fa496ws raced the suite's own second width test under the
+      // in-suite --concurrency=4 — the first test's teardown deleted the
+      // dir under the other's live CLI (run 36235579869, shard 2).
+      // /tmp keeps the resolved path short so the footer's tail markers
+      // stay visible at 80 columns.
+      final workspace = Directory('/tmp').createTempSync('fa496ws');
       addTearDown(() => workspace.deleteSync(recursive: true));
       final server = await MockLlmServer.start()
         // Turn 1 seeds the job board with a collapsed turn of inline
