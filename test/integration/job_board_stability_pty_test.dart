@@ -103,8 +103,12 @@ void main() {
   late File turnsFile;
 
   setUp(() async {
-    home = Directory('/tmp/fa_539_home')..createSync(recursive: true);
-    project = Directory('/tmp/fa_539_proj')..createSync(recursive: true);
+    // Issue #943 (vector 1): unique per-RUN roots. The old hardcoded
+    // /tmp/fa_539_home + /tmp/fa_539_proj were shared by every PR's PTY
+    // leg — one run's tearDown deleted them under another run's live ext
+    // processes (PathNotFoundException: Deletion failed, /tmp/fa_539_home).
+    home = Directory.systemTemp.createTempSync('fa_539_home_');
+    project = Directory.systemTemp.createTempSync('fa_539_proj_');
     // Pin the classic chrome: this suite asserts the classic grid (#539);
     // the band redesign (#805-#807) has its own surface.
     File('${home.path}/.fah/config.yaml')
@@ -115,8 +119,17 @@ void main() {
   });
 
   tearDown(() async {
-    await home.delete(recursive: true);
-    await project.delete(recursive: true);
+    // Failure-safe cleanup (issue #943): the run's own verdict must never
+    // hinge on whether a straggler ext process still holds a root — a
+    // unique-per-run root can only leave /tmp residue, never poison the
+    // next run.
+    for (final dir in [home, project]) {
+      try {
+        dir.deleteSync(recursive: true);
+      } on FileSystemException {
+        // Straggler holds it; /tmp reclaims the unique dir.
+      }
+    }
   });
 
   Map<String, String> env() => {
@@ -227,7 +240,11 @@ void main() {
       // The printed `· older` row is a frozen snapshot: after the FIRST
       // settle lands (four jobs still live), it must not have moved — the
       // unfrozen board would re-derive `· 4 running · 1 done` here.
-      final beforeOlder = before
+      // Compared as CONTENT frames (gh-982): raw viewport equality also
+      // compares xterm buffer-cell materialization, which the two dart_tui
+      // paint paths leave differently depending on frame history — the
+      // macOS/fa-m5 flake failed raw equality on byte-identical counts.
+      final beforeOlder = frameContentLines(before)
           .where((l) => l.contains('· older') && l.contains('(5)'))
           .toList();
       expect(beforeOlder, hasLength(1), reason: 'frame before:\n$before');
@@ -239,7 +256,9 @@ void main() {
       final mid = harness.viewportLines;
       expectComposerReserved(mid, columns);
       expect(
-        mid.where((l) => l.contains('· older') && l.contains('(5)')).toList(),
+        frameContentLines(mid)
+            .where((l) => l.contains('· older') && l.contains('(5)'))
+            .toList(),
         beforeOlder,
         reason:
             'the printed `· older` row never changes counts while its '
@@ -288,13 +307,13 @@ void main() {
         onTimeout: () => -1,
       );
     }
-  }, skip: 'flake: gh-982 macOS/fa-m5 shard red while linux green; '
-      'quarantined to unblock main — fix the flake and re-enable');
+  });
 
   // gh-938: only this case races the shared /tmp/fa_539_home layout.
-  // 'stacked boards freeze' above is QUARANTINED under gh-982: it is the
-  // real #937 regression, but it flakes on macOS/fa-m5 (linux green) and
-  // red-blocks the whole factory — re-enable it with the ai/gh-869 fix.
+  // 'stacked boards freeze' above was QUARANTINED under gh-982 and is
+  // re-enabled: the macOS/fa-m5 flake was the raw viewport equality
+  // comparing xterm buffer-cell materialization across the dart_tui
+  // paint paths (fixed via frameContentLines), not a board regression.
   test(
     'restart with live jobs shows lost, never running (268/0 impossible)',
     () async {
@@ -352,6 +371,9 @@ void main() {
       );
       expectComposerReserved(resumed.viewportLines, 80);
     },
-    skip: 'infra: #936 shared /tmp race (fa_539_home/fa_539_proj)',
+    // Issue #943: re-enabled — the /tmp/fa_539_* race it died of is gone
+    // (unique per-run roots + failure-safe cleanup above). The OTHER
+    // scenario's skip ('stacked boards freeze', #937) stays: a real
+    // product regression, deliberately not re-enabled here.
   );
 }
