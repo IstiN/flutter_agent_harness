@@ -376,7 +376,7 @@ extension ApprovalCommands on AgentCli {
   void _handleApprovalMode(String rest) {
     if (rest.isEmpty) {
       io.writeln('approval mode: ${_approval.mode.label}');
-      io.writeln('approval modes: always-ask, write, yolo, unattended');
+      io.writeln('approval modes: always-ask, write, yolo, $kAutopilotLabel');
       final allowed = _approval.alwaysAllowedTools;
       io.writeln(
         'always-allowed tools: ${allowed.isEmpty ? '(none)' : allowed.join(', ')}',
@@ -387,7 +387,7 @@ extension ApprovalCommands on AgentCli {
     if (mode == null) {
       io.writeln(
         'unknown approval mode: $rest '
-        '(want always-ask|write|yolo|unattended)',
+        '(want always-ask|write|yolo|$kAutopilotLabel)',
       );
       return;
     }
@@ -555,7 +555,7 @@ extension ApprovalCommands on AgentCli {
       // `provider / model` in the band (issue #920) — the same label the
       // legacy footer renders.
       providerName: _statusProviderLabel(model),
-      approvalMode: _approval.mode.name,
+      approvalMode: _approval.mode.label,
       agentLoadMode: config.agentLoadMode,
       git: _statusGitProbe.current(_env.cwd),
       contextTokens: _liveContextTokens(),
@@ -770,8 +770,10 @@ extension ApprovalCommands on AgentCli {
     // stays plain ASCII; existing `/help` output is byte-unchanged.
     final lower = filter.trim().toLowerCase();
     if (lower == 'hotkeys' || lower == 'keys' || lower == 'keybindings') {
-      for (final line
-          in tuiHotkeyTableLines(markdown: _useTui, darwin: tuiKeyHintDarwin)) {
+      for (final line in tuiHotkeyTableLines(
+        markdown: _useTui,
+        darwin: tuiKeyHintDarwin,
+      )) {
         io.writeln(line);
       }
       return;
