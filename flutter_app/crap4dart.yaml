@@ -75,14 +75,16 @@ crap:
   # lcov is impossible on the agent cube (the flutter coverage collector
   # canonicalizes source paths and lstat EPERMs through .worktrees). Only
   # down.
-  # gh-992 (restore): the #955 network-mode merge shipped three uncovered
-  # UI beasts (ShowcasePage.build 72, _ChannelRailState._createChannel 72,
-  # runCreateNetworkFlow 40.8); the gate was temporarily raised to 75.0 on
-  # main (owner call 2026-09-26, raise-issue: gh-992). Scripted-HTTP widget
-  # tests covered all three — each now 8.0 (test/network/
-  # ui_showcase_page_test.dart, ui_channel_rail_test.dart,
-  # ui_create_network_flow_test.dart) — and the threshold is restored to
-  # 30.0 (the CC-5 ladder tier). Only down.
+  # TEMP raise (owner call 2026-09-26, mirrors dmtools-dart #256): the #955
+  # network-mode merge shipped widgets without tests — max CRAP 72.0
+  # (_ChannelRailState._createChannel, CC 8 @ 0% cov). Restore to 30.0 via
+  # the linked issue.
+  # raise-issue: gh-992
+  # Restored (gh-992, 2026-09-27): the agents/enroll DAP-tab rework
+  # (fcd2d0232) covered the #955 network UI — 5 enroll dialog groups +
+  # channel_rail/chat_page call-site suites, 72 focused tests; re-measured
+  # on the full local flutter lcov (3292 green): max CRAP 30.0, the
+  # threshold follows back down 75.0 → 30.0. Only down.
   threshold: 30.0
 
 coverage:
