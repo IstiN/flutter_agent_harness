@@ -23,7 +23,10 @@ permissions:
 jobs:
   measure-and-file:
     name: Measure CLI coverage, file raise-to-X issue if higher
-    runs-on: ubuntu-latest
+    # gh-1005: measure on the SAME environment the per-PR ratchet measures —
+    # ubuntu-24.04-arm (pure-dart job per the runner-split note; OS-identical
+    # line hits to the x64 queue).
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1

@@ -17,13 +17,12 @@ tags:
     # in tag overrides (test_core _disallow('concurrency') for tag scopes, v1.32),
     # so the pin lives on the CI invocations: the per-PR integration shards run
     # `--concurrency=4`, which bounds concurrent live-provider tests PER JOB at
-    # 4 (they previously ran at the default = CPU count). Since #963 the same
-    # suites also run on the standing linux leg in the same wall-time window:
-    # a same-repo PR can execute them twice (mac + linux), with a theoretical
-    # ceiling of 6 shard jobs x 4 = 24 concurrent live tests. Accepted for now
-    # (live tests only run with keys; each suite is a handful of tests) — if
-    # provider 429s start flaking the leg, stagger the linux leg or lower the
-    # knob; per-job rate pinning across CI jobs has no native Actions primitive.
+    # 4 (they previously ran at the default = CPU count). gh-1005 (2026-09-30)
+    # retired the mac leg: the per-PR suite runs ONCE (pty-integration-linux,
+    # 3 shards x 4 = 12 concurrent live tests) and nightly's unsharded leg
+    # runs hours later — the old mac+linux same-window doubling (24) is gone.
+    # If provider 429s start flaking the leg, lower the knob; per-job rate
+    # pinning across CI jobs has no native Actions primitive.
   pty:
     # Child-agent-spawn PTY tests (issue #553): the test drives a full task
     # tool spawn — a second CLI process whose boot/JIT time is unbounded on a
