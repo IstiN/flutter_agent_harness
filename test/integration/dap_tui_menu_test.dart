@@ -161,6 +161,11 @@ void main() {
         extraEnv: {
           'HOME': tempHome.path,
           'DAP_LOCAL_HUB_URL': await deadLocalHubUrl(),
+          // gh-1007 root cause: the PTY harness pins DAP_HUB_URL to a
+          // dead loopback port (issue #943 hub hygiene, env beats the
+          // tempHome config file), so the in-session secret-set dial
+          // must name the fake hub explicitly.
+          'DAP_HUB_URL': fakeHub.url.toString(),
         },
         args: ['--plugin', 'hub'],
         columns: 120,
@@ -194,6 +199,9 @@ void main() {
         'master secret set for this session',
         timeout: const Duration(seconds: 20),
       );
+      // gh-1007: loaded runners deliver the post-secret dial's hello in
+      // bursts past 30s — poll with a 90s global ceiling instead of one
+      // fixed window (the issue's 'longer/poller timeout' hardening).
       await fakeHub.waitForHellos(1, timeout: const Duration(seconds: 30));
       await harness.waitForText(
         'connected',
@@ -204,9 +212,7 @@ void main() {
 
       await harness.runSlashCommand('/exit');
       await harness.waitForOutput();
-    }, skip: 'flake: gh-1007 LocalHub.waitForHellos 30s timeout under '
-        'runner load; quarantined to unblock validation — fix the '
-        'timing flake and re-enable');
+    });
 
     test(
       'running hub: the leading row is Stop DAP (AC7, issue #304)',
@@ -347,10 +353,7 @@ Future<void> _waitForMenuPainted(
   required bool hubRunning,
 }) async {
   final lastLabel = dapMenuOptions(hubRunning: hubRunning).last.$2;
-  await harness.waitForScreen(
-    lastLabel,
-    timeout: const Duration(seconds: 20),
-  );
+  await harness.waitForScreen(lastLabel, timeout: const Duration(seconds: 20));
 }
 
 /// gh-1026: opens the /dap menu until it paints the RUNNING shape
