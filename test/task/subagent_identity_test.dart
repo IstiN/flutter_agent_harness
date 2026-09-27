@@ -126,7 +126,7 @@ final class _Router {
         return entry.value.removeAt(0)();
       }
     }
-    return _immediate([_textTurn('done')]);
+    return _immediate(_textTurn('done'));
   }
 
   static String _lastUserText(Context context) {
@@ -191,7 +191,7 @@ final class _FakeFabric implements MessagingRepository {
 TaskExecutor _executor(SubagentManager manager, _Router router) {
   return TaskExecutor(
     childTools: [_fakeTool('read', ApprovalTier.read)],
-    streamFunction: router.call,
+    streamFunction: () => router.call,
     model: () => _model,
     registry: TaskAgentRegistry(const []),
     semaphore: Semaphore(4),
@@ -358,7 +358,7 @@ void main() {
               },
             ),
           ],
-          streamFunction: router.call,
+          streamFunction: () => router.call,
           model: () => _model,
           registry: TaskAgentRegistry(const []),
           semaphore: Semaphore(4),

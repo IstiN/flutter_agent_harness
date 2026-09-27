@@ -1149,16 +1149,34 @@ void main() {
       () async {
         final env = MemoryExecutionEnv(cwd: '/work');
         final (queue, repo, clock) = harness(env);
-        await queue.schedule(
-          text: 'other session monitor',
-          delay: const Duration(minutes: 1),
-          to: 'other-sid/monitor-b',
-          from: 'other-sid/monitor-b',
-        );
+        // Hand-written record owned by ANOTHER session (the only way this
+        // shape exists — the tool always stamps the scheduler's own owner):
+        // session sid-2's monitor scheduled itself; sid-1's sweeper must
+        // neither deliver it (anywhere) nor delete it.
+        final dir = '/sessions/--work--/messages/_scheduled';
+        await env.createDir(dir).getOrThrow();
+        await env
+            .writeFile(
+              '$dir/foreign.json',
+              jsonEncode({
+                'id': 'foreign',
+                'dueMs': clock.now.millisecondsSinceEpoch,
+                'to': 'sid-2/monitor-b',
+                'from': 'sid-2/monitor-b',
+                'text': 'other session monitor',
+                'owner': 'sid-2',
+              }),
+            )
+            .getOrThrow();
         clock.jump(const Duration(minutes: 2));
         expect(await queue.deliverDue(), 0);
-        expect(await repo.peek('other-sid/monitor-b'), isEmpty);
+        expect(await repo.peek('sid-2/monitor-b'), isEmpty);
         expect(await repo.peek('sid-1/main'), isEmpty);
+        // The record stays on disk for its owner's sweeper.
+        final record = jsonDecode(
+          (await env.readTextFile('$dir/foreign.json')).valueOrNull!,
+        );
+        expect(record['id'], 'foreign');
         queue.dispose();
       },
     );

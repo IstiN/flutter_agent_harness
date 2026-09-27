@@ -362,12 +362,24 @@ final class ScheduledMessageQueue {
   /// re-addressing a foreign-owned record here steals the reminder into
   /// the wrong mailbox and deletes the file (cross-instance self-theft —
   /// issue #59), so those return null and stay with their owner.
+  ///
+  /// A self-addressed record naming a SUBAGENT mailbox of this session
+  /// (`<prefix>/<childId>`, gh-970) delivers as recorded: the address rides
+  /// the same owner prefix and is exactly as stable, and re-addressing it
+  /// here would steal the child's reminder into main's inbox (the reported
+  /// "monitors stop waking" symptom).
   String? _deliveryTarget(Map<String, dynamic> record) {
     final recordedTo = record['to'] as String? ?? _self();
     final from = record['from'] as String? ?? recordedTo;
     if (recordedTo != from) return recordedTo;
     if (!_owns(record['owner'] as String? ?? '')) return null;
+    final owner = _ownerPrefix?.call() ?? '';
     final self = _self();
+    if (owner.isNotEmpty &&
+        recordedTo.startsWith('$owner/') &&
+        recordedTo != self) {
+      return recordedTo;
+    }
     return (self != 'self' && self.isNotEmpty) ? self : recordedTo;
   }
 

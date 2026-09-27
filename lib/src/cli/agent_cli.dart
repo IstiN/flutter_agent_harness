@@ -68,6 +68,7 @@ import '../task/agent_discovery.dart';
 import '../task/child_session_io.dart';
 import '../task/subagent.dart';
 import '../task/subagent_manager.dart';
+import '../task/subagent_scope.dart';
 import '../task/subagent_heartbeat.dart';
 import '../task/subagent_tools.dart';
 import '../task/delivery_slo.dart';
@@ -409,7 +410,13 @@ class AgentCli {
       ),
       // schedule_message: self-addressed delayed notes — an agent can
       // schedule its own follow-up check; delivery rides the inbox idle-wake.
-      scheduleMessageTool(_scheduledMessages),
+      // gh-970: inside a subagent run "your own mailbox" is the CHILD's —
+      // the queue's selfMailbox always resolves main, which redirected
+      // every subagent self-reminder into main's inbox.
+      scheduleMessageTool(
+        _scheduledMessages,
+        senderMailbox: _childSenderMailbox,
+      ),
       // Non-interactive input gets a null ask callback (safe default).
       askTool(callback: io.isInteractive ? _answerAskQuestions : null),
       // request_secret: ask the user for missing API keys securely.
@@ -585,6 +592,12 @@ class AgentCli {
       // without it the tombstone fallback would fire over LIVE children.
       executor: _taskConfig.executor,
     );
+    // gh-970: a scheduled reminder (or sibling mail) that fires into a
+    // finished child's inbox resumes the child in its own session — the
+    // child-side analog of the idle inbox wake below. The sweep (dedup,
+    // status gates) lives on the manager; this host supplies the resume.
+    _subagentManager.wakeChild = (id) =>
+        _taskConfig.executor.resumeChild(id, childInboxWakePrompt);
     _toolRegistry = ToolRegistry([
       ...coreTools,
       ...monitoringTools,
@@ -1499,6 +1512,10 @@ class AgentCli {
       }
       unawaited(_reclaimOrphanFabricMail());
       unawaited(_wakeOnInboxMail());
+      // gh-970: reminders/sibling mail that fired into a FINISHED child's
+      // inbox resume that child in its own session (no-op without the
+      // child-resume wiring).
+      unawaited(_subagentManager.wakeChildrenWithPendingMail());
       // #437: wedge watchdog for mid-run steering + the idle wake for
       // steering recovered from the previous session.
       _checkPendingSteeringHealth();
