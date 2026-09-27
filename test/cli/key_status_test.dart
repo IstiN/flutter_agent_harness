@@ -2,6 +2,7 @@
 // never in play — `OPENROUTER_API_KEY` exported for OpenRouter must not
 // serve api.z.ai (the boot key resolution and the banner/error renderer
 // both follow the shared resolveEndpointKey chain).
+import 'package:flutter_agent_harness/src/cli/custom_providers.dart';
 import 'package:flutter_agent_harness/src/cli/headless_provider_key.dart';
 import 'package:flutter_agent_harness/src/cli/key_status.dart';
 import 'package:flutter_agent_harness/src/model.dart';
@@ -200,6 +201,94 @@ void main() {
         maxTokens: 16384,
       );
       expect(renderer.keyStatusLine(model), isNotNull);
+    });
+  });
+
+  group('authHint under roles mode (gh-1000 AC2)', () {
+    const kimiUrl = 'https://api.kimi.com/coding/v1';
+    const kimiMeKey = 'FA_KEY_API_KIMI_COM_KIMI_ME';
+
+    Future<KeyStatusRenderer> rolesRendererOf({
+      Map<String, String> env = const {},
+      FakeSecureKeyStore? store,
+      CustomProviderRegistry? registry,
+      String? activeCustomName,
+    }) async {
+      final keys = SecureKeyCache(store ?? FakeSecureKeyStore());
+      await keys.preload(const []);
+      return KeyStatusRenderer(
+        rolesDriven: true,
+        providerKind: 'openai-completions',
+        explicitToken: false,
+        activeCustomName: activeCustomName,
+        red: (message) => message,
+        secureKeys: keys,
+        customProviders: registry,
+        envVarIsSet: (name) => env.containsKey(name),
+        envVarValue: (name) => env[name],
+      );
+    }
+
+    test('a catalog default endpoint keeps the generic roles hint', () async {
+      final renderer = await rolesRendererOf();
+      expect(
+        renderer.authHint(openRouterUrl),
+        contains('roles mode reads keys from the environment only'),
+      );
+    });
+
+    test('a custom endpoint never shows the generic roles hint (AC2)',
+        () async {
+      final renderer = await rolesRendererOf();
+      expect(
+        renderer.authHint(kimiUrl),
+        isNot(contains('roles mode reads keys from the environment only')),
+      );
+    });
+
+    test('a custom endpoint names the saved entry and its key slot (AC2)',
+        () async {
+      final renderer = await rolesRendererOf(
+        registry: CustomProviderRegistry([
+          CustomProviderEntry(
+            name: 'kimi_me',
+            apiType: 'openai',
+            baseUrl: kimiUrl,
+            modelId: 'k3-256k',
+            keyName: kimiMeKey,
+          ),
+        ]),
+        activeCustomName: 'kimi_me',
+      );
+      final hint = renderer.authHint(kimiUrl);
+      expect(hint, contains('kimi_me'));
+      expect(hint, contains('/key set $kimiMeKey'));
+    });
+
+    test('a stored key names the store as the source to verify', () async {
+      final renderer = await rolesRendererOf(
+        store: FakeSecureKeyStore()..map[kimiMeKey] = 'sk-stale',
+        registry: CustomProviderRegistry([
+          CustomProviderEntry(
+            name: 'kimi_me',
+            apiType: 'openai',
+            baseUrl: kimiUrl,
+            modelId: 'k3-256k',
+            keyName: kimiMeKey,
+          ),
+        ]),
+        activeCustomName: 'kimi_me',
+      );
+      final hint = renderer.authHint(kimiUrl);
+      expect(hint, contains(kimiMeKey));
+      expect(hint, isNot(contains('sk-stale')));
+    });
+
+    test('a custom endpoint without a saved entry names the scoped slot',
+        () async {
+      final renderer = await rolesRendererOf();
+      final hint = renderer.authHint(kimiUrl);
+      expect(hint, contains('/key set FA_KEY_API_KIMI_COM'));
     });
   });
 }

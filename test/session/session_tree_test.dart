@@ -239,6 +239,36 @@ void main() {
       },
     );
 
+    test(
+      'buildContext derives the custom provider pin from model_change '
+      '(gh-1000)',
+      () async {
+        final session = await newSession();
+        await session.appendModelChange(
+          provider: 'openai',
+          modelId: 'k3-256k',
+          baseUrl: 'https://api.kimi.com/coding/v1',
+          customProvider: 'kimi_me',
+        );
+        final context = await session.buildContext();
+        expect(context.model?.provider, 'openai');
+        expect(context.model?.modelId, 'k3-256k');
+        expect(context.model?.baseUrl, 'https://api.kimi.com/coding/v1');
+        expect(context.model?.customProvider, 'kimi_me');
+      },
+    );
+
+    test(
+      'an assistant-message-derived model carries no pin (migration-safe)',
+      () async {
+        final session = await newSession();
+        await session.appendMessage(assistant('hello'));
+        final context = await session.buildContext();
+        expect(context.model?.baseUrl, isNull);
+        expect(context.model?.customProvider, isNull);
+      },
+    );
+
     test('buildContext defaults when nothing was recorded', () async {
       final session = await newSession();
       final context = await session.buildContext();

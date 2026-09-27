@@ -427,6 +427,43 @@ void main() {
       );
       expect(names, isEmpty);
     });
+
+    test('collects the endpoint-scoped slots of custom-endpoint refs '
+        '(gh-1000 AC5)', () {
+      final names = roleKeyNames(
+        ModelRolesConfig(
+          roles: {
+            'smol': const [
+              ModelRef(
+                provider: 'openai',
+                modelId: 'k3-256k',
+                baseUrl: 'https://api.kimi.com/coding/v1',
+              ),
+            ],
+          },
+        ),
+      );
+      expect(names, {
+        CustomProviderRegistry.keyNameFor('https://api.kimi.com/coding/v1'),
+      });
+    });
+
+    test('a catalog-default ref adds no endpoint slot', () {
+      final names = roleKeyNames(
+        ModelRolesConfig(
+          roles: {
+            'default': const [
+              ModelRef(
+                provider: 'openrouter',
+                modelId: 'm1',
+                baseUrl: _openrouter,
+              ),
+            ],
+          },
+        ),
+      );
+      expect(names, isEmpty);
+    });
   });
 
   group('secureKeyPreloadNames', () {
@@ -530,6 +567,30 @@ void main() {
         env: const {'CHAIN_KEY': ''},
       );
       expect(secrets, {'CHAIN_KEY': 'storevalue1'});
+    });
+
+    test('the endpoint-scoped slot of a custom-endpoint ref is collected '
+        '(gh-1000 AC6)', () async {
+      final config = ModelRolesConfig(
+        roles: {
+          'smol': const [
+            ModelRef(
+              provider: 'openai',
+              modelId: 'k3-256k',
+              baseUrl: 'https://api.kimi.com/coding/v1',
+            ),
+          ],
+        },
+      );
+      final scoped = CustomProviderRegistry.keyNameFor(
+        'https://api.kimi.com/coding/v1',
+      );
+      final secrets = collectRoleSecrets(
+        config,
+        await _cache({scoped: 'sk-store'}),
+        env: const {},
+      );
+      expect(secrets[scoped], 'sk-store');
     });
   });
 

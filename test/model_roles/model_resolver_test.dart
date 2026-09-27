@@ -740,4 +740,61 @@ void main() {
       });
     });
   });
+
+  group('custom-endpoint key resolution (gh-1000 AC5)', () {
+    const kimiUrl = 'https://api.kimi.com/coding/v1';
+    const scopedName = 'FA_KEY_API_KIMI_COM';
+
+    ModelRolesResolver resolverWith(Map<String, String> secrets) {
+      return ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: {
+            'smol': [
+              ModelRef(provider: 'openai', modelId: 'k3-256k', baseUrl: kimiUrl),
+            ],
+          },
+        ),
+        secrets: secrets,
+        streamFactory: _neverStream,
+      );
+    }
+
+    test('a custom-endpoint chain entry resolves its endpoint-scoped key',
+        () {
+      final chain = resolverWith({
+        scopedName: 'sk-store',
+        // A foreign OPENAI_API_KEY must NOT serve the custom endpoint
+        // before the endpoint-scoped slot (issue #40 ordering).
+        'OPENAI_API_KEY': 'sk-openai',
+      }).chainFor('smol')!;
+      expect(chain, hasLength(1));
+      expect(chain.single.keyRing.baseName, scopedName);
+      expect(chain.single.keyRing.currentCredential.value, 'sk-store');
+    });
+
+    test('the catalog env name still backstops a custom endpoint', () {
+      final chain = resolverWith({
+        'OPENAI_API_KEY': 'sk-openai',
+      }).chainFor('smol')!;
+      expect(chain.single.keyRing.baseName, 'OPENAI_API_KEY');
+    });
+
+    test('a missing key names the endpoint-scoped store fix', () {
+      final resolver = resolverWith(const {});
+      expect(
+        () => resolver.chainFor('smol'),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('smol'), contains('/key set $scopedName')),
+          ),
+        ),
+      );
+      expect(
+        resolver.skippedEntries['smol']!.single,
+        contains('/key set $scopedName'),
+      );
+    });
+  });
 }
