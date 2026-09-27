@@ -183,6 +183,10 @@ dev_dependencies:
   # not a hand-rolled rasterizer.
   xterm: ^4.0.0
   pty2: ^0.5.3
+  # omp REG parity legs (issue #810): the capture + fa-side visual tests
+  # drive both CLIs through the same scripted OpenAI-compatible mock.
+  fa_llm_mock:
+    path: ../packages/fa_llm_mock
 
 dependency_overrides:
   # (meta override removed with Flutter 3.47.4: the SDK now declares
