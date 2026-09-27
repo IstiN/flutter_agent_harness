@@ -1,5 +1,10 @@
+@TestOn('vm')
+library;
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
+
+import 'agent_cli_test_support.dart';
 
 /// A scriptable monotonic clock: the window must be measured on elapsed
 /// time, so tests advance it explicitly instead of faking wall clock.
