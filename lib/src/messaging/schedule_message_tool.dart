@@ -31,7 +31,18 @@ Duration? parseDelay(String spec) {
   return total == Duration.zero ? null : total;
 }
 
-AgentTool scheduleMessageTool(ScheduledMessageQueue queue) {
+AgentTool scheduleMessageTool(
+  ScheduledMessageQueue queue, {
+
+  /// The calling agent's own mailbox when it is NOT the host's main agent
+  /// (gh-970): a subagent scheduling a self-reminder must default to its
+  /// OWN mailbox — the queue's `selfMailbox` always resolves the host's
+  /// main mailbox, which silently redirected every subagent reminder into
+  /// main's inbox. Resolved per call; null (the main agent) keeps the
+  /// legacy defaulting. Hosts wire it to the subagent scope, e.g.
+  /// `() => activeSubagentId() == null ? null : manager.mailboxOf(...)`.
+  String? Function()? senderMailbox,
+}) {
   return AgentTool(
     name: 'schedule_message',
     description:
@@ -70,14 +81,17 @@ AgentTool scheduleMessageTool(ScheduledMessageQueue queue) {
           'error: delay must look like 90s / 25m / 2h / 1d',
         );
       }
+      final sender = senderMailbox?.call();
       final id = await queue.schedule(
         text: text.trim(),
         delay: delay,
-        to: args['to'] as String?,
+        to: (args['to'] as String?) ?? sender,
+        from: sender,
       );
       final due = DateTime.now().add(delay).toIso8601String();
       return ToolExecutionResult.text(
-        'scheduled $id for $due — it will arrive as [scheduled] mail',
+        'scheduled $id for $due — it will arrive as [scheduled] mail'
+        '${sender == null ? '' : ' in $sender'}',
       );
     },
   );
