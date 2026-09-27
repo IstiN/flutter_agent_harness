@@ -1,3 +1,5 @@
+import 'package:http/http.dart' as http;
+
 // Web stubs for the CLI OAuth/SSO callback-server entry points exported
 // from `package:flutter_agent_harness/io.dart`. The real implementations
 // (lib/src/cli/codemie_sso_server.dart, lib/src/cli/chatgpt_oauth_server.dart)
@@ -48,6 +50,7 @@ Never runChatGptOAuthCliFlow({
 /// Always throws on the web — the AIIN connect flow needs a local server.
 Never runAiinConnectCliFlow({
   required void Function(String) onStatus,
+  http.Client? client,
   Future<bool> Function(String)? openBrowserFn,
   void Function()? onCallback,
   Duration? timeout,
