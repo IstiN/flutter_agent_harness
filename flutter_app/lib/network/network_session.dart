@@ -265,7 +265,9 @@ final class NetworkSession extends ChangeNotifier {
       senderIdentity: senderIdentity,
       channelPub: _codec.publicKeyFromB64(channelKeys.pub),
       frameId: frameId,
-      channelName: channel.name ?? channel.id,
+      // AAD binds to the channel id (the hub-side name) — pure-DAP agents
+      // cannot know the display name (#1002).
+      aadTarget: channel.id,
       plaintext: text,
     );
   }
@@ -302,7 +304,10 @@ final class NetworkSession extends ChangeNotifier {
         channelKeyPair: await _codec.keyPairFromPriv(keys.priv),
         // The fanet1 AAD frame id IS the envelope id (see sendText).
         frameId: envelope.id,
-        channelName: channel.name ?? channel.id,
+        // AAD contract: the channel id (#1002); pre-contract frames were
+        // sealed with the display name — accept them via the fallback.
+        aadTarget: envelope.channelId,
+        legacyAadTarget: channel.name,
         payloadB64: envelope.payload,
       );
       return ChannelMessage(
