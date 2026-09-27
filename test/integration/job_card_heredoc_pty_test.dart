@@ -64,8 +64,11 @@ void main() {
   late File turnsFile;
 
   setUp(() async {
-    home = Directory('/tmp/fa_599_home')..createSync(recursive: true);
-    project = Directory('/tmp/fa_599_proj')..createSync(recursive: true);
+    // Unique SHORT dirs (the #936/#938 class — fixed /tmp paths race the
+    // in-suite --concurrency=4 and cross-suite siblings on the shared
+    // minis); /tmp keeps the resolved path short for the 80-col geometry.
+    home = Directory('/tmp').createTempSync('fa599h');
+    project = Directory('/tmp').createTempSync('fa599p');
     // Pin the classic chrome: this suite asserts the classic grid (#599);
     // the band redesign (#805-#807) has its own surface.
     File('${home.path}/.fah/config.yaml')
