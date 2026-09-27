@@ -287,3 +287,5 @@ cp scripts/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+<!-- factory ladder smoke: trivial doc touch to walk the full machine pipeline (review → validate → merge) -->
