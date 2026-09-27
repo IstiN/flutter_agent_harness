@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- fix(install): source-of-truth pin drift + install-pin provenance gate.
+  `site/install-config.yaml` `pinned_cli_version` said 0.1.452 while the
+  generated `site/install.sh` carried 1.0.480 (#1015 hand-edited only the
+  generated file), so the next regeneration would have silently regressed
+  the installer default to a release that predates SHA256SUMS signing
+  (`E_PROVENANCE_MISSING` on a fresh curl|sh). The config pin is bumped to
+  1.0.480, and `scripts/check_install_pin.sh` (new ci.yml
+  `install-pin-gate` job, aggregated into the Quality gate; fixture
+  coverage as contract 5 in `installer_verify_selftest.sh`) fails a PR
+  when the config pin drifts from the generated installer
+  (`E_PIN_DRIFT`) or when the pinned release does not publish a
+  signature-verified `SHA256SUMS` covering every platform archive
+  (`E_PIN_PROVENANCE_MISSING` / `E_PIN_PROVENANCE_INVALID` /
+  `E_PIN_ASSET_COVERAGE`).
+
 ## 1.0.472
 
 - feat(818): herdr integration — fa as a supported herdr agent. The

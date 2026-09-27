@@ -1920,10 +1920,28 @@ jobs:
       - name: Installer verification fixtures (AC1-AC4)
         run: bash scripts/installer_verify_selftest.sh
 
+  # SEC-07 follow-up (#1015 incident): the release install.sh pins by default
+  # must itself carry signed provenance — otherwise a fresh curl|sh refuses
+  # the installer's own default with E_PIN_PROVENANCE_MISSING. Runs the pin
+  # gate live (network to github.com releases, read-only) on EVERY PR — no
+  # path gating, same reasoning as installer-verify. Fixture coverage of the
+  # gate's failure modes lives in installer-verify (contract 5).
+  install-pin-gate:
+    name: Install pin provenance gate
+    runs-on: ubuntu-latest
+    needs: changes
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Pinned release must carry signed provenance
+        run: bash scripts/check_install_pin.sh
+
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-verify]
+    needs: [changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-verify, install-pin-gate]
     if: always()
     timeout-minutes: 5
     permissions:
@@ -1955,6 +1973,7 @@ jobs:
           echo "supply-chain  = ${{ needs.supply-chain.result }}"
           echo "dep-audit     = ${{ needs.dep-audit.result }}"
           echo "installer-it = ${{ needs.installer-verify.result }}"
+          echo "pin-gate    = ${{ needs.install-pin-gate.result }}"
       - name: Fail on any real failure (skipped security = dodge = FAIL)
         env:
           R_CHANGES: ${{ needs.changes.result }}
@@ -1981,6 +2000,7 @@ jobs:
           R_PTY_GATES: ${{ needs.pty-coverage-gate.result }}
           R_PTY_VISUAL: ${{ needs.pty-visual.result }}
           R_INSTALLER_VERIFY: ${{ needs.installer-verify.result }}
+          R_INSTALL_PIN_GATE: ${{ needs.install-pin-gate.result }}
         run: |
           fail() { echo "Quality gate FAILED: $1"; exit 1; }
           # The classifier itself must have run: a failed or skipped
@@ -2006,7 +2026,7 @@ jobs:
                     "build-android:$R_BUILD_ANDROID" "build-ios:$R_BUILD_IOS" "build-macos:$R_BUILD_MACOS" \
                     "integration-mock:$R_INTEG" "hostile-env:$R_HOSTILE" \
                     "pty-integration-linux:$R_PTY_LINUX" "pty-coverage-gate:$R_PTY_GATES" "pty-visual:$R_PTY_VISUAL" \
-                    "installer-verify:$R_INSTALLER_VERIFY"; do
+                    "installer-verify:$R_INSTALLER_VERIFY" "install-pin-gate:$R_INSTALL_PIN_GATE"; do
             name="${kv%%:*}"; r="${kv#*:}"
             if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then
               fail "a leg is $r ($name)"

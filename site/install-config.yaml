@@ -117,7 +117,7 @@ install:
     +GmhARJnFP2Nem6owJ1PSYzIWT5zVjrA4pK4VJGA6EC2H2poBq4x7tkDugQYxdgC
     P2gLH2uyw0KaQBQa1CQVCnUCAwEAAQ==
     -----END PUBLIC KEY-----
-  pinned_cli_version: "0.1.452"
+  pinned_cli_version: "1.0.480"
   banner:
     - "  ███████╗ █████╗       ████████╗███████╗██████╗ ███╗   ███╗██╗███╗   ██╗ █████╗ ██╗"
     - "  ██╔════╝██╔══██╗      ╚══██╔══╝██╔════╝██╔══██╗████╗ ████║██║████╗  ██║██╔══██╗██║"
