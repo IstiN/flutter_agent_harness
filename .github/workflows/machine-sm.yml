@@ -57,7 +57,7 @@ jobs:
     with:
       # The literal uses-ref: the factory requires it (it cannot derive its
       # own ref — github.workflow_ref in a called workflow is the CALLER's).
-      factory_ref: 6b953f80e7670c20e5a354a350946eaf24287dda
+      factory_ref: fa6e9c2fdf845e11476f7b648d92805a49b9ec01
       # Manual ticks default to dry; cron ticks run live.
       dryRun: ${{ github.event.inputs.dryRun || 'false' }}
       # #687: one source of truth for the machine login (repo variable).
