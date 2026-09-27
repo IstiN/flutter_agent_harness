@@ -222,8 +222,17 @@ final class KeyStatusRenderer {
   /// endpoint-scoped store entry → legacy env-name store entry; on a custom
   /// endpoint only the endpoint-scoped store entries can be the source (the
   /// boot resolver never probes the catalog env names there — issue #40).
+  ///
+  /// Roles mode gets the generic env-only hint ONLY for its genuine chain
+  /// failures (a catalog-default endpoint). A custom endpoint under roles
+  /// mode is a provider-binding failure — the hint names the saved entry,
+  /// the expected key slot, and the one-line fix (gh-1000 AC2): a restored
+  /// session or pinned role re-resolved onto a custom provider whose key
+  /// did not follow.
   String authHint(String baseUrl) {
     if (rolesDriven) {
+      final customHint = customEndpointAuthHint(baseUrl);
+      if (customHint != null) return customHint;
       return ' — roles mode reads keys from the environment only; check '
           'the chain env vars in ~/.fah/config.yaml';
     }
@@ -319,5 +328,56 @@ final class KeyStatusRenderer {
   String? storedKeyHint(String name, String baseUrl) {
     if (secureKeys?.read(name) == null) return null;
     return storeHintMessage(name, baseUrl);
+  }
+
+  /// The auth hint for a CUSTOM endpoint (no catalog spec's default URL)
+  /// — roles mode included, which otherwise shows its generic env-only
+  /// hint for genuine chain failures. Null for catalog-default endpoints.
+  ///
+  /// Names the failing provider (the saved entry serving the endpoint, or
+  /// the endpoint itself), the expected source (the entry's key slot or
+  /// the endpoint-scoped store slot), and the one-line fix — never the
+  /// bare roles-mode hint (gh-1000 AC2/AC5).
+  String? customEndpointAuthHint(String baseUrl) {
+    if (_isCatalogDefaultEndpoint(baseUrl)) return null;
+    final entry = _entryForEndpoint(baseUrl);
+    final keyName =
+        entry?.keyName ?? CustomProviderRegistry.keyNameFor(baseUrl);
+    final storedHint = storedKeyHint(keyName, baseUrl);
+    if (storedHint != null) return storedHint;
+    final target = entry != null ? 'provider "${entry.name}"' : baseUrl;
+    final login = entry != null ? ' (or /provider ${entry.name})' : '';
+    return ' — no key resolved for $target; set it with '
+        '/key set $keyName <value>$login';
+  }
+
+  /// Whether [baseUrl] IS some catalog spec's default endpoint.
+  bool _isCatalogDefaultEndpoint(String baseUrl) =>
+      providerCatalog.values.any((spec) => spec.defaultBaseUrl == baseUrl);
+
+  /// The saved custom entry serving [baseUrl]: the active entry when it
+  /// matches (two accounts can share one endpoint — the active one is the
+  /// one in play), else the first endpoint match.
+  CustomProviderEntry? _entryForEndpoint(String baseUrl) {
+    final registry = customProviders;
+    if (registry == null) return null;
+    final active = activeCustomName == null
+        ? null
+        : registry.find(activeCustomName!);
+    if (active != null && _sameEndpoint(active.baseUrl, baseUrl)) {
+      return active;
+    }
+    for (final entry in registry.entries) {
+      if (_sameEndpoint(entry.baseUrl, baseUrl)) return entry;
+    }
+    return null;
+  }
+
+  /// Endpoint equality ignoring a trailing slash (saved entries and
+  /// resolved endpoints disagree on it routinely).
+  bool _sameEndpoint(String a, String b) {
+    String norm(String u) =>
+        u.endsWith('/') ? u.substring(0, u.length - 1) : u;
+    return norm(a) == norm(b);
   }
 }

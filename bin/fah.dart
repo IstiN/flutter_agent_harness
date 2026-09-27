@@ -1443,6 +1443,20 @@ Future<void> _runApp(List<String> args) async {
                 'ignoring it and keeping "$provider"',
     );
   }
+  // gh-1000 (AC1): the state's saved-provider NAME pins WHICH saved entry
+  // serves the restored model — two entries can share one endpoint and
+  // modelId, and endpoint-keyed resolution would pick the first config
+  // match (possibly the other account's key → 401). A name that no
+  // longer resolves degrades to endpoint-keyed resolution with a note
+  // (E1 — the model is kept).
+  final folderPinned = folderStateProviderEntry(
+    folderStateUsable ? state : null,
+    CustomProviderRegistry(saved.customProviders),
+  );
+  if (folderPinned.note != null) {
+    stderr.writeln('note: ${folderPinned.note}');
+  }
+  final folderPinnedEntry = folderPinned.entry;
   final applyFolderModel = applyFolderState && folderStateUsable;
   if (applyFolderModel) {
     provider = folderSpec.kind;
@@ -1519,6 +1533,25 @@ Future<void> _runApp(List<String> args) async {
   // the banner, `/provider`, `/key`) hits the snapshot.
   final keyCache = SecureKeyCache(platformSecureKeyStore());
   await keyCache.preload(secureKeyPreloadNames(saved, baseUrl: baseUrl));
+
+  // gh-1000 (E2): when the boot-pinned key slot exists in BOTH the
+  // environment and the store with different values, note the provenance
+  // order (the env value wins — the same rule the banner's shadowing hint
+  // teaches).
+  final pinnedKeyName = folderPinnedEntry?.keyName;
+  if (pinnedKeyName != null) {
+    final envValue = Platform.environment[pinnedKeyName];
+    final storedValue = keyCache.read(pinnedKeyName);
+    if (envValue != null &&
+        envValue.isNotEmpty &&
+        storedValue != null &&
+        storedValue != envValue) {
+      stderr.writeln(
+        'note: the environment variable $pinnedKeyName shadows a DIFFERENT '
+        'stored key — the env value is the one sent',
+      );
+    }
+  }
 
   // Prompt overrides: the `prompts:` section of ~/.fah/config.yaml (file
   // paths resolve against the agent cwd, `~` expands; missing files are a

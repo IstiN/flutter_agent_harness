@@ -328,6 +328,9 @@ Map<String, String> collectRoleSecrets(
 ///
 /// Saved custom entries for [baseUrl] carry name-scoped keys
 /// (multi-account); they resolve right after the host-scoped slot.
+/// [pinnedKeyName] (the restored folder state's saved provider entry,
+/// gh-1000) resolves BEFORE both — it names the account the session
+/// actually ran on.
 ///
 /// Throws [ConfigException] when the key is required and missing — the
 /// executable maps that to its `fa:` usage failure.
@@ -339,6 +342,7 @@ String startupApiKey(
   required bool defaultRoleResolved,
   required bool interactive,
   Map<String, String>? env,
+  String? pinnedKeyName,
 }) {
   // A base URL other than the catalog default (--base-url or config
   // baseUrl) means a user-configured endpoint: local servers need no key.
@@ -358,6 +362,7 @@ String startupApiKey(
               baseUrl: baseUrl,
               scopedKeyNames: entryKeyNames,
               env: env,
+              pinnedKeyName: pinnedKeyName,
             ) ??
             '')
       : _requiredProviderApiKey(
@@ -366,6 +371,7 @@ String startupApiKey(
           baseUrl: baseUrl,
           scopedKeyNames: entryKeyNames,
           env: env,
+          pinnedKeyName: pinnedKeyName,
         );
   return key;
 }
@@ -379,6 +385,7 @@ String _requiredProviderApiKey(
   String? baseUrl,
   Iterable<String>? scopedKeyNames,
   Map<String, String>? env,
+  String? pinnedKeyName,
 }) {
   final key = optionalProviderApiKey(
     provider,
@@ -386,6 +393,7 @@ String _requiredProviderApiKey(
     baseUrl: baseUrl,
     scopedKeyNames: scopedKeyNames,
     env: env,
+    pinnedKeyName: pinnedKeyName,
   );
   if (key == null || key.isEmpty) {
     throw ConfigException(

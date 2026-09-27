@@ -44,18 +44,31 @@ ProviderSpec? _keySpec(String provider) => resolveCliProviderSpec(provider);
 /// silently serving api.z.ai), mirroring the shared
 /// [resolveEndpointKey] chain. [env] overrides Platform.environment
 /// (tests).
+///
+/// [pinnedKeyName] (gh-1000 AC1) is the restored folder state's saved
+/// provider entry's own key slot: it resolves FIRST — the environment
+/// value, then the store slot — because it names the account the session
+/// actually ran on. A same-endpoint twin entry (or the host-scoped slot)
+/// must never win over the pin.
 String? optionalProviderApiKey(
   String provider,
   SecureKeyCache keys, {
   String? baseUrl,
   Iterable<String>? scopedKeyNames,
   Map<String, String>? env,
+  String? pinnedKeyName,
 }) {
   final environment = env ?? Platform.environment;
   final names = apiKeyEnvNames(provider);
   final spec = _keySpec(provider);
   final customEndpoint =
       spec != null && baseUrl != null && baseUrl != spec.defaultBaseUrl;
+  if (pinnedKeyName != null) {
+    final pinned =
+        environment[pinnedKeyName] ??
+        _firstStoredValue([pinnedKeyName], keys);
+    if (pinned != null && pinned.isNotEmpty) return pinned;
+  }
   if (!customEndpoint) {
     final envKey = _firstEnvValue(names, environment);
     if (envKey != null) return envKey;
