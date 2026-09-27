@@ -74,6 +74,16 @@ extension AgentServiceInbox on AgentService {
     );
   }
 
+  /// Called when a background `task` job settles (issue #958, the same
+  /// async-result flow the CLI wires): the settled child's result re-enters
+  /// the conversation — sendText steers mid-run and starts a fresh turn
+  /// while idle, so an idle orchestrator wakes on its subagents' completion
+  /// instead of sitting silent until the user pings.
+  void _onTaskJobCompleted(TaskJob job) {
+    if (_disposed) return;
+    unawaited(sendText(taskAsyncResultNotice(job)));
+  }
+
   Future<void> _wakeOnInboxMail() async {
     final manager = _subagentManager;
     if (manager == null || _inboxWakeRunning || _disposed) return;
