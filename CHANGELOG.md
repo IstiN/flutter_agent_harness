@@ -15,7 +15,12 @@
   (`E_PIN_DRIFT`) or when the pinned release does not publish a
   signature-verified `SHA256SUMS` covering every platform archive
   (`E_PIN_PROVENANCE_MISSING` / `E_PIN_PROVENANCE_INVALID` /
-  `E_PIN_ASSET_COVERAGE`).
+  `E_PIN_ASSET_COVERAGE`). And the pin now advances itself: the tag-scoped
+  `install-pin-bump` CI job runs `scripts/auto_bump_install_pin.sh` after
+  `release-provenance` signs the release — it re-verifies the signature
+  against the committed trust anchor (`is-newer` guards against backward
+  rolls), regenerates the installers and pushes, and Pages redeploys
+  fa1.dev — no manual pin bumps anymore.
 
 ## 1.0.472
 

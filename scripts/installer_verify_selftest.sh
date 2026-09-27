@@ -304,5 +304,20 @@ if [ "$s" -eq 0 ] || ! grep -q "E_PIN_ASSET_COVERAGE" "$work/pinfix-gap.log"; th
 fi
 echo "ok  (pin-gate 5c): E_PIN_ASSET_COVERAGE when a platform asset is unsigned"
 
+# ── contract 6: auto-bump version arithmetic ────────────────────────────────
+# scripts/auto_bump_install_pin.sh advances install.pinned_cli_version to a
+# freshly signed release tag. Its `is-newer` subcommand is the gate that
+# keeps re-runs and out-of-order tags from ever rolling the pin BACKWARD.
+BUMPER="$REPO_ROOT/scripts/auto_bump_install_pin.sh"
+[ -f "$BUMPER" ] || { echo "FAIL (pin-bump): scripts/auto_bump_install_pin.sh missing"; exit 1; }
+bump_newer() { sh "$BUMPER" is-newer "$1" "$2" >/dev/null 2>&1; }
+bump_newer v1.0.481 1.0.480 || { echo "FAIL (pin-bump): v1.0.481 should be newer than 1.0.480"; exit 1; }
+bump_newer 2.0.0 1.9.9    || { echo "FAIL (pin-bump): 2.0.0 should be newer than 1.9.9"; exit 1; }
+bump_newer 1.0.10 1.0.9   || { echo "FAIL (pin-bump): 1.0.10 should be newer than 1.0.9 (numeric, not lexical)"; exit 1; }
+if bump_newer 1.0.480 1.0.480; then echo "FAIL (pin-bump): equal versions must NOT count as newer"; exit 1; fi
+if bump_newer 1.0.479 1.0.480; then echo "FAIL (pin-bump): older version must NOT count as newer"; exit 1; fi
+if bump_newer v0.1.452 v1.0.480; then echo "FAIL (pin-bump): 0.1.452 must NOT count as newer than 1.0.480"; exit 1; fi
+echo "ok  (pin-bump 6): is-newer gates forward-only bumps (v-prefix, numeric compare)"
+
 echo ""
-echo "installer_verify_selftest: ALL GREEN (AC1-AC4, contracts 1+5)"
+echo "installer_verify_selftest: ALL GREEN (AC1-AC4, contracts 1+5+6)"
