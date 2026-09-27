@@ -4301,6 +4301,22 @@
 - feat(app): #955 adopt contract senderKey — envelopes carry the sender X25519 pub
 - feat(app): #955 network mode engine — fa_network client, WS, fanet1 crypto, KeyWallet, sessions
 
+## 1.0.480
+
+- chore(factory): bump dmtools-agents to d67b66b — blocked-label freeze (#546) in lockstep (uses + factory_ref) (#1011)
+- docs: ladder smoke — trivial README marker to walk the full factory pipeline (#1010)
+- chore(factory): bump dmtools-agents pins to fa6e9c2 — PR-anchored rework (#544/#545) (#1009)
+- quarantine(#1007): dap_tui_menu_test master-secret hub-connect flake (#1008)
+- gh-1005 Migrate PTY test coverage from macOS shards to Linux-hosted runners (#1006)
+- Raise the CLI-coverage floor: third-party skills consent PTY suite (#927) (#934)
+- gh-982 fix flaky PTY test: job_board_stability (stacked boards freeze across settles) — quarantined, fix + re-enable (#986)
+- Fix #943: infra tests fixed properly — tmp roots, hub port hygiene, prewarm, budgets; #938 skips re-enabled (#948)
+- gh-995 WIP auto-save 2026-09-27T04-55-21 (#996)
+- chore(ci): M5_POOL=1 — PTY legs serial on the single fa-m5-1 runner (#1004)
+- chore(ci): M5_POOL 2 → 0 — single-runner mode on the fa-m5 host (owner 2026-09-27) (#1003)
+- chore(quality): temp CLI coverage baseline 11.0 → 7.9 — unwedge PTY-gate (restore: gh-997) (#998)
+- gh-946 CLI Rename unattended change to autopilot (#949)
+
 ## Unreleased
 
 ## Unreleased
