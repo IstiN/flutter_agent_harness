@@ -1,7 +1,6 @@
 @TestOn('vm')
 @Tags(['integration'])
 @Timeout(Duration(minutes: 5))
-@Skip('infra: #936 shared /tmp race (PathNotFound on cleanup)')
 library;
 
 import 'dart:io';
@@ -33,8 +32,17 @@ allowedTools: []
     });
 
     tearDown(() {
-      tempHome.deleteSync(recursive: true);
-      workspace.deleteSync(recursive: true);
+      // Failure-safe cleanup (issue #943): a straggler headless fa (or its
+      // ext children) holding the dir must not convert a green test red —
+      // unique-per-run roots only leave /tmp residue, never a shared-path
+      // race (the old PathNotFound-on-cleanup flake).
+      for (final dir in [tempHome, workspace]) {
+        try {
+          dir.deleteSync(recursive: true);
+        } on FileSystemException {
+          // Straggler holds it; /tmp reclaims the unique dir.
+        }
+      }
     });
 
     /// Runs one headless prompt against [server] with the temp HOME.
