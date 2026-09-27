@@ -24,7 +24,11 @@
 #                        and no gh/network is touched (selftest/dry runs)
 #   PIN_RELEASE_REPO     owner/repo for gh calls (default: IstiN/flutter_agent_harness)
 #   MARKER_TAG           marker release/tag name (default: vpinned)
-set -euo pipefail
+# POSIX-only below: Ubuntu's /bin/sh is dash — no pipefail, no arrays/[[]].
+# Enable pipefail only where the shell supports it (same convention as
+# site/install.sh.template).
+set -eu
+( set -o pipefail ) 2>/dev/null && set -o pipefail || true
 
 MARKER="${MARKER_TAG:-vpinned}"
 REPO="${PIN_RELEASE_REPO:-IstiN/flutter_agent_harness}"
