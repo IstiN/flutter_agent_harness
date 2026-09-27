@@ -149,13 +149,15 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
                   features: const FaChatFeatures.minimal(),
                   title: label,
                   showAppBar: false,
-                  composerBuilder: (context, service, drop) =>
-                      _isReadOnlyShowcase(session, chatFor.$2)
-                      ? const _ShowcaseReadOnlyNote()
-                      : ChannelComposer(
-                          service: service,
-                          hint: context.l10n.networkMessageHint(label),
-                        ),
+                  // Writable channels get the DEFAULT composer — the same
+                  // ChatComposer chrome as the session surface (single
+                  // style across the app). The showcase read-only note
+                  // replaces it only for members browsing a public
+                  // showcase channel.
+                  composerBuilder: _isReadOnlyShowcase(session, chatFor.$2)
+                      ? (context, service, drop) =>
+                            const _ShowcaseReadOnlyNote()
+                      : null,
                 ),
               ),
             ),
@@ -236,87 +238,6 @@ class _ChannelChatStrings extends FaChatStringsEn {
 
   @override
   String get chatInputHint => inputHint;
-}
-
-/// The minimal channel composer (a channel has no attachments, no voice,
-/// no approvals — see [FaChatFeatures.minimal]): a text field with the
-/// channel-aware hint and a send button. Enter sends.
-class ChannelComposer extends StatefulWidget {
-  const ChannelComposer({super.key, required this.service, required this.hint});
-
-  /// The chat service the composer sends through.
-  final FaChatService service;
-
-  /// The input hint (`Message <channel>`).
-  final String hint;
-
-  @override
-  State<ChannelComposer> createState() => _ChannelComposerState();
-}
-
-class _ChannelComposerState extends State<ChannelComposer> {
-  final _text = TextEditingController();
-
-  @override
-  void dispose() {
-    _text.dispose();
-    super.dispose();
-  }
-
-  Future<void> _send() async {
-    final text = _text.text.trim();
-    if (text.isEmpty) return;
-    try {
-      await widget.service.sendText(text);
-      if (mounted) _text.clear();
-    } on Object catch (e) {
-      if (mounted) showFahErrorSnack(context, '$e');
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
-    return SafeArea(
-      top: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Expanded(
-              child: TextField(
-                controller: _text,
-                minLines: 1,
-                maxLines: 6,
-                textInputAction: TextInputAction.send,
-                onSubmitted: (_) => unawaited(_send()),
-                decoration: InputDecoration(
-                  hintText: widget.hint,
-                  isDense: true,
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 10,
-                  ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(24),
-                    borderSide: BorderSide(color: colors.border),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            IconButton(
-              key: const ValueKey('channelSend'),
-              icon: Icon(Icons.send, color: colors.indigo),
-              tooltip: context.l10n.chatSendTooltip,
-              onPressed: () => unawaited(_send()),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 /// The slim channel header: lock/globe + name, and for private channels
