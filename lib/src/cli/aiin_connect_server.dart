@@ -117,6 +117,19 @@ String _callbackPage(AiinCallback callback) {
       '<h1>$title</h1><p>$message</p>';
 }
 
+/// The mobile auth-session surface closed WITHOUT a callback — a user
+/// cancel (iOS swipe-dismissal). Thrown by [runAiinConnectCliFlow] under
+/// `cancelWhenOpenSettles`; the app's mobile branch catches it and falls
+/// straight to the paste-key fallback.
+final class AiinSurfaceClosedException implements Exception {
+  const AiinSurfaceClosedException();
+
+  @override
+  String toString() =>
+      'AiinSurfaceClosedException: the sign-in surface closed without a '
+      'callback (user cancel)';
+}
+
 /// Runs the full AIIN connect flow for CLI/desktop hosts:
 ///
 /// 1. binds the loopback callback server (ephemeral port),
@@ -135,6 +148,24 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
   http.Client? client,
   String authBaseUrl = aiinAuthBaseUrl,
   Duration timeout = const Duration(minutes: 5),
+
+  /// Called once the callback wait settles — when the callback lands OR
+  /// the timeout/cancel path gives up — before the exchange/return. The
+  /// mobile auth-session sheet dismisses itself here (a stale sheet
+  /// closes too): the session does not intercept the `http://localhost`
+  /// redirect (it loads the callback server for real), so the sheet must
+  /// be closed programmatically to hand the user back to the app.
+  /// Optional — desktop callers skip it.
+  void Function()? onCallback,
+
+  /// Treats a successful open completion before any callback as a user
+  /// cancel — throws [AiinSurfaceClosedException] — instead of waiting
+  /// out [timeout]. For auth-session surfaces that resolve only when the
+  /// sheet CLOSES (iOS `ASWebAuthenticationSession`): a user
+  /// swipe-dismissal must short-circuit to the caller's fallback, not
+  /// leave dead air. Desktop browser launches resolve immediately, so
+  /// they must leave this off (default false).
+  bool cancelWhenOpenSettles = false,
 }) async {
   final server = AiinCallbackServer();
   final redirectUri = await server.start(timeout: timeout);
@@ -146,12 +177,36 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
     final loginUrl = buildAiinLoginUrl(
       redirectUri: redirectUri,
       state: state,
+      // `desktop` is the client_type whose redirect shape is an arbitrary
+      // localhost loopback URI — the mobile apps use the same shape. There
+      // is no `mobile` value in AIIN's contract (the web build sends
+      // `web`), so desktop parity is deliberate here.
       clientType: 'desktop',
       authBaseUrl: authBaseUrl,
     );
     onStatus('listening for the AIIN callback on $redirectUri');
-    await _openAiinBrowser(loginUrl.toString(), openBrowserFn, onStatus);
-    final callback = await server.waitForCallback();
+    // Arm the callback wait and the browser surface CONCURRENTLY: the
+    // mobile auth session resolves its open future only when the sheet
+    // CLOSES, and the sheet is dismissed through [onCallback] — awaiting
+    // the open first would deadlock the mobile flow. Open FAILURES (the
+    // session cannot start) surface promptly through the race instead of
+    // stalling until the callback timeout.
+    final callbackFuture = server.waitForCallback();
+    final opened = _openAiinBrowser(loginUrl.toString(), openBrowserFn, onStatus);
+    final callback = await _firstCallbackOrOpenError(
+      callbackFuture,
+      opened,
+      cancelWhenOpenSettles: cancelWhenOpenSettles,
+    );
+    onCallback?.call();
+    try {
+      await opened;
+    } on Object {
+      // Late open failure after the callback won: the flow is settling
+      // and the open surface is already gone (e.g. the native side fails
+      // the pending session when the dismissal tears it down). Swallow —
+      // the landed callback must always settle the flow.
+    }
     return await _settleAiinCallback(
       callback,
       state,
@@ -165,6 +220,37 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
   } finally {
     await server.close();
   }
+}
+
+/// Resolves with the first of [callbackFuture] (a landed callback or the
+/// timeout), an [opened] failure, or — when [cancelWhenOpenSettles] — a
+/// successful [opened] completion ([AiinSurfaceClosedException]): an
+/// auth-session sheet that closed WITHOUT a callback is a user cancel,
+/// not a reason to wait out the callback timeout. A late open error after
+/// the callback won is dropped from the race here and swallowed by the
+/// caller's `await opened` — the landed callback always settles the flow.
+Future<AiinCallback?> _firstCallbackOrOpenError(
+  Future<AiinCallback?> callbackFuture,
+  Future<void> opened, {
+  required bool cancelWhenOpenSettles,
+}) {
+  final openError = Completer<Never>();
+  final surfaceClosed = Completer<Never>();
+  unawaited(
+    opened.then(
+      (_) {
+        if (cancelWhenOpenSettles && !surfaceClosed.isCompleted) {
+          surfaceClosed.completeError(const AiinSurfaceClosedException());
+        }
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (!openError.isCompleted) openError.completeError(error, stackTrace);
+      },
+    ),
+  );
+  openError.future.ignore();
+  surfaceClosed.future.ignore();
+  return Future.any([callbackFuture, openError.future, surfaceClosed.future]);
 }
 
 /// Opens the system browser, falling back to printing the URL when no
