@@ -7,6 +7,7 @@ import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/network/showcase_viewer.dart';
 import 'package:fa/ui/app_theme.dart';
+import 'package:fa/ui/network/join_sheet.dart';
 import 'package:fa/ui/network/showcase_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -114,10 +115,7 @@ void main() {
         }
         expect(find.textContaining('hello public'), findsOneWidget);
         expect(
-          find.text(
-            'Public showcase — read-only preview. '
-            'Join the network to participate.',
-          ),
+          find.text('Read-only preview — tap to join the network and write.'),
           findsOneWidget,
         );
         expect(http.requests.last.url.path, '/api/channels/pc1/messages');
@@ -132,6 +130,71 @@ void main() {
           await tester.pump(const Duration(milliseconds: 20));
         }
         expect(controller.showcaseNetworkId, isNull);
+      },
+    );
+
+    testWidgets('the read-only composer bar offers joining: tap opens the join '
+        'sheet prefilled with the showcase network', (tester) async {
+      final http = FakeHttpClient()
+        ..respond(
+          200,
+          body:
+              '{"id":"net1","name":"fa-team","channels":['
+              '{"id":"pc1","name":"announcements"}'
+              ']}',
+        )
+        ..respond(200, body: '{"items":[],"nextCursor":""}');
+      final controller = NetworkModeController.inMemory();
+      await controller.viewShowcase('net1');
+      final manager = await newManager(http);
+
+      await pumpPage(tester, controller, manager);
+      await tester.tap(find.text('announcements'));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+
+      await tester.tap(find.byKey(const ValueKey('showcaseJoinToWrite')));
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      expect(find.byType(JoinSheet), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets(
+      'a hub-originated showcase envelope renders senderName over the '
+      'raw sender id (fa_network#2)',
+      (tester) async {
+        final http = FakeHttpClient()
+          ..respond(
+            200,
+            body:
+                '{"id":"net1","name":"fa-team","channels":['
+                '{"id":"pc1","name":"announcements"}'
+                ']}',
+          )
+          ..respond(
+            200,
+            body:
+                '{"items":[{"id":"e1","channelId":"pc1",'
+                '"senderId":"6b7594ffcfb0ab92","senderName":"fa-agent",'
+                '"payload":"${encodePublicChannelText('from the hub')}"}],'
+                '"nextCursor":""}',
+          );
+        final controller = NetworkModeController.inMemory();
+        await controller.viewShowcase('net1');
+        final manager = await newManager(http);
+
+        await pumpPage(tester, controller, manager);
+        await tester.tap(find.text('announcements'));
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+
+        expect(find.textContaining('from the hub'), findsOneWidget);
+        expect(find.text('fa-agent'), findsOneWidget);
+        expect(find.text('6b7594ffcfb0ab92'), findsNothing);
       },
     );
   });
