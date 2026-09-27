@@ -14,6 +14,8 @@ import 'package:test/test.dart';
 import 'pty_harness.dart';
 
 void main() {
+  // QUARANTINED under gh-1012: indicator/schedule timing flake under
+  // runner load — fix the timing flake and re-enable (mirrors gh-982).
   test('a scheduled follow-up shows on top of the working row, persists '
       'while idle, and clears when it fires', () async {
     final mock = _SchedulingMock();
