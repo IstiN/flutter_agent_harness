@@ -23,6 +23,7 @@ import '../cancel_token.dart';
 import '../exceptions.dart';
 import '../model.dart';
 import '../secrets/secrets_store.dart';
+import '../cli/custom_providers.dart' show CustomProviderRegistry;
 import 'fallback_stream.dart';
 import 'key_rotation.dart';
 import 'roles_config.dart';
@@ -192,9 +193,7 @@ final class ModelRolesResolver {
     }
     final keyBase = _keyBaseName(ref, spec);
     if (keyBase == null) {
-      skipped.add(
-        '${ref.label} (missing API key: set ${spec.apiKeyEnvNames.first})',
-      );
+      skipped.add('${ref.label} (missing API key: ${_missingKeyHint(ref, spec)})');
       return null;
     }
     final ring = _rings.putIfAbsent(
@@ -233,18 +232,48 @@ final class ModelRolesResolver {
     );
   }
 
-  /// The key base name for [ref]: its explicit `apiKeyName`, else the first
-  /// of the provider's env names present in the secrets snapshot. `null`
-  /// when no candidate resolves to a configured key.
+  /// The key base name for [ref]: its explicit `apiKeyName`, else — for a
+  /// chain entry pinned to a CUSTOM endpoint — the endpoint-scoped
+  /// `FA_KEY_<HOST>` slot (the same source a manual provider switch
+  /// resolves; gh-1000 AC5), else the first of the provider's env names
+  /// present in the secrets snapshot. `null` when no candidate resolves
+  /// to a configured key.
   String? _keyBaseName(ModelRef ref, ProviderSpec spec) {
     final explicit = ref.apiKeyName;
     if (explicit != null) {
       return collectKeyStack(_secrets, explicit).isEmpty ? null : explicit;
     }
+    final scopedName = _endpointScopedKeyName(ref, spec);
+    if (scopedName != null &&
+        collectKeyStack(_secrets, scopedName).isNotEmpty) {
+      return scopedName;
+    }
     for (final candidate in spec.apiKeyEnvNames) {
       if (collectKeyStack(_secrets, candidate).isNotEmpty) return candidate;
     }
     return null;
+  }
+
+  /// The endpoint-scoped `FA_KEY_<HOST>` name for a chain entry pinned to
+  /// a non-default endpoint, else null. The snapshot carries the slot's
+  /// value when the host collected it (the startup snapshot includes
+  /// every custom-endpoint slot a roles chain can need — gh-1000).
+  String? _endpointScopedKeyName(ModelRef ref, ProviderSpec spec) {
+    final baseUrl = ref.baseUrl;
+    if (baseUrl == null || baseUrl == spec.defaultBaseUrl) return null;
+    return CustomProviderRegistry.keyNameFor(baseUrl);
+  }
+
+  /// The missing-key hint for [ref]'s skip reason: a custom endpoint names
+  /// its `/key set` fix (the catalog env name would point at the DEFAULT
+  /// endpoint — the wrong slot, gh-1000 AC2/AC5), a default endpoint names
+  /// its env var.
+  String _missingKeyHint(ModelRef ref, ProviderSpec spec) {
+    final scopedName = _endpointScopedKeyName(ref, spec);
+    if (scopedName != null) {
+      return '/key set $scopedName <value>';
+    }
+    return 'set ${spec.apiKeyEnvNames.first}';
   }
 
   /// The cached [FallbackStreamFunction] for [role] (entry cooldowns and

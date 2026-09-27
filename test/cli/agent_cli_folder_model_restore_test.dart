@@ -194,6 +194,302 @@ void main() {
       expect(second.agent.state.model.id, 'pinned-model');
     },
   );
+
+  group('provider pin restore (gh-1000)', () {
+    const kimiUrl = 'https://api.kimi.com/coding/v1';
+    const iraKeyName = 'FA_KEY_API_KIMI_COM_IRA_1';
+    const kimiMeKeyName = 'FA_KEY_API_KIMI_COM_KIMI_ME';
+
+    /// Two saved providers sharing ONE modelId and ONE endpoint — the
+    /// exact gh-1000 fixture. A first-match-by-endpoint scan picks ira-1.
+    CustomProviderRegistry twinRegistry() => CustomProviderRegistry([
+      CustomProviderEntry(
+        name: 'ira-1',
+        apiType: 'kimi',
+        baseUrl: kimiUrl,
+        modelId: 'k3-256k',
+        keyName: iraKeyName,
+      ),
+      CustomProviderEntry(
+        name: 'kimi_me',
+        apiType: 'openai',
+        baseUrl: kimiUrl,
+        modelId: 'k3-256k',
+        keyName: kimiMeKeyName,
+      ),
+    ]);
+
+    Future<void> seedSession(String name) async {
+      final first = cliFactory(sessionName: name);
+      final run = first.run();
+      ios.single.sendLine('hi');
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      ios.single.sendLine('/exit');
+      await run;
+    }
+
+    AgentCli pinnedCliFactory({
+      required String sessionName,
+      CustomProviderRegistry? registry,
+      FakeSecureKeyStore? store,
+    }) {
+      return AgentCli(
+        config: AgentCliConfig(
+          model: Model(
+            id: 'start-model',
+            api: 'test-api',
+            provider: 'test-provider',
+            baseUrl: 'https://example.test',
+            contextWindow: 100000,
+            maxTokens: 4096,
+          ),
+          apiKey: '',
+          env: env,
+          sessionRoot: '/sessions',
+          sessionName: sessionName,
+          customProviders: registry,
+          secureKeys: SecureKeyCache(store ?? FakeSecureKeyStore()),
+        ),
+        io: freshIo(),
+        streamFunction: _singleTextResponse('ok'),
+      );
+    }
+
+    test(
+      'UT-1: two providers sharing a modelId — the session resumes onto '
+      'the NAMED entry (AC1)',
+      timeout: const Timeout(Duration(seconds: 60)),
+      () async {
+        await seedSession('twin');
+        await saveFolderModelState(
+          env,
+          sessionsRoot: '/sessions',
+          cwd: '/work',
+          providerKind: 'openai-completions',
+          modelId: 'k3-256k',
+          baseUrl: kimiUrl,
+          customProvider: 'kimi_me',
+        );
+
+        final store =
+            FakeSecureKeyStore()
+              ..map[iraKeyName] = 'ira-key'
+              ..map[kimiMeKeyName] = 'me-key';
+        final second = pinnedCliFactory(
+          sessionName: 'twin',
+          registry: twinRegistry(),
+          store: store,
+        );
+        final io = ios.last;
+        final run = second.run();
+        io.sendLine('/provider');
+        io.sendLine('/exit');
+        await run;
+
+        expect(second.agent.state.model.id, 'k3-256k');
+        // Name-pinned, NOT first-endpoint-match (which would be ira-1).
+        expect(second.activeCustomProviderName, 'kimi_me');
+        expect(io.out.toString(), contains('kimi_me (current)'));
+        expect(io.out.toString(), isNot(contains('no longer configured')));
+      },
+    );
+
+    test(
+      'IT-3: a store-backed key resumes with no env var exported (AC3)',
+      timeout: const Timeout(Duration(seconds: 60)),
+      () async {
+        await seedSession('store-key');
+        await saveFolderModelState(
+          env,
+          sessionsRoot: '/sessions',
+          cwd: '/work',
+          providerKind: 'openai-completions',
+          modelId: 'k3-256k',
+          baseUrl: kimiUrl,
+          customProvider: 'kimi_me',
+        );
+
+        final second = pinnedCliFactory(
+          sessionName: 'store-key',
+          registry: twinRegistry(),
+          store: FakeSecureKeyStore()..map[kimiMeKeyName] = 'me-key',
+        );
+        final io = ios.last;
+        final run = second.run();
+        io.sendLine('/exit');
+        await run;
+
+        expect(second.agent.state.model.id, 'k3-256k');
+        expect(second.activeCustomProviderName, 'kimi_me');
+        expect(io.out.toString(), contains('restored k3-256k'));
+        // No re-auth degradation: the key resolved from the store.
+        expect(io.out.toString(), isNot(contains('no key for')));
+      },
+    );
+
+    test(
+      'E3: a missing store key degrades to a named re-auth note',
+      timeout: const Timeout(Duration(seconds: 60)),
+      () async {
+        await seedSession('no-key');
+        await saveFolderModelState(
+          env,
+          sessionsRoot: '/sessions',
+          cwd: '/work',
+          providerKind: 'openai-completions',
+          modelId: 'k3-256k',
+          baseUrl: kimiUrl,
+          customProvider: 'kimi_me',
+        );
+
+        final second = pinnedCliFactory(
+          sessionName: 'no-key',
+          registry: twinRegistry(),
+          store: FakeSecureKeyStore(),
+        );
+        final io = ios.last;
+        final run = second.run();
+        io.sendLine('/exit');
+        await run;
+
+        // The model is kept (status bar), the fix is named.
+        expect(second.agent.state.model.id, 'k3-256k');
+        expect(io.out.toString(), contains('kimi_me'));
+        expect(io.out.toString(), contains('/key set $kimiMeKeyName'));
+      },
+    );
+
+    test(
+      'E1: a deleted provider entry degrades to endpoint-keyed restore',
+      timeout: const Timeout(Duration(seconds: 60)),
+      () async {
+        await seedSession('renamed');
+        await saveFolderModelState(
+          env,
+          sessionsRoot: '/sessions',
+          cwd: '/work',
+          providerKind: 'openai-completions',
+          modelId: 'k3-256k',
+          baseUrl: kimiUrl,
+          customProvider: 'gone-provider',
+        );
+
+        final second = pinnedCliFactory(
+          sessionName: 'renamed',
+          registry: twinRegistry(),
+          store: FakeSecureKeyStore()..map[kimiMeKeyName] = 'me-key',
+        );
+        final io = ios.last;
+        final run = second.run();
+        io.sendLine('/exit');
+        await run;
+
+        expect(second.agent.state.model.id, 'k3-256k');
+        expect(second.activeCustomProviderName, isNull);
+        expect(io.out.toString(), contains('gone-provider'));
+        expect(io.out.toString(), contains('no longer configured'));
+      },
+    );
+
+    test(
+      'REG-5: a pre-change state file (no provider name) restores like '
+      'today',
+      timeout: const Timeout(Duration(seconds: 60)),
+      () async {
+        await seedSession('legacy');
+        await saveFolderModelState(
+          env,
+          sessionsRoot: '/sessions',
+          cwd: '/work',
+          providerKind: 'openai-completions',
+          modelId: 'k3-256k',
+          baseUrl: kimiUrl,
+        );
+
+        final second = pinnedCliFactory(
+          sessionName: 'legacy',
+          registry: twinRegistry(),
+          store: FakeSecureKeyStore()..map[kimiMeKeyName] = 'me-key',
+        );
+        final io = ios.last;
+        final run = second.run();
+        io.sendLine('/exit');
+        await run;
+
+        expect(second.agent.state.model.id, 'k3-256k');
+        expect(second.activeCustomProviderName, isNull);
+        expect(io.out.toString(), contains('restored k3-256k'));
+        expect(io.out.toString(), isNot(contains('no longer configured')));
+      },
+    );
+
+    test(
+      'roles mode: the restored pin re-points the default chain (AC3)',
+      timeout: const Timeout(Duration(seconds: 60)),
+      () async {
+        await seedSession('roles-pin');
+        await saveFolderModelState(
+          env,
+          sessionsRoot: '/sessions',
+          cwd: '/work',
+          providerKind: 'openai-completions',
+          modelId: 'k3-256k',
+          baseUrl: kimiUrl,
+          customProvider: 'kimi_me',
+        );
+
+        // Boot 2 runs roles-driven: the config's default chain pins
+        // ANOTHER provider (the gh-1000 repro shape). The restore must
+        // re-pin the chain onto the named entry's key.
+        final store = FakeSecureKeyStore()..map[kimiMeKeyName] = 'me-key';
+        final keys = SecureKeyCache(store);
+        await keys.preload(const [kimiMeKeyName]);
+        final resolver = ModelRolesResolver(
+          config: ModelRolesConfig(
+            roles: {
+              'default': const [
+                ModelRef(provider: 'anthropic', modelId: 'claude-a'),
+              ],
+            },
+          ),
+          secrets: const {'ANTHROPIC_API_KEY': 'test-key'},
+          streamFactory: (kind, apiKey) => _singleTextResponse('ok'),
+        );
+        final second = AgentCli(
+          config: AgentCliConfig(
+            model: Model(
+              id: 'start-model',
+              api: 'test-api',
+              provider: 'test-provider',
+              baseUrl: 'https://example.test',
+              contextWindow: 100000,
+              maxTokens: 4096,
+            ),
+            apiKey: '',
+            env: env,
+            sessionRoot: '/sessions',
+            sessionName: 'roles-pin',
+            customProviders: twinRegistry(),
+            secureKeys: keys,
+            modelRolesResolver: resolver,
+          ),
+          io: freshIo(),
+          streamFunction: _singleTextResponse('ok'),
+        );
+        final io = ios.last;
+        final run = second.run();
+        io.sendLine('/exit');
+        await run;
+
+        final resolved = second.config.modelRolesResolver!.resolveRole(
+          'default',
+        );
+        expect(resolved, isNotNull);
+        expect(resolved!.model.id, 'k3-256k');
+        expect(resolved.model.baseUrl, kimiUrl);
+      },
+    );
+  });
 }
 
 StreamFunction _singleTextResponse(String text) {

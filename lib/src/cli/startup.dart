@@ -235,8 +235,15 @@ EnvProviderPreconfig? faProviderPreconfig(
 }
 
 /// The explicit `apiKeyName`s referenced by a roles config (the
-/// secure-store preload set; the catalog names are always preloaded).
+/// secure-store preload set; the catalog names are always preloaded), plus
+/// the endpoint-scoped `FA_KEY_<HOST>` slot of every chain entry pinned to
+/// a custom endpoint (gh-1000 AC5 — the same source a manual provider
+/// switch resolves; the catalog env names describe default endpoints
+/// only).
 Set<String> roleKeyNames(ModelRolesConfig rolesConfig) {
+  Iterable<ModelRef> refsOf(Map<String, List<ModelRef>> roles) => [
+    for (final chain in roles.values) ...chain,
+  ];
   return {
     for (final chain in rolesConfig.roles.values)
       for (final ref in chain)
@@ -245,6 +252,13 @@ Set<String> roleKeyNames(ModelRolesConfig rolesConfig) {
       for (final chain in override.roles.values)
         for (final ref in chain)
           if (ref.apiKeyName != null) ref.apiKeyName!,
+    for (final ref in [
+      ...refsOf(rolesConfig.roles),
+      for (final override in rolesConfig.pathOverrides)
+        ...refsOf(override.roles),
+    ])
+      if (ref.baseUrl != null)
+        CustomProviderRegistry.keyNameFor(ref.baseUrl!),
   };
 }
 
