@@ -2035,7 +2035,8 @@ Future<void> _runApp(List<String> args) async {
     // dart:io context — lib/src stays pure). One instance for both input
     // paths (ACX.5) rides the cli into the TUI.
     sigintPolicy: SigintPolicy(
-      window: resolveSigintWindowOverride(env: Platform.environment) ??
+      window:
+          resolveSigintWindowOverride(env: Platform.environment) ??
           kSigintPressWindow,
     ),
     // Markdown parity (issue #774): every non-TUI surface renders

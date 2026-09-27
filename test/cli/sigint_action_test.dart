@@ -141,7 +141,9 @@ void main() {
   group('press-window env override (gh-1014 PTY seam)', () {
     test('a positive millisecond value widens the window', () {
       expect(
-        resolveSigintWindowOverride(env: const {'FA_SIGINT_WINDOW_MS': '12000'}),
+        resolveSigintWindowOverride(
+          env: const {'FA_SIGINT_WINDOW_MS': '12000'},
+        ),
         const Duration(seconds: 12),
       );
     });
@@ -158,8 +160,9 @@ void main() {
     });
 
     test('the parsed override drives the policy window end to end', () {
-      final window =
-          resolveSigintWindowOverride(env: const {'FA_SIGINT_WINDOW_MS': '750'})!;
+      final window = resolveSigintWindowOverride(
+        env: const {'FA_SIGINT_WINDOW_MS': '750'},
+      )!;
       final clocks = <FakeStopwatch>[];
       final policy = SigintPolicy(
         window: window,
@@ -191,18 +194,20 @@ void main() {
         providerKind: 'openai-completions',
       ),
       io: FakeCliIO(),
-      streamFunction: FakeStreamFunction([
-        textTurn('idle'),
-      ]).call,
+      streamFunction: FakeStreamFunction([textTurn('idle')]).call,
       sigintPolicy: sigintPolicy,
     );
 
-    test('an injected policy IS the cli policy — both input paths share it',
-        () {
-      final injected = SigintPolicy(window: const Duration(seconds: 9));
-      expect(identical(cliFor(sigintPolicy: injected).sigintPolicy, injected),
-          isTrue);
-    });
+    test(
+      'an injected policy IS the cli policy — both input paths share it',
+      () {
+        final injected = SigintPolicy(window: const Duration(seconds: 9));
+        expect(
+          identical(cliFor(sigintPolicy: injected).sigintPolicy, injected),
+          isTrue,
+        );
+      },
+    );
 
     test('omitted → the contract default window', () {
       expect(cliFor().sigintPolicy.window, kSigintPressWindow);

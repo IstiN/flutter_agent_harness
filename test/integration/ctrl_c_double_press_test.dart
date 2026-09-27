@@ -244,7 +244,23 @@ tui:
           'hi',
         ],
         workingDirectory: Directory.current.path,
-        environment: {'OPENAI_API_KEY': 'mock', 'HOME': tempHome.path},
+        // NOT merged: Process.start adds `environment:` ON TOP of the
+        // parent env by default, so a developer/agent machine carrying
+        // FA_PROVIDERS_QUEUE / FA_PROVIDER_* (the agent-sandbox case)
+        // made the child dial the REAL queue provider and this pin
+        // timed out waiting for a mock-server request that never came.
+        // Replace the env wholesale — same whitelist hygiene as the PTY
+        // harness (pty_harness.dart: API keys and agent env never leak
+        // into tests); PATH (executable lookup) and PUB_CACHE (package
+        // resolution under the overridden HOME) are the only pass-throughs.
+        includeParentEnvironment: false,
+        environment: {
+          'OPENAI_API_KEY': 'mock',
+          'HOME': tempHome.path,
+          'PATH': Platform.environment['PATH'] ?? '',
+          if (Platform.environment['PUB_CACHE'] != null)
+            'PUB_CACHE': Platform.environment['PUB_CACHE']!,
+        },
       );
       final stdoutBuffer = StringBuffer();
       final stderrBuffer = StringBuffer();
