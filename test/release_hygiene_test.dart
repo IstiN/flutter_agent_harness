@@ -917,8 +917,10 @@ gh release create "v9.9.9" \
     });
 
     test('pty shard coverage artifacts: upload name, download pattern and count check agree', () {
+      // gh-1005: the consolidated leg is pty-integration-linux (the former
+      // mac `pty-integration` shards merged in; there is no mac leg anymore).
       final jobs = jobsOf('.github/workflows/ci.yml');
-      final integration = jobs['pty-integration'] as YamlMap;
+      final integration = jobs['pty-integration-linux'] as YamlMap;
       final gate = jobs['pty-coverage-gate'] as YamlMap;
 
       // The matrix width is the source of truth for the expected report count.
