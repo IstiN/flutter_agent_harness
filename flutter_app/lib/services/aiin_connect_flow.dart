@@ -106,7 +106,7 @@ Future<bool> runAiinConnectFlow({
       registry: registry,
       service: service,
       lastConnectionStore: lastConnectionStore,
-      sessionKeysStore: sessionKeysStore,
+      sessionKeysStore: sessionKeysStore ?? fallbackKeys,
       keychainStore: keychainStore,
       aiinConnectFn: aiinConnectFn,
       aiinHttpClient: aiinHttpClient,
@@ -194,34 +194,18 @@ Future<bool> runAiinWebConnect({
   );
   if (result == null) {
     final failure = coordinator.lastFailure ?? '';
-    if ((failure == 'timeout' || failure == 'cancelled') && context.mounted) {
-      final pasted = await _pasteAiinKeyFallback(context);
-      if (pasted == null) return false;
-      if (!context.mounted) return false;
-      return _finishAiinConnect(
-        context,
-        registry: registry,
-        service: service,
-        lastConnectionStore: lastConnectionStore,
-        sessionKeysStore: sessionKeysStore,
-        keychainStore: keychainStore,
-        apiKey: pasted,
-        aiinModelsFetcher: aiinModelsFetcher,
-        reauthenticateFor: reauthenticateFor,
-      );
-    }
-    return false;
+    // Only a timeout/cancel falls back to paste; other failures abort.
+    if (failure != 'timeout' && failure != 'cancelled') return false;
   }
   if (!context.mounted) return false;
-  return _finishAiinConnect(
+  return _completeAiinConnect(
     context,
     registry: registry,
     service: service,
     lastConnectionStore: lastConnectionStore,
     sessionKeysStore: sessionKeysStore,
     keychainStore: keychainStore,
-    apiKey: result.apiKey.raw,
-    accountLabel: result.email,
+    result: result,
     aiinModelsFetcher: aiinModelsFetcher,
     reauthenticateFor: reauthenticateFor,
   );
@@ -258,6 +242,35 @@ Future<bool> _runAiinDesktopConnect(
             mode: url_launcher.LaunchMode.externalApplication,
           ),
         );
+  if (!context.mounted) return false;
+  return _completeAiinConnect(
+    context,
+    registry: registry,
+    service: service,
+    lastConnectionStore: lastConnectionStore,
+    sessionKeysStore: sessionKeysStore ?? fallbackKeys,
+    keychainStore: keychainStore,
+    result: result,
+    aiinModelsFetcher: aiinModelsFetcher,
+    reauthenticateFor: reauthenticateFor,
+  );
+}
+
+/// The shared tail of every automatic-sign-in branch (web, desktop,
+/// mobile): the paste-key cabinet fallback when the sign-in produced
+/// nothing, then the model-pick finish with the automatic key.
+Future<bool> _completeAiinConnect(
+  BuildContext context, {
+  required ProviderRegistry registry,
+  required AgentService? service,
+  required LastConnectionStore lastConnectionStore,
+  required SessionKeysStore? sessionKeysStore,
+  required KeychainStore? keychainStore,
+  required AiinConnectResult? result,
+  required Future<List<String>> Function(String baseUrl, {required String apiKey})?
+  aiinModelsFetcher,
+  required CustomProvider? reauthenticateFor,
+}) async {
   if (result == null && context.mounted) {
     // Automatic sign-in failed (cancelled, timeout, service error) — the
     // cabinet + paste-key path still completes the connect.
@@ -269,7 +282,7 @@ Future<bool> _runAiinDesktopConnect(
       registry: registry,
       service: service,
       lastConnectionStore: lastConnectionStore,
-      sessionKeysStore: sessionKeysStore ?? fallbackKeys,
+      sessionKeysStore: sessionKeysStore,
       keychainStore: keychainStore,
       apiKey: pasted,
       aiinModelsFetcher: aiinModelsFetcher,
@@ -283,7 +296,7 @@ Future<bool> _runAiinDesktopConnect(
     registry: registry,
     service: service,
     lastConnectionStore: lastConnectionStore,
-    sessionKeysStore: sessionKeysStore ?? fallbackKeys,
+    sessionKeysStore: sessionKeysStore,
     keychainStore: keychainStore,
     apiKey: result.apiKey.raw,
     accountLabel: result.email,
@@ -297,11 +310,12 @@ Future<bool> _runAiinDesktopConnect(
 /// The same channel the CodeMie SSO flow drives.
 const _webAuthSessionChannel = MethodChannel('fah/web_auth_session');
 
-/// Opens [url] in the iOS auth-session sheet. Resolves `true` when the
-/// sheet CLOSES — a user dismissal cancels the session (the loopback wait
-/// keeps running, desktop parity), and the callback dismissal completes it
-/// right after the code landed. A sheet that cannot even start throws —
-/// the mobile branch falls straight to the paste fallback.
+/// Opens [url] in the iOS auth-session sheet. Resolves `true` only when
+/// the sheet CLOSES — a user swipe-dismissal and the callback dismissal
+/// are indistinguishable here, so the flow races the resolution against
+/// the callback (`cancelWhenOpenSettles`): closed without a callback is a
+/// user cancel and falls straight to the paste fallback. A sheet that
+/// cannot even start throws — same fallback.
 Future<bool> _openAiinAuthSession(String url) =>
     _webAuthSessionChannel
         .invokeMethod<String>('authenticate', {'url': url})
@@ -361,7 +375,16 @@ Future<bool> runAiinMobileConnect({
                     mode: url_launcher.LaunchMode.externalApplication,
                   ),
             onCallback: authSession ? _dismissAiinAuthSession : null,
+            // The iOS sheet resolving without a callback is a user
+            // cancel — fall to paste immediately instead of waiting out
+            // the callback timeout. The external Android browser cannot
+            // signal a cancel; the short mobile timeout bounds it.
+            cancelWhenOpenSettles: authSession,
+            timeout: const Duration(minutes: 3),
           );
+  } on AiinSurfaceClosedException {
+    // The sheet closed without a callback — user cancel.
+    result = null;
   } on PlatformException {
     // The auth session could not start (no presentation context) or the
     // native channel is missing (stale host) — the cabinet + paste-key
@@ -370,33 +393,15 @@ Future<bool> runAiinMobileConnect({
   } on MissingPluginException {
     result = null;
   }
-  if (result == null && context.mounted) {
-    final pasted = await _pasteAiinKeyFallback(context);
-    if (pasted == null) return false;
-    if (!context.mounted) return false;
-    return _finishAiinConnect(
-      context,
-      registry: registry,
-      service: service,
-      lastConnectionStore: lastConnectionStore,
-      sessionKeysStore: sessionKeysStore,
-      keychainStore: keychainStore,
-      apiKey: pasted,
-      aiinModelsFetcher: aiinModelsFetcher,
-      reauthenticateFor: reauthenticateFor,
-    );
-  }
-  if (result == null) return false;
   if (!context.mounted) return false;
-  return _finishAiinConnect(
+  return _completeAiinConnect(
     context,
     registry: registry,
     service: service,
     lastConnectionStore: lastConnectionStore,
     sessionKeysStore: sessionKeysStore,
     keychainStore: keychainStore,
-    apiKey: result.apiKey.raw,
-    accountLabel: result.email,
+    result: result,
     aiinModelsFetcher: aiinModelsFetcher,
     reauthenticateFor: reauthenticateFor,
   );
