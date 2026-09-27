@@ -725,8 +725,18 @@ class AgentService extends ChangeNotifier
         onChanged: () => unawaited(_refreshMemorySection()),
       ),
       // schedule_message: self-addressed delayed notes, delivered by the
-      // fabric's idle-wake (shared with the CLI).
-      scheduleMessageTool(_scheduledMessages),
+      // fabric's idle-wake (shared with the CLI). gh-970: inside a subagent
+      // run "your own mailbox" is the CHILD's — the queue's selfMailbox
+      // always resolves main.
+      scheduleMessageTool(
+        _scheduledMessages,
+        senderMailbox: () {
+          final id = activeSubagentId();
+          final manager = _subagentManager;
+          if (id == null || manager == null) return null;
+          return manager.mailboxOf(id);
+        },
+      ),
       ...subagentMonitoringTools(
         manager: _subagentManager,
         jobs: taskJobManager,
