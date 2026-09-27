@@ -21,7 +21,7 @@ import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:fa/ui/screens/onboarding_screen.dart';
 import 'package:fa/ui/widgets/chat_composer.dart';
-import 'package:fa_ui/fa_ui.dart' show ProviderEditorPage;
+import 'package:fa_ui/fa_ui.dart' show MediaSlotModelPage, ProviderEditorPage;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -184,6 +184,18 @@ void main() {
           find.widgetWithText(TextField, 'API key (optional)'),
           'sk-first-boot',
         );
+        // Issue #1020: the model is mandatory now — pick one through the
+        // selector (free-text entry; the endpoint fetch is silent on
+        // failure).
+        await tester.tap(find.text('Model id'));
+        await tester.pumpAndSettle();
+        expect(find.byType(MediaSlotModelPage), findsOneWidget);
+        await tester.enterText(
+          find.widgetWithText(TextField, 'Model id'),
+          'acme-model',
+        );
+        await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+        await tester.pumpAndSettle();
         await tester.tap(find.widgetWithText(FilledButton, 'Save'));
         await tester.pumpAndSettle();
 
@@ -220,6 +232,8 @@ void main() {
           '${env.cwd}/${LastConnectionStore.fileName}',
         )).valueOrNull!;
         expect(raw, contains('https://acme.example/v1'));
+        // Boarding can only leave WITH a chat model (issue #1020).
+        expect(raw, contains('acme-model'));
         expect(raw, isNot(contains('sk-first-boot')));
       }, getCurrentDirectory: emptyCwd);
     });
