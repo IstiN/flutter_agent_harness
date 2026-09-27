@@ -596,3 +596,32 @@ against it: CLI peers reach it by name, and the app's roster view
 (composer in the same section) sends hub-ward. The LAN listener pairing
 (E2/A3) ships behind the same controller — the app connects to
 `ws://<mac>:<port>` with the pairing token once the LAN bind lands.
+
+## 14. fa_network bridging: channel ids are unstable
+
+When fa_network bridges a channel onto the hub (the relay joins a hub
+channel whose name is the fa_network channel id), remember that
+**fa_network channel ids are random 32-byte tokens** (`newToken()`), not
+deterministic derivations: deleting and recreating a channel mints a NEW
+id under the same display name, and every invite/bundle carrying the old
+id silently points at a dead hub channel (the relay only joins channels
+its store knows — frames to the stale id fan out on the hub but never
+reach fa_network).
+
+Consequences for invite producers and consumers:
+
+- Treat a network/channel invite as **point-in-time**. A stale invite is
+  indistinguishable from a working one on the hub side — always verify
+  liveness by resolving the channel list at join time:
+  `GET /api/networks/{networkId}/channels` (any member sessionToken,
+  guest included), match by channel **name** (stable), take the current
+  id. Name-based resolution at join is the recommended pattern; the id
+  in the invite is a fast path, not a contract.
+- The fanet1 envelope AAD binds to the channel **id**
+  (`dap1|<frameId>|<channelId>` — see
+  `flutter_app/lib/network/envelope_codec.dart`), so an id change also
+  re-keys every new frame; the app decrypts pre-recreation history via
+  its legacy display-name AAD fallback only while the name is unchanged.
+- Public (keyless) channels accept hub joins with an empty `chanPubkey`
+  (`{"op":"join","channel":<id>,"chanPubkey":""}`); payloads are raw
+  UTF-8 (no fanet1 wrapper) and render as plain text.
