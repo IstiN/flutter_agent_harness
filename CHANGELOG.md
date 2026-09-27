@@ -4325,6 +4325,14 @@
 - fix(install): bump SEC-07 pin 0.1.452 -> 1.0.480 (#1015)
 - quarantine(#1012 #1014): linux shard-0 PTY timing flakes (scheduled_indicator + ctrl_c_double_press) (#1013)
 
+## 1.0.482
+
+- chore: pin factory 60571fed (validation_failed sticky park) (#1027)
+- hotfix: correct uses: factory sha in all 3 workflows (fake sha from #1024) (#1025)
+- chore: pin factory 5e2a8051 (session quarantine) (#1024)
+- chore: pin factory a18361b2 (red-park + dryRun + dup-guard + teammate watchdog) (#1023)
+- chore(factory): bump dmtools-agents to b44b5493 — latch-skip + stamp links + auto-anchor fallback (#547/#548/#549) in lockstep (#1019)
+
 ## Unreleased
 
 ## Unreleased
