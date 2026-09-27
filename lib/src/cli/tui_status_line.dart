@@ -35,6 +35,7 @@ import 'dart:collection' show UnmodifiableMapView;
 import 'package:dart_tui/src/bubbles/style.dart' show RgbColor, Style;
 import 'package:yaml/yaml.dart';
 
+import '../approval/approval.dart' show kAutopilotLabel;
 import '../exceptions.dart';
 import '../trajectory/formatters.dart' show formatTokens;
 import 'tui_text_width.dart';
@@ -94,7 +95,11 @@ final class StatusLineSnapshot {
   /// [StatusLineSegmentOptions.showThinkingLevel] is on).
   final String? thinkingLevel;
 
-  /// Approval mode label for `mode` (`yolo`, `write`, …).
+  /// Approval mode label for `mode` (`yolo`, `write`, …). Must be the CLI
+  /// label (`ApprovalModeLabel.label`), NOT the enum name — the autopilot
+  /// highlight matches this string against [kAutopilotLabel] exactly; a
+  /// host that feeds `.name` (`unattended`) silently renders as a plain
+  /// muted mode with no highlight.
   final String? approvalMode;
 
   /// Agent load mode label for `mode` (`omp`, `pi`, …; `default` renders
@@ -225,6 +230,12 @@ enum StatusLineRoleKey {
   /// the S3 writer paints behind the rendered spans. Additive key — the
   /// S1 token merge re-points the lambda, never removes the key.
   bandBg,
+
+  /// The approval-mode segment when autopilot (gh-946): the one mode that
+  /// auto-approves everything, critical patterns included — highlighted
+  /// with the accent (and exempt from the idle dim) so a never-asks
+  /// session reads at a glance.
+  autopilot,
 }
 
 /// The statusLine role TABLE (issue #805 seam): maps each role key onto an
@@ -264,6 +275,10 @@ final Map<StatusLineRoleKey, Style Function(TuiTheme theme)> kStatusLineRoles =
       // re-point this one lambda — the band writer never names a color.
       StatusLineRoleKey.bandBg: (t) =>
           Style(backgroundRgb: t.userMessageBg.backgroundRgb),
+
+      // Autopilot (gh-946): the accent — bold primary highlight — so the
+      // never-blocks mode stands out from the quiet muted mode role.
+      StatusLineRoleKey.autopilot: (t) => t.accent,
     });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1224,11 +1239,18 @@ LaidSegment? _renderModel(StatusLineSnapshot s, StatusLineSpec spec) {
 LaidSegment? _renderMode(StatusLineSnapshot s, StatusLineSpec spec) {
   final approval = s.approvalMode;
   final load = s.agentLoadMode;
-  final parts = [
-    if (approval != null && approval.isNotEmpty) approval,
-    if (load != null && load.isNotEmpty && load != 'default') load,
-  ];
-  if (parts.isEmpty) return null;
+  final hasApproval = approval != null && approval.isNotEmpty;
+  final hasLoad = load != null && load.isNotEmpty && load != 'default';
+  if (!hasApproval && !hasLoad) return null;
+  // Autopilot (gh-946) breaks out of the joined span: the label carries
+  // the dedicated highlight role while the load-mode tail stays muted.
+  if (hasApproval && approval == kAutopilotLabel) {
+    return LaidSegment('mode', [
+      (approval, StatusLineRoleKey.autopilot),
+      if (hasLoad) (' $load', StatusLineRoleKey.mode),
+    ]);
+  }
+  final parts = [if (hasApproval) approval, if (hasLoad) load];
   return LaidSegment('mode', [(parts.join(' '), StatusLineRoleKey.mode)]);
 }
 
@@ -1768,6 +1790,11 @@ Style statusLineStyle(
   double brandT = 1.0,
 }) {
   final base = kStatusLineRoles[key]!(theme);
+  if (key == StatusLineRoleKey.autopilot) {
+    // gh-946: the highlight IS the point — it never dims, so an idle
+    // autopilot session keeps reading as "this will not ask you".
+    return base;
+  }
   if (key == StatusLineRoleKey.brandA || key == StatusLineRoleKey.brandB) {
     if (brandT >= 1) return base;
     final dim = theme.muted;

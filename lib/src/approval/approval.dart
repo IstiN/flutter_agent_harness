@@ -75,7 +75,8 @@ enum ApprovalMode {
 
   /// Auto-allow every call, critical `bash` patterns included — the session
   /// NEVER blocks on an interactive prompt. For runs without a user present
-  /// (overnight/automation); there is nobody to answer a prompt.
+  /// (overnight/automation); there is nobody to answer a prompt. CLI label
+  /// ([ApprovalModeLabel.label]): `autopilot` (formerly `unattended`).
   unattended,
 }
 
@@ -412,16 +413,21 @@ final class ApprovalManager {
 }
 
 /// The CLI/config spelling of an [ApprovalMode] (`always-ask`, `write`,
-/// `yolo`, `unattended`).
+/// `yolo`, `autopilot`).
 extension ApprovalModeLabel on ApprovalMode {
   /// The stable lowercase label used in config files and slash commands.
   String get label => switch (this) {
     ApprovalMode.alwaysAsk => 'always-ask',
     ApprovalMode.write => 'write',
     ApprovalMode.yolo => 'yolo',
-    ApprovalMode.unattended => 'unattended',
+    ApprovalMode.unattended => kAutopilotLabel,
   };
 }
+
+/// The CLI label of the never-blocks approval mode (gh-946): renamed from
+/// `unattended` to `autopilot`. The old spelling stays accepted by
+/// [approvalModeFromLabel] so persisted configs and hosts keep loading.
+const String kAutopilotLabel = 'autopilot';
 
 /// Parses a CLI/config label into an [ApprovalMode]; `null` when unknown.
 ApprovalMode? approvalModeFromLabel(String? value) {
@@ -429,7 +435,7 @@ ApprovalMode? approvalModeFromLabel(String? value) {
     'always-ask' || 'alwaysAsk' => ApprovalMode.alwaysAsk,
     'write' => ApprovalMode.write,
     'yolo' => ApprovalMode.yolo,
-    'unattended' => ApprovalMode.unattended,
+    kAutopilotLabel || 'unattended' => ApprovalMode.unattended,
     _ => null,
   };
 }
