@@ -204,10 +204,15 @@ A channel is nothing but an X25519 keypair plus a name
 (`channels.dart` `newChannelKeypair`). The hub knows only the name and
 the public key.
 
-- **Join**: `{"op":"join","channel":c,"chanPubkey":pub}` — the first
-  join creates the channel and registers the pubkey; re-joins are
+- **Join**: `{"op":"join","channel":c,"chanPubkey":pub}` — re-joins are
   idempotent and replayed after every reconnect/welcome
-  (`hub_client.dart` `join`, `_joinKnownChannels`).
+  (`hub_client.dart` `join`, `_joinKnownChannels`). **Channel creation
+  is master-gated on the public hub (hub.fa1.dev, dap@main 2026-09):**
+  a client-secret connection may only join EXISTING channels — joining
+  an unknown channel answers `access_denied`. The legacy "first join
+  creates the channel" behaviour remains on self-hosted/local hubs
+  without the gate; clients must treat `access_denied` on join as a
+  normal "not invited / wrong id" signal, never as a transient error.
 - **Membership = possession of the channel private key.** The hub's
   fan-out is broadcast (every connected agent except the sender gets the
   frame — `fake_hub.dart` `_send`); privacy comes from the key, not from
@@ -222,7 +227,10 @@ Key lifecycle (`ChannelStore`, backed by the machine-shared
 
 1. First send/join/invite touching an unknown channel **auto-generates**
    a keypair and persists it (`ChannelStore.keysFor`) — zero-config
-   channel creation.
+   channel creation **on self-hosted hubs**; on the gated public hub
+   (§5) the join is rejected and the freshly minted keypair belongs to
+   a channel that never comes into existence — importing agents should
+   surface the `access_denied` rather than retry.
 2. An accepted invite persists the received keypair
    (`ChannelStore.accept`).
 3. Agents on the same machine share the file, so they share channels for
