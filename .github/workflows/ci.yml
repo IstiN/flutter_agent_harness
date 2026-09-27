@@ -499,7 +499,11 @@ jobs:
     # raw json feeds the #928 duration gate (pty-coverage-gate below).
     name: PTY/CLI integration (linux, shard ${{ matrix.shard }}/3)
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
+    # 40 > 30: the leg now carries the coverage + file-reporter overhead the
+    # old mac leg had (the coverage-free linux twin never paid it) and arm64
+    # Graviton cores run somewhat slower than the M-series minis did — margin
+    # without stretching the watchdog much.
+    timeout-minutes: 40
     permissions:
       contents: read
     strategy:
