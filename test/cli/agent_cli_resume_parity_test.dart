@@ -158,11 +158,7 @@ void main() {
     for (final message in context.messages)
       switch (message) {
         UserMessage() =>
-          'user:${message.content is String
-              ? message.content
-              : (message.content as List)
-                    .map((b) => b is TextContent ? b.text : 'image')
-                    .join('|')}',
+          'user:${message.content is String ? message.content : (message.content as List).map((b) => b is TextContent ? b.text : 'image').join('|')}',
         AssistantMessage() =>
           'assistant:${message.content.map((b) => b is TextContent ? b.text : 'other').join('|')}',
         ToolResultMessage(:final toolCallId) => 'tool:$toolCallId',

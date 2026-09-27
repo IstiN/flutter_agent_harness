@@ -158,8 +158,7 @@ void main() {
       '{"type":"session","version":3,"id":"big","timestamp":"$iso",'
       '"cwd":"/work"}\n',
     );
-    String body(int i) =>
-        i == giantAt ? 'g' * giantChars : 'a' * textChars;
+    String body(int i) => i == giantAt ? 'g' * giantChars : 'a' * textChars;
     for (var i = 0; i < count; i++) {
       if (compactionAt == i) {
         buffer.write(
@@ -1048,7 +1047,10 @@ void main() {
       // now, so the kept tail sits at/below the budget, never a block
       // past it; a ~45-char record prices ~12 tokens).
       expect(estimateSessionBranchTokens(branch), lessThanOrEqualTo(1000));
-      expect(estimateSessionBranchTokens(branch), greaterThanOrEqualTo(1000 - 12));
+      expect(
+        estimateSessionBranchTokens(branch),
+        greaterThanOrEqualTo(1000 - 12),
+      );
     });
 
     test(

@@ -511,24 +511,26 @@ void main() {
       parameters: const {'type': 'object', 'properties': <String, dynamic>{}},
     );
 
-    test('window − system+tools overhead − reserve: the meter\'s own basis',
-        () {
-      const window = 200000;
-      const reserve = 16384;
-      final budget = resumeParityBudget(
-        effectiveContextWindow: window,
-        reserveTokens: reserve,
-        systemPrompt: 'a' * 4000, // 1000 tokens
-        tools: [tool],
-      );
-      final overhead = estimateRequestOverheadTokens('a' * 4000, [tool]);
-      // The parity identity: transcript budget + overhead + reserve must
-      // reassemble the window, so the meter (transcript + overhead) can
-      // never read past window − reserve on a fresh resume.
-      expect(budget + overhead + reserve, window);
-      // The overhead already prices the prompt in — subtracted once.
-      expect(budget, window - reserve - overhead);
-    });
+    test(
+      'window − system+tools overhead − reserve: the meter\'s own basis',
+      () {
+        const window = 200000;
+        const reserve = 16384;
+        final budget = resumeParityBudget(
+          effectiveContextWindow: window,
+          reserveTokens: reserve,
+          systemPrompt: 'a' * 4000, // 1000 tokens
+          tools: [tool],
+        );
+        final overhead = estimateRequestOverheadTokens('a' * 4000, [tool]);
+        // The parity identity: transcript budget + overhead + reserve must
+        // reassemble the window, so the meter (transcript + overhead) can
+        // never read past window − reserve on a fresh resume.
+        expect(budget + overhead + reserve, window);
+        // The overhead already prices the prompt in — subtracted once.
+        expect(budget, window - reserve - overhead);
+      },
+    );
 
     test('no prompt and no tools: budget = window − reserve', () {
       expect(
@@ -537,25 +539,25 @@ void main() {
       );
     });
 
-    test('an unanchored overhead is SUBTRACTED, never swallowed (the '
-        'reported 127% resume priced system+tools on top of a full window)',
-        () {
-      const window = 32768;
-      const reserve = 8192;
-      final prompt = 'x' * 40000; // 10k tokens of system prompt
-      final budget = resumeParityBudget(
-        effectiveContextWindow: window,
-        reserveTokens: reserve,
-        systemPrompt: prompt,
-        tools: [tool],
-      );
-      expect(
-        budget,
-        window -
-            reserve -
-            estimateRequestOverheadTokens(prompt, [tool]),
-      );
-    });
+    test(
+      'an unanchored overhead is SUBTRACTED, never swallowed (the '
+      'reported 127% resume priced system+tools on top of a full window)',
+      () {
+        const window = 32768;
+        const reserve = 8192;
+        final prompt = 'x' * 40000; // 10k tokens of system prompt
+        final budget = resumeParityBudget(
+          effectiveContextWindow: window,
+          reserveTokens: reserve,
+          systemPrompt: prompt,
+          tools: [tool],
+        );
+        expect(
+          budget,
+          window - reserve - estimateRequestOverheadTokens(prompt, [tool]),
+        );
+      },
+    );
 
     test('a clamped window (contextWindowCap) scales the budget (E4)', () {
       // The caller passes the EFFECTIVE window; the formula is honest
@@ -606,27 +608,25 @@ void main() {
       expect(projectedBranchBudgetCut(branch, 100000), isNull);
     });
 
-    test('cuts before the record that would push the kept tail PAST the '
-        'budget walking backward (kept tail ≤ budget, never a blockful over)',
-        () {
-      final branch = msgs(20); // 2000 tokens
-      final cut = projectedBranchBudgetCut(branch, 1000);
-      // Walking backward: 100..1000 stay at/below budget; the record that
-      // would reach 1100 is dropped, so the kept suffix prices 1000.
-      expect(cut, 10);
-      final kept = branch.sublist(cut!);
-      expect(estimateProjectedBranchTokens(kept), 1000);
-      expect(estimateProjectedBranchTokens(kept), lessThanOrEqualTo(1000));
-    });
+    test(
+      'cuts before the record that would push the kept tail PAST the '
+      'budget walking backward (kept tail ≤ budget, never a blockful over)',
+      () {
+        final branch = msgs(20); // 2000 tokens
+        final cut = projectedBranchBudgetCut(branch, 1000);
+        // Walking backward: 100..1000 stay at/below budget; the record that
+        // would reach 1100 is dropped, so the kept suffix prices 1000.
+        expect(cut, 10);
+        final kept = branch.sublist(cut!);
+        expect(estimateProjectedBranchTokens(kept), 1000);
+        expect(estimateProjectedBranchTokens(kept), lessThanOrEqualTo(1000));
+      },
+    );
 
-    test('a whole branch exactly at the budget fits (budget is inclusive)',
-        () {
+    test('a whole branch exactly at the budget fits (budget is inclusive)', () {
       final branch = msgs(10); // 1000 tokens
       expect(projectedBranchBudgetCut(branch, 999), 1);
-      expect(
-        estimateProjectedBranchTokens(branch.sublist(1)),
-        900,
-      );
+      expect(estimateProjectedBranchTokens(branch.sublist(1)), 900);
     });
 
     test('the overshoot is bounded by ONE record, never one block: a giant '
@@ -668,7 +668,9 @@ void main() {
         for (var i = 0; i < 20; i++)
           msg('e$i', i == 0 ? null : 'e${i - 1}', 'x' * 40000),
       ];
-      final tail = [for (var i = 20; i < 40; i++) msg('e$i', 'e${i - 1}', 'a' * 400)];
+      final tail = [
+        for (var i = 20; i < 40; i++) msg('e$i', 'e${i - 1}', 'a' * 400),
+      ];
       final branch = [
         ...hidden,
         ...tail,

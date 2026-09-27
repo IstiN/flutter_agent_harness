@@ -199,7 +199,9 @@ int? projectedBranchBudgetCut(List<SessionRecord> branch, int budget) {
                 UserMessage(content: content, timestamp: timestamp),
               ),
             CompactionRecord(:final summary) => estimateStringTokens(summary),
-            BranchSummaryRecord(:final summary) => estimateStringTokens(summary),
+            BranchSummaryRecord(:final summary) => estimateStringTokens(
+              summary,
+            ),
             CompactCheckpointRecord(:final text) => estimateStringTokens(text),
             _ => 0,
           };
