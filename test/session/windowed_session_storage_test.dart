@@ -142,6 +142,43 @@ void main() {
     return count;
   }
 
+  /// [seedRaw] with deterministic per-record sizes: 400-char texts price
+  /// 100 tokens each (chars/4), with an optional giant record and an
+  /// optional compaction boundary — the fixtures for the gh-968 budget
+  /// trim tests.
+  Future<void> seedSized(
+    int count, {
+    int? compactionAt,
+    int? giantAt,
+    int giantChars = 20000,
+    int textChars = 400,
+  }) async {
+    const iso = '2026-01-01T00:00:00.000Z';
+    final buffer = StringBuffer(
+      '{"type":"session","version":3,"id":"big","timestamp":"$iso",'
+      '"cwd":"/work"}\n',
+    );
+    String body(int i) => i == giantAt ? 'g' * giantChars : 'a' * textChars;
+    for (var i = 0; i < count; i++) {
+      if (compactionAt == i) {
+        buffer.write(
+          '{"type":"compaction","id":"c$i","parentId":'
+          '${i == 0 ? 'null' : '"e${i - 1}"'},"timestamp":"$iso",'
+          '"summary":"compacted prefix","firstKeptEntryId":"e$i",'
+          '"tokensBefore":12345}\n',
+        );
+      }
+      buffer.write(
+        '{"type":"message","id":"e$i","parentId":'
+        '${i == 0 && compactionAt != 0 ? 'null' : (compactionAt == i ? '"c$i"' : '"e${i - 1}"')},'
+        '"timestamp":"$iso",'
+        '"message":{"role":"user","content":[{"type":"text","text":'
+        '"${body(i)}"}]}}\n',
+      );
+    }
+    await fs.writeFile(path, buffer.toString());
+  }
+
   Future<JsonlSessionStorage> seed(int count) async {
     final storage = await JsonlSessionStorage.create(
       fs,
@@ -1005,8 +1042,15 @@ void main() {
       expect(branch.any((r) => r is CompactionRecord), isFalse);
       expect(windowed.hasOlder, isTrue);
       expect(branch.length, lessThan(count));
-      // ...and the resident tail genuinely covers the budget.
-      expect(estimateSessionBranchTokens(branch), greaterThanOrEqualTo(1000));
+      // ...and the resident tail genuinely covers the budget — within
+      // one record's tokens (gh-968 AC-R4: the stop is record-granular
+      // now, so the kept tail sits at/below the budget, never a block
+      // past it; a ~45-char record prices ~12 tokens).
+      expect(estimateSessionBranchTokens(branch), lessThanOrEqualTo(1000));
+      expect(
+        estimateSessionBranchTokens(branch),
+        greaterThanOrEqualTo(1000 - 12),
+      );
     });
 
     test(
@@ -1141,5 +1185,183 @@ void main() {
         );
       },
     );
+
+    test('budget stop trims to the parity bound (gh-968 AC-R4): the kept '
+        'tail never prices past the budget, and dropped history pages back '
+        'lazily', () async {
+      // 700 records × 100 tokens, a 5000-token giant at index 300: the
+      // block that crosses a 19750 budget prices ~44.9k (300 records +
+      // the giant) — the old stop returned it whole.
+      await seedSized(700, giantAt: 300);
+      final windowed = await WindowedSessionStorage.open(
+        fs,
+        path,
+        chunkRecords: 50,
+        residentRecords: 100,
+      );
+      final leafBefore = await windowed.getLeafId();
+
+      const budget = 19750;
+      final ok = await windowed.growOlderUntil(
+        (r) => r is CompactionRecord,
+        tokenBudget: budget,
+      );
+
+      expect(ok, isTrue);
+      // The walk stays tail-anchored (no full-open fallback on the
+      // caller's side).
+      expect(await windowed.getLeafId(), leafBefore);
+      final branch = await windowed.getPathToRoot(leafBefore!);
+      final estimate = estimateProjectedBranchTokens(branch);
+      // The kept tail is within the budget — overshoot bounded by the
+      // crossing record, never one doubling block.
+      expect(estimate, lessThanOrEqualTo(budget));
+      expect(estimate, greaterThan(budget - 200));
+      // Records below the cut are gone from the branch — the giant too —
+      // while the live tail stays.
+      expect(branch.any((r) => r.id == 'giant'), isFalse);
+      expect(branch.last.id, leafBefore);
+      // Dropped history stays lazy-scrollable (issue #503 preserved):
+      // loadOlder pages it back.
+      expect(windowed.hasOlder, isTrue);
+      final older = await windowed.loadOlder();
+      expect(older, isNotEmpty);
+      // The record just below the cut pages back first among the joined
+      // tail (loadOlder returns root-first) — the trim dropped everything
+      // older than the kept boundary.
+      expect(older.last.id, branch.first.parentId);
+    });
+
+    test('boundary-first preserved: a reachable compaction boundary stops '
+        'the walk before the budget and is NEVER trimmed (the parity budget '
+        'is the safety net, not the target)', () async {
+      await seedSized(700, compactionAt: 100);
+      final windowed = await WindowedSessionStorage.open(
+        fs,
+        path,
+        chunkRecords: 50,
+        residentRecords: 100,
+      );
+      final leafBefore = await windowed.getLeafId();
+
+      // Budget 45000 < the 700-record projection: the walk crosses it —
+      // but only AFTER the boundary is resident, and the boundary stop
+      // wins, so nothing is trimmed.
+      const budget = 45000;
+      final ok = await windowed.growOlderUntil(
+        (r) => r is CompactionRecord,
+        tokenBudget: budget,
+      );
+
+      expect(ok, isTrue);
+      expect(await windowed.getLeafId(), leafBefore);
+      final branch = await windowed.getPathToRoot(leafBefore!);
+      expect(branch.any((r) => r is CompactionRecord), isTrue);
+      // Whole chain resident: the boundary path reconstructs the real
+      // pre-close projection, budget notwithstanding.
+      expect(branch, hasLength(701));
+      expect(
+        estimateProjectedBranchTokens(branch),
+        greaterThan(budget),
+        reason: 'the boundary stop tolerates a budget-crossing projection',
+      );
+    });
+
+    test('a budget under the newest record alone floors at the tail record '
+        '(E3: giant in the tail — never an empty window)', () async {
+      await seedSized(10, textChars: 2000); // 10 records × 500 tokens
+      final windowed = await WindowedSessionStorage.open(
+        fs,
+        path,
+        chunkRecords: 50,
+        residentRecords: 100,
+      );
+      final leafBefore = await windowed.getLeafId();
+
+      final ok = await windowed.growOlderUntil(
+        (r) => r is CompactionRecord,
+        tokenBudget: 100,
+      );
+
+      expect(ok, isTrue);
+      expect(await windowed.getLeafId(), leafBefore);
+      final branch = await windowed.getPathToRoot(leafBefore!);
+      expect(branch, hasLength(1));
+      expect(branch.single.id, leafBefore);
+      expect(windowed.hasOlder, isTrue);
+    });
+
+    test('walk + trim keep the tail byte-exact: Cyrillic payloads and '
+        'image blocks survive the JSONL round-trip (mojibake-family '
+        'regression, E2E tail shape)', () async {
+      final storage = await JsonlSessionStorage.create(
+        fs,
+        path,
+        cwd: '/work',
+        sessionId: 'cyr',
+      );
+      // 60 records × 101 tokens (403-char texts — 400 Cyrillic ж + a
+      // №-marker), an image every 10th record.
+      final texts = <String>[];
+      for (var i = 0; i < 60; i++) {
+        final text = 'ж' * 400 + '№$i';
+        texts.add(text);
+        final content = <ContentBlock>[
+          TextContent(text: text),
+          if (i % 10 == 0)
+            const ImageContent(data: 'AAAA', mimeType: 'image/png'),
+        ];
+        await storage.appendEntry(
+          MessageRecord(
+            id: 'e$i',
+            parentId: i == 0 ? null : 'e${i - 1}',
+            timestamp: DateTime.utc(2026, 1, 1).add(Duration(minutes: i)),
+            message: UserMessage(
+              content: content,
+              timestamp: DateTime.utc(2026, 1, 1).add(Duration(minutes: i)),
+            ),
+          ),
+        );
+      }
+      final windowed = await WindowedSessionStorage.open(
+        fs,
+        path,
+        chunkRecords: 50,
+        residentRecords: 100,
+      );
+      final leafBefore = await windowed.getLeafId();
+
+      // 50 × 101 = 5050 < 5800: the walk pages one block (records e0..e9
+      // re-parse from multibyte JSONL), then trims to the budget.
+      final ok = await windowed.growOlderUntil(
+        (r) => r is CompactionRecord,
+        tokenBudget: 5800,
+      );
+
+      expect(ok, isTrue);
+      expect(await windowed.getLeafId(), leafBefore);
+      final branch = await windowed.getPathToRoot(leafBefore!);
+      expect(estimateProjectedBranchTokens(branch), lessThanOrEqualTo(5800));
+      // The walked-then-kept records keep their exact content — no
+      // mojibake, no split codepoints.
+      final byId = {for (final r in branch) r.id: r};
+      // e40/e50 carry images and are checked below.
+      for (final i in [31, 35, 39, 41, 45, 59]) {
+        final record = byId['e$i']! as MessageRecord;
+        final message = record.message as UserMessage;
+        expect(
+          (message.content as List).single as TextContent,
+          isA<TextContent>().having((t) => t.text, 'text', texts[i]),
+          reason: 'e$i must survive the walk byte-exact',
+        );
+      }
+      for (final i in [40, 50]) {
+        final carrier = (byId['e$i']! as MessageRecord).message as UserMessage;
+        expect(carrier.content as List, hasLength(2), reason: 'e$i');
+        final image = (carrier.content as List).last as ImageContent;
+        expect(image.data, 'AAAA', reason: 'e$i');
+        expect(image.mimeType, 'image/png', reason: 'e$i');
+      }
+    });
   });
 }

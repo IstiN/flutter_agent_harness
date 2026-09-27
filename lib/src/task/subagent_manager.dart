@@ -39,6 +39,14 @@ typedef SubagentRegistrySource = Future<List<Map<String, dynamic>>> Function();
 /// per write, in the parent session's JSONL (a side-leaf custom record).
 const String subagentRegistryRecordType = 'subagent_registry';
 
+/// The steering text a host's [SubagentManager.wakeChild] ride resumes a
+/// child with (gh-970). The resumed run's warm wake drains the inbox
+/// first, so the pending mail itself forms the prompt — this line only
+/// frames the turn.
+const String childInboxWakePrompt =
+    'Your inbox has pending mail that arrived while you were finished — '
+    'process it now.';
+
 /// Session-scoped subagent manager.
 /// Launches a detached, non-interactive run of a session so a SLEEPING
 /// agent processes its pending inbox mail right away (issue: "if the
@@ -125,6 +133,60 @@ final class SubagentManager {
   /// territory and stays unresolved. Null = the host did not report one —
   /// machine-suffixed addresses then never resolve locally.
   String? machineName;
+
+  /// Wakes a retained child with pending inbox mail by resuming it in its
+  /// own session (gh-970). Hosts WITH the child-resume capability wire
+  /// their executor's resume here:
+  /// `wakeChild = (id) => executor.resumeChild(id, childInboxWakePrompt)` —
+  /// the resumed run's warm wake drains the inbox as its first action, so
+  /// the reminder (or sibling mail) that fired into a finished monitor is
+  /// consumed and the recurrence continues. Null (the app host — no
+  /// child-resume capability) keeps the sweep a no-op; the mail waits for
+  /// the next task_send/steer.
+  Future<void> Function(String id)? wakeChild;
+
+  /// Children with a wake currently in flight — the sweep tick must not
+  /// stack a second wake onto a running one.
+  final _wakingChildren = <String>{};
+
+  /// Children whose wake threw — retired for this manager's lifetime so a
+  /// permanently unwakeable child (unreadable session) cannot spin the
+  /// sweep on every tick. Status gates re-eligibility anyway; this covers
+  /// children whose status did not change because the wake failed early.
+  final _unwakeableChildren = <String>{};
+
+  /// Starts a wake for every retained child that (a) holds pending inbox
+  /// mail and (b) can be woken — [SubagentStatus.completed] or
+  /// [SubagentStatus.idle]. Failed/aborted children stay manual
+  /// (task_resume semantics); queued/running children consume their inbox
+  /// at the next turn boundary on their own. Fire-and-forget by design:
+  /// the sweep rides the host's inbox tick and never blocks it. Returns
+  /// how many wakes were STARTED. Without [wakeChild] or a fabric this is
+  /// a cheap no-op.
+  Future<int> wakeChildrenWithPendingMail() async {
+    final wake = wakeChild;
+    if (wake == null) return 0;
+    var started = 0;
+    for (final handle in handles) {
+      final id = handle.id;
+      if (_wakingChildren.contains(id) || _unwakeableChildren.contains(id)) {
+        continue;
+      }
+      const wakeable = {SubagentStatus.completed, SubagentStatus.idle};
+      if (!wakeable.contains(handle.status)) continue;
+      if (await pendingInboxCount(id) == 0) continue;
+      _wakingChildren.add(id);
+      started++;
+      unawaited(
+        wake(id)
+            .catchError((Object _) {
+              _unwakeableChildren.add(id);
+            })
+            .whenComplete(() => _wakingChildren.remove(id)),
+      );
+    }
+    return started;
+  }
 
   /// The A2A boundary gateway (issue #27 phase 3): when set, a
   /// `name@machine` address naming ANOTHER machine delivers through the
@@ -213,10 +275,13 @@ final class SubagentManager {
 
   /// Drops the registry view so the next [rehydrate] loads afresh — used
   /// when the host switches to a different parent session (each session owns
-  /// its own registry).
+  /// its own registry). Wake bookkeeping is dropped with it: the new
+  /// session's children start clean.
   void reset() {
     _handles.clear();
     _rehydrated = false;
+    _wakingChildren.clear();
+    _unwakeableChildren.clear();
   }
 
   /// Registers a new subagent — NEVER creates a child session eagerly.

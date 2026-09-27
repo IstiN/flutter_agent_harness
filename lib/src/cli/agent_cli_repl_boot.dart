@@ -138,9 +138,7 @@ extension on AgentCli {
         statusSnapshot: config.tuiClassic ? null : _statusLineSnapshot,
         statusLineEngine: config.tuiClassic
             ? null
-            : TuiStatusLine(
-                spec: resolveStatusLineSpec(config.statusLine),
-              ),
+            : TuiStatusLine(spec: resolveStatusLineSpec(config.statusLine)),
         prompt: prompt,
         onInterrupt: () {
           // Marks the drain loop to discard queued messages (kimi-cli drops
