@@ -31,13 +31,49 @@ REPO="${PIN_RELEASE_REPO:-IstiN/flutter_agent_harness}"
 BASE="${PIN_RELEASE_BASE:-https://github.com/$REPO/releases/download}"
 
 # ── is-newer <a> <b>: numeric semver compare, v-prefix tolerated ────────────
+# POSIX-pure on purpose: ubuntu runners give `sh` = dash and `awk` = mawk,
+# whose printf does not apply the %010d zero-padding this compare relies on
+# (the old awk ver_key made equal keys and silently reported "not newer").
+# Here every component is normalized with the SHELL printf (dash/bash both
+# implement %010d) to a zero-padded digit string — pure digits of equal
+# length, so the lexical `>` is collation-independent.
 if [ "${1:-}" = "is-newer" ]; then
   a="$(printf '%s' "${2:?usage: is-newer <a> <b>}" | sed 's/^v//')"
   b="$(printf '%s' "${3:?usage: is-newer <a> <b>}" | sed 's/^v//')"
-  # Per-component leading-numeric parse: awk's +0 stops at the first
-  # non-digit, so pre-release suffixes ("1-test") compare numerically.
-  ver_key() { printf '%s' "$1" | awk -F. '{ for (i=1; i<=3; i++) printf "%010d ", (i<=NF) ? ($i + 0) : -1; }'; }
-  [ "$(ver_key "$a")" != "$(ver_key "$b")" ] && [ "$(ver_key "$a")" \> "$(ver_key "$b")" ]
+  a_num="${a%%-*}"; a_sfx="${a#"$a_num"}"
+  b_num="${b%%-*}"; b_sfx="${b#"$b_num"}"
+  # leading digits of a dotted component, zero-stripped, padded to 10
+  comp10() {
+    c="$(printf '%s' "$1" | tr -cd '0-9' | sed -e 's/^0*//' -e 's/^$/0/')"
+    printf '%010d' "$c"
+  }
+  split3() { # $1 = "X.Y.Z" → newline-separated X, Y, Z (missing pieces empty)
+    rest="$1"
+    c1="${rest%%.*}"; [ "$c1" = "$rest" ] && rest="" || rest="${rest#*.}"
+    c2="${rest%%.*}"; [ "$c2" = "$rest" ] && c3="" || c3="${rest#*.}"
+    printf '%s\n%s\n%s\n' "$c1" "$c2" "$c3"
+  }
+  # sed-extract instead of `set -- $(...)` — word-splitting drops the empty
+  # components, and `set -u` then kills $2/$3 in dash.
+  a123="$(split3 "$a_num")"
+  a1="$(printf '%s\n' "$a123" | sed -n 1p)"
+  a2="$(printf '%s\n' "$a123" | sed -n 2p)"
+  a3="$(printf '%s\n' "$a123" | sed -n 3p)"
+  b123="$(split3 "$b_num")"
+  b1="$(printf '%s\n' "$b123" | sed -n 1p)"
+  b2="$(printf '%s\n' "$b123" | sed -n 2p)"
+  b3="$(printf '%s\n' "$b123" | sed -n 3p)"
+  ka="$(comp10 "$a1")$(comp10 "$a2")$(comp10 "$a3")"
+  kb="$(comp10 "$b1")$(comp10 "$b2")$(comp10 "$b3")"
+  if [ "$ka" != "$kb" ]; then
+    [ "$ka" \> "$kb" ]
+    exit $?
+  fi
+  # equal numerics: a release outranks its own pre-release; release vs
+  # release is equal (NOT newer)
+  if [ -z "$a_sfx" ] && [ -n "$b_sfx" ]; then exit 0; fi
+  if [ -n "$a_sfx" ] || [ -z "$b_sfx" ]; then exit 1; fi
+  [ "$a_sfx" \> "$b_sfx" ]
   exit $?
 fi
 
