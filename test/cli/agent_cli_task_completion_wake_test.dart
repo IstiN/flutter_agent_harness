@@ -181,7 +181,9 @@ void main() {
       final stream = _CompletionRouter(
         childMarkers: const ['TASKMARK-alpha', 'TASKMARK-beta'],
         spawnTurns: [
-          toolTurn([backgroundSpawn(['alpha', 'beta'])]),
+          toolTurn([
+            backgroundSpawn(['alpha', 'beta']),
+          ]),
           textTurn('spawned both in the background, ending my turn'),
         ],
         wakeTurns: [textTurn('results acknowledged')],
@@ -209,7 +211,7 @@ void main() {
               lastUserText(context).contains('<task-result') &&
               lastUserText(context).contains('alpha'),
         ),
-        reason: 'the settled child re-enters as an async-result run'
+        reason: 'the settled child re-enters as an async-result run',
       );
       final wake = stream.contexts.lastWhere(
         (context) =>
@@ -241,7 +243,7 @@ void main() {
               lastUserText(context).contains('<task-result') &&
               lastUserText(context).contains('beta'),
         ),
-        reason: 'the second child re-enters as well'
+        reason: 'the second child re-enters as well',
       );
 
       io.sendLine('/exit');
@@ -258,7 +260,9 @@ void main() {
       final stream = _CompletionRouter(
         childMarkers: const ['TASKMARK-gamma'],
         spawnTurns: [
-          toolTurn([backgroundSpawn(['gamma'])]),
+          toolTurn([
+            backgroundSpawn(['gamma']),
+          ]),
           // The parent stays busy on a long tool call while the child
           // settles underneath it.
           toolTurn([
@@ -290,14 +294,14 @@ void main() {
         () =>
             cli.taskConfig.jobManager.job('gamma')!.status ==
             TaskJobStatus.completed,
-        reason: 'the child settles under the busy parent'
+        reason: 'the child settles under the busy parent',
       );
       gate.release();
       await waitForIt(
         () => stream.contexts.any(
           (context) => lastUserText(context).contains('<task-result'),
         ),
-        reason: 'the async-result is delivered at the next step boundary'
+        reason: 'the async-result is delivered at the next step boundary',
       );
       await waitForIt(() => !cli.isBusy, reason: 'the turn settles');
 

@@ -60,16 +60,18 @@ String _lastUserOf(List<Message> messages) {
   return '';
 }
 
-AssistantMessage _assistant(String text, {StopReason reason = StopReason.stop}) =>
-    AssistantMessage(
-      content: [TextContent(text: text)],
-      api: _testModel.api,
-      provider: _testModel.provider,
-      model: _testModel.id,
-      usage: Usage.zero,
-      stopReason: reason,
-      timestamp: DateTime.now(),
-    );
+AssistantMessage _assistant(
+  String text, {
+  StopReason reason = StopReason.stop,
+}) => AssistantMessage(
+  content: [TextContent(text: text)],
+  api: _testModel.api,
+  provider: _testModel.provider,
+  model: _testModel.id,
+  usage: Usage.zero,
+  stopReason: reason,
+  timestamp: DateTime.now(),
+);
 
 /// A complete text turn as events.
 List<AssistantMessageEvent> _textEvents(String text) {
@@ -114,7 +116,9 @@ List<AssistantMessageEvent> _toolTurnEvents(List<ToolCall> calls) {
   for (var i = 0; i < calls.length; i++) {
     events
       ..add(ToolCallStartEvent(contentIndex: i, partial: empty))
-      ..add(ToolCallEndEvent(contentIndex: i, toolCall: calls[i], partial: partial));
+      ..add(
+        ToolCallEndEvent(contentIndex: i, toolCall: calls[i], partial: partial),
+      );
   }
   events.add(DoneEvent(reason: StopReason.toolUse, message: partial));
   return events;
@@ -159,9 +163,7 @@ StreamFunction _router({
         return stream;
       }
     }
-    final events = queue.isNotEmpty
-        ? queue.removeAt(0)
-        : _textEvents('noted.');
+    final events = queue.isNotEmpty ? queue.removeAt(0) : _textEvents('noted.');
     for (final event in events) {
       stream.push(event);
     }
@@ -214,23 +216,21 @@ Future<void> _waitFor(
   fail('timed out waiting: $reason');
 }
 
-Future<AgentService> _service(
-  StreamFunction stream, {
-  Shell? shell,
-}) => AgentService.create(
-  config: AgentConfig(
-    providerKind: 'openai-completions',
-    modelId: 'test-model',
-    baseUrl: 'https://example.test',
-    apiKey: 'test-key',
-  ),
-  // The config-built boot is what the real app runs: it registers the task
-  // tool and arms the completions subscription under test (issue #958).
-  env: shell == null
-      ? MemoryExecutionEnv(cwd: '/work')
-      : MemoryExecutionEnv(cwd: '/work', shell: shell),
-  streamFunction: stream,
-);
+Future<AgentService> _service(StreamFunction stream, {Shell? shell}) =>
+    AgentService.create(
+      config: AgentConfig(
+        providerKind: 'openai-completions',
+        modelId: 'test-model',
+        baseUrl: 'https://example.test',
+        apiKey: 'test-key',
+      ),
+      // The config-built boot is what the real app runs: it registers the task
+      // tool and arms the completions subscription under test (issue #958).
+      env: shell == null
+          ? MemoryExecutionEnv(cwd: '/work')
+          : MemoryExecutionEnv(cwd: '/work', shell: shell),
+      streamFunction: stream,
+    );
 
 void main() {
   test(
@@ -243,7 +243,9 @@ void main() {
         childMarkers: const ['TASKMARK-alpha'],
         childDone: childDone,
         spawnTurns: [
-          _toolTurnEvents([_backgroundSpawn(['alpha'])]),
+          _toolTurnEvents([
+            _backgroundSpawn(['alpha']),
+          ]),
         ],
       );
       final service = await _service(stream);
@@ -257,7 +259,8 @@ void main() {
       // settlement must re-enter as a fresh turn: the notice lands as a
       // user message, the scripted wake reply follows it.
       await _waitFor(
-        () => _hasUserText(service.messages, '<task-result') &&
+        () =>
+            _hasUserText(service.messages, '<task-result') &&
             _hasUserText(service.messages, 'alpha'),
         reason: 'the settled child re-enters as an async-result turn',
       );
@@ -284,7 +287,9 @@ void main() {
         childMarkers: const ['TASKMARK-gamma'],
         childDone: childDone,
         spawnTurns: [
-          _toolTurnEvents([_backgroundSpawn(['gamma'])]),
+          _toolTurnEvents([
+            _backgroundSpawn(['gamma']),
+          ]),
           _toolTurnEvents([
             ToolCall(
               id: 't2',
