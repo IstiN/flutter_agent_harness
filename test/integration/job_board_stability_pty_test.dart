@@ -104,11 +104,20 @@ void main() {
 
   setUp(() async {
     // Issue #943 (vector 1): unique per-RUN roots. The old hardcoded
-    // /tmp/fa_539_home + /tmp/fa_539_proj were shared by every PR's PTY
-    // leg — one run's tearDown deleted them under another run's live ext
-    // processes (PathNotFoundException: Deletion failed, /tmp/fa_539_home).
-    home = Directory.systemTemp.createTempSync('fa_539_home_');
-    project = Directory.systemTemp.createTempSync('fa_539_proj_');
+    // /tmp/fa_539_home + /tmp/fa_539_proj were shared by every copy of
+    // this suite — one run's tearDown deleting them under another's live
+    // CLI wedges the boot ([Model] never arrives) and then breaks its own
+    // teardown (PathNotFoundException). Observed on main (run 36224616919).
+    //
+    // Under /tmp, NOT Directory.systemTemp: on the mac minis systemTemp
+    // resolves to a ~77-char /private/var/folders/... path, and the status
+    // row renders `<cwd> · ctx N% ...` clipped at the glass — the long cwd
+    // eats the `· ctx ` marker expectComposerReserved() sniffs, so a live
+    // frame misclassifies as idle (run 36232635161, the 80-col leg). The
+    // resolved /tmp path (/private/tmp/fa_539_XXXXXX) keeps the marker
+    // inside the glass; /tmp already was this suite's platform contract.
+    home = await Directory('/tmp').createTemp('fa_539_h_');
+    project = await Directory('/tmp').createTemp('fa_539_p_');
     // Pin the classic chrome: this suite asserts the classic grid (#539);
     // the band redesign (#805-#807) has its own surface.
     File('${home.path}/.fah/config.yaml')
@@ -246,6 +255,7 @@ void main() {
       // macOS/fa-m5 flake failed raw equality on byte-identical counts.
       final beforeOlder = frameContentLines(before)
           .where((l) => l.contains('· older') && l.contains('(5)'))
+          .map((l) => l.trimRight())
           .toList();
       expect(beforeOlder, hasLength(1), reason: 'frame before:\n$before');
       await harness.waitForText(
@@ -373,7 +383,7 @@ void main() {
     },
     // Issue #943: re-enabled — the /tmp/fa_539_* race it died of is gone
     // (unique per-run roots + failure-safe cleanup above). The OTHER
-    // scenario's skip ('stacked boards freeze', #937) stays: a real
-    // product regression, deliberately not re-enabled here.
+    // scenario ('stacked boards freeze', #937) is re-enabled too, via the
+    // gh-982 fix (frameContentLines) on top of the same unique roots.
   );
 }
