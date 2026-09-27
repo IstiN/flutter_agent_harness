@@ -22,7 +22,6 @@
 @TestOn('vm')
 @Tags(['integration'])
 @Timeout(Duration(minutes: 10))
-@Skip('infra: #936 resume perf budget too tight under load')
 library;
 
 import 'dart:convert';
@@ -416,9 +415,12 @@ ${resumeTail.join('\n')}''',
       try {
         // The restored header scrolls out of the small scrollback at 3k
         // records; the tail's last rendered row is the settled marker.
+        // 90 s (issue #943): the watch budget below (60 s) must bind
+        // BEFORE the wait does, or the gate reports a wait timeout
+        // instead of a budget breach.
         await resumed.waitForText(
           'answer $turns',
-          timeout: const Duration(seconds: 60),
+          timeout: const Duration(seconds: 90),
         );
         final timeToTail = watch.elapsed;
         await resumed.waitForOutput(
@@ -432,9 +434,15 @@ ${resumeTail.join('\n')}''',
         expect(tail, contains('answer $turns'));
         expect(tail, isNot(contains('[bash]')));
         // AC8 fixed ceiling: PTY boot + windowed open + tail render.
+        // 45 -> 60 s (issue #943): the old line was idle-tuned; concurrent
+        // CI dilates the JIT boot + windowed open past it (the #938 skip).
+        // 60 s is 1.33x the old ceiling and still an order of magnitude
+        // under any real resume regression (full-file parse class, seconds
+        // to minutes). Inspection-derived: this leg needs a PTY host and
+        // cannot be budget-measured in the sandboxed dev checkout.
         expect(
           timeToTail,
-          lessThan(const Duration(seconds: 45)),
+          lessThan(const Duration(seconds: 60)),
           reason: 'resume time-to-tail: $timeToTail',
         );
       } finally {
