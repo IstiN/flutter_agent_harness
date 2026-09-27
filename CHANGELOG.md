@@ -4317,6 +4317,14 @@
 - chore(quality): temp CLI coverage baseline 11.0 → 7.9 — unwedge PTY-gate (restore: gh-997) (#998)
 - gh-946 CLI Rename unattended change to autopilot (#949)
 
+## 1.0.481
+
+- fix(921): swallow post-abandonment SSE transport errors instead of crashing (#922)
+- chore(factory): mirror ai-teammate stub template (effective-anchor run-name) (#1017)
+- gh-957: drop the 3 temporary CRAP excludes after #948 (f2498ead) — gate re-measures green at 30.0 (#959)
+- fix(install): bump SEC-07 pin 0.1.452 -> 1.0.480 (#1015)
+- quarantine(#1012 #1014): linux shard-0 PTY timing flakes (scheduled_indicator + ctrl_c_double_press) (#1013)
+
 ## Unreleased
 
 ## Unreleased
