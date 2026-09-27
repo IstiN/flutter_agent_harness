@@ -12,6 +12,7 @@ import 'package:fa/network/fa_network_client.dart';
 import 'package:fa/network/invite_codec.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session_manager.dart';
+import 'package:fa/ui/network/network_input_style.dart';
 
 /// Opens the join-network sheet: a dialog on wide layouts, a modal bottom
 /// sheet on narrow ones. All state lives inside the sheet — a kill/resume
@@ -189,10 +190,8 @@ class _JoinSheetState extends State<JoinSheet> {
               Expanded(
                 child: TextField(
                   controller: _linkController,
-                  decoration: InputDecoration(
-                    labelText: context.l10n.networkJoinLinkLabel,
-                    hintText: 'https://…/join?network=…#pw=…', // l10n:ignore
-                    isDense: true,
+                  decoration: networkInputDecoration(
+                    hint: context.l10n.networkJoinLinkLabel,
                   ),
                   onSubmitted: (_) => _fillFromLink(),
                 ),
@@ -207,9 +206,8 @@ class _JoinSheetState extends State<JoinSheet> {
           const SizedBox(height: 12),
           TextField(
             controller: _idController,
-            decoration: InputDecoration(
-              labelText: context.l10n.networkIdLabel,
-              isDense: true,
+            decoration: networkInputDecoration(
+              hint: context.l10n.networkIdLabel,
             ),
           ),
           const SizedBox(height: 12),
@@ -219,9 +217,8 @@ class _JoinSheetState extends State<JoinSheet> {
             // A prefilled id (the public directory's Join) lands the caret
             // straight on the password — the only thing left to type.
             autofocus: widget.initialNetworkId != null,
-            decoration: InputDecoration(
-              labelText: context.l10n.networkPasswordLabel,
-              isDense: true,
+            decoration: networkInputDecoration(
+              hint: context.l10n.networkPasswordLabel,
             ),
           ),
           const SizedBox(height: 12),
@@ -235,9 +232,8 @@ class _JoinSheetState extends State<JoinSheet> {
           else
             TextField(
               controller: _nameController,
-              decoration: InputDecoration(
-                labelText: context.l10n.networkDisplayNameLabel,
-                isDense: true,
+              decoration: networkInputDecoration(
+                hint: context.l10n.networkDisplayNameLabel,
               ),
             ),
           if (error != null) ...[

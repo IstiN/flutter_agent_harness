@@ -204,19 +204,21 @@ const membersBody =
 
 /// Encrypts [plaintext] as [sender] into a fanet1 envelope payload for the
 /// channel with [channelPub] — history pages and relayed frames in tests.
+/// [aadTarget] is the AAD channel target (post-#1002: the channel id; pass
+/// a display name to mint a pre-contract legacy frame).
 Future<String> encryptAs({
   required ({String pub, String priv}) sender,
   required String channelPub,
   required String envelopeId,
   required String plaintext,
-  String channelName = 'general',
+  String aadTarget = 'general',
 }) async {
   final senderKeyPair = await testCodec.keyPairFromPriv(sender.priv);
   return testCodec.encrypt(
     senderIdentity: senderKeyPair,
     channelPub: testCodec.publicKeyFromB64(channelPub),
     frameId: envelopeId,
-    channelName: channelName,
+    aadTarget: aadTarget,
     plaintext: plaintext,
   );
 }

@@ -819,7 +819,10 @@ class ChatComposerState extends State<ChatComposer>
                           controller: _textController,
                           focusNode: _focusNode,
                           decoration: InputDecoration(
-                            hintText: 'Ask anything…',
+                            // The host-localized hint (the session surface
+                            // scopes FaChatStrings; channel chats override
+                            // it with "Message <channel>").
+                            hintText: FaChatStrings.of(context).chatInputHint,
                             contentPadding: const EdgeInsets.symmetric(
                               horizontal: 16,
                               vertical: 8,
