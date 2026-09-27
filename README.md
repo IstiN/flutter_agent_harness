@@ -67,7 +67,7 @@ and the CLI installer below.
   rendering, and per-turn approval grants. See
   [docs/migrating-from-claude-copilot-codex.md](docs/migrating-from-claude-copilot-codex.md).
 - **Approval gate** (`lib/src/approval/`): read/write/exec tiers, session
-  modes (always-ask/write/yolo/unattended), per-tool overrides, and a
+  modes (always-ask/write/yolo/autopilot), per-tool overrides, and a
   critical-pattern interceptor for dangerous `bash` — even in yolo.
 - **Trajectory ledger** (`lib/src/trajectory/`): every session projects
   into an immutable snapshot (turns, timeline modes, full-text search)
