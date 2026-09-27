@@ -811,7 +811,7 @@ final class TaskExecutor {
       for (final tool in subagentMonitoringTools(
         manager: subagentManager,
         currentSubagentId: currentSubagentId,
-      ).where((t) => t.name == 'reply' || t.name == 'agent_message')) {
+      ).where((t) => childInjectedToolNames.contains(t.name))) {
         toolRegistry.register(tool);
       }
     }
