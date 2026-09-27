@@ -224,11 +224,11 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
 
 /// Resolves with the first of [callbackFuture] (a landed callback or the
 /// timeout), an [opened] failure, or — when [cancelWhenOpenSettles] — a
-/// successful [opened] completion (PlatformException `aiinSurfaceClosed`):
-/// an auth-session sheet that closed WITHOUT a callback is a user cancel,
+/// successful [opened] completion ([AiinSurfaceClosedException]): an
+/// auth-session sheet that closed WITHOUT a callback is a user cancel,
 /// not a reason to wait out the callback timeout. A late open error after
-/// the callback won is swallowed here: the dismissal already closed the
-/// surface and the flow is settling.
+/// the callback won is dropped from the race here and swallowed by the
+/// caller's `await opened` — the landed callback always settles the flow.
 Future<AiinCallback?> _firstCallbackOrOpenError(
   Future<AiinCallback?> callbackFuture,
   Future<void> opened, {

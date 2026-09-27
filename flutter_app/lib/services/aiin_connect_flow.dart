@@ -377,10 +377,12 @@ Future<bool> runAiinMobileConnect({
             onCallback: authSession ? _dismissAiinAuthSession : null,
             // The iOS sheet resolving without a callback is a user
             // cancel — fall to paste immediately instead of waiting out
-            // the callback timeout. The external Android browser cannot
-            // signal a cancel; the short mobile timeout bounds it.
+            // the callback timeout; the timeout there only guards a
+            // stalled network, so it stays at the desktop default. The
+            // external Android browser gives no cancel signal — its 3
+            // minute bound is the abandonment protection.
             cancelWhenOpenSettles: authSession,
-            timeout: const Duration(minutes: 3),
+            timeout: Duration(minutes: authSession ? 5 : 3),
           );
   } on AiinSurfaceClosedException {
     // The sheet closed without a callback — user cancel.

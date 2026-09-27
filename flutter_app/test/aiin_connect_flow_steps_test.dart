@@ -422,6 +422,35 @@ void main() {
       debugDefaultTargetPlatformOverride = null;
     });
 
+    testWidgets('a sheet that closes without a callback falls back to paste '
+        'immediately', (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      // A non-null behavior return completes the session (the native
+      // complete path) — the sheet CLOSES with no callback ever landing:
+      // the cancelWhenOpenSettles path. The paste dialog must appear
+      // without waiting out any timeout.
+      mockAuthSessionChannel((url) => 'done');
+      final registry = ProviderRegistry.inMemory();
+      final context = await _pumpHost(tester);
+      final done = runAiinConnectFlow(
+        context: context,
+        registry: registry,
+        service: null,
+        lastConnectionStore: LastConnectionStore.inMemory(),
+      );
+      // Let the loopback bind + the surface close settle.
+      await tester.runAsync(
+        () async => Future<void>.delayed(const Duration(milliseconds: 50)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('AIIN API key'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      expect(await done, isFalse);
+      expect(registry.providers, isEmpty);
+      await tester.pump(const Duration(seconds: 4)); // expire the snackbar
+      debugDefaultTargetPlatformOverride = null;
+    });
+
     testWidgets('android runs the same loopback flow through the external '
         'browser and saves the provider', (tester) async {
       debugDefaultTargetPlatformOverride = TargetPlatform.android;
