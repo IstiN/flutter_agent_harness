@@ -150,8 +150,6 @@ void main() {
       },
     );
 
-    // QUARANTINED under gh-1007: LocalHub.waitForHellos 30s timeout under
-    // runner load — fix the timing flake and re-enable (mirrors gh-982).
     test('set master secret: masked input, then connects to the hub', () async {
       final fakeHub = FakeHub();
       await fakeHub.start();
@@ -194,7 +192,10 @@ void main() {
         'master secret set for this session',
         timeout: const Duration(seconds: 20),
       );
-      await fakeHub.waitForHellos(1, timeout: const Duration(seconds: 30));
+      // The CLI dial rides a cold-JIT `dart` process behind the TUI boot —
+      // on loaded validation runners the handshake has landed past 30s
+      // (gh-1007), so the wait gets the same headroom as the boot itself.
+      await fakeHub.waitForHellos(1, timeout: const Duration(seconds: 60));
       await harness.waitForText(
         'connected',
         timeout: const Duration(seconds: 30),
@@ -204,9 +205,7 @@ void main() {
 
       await harness.runSlashCommand('/exit');
       await harness.waitForOutput();
-    }, skip: 'flake: gh-1007 LocalHub.waitForHellos 30s timeout under '
-        'runner load; quarantined to unblock validation — fix the '
-        'timing flake and re-enable');
+    });
 
     test(
       'running hub: the leading row is Stop DAP (AC7, issue #304)',
@@ -301,7 +300,10 @@ void main() {
       );
       harness.sendEnter();
 
-      await fakeHub.waitForHellos(1, timeout: const Duration(seconds: 30));
+      // The CLI dial rides a cold-JIT `dart` process behind the TUI boot —
+      // on loaded validation runners the handshake has landed past 30s
+      // (gh-1007), so the wait gets the same headroom as the boot itself.
+      await fakeHub.waitForHellos(1, timeout: const Duration(seconds: 60));
       await harness.waitForText(
         'connected to ${fakeHub.url}',
         timeout: const Duration(seconds: 30),
