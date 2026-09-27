@@ -295,11 +295,11 @@ void main() {
     'override (the ACTIVE reserve, not forWindow)',
     timeout: const Timeout(Duration(minutes: 5)),
     () async {
-      // 20k transcript tokens: over the default-reserve budget
+      // ~18k transcript tokens: over the default-reserve budget
       // (32768 − 8192 − overhead ≈ 16k) but under the override's
       // (32768 − 4096 − overhead ≈ 20k).
       final defaultEnv = await freshEnv();
-      await seedFlat(defaultEnv, 'parity-target', 20);
+      await seedFlat(defaultEnv, 'parity-target', 18);
       final defaultStream = FakeStreamFunction([textTurn('ok')]);
       final defaultExit = await headlessCli(
         defaultEnv,
@@ -311,7 +311,7 @@ void main() {
 
       io = FakeCliIO();
       final overrideEnv = await freshEnv();
-      await seedFlat(overrideEnv, 'parity-target', 20);
+      await seedFlat(overrideEnv, 'parity-target', 18);
       final overrideStream = FakeStreamFunction([textTurn('ok')]);
       final overrideExit = await headlessCli(
         overrideEnv,
@@ -328,7 +328,7 @@ void main() {
       // The smaller reserve keeps the whole file — the budget moved with
       // the ACTIVE settings.
       expect(kept, greaterThan(trimmed));
-      expect(kept, 21);
+      expect(kept, 19);
     },
   );
 
@@ -427,7 +427,8 @@ void main() {
 
       // 'go' (1) + 'done' (1): the only projection delta; a couple of
       // tokens of slack for markers.
-      expect(second, inClosedRange(first + 2, first + 8));
+      expect(second, greaterThanOrEqualTo(first + 2));
+      expect(second, lessThanOrEqualTo(first + 8));
       // No ratchet: still under the compaction threshold.
       expect(second, lessThanOrEqualTo(_threshold));
     },
