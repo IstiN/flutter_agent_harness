@@ -482,7 +482,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          M5_POOL: '2'
+          M5_POOL: '0'
         run: |
           busy=0
           for rid in $(gh api "repos/$REPO/actions/runs?status=in_progress&per_page=100" --jq '.workflow_runs[].id'); do
