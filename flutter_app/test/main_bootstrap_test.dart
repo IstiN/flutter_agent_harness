@@ -122,21 +122,24 @@ void main() {
     test('a model-less connection does not restore (issue #1020)', () async {
       // The z.ai report: a provider registered without a model persisted a
       // model-less last connection — restoring it boots an unusable chat,
-      // so the boot falls back to the setup form instead.
-      const keyless = LastConnection(
+      // so the boot falls back to the setup form instead. The key half is
+      // satisfied (a remembered registry key) so ONLY the missing model
+      // blocks the restore.
+      const modelLess = LastConnection(
         providerKind: 'openai-completions',
         modelId: '',
         baseUrl: 'http://localhost:11434/v1',
       );
       final registry = ProviderRegistry.inMemory();
-      await registry.add(
+      final provider = await registry.add(
         name: 'Local',
-        baseUrl: keyless.baseUrl!,
+        baseUrl: modelLess.baseUrl!,
         modelId: '',
       );
+      registry.rememberKey(provider.id, 'sk-local');
       expect(
         restorableBootConfig(
-          connection: keyless,
+          connection: modelLess,
           registry: registry,
           sessionKeysStore: null,
         ),

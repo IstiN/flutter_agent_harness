@@ -1633,6 +1633,13 @@ class _P2State extends State<_P2> {
   Future<void> _saveConnection(String baseUrl, String modelId, String apiKey) {
     final store = widget.lastConnectionStore;
     if (store == null) return Future<void>.value();
+    // Belt-and-braces under the editor's requireModel gate (issue #1020
+    // review): boarding must never persist a model-less connection, even
+    // if a future flow pops the editor without the flag.
+    assert(
+      modelId.isNotEmpty,
+      'boarding must never persist a model-less connection (#1020)',
+    );
     return store.saveFromConfig(
       AgentConfig(
         providerKind: 'openai-completions',

@@ -25,8 +25,9 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// Rebuilds the last connection's [AgentConfig] for the boot auto-connect,
 /// or null when the setup screen should show instead: nothing configured,
-/// an on-device connection (those re-offer the quick start instead of
-/// silently loading multi-GB weights at boot), or a hosted connection
+/// a model-less connection (issue #1020 — restoring one boots an unusable
+/// chat), an on-device connection (those re-offer the quick start instead
+/// of silently loading multi-GB weights at boot), or a hosted connection
 /// whose key is gone. Every hosted catalog kind restores
 /// (`openai-completions`, `google`, `anthropic`, `dial`, `minimax`,
 /// `chatgpt-codex`, `copilot`). Key order: the matching custom provider's

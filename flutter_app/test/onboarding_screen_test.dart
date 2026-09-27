@@ -14,12 +14,14 @@ import 'package:fa/services/skills_access_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/onboarding_screen.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
-import 'package:fa_ui/fa_ui.dart' show MediaSlotModelPage, ProviderEditorPage;
+import 'package:fa_ui/fa_ui.dart' show ProviderEditorPage;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'model_picking.dart';
 
 /// Pumps the onboarding flow full-screen with the app's real theme and
 /// localization; [keysStore] is exposed through a [SessionKeysScope] like
@@ -247,17 +249,8 @@ void main() {
         'sk-onboarding',
       );
       // Issue #1020: the model is mandatory now — pick one through the
-      // selector (free-text entry; the endpoint fetch is silent on
-      // failure).
-      await tester.tap(find.text('Model id'));
-      await tester.pumpAndSettle();
-      expect(find.byType(MediaSlotModelPage), findsOneWidget);
-      await tester.enterText(
-        find.widgetWithText(TextField, 'Model id'),
-        'acme-model',
-      );
-      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
-      await tester.pumpAndSettle();
+      // selector (see test/model_picking.dart).
+      await tester.pickModel('acme-model');
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
       await tester.pumpAndSettle();
 
@@ -321,6 +314,41 @@ void main() {
       await tester.tap(find.text('Continue'));
       await tester.pumpAndSettle();
       expect(find.text('Choose how Fa thinks.'), findsOneWidget);
+    });
+
+    testWidgets('a preset editor unlocks with its seeded default model', (
+      tester,
+    ) async {
+      // Issue #1020 review: preset-mode editors (OpenRouter et al) seed a
+      // non-empty default model, so the model gate is a no-op there —
+      // saving immediately unlocks the step without the selector.
+      final registry = ProviderRegistry.inMemory();
+      final lastConnection = LastConnectionStore.inMemory();
+      await _pumpOnboarding(
+        tester,
+        initialPage: 1,
+        registry: registry,
+        lastConnectionStore: lastConnection,
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('OpenRouter'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ProviderEditorPage), findsOneWidget);
+
+      await tester.enterText(
+        find.widgetWithText(TextField, 'API key (optional)'),
+        'sk-or',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
+
+      // The seeded default model saved with the provider and the
+      // connection — the gate never tripped.
+      expect(find.text('Model id is required'), findsNothing);
+      expect(registry.providers.single.modelId, isNotEmpty);
+      expect(lastConnection.connection?.modelId, isNotEmpty);
+      expect(find.text('Give access only when it helps.'), findsOneWidget);
     });
 
     testWidgets('without a registry the provider cards are inert', (
