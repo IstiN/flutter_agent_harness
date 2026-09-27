@@ -1043,8 +1043,12 @@ void main() {
       expect(branch.any((r) => r is CompactionRecord), isFalse);
       expect(windowed.hasOlder, isTrue);
       expect(branch.length, lessThan(count));
-      // ...and the resident tail genuinely covers the budget.
-      expect(estimateSessionBranchTokens(branch), greaterThanOrEqualTo(1000));
+      // ...and the resident tail genuinely covers the budget — within
+      // one record's tokens (gh-968 AC-R4: the stop is record-granular
+      // now, so the kept tail sits at/below the budget, never a block
+      // past it; a ~45-char record prices ~12 tokens).
+      expect(estimateSessionBranchTokens(branch), lessThanOrEqualTo(1000));
+      expect(estimateSessionBranchTokens(branch), greaterThanOrEqualTo(1000 - 12));
     });
 
     test(
@@ -1220,7 +1224,10 @@ void main() {
       expect(windowed.hasOlder, isTrue);
       final older = await windowed.loadOlder();
       expect(older, isNotEmpty);
-      expect(older.any((r) => r.id == 'giant'), isTrue);
+      // The record just below the cut pages back first among the joined
+      // tail (loadOlder returns root-first) — the trim dropped everything
+      // older than the kept boundary.
+      expect(older.last.id, branch.first.parentId);
     });
 
     test('boundary-first preserved: a reachable compaction boundary stops '
@@ -1260,7 +1267,7 @@ void main() {
 
     test('a budget under the newest record alone floors at the tail record '
         '(E3: giant in the tail — never an empty window)', () async {
-      await seedSized(10, textChars: 200); // 10 records × 5000 tokens
+      await seedSized(10, textChars: 2000); // 10 records × 500 tokens
       final windowed = await WindowedSessionStorage.open(
         fs,
         path,
@@ -1336,7 +1343,8 @@ void main() {
       // The walked-then-kept records keep their exact content — no
       // mojibake, no split codepoints.
       final byId = {for (final r in branch) r.id: r};
-      for (final i in [3, 5, 7, 9, 10, 25, 59]) {
+      // e40/e50 carry images and are checked below.
+      for (final i in [31, 35, 39, 41, 45, 59]) {
         final record = byId['e$i']! as MessageRecord;
         final message = record.message as UserMessage;
         expect(
@@ -1345,11 +1353,13 @@ void main() {
           reason: 'e$i must survive the walk byte-exact',
         );
       }
-      final imageCarrier = (byId['e10']! as MessageRecord).message as UserMessage;
-      expect(imageCarrier.content as List, hasLength(2));
-      final image = (imageCarrier.content as List).last as ImageContent;
-      expect(image.data, 'AAAA');
-      expect(image.mimeType, 'image/png');
+      for (final i in [40, 50]) {
+        final carrier = (byId['e$i']! as MessageRecord).message as UserMessage;
+        expect(carrier.content as List, hasLength(2), reason: 'e$i');
+        final image = (carrier.content as List).last as ImageContent;
+        expect(image.data, 'AAAA', reason: 'e$i');
+        expect(image.mimeType, 'image/png', reason: 'e$i');
+      }
     });
   });
 }
