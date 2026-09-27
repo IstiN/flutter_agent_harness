@@ -141,20 +141,60 @@ case "$(uname -s)" in
 esac
 echo "ok  (AC3): valid fixture installed; verification preceded install + strip"
 
+
 # ── pinned default + latest override resolve (contract 1) ───────────────────
-# (no network here — just assert the script carries a baked non-empty pin)
-grep -q 'FA_VERSION="${FA_VERSION:-[0-9v]' "$INSTALLER" || {
-  echo "FAIL (contract1): no pinned default version in installer"; exit 1
+# The default is the `vpinned` release marker (resolved at install time),
+# NOT a baked-in version — a baked pin rots (#1015). Explicit overrides:
+# FA_VERSION=<tag> and FA_VERSION=latest.
+grep -q 'FA_VERSION="${FA_VERSION:-vpinned}"' "$INSTALLER" || {
+  echo "FAIL (contract1): installer does not default to the vpinned marker"; exit 1
 }
 grep -q 'FA_VERSION=latest' "$INSTALLER" || {
   echo "FAIL (contract1): no explicit latest override in installer"; exit 1
 }
-# gh-814 r2: release tags are v-prefixed — the installer must normalize a
-# bare X.Y.Z pin/override to vX.Y.Z or every pinned download 404s.
 grep -qF 'latest|v*)' "$INSTALLER" || {
   echo "FAIL (contract1): no v-prefix normalization for FA_VERSION"; exit 1
 }
-echo "ok  (contract1): installer pins a default version; latest is opt-in; bare pins normalize to v-tags"
+echo "ok  (contract1): installer defaults to the vpinned marker; latest is opt-in; bare pins normalize to v-tags"
+
+# ── marker resolution through the real installer (contract 1b) ──────────────
+# Default install (no FA_VERSION) must resolve vpinned/PINNED_VERSION from
+# the SAME fixture base and install the marked release.
+run_install_default() { # run_install_default <fixture-dir>; no FA_VERSION
+  rm -rf "$install_dir"; mkdir -p "$install_dir"
+  (cd "$work" &&
+    FA_INSTALL_DIR="$install_dir" \
+    FA_RELEASE_BASE_URL="file://$1" \
+    FA_SIGNING_PEM="$work/test.pub" \
+    PATH="$shim:$PATH" \
+    sh "$INSTALLER" > "$work/out-default.log" 2>&1
+  )
+}
+mkdir -p "$fixture/vpinned"
+printf 'v0.0.0-test\n' > "$fixture/vpinned/PINNED_VERSION"
+if ! run_install_default "$fixture"; then
+  echo "FAIL (contract1b): default install via marker failed:"; cat "$work/out-default.log"; exit 1
+fi
+grep -q "Pinned marker resolves to: v0.0.0-test" "$work/out-default.log" || {
+  echo "FAIL (contract1b): marker resolution not logged:"; cat "$work/out-default.log"; exit 1
+}
+[ -x "$install_dir/fa" ] || { echo "FAIL (contract1b): resolved install left no binary"; exit 1; }
+echo "ok  (contract1b): default install resolves the marker and installs the marked release"
+
+# marker missing → E_PIN_MISSING, fail-closed, nothing installed
+cp -R "$fixture" "$work/release-nomarker"
+rm -rf "$work/release-nomarker/vpinned"
+set +e
+run_install_default "$work/release-nomarker"
+status=$?
+set -e
+if [ "$status" -eq 0 ] || ! grep -q "E_PIN_MISSING" "$work/out-default.log"; then
+  echo "FAIL (contract1b): missing marker not caught (exit $status):"; cat "$work/out-default.log"; exit 1
+fi
+if [ -e "$install_dir/fa" ]; then
+  echo "FAIL (contract1b): installer left a binary behind on E_PIN_MISSING"; exit 1
+fi
+echo "ok  (contract1b): E_PIN_MISSING without the marker, nothing installed"
 
 # ── embedded trust anchor (gh-814 r2): parses WITHOUT any override ──────────
 # The production trust path is the PEM baked into the installer (single-
@@ -169,13 +209,12 @@ if ! openssl pkey -pubin -in "$work/embedded-anchor.pem" -noout 2>/dev/null; the
 fi
 echo "ok  (anchor): embedded trust anchor parses (no FA_SIGNING_PEM override)"
 
-# ── contract 5: the pinned default satisfies its OWN provenance gate ────────
-# gh follow-up to #814/#1015: install.sh refused its own default pin
-# (v0.1.452 predates SHA256SUMS → E_PROVENANCE_MISSING on a fresh
-# curl|sh). scripts/check_install_pin.sh closes the loop: the pin in
-# install-config.yaml must (a) match the generated installer (no
-# hand-edited/generated drift) and (b) resolve on the release to a
-# signature-verified SHA256SUMS covering every platform asset.
+# ── contract 5: the vpinned marker satisfies its OWN provenance gate ────────
+# gh follow-up to #814/#1015: a committed pin rots and a hand-bumped pin is
+# unverified. The default now resolves the `vpinned` release marker;
+# scripts/check_install_pin.sh guards it: installer↔config drift (anchor +
+# marker default), marker well-formedness, and — the actual trust root —
+# the MARKED release's signature + platform coverage.
 PIN_GATE="$REPO_ROOT/scripts/check_install_pin.sh"
 
 # 5a: offline drift gate passes on the real repo files (no network).
@@ -190,50 +229,56 @@ if ! FA_PIN_CONFIG="$REPO_ROOT/site/install-config.yaml" \
 fi
 echo "ok  (pin-gate 5a): offline drift check passes on repo files"
 
-# 5b: config-pin != installer-pin is caught (E_PIN_DRIFT), not waved through.
+# 5b: a generated installer that drifts from the marker model is caught.
 mkdir -p "$work/drift"
-sed 's/^  pinned_cli_version: .*/  pinned_cli_version: "9.9.9"/' \
-  "$REPO_ROOT/site/install-config.yaml" > "$work/drift/config.yaml"
-cp "$INSTALLER" "$work/drift/install.sh"
+sed 's/FA_VERSION="${FA_VERSION:-vpinned}"/FA_VERSION="${FA_VERSION:-9.9.9}"/' \
+  "$INSTALLER" > "$work/drift/install.sh"
 set +e
-FA_PIN_CONFIG="$work/drift/config.yaml" FA_PIN_INSTALLER="$work/drift/install.sh" \
+FA_PIN_CONFIG="$REPO_ROOT/site/install-config.yaml" FA_PIN_INSTALLER="$work/drift/install.sh" \
   sh "$PIN_GATE" --offline > "$work/drift.log" 2>&1
 status=$?
 set -e
 if [ "$status" -eq 0 ] || ! grep -q "E_PIN_DRIFT" "$work/drift.log"; then
-  echo "FAIL (pin-gate 5b): config/installer pin drift not caught (exit $status):"
+  echo "FAIL (pin-gate 5b): installer drift not caught (exit $status):"
   cat "$work/drift.log"; exit 1
 fi
-echo "ok  (pin-gate 5b): E_PIN_DRIFT on config/installer pin mismatch"
+echo "ok  (pin-gate 5b): E_PIN_DRIFT when the installer stops tracking the marker"
 
-# 5c: live provenance gate against a fixture release (file:// — no network).
-# Fixture config carries the throwaway anchor + a 0.0.0-test pin; the
-# fixture release under v0.0.0-test/ is signed with the throwaway key.
+# 5c: full gate against a fixture release root (file:// — no network).
+# Root layout: vpinned/PINNED_VERSION names the tag; v0.0.0-test/ carries
+# the five platform archives + a manifest signed with the throwaway key.
 mkdir -p "$work/pinfix"
 {
   echo "install:"
-  echo "  pinned_cli_version: \"0.0.0-test\""
   echo "  signing_public_key: |"
   sed 's/^/    /' "$work/test.pub"
 } > "$work/pinfix/config.yaml"
-sed "s/FA_VERSION:-[^}]*}/FA_VERSION:-0.0.0-test}/" "$INSTALLER" \
-  > "$work/pinfix/install.sh"
-pinrels="$work/pinrels/v0.0.0-test"
-mkdir -p "$pinrels"
-for a in fa-linux-x64.tar.gz fa-linux-arm64.tar.gz fa-macos-arm64.tar.gz \
-         fa-macos-x64.tar.gz fa-windows-x64.zip; do
-  printf 'fixture-%s\n' "$a" > "$pinrels/$a"
+# The copied installer must carry the THROWAWAY anchor (the gate compares
+# the embedded PEM against the config — production checks they match).
+awk -v pubfile="$work/test.pub" '
+  /BEGIN PUBLIC KEY/ && !done {
+    while ((getline line < pubfile) > 0) print line
+    close(pubfile)
+    done=1; skipping=1
+  }
+  skipping && !/END PUBLIC KEY/ { next }
+  skipping && /END PUBLIC KEY/ { skipping=0; next }
+  { print }
+' "$INSTALLER" > "$work/pinfix/install.sh"
+ALL_ASSETS="fa-linux-x64.tar.gz fa-linux-arm64.tar.gz fa-macos-arm64.tar.gz fa-macos-x64.tar.gz fa-windows-x64.zip"
+mkdir -p "$work/pinrels/vpinned" "$work/pinrels/v0.0.0-test"
+printf 'v0.0.0-test\n' > "$work/pinrels/vpinned/PINNED_VERSION"
+for a in $ALL_ASSETS; do
+  printf 'fixture-%s\n' "$a" > "$work/pinrels/v0.0.0-test/$a"
 done
 pin_sign() { # pin_sign <dir> <key> [assets...]
   d="$1"; k="$2"; shift 2
   (cd "$d" && sums_tool "$@" > SHA256SUMS)
   openssl dgst -sha256 -sign "$k" -out "$d/SHA256SUMS.sig" "$d/SHA256SUMS" 2>/dev/null
 }
-pin_sign "$pinrels" "$work/test.key" \
-  fa-linux-x64.tar.gz fa-linux-arm64.tar.gz fa-macos-arm64.tar.gz \
-  fa-macos-x64.tar.gz fa-windows-x64.zip
+pin_sign "$work/pinrels/v0.0.0-test" "$work/test.key" $ALL_ASSETS
 
-pin_run() { # pin_run; runs the gate against $work/pinrels, prints exit code
+pin_run() { # pin_run; gate against $work/pinrels, prints exit code
   set +e
   FA_PIN_CONFIG="$work/pinfix/config.yaml" \
   FA_PIN_INSTALLER="$work/pinfix/install.sh" \
@@ -244,16 +289,35 @@ pin_run() { # pin_run; runs the gate against $work/pinrels, prints exit code
   echo "$status"
 }
 
-# good fixture: full gate passes (drift + provenance + asset coverage)
+# good fixture: marker resolves, target signature verifies, full coverage
 s=$(pin_run)
 if [ "$s" -ne 0 ]; then
   echo "FAIL (pin-gate 5c): signed fixture release rejected (exit $s):"
   cat "$work/pinfix.log"; exit 1
 fi
-echo "ok  (pin-gate 5c): signed fixture release passes the full gate"
+grep -q "marker resolves to: v0.0.0-test" "$work/pinfix.log" || {
+  echo "FAIL (pin-gate 5c): marker resolution not logged:"; cat "$work/pinfix.log"; exit 1
+}
+echo "ok  (pin-gate 5c): marker → signed fixture release passes the full gate"
 
-# missing signature → E_PIN_PROVENANCE_MISSING (fail-closed)
-mkdir -p "$work/pinrels-nosig/v0.0.0-test"
+# marker missing → E_PIN_MISSING
+mkdir -p "$work/pinrels-nomarker/v0.0.0-test"
+cp "$work/pinrels/v0.0.0-test/"* "$work/pinrels-nomarker/v0.0.0-test/"
+set +e
+FA_PIN_CONFIG="$work/pinfix/config.yaml" FA_PIN_INSTALLER="$work/pinfix/install.sh" \
+  FA_PIN_RELEASE_BASE="file://$work/pinrels-nomarker" \
+  sh "$PIN_GATE" > "$work/pinfix-nomarker.log" 2>&1
+s=$?
+set -e
+if [ "$s" -eq 0 ] || ! grep -q "E_PIN_MISSING" "$work/pinfix-nomarker.log"; then
+  echo "FAIL (pin-gate 5c): missing marker not caught (exit $s):"
+  cat "$work/pinfix-nomarker.log"; exit 1
+fi
+echo "ok  (pin-gate 5c): E_PIN_MISSING without the marker release"
+
+# marker names a release with no signature → E_PIN_PROVENANCE_MISSING
+mkdir -p "$work/pinrels-nosig/vpinned" "$work/pinrels-nosig/v0.0.0-test"
+printf 'v0.0.0-test\n' > "$work/pinrels-nosig/vpinned/PINNED_VERSION"
 cp "$work/pinrels/v0.0.0-test/"* "$work/pinrels-nosig/v0.0.0-test/"
 rm "$work/pinrels-nosig/v0.0.0-test/SHA256SUMS.sig"
 set +e
@@ -266,15 +330,14 @@ if [ "$s" -eq 0 ] || ! grep -q "E_PIN_PROVENANCE_MISSING" "$work/pinfix-nosig.lo
   echo "FAIL (pin-gate 5c): missing signature not caught (exit $s):"
   cat "$work/pinfix-nosig.log"; exit 1
 fi
-echo "ok  (pin-gate 5c): E_PIN_PROVENANCE_MISSING without SHA256SUMS.sig"
+echo "ok  (pin-gate 5c): E_PIN_PROVENANCE_MISSING when the marked release is unsigned"
 
 # wrong-key signature → E_PIN_PROVENANCE_INVALID
-mkdir -p "$work/pinrels-badkey/v0.0.0-test"
+mkdir -p "$work/pinrels-badkey/vpinned" "$work/pinrels-badkey/v0.0.0-test"
+printf 'v0.0.0-test\n' > "$work/pinrels-badkey/vpinned/PINNED_VERSION"
 cp "$work/pinrels/v0.0.0-test/"* "$work/pinrels-badkey/v0.0.0-test/"
 openssl genrsa -out "$work/other.key" 2048 2>/dev/null
-pin_sign "$work/pinrels-badkey/v0.0.0-test" "$work/other.key" \
-  fa-linux-x64.tar.gz fa-linux-arm64.tar.gz fa-macos-arm64.tar.gz \
-  fa-macos-x64.tar.gz fa-windows-x64.zip
+pin_sign "$work/pinrels-badkey/v0.0.0-test" "$work/other.key" $ALL_ASSETS
 set +e
 FA_PIN_CONFIG="$work/pinfix/config.yaml" FA_PIN_INSTALLER="$work/pinfix/install.sh" \
   FA_PIN_RELEASE_BASE="file://$work/pinrels-badkey" \
@@ -288,7 +351,8 @@ fi
 echo "ok  (pin-gate 5c): E_PIN_PROVENANCE_INVALID on wrong-key signature"
 
 # manifest missing a platform asset → E_PIN_ASSET_COVERAGE
-mkdir -p "$work/pinrels-gap/v0.0.0-test"
+mkdir -p "$work/pinrels-gap/vpinned" "$work/pinrels-gap/v0.0.0-test"
+printf 'v0.0.0-test\n' > "$work/pinrels-gap/vpinned/PINNED_VERSION"
 cp "$work/pinrels/v0.0.0-test/"* "$work/pinrels-gap/v0.0.0-test/"
 pin_sign "$work/pinrels-gap/v0.0.0-test" "$work/test.key" \
   fa-linux-x64.tar.gz fa-macos-arm64.tar.gz fa-windows-x64.zip
@@ -304,12 +368,33 @@ if [ "$s" -eq 0 ] || ! grep -q "E_PIN_ASSET_COVERAGE" "$work/pinfix-gap.log"; th
 fi
 echo "ok  (pin-gate 5c): E_PIN_ASSET_COVERAGE when a platform asset is unsigned"
 
-# ── contract 6: auto-bump version arithmetic ────────────────────────────────
-# scripts/auto_bump_install_pin.sh advances install.pinned_cli_version to a
-# freshly signed release tag. Its `is-newer` subcommand is the gate that
-# keeps re-runs and out-of-order tags from ever rolling the pin BACKWARD.
-BUMPER="$REPO_ROOT/scripts/auto_bump_install_pin.sh"
-[ -f "$BUMPER" ] || { echo "FAIL (pin-bump): scripts/auto_bump_install_pin.sh missing"; exit 1; }
+# FA_PIN_TARGET override: verify a concrete tag regardless of the marker
+# (pin_release.sh pre-checks the NEW release BEFORE moving the marker).
+mkdir -p "$work/pinrels-override/vpinned" "$work/pinrels-override/v0.0.0-test"
+printf 'v9.9.9\n' > "$work/pinrels-override/vpinned/PINNED_VERSION"
+cp "$work/pinrels/v0.0.0-test/"* "$work/pinrels-override/v0.0.0-test/"
+set +e
+FA_PIN_TARGET="0.0.0-test" \
+FA_PIN_CONFIG="$work/pinfix/config.yaml" FA_PIN_INSTALLER="$work/pinfix/install.sh" \
+  FA_PIN_RELEASE_BASE="file://$work/pinrels-override" \
+  sh "$PIN_GATE" > "$work/pinfix-override.log" 2>&1
+s=$?
+set -e
+if [ "$s" -ne 0 ]; then
+  echo "FAIL (pin-gate 5c): FA_PIN_TARGET override rejected the good release (exit $s):"
+  cat "$work/pinfix-override.log"; exit 1
+fi
+grep -q "target override: v0.0.0-test" "$work/pinfix-override.log" || {
+  echo "FAIL (pin-gate 5c): target override not logged:"; cat "$work/pinfix-override.log"; exit 1
+}
+echo "ok  (pin-gate 5c): FA_PIN_TARGET verifies a concrete tag past a stale marker"
+
+# ── contract 6: pin_release.sh — marker arithmetic + fixture end-to-end ─────
+# scripts/pin_release.sh advances the vpinned marker to a freshly signed
+# tag: is-newer keeps bumps forward-only; the pre-move gate proves the
+# target; the post-move gate proves the published marker.
+BUMPER="$REPO_ROOT/scripts/pin_release.sh"
+[ -f "$BUMPER" ] || { echo "FAIL (pin-bump): scripts/pin_release.sh missing"; exit 1; }
 bump_newer() { sh "$BUMPER" is-newer "$1" "$2" >/dev/null 2>&1; }
 bump_newer v1.0.481 1.0.480 || { echo "FAIL (pin-bump): v1.0.481 should be newer than 1.0.480"; exit 1; }
 bump_newer 2.0.0 1.9.9    || { echo "FAIL (pin-bump): 2.0.0 should be newer than 1.9.9"; exit 1; }
@@ -317,7 +402,55 @@ bump_newer 1.0.10 1.0.9   || { echo "FAIL (pin-bump): 1.0.10 should be newer tha
 if bump_newer 1.0.480 1.0.480; then echo "FAIL (pin-bump): equal versions must NOT count as newer"; exit 1; fi
 if bump_newer 1.0.479 1.0.480; then echo "FAIL (pin-bump): older version must NOT count as newer"; exit 1; fi
 if bump_newer v0.1.452 v1.0.480; then echo "FAIL (pin-bump): 0.1.452 must NOT count as newer than 1.0.480"; exit 1; fi
-echo "ok  (pin-bump 6): is-newer gates forward-only bumps (v-prefix, numeric compare)"
+echo "ok  (pin-bump 6a): is-newer gates forward-only bumps (v-prefix, numeric compare)"
+
+# 6b: fixture-mode end-to-end — PIN_RELEASE_BASE writes the marker file
+# directly (no gh), pre- and post-gates run against the fixture root.
+mkdir -p "$work/pinrel-root/v0.0.0-test"
+for a in $ALL_ASSETS; do
+  printf 'fixture-%s\n' "$a" > "$work/pinrel-root/v0.0.0-test/$a"
+done
+pin_sign "$work/pinrel-root/v0.0.0-test" "$work/test.key" $ALL_ASSETS
+if ! PIN_RELEASE_BASE="$work/pinrel-root" \
+     FA_PIN_CONFIG="$work/pinfix/config.yaml" FA_PIN_INSTALLER="$work/pinfix/install.sh" \
+     sh "$BUMPER" 0.0.0-test > "$work/pinrel-run.log" 2>&1; then
+  echo "FAIL (pin-bump 6b): pin_release rejected the signed fixture:"
+  cat "$work/pinrel-run.log"; exit 1
+fi
+[ "$(tr -d '[:space:]' < "$work/pinrel-root/vpinned/PINNED_VERSION")" = "v0.0.0-test" ] || {
+  echo "FAIL (pin-bump 6b): marker file not written:"; cat "$work/pinrel-run.log"; exit 1
+}
+echo "ok  (pin-bump 6b): fixture pin_release wrote and verified the marker"
+
+# re-run: marker already at the target — green skip, marker untouched
+if ! PIN_RELEASE_BASE="$work/pinrel-root" \
+     FA_PIN_CONFIG="$work/pinfix/config.yaml" FA_PIN_INSTALLER="$work/pinfix/install.sh" \
+     sh "$BUMPER" v0.0.0-test > "$work/pinrel-rerun.log" 2>&1; then
+  echo "FAIL (pin-bump 6b): re-run of an up-to-date marker must skip green:"
+  cat "$work/pinrel-rerun.log"; exit 1
+fi
+grep -q "nothing to do" "$work/pinrel-rerun.log" || {
+  echo "FAIL (pin-bump 6b): re-run did not skip:"; cat "$work/pinrel-rerun.log"; exit 1
+}
+echo "ok  (pin-bump 6b): re-run skips green when the marker is up to date"
+
+# unsigned target: the gate must reject AND the marker must NOT move
+mkdir -p "$work/pinrel-root/v0.0.1-test"
+cp "$work/pinrel-root/v0.0.0-test/"* "$work/pinrel-root/v0.0.1-test/"
+rm "$work/pinrel-root/v0.0.1-test/SHA256SUMS.sig"
+set +e
+PIN_RELEASE_BASE="$work/pinrel-root" \
+  FA_PIN_CONFIG="$work/pinfix/config.yaml" FA_PIN_INSTALLER="$work/pinfix/install.sh" \
+  sh "$BUMPER" 0.0.1-test > "$work/pinrel-unsigned.log" 2>&1
+s=$?
+set -e
+if [ "$s" -eq 0 ]; then
+  echo "FAIL (pin-bump 6b): unsigned target accepted"; exit 1
+fi
+[ "$(tr -d '[:space:]' < "$work/pinrel-root/vpinned/PINNED_VERSION")" = "v0.0.0-test" ] || {
+  echo "FAIL (pin-bump 6b): marker MOVED to an unsigned target"; exit 1
+}
+echo "ok  (pin-bump 6b): unsigned target rejected, marker unmoved"
 
 echo ""
-echo "installer_verify_selftest: ALL GREEN (AC1-AC4, contracts 1+5+6)"
+echo "installer_verify_selftest: ALL GREEN (AC1-AC4, contracts 1+1b+5+6)"

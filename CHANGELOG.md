@@ -2,25 +2,33 @@
 
 ## Unreleased
 
-- fix(install): source-of-truth pin drift + install-pin provenance gate.
-  `site/install-config.yaml` `pinned_cli_version` said 0.1.452 while the
-  generated `site/install.sh` carried 1.0.480 (#1015 hand-edited only the
-  generated file), so the next regeneration would have silently regressed
-  the installer default to a release that predates SHA256SUMS signing
-  (`E_PROVENANCE_MISSING` on a fresh curl|sh). The config pin is bumped to
-  1.0.480, and `scripts/check_install_pin.sh` (new ci.yml
-  `install-pin-gate` job, aggregated into the Quality gate; fixture
-  coverage as contract 5 in `installer_verify_selftest.sh`) fails a PR
-  when the config pin drifts from the generated installer
-  (`E_PIN_DRIFT`) or when the pinned release does not publish a
-  signature-verified `SHA256SUMS` covering every platform archive
-  (`E_PIN_PROVENANCE_MISSING` / `E_PIN_PROVENANCE_INVALID` /
-  `E_PIN_ASSET_COVERAGE`). And the pin now advances itself: the tag-scoped
-  `install-pin-bump` CI job runs `scripts/auto_bump_install_pin.sh` after
-  `release-provenance` signs the release — it re-verifies the signature
-  against the committed trust anchor (`is-newer` guards against backward
-  rolls), regenerates the installers and pushes, and Pages redeploys
-  fa1.dev — no manual pin bumps anymore.
+- fix(install): the pinned default is now the `vpinned` RELEASE MARKER —
+  no committed pin at all. `install-config.yaml` `pinned_cli_version`
+  said 0.1.452 while the generated `site/install.sh` carried 1.0.480
+  (#1015 hand-edited only the generated file): a committed pin rots, and a
+  pin advanced by committing/pushing from the release pipeline re-races
+  `auto_release` and re-triggers Pages on every tag. Instead, the
+  installer resolves the standing `vpinned` release marker (its
+  `PINNED_VERSION` asset names the known-good release) and verifies the
+  pointed release exactly as before — the marker is only a pointer, so a
+  tampered one fails closed (DoS at worst, never a bad binary; the
+  embedded trust anchor stays the real trust root).
+  `scripts/pin_release.sh` advances the marker from the tag-scoped
+  `install-pin-bump` CI job after `release-provenance` signs the release:
+  pure release-artifact manipulation — zero commits, zero pushes, no
+  `RELEASE_PAT`, no regeneration (`is-newer` keeps bumps forward-only; a
+  pre-move `check_install_pin.sh` run with `FA_PIN_TARGET` proves the new
+  release BEFORE the marker moves, and a post-move run proves the
+  published marker). `scripts/check_install_pin.sh` (new ci.yml
+  `install-pin-gate` job on every PR, aggregated into the Quality gate)
+  fails when the generated installer drifts from the marker model
+  (`E_PIN_DRIFT`), the marker is missing/ill-formed (`E_PIN_MISSING` /
+  `E_PIN_INVALID`), or the marked release lacks a signature-verified
+  `SHA256SUMS` covering every platform archive (`E_PIN_PROVENANCE_MISSING`
+  / `E_PIN_PROVENANCE_INVALID` / `E_PIN_ASSET_COVERAGE`). Fixture coverage
+  in `installer_verify_selftest.sh`: contracts 1/1b/5/6, including
+  end-to-end `pin_release.sh` runs against a `file://` fixture release
+  root. `gen_installers.dart` drops the `pinned_cli_version` knob.
 
 ## 1.0.472
 
