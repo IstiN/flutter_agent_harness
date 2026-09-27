@@ -536,14 +536,23 @@ extension on AgentCli {
     // only the tail that fits the model's context window — walking a
     // marathon file back to the newest compaction parsed ~470MB / 11.5k
     // records (~10s) on a session whose window holds a fraction of that.
-    // The budget equals the EFFECTIVE window minus the compaction
-    // reserve: enough for the first request plus headroom, everything
-    // older pages in lazily via the scrollback's loadOlder. Sessions
-    // whose tail-after-compaction fits the window behave byte-identically
-    // (the boundary is reached before the budget trips).
-    final budget =
-        _effectiveContextWindow -
-        CompactionSettings.forWindow(_effectiveContextWindow).reserveTokens;
+    //
+    // gh-968 (AC-R3): the budget is the PARITY formula — effective
+    // window minus the SAME unanchored system-prompt/tool-schema
+    // overhead the ctx meter adds, minus the ACTIVE compaction reserve.
+    // Pricing the transcript alone against the window (the old budget)
+    // let a resume materialize MORE request than the live loop carried
+    // before exit (the reported `127%/200k` footer): the meter read
+    // transcript + overhead over the window and tripped the guard /
+    // auto-compaction on a fresh resume. With the parity budget the
+    // resumed meter sits at/below window − reserve — below the
+    // compaction trigger — on every fresh resume.
+    final budget = resumeParityBudget(
+      effectiveContextWindow: _effectiveContextWindow,
+      reserveTokens: _effectiveCompactionSettings.reserveTokens,
+      systemPrompt: _agent.state.systemPrompt,
+      tools: _agent.state.tools,
+    );
     if (!await session.ensureCompactionBoundaryResident(tokenBudget: budget)) {
       session = await _repo.open(metadata);
     }
