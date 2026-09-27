@@ -216,7 +216,13 @@ void main() {
     await _waitFor(() => browser.connected);
     final arrived = browser.inbound
         .firstWhere((m) => m.plaintext == 'queued while offline')
-        .timeout(const Duration(seconds: 5));
+        // 15s, not 5: the forward ride follows TWO reconnect handshakes
+        // (fabric + browser peer, each poll-bounded above) plus the hub's
+        // bind-retry window (#948: 150ms..1.2s backoff) — on loaded
+        // runners (hostile-env leg, concurrency=4) the whole chain
+        // measured past a bare 5s (run 36327531059). The assertion is
+        // unchanged: exactly-once arrival.
+        .timeout(const Duration(seconds: 15));
     await fabric.drain('sess1/main'); // triggers the flush
     await arrived;
 
