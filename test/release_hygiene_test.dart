@@ -979,5 +979,60 @@ gh release create "v9.9.9" \
           reason: 'merge must reject hollow per-shard lcov reports before merging');
     });
   });
+
+  // ── gh-1005 — PTY legs are hosted-linux-only, fa-m5-1 never on the PR path
+  // The on-prem M5 pool is ONE runner reserved for macOS-specific work
+  // (cube-kernel-live). These pins freeze the migration topology: the
+  // runner-pick probe is gone, the consolidated linux leg carries coverage
+  // + duration reporting, and no PTY screenshot leg sits on macOS.
+  group('gh-1005 — PTY legs never route to fa-m5 / hosted macOS', () {
+    test('no runner-pick probe and no mac pty-integration leg remains', () {
+      final ci = jobsOf('.github/workflows/ci.yml');
+      final nightly = jobsOf('.github/workflows/nightly.yml');
+      expect(ci.containsKey('runner-pick'), isFalse,
+          reason: 'the M5_POOL probe would route PR legs back onto fa-m5-1');
+      expect(ci.containsKey('pty-integration'), isFalse,
+          reason: 'the mac shards merged into pty-integration-linux (gh-1005)');
+      expect(nightly.containsKey('runner-pick'), isFalse);
+      // The reserved runner's only PR-time consumer stays the macOS kernel E2E.
+      expect((ci['cube-kernel-live'] as YamlMap)['runs-on'].toString(),
+          contains('macos-m5'),
+          reason: 'cube-kernel-live keeps the genuinely macOS-only gate on fa-m5-1');
+    });
+
+    test('every PR PTY leg runs on ubuntu-24.04-arm', () {
+      final ci = jobsOf('.github/workflows/ci.yml');
+      for (final id in ['pty-integration-linux', 'pty-visual', 'cli-visual-settings']) {
+        expect((ci[id] as YamlMap)['runs-on'].toString(), 'ubuntu-24.04-arm',
+            reason: '\$id must stay on the hosted linux arm64 pool');
+      }
+      final nightly = jobsOf('.github/workflows/nightly.yml');
+      expect((nightly['pty-integration'] as YamlMap)['runs-on'].toString(),
+          'ubuntu-24.04-arm');
+      expect((nightly['cli-visual'] as YamlMap)['runs-on'].toString(),
+          'ubuntu-24.04-arm');
+    });
+
+    test('the consolidated linux leg carries the coverage + duration reporting', () {
+      final job = jobsOf('.github/workflows/ci.yml')['pty-integration-linux'] as YamlMap;
+      final steps = job['steps'] as YamlList;
+      final runText = steps.whereType<YamlMap>().map((s) {
+        final withBlock = s['with'];
+        return '${s['run'] ?? ''} ${s['uses'] ?? ''} ${withBlock ?? ''}';
+      }).join('\n');
+      expect(runText, contains('--coverage=coverage'),
+          reason: 'the leg feeds the CLI coverage ratchet');
+      expect(runText, contains('--file-reporter'),
+          reason: 'the leg feeds the #928 duration gate');
+      for (final artifact in ['pty-coverage-shard-', 'integration-json-shard-']) {
+        expect(runText, contains(artifact),
+            reason: '\$artifact uploads must survive the consolidation '
+                '(pty-coverage-gate downloads them)');
+      }
+      // The gate consumes THIS leg, not a phantom mac leg.
+      expect((jobsOf('.github/workflows/ci.yml')['pty-coverage-gate'] as YamlMap)['needs']
+          .toString(), contains('pty-integration-linux'));
+    });
+  });
 }
 

@@ -26,9 +26,10 @@ tags:
   pty:
     # Child-agent-spawn PTY tests (issue #553): the test drives a full task
     # tool spawn — a second CLI process whose boot/JIT time is unbounded on a
-    # loaded runner. They carry `integration` too and stay in nightly's
-    # pty-integration job; the per-PR integration-mock leg excludes them:
-    # dart test --exclude-tags pty
+    # loaded runner. They carry `integration` too and run in the per-PR
+    # sharded legs (the shard manifest includes them — bounded
+    # --concurrency, prewarmed boots) and nightly; the no-key
+    # integration-mock leg still excludes them: dart test --exclude-tags pty
   io:
     # IO tests use dart:io primitives (local sockets, processes) and are
     # excluded from the default pre-commit gate. Run them with:
