@@ -12,6 +12,7 @@ import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/network/showcase_chat_service.dart';
 import 'package:fa/network/showcase_viewer.dart';
+import 'package:fa/ui/network/join_sheet.dart';
 
 /// The anonymous read-only showcase page (issue #955): a public network's
 /// public channels, browsable without join or password. Left: the channel
@@ -190,16 +191,44 @@ class _ShowcasePageState extends State<ShowcasePage> {
                             title: _channelId ?? '',
                             showAppBar: false,
                             composerBuilder: (context, service, drop) =>
-                                Container(
-                                  width: double.infinity,
-                                  padding: const EdgeInsets.all(10),
-                                  color: colors.panelAlt,
-                                  child: Text(
-                                    context.l10n.networkShowcaseReadOnly,
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      color: colors.dim,
-                                      fontSize: 12,
+                                InkWell(
+                                  key: const ValueKey('showcaseJoinToWrite'),
+                                  onTap: () => unawaited(
+                                    showJoinSheet(
+                                      context,
+                                      controller: widget.controller,
+                                      manager: widget.manager,
+                                      initialNetworkId:
+                                          widget.controller.showcaseNetworkId,
+                                    ),
+                                  ),
+                                  child: Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.all(10),
+                                    color: colors.panelAlt,
+                                    child: Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Flexible(
+                                          child: Text(
+                                            context
+                                                .l10n
+                                                .networkShowcaseReadOnly,
+                                            textAlign: TextAlign.center,
+                                            style: TextStyle(
+                                              color: colors.dim,
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Icon(
+                                          Icons.login,
+                                          size: 14,
+                                          color: colors.dim,
+                                        ),
+                                      ],
                                     ),
                                   ),
                                 ),
