@@ -4103,7 +4103,7 @@ abstract class AppLocalizations {
   /// Composer replacement in the anonymous showcase
   ///
   /// In en, this message translates to:
-  /// **'Public showcase — read-only preview. Join the network to participate.'**
+  /// **'Read-only preview — tap to join the network and write.'**
   String get networkShowcaseReadOnly;
 
   /// Channel rail placeholder while the session connects

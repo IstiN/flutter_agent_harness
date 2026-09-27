@@ -1167,7 +1167,7 @@
   "@networkShowcasesSection": {
     "description": "Channel rail section header: public showcases"
   },
-  "networkShowcaseReadOnly": "Public showcase — read-only preview. Join the network to participate.",
+  "networkShowcaseReadOnly": "Read-only preview — tap to join the network and write.",
   "@networkShowcaseReadOnly": {
     "description": "Composer replacement in the anonymous showcase"
   },

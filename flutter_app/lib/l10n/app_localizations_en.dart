@@ -2313,7 +2313,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get networkShowcaseReadOnly =>
-      'Public showcase — read-only preview. Join the network to participate.';
+      'Read-only preview — tap to join the network and write.';
 
   @override
   String get networkConnecting => 'Connecting…';

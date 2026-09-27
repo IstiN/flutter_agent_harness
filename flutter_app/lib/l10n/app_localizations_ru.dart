@@ -2342,7 +2342,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get networkShowcaseReadOnly =>
-      'Публичная витрина — только чтение. Присоединитесь к сети, чтобы участвовать.';
+      'Только чтение — нажмите, чтобы войти в сеть и писать.';
 
   @override
   String get networkConnecting => 'Подключение…';

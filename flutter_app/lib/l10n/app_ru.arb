@@ -910,7 +910,7 @@
   "networkOnlineCount": "{count} в сети",
   "networkChannelsSection": "Каналы",
   "networkShowcasesSection": "Витрины",
-  "networkShowcaseReadOnly": "Публичная витрина — только чтение. Присоединитесь к сети, чтобы участвовать.",
+  "networkShowcaseReadOnly": "Только чтение — нажмите, чтобы войти в сеть и писать.",
   "networkConnecting": "Подключение…",
   "networkNoChannels": "Нет каналов",
   "networkChannelOptions": "Параметры канала",
