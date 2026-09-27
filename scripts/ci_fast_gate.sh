@@ -41,6 +41,10 @@
 #
 # Concurrency overrides: FA_DART_TEST_CONCURRENCY / FA_FLUTTER_TEST_CONCURRENCY
 # (auto-throttled via detect_test_concurrency, same as scripts/pre-commit).
+# Flake budget (gh-1026): FA_GATE_PTY_RETRIES=N makes the integration-mock
+# stage rerun ONLY its failed files, up to N times, before failing — the
+# load-sensitive PTY/grid timing legs stop costing a full 2.5 h leg per
+# ambient flake (default 0 = single-shot, behaviour unchanged).
 #
 # CRAP ratchet scoping: in --hook mode the analyze runs over the STAGED
 # lib/bin files only — the ratchet guards what a commit touches, so a
@@ -279,9 +283,52 @@ stage_integration_mock() {
   echo "🧪 Running no-key integration legs (MockLlmServer)..."
   local conc="${FA_DART_TEST_CONCURRENCY:-$(detect_test_concurrency)}"
   echo "   concurrency: ${conc:-default}"
-  TMPDIR="${FA_GATE_TMPDIR:-/tmp}" \
-    dart test ${conc:+--concurrency=$conc} test/integration \
-    --exclude-tags llm,browser-ext,perf,pty
+  #
+  # Flake budget (gh-1026): FA_GATE_PTY_RETRIES=N reruns ONLY the failed
+  # files, up to N times, before the stage fails. The PTY/grid timing legs
+  # are load-sensitive (the gh-1026 class: 3 red 2.5 h gate runs on an
+  # unchanged head, a different ambient test red each time, every file
+  # green in isolation) — the budget turns one flaky PTY case from a full
+  # leg rerun into a minutes-scoped file rerun, mirroring CI's
+  # retrigger-recovery behaviour (ci.yml watchdog: ONE retrigger, never a
+  # blind rerun). 0 (the default) keeps the single-shot leg below
+  # byte-identical. Files come from scripts/gate_failed_targets.py over
+  # the dart json file-reporter log; when the log yields no targets
+  # (crash before the reporter flushed) the stage fails WITHOUT a rerun —
+  # never rerun blind.
+  local retries="${FA_GATE_PTY_RETRIES:-0}"
+  if [ "$retries" -le 0 ]; then
+    TMPDIR="${FA_GATE_TMPDIR:-/tmp}" \
+      dart test ${conc:+--concurrency=$conc} test/integration \
+      --exclude-tags llm,browser-ext,perf,pty
+    return
+  fi
+  local log="test-results/gate-integration-mock.json"
+  mkdir -p test-results
+  local targets="test/integration"
+  local attempt=0
+  while true; do
+    attempt=$((attempt + 1))
+    if TMPDIR="${FA_GATE_TMPDIR:-/tmp}" \
+        dart test ${conc:+--concurrency=$conc} $targets \
+        --exclude-tags llm,browser-ext,perf,pty \
+        --file-reporter="json:$log"; then
+      return 0
+    fi
+    if [ "$attempt" -gt "$retries" ]; then
+      echo "❌ flake budget exhausted ($retries rerun(s)) — integration leg stays red" >&2
+      exit 1
+    fi
+    local failed
+    failed=$(python3 scripts/gate_failed_targets.py "$log")
+    if [ -z "$failed" ]; then
+      echo "   no failed-file targets in $log — not rerunning blind" >&2
+      exit 1
+    fi
+    echo "🔁 flake budget: rerun $attempt/$retries — failed files only:" >&2
+    printf '%s\n' "$failed" | sed 's/^/   /' >&2
+    targets="$failed"
+  done
 }
 
 stage_coverage() {
