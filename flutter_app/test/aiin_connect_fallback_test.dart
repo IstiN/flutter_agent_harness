@@ -95,7 +95,8 @@ void main() {
   });
 
   testWidgets('AIIN connect falls back to the paste-key dialog when the '
-      'service blocks the redirect, and completes the connect', (tester) async {
+      'automatic sign-in does not complete, and completes the connect',
+      (tester) async {
     final registry = ProviderRegistry.inMemory();
     BuildContext? flowContext;
     Future<bool>? done;
