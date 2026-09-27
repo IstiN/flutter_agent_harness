@@ -141,9 +141,14 @@ tui:
       // The 130 code is pinned by ACX.4 (headless, Process.exitCode); over
       // the PTY pty2 can lose the waitpid race and report -1 for a clean
       // exit, so the contract here is bounded death (ACX.2 / ACX.4 note).
+      // 30s, not 15: this case runs the longest press ladder of the file
+      // (press → window expiry → fresh press → exit) behind three PTY
+      // suites at --concurrency=4; on the hosted arm shard the exit
+      // handshake measured past 15s (run 36327531059) — the assertion is
+      // unchanged: the REPL must die, never park on -999.
       const stillAlive = -999;
       final code = await harness.pty.exitCode.timeout(
-        const Duration(seconds: 15),
+        const Duration(seconds: 30),
         onTimeout: () => stillAlive,
       );
       expect(
