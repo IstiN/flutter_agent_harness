@@ -541,18 +541,23 @@ extension ApprovalCommands on AgentCli {
   /// The host-built status-bar snapshot (issue #806, the S3 band
   /// attachment): everything the TUI's status band renders from,
   /// resolved per frame tick host-side — the TUI layer stays fetch-free
-  /// and subprocess-free (the #802 invariant). Segments with no data yet
-  /// (git/pr — the watcher seam is a later story, session name) stay
-  /// null and hide.
+  /// and subprocess-free (the #802 invariant). Segments with no host
+  /// data (pr — the watcher seam is a later story — and session name)
+  /// stay null and hide; git arrives through the #920 TTL probe below.
   StatusLineSnapshot _statusLineSnapshot() {
     final total = _usage.total;
     final cost = total.cost.total;
+    final model = _agent.state.model;
     return StatusLineSnapshot(
       cwd: _env.cwd,
       homeDir: config.homeDir,
-      modelName: _agent.state.model.id,
+      modelName: model.id,
+      // `provider / model` in the band (issue #920) — the same label the
+      // legacy footer renders.
+      providerName: _statusProviderLabel(model),
       approvalMode: _approval.mode.label,
       agentLoadMode: config.agentLoadMode,
+      git: _statusGitProbe.current(_env.cwd),
       contextTokens: _liveContextTokens(),
       contextWindow: _effectiveContextWindow,
       tokensIn: total.input,
@@ -765,8 +770,10 @@ extension ApprovalCommands on AgentCli {
     // stays plain ASCII; existing `/help` output is byte-unchanged.
     final lower = filter.trim().toLowerCase();
     if (lower == 'hotkeys' || lower == 'keys' || lower == 'keybindings') {
-      for (final line
-          in tuiHotkeyTableLines(markdown: _useTui, darwin: tuiKeyHintDarwin)) {
+      for (final line in tuiHotkeyTableLines(
+        markdown: _useTui,
+        darwin: tuiKeyHintDarwin,
+      )) {
         io.writeln(line);
       }
       return;
@@ -1246,3 +1253,8 @@ extension ApprovalCommands on AgentCli {
     _assistantPrefixPrinted = true;
   }
 }
+
+/// The status bar's git probe (issue #920). A process-wide instance is
+/// right — one CLI process serves one band, and the probe is a read-only
+/// refresher (outside the shell stream, never a recorded command).
+final StatusLineGitProbe _statusGitProbe = StatusLineGitProbe();
