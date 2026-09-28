@@ -1154,9 +1154,10 @@ jobs:
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true'
         run: |
           # Issue #447: pin bumped 0.2.1 → >=0.9.5 for the gate framework.
+          # gh-1061: >=0.10.0 (analyzer 14.4 refresh).
           # coverage.run_tests: false in both configs — the merged shard
           # lcov above is the source; never re-run the suite here.
-          dart pub global activate crap4dart ">=0.9.5"
+          dart pub global activate crap4dart ">=0.10.0"
           cd flutter_app && dart pub global run crap4dart analyze --format json > crap_report.json
 
       # Issue #490 AC2: publish the ranked CRAP JSON even when the ratchet
