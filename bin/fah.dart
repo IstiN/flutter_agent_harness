@@ -1253,6 +1253,7 @@ Future<void> _runApp(List<String> args) async {
         projectDir: jsrEnv.cwd,
         pathEnv: Platform.environment['PATH'] ?? '',
         pathListSeparator: Platform.isWindows ? ';' : ':',
+        windowsQuoting: Platform.isWindows,
       ),
     );
   }

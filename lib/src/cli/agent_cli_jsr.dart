@@ -15,10 +15,11 @@ extension AgentCliJsr on AgentCli {
         : trimmed.split(_commandWhitespace);
     if (parts.isEmpty || !jsrVerbs.contains(parts.first)) {
       io.writeln(
-        'usage: /jsr widget:test <path> [--event ID]... '
-        '[--expect-state JSON] [--seed-storage JSON] [--json]\n'
-        '       /jsr widget:screenshot <path> [--out png] [--width N] '
-        '[--height N] [--theme name] [--scale S] [--freeze-clock]',
+        'usage: /jsr <widget:test|widget:screenshot> <path> [flags...] '
+        '(same flags as fa jsr):\n'
+        '$jsrUsage\n'
+        'note: /jsr splits arguments on whitespace — for exact argv '
+        '(quoted JSON payloads) use `fa jsr` from a shell',
       );
       return;
     }
@@ -32,10 +33,14 @@ extension AgentCliJsr on AgentCli {
       ),
       env: _env,
       projectDir: _env.cwd,
-      pathEnv: config.envVarValue?.call('PATH') ?? '',
+      // null when the session has no env accessor: the harness cannot see
+      // PATH, so it does not claim flutter is missing — the child owns
+      // that failure (I2), bin/fah.dart's envVarValue always binds this.
+      pathEnv: config.envVarValue?.call('PATH'),
       pathListSeparator: (config.osName ?? '').toLowerCase() == 'windows'
           ? ';'
           : ':',
+      windowsQuoting: (config.osName ?? '').toLowerCase() == 'windows',
     );
     if (code != 0) {
       io.writeln('/jsr: exited with code $code');

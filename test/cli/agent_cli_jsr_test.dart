@@ -117,4 +117,81 @@ void main() {
     await run;
     await io.close();
   });
+
+  test('/jsr usage reuses the shared jsrUsage flag matrix (single source) '
+      'and names the whitespace limitation', () async {
+    final shell = ScriptedShell();
+    final env = MemoryExecutionEnv(cwd: projectDir, shell: shell);
+    final io = FakeCliIO();
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: '[REDACTED:Sensitive Value]',
+        env: env,
+        sessionRoot: '/sessions',
+        providerKind: 'openai-completions',
+        homeDir: '/home',
+      ),
+      io: io,
+      streamFunction: FakeStreamFunction([textTurn('ok')]).call,
+    );
+    final run = cli.run();
+    await waitForIt(() => io.out.toString().contains('fa>'));
+
+    io.sendLine('/jsr');
+    await waitForIt(() => io.out.toString().contains('usage: /jsr'));
+    final out = io.out.toString();
+    // The shared body from cli_args.dart (not a second flag list).
+    expect(out, contains('fa jsr widget:screenshot <path> [--out png]'));
+    // The limitation note: /jsr is whitespace-split, bash is not.
+    expect(out, contains('splits arguments on whitespace'));
+    expect(out, contains('fa jsr` from a shell'));
+    expect(shell.commands, isEmpty);
+    io.sendLine('/exit');
+    await run;
+    await io.close();
+  });
+
+  test('/jsr with no env accessor still execs — the harness never claims '
+      'flutter is missing when it could not see PATH at all', () async {
+    final shell = ScriptedShell();
+    final env = MemoryExecutionEnv(cwd: projectDir, shell: shell);
+    await env.writeFile(
+      '$projectDir/.dart_tool/package_config.json',
+      jsonEncode({
+        'configVersion': 2,
+        'packages': [
+          {
+            'name': 'js_widget_runtime',
+            'rootUri': 'file://$jsrRoot',
+            'languageVersion': '3.12',
+          },
+        ],
+      }),
+    );
+    await env.writeFile('$jsrRoot/bin/jsr_widget.dart', 'void main() {}');
+    final io = FakeCliIO();
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: '[REDACTED:Sensitive Value]',
+        env: env,
+        sessionRoot: '/sessions',
+        providerKind: 'openai-completions',
+        homeDir: '/home',
+        // No envVarValue accessor at all.
+      ),
+      io: io,
+      streamFunction: FakeStreamFunction([textTurn('ok')]).call,
+    );
+    final run = cli.run();
+    await waitForIt(() => io.out.toString().contains('fa>'));
+
+    io.sendLine('/jsr widget:test calc');
+    await waitForIt(() => shell.commands.isNotEmpty);
+    expect(io.out.toString(), isNot(contains('flutter was not found on PATH')));
+    io.sendLine('/exit');
+    await run;
+    await io.close();
+  });
 }

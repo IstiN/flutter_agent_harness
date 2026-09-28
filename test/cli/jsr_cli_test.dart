@@ -127,6 +127,7 @@ void main() {
     String pathListSeparator = ':',
     String projectDirOverride = projectDir,
     String dartExecutable = 'dart',
+    bool windowsQuoting = false,
   }) async {
     final sh = shell ?? ScriptedShell();
     final env = await project(
@@ -146,6 +147,7 @@ void main() {
       pathEnv: pathEnv,
       pathListSeparator: pathListSeparator,
       dartExecutable: dartExecutable,
+      windowsQuoting: windowsQuoting,
     );
     return (code, io, sh);
   }
@@ -413,6 +415,19 @@ void main() {
       },
     );
 
+    test('a null pathEnv (no env accessor) skips the preflight instead of '
+        'claiming flutter is missing', () async {
+      final (code, io, shell) = await runJsr(
+        const JsrCliCommand(verb: 'widget:test', args: ['w']),
+        pathEnv: null,
+      );
+      // The child runs and owns its own failure (I2 transparency); the
+      // harness never asserts a PATH it could not see.
+      expect(code, 0);
+      expect(shell.commands, isNotEmpty);
+      expect(io.notes.where((n) => n.contains('flutter')), isEmpty);
+    });
+
     test('spawn failure surfaces as a note and exit 1', () async {
       final (code, io, _) = await runJsr(
         const JsrCliCommand(verb: 'widget:test', args: ['w']),
@@ -463,36 +478,39 @@ void main() {
   });
 
   group('package resolution: malformed rootUri stays a clean error', () {
-    test('an unparseable rootUri (:::) is JsrPackageMissing, not a throw',
-        () async {
-      final env = await project(rootUri: ':::');
-      final resolution = await resolveJsrPackageRoot(
-        env,
-        projectDir: projectDir,
-      );
-      expect(resolution, isA<JsrPackageMissing>());
-      expect(
-        (resolution as JsrPackageMissing).detail,
-        contains('invalid rootUri'),
-      );
-    });
+    test(
+      'an unparseable rootUri (:::) is JsrPackageMissing, not a throw',
+      () async {
+        final env = await project(rootUri: ':::');
+        final resolution = await resolveJsrPackageRoot(
+          env,
+          projectDir: projectDir,
+        );
+        expect(resolution, isA<JsrPackageMissing>());
+        expect(
+          (resolution as JsrPackageMissing).detail,
+          contains('invalid rootUri'),
+        );
+      },
+    );
 
-    test('a non-file rootUri (https:) is JsrPackageMissing, not a throw',
-        () async {
-      final env = await project(rootUri: 'https://host/pkg');
-      final resolution = await resolveJsrPackageRoot(
-        env,
-        projectDir: projectDir,
-      );
-      expect(resolution, isA<JsrPackageMissing>());
-      expect(
-        (resolution as JsrPackageMissing).detail,
-        contains('not a file URI'),
-      );
-    });
+    test(
+      'a non-file rootUri (https:) is JsrPackageMissing, not a throw',
+      () async {
+        final env = await project(rootUri: 'https://host/pkg');
+        final resolution = await resolveJsrPackageRoot(
+          env,
+          projectDir: projectDir,
+        );
+        expect(resolution, isA<JsrPackageMissing>());
+        expect(
+          (resolution as JsrPackageMissing).detail,
+          contains('not a file URI'),
+        );
+      },
+    );
 
-    test('runJsrCliCommand surfaces both as the add-dependency note',
-        () async {
+    test('runJsrCliCommand surfaces both as the add-dependency note', () async {
       final (code, io, shell) = await runJsr(
         const JsrCliCommand(verb: 'widget:test', args: ['w']),
         rootUri: ':::',
@@ -530,16 +548,13 @@ void main() {
       },
     );
 
-    test(
-      'a quote later in the arg: metachars inside the re-opened quotes '
-      'stay bare, cmd never sees them active',
-      () {
-        expect(
-          quoteJsrArg('he said "hi" & left', windowsQuoting: true),
-          r'"he said \"hi\" & left"',
-        );
-      },
-    );
+    test('a quote later in the arg: metachars inside the re-opened quotes '
+        'stay bare, cmd never sees them active', () {
+      expect(
+        quoteJsrArg('he said "hi" & left', windowsQuoting: true),
+        r'"he said \"hi\" & left"',
+      );
+    });
 
     test('trailing backslashes double; plain path backslashes survive', () {
       expect(quoteJsrArg(r'C:\dir\', windowsQuoting: true), r'"C:\dir\\"');
@@ -549,7 +564,7 @@ void main() {
       );
       expect(
         quoteJsrArg(r'C:\dir\", and more', windowsQuoting: true),
-        r'"C:\dir\", ^and more"',
+        r'"C:\dir\\\", and more"',
       );
     });
 

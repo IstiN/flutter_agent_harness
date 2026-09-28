@@ -21,7 +21,7 @@ import 'dart:convert';
 import '../env/execution_env.dart';
 import 'cli_args.dart';
 
-export 'cli_args.dart' show JsrCliCommand, jsrVerbs;
+export 'cli_args.dart' show JsrCliCommand, jsrVerbs, jsrUsage;
 
 /// The pub package whose agent CLI this delegate fronts.
 const jsrPackageName = 'js_widget_runtime';
@@ -169,10 +169,33 @@ Future<JsrPackageResolution> _resolveJsrRoot(
   String rootUriRaw, {
   required String projectDir,
 }) async {
-  // Relative rootUris resolve against the config file's directory; an
-  // absolute file:// URI ignores the base.
-  final resolved = Uri.directory('$projectDir/.dart_tool/').resolve(rootUriRaw);
-  final root = _stripPathSeparators(resolved.toFilePath());
+  final configPath = '$projectDir/.dart_tool/package_config.json';
+  // A hand-edited or corrupt config can carry a rootUri that is not a
+  // resolvable URI (`:::`) or not a file URI (`https://…`): both throw.
+  // The clean-error contract says malformed package_config input is a
+  // JsrPackageMissing, never a stack trace.
+  final String resolvedPath;
+  try {
+    // Relative rootUris resolve against the config file's directory; an
+    // absolute file:// URI ignores the base.
+    final resolved = Uri.directory(
+      '$projectDir/.dart_tool/',
+    ).resolve(rootUriRaw);
+    resolvedPath = _stripPathSeparators(resolved.toFilePath());
+  } on FormatException catch (error) {
+    return JsrPackageMissing(
+      detail: '$configPath: invalid rootUri "$rootUriRaw" ($error)',
+    );
+  } on UnsupportedError catch (error) {
+    return JsrPackageMissing(
+      detail: '$configPath: rootUri "$rootUriRaw" is not a file URI',
+    );
+  } on ArgumentError catch (error) {
+    return JsrPackageMissing(
+      detail: '$configPath: rootUri "$rootUriRaw" is not a file URI',
+    );
+  }
+  final root = resolvedPath;
   // A resolved package older than the agent CLI has no entrypoint; name
   // the upgrade instead of letting `dart` die with a generic file error.
   if ((await env.exists('$root/$jsrCliEntrypoint')).valueOrNull != true) {
@@ -211,25 +234,97 @@ Future<bool> flutterOnPath(
   return false;
 }
 
-/// Quotes one child-command argument for the shell: bare when it is made
-/// of shell-safe characters, double-quoted otherwise (with `"`/`\`/`$`/
-/// backtick escaped — sh semantics, which cmd also parses correctly for
-/// the paths and JSON payloads this surface forwards).
-String quoteJsrArg(String arg) => _quoteJsr(arg, always: false);
+/// Quotes one child-command argument for the shell.
+///
+/// POSIX (`windowsQuoting: false`, the default): sh rules — bare when the
+/// argument is made of shell-safe characters, double-quoted otherwise
+/// (with `"`/`\`/`$`/backtick escaped).
+///
+/// Windows (`windowsQuoting: true`): cmd rules. `cmd /c` toggles its quote
+/// state at EVERY `"` — it does not honor `\"` — so an embedded quote
+/// would flip cmd's scan outside the quotes and let the remainder of the
+/// argument's cmd metacharacters (`&`, `|`, `<>`, `^`, `()`) scan as ACTIVE
+/// command separators. The quoted form therefore combines the MSVCRT
+/// backslash rules the child's argv parser applies (backslash runs before
+/// a quote — and trailing runs — double; `"` becomes `\"`) with
+/// `^`-escaping of the cmd metacharacters exactly while cmd's scan is
+/// outside quotes (after each emitted `\"`). Both parsers then agree with
+/// the original argument.
+///
+/// Returns null when the argument cannot be carried faithfully: cmd
+/// expands `%VAR%` in a separate phase BEFORE quote/caret parsing and
+/// quotes do not protect it, so an argument containing `%` would arrive
+/// mutated no matter how it is quoted. The caller reports that as a clean
+/// note instead of exec'ing a mutated command line.
+String? quoteJsrArg(String arg, {bool windowsQuoting = false}) =>
+    _quoteJsr(arg, always: false, windowsQuoting: windowsQuoting);
 
 /// Always-quoted form for the resolved entrypoint path — never bare, so a
-/// pub-cache path with spaces stays one shell word.
-String quoteJsrScript(String path) => _quoteJsr(path, always: true);
+/// pub-cache path with spaces stays one shell word. Same shell rules and
+/// the same null-means-uncarriable contract as [quoteJsrArg].
+String? quoteJsrScript(String path, {bool windowsQuoting = false}) =>
+    _quoteJsr(path, always: true, windowsQuoting: windowsQuoting);
 
-String _quoteJsr(String arg, {required bool always}) {
-  const safePattern = r'^[a-zA-Z0-9_@%+=:,./-]+$';
+/// cmd metacharacters that are ACTIVE when its quote scan is outside
+/// quotes (and therefore need `^`); inside quotes cmd treats them as
+/// literal.
+const _cmdMetacharacters = '&|<>^()';
+
+String? _quoteJsr(
+  String arg, {
+  required bool always,
+  required bool windowsQuoting,
+}) {
+  if (!windowsQuoting) {
+    const safePattern = r'^[a-zA-Z0-9_@%+=:,./-]+$';
+    if (!always && RegExp(safePattern).hasMatch(arg)) return arg;
+    final escaped = arg
+        .replaceAll(r'\', r'\\')
+        .replaceAll('"', r'\"')
+        .replaceAll(r'$', r'\$')
+        .replaceAll('`', r'\`');
+    return '"$escaped"';
+  }
+  // cmd: `%` is uncarryable everywhere (see the doc comment), and the
+  // safe pattern drops `%` so a bare `%VAR%` can never ride through the
+  // expansion phase either.
+  if (arg.contains('%')) return null;
+  const safePattern = r'^[a-zA-Z0-9_@+=:,./-]+$';
   if (!always && RegExp(safePattern).hasMatch(arg)) return arg;
-  final escaped = arg
-      .replaceAll(r'\', r'\\')
-      .replaceAll('"', r'\"')
-      .replaceAll(r'$', r'\$')
-      .replaceAll('`', r'\`');
-  return '"$escaped"';
+  return _quoteForCmd(arg);
+}
+
+/// MSVCRT + cmd-caret quoting: the child's argv parser honors `\"` with
+/// doubled backslash runs, cmd toggles quote state at every bare `"` —
+/// [cmdOutside] tracks which side cmd is on so the active metacharacters
+/// it would see get carets.
+String _quoteForCmd(String arg) {
+  final out = StringBuffer('"');
+  var cmdOutside = false;
+  var i = 0;
+  while (i < arg.length) {
+    if (arg[i] == r'\') {
+      var backslashes = 0;
+      while (i < arg.length && arg[i] == r'\') {
+        backslashes++;
+        i++;
+      }
+      final beforeQuote = i < arg.length && arg[i] == '"';
+      final atEnd = i == arg.length;
+      out.write(r'\' * backslashes * (beforeQuote || atEnd ? 2 : 1));
+      if (!beforeQuote) continue;
+    }
+    if (arg[i] == '"') {
+      out.write(r'\"');
+      cmdOutside = !cmdOutside;
+    } else {
+      if (cmdOutside && _cmdMetacharacters.contains(arg[i])) out.write('^');
+      out.write(arg[i]);
+    }
+    i++;
+  }
+  out.write('"');
+  return out.toString();
 }
 
 /// Runs one `fa jsr <verb>` command and returns the child's exit code (or
@@ -238,15 +333,22 @@ String _quoteJsr(String arg, {required bool always}) {
 /// [pathEnv] and [pathListSeparator] come from the host (IO layer): the
 /// headless CLI passes `Platform.environment['PATH']` and the platform
 /// separator; the REPL passes the config's env-value accessor. Empty
-/// [pathEnv] = nothing reachable = the flutter hint.
+/// [pathEnv] = nothing reachable = the flutter hint. A NULL [pathEnv] =
+/// the host has no env accessor at all and cannot see PATH — the flutter
+/// preflight is skipped (the child owns its own "no flutter" failure per
+/// I2) because claiming flutter is missing would be a lie.
+///
+/// [windowsQuoting] selects the shell dialect of the quoting: hosts whose
+/// `env.exec` routes through `cmd /c` pass true (see [quoteJsrArg]).
 Future<int> runJsrCliCommand(
   JsrCliCommand cmd, {
   required JsrCliIo io,
   required ExecutionEnv env,
   required String projectDir,
-  required String pathEnv,
+  required String? pathEnv,
   required String pathListSeparator,
   String dartExecutable = 'dart',
+  bool windowsQuoting = false,
 }) async {
   final resolution = await resolveJsrPackageRoot(env, projectDir: projectDir);
   final String script;
@@ -268,20 +370,33 @@ Future<int> runJsrCliCommand(
     case JsrPackageReady(:final packageRoot):
       script = '$packageRoot/$jsrCliEntrypoint';
   }
-  if (!await flutterOnPath(
-    env,
-    pathEnv: pathEnv,
-    pathListSeparator: pathListSeparator,
-  )) {
+  if (pathEnv != null &&
+      !await flutterOnPath(
+        env,
+        pathEnv: pathEnv,
+        pathListSeparator: pathListSeparator,
+      )) {
     io.note(
       'jsr: flutter was not found on PATH — the jsr widget CLI runs real '
       'Flutter rendering and needs flutter (install it or add it to PATH).',
     );
     return 1;
   }
-  final command =
-      '$dartExecutable ${quoteJsrScript(script)} '
-      '${[cmd.verb, ...cmd.args].map(quoteJsrArg).join(' ')}';
+  final quotedScript = quoteJsrScript(script, windowsQuoting: windowsQuoting);
+  if (quotedScript == null) {
+    return _noteUncarriable(
+      io,
+      arg: script,
+      what: 'the resolved jsr package path',
+    );
+  }
+  final forwarded = <String>[];
+  for (final arg in [cmd.verb, ...cmd.args]) {
+    final quoted = quoteJsrArg(arg, windowsQuoting: windowsQuoting);
+    if (quoted == null) return _noteUncarriable(io, arg: arg);
+    forwarded.add(quoted);
+  }
+  final command = '$dartExecutable $quotedScript ${forwarded.join(' ')}';
   final result = await env.exec(
     command,
     options: ShellExecOptions(
@@ -295,4 +410,21 @@ Future<int> runJsrCliCommand(
     return 1;
   }
   return result.valueOrNull!.exitCode;
+}
+
+/// The clean note for a `%`-bearing argument on the cmd dialect: cmd
+/// expands it before any escaping applies, so the harness refuses to exec
+/// a mutated command line.
+int _noteUncarriable(
+  JsrCliIo io, {
+  required String arg,
+  String what = 'this argument',
+}) {
+  io.note(
+    'jsr: $what contains % ("$arg") — cmd expands %VAR% before its quote '
+    'and caret parsing and quotes do not protect it, so it cannot be '
+    'passed faithfully through cmd. Run `fa jsr` from a POSIX shell (bash '
+    '/ git-bash) for this invocation, or restructure the value without %.',
+  );
+  return 1;
 }

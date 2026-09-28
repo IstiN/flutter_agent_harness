@@ -915,7 +915,12 @@ final class JsrCliCommand {
 /// The verbs accepted by `fa jsr`.
 const jsrVerbs = {'widget:test', 'widget:screenshot'};
 
-const String _jsrUsage =
+/// The jsr flag matrix — the single source of truth for the flag surface
+/// documentation: `fa jsr` usage errors, the REPL `/jsr` usage, and the
+/// `fa --help` docs reference this. The surface itself is owned by the
+/// jsr CLI and may drift without a fah release; when it does, this line
+/// is the only one to update (invariant I1).
+const String jsrUsage =
     'usage: fa jsr <widget:test|widget:screenshot> <path> [flags...]\n'
     '       fa jsr widget:test <path> [--event ID]... '
     '[--expect-state JSON] [--seed-storage JSON] [--json]\n'
@@ -931,19 +936,19 @@ CliArgsResult _parseJsrArgs(List<String> args) {
     return const CliArgsHelp();
   }
   if (args.isEmpty) {
-    throw const CliArgsException(_jsrUsage);
+    throw const CliArgsException(jsrUsage);
   }
   final verb = args.first;
   if (!jsrVerbs.contains(verb)) {
     throw CliArgsException(
       'unknown jsr verb: $verb '
-      '(expected one of ${jsrVerbs.join('|')})\n$_jsrUsage',
+      '(expected one of ${jsrVerbs.join('|')})\n$jsrUsage',
     );
   }
   final rest = args.sublist(1);
   final hasPathOperand = rest.any((arg) => !arg.startsWith('-'));
   if (!hasPathOperand) {
-    throw CliArgsException('fa jsr $verb requires a widget path\n$_jsrUsage');
+    throw CliArgsException('fa jsr $verb requires a widget path\n$jsrUsage');
   }
   return CliArgs(
     jsr: JsrCliCommand(verb: verb, args: List.unmodifiable(rest)),
