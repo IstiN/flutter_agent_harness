@@ -2595,8 +2595,17 @@ jobs:
     runs-on: ubuntu-latest
     needs: release-provenance
     timeout-minutes: 10
+    # always(): when release-provenance FAILS (e.g. the binaries/signature
+    # upload race), plain needs-gating leaves this job SKIPPED — and a
+    # `rerun --failed` never resurrects skipped jobs, so the marker stays
+    # stale forever (v1.0.483: publish+provenance flaked, the recovery rerun
+    # went green, the marker never advanced). With always() the job RUNS
+    # even after a failed provenance: pin_release.sh's own pre-move
+    # provenance gate (check_install_pin.sh with FA_PIN_TARGET) fails the
+    # job loudly instead of moving the marker — and a FAILED job IS part of
+    # rerun --failed, so the recovery cascade reaches it.
     if: >-
-      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+      always() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
     steps:

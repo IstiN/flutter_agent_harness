@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- fix(ci): Daily auto-publish `pub.dev` leg — poll the pub.dev API until it
+  reflects the rerun's publish instead of a single read. 2026-09-28: the
+  recovery rerun published AND self-verified 1.0.483 (`pub.dev verified`
+  at 05:44:11Z), but the leg's one-shot API query 52s later hit a stale
+  replica, saw 1.0.482 and false-errored "manual publish needed". Initial
+  behind-check now takes three spaced reads (newest wins) so a stale read
+  cannot trigger unnecessary recovery either.
+- fix(ci): `install-pin-bump` no longer hard-gates on `release-provenance`.
+  When provenance FAILED (binaries/signature upload race), the marker job
+  was left SKIPPED — and `rerun --failed` never resurrects skipped jobs, so
+  the `vpinned` marker stayed stale forever (v1.0.483: the recovery rerun
+  went green, the marker never advanced). The job now uses
+  `if: always()`; `pin_release.sh`'s own pre-move provenance gate
+  (`check_install_pin.sh` with `FA_PIN_TARGET`) fails it loudly instead of
+  moving the marker, and a FAILED job IS part of `rerun --failed` — so the
+  recovery cascade reaches it.
+
 ## 1.0.483
 
 
