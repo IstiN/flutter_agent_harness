@@ -15,6 +15,11 @@
 # The IO glue (JWT minting, HTTP, gh issue lifecycle) lives in
 # scripts/store_appearance_check.rb and stays thin: it fetches the facts,
 # this module decides.
+require "base64"
+require "json"
+require "openssl"
+require "time"
+
 module StoreAppearance
   # Stores the check owns, in report order. Machine id → GitHub-facing
   # display name (used in stub titles, which double as the idempotency key).
