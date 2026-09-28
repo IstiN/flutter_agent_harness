@@ -113,6 +113,45 @@ final class _WaitingCoordinator {
 
   ScheduledMessageQueue get _timers => _cli._scheduledMessages;
 
+  /// Per-call foreground liveness (gh-1055): the third waiting horizon —
+  /// a tool call running long in the FOREGROUND. Headless/line mode prints
+  /// grep-friendly single lines (elapsed, tool name, command tail) past
+  /// `toolLivenessSeconds`, then — once per stuck call — the background
+  /// escape-hatch hint past `toolEscalateSeconds`. Every elapsed value
+  /// rides the same waiting-clock seam the heartbeat uses (AC5: no second
+  /// clock); when #1054's stuck-call heartbeat records land, its detector
+  /// feeds this tracker instead of a private one.
+  late final ToolLivenessTracker liveness = ToolLivenessTracker(
+    onRemind: (call) =>
+        _printLiveness(toolLivenessReminderLine(call, _clock())),
+    onEscalate: (call) =>
+        _printLiveness(toolLivenessEscalationLine(call, _clock())),
+    clock: _clock,
+    livenessSeconds: () => _cli.config.waiting.toolLivenessSeconds,
+    tickSeconds: () => _cli.config.waiting.toolLivenessTickSeconds,
+    escalateSeconds: () => _cli.config.waiting.toolEscalateSeconds,
+  );
+
+  /// One liveness line, dimmed like every other run notice (the style is
+  /// off in headless, so the piped output stays plain). Never after exit —
+  /// the timer chain can outlive the session by a tick.
+  void _printLiveness(String line) {
+    if (_cli._exited) return;
+    _cli.io.writeln(_cli._style.dim(line));
+  }
+
+  /// Foreground tool call started (gh-1055): arm the headless/line-mode
+  /// liveness watch. TUI mode stays untouched — its waiting row already
+  /// shows the live call.
+  void toolCallStarted(String toolCallId, String toolName, String detail) {
+    if (_cli._useTui) return;
+    liveness.callStarted(toolCallId, toolName, detail);
+  }
+
+  /// Foreground tool call ended: this call's watch (and escalation state)
+  /// stops with it.
+  void toolCallEnded(String toolCallId) => liveness.callEnded(toolCallId);
+
   /// The cross-run job registry (`<cwd>/.fah/bash_jobs/running.json`):
   /// one entry per job any fa process in this workspace still considers
   /// running. Boot reconcile (issue #478) drops entries whose owning
@@ -828,4 +867,24 @@ extension AgentCliWaitingSeams on AgentCli {
   @visibleForTesting
   Future<String> waitingScheduleTimerForTest(String text, Duration delay) =>
       _waiting._timers.schedule(text: text, delay: delay);
+
+  /// Test seam: fires one tool-liveness evaluation now (gh-1055), the
+  /// analog of [waitingHeartbeatTickForTest] for #450.
+  @visibleForTesting
+  void toolLivenessTickForTest() => _waiting.liveness.tick();
+
+  /// Test seam: the watched foreground calls, oldest first (gh-1055).
+  @visibleForTesting
+  List<ToolLivenessCall> get toolLivenessCallsForTest =>
+      _waiting.liveness.inFlight;
+
+  /// Test seam: feeds the liveness watch directly, bypassing the agent
+  /// event path — the TUI-gate test drives this.
+  @visibleForTesting
+  void toolCallStartedForTest(String id, String name, String detail) =>
+      _waiting.toolCallStarted(id, name, detail);
+
+  /// Test seam: ends the watched call started by [toolCallStartedForTest].
+  @visibleForTesting
+  void toolCallEndedForTest(String id) => _waiting.toolCallEnded(id);
 }
