@@ -99,6 +99,7 @@ final class CliArgs extends CliArgsResult {
     this.trajectory,
     this.config,
     this.ext,
+    this.jsr,
     this.sessionList,
     this.positionals = const [],
     this.output,
@@ -227,6 +228,10 @@ final class CliArgs extends CliArgsResult {
   /// extension manager instead of a prompt run.
   final ExtCliCommand? ext;
 
+  /// The `fa jsr <verb>` subcommand (gh-1033), when the invocation routed
+  /// to the jsr widget CLI pass-through instead of a prompt run.
+  final JsrCliCommand? jsr;
+
   /// The `fa session <verb>` subcommand (issue #198), when the invocation
   /// routed to the session lister instead of a prompt run.
   final SessionCliCommand? sessionList;
@@ -285,6 +290,7 @@ const Map<String, CliArgsResult Function(List<String>)> _cliSubcommands = {
   'trajectory': _parseTrajectoryArgs,
   'config': _parseConfigArgs,
   'ext': _parseExtArgs,
+  'jsr': _parseJsrArgs,
   'session': _parseSessionArgs,
 };
 
@@ -887,6 +893,62 @@ void _validateExtVerb(String verb, _ExtOperands operands) {
         throw const CliArgsException('usage: fa ext list [--json]');
       }
   }
+}
+
+/// The `fa jsr <verb>` subcommand (gh-1033): a pass-through to the
+/// `js_widget_runtime` package's own agent CLI (`bin/jsr_widget.dart`).
+/// The harness only resolves the package root and execs the child — zero
+/// widget logic lives here (invariant I1), and everything after the verb
+/// rides [args] VERBATIM (invariant I2): the flag surface is owned by the
+/// jsr CLI and may drift without a fah release.
+final class JsrCliCommand {
+  /// Creates a [JsrCliCommand].
+  const JsrCliCommand({required this.verb, this.args = const []});
+
+  /// One of [jsrVerbs], forwarded as the child's first argument.
+  final String verb;
+
+  /// Everything after the verb, forwarded untouched.
+  final List<String> args;
+}
+
+/// The verbs accepted by `fa jsr`.
+const jsrVerbs = {'widget:test', 'widget:screenshot'};
+
+const String _jsrUsage =
+    'usage: fa jsr widget:test <path> [--event ID]... '
+    '[--expect-state JSON] [--seed-storage JSON] [--json]\n'
+    '       fa jsr widget:screenshot <path> [--out png] [--width N] '
+    '[--height N] [--theme name] [--scale S] [--freeze-clock]';
+
+/// Parses the `jsr` subcommand operands (everything after the `jsr` word).
+/// Unknown verbs are usage errors so a typo never becomes a prompt sent to
+/// a model; unknown FLAGS are deliberately NOT validated — they belong to
+/// the jsr CLI's surface and are forwarded verbatim.
+CliArgsResult _parseJsrArgs(List<String> args) {
+  if (args.contains('--help') || args.contains('-h')) {
+    return const CliArgsHelp();
+  }
+  if (args.isEmpty) {
+    throw const CliArgsException(_jsrUsage);
+  }
+  final verb = args.first;
+  if (!jsrVerbs.contains(verb)) {
+    throw CliArgsException(
+      'unknown jsr verb: $verb '
+      '(expected one of ${jsrVerbs.join('|')})\n$_jsrUsage',
+    );
+  }
+  final rest = args.sublist(1);
+  final hasPathOperand = rest.any((arg) => !arg.startsWith('-'));
+  if (!hasPathOperand) {
+    throw CliArgsException(
+      'fa jsr $verb requires a widget path\n$_jsrUsage',
+    );
+  }
+  return CliArgs(
+    jsr: JsrCliCommand(verb: verb, args: List.unmodifiable(rest)),
+  );
 }
 
 /// A value-taking CLI flag: its canonical name (for error messages, so
