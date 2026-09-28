@@ -127,44 +127,67 @@ Future<JsrPackageResolution> resolveJsrPackageRoot(
   if (read.isErr) {
     return JsrPackageMissing(detail: '$configPath: not found');
   }
+  final lookup = _findJsrRootUri(read.valueOrNull!, configPath);
+  if (lookup.problem != null) {
+    return JsrPackageMissing(detail: lookup.problem!);
+  }
+  return _resolveJsrRoot(env, lookup.rootUri!, projectDir: projectDir);
+}
+
+/// The jsr entry's `rootUri`, or [problem] naming why the config has none.
+typedef _JsrRootUriLookup = ({String? rootUri, String? problem});
+
+/// Decodes the package_config text and finds the `js_widget_runtime`
+/// entry's `rootUri`.
+_JsrRootUriLookup _findJsrRootUri(String text, String configPath) {
   final Object? doc;
   try {
-    doc = jsonDecode(read.valueOrNull!);
+    doc = jsonDecode(text);
   } on FormatException catch (error) {
-    return JsrPackageMissing(detail: '$configPath: invalid JSON ($error)');
+    return (rootUri: null, problem: '$configPath: invalid JSON ($error)');
   }
   if (doc is! Map<String, Object?>) {
-    return JsrPackageMissing(detail: '$configPath: not a package_config');
+    return (rootUri: null, problem: '$configPath: not a package_config');
   }
   final packages = doc['packages'];
   if (packages is! List<Object?>) {
-    return JsrPackageMissing(detail: '$configPath: no packages list');
+    return (rootUri: null, problem: '$configPath: no packages list');
   }
-  String? rootUriRaw;
   for (final entry in packages) {
-    if (entry is Map<String, Object?> &&
-        entry['name'] == jsrPackageName &&
-        entry['rootUri'] is String) {
-      rootUriRaw = entry['rootUri'] as String;
-      break;
+    if (entry is Map<String, Object?> && entry['name'] == jsrPackageName) {
+      final uri = entry['rootUri'];
+      if (uri is String) return (rootUri: uri, problem: null);
     }
   }
-  if (rootUriRaw == null) {
-    return JsrPackageMissing(detail: '$configPath: no $jsrPackageName entry');
-  }
+  return (rootUri: null, problem: '$configPath: no $jsrPackageName entry');
+}
+
+/// Resolves the entry's `rootUri` to the package root and verifies the
+/// CLI entrypoint exists.
+Future<JsrPackageResolution> _resolveJsrRoot(
+  ExecutionEnv env,
+  String rootUriRaw, {
+  required String projectDir,
+}) async {
   // Relative rootUris resolve against the config file's directory; an
   // absolute file:// URI ignores the base.
   final resolved = Uri.directory('$projectDir/.dart_tool/').resolve(rootUriRaw);
-  var root = resolved.toFilePath();
-  while (root.endsWith('/') || root.endsWith(r'\')) {
-    root = root.substring(0, root.length - 1);
-  }
+  final root = _stripPathSeparators(resolved.toFilePath());
   // A resolved package older than the agent CLI has no entrypoint; name
   // the upgrade instead of letting `dart` die with a generic file error.
   if ((await env.exists('$root/$jsrCliEntrypoint')).valueOrNull != true) {
     return JsrCliEntrypointMissing(packageRoot: root);
   }
   return JsrPackageReady(packageRoot: root);
+}
+
+/// Drops trailing `/` and `\` separators from a resolved directory path.
+String _stripPathSeparators(String path) {
+  var root = path;
+  while (root.endsWith('/') || root.endsWith(r'\')) {
+    root = root.substring(0, root.length - 1);
+  }
+  return root;
 }
 
 /// Whether `flutter` is reachable through [pathEnv]: scans each entry for
