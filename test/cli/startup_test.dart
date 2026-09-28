@@ -799,14 +799,14 @@ void main() {
       expect(lines.where((l) => l.startsWith('warning:')), isEmpty);
     });
 
-    test('zero referenced keys resolved → one warning naming the count, '
-        'debug or not', () {
+    test('zero referenced keys resolved → the NOTHING warning plus a '
+        'per-name list of the errored reads', () {
       SecureKeyPreloadReport reportOf(List<SecureKeyReadOutcome> outcomes) =>
           SecureKeyPreloadReport(storeAvailable: true, outcomes: outcomes);
       final referenced = referencedSecureKeyNames(savedWithKeys);
 
       for (final debug in [false, true]) {
-        final silent = secureKeyBootDiagnostics(
+        final lines = secureKeyBootDiagnostics(
           report: reportOf(const [
             SecureKeyReadOutcome(
               'FA_KEY_CHATGPT_COM',
@@ -818,11 +818,45 @@ void main() {
           referencedKeyNames: referenced,
           debug: debug,
         );
-        final warnings = silent.where((l) => l.startsWith('warning:'));
-        expect(warnings, hasLength(1));
-        expect(warnings.single, contains('2 provider key(s)'));
-        expect(warnings.single, contains('resolved NOTHING'));
+        final warnings = lines.where((l) => l.startsWith('warning:'));
+        expect(warnings, hasLength(2), reason: 'debug=$debug');
+        expect(warnings.first, contains('2 provider key(s)'));
+        expect(warnings.first, contains('resolved NOTHING'));
+        // gh-1059 review: `error` means the store ANSWERED and failed —
+        // worth naming even though the NOTHING line already fired.
+        expect(warnings.last, contains('1 provider key(s)'));
+        expect(warnings.last, contains('failed to read'));
+        expect(warnings.last, contains('FA_KEY_CHATGPT_COM'));
       }
+    });
+
+    test('a partial read failure warns per-name even though other '
+        'referenced keys resolve (debug off)', () {
+      final lines = secureKeyBootDiagnostics(
+        report: const SecureKeyPreloadReport(
+          storeAvailable: true,
+          outcomes: [
+            SecureKeyReadOutcome(
+              'FA_KEY_CHATGPT_COM',
+              SecureKeyReadStatus.found,
+              value: 'x',
+            ),
+            SecureKeyReadOutcome(
+              'FA_KEY_Z_AI',
+              SecureKeyReadStatus.error,
+              error: 'exit 45: interaction not allowed',
+            ),
+          ],
+        ),
+        referencedKeyNames: referencedSecureKeyNames(savedWithKeys),
+        debug: false,
+      );
+      final warnings = lines.where((l) => l.startsWith('warning:'));
+      expect(warnings, hasLength(1));
+      expect(warnings.single, contains('1 provider key(s)'));
+      expect(warnings.single, contains('failed to read'));
+      expect(warnings.single, contains('FA_KEY_Z_AI'));
+      expect(warnings.single, contains('--debug-secrets'));
     });
 
     test('an env-only boot (nothing referenced) never warns', () {
