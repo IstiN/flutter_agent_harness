@@ -128,5 +128,102 @@ void main() {
       expect(findings, hasLength(1));
       expect(findings.single, contains('chrome row count'));
     });
+
+    test('structuralDiff reports bar-presence drift in BOTH directions', () {
+      final ompWithBar = [
+        'banner',
+        ' pi $glyph Test Model $glyph yolo $glyph 23% $glyph \$0.00 ',
+        'input',
+      ];
+      // Same row count — a plain line keeps the chrome count equal so the
+      // only finding is the missing bar.
+      final faWithoutBar = [
+        'banner',
+        ' pi plain transcript line without separators ',
+        'input',
+      ];
+      expect(
+        structuralDiff(
+          faWithoutBar,
+          ompWithBar,
+          surfaceName: 'boot',
+          separatorGlyph: glyph,
+        ),
+        ['boot: fa has no status bar, omp does'],
+      );
+      expect(
+        structuralDiff(
+          ompWithBar,
+          faWithoutBar,
+          surfaceName: 'boot',
+          separatorGlyph: glyph,
+        ),
+        ['boot: omp has no status bar, fa does'],
+      );
+    });
+
+    test('structuralDiff is silent when neither side has a status bar', () {
+      final omp = ['banner', 'plain line', 'input'];
+      final fa = ['other banner', 'another plain line', 'input'];
+      expect(
+        structuralDiff(fa, omp, surfaceName: 'boot', separatorGlyph: glyph),
+        isEmpty,
+      );
+    });
+
+    test('structuralDiff reports a segment-count mismatch as ONE finding', () {
+      final omp = [
+        'banner',
+        ' pi $glyph Test Model $glyph yolo $glyph 23% $glyph \$0.00 ',
+        'input',
+      ];
+      // fa's bar lost its cost segment — positions are meaningless after a
+      // count mismatch, so no per-position findings may follow.
+      final fa = [
+        'banner',
+        ' >_Fa $glyph test-model $glyph yolo $glyph 23% ',
+        'input',
+      ];
+      final findings = structuralDiff(
+        fa,
+        omp,
+        surfaceName: 'boot',
+        separatorGlyph: glyph,
+      );
+      expect(findings, hasLength(1));
+      expect(
+        findings.single,
+        'boot: segment count differs — fa 4 '
+        '[<word:1>, <word:2>, <word:1>, <pct>], '
+        'omp 5 [<word:1>, <word:2>, <word:1>, <pct>, <cost>]',
+      );
+    });
+
+    test('structuralDiff reports EVERY drifted segment with raw tokens', () {
+      // Segments 2 and 4 drift (word-run count, then shape class) while 1,
+      // 3 and 5 stay equal — the loop must report both, in order.
+      final omp = [
+        'banner',
+        ' pi $glyph Test Model $glyph yolo $glyph 23% $glyph \$0.00 ',
+        'input',
+      ];
+      final fa = [
+        'banner',
+        ' >_Fa $glyph test model extra $glyph yolo $glyph 4m 30s $glyph \$0.00 ',
+        'input',
+      ];
+      final findings = structuralDiff(
+        fa,
+        omp,
+        surfaceName: 'boot',
+        separatorGlyph: glyph,
+      );
+      expect(findings, [
+        'boot: segment 2 shape differs — '
+            'fa <word:3> (test model extra), omp <word:2> (Test Model)',
+        'boot: segment 4 shape differs — '
+            'fa <time> (4m 30s), omp <pct> (23%)',
+      ]);
+    });
   });
 }
