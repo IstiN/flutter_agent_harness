@@ -161,15 +161,20 @@ void main() {
       expect((resolution as JsrPackageReady).packageRoot, jsrRoot);
     });
 
-    test('relative rootUri resolves against the .dart_tool directory', () async {
-      final env = await project(rootUri: '../../pub/js_widget_runtime-0.4.126');
-      final resolution = await resolveJsrPackageRoot(
-        env,
-        projectDir: projectDir,
-      );
-      expect(resolution, isA<JsrPackageReady>());
-      expect((resolution as JsrPackageReady).packageRoot, jsrRoot);
-    });
+    test(
+      'relative rootUri resolves against the .dart_tool directory',
+      () async {
+        final env = await project(
+          rootUri: '../../pub/js_widget_runtime-0.4.126',
+        );
+        final resolution = await resolveJsrPackageRoot(
+          env,
+          projectDir: projectDir,
+        );
+        expect(resolution, isA<JsrPackageReady>());
+        expect((resolution as JsrPackageReady).packageRoot, jsrRoot);
+      },
+    );
 
     test('missing package_config is JsrPackageMissing', () async {
       final env = MemoryExecutionEnv(cwd: projectDir);
@@ -325,14 +330,10 @@ void main() {
 
     test('widget:screenshot passes its flags through too', () async {
       final (code, _, shell) = await runJsr(
-        const JsrCliCommand(verb: 'widget:screenshot', args: [
-          'w',
-          '--out',
-          'shot.png',
-          '--scale',
-          '2',
-          '--freeze-clock',
-        ]),
+        const JsrCliCommand(
+          verb: 'widget:screenshot',
+          args: ['w', '--out', 'shot.png', '--scale', '2', '--freeze-clock'],
+        ),
       );
       expect(code, 0);
       expect(
@@ -368,17 +369,19 @@ void main() {
       expect(io.notes.single, contains('0.4.126'));
     });
 
-    test('AC3: flutter missing from PATH fails fast with a named hint',
-        () async {
-      final (code, io, shell) = await runJsr(
-        const JsrCliCommand(verb: 'widget:screenshot', args: ['w']),
-        flutterOnPath: false,
-        pathEnv: '/usr/local/bin:/usr/bin',
-      );
-      expect(code, 1);
-      expect(shell.commands, isEmpty);
-      expect(io.notes.single, allOf(contains('flutter'), contains('PATH')));
-    });
+    test(
+      'AC3: flutter missing from PATH fails fast with a named hint',
+      () async {
+        final (code, io, shell) = await runJsr(
+          const JsrCliCommand(verb: 'widget:screenshot', args: ['w']),
+          flutterOnPath: false,
+          pathEnv: '/usr/local/bin:/usr/bin',
+        );
+        expect(code, 1);
+        expect(shell.commands, isEmpty);
+        expect(io.notes.single, allOf(contains('flutter'), contains('PATH')));
+      },
+    );
 
     test('spawn failure surfaces as a note and exit 1', () async {
       final (code, io, _) = await runJsr(
@@ -390,9 +393,24 @@ void main() {
     });
 
     test('quoted project paths keep the command a single sh word', () async {
-      final (code, _, shell) = await runJsr(
-        const JsrCliCommand(verb: 'widget:test', args: ['w']),
+      final shell = ScriptedShell();
+      final env = await project(
         rootUri: 'file:///pub my cache/jsr-0.4.126',
+        writeEntrypoint: false,
+        shell: shell,
+      );
+      await env.writeFile(
+        '/pub my cache/jsr-0.4.126/bin/jsr_widget.dart',
+        'void main() {}',
+      );
+      final io = RecordingJsrIo();
+      final code = await runJsrCliCommand(
+        const JsrCliCommand(verb: 'widget:test', args: ['w']),
+        io: io,
+        env: env,
+        projectDir: projectDir,
+        pathEnv: '$flutterBin:/usr/bin',
+        pathListSeparator: ':',
       );
       expect(code, 0);
       expect(

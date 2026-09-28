@@ -916,7 +916,8 @@ final class JsrCliCommand {
 const jsrVerbs = {'widget:test', 'widget:screenshot'};
 
 const String _jsrUsage =
-    'usage: fa jsr widget:test <path> [--event ID]... '
+    'usage: fa jsr <widget:test|widget:screenshot> <path> [flags...]\n'
+    '       fa jsr widget:test <path> [--event ID]... '
     '[--expect-state JSON] [--seed-storage JSON] [--json]\n'
     '       fa jsr widget:screenshot <path> [--out png] [--width N] '
     '[--height N] [--theme name] [--scale S] [--freeze-clock]';
@@ -942,9 +943,7 @@ CliArgsResult _parseJsrArgs(List<String> args) {
   final rest = args.sublist(1);
   final hasPathOperand = rest.any((arg) => !arg.startsWith('-'));
   if (!hasPathOperand) {
-    throw CliArgsException(
-      'fa jsr $verb requires a widget path\n$_jsrUsage',
-    );
+    throw CliArgsException('fa jsr $verb requires a widget path\n$_jsrUsage');
   }
   return CliArgs(
     jsr: JsrCliCommand(verb: verb, args: List.unmodifiable(rest)),

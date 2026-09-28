@@ -130,8 +130,10 @@ void main() {
           ),
         ),
       );
-      expect(() => parseCliArgs(['jsr', 'widget:screenshot']),
-          throwsA(isA<CliArgsException>()));
+      expect(
+        () => parseCliArgs(['jsr', 'widget:screenshot']),
+        throwsA(isA<CliArgsException>()),
+      );
     });
 
     test('the jsr verb words never become a prompt (REG)', () {

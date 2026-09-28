@@ -21,6 +21,8 @@ import 'dart:convert';
 import '../env/execution_env.dart';
 import 'cli_args.dart';
 
+export 'cli_args.dart' show JsrCliCommand, jsrVerbs;
+
 /// The pub package whose agent CLI this delegate fronts.
 const jsrPackageName = 'js_widget_runtime';
 
@@ -157,6 +159,11 @@ Future<JsrPackageResolution> resolveJsrPackageRoot(
   while (root.endsWith('/') || root.endsWith(r'\')) {
     root = root.substring(0, root.length - 1);
   }
+  // A resolved package older than the agent CLI has no entrypoint; name
+  // the upgrade instead of letting `dart` die with a generic file error.
+  if ((await env.exists('$root/$jsrCliEntrypoint')).valueOrNull != true) {
+    return JsrCliEntrypointMissing(packageRoot: root);
+  }
   return JsrPackageReady(packageRoot: root);
 }
 
@@ -185,9 +192,15 @@ Future<bool> flutterOnPath(
 /// of shell-safe characters, double-quoted otherwise (with `"`/`\`/`$`/
 /// backtick escaped — sh semantics, which cmd also parses correctly for
 /// the paths and JSON payloads this surface forwards).
-String quoteJsrArg(String arg) {
+String quoteJsrArg(String arg) => _quoteJsr(arg, always: false);
+
+/// Always-quoted form for the resolved entrypoint path — never bare, so a
+/// pub-cache path with spaces stays one shell word.
+String quoteJsrScript(String path) => _quoteJsr(path, always: true);
+
+String _quoteJsr(String arg, {required bool always}) {
   const safePattern = r'^[a-zA-Z0-9_@%+=:,./-]+$';
-  if (RegExp(safePattern).hasMatch(arg)) return arg;
+  if (!always && RegExp(safePattern).hasMatch(arg)) return arg;
   final escaped = arg
       .replaceAll(r'\', r'\\')
       .replaceAll('"', r'\"')
@@ -231,7 +244,7 @@ Future<int> runJsrCliCommand(
       return 1;
     case JsrPackageReady(:final packageRoot):
       script = '$packageRoot/$jsrCliEntrypoint';
-    }
+  }
   if (!await flutterOnPath(
     env,
     pathEnv: pathEnv,
@@ -244,7 +257,7 @@ Future<int> runJsrCliCommand(
     return 1;
   }
   final command =
-      '$dartExecutable ${quoteJsrArg(script)} '
+      '$dartExecutable ${quoteJsrScript(script)} '
       '${[cmd.verb, ...cmd.args].map(quoteJsrArg).join(' ')}';
   final result = await env.exec(
     command,
