@@ -108,22 +108,6 @@ const _coverage = <String, String>{
 
 /// Widget files that legitimately cannot be snapshot-tested on the host.
 const _exempt = <String, String>{
-  // #955/#999 fa_network feature widgets merged from main without golden
-  // coverage (main's own guard is red for these); goldens belong to the
-  // network feature work — waived here so the guard reflects #947 only.
-  'lib/ui/network/add_agent_dialog.dart': 'fa_network #955: no goldens yet',
-  'lib/ui/network/channel_rail.dart': 'fa_network #955: no goldens yet',
-  'lib/ui/network/create_network_dialog.dart': 'fa_network #955: no goldens yet',
-  'lib/ui/network/join_sheet.dart': 'fa_network #955: no goldens yet',
-  'lib/ui/network/network_center.dart': 'fa_network #955: no goldens yet',
-  'lib/ui/network/network_chat_page.dart': 'fa_network #955: no goldens yet',
-  'lib/ui/network/network_home.dart': 'fa_network #955: no goldens yet',
-  'lib/ui/network/network_mode_chip.dart': 'fa_network #955: no goldens yet',
-  'lib/ui/network/networks_sidebar.dart': 'fa_network #955: no goldens yet',
-  'lib/ui/network/quick_switcher.dart': 'fa_network #955: no goldens yet',
-  'lib/ui/network/showcase_page.dart': 'fa_network #955: no goldens yet',
-  'lib/ui/network/sign_in_dialog.dart': 'fa_network #955: no goldens yet',
-  'lib/ui/network/wallet_menu.dart': 'fa_network #955: no goldens yet',
   'lib/ui/widgets/store_get_banner.dart':
       'settings Get banner; rendered inside settings.dart (covered '
       'indirectly by settings_golden_test.dart)',
