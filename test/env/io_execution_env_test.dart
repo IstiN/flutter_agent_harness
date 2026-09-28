@@ -342,8 +342,7 @@ void main() {
     /// process table after the kill round.
     Future<void> expectBoundedTreeKill(
       String marker, {
-      required Future<Result<ShellExecResult, ExecutionError>> Function()
-      run,
+      required Future<Result<ShellExecResult, ExecutionError>> Function() run,
       required ExecutionErrorCode code,
     }) async {
       // Best-effort cleanup so a failed run never leaks sleep orphans.
@@ -369,19 +368,21 @@ void main() {
       expect(survivors, isEmpty, reason: 'orphaned descendant survived');
     }
 
-    test('timeout reaps the whole tree and returns bounded (gh-1053)',
-        skip: Platform.isWindows
-            ? 'POSIX process semantics only'
-            : false, () async {
-      await expectBoundedTreeKill(
-        'sleep 601.1053',
-        code: ExecutionErrorCode.timeout,
-        run: () => const LocalShell().exec(
+    test(
+      'timeout reaps the whole tree and returns bounded (gh-1053)',
+      skip: Platform.isWindows ? 'POSIX process semantics only' : false,
+      () async {
+        await expectBoundedTreeKill(
           'sleep 601.1053',
-          options: const ShellExecOptions(timeout: Duration(seconds: 2)),
-        ),
-      );
-    }, timeout: const Timeout(Duration(seconds: 30)));
+          code: ExecutionErrorCode.timeout,
+          run: () => const LocalShell().exec(
+            'sleep 601.1053',
+            options: const ShellExecOptions(timeout: Duration(seconds: 2)),
+          ),
+        );
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
 
     test(
       'timeout reaps a detached grandchild that outlived the shell '
@@ -391,9 +392,9 @@ void main() {
           // Reaping a grandchild whose parent shell already exited needs the
           // process-group kill (setsid): the reparented orphan is invisible
           // to the live ps descendant walk.
-          : (LocalShell.jobsGetOwnProcessGroup
-              ? false
-              : 'setsid unavailable — no group kill to reach the orphan'),
+          : (LocalShell.ownProcessGroupAvailable
+                ? false
+                : 'setsid unavailable — no group kill to reach the orphan'),
       () async {
         // `(sleep … &); wait` — the subshell forks the sleeper, exits, sh's
         // `wait` returns instantly, so the DIRECT child is long gone when
@@ -410,33 +411,36 @@ void main() {
       timeout: const Timeout(Duration(seconds: 30)),
     );
 
-    test('cancel token: [REDACTED:Sensitive Value]',
-        skip: Platform.isWindows ? 'POSIX process semantics only' : false,
-        () async {
-      await expectBoundedTreeKill(
-        'sleep 603.1053',
-        code: ExecutionErrorCode.aborted,
-        run: () {
-          final source = CancelTokenSource();
-          Future<void>.delayed(
-            const Duration(milliseconds: 300),
-            source.cancel,
-          );
-          return const LocalShell().exec(
-            'sleep 603.1053',
-            options: ShellExecOptions(cancelToken: source.token),
-          );
-        },
-      );
-    }, timeout: const Timeout(Duration(seconds: 30)));
+    test(
+      'cancel token: [REDACTED:Sensitive Value]',
+      skip: Platform.isWindows ? 'POSIX process semantics only' : false,
+      () async {
+        await expectBoundedTreeKill(
+          'sleep 603.1053',
+          code: ExecutionErrorCode.aborted,
+          run: () {
+            final source = CancelTokenSource();
+            Future<void>.delayed(
+              const Duration(milliseconds: 300),
+              source.cancel,
+            );
+            return const LocalShell().exec(
+              'sleep 603.1053',
+              options: ShellExecOptions(cancelToken: source.token),
+            );
+          },
+        );
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
 
     test(
       'cancel token reaps a detached grandchild that outlived the shell',
       skip: Platform.isWindows
           ? 'POSIX process semantics only'
-          : (LocalShell.jobsGetOwnProcessGroup
-              ? false
-              : 'setsid unavailable — no group kill to reach the orphan'),
+          : (LocalShell.ownProcessGroupAvailable
+                ? false
+                : 'setsid unavailable — no group kill to reach the orphan'),
       () async {
         await expectBoundedTreeKill(
           'sleep 604.1053',
@@ -457,23 +461,26 @@ void main() {
       timeout: const Timeout(Duration(seconds: 30)),
     );
 
-    test('the walk fallback (no setsid) reaps the tree identically (AC3)',
-        skip: Platform.isWindows ? 'POSIX process semantics only' : false,
-        () async {
-      LocalShell.ownProcessGroupOverride = false;
-      addTearDown(() => LocalShell.ownProcessGroupOverride = null);
-      // The shell stays alive under the timeout, so the live ps descendant
-      // walk roots at an observable pid and reaches the sleeper without any
-      // group leadership.
-      await expectBoundedTreeKill(
-        'sleep 605.1053',
-        code: ExecutionErrorCode.timeout,
-        run: () => const LocalShell().exec(
+    test(
+      'the walk fallback (no setsid) reaps the tree identically (AC3)',
+      skip: Platform.isWindows ? 'POSIX process semantics only' : false,
+      () async {
+        LocalShell.ownProcessGroupOverride = false;
+        addTearDown(() => LocalShell.ownProcessGroupOverride = null);
+        // The shell stays alive under the timeout, so the live ps descendant
+        // walk roots at an observable pid and reaches the sleeper without any
+        // group leadership.
+        await expectBoundedTreeKill(
           'sleep 605.1053',
-          options: const ShellExecOptions(timeout: Duration(seconds: 2)),
-        ),
-      );
-    }, timeout: const Timeout(Duration(seconds: 30)));
+          code: ExecutionErrorCode.timeout,
+          run: () => const LocalShell().exec(
+            'sleep 605.1053',
+            options: const ShellExecOptions(timeout: Duration(seconds: 2)),
+          ),
+        );
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
   });
 
   group('LocalExecutionEnv custom shell', () {
