@@ -170,7 +170,12 @@ void main() {
         final mock = _ScriptedMockServer();
         await mock.start();
         addTearDown(mock.close);
-        final tempHome = _tempHomeForMock(mock.port);
+        // Boot as `nord` (persisted tui.theme — applied at boot, no
+        // 'theme: ' line): the picker's current row is NOT the first row,
+        // so the '✓ current' marker lands MID-reveal under the widened
+        // frame gap below — the exact gh-1049 shape (header frame first,
+        // asserted marker a frame later).
+        final tempHome = _tempHomeForMock(mock.port, tuiTheme: 'nord');
         final harness = await FaCliHarness.spawn(
           extraEnv: {
             'HOME': tempHome.path,
@@ -206,11 +211,13 @@ void main() {
         expect(screen, contains('✓ current'));
         // Every row still shows its swatch preview.
         expect(screen, contains('█'));
-        // The picker preselects the current theme (cursor on `default`).
+        // The picker preselects the current theme (cursor on `nord`).
         expect(
-          RegExp(r'▸\s*default').hasMatch(screen),
+          RegExp(r'▸\s*nord').hasMatch(screen),
           isTrue,
-          reason: 'the picker must open with the cursor on the current theme',
+          reason:
+              'the picker must open with the cursor on the current '
+              'theme:\n$screen',
         );
 
         // Esc dismisses without switching; nothing confirms a switch.
@@ -230,8 +237,11 @@ void main() {
 }
 
 /// A temp HOME pointing the provider at the local mock server. Yolo
-/// approval mode keeps the scripted tool calls unattended.
-Directory _tempHomeForMock(int port) {
+/// approval mode keeps the scripted tool calls unattended. [tuiTheme] pins
+/// a persisted boot theme (gh-1049: the picker scenario boots as `nord` so
+/// the '✓ current' row is NOT the first picker row — the marker must
+/// survive the progressive reveal).
+Directory _tempHomeForMock(int port, {String? tuiTheme}) {
   final tempHome = Directory.systemTemp.createTempSync('fa_theme_test_');
   File('${tempHome.path}/.fah/config.yaml')
     ..createSync(recursive: true)
@@ -242,7 +252,7 @@ baseUrl: http://127.0.0.1:$port/v1
 mode: code
 approvalMode: yolo
 allowedTools: []
-''');
+${tuiTheme == null ? '' : 'tui:\n  theme: $tuiTheme\n'}''');
   return tempHome;
 }
 

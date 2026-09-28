@@ -7,3 +7,4 @@ INDEX.md
 .last_maintenance
 stats/
 # flutter_agent_memory derivatives - rebuilt from records, do not commit
+.last_deletions
