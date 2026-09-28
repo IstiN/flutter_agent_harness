@@ -1,7 +1,10 @@
 // l10n:ignore-file — connect flow screens — en-only by design
+import 'dart:async' show Completer, unawaited;
+
 import 'package:http/http.dart' as http;
 
-import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, kIsWeb, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'
     show MethodChannel, MissingPluginException, PlatformException;
@@ -43,6 +46,10 @@ import 'package:url_launcher/url_launcher.dart' as url_launcher;
 ///
 /// Returns `true` when the flow completed and the service was reconfigured,
 /// `false` when the user cancelled at any step.
+///
+/// Single flight (gh-1044 I2/AC3, the F3 listener leak): a second Add tap
+/// while an attempt is running JOINS it — one loopback listener per
+/// attempt, retries never stack servers.
 Future<bool> runAiinConnectFlow({
   required BuildContext context,
   required ProviderRegistry registry,
@@ -72,6 +79,108 @@ Future<bool> runAiinConnectFlow({
   /// the fresh key replaces the stored one, the entry keeps its name and
   /// model, and the service reconnects on it (the editor's
   /// "Re-authenticate" path).
+  CustomProvider? reauthenticateFor,
+}) {
+  final inFlight = _activeAiinConnectFlow;
+  if (inFlight != null) {
+    debugPrint(
+      '[AIIN] connect already in progress — joining the running attempt',
+    );
+    return inFlight;
+  }
+  final done = _runAiinConnectFlowAttempt(
+    context: context,
+    registry: registry,
+    service: service,
+    lastConnectionStore: lastConnectionStore,
+    sessionKeysStore: sessionKeysStore,
+    keychainStore: keychainStore,
+    aiinConnectFn: aiinConnectFn,
+    aiinHttpClient: aiinHttpClient,
+    aiinOpenPopupFn: aiinOpenPopupFn,
+    aiinNavigatePopupFn: aiinNavigatePopupFn,
+    aiinModelsFetcher: aiinModelsFetcher,
+    aiinWebTimeout: aiinWebTimeout,
+    reauthenticateFor: reauthenticateFor,
+  );
+  _activeAiinConnectFlow = done;
+  unawaited(
+    done.whenComplete(() {
+      if (identical(_activeAiinConnectFlow, done)) {
+        _activeAiinConnectFlow = null;
+      }
+    }),
+  );
+  return done;
+}
+
+/// The in-flight connect attempt (see [runAiinConnectFlow]).
+Future<bool>? _activeAiinConnectFlow;
+
+/// Test hook: the single-flight guard is module state; a test that
+/// abandons a running flow (a pending model picker at teardown) must
+/// clear it so the next test starts clean.
+@visibleForTesting
+void resetAiinConnectFlightForTests() => _activeAiinConnectFlow = null;
+
+/// The [runAiinConnectFlow] body. While it runs, the service is latched
+/// into an add-provider flow (gh-1044 I1/AC6): boot/session-restore
+/// reconfigures are refused for the duration — the active connection is
+/// never hijacked mid-flow; the flow's own switch bypasses the latch.
+Future<bool> _runAiinConnectFlowAttempt({
+  required BuildContext context,
+  required ProviderRegistry registry,
+  required AgentService? service,
+  required LastConnectionStore lastConnectionStore,
+  SessionKeysStore? sessionKeysStore,
+  KeychainStore? keychainStore,
+  Future<AiinConnectResult?> Function()? aiinConnectFn,
+  http.Client? aiinHttpClient,
+  bool Function()? aiinOpenPopupFn,
+  void Function(String url)? aiinNavigatePopupFn,
+  Future<List<String>> Function(String baseUrl, {required String apiKey})?
+  aiinModelsFetcher,
+  Duration? aiinWebTimeout,
+  CustomProvider? reauthenticateFor,
+}) async {
+  service?.beginProviderAddFlow();
+  try {
+    return await _dispatchAiinConnectFlow(
+      context: context,
+      registry: registry,
+      service: service,
+      lastConnectionStore: lastConnectionStore,
+      sessionKeysStore: sessionKeysStore,
+      keychainStore: keychainStore,
+      aiinConnectFn: aiinConnectFn,
+      aiinHttpClient: aiinHttpClient,
+      aiinOpenPopupFn: aiinOpenPopupFn,
+      aiinNavigatePopupFn: aiinNavigatePopupFn,
+      aiinModelsFetcher: aiinModelsFetcher,
+      aiinWebTimeout: aiinWebTimeout,
+      reauthenticateFor: reauthenticateFor,
+    );
+  } finally {
+    service?.endProviderAddFlow();
+  }
+}
+
+/// The per-surface dispatch (web → [runAiinWebConnect], mobile →
+/// [runAiinMobileConnect], desktop → the loopback CLI flow).
+Future<bool> _dispatchAiinConnectFlow({
+  required BuildContext context,
+  required ProviderRegistry registry,
+  required AgentService? service,
+  required LastConnectionStore lastConnectionStore,
+  SessionKeysStore? sessionKeysStore,
+  KeychainStore? keychainStore,
+  Future<AiinConnectResult?> Function()? aiinConnectFn,
+  http.Client? aiinHttpClient,
+  bool Function()? aiinOpenPopupFn,
+  void Function(String url)? aiinNavigatePopupFn,
+  Future<List<String>> Function(String baseUrl, {required String apiKey})?
+  aiinModelsFetcher,
+  Duration? aiinWebTimeout,
   CustomProvider? reauthenticateFor,
 }) async {
   if (kIsWeb) {
@@ -116,22 +225,11 @@ Future<bool> runAiinConnectFlow({
   }
   if (!desktop) {
     // No browser surface to complete the loopback round-trip with (web is
-    // handled above, mobile above) — paste the cabinet key instead.
+    // handled above, mobile above). gh-1044 I4: SSO is the only path —
+    // the failure is a visible error, never a paste sheet.
     if (!context.mounted) return false;
-    final pasted = await _pasteAiinKeyFallback(context);
-    if (pasted == null) return false;
-    if (!context.mounted) return false;
-    return _finishAiinConnect(
-      context,
-      registry: registry,
-      service: service,
-      lastConnectionStore: lastConnectionStore,
-      sessionKeysStore: sessionKeysStore,
-      keychainStore: keychainStore,
-      apiKey: pasted,
-      aiinModelsFetcher: aiinModelsFetcher,
-      reauthenticateFor: reauthenticateFor,
-    );
+    showFahErrorSnack(context, _aiinSignInFailedMessage);
+    return false;
   }
   return _runAiinDesktopConnect(
     context,
@@ -233,10 +331,15 @@ Future<bool> _runAiinDesktopConnect(
     duration: const Duration(seconds: 3),
   );
 
+  // gh-1044 AC2/AC4: the diagnostic bundle behind the visible failure.
+  final trace = _AiinFlowTrace();
   final result = aiinConnectFn != null
       ? await aiinConnectFn()
       : await runAiinConnectCliFlow(
-          onStatus: (message) => debugPrint('[AIIN] $message'),
+          onStatus: (message) {
+            debugPrint('[AIIN] $message');
+            trace.add(message);
+          },
           openBrowserFn: (url) => url_launcher.launchUrl(
             Uri.parse(url),
             mode: url_launcher.LaunchMode.externalApplication,
@@ -253,12 +356,16 @@ Future<bool> _runAiinDesktopConnect(
     result: result,
     aiinModelsFetcher: aiinModelsFetcher,
     reauthenticateFor: reauthenticateFor,
+    trace: trace,
   );
 }
 
 /// The shared tail of every automatic-sign-in branch (web, desktop,
-/// mobile): the paste-key cabinet fallback when the sign-in produced
-/// nothing, then the model-pick finish with the automatic key.
+/// mobile): the model-pick finish with the automatic key. The app
+/// surfaces (mobile/desktop) own their visible failure BEFORE this tail
+/// (gh-1044 I4 — SSO is the only path); [trace] carries their diagnostic
+/// bundle. Only the web reference path still completes through the
+/// cabinet paste-key fallback ([trace] == null).
 Future<bool> _completeAiinConnect(
   BuildContext context, {
   required ProviderRegistry registry,
@@ -270,26 +377,36 @@ Future<bool> _completeAiinConnect(
   required Future<List<String>> Function(String baseUrl, {required String apiKey})?
   aiinModelsFetcher,
   required CustomProvider? reauthenticateFor,
+  _AiinFlowTrace? trace,
 }) async {
-  if (result == null && context.mounted) {
-    // Automatic sign-in failed (cancelled, timeout, service error) — the
-    // cabinet + paste-key path still completes the connect.
-    final pasted = await _pasteAiinKeyFallback(context);
-    if (pasted == null) return false;
-    if (!context.mounted) return false;
-    return _finishAiinConnect(
-      context,
-      registry: registry,
-      service: service,
-      lastConnectionStore: lastConnectionStore,
-      sessionKeysStore: sessionKeysStore,
-      keychainStore: keychainStore,
-      apiKey: pasted,
-      aiinModelsFetcher: aiinModelsFetcher,
-      reauthenticateFor: reauthenticateFor,
-    );
+  if (result == null) {
+    if (trace != null) {
+      // Automatic sign-in failed (cancelled, timeout, service error) — a
+      // VISIBLE, actionable error state: what happened plus the
+      // diagnostic bundle. Never a paste sheet, never a silent exit.
+      if (context.mounted) _showAiinSignInError(context, trace);
+      return false;
+    }
+    if (context.mounted) {
+      // Web reference behavior (issue #486, untouched by gh-1044): the
+      // cabinet + paste-key path still completes the web connect.
+      final pasted = await _pasteAiinKeyFallback(context);
+      if (pasted == null) return false;
+      if (!context.mounted) return false;
+      return _finishAiinConnect(
+        context,
+        registry: registry,
+        service: service,
+        lastConnectionStore: lastConnectionStore,
+        sessionKeysStore: sessionKeysStore,
+        keychainStore: keychainStore,
+        apiKey: pasted,
+        aiinModelsFetcher: aiinModelsFetcher,
+        reauthenticateFor: reauthenticateFor,
+      );
+    }
+    return false;
   }
-  if (result == null) return false;
   if (!context.mounted) return false;
   return _finishAiinConnect(
     context,
@@ -305,21 +422,62 @@ Future<bool> _completeAiinConnect(
   );
 }
 
+/// The gh-1044 AC4 failure state: what happened plus the AC2 diagnostic
+/// bundle. The snack carries the actionable one-liner; the full trace is
+/// answerable from the log alone.
+void _showAiinSignInError(BuildContext context, _AiinFlowTrace trace) {
+  final reason = trace.lastOutcome;
+  showFahErrorSnack(context, '$_aiinSignInFailedMessage — $reason. Try again.');
+  debugPrint('[AIIN] flow trace: ${trace.summary}');
+}
+
+/// The gh-1044 AC4 visible-failure headline (SSO is the only path).
+const _aiinSignInFailedMessage = 'AIIN sign-in did not complete';
+
+/// The gh-1044 AC2/AC4 diagnostic bundle: the flow's status lines plus
+/// the sheet resolution, answerable from the log alone and surfaced in
+/// the visible failure state.
+final class _AiinFlowTrace {
+  final List<String> _events = [];
+
+  void add(String event) => _events.add(event);
+
+  /// The last recorded outcome — the one-line reason for the failure.
+  String get lastOutcome =>
+      _events.isEmpty ? 'the sign-in did not complete' : _events.last;
+
+  String get summary => _events.join(' | ');
+}
+
 /// The `fah/web_auth_session` method channel (implemented in
 /// `ios/Runner/AppDelegate.swift`): a system `ASWebAuthenticationSession`.
 /// The same channel the CodeMie SSO flow drives.
 const _webAuthSessionChannel = MethodChannel('fah/web_auth_session');
 
-/// Opens [url] in the iOS auth-session sheet. Resolves `true` only when
-/// the sheet CLOSES — a user swipe-dismissal and the callback dismissal
-/// are indistinguishable here, so the flow races the resolution against
-/// the callback (`cancelWhenOpenSettles`): closed without a callback is a
-/// user cancel and falls straight to the paste fallback. A sheet that
-/// cannot even start throws — same fallback.
-Future<bool> _openAiinAuthSession(String url) =>
-    _webAuthSessionChannel
-        .invokeMethod<String>('authenticate', {'url': url})
-        .then((_) => true);
+/// Opens [url] in the iOS auth-session sheet and RETURNS the callback
+/// URL the native scheme interception caught (gh-1044 AC9, the CodeMie
+/// contract): `callbackScheme: 'http'` makes `ASWebAuthenticationSession`
+/// intercept the `http://localhost:<port>/callback` redirect and hand it
+/// back to Dart, so the flow's completion never depends on the redirect
+/// physically loading the loopback server inside the sheet. Resolves
+/// `null` when the sheet closed without a callback (user cancel) — a
+/// visible error for the caller, never a fallback. A sheet that cannot
+/// even start throws — the mobile flow surfaces it as the failure state.
+Future<String?> _openAiinAuthSession(String url) {
+  debugPrint('[AIIN mobile] opening the sign-in sheet (callbackScheme: http)');
+  return _webAuthSessionChannel
+      .invokeMethod<String>('authenticate', {
+        'url': url,
+        'callbackScheme': 'http',
+      })
+      .then((callbackUrl) {
+        debugPrint(
+          '[AIIN mobile] sign-in sheet resolved; callbackUrl='
+          '${callbackUrl == null ? 'none (cancelled)' : 'returned'}',
+        );
+        return callbackUrl;
+      });
+}
 
 /// Dismisses the active auth-session sheet (the callback landed on the
 /// flow's loopback server). Best-effort: the sheet may already be gone.
@@ -334,12 +492,15 @@ Future<void> _dismissAiinAuthSession() async {
 /// The mobile browser branch (issue #976): the SAME loopback CLI flow as
 /// desktop, opened in the platform browser surface. iOS the
 /// `ASWebAuthenticationSession` system sheet — it shares Safari's cookies
-/// and passkey support, and Google refuses OAuth inside embedded WebViews;
-/// the `http://localhost` redirect loads the flow's own callback server
-/// inside the sheet and [_dismissAiinAuthSession] closes it. Android the
-/// external browser, whose localhost redirect reaches the on-device server
-/// directly. Public step seam (the #476 recipe): VM tests drive this with
-/// an iOS platform override and a mocked channel.
+/// and passkey support, and Google refuses OAuth inside embedded WebViews.
+/// gh-1044 AC9: the sheet is driven with the CodeMie contract —
+/// `callbackScheme: 'http'` intercepts the `http://localhost:<port>/callback`
+/// redirect and returns it to the flow (the intercepted leg), while the
+/// loopback server stays armed as the fallback leg for surfaces that
+/// navigate the redirect for real (dismissed via [_dismissAiinAuthSession]).
+/// Android the external browser, whose localhost redirect reaches the
+/// on-device server directly. Public step seam (the #476 recipe): VM
+/// tests drive this with an iOS platform override and a mocked channel.
 Future<bool> runAiinMobileConnect({
   required BuildContext context,
   required ProviderRegistry registry,
@@ -361,39 +522,64 @@ Future<bool> runAiinMobileConnect({
   );
 
   final authSession = defaultTargetPlatform == TargetPlatform.iOS;
+  // The sheet's completion value rides this completer: the same
+  // `authenticate` call that opens the sheet resolves with the intercepted
+  // callback URL (or null on a user cancel). Completing it BEFORE the
+  // open future's bool keeps the flow's race order — the intercepted
+  // callback can never lose to the surface-closed signal.
+  final intercepted = authSession ? Completer<String?>() : null;
+  // gh-1044 AC2/AC4: the diagnostic bundle behind the visible failure.
+  final trace = _AiinFlowTrace();
   AiinConnectResult? result;
   try {
     result = aiinConnectFn != null
         ? await aiinConnectFn()
         : await runAiinConnectCliFlow(
-            onStatus: (message) => debugPrint('[AIIN mobile] $message'),
+            onStatus: (message) {
+              debugPrint('[AIIN mobile] $message');
+              trace.add(message);
+            },
             client: aiinHttpClient,
+            // CodeMie's proven redirect shape: the sheet's `http`
+            // interception and the loopback fallback leg both answer on
+            // the localhost host (the server binds the same loopback
+            // interface either way).
+            callbackHost: authSession ? 'localhost' : '127.0.0.1',
             openBrowserFn: authSession
-                ? _openAiinAuthSession
+                ? (url) async {
+                    final callbackUrl = await _openAiinAuthSession(url);
+                    if (intercepted != null && !intercepted.isCompleted) {
+                      intercepted.complete(callbackUrl);
+                    }
+                    return true;
+                  }
                 : (url) => url_launcher.launchUrl(
                     Uri.parse(url),
                     mode: url_launcher.LaunchMode.externalApplication,
                   ),
+            interceptedCallback:
+                intercepted == null ? null : () => intercepted.future,
             onCallback: authSession ? _dismissAiinAuthSession : null,
             // The iOS sheet resolving without a callback is a user
-            // cancel — fall to paste immediately instead of waiting out
-            // the callback timeout; the timeout there only guards a
-            // stalled network, so it stays at the desktop default. The
-            // external Android browser gives no cancel signal — its 3
-            // minute bound is the abandonment protection.
+            // cancel — surface the failure immediately instead of
+            // waiting out the callback timeout; the timeout there only
+            // guards a stalled network, so it stays at the desktop
+            // default. The external Android browser gives no cancel
+            // signal — its 3 minute bound is the abandonment protection.
             cancelWhenOpenSettles: authSession,
             timeout: Duration(minutes: authSession ? 5 : 3),
           );
   } on AiinSurfaceClosedException {
     // The sheet closed without a callback — user cancel.
     result = null;
-  } on PlatformException {
-    // The auth session could not start (no presentation context) or the
-    // native channel is missing (stale host) — the cabinet + paste-key
-    // path still completes the connect.
+  } on PlatformException catch (error) {
+    // The auth session could not start (no presentation context).
     result = null;
+    trace.add('the system sign-in sheet could not start (${error.code})');
   } on MissingPluginException {
+    // The native channel is missing (stale host).
     result = null;
+    trace.add('the system sign-in sheet is unavailable on this host');
   }
   if (!context.mounted) return false;
   return _completeAiinConnect(
@@ -406,6 +592,7 @@ Future<bool> runAiinMobileConnect({
     result: result,
     aiinModelsFetcher: aiinModelsFetcher,
     reauthenticateFor: reauthenticateFor,
+    trace: trace,
   );
 }
 
@@ -453,7 +640,9 @@ Future<bool> _finishAiinConnect(
       baseUrl: existing.baseUrl,
       apiKey: key,
     );
-    if (service != null) await service.reconfigure(config);
+    if (service != null) {
+      await service.reconfigure(config, fromProviderAddFlow: true);
+    }
     await lastConnectionStore.saveFromConfig(config);
     return true;
   }
@@ -514,7 +703,9 @@ Future<bool> _finishAiinConnect(
     baseUrl: baseUrl,
     apiKey: key,
   );
-  if (service != null) await service.reconfigure(config);
+  if (service != null) {
+    await service.reconfigure(config, fromProviderAddFlow: true);
+  }
   await lastConnectionStore.saveFromConfig(config);
 
   return true;
@@ -534,9 +725,11 @@ bool isValidAiinApiKey(String key) {
 /// the automatic OAuth redirect is not allowlisted).
 const aiinCabinetUrl = 'https://aiin.by/app';
 
-/// The fallback when the automatic sign-in cannot complete: open the AIIN
-/// cabinet, let the user create a key, and paste it here. Returns the key
-/// or null on cancel.
+/// The WEB reference path's fallback (issue #486 — untouched by
+/// gh-1044): open the AIIN cabinet, let the user create a key, and paste
+/// it here. Returns the key or null on cancel. The app surfaces (mobile,
+/// desktop) do NOT reach this — their failed sign-in is a visible error
+/// (gh-1044 I4: honest SSO, no key-paste fallback).
 Future<String?> _pasteAiinKeyFallback(BuildContext context) {
   return showDialog<String>(
     context: context,
