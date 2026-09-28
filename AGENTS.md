@@ -41,6 +41,16 @@ factual: paths, commands, invariants — no essays.
   `builtinTools` in the CLI (`AgentCli`) and the app (`AgentService`).
   `LocalShell` merges `ShellExecOptions.env` OVER `Platform.environment`
   (never replaces), so injected vars keep the inherited environment.
+- `lib/src/env/io_execution_env.dart` — `LocalShell`: foreground `exec`
+  runs under `setsid` when the host has it (probe
+  `ownProcessGroupAvailable`, seam `ownProcessGroupOverride`) and the
+  timeout/cancel paths reap the whole tree (`killTree` + direct-kill
+  backstop) with a capped pipe-drain (`_drainGrace`) — the exec future
+  completes in ≤ timeout + kill grace + drain grace, marked
+  `timeout`/`aborted`, partial capture kept (gh-1053; the timeout timer
+  stays armed after the child exits because an orphaned descendant can
+  hold the pipes). Background jobs (issue #517) keep their own group +
+  `stop()` semantics.
 - `lib/src/tools/checkpoint_tool.dart` — `checkpoint`/`rewind` tools:
   context hygiene for detours. `CheckpointRewindController` wraps
   `Agent.prepareNextTurn`, persists via host `CheckpointSessionSink`.
