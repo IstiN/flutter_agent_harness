@@ -11,7 +11,7 @@ extension on AgentCli {
   /// prefills and [editName] are set) without awaiting it: the REPL loop
   /// must keep reading lines so the flow's prompts can be answered
   /// (awaiting it here would deadlock the loop on the first question).
-  void _startProviderFlow({
+  Future<void>? _startProviderFlow({
     String? initialType,
     String? initialBaseUrl,
     String? initialName,
@@ -19,34 +19,54 @@ extension on AgentCli {
     String? editName,
     ({String label, Future<String?> Function() run})? reauth,
   }) {
-    if (_providerFlowActive) return;
+    if (_providerFlowActive) return null;
     _providerFlowActive = true;
-    unawaited(
-      runCustomProviderFlow(
-        io,
-        CustomProviderFlowConfig(
-          askLine: _askLine,
-          pickOption: _pickOption,
-          fetchModels: _fetchModelsForFlow,
-          applyResult: (setup) =>
-              _applyCustomProviderSetup(setup, editName: editName),
-          currentModelId: () => _agent.state.model.id,
-          rolesActive: config.modelRolesResolver != null,
-          deriveName: (baseUrl) =>
-              config.customProviders?.deriveName(baseUrl) ?? 'custom',
-          initialType: initialType,
-          initialBaseUrl: initialBaseUrl,
-          initialName: initialName,
-          initialModelId: initialModelId,
-          editName: editName,
-          reauth: reauth,
-        ),
-      ).whenComplete(() {
-        _providerFlowActive = false;
-        // Leftover buffered lines are flow answers, not user prompts.
-        _promptLineBuffer.clear();
-      }),
-    );
+    // The future is surfaced (line-mode fresh-install redraw chains on it)
+    // while staying fire-and-forget for every slash-command caller: the
+    // REPL loop must keep reading lines so the flow's prompts can be
+    // answered (awaiting it would deadlock the loop on the first question).
+    final done = runCustomProviderFlow(
+      io,
+      CustomProviderFlowConfig(
+        askLine: _askLine,
+        pickOption: _pickOption,
+        fetchModels: _fetchModelsForFlow,
+        applyResult: (setup) =>
+            _applyCustomProviderSetup(setup, editName: editName),
+        currentModelId: () => _agent.state.model.id,
+        rolesActive: config.modelRolesResolver != null,
+        deriveName: (baseUrl) =>
+            config.customProviders?.deriveName(baseUrl) ?? 'custom',
+        initialType: initialType,
+        initialBaseUrl: initialBaseUrl,
+        initialName: initialName,
+        initialModelId: initialModelId,
+        editName: editName,
+        reauth: reauth,
+      ),
+    ).whenComplete(() {
+      _providerFlowActive = false;
+      // Leftover buffered lines are flow answers, not user prompts.
+      _promptLineBuffer.clear();
+    });
+    unawaited(done);
+    return done;
+  }
+
+  /// Fresh-install gate (issue #969): the executable flagged a REPL boot
+  /// with nothing configured and no key anywhere — open the same guided
+  /// add-provider wizard `/provider custom` opens, before the first
+  /// prompt, so the user adds a provider instead of staring at the
+  /// default provider's "no key set" noise. Fire-and-forget like every
+  /// flow start: the REPL loop answers the prompts. Piped input (and
+  /// headless, which never gets the flag) never enters the wizard.
+  /// Returns the wizard's future (null when the boot is not fresh) so the
+  /// line-mode entry can redraw the idle prompt when it settles — the flow
+  /// completes outside `_handleLine`, when the loop is parked reading the
+  /// next line.
+  Future<void>? _maybeStartFreshInstallProviderFlow() {
+    if (!config.freshInstallProviderFlow || !io.isInteractive) return null;
+    return _startProviderFlow();
   }
 
   /// The Edit/Delete picker for a custom provider entry.
