@@ -162,6 +162,63 @@ void main() {
     }
   });
 
+  test('gh-1049 AC4: the picker open frame carries the FULL visible row set '
+      'atomically', () {
+    // The /theme picker's rows ride ONE OpenPickerMsg — the first frame
+    // rendered after the open must hold the title, EVERY in-window row
+    // with its swatch, the current row's '✓ current' marker and the
+    // cursor. A row that only lands in a LATER frame regresses to the
+    // progressive-paint race the gh-1049 PTY flake sampled mid-render.
+    // The generic-picker reveal test hook (FA_TUI_PICKER_REVEAL_MS) is
+    // env-gated and unset here, so this pins the production atomic open.
+    addTearDown(controller.reset);
+    final items = themePickerItems(current: 'default').take(5).toList();
+    expect(items, hasLength(5));
+    var m = FaTuiModel(
+      callbacks: FaTuiCallbacks(
+        onSubmit: (_, {images = const []}) async {},
+        onModelSelected: (_) async {},
+        buildSlashMenu: (_) => const [],
+        buildModelMenu: (_, _) => const [],
+        statusLine: () => 'ready',
+        prompt: 'fa> ',
+      ),
+      isExited: () => false,
+      // Tall enough that the 5 rows fit the menu window (no scroll hints).
+      termWidth: 80,
+      termHeight: 20,
+    );
+    m =
+        m
+                .update(
+                  OpenPickerMsg('theme', 'Select theme', items,
+                      initialIndex: 0),
+                )
+                .$1
+            as FaTuiModel;
+    final frame = m.view().content.replaceAll(_sgr, '');
+    expect(frame, contains('Select theme'), reason: 'the picker title');
+    for (final item in items) {
+      expect(
+        frame,
+        contains(item.label),
+        reason: 'row "${item.label}" must paint in the OPEN frame',
+      );
+      expect(
+        frame,
+        contains('███'),
+        reason: 'row "${item.label}" must keep its swatch in the open frame',
+      );
+    }
+    // The current row (default, preselected) is text-marked and cursor'ed.
+    expect(frame, contains('✓ current'));
+    expect(
+      RegExp(r'▸\s*default').hasMatch(frame),
+      isTrue,
+      reason: 'the cursor opens on the current theme row',
+    );
+  });
+
   test('gh-671: a TRUNCATED selected label wears the accent too', () {
     // Narrow terminal: the label does not fit, so `_menuItemRow` renders
     // the stripped fitted text. The old truncated branch returned it
