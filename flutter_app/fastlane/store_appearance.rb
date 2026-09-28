@@ -240,7 +240,10 @@ module StoreAppearance
   # Inputs:
   #   expected          — resolve_expected output
   #   verdicts          — { "testflight" => decide_presence output, ... }
-  #                       (stores that were skipped/errored are simply absent)
+  #                       (stores that were skipped are simply absent)
+  #   errors            — { "testflight" => "ASC answered 500 …", ... }: an
+  #                       API error blocks the green summary (an unchecked
+  #                       store must never be reported as "all green")
   #   stub_due          — Horizon.stub_due? result
   #   open_stubs        — open issues labeled store-appearance-check:
   #                       [{ "number" => 12, "title" => "[store-appearance-check] …" }]
@@ -252,7 +255,7 @@ module StoreAppearance
   #   now               — RFC3339 stamp for bodies
   # Returns actions; the IO script executes them via gh verbatim:
   #   create_stub / comment_stub / close_stub / comment_summary
-  def plan_lifecycle(expected:, verdicts:, stub_due:, open_stubs:, publish_stub_numbers:, summarized:, run_url:, now:)
+  def plan_lifecycle(expected:, verdicts:, stub_due:, open_stubs:, publish_stub_numbers:, summarized:, run_url:, now:, errors: {})
     actions = []
     STORES.each do |store, display|
       verdict = verdicts[store]
@@ -300,7 +303,10 @@ module StoreAppearance
       end
     end
 
-    if verdicts.values.any? && verdicts.values.all? { |v| %w[present rolled_over].include?(v["verdict"]) }
+    # A green summary only when nothing errored (an unchecked store must
+    # never be reported "all green") and every ran store is resolved.
+    if errors.empty? &&
+       verdicts.values.any? && verdicts.values.all? { |v| %w[present rolled_over].include?(v["verdict"]) }
       publish_stub_numbers.each do |number|
         next if summarized.include?(number)
 
@@ -313,11 +319,18 @@ module StoreAppearance
 
   def absence_body(display:, version:, verdict:, run_url:, now:, updated:)
     observed = verdict["observed"] || []
+    top = highest(observed)
+    served = if top.nil?
+               '_nothing comparable_'
+             else
+               older = observed.length - 1
+               "`#{top}`#{older.positive? ? " (+#{older} older versions)" : ''}"
+             end
     <<~BODY
       #{STUB_PREFIX} **#{display}**: expected `#{version}` is still **absent** past the horizon.
 
       - **Expected:** `#{version}` (resolved from the repo tag/version file — gh-1041 I2)
-      - **Store serves:** #{observed.empty? ? '_nothing comparable_' : observed.map { |v| "`#{v}`" }.join(', ')}
+      - **Store serves:** #{served}
       - **First check runs 120 min after the daily publish legs start; this stub is updated in place by later checks until the version appears or rolls over (exactly-one-stub guarantee).**
       - **Check run:** #{run_url}
       - **Checked at:** #{now}

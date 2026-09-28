@@ -245,7 +245,7 @@ end
 # ── horizon + gh issue lifecycle ─────────────────────────────────────────────
 def gh(*args)
   out = `gh #{args.map { |a| "'#{a.to_s.gsub("'", "'\\\\''")}'" }.join(' ')} 2>/dev/null`
-  $CHILD_STATUS.success? ? out : nil
+  $?.success? ? out : nil
 end
 
 since = env("STORE_APPEARANCE_SINCE")
@@ -283,7 +283,7 @@ end
 actions = S.plan_lifecycle(
   expected: expected, verdicts: verdicts, stub_due: stub_due,
   open_stubs: open_stubs, publish_stub_numbers: publish_stubs,
-  summarized: summarized, run_url: run_url, now: now
+  summarized: summarized, run_url: run_url, now: now, errors: errors
 )
 
 # ── execute the plan ─────────────────────────────────────────────────────────
@@ -322,7 +322,7 @@ actions.each do |action|
 end
 
 # ── report ───────────────────────────────────────────────────────────────────
-failed = verdicts.any? { |store, v| v["verdict"] == "error" } ||
+failed = errors.any? ||
          verdicts.any? { |_, v| v["verdict"] == "absent" && stub_due }
 result = {
   "expected" => expected, "now" => now, "since" => since, "stub_due" => stub_due,

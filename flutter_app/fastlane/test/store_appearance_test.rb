@@ -292,6 +292,17 @@ if $PROGRAM_NAME == __FILE__
   raise!("partial green posts no all-green summary") unless a.none? { |x| x["action"] == "comment_summary" }
   ok("multi-store run: the absent store updates its own stub, no green summary while anything is missing")
 
+  a = S.plan_lifecycle(
+    expected: expected485,
+    verdicts: { "pubdev" => { "verdict" => "present", "matched" => "1.0.485", "observed" => ["1.0.485"] } },
+    stub_due: true, open_stubs: [],
+    publish_stub_numbers: [7], summarized: [],
+    run_url: "https://ci/runs/11", now: "2026-09-29T07:17:00Z",
+    errors: { "testflight" => "ASC answered 500" }
+  )
+  raise!("an errored store blocks the all-green summary") unless a.empty?
+  ok("API error on one store → no green summary (an unchecked store is never 'all green')")
+
   # ── JWT minting (real signatures, no network — transport glue) ─────────────
   es_key = OpenSSL::PKey::EC.generate("prime256v1")
   token = S::Jwt.mint(

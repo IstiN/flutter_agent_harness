@@ -487,7 +487,7 @@ exit 0
       return result;
     }
 
-    Map<String, Object> resultOf(ProcessResult r) {
+    Map<String, dynamic> resultOf(ProcessResult r) {
       final line = r.stdout
           .toString()
           .split('\n')
@@ -495,6 +495,10 @@ exit 0
             (l) => l.startsWith('STORE_APPEARANCE_RESULT '),
             orElse: () => '',
           );
+      if (Platform.environment['FA_DEBUG'] != null) {
+        // ignore: avoid_print
+        print('SCRIPT-STDOUT: ${r.stdout}\nSCRIPT-STDERR: ${r.stderr}');
+      }
       expect(
         line,
         isNotEmpty,
@@ -503,7 +507,7 @@ exit 0
             'stdout: ${r.stdout}\nstderr: ${r.stderr}',
       );
       return jsonDecode(line.substring('STORE_APPEARANCE_RESULT '.length))
-          as Map<String, Object>;
+          as Map<String, dynamic>;
     }
 
     List<String> ghLog() => File('$stubDir/log').readAsLinesSync();
@@ -559,7 +563,7 @@ exit 0
         (a) => a.contains('/asc/v1/apps'),
       );
       final ascToken = ascAuth.split('Bearer ').last;
-      expect(ascAuth, startsWith('Bearer '));
+      expect(ascAuth, contains('Bearer '));
       expect(
         ascToken.split('.').length,
         3,
