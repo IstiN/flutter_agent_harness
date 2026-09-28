@@ -95,12 +95,10 @@ void main() {
 
   group('cross-tool tombstone consistency (AC2)', () {
     late Directory temp;
-    late FileKbStorage libraryStorage;
     late ExecutionEnvKbStorage harnessStorage;
 
     setUp(() async {
       temp = Directory.systemTemp.createTempSync('fah_tombstone_ac2_');
-      libraryStorage = FileKbStorage(temp);
       harnessStorage = ExecutionEnvKbStorage(
         LocalExecutionEnv(cwd: temp.path),
         temp.path,
