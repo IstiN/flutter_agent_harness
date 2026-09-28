@@ -271,8 +271,8 @@ final class CliConfig {
       // Issue #772: the persisted provider identity is the catalog KIND.
       // Old name-shaped values (`chatgpt`, `chatgpt.com`) canonicalize on
       // load — the file itself is rewritten only on the next save.
-      providerKind: _canonicalSavedProvider(map['provider']) ??
-          'openai-completions',
+      providerKind:
+          _canonicalSavedProvider(map['provider']) ?? 'openai-completions',
       modelId: map['model'] as String? ?? 'openai/gpt-4o-mini',
       baseUrl: map['baseUrl'] as String? ?? 'https://openrouter.ai/api/v1',
       mode: map['mode'] as String? ?? 'code',
@@ -581,8 +581,10 @@ final class CliConfig {
   final String? agentLoadMode;
 
   /// The `waiting:` section (issue #450): visible-waiting heartbeat
-  /// cadence (`waitHeartbeatMinutes`, 0 = off) and the `--wait-for-jobs`
-  /// ceiling (`waitCeilingMinutes`, default 30).
+  /// cadence (`waitHeartbeatMinutes`, 0 = off), the `--wait-for-jobs`
+  /// ceiling (`waitCeilingMinutes`, default 30), and the per-call
+  /// foreground liveness knobs (gh-1055: `toolLivenessSeconds`,
+  /// `toolLivenessTickSeconds`, `toolEscalateSeconds`).
   final WaitingConfig waiting;
 
   /// The `jobs:` section (issue #478): boot-maintenance knobs for the
@@ -698,7 +700,8 @@ final class CliConfig {
   /// switch, statusLine); the file stays minimal.
   String _tuiSectionYaml() {
     final statusLineYaml = statusLine?.toYaml();
-    if (tuiTheme == null && !tuiClassic &&
+    if (tuiTheme == null &&
+        !tuiClassic &&
         (statusLineYaml == null || statusLineYaml.isEmpty)) {
       return '';
     }

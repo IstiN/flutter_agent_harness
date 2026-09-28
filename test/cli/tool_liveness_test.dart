@@ -6,8 +6,6 @@
 /// same seam shape as [WaitingHeartbeat] for issue #450.
 library;
 
-import 'dart:async';
-
 import 'package:flutter_agent_harness/src/cli/tool_liveness.dart';
 import 'package:flutter_agent_harness/src/cli/waiting_heartbeat.dart';
 import 'package:test/test.dart';
