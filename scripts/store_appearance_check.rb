@@ -294,7 +294,6 @@ def write_temp(body)
   file.path
 end
 
-require "tempfile"
 executed = []
 actions.each do |action|
   case action["action"]
@@ -334,7 +333,8 @@ summary_rows = stores.map do |store|
   display = S::STORES[store]
   if (v = verdicts[store])
     icon = { "present" => "✅", "rolled_over" => "↪️", "absent" => "❌" }[v["verdict"]]
-    "| #{display} | `#{store == 'pubdev' ? expected['pubdev'] : expected['app']}` | #{icon} #{v['verdict']} (serves #{v['observed'].map { |x| "`#{x}`" }.join(', ')}) |"
+    served = v["observed"].empty? ? "-" : "`#{S.highest(v['observed'])}`"
+    "| #{display} | `#{store == 'pubdev' ? expected['pubdev'] : expected['app']}` | #{icon} #{v['verdict']} (serves #{served}) |"
   elsif errors[store]
     "| #{display} | - | ⚠️ API error: #{errors[store].to_s[0, 80]} |"
   else
@@ -342,6 +342,7 @@ summary_rows = stores.map do |store|
   end
 end
 if (path = ENV["GITHUB_STEP_SUMMARY"])
+  names = (dry_run ? actions : executed).map { |a| a['action'] }
   File.write(path, <<~SUMMARY, mode: "a")
     ## Store appearance check (gh-1041)
 
@@ -351,7 +352,7 @@ if (path = ENV["GITHUB_STEP_SUMMARY"])
     | --- | --- | --- |
     #{summary_rows.join("\n")}
 
-    Actions: #{(dry_run ? actions : executed).map { |a| a['action'] }.join(', ').empty? ? '_none_' : (dry_run ? actions : executed).map { |a| a['action'] }.join(', ')}
+    Actions: #{names.empty? ? '_none_' : names.join(', ')}
   SUMMARY
 end
 
