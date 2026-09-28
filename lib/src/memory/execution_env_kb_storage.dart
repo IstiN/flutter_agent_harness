@@ -79,6 +79,12 @@ final class ExecutionEnvKbStorage
   /// no automatic purge (E3: opt-in manual/CLI use only). The ledger and
   /// `deleted/` records keep the deletion history, so purging loses
   /// nothing.
+  ///
+  /// Scope note for the second-tier gc card: this adapter backs BOTH the
+  /// project store (git-committed, where tombstones buy conflict-free
+  /// merges) and the user store (machine-local, never committed —
+  /// tombstones bring no merge benefit yet still accumulate on disk until
+  /// an opt-in purge). The gc card's scope must cover both stores.
   @override
   FutureOr<List<String>> purgeTombstones() async {
     final removed = <String>[];
@@ -102,6 +108,11 @@ final class ExecutionEnvKbStorage
   /// deletions must go through `KBMemoryStore.deleteRecord` (as
   /// `MemoryController.delete` already does): that is what tombstones the
   /// file, records the `deleted/` entry and keeps git merges conflict-free.
+  @Deprecated(
+    'Physical unlink reintroduces delete/modify git conflicts. Use '
+    'MemoryController.delete (KBMemoryStore.deleteRecord → tombstone) '
+    'instead; this helper stays only for harness-local teardown paths.',
+  )
   Future<bool> deleteEntityById(String id) async {
     for (final type in _entityTypes) {
       final path = _path(type, id);

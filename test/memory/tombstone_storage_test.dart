@@ -56,41 +56,54 @@ void main() {
       expect(await storage.readEntity('note', 'n_0002_beef'), isNotNull);
     });
 
-    test('readEntity filters a hand-written tombstone of foreign shape',
-        () async {
-      // Marker position/format is the library's contract; any file carrying
-      // the marker line must read as absent.
-      await env.writeFile(
-        '/.fah/memory/note/n_0009_ff.md',
-        '---\nid: n_0009_ff\ntombstone: true\n---\nbody\n',
-      );
-      expect(await storage.readEntity('note', 'n_0009_ff'), isNull);
-    });
+    test(
+      'readEntity filters a hand-written tombstone of foreign shape',
+      () async {
+        // Marker position/format is the library's contract; any file carrying
+        // the marker line must read as absent.
+        await env.writeFile(
+          '/.fah/memory/note/n_0009_ff.md',
+          '---\nid: n_0009_ff\ntombstone: true\n---\nbody\n',
+        );
+        expect(await storage.readEntity('note', 'n_0009_ff'), isNull);
+      },
+    );
 
-    test('listEntityIds still yields tombstoned ids (no silent id reuse)',
-        () async {
-      await storage.tombstoneEntity('note', 'n_0001_dead');
-      expect(await storage.listEntityIds('note'),
-          containsAll(['n_0001_dead', 'n_0002_beef']));
-    });
+    test(
+      'listEntityIds still yields tombstoned ids (no silent id reuse)',
+      () async {
+        await storage.tombstoneEntity('note', 'n_0001_dead');
+        expect(
+          await storage.listEntityIds('note'),
+          containsAll(['n_0001_dead', 'n_0002_beef']),
+        );
+      },
+    );
 
-    test('purgeTombstones removes only tombstones and returns sorted ids',
-        () async {
-      await storage.tombstoneEntity('note', 'n_0002_beef');
-      await storage.tombstoneEntity('answer', 'a_0001_ab');
-      // Live note stays.
-      final removed = await storage.purgeTombstones();
-      expect(removed, ['a_0001_ab', 'n_0002_beef']);
-      expect((await env.exists('/.fah/memory/note/n_0002_beef.md')).valueOrNull,
-          isFalse);
-      expect(
+    test(
+      'purgeTombstones removes only tombstones and returns sorted ids',
+      () async {
+        await storage.tombstoneEntity('note', 'n_0002_beef');
+        await storage.tombstoneEntity('answer', 'a_0001_ab');
+        // Live note stays.
+        final removed = await storage.purgeTombstones();
+        expect(removed, ['a_0001_ab', 'n_0002_beef']);
+        expect(
+          (await env.exists('/.fah/memory/note/n_0002_beef.md')).valueOrNull,
+          isFalse,
+        );
+        expect(
           (await env.exists('/.fah/memory/answer/a_0001_ab.md')).valueOrNull,
-          isFalse);
-      expect((await env.exists('/.fah/memory/note/n_0001_dead.md')).valueOrNull,
-          isTrue);
-      // Idempotent: nothing left to purge.
-      expect(await storage.purgeTombstones(), isEmpty);
-    });
+          isFalse,
+        );
+        expect(
+          (await env.exists('/.fah/memory/note/n_0001_dead.md')).valueOrNull,
+          isTrue,
+        );
+        // Idempotent: nothing left to purge.
+        expect(await storage.purgeTombstones(), isEmpty);
+      },
+    );
   });
 
   group('cross-tool tombstone consistency (AC2)', () {
@@ -109,48 +122,42 @@ void main() {
       if (temp.existsSync()) temp.deleteSync(recursive: true);
     });
 
-    test(
-      'a store tombstoned by the library FileKbStorage reads as absent '
-      'through the harness adapter',
-      () async {
-        const id = 'n_0001_cafe';
-        await harnessStorage.writeEntity(
-          'note',
-          id,
-          '---\nid: $id\n---\n# Entity: $id\nshared note\n',
-        );
-        expect(await harnessStorage.readEntity('note', id), isNotNull);
+    test('a store tombstoned by the library FileKbStorage reads as absent '
+        'through the harness adapter', () async {
+      const id = 'n_0001_cafe';
+      await harnessStorage.writeEntity(
+        'note',
+        id,
+        '---\nid: $id\n---\n# Entity: $id\nshared note\n',
+      );
+      expect(await harnessStorage.readEntity('note', id), isNotNull);
 
-        // A CLI agent (or another tool) deletes through the library's file
-        // backend: the tombstone content is what FileKbStorage writes (its
-        // public static — simulated fixture on the shared store).
-        await harnessStorage.writeEntity(
-          'note',
-          id,
-          FileKbStorage.tombstoneContentFor(id, '2026-01-01T00:00:00.000Z'),
-        );
-        expect(await harnessStorage.readEntity('note', id), isNull);
-        // And the raw file is still there (tombstone, not unlink).
-        expect(
-          FileKbStorage.isTombstoneContent(
-            File('${temp.path}/note/$id.md').readAsStringSync(),
-          ),
-          isTrue,
-        );
-      },
-    );
+      // A CLI agent (or another tool) deletes through the library's file
+      // backend: the tombstone content is what FileKbStorage writes (its
+      // public static — simulated fixture on the shared store).
+      await harnessStorage.writeEntity(
+        'note',
+        id,
+        FileKbStorage.tombstoneContentFor(id, '2026-01-01T00:00:00.000Z'),
+      );
+      expect(await harnessStorage.readEntity('note', id), isNull);
+      // And the raw file is still there (tombstone, not unlink).
+      expect(
+        FileKbStorage.isTombstoneContent(
+          File('${temp.path}/note/$id.md').readAsStringSync(),
+        ),
+        isTrue,
+      );
+    });
 
-    test(
-      'a harness tombstone carries the library marker format',
-      () async {
-        await harnessStorage.tombstoneEntity('note', 'n_0002_d00d');
-        expect(
-          FileKbStorage.isTombstoneContent(
-            File('${temp.path}/note/n_0002_d00d.md').readAsStringSync(),
-          ),
-          isTrue,
-        );
-      },
-    );
+    test('a harness tombstone carries the library marker format', () async {
+      await harnessStorage.tombstoneEntity('note', 'n_0002_d00d');
+      expect(
+        FileKbStorage.isTombstoneContent(
+          File('${temp.path}/note/n_0002_d00d.md').readAsStringSync(),
+        ),
+        isTrue,
+      );
+    });
   });
 }
