@@ -269,6 +269,87 @@ Set<String> secureKeyPreloadNames(CliConfig saved, {required String? baseUrl}) {
   };
 }
 
+/// The store-key names the SAVED CONFIG explicitly references (gh-1059):
+/// every custom provider entry's own `keyName` plus the roles config's
+/// `apiKeyName`s. Env-only setups reference nothing — the boot warning
+/// must stay silent for them (a missing env key has its own loud banner).
+Set<String> referencedSecureKeyNames(CliConfig saved) {
+  return {
+    for (final entry in saved.customProviders)
+      if (entry.keyName != null) entry.keyName!,
+    if (saved.modelRoles != null) ...roleKeyNames(saved.modelRoles!),
+  };
+}
+
+/// The boot key-snapshot diagnostics (gh-1059): the lines the executable
+/// prints after `preload`. With [debug] (`--debug-secrets` / truthy
+/// `FA_DEBUG_KEYS`) one `[keys]` line per preload outcome plus a summary —
+/// `found` / `absent` / `error: <diagnostic>` — so a degraded keychain is
+/// diagnosable instead of silently empty. INDEPENDENT of [debug], one
+/// warning fires when the store answered but NONE of the config-referenced
+/// [referencedKeyNames] resolved — the "every provider boots keyless with
+/// no log trail" state — naming the count. Save degradations
+/// ([saveFailures] / [lastSaveError], recorded by [SecureKeyCache.save])
+/// join the same summary; the per-save print at the call site stays.
+List<String> secureKeyBootDiagnostics({
+  required SecureKeyPreloadReport report,
+  required Set<String> referencedKeyNames,
+  required bool debug,
+  String? storeLabel,
+  int saveFailures = 0,
+  String? lastSaveError,
+}) {
+  final lines = <String>[];
+  final label = storeLabel ?? 'secure store';
+  if (!report.storeAvailable) {
+    if (debug) {
+      lines.add('[keys] $label unavailable — no keychain reads attempted');
+    }
+    return lines;
+  }
+  final resolvedReferenced = referencedKeyNames
+      .where((name) => report.outcomes.any((o) => o.name == name &&
+          o.status == SecureKeyReadStatus.found))
+      .toSet();
+  if (debug) {
+    for (final outcome in report.outcomes) {
+      lines.add(
+        switch (outcome.status) {
+          SecureKeyReadStatus.found => '[keys] ${outcome.name}: found',
+          SecureKeyReadStatus.absent => '[keys] ${outcome.name}: absent',
+          SecureKeyReadStatus.error =>
+            '[keys] ${outcome.name}: error: ${outcome.error ?? 'unknown'}',
+        },
+      );
+    }
+    lines.add(
+      '[keys] ${referencedKeyNames.length} config-referenced, '
+      '${report.foundCount} found, ${report.absentCount} absent, '
+      '${report.errorCount} errors ($label)',
+    );
+  }
+  if (referencedKeyNames.isNotEmpty && resolvedReferenced.isEmpty) {
+    final hint = debug
+        ? 'see the [keys] lines above'
+        : 'run with --debug-secrets (or FA_DEBUG_KEYS=1) to see the '
+            'per-name reads';
+    lines.add(
+      'warning: ${referencedKeyNames.length} provider key(s) referenced by '
+      'the config (custom providers / roles) resolved NOTHING from the '
+      '$label — those providers boot keyless; re-enter a key or $hint '
+      '(the stored values were not touched)',
+    );
+  }
+  if (saveFailures > 0) {
+    lines.add(
+      'warning: $saveFailures secure-store save(s) degraded to session-only'
+      '${lastSaveError == null ? '' : ' ($lastSaveError)'} — re-enter the '
+      'keys once the store is writable',
+    );
+  }
+  return lines;
+}
+
 /// Fresh-install detection (issue #969): true when NO saved custom provider
 /// exists AND no provider key resolves anywhere — no catalog env name (nor
 /// its rotation stack) in the environment, and nothing in the preloaded

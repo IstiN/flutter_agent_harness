@@ -155,8 +155,8 @@ final class SecureKeyCache {
       return SecureKeyPreloadReport(storeAvailable: false, outcomes: const []);
     }
     final store = _store!;
-    final diagnostics =
-        store is SecureKeyDiagnostics ? store : null;
+    final SecureKeyDiagnostics? diagnostics =
+        store is SecureKeyDiagnostics ? store as SecureKeyDiagnostics : null;
     final outcomes = await Future.wait(
       requested.map((name) async {
         try {
@@ -180,7 +180,6 @@ final class SecureKeyCache {
         _snapshot[outcome.name] = value;
       }
     }
-    return SecureKeyPreloadReport(storeAvailable: true, outcomes: outcomes);
     return SecureKeyPreloadReport(storeAvailable: true, outcomes: outcomes);
   }
 
@@ -216,10 +215,6 @@ final class SecureKeyCache {
     _snapshot[name] = value;
     return true;
   }
-    }
-    _snapshot[name] = value;
-    return true;
-  }
 
   /// Deletes [name] from the store and the snapshot. Returns false when the
   /// store is unavailable or the delete fails; deleting an absent name is a
@@ -234,7 +229,6 @@ final class SecureKeyCache {
     _snapshot.remove(name);
     return true;
   }
-}
 
   /// Records a degraded save for the boot/warning summary (the per-save
   /// print at the call site stays).
@@ -260,3 +254,4 @@ final class SecureKeyCache {
     final flat = text.trim().replaceAll(RegExp(r'\s+'), ' ');
     return flat.length > 200 ? flat.substring(flat.length - 200) : flat;
   }
+}

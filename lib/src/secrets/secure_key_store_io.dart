@@ -22,14 +22,29 @@ const secureKeyServiceName = 'fah';
 
 /// Result of one helper-process invocation.
 final class SecureKeyRunResult {
-  /// Creates a result with the process [exitCode] and captured [stdout].
-  const SecureKeyRunResult(this.exitCode, this.stdout);
+  /// Creates a result with the process [exitCode], captured [stdout] and,
+  /// since gh-1059, the captured [stderr] tail plus a [timedOut] marker —
+  /// the diagnostics a bounded runner used to drop on the floor.
+  const SecureKeyRunResult(
+    this.exitCode,
+    this.stdout, {
+    this.stderr = '',
+    this.timedOut = false,
+  });
 
-  /// The process exit code.
+  /// The process exit code (-1 on spawn failure or helper timeout).
   final int exitCode;
 
   /// Captured standard output.
   final String stdout;
+
+  /// Captured standard error, collapsed to a one-line tail (≤200 chars).
+  /// Empty on spawn failures; may lag on a timeout kill. Never contains a
+  /// secret (reads print secrets to stdout, errors to stderr).
+  final String stderr;
+
+  /// Whether the invocation hit [secureKeyProcessTimeout] and was killed.
+  final bool timedOut;
 }
 
 /// Runs one helper process for a [SecureKeyStore] backend, optionally piping
@@ -43,12 +58,24 @@ typedef SecureKeyRunner =
       Map<String, String>? environment,
     });
 
+/// The child environment for a helper spawn (gh-1059 H1): explicit
+/// overrides RIDE the full inherited environment. A non-null map passed to
+/// `Process.start` REPLACES the whole child environment — a helper spawned
+/// without `PATH`/`HOME`/`SystemRoot` cannot run, which reads as a silent
+/// keyless boot. Null stays null = full inheritance.
+@visibleForTesting
+Map<String, String>? secureKeyChildEnvironment(
+  Map<String, String>? overrides,
+) => overrides == null ? null : {...Platform.environment, ...overrides};
+
 /// The default [SecureKeyRunner]: [Process.start] with optional stdin.
 ///
 /// Bounded by [secureKeyProcessTimeout]: keychain operations can block on a
 /// SYSTEM modal (e.g. macOS "Keychain Not Found" on a corrupt/missing login
 /// keychain) — the wizard must degrade to session-only then, never hang
-/// the CLI.
+/// the CLI. stderr is drained concurrently with stdout (a helper blocked on
+/// a full stderr pipe can never exit) and captured so read failures can
+/// surface their diagnostics instead of collapsing into a bare null.
 Future<SecureKeyRunResult> _processRunner(
   String executable,
   List<String> arguments, {
@@ -60,7 +87,7 @@ Future<SecureKeyRunResult> _processRunner(
     process = await Process.start(
       executable,
       arguments,
-      environment: environment,
+      environment: secureKeyChildEnvironment(environment),
     );
   } on Object {
     return const SecureKeyRunResult(-1, '');
@@ -69,6 +96,15 @@ Future<SecureKeyRunResult> _processRunner(
     process.stdin.write(stdin);
   }
   unawaited(process.stdin.close());
+  final stderrBuffer = StringBuffer();
+  final stderrDone = process.stderr
+      .transform(utf8.decoder)
+      .listen(stderrBuffer.write)
+      .asFuture<void>();
+  Future<void> drainStderr() => stderrDone.timeout(
+    const Duration(seconds: 1),
+    onTimeout: () {},
+  );
   try {
     final stdout = await process.stdout
         .transform(utf8.decoder)
@@ -78,12 +114,36 @@ Future<SecureKeyRunResult> _processRunner(
       const Duration(seconds: 1),
       onTimeout: () => -1,
     );
-    return SecureKeyRunResult(exitCode, stdout);
+    await drainStderr();
+    return SecureKeyRunResult(
+      exitCode,
+      stdout,
+      stderr: _stderrTail(stderrBuffer),
+    );
   } on TimeoutException {
     process.kill();
-    return const SecureKeyRunResult(-1, '');
+    await drainStderr();
+    return SecureKeyRunResult(
+      -1,
+      '',
+      stderr: _stderrTail(stderrBuffer),
+      timedOut: true,
+    );
   }
 }
+
+/// Collapses captured stderr to one log-safe line, last 200 chars.
+String _stderrTail(StringBuffer buffer) {
+  final text = buffer.toString().trim();
+  if (text.isEmpty) return '';
+  final flat = text.replaceAll(RegExp(r'\s+'), ' ');
+  return flat.length > 200 ? flat.substring(flat.length - 200) : flat;
+}
+
+/// One-line diagnostic for a failed read: [why] (exit code / timeout note)
+/// plus the captured stderr tail when the helper wrote any.
+String _errorTail(SecureKeyRunResult result, String why) =>
+    result.stderr.isEmpty ? why : '$why: ${result.stderr}';
 
 /// The per-invocation cap for helper processes (`security`, `secret-tool`,
 /// `powershell.exe`) — they can block on a system keychain modal on a
@@ -140,7 +200,8 @@ String _output(String stdout) {
 /// is briefly visible in the process list — the accepted trade-off of the
 /// only always-present keychain interface on macOS (the alternative is
 /// Security.framework FFI).
-final class _MacosKeychainStore implements SecureKeyStore {
+final class _MacosKeychainStore
+    implements SecureKeyStore, SecureKeyDiagnostics {
   const _MacosKeychainStore(this._run);
 
   final SecureKeyRunner _run;
@@ -158,7 +219,15 @@ final class _MacosKeychainStore implements SecureKeyStore {
   }
 
   @override
-  Future<String?> read(String name) async {
+  Future<String?> read(String name) async => (await readDetailed(name)).value;
+
+  /// `security find-generic-password` exit codes, classified (gh-1059):
+  /// 0 = found (empty stdout reads as absent), 44 = the item is genuinely
+  /// not stored, anything else (45 interaction-not-allowed, 51 locked
+  /// keychain, …) plus a helper timeout or spawn failure is an ERROR with
+  /// the stderr tail — never a bare "absent".
+  @override
+  Future<SecureKeyReadOutcome> readDetailed(String name) async {
     _validateName(name);
     final result = await _run('security', [
       'find-generic-password',
@@ -168,9 +237,34 @@ final class _MacosKeychainStore implements SecureKeyStore {
       name,
       '-w',
     ]);
-    if (result.exitCode != 0) return null;
-    final value = _output(result.stdout);
-    return value.isEmpty ? null : value;
+    if (result.timedOut) {
+      return SecureKeyReadOutcome(
+        name,
+        SecureKeyReadStatus.error,
+        error: _errorTail(
+          result,
+          'timed out after ${secureKeyProcessTimeout.inSeconds}s',
+        ),
+      );
+    }
+    if (result.exitCode == 0) {
+      final value = _output(result.stdout);
+      return value.isEmpty
+          ? SecureKeyReadOutcome(name, SecureKeyReadStatus.absent)
+          : SecureKeyReadOutcome(
+              name,
+              SecureKeyReadStatus.found,
+              value: value,
+            );
+    }
+    if (result.exitCode == 44) {
+      return SecureKeyReadOutcome(name, SecureKeyReadStatus.absent);
+    }
+    return SecureKeyReadOutcome(
+      name,
+      SecureKeyReadStatus.error,
+      error: _errorTail(result, 'exit ${result.exitCode}'),
+    );
   }
 
   @override
@@ -221,7 +315,8 @@ final class _MacosKeychainStore implements SecureKeyStore {
 /// freedesktop Secret Service via `secret-tool` (libsecret): gnome-keyring,
 /// KWallet, or KeePassXC on the session D-Bus. Hosts without the binary (or
 /// without a session bus, e.g. headless servers) report unavailable.
-final class _LinuxSecretServiceStore implements SecureKeyStore {
+final class _LinuxSecretServiceStore
+    implements SecureKeyStore, SecureKeyDiagnostics {
   const _LinuxSecretServiceStore(this._run);
 
   final SecureKeyRunner _run;
@@ -241,7 +336,12 @@ final class _LinuxSecretServiceStore implements SecureKeyStore {
   }
 
   @override
-  Future<String?> read(String name) async {
+  Future<String?> read(String name) async => (await readDetailed(name)).value;
+
+  /// `secret-tool lookup` exits 0 with empty output when the item is not
+  /// stored — classified absent; a timeout / non-zero exit is an error.
+  @override
+  Future<SecureKeyReadOutcome> readDetailed(String name) async {
     _validateName(name);
     final result = await _run('secret-tool', [
       'lookup',
@@ -249,9 +349,27 @@ final class _LinuxSecretServiceStore implements SecureKeyStore {
       'name',
       name,
     ]);
-    if (result.exitCode != 0) return null;
+    if (result.timedOut) {
+      return SecureKeyReadOutcome(
+        name,
+        SecureKeyReadStatus.error,
+        error: _errorTail(
+          result,
+          'timed out after ${secureKeyProcessTimeout.inSeconds}s',
+        ),
+      );
+    }
+    if (result.exitCode != 0) {
+      return SecureKeyReadOutcome(
+        name,
+        SecureKeyReadStatus.error,
+        error: _errorTail(result, 'exit ${result.exitCode}'),
+      );
+    }
     final value = _output(result.stdout);
-    return value.isEmpty ? null : value;
+    return value.isEmpty
+        ? SecureKeyReadOutcome(name, SecureKeyReadStatus.absent)
+        : SecureKeyReadOutcome(name, SecureKeyReadStatus.found, value: value);
   }
 
   @override
@@ -284,7 +402,8 @@ final class _LinuxSecretServiceStore implements SecureKeyStore {
 /// `powershell.exe` (present since Windows 10; `cmdkey` cannot read secrets
 /// back, so it is not an option). The secret reaches the child through the
 /// FAH_SECRET environment variable, never the command line.
-final class _WindowsCredentialLockerStore implements SecureKeyStore {
+final class _WindowsCredentialLockerStore
+    implements SecureKeyStore, SecureKeyDiagnostics {
   const _WindowsCredentialLockerStore(this._run);
 
   final SecureKeyRunner _run;
@@ -316,7 +435,13 @@ final class _WindowsCredentialLockerStore implements SecureKeyStore {
   }
 
   @override
-  Future<String?> read(String name) async {
+  Future<String?> read(String name) async => (await readDetailed(name)).value;
+
+  /// The retrieve script catches its own errors and prints an empty line,
+  /// so a stored-but-unreadable entry still exits 0 — classified absent;
+  /// a timeout or a non-zero exit (PowerShell itself failed) is an error.
+  @override
+  Future<SecureKeyReadOutcome> readDetailed(String name) async {
     _validateName(name);
     final result = await _ps(
       "$_prologue try { "
@@ -324,9 +449,27 @@ final class _WindowsCredentialLockerStore implements SecureKeyStore {
       r'$c.RetrievePassword(); $c.Password '
       "} catch { '' }",
     );
-    if (result.exitCode != 0) return null;
+    if (result.timedOut) {
+      return SecureKeyReadOutcome(
+        name,
+        SecureKeyReadStatus.error,
+        error: _errorTail(
+          result,
+          'timed out after ${secureKeyProcessTimeout.inSeconds}s',
+        ),
+      );
+    }
+    if (result.exitCode != 0) {
+      return SecureKeyReadOutcome(
+        name,
+        SecureKeyReadStatus.error,
+        error: _errorTail(result, 'exit ${result.exitCode}'),
+      );
+    }
     final value = _output(result.stdout);
-    return value.isEmpty ? null : value;
+    return value.isEmpty
+        ? SecureKeyReadOutcome(name, SecureKeyReadStatus.absent)
+        : SecureKeyReadOutcome(name, SecureKeyReadStatus.found, value: value);
   }
 
   @override

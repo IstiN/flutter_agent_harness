@@ -1518,8 +1518,27 @@ Future<void> _runApp(List<String> args) async {
   // not set. Reads are process spawns, so the store is preloaded once into
   // a synchronous session cache — every later lookup (startup resolution,
   // the banner, `/provider`, `/key`) hits the snapshot.
+  //
+  // gh-1059: the preload report feeds the boot diagnostics — every read
+  // logged under --debug-secrets / FA_DEBUG_KEYS, and a config that
+  // references store keys while NONE resolve prints a warning instead of
+  // the silent keyless boot.
   final keyCache = SecureKeyCache(platformSecureKeyStore());
-  await keyCache.preload(secureKeyPreloadNames(saved, baseUrl: baseUrl));
+  final keyPreloadReport = await keyCache.preload(
+    secureKeyPreloadNames(saved, baseUrl: baseUrl),
+  );
+  for (final line in secureKeyBootDiagnostics(
+    report: keyPreloadReport,
+    referencedKeyNames: referencedSecureKeyNames(saved),
+    debug:
+        parsed.debugSecrets ||
+        isTruthyEnvValue(Platform.environment['FA_DEBUG_KEYS']),
+    storeLabel: keyCache.label,
+    saveFailures: keyCache.saveFailures,
+    lastSaveError: keyCache.lastSaveError,
+  )) {
+    stderr.writeln(line);
+  }
 
   // Prompt overrides: the `prompts:` section of ~/.fah/config.yaml (file
   // paths resolve against the agent cwd, `~` expands; missing files are a
