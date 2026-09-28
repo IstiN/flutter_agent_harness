@@ -525,7 +525,7 @@ exit 0
         'STORE_APPEARANCE_NOW': ?now,
         'STORE_APPEARANCE_SINCE': ?since,
         if (failIssueList) 'FAIL_ISSUE_LIST': '1',
-        if (ghFailVerb != null) 'GH_FAIL_VERB': ghFailVerb,
+        'GH_FAIL_VERB': ?ghFailVerb,
         if (withSecrets) ...{
           'APP_STORE_CONNECT_KEY_ID': 'TESTKID',
           'APP_STORE_CONNECT_ISSUER_ID': 'TESTISSUER',
@@ -954,7 +954,8 @@ exit 0
       expect(
         failed.exitCode,
         0,
-        reason: 'no green submit ⇒ no appearance premise; the [daily-publish] '
+        reason:
+            'no green submit ⇒ no appearance premise; the [daily-publish] '
             'leg stub owns the signal',
       );
       expect(
@@ -972,7 +973,10 @@ exit 0
       // stubbed gh fails every `issue close`, so the run must not exit 0.
       final r = await runCheck(
         openStubs: [
-          {'number': 42, 'title': '[store-appearance-check] TestFlight 1.0.485 absent'},
+          {
+            'number': 42,
+            'title': '[store-appearance-check] TestFlight 1.0.485 absent',
+          },
         ],
         ghFailVerb: 'issue close',
       );
@@ -983,19 +987,26 @@ exit 0
       );
       final result = resultOf(r);
       expect((result['write_failures'] as List), isNotEmpty);
-      final close = (result['actions'] as List).firstWhere(
-        (a) => a['action'] == 'close_stub',
-      ) as Map;
+      final close =
+          (result['actions'] as List).firstWhere(
+                (a) => a['action'] == 'close_stub',
+              )
+              as Map;
       expect(close['done'], isFalse, reason: 'the failed write is annotated');
       final r2 = await runCheck(
         openStubs: [
-          {'number': 42, 'title': '[store-appearance-check] TestFlight 1.0.485 absent'},
+          {
+            'number': 42,
+            'title': '[store-appearance-check] TestFlight 1.0.485 absent',
+          },
         ],
       );
       expect(r2.exitCode, 0, reason: '${r2.stderr}');
-      final close2 = (resultOf(r2)['actions'] as List).firstWhere(
-        (a) => a['action'] == 'close_stub',
-      ) as Map;
+      final close2 =
+          (resultOf(r2)['actions'] as List).firstWhere(
+                (a) => a['action'] == 'close_stub',
+              )
+              as Map;
       expect(close2['done'], isTrue);
     });
   });
