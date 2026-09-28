@@ -212,6 +212,36 @@ void main() {
         projectDir: projectDir,
       );
       expect(resolution, isA<JsrPackageMissing>());
+      expect(
+        (resolution as JsrPackageMissing).detail,
+        contains('invalid JSON'),
+      );
+    });
+
+    test('non-map package_config is JsrPackageMissing', () async {
+      final env = await project(configJson: '[]');
+      final resolution = await resolveJsrPackageRoot(
+        env,
+        projectDir: projectDir,
+      );
+      expect(resolution, isA<JsrPackageMissing>());
+      expect(
+        (resolution as JsrPackageMissing).detail,
+        contains('not a package_config'),
+      );
+    });
+
+    test('config without a packages list is JsrPackageMissing', () async {
+      final env = await project(configJson: '{"configVersion":2}');
+      final resolution = await resolveJsrPackageRoot(
+        env,
+        projectDir: projectDir,
+      );
+      expect(resolution, isA<JsrPackageMissing>());
+      expect(
+        (resolution as JsrPackageMissing).detail,
+        contains('no packages list'),
+      );
     });
 
     test('jsr without the CLI entrypoint is JsrCliEntrypointMissing', () async {
