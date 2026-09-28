@@ -66,14 +66,23 @@ QueueDeath? classifyQueueDeath(ErrorEvent event) {
     );
   }
 
-  // Auth: the key is dead — advance immediately, no cooldown (UT-10).
-  if (_authPatterns.any((pattern) => pattern.hasMatch(text))) {
-    return const QueueDeath(kind: QueueDeathKind.auth, immediate: true);
-  }
-
   // Transient/unknown wire finish_reason after retries (issue #312).
   if (retryClass != null) {
     return const QueueDeath(kind: QueueDeathKind.finishReason);
+  }
+
+  // The labeled regex nets in precedence order, then the transport net;
+  // null — unknown, forward verbatim, never advance on a guess.
+  return _labeledDeath(text, event.error);
+}
+
+/// The labeled death kinds after quota/finish_reason (issue #418): auth,
+/// 5xx, malformed, timeout, network. Null when none match — the caller
+/// forwards verbatim.
+QueueDeath? _labeledDeath(String text, AssistantMessage error) {
+  // Auth: the key is dead — advance immediately, no cooldown (UT-10).
+  if (_authPatterns.any((pattern) => pattern.hasMatch(text))) {
+    return const QueueDeath(kind: QueueDeathKind.auth, immediate: true);
   }
 
   // 5xx family (gateways included) after the retry ladder is spent.
@@ -94,11 +103,10 @@ QueueDeath? classifyQueueDeath(ErrorEvent event) {
 
   // Everything else the roles layer already calls transient transport:
   // dropped/refused/reset connections, DNS/TLS failures.
-  if (isTransientTransportError(event.error)) {
+  if (isTransientTransportError(error)) {
     return const QueueDeath(kind: QueueDeathKind.network);
   }
 
-  // Unknown — forward verbatim, never advance on a guess.
   return null;
 }
 
