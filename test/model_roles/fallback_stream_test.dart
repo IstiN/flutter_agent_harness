@@ -201,6 +201,54 @@ void main() {
     });
 
     test(
+      'budget exhaustion advances to the fallback at once (issue #926)',
+      () async {
+        final a = _model('openai', 'gpt-a');
+        final b = _model('anthropic', 'claude-b');
+        final probe = _Probe({
+          'v-a': [
+            _rateLimitTurn(
+              a,
+              error:
+                  '403: CodeMie monthly budget limit reached '
+                  '(\$150.08 / \$150.00). Next budget reset: 01/10/2026',
+            ),
+          ],
+          'v-b': [_okTurn(b, 'hello from b')],
+        });
+        // DEFAULT policy (paid retries per entry) — the budget death must
+        // skip the whole ladder.
+        final w = wrapper([
+          entry(probe, a, ['v-a']),
+          entry(probe, b, ['v-b']),
+        ]);
+
+        final events = await run(w);
+
+        expect(events, [
+          'start:${b.id}',
+          'textStart',
+          'delta:hello from b',
+          'done:${b.id}',
+        ]);
+        expect(probe.calls, [
+          'v-a',
+          'v-b',
+        ], reason: 'no paid retries against the dead budget');
+        expect(sleeps, isEmpty);
+        // The clear user notice: the modelFallback reason carries the
+        // provider's budget wording verbatim.
+        expect(notices, hasLength(1));
+        expect(notices.single.kind, FallbackNoticeKind.modelFallback);
+        expect(notices.single.fromModel, 'openai/gpt-a');
+        expect(notices.single.toModel, 'anthropic/claude-b');
+        expect(notices.single.reason, contains('budget limit reached'));
+        expect(notices.single.reason, contains('\$150.08'));
+        expect(w.activeIndex, 1);
+      },
+    );
+
+    test(
       'retries the same entry with capped backoff before succeeding',
       () async {
         final a = _model('openai', 'gpt-a');
