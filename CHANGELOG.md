@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## 1.0.485
+
 
 - fix(ci): Daily auto-publish `pub.dev` leg — poll the pub.dev API until it
   reflects the rerun's publish instead of a single read. 2026-09-28: the
@@ -4382,6 +4383,8 @@
 - chore: pin factory 5e2a8051 (session quarantine) (#1024)
 - chore: pin factory a18361b2 (red-park + dryRun + dup-guard + teammate watchdog) (#1023)
 - chore(factory): bump dmtools-agents to b44b5493 — latch-skip + stamp links + auto-anchor fallback (#547/#548/#549) in lockstep (#1019)
+
+## Unreleased
 
 ## Unreleased
 
