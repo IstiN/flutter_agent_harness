@@ -292,5 +292,38 @@ if $PROGRAM_NAME == __FILE__
   raise!("partial green posts no all-green summary") unless a.none? { |x| x["action"] == "comment_summary" }
   ok("multi-store run: the absent store updates its own stub, no green summary while anything is missing")
 
+  # ── JWT minting (real signatures, no network — transport glue) ─────────────
+  es_key = OpenSSL::PKey::EC.generate("prime256v1")
+  token = S::Jwt.mint(
+    header: { alg: "ES256", kid: "KID", typ: "JWT" },
+    payload: { iss: "ISSUER", iat: 1_700_000_000, aud: "appstoreconnect-v1" },
+    key_pem: es_key.to_pem, alg: "ES256"
+  )
+  parts = token.split(".")
+  raise!("ES256 JWT has three segments") unless parts.size == 3
+
+  # Verify the raw r||s signature by converting back to DER for openssl.
+  sig = parts[2].tr("-_", "+/").then { |s| Base64.decode64(s.ljust((s.length + 3) / 4 * 4, "=")) }
+  raise!("ES256 signature must be exactly 64 raw bytes") unless sig.bytesize == 64
+  r, s_bytes = sig[0, 32], sig[32, 32]
+  der = OpenSSL::ASN1::Sequence.new([OpenSSL::ASN1::Integer.new(OpenSSL::BN.new(r, 2)),
+                                     OpenSSL::ASN1::Integer.new(OpenSSL::BN.new(s_bytes, 2))]).to_der
+  signing_input = "#{parts[0]}.#{parts[1]}"
+  raise!("ES256 signature must verify against the minting key") unless es_key.verify("SHA256", der, signing_input)
+  ok("ES256 JWT mints + cryptographically verifies (ASC transport)")
+
+  rsa_key = OpenSSL::PKey::RSA.generate(2048)
+  token = S::Jwt.mint(
+    header: { alg: "RS256", typ: "JWT" },
+    payload: { iss: "test-only@test.iam.gserviceaccount.com", scope: "https://www.googleapis.com/auth/androidpublisher" },
+    key_pem: rsa_key.to_pem, alg: "RS256"
+  )
+  parts = token.split(".")
+  raise!("RS256 JWT has three segments") unless parts.size == 3
+  sig = parts[2].tr("-_", "+/").then { |s| Base64.decode64(s.ljust((s.length + 3) / 4 * 4, "=")) }
+  raise!("RS256 signature verifies against the minting key") unless rsa_key.verify("SHA256", sig, "#{parts[0]}.#{parts[1]}")
+  ok("RS256 JWT mints + cryptographically verifies (Play transport)")
+
   puts "\nstore_appearance_test: #{$checks} checks passed"
 end
+

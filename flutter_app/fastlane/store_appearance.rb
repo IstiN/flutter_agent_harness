@@ -37,6 +37,43 @@ module StoreAppearance
   # publish stub per day, no matter how often the check runs (REG idempotency).
   GREEN_SUMMARY_MARKER = "<!-- store-appearance-check:green-summary "
 
+  # ── JWT minting primitives (stdlib openssl, no gems) ─────────────────────
+  # Transport glue the IO script uses to talk to the real ASC / Play APIs
+  # with the SAME keys the submit legs already use (gh-1041 I3 — no new
+  # credentials). Kept here so the fixture suite exercises real signing
+  # without any network.
+  module Jwt
+    module_function
+
+    def b64url(input)
+      Base64.strict_encode64(input).tr("+/", "-_").delete("=")
+    end
+
+    # Apple demands a raw r||s (64-byte) ES256 signature; OpenSSL signs ECDSA
+    # as DER (SEQUENCE { INTEGER r, INTEGER s }) — unwrap, stripping the
+    # INTEGER leading zero a >127-byte-order top byte adds, left-padding
+    # each half to exactly 32 bytes.
+    def es256_raw_signature(der)
+      seq = OpenSSL::ASN1.decode(der)
+      unless seq.is_a?(OpenSSL::ASN1::Sequence) && seq.value.size == 2
+        raise "not an ECDSA DER signature"
+      end
+
+      seq.value.map { |i|
+        bytes = i.value.to_s(2) # BN → minimal big-endian magnitude
+        bytes = bytes[1..] while bytes.bytesize > 32 && bytes.getbyte(0).zero?
+        bytes.rjust(32, "\x00")
+      }.join
+    end
+
+    def mint(header:, payload:, key_pem:, alg:)
+      input = "#{b64url(JSON.generate(header))}.#{b64url(JSON.generate(payload))}"
+      raw = alg == "ES256" ? OpenSSL::PKey::EC.new(key_pem).sign("SHA256", input) : OpenSSL::PKey::RSA.new(key_pem).sign("SHA256", input)
+      sig = alg == "ES256" ? es256_raw_signature(raw) : raw
+      "#{input}.#{b64url(sig)}"
+    end
+  end
+
   module_function
 
   # Strict x.y.z (minor/patch optional) → [x, y, z]; nil for garbage, so a
