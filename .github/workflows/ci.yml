@@ -855,7 +855,10 @@ jobs:
           # et al.); 0.2.1 knew only the CRAP ratchet. Both configs set
           # coverage.run_tests: false — the merged shard lcov above is the
           # coverage source; gates must not re-run the suite.
-          dart pub global activate crap4dart ">=0.9.5"
+          # gh-1061: >=0.10.0 — analyzer 7.3→14.4 refresh + the
+          # duplication.sources key (native cross-module scan; the
+          # duplication gate stays jscpd-gated, see crap4dart.yaml).
+          dart pub global activate crap4dart ">=0.10.0"
           dart pub global run crap4dart analyze
 
       - name: Broken-goldens gate over core test/ goldens (issue 447)
