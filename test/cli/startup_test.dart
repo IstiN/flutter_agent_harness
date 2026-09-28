@@ -899,28 +899,6 @@ void main() {
       expect(lines.single, contains('2 provider key(s)'));
       expect(lines.single, contains('store unavailable'));
     });
-
-    test('save degradations join the summary', () {
-      final lines = secureKeyBootDiagnostics(
-        report: const SecureKeyPreloadReport(
-          storeAvailable: true,
-          outcomes: [
-            SecureKeyReadOutcome(
-              'FA_KEY_CHATGPT_COM',
-              SecureKeyReadStatus.found,
-              value: 'x',
-            ),
-          ],
-        ),
-        referencedKeyNames: {'FA_KEY_CHATGPT_COM'},
-        debug: false,
-        saveFailures: 1,
-        lastSaveError: 'keychain write failed (exit 45)',
-      );
-      expect(lines, hasLength(1));
-      expect(lines.single, contains('1 secure-store save(s) degraded'));
-      expect(lines.single, contains('keychain write failed (exit 45)'));
-    });
   });
 
   group('buildSecretRedactor', () {

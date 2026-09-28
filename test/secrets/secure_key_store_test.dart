@@ -596,6 +596,15 @@ void main() {
     });
   });
 
+  // `tags: integration` (gh-1059 review): this group performs a REAL
+  // `security add-generic-password` against the developer's default
+  // keychain — excluded from the pre-commit gate and the plain per-PR
+  // core shards, executed by ci.yml's macOS cube-kernel-live leg
+  // (`dart test test/secrets/secure_key_store_test.dart --tags
+  // integration`) and runnable standalone with `--tags integration`.
+  // (The file-level `@Tags` form would sweep the side-effect-free
+  // `sleep`/`sh` runner groups into the tag; the group parameter keeps
+  // them untagged.)
   group('real keychain runner (gh-1059 AC4, macOS only)', () {
     const testName = 'FA_KEY_SELFTEST_GH1059';
 
@@ -629,5 +638,5 @@ void main() {
       },
       timeout: const Timeout(Duration(seconds: 60)),
     );
-  });
+  }, tags: 'integration');
 }

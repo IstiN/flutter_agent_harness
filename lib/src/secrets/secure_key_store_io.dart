@@ -116,7 +116,7 @@ Future<SecureKeyRunResult> _processRunner(
     return SecureKeyRunResult(
       exitCode,
       stdout,
-      stderr: _stderrTail(stderrBuffer),
+      stderr: secureKeyDiagnosticLine(stderrBuffer.toString()),
     );
   } on TimeoutException {
     process.kill();
@@ -124,24 +124,55 @@ Future<SecureKeyRunResult> _processRunner(
     return SecureKeyRunResult(
       -1,
       '',
-      stderr: _stderrTail(stderrBuffer),
+      stderr: secureKeyDiagnosticLine(stderrBuffer.toString()),
       timedOut: true,
     );
   }
-}
-
-/// Collapses captured stderr to one log-safe line, last 200 chars.
-String _stderrTail(StringBuffer buffer) {
-  final text = buffer.toString().trim();
-  if (text.isEmpty) return '';
-  final flat = text.replaceAll(RegExp(r'\s+'), ' ');
-  return flat.length > 200 ? flat.substring(flat.length - 200) : flat;
 }
 
 /// One-line diagnostic for a failed read: [why] (exit code / timeout note)
 /// plus the captured stderr tail when the helper wrote any.
 String _errorTail(SecureKeyRunResult result, String why) =>
     result.stderr.isEmpty ? why : '$why: ${result.stderr}';
+
+/// The shared read-classification ladder for all three backends (gh-1059
+/// review — the contract lives in ONE place, the per-backend doc comments
+/// only name their helper's exit codes):
+///
+/// - [SecureKeyRunResult.timedOut] → `error` (the modal-ate-the-read
+///   state);
+/// - non-zero exit outside [absentCodes] → `error` with the exit code and
+///   stderr tail;
+/// - empty stdout → `absent` (also reached for an [absentCodes] exit —
+///   `security find-generic-password -w` prints nothing on a miss);
+/// - otherwise `found` with the stripped stdout.
+SecureKeyReadOutcome _classifyRead(
+  SecureKeyRunResult result,
+  String name, {
+  Set<int> absentCodes = const {},
+}) {
+  if (result.timedOut) {
+    return SecureKeyReadOutcome(
+      name,
+      SecureKeyReadStatus.error,
+      error: _errorTail(
+        result,
+        'timed out after ${secureKeyProcessTimeout.inSeconds}s',
+      ),
+    );
+  }
+  if (result.exitCode != 0 && !absentCodes.contains(result.exitCode)) {
+    return SecureKeyReadOutcome(
+      name,
+      SecureKeyReadStatus.error,
+      error: _errorTail(result, 'exit ${result.exitCode}'),
+    );
+  }
+  final value = _output(result.stdout);
+  return value.isEmpty
+      ? SecureKeyReadOutcome(name, SecureKeyReadStatus.absent)
+      : SecureKeyReadOutcome(name, SecureKeyReadStatus.found, value: value);
+}
 
 /// The per-invocation cap for helper processes (`security`, `secret-tool`,
 /// `powershell.exe`) — they can block on a system keychain modal on a
@@ -235,30 +266,7 @@ final class _MacosKeychainStore
       name,
       '-w',
     ]);
-    if (result.timedOut) {
-      return SecureKeyReadOutcome(
-        name,
-        SecureKeyReadStatus.error,
-        error: _errorTail(
-          result,
-          'timed out after ${secureKeyProcessTimeout.inSeconds}s',
-        ),
-      );
-    }
-    if (result.exitCode == 0) {
-      final value = _output(result.stdout);
-      return value.isEmpty
-          ? SecureKeyReadOutcome(name, SecureKeyReadStatus.absent)
-          : SecureKeyReadOutcome(name, SecureKeyReadStatus.found, value: value);
-    }
-    if (result.exitCode == 44) {
-      return SecureKeyReadOutcome(name, SecureKeyReadStatus.absent);
-    }
-    return SecureKeyReadOutcome(
-      name,
-      SecureKeyReadStatus.error,
-      error: _errorTail(result, 'exit ${result.exitCode}'),
-    );
+    return _classifyRead(result, name, absentCodes: const {44});
   }
 
   @override
@@ -343,27 +351,7 @@ final class _LinuxSecretServiceStore
       'name',
       name,
     ]);
-    if (result.timedOut) {
-      return SecureKeyReadOutcome(
-        name,
-        SecureKeyReadStatus.error,
-        error: _errorTail(
-          result,
-          'timed out after ${secureKeyProcessTimeout.inSeconds}s',
-        ),
-      );
-    }
-    if (result.exitCode != 0) {
-      return SecureKeyReadOutcome(
-        name,
-        SecureKeyReadStatus.error,
-        error: _errorTail(result, 'exit ${result.exitCode}'),
-      );
-    }
-    final value = _output(result.stdout);
-    return value.isEmpty
-        ? SecureKeyReadOutcome(name, SecureKeyReadStatus.absent)
-        : SecureKeyReadOutcome(name, SecureKeyReadStatus.found, value: value);
+    return _classifyRead(result, name);
   }
 
   @override
@@ -443,27 +431,7 @@ final class _WindowsCredentialLockerStore
       r'$c.RetrievePassword(); $c.Password '
       "} catch { '' }",
     );
-    if (result.timedOut) {
-      return SecureKeyReadOutcome(
-        name,
-        SecureKeyReadStatus.error,
-        error: _errorTail(
-          result,
-          'timed out after ${secureKeyProcessTimeout.inSeconds}s',
-        ),
-      );
-    }
-    if (result.exitCode != 0) {
-      return SecureKeyReadOutcome(
-        name,
-        SecureKeyReadStatus.error,
-        error: _errorTail(result, 'exit ${result.exitCode}'),
-      );
-    }
-    final value = _output(result.stdout);
-    return value.isEmpty
-        ? SecureKeyReadOutcome(name, SecureKeyReadStatus.absent)
-        : SecureKeyReadOutcome(name, SecureKeyReadStatus.found, value: value);
+    return _classifyRead(result, name);
   }
 
   @override

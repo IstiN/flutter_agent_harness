@@ -1534,8 +1534,6 @@ Future<void> _runApp(List<String> args) async {
         parsed.debugSecrets ||
         isTruthyEnvValue(Platform.environment['FA_DEBUG_KEYS']),
     storeLabel: keyCache.label,
-    saveFailures: keyCache.saveFailures,
-    lastSaveError: keyCache.lastSaveError,
   )) {
     stderr.writeln(line);
   }

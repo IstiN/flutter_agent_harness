@@ -285,19 +285,19 @@ Set<String> referencedSecureKeyNames(CliConfig saved) {
 /// prints after `preload`. With [debug] (`--debug-secrets` / truthy
 /// `FA_DEBUG_KEYS`) one `[keys]` line per preload outcome plus a summary —
 /// `found` / `absent` / `error: <diagnostic>` — so a degraded keychain is
-/// diagnosable instead of silently empty. INDEPENDENT of [debug], one
-/// warning fires when the store answered but NONE of the config-referenced
-/// [referencedKeyNames] resolved — the "every provider boots keyless with
-/// no log trail" state — naming the count. Save degradations
-/// ([saveFailures] / [lastSaveError], recorded by [SecureKeyCache.save])
-/// join the same summary; the per-save print at the call site stays.
+/// diagnosable instead of silently empty. INDEPENDENT of [debug]:
+/// - one warning fires when the store answered but NONE of the
+///   config-referenced [referencedKeyNames] resolved — the "every provider
+///   boots keyless with no log trail" state — naming the count;
+/// - a per-name warning fires whenever any referenced name classified
+///   `error` (gh-1059 review: a boot where 7 of 8 keys fail to read but one
+///   resolves is just as keyless for those 7) — the store ANSWERED and
+///   failed, exactly the state worth naming.
 List<String> secureKeyBootDiagnostics({
   required SecureKeyPreloadReport report,
   required Set<String> referencedKeyNames,
   required bool debug,
   String? storeLabel,
-  int saveFailures = 0,
-  String? lastSaveError,
 }) {
   final lines = <String>[];
   final label = storeLabel ?? 'secure store';
@@ -351,11 +351,25 @@ List<String> secureKeyBootDiagnostics({
       '(the stored values were not touched)',
     );
   }
-  if (saveFailures > 0) {
+  // gh-1059 review: `error` means the store answered and FAILED — the
+  // exact state worth naming, even when other referenced keys resolved.
+  final erroredReferenced = referencedKeyNames
+      .where(
+        (name) => report.outcomes.any(
+          (o) => o.name == name && o.status == SecureKeyReadStatus.error,
+        ),
+      )
+      .toList()
+        ..sort();
+  if (erroredReferenced.isNotEmpty) {
+    final hint = debug
+        ? 'see the [keys] lines above'
+        : 'run with --debug-secrets (or FA_DEBUG_KEYS=1) to see the errors';
     lines.add(
-      'warning: $saveFailures secure-store save(s) degraded to session-only'
-      '${lastSaveError == null ? '' : ' ($lastSaveError)'} — re-enter the '
-      'keys once the store is writable',
+      'warning: ${erroredReferenced.length} provider key(s) referenced by '
+      'the config failed to read from the $label: '
+      '${erroredReferenced.join(', ')} — those providers boot keyless; '
+      're-enter a key or $hint (the stored values were not touched)',
     );
   }
   return lines;

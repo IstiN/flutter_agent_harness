@@ -62,6 +62,17 @@ final class SecureKeyReadOutcome {
   final String? error;
 }
 
+/// Collapses a diagnostic to one log-safe line: trim → collapse internal
+/// whitespace → keep the LAST 200 chars (failures announce themselves in
+/// the tail). The ONE canonical collapse (gh-1059 review): both the
+/// preload error paths and the platform runner's captured stderr go
+/// through it, so boot diagnostics and helper diagnostics can never drift
+/// apart (a diverged cap would truncate the two surfaces differently).
+String secureKeyDiagnosticLine(String text) {
+  final flat = text.trim().replaceAll(RegExp(r'\s+'), ' ');
+  return flat.length > 200 ? flat.substring(flat.length - 200) : flat;
+}
+
 /// The summary of one [SecureKeyCache.preload] run. The executable turns
 /// it into per-name debug lines and the zero-resolved boot warning — the
 /// cache itself never prints (a keychain must never break startup, and
@@ -168,7 +179,7 @@ final class SecureKeyCache {
           return SecureKeyReadOutcome(
             name,
             SecureKeyReadStatus.error,
-            error: _oneLine(error.toString()),
+            error: secureKeyDiagnosticLine(error.toString()),
           );
         }
       }),
@@ -192,7 +203,8 @@ final class SecureKeyCache {
 
   /// How many save attempts degraded to session-only since process start
   /// (unavailable store or a failing write — gh-1059: the loud per-save
-  /// print stays, and the boot summary can name the degradations too).
+  /// print stays, and `/key` status names the degradations; saves happen
+  /// after boot, so the boot summary deliberately does not cover them).
   int get saveFailures => _saveFailures;
 
   /// The last save degradation's diagnostic, when any.
@@ -210,7 +222,7 @@ final class SecureKeyCache {
     try {
       await _store!.write(name, value);
     } on Object catch (error) {
-      _recordSaveFailure(_oneLine(error.toString()));
+      _recordSaveFailure(secureKeyDiagnosticLine(error.toString()));
       return false;
     }
     _snapshot[name] = value;
@@ -248,11 +260,5 @@ final class SecureKeyCache {
     return value != null && value.isNotEmpty
         ? SecureKeyReadOutcome(name, SecureKeyReadStatus.found, value: value)
         : SecureKeyReadOutcome(name, SecureKeyReadStatus.absent);
-  }
-
-  /// Collapses a diagnostic to one log-safe line, capped at 200 chars.
-  String _oneLine(String text) {
-    final flat = text.trim().replaceAll(RegExp(r'\s+'), ' ');
-    return flat.length > 200 ? flat.substring(flat.length - 200) : flat;
   }
 }
