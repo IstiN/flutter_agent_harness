@@ -14,6 +14,12 @@ const _newGitattributesLines = [
   'deleted/*.md merge=union',
 ];
 
+const _harnessGitattributesLines = [
+  'question/*.md merge=union',
+  'answer/*.md merge=union',
+  'note/*.md merge=union',
+];
+
 void main() {
   group('tombstone deletions through MemoryController (gh-1032 IT-1)', () {
     test(
@@ -98,6 +104,32 @@ void main() {
     });
 
     test(
+      'set-difference consolidation progress works over the adapter '
+      '(library 0.2.3 unprocessedDeletions, no harness change)',
+      () async {
+        final env = MemoryExecutionEnv(cwd: '/work');
+        final controller = MemoryController(env: env);
+        final added = await controller.add(text: 'consolidation probe');
+        await controller.delete(added.id);
+
+        // The consolidation flow reads deleted/ through the storage
+        // adapter: listFilePaths('deleted') + readFile.
+        final service = MemoryDeletionService(
+          ExecutionEnvKbStorage(env, _store),
+        );
+        final pending = await service.unprocessedDeletions();
+        expect(pending.map((d) => d.id), [added.id]);
+        await service.markDeletionsProcessed(pending);
+        expect(await service.unprocessedDeletions(), isEmpty);
+        // The marker is a local derivative — the library keeps it out of
+        // git alongside MEMORY.revision & co.
+        final gitignore =
+            (await env.readTextFile('$_store/.gitignore')).valueOrNull ?? '';
+        expect(gitignore, contains('.last_deletions'));
+      },
+    );
+
+    test(
       'legacy ledger-only store still answers isDeleted/hasDeletedText (E1)',
       () async {
         final env = MemoryExecutionEnv(cwd: '/work');
@@ -144,12 +176,17 @@ consolidatedUpTo: 0
           (await env.readTextFile('$_store/.gitattributes')).valueOrNull!;
       // Old content preserved…
       expect(gitattributes, contains('DELETIONS.md merge=union'));
-      // …exactly the new union drivers appended…
+      // …the library's new union drivers for its plural layout…
       for (final line in _newGitattributesLines) {
         expect(gitattributes, contains(line));
       }
-      // …no duplicates.
-      expect('merge=union'.allMatches(gitattributes), hasLength(5));
+      // …and the harness's own union drivers for the adapter's singular
+      // entity dirs (the library lines do not match note/ question/ answer/).
+      for (final line in _harnessGitattributesLines) {
+        expect(gitattributes, contains(line));
+      }
+      // No duplicates: 5 library lines + 3 harness lines.
+      expect('merge=union'.allMatches(gitattributes), hasLength(8));
 
       final gitignore =
           (await env.readTextFile('$_store/.gitignore')).valueOrNull!;

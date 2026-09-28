@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_agent_harness/src/memory/execution_env_kb_storage.dart';
+import 'package:flutter_agent_harness/src/memory/memory_repo_git_support.dart';
 import 'package:flutter_agent_memory/flutter_agent_memory.dart';
 import 'package:test/test.dart';
 
@@ -57,10 +58,12 @@ void main() {
     'harness tombstone on one branch + edit on the other rebases cleanly '
     '(AC3)',
     () async {
-      // Base: a committed memory store with one note.
+      // Base: a committed memory store with one note, initialized exactly
+      // like MemoryController.projectStore does it.
       final s = store();
       final note = await s.addNote(text: 'Shared fact across branches.');
       await MemoryRepoInit(s.storage).ensureGitSupport();
+      await ensureHarnessMergeDrivers(s.storage);
       await git(['init', '-q']);
       // Pin the branch name regardless of init.defaultBranch config.
       await git(['symbolic-ref', 'HEAD', 'refs/heads/main']);
@@ -72,7 +75,7 @@ void main() {
       // tombstone-in-place, the file is rewritten, never unlinked.
       await git(['checkout', '-q', '-b', 'agent-a']);
       expect(await store().deleteRecord(note.id), isTrue);
-      final tombstone = File('${repo.path}/notes/${note.id}.md');
+      final tombstone = File('${repo.path}/note/${note.id}.md');
       expect(tombstone.existsSync(), isTrue);
       expect(
         FileKbStorage.isTombstoneContent(tombstone.readAsStringSync()),

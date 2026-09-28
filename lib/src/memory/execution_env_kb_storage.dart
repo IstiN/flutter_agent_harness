@@ -73,6 +73,12 @@ final class ExecutionEnvKbStorage
     FileKbStorage.tombstoneContentFor(id, currentUtcTimestamp()),
   );
 
+  /// Physically removes tombstoned entity files and returns the sorted
+  /// purged ids. Re-introduces deletions into git history — run only in
+  /// maintenance windows (quiet, no concurrent writer); the harness wires
+  /// no automatic purge (E3: opt-in manual/CLI use only). The ledger and
+  /// `deleted/` records keep the deletion history, so purging loses
+  /// nothing.
   @override
   FutureOr<List<String>> purgeTombstones() async {
     final removed = <String>[];

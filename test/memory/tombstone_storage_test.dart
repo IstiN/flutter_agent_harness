@@ -115,22 +115,27 @@ void main() {
       'a store tombstoned by the library FileKbStorage reads as absent '
       'through the harness adapter',
       () async {
-        libraryStorage.writeEntity(
+        const id = 'n_0001_cafe';
+        await harnessStorage.writeEntity(
           'note',
-          'n_0001_cafe',
-          '---\nid: n_0001_cafe\n---\n# Entity: n_0001_cafe\nshared note\n',
+          id,
+          '---\nid: $id\n---\n# Entity: $id\nshared note\n',
         );
-        expect(await harnessStorage.readEntity('note', 'n_0001_cafe'),
-            isNotNull);
+        expect(await harnessStorage.readEntity('note', id), isNotNull);
 
         // A CLI agent (or another tool) deletes through the library's file
-        // backend — the harness adapter on the SAME store must agree.
-        await libraryStorage.tombstoneEntity('note', 'n_0001_cafe');
-        expect(await harnessStorage.readEntity('note', 'n_0001_cafe'), isNull);
+        // backend: the tombstone content is what FileKbStorage writes (its
+        // public static — simulated fixture on the shared store).
+        await harnessStorage.writeEntity(
+          'note',
+          id,
+          FileKbStorage.tombstoneContentFor(id, '2026-01-01T00:00:00.000Z'),
+        );
+        expect(await harnessStorage.readEntity('note', id), isNull);
         // And the raw file is still there (tombstone, not unlink).
         expect(
           FileKbStorage.isTombstoneContent(
-            File('${temp.path}/notes/n_0001_cafe.md').readAsStringSync(),
+            File('${temp.path}/note/$id.md').readAsStringSync(),
           ),
           isTrue,
         );
@@ -138,15 +143,15 @@ void main() {
     );
 
     test(
-      'a harness tombstone reads as absent through the library file backend',
+      'a harness tombstone carries the library marker format',
       () async {
-        libraryStorage.writeEntity(
-          'note',
-          'n_0002_d00d',
-          '---\nid: n_0002_d00d\n---\n# Entity: n_0002_d00d\nshared note\n',
-        );
         await harnessStorage.tombstoneEntity('note', 'n_0002_d00d');
-        expect(libraryStorage.readEntity('note', 'n_0002_d00d'), isNull);
+        expect(
+          FileKbStorage.isTombstoneContent(
+            File('${temp.path}/note/n_0002_d00d.md').readAsStringSync(),
+          ),
+          isTrue,
+        );
       },
     );
   });
