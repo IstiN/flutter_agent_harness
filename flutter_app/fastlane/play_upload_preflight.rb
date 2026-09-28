@@ -100,17 +100,20 @@ module PlayUploadPreflight
   end
 
   # Options hash for the store-listing lane (fastlane android play_store):
-  # metadata texts + images (icon/featureGraphic) + screenshots from
-  # fastlane/metadata/android/<locale>/ — NEVER a binary (AABs ride the
-  # upload_only lane) and never changelogs (Play release notes need a
-  # version code and ride the binary upload instead).
+  # metadata TEXTS from fastlane/metadata/android/<locale>/ — NEVER a binary
+  # (AABs ride the upload_only lane) and never changelogs (Play release
+  # notes need a version code and ride the binary upload instead).
+  # Images never ride supply either (issue #947): Play appends screenshot
+  # uploads, so a supply-only upload lets stale shots survive. The images
+  # go through PlayListingSync instead — whole set replaced per locale +
+  # device type, verified by sha256 — so supply always skips them.
   def supply_listing_options(track:, metadata:, images:, validate_only:)
     {
       track: track,
       skip_upload_aab: true,
       skip_upload_metadata: !(metadata && !validate_only),
-      skip_upload_images: !(images && !validate_only),
-      skip_upload_screenshots: !(images && !validate_only),
+      skip_upload_images: true,
+      skip_upload_screenshots: true,
       skip_upload_changelogs: true
     }
   end
