@@ -186,11 +186,11 @@ Future<JsrPackageResolution> _resolveJsrRoot(
     return JsrPackageMissing(
       detail: '$configPath: invalid rootUri "$rootUriRaw" ($error)',
     );
-  } on UnsupportedError catch (error) {
+  } on UnsupportedError {
     return JsrPackageMissing(
       detail: '$configPath: rootUri "$rootUriRaw" is not a file URI',
     );
-  } on ArgumentError catch (error) {
+  } on ArgumentError {
     return JsrPackageMissing(
       detail: '$configPath: rootUri "$rootUriRaw" is not a file URI',
     );
