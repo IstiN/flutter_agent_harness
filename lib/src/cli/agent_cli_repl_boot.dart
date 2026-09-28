@@ -13,6 +13,33 @@ extension on AgentCli {
   /// The line-mode REPL: banner, restored-session replay, then the
   /// read-dispatch loop.
   Future<void> _runLineRepl() async {
+    final lineIterator = await _primeLineModeInput();
+    while (await lineIterator.moveNext()) {
+      var line = lineIterator.current;
+      // A fresh user line clears the abort marker: the settle path already
+      // dropped (or ran) the interrupted run's leftover steering.
+      _abortRequested = false;
+      if (line.trim() == '/') {
+        final choice = await _showLineModeMenu(lineIterator);
+        if (choice != null) line = choice;
+      }
+      await _handleLine(line);
+      if (_exited) break;
+      // No idle prompt while a guided flow owns input: its questions
+      // would interleave with the status bar, and each answered prompt
+      // would print a redundant one.
+      if (!isBusy && !_providerFlowActive) _writeIdlePrompt();
+    }
+  }
+
+  /// Everything that must happen before the line-mode dispatch loop reads
+  /// its first line: the banner, the restored-session replay, the one-time
+  /// skills-consent question, and the fresh-install wizard (issue #969)
+  /// with its idle-prompt restoration. Returns the iterator the loop reads
+  /// from — the prologue reads answers straight from the line stream
+  /// (the dispatch loop is not running yet, so this pre-loop iterator
+  /// cannot route to `_pendingPromptAnswer`).
+  Future<StreamIterator<String>> _primeLineModeInput() async {
     await _printBanner();
     await _printViewerBannerIfAny();
     // Warm the model cache here too (the TUI path does): the endpoint-
@@ -45,22 +72,7 @@ extension on AgentCli {
       );
     }
     if (!_providerFlowActive) _writeIdlePrompt();
-    while (await lineIterator.moveNext()) {
-      var line = lineIterator.current;
-      // A fresh user line clears the abort marker: the settle path already
-      // dropped (or ran) the interrupted run's leftover steering.
-      _abortRequested = false;
-      if (line.trim() == '/') {
-        final choice = await _showLineModeMenu(lineIterator);
-        if (choice != null) line = choice;
-      }
-      await _handleLine(line);
-      if (_exited) break;
-      // No idle prompt while a guided flow owns input: its questions
-      // would interleave with the status bar, and each answered prompt
-      // would print a redundant one.
-      if (!isBusy && !_providerFlowActive) _writeIdlePrompt();
-    }
+    return lineIterator;
   }
 
   Future<void> _runTuiRepl() async {
