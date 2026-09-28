@@ -378,7 +378,7 @@ if (path = ENV["GITHUB_STEP_SUMMARY"])
   File.write(path, <<~SUMMARY, mode: "a")
     ## Store appearance check (gh-1041)
 
-    Expected: app `#{expected['app']}` • pub.dev `#{expected['pubdev']}` • horizon #{horizon} min (legs started: `#{since || 'unknown'}`) • stub due: #{stub_due}
+    Expected: app `#{expected['app']}` • pub.dev `#{expected['pubdev']}` • horizon #{horizon} min (legs started: `#{since || 'unknown'}`#{leg&.dig('status') ? " • leg status: #{leg['status']}" : ''}) • stub due: #{stub_due}#{lifecycle_error ? " • LIFECYCLE ABORTED: #{lifecycle_error.to_s[0, 120]}" : ''}
 
     | Store | Expected | Verdict |
     | --- | --- | --- |

@@ -14,7 +14,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-
 import 'package:crypto/crypto.dart';
 
 Future<void> main(List<String> args) async {
@@ -329,7 +328,8 @@ Future<void> main(List<String> args) async {
 })()
 """;
   final probe = await send('Runtime.evaluate', {
-    'expression': "location.href + ' chrome=' + (typeof chrome) + ' runtime=' + (typeof chrome?.runtime)",
+    'expression':
+        "location.href + ' chrome=' + (typeof chrome) + ' runtime=' + (typeof chrome?.runtime)",
     'returnByValue': true,
   }, pageSession);
   stderr.writeln('=== probe: ${jsonEncode(probe['result'])}');
@@ -369,9 +369,9 @@ Future<void> main(List<String> args) async {
 /// The unpacked-extension id: SHA-256 of the manifest `key` — first 16
 /// bytes, hex digits mapped 0-9a-f → a-p (see check_extension_panel.dart).
 String extensionIdForPath(String path) {
-  final manifest = jsonDecode(
-    File('$path/manifest.json').readAsStringSync(),
-  ) as Map<String, dynamic>;
+  final manifest =
+      jsonDecode(File('$path/manifest.json').readAsStringSync())
+          as Map<String, dynamic>;
   final key = manifest['key'] as String?;
   final List<int> input = key != null ? base64Decode(key) : utf8.encode(path);
   final digest = sha256.convert(input).bytes;

@@ -145,7 +145,7 @@ void main() {
     });
 
     test(
-      'dispatch inputs reach the script through env:, never ${{ }} interpolation '
+      'dispatch inputs reach the script through env:, never ${{}} interpolation '
       '(review gh-1041 thread 4 — script injection hardening)',
       () {
         final text = read(workflowPath);
@@ -165,7 +165,8 @@ void main() {
         expect(
           onlyStep['run'].toString(),
           contains('"\$STORES_INPUT"'),
-          reason: 'the input rides an intermediate env var (GitHub hardening guide)',
+          reason:
+              'the input rides an intermediate env var (GitHub hardening guide)',
         );
         final env = onlyStep['env'] as YamlMap;
         expect(env['STORES_INPUT'].toString(), r'${{ inputs.stores }}');
@@ -519,8 +520,8 @@ exit 0
         'STORE_APPEARANCE_PUBDEV_BASE': 'http://127.0.0.1:$port/pubdev',
         'STORE_APPEARANCE_RUN_URL': 'https://ci/runs/it',
         if (dryRun) 'STORE_APPEARANCE_DRY_RUN': '1',
-        if (now != null) 'STORE_APPEARANCE_NOW': now,
-        if (since != null) 'STORE_APPEARANCE_SINCE': since,
+        'STORE_APPEARANCE_NOW': ?now,
+        'STORE_APPEARANCE_SINCE': ?since,
         if (failIssueList) 'FAIL_ISSUE_LIST': '1',
         if (withSecrets) ...{
           'APP_STORE_CONNECT_KEY_ID': 'TESTKID',
@@ -851,97 +852,89 @@ exit 0
       },
     );
 
-    test(
-      'a failed gh READ aborts the lifecycle — never a duplicate stub '
-      '(review gh-1041 thread 3)',
-      () async {
-        if (!rubyAvailable) return;
-        // Everything absent + past the horizon: the state WOULD file stubs —
-        // but the stub-list read itself fails, so the run must go red and
-        // plan nothing instead of reading the failure as "no stubs exist".
-        final r = await runCheck(
-          asc: 'absent',
-          play: 'absent',
-          pubdev: 'absent',
-          failIssueList: true,
-        );
-        expect(r.exitCode, 1, reason: 'a failed gh read is loud, not silent');
-        final result = resultOf(r);
-        expect(
-          (result['lifecycle_error'] as String?) ?? '',
-          isNotEmpty,
-          reason: 'the aborted lifecycle is part of the machine result',
-        );
-        expect(
-          ghLog().where((l) => l.contains('issue create')),
-          isEmpty,
-          reason: 'no stub may be planned on partially-read state (AC3)',
-        );
-      },
-    );
+    test('a failed gh READ aborts the lifecycle — never a duplicate stub '
+        '(review gh-1041 thread 3)', () async {
+      if (!rubyAvailable) return;
+      // Everything absent + past the horizon: the state WOULD file stubs —
+      // but the stub-list read itself fails, so the run must go red and
+      // plan nothing instead of reading the failure as "no stubs exist".
+      final r = await runCheck(
+        asc: 'absent',
+        play: 'absent',
+        pubdev: 'absent',
+        failIssueList: true,
+      );
+      expect(r.exitCode, 1, reason: 'a failed gh read is loud, not silent');
+      final result = resultOf(r);
+      expect(
+        (result['lifecycle_error'] as String?) ?? '',
+        isNotEmpty,
+        reason: 'the aborted lifecycle is part of the machine result',
+      );
+      expect(
+        ghLog().where((l) => l.contains('issue create')),
+        isEmpty,
+        reason: 'no stub may be planned on partially-read state (AC3)',
+      );
+    });
 
-    test(
-      'a partial --only run posts no all-green summary '
-      '(review gh-1041 thread 2)',
-      () async {
-        if (!rubyAvailable) return;
-        final r = await runCheck(only: 'pubdev', publishStubs: [7]);
-        expect(r.exitCode, 0, reason: '${r.stderr}');
-        final verdicts = resultOf(r)['verdicts'] as Map;
-        expect(verdicts.keys, ['pubdev']);
-        expect(
-          ghLog().where((l) => l.contains('issue comment 7')),
-          isEmpty,
-          reason: 'one store is not "all stores" — the summary and its '
-              'day-marker must wait for the full family',
-        );
-      },
-    );
+    test('a partial --only run posts no all-green summary '
+        '(review gh-1041 thread 2)', () async {
+      if (!rubyAvailable) return;
+      final r = await runCheck(only: 'pubdev', publishStubs: [7]);
+      expect(r.exitCode, 0, reason: '${r.stderr}');
+      final verdicts = resultOf(r)['verdicts'] as Map;
+      expect(verdicts.keys, ['pubdev']);
+      expect(
+        ghLog().where((l) => l.contains('issue comment 7')),
+        isEmpty,
+        reason:
+            'one store is not "all stores" — the summary and its '
+            'day-marker must wait for the full family',
+      );
+    });
 
-    test(
-      'the horizon follows the REAL leg state: still running → report only '
-      '(review gh-1041 thread 5)',
-      () async {
-        if (!rubyAvailable) return;
-        // since env unset → the script resolves the legs via `gh run list`
-        // (needs the workflow's actions:read); the day's run is IN PROGRESS,
-        // so the build may not even be uploaded — absence must not stub.
-        final running = await runCheck(
-          asc: 'absent',
-          play: 'absent',
-          pubdev: 'absent',
-          since: null,
-          dailyRunJson:
-              '{"createdAt":"2026-09-29T05:17:00Z","status":"in_progress","conclusion":null}',
-        );
-        expect(running.exitCode, 0, reason: 'a running leg owns the horizon');
-        expect(
-          ghLog().any((l) => l.contains('run list')),
-          isTrue,
-          reason: 'the leg state is fetched via gh run list (actions:read)',
-        );
-        expect(
-          ghLog().where((l) => l.contains('issue create')),
-          isEmpty,
-          reason: 'no stub while the publish leg is still running',
-        );
-        expect(resultOf(running)['since'], '2026-09-29T05:17:00Z');
+    test('the horizon follows the REAL leg state: still running → report only '
+        '(review gh-1041 thread 5)', () async {
+      if (!rubyAvailable) return;
+      // since env unset → the script resolves the legs via `gh run list`
+      // (needs the workflow's actions:read); the day's run is IN PROGRESS,
+      // so the build may not even be uploaded — absence must not stub.
+      final running = await runCheck(
+        asc: 'absent',
+        play: 'absent',
+        pubdev: 'absent',
+        since: null,
+        dailyRunJson:
+            '{"createdAt":"2026-09-29T05:17:00Z","status":"in_progress","conclusion":null}',
+      );
+      expect(running.exitCode, 0, reason: 'a running leg owns the horizon');
+      expect(
+        ghLog().any((l) => l.contains('run list')),
+        isTrue,
+        reason: 'the leg state is fetched via gh run list (actions:read)',
+      );
+      expect(
+        ghLog().where((l) => l.contains('issue create')),
+        isEmpty,
+        reason: 'no stub while the publish leg is still running',
+      );
+      expect(resultOf(running)['since'], '2026-09-29T05:17:00Z');
 
-        final finished = await runCheck(
-          asc: 'absent',
-          play: 'absent',
-          pubdev: 'absent',
-          since: null,
-          dailyRunJson:
-              '{"createdAt":"2026-09-29T05:17:00Z","status":"completed","conclusion":"success"}',
-        );
-        expect(finished.exitCode, 1, reason: 'absent past the horizon is loud');
-        expect(
-          ghLog().where((l) => l.contains('issue create')).length,
-          3,
-          reason: 'a finished leg + absence past the horizon files the stubs',
-        );
-      },
-    );
+      final finished = await runCheck(
+        asc: 'absent',
+        play: 'absent',
+        pubdev: 'absent',
+        since: null,
+        dailyRunJson:
+            '{"createdAt":"2026-09-29T05:17:00Z","status":"completed","conclusion":"success"}',
+      );
+      expect(finished.exitCode, 1, reason: 'absent past the horizon is loud');
+      expect(
+        ghLog().where((l) => l.contains('issue create')).length,
+        3,
+        reason: 'a finished leg + absence past the horizon files the stubs',
+      );
+    });
   });
 }
