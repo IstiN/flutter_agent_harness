@@ -837,17 +837,33 @@ void main() {
       expect(lines, isEmpty);
     });
 
-    test('an unavailable store prints nothing without debug (no reads '
-        'attempted, env keys may still resolve)', () {
-      final lines = secureKeyBootDiagnostics(
-        report: const SecureKeyPreloadReport(
+    test('an unavailable store stays quiet for env-only configs but warns '
+        'when the config references store keys', () {
+      final base = {
+        'report': const SecureKeyPreloadReport(
           storeAvailable: false,
           outcomes: [],
         ),
-        referencedKeyNames: {'FA_KEY_CHATGPT_COM'},
+        'debug': false,
+      };
+      // Env-only: nothing referenced, nothing to warn about.
+      expect(
+        secureKeyBootDiagnostics(
+          report: base['report'] as SecureKeyPreloadReport,
+          referencedKeyNames: const {},
+          debug: base['debug'] as bool,
+        ),
+        isEmpty,
+      );
+      // Referenced keys + no backend: the boot is keyless for them — loud.
+      final lines = secureKeyBootDiagnostics(
+        report: base['report'] as SecureKeyPreloadReport,
+        referencedKeyNames: {'FA_KEY_CHATGPT_COM', 'FA_KEY_Z_AI'},
         debug: false,
       );
-      expect(lines, isEmpty);
+      expect(lines, hasLength(1));
+      expect(lines.single, contains('2 provider key(s)'));
+      expect(lines.single, contains('store unavailable'));
     });
 
     test('save degradations join the summary', () {

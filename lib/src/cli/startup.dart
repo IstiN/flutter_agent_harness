@@ -305,6 +305,16 @@ List<String> secureKeyBootDiagnostics({
     if (debug) {
       lines.add('[keys] $label unavailable — no keychain reads attempted');
     }
+    // Referenced store keys with no backend resolve 0 too — the boot is
+    // keyless for them all the same ("never stay invisible").
+    if (referencedKeyNames.isNotEmpty) {
+      lines.add(
+        'warning: ${referencedKeyNames.length} provider key(s) referenced '
+        'by the config (custom providers / roles) resolved NOTHING from '
+        'the $label (store unavailable, no reads attempted) — those '
+        'providers boot keyless',
+      );
+    }
     return lines;
   }
   final resolvedReferenced = referencedKeyNames
