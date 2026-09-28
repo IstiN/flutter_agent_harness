@@ -11,6 +11,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:crypto/crypto.dart';
 
 Future<void> main(List<String> args) async {
@@ -154,8 +155,7 @@ Future<void> main(List<String> args) async {
   await send('Runtime.enable', null, bgSession);
   await Future<void>.delayed(const Duration(seconds: 1));
   final fetchProbe = await send('Runtime.evaluate', {
-    'expression':
-        "fetch(chrome.runtime.getURL('panel/panel.html')).then(r => r.status).catch(e => 'ERR ' + e)",
+    'expression': "fetch(chrome.runtime.getURL('panel/panel.html')).then(r => r.status).catch(e => 'ERR ' + e)",
     'returnByValue': true,
     'awaitPromise': true,
   }, bgSession);
@@ -173,8 +173,7 @@ Future<void> main(List<String> args) async {
   await send('Log.enable', null, panelSession);
   await Future<void>.delayed(Duration(seconds: watchSecs));
   final probe = await send('Runtime.evaluate', {
-    'expression':
-        "location.href + ' | ready=' + document.readyState + ' | flutter=' + (typeof window._flutter !== 'undefined')",
+    'expression': "location.href + ' | ready=' + document.readyState + ' | flutter=' + (typeof window._flutter !== 'undefined')",
     'returnByValue': true,
   }, panelSession);
   stderr.writeln('=== probe: ${jsonEncode(probe)}');
@@ -205,9 +204,9 @@ Future<void> main(List<String> args) async {
 /// key) when present, else of the absolute load path — first 16 bytes,
 /// hex digits mapped 0-9a-f → a-p.
 String extensionIdForPath(String path) {
-  final manifest =
-      jsonDecode(File('$path/manifest.json').readAsStringSync())
-          as Map<String, dynamic>;
+  final manifest = jsonDecode(
+    File('$path/manifest.json').readAsStringSync(),
+  ) as Map<String, dynamic>;
   final key = manifest['key'] as String?;
   final List<int> input = key != null ? base64Decode(key) : utf8.encode(path);
   final digest = sha256.convert(input).bytes;

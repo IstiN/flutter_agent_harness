@@ -36,47 +36,70 @@ void main() {
 
   group('workflow — store-appearance-check.yml (AC2)', () {
     final workflow = loadYaml(read(workflowPath)) as Map;
-    final on = (workflow['on'] ?? workflow[true]) as Map; // YAML 1.1 keys `on` as true
+    final on =
+        (workflow['on'] ?? workflow[true]) as Map; // YAML 1.1 keys `on` as true
 
     test('schedule = daily-publish + exactly 120 minutes (owner ruling)', () {
-      final daily = loadYaml(read('.github/workflows/daily-publish.yml')) as Map;
+      final daily =
+          loadYaml(read('.github/workflows/daily-publish.yml')) as Map;
       final dailyOn = (daily['on'] ?? daily[true]) as Map;
-      final dailyCron =
-          RegExp(r"'([\d*]+) ([\d*]+) ([\d*]+) ([\d*]+) ([\d*]+)'")
-              .firstMatch((dailyOn['schedule'] as List).first.toString());
-      final checkCron =
-          RegExp(r"'([\d*]+) ([\d*]+) ([\d*]+) ([\d*]+) ([\d*]+)'")
-              .firstMatch((on['schedule'] as List).first.toString());
+      final dailyCron = RegExp(
+        r"'([\d*]+) ([\d*]+) ([\d*]+) ([\d*]+) ([\d*]+)'",
+      ).firstMatch((dailyOn['schedule'] as List).first.toString());
+      final checkCron = RegExp(
+        r"'([\d*]+) ([\d*]+) ([\d*]+) ([\d*]+) ([\d*]+)'",
+      ).firstMatch((on['schedule'] as List).first.toString());
       expect(checkCron, isNotNull, reason: 'the check carries a cron schedule');
       expect(dailyCron, isNotNull);
-      expect(checkCron!.group(1), dailyCron!.group(1), reason: 'same minute as the daily legs');
-      expect(int.parse(checkCron.group(2)!) - int.parse(dailyCron.group(2)!), 2,
-          reason: 'exactly 120 min after the daily publish legs start (gh-1041)');
+      expect(
+        checkCron!.group(1),
+        dailyCron!.group(1),
+        reason: 'same minute as the daily legs',
+      );
+      expect(
+        int.parse(checkCron.group(2)!) - int.parse(dailyCron.group(2)!),
+        2,
+        reason: 'exactly 120 min after the daily publish legs start (gh-1041)',
+      );
     });
 
     test('manual dispatch with a stores choice + horizon input', () {
       final dispatch = on['workflow_dispatch'] as Map;
       final inputs = dispatch['inputs'] as Map;
-      expect((inputs['stores'] as Map)['options'].toString(),
-          allOf(contains('testflight'), contains('play'), contains('pubdev')));
+      expect(
+        (inputs['stores'] as Map)['options'].toString(),
+        allOf(contains('testflight'), contains('play'), contains('pubdev')),
+      );
       expect(inputs.keys, contains('horizon_minutes'));
     });
 
     test('read-only token + issues:write for the stub lifecycle', () {
       final perms = workflow['permissions'] as Map;
       expect(perms['contents'].toString(), 'read');
-      expect(perms['issues'].toString(), 'write',
-          reason: 'stub filing/updates and green summaries need issues:write');
-      expect(perms.containsKey('id-token'), isFalse,
-          reason: 'the check is read-only against the stores — no upload-grade token');
+      expect(
+        perms['issues'].toString(),
+        'write',
+        reason: 'stub filing/updates and green summaries need issues:write',
+      );
+      expect(
+        perms.containsKey('id-token'),
+        isFalse,
+        reason:
+            'the check is read-only against the stores — no upload-grade token',
+      );
     });
 
-    test('concurrency group + explicit timeout (watch arithmetic stays real)', () {
-      expect((workflow['concurrency'] as Map)['group'].toString(),
-          'store-appearance-check');
-      final job = (workflow['jobs'] as Map)['check'] as Map;
-      expect(job['timeout-minutes'].toString(), '20');
-    });
+    test(
+      'concurrency group + explicit timeout (watch arithmetic stays real)',
+      () {
+        expect(
+          (workflow['concurrency'] as Map)['group'].toString(),
+          'store-appearance-check',
+        );
+        final job = (workflow['jobs'] as Map)['check'] as Map;
+        expect(job['timeout-minutes'].toString(), '20');
+      },
+    );
 
     test('reuses the submit legs credentials — no new secrets (I3)', () {
       final text = read(workflowPath);
@@ -87,7 +110,11 @@ void main() {
         r'secrets.PLAY_STORE_SERVICE_ACCOUNT_JSON',
         r'vars.TESTFLIGHT_EXTERNAL_GROUP',
       ]) {
-        expect(text, contains(secret), reason: '$secret must ride through to the check');
+        expect(
+          text,
+          contains(secret),
+          reason: '$secret must ride through to the check',
+        );
       }
     });
 
@@ -98,8 +125,11 @@ void main() {
           .map((s) => s['run'].toString())
           .join('\n');
       expect(steps, contains('ruby scripts/store_appearance_check.rb'));
-      expect(read(scriptPath), contains('--only'),
-          reason: 'the dispatch stores input routes through --only');
+      expect(
+        read(scriptPath),
+        contains('--only'),
+        reason: 'the dispatch stores input routes through --only',
+      );
     });
   });
 
@@ -107,25 +137,46 @@ void main() {
     final fastfile = read('flutter_app/fastlane/Fastfile');
 
     test('no verify timeout env, no deadline loop, no poll sleep', () {
-      expect(fastfile, isNot(contains('TESTFLIGHT_VERIFY_TIMEOUT_SECONDS')),
-          reason: 'the 900s wait-loop env is gone');
-      expect(fastfile, isNot(contains('never appeared in the external group')),
-          reason: 'the user_error! verdict is gone');
-      expect(fastfile, isNot(contains('sleep(60)')),
-          reason: 'no poll loop may remain in the submit path');
-      expect(fastfile, isNot(contains('deadline = Time.now')),
-          reason: 'no blocking deadline may remain');
+      expect(
+        fastfile,
+        isNot(contains('TESTFLIGHT_VERIFY_TIMEOUT_SECONDS')),
+        reason: 'the 900s wait-loop env is gone',
+      );
+      expect(
+        fastfile,
+        isNot(contains('never appeared in the external group')),
+        reason: 'the user_error! verdict is gone',
+      );
+      expect(
+        fastfile,
+        isNot(contains('sleep(60)')),
+        reason: 'no poll loop may remain in the submit path',
+      );
+      expect(
+        fastfile,
+        isNot(contains('deadline = Time.now')),
+        reason: 'no blocking deadline may remain',
+      );
     });
 
-    test('the verify becomes a non-failing note linking the deferred check', () {
-      expect(fastfile, contains('store-appearance-check'),
-          reason: 'the note must point at the deferred workflow');
-      expect(fastfile, contains('the submit stays GREEN'),
-          reason: 'the leg must say explicitly that lag is not a failure');
-      // The probe still exists (observability), called by both lanes —
-      // store_automation_guard_test.dart pins the 3 occurrences.
-      expect('verify_external_distribution!'.allMatches(fastfile).length, 3);
-    });
+    test(
+      'the verify becomes a non-failing note linking the deferred check',
+      () {
+        expect(
+          fastfile,
+          contains('store-appearance-check'),
+          reason: 'the note must point at the deferred workflow',
+        );
+        expect(
+          fastfile,
+          contains('the submit stays GREEN'),
+          reason: 'the leg must say explicitly that lag is not a failure',
+        );
+        // The probe still exists (observability), called by both lanes —
+        // store_automation_guard_test.dart pins the 3 occurrences.
+        expect('verify_external_distribution!'.allMatches(fastfile).length, 3);
+      },
+    );
 
     test('fastlane processing wait is untouched (upload-owned, not the custom wait)', () {
       expect(fastfile, contains('skip_waiting_for_build_processing: false'));
@@ -147,26 +198,45 @@ void main() {
   group('check logic wiring (AC5)', () {
     test('pure decision module exists and the plain-ruby suite covers it', () {
       expect(File(modulePath).existsSync(), isTrue);
-      final rubyTest = read('flutter_app/fastlane/test/store_appearance_test.rb');
+      final rubyTest = read(
+        'flutter_app/fastlane/test/store_appearance_test.rb',
+      );
       for (final scenario in ['present', 'absent', 'rolled_over', 'error']) {
-        expect(rubyTest, contains(scenario), reason: 'AC5 matrix case missing: $scenario');
+        expect(
+          rubyTest,
+          contains(scenario),
+          reason: 'AC5 matrix case missing: $scenario',
+        );
       }
     });
 
     test('the script routes every decision through the module', () {
       final script = read(scriptPath);
       expect(script, contains("require_relative"));
-      expect(script, contains('store_appearance\''), reason: 'requires the pure module');
+      expect(
+        script,
+        contains('store_appearance\''),
+        reason: 'requires the pure module',
+      );
       for (final call in [
-        'resolve_expected', 'decide_presence', 'stub_due?', 'plan_lifecycle',
+        'resolve_expected',
+        'decide_presence',
+        'stub_due?',
+        'plan_lifecycle',
       ]) {
-        expect(script, contains(call), reason: '$call must not be re-decided in the script');
+        expect(
+          script,
+          contains(call),
+          reason: '$call must not be re-decided in the script',
+        );
       }
     });
 
     test('ci.yml picks the ruby suite up automatically (pre-flight loop)', () {
-      expect(read('.github/workflows/ci.yml'),
-          contains('for t in flutter_app/fastlane/test/*_test.rb'));
+      expect(
+        read('.github/workflows/ci.yml'),
+        contains('for t in flutter_app/fastlane/test/*_test.rb'),
+      );
     });
   });
 
@@ -184,7 +254,11 @@ void main() {
       String play = 'present',
       String pubdev = 'present',
     }) async {
-      Future<void> serveJson(HttpRequest req, Object? json, [int status = 200]) async {
+      Future<void> serveJson(
+        HttpRequest req,
+        Object? json, [
+        int status = 200,
+      ]) async {
         req.response.statusCode = status;
         req.response.headers.contentType = ContentType.json;
         req.response.write(json is String ? json : jsonEncode(json));
@@ -204,22 +278,31 @@ void main() {
           if (asc == 'error') {
             await serveJson(req, {
               "errors": [
-                {"status": "500", "title": "Internal Server Error (fixture)"}
-              ]
+                {"status": "500", "title": "Internal Server Error (fixture)"},
+              ],
             }, 500);
             return;
           }
           if (path == '/asc/v1/apps') return serveFixture(req, 'asc_apps.json');
-          if (path.startsWith('/asc/v1/betaGroups?') || path == '/asc/v1/betaGroups') {
+          if (path.startsWith('/asc/v1/betaGroups?') ||
+              path == '/asc/v1/betaGroups') {
             return serveFixture(req, 'asc_beta_groups.json');
           }
           if (path.startsWith('/asc/v1/betaGroups/GRP-EXTERNAL/builds')) {
             return serveFixture(
-                req, asc == 'present' ? 'asc_group_builds_present.json' : 'asc_group_builds_absent.json');
+              req,
+              asc == 'present'
+                  ? 'asc_group_builds_present.json'
+                  : 'asc_group_builds_absent.json',
+            );
           }
           if (path.startsWith('/asc/v1/builds')) {
             return serveFixture(
-                req, asc == 'present' ? 'asc_app_builds_present.json' : 'asc_app_builds_absent.json');
+              req,
+              asc == 'present'
+                  ? 'asc_app_builds_present.json'
+                  : 'asc_app_builds_absent.json',
+            );
           }
         }
         if (path == '/play-token') {
@@ -230,7 +313,9 @@ void main() {
         }
         if (path.startsWith('/play/')) {
           if (play == 'error') {
-            await serveJson(req, {"error": {"code": 500, "message": "backend error (fixture)"}}, 500);
+            await serveJson(req, {
+              "error": {"code": 500, "message": "backend error (fixture)"},
+            }, 500);
             return;
           }
           if (path.endsWith('/edits')) {
@@ -244,11 +329,17 @@ void main() {
           }
           if (path.endsWith('/tracks/beta')) {
             if (play == 'notrack') {
-              await serveJson(req, {"error": {"code": 404, "message": "track empty (fixture)"}}, 404);
+              await serveJson(req, {
+                "error": {"code": 404, "message": "track empty (fixture)"},
+              }, 404);
               return;
             }
             return serveFixture(
-                req, play == 'present' ? 'play_track_present.json' : 'play_track_absent.json');
+              req,
+              play == 'present'
+                  ? 'play_track_present.json'
+                  : 'play_track_absent.json',
+            );
           }
         }
         if (path.startsWith('/pubdev/packages/')) {
@@ -256,8 +347,12 @@ void main() {
             await serveJson(req, 'backend error (fixture)', 500);
             return;
           }
-          return serveFixture(req,
-              pubdev == 'present' ? 'pubdev_package_present.json' : 'pubdev_package_absent.json');
+          return serveFixture(
+            req,
+            pubdev == 'present'
+                ? 'pubdev_package_present.json'
+                : 'pubdev_package_absent.json',
+          );
         }
         req.response.statusCode = 404;
         await req.response.close();
@@ -269,11 +364,25 @@ void main() {
     void makeFixtureRepo(String version) {
       final dir = Directory.systemTemp.createTempSync('store-appearance-');
       Process.runSync('git', ['init', '-q'], workingDirectory: dir.path);
-      Process.runSync('git', ['config', 'user.email', 't@t'], workingDirectory: dir.path);
-      Process.runSync('git', ['config', 'user.name', 't'], workingDirectory: dir.path);
-      File('${dir.path}/pubspec.yaml').writeAsStringSync('name: fixture\nversion: $version\n');
+      Process.runSync('git', [
+        'config',
+        'user.email',
+        't@t',
+      ], workingDirectory: dir.path);
+      Process.runSync('git', [
+        'config',
+        'user.name',
+        't',
+      ], workingDirectory: dir.path);
+      File('${dir.path}/pubspec.yaml')
+          .writeAsStringSync('name: fixture\nversion: $version\n');
       Process.runSync('git', ['add', '.'], workingDirectory: dir.path);
-      Process.runSync('git', ['commit', '-q', '-m', 'seed'], workingDirectory: dir.path);
+      Process.runSync('git', [
+        'commit',
+        '-q',
+        '-m',
+        'seed',
+      ], workingDirectory: dir.path);
       Process.runSync('git', ['tag', 'v$version'], workingDirectory: dir.path);
       fixtureRepo = dir.path;
     }
@@ -285,10 +394,13 @@ void main() {
       List<int> publishStubs = const [],
       String summarizedBodies = '',
     }) {
-      stubDir = '${Directory.systemTemp.createTempSync('gh-stub-').path}';
+      final root = Directory.systemTemp.createTempSync('gh-stub-');
+      stubDir = root.path;
       Directory('$stubDir/bin').createSync();
       File('$stubDir/open_stubs.json').writeAsStringSync(jsonEncode(openStubs));
-      File('$stubDir/publish_stubs.json').writeAsStringSync(jsonEncode(publishStubs));
+      File('$stubDir/publish_stubs.json').writeAsStringSync(
+        jsonEncode(publishStubs.map((n) => {'number': n}).toList()),
+      );
       File('$stubDir/summarized.txt').writeAsStringSync(summarizedBodies);
       File('$stubDir/log').writeAsStringSync('');
       final gh = File('$stubDir/bin/gh');
@@ -302,12 +414,12 @@ case "\$1 \$2" in
     exit 0 ;;
   "issue view"*) cat "\$GH_STUB_DIR/summarized.txt"; exit 0 ;;
 esac
-for prev in \${@}; do
-  if [ "\$prev" = "--body-file" ]; then shift; fi
-  if [[ "\$1" == *.md && -f "\$1" ]]; then cp "\$1" "\$GH_STUB_DIR/last-body.md"; fi
-  shift 2>/dev/null || true
+copy=0
+for arg in "\$@"; do
+  if [ "\$copy" = "1" ]; then cp "\$arg" "\$GH_STUB_DIR/last-body.md" 2>/dev/null; copy=0; fi
+  [ "\$arg" = "--body-file" ] && copy=1
 done
-[ "\$1 \$2" = "issue create" ] && echo "https://github.com/OWNER/REPO/issues/42"
+if [ "\$1 \$2" = "issue create" ]; then echo "https://github.com/OWNER/REPO/issues/42"; fi
 exit 0
 ''');
       Process.runSync('chmod', ['+x', gh.path]);
@@ -330,8 +442,12 @@ exit 0
       await startServer(asc: asc, play: play, pubdev: pubdev);
       makeFixtureRepo(fixtureVersion);
       makeGhStub(
-          openStubs: openStubs, publishStubs: publishStubs, summarizedBodies: summarizedBodies);
+        openStubs: openStubs,
+        publishStubs: publishStubs,
+        summarizedBodies: summarizedBodies,
+      );
       final summaryFile = File('$fixtureRepo/step-summary.md');
+      final port = servers.last.port;
       final env = <String, String>{
         'PATH': '$stubDir/bin:${Platform.environment['PATH']!}',
         'GH_TOKEN': 'stub',
@@ -342,29 +458,29 @@ exit 0
         'IOS_BUNDLE_ID': 'dev.fa1.app',
         'PLAY_PACKAGE_NAME': 'dev.fa1.app',
         'PLAY_TRACK': 'beta',
-        'STORE_APPEARANCE_ASC_BASE': 'http://127.0.0.1:${server.port}/asc',
-        'STORE_APPEARANCE_PLAY_BASE': 'http://127.0.0.1:${server.port}/play',
-        'STORE_APPEARANCE_PLAY_TOKEN_URL': 'http://127.0.0.1:${server.port}/play-token',
-        'STORE_APPEARANCE_PUBDEV_BASE': 'http://127.0.0.1:${server.port}/pubdev',
+        'STORE_APPEARANCE_ASC_BASE': 'http://127.0.0.1:$port/asc',
+        'STORE_APPEARANCE_PLAY_BASE': 'http://127.0.0.1:$port/play',
+        'STORE_APPEARANCE_PLAY_TOKEN_URL': 'http://127.0.0.1:$port/play-token',
+        'STORE_APPEARANCE_PUBDEV_BASE': 'http://127.0.0.1:$port/pubdev',
         'STORE_APPEARANCE_RUN_URL': 'https://ci/runs/it',
+        if (dryRun) 'STORE_APPEARANCE_DRY_RUN': '1',
         if (now != null) 'STORE_APPEARANCE_NOW': now,
         if (since != null) 'STORE_APPEARANCE_SINCE': since,
-        if (dryRun) 'STORE_APPEARANCE_DRY_RUN': '1',
-        if (!withSecrets) ...{
-          'APP_STORE_CONNECT_KEY_CONTENT': '',
-          'PLAY_STORE_SERVICE_ACCOUNT_JSON': '',
-        },
         if (withSecrets) ...{
           'APP_STORE_CONNECT_KEY_ID': 'TESTKID',
           'APP_STORE_CONNECT_ISSUER_ID': 'TESTISSUER',
           'APP_STORE_CONNECT_KEY_CONTENT': read('$fixturesDir/test_asc_key.p8'),
-          'PLAY_STORE_SERVICE_ACCOUNT_JSON': read('$fixturesDir/test_play_service_account.json'),
+          'PLAY_STORE_SERVICE_ACCOUNT_JSON': read(
+            '$fixturesDir/test_play_service_account.json',
+          ),
         },
-        if (only != null) 'FA_ONLY': only,
       };
       final result = await Process.run(
         'ruby',
-        [File(scriptPath).absolute.path, if (only != null) ...['--only', only]],
+        [
+          File(scriptPath).absolute.path,
+          if (only != null) ...['--only', only],
+        ],
         workingDirectory: fixtureRepo,
         environment: env,
       );
@@ -375,10 +491,17 @@ exit 0
       final line = r.stdout
           .toString()
           .split('\n')
-          .lastWhere((l) => l.startsWith('STORE_APPEARANCE_RESULT '), orElse: () => '');
-      expect(line, isNotEmpty,
-          reason: 'the script must always print its result JSON\n'
-              'stdout: ${r.stdout}\nstderr: ${r.stderr}');
+          .lastWhere(
+            (l) => l.startsWith('STORE_APPEARANCE_RESULT '),
+            orElse: () => '',
+          );
+      expect(
+        line,
+        isNotEmpty,
+        reason:
+            'the script must always print its result JSON\n'
+            'stdout: ${r.stdout}\nstderr: ${r.stderr}',
+      );
       return jsonDecode(line.substring('STORE_APPEARANCE_RESULT '.length))
           as Map<String, Object>;
     }
@@ -386,93 +509,149 @@ exit 0
     List<String> ghLog() => File('$stubDir/log').readAsLinesSync();
 
     tearDown(() async {
-      await server.close(force: true);
+      for (final server in servers) {
+        await server.close(force: true);
+      }
+      servers.clear();
       Directory(fixtureRepo).deleteSync(recursive: true);
       Directory(stubDir).deleteSync(recursive: true);
       capturedAuth.clear();
       capturedGrants.clear();
     });
 
-    Future<void> skipWithoutRuby() async {
-      if (!rubyAvailable) {
-        // Emit a passing placeholder so the suite stays green on machines
-        // without ruby; CI (ubuntu runner's stock ruby) always runs the IT.
-      }
-    }
-
-    test('all stores present → green summary on the publish stubs, exit 0', () async {
-      await skipWithoutRuby();
-      final r = await runCheck(publishStubs: [7, 8]);
-      expect(r.exitCode, 0, reason: '${r.stderr}');
-      final result = resultOf(r);
-      expect((result['verdicts'] as Map)['testflight']['verdict'], 'present');
-      expect((result['verdicts'] as Map)['play']['verdict'], 'present');
-      expect((result['verdicts'] as Map)['pubdev']['verdict'], 'present');
-      final log = ghLog();
-      expect(log.where((l) => l.contains('issue create')), isEmpty,
-          reason: 'nothing absent — no stub may be filed');
-      expect(log.where((l) => l.contains('issue comment 7')).length, 1,
-          reason: 'the green summary lands on the day\'s publish stub');
-      expect(log.where((l) => l.contains('issue comment 8')).length, 1);
-      expect(File('$stubDir/last-body.md').readAsStringSync(),
-          contains('Store appearance check — all green'));
-      expect(summaryFile.readAsStringSync(), contains('Store appearance check'));
-    });
+    test(
+      'all stores present → green summary on the publish stubs, exit 0',
+      () async {
+        if (!rubyAvailable) return;
+        final r = await runCheck(publishStubs: [7, 8]);
+        expect(r.exitCode, 0, reason: '${r.stderr}');
+        final result = resultOf(r);
+        expect((result['verdicts'] as Map)['testflight']['verdict'], 'present');
+        expect((result['verdicts'] as Map)['play']['verdict'], 'present');
+        expect((result['verdicts'] as Map)['pubdev']['verdict'], 'present');
+        final log = ghLog();
+        expect(
+          log.where((l) => l.contains('issue create')),
+          isEmpty,
+          reason: 'nothing absent — no stub may be filed',
+        );
+        expect(
+          log.where((l) => l.contains('issue comment 7')).length,
+          1,
+          reason: 'the green summary lands on the day\'s publish stub',
+        );
+        expect(log.where((l) => l.contains('issue comment 8')).length, 1);
+        expect(
+          File('$stubDir/last-body.md').readAsStringSync(),
+          contains('Store appearance check — all green'),
+        );
+        expect(
+          File('$fixtureRepo/step-summary.md').readAsStringSync(),
+          contains('Store appearance check'),
+        );
+      },
+    );
 
     test('real JWTs ride the wire: ES256 to ASC, RS256 assertion to the Play token endpoint', () async {
-      await skipWithoutRuby();
+      if (!rubyAvailable) return;
       await runCheck();
-      final ascAuth = capturedAuth.firstWhere((a) => a.startsWith('/asc/v1/apps'));
-      final ascToken = ascAuth.split(' ').last;
+      final ascAuth = capturedAuth.firstWhere(
+        (a) => a.contains('/asc/v1/apps'),
+      );
+      final ascToken = ascAuth.split('Bearer ').last;
       expect(ascAuth, startsWith('Bearer '));
-      expect(ascToken.split('.').length, 3, reason: 'a real ES256 JWT, not a stub string');
-      expect(ascToken.split('.')[0], 'eyJhbGciOiJFUzI1NiIsImtpZCI6IlRFU1RLSUQiLCJ0eXAiOiJKV1QifQ',
-          reason: 'header decodes to {alg:ES256, kid:TESTKID, typ:JWT}');
+      expect(
+        ascToken.split('.').length,
+        3,
+        reason: 'a real ES256 JWT, not a stub string',
+      );
+      expect(
+        ascToken.split('.')[0],
+        'eyJhbGciOiJFUzI1NiIsImtpZCI6IlRFU1RLSUQiLCJ0eXAiOiJKV1QifQ',
+        reason: 'header decodes to {alg:ES256, kid:TESTKID, typ:JWT}',
+      );
       final grant = capturedGrants.single;
-      expect(grant, contains('grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer'));
+      expect(
+        grant,
+        contains(
+          'grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer',
+        ),
+      );
       final assertion = Uri.splitQueryString(grant)['assertion']!;
-      expect(assertion.split('.').length, 3, reason: 'a real RS256 assertion minted from the SA key');
+      expect(
+        assertion.split('.').length,
+        3,
+        reason: 'a real RS256 assertion minted from the SA key',
+      );
     });
 
-    test('absent past the horizon → exactly one stub per absent store, exit 1', () async {
-      await skipWithoutRuby();
-      final r = await runCheck(asc: 'absent', play: 'absent', pubdev: 'absent');
-      expect(r.exitCode, 1, reason: 'absence past the horizon is loud');
-      final result = resultOf(r);
-      for (final store in ['testflight', 'play', 'pubdev']) {
-        expect((result['verdicts'] as Map)[store]['verdict'], 'absent');
-      }
-      final log = ghLog();
-      expect(log.where((l) => l.contains('issue create')).length, 3,
-          reason: 'one evidence stub per absent store — never more');
-      expect(File('$stubDir/last-body.md').readAsStringSync(), contains('still **absent**'));
-      expect(File('$stubDir/last-body.md').readAsStringSync(), contains('https://ci/runs/it'),
-          reason: 'the stub carries the check run as evidence');
-    });
+    test(
+      'absent past the horizon → exactly one stub per absent store, exit 1',
+      () async {
+        if (!rubyAvailable) return;
+        final r = await runCheck(
+          asc: 'absent',
+          play: 'absent',
+          pubdev: 'absent',
+        );
+        expect(r.exitCode, 1, reason: 'absence past the horizon is loud');
+        final result = resultOf(r);
+        for (final store in ['testflight', 'play', 'pubdev']) {
+          expect((result['verdicts'] as Map)[store]['verdict'], 'absent');
+        }
+        final log = ghLog();
+        expect(
+          log.where((l) => l.contains('issue create')).length,
+          3,
+          reason: 'one evidence stub per absent store — never more',
+        );
+        expect(
+          File('$stubDir/last-body.md').readAsStringSync(),
+          contains('still **absent**'),
+        );
+        expect(
+          File('$stubDir/last-body.md').readAsStringSync(),
+          contains('https://ci/runs/it'),
+          reason: 'the stub carries the check run as evidence',
+        );
+      },
+    );
 
     test('a second identical check updates the stubs in place (no duplicates, REG)', () async {
-      await skipWithoutRuby();
+      if (!rubyAvailable) return;
       final r = await runCheck(
         asc: 'absent',
         play: 'absent',
         pubdev: 'absent',
         openStubs: [
-          {'number': 11, 'title': '[store-appearance-check] TestFlight 1.0.485 absent'},
-          {'number': 12, 'title': '[store-appearance-check] Play 1.0.485 absent'},
-          {'number': 13, 'title': '[store-appearance-check] pub.dev 1.0.485 absent'},
+          {
+            'number': 11,
+            'title': '[store-appearance-check] TestFlight 1.0.485 absent',
+          },
+          {
+            'number': 12,
+            'title': '[store-appearance-check] Play 1.0.485 absent',
+          },
+          {
+            'number': 13,
+            'title': '[store-appearance-check] pub.dev 1.0.485 absent',
+          },
         ],
       );
       expect(r.exitCode, 1);
       final log = ghLog();
-      expect(log.where((l) => l.contains('issue create')), isEmpty,
-          reason: 'the stubs exist — filing again would duplicate');
+      expect(
+        log.where((l) => l.contains('issue create')),
+        isEmpty,
+        reason: 'the stubs exist — filing again would duplicate',
+      );
       expect(log.where((l) => l.startsWith('issue comment 11')).length, 1);
       expect(log.where((l) => l.startsWith('issue comment 12')).length, 1);
       expect(log.where((l) => l.startsWith('issue comment 13')).length, 1);
     });
 
     test('absence below the horizon only reports — no stub, exit 0', () async {
-      await skipWithoutRuby();
+      if (!rubyAvailable) return;
       final r = await runCheck(
         asc: 'absent',
         play: 'absent',
@@ -485,17 +664,26 @@ exit 0
     });
 
     test('version rollover resolves: stubs close, exit 0', () async {
-      await skipWithoutRuby();
+      if (!rubyAvailable) return;
       final r = await runCheck(
         fixtureVersion: '1.0.484',
         openStubs: [
-          {'number': 11, 'title': '[store-appearance-check] TestFlight 1.0.484 absent'},
-          {'number': 12, 'title': '[store-appearance-check] pub.dev 1.0.484 absent'},
+          {
+            'number': 11,
+            'title': '[store-appearance-check] TestFlight 1.0.484 absent',
+          },
+          {
+            'number': 12,
+            'title': '[store-appearance-check] pub.dev 1.0.484 absent',
+          },
         ],
       );
       expect(r.exitCode, 0);
       final result = resultOf(r);
-      expect((result['verdicts'] as Map)['testflight']['verdict'], 'rolled_over');
+      expect(
+        (result['verdicts'] as Map)['testflight']['verdict'],
+        'rolled_over',
+      );
       expect((result['verdicts'] as Map)['pubdev']['verdict'], 'rolled_over');
       final log = ghLog();
       expect(log.where((l) => l.contains('issue create')), isEmpty);
@@ -503,59 +691,95 @@ exit 0
       expect(log.where((l) => l.startsWith('issue close 12')).length, 1);
     });
 
-    test('API errors never file stubs (noise guard) — but the run stays red', () async {
-      await skipWithoutRuby();
-      final r = await runCheck(asc: 'error', play: 'error', pubdev: 'error');
-      expect(r.exitCode, 1, reason: 'an API error is loud, just not stubbed');
-      final result = resultOf(r);
-      expect((result['errors'] as Map).keys.toList(), containsAll(['testflight', 'play', 'pubdev']));
-      expect(ghLog().where((l) => l.contains('issue create')), isEmpty);
-      expect(ghLog().where((l) => l.contains('issue close')), isEmpty,
-          reason: 'an erroring store must not resolve existing stubs either');
-    });
+    test(
+      'API errors never file stubs (noise guard) — but the run stays red',
+      () async {
+        if (!rubyAvailable) return;
+        final r = await runCheck(asc: 'error', play: 'error', pubdev: 'error');
+        expect(r.exitCode, 1, reason: 'an API error is loud, just not stubbed');
+        final result = resultOf(r);
+        expect(
+          (result['errors'] as Map).keys.toList(),
+          containsAll(['testflight', 'play', 'pubdev']),
+        );
+        expect(ghLog().where((l) => l.contains('issue create')), isEmpty);
+        expect(
+          ghLog().where((l) => l.contains('issue close')),
+          isEmpty,
+          reason: 'an erroring store must not resolve existing stubs either',
+        );
+      },
+    );
 
     test('once-a-day guard: the green summary is not repeated within the day (REG)', () async {
-      await skipWithoutRuby();
+      if (!rubyAvailable) return;
       final r = await runCheck(
         publishStubs: [7],
-        summarizedBodies: '<!-- store-appearance-check:green-summary 2026-09-29 -->',
+        summarizedBodies:
+            '<!-- store-appearance-check:green-summary 2026-09-29 -->',
       );
       expect(r.exitCode, 0);
-      expect(ghLog().where((l) => l.contains('issue comment 7')), isEmpty,
-          reason: 'the marker already carries today\'s summary');
-    });
-
-    test('--only scopes the run and missing secrets skip green-neutrally', () async {
-      await skipWithoutRuby();
-      final r = await runCheck(pubdev: 'absent', only: 'pubdev');
-      expect(r.exitCode, 1);
-      final result = resultOf(r);
-      expect((result['verdicts'] as Map).keys, ['pubdev'],
-          reason: '--only must scope both the checks and the stub family');
-      expect(ghLog().where((l) => l.contains('issue create')).length, 1);
-
-      final skipped = await runCheck(withSecrets: true, pubdev: 'absent', only: 'pubdev');
-      final dryRun = await runCheck(
-        withSecrets: false,
-        dryRun: true,
-        pubdev: 'absent',
+      expect(
+        ghLog().where((l) => l.contains('issue comment 7')),
+        isEmpty,
+        reason: 'the marker already carries today\'s summary',
       );
-      expect(dryRun.exitCode, 1);
-      expect((resultOf(dryRun)['verdicts'] as Map).containsKey('testflight'), isFalse,
-          reason: 'no ASC key → the store skips, it never errors');
-      expect((resultOf(skipped)['verdicts'] as Map).keys, ['pubdev']);
     });
+
+    test(
+      '--only scopes the run, and missing secrets skip green-neutrally',
+      () async {
+        if (!rubyAvailable) return;
+        final r = await runCheck(pubdev: 'absent', only: 'pubdev');
+        expect(r.exitCode, 1);
+        final result = resultOf(r);
+        expect((result['verdicts'] as Map).keys, [
+          'pubdev',
+        ], reason: '--only must scope both the checks and the stub family');
+        expect(ghLog().where((l) => l.contains('issue create')).length, 1);
+
+        // Without the ASC/Play secrets those stores skip (green-neutral, the
+        // leg semantics) — they never error and never file.
+        final dryRun = await runCheck(
+          withSecrets: false,
+          dryRun: true,
+          pubdev: 'absent',
+        );
+        expect(dryRun.exitCode, 1, reason: 'the pub.dev absence is still loud');
+        final verdicts = resultOf(dryRun)['verdicts'] as Map;
+        expect(
+          verdicts.containsKey('testflight'),
+          isFalse,
+          reason: 'no ASC key → the store skips, it never errors',
+        );
+        expect(verdicts.containsKey('play'), isFalse);
+        expect(verdicts['pubdev']['verdict'], 'absent');
+      },
+    );
 
     test('the play leg stays read-only: the edit is always deleted, never committed', () async {
-      await skipWithoutRuby();
+      if (!rubyAvailable) return;
       await runCheck(play: 'absent');
-      final log = ghLog(); // touch to keep the helper used
-      expect(log, isA<List<String>>());
-      final deletes = capturedAuth.where((a) => a.startsWith('/play/') && a.contains('DELETE'));
-      final commits = capturedAuth.where((a) =>
-          a.startsWith('/play/') && a.split(' ').first.endsWith('/edits/EDIT-1:commit'));
-      expect(deletes, isNotEmpty, reason: 'edits.insert must be abandoned (read-only contract)');
-      expect(commits, isEmpty, reason: 'a commit would PUBLISH — forbidden (I3)');
+      expect(
+        capturedAuth.any(
+          (a) => a.startsWith('POST /play/') && a.endsWith('/edits'),
+        ),
+        isTrue,
+        reason: 'the edit is created (reads require one)',
+      );
+      expect(
+        capturedAuth.any((a) => a.startsWith('DELETE /play/')),
+        isNotEmpty,
+        reason: 'edits.insert must be abandoned (read-only contract)',
+      );
+      expect(
+        capturedAuth.where(
+          (a) =>
+              a.startsWith('POST /play/') && a.contains('edits/EDIT-1:commit'),
+        ),
+        isEmpty,
+        reason: 'a commit would PUBLISH — forbidden (I3)',
+      );
     });
   });
 }

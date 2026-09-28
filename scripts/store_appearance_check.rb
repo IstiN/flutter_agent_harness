@@ -112,7 +112,7 @@ def asc_token(now)
   )
 end
 
-def check_testflight(now)
+def check_testflight(now, expected)
   base = env("STORE_APPEARANCE_ASC_BASE", "https://api.appstoreconnect.apple.com")
   bundle_id = env("IOS_BUNDLE_ID", "dev.fa1.app")
   group_name = env("TESTFLIGHT_EXTERNAL_GROUP")
@@ -149,7 +149,7 @@ def check_testflight(now)
   S.decide_presence(expected: expected["app"], observed: versions).merge("observed" => versions)
 end
 
-def check_play
+def check_play(root, expected)
   base = env("STORE_APPEARANCE_PLAY_BASE", "https://androidpublisher.googleapis.com")
   token_url = env("STORE_APPEARANCE_PLAY_TOKEN_URL", "https://oauth2.googleapis.com/token")
   package = env("PLAY_PACKAGE_NAME")
@@ -204,7 +204,7 @@ def check_play
   S.decide_presence(expected: expected["app"], observed: versions).merge("observed" => versions)
 end
 
-def check_pubdev
+def check_pubdev(expected)
   base = env("STORE_APPEARANCE_PUBDEV_BASE", "https://pub.dev/api")
   package = env("PUBDEV_PACKAGE", "flutter_agent_harness")
   code, payload, raw = json_response("Get", "#{base}/packages/#{package}", headers: { "Accept" => "application/json" })
@@ -232,9 +232,9 @@ stores.each do |store|
   end
   begin
     verdicts[store] = case store
-                      when "testflight" then check_testflight(now)
-                      when "play" then check_play
-                      when "pubdev" then check_pubdev
+                      when "testflight" then check_testflight(now, expected)
+                      when "play" then check_play(root, expected)
+                      when "pubdev" then check_pubdev(expected)
                       end
   rescue StandardError => e
     errors[store] = e.message.to_s[0, 300]
