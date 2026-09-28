@@ -359,8 +359,8 @@ List<String> secureKeyBootDiagnostics({
           (o) => o.name == name && o.status == SecureKeyReadStatus.error,
         ),
       )
-      .toList()
-        ..sort();
+      .toList();
+  erroredReferenced.sort();
   if (erroredReferenced.isNotEmpty) {
     final hint = debug
         ? 'see the [keys] lines above'
