@@ -133,6 +133,75 @@ String segmentSignature(String rawToken) {
 List<String> barSignature(String barRow, String separatorGlyph) =>
     splitBarSegments(barRow, separatorGlyph).map(segmentSignature).toList();
 
+/// The non-empty trimmed rows of a rendered screen — the chrome region
+/// whose row count is structural.
+List<String> _chromeRows(List<String> screen) =>
+    screen.where((l) => l.trim().isNotEmpty).toList(growable: false);
+
+/// The chrome-row-count finding, or null when both twins carry the same
+/// number of non-empty rows.
+String? _chromeRowCountFinding(
+  List<String> faScreen,
+  List<String> ompScreen,
+  String surfaceName,
+) {
+  final faRows = _chromeRows(faScreen);
+  final ompRows = _chromeRows(ompScreen);
+  if (faRows.length == ompRows.length) return null;
+  return '$surfaceName: chrome row count differs — fa ${faRows.length}, '
+      'omp ${ompRows.length}';
+}
+
+/// Status-bar findings for one surface: presence drift first (a bar on
+/// only one side), then per-segment shape drift when both bars exist. No
+/// bar on either side = nothing to compare.
+List<String> _statusBarFindings(
+  List<String> faScreen,
+  List<String> ompScreen, {
+  required String surfaceName,
+  required String separatorGlyph,
+}) {
+  final faBar = findStatusBarRow(faScreen, separatorGlyph);
+  final ompBar = findStatusBarRow(ompScreen, separatorGlyph);
+  if (faBar == null && ompBar != null) {
+    return <String>['$surfaceName: fa has no status bar, omp does'];
+  }
+  if (faBar != null && ompBar == null) {
+    return <String>['$surfaceName: omp has no status bar, fa does'];
+  }
+  if (faBar == null || ompBar == null) return const [];
+  return _segmentFindings(faBar, ompBar, surfaceName, separatorGlyph);
+}
+
+/// Per-segment findings for two existing bar rows: a segment-count
+/// mismatch is ONE finding (positions are meaningless after it, so no
+/// per-position comparison follows); equal counts compare shape per
+/// position and name the raw tokens.
+List<String> _segmentFindings(
+  String faBar,
+  String ompBar,
+  String surfaceName,
+  String separatorGlyph,
+) {
+  final faSig = barSignature(faBar, separatorGlyph);
+  final ompSig = barSignature(ompBar, separatorGlyph);
+  if (faSig.length != ompSig.length) {
+    return <String>[
+      '$surfaceName: segment count differs — fa ${faSig.length} '
+          '$faSig, omp ${ompSig.length} $ompSig',
+    ];
+  }
+  final faTokens = splitBarSegments(faBar, separatorGlyph);
+  final ompTokens = splitBarSegments(ompBar, separatorGlyph);
+  return <String>[
+    for (var i = 0; i < faSig.length; i++)
+      if (faSig[i] != ompSig[i])
+        '$surfaceName: segment ${i + 1} shape differs — '
+            'fa ${faSig[i]} (${faTokens[i]}), '
+            'omp ${ompSig[i]} (${ompTokens[i]})',
+  ];
+}
+
 /// Structural diff of two rendered twin screens for one shared surface.
 ///
 /// Returns human-readable findings; empty list = structurally equal.
@@ -148,45 +217,15 @@ List<String> structuralDiff(
   required String separatorGlyph,
 }) {
   final findings = <String>[];
-  final faRows = faScreen
-      .where((l) => l.trim().isNotEmpty)
-      .toList(growable: false);
-  final ompRows = ompScreen
-      .where((l) => l.trim().isNotEmpty)
-      .toList(growable: false);
-  if (faRows.length != ompRows.length) {
-    findings.add(
-      '$surfaceName: chrome row count differs — fa ${faRows.length}, '
-      'omp ${ompRows.length}',
-    );
-  }
-
-  final faBar = findStatusBarRow(faScreen, separatorGlyph);
-  final ompBar = findStatusBarRow(ompScreen, separatorGlyph);
-  if (faBar == null && ompBar != null) {
-    findings.add('$surfaceName: fa has no status bar, omp does');
-  } else if (faBar != null && ompBar == null) {
-    findings.add('$surfaceName: omp has no status bar, fa does');
-  } else if (faBar != null && ompBar != null) {
-    final faSig = barSignature(faBar, separatorGlyph);
-    final ompSig = barSignature(ompBar, separatorGlyph);
-    if (faSig.length != ompSig.length) {
-      findings.add(
-        '$surfaceName: segment count differs — fa ${faSig.length} '
-        '$faSig, omp ${ompSig.length} $ompSig',
-      );
-    } else {
-      for (var i = 0; i < faSig.length; i++) {
-        if (faSig[i] != ompSig[i]) {
-          findings.add(
-            '$surfaceName: segment ${i + 1} shape differs — '
-            'fa ${faSig[i]} (${splitBarSegments(faBar, separatorGlyph)[i]}), '
-            'omp ${ompSig[i]} '
-            '(${splitBarSegments(ompBar, separatorGlyph)[i]})',
-          );
-        }
-      }
-    }
-  }
+  final rowFinding = _chromeRowCountFinding(faScreen, ompScreen, surfaceName);
+  if (rowFinding != null) findings.add(rowFinding);
+  findings.addAll(
+    _statusBarFindings(
+      faScreen,
+      ompScreen,
+      surfaceName: surfaceName,
+      separatorGlyph: separatorGlyph,
+    ),
+  );
   return findings;
 }
