@@ -119,6 +119,15 @@ extension AgentCliMessagingFlow on AgentCli {
   String get _scheduledMessagesRoot =>
       '${config.sessionRoot}/${encodeSessionCwd(_env.cwd)}/messages';
 
+  /// The mailbox of the subagent whose run encloses the caller, or null on
+  /// the main agent (gh-970). `schedule_message` resolves "your own
+  /// mailbox" through this — the queue's `selfMailbox` always names MAIN,
+  /// so without it every child self-reminder landed in main's inbox.
+  String? _childSenderMailbox() {
+    final id = activeSubagentId();
+    return id == null ? null : _subagentManager.mailboxOf(id);
+  }
+
   /// Namespaces this instance's mailboxes with the active session id: two
   /// Fa instances sharing the messaging root never drain each other's
   /// inboxes. Called after every session init/switch.

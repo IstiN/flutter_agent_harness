@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.0.483
+
+
+- fix(install): the pinned default is now the `vpinned` RELEASE MARKER —
+  no committed pin at all. `install-config.yaml` `pinned_cli_version`
+  said 0.1.452 while the generated `site/install.sh` carried 1.0.480
+  (#1015 hand-edited only the generated file): a committed pin rots, and a
+  pin advanced by committing/pushing from the release pipeline re-races
+  `auto_release` and re-triggers Pages on every tag. Instead, the
+  installer resolves the standing `vpinned` release marker (its
+  `PINNED_VERSION` asset names the known-good release) and verifies the
+  pointed release exactly as before — the marker is only a pointer, so a
+  tampered one fails closed (DoS at worst, never a bad binary; the
+  embedded trust anchor stays the real trust root).
+  `scripts/pin_release.sh` advances the marker from the tag-scoped
+  `install-pin-bump` CI job after `release-provenance` signs the release:
+  pure release-artifact manipulation — zero commits, zero pushes, no
+  `RELEASE_PAT`, no regeneration (`is-newer` keeps bumps forward-only; a
+  pre-move `check_install_pin.sh` run with `FA_PIN_TARGET` proves the new
+  release BEFORE the marker moves, and a post-move run proves the
+  published marker). `scripts/check_install_pin.sh` (new ci.yml
+  `install-pin-gate` job on every PR, aggregated into the Quality gate)
+  fails when the generated installer drifts from the marker model
+  (`E_PIN_DRIFT`), the marker is missing/ill-formed (`E_PIN_MISSING` /
+  `E_PIN_INVALID`), or the marked release lacks a signature-verified
+  `SHA256SUMS` covering every platform archive (`E_PIN_PROVENANCE_MISSING`
+  / `E_PIN_PROVENANCE_INVALID` / `E_PIN_ASSET_COVERAGE`). Fixture coverage
+  in `installer_verify_selftest.sh`: contracts 1/1b/5/6, including
+  end-to-end `pin_release.sh` runs against a `file://` fixture release
+  root. `gen_installers.dart` drops the `pinned_cli_version` knob.
+
 ## 1.0.472
 
 - feat(818): herdr integration — fa as a supported herdr agent. The
@@ -4324,6 +4355,16 @@
 - gh-957: drop the 3 temporary CRAP excludes after #948 (f2498ead) — gate re-measures green at 30.0 (#959)
 - fix(install): bump SEC-07 pin 0.1.452 -> 1.0.480 (#1015)
 - quarantine(#1012 #1014): linux shard-0 PTY timing flakes (scheduled_indicator + ctrl_c_double_press) (#1013)
+
+## 1.0.482
+
+- chore: pin factory 60571fed (validation_failed sticky park) (#1027)
+- hotfix: correct uses: factory sha in all 3 workflows (fake sha from #1024) (#1025)
+- chore: pin factory 5e2a8051 (session quarantine) (#1024)
+- chore: pin factory a18361b2 (red-park + dryRun + dup-guard + teammate watchdog) (#1023)
+- chore(factory): bump dmtools-agents to b44b5493 — latch-skip + stamp links + auto-anchor fallback (#547/#548/#549) in lockstep (#1019)
+
+## Unreleased
 
 ## Unreleased
 

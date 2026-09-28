@@ -5,8 +5,9 @@
 #
 # What it does:
 #   1. Detects OS and architecture.
-#   2. Downloads the PINNED Fa release (FA_VERSION overrides; the resolved
-#      version is printed) from GitHub Releases.
+#   2. Resolves the pinned default: the `vpinned` release marker names the
+#      current known-good release (FA_VERSION overrides; the resolved
+#      version is printed), then downloads it from GitHub Releases.
 #   3. Verifies the artifact's provenance BEFORE installing: the release's
 #      SHA256SUMS manifest must carry a valid signature from the embedded
 #      release-signing key, and the archive must match the signed checksum
@@ -122,10 +123,44 @@ mkdir -p "$install_dir"
 target="$install_dir/$BINARY"
 
 # ── 3. Resolve version and download URLs ────────────────────────────────────
-# SEC-07 (#795): the default install is PINNED to a known-good release.
+# SEC-07 (#795): the default install tracks the `vpinned` RELEASE MARKER — a
+# GitHub Release whose only asset (PINNED_VERSION) names the current
+# known-good release. The tag-scoped install-pin-bump CI job advances the
+# marker ONLY after release-provenance signed the new release, so the
+# default never points at an unverified release. The marker itself is NOT
+# trusted: the concrete release's SHA256SUMS.sig must still verify against
+# the embedded trust anchor, so a tampered marker fails closed (a broken
+# pointer is a DoS at worst, never a bad binary).
 # FA_VERSION overrides it explicitly (FA_VERSION=latest tracks the moving
 # latest release); the resolved version is always printed.
-FA_VERSION="${FA_VERSION:-1.0.480}"
+FA_VERSION="${FA_VERSION:-vpinned}"
+fetch_text() { # fetch_text <url> — stdout, non-zero on 404
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$1"
+  else
+    wget -qO- "$1"
+  fi
+}
+if [ "$FA_VERSION" = "vpinned" ]; then
+  # Resolve the marker BEFORE building URLs. The marker release is a stable
+  # address; its PINNED_VERSION asset carries the concrete vX.Y.Z tag. The
+  # fixture override (FA_RELEASE_BASE_URL) applies to the marker too, so a
+  # local fixture "release" can serve vpinned/PINNED_VERSION.
+  marker_root="${FA_RELEASE_BASE_URL:-https://github.com/$REPO/releases/download}/vpinned"
+  if ! raw_marker="$(fetch_text "$marker_root/PINNED_VERSION")"; then
+    err "E_PIN_MISSING: the vpinned release marker publishes no PINNED_VERSION at $marker_root/PINNED_VERSION — cannot resolve the pinned default (marker not created yet, or network blocked; FA_VERSION=<tag> overrides explicitly)"
+    exit 1
+  fi
+  resolved="$(printf '%s' "$raw_marker" | tr -d '[:space:]')"
+  case "$resolved" in
+    ''|*[!0-9A-Za-z.-]*)
+      err "E_PIN_INVALID: the vpinned marker returned '$resolved' — not a release tag; refusing to guess"
+      exit 1
+      ;;
+  esac
+  FA_VERSION="$resolved"
+  info "Pinned marker resolves to: $FA_VERSION"
+fi
 # Release tags are v-prefixed (releases/download/vX.Y.Z); accept both spellings.
 case "$FA_VERSION" in
   latest|v*) ;;
