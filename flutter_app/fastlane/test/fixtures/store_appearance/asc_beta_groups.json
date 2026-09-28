@@ -1,0 +1,14 @@
+{
+  "data": [
+    {
+      "id": "GRP-EXTERNAL",
+      "type": "betaGroups",
+      "attributes": { "name": "External Beta", "isExternalGroup": true }
+    },
+    {
+      "id": "GRP-INTERNAL",
+      "type": "betaGroups",
+      "attributes": { "name": "Internal", "isExternalGroup": false }
+    }
+  ]
+}
