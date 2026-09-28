@@ -123,7 +123,7 @@ void main() {
     bool flutterOnPath = true,
     String? configJson,
     bool writePackageConfig = true,
-    String pathEnv = '$flutterBin:/usr/bin',
+    String? pathEnv = '$flutterBin:/usr/bin',
     String pathListSeparator = ':',
     String projectDirOverride = projectDir,
     String dartExecutable = 'dart',
@@ -458,6 +458,130 @@ void main() {
       expect(
         shell.commands.single,
         startsWith('/usr/local/bin/dart "$jsrRoot/bin/jsr_widget.dart"'),
+      );
+    });
+  });
+
+  group('package resolution: malformed rootUri stays a clean error', () {
+    test('an unparseable rootUri (:::) is JsrPackageMissing, not a throw',
+        () async {
+      final env = await project(rootUri: ':::');
+      final resolution = await resolveJsrPackageRoot(
+        env,
+        projectDir: projectDir,
+      );
+      expect(resolution, isA<JsrPackageMissing>());
+      expect(
+        (resolution as JsrPackageMissing).detail,
+        contains('invalid rootUri'),
+      );
+    });
+
+    test('a non-file rootUri (https:) is JsrPackageMissing, not a throw',
+        () async {
+      final env = await project(rootUri: 'https://host/pkg');
+      final resolution = await resolveJsrPackageRoot(
+        env,
+        projectDir: projectDir,
+      );
+      expect(resolution, isA<JsrPackageMissing>());
+      expect(
+        (resolution as JsrPackageMissing).detail,
+        contains('not a file URI'),
+      );
+    });
+
+    test('runJsrCliCommand surfaces both as the add-dependency note',
+        () async {
+      final (code, io, shell) = await runJsr(
+        const JsrCliCommand(verb: 'widget:test', args: ['w']),
+        rootUri: ':::',
+      );
+      expect(code, 1);
+      expect(shell.commands, isEmpty);
+      expect(io.notes.single, contains('add js_widget_runtime'));
+    });
+  });
+
+  group('windows (cmd) quoting', () {
+    test(
+      'POSIX default quoting is unchanged: embedded quote sh-escapes only',
+      () {
+        expect(quoteJsrArg('"& calc'), r'"\"& calc"');
+      },
+    );
+
+    test(
+      'reviewer breakout shape: \'& calc keeps every & inactive for cmd',
+      () async {
+        final (code, _, shell) = await runJsr(
+          const JsrCliCommand(verb: 'widget:screenshot', args: ['"& calc']),
+          windowsQuoting: true,
+        );
+        expect(code, 0);
+        // The arg's embedded quote is emitted as `\"` (cmd toggles OUT
+        // there), so the `&` that follows rides cmd's OUTSIDE state and
+        // MUST carry a caret — the bare form would run `calc`.
+        expect(
+          shell.commands.single,
+          'dart "$jsrRoot/bin/jsr_widget.dart" widget:screenshot '
+          r'"\"^& calc"',
+        );
+      },
+    );
+
+    test(
+      'a quote later in the arg: metachars inside the re-opened quotes '
+      'stay bare, cmd never sees them active',
+      () {
+        expect(
+          quoteJsrArg('he said "hi" & left', windowsQuoting: true),
+          r'"he said \"hi\" & left"',
+        );
+      },
+    );
+
+    test('trailing backslashes double; plain path backslashes survive', () {
+      expect(quoteJsrArg(r'C:\dir\', windowsQuoting: true), r'"C:\dir\\"');
+      expect(
+        quoteJsrArg(r'C:\Program Files\app', windowsQuoting: true),
+        r'"C:\Program Files\app"',
+      );
+      expect(
+        quoteJsrArg(r'C:\dir\", and more', windowsQuoting: true),
+        r'"C:\dir\", ^and more"',
+      );
+    });
+
+    test(
+      'a %-bearing argument is refused clean, before any exec — cmd '
+      'expands %VAR% before quote/caret parsing and quotes do not protect',
+      () async {
+        final (code, io, shell) = await runJsr(
+          const JsrCliCommand(
+            verb: 'widget:test',
+            args: ['--expect-state', '{"dir":"%APPDATA%"}'],
+          ),
+          windowsQuoting: true,
+        );
+        expect(code, 1);
+        expect(shell.commands, isEmpty);
+        expect(io.notes.single, contains('%APPDATA%'));
+        expect(io.notes.single, contains('jsr:'));
+      },
+    );
+
+    test('the same arg carries fine on the POSIX path (no refusal)', () async {
+      final (code, _, shell) = await runJsr(
+        const JsrCliCommand(
+          verb: 'widget:test',
+          args: ['--expect-state', '{"dir":"%APPDATA%"}'],
+        ),
+      );
+      expect(code, 0);
+      expect(
+        shell.commands.single,
+        endsWith(r''' "{\"dir\":\"%APPDATA%\"}"'''),
       );
     });
   });
