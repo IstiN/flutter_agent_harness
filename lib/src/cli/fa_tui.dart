@@ -1209,30 +1209,8 @@ final class FaTuiModel extends Model {
       int.tryParse(Platform.environment['FA_TUI_PICKER_REVEAL_MS'] ?? '') ?? 0;
 
   (Model, Cmd?) _handleOpenPicker(OpenPickerMsg msg) {
-    final revealMs = _pickerRevealDelayMs;
-    if (revealMs > 0 && msg.items.length > 1) {
-      // Progressive reveal (gh-1049 test hook): the first frame carries the
-      // title + ONE row, every later frame adds one — the hostile frame-gap
-      // condition the PTY screen waits must survive with content
-      // predicates. The selection stays clamped to the FULL item list so
-      // the cursor lands on the initial row once it is revealed.
-      return (
-        copyWith(
-          menuOpen: true,
-          menuModelMode: true,
-          modelFilter: '',
-          menuItems: msg.items.take(1).toList(),
-          menuAllItems: msg.items,
-          menuSelected: msg.initialIndex.clamp(
-            0,
-            msg.items.isEmpty ? 0 : msg.items.length - 1,
-          ),
-          pickerId: msg.pickerId,
-          pickerTitle: msg.title,
-        ),
-        _schedulePickerReveal(revealMs),
-      );
-    }
+    final reveal = _pickerRevealOpen(msg);
+    if (reveal != null) return reveal;
     return (
       copyWith(
         menuOpen: true,
@@ -1251,6 +1229,34 @@ final class FaTuiModel extends Model {
     );
   }
 
+  /// The progressive-reveal open (gh-1049 test hook), or null when the
+  /// hook is off (the production atomic open above) or the picker has a
+  /// single row. The first frame carries the title + ONE row, every later
+  /// frame adds one — the hostile frame-gap condition the PTY screen waits
+  /// must survive with content predicates. The selection stays clamped to
+  /// the FULL item list so the cursor lands on the initial row once it is
+  /// revealed.
+  (Model, Cmd?)? _pickerRevealOpen(OpenPickerMsg msg) {
+    final revealMs = _pickerRevealDelayMs;
+    if (revealMs <= 0 || msg.items.length <= 1) return null;
+    return (
+      copyWith(
+        menuOpen: true,
+        menuModelMode: true,
+        modelFilter: '',
+        menuItems: msg.items.take(1).toList(),
+        menuAllItems: msg.items,
+        menuSelected: msg.initialIndex.clamp(
+          0,
+          msg.items.isEmpty ? 0 : msg.items.length - 1,
+        ),
+        pickerId: msg.pickerId,
+        pickerTitle: msg.title,
+      ),
+      _schedulePickerReveal(revealMs),
+    );
+  }
+
   Cmd _schedulePickerReveal(int delayMs) {
     return () async {
       await Future<void>.delayed(Duration(milliseconds: delayMs));
@@ -1265,13 +1271,18 @@ final class FaTuiModel extends Model {
     final all = menuAllItems;
     if (!menuOpen || menuItems.length >= all.length) return (this, null);
     final revealed = (menuItems.length + 1).clamp(0, all.length);
-    final revealMs = _pickerRevealDelayMs;
     return (
       copyWith(menuItems: all.take(revealed).toList()),
-      revealed < all.length && revealMs > 0
-          ? _schedulePickerReveal(revealMs)
-          : null,
+      _pickerRevealNextCmd(revealed, all.length),
     );
+  }
+
+  /// The next reveal leg, or null when the row set is complete or the
+  /// hook switched off mid-run.
+  Cmd? _pickerRevealNextCmd(int revealed, int total) {
+    final revealMs = _pickerRevealDelayMs;
+    if (revealed >= total || revealMs <= 0) return null;
+    return _schedulePickerReveal(revealMs);
   }
 
   (Model, Cmd?) _handleWindowSize(WindowSizeMsg msg) {
