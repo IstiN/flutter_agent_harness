@@ -745,13 +745,18 @@ final class LocalShell implements Shell, BackgroundShell {
     token?.onCancel.then(onCancel);
 
     final exitCode = await process.exitCode;
-    timer?.cancel();
+    // gh-1053: the timer stays ARMED after the direct child exits — an
+    // orphaned descendant can hold the pipes past the child's death, and
+    // this timer is what bounds the call ("≤ timeout + kill grace + drain
+    // grace regardless of what descendants do"). It no-ops once the child
+    // is gone AND both pipes closed (guard above); the settled drain
+    // cancels it below. Cancel-on-exit used to strand exactly the
+    // run-36421037356 shape (shell long dead, grandchild on the pipe).
     if (options?.liveStdin != null) {
       unawaited(process.stdin.close().catchError((_) {}));
     }
-    final cancelled = token?.isCancelled ?? false;
     final drained = Future.wait([stdoutDone, stderrDone]);
-    if (timedOut || cancelled) {
+    if (timedOut || (token?.isCancelled ?? false)) {
       // gh-1053: after a tree kill a descendant the kill could not see can
       // hold the pipe write end — cap the drain and return the partial
       // capture. The exec future completes in
@@ -761,9 +766,15 @@ final class LocalShell implements Shell, BackgroundShell {
       // from the dying tree) must never surface unhandled.
       drained.ignore();
     } else {
-      // Natural exit: full drain, byte-identical with the legacy behavior.
+      // Natural exit: full drain, byte-identical with the legacy behavior
+      // (a command with no timeout/cancel that leaves a pipe open keeps
+      // legacy semantics; the timer — when set — bounds it at the timeout).
       await drained;
     }
+    timer?.cancel();
+    // Read AFTER the waits: a cancel that lands mid-drain must still mark
+    // the result (the flag used to be captured pre-drain and lost).
+    final cancelled = token?.isCancelled ?? false;
 
     return _result(
       callbackError: callbackError,
