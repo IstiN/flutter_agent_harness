@@ -4,6 +4,7 @@ library;
 import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_agent_harness/src/memory/execution_env_kb_storage.dart';
 import 'package:flutter_agent_memory/flutter_agent_memory.dart';
 import 'package:test/test.dart';

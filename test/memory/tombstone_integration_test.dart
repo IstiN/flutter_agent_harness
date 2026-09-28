@@ -6,7 +6,7 @@ import 'package:flutter_agent_harness/src/memory/execution_env_kb_storage.dart';
 import 'package:flutter_agent_memory/flutter_agent_memory.dart';
 import 'package:test/test.dart';
 
-const _store = '/.fah/memory';
+const _store = '/work/.fah/memory';
 const _newGitattributesLines = [
   'questions/*.md merge=union',
   'answers/*.md merge=union',
@@ -58,15 +58,16 @@ void main() {
       '(UT-2 merge-triviality invariant)',
       () async {
         Future<String> deletedFileOf(MemoryExecutionEnv env) async {
+          final store = '${env.cwd}/.fah/memory';
           final controller = MemoryController(env: env);
           final added = await controller.add(
             text: 'shared fact deleted on both branches',
           );
           expect(await controller.delete(added.id), 'project');
-          final files = (await env.listDir('$_store/deleted')).getOrThrow();
+          final files = (await env.listDir('$store/deleted')).getOrThrow();
           expect(files, hasLength(1));
           return (await env.readTextFile(
-            '$_store/deleted/${files.first.name}',
+            '$store/deleted/${files.first.name}',
           ))
               .valueOrNull!;
         }

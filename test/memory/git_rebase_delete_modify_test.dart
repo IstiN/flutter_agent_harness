@@ -4,6 +4,7 @@ library;
 import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_agent_harness/src/memory/execution_env_kb_storage.dart';
 import 'package:flutter_agent_memory/flutter_agent_memory.dart';
 import 'package:test/test.dart';
@@ -65,7 +66,7 @@ void main() {
       await git(['symbolic-ref', 'HEAD', 'refs/heads/main']);
       await git(['add', '-A']);
       final base = await git(['commit', '-q', '-m', 'base']);
-      expect(base.exitCode, 0, reason: base.stderr as Object?);
+      expect(base.exitCode, 0, reason: base.stderr.toString());
 
       // Branch A: an agent deletes the note through the harness storage —
       // tombstone-in-place, the file is rewritten, never unlinked.
@@ -79,7 +80,7 @@ void main() {
       );
       await git(['add', '-A']);
       final commitA = await git(['commit', '-q', '-m', 'A deletes the note']);
-      expect(commitA.exitCode, 0, reason: commitA.stderr as Object?);
+      expect(commitA.exitCode, 0, reason: commitA.stderr.toString());
 
       // Branch B (main): another agent edits the same note file.
       await git(['checkout', '-q', 'main']);
@@ -89,7 +90,7 @@ void main() {
       );
       await git(['add', '-A']);
       final commitB = await git(['commit', '-q', '-m', 'B edits the note']);
-      expect(commitB.exitCode, 0, reason: commitB.stderr as Object?);
+      expect(commitB.exitCode, 0, reason: commitB.stderr.toString());
 
       // Rebase B onto A — zero manual conflict resolution.
       final rebase = await git(['rebase', 'agent-a']);
