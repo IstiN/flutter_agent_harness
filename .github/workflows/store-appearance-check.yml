@@ -33,7 +33,7 @@ run-name: "Store appearance check (${{ inputs.stores || 'all' }})"
 
 on:
   schedule:
-    - cron: '17 7 *' # = daily-publish (05:17 UTC) + 120 min, owner ruling gh-1041
+    - cron: '17 7 * * *' # = daily-publish (05:17 UTC) + 120 min, owner ruling gh-1041
   workflow_dispatch:
     inputs:
       stores:

@@ -43,21 +43,24 @@ void main() {
       final daily =
           loadYaml(read('.github/workflows/daily-publish.yml')) as Map;
       final dailyOn = (daily['on'] ?? daily[true]) as Map;
-      final dailyCron = RegExp(
-        r"'([\d*]+) ([\d*]+) ([\d*]+) ([\d*]+) ([\d*]+)'",
-      ).firstMatch((dailyOn['schedule'] as List).first.toString());
-      final checkCron = RegExp(
-        r"'([\d*]+) ([\d*]+) ([\d*]+) ([\d*]+) ([\d*]+)'",
-      ).firstMatch((on['schedule'] as List).first.toString());
-      expect(checkCron, isNotNull, reason: 'the check carries a cron schedule');
-      expect(dailyCron, isNotNull);
+      String cronOf(Map trigger) =>
+          ((trigger['schedule'] as List).first as Map)['cron'].toString();
+      final dailyCron = cronOf(dailyOn);
+      final checkCron = cronOf(on);
+      final dailyParts = dailyCron.split(' ');
+      final checkParts = checkCron.split(' ');
       expect(
-        checkCron!.group(1),
-        dailyCron!.group(1),
+        checkParts,
+        hasLength(5),
+        reason: 'the check carries a cron schedule',
+      );
+      expect(
+        checkParts[0],
+        dailyParts[0],
         reason: 'same minute as the daily legs',
       );
       expect(
-        int.parse(checkCron.group(2)!) - int.parse(dailyCron.group(2)!),
+        int.parse(checkParts[1]) - int.parse(dailyParts[1]),
         2,
         reason: 'exactly 120 min after the daily publish legs start (gh-1041)',
       );
@@ -178,10 +181,13 @@ void main() {
       },
     );
 
-    test('fastlane processing wait is untouched (upload-owned, not the custom wait)', () {
-      expect(fastfile, contains('skip_waiting_for_build_processing: false'));
-      expect(fastfile, contains('TESTFLIGHT_WAIT_TIMEOUT_SECONDS'));
-    });
+    test(
+      'fastlane processing wait is untouched (upload-owned, not the custom wait)',
+      () {
+        expect(fastfile, contains('skip_waiting_for_build_processing: false'));
+        expect(fastfile, contains('TESTFLIGHT_WAIT_TIMEOUT_SECONDS'));
+      },
+    );
 
     test('touched workflows are still valid YAML', () {
       for (final path in [
@@ -215,7 +221,7 @@ void main() {
       expect(script, contains("require_relative"));
       expect(
         script,
-        contains('store_appearance\''),
+        contains('store_appearance'),
         reason: 'requires the pure module',
       );
       for (final call in [
@@ -374,8 +380,9 @@ void main() {
         'user.name',
         't',
       ], workingDirectory: dir.path);
-      File('${dir.path}/pubspec.yaml')
-          .writeAsStringSync('name: fixture\nversion: $version\n');
+      File(
+        '${dir.path}/pubspec.yaml',
+      ).writeAsStringSync('name: fixture\nversion: $version\n');
       Process.runSync('git', ['add', '.'], workingDirectory: dir.path);
       Process.runSync('git', [
         'commit',
@@ -451,6 +458,8 @@ exit 0
       final env = <String, String>{
         'PATH': '$stubDir/bin:${Platform.environment['PATH']!}',
         'GH_TOKEN': 'stub',
+        'GH_STUB_DIR': stubDir,
+        'GH_LOG_FILE': '$stubDir/log',
         'GITHUB_REPOSITORY': 'OWNER/REPO',
         'GITHUB_RUN_ID': '4242',
         'GITHUB_STEP_SUMMARY': summaryFile.path,
@@ -495,10 +504,6 @@ exit 0
             (l) => l.startsWith('STORE_APPEARANCE_RESULT '),
             orElse: () => '',
           );
-      if (Platform.environment['FA_DEBUG'] != null) {
-        // ignore: avoid_print
-        print('SCRIPT-STDOUT: ${r.stdout}\nSCRIPT-STDERR: ${r.stderr}');
-      }
       expect(
         line,
         isNotEmpty,
@@ -556,38 +561,41 @@ exit 0
       },
     );
 
-    test('real JWTs ride the wire: ES256 to ASC, RS256 assertion to the Play token endpoint', () async {
-      if (!rubyAvailable) return;
-      await runCheck();
-      final ascAuth = capturedAuth.firstWhere(
-        (a) => a.contains('/asc/v1/apps'),
-      );
-      final ascToken = ascAuth.split('Bearer ').last;
-      expect(ascAuth, contains('Bearer '));
-      expect(
-        ascToken.split('.').length,
-        3,
-        reason: 'a real ES256 JWT, not a stub string',
-      );
-      expect(
-        ascToken.split('.')[0],
-        'eyJhbGciOiJFUzI1NiIsImtpZCI6IlRFU1RLSUQiLCJ0eXAiOiJKV1QifQ',
-        reason: 'header decodes to {alg:ES256, kid:TESTKID, typ:JWT}',
-      );
-      final grant = capturedGrants.single;
-      expect(
-        grant,
-        contains(
-          'grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer',
-        ),
-      );
-      final assertion = Uri.splitQueryString(grant)['assertion']!;
-      expect(
-        assertion.split('.').length,
-        3,
-        reason: 'a real RS256 assertion minted from the SA key',
-      );
-    });
+    test(
+      'real JWTs ride the wire: ES256 to ASC, RS256 assertion to the Play token endpoint',
+      () async {
+        if (!rubyAvailable) return;
+        await runCheck();
+        final ascAuth = capturedAuth.firstWhere(
+          (a) => a.contains('/asc/v1/apps'),
+        );
+        final ascToken = ascAuth.split('Bearer ').last;
+        expect(ascAuth, contains('Bearer '));
+        expect(
+          ascToken.split('.').length,
+          3,
+          reason: 'a real ES256 JWT, not a stub string',
+        );
+        expect(
+          ascToken.split('.')[0],
+          'eyJhbGciOiJFUzI1NiIsImtpZCI6IlRFU1RLSUQiLCJ0eXAiOiJKV1QifQ',
+          reason: 'header decodes to {alg:ES256, kid:TESTKID, typ:JWT}',
+        );
+        final grant = capturedGrants.single;
+        expect(
+          grant,
+          contains(
+            'grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer',
+          ),
+        );
+        final assertion = Uri.splitQueryString(grant)['assertion']!;
+        expect(
+          assertion.split('.').length,
+          3,
+          reason: 'a real RS256 assertion minted from the SA key',
+        );
+      },
+    );
 
     test(
       'absent past the horizon → exactly one stub per absent store, exit 1',
@@ -621,38 +629,41 @@ exit 0
       },
     );
 
-    test('a second identical check updates the stubs in place (no duplicates, REG)', () async {
-      if (!rubyAvailable) return;
-      final r = await runCheck(
-        asc: 'absent',
-        play: 'absent',
-        pubdev: 'absent',
-        openStubs: [
-          {
-            'number': 11,
-            'title': '[store-appearance-check] TestFlight 1.0.485 absent',
-          },
-          {
-            'number': 12,
-            'title': '[store-appearance-check] Play 1.0.485 absent',
-          },
-          {
-            'number': 13,
-            'title': '[store-appearance-check] pub.dev 1.0.485 absent',
-          },
-        ],
-      );
-      expect(r.exitCode, 1);
-      final log = ghLog();
-      expect(
-        log.where((l) => l.contains('issue create')),
-        isEmpty,
-        reason: 'the stubs exist — filing again would duplicate',
-      );
-      expect(log.where((l) => l.startsWith('issue comment 11')).length, 1);
-      expect(log.where((l) => l.startsWith('issue comment 12')).length, 1);
-      expect(log.where((l) => l.startsWith('issue comment 13')).length, 1);
-    });
+    test(
+      'a second identical check updates the stubs in place (no duplicates, REG)',
+      () async {
+        if (!rubyAvailable) return;
+        final r = await runCheck(
+          asc: 'absent',
+          play: 'absent',
+          pubdev: 'absent',
+          openStubs: [
+            {
+              'number': 11,
+              'title': '[store-appearance-check] TestFlight 1.0.485 absent',
+            },
+            {
+              'number': 12,
+              'title': '[store-appearance-check] Play 1.0.485 absent',
+            },
+            {
+              'number': 13,
+              'title': '[store-appearance-check] pub.dev 1.0.485 absent',
+            },
+          ],
+        );
+        expect(r.exitCode, 1);
+        final log = ghLog();
+        expect(
+          log.where((l) => l.contains('issue create')),
+          isEmpty,
+          reason: 'the stubs exist — filing again would duplicate',
+        );
+        expect(log.where((l) => l.startsWith('issue comment 11')).length, 1);
+        expect(log.where((l) => l.startsWith('issue comment 12')).length, 1);
+        expect(log.where((l) => l.startsWith('issue comment 13')).length, 1);
+      },
+    );
 
     test('absence below the horizon only reports — no stub, exit 0', () async {
       if (!rubyAvailable) return;
@@ -715,20 +726,23 @@ exit 0
       },
     );
 
-    test('once-a-day guard: the green summary is not repeated within the day (REG)', () async {
-      if (!rubyAvailable) return;
-      final r = await runCheck(
-        publishStubs: [7],
-        summarizedBodies:
-            '<!-- store-appearance-check:green-summary 2026-09-29 -->',
-      );
-      expect(r.exitCode, 0);
-      expect(
-        ghLog().where((l) => l.contains('issue comment 7')),
-        isEmpty,
-        reason: 'the marker already carries today\'s summary',
-      );
-    });
+    test(
+      'once-a-day guard: the green summary is not repeated within the day (REG)',
+      () async {
+        if (!rubyAvailable) return;
+        final r = await runCheck(
+          publishStubs: [7],
+          summarizedBodies:
+              '<!-- store-appearance-check:green-summary 2026-09-29 -->',
+        );
+        expect(r.exitCode, 0);
+        expect(
+          ghLog().where((l) => l.contains('issue comment 7')),
+          isEmpty,
+          reason: 'the marker already carries today\'s summary',
+        );
+      },
+    );
 
     test(
       '--only scopes the run, and missing secrets skip green-neutrally',
@@ -761,29 +775,33 @@ exit 0
       },
     );
 
-    test('the play leg stays read-only: the edit is always deleted, never committed', () async {
-      if (!rubyAvailable) return;
-      await runCheck(play: 'absent');
-      expect(
-        capturedAuth.any(
-          (a) => a.startsWith('POST /play/') && a.endsWith('/edits'),
-        ),
-        isTrue,
-        reason: 'the edit is created (reads require one)',
-      );
-      expect(
-        capturedAuth.any((a) => a.startsWith('DELETE /play/')),
-        isNotEmpty,
-        reason: 'edits.insert must be abandoned (read-only contract)',
-      );
-      expect(
-        capturedAuth.where(
-          (a) =>
-              a.startsWith('POST /play/') && a.contains('edits/EDIT-1:commit'),
-        ),
-        isEmpty,
-        reason: 'a commit would PUBLISH — forbidden (I3)',
-      );
-    });
+    test(
+      'the play leg stays read-only: the edit is always deleted, never committed',
+      () async {
+        if (!rubyAvailable) return;
+        await runCheck(play: 'absent');
+        expect(
+          capturedAuth.any(
+            (a) => a.startsWith('POST /play/') && a.contains('/edits '),
+          ),
+          isTrue,
+          reason: 'the edit is created (reads require one)',
+        );
+        expect(
+          capturedAuth.any((a) => a.startsWith('DELETE /play/')),
+          isTrue,
+          reason: 'edits.insert must be abandoned (read-only contract)',
+        );
+        expect(
+          capturedAuth.where(
+            (a) =>
+                a.startsWith('POST /play/') &&
+                a.contains('edits/EDIT-1:commit'),
+          ),
+          isEmpty,
+          reason: 'a commit would PUBLISH — forbidden (I3)',
+        );
+      },
+    );
   });
 }
