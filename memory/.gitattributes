@@ -6,3 +6,9 @@ questions/*.md merge=union
 answers/*.md merge=union
 notes/*.md merge=union
 deleted/*.md merge=union
+<<<<<<< HEAD
+=======
+question/*.md merge=union
+answer/*.md merge=union
+note/*.md merge=union
+>>>>>>> origin/main
