@@ -83,8 +83,10 @@ jobs:
     needs: version
     runs-on: [self-hosted, macOS, ARM64]
     # Issue #239: TestFlight submit now waits for Apple processing (bounded,
-    # default 90 min) + a 15-min distribution verify AFTER the build/notarize
-    # work — the job ceiling must cover the worst case, not just the build.
+    # default 90 min) + a ~1-min one-shot appearance probe AFTER the
+    # build/notarize work (gh-1041: the blocking distribution wait moved to
+    # the deferred store-appearance-check workflow) — the job ceiling must
+    # cover the worst case, not just the build.
     timeout-minutes: 150
     strategy:
       fail-fast: false

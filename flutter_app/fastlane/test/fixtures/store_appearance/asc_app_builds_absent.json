@@ -1,0 +1,13 @@
+{
+  "data": [
+    {
+      "id": "BUILD-190",
+      "type": "builds",
+      "attributes": { "version": "190", "processingState": "VALID", "uploadedDate": "2026-09-27T05:40:00Z" },
+      "relationships": { "preReleaseVersion": { "data": { "id": "PRV-484" } } }
+    }
+  ],
+  "included": [
+    { "id": "PRV-484", "type": "preReleaseVersions", "attributes": { "version": "1.0.484", "platform": "IOS" } }
+  ]
+}
