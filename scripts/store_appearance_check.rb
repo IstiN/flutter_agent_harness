@@ -275,9 +275,12 @@ if since.nil? && !repo.to_s.empty?
   end
 end
 # review thread 5: a daily-publish leg still running at check time has
-# possibly not uploaded yet — report only, never stub.
+# possibly not uploaded yet — report only, never stub. review thread 7:
+# a leg that ended NON-success never went green — its own [daily-publish]
+# failure stub owns the "version missing" signal, not this check.
 stub_due = S.stub_due?(now: now, since: since, horizon_minutes: horizon,
-                       leg_status: leg&.dig("status"))
+                       leg_status: leg&.dig("status"),
+                       leg_conclusion: leg&.dig("conclusion"))
 
 dry_run = %w[1 true yes].include?(env("STORE_APPEARANCE_DRY_RUN", "").to_s.downcase) || repo.to_s.empty?
 open_stubs = []
@@ -314,7 +317,8 @@ end
 actions = lifecycle_error ? [] : S.plan_lifecycle(
   expected: expected, verdicts: verdicts, stub_due: stub_due,
   open_stubs: open_stubs, publish_stub_numbers: publish_stubs,
-  summarized: summarized, run_url: run_url, now: now, errors: errors
+  summarized: summarized, run_url: run_url, now: now, errors: errors,
+  leg: leg
 )
 
 # ── execute the plan ─────────────────────────────────────────────────────────
@@ -326,38 +330,43 @@ def write_temp(body)
 end
 
 executed = []
+write_failures = []
 actions.each do |action|
+  # review gh-1041 thread 8: a failed gh WRITE must not pass silently —
+  # record `done` per action, collect failures, and fold them into `failed`
+  # so a partially-executed lifecycle never reports a clean green.
+  record = lambda do |ok, extra = {}|
+    write_failures << "#{action['action']} #{action['title'] || action['number']}" unless ok
+    executed << action.merge("done" => ok, **extra)
+  end
   case action["action"]
   when "create_stub"
     next executed << action.merge("skipped" => "dry-run") if dry_run
     body = write_temp(action["body"])
     url = gh("issue", "create", "--repo", repo, "--title", action["title"], "--body-file", body,
              "--label", "bug", "--label", "store-appearance-check", "--assignee", assignee)
-    executed << action.merge("issue" => url.to_s.strip)
+    record.call(!url.nil?, "issue" => url.to_s.strip)
   when "comment_stub"
     next executed << action.merge("skipped" => "dry-run") if dry_run
     body = write_temp(action["body"])
-    gh("issue", "comment", action["number"], "--repo", repo, "--body-file", body)
-    executed << action
+    record.call(!gh("issue", "comment", action["number"], "--repo", repo, "--body-file", body).nil?)
   when "close_stub"
     next executed << action.merge("skipped" => "dry-run") if dry_run
-    gh("issue", "close", action["number"], "--repo", repo, "--comment", action["reason"])
-    executed << action
+    record.call(!gh("issue", "close", action["number"], "--repo", repo, "--comment", action["reason"]).nil?)
   when "comment_summary"
     next executed << action.merge("skipped" => "dry-run") if dry_run
     body = write_temp(action["body"])
-    gh("issue", "comment", action["number"], "--repo", repo, "--body-file", body)
-    executed << action
+    record.call(!gh("issue", "comment", action["number"], "--repo", repo, "--body-file", body).nil?)
   end
 end
 
 # ── report ───────────────────────────────────────────────────────────────────
-failed = errors.any? || !lifecycle_error.nil? ||
+failed = errors.any? || !lifecycle_error.nil? || write_failures.any? ||
          verdicts.any? { |_, v| v["verdict"] == "absent" && stub_due }
 result = {
   "expected" => expected, "now" => now, "since" => since, "stub_due" => stub_due,
   "verdicts" => verdicts, "errors" => errors, "skips" => skips,
-  "lifecycle_error" => lifecycle_error,
+  "lifecycle_error" => lifecycle_error, "write_failures" => write_failures,
   "actions" => dry_run ? actions : executed, "dry_run" => dry_run
 }
 
@@ -375,10 +384,14 @@ summary_rows = stores.map do |store|
 end
 if (path = ENV["GITHUB_STEP_SUMMARY"])
   names = (dry_run ? actions : executed).map { |a| a['action'] }
+  leg_bits = leg&.dig('status') ? " • leg: #{leg['status']}#{leg['conclusion'] ? "/#{leg['conclusion']}" : ''}" : ''
+  bits = +""
+  bits << " • LIFECYCLE ABORTED: #{lifecycle_error.to_s[0, 120]}" if lifecycle_error
+  bits << " • WRITE FAILURES: #{write_failures.join('; ').to_s[0, 200]}" if write_failures.any?
   File.write(path, <<~SUMMARY, mode: "a")
     ## Store appearance check (gh-1041)
 
-    Expected: app `#{expected['app']}` • pub.dev `#{expected['pubdev']}` • horizon #{horizon} min (legs started: `#{since || 'unknown'}`#{leg&.dig('status') ? " • leg status: #{leg['status']}" : ''}) • stub due: #{stub_due}#{lifecycle_error ? " • LIFECYCLE ABORTED: #{lifecycle_error.to_s[0, 120]}" : ''}
+    Expected: app `#{expected['app']}` • pub.dev `#{expected['pubdev']}` • horizon #{horizon} min (legs started: `#{since || 'unknown'}`#{leg_bits}) • stub due: #{stub_due}#{bits}
 
     | Store | Expected | Verdict |
     | --- | --- | --- |
@@ -386,6 +399,7 @@ if (path = ENV["GITHUB_STEP_SUMMARY"])
 
     Actions: #{names.empty? ? '_none_' : names.join(', ')}
   SUMMARY
+
 end
 
 puts "STORE_APPEARANCE_RESULT #{JSON.generate(result)}"

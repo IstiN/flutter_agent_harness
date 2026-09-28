@@ -194,6 +194,19 @@ if $PROGRAM_NAME == __FILE__
     S.stub_due?(now: "2026-09-29T08:00:00Z", since: "2026-09-29T05:17:00Z", horizon_minutes: 120)
   ok("leg still running at check time → report only, stub waits for a later check")
 
+  # review gh-1041 thread 7: `status: completed` alone isn't "the submit went
+  # green" — a FAILED leg never uploaded, so an absence stub's premise
+  # ("a green submit's version should be live") doesn't hold and it would
+  # just duplicate the leg's own [daily-publish] failure stub for a day.
+  base = { now: "2026-09-29T08:00:00Z", since: "2026-09-29T05:17:00Z", horizon_minutes: 120, leg_status: "completed" }
+  raise!("a FAILED leg never stubs absences") if S.stub_due?(**base, leg_conclusion: "failure")
+  raise!("a cancelled leg never stubs absences either") if S.stub_due?(**base, leg_conclusion: "cancelled")
+  raise!("timed_out/skipped legs never stub absences") if S.stub_due?(**base, leg_conclusion: "timed_out") || S.stub_due?(**base, leg_conclusion: "skipped")
+  raise!("a successful leg stubs absences exactly like before") unless S.stub_due?(**base, leg_conclusion: "success")
+  raise!("no conclusion (old gh shape) keeps the old semantics") unless S.stub_due?(**base)
+  raise!("in flight still wins over any conclusion") if S.stub_due?(**base, leg_conclusion: "success", leg_status: "in_progress")
+  ok("leg ended non-success (no green submit) → report only, the leg stub owns the signal")
+
   # review gh-1041 thread 7 minor: horizon_minutes free text (.to_i → 0) must
   # never collapse the horizon to "stub immediately".
   raise!("free text horizon falls back to the default") unless S.parse_horizon("two hours") == 120
@@ -247,6 +260,25 @@ if $PROGRAM_NAME == __FILE__
     a[0]["title"] == "[store-appearance-check] TestFlight 1.0.485 absent"
   raise!("the stub body carries evidence") unless a[0]["body"].include?("1.0.484") && a[0]["body"].include?("https://ci/runs/1") && a[0]["body"].include?("2026-09-29")
   ok("first absence → exactly one evidence-carrying stub (title = stable key)")
+
+  # review gh-1041 thread 7: the leg's state belongs in the stub's evidence
+  # block — a reader sees "submit leg: completed/success" without hunting
+  # for the daily-publish run.
+  a = S.plan_lifecycle(
+    expected: expected485, verdicts: { "testflight" => tf_absent },
+    stub_due: true, open_stubs: [], publish_stub_numbers: [], summarized: [],
+    run_url: "https://ci/runs/1", now: "2026-09-29T07:17:00Z",
+    leg: { "status" => "completed", "conclusion" => "success" }
+  )
+  raise!("the stub body quotes the leg's state") unless
+    a[0]["body"].include?("Submit leg at check time") && a[0]["body"].include?("completed") && a[0]["body"].include?("success")
+  a = S.plan_lifecycle(
+    expected: expected485, verdicts: { "testflight" => tf_absent },
+    stub_due: true, open_stubs: [], publish_stub_numbers: [], summarized: [],
+    run_url: "https://ci/runs/1", now: "2026-09-29T07:17:00Z"
+  )
+  raise!("no leg state → no leg line, nothing else changes") unless !a[0]["body"].include?("Submit leg at check time") && a.size == 1
+  ok("absence stub body carries the day's leg state when known")
 
   a = S.plan_lifecycle(
     expected: expected485, verdicts: { "testflight" => tf_absent },

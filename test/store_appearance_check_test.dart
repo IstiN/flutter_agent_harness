@@ -455,6 +455,7 @@ void main() {
       gh.writeAsStringSync('''
 #!/usr/bin/env bash
 echo "\$*" >> "\$GH_LOG_FILE"
+if [ -n "\$GH_FAIL_VERB" ] && [ "\$1 \$2" = "\$GH_FAIL_VERB" ]; then exit 1; fi
 case "\$1 \$2" in
   "issue list"*)
     if [ "\$FAIL_ISSUE_LIST" = "1" ]; then exit 1; fi
@@ -490,6 +491,7 @@ exit 0
       String summarizedBodies = '',
       String dailyRunJson = '',
       bool failIssueList = false,
+      String? ghFailVerb,
     }) async {
       await startServer(asc: asc, play: play, pubdev: pubdev);
       makeFixtureRepo(fixtureVersion);
@@ -523,6 +525,7 @@ exit 0
         'STORE_APPEARANCE_NOW': ?now,
         'STORE_APPEARANCE_SINCE': ?since,
         if (failIssueList) 'FAIL_ISSUE_LIST': '1',
+        if (ghFailVerb != null) 'GH_FAIL_VERB': ghFailVerb,
         if (withSecrets) ...{
           'APP_STORE_CONNECT_KEY_ID': 'TESTKID',
           'APP_STORE_CONNECT_ISSUER_ID': 'TESTISSUER',
@@ -935,6 +938,65 @@ exit 0
         3,
         reason: 'a finished leg + absence past the horizon files the stubs',
       );
+    });
+
+    test('a leg that FAILED never went green → no absence stubs at all '
+        '(review gh-1041 thread 7)', () async {
+      if (!rubyAvailable) return;
+      final failed = await runCheck(
+        asc: 'absent',
+        play: 'absent',
+        pubdev: 'absent',
+        since: null,
+        dailyRunJson:
+            '{"createdAt":"2026-09-29T05:17:00Z","status":"completed","conclusion":"failure"}',
+      );
+      expect(
+        failed.exitCode,
+        0,
+        reason: 'no green submit ⇒ no appearance premise; the [daily-publish] '
+            'leg stub owns the signal',
+      );
+      expect(
+        ghLog().where((l) => l.contains('issue create')),
+        isEmpty,
+        reason: 'an absence stub would just duplicate the leg failure stub',
+      );
+      expect(resultOf(failed)['stub_due'], isFalse);
+    });
+
+    test('a failed gh WRITE turns the run red and is recorded '
+        '(review gh-1041 thread 8)', () async {
+      if (!rubyAvailable) return;
+      // All present + an open stub ⇒ exactly one close_stub action; the
+      // stubbed gh fails every `issue close`, so the run must not exit 0.
+      final r = await runCheck(
+        openStubs: [
+          {'number': 42, 'title': '[store-appearance-check] TestFlight 1.0.485 absent'},
+        ],
+        ghFailVerb: 'issue close',
+      );
+      expect(
+        r.exitCode,
+        1,
+        reason: 'a partially-executed lifecycle never reports a clean green',
+      );
+      final result = resultOf(r);
+      expect((result['write_failures'] as List), isNotEmpty);
+      final close = (result['actions'] as List).firstWhere(
+        (a) => a['action'] == 'close_stub',
+      ) as Map;
+      expect(close['done'], isFalse, reason: 'the failed write is annotated');
+      final r2 = await runCheck(
+        openStubs: [
+          {'number': 42, 'title': '[store-appearance-check] TestFlight 1.0.485 absent'},
+        ],
+      );
+      expect(r2.exitCode, 0, reason: '${r2.stderr}');
+      final close2 = (resultOf(r2)['actions'] as List).firstWhere(
+        (a) => a['action'] == 'close_stub',
+      ) as Map;
+      expect(close2['done'], isTrue);
     });
   });
 }

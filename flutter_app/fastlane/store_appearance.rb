@@ -154,8 +154,15 @@ module StoreAppearance
   # (TestFlight worst case ≈ 220 min after start) — stubbing then is a false
   # positive by construction, so the check reports only and a later check
   # (next day, or a manual re-run) owns the stub.
-  def stub_due?(now:, since:, horizon_minutes:, leg_status: nil)
+  def stub_due?(now:, since:, horizon_minutes:, leg_status: nil, leg_conclusion: nil)
     return false if %w[in_progress queued pending waiting].include?(leg_status.to_s)
+    # review gh-1041 thread 7: `completed` alone is not "the submit went
+    # green" — a failed/cancelled/timed-out leg never uploaded, so an
+    # absence stub's premise ("a green submit's version should be live")
+    # doesn't hold; the leg's own [daily-publish] failure stub owns that
+    # signal. Any KNOWN non-success conclusion → report only. A missing
+    # conclusion (old gh shape, manual dispatch) keeps the old semantics.
+    return false if !leg_conclusion.nil? && leg_conclusion != "success"
 
     return true if since.nil? # no daily run found — a manual check owns the horizon itself
 
@@ -309,7 +316,7 @@ module StoreAppearance
   #   now               — RFC3339 stamp for bodies
   # Returns actions; the IO script executes them via gh verbatim:
   #   create_stub / comment_stub / close_stub / comment_summary
-  def plan_lifecycle(expected:, verdicts:, stub_due:, open_stubs:, publish_stub_numbers:, summarized:, run_url:, now:, errors: {})
+  def plan_lifecycle(expected:, verdicts:, stub_due:, open_stubs:, publish_stub_numbers:, summarized:, run_url:, now:, errors: {}, leg: nil)
     actions = []
     STORES.each do |store, display|
       verdict = verdicts[store]
@@ -344,7 +351,7 @@ module StoreAppearance
         if stub_due
           body = absence_body(
             display: display, version: expected_version, verdict: verdict,
-            run_url: run_url, now: now, updated: !exact_stub.nil?
+            run_url: run_url, now: now, updated: !exact_stub.nil?, leg: leg
           )
           if exact_stub
             actions << { "action" => "comment_stub", "number" => exact_stub["number"],
@@ -375,7 +382,7 @@ module StoreAppearance
     actions
   end
 
-  def absence_body(display:, version:, verdict:, run_url:, now:, updated:)
+  def absence_body(display:, version:, verdict:, run_url:, now:, updated:, leg: nil)
     observed = verdict["observed"] || []
     top = highest(observed)
     served = if top.nil?
@@ -384,12 +391,16 @@ module StoreAppearance
                older = observed.length - 1
                "`#{top}`#{older.positive? ? " (+#{older} older versions)" : ''}"
              end
+    # review gh-1041 thread 7: the day's leg state is part of the evidence —
+    # the stub's premise is "a green submit's version should be live".
+    leg_line = leg.is_a?(Hash) && leg["status"].is_a?(String) &&
+               !leg["status"].empty? ? "      - **Submit leg at check time:** `#{leg['status']}`#{leg['conclusion'].to_s.empty? ? '' : " / `#{leg['conclusion']}`"}\n" : ""
     <<~BODY
       #{STUB_PREFIX} **#{display}**: expected `#{version}` is still **absent** past the horizon.
 
       - **Expected:** `#{version}` (resolved from the repo tag/version file — gh-1041 I2)
       - **Store serves:** #{served}
-      - **First check runs 120 min after the daily publish legs start; this stub is updated in place by later checks until the version appears or rolls over (exactly-one-stub guarantee).**
+#{leg_line}      - **First check runs 120 min after the daily publish legs start; this stub is updated in place by later checks until the version appears or rolls over (exactly-one-stub guarantee).**
       - **Check run:** #{run_url}
       - **Checked at:** #{now}
 
