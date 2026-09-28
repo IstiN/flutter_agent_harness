@@ -4384,6 +4384,11 @@
 - chore: pin factory a18361b2 (red-park + dryRun + dup-guard + teammate watchdog) (#1023)
 - chore(factory): bump dmtools-agents to b44b5493 — latch-skip + stamp links + auto-anchor fallback (#547/#548/#549) in lockstep (#1019)
 
+## 1.0.486
+
+- fix(926): CodeMie budget/spending exhaustion is terminal — no retry loops, immediate fallback (#929)
+- chore: pin factory 1fdb4c6 (git-guard double-shim exec-loop fix) (#1043)
+
 ## Unreleased
 
 ## Unreleased
