@@ -412,7 +412,7 @@ void main() {
     );
 
     test(
-      'cancel token: [REDACTED:Sensitive Value]',
+      'cancel token: bounded abort with the tree reaped',
       skip: Platform.isWindows ? 'POSIX process semantics only' : false,
       () async {
         await expectBoundedTreeKill(
