@@ -4389,6 +4389,12 @@
 - fix(926): CodeMie budget/spending exhaustion is terminal — no retry loops, immediate fallback (#929)
 - chore: pin factory 1fdb4c6 (git-guard double-shim exec-loop fix) (#1043)
 
+## 1.0.489
+
+- fix(web): conditionally export FFI-backed io.dart members
+- feat(#977): provider name step + multi-account coexistence in app add-provider flow (#984)
+- feat(#969): show add-provider flow first on fresh install (#971)
+
 ## Unreleased
 
 ## Unreleased
