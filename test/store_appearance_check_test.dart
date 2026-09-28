@@ -85,6 +85,15 @@ void main() {
         reason: 'stub filing/updates and green summaries need issues:write',
       );
       expect(
+        perms['actions'].toString(),
+        'read',
+        reason:
+            'gh run list resolves the daily legs\' started-at for the horizon '
+            '— without actions:read the GITHUB_TOKEN 403s, since stays nil, '
+            'stub_due? is unconditionally true and the horizon input is dead '
+            '(review gh-1041 thread 1)',
+      );
+      expect(
         perms.containsKey('id-token'),
         isFalse,
         reason:
@@ -134,6 +143,34 @@ void main() {
         reason: 'the dispatch stores input routes through --only',
       );
     });
+
+    test(
+      'dispatch inputs reach the script through env:, never ${{ }} interpolation '
+      '(review gh-1041 thread 4 — script injection hardening)',
+      () {
+        final text = read(workflowPath);
+        // `type: choice` is NOT enforced for REST/gh CLI dispatches, and this
+        // job's env carries the ASC .p8 + Play service account — an
+        // interpolated input would be shell syntax before ruby validates it.
+        expect(
+          text,
+          isNot(contains(r'--only "${{ inputs.stores }}"')),
+          reason: 'the stores input must not expand into the run: script',
+        );
+        final job = (workflow['jobs'] as Map)['check'] as Map;
+        final steps = (job['steps'] as YamlList).whereType<YamlMap>().toList();
+        final onlyStep = steps.firstWhere(
+          (s) => s['run'].toString().contains('--only'),
+        );
+        expect(
+          onlyStep['run'].toString(),
+          contains('"\$STORES_INPUT"'),
+          reason: 'the input rides an intermediate env var (GitHub hardening guide)',
+        );
+        final env = onlyStep['env'] as YamlMap;
+        expect(env['STORES_INPUT'].toString(), r'${{ inputs.stores }}');
+      },
+    );
   });
 
   group('Fastfile — the 900s wait leaves the failing path (AC1)', () {
@@ -400,6 +437,8 @@ void main() {
       List<Map<String, Object>> openStubs = const [],
       List<int> publishStubs = const [],
       String summarizedBodies = '',
+      String dailyRunJson = '',
+      bool failIssueList = false,
     }) {
       final root = Directory.systemTemp.createTempSync('gh-stub-');
       stubDir = root.path;
@@ -409,6 +448,7 @@ void main() {
         jsonEncode(publishStubs.map((n) => {'number': n}).toList()),
       );
       File('$stubDir/summarized.txt').writeAsStringSync(summarizedBodies);
+      File('$stubDir/daily_run.json').writeAsStringSync(dailyRunJson);
       File('$stubDir/log').writeAsStringSync('');
       final gh = File('$stubDir/bin/gh');
       gh.writeAsStringSync('''
@@ -416,10 +456,12 @@ void main() {
 echo "\$*" >> "\$GH_LOG_FILE"
 case "\$1 \$2" in
   "issue list"*)
+    if [ "\$FAIL_ISSUE_LIST" = "1" ]; then exit 1; fi
     if [[ "\$*" == *"--label store-appearance-check"* ]]; then cat "\$GH_STUB_DIR/open_stubs.json"
     else cat "\$GH_STUB_DIR/publish_stubs.json"; fi
     exit 0 ;;
   "issue view"*) cat "\$GH_STUB_DIR/summarized.txt"; exit 0 ;;
+  "run list"*) cat "\$GH_STUB_DIR/daily_run.json"; exit 0 ;;
 esac
 copy=0
 for arg in "\$@"; do
@@ -445,6 +487,8 @@ exit 0
       List<Map<String, Object>> openStubs = const [],
       List<int> publishStubs = const [],
       String summarizedBodies = '',
+      String dailyRunJson = '',
+      bool failIssueList = false,
     }) async {
       await startServer(asc: asc, play: play, pubdev: pubdev);
       makeFixtureRepo(fixtureVersion);
@@ -452,6 +496,8 @@ exit 0
         openStubs: openStubs,
         publishStubs: publishStubs,
         summarizedBodies: summarizedBodies,
+        dailyRunJson: dailyRunJson,
+        failIssueList: failIssueList,
       );
       final summaryFile = File('$fixtureRepo/step-summary.md');
       final port = servers.last.port;
@@ -475,6 +521,7 @@ exit 0
         if (dryRun) 'STORE_APPEARANCE_DRY_RUN': '1',
         if (now != null) 'STORE_APPEARANCE_NOW': now,
         if (since != null) 'STORE_APPEARANCE_SINCE': since,
+        if (failIssueList) 'FAIL_ISSUE_LIST': '1',
         if (withSecrets) ...{
           'APP_STORE_CONNECT_KEY_ID': 'TESTKID',
           'APP_STORE_CONNECT_ISSUER_ID': 'TESTISSUER',
@@ -800,6 +847,99 @@ exit 0
           ),
           isEmpty,
           reason: 'a commit would PUBLISH — forbidden (I3)',
+        );
+      },
+    );
+
+    test(
+      'a failed gh READ aborts the lifecycle — never a duplicate stub '
+      '(review gh-1041 thread 3)',
+      () async {
+        if (!rubyAvailable) return;
+        // Everything absent + past the horizon: the state WOULD file stubs —
+        // but the stub-list read itself fails, so the run must go red and
+        // plan nothing instead of reading the failure as "no stubs exist".
+        final r = await runCheck(
+          asc: 'absent',
+          play: 'absent',
+          pubdev: 'absent',
+          failIssueList: true,
+        );
+        expect(r.exitCode, 1, reason: 'a failed gh read is loud, not silent');
+        final result = resultOf(r);
+        expect(
+          (result['lifecycle_error'] as String?) ?? '',
+          isNotEmpty,
+          reason: 'the aborted lifecycle is part of the machine result',
+        );
+        expect(
+          ghLog().where((l) => l.contains('issue create')),
+          isEmpty,
+          reason: 'no stub may be planned on partially-read state (AC3)',
+        );
+      },
+    );
+
+    test(
+      'a partial --only run posts no all-green summary '
+      '(review gh-1041 thread 2)',
+      () async {
+        if (!rubyAvailable) return;
+        final r = await runCheck(only: 'pubdev', publishStubs: [7]);
+        expect(r.exitCode, 0, reason: '${r.stderr}');
+        final verdicts = resultOf(r)['verdicts'] as Map;
+        expect(verdicts.keys, ['pubdev']);
+        expect(
+          ghLog().where((l) => l.contains('issue comment 7')),
+          isEmpty,
+          reason: 'one store is not "all stores" — the summary and its '
+              'day-marker must wait for the full family',
+        );
+      },
+    );
+
+    test(
+      'the horizon follows the REAL leg state: still running → report only '
+      '(review gh-1041 thread 5)',
+      () async {
+        if (!rubyAvailable) return;
+        // since env unset → the script resolves the legs via `gh run list`
+        // (needs the workflow's actions:read); the day's run is IN PROGRESS,
+        // so the build may not even be uploaded — absence must not stub.
+        final running = await runCheck(
+          asc: 'absent',
+          play: 'absent',
+          pubdev: 'absent',
+          since: null,
+          dailyRunJson:
+              '{"createdAt":"2026-09-29T05:17:00Z","status":"in_progress","conclusion":null}',
+        );
+        expect(running.exitCode, 0, reason: 'a running leg owns the horizon');
+        expect(
+          ghLog().any((l) => l.contains('run list')),
+          isTrue,
+          reason: 'the leg state is fetched via gh run list (actions:read)',
+        );
+        expect(
+          ghLog().where((l) => l.contains('issue create')),
+          isEmpty,
+          reason: 'no stub while the publish leg is still running',
+        );
+        expect(resultOf(running)['since'], '2026-09-29T05:17:00Z');
+
+        final finished = await runCheck(
+          asc: 'absent',
+          play: 'absent',
+          pubdev: 'absent',
+          since: null,
+          dailyRunJson:
+              '{"createdAt":"2026-09-29T05:17:00Z","status":"completed","conclusion":"success"}',
+        );
+        expect(finished.exitCode, 1, reason: 'absent past the horizon is loud');
+        expect(
+          ghLog().where((l) => l.contains('issue create')).length,
+          3,
+          reason: 'a finished leg + absence past the horizon files the stubs',
         );
       },
     );

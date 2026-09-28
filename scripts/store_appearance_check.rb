@@ -53,7 +53,7 @@ end
 repo = env("GITHUB_REPOSITORY")
 assignee = env("DAILY_PUBLISH_ASSIGNEE", "ai-teammate")
 now = env("STORE_APPEARANCE_NOW") || Time.now.utc.iso8601
-horizon = env("STORE_APPEARANCE_HORIZON_MINUTES", "120").to_i
+horizon = S.parse_horizon(env("STORE_APPEARANCE_HORIZON_MINUTES", "120"))
 run_url = env("STORE_APPEARANCE_RUN_URL") ||
           (repo && !repo.empty? ? "#{env('GITHUB_SERVER_URL', 'https://github.com')}/#{repo}/actions/runs/#{ENV['GITHUB_RUN_ID']}" : "local")
 only = nil
@@ -248,39 +248,70 @@ def gh(*args)
   $?.success? ? out : nil
 end
 
-since = env("STORE_APPEARANCE_SINCE")
-if since.nil? && !repo.to_s.empty?
-  listed = gh("run", "list", "--repo", repo, "--workflow", "daily-publish.yml",
-              "--event", "schedule", "--limit", "5", "--json", "createdAt", "--jq", ".[0].createdAt")
-  since = listed&.strip
-  since = nil if since.to_s.empty?
+# Review gh-1041 thread 3: a gh READ failure must be loud — nil degrades to
+# "empty state" downstream, which is exactly what files duplicate stubs.
+def gh!(*args)
+  out = gh(*args)
+  raise "gh #{args.first} #{args[1]} failed" if out.nil?
+
+  out
 end
-stub_due = S.stub_due?(now: now, since: since, horizon_minutes: horizon)
+
+# since = when the day's daily-publish legs started (review thread 1: needs
+# `actions: read` on the workflow token; review thread 3: a FAILED read
+# aborts the lifecycle — it is never "no run found").
+leg = nil
+since = env("STORE_APPEARANCE_SINCE")
+lifecycle_error = nil
+if since.nil? && !repo.to_s.empty?
+  begin
+    leg = S.daily_run(raw: gh!("run", "list", "--repo", repo, "--workflow", "daily-publish.yml",
+                               "--event", "schedule", "--limit", "5", "--json", "createdAt,status,conclusion",
+                               "--jq", ".[0]"))
+    since = leg&.dig("created_at")
+  rescue StandardError => e
+    lifecycle_error = e.message
+    warn "store-appearance-check: #{e.message}"
+  end
+end
+# review thread 5: a daily-publish leg still running at check time has
+# possibly not uploaded yet — report only, never stub.
+stub_due = S.stub_due?(now: now, since: since, horizon_minutes: horizon,
+                       leg_status: leg&.dig("status"))
 
 dry_run = %w[1 true yes].include?(env("STORE_APPEARANCE_DRY_RUN", "").to_s.downcase) || repo.to_s.empty?
 open_stubs = []
 publish_stubs = []
 summarized = []
-unless dry_run
-  gh("label", "create", "store-appearance-check", "--repo", repo,
-     "--color", "5319E7", "--description", "Auto-filed by the deferred store-appearance check (gh-1041)")
-  (JSON.parse(gh("issue", "list", "--repo", repo, "--state", "open", "--label",
-                 "store-appearance-check", "--limit", "200", "--json", "number,title") || "[]") rescue []).each do |issue|
-    open_stubs << { "number" => issue["number"], "title" => issue["title"] }
-  end
-  (JSON.parse(gh("issue", "list", "--repo", repo, "--state", "open", "--label",
-                 "daily-publish", "--limit", "200", "--json", "number,title") || "[]") rescue []).each do |issue|
-    publish_stubs << issue["number"]
-  end
-  today = now[0, 10]
-  publish_stubs.each do |number|
-    bodies = gh("issue", "view", number, "--repo", repo, "--json", "comments",
-                "--jq", "[.comments[].body] | join(\"\\n\")") || ""
-    summarized << number if bodies.include?(S::GREEN_SUMMARY_MARKER + today)
+unless dry_run || lifecycle_error
+  begin
+    gh("label", "create", "store-appearance-check", "--repo", repo,
+       "--color", "5319E7", "--description", "Auto-filed by the deferred store-appearance check (gh-1041)")
+    S.parse_issue_list(gh!("issue", "list", "--repo", repo, "--state", "open", "--label",
+                           "store-appearance-check", "--limit", "200", "--json", "number,title"),
+                       label: "store-appearance-check").each do |issue|
+      open_stubs << issue
+    end
+    S.parse_issue_list(gh!("issue", "list", "--repo", repo, "--state", "open", "--label",
+                           "daily-publish", "--limit", "200", "--json", "number,title"),
+                       label: "daily-publish").each do |issue|
+      publish_stubs << issue["number"]
+    end
+    today = now[0, 10]
+    publish_stubs.each do |number|
+      bodies = gh!("issue", "view", number, "--repo", repo, "--json", "comments",
+                   "--jq", "[.comments[].body] | join(\"\\n\")")
+      summarized << number if bodies.include?(S::GREEN_SUMMARY_MARKER + today)
+    end
+  rescue StandardError => e
+    lifecycle_error = e.message
+    warn "store-appearance-check: lifecycle aborted — #{e.message}"
   end
 end
 
-actions = S.plan_lifecycle(
+# A failed lifecycle read leaves the state partially known: plan NOTHING
+# (no stub on unread state, no close on unread state) and go red.
+actions = lifecycle_error ? [] : S.plan_lifecycle(
   expected: expected, verdicts: verdicts, stub_due: stub_due,
   open_stubs: open_stubs, publish_stub_numbers: publish_stubs,
   summarized: summarized, run_url: run_url, now: now, errors: errors
@@ -321,11 +352,12 @@ actions.each do |action|
 end
 
 # ── report ───────────────────────────────────────────────────────────────────
-failed = errors.any? ||
+failed = errors.any? || !lifecycle_error.nil? ||
          verdicts.any? { |_, v| v["verdict"] == "absent" && stub_due }
 result = {
   "expected" => expected, "now" => now, "since" => since, "stub_due" => stub_due,
   "verdicts" => verdicts, "errors" => errors, "skips" => skips,
+  "lifecycle_error" => lifecycle_error,
   "actions" => dry_run ? actions : executed, "dry_run" => dry_run
 }
 

@@ -54,6 +54,7 @@ on:
 permissions:
   contents: read
   issues: write # stub filing/updates + green-summary comments (same family as daily-publish)
+  actions: read # `gh run list` resolves the daily legs' started-at for the horizon gate
 
 # One check at a time; overlapping runs would double-comment.
 concurrency:
@@ -88,4 +89,9 @@ jobs:
 
       - name: Check one store (manual dispatch)
         if: inputs.stores != '' && inputs.stores != 'all'
-        run: ruby scripts/store_appearance_check.rb --only "${{ inputs.stores }}"
+        env:
+          # choice is NOT validated on REST/gh CLI dispatches — route the raw
+          # input through env: so it can never become shell syntax (the job
+          # env carries real store credentials); ruby validates --only itself.
+          STORES_INPUT: ${{ inputs.stores }}
+        run: ruby scripts/store_appearance_check.rb --only "$STORES_INPUT"

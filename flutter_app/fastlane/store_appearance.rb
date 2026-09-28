@@ -358,9 +358,13 @@ module StoreAppearance
     end
 
     # A green summary only when nothing errored (an unchecked store must
-    # never be reported "all green") and every ran store is resolved.
+    # never be reported "all green"), EVERY store in the family produced a
+    # verdict (review gh-1041 thread 2: a partial --only run must not post
+    # "live in all stores" — nor burn the day's idempotency marker the
+    # scheduled full check needs), and every ran store is resolved.
     if errors.empty? &&
-       verdicts.values.any? && verdicts.values.all? { |v| %w[present rolled_over].include?(v["verdict"]) }
+       STORES.keys.all? { |s| verdicts.key?(s) } &&
+       verdicts.values.all? { |v| %w[present rolled_over].include?(v["verdict"]) }
       publish_stub_numbers.each do |number|
         next if summarized.include?(number)
 

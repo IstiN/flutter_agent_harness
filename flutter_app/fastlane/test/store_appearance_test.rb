@@ -311,9 +311,9 @@ if $PROGRAM_NAME == __FILE__
   ok("partial run (1 or 2 of 3 stores) → no all-green summary, marker not burned (only the full family summarizes)")
 
   a = S.plan_lifecycle(
-    expected: expected485, verdicts: { "testflight" => tf_present },
+    expected: expected485, verdicts: all_present,
     stub_due: true,
-    open_stubs: stubs.call(["[store-appearance-check] TestFlight 1.0.485 absent"]),
+    open_stubs: [],
     publish_stub_numbers: [7, 8], summarized: [7],
     run_url: "https://ci/runs/5", now: "2026-09-29T10:00:00Z"
   )
