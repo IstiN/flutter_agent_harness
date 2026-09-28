@@ -148,7 +148,15 @@ module StoreAppearance
   # ruling) has elapsed since the day's publish legs STARTED — an early
   # manual run reports "absent" without filing. since = the daily-publish
   # scheduled run's created_at; now is injectable for tests.
-  def stub_due?(now:, since:, horizon_minutes:)
+  #
+  # leg_status (review gh-1041 thread 5): when the day's daily-publish run is
+  # STILL running at check time, its build may not even be uploaded yet
+  # (TestFlight worst case ≈ 220 min after start) — stubbing then is a false
+  # positive by construction, so the check reports only and a later check
+  # (next day, or a manual re-run) owns the stub.
+  def stub_due?(now:, since:, horizon_minutes:, leg_status: nil)
+    return false if %w[in_progress queued pending waiting].include?(leg_status.to_s)
+
     return true if since.nil? # no daily run found — a manual check owns the horizon itself
 
     started = Time.iso8601(since.to_s) rescue nil
@@ -156,6 +164,52 @@ module StoreAppearance
     return true if started.nil? || now_t.nil? # unparsable clock — fail loud, not silent
 
     (now_t - started) >= horizon_minutes.to_i * 60
+  end
+
+  # horizon_minutes arrives as a free-text dispatch input — a non-numeric or
+  # non-positive value must fall back to the default, never collapse to 0
+  # ("stub immediately") via Integer#to_i (review gh-1041, minor).
+  def parse_horizon(raw, default: 120)
+    value = Integer(raw.to_s.strip) rescue nil
+    value.nil? || value <= 0 ? default : value
+  end
+
+  # ── gh output parsing (review gh-1041 threads 1/3: reads fail LOUD) ───────
+  # A `gh` READ failure must abort the lifecycle phase, never degrade to
+  # "empty state" — an empty stub list read from a failed gh call is what
+  # files DUPLICATE stubs (AC3's exactly-one guarantee).
+
+  # `gh run list --json createdAt,status,conclusion --jq '.[0]'` output →
+  # { "created_at" =>, "status" =>, "conclusion" => } for the day's
+  # daily-publish run; nil when there is no scheduled run (quiet day).
+  # raw nil = the gh call itself failed → raise.
+  def daily_run(raw:)
+    raise "gh run list failed — cannot resolve the legs' start time (aborting, not treating as 'no run found')" if raw.nil?
+
+    parsed = JSON.parse(raw.to_s) rescue nil
+    return nil if parsed.nil? || !parsed.is_a?(Hash) # empty/null output = no run found
+
+    {
+      "created_at" => parsed["createdAt"].is_a?(String) ? parsed["createdAt"] : nil,
+      "status" => parsed["status"].is_a?(String) ? parsed["status"] : nil,
+      "conclusion" => parsed["conclusion"].is_a?(String) ? parsed["conclusion"] : nil,
+    }
+  end
+
+  # `gh issue list --json number,title` output → [{ "number" =>, "title" => }].
+  # raw nil (gh failed) or unparsable output → raise; the caller skips the
+  # whole lifecycle rather than planning against partially-read state.
+  def parse_issue_list(raw, label:)
+    raise "gh issue list (#{label}) failed — aborting the lifecycle instead of reading it as 'no open issues'" if raw.nil?
+
+    parsed = JSON.parse(raw.to_s) rescue nil
+    raise "gh issue list (#{label}) returned unparsable output — aborting the lifecycle" unless parsed.is_a?(Array)
+
+    parsed.filter_map do |issue|
+      next nil unless issue.is_a?(Hash) && issue["number"].is_a?(Integer)
+
+      { "number" => issue["number"], "title" => issue["title"].is_a?(String) ? issue["title"] : "" }
+    end
   end
 
   # ── ASC payload parsers (recorded /v1 responses, AC5) ────────────────────

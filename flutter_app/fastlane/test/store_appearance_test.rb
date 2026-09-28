@@ -181,6 +181,57 @@ if $PROGRAM_NAME == __FILE__
   raise!("unparsable clocks fail loud") unless S.stub_due?(now: "garbage", since: "2026-09-29T05:17:00Z", horizon_minutes: 120)
   ok("unparsable clock → fail loud (stub due), never silently green")
 
+  # review gh-1041 thread 5: the horizon measures from the daily run's START,
+  # but a slow leg can still be uploading at check time (TestFlight worst case
+  # ~220 min) — a stub filed then is a false positive by construction.
+  raise!("a still-running leg must not stub (its build may not be uploaded yet)") if
+    S.stub_due?(now: "2026-09-29T08:00:00Z", since: "2026-09-29T05:17:00Z", horizon_minutes: 120, leg_status: "in_progress")
+  raise!("a queued leg must not stub either") if
+    S.stub_due?(now: "2026-09-29T08:00:00Z", since: "2026-09-29T05:17:00Z", horizon_minutes: 120, leg_status: "queued")
+  raise!("a finished leg stubs exactly like before") unless
+    S.stub_due?(now: "2026-09-29T08:00:00Z", since: "2026-09-29T05:17:00Z", horizon_minutes: 120, leg_status: "completed")
+  raise!("no leg state (manual dispatch, old gh shape) keeps the old semantics") unless
+    S.stub_due?(now: "2026-09-29T08:00:00Z", since: "2026-09-29T05:17:00Z", horizon_minutes: 120)
+  ok("leg still running at check time → report only, stub waits for a later check")
+
+  # review gh-1041 thread 7 minor: horizon_minutes free text (.to_i → 0) must
+  # never collapse the horizon to "stub immediately".
+  raise!("free text horizon falls back to the default") unless S.parse_horizon("two hours") == 120
+  raise!("zero/negative horizon falls back to the default") unless S.parse_horizon("0") == 120 && S.parse_horizon("-5") == 120
+  raise!("empty horizon falls back to the default") unless S.parse_horizon("") == 120 && S.parse_horizon(nil) == 120
+  raise!("a numeric horizon is honored") unless S.parse_horizon(" 240 ") == 240
+  ok("horizon parse guards free-text dispatch input (never stubs immediately)")
+
+  # ── review gh-1041 thread 1/3: gh READ failures are loud, never "empty" ────
+  begin
+    S.daily_run(raw: nil)
+    raise "no"
+  rescue StandardError => e
+    raise!("gh run list failure must abort, not read as 'no run found'") unless e.message.include?("gh run list")
+  end
+  raise!("no scheduled run (empty output) → nil, a legitimate quiet day") unless S.daily_run(raw: "").nil?
+  raise!("gh printing a literal null → nil") unless S.daily_run(raw: "null").nil?
+  run = S.daily_run(raw: '{"createdAt":"2026-09-29T05:17:00Z","status":"in_progress","conclusion":null}')
+  raise!("the day's run parses created_at/status/conclusion") unless
+    run["created_at"] == "2026-09-29T05:17:00Z" && run["status"] == "in_progress" && run["conclusion"].nil?
+  ok("gh run list output parses to leg state; gh failure raises (never 'no run found')")
+
+  begin
+    S.parse_issue_list(nil, label: "store-appearance-check")
+    raise "no"
+  rescue StandardError => e
+    raise!("gh issue list failure must abort, never degrade to 'no stubs'") unless e.message.include?("gh issue list")
+  end
+  begin
+    S.parse_issue_list("not json", label: "daily-publish")
+    raise "no"
+  rescue StandardError => e
+    raise!("unparsable issue-list output fails loud") unless e.message.include?("daily-publish")
+  end
+  listed = S.parse_issue_list('[{"number":12,"title":"[store-appearance-check] TestFlight 1.0.485 absent"},{"number":13,"title":"x"}]', label: "store-appearance-check")
+  raise!("issue-list JSON parses to number/title pairs") unless listed.size == 2 && listed[0]["number"] == 12
+  ok("gh issue list: failure or garbage raises; valid JSON parses")
+
   # ── lifecycle planner (AC3: exactly one stub, updated in place) ────────────
   stubs = ->(titles) { titles.each_with_index.map { |t, i| { "number" => 100 + i, "title" => t } } }
   tf_absent = { "verdict" => "absent", "matched" => nil, "observed" => ["1.0.484"] }
@@ -215,6 +266,11 @@ if $PROGRAM_NAME == __FILE__
   raise!("absence below the horizon files nothing") unless a.empty?
   ok("absence below the horizon → no stub (report only)")
 
+  all_present = {
+    "testflight" => tf_present,
+    "play" => { "verdict" => "present", "matched" => "1.0.485", "observed" => ["1.0.485"] },
+    "pubdev" => { "verdict" => "present", "matched" => "1.0.485", "observed" => ["1.0.485"] },
+  }
   a = S.plan_lifecycle(
     expected: expected485, verdicts: { "testflight" => tf_present },
     stub_due: true,
@@ -223,9 +279,36 @@ if $PROGRAM_NAME == __FILE__
     run_url: "https://ci/runs/4", now: "2026-09-29T08:00:00Z"
   )
   raise!("appearance resolves the stub") unless a.any? { |x| x["action"] == "close_stub" && x["number"] == 100 }
+  a = S.plan_lifecycle(
+    expected: expected485, verdicts: all_present,
+    stub_due: true,
+    open_stubs: [],
+    publish_stub_numbers: [7, 8], summarized: [],
+    run_url: "https://ci/runs/4", now: "2026-09-29T08:00:00Z"
+  )
   raise!("green run posts the per-store summary on the day's publish stubs") unless a.count { |x| x["action"] == "comment_summary" } == 2
   raise!("the summary carries per-store presence") unless a.find { |x| x["action"] == "comment_summary" }["body"].include?("TestFlight")
   ok("appearance → stub closed + green summary on both publish stubs")
+
+  # review gh-1041 thread 2: a partial (--only) run must NEVER post the
+  # "all green" summary — the unchecked stores were never queried, and the
+  # day's idempotency marker would silence the scheduled full check.
+  a = S.plan_lifecycle(
+    expected: expected485,
+    verdicts: { "pubdev" => { "verdict" => "present", "matched" => "1.0.485", "observed" => ["1.0.485"] } },
+    stub_due: true, open_stubs: [],
+    publish_stub_numbers: [7, 8], summarized: [],
+    run_url: "https://ci/runs/4b", now: "2026-09-29T08:00:00Z"
+  )
+  raise!("a partial --only run posts no all-green summary") unless a.none? { |x| x["action"] == "comment_summary" }
+  raise!("a two-of-three run still posts no all-green summary") unless
+    S.plan_lifecycle(
+      expected: expected485,
+      verdicts: all_present.reject { |k, _| k == "play" },
+      stub_due: true, open_stubs: [], publish_stub_numbers: [7], summarized: [],
+      run_url: "https://ci/runs/4c", now: "2026-09-29T08:00:00Z"
+    ).none? { |x| x["action"] == "comment_summary" }
+  ok("partial run (1 or 2 of 3 stores) → no all-green summary, marker not burned (only the full family summarizes)")
 
   a = S.plan_lifecycle(
     expected: expected485, verdicts: { "testflight" => tf_present },
