@@ -31,6 +31,12 @@ void main() {
         final added = await controller.add(text: 'doomed durable fact');
         final entityPath = '$_store/note/${added.id}.md';
         expect((await env.exists(entityPath)).valueOrNull, isTrue);
+        Future<int> revision() async => int.parse(
+          ((await env.readTextFile('$_store/MEMORY.revision')).valueOrNull ??
+                  '0')
+              .trim(),
+        );
+        final revisionBeforeDelete = await revision();
 
         expect(await controller.delete(added.id), 'project');
 
@@ -53,9 +59,7 @@ void main() {
         expect(deletedFiles, hasLength(1));
         expect(deletedFiles.single, startsWith('${added.id}_'));
         // …and the revision generation was bumped (consolidation guard).
-        final revision =
-            (await env.readTextFile('$_store/MEMORY.revision')).valueOrNull!;
-        expect(int.parse(revision.trim()), greaterThan(0));
+        expect(await revision(), greaterThan(revisionBeforeDelete));
       },
     );
 
