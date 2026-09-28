@@ -49,9 +49,9 @@ tui:
     final config = File('${tempHome.path}/.fah/config.yaml');
     config.writeAsStringSync(
       config.readAsStringSync().replaceFirst(
-        'baseUrl: http://localhost:9999/v1',
-        'baseUrl: ${server.baseUrl}',
-      ),
+            'baseUrl: http://localhost:9999/v1',
+            'baseUrl: ${server.baseUrl}',
+          ),
     );
   }
 
@@ -118,6 +118,7 @@ scenarios:
         'agent://',
         timeout: const Duration(seconds: 60),
       );
+<<<<<<< HEAD
       // The contract is the PAINTED screen: the streamed sentence can hit
       // the raw stream (and paint prefix-first on a delta split) before the
       // frame carrying the whole row lands — an immediate screenText read
@@ -131,6 +132,10 @@ scenarios:
       );
       final screen = await harness.waitForScreen(
         'subagent finished: agent://explorer1',
+=======
+      await harness.waitForText(
+        'subagent finished',
+>>>>>>> origin/main
         timeout: const Duration(seconds: 30),
       );
       expect(screen, contains('✔ task: Prove the task loop'));

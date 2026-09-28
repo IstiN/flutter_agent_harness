@@ -4389,16 +4389,6 @@
 - fix(926): CodeMie budget/spending exhaustion is terminal — no retry loops, immediate fallback (#929)
 - chore: pin factory 1fdb4c6 (git-guard double-shim exec-loop fix) (#1043)
 
-## 1.0.487
-
-- Fix #947: store goldens render real text; Play listing images ship via whole-set replace + verify (#962)
-- fix(920): optimal space usage in the CLI TUI status band (#923)
-
-## 1.0.488
-
-- fix(#973): Enter sends, Shift+Enter inserts newline in chat composer (#978)
-- site: add /oauth/callback page — the web app's OAuth popup receiver target (#1048)
-
 ## Unreleased
 
 ## Unreleased

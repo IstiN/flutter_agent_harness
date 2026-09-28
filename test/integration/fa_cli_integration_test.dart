@@ -57,18 +57,14 @@ void main() {
           timeout: const Duration(seconds: 20),
         );
         harness.sendEnter();
-        // The provider picker lists saved providers first. The anchor is
-        // the picker ROW (`label + description`), not the bare name: the
-        // composer status row and the status band both render the ACTIVE
-        // provider label (`test-provider/test-model`) from boot, so a bare
-        // name gate fires before the picker opens and the next Enter is
-        // eaten by the still-open settings hub (#920 PTY legs).
+        // The provider picker lists saved providers first.
         await harness.waitForText(
-          'test-provider http://',
+          'test-provider',
           timeout: const Duration(seconds: 20),
         );
         harness.sendEnter();
 
+<<<<<<< HEAD
         // Selecting the saved provider opens its Edit/Delete picker. The
         // contract is the PAINTED screen — a raw-stream wait races frame
         // painting on loaded runners (#550/#557 family), so anchor on the
@@ -76,6 +72,10 @@ void main() {
         // the captured screen — a header-wait + fresh screenText read
         // sampled the picker mid-render (rows land across frames).
         var screen = await harness.waitForScreen(
+=======
+        // Selecting the saved provider opens its Edit/Delete picker.
+        await harness.waitForText(
+>>>>>>> origin/main
           'Edit provider',
           timeout: const Duration(seconds: 20),
         );
@@ -111,11 +111,8 @@ void main() {
           timeout: const Duration(seconds: 20),
         );
         harness.sendEnter();
-        // Same picker-row anchor as above: the bare name already rides the
-        // composer status row / band from boot, so it cannot prove the
-        // picker is open.
         await harness.waitForText(
-          'test-provider http://',
+          'test-provider',
           timeout: const Duration(seconds: 20),
         );
         harness.sendEnter();
