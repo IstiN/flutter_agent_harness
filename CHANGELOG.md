@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.0.485
+
+
+- fix(ci): Daily auto-publish `pub.dev` leg — poll the pub.dev API until it
+  reflects the rerun's publish instead of a single read. 2026-09-28: the
+  recovery rerun published AND self-verified 1.0.483 (`pub.dev verified`
+  at 05:44:11Z), but the leg's one-shot API query 52s later hit a stale
+  replica, saw 1.0.482 and false-errored "manual publish needed". Initial
+  behind-check now takes three spaced reads (newest wins) so a stale read
+  cannot trigger unnecessary recovery either.
+- fix(ci): `install-pin-bump` no longer hard-gates on `release-provenance`.
+  When provenance FAILED (binaries/signature upload race), the marker job
+  was left SKIPPED — and `rerun --failed` never resurrects skipped jobs, so
+  the `vpinned` marker stayed stale forever (v1.0.483: the recovery rerun
+  went green, the marker never advanced). The job now uses
+  `if: always()`; `pin_release.sh`'s own pre-move provenance gate
+  (`check_install_pin.sh` with `FA_PIN_TARGET`) fails it loudly instead of
+  moving the marker, and a FAILED job IS part of `rerun --failed` — so the
+  recovery cascade reaches it.
+
 ## 1.0.483
 
 
@@ -4363,6 +4383,13 @@
 - chore: pin factory 5e2a8051 (session quarantine) (#1024)
 - chore: pin factory a18361b2 (red-park + dryRun + dup-guard + teammate watchdog) (#1023)
 - chore(factory): bump dmtools-agents to b44b5493 — latch-skip + stamp links + auto-anchor fallback (#547/#548/#549) in lockstep (#1019)
+
+## 1.0.486
+
+- fix(926): CodeMie budget/spending exhaustion is terminal — no retry loops, immediate fallback (#929)
+- chore: pin factory 1fdb4c6 (git-guard double-shim exec-loop fix) (#1043)
+
+## Unreleased
 
 ## Unreleased
 
