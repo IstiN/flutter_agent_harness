@@ -1068,6 +1068,7 @@ final class FaTuiModel extends Model {
     if (msg is _ThemeChangedMsg) return _handleThemeChanged();
     if (msg is _OpenModelMenuMsg) return _handleOpenModelMenu();
     if (msg is OpenPickerMsg) return _handleOpenPicker(msg);
+    if (msg is _RevealPickerRowsMsg) return _handleRevealPickerRows();
     if (msg is HubStateMsg) return _handleHubStateMsg(msg);
     if (msg is _CloseHubMsg) return (copyWith(clearHub: true), null);
 
@@ -1202,7 +1203,36 @@ final class FaTuiModel extends Model {
     );
   }
 
+  /// gh-1049 test hook: per-row reveal delay for the generic picker, read
+  /// from `FA_TUI_PICKER_REVEAL_MS`. 0/unset = the production atomic open.
+  static int get _pickerRevealDelayMs =>
+      int.tryParse(Platform.environment['FA_TUI_PICKER_REVEAL_MS'] ?? '') ?? 0;
+
   (Model, Cmd?) _handleOpenPicker(OpenPickerMsg msg) {
+    final revealMs = _pickerRevealDelayMs;
+    if (revealMs > 0 && msg.items.length > 1) {
+      // Progressive reveal (gh-1049 test hook): the first frame carries the
+      // title + ONE row, every later frame adds one — the hostile frame-gap
+      // condition the PTY screen waits must survive with content
+      // predicates. The selection stays clamped to the FULL item list so
+      // the cursor lands on the initial row once it is revealed.
+      return (
+        copyWith(
+          menuOpen: true,
+          menuModelMode: true,
+          modelFilter: '',
+          menuItems: msg.items.take(1).toList(),
+          menuAllItems: msg.items,
+          menuSelected: msg.initialIndex.clamp(
+            0,
+            msg.items.isEmpty ? 0 : msg.items.length - 1,
+          ),
+          pickerId: msg.pickerId,
+          pickerTitle: msg.title,
+        ),
+        _schedulePickerReveal(revealMs),
+      );
+    }
     return (
       copyWith(
         menuOpen: true,
@@ -1218,6 +1248,29 @@ final class FaTuiModel extends Model {
         pickerTitle: msg.title,
       ),
       null,
+    );
+  }
+
+  Cmd _schedulePickerReveal(int delayMs) {
+    return () async {
+      await Future<void>.delayed(Duration(milliseconds: delayMs));
+      return const _RevealPickerRowsMsg();
+    };
+  }
+
+  /// Reveals the next picker row; re-arms while rows remain. A close or a
+  /// full reveal stops the chain (a reveal landing on a closed picker is a
+  /// no-op — the menu keys rebuilt/cleared [menuItems] in between).
+  (Model, Cmd?) _handleRevealPickerRows() {
+    final all = menuAllItems;
+    if (!menuOpen || menuItems.length >= all.length) return (this, null);
+    final revealed = (menuItems.length + 1).clamp(0, all.length);
+    final revealMs = _pickerRevealDelayMs;
+    return (
+      copyWith(menuItems: all.take(revealed).toList()),
+      revealed < all.length && revealMs > 0
+          ? _schedulePickerReveal(revealMs)
+          : null,
     );
   }
 

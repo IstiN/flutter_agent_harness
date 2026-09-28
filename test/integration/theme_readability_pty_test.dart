@@ -172,7 +172,15 @@ void main() {
         addTearDown(mock.close);
         final tempHome = _tempHomeForMock(mock.port);
         final harness = await FaCliHarness.spawn(
-          extraEnv: {'HOME': tempHome.path, 'OPENAI_API_KEY': 'test-key'},
+          extraEnv: {
+            'HOME': tempHome.path,
+            'OPENAI_API_KEY': 'test-key',
+            // gh-1049 test hook: force the picker to paint its rows
+            // progressively across frames, so THIS suite permanently
+            // exercises the hostile frame-gap condition on every CI run
+            // instead of trusting a lucky fast host.
+            'FA_TUI_PICKER_REVEAL_MS': '120',
+          },
         );
         addTearDown(() async {
           await harness.close();
@@ -181,11 +189,18 @@ void main() {
         await harness.waitForBoot();
 
         await harness.runSlashCommand('/theme');
-        await harness.waitForScreen(
-          'Select theme',
+        // gh-1049: wait for the CONTENT the assertions need — the
+        // '✓ current' marker — not the picker header. waitForScreen returns
+        // the first frame containing the pattern with no settle, and the
+        // picker paints its rows progressively across frames (widened here
+        // by FA_TUI_PICKER_REVEAL_MS): a header-wait followed by a fresh
+        // `screenText` read sampled the screen mid-render (header + one
+        // row, no marker). Capturing the wait's screen makes the wait and
+        // the expects agree by construction — predicates only, no sleeps.
+        final screen = await harness.waitForScreen(
+          '✓ current',
           timeout: const Duration(seconds: 15),
         );
-        final screen = harness.screenText;
         // gh-671: the current theme must be VISIBLE as text — the old picker
         // replaced the current row's swatch with a dim '(current)' string.
         expect(screen, contains('✓ current'));
