@@ -1,0 +1,97 @@
+# Deferred store-appearance verification (gh-1041).
+#
+# Owner ruling (2026-09-28): «если получили зеленый саксесс то мы не фейлим
+# job а надо заскедулить отдельный job который будет проверять появился ли
+# билд в сторах через 1-2 часа» — a green store SUBMIT is final; the store's
+# read-side lag (ASC group membership / Play track / pub.dev replica trailing
+# an already-successful distribution, #855) must never fail a leg. THIS
+# workflow owns appearance instead:
+#
+#   * scheduled 120 min after the daily publish legs start (05:17 UTC →
+#     07:17 UTC) + manual dispatch;
+#   * strictly READ-ONLY against all three stores via their real APIs, with
+#     the SAME credentials the legs already use — no new secrets (I3);
+#   * expected version resolved from the repo's tag/version file every run,
+#     so a missed schedule self-heals (I2);
+#   * all green → one summary comment on the day's [daily-publish] stubs
+#     (once per day per stub — idempotency guard);
+#   * absence past the horizon (default 120 min, tunable) → EXACTLY ONE stub
+#     per store (label `store-appearance-check`), updated in place by later
+#     checks until the version appears or rolls over (AC3).
+#
+# Check logic: scripts/store_appearance_check.rb — decisions live in
+# flutter_app/fastlane/store_appearance.rb, fixture-tested in CI (AC5) by
+# flutter_app/fastlane/test/store_appearance_test.rb (plain ruby, ci.yml's
+# pre-flight loop) and test/store_appearance_check_test.dart (fake
+# endpoints, no real network).
+#
+# Pause: gh workflow disable store-appearance-check.yml -R IstiN/flutter_agent_harness
+
+name: Store appearance check
+
+run-name: "Store appearance check (${{ inputs.stores || 'all' }})"
+
+on:
+  schedule:
+    - cron: '17 7 * * *' # = daily-publish (05:17 UTC) + 120 min, owner ruling gh-1041
+  workflow_dispatch:
+    inputs:
+      stores:
+        description: 'Store(s) to check'
+        type: choice
+        default: all
+        options:
+          - all
+          - testflight
+          - play
+          - pubdev
+      horizon_minutes:
+        description: 'Absence horizon (minutes since the daily legs started) before a stub is filed'
+        required: false
+        default: '120'
+        type: string
+
+permissions:
+  contents: read
+  issues: write # stub filing/updates + green-summary comments (same family as daily-publish)
+  actions: read # `gh run list` resolves the daily legs' started-at for the horizon gate
+
+# One check at a time; overlapping runs would double-comment.
+concurrency:
+  group: store-appearance-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check store appearance
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # Same credentials the submit legs use (I3 — no new secrets). The check
+      # mints read-only API tokens from them; it never uploads anything.
+      APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+      APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+      APP_STORE_CONNECT_KEY_CONTENT: ${{ secrets.APP_STORE_CONNECT_KEY_CONTENT }}
+      PLAY_STORE_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_STORE_SERVICE_ACCOUNT_JSON }}
+      # Repo variables shared with the submit lanes (issue #239/#289).
+      TESTFLIGHT_EXTERNAL_GROUP: ${{ vars.TESTFLIGHT_EXTERNAL_GROUP }}
+      IOS_BUNDLE_ID: dev.fa1.app
+      PLAY_TRACK: beta # the external/open testing track — the daily Play leg's track
+      DAILY_PUBLISH_ASSIGNEE: ai-teammate
+      STORE_APPEARANCE_HORIZON_MINUTES: ${{ inputs.horizon_minutes || '120' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check all stores (read-only)
+        if: inputs.stores == '' || inputs.stores == 'all'
+        run: ruby scripts/store_appearance_check.rb
+
+      - name: Check one store (manual dispatch)
+        if: inputs.stores != '' && inputs.stores != 'all'
+        env:
+          # choice is NOT validated on REST/gh CLI dispatches — route the raw
+          # input through env: so it can never become shell syntax (the job
+          # env carries real store credentials); ruby validates --only itself.
+          STORES_INPUT: ${{ inputs.stores }}
+        run: ruby scripts/store_appearance_check.rb --only "$STORES_INPUT"
