@@ -223,8 +223,7 @@ void main() {
       expect(resolved.unknownSavedProvider, 'from-the-future');
     });
 
-    test('a BLANK saved provider is unset, not unknown (gh-760 review)',
-        () {
+    test('a BLANK saved provider is unset, not unknown (gh-760 review)', () {
       // `provider: ""` is a hand-edit artifact — pre-#760 it silently took
       // the default; it must not wear the version-skew warning.
       final resolved = resolveEffectiveCliArgs(
@@ -633,6 +632,244 @@ void main() {
         env: const {},
       );
       expect(key, isEmpty);
+    });
+
+    test('gh-1059 AC3: a seeded snapshot resolves every saved entry key BY '
+        'keyName (H2 seam guard, multi-entry)', () async {
+      // Owner-shaped: several saved custom providers, each with its own
+      // name-scoped key, all values persisted in the store snapshot —
+      // the boot key for the ACTIVE endpoint must resolve from the
+      // entry's keyName (not the host-scoped slot, which is empty here).
+      const active = 'https://api.chatgpt.com/v1';
+      const other = 'https://api.z.ai/api/paas/v4';
+      final customProviders = [
+        CustomProviderEntry(
+          name: 'chatgpt.com',
+          apiType: 'openai',
+          baseUrl: active,
+          modelId: 'gpt-5',
+          keyName: 'FA_KEY_CHATGPT_COM',
+        ),
+        CustomProviderEntry(
+          name: 'z.ai',
+          apiType: 'openai',
+          baseUrl: other,
+          modelId: 'glm-4.7',
+          keyName: 'FA_KEY_Z_AI',
+        ),
+      ];
+      final cache = await _cache({
+        'FA_KEY_CHATGPT_COM': 'active-entry-key',
+        'FA_KEY_Z_AI': 'other-entry-key',
+      });
+
+      final key = startupApiKey(
+        'openai-completions',
+        cache,
+        baseUrl: active,
+        customProviders: customProviders,
+        defaultRoleResolved: false,
+        interactive: false,
+        env: const {},
+      );
+
+      expect(key, 'active-entry-key');
+
+      // Interactive boot (the owner's REPL case) resolves the same way.
+      expect(
+        startupApiKey(
+          'openai-completions',
+          cache,
+          baseUrl: active,
+          customProviders: customProviders,
+          defaultRoleResolved: false,
+          interactive: true,
+          env: const {},
+        ),
+        'active-entry-key',
+      );
+    });
+
+    test('gh-1059 AC3: an empty snapshot reads as keyless (the reported '
+        'symptom, H1 discriminator)', () async {
+      const active = 'https://api.chatgpt.com/v1';
+      final cache = await _cache({});
+
+      final key = startupApiKey(
+        'openai-completions',
+        cache,
+        baseUrl: active,
+        customProviders: [
+          CustomProviderEntry(
+            name: 'chatgpt.com',
+            apiType: 'openai',
+            baseUrl: active,
+            modelId: 'gpt-5',
+            keyName: 'FA_KEY_CHATGPT_COM',
+          ),
+        ],
+        defaultRoleResolved: false,
+        interactive: true,
+        env: const {},
+      );
+
+      // The resolution seam consults the snapshot correctly — an EMPTY
+      // snapshot is the only way providers boot keyless, which pins the
+      // bug to the preload/read path (H1), not this seam (H2).
+      expect(key, isEmpty);
+    });
+  });
+
+  group('referencedSecureKeyNames + secureKeyBootDiagnostics (gh-1059)', () {
+    final savedWithKeys = CliConfig(
+      customProviders: [
+        CustomProviderEntry(
+          name: 'chatgpt.com',
+          apiType: 'openai',
+          baseUrl: 'https://api.chatgpt.com/v1',
+          modelId: 'gpt-5',
+          keyName: 'FA_KEY_CHATGPT_COM',
+        ),
+        CustomProviderEntry(
+          name: 'z.ai',
+          apiType: 'openai',
+          baseUrl: 'https://api.z.ai/api/paas/v4',
+          modelId: 'glm-4.7',
+          keyName: 'FA_KEY_Z_AI',
+        ),
+        CustomProviderEntry(
+          name: 'keyless-local',
+          apiType: 'openai',
+          baseUrl: 'http://llama.local:8080',
+          modelId: 'm1',
+        ),
+      ],
+    );
+
+    test('referenced names are exactly the saved entries keyNames', () {
+      expect(referencedSecureKeyNames(savedWithKeys), {
+        'FA_KEY_CHATGPT_COM',
+        'FA_KEY_Z_AI',
+      });
+    });
+
+    test('an env-only config references nothing', () {
+      expect(referencedSecureKeyNames(CliConfig()), isEmpty);
+    });
+
+    test('debug: one line per outcome plus the summary', () {
+      final report = SecureKeyPreloadReport(
+        storeAvailable: true,
+        outcomes: const [
+          SecureKeyReadOutcome(
+            'FA_KEY_CHATGPT_COM',
+            SecureKeyReadStatus.found,
+            value: 'x',
+          ),
+          SecureKeyReadOutcome('FA_KEY_Z_AI', SecureKeyReadStatus.absent),
+          SecureKeyReadOutcome(
+            'OPENAI_API_KEY',
+            SecureKeyReadStatus.error,
+            error: 'exit 45: Interaction is not allowed.',
+          ),
+        ],
+      );
+
+      final lines = secureKeyBootDiagnostics(
+        report: report,
+        referencedKeyNames: referencedSecureKeyNames(savedWithKeys),
+        debug: true,
+        storeLabel: 'macOS Keychain',
+      );
+
+      expect(lines, contains('[keys] FA_KEY_CHATGPT_COM: found'));
+      expect(lines, contains('[keys] FA_KEY_Z_AI: absent'));
+      expect(
+        lines,
+        contains(
+          '[keys] OPENAI_API_KEY: error: exit 45: Interaction is '
+          'not allowed.',
+        ),
+      );
+      expect(
+        lines.lastWhere((l) => l.startsWith('[keys] ')),
+        contains('2 config-referenced, 1 found, 1 absent, 1 errors'),
+      );
+      // Some referenced keys resolved → no zero-resolved warning.
+      expect(lines.where((l) => l.startsWith('warning:')), isEmpty);
+    });
+
+    test('zero referenced keys resolved → one warning naming the count, '
+        'debug or not', () {
+      SecureKeyPreloadReport reportOf(List<SecureKeyReadOutcome> outcomes) =>
+          SecureKeyPreloadReport(storeAvailable: true, outcomes: outcomes);
+      final referenced = referencedSecureKeyNames(savedWithKeys);
+
+      for (final debug in [false, true]) {
+        final silent = secureKeyBootDiagnostics(
+          report: reportOf(const [
+            SecureKeyReadOutcome(
+              'FA_KEY_CHATGPT_COM',
+              SecureKeyReadStatus.error,
+              error: 'timed out after 15s',
+            ),
+            SecureKeyReadOutcome('FA_KEY_Z_AI', SecureKeyReadStatus.absent),
+          ]),
+          referencedKeyNames: referenced,
+          debug: debug,
+        );
+        final warnings = silent.where((l) => l.startsWith('warning:'));
+        expect(warnings, hasLength(1));
+        expect(warnings.single, contains('2 provider key(s)'));
+        expect(warnings.single, contains('resolved NOTHING'));
+      }
+    });
+
+    test('an env-only boot (nothing referenced) never warns', () {
+      final lines = secureKeyBootDiagnostics(
+        report: const SecureKeyPreloadReport(
+          storeAvailable: true,
+          outcomes: [],
+        ),
+        referencedKeyNames: referencedSecureKeyNames(CliConfig()),
+        debug: false,
+      );
+      expect(lines, isEmpty);
+    });
+
+    test('an unavailable store prints nothing without debug (no reads '
+        'attempted, env keys may still resolve)', () {
+      final lines = secureKeyBootDiagnostics(
+        report: const SecureKeyPreloadReport(
+          storeAvailable: false,
+          outcomes: [],
+        ),
+        referencedKeyNames: {'FA_KEY_CHATGPT_COM'},
+        debug: false,
+      );
+      expect(lines, isEmpty);
+    });
+
+    test('save degradations join the summary', () {
+      final lines = secureKeyBootDiagnostics(
+        report: const SecureKeyPreloadReport(
+          storeAvailable: true,
+          outcomes: [
+            SecureKeyReadOutcome(
+              'FA_KEY_CHATGPT_COM',
+              SecureKeyReadStatus.found,
+              value: 'x',
+            ),
+          ],
+        ),
+        referencedKeyNames: {'FA_KEY_CHATGPT_COM'},
+        debug: false,
+        saveFailures: 1,
+        lastSaveError: 'keychain write failed (exit 45)',
+      );
+      expect(lines, hasLength(1));
+      expect(lines.single, contains('1 secure-store save(s) degraded'));
+      expect(lines.single, contains('keychain write failed (exit 45)'));
     });
   });
 

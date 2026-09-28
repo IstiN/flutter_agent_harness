@@ -308,19 +308,20 @@ List<String> secureKeyBootDiagnostics({
     return lines;
   }
   final resolvedReferenced = referencedKeyNames
-      .where((name) => report.outcomes.any((o) => o.name == name &&
-          o.status == SecureKeyReadStatus.found))
+      .where(
+        (name) => report.outcomes.any(
+          (o) => o.name == name && o.status == SecureKeyReadStatus.found,
+        ),
+      )
       .toSet();
   if (debug) {
     for (final outcome in report.outcomes) {
-      lines.add(
-        switch (outcome.status) {
-          SecureKeyReadStatus.found => '[keys] ${outcome.name}: found',
-          SecureKeyReadStatus.absent => '[keys] ${outcome.name}: absent',
-          SecureKeyReadStatus.error =>
-            '[keys] ${outcome.name}: error: ${outcome.error ?? 'unknown'}',
-        },
-      );
+      lines.add(switch (outcome.status) {
+        SecureKeyReadStatus.found => '[keys] ${outcome.name}: found',
+        SecureKeyReadStatus.absent => '[keys] ${outcome.name}: absent',
+        SecureKeyReadStatus.error =>
+          '[keys] ${outcome.name}: error: ${outcome.error ?? 'unknown'}',
+      });
     }
     lines.add(
       '[keys] ${referencedKeyNames.length} config-referenced, '
@@ -332,7 +333,7 @@ List<String> secureKeyBootDiagnostics({
     final hint = debug
         ? 'see the [keys] lines above'
         : 'run with --debug-secrets (or FA_DEBUG_KEYS=1) to see the '
-            'per-name reads';
+              'per-name reads';
     lines.add(
       'warning: ${referencedKeyNames.length} provider key(s) referenced by '
       'the config (custom providers / roles) resolved NOTHING from the '

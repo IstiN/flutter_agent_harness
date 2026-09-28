@@ -155,8 +155,9 @@ final class SecureKeyCache {
       return SecureKeyPreloadReport(storeAvailable: false, outcomes: const []);
     }
     final store = _store!;
-    final SecureKeyDiagnostics? diagnostics =
-        store is SecureKeyDiagnostics ? store as SecureKeyDiagnostics : null;
+    final SecureKeyDiagnostics? diagnostics = store is SecureKeyDiagnostics
+        ? store as SecureKeyDiagnostics
+        : null;
     final outcomes = await Future.wait(
       requested.map((name) async {
         try {

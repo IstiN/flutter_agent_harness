@@ -101,10 +101,8 @@ Future<SecureKeyRunResult> _processRunner(
       .transform(utf8.decoder)
       .listen(stderrBuffer.write)
       .asFuture<void>();
-  Future<void> drainStderr() => stderrDone.timeout(
-    const Duration(seconds: 1),
-    onTimeout: () {},
-  );
+  Future<void> drainStderr() =>
+      stderrDone.timeout(const Duration(seconds: 1), onTimeout: () {});
   try {
     final stdout = await process.stdout
         .transform(utf8.decoder)
@@ -251,11 +249,7 @@ final class _MacosKeychainStore
       final value = _output(result.stdout);
       return value.isEmpty
           ? SecureKeyReadOutcome(name, SecureKeyReadStatus.absent)
-          : SecureKeyReadOutcome(
-              name,
-              SecureKeyReadStatus.found,
-              value: value,
-            );
+          : SecureKeyReadOutcome(name, SecureKeyReadStatus.found, value: value);
     }
     if (result.exitCode == 44) {
       return SecureKeyReadOutcome(name, SecureKeyReadStatus.absent);
