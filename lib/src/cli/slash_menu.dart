@@ -151,6 +151,9 @@ const builtinSlashCommands = <String, String>{
   '/a2a': 'show A2A remote agent servers status',
   '/skills': 'list discovered skills (invoke with /skill:<name>)',
   '/ext': '[list|enable|disable|audit|remove|update|reload] — JS extensions',
+  '/jsr':
+      '[widget:test|widget:screenshot] — jsr widget CLI pass-through '
+      '(js_widget_runtime)',
   '/agents':
       '[types|<id>|open <id>] — agents hub: fleet tree, transcript, '
       'observe, open session',
