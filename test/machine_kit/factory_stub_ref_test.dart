@@ -38,7 +38,7 @@ void main() {
     if (!usesLine.contains('@')) return null;
     final ref = usesLine.trim().split('@').last;
     // Immutable SHA-1, not a moving branch/tag ref.
-    return RegExp(r'^[0-9a-f]{40}$').hasMatch(ref) ? ref : ref;
+    return ref;
   }
 
   test('ai-teammate.yml pins factory-teammate.yml at an immutable SHA', () {
@@ -98,15 +98,13 @@ void main() {
 
   test('factory_ref input echoes the literal uses-ref (the factory cannot '
       'derive its own ref)', () {
-    for (final yaml in [teammate, sm]) {
-      final ref = pinnedRef(
-        yaml,
-        yaml == teammate ? 'factory-teammate.yml' : 'factory-sm.yml',
-      )!;
+    for (final entry in stubs.entries) {
+      final (yaml, factoryFile) = entry.value;
+      final ref = pinnedRef(yaml, factoryFile)!;
       expect(
         yaml.contains('factory_ref: $ref'),
         isTrue,
-        reason: 'factory_ref must repeat the uses-ref literally',
+        reason: '${entry.key}: factory_ref must repeat the uses-ref literally',
       );
     }
   });
