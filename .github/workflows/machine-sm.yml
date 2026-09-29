@@ -48,7 +48,7 @@ permissions:
 
 jobs:
   sm:
-    # Pinned to the immutable dmtools-agents main @171b9392 — ships #569
+    # Pinned to the immutable dmtools-agents main @171b9398 — ships #569
     # (rework: a fatal CLI failure is no longer announced as "Rework
     # Complete" — the #1052 loop) + #568 (mergeBot workspace/repository
     # args) + #566 (pack-registry runner overrides).
