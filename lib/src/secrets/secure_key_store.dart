@@ -243,7 +243,7 @@ final class SecureKeyCache {
     return true;
   }
 
-  /// Records a degraded save for the boot/warning summary (the per-save
+  /// Records a degraded save for the `/key` status summary (the per-save
   /// print at the call site stays).
   void _recordSaveFailure(String message) {
     _saveFailures++;
