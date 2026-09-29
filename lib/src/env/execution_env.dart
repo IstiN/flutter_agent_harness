@@ -318,11 +318,14 @@ final class ExecutionError implements Exception {
   final Object? cause;
 
   /// Captured partial stdout of a killed run (timeout/cancel), empty
-  /// otherwise.
+  /// otherwise. Tail-capped at the source to the last 64 KiB
+  /// (`LocalShell._captureMax`) — renderers may truncate further, but no
+  /// consumer inherits an unbounded retention.
   final String stdout;
 
   /// Captured partial stderr of a killed run (timeout/cancel), empty
-  /// otherwise.
+  /// otherwise. Tail-capped at the source to the last 64 KiB — see
+  /// [stdout].
   final String stderr;
 
   @override

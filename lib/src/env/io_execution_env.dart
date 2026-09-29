@@ -632,6 +632,18 @@ final class LocalShell implements Shell, BackgroundShell {
     }
   }
 
+  /// Tail-caps a killed run's capture at the source (review thread 8):
+  /// keep the last [_captureMax] bytes with a marker — the diagnostic tail
+  /// of a timeout/abort. Successful runs keep the full output (this is
+  /// only used for the error fields).
+  static const _captureMax = 64 * 1024;
+
+  static String _captureTail(StringBuffer buffer) {
+    final s = buffer.toString();
+    if (s.length <= _captureMax) return s;
+    return '…[truncated]${s.substring(s.length - _captureMax)}';
+  }
+
   static Result<ShellExecResult, ExecutionError> _result({
     required ExecutionError? callbackError,
     required bool timedOut,
@@ -644,14 +656,17 @@ final class LocalShell implements Shell, BackgroundShell {
     if (callbackError != null) return Err(callbackError);
     // gh-1053 (review rework): a killed call returns the captured partial
     // output — the bounded return exists so a hung call comes back WITH
-    // its evidence, not just a verdict.
+    // its evidence, not just a verdict. Capped AT THE SOURCE (review
+    // thread 8): a chatty command streaming tens of MB before its timeout
+    // must not keep its full output on the error object — the diagnostic
+    // tail is what a bounded return needs.
     if (timedOut) {
       return Err(
         ExecutionError(
           ExecutionErrorCode.timeout,
           'timeout: $timeout',
-          stdout: stdout.toString(),
-          stderr: stderr.toString(),
+          stdout: _captureTail(stdout),
+          stderr: _captureTail(stderr),
         ),
       );
     }
@@ -660,8 +675,8 @@ final class LocalShell implements Shell, BackgroundShell {
         ExecutionError(
           ExecutionErrorCode.aborted,
           'aborted',
-          stdout: stdout.toString(),
-          stderr: stderr.toString(),
+          stdout: _captureTail(stdout),
+          stderr: _captureTail(stderr),
         ),
       );
     }

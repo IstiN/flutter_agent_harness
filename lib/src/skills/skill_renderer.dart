@@ -200,6 +200,14 @@ String _substituteVariables(
 
 /// Executes `!`cmd`` inline injections and ```` ```! ```` fenced blocks,
 /// replacing each with the command output (stdout + stderr merged).
+/// Tail-caps [s] to its last [max] characters (review thread 7): the
+/// diagnostic tail is the part that matters, and embedded error strings
+/// must stay bounded for the CLI user.
+String _tail(String s, {int max = 2000}) {
+  if (s.length <= max) return s;
+  return '…[truncated]${s.substring(s.length - max)}';
+}
+
 Future<String> _injectShellCommands(
   ExecutionEnv env,
   String body, {
@@ -217,13 +225,16 @@ Future<String> _injectShellCommands(
     if (value == null) {
       // gh-1053 (review rework): a killed command's error carries the
       // captured partial output — surface it like the bash tool does.
+      // Every embedded string is tail-capped (review thread 7): the
+      // message reaches the CLI user via io.writeln, and a chatty killed
+      // command must not produce a multi-MB terminal dump.
       final error = result.errorOrNull;
       var detail = error?.message ?? 'unavailable';
       final captured = <String>[
         if (error != null && error.stdout.isNotEmpty)
-          '--- partial stdout ---\n${error.stdout}',
+          '--- partial stdout ---\n${_tail(error.stdout)}',
         if (error != null && error.stderr.isNotEmpty)
-          '--- partial stderr ---\n${error.stderr}',
+          '--- partial stderr ---\n${_tail(error.stderr)}',
       ];
       if (captured.isNotEmpty) detail = '$detail\n${captured.join('\n')}';
       throw SkillRenderException(
@@ -236,7 +247,7 @@ Future<String> _injectShellCommands(
     if (value.exitCode != 0) {
       throw SkillRenderException(
         'Shell command failed for pattern "$command" '
-        '(exit ${value.exitCode}):\n$output',
+        '(exit ${value.exitCode}):\n${_tail(output)}',
       );
     }
     return output.trimRight();

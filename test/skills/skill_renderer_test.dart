@@ -211,6 +211,65 @@ void main() {
       );
     });
 
+    // Review rework (PR #1058 thread 7): every string embedded in the
+    // SkillRenderException message is tail-capped (~2 KB) — the message is
+    // printed via io.writeln to the CLI user, and a chatty killed command
+    // (or a chatty failing one) must not produce a multi-MB terminal dump.
+    test('a killed injection tail-caps the captured partial output', () async {
+      await env.createDir('/work/.claude/skills/chatty');
+      await env.writeFile(
+        '/work/.claude/skills/chatty/SKILL.md',
+        '!`chatty-cmd`\n',
+      );
+      shell.cannedError = ExecutionError(
+        ExecutionErrorCode.timeout,
+        'timeout: 0:02:00.000000',
+        stdout: 'HEAD-SENTINEL-111${'H' * 5000}TAIL-MARKER-777',
+      );
+      await expectLater(
+        renderSkillBody(env, skillAt('/work/.claude/skills/chatty/SKILL.md')),
+        throwsA(
+          isA<SkillRenderException>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('TAIL-MARKER-777'),
+              isNot(contains('HEAD-SENTINEL')),
+              // ~2 KB cap (plus headers), not the multi-KB source string.
+              hasLength(lessThan(3000)),
+            ),
+          ),
+        ),
+      );
+    });
+
+    test('a failing injection tail-caps the embedded output (exit path)', () async {
+      await env.createDir('/work/.claude/skills/bigfail');
+      await env.writeFile(
+        '/work/.claude/skills/bigfail/SKILL.md',
+        '!`bigfail-cmd`\n',
+      );
+      shell.canned['bigfail-cmd'] = ShellExecResult(
+        stdout: 'HEAD-SENTINEL-222${'G' * 5000}TAIL-MARKER-888',
+        stderr: '',
+        exitCode: 2,
+      );
+      await expectLater(
+        renderSkillBody(env, skillAt('/work/.claude/skills/bigfail/SKILL.md')),
+        throwsA(
+          isA<SkillRenderException>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('TAIL-MARKER-888'),
+              isNot(contains('HEAD-SENTINEL')),
+              hasLength(lessThan(3000)),
+            ),
+          ),
+        ),
+      );
+    });
+
     test('disabled shell execution renders the placeholder', () async {
       await env.createDir('/work/.claude/skills/off');
       await env.writeFile('/work/.claude/skills/off/SKILL.md', '!`id`\n');

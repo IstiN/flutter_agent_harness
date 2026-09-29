@@ -501,6 +501,31 @@ void main() {
       },
       timeout: const Timeout(Duration(seconds: 30)),
     );
+    // Review rework (PR #1058 thread 8): the capture is tail-capped AT THE
+    // SOURCE — a chatty killed command (megabytes before the timeout) must
+    // not retain its full output on the error object; the diagnostic tail
+    // (last ≤ 64 KiB) is what a bounded return needs.
+    test(
+      'timeout capture is tail-capped at the source',
+      skip: Platform.isWindows ? 'POSIX process semantics only' : false,
+      () async {
+        addTearDown(() => Process.run('pkill', ['-f', 'sleep 611.1053']));
+        final result = await const LocalShell().exec(
+          'head -c 70000 /dev/zero; echo TAIL-MARKER-611; sleep 611.1053',
+          options: const ShellExecOptions(timeout: Duration(seconds: 2)),
+        );
+        expect(result.isErr, isTrue, reason: '${result.valueOrNull}');
+        expect(result.errorOrNull?.code, ExecutionErrorCode.timeout);
+        final stdout = result.errorOrNull?.stdout ?? '';
+        // Capped at the source: bounded (64 KiB tail + marker), newest
+        // bytes win, marker on top. 70000 bytes in → 65536 + marker out.
+        expect(stdout.length, lessThan(70 * 1024));
+        expect(stdout.length, greaterThan(64 * 1024));
+        expect(stdout, contains('TAIL-MARKER-611'));
+        expect(stdout, startsWith('…[truncated]'));
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
 
     test(
       'aborted error carries the captured partial stdout/stderr',
