@@ -110,7 +110,9 @@ gates:
   unused_code: {enabled: false}
   unused_files: {enabled: false}
   banned_imports: {enabled: false}
-  duplication: {enabled: false} # own jscpd <1% guard
+  duplication: {enabled: false} # own jscpd <1% guard (global %) — 0.10.0's
+    # `duplication.sources` cross-module key stays available if the jscpd
+    # guards are ever retired (mirrors the root crap4dart.yaml)
   file_naming: {enabled: false}
   magic_constants: {enabled: false}
   test_assertions: {enabled: false}
