@@ -295,7 +295,18 @@ enum ExecutionErrorCode {
 /// Ported from pi's `ExecutionError`.
 final class ExecutionError implements Exception {
   /// Creates an [ExecutionError] with a [code] and [message].
-  const ExecutionError(this.code, this.message, {this.cause});
+  ///
+  /// [stdout]/[stderr] carry the captured partial output when the command
+  /// was killed mid-run (timeout/cancel, gh-1053): the bounded return must
+  /// deliver the evidence of WHERE the call stalled, not just the fact.
+  /// Empty for every other failure class.
+  const ExecutionError(
+    this.code,
+    this.message, {
+    this.cause,
+    this.stdout = '',
+    this.stderr = '',
+  });
 
   /// Backend-independent error code.
   final ExecutionErrorCode code;
@@ -305,6 +316,17 @@ final class ExecutionError implements Exception {
 
   /// The original backend error, when available.
   final Object? cause;
+
+  /// Captured partial stdout of a killed run (timeout/cancel), empty
+  /// otherwise. Tail-capped at the source to the last 64 KiB
+  /// (`LocalShell._captureMax`) — renderers may truncate further, but no
+  /// consumer inherits an unbounded retention.
+  final String stdout;
+
+  /// Captured partial stderr of a killed run (timeout/cancel), empty
+  /// otherwise. Tail-capped at the source to the last 64 KiB — see
+  /// [stdout].
+  final String stderr;
 
   @override
   String toString() => 'ExecutionError(${code.name}): $message';
