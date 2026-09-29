@@ -865,7 +865,12 @@ jobs:
           # et al.); 0.2.1 knew only the CRAP ratchet. Both configs set
           # coverage.run_tests: false — the merged shard lcov above is the
           # coverage source; gates must not re-run the suite.
-          dart pub global activate crap4dart ">=0.9.5"
+          # gh-1061: >=0.10.0 — analyzer 7.3→14.4 refresh + the
+          # duplication.sources key (native cross-module scan; the
+          # duplication gate stays jscpd-gated, see crap4dart.yaml).
+          # Bounded (rework review): a floating >= would auto-adopt 0.11.0+
+          # with no repo change — bump the ceiling deliberately.
+          dart pub global activate crap4dart ">=0.10.0 <0.11.0"
           dart pub global run crap4dart analyze
 
       - name: Broken-goldens gate over core test/ goldens (issue 447)
@@ -1164,9 +1169,10 @@ jobs:
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true'
         run: |
           # Issue #447: pin bumped 0.2.1 → >=0.9.5 for the gate framework.
+          # gh-1061: >=0.10.0 (analyzer 14.4 refresh).
           # coverage.run_tests: false in both configs — the merged shard
           # lcov above is the source; never re-run the suite here.
-          dart pub global activate crap4dart ">=0.9.5"
+          dart pub global activate crap4dart ">=0.10.0"
           cd flutter_app && dart pub global run crap4dart analyze --format json > crap_report.json
 
       # Issue #490 AC2: publish the ranked CRAP JSON even when the ratchet
