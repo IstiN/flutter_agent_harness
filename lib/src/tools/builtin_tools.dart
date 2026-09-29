@@ -1798,6 +1798,13 @@ final _pathMutationLock = _PathMutationLock();
 /// either. Mirrors `HashlinePatcher._canonicalPath` for the absolute step;
 /// symlink aliasing stays out of scope (the pure-Dart env seam does not
 /// resolve links).
+///
+/// Documented residual (issue #1083 review round 2): on case-insensitive
+/// backends (macOS default APFS, Windows) `F.md` and `f.md` are one file
+/// but keep two lock keys. The env seam carries no case-sensitivity
+/// signal, and folding keys unconditionally would spuriously serialize
+/// distinct files on case-sensitive backends (Linux production targets) —
+/// the same out-of-scope class as symlink aliasing above.
 Future<String> _canonicalPath(ExecutionEnv env, String path) async {
   final resolved = await env.absolutePath(path);
   return _normalizeLockKey(resolved.valueOrNull ?? path);

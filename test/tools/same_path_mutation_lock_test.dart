@@ -585,6 +585,86 @@ void main() {
         reason: 'the stale-tag patch must not write over the applied edit',
       );
     });
+    test('UT-2cW: a WRITE cancelled while queued never mutates either',
+        () async {
+      final env = _GatedEnv(cwd: '/w');
+      final write = writeFileTool(env);
+
+      final gate = Completer<void>();
+      env.writeGates['w.md'] = gate;
+      final first = write.execute(
+        {'path': 'w.md', 'content': 'one'},
+        null,
+        null,
+      );
+      await _pumpUntil(() => env.gatedWrites == 1);
+
+      final source = CancelTokenSource();
+      final second = write.execute(
+        {'path': 'w.md', 'content': 'two'},
+        source.token,
+        null,
+      );
+      await _pumpTurns();
+      source.cancel('superseded');
+      gate.complete();
+
+      await expectLater(second, throwsA(isA<CancelledException>()));
+      expect(_text(await first), contains('Successfully wrote'));
+      expect(
+        (await env.readTextFile('w.md')).valueOrNull,
+        'one',
+        reason: 'the cancelled write must not run its mutation',
+      );
+    });
+
+    test('UT-3r: a hashline patch recovered onto another file holds that '
+        "file's lock too", () async {
+      final env = _GatedEnv(cwd: '/w');
+      const content = 'alpha\nbeta\ngamma\n';
+      await env.writeFile('real.md', content);
+      final store = HashlineSnapshotStore();
+      final edit = editFileTool(env, snapshots: store);
+      final tag = await _recordFullRead(env, store, 'real.md');
+
+      final gate = Completer<void>();
+      // The recovery read targets the snapshot's canonical path.
+      env.readGates['/w/real.md'] = gate;
+
+      // The patch names a MISSING sibling directory spelling; the tag and
+      // basename redirect it onto /w/real.md (patcher path recovery).
+      final patch = edit.execute(
+        {'patch': '[sub/real.md#$tag]\nSWAP 1.=1:\n+ALPHA'},
+        null,
+        null,
+      );
+      // reads[0] = tag mint; reads[1] = the patch's missing-path probe;
+      // reads[2] = the patch's recovered read of real.md, parked on the
+      // gate while the patch holds BOTH lock keys.
+      await _pumpUntil(() => env.reads.length == 3);
+
+      final exact = edit.execute(
+        {'path': 'real.md', 'oldText': 'beta', 'newText': 'BETA'},
+        null,
+        null,
+      );
+      await _pumpTurns();
+      expect(
+        env.reads.length,
+        3,
+        reason: 'exact edit raced past the recovered patch: the patch '
+            'never names real.md directly, yet must hold its lock',
+      );
+
+      gate.complete();
+      expect(_text(await patch), contains('real.md#'));
+      expect(_text(await exact), contains('Edited'));
+      expect(
+        (await env.readTextFile('real.md')).valueOrNull,
+        'ALPHA\nBETA\ngamma\n',
+        reason: 'both mutations land serialized on the recovered file',
+      );
+    });
   });
 
   group('per-path mutation lock: hashline patches (issue #1083)', () {
