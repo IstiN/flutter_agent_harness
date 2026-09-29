@@ -1,6 +1,8 @@
 // Guard: the machine-loop stubs pin the dmtools-agents factory at an
-// immutable SHA, and both stubs pin the SAME ref (teammate + SM must
-// never skew apart — the SM dispatches the teammate workflow).
+// immutable SHA, and all THREE stubs pin the SAME ref (teammate, SM and
+// merge must never skew apart — the SM dispatches the teammate workflow,
+// the event-driven merge fast path runs mergeBot.js from the pinned
+// pack; a stale merge stub silently misses pack fixes).
 //
 // Ported from epam/dmtools-dart (test/machine_kit/factory_stub_ref_test.dart)
 // minus the submodule cross-check: fa pins the factory ref directly, there
@@ -12,6 +14,19 @@ import 'package:test/test.dart';
 void main() {
   final teammate = File('.github/workflows/ai-teammate.yml').readAsStringSync();
   final sm = File('.github/workflows/machine-sm.yml').readAsStringSync();
+  // Third stub (pr-1076 review: machine-merge.yml skewed to an older pin
+  // while teammate+SM were flipped — the #568 fix never reached the
+  // event-driven merge leg). Guarded in the same lockstep from now on.
+  final merge = File('.github/workflows/machine-merge.yml').readAsStringSync();
+
+  /// Every machine-loop stub -> the factory workflow it calls. New stubs
+  /// MUST be added here: the lockstep, factory_ref-echo and secrets checks
+  /// below iterate this map, so an unlisted stub escapes all three.
+  final stubs = <String, (String, String)>{
+    'ai-teammate.yml': (teammate, 'factory-teammate.yml'),
+    'machine-sm.yml': (sm, 'factory-sm.yml'),
+    'machine-merge.yml': (merge, 'factory-merge.yml'),
+  };
 
   String? pinnedRef(String yaml, String workflowFile) {
     final usesLine = yaml
@@ -23,7 +38,7 @@ void main() {
     if (!usesLine.contains('@')) return null;
     final ref = usesLine.trim().split('@').last;
     // Immutable SHA-1, not a moving branch/tag ref.
-    return RegExp(r'^[0-9a-f]{40}$').hasMatch(ref) ? ref : ref;
+    return ref;
   }
 
   test('ai-teammate.yml pins factory-teammate.yml at an immutable SHA', () {
@@ -48,9 +63,21 @@ void main() {
     );
   });
 
-  test('both stubs pin the SAME factory ref (teammate and SM in lockstep)', () {
+  test('machine-merge.yml pins factory-merge.yml at an immutable SHA', () {
+    final ref = pinnedRef(merge, 'factory-merge.yml');
+    expect(ref, isNotNull, reason: 'uses: line with @<sha> not found');
+    expect(
+      RegExp(r'^[0-9a-f]{40}$').hasMatch(ref!),
+      isTrue,
+      reason: 'ref "$ref" is not a 40-hex SHA',
+    );
+  });
+
+  test('all three stubs pin the SAME factory ref (teammate, SM, merge '
+      'in lockstep)', () {
     final a = pinnedRef(teammate, 'factory-teammate.yml');
     final b = pinnedRef(sm, 'factory-sm.yml');
+    final c = pinnedRef(merge, 'factory-merge.yml');
     expect(
       a,
       b,
@@ -58,48 +85,50 @@ void main() {
           'teammate and SM factories must not skew apart: '
           'the SM dispatches ai-teammate.yml expecting the reviewed contract',
     );
+    expect(
+      b,
+      c,
+      reason:
+          'SM and merge factories must not skew apart: '
+          'the merge fast path executes mergeBot.js from the pinned pack — '
+          'a stale merge stub silently misses pack fixes (live: pr-1076, '
+          'the #568 workspace fix shipped to teammate+SM only)',
+    );
   });
 
   test('factory_ref input echoes the literal uses-ref (the factory cannot '
       'derive its own ref)', () {
-    for (final yaml in [teammate, sm]) {
-      final ref = pinnedRef(
-        yaml,
-        yaml == teammate ? 'factory-teammate.yml' : 'factory-sm.yml',
-      )!;
+    for (final entry in stubs.entries) {
+      final (yaml, factoryFile) = entry.value;
+      final ref = pinnedRef(yaml, factoryFile)!;
       expect(
         yaml.contains('factory_ref: $ref'),
         isTrue,
-        reason: 'factory_ref must repeat the uses-ref literally',
+        reason: '${entry.key}: factory_ref must repeat the uses-ref literally',
       );
     }
   });
 
   test('secrets are mapped explicitly, not inherited '
       '(required-secret validation rejects inherit)', () {
-    expect(
-      teammate.contains(
-        'SOURCE_GITHUB_TOKEN: \${{ secrets.SOURCE_GITHUB_TOKEN }}',
-      ),
-      isTrue,
-    );
-    expect(
-      sm.contains('SOURCE_GITHUB_TOKEN: \${{ secrets.SOURCE_GITHUB_TOKEN }}'),
-      isTrue,
-    );
-    // No NON-comment line carries `secrets: inherit` (the factory docs
-    // mention it in comments; only real YAML would break validation).
-    for (final yaml in {
-      'ai-teammate.yml': teammate,
-      'machine-sm.yml': sm,
-    }.entries) {
-      final inheritLine = yaml.value
+    for (final entry in stubs.entries) {
+      final (yaml, _) = entry.value;
+      expect(
+        yaml.contains(
+          'SOURCE_GITHUB_TOKEN: \${{ secrets.SOURCE_GITHUB_TOKEN }}',
+        ),
+        isTrue,
+        reason: '${entry.key}: SOURCE_GITHUB_TOKEN must be mapped explicitly',
+      );
+      // No NON-comment line carries `secrets: inherit` (the factory docs
+      // mention it in comments; only real YAML would break validation).
+      final inheritLine = yaml
           .split('\n')
           .any((l) => l.trimLeft().startsWith('secrets: inherit'));
       expect(
         inheritLine,
         isFalse,
-        reason: '${yaml.key} must not use secrets: inherit',
+        reason: '${entry.key} must not use secrets: inherit',
       );
     }
   });
@@ -121,18 +150,16 @@ void main() {
     expect(
       teammate.contains('pull_request:'),
       isFalse,
-      reason: 'no PR trigger: pull_request runs startup-failed (PRs #624/'
+      reason:
+          'no PR trigger: pull_request runs startup-failed (PRs #624/'
           '#625) and the loop drives review via SM ticks + issue labels',
     );
     expect(
-      teammate.contains(
-        "github.event_name == 'workflow_dispatch')",
-      ) ||
-          teammate.contains(
-            "|| github.event_name == 'workflow_dispatch'",
-          ),
+      teammate.contains("github.event_name == 'workflow_dispatch')") ||
+          teammate.contains("|| github.event_name == 'workflow_dispatch'"),
       isTrue,
-      reason: 'dispatch runs must reach the factory even with empty gate '
+      reason:
+          'dispatch runs must reach the factory even with empty gate '
           'outputs (inputs carry the target) — the gh-623 skip bug',
     );
     expect(
