@@ -433,6 +433,10 @@ final class _DriveState {
   /// When the call started (the exhaustion story reports the elapsed time).
   final DateTime startedAt;
 
+  /// Total time slept for retries in this call (the exhaustion story
+  /// reports it, issue #1066).
+  var waitedTotal = Duration.zero;
+
   /// One bounded line per failed attempt (the exhaustion story's
   /// per-attempt outcomes, issue #290 AC2).
   final List<String> attemptLog = [];
@@ -608,8 +612,10 @@ final class _AttemptBuffer {
 
 /// A [StreamFunction] over an ordered [ChainEntry] list with omp's
 /// rate-limit policy: rotate keys for free, retry the entry with capped
-/// exponential backoff, then fail over to the next entry — every step
-/// announced through [onNotice].
+/// exponential backoff, then fail over to the next entry — or, when no
+/// other entry is available, wait out a transient rate limit (bounded by
+/// `maxWaitForLastEntry`, issue #1066) — every step announced through
+/// [onNotice].
 ///
 /// One instance is stateful and long-lived (a session): entry cooldowns and
 /// the [activeIndex] persist across calls, and a later call starts at the
@@ -901,6 +907,7 @@ final class FallbackStreamFunction {
       _pushAborted(out, _entries[state.entryIndex].model);
       return false;
     }
+    state.waitedTotal += delay;
     // After the wait: a single-key ring reuses its (benched) key — omp
     // retries the current credential after local backoff; our own bench
     // must not deadlock the retry. Multi-key rings re-select, picking up
@@ -936,10 +943,18 @@ final class FallbackStreamFunction {
         state.lastFailure?.retryAfter,
       );
     }
-    if (wait > policy.maxWait) {
-      return _failOver(out, state);
-    }
     final lastFailure = state.lastFailure;
+    if (wait > policy.maxWait) {
+      return _onExcessiveWait(
+        out,
+        state,
+        wait,
+        lastFailure == null
+            ? 'all API keys in backoff'
+            : _shortReasonText(lastFailure.error),
+        cancelToken,
+      );
+    }
     return _sleepAndRetry(
       out,
       state,
@@ -949,6 +964,46 @@ final class FallbackStreamFunction {
           : _shortReasonText(lastFailure.error),
       cancelToken,
     );
+  }
+
+  /// Issue #1066: the required retry wait exceeds the failover threshold
+  /// ([ModelRolesRetryPolicy.maxWait]). With a fallback entry available
+  /// this fails over immediately (unchanged); on the sole/last eligible
+  /// entry failover is impossible, so the chain waits out the rate limit
+  /// instead of dying in <1s — bounded by
+  /// [ModelRolesRetryPolicy.maxWaitForLastEntry] so a pathological
+  /// `Retry-After` (hours) still ends the chain. The wait-out consumes
+  /// attempts like any paid retry ([_sleepAndRetry]).
+  Future<bool> _onExcessiveWait(
+    AssistantMessageEventStream out,
+    _DriveState state,
+    Duration delay,
+    String reason,
+    CancelToken? cancelToken, {
+    bool isTransport = false,
+  }) async {
+    if (_hasAvailableFallback(state.tried)) {
+      return _failOver(out, state);
+    }
+    final bounded =
+        delay < policy.maxWaitForLastEntry ? delay : policy.maxWaitForLastEntry;
+    return _sleepAndRetry(
+      out,
+      state,
+      bounded,
+      reason,
+      cancelToken,
+      isTransport: isTransport,
+    );
+  }
+
+  /// Whether any entry outside [tried] is not cooling down right now —
+  /// i.e. [_failOver] would find a live target.
+  bool _hasAvailableFallback(Set<int> tried) {
+    for (var index = 0; index < _entries.length; index++) {
+      if (!tried.contains(index) && !isInCooldown(index)) return true;
+    }
+    return false;
   }
 
   /// Handles a retryable failure. Rate-limits follow omp's order: free
@@ -999,7 +1054,14 @@ final class FallbackStreamFunction {
     }
     final delay = _retryDelay(state.attemptsOnEntry + 1, outcome.retryAfter);
     if (delay > policy.maxWait) {
-      return _failOver(out, state);
+      return _onExcessiveWait(
+        out,
+        state,
+        delay,
+        _shortReasonText(outcome.error),
+        cancelToken,
+        isTransport: outcome.isTransport,
+      );
     }
     return _sleepAndRetry(
       out,
@@ -1156,6 +1218,12 @@ final class FallbackStreamFunction {
     }
     final elapsed = _now().difference(state.startedAt);
     final elapsedText = elapsed.inSeconds < 1 ? '<1s' : '${elapsed.inSeconds}s';
+    // Issue #1066: say how long the chain already waited out rate limits
+    // before giving up.
+    final waited = state.waitedTotal;
+    final waitedText = waited.inSeconds < 1
+        ? ''
+        : ' (waited ${_etaText(waited)} on rate limits)';
     final log = state.attemptLog
         .map(
           (line) =>
@@ -1168,7 +1236,7 @@ final class FallbackStreamFunction {
     final story =
         'Provider chain exhausted: ${state.tried.length} of '
         '${_entries.length} chain model(s) failed after '
-        '${state.attemptLog.length} attempt(s) over $elapsedText. '
+        '${state.attemptLog.length} attempt(s) over $elapsedText$waitedText. '
         'Attempts: $log.$queueLines '
         'All available models failed with provider-side errors — likely an '
         'outage or quota exhaustion, not a key problem. '
