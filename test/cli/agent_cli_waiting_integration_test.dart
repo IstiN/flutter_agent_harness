@@ -38,7 +38,7 @@ void main() {
   test(
     'boot sweep reaps a previous-run orphan group and warns '
     '(issue #517)',
-    skip: LocalShell.jobsGetOwnProcessGroup
+    skip: LocalShell.ownProcessGroupAvailable
         ? null
         : 'needs setsid (group leadership)',
     () async {
