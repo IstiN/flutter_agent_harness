@@ -665,6 +665,45 @@ void main() {
         reason: 'both mutations land serialized on the recovered file',
       );
     });
+    test('UT-2cH: a hashline PATCH cancelled while queued never mutates '
+        'either', () async {
+      final env = _GatedEnv(cwd: '/w');
+      const content = 'alpha\nbeta\ngamma\n';
+      await env.writeFile('f.txt', content);
+      final store = HashlineSnapshotStore();
+      final edit = editFileTool(env, snapshots: store);
+      final tag = await _recordFullRead(env, store, 'f.txt');
+
+      final gate = Completer<void>();
+      env.readGates['f.txt'] = gate;
+      final holder = edit.execute(
+        {'patch': '[f.txt#$tag]\nSWAP 1.=1:\n+ALPHA'},
+        null,
+        null,
+      );
+      // reads[0] = tag mint; reads[1] = the holder patch's parked read.
+      await _pumpUntil(() => env.reads.length == 2);
+
+      final source = CancelTokenSource();
+      final queued = edit.execute(
+        {'patch': '[f.txt#$tag]\nSWAP 1.=1:\n+BETA'},
+        source.token,
+        null,
+      );
+      await _pumpTurns();
+      source.cancel('superseded');
+      gate.complete();
+
+      // Cancel wins before the stale-tag guard: the queued patch throws
+      // CancelledException on acquisition and never even reads the file.
+      await expectLater(queued, throwsA(isA<CancelledException>()));
+      expect(_text(await holder), contains('[f.txt#'));
+      expect(
+        (await env.readTextFile('f.txt')).valueOrNull,
+        'ALPHA\nbeta\ngamma\n',
+        reason: 'the cancelled patch must not run its mutation',
+      );
+    });
   });
 
   group('per-path mutation lock: hashline patches (issue #1083)', () {
