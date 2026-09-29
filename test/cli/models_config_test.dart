@@ -367,6 +367,17 @@ models:
           'models.custom.fast: invalid authHeader',
         );
       });
+
+      test('custom authHeader on a non-openai-completions dialect is '
+          'rejected (issue #964 review)', () {
+        expectBad(
+          'models:\n  custom:\n    fast:\n      provider: anthropic\n'
+              '      baseUrl: https://x\n      model: m\n'
+              '      authHeader: x-api-key',
+          'models.custom.fast: authHeader only applies to '
+              'openai-completions endpoints',
+        );
+      });
     });
 
     test('setSlotOverride rejects unknown slots', () {

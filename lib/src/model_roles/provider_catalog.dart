@@ -439,6 +439,27 @@ String? parseAuthHeaderName(Object? value, String where) {
   return name;
 }
 
+/// Rejects a config-declared `authHeader` on a provider whose adapter
+/// dialect is not `openai-completions` (issue #964 review): only that
+/// adapter reads the field — everywhere else the header would be silently
+/// ignored. A null [spec] (provider unknown at parse time — roles chain
+/// entries skip unknown providers at resolve) passes; nothing reaches a
+/// builder for it.
+void validateAuthHeaderDialect(
+  String? authHeader,
+  ProviderSpec? spec,
+  String where,
+) {
+  if (authHeader == null || spec == null || spec.api == 'openai-completions') {
+    return;
+  }
+  throw ConfigException(
+    '$where: authHeader only applies to openai-completions endpoints — '
+    'provider "${spec.name}" speaks ${spec.api}, which would silently '
+    'ignore the header',
+  );
+}
+
 /// Builds a [Model] for [provider]/[modelId] with catalog defaults, overrid-
 /// able per reference (see `ModelRef`).
 ///
@@ -464,6 +485,7 @@ Model buildCatalogModel(
       '${providerCatalog.keys.join(', ')}',
     );
   }
+  validateAuthHeaderDialect(authHeader, spec, 'provider "$provider"');
   return Model(
     id: modelId,
     name: modelId,
@@ -595,6 +617,7 @@ Model buildCliDefaultModel(
   if (spec == null) {
     throw ConfigException('unknown provider: $providerKind');
   }
+  validateAuthHeaderDialect(authHeader, spec, 'provider "$providerKind"');
 
   final id = modelId;
   if (id == null) {

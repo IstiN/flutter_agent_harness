@@ -97,6 +97,30 @@ void main() {
       expectBadAuth('x api key');
       expectBadAuth(7);
     });
+
+    test('rejects authHeader on a non-openai-completions api type '
+        '(issue #964 review)', () {
+      expect(
+        () => CustomProviderEntry.fromYaml(const {
+          'name': 'acme-gw',
+          'apiType': 'anthropic',
+          'baseUrl': 'https://gateway.acme.com/v1',
+          'modelId': 'claude-x',
+          'authHeader': 'x-api-key',
+        }),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('customProviders entry "acme-gw"'),
+              contains('anthropic'),
+              contains('anthropic-messages'),
+            ),
+          ),
+        ),
+      );
+    });
   });
 
   group('CustomProviderRegistry', () {

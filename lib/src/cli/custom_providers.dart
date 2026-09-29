@@ -88,6 +88,15 @@ final class CustomProviderEntry {
     final keyName = node['keyName'];
     final authMethod = _parseAuthMethod(node['authMethod']);
     final name = requireString('name');
+    final authHeader = parseAuthHeaderName(
+      node['authHeader'],
+      'customProviders entry "$name"',
+    );
+    validateAuthHeaderDialect(
+      authHeader,
+      catalogProvider(apiType),
+      'customProviders entry "$name"',
+    );
     return CustomProviderEntry(
       name: name,
       apiType: apiType,
@@ -97,10 +106,7 @@ final class CustomProviderEntry {
       authMethod: authMethod,
       // Named error (issue #964 AC5): the entry owns the bad value, so the
       // message names the entry.
-      authHeader: parseAuthHeaderName(
-        node['authHeader'],
-        'customProviders entry "$name"',
-      ),
+      authHeader: authHeader,
     );
   }
 
@@ -220,6 +226,19 @@ List<CustomProviderEntry> mergeCustomProviderEntries(
           !isReservedCustomProviderName(e.name))
         e,
   ];
+}
+
+/// The `authHeader` of the saved entry serving [baseUrl], for the
+/// folder-model-state restores (boot in `bin/fah.dart` and session
+/// re-apply in `agent_cli.dart` — issue #964 review): a restored gateway
+/// endpoint without its header 401s. Null when [baseUrl] is null (catalog
+/// default) or no saved entry matches it.
+String? authHeaderForBaseUrl(List<CustomProviderEntry> entries, String? baseUrl) {
+  if (baseUrl == null) return null;
+  for (final entry in entries) {
+    if (entry.baseUrl == baseUrl) return entry.authHeader;
+  }
+  return null;
 }
 
 /// The live list of saved custom providers (shared by the CLI, which

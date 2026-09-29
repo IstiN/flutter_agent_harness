@@ -17,7 +17,10 @@
 ///   duplicate it). Thinking-only streams still replay: thinking deltas
 ///   buffer until the first visible event commits the attempt, so a drop
 ///   mid-reasoning leaves no trace and the retry regenerates the reasoning
-///   (re-billed reasoning accepted, same as any retry).
+///   (re-billed reasoning accepted, same as any retry). The buffering is
+///   withheld from the host until commit/Done — a pure-reasoning phase
+///   renders as silence, the price of replayability (forwarding an event
+///   is committing it).
 /// - Providers-never-throw is preserved: a defensive catch converts a
 ///   throwing inner stream into an error event.
 library;
@@ -350,6 +353,17 @@ Future<_AttemptOutcome> _runAttempt(
         // (minutes of thinking, zero visible deltas) is retried under the
         // existing policy with no trace of the dead attempt. The buffered
         // reasoning flushes in order when the attempt commits or ends.
+        //
+        // Visibility tradeoff (issue #964 review): until the first visible
+        // delta (or the terminal event) the host sees NOTHING of the
+        // reasoning — a thinking-only phase renders as silence, where the
+        // pre-#964 behavior showed it live. That is the price of
+        // replayability, not an oversight: forwarding an event IS
+        // committing it (the host may have rendered it), and a committed
+        // stream can never be replayed — the same reason omp's original
+        // guard withheld all content. Providers that emit visible content
+        // early are unaffected; pure-reasoning marathons are the case this
+        // retry exists for.
         buffer.add(event);
       case StartEvent():
         buffer.add(event);

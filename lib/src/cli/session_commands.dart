@@ -618,10 +618,10 @@ extension on AgentCli {
         state.providerKind,
         modelId: state.modelId,
         baseUrl: state.baseUrl,
-        authHeader: config.customProviders?.entries
-            .where((e) => e.baseUrl == state.baseUrl)
-            .firstOrNull
-            ?.authHeader,
+        authHeader: authHeaderForBaseUrl(
+          config.customProviders?.entries ?? const [],
+          state.baseUrl,
+        ),
       );
     } on ConfigException {
       io.writeln(

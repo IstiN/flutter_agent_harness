@@ -90,12 +90,15 @@ final class CustomModelDefinition {
     // (both identifiers, FA_PROVIDERS filter) — a kind-shaped or
     // filtered-out entry fails HERE with the enabled list, never later
     // at `/model` (issue #772 review).
-    if (resolveCliProviderSpec(provider, honorBuildFilter: true) == null) {
+    final spec = resolveCliProviderSpec(provider, honorBuildFilter: true);
+    if (spec == null) {
       throw ConfigException(
         'unknown provider "$provider" in $where — supported providers: '
         '${enabledProviderNames().join(', ')}',
       );
     }
+    final authHeader = parseAuthHeaderName(node['authHeader'], where);
+    validateAuthHeaderDialect(authHeader, spec, where);
     int? optionalInt(String field) {
       final value = node[field];
       if (value == null) return null;
@@ -128,7 +131,7 @@ final class CustomModelDefinition {
       contextWindow: optionalInt('contextWindow'),
       maxTokens: optionalInt('maxTokens'),
       input: input,
-      authHeader: parseAuthHeaderName(node['authHeader'], where),
+      authHeader: authHeader,
     );
   }
 

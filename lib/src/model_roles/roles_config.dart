@@ -22,11 +22,14 @@
 /// parsing, validation, serialization, and chain selection.
 library;
 
+import 'dart:convert';
+
 import 'package:yaml/yaml.dart';
 
 import '../exceptions.dart';
 import '../providers/thinking.dart';
-import 'provider_catalog.dart' show parseAuthHeaderName;
+import 'provider_catalog.dart'
+    show catalogProvider, parseAuthHeaderName, validateAuthHeaderDialect;
 
 /// The model roles supported by [ModelRolesConfig], in declaration order.
 ///
@@ -90,9 +93,13 @@ final class ModelRef {
     switch (node) {
       case String value:
         return ModelRef.parse(value, role: role);
-      case YamlMap map:
-        final provider = map['provider'];
-        final model = map['model'];
+      case YamlMap entry:
+        // Leaf reads bind to `entry` (not `map`/`doc`): the settings
+        // completeness gate counts literal `map['…']` reads in parser
+        // sources as TOP-LEVEL keys, and these are section leaves
+        // (issue #964 review — `authHeader` tripped the ratchet).
+        final provider = entry['provider'];
+        final model = entry['model'];
         if (provider is! String || provider.trim().isEmpty) {
           throw ConfigException(
             'model chain entry${role == null ? '' : ' in role "$role"'} '
@@ -105,19 +112,20 @@ final class ModelRef {
             'is missing a "model" string',
           );
         }
+        final where =
+            'model chain entry${role == null ? '' : ' in role "$role"'}';
+        final authHeader = parseAuthHeaderName(entry['authHeader'], where);
+        validateAuthHeaderDialect(authHeader, catalogProvider(provider), where);
         return ModelRef(
           provider: provider.trim(),
           modelId: model.trim(),
-          apiKeyName: _optionalString(map, 'apiKeyName', role),
-          baseUrl: _optionalString(map, 'baseUrl', role),
-          contextWindow: _optionalInt(map, 'contextWindow', role),
-          maxTokens: _optionalInt(map, 'maxTokens', role),
-          input: _optionalInput(map, role),
-          thinkingLevel: _optionalThinkingLevel(map, role),
-          authHeader: parseAuthHeaderName(
-            map['authHeader'],
-            'model chain entry${role == null ? '' : ' in role "$role"'}',
-          ),
+          apiKeyName: _optionalString(entry, 'apiKeyName', role),
+          baseUrl: _optionalString(entry, 'baseUrl', role),
+          contextWindow: _optionalInt(entry, 'contextWindow', role),
+          maxTokens: _optionalInt(entry, 'maxTokens', role),
+          input: _optionalInput(entry, role),
+          thinkingLevel: _optionalThinkingLevel(entry, role),
+          authHeader: authHeader,
         );
       default:
         throw ConfigException(
@@ -252,7 +260,12 @@ final class ModelRef {
     if (input != null) {
       buffer.write('input: [${input!.join(', ')}]\n');
     }
-    if (authHeader != null) buffer.write('authHeader: $authHeader\n');
+    if (authHeader != null) {
+      // RFC 7230 tokens may lead with yaml specials (`#`, `*`, `!`): a raw
+      // scalar would round-trip as a comment/alias. JSON quoting keeps the
+      // round-trip lossless (issue #964 review).
+      buffer.write('authHeader: ${jsonEncode(authHeader)}\n');
+    }
     return buffer.toString();
   }
 }
