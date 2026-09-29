@@ -1051,6 +1051,14 @@ final class FaTuiModel extends Model {
     return (next, null);
   }
 
+  /// Picker dispatch: atomic open + the gh-1049 reveal hook (extracted so
+  /// `_updateAfterExitCheck` stays under the CRAP complexity threshold).
+  (Model, Cmd?)? _handlePickerMsg(Msg msg) {
+    if (msg is OpenPickerMsg) return _handleOpenPicker(msg);
+    if (msg is _RevealPickerRowsMsg) return _handleRevealPickerRows();
+    return null;
+  }
+
   (Model, Cmd?) _handleClearQueue() {
     if (queue.isEmpty) return (this, null);
     return (copyWith(queue: const []), null);
@@ -1067,7 +1075,7 @@ final class FaTuiModel extends Model {
     if (msg is _ModelsRefreshMsg) return _handleModelsRefresh();
     if (msg is _ThemeChangedMsg) return _handleThemeChanged();
     if (msg is _OpenModelMenuMsg) return _handleOpenModelMenu();
-    if (msg is OpenPickerMsg) return _handleOpenPicker(msg);
+    if (_handlePickerMsg(msg) case final picker?) return picker;
     if (msg is HubStateMsg) return _handleHubStateMsg(msg);
     if (msg is _CloseHubMsg) return (copyWith(clearHub: true), null);
 
@@ -1202,7 +1210,23 @@ final class FaTuiModel extends Model {
     );
   }
 
+  /// gh-1049 test hook: per-row reveal delay for the generic picker, read
+  /// from `FA_TUI_PICKER_REVEAL_MS`. 0/unset = the production atomic open.
+  ///
+  /// Unit-test seam: `Platform.environment` is immutable in-process, so
+  /// model-level tests set [pickerRevealDelayMsOverride] instead; null
+  /// falls through to the env var (the production default).
+  @visibleForTesting
+  static int? pickerRevealDelayMsOverride;
+
+  static int get _pickerRevealDelayMs =>
+      pickerRevealDelayMsOverride ??
+      int.tryParse(Platform.environment['FA_TUI_PICKER_REVEAL_MS'] ?? '') ??
+      0;
+
   (Model, Cmd?) _handleOpenPicker(OpenPickerMsg msg) {
+    final reveal = _pickerRevealOpen(msg);
+    if (reveal != null) return reveal;
     return (
       copyWith(
         menuOpen: true,
@@ -1219,6 +1243,67 @@ final class FaTuiModel extends Model {
       ),
       null,
     );
+  }
+
+  /// The progressive-reveal open (gh-1049 test hook), or null when the
+  /// hook is off (the production atomic open above) or the picker has a
+  /// single row. The first frame carries the title + ONE row, every later
+  /// frame adds one — the hostile frame-gap condition the PTY screen waits
+  /// must survive with content predicates. The selection stays clamped to
+  /// the FULL item list so the cursor lands on the initial row once it is
+  /// revealed.
+  (Model, Cmd?)? _pickerRevealOpen(OpenPickerMsg msg) {
+    final revealMs = _pickerRevealDelayMs;
+    if (revealMs <= 0 || msg.items.length <= 1) return null;
+    return (
+      copyWith(
+        menuOpen: true,
+        menuModelMode: true,
+        modelFilter: '',
+        menuItems: msg.items.take(1).toList(),
+        menuAllItems: msg.items,
+        menuSelected: msg.initialIndex.clamp(
+          0,
+          msg.items.isEmpty ? 0 : msg.items.length - 1,
+        ),
+        pickerId: msg.pickerId,
+        pickerTitle: msg.title,
+      ),
+      _schedulePickerReveal(revealMs),
+    );
+  }
+
+  Cmd _schedulePickerReveal(int delayMs) {
+    return () async {
+      await Future<void>.delayed(Duration(milliseconds: delayMs));
+      return const _RevealPickerRowsMsg();
+    };
+  }
+
+  /// Reveals the next picker row; re-arms while rows remain. A close, a
+  /// full reveal, or an ACTIVE TYPE-TO-FILTER stops the chain: the filter
+  /// owns [menuItems] (the rows are the filtered set) and the leg must
+  /// never clobber it with an unfiltered prefix (a reveal landing on a
+  /// closed picker is a no-op — the menu keys rebuilt/cleared [menuItems]
+  /// in between).
+  (Model, Cmd?) _handleRevealPickerRows() {
+    final all = menuAllItems;
+    if (!menuOpen || modelFilter.isNotEmpty || menuItems.length >= all.length) {
+      return (this, null);
+    }
+    final revealed = (menuItems.length + 1).clamp(0, all.length);
+    return (
+      copyWith(menuItems: all.take(revealed).toList()),
+      _pickerRevealNextCmd(revealed, all.length),
+    );
+  }
+
+  /// The next reveal leg, or null when the row set is complete or the
+  /// hook switched off mid-run.
+  Cmd? _pickerRevealNextCmd(int revealed, int total) {
+    final revealMs = _pickerRevealDelayMs;
+    if (revealed >= total || revealMs <= 0) return null;
+    return _schedulePickerReveal(revealMs);
   }
 
   (Model, Cmd?) _handleWindowSize(WindowSizeMsg msg) {
