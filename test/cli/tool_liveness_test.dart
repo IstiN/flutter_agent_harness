@@ -294,8 +294,10 @@ void main() {
       final deadline = DateTime.now().add(const Duration(seconds: 8));
       while (lines.length < count) {
         if (DateTime.now().isAfter(deadline)) {
-          fail('timed out waiting for $count line(s): '
-              '${reason ?? lines.join(' | ')}');
+          fail(
+            'timed out waiting for $count line(s): '
+            '${reason ?? lines.join(' | ')}',
+          );
         }
         await Future<void>.delayed(const Duration(milliseconds: 20));
       }
@@ -359,7 +361,8 @@ void main() {
       expect(
         reminds.length,
         1,
-        reason: 'the original leg was cancelled by the tick — '
+        reason:
+            'the original leg was cancelled by the tick — '
             'it must not fire at its old 2s deadline',
       );
       await waitForCount(reminds, 2, reason: 'the re-armed leg fires');
