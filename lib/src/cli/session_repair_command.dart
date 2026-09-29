@@ -1,6 +1,9 @@
-import 'package:flutter_agent_harness/src/session/attach/session_presence.dart';
+import 'package:flutter_agent_harness/src/env/execution_env.dart';
+import 'package:flutter_agent_harness/src/session/session_storage.dart'
+    show SessionMetadata;
 import 'package:flutter_agent_harness/src/session/session_repo.dart';
-import 'package:flutter_agent_harness/src/session/session_repair.dart';
+import 'package:flutter_agent_harness/src/session/attach/session_presence.dart';
+import 'package:flutter_agent_harness/src/session_repair.dart';
 
 /// The headless `fa session repair <sessionId|path> [--dry-run]` command
 /// (gh-1073): rewrites a bloated session JSONL with the append-only

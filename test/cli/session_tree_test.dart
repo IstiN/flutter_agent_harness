@@ -281,6 +281,28 @@ void main() {
         throwsA(isA<CliArgsException>()),
       );
     });
+
+    test('repair parses the target and --dry-run (gh-1073)', () {
+      final repair = parseCliArgs(['session', 'repair', 'bloated']) as CliArgs;
+      expect(repair.sessionList?.verb, 'repair');
+      expect(repair.sessionList?.repairTarget, 'bloated');
+      expect(repair.sessionList?.dryRun, isFalse);
+
+      final dry = parseCliArgs(
+        ['session', 'repair', '/abs/path.jsonl', '--dry-run'],
+      ) as CliArgs;
+      expect(dry.sessionList?.repairTarget, '/abs/path.jsonl');
+      expect(dry.sessionList?.dryRun, isTrue);
+
+      expect(
+        () => parseCliArgs(['session', 'repair']),
+        throwsA(isA<CliArgsException>()),
+      );
+      expect(
+        () => parseCliArgs(['session', 'repair', 'x', '--wat']),
+        throwsA(isA<CliArgsException>()),
+      );
+    });
   });
 
   group('sessionPickerItems', () {
