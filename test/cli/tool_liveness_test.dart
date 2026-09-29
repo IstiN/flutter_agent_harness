@@ -60,6 +60,43 @@ void main() {
       expect(() => WaitingConfig.fromYaml({'bogus': 1}), throwsA(anything));
     });
 
+    test('fromYaml rejects an escalation threshold below an enabled liveness '
+        'start (the hint is supposed to come at a longer threshold)', () {
+      expect(
+        () => WaitingConfig.fromYaml({
+          'toolLivenessSeconds': 600,
+          'toolEscalateSeconds': 120,
+        }),
+        throwsA(anything),
+      );
+    });
+
+    test('fromYaml accepts escalate == liveness and 0-disabled sides', () {
+      expect(
+        () => WaitingConfig.fromYaml({
+          'toolLivenessSeconds': 600,
+          'toolEscalateSeconds': 600,
+        }),
+        returnsNormally,
+        reason: 'equal thresholds = hint-only mode, a coherent choice',
+      );
+      expect(
+        () => WaitingConfig.fromYaml({
+          'toolLivenessSeconds': 600,
+          'toolEscalateSeconds': 0,
+        }),
+        returnsNormally,
+      );
+      expect(
+        () => WaitingConfig.fromYaml({
+          'toolLivenessSeconds': 0,
+          'toolEscalateSeconds': 120,
+        }),
+        returnsNormally,
+        reason: 'liveness 0 is the feature kill switch — nothing to order',
+      );
+    });
+
     test('toYaml round-trips the liveness knobs', () {
       const config = WaitingConfig(
         toolLivenessSeconds: 90,
