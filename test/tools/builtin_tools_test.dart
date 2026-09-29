@@ -900,6 +900,57 @@ void main() {
       );
     });
 
+    // Review rework (PR #1058): the shell's timeout/abort errors carry the
+    // partial capture — the inline bash path must render it so the model
+    // sees WHERE a hung call stalled, not just the timeout fact.
+    test('timeout error surfaces the shell-captured partial output', () {
+      shell.result = const Err(
+        ExecutionError(
+          ExecutionErrorCode.timeout,
+          'killed',
+          stdout: 'evidence-stdout-tail',
+          stderr: 'evidence-stderr-tail',
+        ),
+      );
+      expect(
+        tool.execute({'command': 'x', 'timeout': 5}, null, null),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('Command timed out after 5 seconds'),
+              contains('evidence-stdout-tail'),
+              contains('evidence-stderr-tail'),
+            ),
+          ),
+        ),
+      );
+    });
+
+    test('abort error surfaces the shell-captured partial output', () async {
+      // The abort-with-capture error is what the SHELL returns after its
+      // own cancel path killed the tree — no pre-cancelled token here (the
+      // tool short-circuits those before consulting the shell).
+      shell.result = const Err(
+        ExecutionError(
+          ExecutionErrorCode.aborted,
+          'aborted',
+          stdout: 'abort-evidence-tail',
+        ),
+      );
+      await expectLater(
+        tool.execute({'command': 'x'}, null, null),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('Command aborted'), contains('abort-evidence-tail')),
+          ),
+        ),
+      );
+    });
+
     test('retries a timed-out command and succeeds on attempt 2', () async {
       // Queue semantics: attempt 1 consumes the timeout error, attempt 2
       // consumes the recovery.
