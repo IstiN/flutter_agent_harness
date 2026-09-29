@@ -83,7 +83,7 @@ final class WaitingConfig {
         throw ConfigException('unknown "waiting" key: $key');
       }
     }
-    return WaitingConfig(
+    final parsed = WaitingConfig(
       waitHeartbeatMinutes: parse(
         'waitHeartbeatMinutes',
         defaultWaitHeartbeatMinutes,
@@ -105,6 +105,22 @@ final class WaitingConfig {
         defaultToolEscalateSeconds,
       ),
     );
+    // Ordering (gh-1055 review): the hint fires at a LONGER threshold than
+    // the reminders — AC1 starts the reminders at the configured threshold,
+    // AC3 escalates past it. A smaller escalation would print the hint as
+    // the very first line; rejected at boot like every other bad `waiting:`
+    // schema. `0` disables either side and is exempt from the ordering.
+    if (parsed.toolLivenessSeconds > 0 &&
+        parsed.toolEscalateSeconds > 0 &&
+        parsed.toolEscalateSeconds < parsed.toolLivenessSeconds) {
+      throw ConfigException(
+        '"waiting.toolEscalateSeconds" must be 0 or >= '
+        '"waiting.toolLivenessSeconds" (${parsed.toolLivenessSeconds}) — '
+        'the background hint fires at a longer threshold than the '
+        'liveness reminders',
+      );
+    }
+    return parsed;
   }
 
   String toYaml() =>

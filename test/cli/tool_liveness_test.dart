@@ -263,11 +263,12 @@ void main() {
 
   group('ToolLivenessTracker timer chain (production legs)', () {
     // The production chain is a real Timer chain; fake_async is not a
-    // dependency, so the legs run shrunk to 1-2s and the assertions poll.
-    // Cancel-before-fire is synchronous (Timer.cancel), so the disarm
-    // assertions stay deterministic; only the fire moments carry jitter,
-    // and every fire assertion polls with slack.
-    late DateTime now;
+    // dependency, so the legs run shrunk to 1-2s with the real clock and
+    // the assertions poll. Cancel-before-fire is synchronous
+    // (Timer.cancel), so the disarm assertions stay deterministic; only
+    // the fire moments carry jitter, and every fire assertion polls with
+    // slack. (Clock sourcing/elapsed math is the seam group's job above —
+    // this group exercises the chain itself.)
     late List<String> reminds;
     late List<String> escalates;
 
@@ -276,10 +277,10 @@ void main() {
       int tickSeconds = 1,
       int escalateSeconds = 0,
     }) => ToolLivenessTracker(
-      onRemind: (call) => reminds.add(toolLivenessReminderLine(call, now)),
+      onRemind: (call) =>
+          reminds.add(toolLivenessReminderLine(call, DateTime.now())),
       onEscalate: (call) =>
-          escalates.add(toolLivenessEscalationLine(call, now)),
-      clock: () => now,
+          escalates.add(toolLivenessEscalationLine(call, DateTime.now())),
       livenessSeconds: () => livenessSeconds,
       tickSeconds: () => tickSeconds,
       escalateSeconds: () => escalateSeconds,
@@ -293,7 +294,7 @@ void main() {
       final deadline = DateTime.now().add(const Duration(seconds: 8));
       while (lines.length < count) {
         if (DateTime.now().isAfter(deadline)) {
-          fail('timed out waiting for ${count} line(s): '
+          fail('timed out waiting for $count line(s): '
               '${reason ?? lines.join(' | ')}');
         }
         await Future<void>.delayed(const Duration(milliseconds: 20));
@@ -306,18 +307,18 @@ void main() {
         Future<void>.delayed(Duration(microseconds: (seconds * 1e6).round()));
 
     setUp(() {
-      now = DateTime.utc(2026, 1, 1, 12);
       reminds = [];
       escalates = [];
     });
 
-    test('callStarted arms the chain; the fired leg ticks and re-arms', () async {
-      final tracker = build(escalateSeconds: 4);
+    test('callStarted arms the chain; the fired leg ticks, re-arms, and '
+        'escalates through the real chain', () async {
+      final tracker = build(escalateSeconds: 2);
       tracker.callStarted('t1', 'bash', 'sleep 500');
       await waitForCount(reminds, 1, reason: 'first armed leg fired');
-      await waitForCount(reminds, 2, reason: 'the leg re-armed and re-fired');
-      // The escalation fires through the real chain too.
       await waitForCount(escalates, 1, reason: 'escalation leg fired');
+      // The chain re-armed past the escalation: reminders resume.
+      await waitForCount(reminds, 2, reason: 'the leg re-armed and re-fired');
       tracker.stop();
       expect(reminds.first, startsWith('⏳ [bash] sleep 500 —'));
     });
@@ -340,7 +341,6 @@ void main() {
       tracker.callStarted('t1', 'bash', 'sleep 500');
       await realSeconds(1.6);
       expect(reminds, isEmpty, reason: 'no chain was ever armed');
-      now = now.add(const Duration(seconds: 120));
       tracker.tick();
       expect(reminds, hasLength(1), reason: 'the manual seam evaluates');
     });

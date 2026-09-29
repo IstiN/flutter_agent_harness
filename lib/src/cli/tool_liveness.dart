@@ -34,10 +34,16 @@ const defaultToolLivenessTickSeconds = 60;
 const defaultToolEscalateSeconds = 300;
 
 /// The background escape hatch an escalation line names (gh-1055): the
-/// tool flag, the job board, and the headless wait flag.
+/// tool flag, the job board, the headless wait flag, and — AC6 — the
+/// cancellation affordance per case: a backgrounded call stops via its
+/// job id (`fa bash_job stop <id>`); the foreground call this tracker
+/// watches has only Ctrl+C (the SIGINT parity exit) / inbox steering,
+/// which land only once the call unwinds (until #1053 bounds the shell).
 const String toolLivenessEscalationHint =
     'background candidate: bash background: true, job board /tasks, '
-    '--wait-for-jobs';
+    '--wait-for-jobs · cancel: fa bash_job stop <id> once backgrounded; '
+    'Ctrl+C / inbox steering takes effect once the call unwinds '
+    '(until #1053)';
 
 /// Flatten + clip budget for the command tail inside a liveness line — the
 /// line must stay grep-friendly and single-line (repeated every tick).
@@ -138,9 +144,21 @@ final class ToolLivenessTracker {
   /// the hint IS the liveness line), otherwise the periodic reminder past
   /// the liveness threshold (continues after the hint fired, and after it).
   /// `toolLivenessSeconds: 0` is the feature kill switch; a disabled
-  /// escalation (`toolEscalateSeconds: 0`) keeps the reminders. The
-  /// production timer legs land here; tests call it directly.
+  /// escalation (`toolEscalateSeconds: 0`) keeps the reminders.
+  ///
+  /// Mirrors the sibling `WaitingHeartbeat.tick` (issue #450): the pending
+  /// leg is cancelled first and the chain re-arms a full cadence from
+  /// NOW — so the manual seam is observable (it owns the chain state) and
+  /// can never double-fire with the production leg. The production timer
+  /// legs land here; tests call it directly.
   void tick() {
+    _timer?.cancel();
+    _timer = null;
+    _evaluate();
+    if (_calls.isNotEmpty) _arm();
+  }
+
+  void _evaluate() {
     if (_calls.isEmpty) return;
     final remindAfter = _livenessSeconds();
     if (remindAfter <= 0) return;
@@ -163,12 +181,12 @@ final class ToolLivenessTracker {
   }
 
   void _arm() {
+    if (_calls.isEmpty) return;
     final seconds = _tickSeconds();
     if (seconds <= 0) return;
     _timer = Timer(Duration(seconds: seconds), () {
       _timer = null;
       tick();
-      _arm();
     });
   }
 }

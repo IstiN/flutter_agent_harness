@@ -149,8 +149,13 @@ final class _WaitingCoordinator {
   }
 
   /// Foreground tool call ended: this call's watch (and escalation state)
-  /// stops with it.
-  void toolCallEnded(String toolCallId) => liveness.callEnded(toolCallId);
+  /// stops with it. The TUI gate mirrors [toolCallStarted] so the pair
+  /// stays symmetric — an end-without-start must never touch the chain
+  /// while other calls are legitimately in flight.
+  void toolCallEnded(String toolCallId) {
+    if (_cli._useTui) return;
+    liveness.callEnded(toolCallId);
+  }
 
   /// The cross-run job registry (`<cwd>/.fah/bash_jobs/running.json`):
   /// one entry per job any fa process in this workspace still considers
