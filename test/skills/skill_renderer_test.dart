@@ -7,6 +7,7 @@ import 'package:test/test.dart';
 
 class _FakeShell implements Shell {
   Map<String, ShellExecResult> canned = {};
+  ExecutionError? cannedError;
   int exitCode = 0;
 
   @override
@@ -14,6 +15,8 @@ class _FakeShell implements Shell {
     String command, {
     ShellExecOptions? options,
   }) async {
+    final error = cannedError;
+    if (error != null) return Err(error);
     final hit = canned[command];
     if (hit != null) return Ok(hit);
     return Ok(
@@ -175,6 +178,34 @@ void main() {
             (e) => e.message,
             'message',
             contains('boom'),
+          ),
+        ),
+      );
+    });
+
+    // Review rework (PR #1058): a killed injection (2-minute cap) must
+    // surface the shell's captured partial output, same as the bash tool.
+    test('a killed injection surfaces the captured partial output', () async {
+      await env.createDir('/work/.claude/skills/slow');
+      await env.writeFile(
+        '/work/.claude/skills/slow/SKILL.md',
+        '!`slow-cmd`\n',
+      );
+      shell.cannedError = const ExecutionError(
+        ExecutionErrorCode.timeout,
+        'timeout: 0:02:00.000000',
+        stdout: 'skill-evidence-tail',
+      );
+      await expectLater(
+        renderSkillBody(env, skillAt('/work/.claude/skills/slow/SKILL.md')),
+        throwsA(
+          isA<SkillRenderException>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('timeout: 0:02:00'),
+              contains('skill-evidence-tail'),
+            ),
           ),
         ),
       );

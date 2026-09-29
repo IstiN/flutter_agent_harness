@@ -215,9 +215,19 @@ Future<String> _injectShellCommands(
     );
     final value = result.valueOrNull;
     if (value == null) {
+      // gh-1053 (review rework): a killed command's error carries the
+      // captured partial output — surface it like the bash tool does.
+      final error = result.errorOrNull;
+      var detail = error?.message ?? 'unavailable';
+      final captured = <String>[
+        if (error != null && error.stdout.isNotEmpty)
+          '--- partial stdout ---\n${error.stdout}',
+        if (error != null && error.stderr.isNotEmpty)
+          '--- partial stderr ---\n${error.stderr}',
+      ];
+      if (captured.isNotEmpty) detail = '$detail\n${captured.join('\n')}';
       throw SkillRenderException(
-        'Shell command failed for pattern "$command": '
-        '${result.errorOrNull?.message ?? 'unavailable'}',
+        'Shell command failed for pattern "$command": $detail',
       );
     }
     final output = value.stderr.isEmpty
