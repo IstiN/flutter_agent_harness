@@ -12,14 +12,19 @@ import 'llm_config_env.dart' if (dart.library.html) 'llm_config_env_stub.dart';
 /// `{PROVIDER}_MAX_TOKENS_PARAM_NAME`. `{PROVIDER}_BASE_PATH` wins over
 /// `{PROVIDER}_BASE_URL` when both are set.
 ///
-/// A base URL — an explicit `baseUrl` argument or a `{PROVIDER}_BASE_PATH` /
-/// `{PROVIDER}_BASE_URL` value — may be an origin (`http://127.0.0.1:8931`),
-/// a versioned base (`http://127.0.0.1:8931/v1`), or the full endpoint
-/// (`http://127.0.0.1:8931/v1/chat/completions`). It is normalized to the
-/// full chat-completions endpoint the providers POST to, so a local proxy can
-/// be pointed at with its origin alone, as `OPENAI_BASE_URL` means in the
-/// OpenAI SDKs. An empty value is left empty (the provider factory then
-/// applies its per-provider default endpoint).
+/// For the OpenAI-compatible providers (`openai`, `openrouter`, `ollama`) a
+/// base URL — an explicit `baseUrl` argument or a `{PROVIDER}_BASE_PATH` /
+/// `{PROVIDER}_BASE_URL` value — may be a bare origin
+/// (`http://127.0.0.1:8931`) or a versioned base
+/// (`http://127.0.0.1:8931/v1`); it is normalized to the full
+/// chat-completions endpoint the providers POST to
+/// (`…/v1/chat/completions`), so a local proxy can be pointed at with its
+/// origin alone — a superset of the `OPENAI_BASE_URL` versioned-base
+/// convention in the OpenAI SDKs. Anything else passes through verbatim: a
+/// full endpoint, a custom gateway path, a URL carrying a query string. An
+/// empty value is left empty (the provider factory then applies its
+/// per-provider default endpoint), and the `copilot` provider speaks its own
+/// dialect — its base URL is an API origin and is never rewritten.
 class LlmConfig {
   final String providerName;
   final String apiKey;
@@ -68,9 +73,11 @@ class LlmConfig {
     int? maxTokens,
     double? temperature,
     String? maxTokensParamName,
+    Map<String, String>? environmentOverride,
+    Map<String, String>? dotEnvOverride,
   }) {
-    final env = systemEnvironment;
-    final dotEnv = loadDotEnvValues();
+    final env = environmentOverride ?? systemEnvironment;
+    final dotEnv = dotEnvOverride ?? loadDotEnvValues();
     final resolvedProvider = provider.toLowerCase();
 
     String providerPrefix(String key) {
@@ -110,14 +117,21 @@ class LlmConfig {
       }
     }
 
-    // Any base URL — explicit argument, env, or .env — may be an origin, a
-    // versioned base, or the full endpoint; providers POST to the full
-    // chat-completions endpoint, so normalize every provider the same way.
+    // For the OpenAI-compatible dialects a bare origin or versioned base is
+    // an alias for the full endpoint; anything else — a full endpoint, a
+    // custom gateway path, a URL with a query string — passes through
+    // verbatim. copilot's base is an API origin in its own dialect and is
+    // never rewritten.
     String fullEndpoint(String url) {
+      final uri = Uri.tryParse(url);
+      if (uri == null || uri.hasQuery || uri.hasFragment) return url;
       final base = url.replaceAll(RegExp(r'/+$'), '');
       if (base.endsWith('/chat/completions')) return base;
       if (base.endsWith('/v1')) return '$base/chat/completions';
-      return '$base/v1/chat/completions';
+      if (uri.path.isEmpty || uri.path == '/') {
+        return '$base/v1/chat/completions';
+      }
+      return url;
     }
 
     var resolvedBaseUrl =
@@ -127,7 +141,7 @@ class LlmConfig {
         defaultBaseUrl();
     // Empty is left empty: the provider factory maps it to the provider's
     // default endpoint.
-    if (resolvedBaseUrl.isNotEmpty) {
+    if (resolvedProvider != 'copilot' && resolvedBaseUrl.isNotEmpty) {
       resolvedBaseUrl = fullEndpoint(resolvedBaseUrl);
     }
 

@@ -32,12 +32,18 @@ a project-root `.env` file, then the built-in default. `PROVIDER` is `OPENAI`
 | `{PROVIDER}_MODEL` | Model id |
 | `{PROVIDER}_BASE_PATH` | Base URL — wins over `{PROVIDER}_BASE_URL` when both are set |
 | `{PROVIDER}_BASE_URL` | Base URL (see below) |
+| `{PROVIDER}_MAX_TOKENS` | Max output tokens (`int`, optional) |
+| `{PROVIDER}_CONTEXT_WINDOW` | Context window (`int`, optional) |
+| `{PROVIDER}_TEMPERATURE` | Sampling temperature (`double`, optional) |
+| `{PROVIDER}_MAX_TOKENS_PARAM_NAME` | `max_tokens` payload key (default `max_completion_tokens`) |
 
-A base URL may be an origin (`http://127.0.0.1:8931`), a versioned base
-(`http://127.0.0.1:8931/v1`), or the full endpoint
-(`https://api.openai.com/v1/chat/completions`); it is normalized to the full
-chat-completions endpoint the providers POST to, so a local proxy (recorder,
-gateway, cost tracker) can be pointed at with its origin alone.
+An origin (`http://127.0.0.1:8931`) or a versioned base
+(`http://127.0.0.1:8931/v1`) is normalized to the full chat-completions
+endpoint the providers POST to, so a local proxy (recorder, gateway, cost
+tracker) can be pointed at with its origin alone. Anything else — a full
+endpoint, a custom gateway path, a URL with a query string — passes through
+verbatim. The `copilot` provider's base URL is its API origin and is never
+rewritten.
 
 ## Features
 
