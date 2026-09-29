@@ -173,6 +173,12 @@ class AgentService extends ChangeNotifier
     /// The owner context-window cap (`agent.contextWindowCap`, gh-1077):
     /// drives the compaction wiring and the loop's over-window guard.
     @visibleForTesting int? contextWindowCap,
+
+    /// Test seam for the roles resolver's stream factory (gh-1077 IT-1):
+    /// lets the IT suite fake the smol summarizer's provider adapter
+    /// instead of building a real HTTP one. Null = the default.
+    @visibleForTesting
+    StreamFunction Function(String kind, String apiKey)? rolesStreamFactory,
   }) : _resolveSecretName = null,
        _providerRegistry = null,
        // ignore: prefer_initializing_formals
@@ -226,6 +232,7 @@ class AgentService extends ChangeNotifier
       _taskRolesResolver = ModelRolesResolver(
         config: ModelRolesConfig(roles: StoreBackedRolesMap(taskModelsStore)),
         secrets: bootSecrets,
+        streamFactory: rolesStreamFactory,
       );
     }
     // gh-1077 AC4: the loop's over-window guard relief — one synchronous

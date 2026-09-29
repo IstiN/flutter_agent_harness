@@ -117,7 +117,8 @@ void main() {
         contextWindowCap: 64000,
       );
       expect(clamped.window, 64000);
-      expect(clamped.settings.reserveTokens, 16384);
+      // The reserve scales with the (capped) window: a quarter of 64k.
+      expect(clamped.settings.reserveTokens, 16000);
     });
 
     test(
