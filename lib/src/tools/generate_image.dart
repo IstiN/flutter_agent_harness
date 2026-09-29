@@ -465,9 +465,11 @@ Future<String> _save(
   }
   // Milliseconds alone collide when two calls land in the same batch (or
   // two fa processes generate at once) — one would overwrite the other.
+  // dart2js: shifts are 32-bit — `1 << 32` == 0, so nextInt(0) would throw
+  // on web (issue #1074). Spell the bound literally.
   final unique =
       DateTime.now().microsecondsSinceEpoch.toRadixString(36) +
-      _mediaNameRandom.nextInt(1 << 32).toRadixString(36);
+      _mediaNameRandom.nextInt(0xFFFFFFFF).toRadixString(36);
   final name =
       '${prefix}_${DateTime.now().millisecondsSinceEpoch}_$unique.$ext';
   final rel = '$dir/$name';
