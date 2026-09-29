@@ -1,0 +1,322 @@
+/// Session-ledger repair (gh-1073): rewrites a bloated session JSONL,
+/// dropping or superseding the append-only `custom` ledger records that
+/// grew a month-long session to 12.4 GiB — without touching the
+/// conversation itself (messages, custom_message records, the tree
+/// structure) — so the session resumes.
+///
+/// TheLedger records are safe to drop BY CONSTRUCTION:
+/// - `model_request_summary` / `trajectory_prompt_blob` /
+///   `trajectory_manifest_blob` / `trajectory_wire_dump` — Request-tab
+///   replay detail; the transcript renders without them.
+/// - `shell_job_registry` / `subagent_registry` — latest-snapshot-wins
+///   registries; only the newest snapshot needs to survive for resume-time
+///   rehydration.
+///
+/// Unknown custom types and unparseable lines are KEPT (repair is
+/// conservative — it deletes only what it provably understands). Pure
+/// Dart over the [FileSystem] abstraction; range reads make the rewrite
+/// linear-time and bounded-memory even on a multi-GiB file.
+library;
+
+import 'dart:convert';
+
+import 'env/execution_env.dart';
+import 'session_line_scanner.dart';
+import 'session/session_storage.dart' show shallowCustomHeader;
+
+/// `custom` ledger types dropped entirely: replay-only detail (the
+/// Request tab), never projected into context, never read on resume.
+const Set<String> repairDropCustomTypes = {
+  'model_request_summary',
+  'trajectory_prompt_blob',
+  'trajectory_manifest_blob',
+  'trajectory_wire_dump',
+};
+
+/// `custom` ledger types where the LATEST record supersedes all earlier
+/// ones: registry snapshots read only through their last occurrence.
+const Set<String> repairKeepLatestCustomTypes = {
+  'shell_job_registry',
+  'subagent_registry',
+};
+
+/// Severity of a [SessionRepairException].
+enum SessionRepairErrorCode {
+  /// The session file does not exist.
+  notFound,
+
+  /// The filesystem cannot stream or rename (repair needs both).
+  unsupported,
+
+  /// Any other failure.
+  unknown,
+}
+
+/// Repair failure with a stable code for host surfaces.
+final class SessionRepairException implements Exception {
+  const SessionRepairException(this.message, {required this.code});
+
+  final String message;
+  final SessionRepairErrorCode code;
+
+  @override
+  String toString() => 'SessionRepairException(${code.name}): $message';
+}
+
+/// What one repair pass saw and changed.
+final class SessionRepairReport {
+  const SessionRepairReport({
+    required this.path,
+    required this.recordsRead,
+    required this.recordsKept,
+    required this.droppedByType,
+    required this.keptLatestByType,
+    required this.bytesBefore,
+    required this.bytesAfter,
+    required this.backupPath,
+    required this.dryRun,
+  });
+
+  /// The session file this pass targeted.
+  final String path;
+
+  /// Total non-blank lines below the header.
+  final int recordsRead;
+
+  /// Lines kept in the rewritten file (header excluded).
+  final int recordsKept;
+
+  /// Dropped records per custom type — full ledger drops AND superseded
+  /// registry snapshots.
+  final Map<String, int> droppedByType;
+
+  /// Latest snapshots KEPT per superseding registry type.
+  final Map<String, int> keptLatestByType;
+
+  /// Session file size before (the backup's size after).
+  final int bytesBefore;
+
+  /// Session file size after (`bytesBefore` when [dryRun]).
+  final int bytesAfter;
+
+  /// Where the original was preserved (`.bak` suffix).
+  final String backupPath;
+
+  /// Whether this pass only counted.
+  final bool dryRun;
+
+  /// Human-readable summary lines for a CLI report.
+  List<String> summaryLines() {
+    final droppedTotal = droppedByType.values.fold<int>(0, (a, b) => a + b);
+    final keptLatestTotal = keptLatestByType.values.fold<int>(
+      0,
+      (a, b) => a + b,
+    );
+    return [
+      '${dryRun ? 'would repair' : 'repaired'} $path: '
+          '$recordsRead records read, $recordsKept kept',
+      if (droppedTotal > 0)
+        'dropped $droppedTotal ledger records: ${_counts(droppedByType)}',
+      if (keptLatestTotal > 0)
+        'kept the latest snapshot of: ${_counts(keptLatestByType)}',
+      '${_bytes(bytesBefore)} → ${_bytes(bytesAfter)}'
+          '${dryRun ? '' : ' · original kept at $backupPath'}',
+    ];
+  }
+
+  static String _counts(Map<String, int> counts) => [
+    for (final entry in counts.entries) '${entry.key}×${entry.value}',
+  ].join(', ');
+
+  static String _bytes(int bytes) {
+    if (bytes >= (1 << 30)) {
+      return '${(bytes / (1 << 30)).toStringAsFixed(2)} GiB';
+    }
+    if (bytes >= (1 << 20)) {
+      return '${(bytes / (1 << 20)).toStringAsFixed(1)} MB';
+    }
+    if (bytes >= (1 << 10)) return '${(bytes / (1 << 10)).toStringAsFixed(1)} KB';
+    return '$bytes B';
+  }
+}
+
+/// The `customType` of a `custom` record line, decoded from its bounded
+/// header (`shallowCustomHeader` — canonical writer order, payload
+/// excluded). Null when the line is not a sniffable custom record — the
+/// caller keeps those verbatim.
+String? _sniffCustomType(String line) {
+  if (!line.startsWith('{"type":"custom"')) return null;
+  final header = shallowCustomHeader(line);
+  if (header == null) return null;
+  try {
+    final decoded = jsonDecode(header);
+    if (decoded is! Map<String, dynamic>) return null;
+    final type = decoded['customType'];
+    return type is String ? type : null;
+  } on Object {
+    return null;
+  }
+}
+
+/// Rewrites the session file at [path] with the ledger `custom` records
+/// dropped ([repairDropCustomTypes]) or superseded by their latest
+/// snapshot ([repairKeepLatestCustomTypes]). Everything else — messages,
+/// unknown customs, unparseable lines — is copied verbatim. The original
+/// is preserved at `<path>.bak` (renamed, not copied) and the repaired
+/// content takes the original's place atomically.
+///
+/// [dryRun] counts without touching anything. Requires a
+/// [RangedReadFileSystem] (bounded streaming) and a
+/// [RenamableFileSystem] (atomic swap) — anything else fails with
+/// [SessionRepairErrorCode.unsupported] rather than half-applying.
+Future<SessionRepairReport> repairSessionLedgers(
+  FileSystem fs,
+  String path, {
+  bool dryRun = false,
+  Set<String>? dropTypes,
+  Set<String>? keepLatestTypes,
+}) async {
+  final drops = dropTypes ?? repairDropCustomTypes;
+  final keepLatest = keepLatestTypes ?? repairKeepLatestCustomTypes;
+  final Object maybeRanged = fs;
+  final ranged = maybeRanged is RangedReadFileSystem ? maybeRanged : null;
+  final Object maybeRenamable = fs;
+  final renamable =
+      maybeRenamable is RenamableFileSystem ? maybeRenamable : null;
+  if (ranged == null || renamable == null) {
+    throw SessionRepairException(
+      'session repair needs byte-range reads and an atomic rename; this '
+      'filesystem supports neither — copy the file to a local filesystem '
+      'and repair it there',
+      code: SessionRepairErrorCode.unsupported,
+    );
+  }
+  final stat = await fs.fileInfo(path);
+  if (stat.isErr) {
+    final code = stat.errorOrNull!.code == FileErrorCode.notFound
+        ? SessionRepairErrorCode.notFound
+        : SessionRepairErrorCode.unknown;
+    throw SessionRepairException(
+      'cannot stat session file $path: ${stat.errorOrNull!.message}',
+      code: code,
+    );
+  }
+  final bytesBefore = stat.valueOrNull!.size;
+
+  // Pass 1: classify every line by byte span. Nothing is decoded whole —
+  // a 12 GiB file scans in bounded chunks.
+  final headerSpan = <(int, int)>[];
+  final keptSpans = <(int, int)>[];
+  final latestByType = <String, (int, int)>{};
+  final droppedByType = <String, int>{};
+  final keptLatestCounts = <String, int>{};
+  var recordsRead = 0;
+  var first = true;
+  await SessionLineScanner(fs: fs, path: path).scan((line) async {
+    if (first) {
+      first = false;
+      headerSpan.add((line.start, line.end));
+      return;
+    }
+    if (line.text.trim().isEmpty) return;
+    recordsRead++;
+    final customType = _sniffCustomType(line.text);
+    final span = (line.start, line.end);
+    if (customType != null && drops.contains(customType)) {
+      droppedByType[customType] = (droppedByType[customType] ?? 0) + 1;
+      return;
+    }
+    if (customType != null && keepLatest.contains(customType)) {
+      if (latestByType.containsKey(customType)) {
+        droppedByType[customType] = (droppedByType[customType] ?? 0) + 1;
+      } else {
+        keptLatestCounts[customType] = 1;
+      }
+      latestByType[customType] = span;
+      return;
+    }
+    _appendSpan(keptSpans, span);
+  }, fileSize: bytesBefore);
+
+  // The LATEST snapshot of each keep-latest type joins the kept spans, in
+  // file position order.
+  keptSpans.addAll(latestByType.values);
+  keptSpans.sort((a, b) => a.$1.compareTo(b.$1));
+  final recordsKept = keptSpans.length;
+
+  if (dryRun) {
+    return SessionRepairReport(
+      path: path,
+      recordsRead: recordsRead,
+      recordsKept: recordsKept,
+      droppedByType: droppedByType,
+      keptLatestByType: keptLatestCounts,
+      bytesBefore: bytesBefore,
+      bytesAfter: bytesBefore,
+      backupPath: '$path.bak',
+      dryRun: true,
+    );
+  }
+
+  // Pass 2: stream the kept spans into a temp file, then swap atomically.
+  final tempPath = '$path.repairing';
+  var write = await fs.writeFile(tempPath, '');
+  for (final span in headerSpan.followedBy(keptSpans)) {
+    final raw = await ranged.readRange(path, span.$1, span.$2);
+    if (raw.isErr) {
+      throw SessionRepairException(
+        'read failed during repair of $path: ${raw.errorOrNull!.message}',
+        code: SessionRepairErrorCode.unknown,
+      );
+    }
+    write = await fs.appendFile(
+      tempPath,
+      utf8.decode(raw.valueOrNull!, allowMalformed: true),
+    );
+    if (write.isErr) {
+      throw SessionRepairException(
+        'write failed during repair of $path: ${write.errorOrNull!.message}',
+        code: SessionRepairErrorCode.unknown,
+      );
+    }
+  }
+  final backupPath = '$path.bak';
+  final backup = await renamable.renamePath(path, backupPath);
+  if (backup.isErr) {
+    throw SessionRepairException(
+      'cannot back up $path to $backupPath: ${backup.errorOrNull!.message}',
+      code: SessionRepairErrorCode.unknown,
+    );
+  }
+  final swap = await renamable.renamePath(tempPath, path);
+  if (swap.isErr) {
+    // Roll the original back — never leave the session missing.
+    await renamable.renamePath(backupPath, path);
+    throw SessionRepairException(
+      'cannot move the repaired file into place at $path: '
+      '${swap.errorOrNull!.message}',
+      code: SessionRepairErrorCode.unknown,
+    );
+  }
+  final afterStat = await fs.fileInfo(path);
+  return SessionRepairReport(
+    path: path,
+    recordsRead: recordsRead,
+    recordsKept: recordsKept,
+    droppedByType: droppedByType,
+    keptLatestByType: keptLatestCounts,
+    bytesBefore: bytesBefore,
+    bytesAfter: afterStat.valueOrNull?.size ?? 0,
+    backupPath: backupPath,
+    dryRun: false,
+  );
+}
+
+void _appendSpan(List<(int, int)> spans, (int, int) span) {
+  if (spans.isNotEmpty && spans.last.$2 == span.$1) {
+    final (start, _) = spans.removeLast();
+    spans.add((start, span.$2));
+  } else {
+    spans.add(span);
+  }
+}
