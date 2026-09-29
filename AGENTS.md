@@ -1553,8 +1553,10 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
   `ci_fast_gate.sh` (ratchet — only tighten; the per-package gates above
   cannot see across module boundaries).
 - CRAP ratchet (`crap4dart analyze`, tool pinned as
-  `dart pub global activate crap4dart 0.2.1`), one config per package,
-  thresholds are the current per-package max — only down from here:
+  `dart pub global activate crap4dart ">=0.10.0 <0.11.0"` — gh-1061;
+  bounded so a future 0.11.0+ is adopted deliberately, never
+  auto-floating), one config per package, thresholds are the current
+  per-package max — only down from here:
   - core (`crap4dart.yaml`, sources `[lib, bin]`): **12.0** — three
     TUI-only dispatchers at CC 3 / 0% cov pending PTY tests (documented
     exception).
