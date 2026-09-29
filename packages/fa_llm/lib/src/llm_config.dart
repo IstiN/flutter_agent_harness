@@ -2,9 +2,24 @@ import 'llm_config_env.dart' if (dart.library.html) 'llm_config_env_stub.dart';
 
 /// Configuration values for LLM providers.
 ///
-/// Reads from environment variables, a project-root `.env` file, and optional
-/// explicit overrides. Override values take precedence, then environment
-/// variables, then `.env`, then defaults.
+/// Each value resolves in order: the matching explicit argument of
+/// [LlmConfig.fromEnvironment], then the `{PROVIDER}_…` environment variable,
+/// then the same name in a project-root `.env` file, then the built-in
+/// default. `PROVIDER` is `OPENAI` (the default provider), `OPENROUTER`, or
+/// `OLLAMA`; the variables are `{PROVIDER}_API_KEY`, `{PROVIDER}_MODEL`,
+/// `{PROVIDER}_BASE_PATH`, `{PROVIDER}_BASE_URL`, `{PROVIDER}_MAX_TOKENS`,
+/// `{PROVIDER}_CONTEXT_WINDOW`, `{PROVIDER}_TEMPERATURE`, and
+/// `{PROVIDER}_MAX_TOKENS_PARAM_NAME`. `{PROVIDER}_BASE_PATH` wins over
+/// `{PROVIDER}_BASE_URL` when both are set.
+///
+/// A base URL — an explicit `baseUrl` argument or a `{PROVIDER}_BASE_PATH` /
+/// `{PROVIDER}_BASE_URL` value — may be an origin (`http://127.0.0.1:8931`),
+/// a versioned base (`http://127.0.0.1:8931/v1`), or the full endpoint
+/// (`http://127.0.0.1:8931/v1/chat/completions`). It is normalized to the
+/// full chat-completions endpoint the providers POST to, so a local proxy can
+/// be pointed at with its origin alone, as `OPENAI_BASE_URL` means in the
+/// OpenAI SDKs. An empty value is left empty (the provider factory then
+/// applies its per-provider default endpoint).
 class LlmConfig {
   final String providerName;
   final String apiKey;
@@ -95,15 +110,25 @@ class LlmConfig {
       }
     }
 
+    // Any base URL — explicit argument, env, or .env — may be an origin, a
+    // versioned base, or the full endpoint; providers POST to the full
+    // chat-completions endpoint, so normalize every provider the same way.
+    String fullEndpoint(String url) {
+      final base = url.replaceAll(RegExp(r'/+$'), '');
+      if (base.endsWith('/chat/completions')) return base;
+      if (base.endsWith('/v1')) return '$base/chat/completions';
+      return '$base/v1/chat/completions';
+    }
+
     var resolvedBaseUrl =
         baseUrl ??
         envKey('BASE_PATH') ??
         envKey('BASE_URL') ??
         defaultBaseUrl();
-    if (resolvedProvider == 'ollama' &&
-        !resolvedBaseUrl.endsWith('/v1/chat/completions')) {
-      resolvedBaseUrl =
-          '${resolvedBaseUrl.replaceAll(RegExp(r'/+$'), '')}/v1/chat/completions';
+    // Empty is left empty: the provider factory maps it to the provider's
+    // default endpoint.
+    if (resolvedBaseUrl.isNotEmpty) {
+      resolvedBaseUrl = fullEndpoint(resolvedBaseUrl);
     }
 
     return LlmConfig(
