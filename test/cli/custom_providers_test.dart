@@ -45,6 +45,58 @@ void main() {
         throwsConfigException,
       );
     });
+
+    test('round-trips authHeader (issue #964)', () {
+      final gateway = CustomProviderEntry(
+        name: 'acme-gw',
+        apiType: 'openai',
+        baseUrl: 'https://gateway.acme.com/v1',
+        modelId: 'bedrock-model',
+        authHeader: 'x-api-key',
+      );
+      final parsed = CustomProviderEntry.fromYaml(gateway.toYaml());
+      expect(parsed.authHeader, 'x-api-key');
+      // Unset keeps the Bearer default and stays out of the yaml.
+      final plain = CustomProviderEntry(
+        name: 'a',
+        apiType: 'openai',
+        baseUrl: 'https://a.example.com',
+        modelId: 'm',
+      );
+      expect(plain.authHeader, isNull);
+      expect(plain.toYaml().containsKey('authHeader'), isFalse);
+    });
+
+    test('rejects invalid authHeader values naming the entry '
+        '(issue #964 AC5)', () {
+      void expectBadAuth(Object? authHeader) {
+        expect(
+          () => CustomProviderEntry.fromYaml({
+            'name': 'acme-gw',
+            'apiType': 'openai',
+            'baseUrl': 'https://gateway.acme.com/v1',
+            'modelId': 'bedrock-model',
+            'authHeader': authHeader,
+          }),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              allOf(
+                contains('acme-gw'),
+                contains('invalid authHeader'),
+              ),
+            ),
+          ),
+        );
+      }
+
+      expectBadAuth('');
+      expectBadAuth('  ');
+      expectBadAuth('x-api-key\r\nX-Evil: 1');
+      expectBadAuth('x api key');
+      expectBadAuth(7);
+    });
   });
 
   group('CustomProviderRegistry', () {

@@ -11,9 +11,13 @@
 ///   overflow belongs to compaction, and the idle watchdog's own
 ///   `TimeoutException` wording deliberately does NOT match (that error
 ///   means "the endpoint went silent", which a retry re-arms anyway).
-/// - omp's observable-output guard is kept: a stream that already emitted
-///   content is never replayed — its failure stands (a retried generation
-///   would duplicate text in the transcript).
+/// - omp's observable-output guard is kept, keyed on USER-VISIBLE content
+///   (issue #964): a stream that already emitted text/tool-call content is
+///   never replayed — its failure stands (a retried generation would
+///   duplicate it). Thinking-only streams still replay: thinking deltas
+///   buffer until the first visible event commits the attempt, so a drop
+///   mid-reasoning leaves no trace and the retry regenerates the reasoning
+///   (re-billed reasoning accepted, same as any retry).
 /// - Providers-never-throw is preserved: a defensive catch converts a
 ///   throwing inner stream into an error event.
 library;
@@ -338,10 +342,22 @@ Future<_AttemptOutcome> _runAttempt(
         buffer.forEach(out.push);
         out.push(event);
         return const _Forwarded();
+      case ThinkingStartEvent() ||
+          ThinkingDeltaEvent() ||
+          ThinkingEndEvent():
+        // Issue #964: thinking deltas are not user-visible content — they
+        // buffer like the start event, so a stream that dies mid-reasoning
+        // (minutes of thinking, zero visible deltas) is retried under the
+        // existing policy with no trace of the dead attempt. The buffered
+        // reasoning flushes in order when the attempt commits or ends.
+        buffer.add(event);
       case StartEvent():
         buffer.add(event);
       default:
-        // Any content event commits the attempt.
+        // The first user-visible content event (text/tool-call family)
+        // commits the attempt (issue #964). From there the post-content
+        // semantics are unchanged: the transcript already holds visible
+        // deltas, so a replay would duplicate them — the failure stands.
         committed = true;
         buffer.forEach(out.push);
         out.push(event);

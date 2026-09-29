@@ -26,6 +26,7 @@ import 'package:yaml/yaml.dart';
 
 import '../exceptions.dart';
 import '../providers/thinking.dart';
+import 'provider_catalog.dart' show parseAuthHeaderName;
 
 /// The model roles supported by [ModelRolesConfig], in declaration order.
 ///
@@ -62,6 +63,7 @@ final class ModelRef {
     this.maxTokens,
     this.input,
     this.thinkingLevel,
+    this.authHeader,
   });
 
   /// Parses the string shorthand `provider/modelId`.
@@ -112,6 +114,10 @@ final class ModelRef {
           maxTokens: _optionalInt(map, 'maxTokens', role),
           input: _optionalInput(map, role),
           thinkingLevel: _optionalThinkingLevel(map, role),
+          authHeader: parseAuthHeaderName(
+            map['authHeader'],
+            'model chain entry${role == null ? '' : ' in role "$role"'}',
+          ),
         );
       default:
         throw ConfigException(
@@ -223,6 +229,11 @@ final class ModelRef {
   /// (issue #734).
   final String? thinkingLevel;
 
+  /// Auth header name override (`authHeader:`, issue #964): the built model
+  /// sends `<authHeader>: <key>` instead of `Authorization: Bearer <key>`.
+  /// Null keeps the Bearer default.
+  final String? authHeader;
+
   /// The `provider/modelId` display form.
   String get label => '$provider/$modelId';
 
@@ -241,6 +252,7 @@ final class ModelRef {
     if (input != null) {
       buffer.write('input: [${input!.join(', ')}]\n');
     }
+    if (authHeader != null) buffer.write('authHeader: $authHeader\n');
     return buffer.toString();
   }
 }

@@ -48,7 +48,9 @@ enum CustomProviderAuthMethod {
 final class CustomProviderEntry {
   /// Creates an entry. [keyName] is the secure-store/env name holding the
   /// API key (null = keyless); [modelId] is the last-used model.
-  /// [authMethod] selects the auth path for SSO/JWT providers.
+  /// [authMethod] selects the auth path for SSO/JWT providers. [authHeader]
+  /// names the auth header (issue #964): `x-api-key` sends
+  /// `x-api-key: <key>` instead of `Authorization: Bearer <key>`.
   CustomProviderEntry({
     required this.name,
     required this.apiType,
@@ -56,6 +58,7 @@ final class CustomProviderEntry {
     required this.modelId,
     this.keyName,
     this.authMethod = CustomProviderAuthMethod.apiKey,
+    this.authHeader,
   });
 
   /// Parses one yaml map from the `customProviders:` list. Throws
@@ -84,13 +87,20 @@ final class CustomProviderEntry {
     }
     final keyName = node['keyName'];
     final authMethod = _parseAuthMethod(node['authMethod']);
+    final name = requireString('name');
     return CustomProviderEntry(
-      name: requireString('name'),
+      name: name,
       apiType: apiType,
       baseUrl: requireString('baseUrl'),
       modelId: requireString('modelId'),
       keyName: keyName is String && keyName.isNotEmpty ? keyName : null,
       authMethod: authMethod,
+      // Named error (issue #964 AC5): the entry owns the bad value, so the
+      // message names the entry.
+      authHeader: parseAuthHeaderName(
+        node['authHeader'],
+        'customProviders entry "$name"',
+      ),
     );
   }
 
@@ -123,6 +133,11 @@ final class CustomProviderEntry {
   /// to saved SSO/JWT providers.
   CustomProviderAuthMethod authMethod;
 
+  /// Auth header name (issue #964): `x-api-key` sends `x-api-key: <key>`
+  /// instead of `Authorization: Bearer <key>` when this entry is active.
+  /// Null keeps the Bearer default.
+  String? authHeader;
+
   /// The last-used model id (rewritten on `/model` switches while active).
   String modelId;
 
@@ -134,6 +149,7 @@ final class CustomProviderEntry {
       'baseUrl': baseUrl,
       'keyName': ?keyName,
       'authMethod': authMethod.name,
+      'authHeader': ?authHeader,
       'modelId': modelId,
     };
   }
@@ -281,6 +297,9 @@ final class CustomProviderRegistry {
   ) {
     if (survivor.keyName == null && twin.keyName != null) {
       survivor.keyName = twin.keyName;
+    }
+    if (survivor.authHeader == null && twin.authHeader != null) {
+      survivor.authHeader = twin.authHeader;
     }
     return survivor;
   }

@@ -449,6 +449,7 @@ extension on AgentCli {
       entry.modelId,
       token: token,
       tokenKeyName: keyName,
+      authHeader: entry.authHeader,
     );
   }
 
@@ -2033,6 +2034,7 @@ String _unknownProviderMessage(String id) {
     String modelId, {
     String? token,
     String? tokenKeyName,
+    String? authHeader,
   }) async {
     try {
       final modelLine = modelId == _agent.state.model.id
@@ -2080,6 +2082,7 @@ String _unknownProviderMessage(String id) {
               modelId: modelId,
               baseUrl: baseUrl,
               apiKeyName: pinnedKeyName,
+              authHeader: authHeader,
             ),
           ]);
           rolesResolver.applyToAgent(_agent);
@@ -2128,6 +2131,7 @@ String _unknownProviderMessage(String id) {
         maxTokens: builtModel.maxTokens,
         headers: builtModel.headers,
         compat: builtModel.compat,
+        authHeader: authHeader,
       );
       // The cached model list belongs to the previous provider/endpoint.
       _modelCache = const [];

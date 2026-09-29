@@ -72,6 +72,44 @@ maxTokens: 4096
         throwsA(isA<ConfigException>()),
       );
     });
+
+    test('parses and round-trips authHeader (issue #964)', () {
+      final ref = ModelRef.fromYaml(
+        _yaml(
+          'provider: openai\nmodel: gpt-4o\n'
+          'baseUrl: https://gateway.example.com/v1\n'
+          'authHeader: x-api-key\n',
+        ),
+      );
+      expect(ref.authHeader, 'x-api-key');
+      expect(ref.toYaml(), contains('authHeader: x-api-key'));
+      expect(ModelRef.fromYaml(_yaml(ref.toYaml())).authHeader, 'x-api-key');
+      // Unset stays unset.
+      expect(
+        ModelRef.fromYaml(_yaml('provider: openai\nmodel: gpt-4o\n')).authHeader,
+        isNull,
+      );
+    });
+
+    test('rejects invalid authHeader values naming the role '
+        '(issue #964 AC5)', () {
+      expect(
+        () => ModelRef.fromYaml(
+          _yaml(
+            'provider: openai\nmodel: gpt-4o\n'
+            'authHeader: "x-api-key\\r\\nX-Evil: 1"\n',
+          ),
+          role: 'default',
+        ),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('invalid authHeader'), contains('role "default"')),
+          ),
+        ),
+      );
+    });
   });
 
   group('ModelRolesConfig.fromYaml', () {

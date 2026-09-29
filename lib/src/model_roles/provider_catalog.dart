@@ -417,6 +417,28 @@ int? resolveModelMaxOutputTokens(String modelId, {required String api}) {
   return bestCeiling ?? _unknownClaudeOutputCeiling;
 }
 
+/// RFC 7230 token bytes — everything an HTTP header NAME may carry. A name
+/// outside this set either carries whitespace (`x api key`) or injects a
+/// CRLF into the request head (`x-api-key\r\nX-Evil: 1`), so both are
+/// rejected at config parse, not on the wire (issue #964 AC5).
+final _authHeaderNamePattern = RegExp(r"^[A-Za-z0-9!#$%&'*+\-.^_`|~]+$");
+
+/// Parses the optional `authHeader:` yaml value into a header name. Null
+/// stays null (the `Authorization: Bearer` default); anything that is not a
+/// non-empty RFC 7230 token throws [ConfigException] naming [where] — the
+/// config entry that owns the value.
+String? parseAuthHeaderName(Object? value, String where) {
+  if (value == null) return null;
+  final name = value is String ? value.trim() : '';
+  if (!_authHeaderNamePattern.hasMatch(name)) {
+    throw ConfigException(
+      '$where: invalid authHeader "$value" — expected an HTTP header name '
+      "(letters, digits, !#\$%&*+-.^_`|~), e.g. x-api-key",
+    );
+  }
+  return name;
+}
+
 /// Builds a [Model] for [provider]/[modelId] with catalog defaults, overrid-
 /// able per reference (see `ModelRef`).
 ///
@@ -433,6 +455,7 @@ Model buildCatalogModel(
   int? maxTokens,
   List<String>? input,
   String? thinkingLevel,
+  String? authHeader,
 }) {
   final spec = catalogProvider(provider);
   if (spec == null) {
@@ -455,6 +478,7 @@ Model buildCatalogModel(
         maxTokens ??
         resolveModelMaxOutputTokens(modelId, api: spec.api) ??
         spec.maxTokens,
+    authHeader: authHeader,
   );
 }
 
@@ -565,6 +589,7 @@ Model buildCliDefaultModel(
   String? baseUrl,
   List<String>? input,
   String? thinkingLevel,
+  String? authHeader,
 }) {
   final spec = resolveCliProviderSpec(providerKind, baseUrl: baseUrl);
   if (spec == null) {
@@ -592,6 +617,9 @@ Model buildCliDefaultModel(
     thinkingLevel: thinkingLevel,
     contextWindow: spec.contextWindow,
     maxTokens: maxTokens,
+    // Folder-state restores adopt the matching saved entry's authHeader
+    // (issue #964) — a restored gateway endpoint without its header 401s.
+    authHeader: authHeader,
   );
 }
 
