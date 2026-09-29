@@ -4400,6 +4400,10 @@
 - gh-1041 [GOAL] Submission ≠ appearance — never fail a green store submit deferred 1–2h store-appearance re-check job (TestFlight / Play / pub.dev) (#1046)
 - gh-1032 Migrate to flutter_agent_memory 0.2.3: conflict-free deletions (tombstones + deleted/ dir) (#1050)
 
+## 1.0.492
+
+- chore(deps): bump ruby/setup-ruby in the github-actions group (#1056)
+
 ## Unreleased
 
 ## Unreleased
