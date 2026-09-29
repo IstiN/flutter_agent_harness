@@ -191,8 +191,12 @@ void main() {
     m =
         m
                 .update(
-                  OpenPickerMsg('theme', 'Select theme', items,
-                      initialIndex: 0),
+                  OpenPickerMsg(
+                    'theme',
+                    'Select theme',
+                    items,
+                    initialIndex: 0,
+                  ),
                 )
                 .$1
             as FaTuiModel;
@@ -220,7 +224,7 @@ void main() {
   });
 
   test('gh-1049 review: Enter during the reveal window accepts the last '
-      'REVEALED row — no RangeError', () {
+      'REVEALED row — no RangeError', () async {
     // _pickerRevealOpen clamps menuSelected to the FULL item list while
     // menuItems holds only the revealed prefix, so Enter/Tab mid-reveal
     // indexed menuItems[menuSelected] past the prefix and threw
@@ -251,8 +255,12 @@ void main() {
     m =
         m
                 .update(
-                  OpenPickerMsg('theme', 'Select theme', items,
-                      initialIndex: 2),
+                  OpenPickerMsg(
+                    'theme',
+                    'Select theme',
+                    items,
+                    initialIndex: 2,
+                  ),
                 )
                 .$1
             as FaTuiModel;
@@ -302,12 +310,13 @@ void main() {
     m = res.$1 as FaTuiModel;
     final revealLeg = res.$2;
     expect(revealLeg, isNotNull, reason: 'the hook must be active (seam set)');
-    // Type-to-filter: 'd' narrows the row set to default + dracula.
-    m =
-        m
-                .update(KeyPressMsg(const TeaKey(code: KeyCode.rune, text: 'd')))
-                .$1
-            as FaTuiModel;
+    // Type-to-filter: 'dr' narrows the row set to dracula only ('nord'
+    // contains a bare 'd' — it must NOT stay visible).
+    for (final ch in 'dr'.split('')) {
+      m =
+          m.update(KeyPressMsg(TeaKey(code: KeyCode.rune, text: ch))).$1
+              as FaTuiModel;
+    }
     // The pending reveal leg fires into the filtered picker.
     final reveal = await revealLeg!();
     if (reveal != null) {

@@ -86,6 +86,26 @@ void main() {
       expect(violations, isEmpty, reason: violations.join('\n'));
     },
   );
+
+  test('_statementEnd ignores parens inside string literals (gh-1049 '
+      'review)', () {
+    // A marker string with an unbalanced `(` must not inflate the depth
+    // scan: the statement ends on its own line, and the danger window must
+    // not bleed into the FOLLOWING, unrelated statements.
+    const lines = [
+      "await h.waitForScreen('heading (of doom');",
+      "final screen = h.screenText;",
+      "expect(screen, contains('done'));",
+    ];
+    expect(
+      _statementEnd(lines, 0),
+      0,
+      reason:
+          "the `(` inside 'heading (of doom' is a string literal — the "
+          'call closes on its own line',
+    );
+    expect(_statementEnd(lines, 2), 2);
+  });
 }
 
 /// Strips full-line comments and trailing `//` comments (a `://` inside a
@@ -106,11 +126,34 @@ String _stripTrailingComment(String line) {
 }
 
 /// The line where the call's opening `(` closes (bail-out at file end).
+///
+/// String literals are skipped while scanning (gh-1049 review): a marker
+/// string containing an unbalanced `(` — `waitForScreen('heading (of doom')`
+/// — otherwise never lets the depth reach 0 on the call's own lines and the
+/// danger window bleeds into following, unrelated statements. The scan is
+/// a heuristic: `${…}` interpolation carrying the OPPOSITE quote char, or a
+/// raw multi-line string, can still confuse it — comment lines are stripped
+/// before the scan and the four covered accessors are matched exactly, so a
+/// diagnosable false positive beats a silent blind spot.
 int _statementEnd(List<String> lines, int start) {
   var depth = 0;
   for (var j = start; j < lines.length; j++) {
-    for (var k = 0; k < lines[j].length; k++) {
-      final c = lines[j].codeUnitAt(k);
+    final line = lines[j];
+    var quote = 0; // the open quote char (' or "), 0 = not in a literal
+    for (var k = 0; k < line.length; k++) {
+      final c = line.codeUnitAt(k);
+      if (quote != 0) {
+        if (c == 0x5c) {
+          k++; // backslash escapes the next char inside the literal
+        } else if (c == quote) {
+          quote = 0;
+        }
+        continue;
+      }
+      if (c == 0x27 || c == 0x22) {
+        quote = c; // ' or "
+        continue;
+      }
       if (c == 0x28) depth++; // (
       if (c == 0x29) depth--; // )
     }

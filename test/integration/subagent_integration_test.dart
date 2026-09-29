@@ -49,9 +49,9 @@ tui:
     final config = File('${tempHome.path}/.fah/config.yaml');
     config.writeAsStringSync(
       config.readAsStringSync().replaceFirst(
-            'baseUrl: http://localhost:9999/v1',
-            'baseUrl: ${server.baseUrl}',
-          ),
+        'baseUrl: http://localhost:9999/v1',
+        'baseUrl: ${server.baseUrl}',
+      ),
     );
   }
 
