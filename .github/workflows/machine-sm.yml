@@ -48,17 +48,17 @@ permissions:
 
 jobs:
   sm:
-    # Pinned to the immutable dmtools-agents main @171b9398 — ships #569
+    # Pinned to the immutable dmtools-agents main @08a874dd — ships #569 + cap 3
     # (rework: a fatal CLI failure is no longer announced as "Rework
     # Complete" — the #1052 loop) + #568 (mergeBot workspace/repository
     # args) + #566 (pack-registry runner overrides).
     # Flip in lockstep with ai-teammate.yml — guarded by
     # test/machine_kit/factory_stub_ref_test.dart.
-    uses: IstiN/dmtools-agents/.github/workflows/factory-sm.yml@171b9398c7df7b55cfa0c55644332da3bc6f67ff
+    uses: IstiN/dmtools-agents/.github/workflows/factory-sm.yml@08a874dd0f887de157caa2089a3c6143e4af1a84
     with:
       # The literal uses-ref: the factory requires it (it cannot derive its
       # own ref — github.workflow_ref in a called workflow is the CALLER's).
-      factory_ref: 171b9398c7df7b55cfa0c55644332da3bc6f67ff
+      factory_ref: 08a874dd0f887de157caa2089a3c6143e4af1a84
       # Manual ticks default to dry; cron ticks run live.
       dryRun: ${{ github.event.inputs.dryRun || 'false' }}
       # #687: one source of truth for the machine login (repo variable).
