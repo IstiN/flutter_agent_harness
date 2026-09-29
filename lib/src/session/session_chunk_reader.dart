@@ -294,8 +294,10 @@ final class SessionChunkReader {
         fromOffset,
         size: info.size,
         mtimeMs: info.mtimeMs,
-        maxRecords: maxRecords ?? 1 << 40,
-        maxBytes: maxBytes ?? 1 << 60,
+        // Literals, not `1 << 40`/`1 << 60`: dart2js shifts are 32-bit —
+        // 0 on web would read nothing (issue #1074).
+        maxRecords: maxRecords ?? 0x10000000000,
+        maxBytes: maxBytes ?? 0x1000000000000000,
       );
     }
     final bytes = await _readRange(fromOffset, info.size);
