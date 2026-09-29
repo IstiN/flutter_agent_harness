@@ -1026,6 +1026,10 @@ extension ApprovalCommands on AgentCli {
       home: config.homeDir,
     );
     _toolStarts[toolCallId] = (DateTime.now(), detail);
+    // Per-call liveness (gh-1055): headless/line mode watch the foreground
+    // call and speak up when it runs long. TUI mode is skipped inside —
+    // its waiting row already covers it.
+    _waiting.toolCallStarted(toolCallId, toolName, detail);
     // TUI chrome (issue #807): the phase-tinted card replaces the compact
     // row — omp's card grammar keeps fa's detail extraction. Line mode and
     // headless keep the legacy row byte-identically.
@@ -1190,6 +1194,7 @@ extension ApprovalCommands on AgentCli {
     required bool isError,
   }) {
     final (started, startDetail) = _toolStarts.remove(toolCallId) ?? (null, '');
+    _waiting.toolCallEnded(toolCallId);
     final elapsed = started == null
         ? ''
         : '${DateTime.now().difference(started).inSeconds}s';
