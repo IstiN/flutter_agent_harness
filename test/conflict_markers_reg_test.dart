@@ -22,14 +22,12 @@ import 'package:test/test.dart';
 const _roots = ['lib', 'bin', 'test', 'memory'];
 
 /// Marker shapes: git writes exactly 7 characters for the middle marker;
-/// longer `===` rules (setext underlines, HR rules) never match the exact-7
-/// anchor. The opening/closing markers carry the label (`HEAD` /
-/// `origin/main`) after a space.
-final _markerPatterns = [
-  RegExp(r'^<<<<<<<($| )'),
-  RegExp(r'^=======$'),
-  RegExp(r'^>>>>>>>($| )'),
-];
+/// the opening/closing markers carry the label (`HEAD` / `origin/main`)
+/// after a space. The bare `=======` shape doubles as a legal Markdown
+/// setext underline, so it is only a marker in NON-Markdown files; `.md`
+/// files are still checked for the unambiguous `<<<<<<<`/`>>>>>>>` shapes.
+final _markerPatterns = [RegExp(r'^<<<<<<<($| )'), RegExp(r'^>>>>>>>($| )')];
+const _mdOnlySafeMarker = r'^=======$';
 
 void main() {
   test('no committed git conflict markers in source trees (gh-1049)', () {
@@ -58,9 +56,13 @@ void main() {
         } on FileSystemException {
           continue; // binary or unreadable — not a merge-marker carrier
         }
+        final patterns = [
+          ..._markerPatterns,
+          if (!file.path.endsWith('.md')) RegExp(_mdOnlySafeMarker),
+        ];
         final lines = text.split('\n');
         for (var i = 0; i < lines.length; i++) {
-          for (final pattern in _markerPatterns) {
+          for (final pattern in patterns) {
             if (pattern.hasMatch(lines[i])) {
               violations.add(
                 '${file.path}:${i + 1}: literal git conflict marker '
