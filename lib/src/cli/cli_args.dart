@@ -107,6 +107,7 @@ final class CliArgs extends CliArgsResult {
     this.waitForJobs = false,
     this.piMode = false,
     this.ompMode = false,
+    this.debugSecrets = false,
     this.noFormat = false,
   }) : super._();
 
@@ -262,6 +263,12 @@ final class CliArgs extends CliArgsResult {
   /// (flag > env > config).
   final bool ompMode;
 
+  /// `--debug-secrets` (gh-1059): log every secure-store preload read —
+  /// `found` / `absent` / `error: <diagnostic>` — so a degraded keychain
+  /// boot is diagnosable instead of silently keyless. Same effect as the
+  /// truthy `FA_DEBUG_KEYS` env var.
+  final bool debugSecrets;
+
   /// `--no-format`: render assistant markdown raw (byte-identical
   /// passthrough) even on a color TTY (issue #774). Same effect as the
   /// `FA_NO_FORMAT` env var.
@@ -289,8 +296,9 @@ const Map<String, CliArgsResult Function(List<String>)> _cliSubcommands = {
 };
 
 /// Applies the no-value boolean flags (`--wait-for-jobs`, `--pi`,
-/// `--omp`) to [values]; returns false when [arg] is none of them (the
-/// caller falls through to the value-flag table).
+/// `--omp`, `--debug-secrets`, `--no-format`) to [values]; returns false
+/// when [arg] is none of them (the caller falls through to the value-flag
+/// table).
 bool _applyBooleanFlag(_CliArgValues values, String arg) {
   if (arg == '--wait-for-jobs') {
     values.waitForJobs = true;
@@ -302,6 +310,10 @@ bool _applyBooleanFlag(_CliArgValues values, String arg) {
   }
   if (arg == '--omp') {
     values.ompMode = true;
+    return true;
+  }
+  if (arg == '--debug-secrets') {
+    values.debugSecrets = true;
     return true;
   }
   if (arg == '--no-format') {
@@ -1046,6 +1058,7 @@ final class _CliArgValues {
   bool waitForJobs = false;
   bool piMode = false;
   bool ompMode = false;
+  bool debugSecrets = false;
   bool noFormat = false;
   final promptTemplateDirs = <String>[];
   String? mode;
@@ -1120,6 +1133,7 @@ final class _CliArgValues {
       waitForJobs: waitForJobs,
       piMode: piMode,
       ompMode: ompMode,
+      debugSecrets: debugSecrets,
       noFormat: noFormat,
       attachments: List.unmodifiable(attachments),
     );
