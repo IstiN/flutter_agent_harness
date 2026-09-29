@@ -468,7 +468,9 @@ final class ScheduledMessageQueue {
     // The scan awaited above; the host may have torn the queue down meanwhile.
     if (_disposed || nearest == null) return;
     final wait = nearest - _now().millisecondsSinceEpoch;
-    var leg = wait.clamp(0, 1 << 40);
+    // Literal, not `1 << 40`: dart2js shifts are 32-bit — 0 on web would
+    // collapse every wait to zero (issue #1074).
+    var leg = wait.clamp(0, 0x10000000000);
     if (leg > maxTimerLeg.inMilliseconds) leg = maxTimerLeg.inMilliseconds;
     final floor = _passHadFailure ? failureBackoff.inMilliseconds : 0;
     if (leg < floor) leg = floor;
