@@ -316,6 +316,10 @@ final class FaTuiModel extends Model {
   /// host's [FaTuiController.openPrompt] future can complete.
   Completer<TuiPromptAnswer?>? _promptCompleter;
 
+  /// Issue #1067: when the last pasteboard probe fired — one probe per
+  /// paste gesture (window in `_pasteboardGestureWindowMs`).
+  int _pasteboardProbeFiredAtMs = -1;
+
   final List<String> outputLines;
 
   /// The readline-grade line editor (issue #275 scope 3): single source of
@@ -808,6 +812,7 @@ final class FaTuiModel extends Model {
     copy._stickyFmtSource = _stickyFmtSource;
     copy._stickyFmtWidth = _stickyFmtWidth;
     copy._promptCompleter = _promptCompleter;
+    copy._pasteboardProbeFiredAtMs = _pasteboardProbeFiredAtMs;
     copy._hitRegions = _hitRegions;
     copy._mouseRouter = _mouseRouter;
     copy._mouseHintShown = _mouseHintShown;
@@ -1351,37 +1356,6 @@ final class FaTuiModel extends Model {
       return (_scrolledTo(scrollOffset + delta), null);
     }
     return (this, null);
-  }
-
-  /// dart_tui 2.0.0's bracketed-paste decoder maps every pasted BYTE to a
-  /// char code (Latin-1), so pasted non-ASCII text arrives as mojibake
-  /// ("ÐÑÐ¸Ð²ÐµÑ" instead of "Привет"). The mis-decode is lossless —
-  /// re-encoding as Latin-1 recovers the original bytes — so decode them as
-  /// UTF-8 here. ASCII and already-correct input pass through unchanged.
-  static String _fixPasteMojibake(String text) {
-    try {
-      return utf8.decode(latin1.encode(text));
-    } on Object {
-      return text; // never worse than the input
-    }
-  }
-
-  (Model, Cmd?) _handlePaste(PasteMsg msg) {
-    final content = _fixPasteMojibake(msg.content);
-    // Prompt mode: pastes go into the open prompt's buffer (e.g. an API key
-    // pasted into the dial/secret prompts), like typed characters do.
-    if (prompt != null) {
-      final key = PromptPaste(content);
-      final (state: next, resolved: answer) = handleTuiPromptKey(prompt!, key);
-      if (answer != null) {
-        _promptCompleter?.complete(answer);
-        _promptCompleter = null;
-        return (copyWith(clearPrompt: true), null);
-      }
-      return (copyWith(prompt: next), null);
-    }
-    // One insert call = one undo group: a paste undoes as a whole.
-    return (copyWith(editor: editor.insert(content)), null);
   }
 
   (Model, Cmd?) _handleMultiCharRunes(KeyPressMsg msg) {
