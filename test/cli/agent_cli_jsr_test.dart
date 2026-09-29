@@ -39,7 +39,7 @@ final class ScriptedShell implements Shell {
 
 void main() {
   const projectDir = '/work';
-  const jsrRoot = '/pub/js_widget_runtime-0.4.126';
+  const jsrRoot = '/pub/js_widget_runtime-0.4.128';
   const flutterBin = '/flutter/bin';
 
   test(

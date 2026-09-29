@@ -202,7 +202,7 @@ QUICK COMMANDS
                                [--theme name] [--scale S] [--freeze-clock]:
                                pass-through to the js_widget_runtime
                                package's own agent CLI (bin/jsr_widget.dart,
-                               jsr >= 0.4.126) — run real widget tests and
+                               jsr >= 0.4.128) — run real widget tests and
                                render PNG screenshots from any consumer
                                project. The package resolves from THIS
                                project's .dart_tool/package_config.json and

@@ -26,12 +26,12 @@ export 'cli_args.dart' show JsrCliCommand, jsrVerbs, jsrUsage;
 /// The pub package whose agent CLI this delegate fronts.
 const jsrPackageName = 'js_widget_runtime';
 
-/// The package-relative entrypoint of the jsr agent CLI (0.4.126+).
+/// The package-relative entrypoint of the jsr agent CLI (0.4.128+).
 const jsrCliEntrypoint = 'bin/jsr_widget.dart';
 
 /// The jsr release that shipped `bin/jsr_widget.dart` — named in the
 /// upgrade hint when the resolved package predates it.
-const jsrCliSinceVersion = '0.4.126';
+const jsrCliSinceVersion = '0.4.128';
 
 /// IO channels of the jsr delegate. The child's stdout/stderr chunks ride
 /// the write channels verbatim (no newline fixups, no re-wrapping);

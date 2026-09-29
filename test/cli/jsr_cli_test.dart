@@ -7,7 +7,6 @@ library;
 
 import 'dart:convert';
 
-import 'package:flutter_agent_harness/src/cli/cli_args.dart';
 import 'package:flutter_agent_harness/src/cli/jsr_cli.dart';
 import 'package:flutter_agent_harness/src/env/execution_env.dart';
 import 'package:flutter_agent_harness/src/env/memory_execution_env.dart';
@@ -72,7 +71,7 @@ final class RecordingJsrIo implements JsrCliIo {
 
 void main() {
   const projectDir = '/work';
-  const jsrRoot = '/pub/js_widget_runtime-0.4.126';
+  const jsrRoot = '/pub/js_widget_runtime-0.4.128';
   const flutterBin = '/flutter/bin';
 
   /// Builds a fake consumer project: package_config naming the fake jsr
@@ -174,7 +173,7 @@ void main() {
       'relative rootUri resolves against the .dart_tool directory',
       () async {
         final env = await project(
-          rootUri: '../../pub/js_widget_runtime-0.4.126',
+          rootUri: '../../pub/js_widget_runtime-0.4.128',
         );
         final resolution = await resolveJsrPackageRoot(
           env,
@@ -398,14 +397,14 @@ void main() {
       expect(io.stdoutChunks, isEmpty);
     });
 
-    test('AC3: jsr entrypoint missing names the 0.4.126 upgrade', () async {
+    test('AC3: jsr entrypoint missing names the 0.4.128 upgrade', () async {
       final (code, io, shell) = await runJsr(
         const JsrCliCommand(verb: 'widget:test', args: ['w']),
         writeEntrypoint: false,
       );
       expect(code, 1);
       expect(shell.commands, isEmpty);
-      expect(io.notes.single, contains('0.4.126'));
+      expect(io.notes.single, contains('0.4.128'));
     });
 
     test(
@@ -447,12 +446,12 @@ void main() {
     test('quoted project paths keep the command a single sh word', () async {
       final shell = ScriptedShell();
       final env = await project(
-        rootUri: 'file:///pub my cache/jsr-0.4.126',
+        rootUri: 'file:///pub my cache/jsr-0.4.128',
         writeEntrypoint: false,
         shell: shell,
       );
       await env.writeFile(
-        '/pub my cache/jsr-0.4.126/bin/jsr_widget.dart',
+        '/pub my cache/jsr-0.4.128/bin/jsr_widget.dart',
         'void main() {}',
       );
       final io = RecordingJsrIo();
@@ -467,7 +466,7 @@ void main() {
       expect(code, 0);
       expect(
         shell.commands.single,
-        startsWith('dart "/pub my cache/jsr-0.4.126/bin/jsr_widget.dart"'),
+        startsWith('dart "/pub my cache/jsr-0.4.128/bin/jsr_widget.dart"'),
       );
     });
 
