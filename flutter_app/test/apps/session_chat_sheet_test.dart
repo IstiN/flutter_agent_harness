@@ -1409,12 +1409,12 @@ void main() {
     });
   });
 
-  group('SessionChatSheet typing-indicator ownership (issue #464)', () {
+  group('SessionChatSheet run-status ownership (issues #464, #1042)', () {
     const orbitKey = ValueKey('faWorkBarOrbit');
-    // Issue #459 moved the expanded-panel indicator into the transcript:
-    // the footer is the visually-last list item; the composer's own row
-    // is gone entirely.
-    const typingRowKey = ValueKey('faChatTypingFooter');
+    // Issues #459 + #1042: the expanded-panel indicator lives IN the
+    // transcript as the single transient status row — the visually-last
+    // list item; no second row, no composer-docked badge.
+    const statusRowKey = ValueKey('faChatRunStatusRow');
 
     /// Pumps the sheet over a single hung-streaming session, docked
     /// (panel closed) and idle.
@@ -1450,13 +1450,13 @@ void main() {
 
     void expectOneOwner() {
       final bars = find.byKey(orbitKey).evaluate().length;
-      final rows = find.byKey(typingRowKey).evaluate().length;
+      final rows = find.byKey(statusRowKey).evaluate().length;
       expect(
         bars + rows,
         1,
         reason:
             'a live turn must show exactly one indicator '
-            '(bar=$bars, composerRow=$rows)',
+            '(bar=$bars, statusRow=$rows)',
       );
     }
 
@@ -1477,11 +1477,11 @@ void main() {
     }
 
     testWidgets('AC1: docked streaming shows ONE indicator — the bar; the '
-        'composer typing row is suppressed', (tester) async {
+        'composer status row is suppressed', (tester) async {
       final service = await pumpSheet(tester);
       // Idle docked: neither surface renders.
       expect(find.byKey(orbitKey), findsNothing);
-      expect(find.byKey(typingRowKey), findsNothing);
+      expect(find.byKey(statusRowKey), findsNothing);
 
       await startRun(tester, service);
       expect(service.isStreaming, isTrue);
@@ -1489,12 +1489,12 @@ void main() {
       // the composer row rendered stacked; #459 removed the row, the
       // transcript footer only mounts with the open panel).
       expect(find.byKey(orbitKey), findsOneWidget);
-      expect(find.byKey(typingRowKey), findsNothing);
+      expect(find.byKey(statusRowKey), findsNothing);
       expect(find.byType(CircularProgressIndicator), findsNothing);
       // ...and the composer renders no typing UI at all (issue #459).
     });
 
-    testWidgets('AC2: expanding flips the indicator to the composer footer; '
+    testWidgets('AC2: expanding flips the indicator to the transcript status row; '
         'collapsing returns it to the bar', (tester) async {
       final service = await pumpSheet(tester);
       await startRun(tester, service);
@@ -1503,12 +1503,12 @@ void main() {
       await expandPanel(tester);
       expect(find.byKey(_panelKey), findsOneWidget);
       expect(find.byKey(orbitKey), findsNothing);
-      expect(find.byKey(typingRowKey), findsOneWidget);
+      expect(find.byKey(statusRowKey), findsOneWidget);
 
       await collapsePanel(tester);
       expect(find.byKey(_panelKey), findsNothing);
       expect(find.byKey(orbitKey), findsOneWidget);
-      expect(find.byKey(typingRowKey), findsNothing);
+      expect(find.byKey(statusRowKey), findsNothing);
       expect(service.isStreaming, isTrue);
     });
 
@@ -1523,7 +1523,7 @@ void main() {
       expect(find.byKey(_panelKey), findsOneWidget);
       await startRun(tester, service);
       expect(service.isStreaming, isTrue);
-      expect(find.byKey(typingRowKey), findsOneWidget);
+      expect(find.byKey(statusRowKey), findsOneWidget);
       expect(find.byKey(orbitKey), findsNothing);
       // End the turn: the flag flips off, the footer indicator goes.
       await tester.runAsync(() async {
@@ -1535,7 +1535,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
       expect(service.isStreaming, isFalse);
-      expect(find.byKey(typingRowKey), findsNothing);
+      expect(find.byKey(statusRowKey), findsNothing);
       expect(find.byKey(orbitKey), findsNothing);
 
       // A second turn while docked: ownership flips back to the bar.
@@ -1543,7 +1543,7 @@ void main() {
       await startRun(tester, service);
       expect(service.isStreaming, isTrue);
       expect(find.byKey(orbitKey), findsOneWidget);
-      expect(find.byKey(typingRowKey), findsNothing);
+      expect(find.byKey(statusRowKey), findsNothing);
     });
 
     testWidgets('E1: a turn finishing while docked drops the indicator '
@@ -1572,7 +1572,7 @@ void main() {
       // Turn over: no indicator anywhere, nothing mid-animation.
       expect(service.isStreaming, isFalse);
       expect(find.byKey(orbitKey), findsNothing);
-      expect(find.byKey(typingRowKey), findsNothing);
+      expect(find.byKey(statusRowKey), findsNothing);
       // Stop on an idle run is a no-op: no throw, no resurrection.
       service.abort();
       await tester.pump();

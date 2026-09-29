@@ -16,7 +16,7 @@ import 'package:fa_ui/fa_ui.dart'
         FaAuthRecoveryCallback,
         FaChatSurfaceHandlers,
         FaHeaderAction,
-        FaTypingFooter,
+        FaRunStatusRow,
         TrajectoryController,
         TrajectoryScreen,
         showFahErrorSnack,
@@ -1684,11 +1684,11 @@ class _SessionTranscriptState extends State<_SessionTranscript>
       listenable: widget.service,
       builder: (context, _) {
         final messages = widget.service.messages;
-        // The typing indicator lives IN the list (issue #459): the footer
-        // is the visually-LAST item — the reversed list renders it right
-        // above the input bar — and scrolls away with the content (no
-        // sticky pinning). Empty transcript + streaming: it is the only
-        // item (E1).
+        // The single transient status row lives IN the list (issues #459,
+        // #1042): the visually-LAST item — the reversed list renders it
+        // right above the input bar — replaced by the assistant message on
+        // completion. Empty transcript + streaming: it is the only item
+        // (E1).
         final streaming = widget.service.isStreaming;
         if (messages.isEmpty && !streaming) {
           return Center(
@@ -1716,10 +1716,17 @@ class _SessionTranscriptState extends State<_SessionTranscript>
           padding: EdgeInsets.fromLTRB(12, 12, 12, 8 + widget.bottomPadding),
           itemCount: messages.length + (streaming ? 1 : 0),
           itemBuilder: (context, index) {
-            if (index == messages.length) {
-              return const FaTypingFooter(key: ValueKey('faChatTypingFooter'));
+            // The status row is the visually-LAST entry (issue #1042): in
+            // this reversed list index 0 is the bottom edge — right above
+            // the input bar.
+            if (streaming && index == 0) {
+              return FaRunStatusRow(
+                key: const ValueKey('faChatRunStatusRow'),
+                service: widget.service,
+              );
             }
-            final message = messages[messages.length - 1 - index];
+            final message =
+                messages[messages.length - 1 - (streaming ? index - 1 : index)];
             return ChatMessageTile(
               message: message,
               images: _images,
