@@ -806,9 +806,10 @@ factual: paths, commands, invariants — no essays.
   transcript message tile (`chat_message_tile.dart`), the composer
   (`chat_composer.dart` — file/gallery/camera picking through the
   `FaChatHost.uploadPicker`/`galleryPicker`/`cameraPicker` hooks, voice
-  input through `FaChatHost.voiceInput`; desktop keys: Shift+Enter inserts
-  a newline (a Focus ancestor swallows the key before the text-input plugin
-  turns it into `send`), Cmd/Ctrl+V is smart paste — a clipboard image
+  input through `FaChatHost.voiceInput`; desktop keys: Enter sends and
+  Shift+Enter inserts a newline (issue #973 — the Focus ancestor swallows
+  plain Enter before the IME turns it into a break; the touch return key
+  keeps its IME newline path), Cmd/Ctrl+V is smart paste — a clipboard image
   (via the `FaChatHost.clipboardImageReader` hook) or long/multi-line text
   is staged as an `uploads/` attachment chip, short single-line text pastes
   inline), and the single-service chat
@@ -1683,4 +1684,10 @@ in `lib/src/parity/settings_registry.dart` with a comment explaining WHY.
   play_store` in `flutter_app` (env gates `PLAY_DEPLOY_METADATA`/
   `PLAY_DEPLOY_IMAGES`, `PLAY_VALIDATE_ONLY=1` dry-run; Play service-account
   secret `PLAY_STORE_SERVICE_ACCOUNT_JSON`) or the `store-metadata.yml`
-  android leg (`android_content`: none/metadata_only/images_only/all).
+  android leg (`android_content`: none/metadata_only/images_only/all). Images
+  never ride supply (it only APPENDS uploads — issue #947): the `play_store`
+  lane pushes them through `play_listing_sync.rb`, which replaces the whole
+  image set per locale + device type (dropped sets are cleared) and verifies
+  the committed goldens against `edits.images.list`. The daily
+  `daily-publish.yml` play leg dispatches `build-mobile.yml` with
+  `android_content=all`, so every release train redeploys the listing.
