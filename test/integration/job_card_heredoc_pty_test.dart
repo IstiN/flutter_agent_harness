@@ -64,8 +64,11 @@ void main() {
   late File turnsFile;
 
   setUp(() async {
-    home = Directory('/tmp/fa_599_home')..createSync(recursive: true);
-    project = Directory('/tmp/fa_599_proj')..createSync(recursive: true);
+    // Unique SHORT dirs (the #936/#938 class — fixed /tmp paths race the
+    // in-suite --concurrency=4 and cross-suite siblings on the shared
+    // minis); /tmp keeps the resolved path short for the 80-col geometry.
+    home = Directory('/tmp').createTempSync('fa599h');
+    project = Directory('/tmp').createTempSync('fa599p');
     // Pin the classic chrome: this suite asserts the classic grid (#599);
     // the band redesign (#805-#807) has its own surface.
     File('${home.path}/.fah/config.yaml')
@@ -175,11 +178,19 @@ void main() {
       harness.sendText('\x1b[6~'); // pgdown
       await Future<void>.delayed(const Duration(milliseconds: 90));
     }
-    await harness.waitForScreen(
+    // gh-1049: anchor on the DEEPEST asserted card line, not the first one
+    // — a header-wait + fresh screenText read sampled the card mid-render
+    // when the frame split across the PTY. The settled layout read below
+    // waits out the tail through the harness's own settle primitive.
+    var bottom = await harness.waitForScreen(
       'bash task completed in background',
       timeout: const Duration(minutes: 2),
     );
-    final bottom = harness.screenText;
+    bottom = await harness.waitForScreen(
+      '… 59 more — bash_job output',
+      timeout: const Duration(seconds: 30),
+    );
+    await harness.waitForOutput(settleMs: 200);
     expectComposerReserved(harness.viewportLines, 80);
 
     // ONE card, bounded: the first command line + the overflow hint.

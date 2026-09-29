@@ -46,6 +46,7 @@ import 'output_manager.dart';
 import 'parallel.dart';
 import 'subagent.dart';
 import 'subagent_manager.dart';
+import 'subagent_scope.dart';
 import 'subagent_tools.dart';
 import 'task_types.dart';
 
@@ -180,20 +181,28 @@ final class TaskExecutor {
       );
     }
     // Per-spawn "current subagent" scope: the child-only reply/agent_message
-    // tools resolve their handle through it (Phase 3b). Re-entrant when the
-    // same executor runs children sequentially (blocking batch mode).
+    // tools resolve their handle through it (Phase 3b), and shared tools
+    // with self-mailbox semantics (schedule_message) resolve the caller's
+    // mailbox through it (gh-970). Re-entrant when the same executor runs
+    // children sequentially (blocking batch mode). The zone — not the id
+    // stack — is the authoritative identity: with several background
+    // children running on this one executor, the stack's head is "the child
+    // that started last", which mislabeled every sender envelope (gh-970).
     _currentSubagentIds.add(id);
     try {
       stopwatch.start();
-      return await _run(
-        item,
-        index,
+      return await runWithSubagentScope(
         id,
-        agentName,
-        context,
-        childCancel.token,
-        stopwatch,
-        onProgress,
+        () => _run(
+          item,
+          index,
+          id,
+          agentName,
+          context,
+          childCancel.token,
+          stopwatch,
+          onProgress,
+        ),
       );
     } on CancelledException catch (error) {
       onProgress?.call(index, id, TaskSpawnPhase.aborted);
@@ -225,12 +234,20 @@ final class TaskExecutor {
 
   /// Stack of in-flight child ids for this executor. The LAST entry is the
   /// innermost running child; children run sequentially inside one executor
-  /// call, and concurrent runSpawn calls each push/pop their own id.
+  /// call, and concurrent runSpawn calls each push/pop their own id. This is
+  /// bookkeeping for [isInFlight] only — identity resolution must go through
+  /// the zone ([activeSubagentId]): the stack's head is shared by all
+  /// concurrent children, so it names the child that STARTED last, not the
+  /// one executing (gh-970).
   final _currentSubagentIds = <String>[];
 
-  /// Resolves the innermost running child id (for the child-only tools).
+  /// Resolves the identity of the child whose run encloses the caller: the
+  /// zone-published scope of the running child, falling back to the stack
+  /// head for callers outside any scoped run. The zone is authoritative —
+  /// see [_currentSubagentIds].
   String? currentSubagentId() =>
-      _currentSubagentIds.isEmpty ? null : _currentSubagentIds.last;
+      activeSubagentId() ??
+      (_currentSubagentIds.isEmpty ? null : _currentSubagentIds.last);
 
   /// Ids with a resume run in flight — the in-process half of the
   /// duplicate-resume guard (the handle's running status is the other).
@@ -362,7 +379,11 @@ final class TaskExecutor {
       );
       agent.prepareNextTurn = (nextTurn) =>
           _compactChildAtBoundary(id, agent, wiring, nextTurn);
-      await child.prompt(promptText);
+      // The resume run's tool calls resolve the child identity through the
+      // same scope a fresh spawn publishes (gh-970) — reply/agent_message
+      // and schedule_message attribute to THIS child, never a concurrent
+      // sibling on the shared executor stack.
+      await runWithSubagentScope(id, () => agent.prompt(promptText));
       deliveryStage(id, 'reply', since: since);
       resumeCancel.token.throwIfCancelled();
       // The agent loop surfaces provider failures as an error-tagged final
@@ -811,7 +832,7 @@ final class TaskExecutor {
       for (final tool in subagentMonitoringTools(
         manager: subagentManager,
         currentSubagentId: currentSubagentId,
-      ).where((t) => t.name == 'reply' || t.name == 'agent_message')) {
+      ).where((t) => childInjectedToolNames.contains(t.name))) {
         toolRegistry.register(tool);
       }
     }

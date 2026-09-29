@@ -68,6 +68,7 @@ import '../task/agent_discovery.dart';
 import '../task/child_session_io.dart';
 import '../task/subagent.dart';
 import '../task/subagent_manager.dart';
+import '../task/subagent_scope.dart';
 import '../task/subagent_heartbeat.dart';
 import '../task/subagent_tools.dart';
 import '../task/delivery_slo.dart';
@@ -257,6 +258,7 @@ part 'agent_cli_theme.dart';
 part 'agent_cli_composer.dart';
 part 'agent_cli_spill.dart';
 part 'agent_cli_prompt.dart';
+part 'agent_cli_diag_log.dart';
 
 /// The CLI harness: agent + built-in tools + session persistence +
 /// compaction, driven by a [CliIO].
@@ -409,7 +411,13 @@ class AgentCli {
       ),
       // schedule_message: self-addressed delayed notes — an agent can
       // schedule its own follow-up check; delivery rides the inbox idle-wake.
-      scheduleMessageTool(_scheduledMessages),
+      // gh-970: inside a subagent run "your own mailbox" is the CHILD's —
+      // the queue's selfMailbox always resolves main, which redirected
+      // every subagent self-reminder into main's inbox.
+      scheduleMessageTool(
+        _scheduledMessages,
+        senderMailbox: _childSenderMailbox,
+      ),
       // Non-interactive input gets a null ask callback (safe default).
       askTool(callback: io.isInteractive ? _answerAskQuestions : null),
       // request_secret: ask the user for missing API keys securely.
@@ -585,6 +593,12 @@ class AgentCli {
       // without it the tombstone fallback would fire over LIVE children.
       executor: _taskConfig.executor,
     );
+    // gh-970: a scheduled reminder (or sibling mail) that fires into a
+    // finished child's inbox resumes the child in its own session — the
+    // child-side analog of the idle inbox wake below. The sweep (dedup,
+    // status gates) lives on the manager; this host supplies the resume.
+    _subagentManager.wakeChild = (id) =>
+        _taskConfig.executor.resumeChild(id, childInboxWakePrompt);
     _toolRegistry = ToolRegistry([
       ...coreTools,
       ...monitoringTools,
@@ -1145,6 +1159,7 @@ class AgentCli {
   Timer? _hubFollowTimer;
   StreamSubscription<dynamic>? _hubSubagentEventsSub;
   StreamSubscription<dynamic>? _hubTaskStartsSub;
+
   /// Hub tree `mail:N` marker counts (async peek → refresh-only re-push
   /// by the driver extension, which cannot hold fields — state here).
   final Map<String, int> _hubMailCounts = <String, int>{};
@@ -1499,6 +1514,10 @@ class AgentCli {
       }
       unawaited(_reclaimOrphanFabricMail());
       unawaited(_wakeOnInboxMail());
+      // gh-970: reminders/sibling mail that fired into a FINISHED child's
+      // inbox resume that child in its own session (no-op without the
+      // child-resume wiring).
+      unawaited(_subagentManager.wakeChildrenWithPendingMail());
       // #437: wedge watchdog for mid-run steering + the idle wake for
       // steering recovered from the previous session.
       _checkPendingSteeringHealth();
@@ -1768,9 +1787,7 @@ class AgentCli {
         statusSnapshot: config.tuiClassic ? null : _statusLineSnapshot,
         statusLineEngine: config.tuiClassic
             ? null
-            : TuiStatusLine(
-                spec: resolveStatusLineSpec(config.statusLine),
-              ),
+            : TuiStatusLine(spec: resolveStatusLineSpec(config.statusLine)),
         prompt: prompt,
         onInterrupt: () {
           // Marks the drain loop to discard queued messages (kimi-cli drops
@@ -2741,40 +2758,6 @@ class AgentCli {
     return CompactionSettings.forWindow(_effectiveContextWindow);
   }
 
-  /// Writes a diagnostic line to the log file (`~/.fah/logs/fa.log`).
-  /// TUI/stderr stay clean — the AutoCompactor hook streams progress to
-  /// the user, the log captures everything for post-mortem.
-  void _logDiagnostic(String message) {
-    final path = _diagnosticLogPath;
-    if (path == null) return;
-    unawaited(_appendDiagnosticLog(path, message));
-  }
-
-  /// Short session id for diagnostic log lines: parallel fa processes share
-  /// one fa.log, so every lifecycle line names its session (post-mortem
-  /// "who held the busy row" starts here).
-  String get _logSid {
-    final id = _session?.cachedId;
-    if (id == null || id.isEmpty) return '-';
-    return id.length <= 8 ? id : id.substring(0, 8);
-  }
-
-  /// Appends one timestamped [message] to [path], creating the log directory
-  /// on first use. Isolated from [_logDiagnostic] so the public entry point
-  /// stays small.
-  Future<void> _appendDiagnosticLog(String path, String message) async {
-    final line = '${DateTime.now().toIso8601String()} $message\n';
-    try {
-      if (!_diagnosticLogDirEnsured) {
-        _diagnosticLogDirEnsured = true;
-        await _env.createDir('${config.homeDir}/.fah/logs', recursive: true);
-      }
-      await _env.appendFile(path, line);
-    } catch (_) {
-      // Diagnostics must never break the CLI.
-    }
-  }
-
   /// Whether a guided flow is between prompts.
   var _providerFlowActive = false;
 
@@ -2783,14 +2766,6 @@ class AgentCli {
 
   /// Runtime secrets granted via `request_secret`.
   final Map<String, String> _runtimeSecrets = {};
-
-  /// Path of the diagnostic log file under `~/.fah/logs/fa.log`. Null
-  /// when the host has no `homeDir` (web build, sandbox).
-  String? get _diagnosticLogPath {
-    final home = config.homeDir;
-    if (home == null || home.isEmpty) return null;
-    return '$home/.fah/logs/fa.log';
-  }
 
   var _diagnosticLogDirEnsured = false;
 

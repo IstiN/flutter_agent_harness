@@ -1,5 +1,56 @@
 # Changelog
 
+## 1.0.485
+
+
+- fix(ci): Daily auto-publish `pub.dev` leg — poll the pub.dev API until it
+  reflects the rerun's publish instead of a single read. 2026-09-28: the
+  recovery rerun published AND self-verified 1.0.483 (`pub.dev verified`
+  at 05:44:11Z), but the leg's one-shot API query 52s later hit a stale
+  replica, saw 1.0.482 and false-errored "manual publish needed". Initial
+  behind-check now takes three spaced reads (newest wins) so a stale read
+  cannot trigger unnecessary recovery either.
+- fix(ci): `install-pin-bump` no longer hard-gates on `release-provenance`.
+  When provenance FAILED (binaries/signature upload race), the marker job
+  was left SKIPPED — and `rerun --failed` never resurrects skipped jobs, so
+  the `vpinned` marker stayed stale forever (v1.0.483: the recovery rerun
+  went green, the marker never advanced). The job now uses
+  `if: always()`; `pin_release.sh`'s own pre-move provenance gate
+  (`check_install_pin.sh` with `FA_PIN_TARGET`) fails it loudly instead of
+  moving the marker, and a FAILED job IS part of `rerun --failed` — so the
+  recovery cascade reaches it.
+
+## 1.0.483
+
+
+- fix(install): the pinned default is now the `vpinned` RELEASE MARKER —
+  no committed pin at all. `install-config.yaml` `pinned_cli_version`
+  said 0.1.452 while the generated `site/install.sh` carried 1.0.480
+  (#1015 hand-edited only the generated file): a committed pin rots, and a
+  pin advanced by committing/pushing from the release pipeline re-races
+  `auto_release` and re-triggers Pages on every tag. Instead, the
+  installer resolves the standing `vpinned` release marker (its
+  `PINNED_VERSION` asset names the known-good release) and verifies the
+  pointed release exactly as before — the marker is only a pointer, so a
+  tampered one fails closed (DoS at worst, never a bad binary; the
+  embedded trust anchor stays the real trust root).
+  `scripts/pin_release.sh` advances the marker from the tag-scoped
+  `install-pin-bump` CI job after `release-provenance` signs the release:
+  pure release-artifact manipulation — zero commits, zero pushes, no
+  `RELEASE_PAT`, no regeneration (`is-newer` keeps bumps forward-only; a
+  pre-move `check_install_pin.sh` run with `FA_PIN_TARGET` proves the new
+  release BEFORE the marker moves, and a post-move run proves the
+  published marker). `scripts/check_install_pin.sh` (new ci.yml
+  `install-pin-gate` job on every PR, aggregated into the Quality gate)
+  fails when the generated installer drifts from the marker model
+  (`E_PIN_DRIFT`), the marker is missing/ill-formed (`E_PIN_MISSING` /
+  `E_PIN_INVALID`), or the marked release lacks a signature-verified
+  `SHA256SUMS` covering every platform archive (`E_PIN_PROVENANCE_MISSING`
+  / `E_PIN_PROVENANCE_INVALID` / `E_PIN_ASSET_COVERAGE`). Fixture coverage
+  in `installer_verify_selftest.sh`: contracts 1/1b/5/6, including
+  end-to-end `pin_release.sh` runs against a `file://` fixture release
+  root. `gen_installers.dart` drops the `pinned_cli_version` knob.
+
 ## 1.0.472
 
 - feat(818): herdr integration — fa as a supported herdr agent. The
@@ -4300,6 +4351,62 @@
 - feat(app): #955 network mode UI — Local|Network chip, networks sidebar, Grok-style channel chat
 - feat(app): #955 adopt contract senderKey — envelopes carry the sender X25519 pub
 - feat(app): #955 network mode engine — fa_network client, WS, fanet1 crypto, KeyWallet, sessions
+
+## 1.0.480
+
+- chore(factory): bump dmtools-agents to d67b66b — blocked-label freeze (#546) in lockstep (uses + factory_ref) (#1011)
+- docs: ladder smoke — trivial README marker to walk the full factory pipeline (#1010)
+- chore(factory): bump dmtools-agents pins to fa6e9c2 — PR-anchored rework (#544/#545) (#1009)
+- quarantine(#1007): dap_tui_menu_test master-secret hub-connect flake (#1008)
+- gh-1005 Migrate PTY test coverage from macOS shards to Linux-hosted runners (#1006)
+- Raise the CLI-coverage floor: third-party skills consent PTY suite (#927) (#934)
+- gh-982 fix flaky PTY test: job_board_stability (stacked boards freeze across settles) — quarantined, fix + re-enable (#986)
+- Fix #943: infra tests fixed properly — tmp roots, hub port hygiene, prewarm, budgets; #938 skips re-enabled (#948)
+- gh-995 WIP auto-save 2026-09-27T04-55-21 (#996)
+- chore(ci): M5_POOL=1 — PTY legs serial on the single fa-m5-1 runner (#1004)
+- chore(ci): M5_POOL 2 → 0 — single-runner mode on the fa-m5 host (owner 2026-09-27) (#1003)
+- chore(quality): temp CLI coverage baseline 11.0 → 7.9 — unwedge PTY-gate (restore: gh-997) (#998)
+- gh-946 CLI Rename unattended change to autopilot (#949)
+
+## 1.0.481
+
+- fix(921): swallow post-abandonment SSE transport errors instead of crashing (#922)
+- chore(factory): mirror ai-teammate stub template (effective-anchor run-name) (#1017)
+- gh-957: drop the 3 temporary CRAP excludes after #948 (f2498ead) — gate re-measures green at 30.0 (#959)
+- fix(install): bump SEC-07 pin 0.1.452 -> 1.0.480 (#1015)
+- quarantine(#1012 #1014): linux shard-0 PTY timing flakes (scheduled_indicator + ctrl_c_double_press) (#1013)
+
+## 1.0.482
+
+- chore: pin factory 60571fed (validation_failed sticky park) (#1027)
+- hotfix: correct uses: factory sha in all 3 workflows (fake sha from #1024) (#1025)
+- chore: pin factory 5e2a8051 (session quarantine) (#1024)
+- chore: pin factory a18361b2 (red-park + dryRun + dup-guard + teammate watchdog) (#1023)
+- chore(factory): bump dmtools-agents to b44b5493 — latch-skip + stamp links + auto-anchor fallback (#547/#548/#549) in lockstep (#1019)
+
+## 1.0.486
+
+- fix(926): CodeMie budget/spending exhaustion is terminal — no retry loops, immediate fallback (#929)
+- chore: pin factory 1fdb4c6 (git-guard double-shim exec-loop fix) (#1043)
+
+## 1.0.489
+
+- fix(web): conditionally export FFI-backed io.dart members
+- feat(#977): provider name step + multi-account coexistence in app add-provider flow (#984)
+- feat(#969): show add-provider flow first on fresh install (#971)
+
+## 1.0.490
+
+- gh-1041 [GOAL] Submission ≠ appearance — never fail a green store submit deferred 1–2h store-appearance re-check job (TestFlight / Play / pub.dev) (#1046)
+- gh-1032 Migrate to flutter_agent_memory 0.2.3: conflict-free deletions (tombstones + deleted/ dir) (#1050)
+
+## 1.0.492
+
+- chore(deps): bump ruby/setup-ruby in the github-actions group (#1056)
+
+## Unreleased
+
+## Unreleased
 
 ## Unreleased
 

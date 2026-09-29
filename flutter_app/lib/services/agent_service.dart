@@ -692,6 +692,13 @@ class AgentService extends ChangeNotifier
     // clean "not supported" note; completions re-enter via sendText (steer
     // mid-run, fresh turn while idle).
     _shellJobs = ShellJobRegistry(env: toolEnv, onSettled: _onShellJobSettled);
+    // Background `task` jobs settle the same way (issue #958): the settled
+    // child's async-result re-enters the conversation — steered mid-run,
+    // a fresh turn while idle. Without this the orchestrator sits idle
+    // until the user pings.
+    _taskCompletionsSub = taskJobManager.completions.listen(
+      _onTaskJobCompleted,
+    );
     // Interactive dynamic messages (issue #102): the host machinery behind
     // the `dynamic_message` tool — session-scoped JS widgets rendered
     // inline in the transcript with the full installed-app engine surface.
@@ -718,8 +725,18 @@ class AgentService extends ChangeNotifier
         onChanged: () => unawaited(_refreshMemorySection()),
       ),
       // schedule_message: self-addressed delayed notes, delivered by the
-      // fabric's idle-wake (shared with the CLI).
-      scheduleMessageTool(_scheduledMessages),
+      // fabric's idle-wake (shared with the CLI). gh-970: inside a subagent
+      // run "your own mailbox" is the CHILD's — the queue's selfMailbox
+      // always resolves main.
+      scheduleMessageTool(
+        _scheduledMessages,
+        senderMailbox: () {
+          final id = activeSubagentId();
+          final manager = _subagentManager;
+          if (id == null || manager == null) return null;
+          return manager.mailboxOf(id);
+        },
+      ),
       ...subagentMonitoringTools(
         manager: _subagentManager,
         jobs: taskJobManager,
@@ -828,9 +845,17 @@ class AgentService extends ChangeNotifier
     if (officeApi != null) {
       debugPrint('[fah] office: outlook.* tools registered (office host)');
     }
-    // Wire the task tool's child surface: all tools except `task` itself.
+    // Wire the task tool's child surface: all tools except `task` itself
+    // and the child-only pair the executor injects per spawn — passing them
+    // through registers `reply` twice and every child dies with
+    // "Duplicate tool name" (the CLI passes coreTools, which never
+    // contains them).
     final childSurface = registry.tools
-        .where((t) => t.name != taskToolName)
+        .where(
+          (t) =>
+              t.name != taskToolName &&
+              !childInjectedToolNames.contains(t.name),
+        )
         .cast<AgentTool>()
         .toList();
     _taskConfig = TaskToolConfig(
@@ -2238,6 +2263,10 @@ class AgentService extends ChangeNotifier
   var _inboxWakeRunning = false;
   var _disposed = false;
 
+  /// Background `task` job settlements (issue #958): each one re-enters the
+  /// conversation as an async-result notice (see `_onTaskJobCompleted`).
+  StreamSubscription<TaskJob>? _taskCompletionsSub;
+
   /// Opt-in for the real app bootstrap (main.dart): the periodic watcher
   /// never starts in tests (a pending periodic Timer fails flutter_test's
   /// invariants), so it is off by default.
@@ -2500,6 +2529,7 @@ class AgentService extends ChangeNotifier
     _compactExpand?.dispose();
     if (_subagentManager != null) _scheduledMessages.dispose();
     _inboxWatchTimer?.cancel();
+    unawaited(_taskCompletionsSub?.cancel());
     _idleWatchdog?.cancel();
     _liveActivityEndTimer?.cancel();
     _sessionWatchTimer?.cancel();

@@ -305,7 +305,20 @@ factual: paths, commands, invariants — no essays.
   addressable: real JSONL child sessions, `task_status`/`task_observe`/
   `task_send`/`task_cancel` (model-facing job abort), child-only `reply` +
   sibling `agent_message` (pending-queue + hop-capped),
-  `completed_without_reply` notice.
+  `completed_without_reply` notice. Child IDENTITY for tool calls is
+  zone-scoped (`subagent_scope.dart`, gh-970): `runSpawn`/`resumeChild`
+  publish the running child's id via `runWithSubagentScope`, and
+  `TaskExecutor.currentSubagentId` reads the zone FIRST — the executor's
+  in-flight id stack is shared by all concurrent children, so its head is
+  "started last", not "executing" (that shift mislabeled every sender
+  envelope and recorded replies on sibling handles). Hosts also resolve
+  shared tools' self-mailbox semantics through the zone (`activeSubagentId`
+  → `schedule_message`'s `senderMailbox`), and the CLI wires
+  `SubagentManager.wakeChild` so mail that fires into a finished child's
+  inbox (a self-scheduled reminder, sibling mail) resumes it in its own
+  session — the child-side analog of the idle inbox wake (the sweep is
+  `wakeChildrenWithPendingMail`, status-gated to completed/idle, one wake
+  per child per settle, a throwing wake retires the child).
 - Steer soft-yield: a steering message (user `Ctrl+S`, subagent completion,
   inbox mail) arriving DURING a tool-call phase cancels the phase's
   zone-scoped yield token — `currentYieldToken()` in `cancel_token.dart`,
@@ -345,7 +358,13 @@ factual: paths, commands, invariants — no essays.
   `schedule_message` (issue #59): records under `<messagesRoot>/_scheduled/`;
   self-addressed records deliver to the host's LIVE mailbox at fire time
   (the address pinned at schedule time goes stale on session switch/restart
-  and would strand the reminder) — hosts re-arm on every mailbox change
+  and would strand the reminder) — EXCEPT self-addressed records naming a
+  subagent mailbox of this session (`<prefix>/<childId>`, gh-970): those
+  deliver as recorded (the address rides the same owner prefix and is as
+  stable; re-addressing stole the child's reminder into main), and the
+  tool's `senderMailbox` override (host-wired from `activeSubagentId()`)
+  makes a subagent's no-`to` schedule default to the CHILD's mailbox, not
+  main's — hosts re-arm on every mailbox change
   (CLI `_syncMailboxPrefix`, app `_setMailboxPrefix`) and sweep due records
   on their inbox ticks; `dispose()` cancels only the timer, the files stay.
   Sleep resilience (issue #259): all due math rides an injectable wall
@@ -1563,8 +1582,9 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
   MockLlmServer); the tag-only `integration` job is just the llm provider
   smoke and `publish` waits on it. `nightly.yml` runs the full monolith +
   PTY/CLI integration (full real-provider suite with secrets) +
-  terminal-visual suites; `coverage-gardener.yml` bumps the only-up CLI
-  coverage baseline weekly.
+  terminal-visual suites; `coverage-gardener.yml` measures the only-up CLI
+  coverage weekly and files an ai-teammate "raise coverage to X" issue —
+  the baseline itself only moves through a reviewed PR (issue #927).
 
 ## Cross-platform parity
 

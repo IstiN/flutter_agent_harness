@@ -347,6 +347,13 @@ final class WindowedSessionStorage
           // sees the hiding markers, which sit LATER on the branch than
           // the records they hide.
           if (estimateProjectedBranchTokens(branch) >= tokenBudget) {
+            // gh-968 (AC-R4): the stop fires AFTER a whole doubling block
+            // was paged, so accepting the block wholesale overshoots the
+            // budget by one BLOCK's tokens — a giant tool result in the
+            // last block read the resume tens of thousands of tokens past
+            // it (the reported 127%). Trim back to the parity bound: the
+            // kept tail overshoots by at most ONE record's tokens.
+            _trimTokenBudget(branch, tokenBudget);
             return true;
           }
         }
@@ -367,6 +374,33 @@ final class WindowedSessionStorage
   /// bounds the transient strip buffer).
   static const maxWalkBlockRecords = 4096;
   static const maxWalkBlockBytes = 64 << 20;
+
+  /// Record-granular budget trim for the [growOlderUntil] stop (gh-968,
+  /// AC-R4): un-indexes the OLDEST resident records down to the cut
+  /// [projectedBranchBudgetCut] finds walking the branch from the newest
+  /// end backward, so the kept tail's projected estimate stays within
+  /// [tokenBudget] — overshoot bounded by one record, never one block.
+  ///
+  /// The dropped records stay on disk and page back lazily through
+  /// [loadOlder]: `_windowTopOffset` rides [_dropOldest] up and
+  /// `_hasOlder` is restored when anything was dropped (the walk may have
+  /// stopped before any page — a tail window alone over the budget). The
+  /// tail anchor (`_branchBottomId`, the leaf) is never touched: the cut
+  /// keeps at least the newest record.
+  void _trimTokenBudget(List<SessionRecord> branch, int tokenBudget) {
+    final cut = projectedBranchBudgetCut(branch, tokenBudget);
+    if (cut == null) return; // whole branch fits — defensive, never the stop
+    final cutId = branch[cut].id;
+    var dropped = 0;
+    // The kept cut record is on the branch, hence resident; everything
+    // file-older than it (branch records AND interleaved side-branch
+    // records) leaves the window.
+    while (_entries.isNotEmpty && _entries.first.id != cutId) {
+      _dropOldest();
+      dropped++;
+    }
+    if (dropped > 0) _hasOlder = true;
+  }
 
   /// One block page-up for the boundary walk ([growOlderUntil]): a
   /// single-read strip above the window (see

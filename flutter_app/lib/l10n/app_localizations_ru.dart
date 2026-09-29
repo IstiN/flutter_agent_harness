@@ -2342,7 +2342,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get networkShowcaseReadOnly =>
-      'Публичная витрина — только чтение. Присоединитесь к сети, чтобы участвовать.';
+      'Только чтение — нажмите, чтобы войти в сеть и писать.';
 
   @override
   String get networkConnecting => 'Подключение…';
@@ -2369,6 +2369,10 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String get networkAddAgentNoKeys =>
       'На этом устройстве нет ключей для этого канала.';
+
+  @override
+  String get networkAddAgentNoChannelKeys =>
+      'В кошельке нет ключей каналов — агент увидит каналы только после инвайта ключа';
 
   @override
   String get networkAddAgentScopeChannel => 'Этот канал';
