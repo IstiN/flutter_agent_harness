@@ -1,3 +1,10 @@
+@Tags(['integration'])
+// The ratchet leg's coverage source (scripts/check_cli_coverage.py measures
+// lib/src/cli/** from the integration-tagged PTY shards): the /jsr REPL
+// handler is a lib/src/cli part file, so these tests MUST carry the tag —
+// gh-1033 review thread 7 (coverage ratchet dilution).
+library;
+
 import 'dart:convert';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
