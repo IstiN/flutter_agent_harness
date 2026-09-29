@@ -51,7 +51,10 @@ factual: paths, commands, invariants — no essays.
   capped unconditionally: after the child is reaped every remaining pipe
   byte comes from an orphan). Killed calls are marked `timeout`/`aborted`
   and carry the captured partial output on `ExecutionError.stdout`/
-  `stderr` (rendered by the bash tool) (gh-1053; the timeout timer stays
+  `stderr` — tail-capped at the source to the last 64 KiB (`_captureTail`)
+  — rendered by the bash tool and the skill renderer's `!cmd` failure
+  branch (every string that branch embeds is tail-capped to ~2 KB)
+  (gh-1053; the timeout timer stays
   armed after the child exits because an orphaned descendant can hold
   the pipes — a drain that outlives the deadline marks the call
   `timedOut` even when the child exited 0). Background jobs (issue #517)
