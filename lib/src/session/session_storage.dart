@@ -14,8 +14,41 @@ import '../env/execution_env.dart';
 import '../env/session_parse_executor.dart';
 import '../exceptions.dart';
 import '../session_io_retry.dart';
+import '../session_line_scanner.dart';
 import 'session_record.dart';
 import 'uuid.dart';
+
+/// Hard backstop for the full open (gh-1073): a session file larger than
+/// this refuses to load whole — the open throws a [SessionErrorCode.
+/// tooLarge] [SessionException] naming the windowed resume and
+/// `fa session repair` rescue paths instead of exhausting the heap on a
+/// multi-GiB read. Range-capable filesystems still stream the file in
+/// bounded chunks below the bound; the bound exists so no caller is ever
+/// one bad session away from an OOM kill.
+const int defaultMaxFullOpenBytes = 2 << 30;
+
+/// Human-readable byte count for the backstop error (GiB/MB granularity).
+String _formatBytes(int bytes) {
+  if (bytes >= (1 << 30)) {
+    return '${(bytes / (1 << 30)).toStringAsFixed(1)} GiB';
+  }
+  if (bytes >= (1 << 20)) {
+    return '${(bytes / (1 << 20)).toStringAsFixed(1)} MB';
+  }
+  return '$bytes bytes';
+}
+
+/// Appends the byte span `(start, end)` to a sorted, disjoint span list,
+/// merging into the tail when contiguous (the streamed scan yields lines
+/// in file order, so good lines coalesce into one span per run).
+void _appendSpan(List<(int, int)> spans, (int, int) span) {
+  if (spans.isNotEmpty && spans.last.$2 == span.$1) {
+    final (start, _) = spans.removeLast();
+    spans.add((start, span.$2));
+  } else {
+    spans.add(span);
+  }
+}
 
 /// Metadata describing a stored session.
 ///
@@ -406,11 +439,19 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     SessionParseExecutor? parseExecutor,
     SessionIoRetryConfig ioRetry = const SessionIoRetryConfig(),
     SessionTimingLogger? timingLog,
+    int maxFullOpenBytes = defaultMaxFullOpenBytes,
   }) async {
     final sw = Stopwatch()..start();
     final storage = await withSessionFileLock(
       filePath,
-      () => _openLocked(fs, filePath, parseExecutor, ioRetry, timingLog),
+      () => _openLocked(
+        fs,
+        filePath,
+        parseExecutor,
+        ioRetry,
+        timingLog,
+        maxFullOpenBytes,
+      ),
     );
     timingLog?.call(
       'resume_timing open file=${filePath.split('/').last} '
@@ -421,6 +462,242 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
   }
 
   static Future<JsonlSessionStorage> _openLocked(
+    FileSystem fs,
+    String filePath,
+    SessionParseExecutor? parseExecutor,
+    SessionIoRetryConfig ioRetry,
+    SessionTimingLogger? timingLog,
+    int maxFullOpenBytes,
+  ) async {
+    // gh-1073 backstop: stat first, refuse the pathological full read.
+    // The size also bounds the streamed scan below. A 12 GiB session used
+    // to die inside readTextFile with `Exhausted heap space` — the refusal
+    // names the rescue paths instead.
+    final stat = _fsOrThrow(
+      await retryTransientSessionFileIo(
+        () => fs.fileInfo(filePath),
+        op: 'open',
+        path: filePath,
+        config: ioRetry,
+      ),
+      'Failed to read session $filePath',
+    );
+    if (stat.size > maxFullOpenBytes) {
+      throw SessionException(
+        'Refusing to open session $filePath: ${_formatBytes(stat.size)} '
+        'exceeds the ${_formatBytes(maxFullOpenBytes)} full-open bound. '
+        'Resume it windowed (`fa --session ${filePath.split('/').last}`) or '
+        'shrink the ledger with `fa session repair` — the full open would '
+        'exhaust the heap (gh-1073).',
+        code: SessionErrorCode.tooLarge,
+      );
+    }
+    final Object maybeRanged = fs;
+    if (maybeRanged is RangedReadFileSystem) {
+      return _openStreamedLocked(
+        fs,
+        maybeRanged,
+        filePath,
+        parseExecutor,
+        ioRetry,
+        timingLog,
+        stat.size,
+      );
+    }
+    return _openWholeFileLocked(fs, filePath, parseExecutor, ioRetry,
+        timingLog);
+  }
+
+  /// Streamed full open (gh-1073): the JSONL is scanned line by line in
+  /// bounded byte chunks ([SessionLineScanner] over [RangedReadFileSystem])
+  /// and parsed in bounded batches — the file is NEVER materialized as one
+  /// `String`.
+  ///
+  /// Giant `custom` ledger records (the ~0.5 MB `model_request_summary` /
+  /// `shell_job_registry` payloads that grew the ticket's session to
+  /// 12.4 GiB) decode HEADER-ONLY ([parseShallowCustomRecord], data
+  /// stubbed to null) EXCEPT the latest record per `customType`, whose raw
+  /// line is kept and fully parsed at the end — resume-time rehydration
+  /// (job board, subagent registry) reads only the latest snapshot, so the
+  /// retained payload is exactly what consumers need at a bounded cost of
+  /// one giant line per ledger type.
+  static Future<JsonlSessionStorage> _openStreamedLocked(
+    FileSystem fs,
+    RangedReadFileSystem ranged,
+    String filePath,
+    SessionParseExecutor? parseExecutor,
+    SessionIoRetryConfig ioRetry,
+    SessionTimingLogger? timingLog,
+    int fileSize,
+  ) async {
+    final totalSw = Stopwatch()..start();
+    var phaseSw = Stopwatch()..start();
+    final entries = <SessionRecord>[];
+    // Merged byte spans of the surviving (good) lines, in file order.
+    final goodSpans = <(int, int)>[];
+    // Byte spans of torn lines (unmerged — they are rare and disjoint).
+    final tornSpans = <(int, int)>[];
+    // customType → (index into entries, raw line): the LATEST giant custom
+    // per type, fully parsed after the scan (see the method doc).
+    final latestGiantCustoms = <String, (int, String)>{};
+    SessionHeader? header;
+    String? leafId;
+    var first = true;
+    var batchLines = <String>[];
+    var batchSpans = <(int, int)>[];
+    var batchFirstLineNumber = 2;
+
+    Future<void> flushBatch() async {
+      if (batchLines.isEmpty) return;
+      final parsed = await parseSessionLines(
+        batchLines,
+        filePath: filePath,
+        firstLineNumber: batchFirstLineNumber,
+        executor: parseExecutor,
+        // The ledger payloads are exactly what must not materialize: the
+        // batch parse stubs giant canonical `custom` records header-only.
+        shallowGiantCustoms: true,
+      );
+      for (var i = 0; i < parsed.length; i++) {
+        final entry = parsed[i];
+        final span = batchSpans[i];
+        final rawLine = batchLines[i];
+        if (entry == null) {
+          // A malformed line is a torn write: drop the record, keep its
+          // byte span for the quarantine below. Never fatal.
+          tornSpans.add(span);
+          continue;
+        }
+        if (entry is CustomRecord &&
+            entry.data == null &&
+            rawLine.length >= shallowCustomRecordThreshold &&
+            rawLine.startsWith('{"type":"custom"')) {
+          // Stubbed giant: remember the latest per customType.
+          latestGiantCustoms[entry.customType] = (entries.length, rawLine);
+        }
+        entries.add(entry);
+        _appendSpan(goodSpans, span);
+        leafId = leafIdAfterSessionRecord(entry);
+      }
+      batchFirstLineNumber += batchLines.length;
+      batchLines = <String>[];
+      batchSpans = <(int, int)>[];
+    }
+
+    await SessionLineScanner(fs: fs, path: filePath).scan((line) async {
+      if (first) {
+        first = false;
+        header = parseSessionHeaderLine(line.text, filePath);
+        goodSpans.add((line.start, line.end));
+        return;
+      }
+      if (line.text.trim().isEmpty) return; // blank lines are skipped
+      batchLines.add(line.text);
+      batchSpans.add((line.start, line.end));
+      if (batchLines.length >= sessionParseBatchMaxLines ||
+          batchLines.fold<int>(0, (n, l) => n + l.length) >=
+              sessionParseBatchMaxBytes) {
+        await flushBatch();
+      }
+    });
+    if (header == null) _invalidSession(filePath, 'missing session header');
+    await flushBatch();
+    final readMs = phaseSw.elapsedMilliseconds;
+    phaseSw
+      ..reset()
+      ..start();
+    // Rehydrate the LATEST giant custom per ledger type at full fidelity.
+    for (final (_, rawLine) in latestGiantCustoms.values) {
+      final full = parseSessionEntryLine(rawLine, filePath, 0);
+      final index = entries.indexWhere((e) => e.id == full.id);
+      if (index >= 0) entries[index] = full;
+    }
+    final parseMs = phaseSw.elapsedMilliseconds;
+    phaseSw
+      ..reset()
+      ..start();
+    var quarantined = 0;
+    var rewriteMs = 0;
+    if (tornSpans.isNotEmpty) {
+      quarantined = tornSpans.length;
+      // Forensics sidecar first; read-only storage skips both writes and
+      // still loads fine with the torn records simply absent from memory.
+      try {
+        for (final (start, end) in tornSpans) {
+          final raw = await ranged.readRange(filePath, start, end);
+          final text = raw.isErr
+              ? null
+              : utf8.decode(raw.valueOrNull!, allowMalformed: true);
+          if (text != null) {
+            await fs.appendFile('$filePath.corrupt', '$text\n');
+          }
+        }
+        // Rewrite whole via a streamed span copy into a temp file + atomic
+        // rename, so the heal never materializes the good content either.
+        // Text decode/encode is byte-exact for every parsed (JSON-valid)
+        // line; only genuinely malformed bytes inside a JSON-valid line
+        // would re-encode as U+FFFD.
+        final Object maybeRenamable = fs;
+        if (maybeRenamable is RenamableFileSystem) {
+          final tempPath = '$filePath.repaired';
+          var wrote = await fs.writeFile(tempPath, '');
+          for (final (start, end) in goodSpans) {
+            final raw = await ranged.readRange(filePath, start, end);
+            if (raw.isErr) break;
+            wrote = await fs.appendFile(
+              tempPath,
+              utf8.decode(raw.valueOrNull!, allowMalformed: true),
+            );
+            if (wrote.isErr) break;
+          }
+          if (wrote.isErr) {
+            await fs.remove(tempPath, force: true);
+          } else {
+            final renamed = await maybeRenamable.renamePath(
+              tempPath,
+              filePath,
+            );
+            if (renamed.isErr) {
+              // Non-renameable after all (or the rename failed): leave the
+              // file untouched — the in-memory state is still consistent
+              // and the next open re-quarantines the torn lines.
+              await fs.remove(tempPath, force: true);
+            } else {
+              rewriteMs = phaseSw.elapsedMilliseconds;
+            }
+          }
+        }
+      } on Object {
+        // Read-only storage: the in-memory state is still consistent.
+      }
+    }
+    phaseSw
+      ..reset()
+      ..start();
+    final storage = JsonlSessionStorage._(
+      fs,
+      filePath,
+      header!,
+      entries,
+      leafId,
+      quarantined: quarantined,
+      ioRetry: ioRetry,
+    );
+    final buildMs = phaseSw.elapsedMilliseconds;
+    storage._openInnerMs = totalSw.elapsedMilliseconds;
+    timingLog?.call(
+      'resume_timing open-detail file=${filePath.split('/').last} '
+      'mode=full-stream bytes=$fileSize read_ms=$readMs parse_ms=$parseMs '
+      'records=${entries.length} torn=$quarantined rewrite_ms=$rewriteMs '
+      'build_ms=$buildMs inner_ms=${storage._openInnerMs}',
+    );
+    return storage;
+  }
+
+  /// Legacy whole-file open — the fallback for filesystems without byte
+  /// range reads (pure web stores). Identical to the pre-gh-1073 behavior;
+  /// the size backstop in [_openLocked] bounds what this can materialize.
+  static Future<JsonlSessionStorage> _openWholeFileLocked(
     FileSystem fs,
     String filePath,
     SessionParseExecutor? parseExecutor,

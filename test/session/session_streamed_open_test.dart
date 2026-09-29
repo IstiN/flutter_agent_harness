@@ -3,18 +3,21 @@ import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/src/env/execution_env.dart';
 import 'package:flutter_agent_harness/src/env/memory_execution_env.dart';
+import 'package:flutter_agent_harness/src/exceptions.dart';
 import 'package:flutter_agent_harness/src/session/session_record.dart';
 import 'package:flutter_agent_harness/src/session/session_storage.dart';
 import 'package:test/test.dart';
 
 /// A [FileSystem] decorator that counts `readTextFile` calls — gh-1073's
 /// crash was `readTextFile` materializing a 12 GiB session as one String.
-final class CountingFileSystem implements FileSystem {
+final class CountingFileSystem
+    implements FileSystem, RangedReadFileSystem, RenamableFileSystem {
   CountingFileSystem(this._delegate);
 
   final FileSystem _delegate;
   int readTextFileCalls = 0;
   int readRangeCalls = 0;
+  int renameCalls = 0;
 
   @override
   String get cwd => _delegate.cwd;
@@ -34,13 +37,18 @@ final class CountingFileSystem implements FileSystem {
       _delegate.readBinaryFile(path);
 
   @override
+  Future<Result<String, FileError>> joinPath(List<String> parts) =>
+      _delegate.joinPath(parts);
+
+  @override
   Future<Result<Uint8List, FileError>> readRange(
     String path,
     int start,
     int end,
   ) async {
     readRangeCalls++;
-    return _delegate.readRange(path, start, end);
+    final ranged = _delegate as RangedReadFileSystem;
+    return ranged.readRange(path, start, end);
   }
 
   @override
@@ -87,6 +95,13 @@ final class CountingFileSystem implements FileSystem {
     bool recursive = false,
     bool force = false,
   }) => _delegate.remove(path, recursive: recursive, force: force);
+
+  @override
+  Future<Result<void, FileError>> renamePath(String from, String to) async {
+    renameCalls++;
+    final renamable = _delegate as RenamableFileSystem;
+    return renamable.renamePath(from, to);
+  }
 }
 
 void main() {
@@ -157,18 +172,18 @@ void main() {
 
     test('giant custom records load shallow; the LATEST per customType '
         'keeps full data', () async {
+      Map<String, Object> giant(int generation) => {
+        'generation': generation,
+        'blob': 'p' * (128 * 1024),
+      };
       await writeLines([
         headerLine(),
-        giantCustomLine('c1', customType: 'shell_job_registry', data: {
-          'generation': 1,
-        }),
-        giantCustomLine('c2', customType: 'shell_job_registry', data: {
-          'generation': 2,
-        }),
+        giantCustomLine('c1', customType: 'shell_job_registry', data: giant(1)),
+        giantCustomLine('c2', customType: 'shell_job_registry', data: giant(2)),
         giantCustomLine(
           'c3',
           customType: 'model_request_summary',
-          data: {'messageCount': 5},
+          data: giant(3),
         ),
       ]);
       final storage = await JsonlSessionStorage.open(fs, path);
@@ -185,8 +200,8 @@ void main() {
       expect(c1.data, isNull, reason: 'superseded giant payload is dropped');
       // The LATEST giant per customType keeps full data so resume-time
       // rehydration (job board, subagent registry) still sees the truth.
-      expect(c2.data, {'generation': 2});
-      expect(c3.data, {'messageCount': 5});
+      expect(c2.data, giant(2));
+      expect(c3.data, giant(3));
     });
 
     test('giant NON-custom records keep full fidelity', () async {
@@ -207,13 +222,13 @@ void main() {
         messageLine('m1'),
       ]);
       final info = (await fs.fileInfo(path)).getOrThrow();
+      // At the bound exactly the open proceeds; past it, it refuses.
       final storage = await JsonlSessionStorage.open(
         fs,
         path,
-        maxFullOpenBytes: info.size - 1,
+        maxFullOpenBytes: info.size,
       );
-      expect(await storage.getEntries(), isNotEmpty,
-          reason: 'at the bound exactly still opens');
+      expect(await storage.getEntries(), isNotEmpty);
       await expectLater(
         JsonlSessionStorage.open(fs, path, maxFullOpenBytes: info.size - 2),
         throwsA(
@@ -245,11 +260,10 @@ void main() {
       // The file is rewritten from the surviving records so later opens
       // see whole JSONL.
       final healed = (await fs.readTextFile(path)).getOrThrow();
-      expect(jsonDecode(healed.split('\n').last), isNull,
-          reason: 'sanity: last split piece after trailing newline is empty');
       final lines = healed.trim().split('\n');
       expect(lines.length, 3);
-      expect(jsonDecode(lines[2]), isA<Map<String, dynamic>>());
+      expect(jsonDecode(lines[0]), isA<Map<String, dynamic>>());
+      expect((jsonDecode(lines[1]) as Map)['id'], 'm1');
       expect((jsonDecode(lines[2]) as Map)['id'], 'm2');
       // Quarantine sidecar holds the torn bytes.
       final corrupt = (await fs.readTextFile('$path.corrupt')).getOrThrow();
