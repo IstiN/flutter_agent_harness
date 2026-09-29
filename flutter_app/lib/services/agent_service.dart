@@ -160,6 +160,19 @@ class AgentService extends ChangeNotifier
     @visibleForTesting bool watchExternalSessions = true,
     @visibleForTesting bool includeSharedSessionRoots = true,
     this.powerAssertion,
+
+    /// Per-task-role model overrides for tests (gh-1077): when given, the
+    /// store-backed roles resolver is built exactly like [_withEnv]'s, so
+    /// the IT suite can exercise the smol summarizer chain end to end.
+    @visibleForTesting TaskModelsStore? taskModelsStore,
+
+    /// Boot secrets for the roles resolver (and the redactor) on this
+    /// constructor — the [SecretsExecutionEnv] snapshot equivalent.
+    @visibleForTesting Map<String, String> bootSecrets = const {},
+
+    /// The owner context-window cap (`agent.contextWindowCap`, gh-1077):
+    /// drives the compaction wiring and the loop's over-window guard.
+    @visibleForTesting int? contextWindowCap,
   }) : _resolveSecretName = null,
        _providerRegistry = null,
        // ignore: prefer_initializing_formals
@@ -168,12 +181,14 @@ class AgentService extends ChangeNotifier
        _includeSharedSessionRoots = includeSharedSessionRoots,
        _secretsEnv = null,
        _sessionKeys = null,
-       _taskModelsStore = null,
+       // ignore: prefer_initializing_formals
+       _taskModelsStore = taskModelsStore,
        _approvalModeStore = null,
        _skillsAccessStore = null,
        _skillsHomeDir = null,
        _skillsAccess = SkillsAccess.granted,
        _toolsAvailabilityStore = null,
+       _contextWindowCap = contextWindowCap,
        approval = ApprovalManager(
          mode: initialApprovalMode ?? ApprovalMode.write,
        ),
@@ -203,7 +218,20 @@ class AgentService extends ChangeNotifier
     _wireTextOnlyImageDropNotice();
     _wireDeliverySloNotice();
     _redactor = redactor;
-    _attachRedactor(redactor);
+    _attachRedactor(redactor, bootSecrets);
+    // gh-1077: the store-backed roles resolver — identical construction
+    // to [_withEnv]'s, so tests drive the real smol resolution path.
+    if (taskModelsStore != null) {
+      _taskRolesResolver = ModelRolesResolver(
+        config: ModelRolesConfig(roles: StoreBackedRolesMap(taskModelsStore)),
+        secrets: bootSecrets,
+      );
+    }
+    // gh-1077 AC4: the loop's over-window guard relief — one synchronous
+    // compaction before the guard refuses (mutable knob: the agent
+    // arrives pre-built here).
+    _agent.overWindowRelief =
+        (overWindow) => _relieveOverWindow(overWindow);
     _attachApproval();
     _agent.subscribe(_onAgentEvent);
     // Chat surfaces (the ✦ dynamic-messages list, inline widget tiles)
@@ -870,11 +898,19 @@ class AgentService extends ChangeNotifier
     );
     // Re-register the task tool with the real child surface.
     registry.register(taskTool(config: _taskConfig!));
+    // Owner context-window cap (gh-1077): `agent.contextWindowCap`, the
+    // same project < user config chain the CLI honors. Null = uncapped.
+    _contextWindowCap = loadAppContextWindowCap(env.sessionCwd);
     _agent = Agent(
       model: config.toModel(),
       systemPrompt: _composeSystemPrompt(config),
       streamFunction: streamFunction ?? _streamFunctionFor(config),
       toolRegistry: registry,
+      // The loop's over-window guard measures against the effective
+      // (capped) window, and issue #387 relief gives a hard overflow ONE
+      // synchronous compaction before the turn dies — CLI parity.
+      contextWindowCap: _contextWindowCap,
+      overWindowRelief: (overWindow) => _relieveOverWindow(overWindow),
     );
     // The main agent's inbox: messages from children (agent_message to
     // "main") and from other Fa instances arrive at turn boundaries.
@@ -1111,6 +1147,18 @@ class AgentService extends ChangeNotifier
   /// carries an override, compaction uses that model instead of the main
   /// connection.
   final TaskModelsStore? _taskModelsStore;
+
+  /// The owner context-window cap (`agent.contextWindowCap`, gh-1077):
+  /// resolved from the app config chain in [_withEnv] (project < user),
+  /// injected on the test constructor. Feeds the compaction wiring AND the
+  /// loop's over-window guard (via the [Agent] constructor). Null =
+  /// uncapped.
+  int? _contextWindowCap;
+
+  /// How many times the loop's over-window relief fired (gh-1077 AC4) —
+  /// observability seam for the IT suite ("exactly ONE relief attempt").
+  @visibleForTesting
+  int overWindowReliefCountForTest = 0;
 
   /// The registry built in [_withEnv]; `null` for services constructed
   /// around a pre-constructed [Agent] (tests), where the registry is owned
