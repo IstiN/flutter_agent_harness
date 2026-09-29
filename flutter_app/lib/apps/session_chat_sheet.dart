@@ -15,6 +15,7 @@ import 'package:fa_ui/fa_ui.dart'
         FaAdaptiveHeader,
         FaAuthRecoveryCallback,
         FaChatSurfaceHandlers,
+        FaChatService,
         FaHeaderAction,
         FaRunStatusRow,
         TrajectoryController,
@@ -1708,6 +1709,9 @@ class _SessionTranscriptState extends State<_SessionTranscript>
           );
         }
         return ListView.builder(
+          // Tests target the transcript's scrollable through this key (the
+          // fa_chat_screen 'faChatTranscriptList' pattern).
+          key: const ValueKey('sessionTranscriptList'),
           controller: _scrollController,
           // reverse: content stays pinned to the BOTTOM (the input bar) — a
           // short transcript no longer flies up and out of view when the
@@ -1718,15 +1722,20 @@ class _SessionTranscriptState extends State<_SessionTranscript>
           itemBuilder: (context, index) {
             // The status row is the visually-LAST entry (issue #1042): in
             // this reversed list index 0 is the bottom edge — right above
-            // the input bar.
+            // the input bar. The keep-alive wrapper preserves the row's
+            // State (phase ticker + elapsed clock) while the item is
+            // scrolled out of the list's cache extent: scrolling back must
+            // not reset the elapsed seconds (PR #1082 review). The item
+            // only exists while the run streams, so the keep-alive is
+            // bounded by the run.
             if (streaming && index == 0) {
-              return FaRunStatusRow(
-                key: const ValueKey('faChatRunStatusRow'),
-                service: widget.service,
-              );
+              return _KeepAliveStatusRow(service: widget.service);
             }
-            final message =
-                messages[messages.length - 1 - (streaming ? index - 1 : index)];
+            // Slot 0 is the newest message; while streaming the status row
+            // occupies slot 0 and the messages shift down by one.
+            final messageIndex =
+                messages.length - 1 - (streaming ? index - 1 : index);
+            final message = messages[messageIndex];
             return ChatMessageTile(
               message: message,
               images: _images,
@@ -1750,6 +1759,35 @@ class _SessionTranscriptState extends State<_SessionTranscript>
           },
         );
       },
+    );
+  }
+}
+
+/// The sheet's transcript status row wrapped in a keep-alive: the
+/// `ListView.builder` disposes items scrolled out of the cache extent,
+/// which would drop the row's ticker State and reset the elapsed clock on
+/// scroll-back. The item only exists while the run streams (the list's
+/// +1 slot), so the keep-alive never outlives the run.
+class _KeepAliveStatusRow extends StatefulWidget {
+  const _KeepAliveStatusRow({required this.service});
+
+  final FaChatService service;
+
+  @override
+  State<_KeepAliveStatusRow> createState() => _KeepAliveStatusRowState();
+}
+
+class _KeepAliveStatusRowState extends State<_KeepAliveStatusRow>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return FaRunStatusRow(
+      key: const ValueKey('faChatRunStatusRow'),
+      service: widget.service,
     );
   }
 }

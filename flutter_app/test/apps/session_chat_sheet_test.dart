@@ -1592,6 +1592,59 @@ void main() {
       }
       expect(service.isStreaming, isTrue);
     });
+
+    testWidgets("E3: the row's elapsed clock survives scrolling the row out "
+        'of the list — keep-alive, no reset (PR #1082 review)', (tester) async {
+      final env = MemoryExecutionEnv();
+      final service = _fakeService(env, _hungResponse());
+      addTearDown(service.dispose);
+      // A long transcript so the row can be scrolled beyond the list's
+      // cache extent (the default builder would dispose its State).
+      for (var i = 0; i < 40; i++) {
+        service.messages.addAll([
+          FahChatMessage(role: 'user', content: 'question $i'),
+          FahChatMessage(role: 'assistant', content: 'answer $i'),
+        ]);
+      }
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('sess-1042', service);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(body: SessionChatSheet(manager: manager)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      // Open the panel (the AC3 flow: focus the field), start the run.
+      await tester.tap(find.byType(TextField).first);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await startRun(tester, service);
+      expect(service.isStreaming, isTrue);
+      await tester.pump(const Duration(seconds: 3));
+      expect(find.textContaining('· 3s'), findsOneWidget);
+
+      final list = find.byKey(const ValueKey('sessionTranscriptList'));
+      // Scroll the row (slot 0, the reversed list's newest end) out of the
+      // viewport AND the cache extent — the builder unmounts (or,
+      // keep-alive: buckets) its State there.
+      final position = tester.state<ScrollableState>(
+        find.descendant(of: list, matching: find.byType(Scrollable)).first,
+      ).position;
+      position.jumpTo(1400);
+      await tester.pump();
+      expect(find.byKey(statusRowKey), findsNothing);
+
+      // Two fake seconds pass while the row is out; scroll back: the
+      // clock CONTINUED (5s) — a disposed State would read 0s.
+      await tester.pump(const Duration(seconds: 2));
+      position.jumpTo(0);
+      await tester.pump();
+      expect(find.textContaining('· 5s'), findsOneWidget);
+      expect(find.textContaining('· 0s'), findsNothing);
+    });
   });
   group('SessionChatSheet session tree (issue #198)', () {
     /// Seeds a main + subagent child pair on disk (the header metadata
