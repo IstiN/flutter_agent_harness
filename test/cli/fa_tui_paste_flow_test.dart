@@ -243,24 +243,48 @@ void main() {
       inputText: '',
     );
     // One user paste in a bracketed-paste terminal: the key event AND the
-    // paste message both fire, both probe.
+    // paste message both arrive. Only the first path fires a probe.
     final (m1, keyCmd) = model.update(
       KeyPressMsg(
         const TeaKey(code: KeyCode.rune, text: 'v', modifiers: {KeyMod.ctrl}),
       ),
     );
     final (m2, pasteCmd) = (m1 as FaTuiModel).update(PasteMsg(''));
+    expect(pasteCmd, isNull,
+        reason: 'the twin path never spawns a second subprocess read');
     final keyResult = await keyCmd?.call();
-    final pasteResult = await pasteCmd?.call();
-    t = 1100; // both results land inside the dedupe window
     final (m3, _) = (m2 as FaTuiModel).update(keyResult!);
-    final (m4, _) = (m3 as FaTuiModel).update(pasteResult!);
 
-    expect((m4 as FaTuiModel).attachments, hasLength(1),
-        reason: 'the duplicate probe is suppressed');
+    expect((m3 as FaTuiModel).attachments, hasLength(1));
   });
 
-  test('the same image after the dedupe window attaches again', () async {
+  test('a bracketed-paste twin after a slow read still spawns no probe',
+      () async {
+    var t = 1000;
+    var model = build(
+      reader: () async => PasteboardImage(_png),
+      now: () => DateTime.fromMillisecondsSinceEpoch(t),
+      inputText: '',
+    );
+    // The key-event probe fires at t=1000 but its result lands late; the
+    // twin PasteMsg arrives at t=1400 — inside the gesture window — and
+    // must not probe again regardless of result timing.
+    final (m1, keyCmd) = model.update(
+      KeyPressMsg(
+        const TeaKey(code: KeyCode.rune, text: 'v', modifiers: {KeyMod.ctrl}),
+      ),
+    );
+    t = 1400;
+    final (m2, pasteCmd) = (m1 as FaTuiModel).update(PasteMsg(''));
+    expect(pasteCmd, isNull);
+    final keyResult = await keyCmd?.call();
+    final (m3, _) = (m2 as FaTuiModel).update(keyResult!);
+
+    expect((m3 as FaTuiModel).attachments, hasLength(1));
+  });
+
+  test('a second paste after the gesture window probes and attaches again',
+      () async {
     var t = 1000;
     var model = build(
       reader: () async => PasteboardImage(_png),
@@ -278,15 +302,52 @@ void main() {
     expect((m2 as FaTuiModel).attachments, hasLength(1));
 
     // A deliberate second paste much later attaches its own chip.
+    t = 1700; // beyond the 500ms gesture window
     final (m3, cmd2) = m2.update(
       KeyPressMsg(
         const TeaKey(code: KeyCode.rune, text: 'v', modifiers: {KeyMod.ctrl}),
       ),
     );
-    t = 1700; // beyond the 500ms window
     final secondResult = await cmd2?.call();
     final (m4, _) = (m3 as FaTuiModel).update(secondResult!);
 
     expect((m4 as FaTuiModel).attachments, hasLength(2));
+  });
+
+  test('an oversized image on an EMPTY paste names the failure (image intent)',
+      () async {
+    var model = build(
+      reader: () async =>
+          PasteboardImage(List.filled(maxPasteImageBytes + 1, 0)),
+      inputText: '',
+    );
+    final (next, cmd) = model.update(PasteMsg(''));
+    model = next as FaTuiModel;
+    final followUp = await cmd?.call();
+    model = model.update(followUp!).$1 as FaTuiModel;
+
+    expect(model.attachments, isEmpty);
+    expect(
+      model.outputLines.join('\n'),
+      contains('clipboard image too large'),
+    );
+  });
+
+  test('an oversized image on a text paste stays silent', () async {
+    var model = build(
+      reader: () async =>
+          PasteboardImage(List.filled(maxPasteImageBytes + 1, 0)),
+      inputText: '',
+    );
+    final linesBefore = model.outputLines.length;
+    final (next, cmd) = model.update(PasteMsg('plain words'));
+    model = next as FaTuiModel;
+    final followUp = await cmd?.call();
+    model = model.update(followUp!).$1 as FaTuiModel;
+
+    expect(model.inputText, 'plain words');
+    expect(model.attachments, isEmpty);
+    expect(model.outputLines.length, linesBefore,
+        reason: 'a normal text paste never prints clipboard errors');
   });
 }
