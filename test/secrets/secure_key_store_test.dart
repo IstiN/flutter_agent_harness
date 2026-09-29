@@ -580,8 +580,7 @@ void main() {
       expect(report.outcomes, isEmpty);
     });
 
-    test('save degradations are counted for the /key status summary',
-        () async {
+    test('save degradations are counted for the /key status summary', () async {
       final store = _MapStore()..failWrites = true;
       final cache = SecureKeyCache(store);
       await cache.probe();
