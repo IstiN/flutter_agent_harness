@@ -316,6 +316,13 @@ final class FaTuiModel extends Model {
   /// host's [FaTuiController.openPrompt] future can complete.
   Completer<TuiPromptAnswer?>? _promptCompleter;
 
+  /// Issue #1067 dedupe: the last image a pasteboard probe attached and
+  /// when. A Ctrl+V and the bracketed paste of the same user action fire
+  /// two probes for one clipboard state; the second identical result inside
+  /// the dedupe window must not stack a second chip.
+  List<int>? _lastPasteboardImageBytes;
+  int _lastPasteboardImageAtMs = -1;
+
   final List<String> outputLines;
 
   /// The readline-grade line editor (issue #275 scope 3): single source of
@@ -808,6 +815,8 @@ final class FaTuiModel extends Model {
     copy._stickyFmtSource = _stickyFmtSource;
     copy._stickyFmtWidth = _stickyFmtWidth;
     copy._promptCompleter = _promptCompleter;
+    copy._lastPasteboardImageBytes = _lastPasteboardImageBytes;
+    copy._lastPasteboardImageAtMs = _lastPasteboardImageAtMs;
     copy._hitRegions = _hitRegions;
     copy._mouseRouter = _mouseRouter;
     copy._mouseHintShown = _mouseHintShown;
@@ -1296,7 +1305,15 @@ final class FaTuiModel extends Model {
       return (copyWith(prompt: next), null);
     }
     // One insert call = one undo group: a paste undoes as a whole.
-    return (copyWith(editor: editor.insert(content)), null);
+    // Any paste action also probes the clipboard for images (issue #1067):
+    // terminal-menu Paste / Cmd+V arrive as bracketed paste and never as
+    // Ctrl+V, so the probe rides along here. Additive: text still inserts,
+    // failed probes stay silent ([_pasteboardProbe(true)]), and prompt mode
+    // never probes — plain-text pastes stay plain above.
+    final probe = callbacks.readClipboardImage == null
+        ? null
+        : _pasteboardProbe(true);
+    return (copyWith(editor: editor.insert(content)), probe);
   }
 
   (Model, Cmd?) _handleMultiCharRunes(KeyPressMsg msg) {
