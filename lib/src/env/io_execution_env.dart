@@ -409,12 +409,14 @@ final class LocalShell implements Shell, BackgroundShell {
   static bool? ownProcessGroupOverride;
   static bool? _ownGroupCached;
 
-  /// Whether background jobs start as their own session and process-group
-  /// leader (`setsid sh -c …`, posix only): stop() then signals the whole
-  /// tree with one group kill, and the boot sweep can recognize a job's
-  /// leftover group after a crash (issue #517). setsid execs sh in place —
+  /// Whether children can start as their own session and process-group
+  /// leader (`setsid sh -c …`, posix only): background jobs then stop with
+  /// one group kill and the boot sweep can recognize a job's leftover group
+  /// after a crash (issue #517), and a timed-out/cancelled FOREGROUND exec
+  /// reaps its whole tree the same way instead of stranding a surviving
+  /// grandchild on the output pipe (gh-1053). setsid execs sh in place —
   /// no fork — so the tracked pid IS the group id.
-  static bool get jobsGetOwnProcessGroup =>
+  static bool get ownProcessGroupAvailable =>
       ownProcessGroupOverride ?? (_ownGroupCached ??= _probeOwnProcessGroup());
 
   static bool _probeOwnProcessGroup() {
@@ -434,6 +436,26 @@ final class LocalShell implements Shell, BackgroundShell {
   /// well-behaved children to exit, short enough to keep `bash_job stop`
   /// snappy.
   static const _killGrace = Duration(milliseconds: 400);
+
+  /// Cap on the stdout/stderr pipe-drain wait after a foreground tree kill
+  /// (gh-1053): a descendant that survived the kill (or one the walk could
+  /// not see) can hold the pipe write end indefinitely — the exec future
+  /// must still return, with the partial capture. Total foreground bound:
+  /// timeout + [_killGrace] + this grace.
+  static const _drainGrace = Duration(seconds: 3);
+
+  /// Stops a foreground process tree (gh-1053): [killTree] reaps the whole
+  /// tree — one group signal when the child leads its own group, the live
+  /// `ps` walk otherwise, `taskkill /T` on Windows — then a direct kill
+  /// backstops whatever the tree round missed. Mirrors `_LocalShellJob
+  /// .stop()`. Best-effort: never throws.
+  static Future<void> _stopTree(
+    Process process, {
+    required bool ownGroup,
+  }) async {
+    await LocalShell.killTree(process.pid, ownGroup: ownGroup);
+    process.kill();
+  }
 
   /// Terminates [pid]'s whole process tree (issue #517): the process group
   /// when the job is its own group leader (one signal — also covers
@@ -610,6 +632,18 @@ final class LocalShell implements Shell, BackgroundShell {
     }
   }
 
+  /// Tail-caps a killed run's capture at the source (review thread 8):
+  /// keep the last [_captureMax] bytes with a marker — the diagnostic tail
+  /// of a timeout/abort. Successful runs keep the full output (this is
+  /// only used for the error fields).
+  static const _captureMax = 64 * 1024;
+
+  static String _captureTail(StringBuffer buffer) {
+    final s = buffer.toString();
+    if (s.length <= _captureMax) return s;
+    return '…[truncated]${s.substring(s.length - _captureMax)}';
+  }
+
   static Result<ShellExecResult, ExecutionError> _result({
     required ExecutionError? callbackError,
     required bool timedOut,
@@ -620,13 +654,31 @@ final class LocalShell implements Shell, BackgroundShell {
     required int exitCode,
   }) {
     if (callbackError != null) return Err(callbackError);
+    // gh-1053 (review rework): a killed call returns the captured partial
+    // output — the bounded return exists so a hung call comes back WITH
+    // its evidence, not just a verdict. Capped AT THE SOURCE (review
+    // thread 8): a chatty command streaming tens of MB before its timeout
+    // must not keep its full output on the error object — the diagnostic
+    // tail is what a bounded return needs.
     if (timedOut) {
       return Err(
-        ExecutionError(ExecutionErrorCode.timeout, 'timeout: $timeout'),
+        ExecutionError(
+          ExecutionErrorCode.timeout,
+          'timeout: $timeout',
+          stdout: _captureTail(stdout),
+          stderr: _captureTail(stderr),
+        ),
       );
     }
     if (cancelled) {
-      return const Err(ExecutionError(ExecutionErrorCode.aborted, 'aborted'));
+      return Err(
+        ExecutionError(
+          ExecutionErrorCode.aborted,
+          'aborted',
+          stdout: _captureTail(stdout),
+          stderr: _captureTail(stderr),
+        ),
+      );
     }
     return Ok(
       ShellExecResult(
@@ -646,7 +698,12 @@ final class LocalShell implements Shell, BackgroundShell {
     if (token?.isCancelled ?? false) {
       return const Err(ExecutionError(ExecutionErrorCode.aborted, 'aborted'));
     }
-    final started = await _start(command, options);
+    // gh-1053: start the child in its own session/process group when the
+    // host can (same probe the background jobs use) — the timeout and
+    // cancel paths below then reap the WHOLE tree with one group signal
+    // instead of stranding a surviving grandchild on the output pipe.
+    final ownGroup = LocalShell.ownProcessGroupAvailable;
+    final started = await _start(command, options, ownSession: ownGroup);
     if (started.isErr) return Err(started.errorOrNull!);
     final process = started.valueOrNull!;
 
@@ -676,34 +733,89 @@ final class LocalShell implements Shell, BackgroundShell {
             (error) => callbackError = error,
           ),
         );
+    // Open-pipe tracker for the kill guards below: both futures complete
+    // when the pipe write end closes. A late stream error is consumed HERE
+    // only for the counting future — the awaiters below keep the original
+    // propagation semantics.
+    var openStreams = 2;
+    void streamClosed() => openStreams--;
+    unawaited(
+      stdoutDone.then(
+        (_) => streamClosed(),
+        onError: (Object _) => streamClosed(),
+      ),
+    );
+    unawaited(
+      stderrDone.then(
+        (_) => streamClosed(),
+        onError: (Object _) => streamClosed(),
+      ),
+    );
+    var childGone = false;
+    unawaited(process.exitCode.then((_) => childGone = true));
 
     Timer? timer;
     var timedOut = false;
     final timeout = options?.timeout;
     if (timeout != null) {
       timer = Timer(timeout, () {
+        // The exec is fully settled: the child exited AND both pipes
+        // closed — nothing to reap, never signal (mirrors the job
+        // registry's isRunning check, which this approximates). With the
+        // child gone but a drain still in flight the signal still fires:
+        // a live group member is what's holding the pipe, so the group is
+        // ours — the residual recycled-pid window (pid freed by the reap
+        // and re-led before the signal lands) is theoretical and accepted,
+        // as in the job path.
+        if (childGone && openStreams == 0) return;
         timedOut = true;
-        process.kill();
+        unawaited(_stopTree(process, ownGroup: ownGroup));
       });
     }
     void onCancel(_) {
-      process.kill();
+      if (childGone && openStreams == 0) return;
+      unawaited(_stopTree(process, ownGroup: ownGroup));
     }
 
     token?.onCancel.then(onCancel);
 
     final exitCode = await process.exitCode;
-    timer?.cancel();
+    // gh-1053: the timer stays ARMED after the direct child exits — an
+    // orphaned descendant can hold the pipes past the child's death, and
+    // this timer is what bounds the call ("≤ timeout + kill grace + drain
+    // grace regardless of what descendants do"). It no-ops once the exec
+    // is fully settled (guard above); the settled drain
+    // cancels it below. Cancel-on-exit used to strand exactly the
+    // run-36421037356 shape (shell long dead, grandchild on the pipe).
     if (options?.liveStdin != null) {
       unawaited(process.stdin.close().catchError((_) {}));
     }
-    await Future.wait([stdoutDone, stderrDone]);
+    // gh-1053 (review rework): the drain is capped UNCONDITIONALLY. This
+    // point is only reached after `process.exitCode` resolved, so every
+    // remaining byte on the pipes comes from an ORPHANED descendant
+    // holding the write end — waiting for it full-unbounded has no
+    // legitimate use (a caller wanting daemon output should use
+    // `run_in_bg`), with or without a timeout. The race never delays a
+    // healthy call: after the child's death the pipe buffer drains in
+    // milliseconds. Timeout/cancel'd calls complete in
+    // ≤ timeout + _killGrace + _drainGrace; a no-timeout call in
+    // ≤ child runtime + _drainGrace. No kill round for the no-timeout
+    // case — a detached daemon is the caller's on purpose.
+    final drained = Future.wait([stdoutDone, stderrDone]);
+    await Future.any([drained, Future<void>.delayed(_drainGrace)]);
+    // Once the grace won the race, a late stream error (malformed bytes
+    // from the dying tree) must never surface unhandled.
+    drained.ignore();
+    timer?.cancel();
+    // Read AFTER the waits: a cancel that lands mid-drain must still mark
+    // the result (the flag used to be captured pre-drain and lost).
+    final cancelled = token?.isCancelled ?? false;
 
     return _result(
       callbackError: callbackError,
       timedOut: timedOut,
       timeout: timeout,
-      cancelled: token?.isCancelled ?? false,
+      cancelled: cancelled,
       stdout: stdout,
       stderr: stderr,
       exitCode: exitCode,
@@ -746,7 +858,7 @@ final class LocalShell implements Shell, BackgroundShell {
     if (token?.isCancelled ?? false) {
       return const Err(ExecutionError(ExecutionErrorCode.aborted, 'aborted'));
     }
-    final ownGroup = LocalShell.jobsGetOwnProcessGroup;
+    final ownGroup = LocalShell.ownProcessGroupAvailable;
     final started = await _start(command, options, ownSession: ownGroup);
     if (started.isErr) return Err(started.errorOrNull!);
     final process = started.valueOrNull!;
