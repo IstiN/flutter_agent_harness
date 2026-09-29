@@ -1773,6 +1773,71 @@ ToolExecutionResult _readSqliteSchema(
 }
 
 // ---------------------------------------------------------------------------
+// per-path mutation lock (issue #1083)
+// ---------------------------------------------------------------------------
+
+/// Serializes mutating built-in tools (`write`, `edit`) on the same resolved
+/// file path (issue #1083): a parallel batch of same-file edits used to
+/// interleave their read-modify-write windows — every call reported success
+/// but only the last write survived on disk. Holding the whole
+/// read-validate-write body makes each edit apply on top of the previous
+/// one; different files and read-only tools are unaffected. The registry is
+/// process-wide, matching the conflict domain: one agent process
+/// (cross-process locking is a separate OS-level problem, out of scope).
+///
+/// ponytail: covers the built-in file tools only; third-party plugin file
+/// tools don't inherit this yet — lift the guard into the ToolExecutor keyed
+/// by a `mutatesPath` tool hint if plugins ever need it.
+final _pathMutationLock = _PathMutationLock();
+
+/// The canonical lock key for [path]: the env-absolute spelling, so aliased
+/// spellings of one file (`f.md`, `./f.md`, absolute) serialize together.
+/// Mirrors `HashlinePatcher._canonicalPath`; symlink aliasing stays out of
+/// scope (the pure-Dart env seam does not resolve links).
+Future<String> _canonicalPath(ExecutionEnv env, String path) async {
+  final resolved = await env.absolutePath(path);
+  return resolved.valueOrNull ?? path;
+}
+
+/// Per-path async mutex. Waiters chain per key: a body runs only after the
+/// previous body for the same path settled. Every wait is single-resource
+/// (one path), so acquisition order can never deadlock and no timeouts are
+/// needed (issue #1083 E2).
+final class _PathMutationLock {
+  final _tails = <String, Future<void>>{};
+
+  /// Runs [body] holding the lock on [path].
+  Future<T> run<T>(String path, Future<T> Function() body) {
+    final previous = _tails[path];
+    final released = Completer<void>();
+    _tails[path] = released.future;
+    return Future<T>(() async {
+      try {
+        if (previous != null) await previous;
+      } catch (_) {
+        // The previous holder's failure is its own result; the path is free.
+      }
+      try {
+        return await body();
+      } finally {
+        released.complete();
+        if (identical(_tails[path], released.future)) _tails.remove(path);
+      }
+    });
+  }
+
+  /// Runs [body] holding the locks on every distinct [paths] entry,
+  /// acquired in sorted order to keep multi-path waits deadlock-free.
+  Future<T> runAll<T>(Iterable<String> paths, Future<T> Function() body) {
+    final ordered = paths.toSet().toList()..sort();
+    Future<T> acquire(int index) => index == ordered.length
+        ? Future<T>(body)
+        : run(ordered[index], () => acquire(index + 1));
+    return acquire(0);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // write (ported from pi's tools/write.ts)
 // ---------------------------------------------------------------------------
 
@@ -1804,11 +1869,15 @@ AgentTool writeFileTool(ExecutionEnv env) {
       cancelToken?.throwIfCancelled();
       final path = arguments['path'] as String;
       final content = arguments['content'] as String;
-      final written = await env.writeFile(path, content);
-      if (written.isErr) throw StateError('${written.errorOrNull}');
-      return ToolExecutionResult.text(
-        'Successfully wrote ${_byteLength(content)} bytes to $path',
-      );
+      // Issue #1083: hold the per-path lock across the whole mutation so a
+      // concurrent same-file tool call queues behind it instead of racing.
+      return _pathMutationLock.run(await _canonicalPath(env, path), () async {
+        final written = await env.writeFile(path, content);
+        if (written.isErr) throw StateError('${written.errorOrNull}');
+        return ToolExecutionResult.text(
+          'Successfully wrote ${_byteLength(content)} bytes to $path',
+        );
+      });
     },
   );
 }
@@ -1886,7 +1955,21 @@ AgentTool editFileTool(ExecutionEnv env, {HashlineSnapshotStore? snapshots}) {
             '(exact-match mode), not both.',
           );
         }
-        return _executeHashlineEdit(env, store, path, patch, cancelToken);
+        // Parse outside the lock: argument errors must not queue behind
+        // another holder. Section paths key the lock the same way the
+        // exact-match mode does (issue #1083), so interleaved hashline
+        // patches serialize per file and the TAG guard decides the winner.
+        final parsed = HashlinePatch.parse(patch, fallbackPath: path);
+        if (parsed.sections.isEmpty) {
+          throw StateError('No hashline sections found in patch input.');
+        }
+        return _pathMutationLock.runAll(
+          {
+            for (final section in parsed.sections)
+              await _canonicalPath(env, section.path),
+          },
+          () => _executeHashlineEdit(env, store, path, parsed, cancelToken),
+        );
       }
       if (path == null || oldText == null || newText == null) {
         throw StateError(
@@ -1894,7 +1977,12 @@ AgentTool editFileTool(ExecutionEnv env, {HashlineSnapshotStore? snapshots}) {
           'path + oldText + newText (exact-match mode).',
         );
       }
-      return _executeExactMatchEdit(env, path, oldText, newText, cancelToken);
+      // Issue #1083: hold the lock across the read-validate-write window so
+      // a concurrent same-file edit applies on top of this one's result
+      // instead of both editing the same snapshot.
+      return _pathMutationLock.run(await _canonicalPath(env, path), () {
+        return _executeExactMatchEdit(env, path, oldText, newText, cancelToken);
+      });
     },
   );
 }
@@ -1939,20 +2027,16 @@ Future<ToolExecutionResult> _executeExactMatchEdit(
   );
 }
 
-/// Runs one hashline-mode edit: parses [patchText], applies it all-or-
-/// nothing via [HashlinePatcher], and renders the post-edit `[path#TAG]`
-/// header(s) the model anchors its next edit on (omp's edit response).
+/// Runs one hashline-mode edit: applies the parsed [patch] all-or-nothing
+/// via [HashlinePatcher], and renders the post-edit `[path#TAG]` header(s)
+/// the model anchors its next edit on (omp's edit response).
 Future<ToolExecutionResult> _executeHashlineEdit(
   ExecutionEnv env,
   HashlineSnapshotStore store,
   String? path,
-  String patchText,
+  HashlinePatch patch,
   CancelToken? cancelToken,
 ) async {
-  final patch = HashlinePatch.parse(patchText, fallbackPath: path);
-  if (patch.sections.isEmpty) {
-    throw StateError('No hashline sections found in patch input.');
-  }
   final patcher = HashlinePatcher(env: env, snapshots: store);
   final result = await patcher.apply(patch);
   cancelToken?.throwIfCancelled();
