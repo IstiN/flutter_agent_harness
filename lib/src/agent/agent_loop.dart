@@ -1246,6 +1246,14 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
         reliefUsed = true;
         try {
           final relieved = await config.overWindowRelief!(context.messages);
+          if (_isCancelRequested(cancelToken)) {
+            // Issue #1085: the relief tokens are linked to the run token —
+            // a USER abort mid-relief cancels the compaction and lands
+            // here. The run must end aborted, NOT with the guard error:
+            // the guard error re-arms the host's auto-continuation funnel,
+            // which would silently resume the task the user just stopped.
+            return await _abortedTurn(context, config, emit);
+          }
           if (relieved != null) {
             // The relieved transcript becomes the loop's live context:
             // the retried request is built from it and every later turn
@@ -1258,7 +1266,13 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
             continue;
           }
         } catch (_) {
-          // A failed relief = no relief; the error below is the answer.
+          // A failed relief = no relief; the error below is the answer —
+          // unless the failure WAS a cancellation (user abort mid-relief,
+          // issue #1085): that must surface as aborted, never as the
+          // guard error.
+          if (_isCancelRequested(cancelToken)) {
+            return await _abortedTurn(context, config, emit);
+          }
         }
       }
       return (

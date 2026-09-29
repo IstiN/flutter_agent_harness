@@ -312,14 +312,23 @@ extension AgentCliCompactionRun on AgentCli {
     }
     _pushBusyPhase('Compacting context…');
     _logDiagnostic('auto-compact start sid=$_logSid tokens=$tokens');
-    await _runAutoCompact('[auto-compacted]');
-    // Hand the busy row back to the run: a stale 'Compacting context…'
-    // over the streamed turn reads as a compaction hang.
-    _pushBusyPhase('');
+    try {
+      await _runAutoCompact('[auto-compacted]');
+    } finally {
+      // Hand the busy row back to the run even when the compaction throws
+      // or is cancelled (issue #1085): a stale 'Compacting context…'
+      // over the streamed turn reads as a compaction hang.
+      _pushBusyPhase('');
+    }
     // [_runAutoCompact] reports '[auto-compacted]' only on success; treat
     // the transcript size as the source of truth for the caller.
+    // Issue #1085 M2a: continuation success = the transcript FITS THE
+    // WINDOW now, not "any reduction". A reduce-but-still-over pass used
+    // to read as success, the guard re-fired on the retried turn, and the
+    // one-shot resume budget was burned on a transcript that still could
+    // not be sent.
     final after = _liveRequestTokens();
-    return after < tokens;
+    return after <= _effectiveContextWindow;
   }
 
   /// The shared request-size estimate for compaction decisions (see
@@ -369,6 +378,30 @@ extension AgentCliCompactionRun on AgentCli {
     // (the following agent_start reuses it). The end frame comes from the
     // pass result in [_AutoCompactorCliHooks.onPass] — the honest numbers.
     _hep?.compactionStart();
+    // User-wired compaction cancellation (issue #1085 M3): a compaction
+    // can run 15-30 min (pre-flight, mid-run relief, post-run) and the
+    // run's own token does not exist for two of those windows — Ctrl+C
+    // used to be a no-op for the whole duration. The token is also
+    // LINKED to the live run token when one exists (mid-run relief), so
+    // `_agent.abort()` cancels the in-flight summarizer too. Explicit
+    // aborts only: the run idle watchdog is suspended around relief and
+    // never cancels through here.
+    final abort = CancelTokenSource();
+    _activeCompactionAbort = abort;
+    final runToken = _agent.activeRunToken;
+    if (runToken != null) {
+      unawaited(
+        runToken.onCancel.then((_) => abort.cancel(runToken.cancelReason)),
+      );
+    }
+    try {
+      return await _runAutoCompactWithToken(label, abort.token);
+    } finally {
+      _activeCompactionAbort = null;
+    }
+  }
+
+  Future<bool> _runAutoCompactWithToken(String label, CancelToken token) async {
     final smol = config.modelRolesResolver?.resolveRole(smolModelRole);
     final hooks = _AutoCompactorCliHooks(
       this,
@@ -400,6 +433,8 @@ extension AgentCliCompactionRun on AgentCli {
       attemptBudget: Duration(
         seconds: config.compactionJudgeBudgetSeconds ?? 300,
       ),
+      // Issue #1085 M1/M3: linked cancellation — see [_runAutoCompact].
+      runToken: token,
       memoryExtractionHook: (text) async {
         final tui = _tuiController;
         tui?.setBusyPhase('Extracting memory…');
@@ -463,10 +498,15 @@ extension OverWindowGuardRelief on AgentCli {
       systemPrompt: _agent.state.systemPrompt,
       tools: _agent.state.tools,
     );
-    await _runAutoCompact('[auto-compacted]');
-    // Hand the busy row back to the run: a stale 'Compacting context…'
-    // over the streamed turn reads as a compaction hang.
-    _tuiController?.setBusyPhase('');
+    // Issue #1085 M3: the relief path never showed the busy label — a
+    // 15-30 min compaction read as a dead, silent stall. Same label as
+    // the auto-compact path.
+    _pushBusyPhase('Compacting context…');
+    try {
+      await _runAutoCompact('[auto-compacted]');
+    } finally {
+      _pushBusyPhase('');
+    }
     final after = _agent.state.messages.toList();
     final afterTokens = _liveRequestTokens();
     if (afterTokens >= beforeTokens) {
@@ -477,6 +517,18 @@ extension OverWindowGuardRelief on AgentCli {
       'over-window relief done sid=$_logSid tokens=$afterTokens '
       '(was $beforeTokens, ${after.length} messages)',
     );
+    // Issue #1085 M3: the relieved turn CONTINUES — say so visibly, the
+    // post-compaction silence is exactly what this run must never do. A
+    // reduce-but-still-over relief stays unmarked: the guard's verbatim
+    // error is the honest next line there (the loop re-measures the
+    // returned list on the window basis).
+    if (afterTokens <= _effectiveContextWindow) {
+      io.writeln(
+        _style.dim(
+          '[resuming] continuing the turn on the compacted context',
+        ),
+      );
+    }
     return after;
   }
 }
