@@ -74,7 +74,6 @@ customProviders:
         'Edit provider',
         timeout: const Duration(seconds: 20),
       );
-<<<<<<< HEAD
       expect(raw, contains('Edit provider'));
       // gh-1049: assert on the CAPTURED screen — a fresh screenText read
       // after the waits re-samples the screen mid-render.
@@ -88,11 +87,6 @@ customProviders:
       );
       expect(screen, contains('Edit provider'));
       expect(screen, contains('Delete provider'));
-=======
-      expect(harness.screenText, contains('Edit provider'));
-      expect(harness.screenText, contains('Delete provider'));
-      expect(raw, contains('Edit provider'));
->>>>>>> origin/main
 
       // Leave the picker (Esc reports the cancellation to the wizard).
       harness.sendEscape();

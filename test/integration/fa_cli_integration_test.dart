@@ -64,7 +64,6 @@ void main() {
         );
         harness.sendEnter();
 
-<<<<<<< HEAD
         // Selecting the saved provider opens its Edit/Delete picker. The
         // contract is the PAINTED screen — a raw-stream wait races frame
         // painting on loaded runners (#550/#557 family), so anchor on the
@@ -72,10 +71,6 @@ void main() {
         // the captured screen — a header-wait + fresh screenText read
         // sampled the picker mid-render (rows land across frames).
         var screen = await harness.waitForScreen(
-=======
-        // Selecting the saved provider opens its Edit/Delete picker.
-        await harness.waitForText(
->>>>>>> origin/main
           'Edit provider',
           timeout: const Duration(seconds: 20),
         );
