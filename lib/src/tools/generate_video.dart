@@ -537,9 +537,11 @@ Future<String> _save(
   if (created.isErr) {
     throw VideoException('failed to create $dir: ${created.errorOrNull}');
   }
+  // dart2js: shifts are 32-bit — `1 << 32` == 0, so nextInt(0) would throw
+  // on web (issue #1074). Spell the bound literally.
   final unique =
       DateTime.now().microsecondsSinceEpoch.toRadixString(36) +
-      _videoNameRandom.nextInt(1 << 32).toRadixString(36);
+      _videoNameRandom.nextInt(0xFFFFFFFF).toRadixString(36);
   final name =
       '${prefix}_${DateTime.now().millisecondsSinceEpoch}_$unique.$ext';
   final rel = '$dir/$name';
