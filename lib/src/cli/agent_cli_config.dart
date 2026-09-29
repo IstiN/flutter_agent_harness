@@ -718,7 +718,8 @@ final class AgentCliConfig {
   final List<AgentCapability> agentCapabilities;
 
   /// The `waiting:` section (issue #450): visible-waiting heartbeat
-  /// cadence and the `--wait-for-jobs` ceiling.
+  /// cadence, the `--wait-for-jobs` ceiling, and the per-call foreground
+  /// liveness thresholds (gh-1055).
   final WaitingConfig waiting;
 
   /// The `jobs:` section (issue #478): boot-maintenance knobs for the
