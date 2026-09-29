@@ -35,6 +35,7 @@ final _infoCommandHandlers = <String, Future<void> Function(AgentCli, String)>{
   '/a2a': (cli, rest) async => cli._printA2aStatus(),
   '/terminal-setup': (cli, rest) async => cli._printTerminalSetup(),
   '/ext': (cli, rest) async => cli._extSlash(rest),
+  '/jsr': (cli, rest) async => cli._jsrSlash(rest),
   '/power': (cli, rest) async => cli._powerSlash(),
   // Hidden (issue #735): not in the slash menu — a diagnostics dump of
   // the live tty's termios state for steering-freeze triage.
