@@ -79,6 +79,11 @@ const defaultLsEntryLimit = 500;
 /// Maximum shell timeout: pi clamps at the int32 max milliseconds.
 const _maxTimeoutMs = 2147483647;
 
+/// "Unbounded" line cap for truncation helpers: 2^62 as a literal because
+/// dart2js shifts are 32-bit — `1 << 62` evaluates to 0 on web, which would
+/// truncate everything (issue #1074).
+const _unboundedMaxLines = 0x4000000000000000;
+
 /// Transient-failure retries for foreground bash runs: timeout-class
 /// failures (a hung transport, or the model's own per-call cap) are
 /// retried up to this many times — 3 attempts total — before the error
@@ -1581,7 +1586,7 @@ ToolExecutionResult _readArchiveDirectory(
   // Byte truncation only; the entry count is already capped above (omp sets
   // the list-limit metadata without a text notice).
   return ToolExecutionResult.text(
-    _truncateHead(output, maxLines: 1 << 62).content,
+    _truncateHead(output, maxLines: _unboundedMaxLines).content,
   );
 }
 
@@ -2104,7 +2109,7 @@ ToolExecutionResult _listingOutput(
   int limit,
   bool entryLimitReached,
 ) {
-  final truncation = _truncateHead(results.join('\n'), maxLines: 1 << 62);
+  final truncation = _truncateHead(results.join('\n'), maxLines: _unboundedMaxLines);
   var output = truncation.content;
   final notices = <String>[];
   if (entryLimitReached) {
