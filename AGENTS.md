@@ -45,12 +45,17 @@ factual: paths, commands, invariants — no essays.
   runs under `setsid` when the host has it (probe
   `ownProcessGroupAvailable`, seam `ownProcessGroupOverride`) and the
   timeout/cancel paths reap the whole tree (`killTree` + direct-kill
-  backstop) with a capped pipe-drain (`_drainGrace`) — the exec future
-  completes in ≤ timeout + kill grace + drain grace, marked
-  `timeout`/`aborted`, partial capture kept (gh-1053; the timeout timer
-  stays armed after the child exits because an orphaned descendant can
-  hold the pipes). Background jobs (issue #517) keep their own group +
-  `stop()` semantics.
+  backstop) with a capped pipe-drain (`_drainGrace`) — timeout/cancel'd
+  calls complete in ≤ timeout + kill grace + drain grace; a no-timeout
+  call within `_drainGrace` of the direct child's exit (the drain is
+  capped unconditionally: after the child is reaped every remaining pipe
+  byte comes from an orphan). Killed calls are marked `timeout`/`aborted`
+  and carry the captured partial output on `ExecutionError.stdout`/
+  `stderr` (rendered by the bash tool) (gh-1053; the timeout timer stays
+  armed after the child exits because an orphaned descendant can hold
+  the pipes — a drain that outlives the deadline marks the call
+  `timedOut` even when the child exited 0). Background jobs (issue #517)
+  keep their own group + `stop()` semantics.
 - `lib/src/tools/checkpoint_tool.dart` — `checkpoint`/`rewind` tools:
   context hygiene for detours. `CheckpointRewindController` wraps
   `Agent.prepareNextTurn`, persists via host `CheckpointSessionSink`.

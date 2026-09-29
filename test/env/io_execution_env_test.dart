@@ -481,6 +481,69 @@ void main() {
       },
       timeout: const Timeout(Duration(seconds: 30)),
     );
+
+    // Review rework (PR #1058): the bounded return must carry the evidence —
+    // the whole point of gh-1053's fix is that a 10-minute hung `flutter
+    // test` comes back with the output that explains where it stalled.
+    test(
+      'timeout error carries the captured partial stdout/stderr',
+      skip: Platform.isWindows ? 'POSIX process semantics only' : false,
+      () async {
+        addTearDown(() => Process.run('pkill', ['-f', 'sleep 609.1053']));
+        final result = await const LocalShell().exec(
+          'echo out-marker-609.1; echo err-marker-609.1 1>&2; sleep 609.1053',
+          options: const ShellExecOptions(timeout: Duration(seconds: 2)),
+        );
+        expect(result.isErr, isTrue, reason: '${result.valueOrNull}');
+        expect(result.errorOrNull?.code, ExecutionErrorCode.timeout);
+        expect(result.errorOrNull?.stdout, contains('out-marker-609.1'));
+        expect(result.errorOrNull?.stderr, contains('err-marker-609.1'));
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
+
+    test(
+      'aborted error carries the captured partial stdout/stderr',
+      skip: Platform.isWindows ? 'POSIX process semantics only' : false,
+      () async {
+        addTearDown(() => Process.run('pkill', ['-f', 'sleep 610.1053']));
+        final source = CancelTokenSource();
+        Future<void>.delayed(const Duration(milliseconds: 300), source.cancel);
+        final result = await const LocalShell().exec(
+          'echo out-marker-610.1; sleep 610.1053',
+          options: ShellExecOptions(cancelToken: source.token),
+        );
+        expect(result.isErr, isTrue, reason: '${result.valueOrNull}');
+        expect(result.errorOrNull?.code, ExecutionErrorCode.aborted);
+        expect(result.errorOrNull?.stdout, contains('out-marker-610.1'));
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
+
+    // Review rework (PR #1058 thread 4): the reported wedge shape with NO
+    // timeout and NO cancel used to hang forever — after the direct child
+    // is reaped every remaining byte comes from an orphan holding the
+    // write end, so the drain is capped unconditionally. Deliberately no
+    // kill round here: a no-timeout caller that detached a daemon
+    // (`nohup server &`) wants it to KEEP running — the call just returns.
+    test(
+      'no-timeout exec returns once the direct child has exited '
+      '(orphan-capped drain)',
+      skip: Platform.isWindows ? 'POSIX process semantics only' : false,
+      () async {
+        addTearDown(() => Process.run('pkill', ['-f', 'sleep 611.1053']));
+        final watch = Stopwatch()..start();
+        final result = await const LocalShell().exec(
+          '(sleep 611.1053 &); wait',
+        );
+        watch.stop();
+        expect(watch.elapsed, lessThan(const Duration(seconds: 6)));
+        // The command itself succeeded — the orphan is not ours to kill.
+        expect(result.isOk, isTrue, reason: '${result.errorOrNull}');
+        expect(result.valueOrNull?.exitCode, 0);
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
   });
 
   group('LocalExecutionEnv custom shell', () {
