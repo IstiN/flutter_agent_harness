@@ -11,7 +11,6 @@ library;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import '../sandbox/env_factory_io.dart' show desktopHomeDir;
-import 'app_config_loader.dart';
 
 /// The parsed owner cap, or null (absent — uncapped).
 int? loadAppContextWindowCap([String? projectDir]) {

@@ -188,6 +188,7 @@ class AgentService extends ChangeNotifier
        _skillsHomeDir = null,
        _skillsAccess = SkillsAccess.granted,
        _toolsAvailabilityStore = null,
+       // ignore: prefer_initializing_formals
        _contextWindowCap = contextWindowCap,
        approval = ApprovalManager(
          mode: initialApprovalMode ?? ApprovalMode.write,
@@ -230,8 +231,7 @@ class AgentService extends ChangeNotifier
     // gh-1077 AC4: the loop's over-window guard relief — one synchronous
     // compaction before the guard refuses (mutable knob: the agent
     // arrives pre-built here).
-    _agent.overWindowRelief =
-        (overWindow) => _relieveOverWindow(overWindow);
+    _agent.overWindowRelief = (overWindow) => _relieveOverWindow(overWindow);
     _attachApproval();
     _agent.subscribe(_onAgentEvent);
     // Chat surfaces (the ✦ dynamic-messages list, inline widget tiles)
@@ -696,7 +696,7 @@ class AgentService extends ChangeNotifier
     final taskModelsStore = _taskModelsStore;
     if (taskModelsStore != null) {
       _taskRolesResolver = ModelRolesResolver(
-        config: ModelRolesConfig(roles: _StoreBackedRolesMap(taskModelsStore)),
+        config: ModelRolesConfig(roles: StoreBackedRolesMap(taskModelsStore)),
         secrets: _secretsEnv?.secretsSnapshot() ?? const {},
       );
     }

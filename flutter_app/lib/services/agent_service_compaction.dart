@@ -146,9 +146,6 @@ class _AutoCompactorFlutterHooks implements AutoCompactorHooks {
 /// A live [Map] view of the [TaskModelsStore]'s role overrides in
 /// `roles:` config shape. Reads through on every access, so settings edits
 /// resolve on the next `task` spawn without rebuilding the agent (used by
-/// A live [Map] view of the [TaskModelsStore]'s role overrides in
-/// `roles:` config shape. Reads through on every access, so settings edits
-/// resolve on the next `task` spawn without rebuilding the agent (used by
 /// [_taskRolesResolver]).
 ///
 /// Public (gh-1077): this IS the documented app-stores → roles mapping —
@@ -158,6 +155,8 @@ final class StoreBackedRolesMap
     with MapMixin<String, List<ModelRef>>
     implements Map<String, List<ModelRef>> {
   StoreBackedRolesMap(this._store);
+
+  final TaskModelsStore _store;
   @override
   List<ModelRef>? operator [](Object? key) {
     if (key is! String) return null;
@@ -201,17 +200,18 @@ extension CompactionWindowSizing on AgentService {
   /// cannot serve hosted 128k models and 8k WebLLM presets.
   CompactionSettings get compactionSettings => _compactionWiring.settings;
 
-  /// The window left for the conversation after [_systemOverheadTokens]
-  /// and the owner cap; `0` when the prompt alone exhausts the model
-  /// window (compaction then has nothing sensible to plan against).
-  int get _conversationWindow => _compactionWiring.conversationWindow;
-
   /// The host wiring for the live agent (gh-1077). The smol summarizer is
   /// resolved lazily by [_maybeAutoCompact] — a broken smol chain must not
   /// fail the pre-run gate — so it is not part of this getter. Exposed for
-  /// the parity/window tests.
+  /// the parity/window tests; [_conversationWindow] rides inside it.
   @visibleForTesting
   CompactionHostWiring get compactionWiringForTest => _compactionWiring;
+
+  /// The window left for the conversation after [_systemOverheadTokens]
+  /// and the owner cap; `0` when the prompt alone exhausts the model
+  /// window (compaction then has nothing sensible to plan against).
+  @visibleForTesting
+  int get conversationWindowForTest => _compactionWiring.conversationWindow;
 
   CompactionHostWiring get _compactionWiring => resolveCompactionHostWiring(
     mainModel: _agent.state.model,
@@ -313,9 +313,12 @@ extension CompactionWindowSizing on AgentService {
     // summarizer, plus the debug log for post-mortems.
     if (failures.isNotEmpty) {
       final error = failures.last;
-      AppLog.w('compaction', 'auto-compaction failed: $error');
+      AppLog.i('compaction', 'auto-compaction failed: $error');
       messages.add(
-        FahChatMessage(role: 'system', content: appCompactionFailureNotice(error)),
+        FahChatMessage(
+          role: 'system',
+          content: appCompactionFailureNotice(error),
+        ),
       );
     }
     // Extensions may not call the protected notifyListeners — _notify is
@@ -339,7 +342,7 @@ extension CompactionWindowSizing on AgentService {
   /// this to ONE attempt per response; there is no loop here either.
   Future<List<Message>?> _relieveOverWindow(List<Message> overWindow) async {
     if (_session == null) return null;
-    _overWindowReliefCountForTest++;
+    overWindowReliefCountForTest++;
     final systemPrompt = _agent.state.systemPrompt;
     final tools = _agent.state.tools;
     final beforeTokens = estimateRequestTokens(
@@ -384,7 +387,7 @@ extension CompactionWindowSizing on AgentService {
         // A configured chain with no usable entry (missing key, unknown
         // provider): never throw out of the compaction path — fall through
         // to the legacy build; a total failure still lands in the notice.
-        AppLog.w('compaction', 'smol role unresolved: $error');
+        AppLog.i('compaction', 'smol role unresolved: $error');
       }
     }
     return _legacySmolSlotFromStore();
@@ -415,6 +418,9 @@ extension CompactionWindowSizing on AgentService {
       maxTokens: _agent.state.model.maxTokens,
       input: _agent.state.model.input,
     );
-    return (model: model, stream: providerStreamFunction(smolConfig.providerKind, apiKey));
+    return (
+      model: model,
+      stream: providerStreamFunction(smolConfig.providerKind, apiKey),
+    );
   }
 }
