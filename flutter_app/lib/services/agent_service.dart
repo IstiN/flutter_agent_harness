@@ -23,6 +23,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'power_guard.dart';
 
 import 'app_log.dart';
+import 'app_config_loader.dart';
 import 'image_registry_loader.dart';
 import 'memory_config_loader.dart';
 import 'compaction_engine_loader.dart';

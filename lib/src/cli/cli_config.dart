@@ -271,8 +271,8 @@ final class CliConfig {
       // Issue #772: the persisted provider identity is the catalog KIND.
       // Old name-shaped values (`chatgpt`, `chatgpt.com`) canonicalize on
       // load — the file itself is rewritten only on the next save.
-      providerKind: _canonicalSavedProvider(map['provider']) ??
-          'openai-completions',
+      providerKind:
+          _canonicalSavedProvider(map['provider']) ?? 'openai-completions',
       modelId: map['model'] as String? ?? 'openai/gpt-4o-mini',
       baseUrl: map['baseUrl'] as String? ?? 'https://openrouter.ai/api/v1',
       mode: map['mode'] as String? ?? 'code',
@@ -698,7 +698,8 @@ final class CliConfig {
   /// switch, statusLine); the file stays minimal.
   String _tuiSectionYaml() {
     final statusLineYaml = statusLine?.toYaml();
-    if (tuiTheme == null && !tuiClassic &&
+    if (tuiTheme == null &&
+        !tuiClassic &&
         (statusLineYaml == null || statusLineYaml.isEmpty)) {
       return '';
     }
@@ -1144,6 +1145,28 @@ bool? loadProjectWireDump(String projectDir) {
     if (doc is! YamlMap) return null;
     final node = doc['trajectory'];
     return node == null ? null : _parseTrajectorySection(node);
+  } on ConfigException {
+    rethrow;
+  } on Object {
+    return null;
+  }
+}
+
+/// Loads the PROJECT-level `agent.contextWindowCap` from
+/// `<projectDir>/.fah/config.yaml` (gh-1077) — the owner-side effective
+/// window cap travels with the repo the same way it does for the CLI.
+/// Null when the file or the section is absent/unreadable; a
+/// present-but-invalid section throws [ConfigException] (strict, like the
+/// user config — same [agent-section rules](_parseAgentSection)).
+int? loadProjectContextWindowCap(String projectDir) {
+  final file = File('$projectDir/.fah/config.yaml');
+  if (!file.existsSync()) return null;
+  try {
+    final doc = loadYaml(file.readAsStringSync());
+    if (doc is! YamlMap) return null;
+    final node = doc['agent'];
+    if (node == null) return null;
+    return _parseAgentSection(node)?.contextWindowCap;
   } on ConfigException {
     rethrow;
   } on Object {

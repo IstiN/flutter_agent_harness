@@ -275,8 +275,12 @@ class Agent {
 
   /// Emergency relief for the loop's over-window guard (issue #387),
   /// threaded into every [AgentLoopConfig]. `null` = the guard keeps
-  /// today's behavior (verbatim error, no mid-turn compaction).
-  final OverWindowRelief? overWindowRelief;
+  /// today's behavior (verbatim error, no mid-turn compaction). Mutable
+  /// like the other late-wirable host knobs ([streamFunction],
+  /// [externalSteeringSource]): hosts that build the agent before the
+  /// service exists (the app's pre-constructed-agent constructor) attach
+  /// the relief right after (gh-1077).
+  OverWindowRelief? overWindowRelief;
 
   /// External messages merged into the steering poll at every turn boundary
   /// (before the first turn and after each one) — e.g. the agent's inbox in

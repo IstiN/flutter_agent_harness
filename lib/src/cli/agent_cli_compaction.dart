@@ -14,11 +14,16 @@ part of 'agent_cli.dart';
 /// basis — one clamp point ([effectiveContextWindow]), not one per
 /// consumer. Lives in this part file so agent_cli.dart stays under the
 /// 2800-line size gate.
+///
+/// Resolved through the shared host wiring (gh-1077): identical output to
+/// the bare `effectiveContextWindow` call (no overhead, smol irrelevant
+/// to the window), but the parity test compares THIS path against the
+/// app's, so the semantics stay pinned in one place.
 extension EffectiveContextWindow on AgentCli {
-  int get _effectiveContextWindow => effectiveContextWindow(
-    _agent.state.model.contextWindow,
-    config.contextWindowCap,
-  );
+  int get _effectiveContextWindow => resolveCompactionHostWiring(
+    mainModel: _agent.state.model,
+    contextWindowCap: config.contextWindowCap,
+  ).window;
 }
 
 extension MemoryLlmSlotResolution on AgentCli {
