@@ -4395,6 +4395,11 @@
 - feat(#977): provider name step + multi-account coexistence in app add-provider flow (#984)
 - feat(#969): show add-provider flow first on fresh install (#971)
 
+## 1.0.490
+
+- gh-1041 [GOAL] Submission ≠ appearance — never fail a green store submit deferred 1–2h store-appearance re-check job (TestFlight / Play / pub.dev) (#1046)
+- gh-1032 Migrate to flutter_agent_memory 0.2.3: conflict-free deletions (tombstones + deleted/ dir) (#1050)
+
 ## Unreleased
 
 ## Unreleased
