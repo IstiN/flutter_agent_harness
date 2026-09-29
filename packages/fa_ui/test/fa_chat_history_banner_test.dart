@@ -47,6 +47,9 @@ Future<void> _pumpScreen(WidgetTester tester, _PagingService service) async {
   await tester.pumpWidget(MaterialApp(home: FaChatScreen(service: service)));
   // flutter_chat_ui's empty chat list schedules a 50ms timer.
   await tester.pump(const Duration(seconds: 1));
+  // The reveal-on-top gate (issue #974) settles one frame after the
+  // transcript's first layout measures its scroll extents.
+  await tester.pump(const Duration(milliseconds: 100));
 }
 
 void main() {
@@ -261,6 +264,43 @@ void main() {
     await _pumpScreen(tester, service);
 
     expectNoTopBanner();
+  });
+
+  testWidgets('UT-974-first-msg: the first message of a fresh (full-open) '
+      'session shows no sticker', (tester) async {
+    // The reported repro (issue #974): a brand-new session reports
+    // nothing above and no total — there are no pages to load, so the
+    // banner must not render over the single message.
+    final service = _PagingService()
+      ..above = 0
+      ..total = null
+      ..msgs = _msgs(1);
+    await _pumpScreen(tester, service);
+
+    expectNoTopBanner();
+  });
+
+  testWidgets('UT-974-reveal: pages above reveal the banner only at the '
+      'scroll top', (tester) async {
+    final service = _PagingService()
+      ..above = 42
+      ..total = 50
+      ..msgs = _msgs(40);
+    await _pumpScreen(tester, service);
+
+    // Parked at the live tail (reversed list, offset 0): hidden.
+    expect(find.text('Load earlier (42 more)'), findsNothing);
+
+    // Drag to the oldest edge — a reversed list puts it at
+    // maxScrollExtent, reached by a downward drag.
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, 3000));
+    await tester.pumpAndSettle();
+    expect(find.text('Load earlier (42 more)'), findsOneWidget);
+
+    // Back to the tail: hidden again.
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, -3000));
+    await tester.pumpAndSettle();
+    expect(find.text('Load earlier (42 more)'), findsNothing);
   });
 
   testWidgets('UT-count-fail: a failed count over an empty transcript '
