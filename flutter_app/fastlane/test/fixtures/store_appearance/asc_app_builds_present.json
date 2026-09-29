@@ -1,0 +1,20 @@
+{
+  "data": [
+    {
+      "id": "BUILD-191",
+      "type": "builds",
+      "attributes": { "version": "191", "processingState": "VALID", "uploadedDate": "2026-09-28T05:40:00Z" },
+      "relationships": { "preReleaseVersion": { "data": { "id": "PRV-485" } } }
+    },
+    {
+      "id": "BUILD-190",
+      "type": "builds",
+      "attributes": { "version": "190", "processingState": "VALID", "uploadedDate": "2026-09-27T05:40:00Z" },
+      "relationships": { "preReleaseVersion": { "data": { "id": "PRV-484" } } }
+    }
+  ],
+  "included": [
+    { "id": "PRV-485", "type": "preReleaseVersions", "attributes": { "version": "1.0.485", "platform": "IOS" } },
+    { "id": "PRV-484", "type": "preReleaseVersions", "attributes": { "version": "1.0.484", "platform": "IOS" } }
+  ]
+}

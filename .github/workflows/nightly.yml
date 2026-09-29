@@ -103,8 +103,9 @@ jobs:
 
       - name: CRAP ratchet (threshold pinned in crap4dart.yaml)
         run: |
-          # gh-1061: >=0.10.0 — analyzer 7.3→14.4 refresh.
-          dart pub global activate crap4dart ">=0.10.0"
+          # gh-1061: >=0.10.0 — analyzer 7.3→14.4 refresh. Bounded: a
+          # floating >= would auto-adopt 0.11.0+ with no repo change.
+          dart pub global activate crap4dart ">=0.10.0 <0.11.0"
           dart pub global run crap4dart analyze
 
       - name: Duplication guard (lib/ < 1%)
