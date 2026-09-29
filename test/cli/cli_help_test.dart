@@ -16,6 +16,7 @@ void main() {
       '-h',
       '--version',
       '--pi',
+      '--debug-secrets',
       '--model',
       '--provider',
       '--base-url',

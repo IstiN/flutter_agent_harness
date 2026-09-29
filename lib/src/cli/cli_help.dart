@@ -108,6 +108,11 @@ OPTIONS
                                surface (read/write/edit/bash), bare
                                prompt; wins over FA_PI_MODE=1 and the
                                config agent.mode setting
+  --debug-secrets               Log every secure-store key read at boot
+                               (found / absent / error: diagnostic) and
+                               warn when config-referenced keys resolve
+                               nothing — diagnose a keyless-after-launch
+                               boot. Same effect as FA_DEBUG_KEYS=1
   --no-format                   Render assistant markdown raw, even on a
                                color TTY (issue #774). Same effect as
                                the FA_NO_FORMAT env var; piped or
