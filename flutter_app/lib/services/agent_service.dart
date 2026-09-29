@@ -24,6 +24,7 @@ import 'power_guard.dart';
 
 import 'app_log.dart';
 import 'image_registry_loader.dart';
+import 'app_config_loader.dart';
 import 'memory_config_loader.dart';
 import 'compaction_engine_loader.dart';
 import 'agent_tool_availability.dart';
@@ -88,6 +89,7 @@ import 'package:fa_office_agent/fa_office_agent.dart'
 import 'package:fa/webllm/webllm_types.dart';
 
 part 'agent_service_compaction.dart';
+part 'agent_service_config.dart';
 part 'agent_service_prompt.dart';
 part 'agent_service_assistant.dart';
 part 'agent_service_events.dart';
@@ -303,6 +305,10 @@ class AgentService extends ChangeNotifier
     /// inject a fake to keep parsing deterministic; production passes
     /// `createSessionParseExecutor()` (null on web → inline parsing).
     @visibleForTesting SessionParseExecutor? parseExecutor,
+
+    /// Overrides the `~/.fah` home the yaml config loader reads (issue
+    /// #1078); null reads the real home. Tests inject a sandbox dir.
+    String? configHomeDir,
   }) async {
     final resolvedEnv =
         env ?? await createPlatformEnv(httpClient: createPlatformHttpClient());
@@ -373,6 +379,7 @@ class AgentService extends ChangeNotifier
           sessionKeys?.valueOf(name) ??
           secrets[name],
       promptSuffix: promptSuffix,
+      configHomeDir: configHomeDir,
     );
   }
 
@@ -489,6 +496,10 @@ class AgentService extends ChangeNotifier
     this._toolsAvailabilityStore,
     String? skillsHomeDir,
     this.powerAssertion,
+
+    /// The `~/.fah` home the yaml config loader reads (issue #1078); null
+    /// reads the real home. Tests inject a sandbox dir.
+    String? configHomeDir,
   }) // ignore: prefer_initializing_formals — private fields, public params
     // ignore: prefer_initializing_formals
     : _skillsHomeDir = skillsHomeDir,
@@ -644,6 +655,24 @@ class AgentService extends ChangeNotifier
     _childSessionFactory = childSessionFactory;
     // Project-level .fah/config.yaml memory: wins over the user one.
     final memoryConfig = loadAppMemoryConfig(env.sessionCwd);
+    // The yaml sections the app honors (issue #1078): the CLI's own
+    // parsers over ~/.fah/config.yaml + the project pair. Null on web
+    // (E2: nothing to read, nothing to note). Warnings (unreadable or
+    // malformed sections) surface ONCE, here — the app stores keep their
+    // values either way and boot never blocks.
+    final appConfig = loadAppFahConfig(
+      projectDir: env.sessionCwd,
+      homeDir: configHomeDir,
+    );
+    for (final warning in appConfig?.warnings ?? const <String>[]) {
+      AppLog.i('config', warning);
+    }
+    // providerTimeouts: (AC5) — the SAME global the CLI publishes at boot;
+    // reassigned every service creation so a config edit (or removal)
+    // applies to the next session without stale overrides.
+    providerTimeoutsOverride = appConfig?.providerTimeouts;
+    // redact: (AC4) — the pipeline config [_attachRedactor] builds from.
+    _yamlRedactConfig = appConfig?.redact;
     // Session image registry (`images:` section, issue #171): process-wide
     // like in the CLI; core default is on, user config honored where the
     // config is readable.
@@ -663,13 +692,32 @@ class AgentService extends ChangeNotifier
     // Model-roles resolver backed by the TaskModelsStore: `smol` (compaction
     // + explore) and `subagent` (delegation) overrides resolve through it;
     // the Map reads the store lazily, so settings changes apply on the next
-    // spawn without rebuilding the agent.
+    // spawn without rebuilding the agent. yaml `roles:` fills the gaps
+    // (issue #1078 AC1): store choices win per role (E1 — the explicit
+    // app-UI choice beats yaml), and the yaml retry/modelOverrides ride
+    // the same resolver. The app's MAIN model stays the explicit UI
+    // choice — yaml `roles.default` would override an explicit pick, so
+    // unlike the CLI the main connection is never re-pointed from config.
     final taskModelsStore = _taskModelsStore;
-    if (taskModelsStore != null) {
+    final yamlRoles = appConfig?.roles;
+    if (taskModelsStore != null || yamlRoles != null) {
       _taskRolesResolver = ModelRolesResolver(
-        config: ModelRolesConfig(roles: _StoreBackedRolesMap(taskModelsStore)),
+        config: ModelRolesConfig(
+          roles: _StoreBackedRolesMap(
+            taskModelsStore,
+            fallback: yamlRoles?.roles,
+          ),
+          pathOverrides: yamlRoles?.pathOverrides ?? const [],
+          retry: yamlRoles?.retry ?? const ModelRolesRetryPolicy(),
+        ),
         secrets: _secretsEnv?.secretsSnapshot() ?? const {},
       );
+      // Chain failover notes (429 rotation, key switches) surface in the
+      // log — the app twin of the CLI's `[roles]` line; the session id
+      // keeps the prompt-cache affinity across chain entries (CLI parity).
+      _taskRolesResolver!.onNotice =
+          (notice) => AppLog.i('roles', notice.describe());
+      _taskRolesResolver!.sessionId = () => _session?.cachedId;
     }
     // Task tool config: childTools is set after the full registry is built
     // (children inherit the core surface minus `task` itself). ONE shared
@@ -887,6 +935,9 @@ class AgentService extends ChangeNotifier
     };
     _attachRedactor(redactor, bootSecrets);
     _attachApproval();
+    // ttsr: rules (issue #1078 AC3) — the CLI's controller/manager pair
+    // over this agent, injecting at the session sink.
+    _attachAppConfigTtsr(appConfig);
     // Structured compaction recall (issue #148 D3): `compact_expand`
     // resolves numeric marker ids against the LIVE session; the per-turn
     // expand budget resets on every new user message through the agent
@@ -909,6 +960,18 @@ class AgentService extends ChangeNotifier
       onDevice: isOnDevice,
       registry: registry,
       initialConfig: initialToolsConfig ?? const ToolsConfig(),
+      // yaml `tools:` scopes under the runtime store (issue #1078 AC2/E1):
+      // global < project < the app-UI choices.
+      configScopes: [
+        if (appConfig case final sections?)
+          (ToolScope.global, sections.userTools),
+        if (appConfig case final sections?) (
+          ToolScope.project,
+          sections.projectTools,
+        ),
+      ],
+      // agent.mode (AC2/E4): the load mode pins essentials + discovery.
+      loadMode: appConfig?.loadMode ?? AgentLoadMode.defaultMode,
       rebuildPrompt: () {
         _agent.state.systemPrompt = _composeSystemPrompt(config);
       },
@@ -982,6 +1045,22 @@ class AgentService extends ChangeNotifier
     for (final tool in _agent.state.tools) tool.name,
   ];
 
+  /// The layered redaction pipeline ([_attachRedactor]); null when the
+  /// yaml section disabled redaction (issue #1078 AC4 tests).
+  @visibleForTesting
+  RedactionPipeline? get redactionPipelineForTest => _redactionPipeline;
+
+  /// The model-roles resolver ([create] wiring); null when neither the
+  /// TaskModelsStore nor yaml `roles:` provided anything (issue #1078
+  /// AC1 tests).
+  @visibleForTesting
+  ModelRolesResolver? get taskRolesResolverForTest => _taskRolesResolver;
+
+  /// The live agent (issue #1078 AC3 tests): the transcript is where a
+  /// ttsr injection lands ([UserMessage] with the rule body).
+  @visibleForTesting
+  Agent get agentForTest => _agent;
+
   /// Composes redaction hooks onto the agent so secret values never reach
   /// the model, the transcript, or the session files. Attached even for an
   /// empty redactor: `request_secret` grants register values at runtime and
@@ -993,15 +1072,21 @@ class AgentService extends ChangeNotifier
   ]) {
     if (redactor == null) return;
     attachSecretRedactor(_agent, redactor);
-    // The layered pipeline (issue #24) rides the same lifecycle: default
-    // config (mask mode) — the app has no `redact:` yaml section yet. Its
-    // registered layer starts from the boot secret values and grows with
-    // every `request_secret` grant via [_registerRedactionSecret].
+    // The layered pipeline (issue #24): config-driven now (issue #1078
+    // AC4) — the yaml `redact:` section builds it (blockMode denial rides
+    // the config), the historical default (mask mode) applies when the
+    // section is absent. A yaml-disabled pipeline stays null: hooks never
+    // attach, exactly like the CLI (runtime `request_secret` grants then
+    // mask through the legacy redactor only).
+    if (_yamlRedactConfig is RedactionConfig && !_yamlRedactConfig!.enabled) {
+      return;
+    }
     _redactionPipeline ??= RedactionPipeline(
       registeredSecrets: [
         for (final value in bootSecrets.values)
           if (value.length >= SecretRedactor.minValueLength) value,
       ],
+      config: _yamlRedactConfig ?? const RedactionConfig(),
     );
     attachRedactionPipeline(_agent, _redactionPipeline!);
   }
@@ -1507,6 +1592,10 @@ class AgentService extends ChangeNotifier
   /// The layered redaction pipeline (issue #24), default config; built
   /// lazily on first attach from the redactor's registered values.
   RedactionPipeline? _redactionPipeline;
+
+  /// The yaml `redact:` section (issue #1078 AC4); null when absent —
+  /// the historical mask-mode default applies. Set once in [create].
+  RedactionConfig? _yamlRedactConfig;
 
   /// Rendered skills + project-context sections appended to the composed
   /// system prompt (discovered in [AgentService.create]; re-discovered by
