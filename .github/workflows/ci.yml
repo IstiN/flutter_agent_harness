@@ -191,6 +191,16 @@ jobs:
       - name: dart test cube backends (live kernel legs)
         run: dart test test/cube/backends
 
+      # gh-1059 AC4: the real-keychain runner guard — `security`
+      # add/find/delete against the runner's login keychain through the
+      # bounded-helper machinery (outcome classification incl. stderr
+      # tails, env merge, timeout kill). The group is tagged `integration`
+      # (real side effects), so the Linux core shards and the pre-commit
+      # gate skip it; this macOS leg is where it actually executes. Skips
+      # with a named reason when no `security` binary / default keychain.
+      - name: dart test secure key store (macOS Keychain live legs)
+        run: dart test test/secrets/secure_key_store_test.dart --tags integration
+
   static:
     name: Static gates
     runs-on: ubuntu-latest

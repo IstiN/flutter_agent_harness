@@ -2380,6 +2380,17 @@ String _unknownProviderMessage(String id) {
         '(/key set <NAME> <value>, /key delete <NAME>)',
       );
     }
+    // gh-1059 review: save degradations can only happen AFTER boot (every
+    // `keys.save()` call site is interactive), so the boot summary can
+    // never see them — the status print is where they are live.
+    if (keys != null && keys.saveFailures > 0) {
+      final last = keys.lastSaveError;
+      io.writeln(
+        'warning: ${keys.saveFailures} secure-store save(s) degraded to '
+        'session-only${last == null ? '' : ' ($last)'} — re-enter the keys '
+        'once the store is writable',
+      );
+    }
   }
 
   /// Bare `/provider` in line mode: the active provider/endpoint/key status
