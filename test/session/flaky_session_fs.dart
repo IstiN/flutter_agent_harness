@@ -14,7 +14,9 @@ final class FlakySessionFs implements FileSystem, RangedReadFileSystem {
 
   final MemoryFileSystem _delegate;
 
-  /// How many more [readTextFile] calls fail before reads succeed.
+  /// How many more [readTextFile]/[fileInfo]/[readRange] calls fail before
+  /// reads succeed (the open path's read surface since gh-1073: the open
+  /// stats first and streams ranged chunks — it never readTextFiles).
   int failNextReads = 0;
 
   /// How many more [writeFile] calls fail before writes succeed.
@@ -26,6 +28,8 @@ final class FlakySessionFs implements FileSystem, RangedReadFileSystem {
   /// Total calls seen per op, successes and simulated ENOENTs alike —
   /// the retry-cap assertions read these.
   int readCalls = 0;
+  int statCalls = 0;
+  int rangeCalls = 0;
   int writeCalls = 0;
   int appendCalls = 0;
 
@@ -93,8 +97,14 @@ final class FlakySessionFs implements FileSystem, RangedReadFileSystem {
   ) => _delegate.writeBinaryFile(path, content);
 
   @override
-  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
-      _delegate.fileInfo(path);
+  Future<Result<FileInfo, FileError>> fileInfo(String path) async {
+    statCalls++;
+    if (failNextReads > 0) {
+      failNextReads--;
+      return Err(_enoent(path));
+    }
+    return _delegate.fileInfo(path);
+  }
 
   @override
   Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
@@ -122,5 +132,12 @@ final class FlakySessionFs implements FileSystem, RangedReadFileSystem {
     String path,
     int start,
     int end,
-  ) => _delegate.readRange(path, start, end);
+  ) async {
+    rangeCalls++;
+    if (failNextReads > 0) {
+      failNextReads--;
+      return Err(_enoent(path));
+    }
+    return _delegate.readRange(path, start, end);
+  }
 }

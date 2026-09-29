@@ -52,6 +52,12 @@ TaskBlockState shellJobPhaseOf({
 /// How many turns' worth of cards the board remembers for records.
 const int _maxBoardHistory = 200;
 
+/// How many cards the PERSISTED `shell_job_registry` snapshot keeps
+/// (gh-1073): rehydration needs the recent tail — live cards and recently
+/// settled ones for the never-shows-running rule — not the full month of
+/// history that grew the snapshots to ~124 KB each × 29k appends.
+const int shellJobBoardPersistedCardCap = 50;
+
 /// How many live rows the transient region shows below the summary.
 const int _maxLiveRows = 3;
 

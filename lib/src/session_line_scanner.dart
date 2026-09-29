@@ -83,21 +83,12 @@ final class SessionLineScanner {
   /// quarantine, never as a whole-file decode failure.
   ///
   /// Throws [SessionException] (code [SessionErrorCode.storage]) when a
-  /// range read fails.
+  /// range read fails. [fileSize] skips the internal stat when the caller
+  /// just stat'd the file (the streamed session open has).
   Future<SessionLineScanResult> scan(
-    Future<void> Function(SessionScannedLine line) onLine,
-  ) async {
-    final stat = await fs.fileInfo(path);
-    if (stat.isErr) {
-      final error = stat.errorOrNull!;
-      throw SessionException(
-        'Failed to read session $path: ${error.message}',
-        code: error.code == FileErrorCode.notFound
-            ? SessionErrorCode.notFound
-            : SessionErrorCode.storage,
-        cause: error,
-      );
-    }
+    Future<void> Function(SessionScannedLine line) onLine, {
+    int? fileSize,
+  }) async {
     final Object? maybeRanged = fs;
     if (maybeRanged is! RangedReadFileSystem) {
       throw SessionException(
@@ -107,7 +98,23 @@ final class SessionLineScanner {
       );
     }
     final ranged = maybeRanged;
-    final size = stat.valueOrNull!.size;
+    late final int size;
+    if (fileSize != null) {
+      size = fileSize;
+    } else {
+      final stat = await fs.fileInfo(path);
+      if (stat.isErr) {
+        final error = stat.errorOrNull!;
+        throw SessionException(
+          'Failed to read session $path: ${error.message}',
+          code: error.code == FileErrorCode.notFound
+              ? SessionErrorCode.notFound
+              : SessionErrorCode.storage,
+          cause: error,
+        );
+      }
+      size = stat.valueOrNull!.size;
+    }
     var lines = 0;
     var carry = BytesBuilder(copy: false);
     var carryStart = 0;

@@ -1466,14 +1466,19 @@ ModelRequestEvent _captureRequest(AgentLoopConfig config, Context context) {
       ? null
       : TrajectoryToolManifestBlob.of(tools);
   return ModelRequestEvent(
-    detail: TrajectoryRequestDetail(
-      messageCount: messages.length,
-      systemPromptChars: prompt?.length ?? 0,
-      toolCount: tools.length,
-      toolNames: [for (final tool in tools) tool.name],
-      messages: messages,
-      systemPromptHash: promptBlob?.hash,
-      toolManifestHash: manifestBlob?.hash,
+    // gh-1073: the per-message detail is capped to the newest tail — an
+    // unbounded summary of a 1000-message request is what grew the ledger
+    // records to ~0.5 MB each.
+    detail: capTrajectoryRequestDetail(
+      TrajectoryRequestDetail(
+        messageCount: messages.length,
+        systemPromptChars: prompt?.length ?? 0,
+        toolCount: tools.length,
+        toolNames: [for (final tool in tools) tool.name],
+        messages: messages,
+        systemPromptHash: promptBlob?.hash,
+        toolManifestHash: manifestBlob?.hash,
+      ),
     ),
     promptBlob: promptBlob,
     manifestBlob: manifestBlob,

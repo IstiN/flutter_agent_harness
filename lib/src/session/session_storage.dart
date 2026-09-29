@@ -584,7 +584,10 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       batchSpans = <(int, int)>[];
     }
 
-    await SessionLineScanner(fs: fs, path: filePath).scan((line) async {
+    await SessionLineScanner(
+      fs: fs,
+      path: filePath,
+    ).scan((line) async {
       if (first) {
         first = false;
         header = parseSessionHeaderLine(line.text, filePath);
@@ -599,7 +602,7 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
               sessionParseBatchMaxBytes) {
         await flushBatch();
       }
-    });
+    }, fileSize: fileSize);
     if (header == null) _invalidSession(filePath, 'missing session header');
     await flushBatch();
     final readMs = phaseSw.elapsedMilliseconds;

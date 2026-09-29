@@ -334,9 +334,13 @@ void main() {
       // Files whose removals provably never touch session files:
       // - clipboard_reader: temp pasteboard images in the system temp dir
       // - sessions_root: a `.probe_<micros>` writability probe file
+      // - session_storage: gh-1073 heal cleanup of the `<file>.repaired`
+      //   temp the streamed open itself just wrote (never a session file;
+      //   the session file is only ever replaced via renamePath)
       const allowed = {
         'lib/src/cli/clipboard_reader.dart',
         'flutter_app/lib/services/sessions_root.dart',
+        'lib/src/session/session_storage.dart',
       };
       final offenders = <String>[];
       for (final zone in zones) {
