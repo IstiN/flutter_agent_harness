@@ -12,6 +12,10 @@ import 'package:test/test.dart';
 void main() {
   final teammate = File('.github/workflows/ai-teammate.yml').readAsStringSync();
   final sm = File('.github/workflows/machine-sm.yml').readAsStringSync();
+  // Third stub (pr-1076 review: machine-merge.yml skewed to an older pin
+  // while teammate+SM were flipped — the #568 fix never reached the
+  // event-driven merge leg). Guarded in the same lockstep from now on.
+  final merge = File('.github/workflows/machine-merge.yml').readAsStringSync();
 
   String? pinnedRef(String yaml, String workflowFile) {
     final usesLine = yaml
@@ -48,15 +52,36 @@ void main() {
     );
   });
 
-  test('both stubs pin the SAME factory ref (teammate and SM in lockstep)', () {
+  test('machine-merge.yml pins factory-merge.yml at an immutable SHA', () {
+    final ref = pinnedRef(merge, 'factory-merge.yml');
+    expect(ref, isNotNull, reason: 'uses: line with @<sha> not found');
+    expect(
+      RegExp(r'^[0-9a-f]{40}$').hasMatch(ref!),
+      isTrue,
+      reason: 'ref "$ref" is not a 40-hex SHA',
+    );
+  });
+
+  test('all three stubs pin the SAME factory ref (teammate, SM, merge '
+      'in lockstep)', () {
     final a = pinnedRef(teammate, 'factory-teammate.yml');
     final b = pinnedRef(sm, 'factory-sm.yml');
+    final c = pinnedRef(merge, 'factory-merge.yml');
     expect(
       a,
       b,
       reason:
           'teammate and SM factories must not skew apart: '
           'the SM dispatches ai-teammate.yml expecting the reviewed contract',
+    );
+    expect(
+      b,
+      c,
+      reason:
+          'SM and merge factories must not skew apart: '
+          'the merge fast path executes mergeBot.js from the pinned pack — '
+          'a stale merge stub silently misses pack fixes (live: pr-1076, '
+          'the #568 workspace fix shipped to teammate+SM only)',
     );
   });
 
