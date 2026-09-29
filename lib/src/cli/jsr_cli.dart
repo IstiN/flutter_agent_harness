@@ -304,15 +304,7 @@ String _quoteForCmd(String arg) {
   var i = 0;
   while (i < arg.length) {
     if (arg[i] == r'\') {
-      var backslashes = 0;
-      while (i < arg.length && arg[i] == r'\') {
-        backslashes++;
-        i++;
-      }
-      final beforeQuote = i < arg.length && arg[i] == '"';
-      final atEnd = i == arg.length;
-      out.write(r'\' * backslashes * (beforeQuote || atEnd ? 2 : 1));
-      if (!beforeQuote) continue;
+      if (!_emitBackslashRun(out, arg, i)) continue;
     }
     if (arg[i] == '"') {
       out.write(r'\"');
@@ -325,6 +317,24 @@ String _quoteForCmd(String arg) {
   }
   out.write('"');
   return out.toString();
+}
+
+/// Emits the backslash run of [arg] starting at [i] into [out] under the
+/// MSVCRT doubling rules the child's argv parser applies (a run directly
+/// before a `"` — and a trailing run — doubles; otherwise it is literal),
+/// leaving [i] on the first non-backslash character. Returns whether that
+/// character is a `"`: the caller then emits `\"` and flips cmd's quote
+/// state; otherwise the run ended on a literal the caller emits itself.
+bool _emitBackslashRun(StringBuffer out, String arg, int i) {
+  var backslashes = 0;
+  while (i < arg.length && arg[i] == r'\') {
+    backslashes++;
+    i++;
+  }
+  final beforeQuote = i < arg.length && arg[i] == '"';
+  final atEnd = i == arg.length;
+  out.write(r'\' * backslashes * (beforeQuote || atEnd ? 2 : 1));
+  return beforeQuote;
 }
 
 /// Runs one `fa jsr <verb>` command and returns the child's exit code (or
