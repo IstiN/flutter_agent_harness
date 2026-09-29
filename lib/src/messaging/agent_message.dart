@@ -83,6 +83,8 @@ final _messageRandom = Random();
 String newMessageId() {
   final micros = DateTime.now().toUtc().microsecondsSinceEpoch;
   final counter = (_messageCounter++).toRadixString(36).padLeft(4, '0');
-  final rand = _messageRandom.nextInt(1 << 32).toRadixString(36);
+  // Literal, not `1 << 32` — dart2js evaluates that shift to 0 and
+  // Random.nextInt(0) throws (see shell_jobs.dart newShellJobId).
+  final rand = _messageRandom.nextInt(0xFFFFFFFF).toRadixString(36);
   return '${micros.toString().padLeft(16, '0')}_${counter}_$rand';
 }

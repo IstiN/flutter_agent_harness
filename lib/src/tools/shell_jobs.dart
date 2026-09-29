@@ -37,7 +37,11 @@ final Random _shellJobRandom = Random.secure();
 /// cross-process collisions practically impossible.
 String newShellJobId(int n) {
   final micros = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
-  final rand = _shellJobRandom.nextInt(1 << 32).toRadixString(36);
+  // 0xFFFFFFFF as a literal, NOT `1 << 32`: on dart2js bitwise shifts are
+  // 32-bit, so `1 << 32` evaluates to 0 and `Random.nextInt(0)` throws
+  // "max must be in range 0 < max ≤ 2^32" — this killed every bash call in
+  // the web app (job-id generation runs before any command executes).
+  final rand = _shellJobRandom.nextInt(0xFFFFFFFF).toRadixString(36);
   return 'sh-$n-$micros$rand';
 }
 

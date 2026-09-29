@@ -99,8 +99,9 @@ Future<MediaEndpoint?> resolveImageGenerationEndpoint(
   );
   if (key.isEmpty) {
     final keyName = override.apiKeyName;
-    final named =
-        (keyName == null || keyName.isEmpty) ? '' : ' (named "$keyName")';
+    final named = (keyName == null || keyName.isEmpty)
+        ? ''
+        : ' (named "$keyName")';
     throw MediaException(
       'the imageGeneration slot has no resolvable API key$named '
       '— a slot override never uses the main provider key; set '
@@ -252,13 +253,11 @@ final class DialImageDialect extends ImageDialect {
     }
     final downloadUrl =
         relUrl.startsWith('http://') || relUrl.startsWith('https://')
-            ? relUrl
-            : '$base/v1/${relUrl.startsWith('/') ? relUrl.substring(1) : relUrl}';
+        ? relUrl
+        : '$base/v1/${relUrl.startsWith('/') ? relUrl.substring(1) : relUrl}';
     final imgResp = await client.get(
       Uri.parse(downloadUrl),
-      headers: {
-        if (apiKey.isNotEmpty) 'Api-Key': apiKey,
-      },
+      headers: {if (apiKey.isNotEmpty) 'Api-Key': apiKey},
     );
     if (imgResp.statusCode != 200) {
       throw MediaException(
@@ -467,7 +466,9 @@ Future<String> _save(
   // two fa processes generate at once) — one would overwrite the other.
   final unique =
       DateTime.now().microsecondsSinceEpoch.toRadixString(36) +
-      _mediaNameRandom.nextInt(1 << 32).toRadixString(36);
+      // Literal, not `1 << 32` — dart2js evaluates that shift to 0 (see
+      // shell_jobs.dart newShellJobId).
+      _mediaNameRandom.nextInt(0xFFFFFFFF).toRadixString(36);
   final name =
       '${prefix}_${DateTime.now().millisecondsSinceEpoch}_$unique.$ext';
   final rel = '$dir/$name';

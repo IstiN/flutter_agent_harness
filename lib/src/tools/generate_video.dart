@@ -539,7 +539,9 @@ Future<String> _save(
   }
   final unique =
       DateTime.now().microsecondsSinceEpoch.toRadixString(36) +
-      _videoNameRandom.nextInt(1 << 32).toRadixString(36);
+      // Literal, not `1 << 32` — dart2js evaluates that shift to 0 (see
+      // shell_jobs.dart newShellJobId).
+      _videoNameRandom.nextInt(0xFFFFFFFF).toRadixString(36);
   final name =
       '${prefix}_${DateTime.now().millisecondsSinceEpoch}_$unique.$ext';
   final rel = '$dir/$name';

@@ -219,7 +219,9 @@ final class FileSessionLeaseStore {
   static String newBootId() {
     final random = Random();
     final micros = DateTime.now().toUtc().microsecondsSinceEpoch;
-    return '$micros-${random.nextInt(1 << 32).toRadixString(36)}';
+    // Literal, not `1 << 32` — dart2js evaluates that shift to 0 and
+    // Random.nextInt(0) throws (see shell_jobs.dart newShellJobId).
+    return '$micros-${random.nextInt(0xFFFFFFFF).toRadixString(36)}';
   }
 
   /// Reads and classifies the current lease for [sessionFilePath].
