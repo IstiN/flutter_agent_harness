@@ -423,15 +423,20 @@ extension AgentCliHubDriver on AgentCli {
   /// `latestRecords` on resume: 4 of 5 running jobs silently vanished from
   /// the registry (observed: "1 background task lost" for 5 live jobs).
   /// Chained, the last queued write carries the newest snapshot.
+  ///
+  /// gh-1073: a byte-identical snapshot is skipped — the ledger is
+  /// latest-snapshot-wins, so re-appending unchanged payloads only grew
+  /// the session file (29k snapshots = 3.65 GB on the ticket's session).
   Future<void> _persistJobBoard() {
     final session = _session;
     if (session == null) return Future.value();
     _persistChain = _persistChain
         .then((_) async {
-          final records = _jobBoard.toRecords();
+          final json = jsonEncode(_jobBoard.toRecords());
+          if (!_jobBoardPersistDeduper.shouldPersist(json)) return;
           await session.appendCustomEntry(
             customType: 'shell_job_registry',
-            data: records,
+            data: _jobBoard.toRecords(),
           );
         })
         // One failed append must not poison the chain (every later persist
@@ -450,6 +455,9 @@ extension AgentCliHubDriver on AgentCli {
     final latest = ShellJobBoard.latestRecords(await session.getEntries());
     if (latest.isEmpty) return;
     _jobBoard = ShellJobBoard.rehydrated(latest);
+    // Fresh session file content: the next persist is a new snapshot, not
+    // a repeat of whatever the previous session last wrote (gh-1073).
+    _jobBoardPersistDeduper.reset();
     _printBoardLines(_jobBoard.takeTranscriptLines(width: _hubBlockWidth));
   }
 

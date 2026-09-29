@@ -25,6 +25,7 @@ library;
 
 import 'agent_hub_panel.dart';
 import 'tool_rows.dart' show shellJobCommandPreview;
+import '../session/ledger_caps.dart';
 import '../session/session_record.dart';
 
 /// AC1 mapping (issue #429): a job's observable lifecycle → card state.
@@ -144,7 +145,9 @@ final class ShellJobBoard {
   void newTurn() => turn++;
 
   /// Register a started job. The card's state must be live; [turn] is
-  /// stamped by the board.
+  /// stamped by the board. The in-memory history stays capped at
+  /// [_maxBoardHistory] (the documented invariant — month-long sessions
+  /// must not accumulate every card ever).
   void start(TaskBlock card) {
     _cards.add(
       TaskBlock(
@@ -160,6 +163,9 @@ final class ShellJobBoard {
         turn: turn,
       ),
     );
+    if (_cards.length > _maxBoardHistory) {
+      _cards.removeRange(0, _cards.length - _maxBoardHistory);
+    }
   }
 
   /// Settle a job in place: truthful terminal state, elapsed, exit code and
@@ -312,12 +318,21 @@ final class ShellJobBoard {
   }
 
   /// The `shell_job_registry` records (issue #429 AC9): the capped card
-  /// history with truthful terminal states.
-  List<Map<String, Object?>> toRecords() => _cards
-      .skip(
-        _cards.length > _maxBoardHistory ? _cards.length - _maxBoardHistory : 0,
-      )
-      .map((c) => c.toRecord())
-      .toList();
-
+  /// history with truthful terminal states. gh-1073 bounds the SNAPSHOT:
+  /// newest [shellJobBoardPersistedCardCap] cards only, label/detail
+  /// strings truncated — the live board keeps full fidelity for rendering,
+  /// the session file stops paying per-mutation megabytes.
+  List<Map<String, Object?>> toRecords() {
+    final kept = _cards.length > shellJobBoardPersistedCardCap
+        ? _cards.sublist(_cards.length - shellJobBoardPersistedCardCap)
+        : _cards;
+    return [
+      for (final c in kept)
+        {
+          ...c.toRecord(),
+          'label': capLedgerText(c.label) ?? '',
+          if (c.detail != null) 'detail': capLedgerText(c.detail),
+        },
+    ];
+  }
 }
