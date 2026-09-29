@@ -64,12 +64,20 @@ void main() {
         );
         harness.sendEnter();
 
-        // Selecting the saved provider opens its Edit/Delete picker.
-        await harness.waitForText(
+        // Selecting the saved provider opens its Edit/Delete picker. The
+        // contract is the PAINTED screen — a raw-stream wait races frame
+        // painting on loaded runners (#550/#557 family), so anchor on the
+        // picker itself. gh-1049: wait for EACH asserted row and assert on
+        // the captured screen — a header-wait + fresh screenText read
+        // sampled the picker mid-render (rows land across frames).
+        var screen = await harness.waitForScreen(
           'Edit provider',
           timeout: const Duration(seconds: 20),
         );
-        final screen = harness.screenText;
+        screen = await harness.waitForScreen(
+          'Delete provider',
+          timeout: const Duration(seconds: 20),
+        );
         expect(screen, contains('Edit provider'));
         expect(screen, contains('Delete provider'));
 
