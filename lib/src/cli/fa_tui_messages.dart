@@ -43,6 +43,15 @@ final class OpenPickerMsg extends Msg {
   final int initialIndex;
 }
 
+/// Test hook (gh-1049): reveals ONE more row of the open generic picker.
+/// `FA_TUI_PICKER_REVEAL_MS` splits the picker's row set across frames —
+/// the way a loaded host's frame pacing legally does — so the PTY suites
+/// prove their screen waits survive progressive picker painting. Never
+/// sent when the env is unset.
+final class _RevealPickerRowsMsg extends Msg {
+  const _RevealPickerRowsMsg();
+}
+
 /// Message asking the program to quit because the host marked exit.
 final class _QuitRequestedMsg extends Msg {}
 
