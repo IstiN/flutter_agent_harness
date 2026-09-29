@@ -377,6 +377,7 @@ final class _Retryable extends _AttemptOutcome {
     this.retryAfter,
     this.error, {
     this.isTransport = false,
+    this.isRateLimit = false,
     this.deathKind,
     this.deathCooldown,
     this.immediate = false,
@@ -393,6 +394,12 @@ final class _Retryable extends _AttemptOutcome {
   /// 502/503/504): retried in place — key rotation is pointless when the
   /// endpoint, not the credential, failed.
   final bool isTransport;
+
+  /// Whether the failure is the rate-limit/quota family — the class the
+  /// waited-total accounting follows (issue #1066). Roles mode: the
+  /// complement of [isTransport]. Queue mode: a quota death (there
+  /// [isTransport] only means "skip key rotation", whatever the class).
+  final bool isRateLimit;
 
   /// Issue #418: the queue death kind (null in roles mode).
   final QueueDeathKind? deathKind;
@@ -434,8 +441,10 @@ final class _DriveState {
   final DateTime startedAt;
 
   /// Total time slept waiting out RATE-LIMIT waits in this call (the
-  /// exhaustion story reports it, issue #1066). Transport-retry backoffs
-  /// don't count — the label must not call an outage a rate limit.
+  /// exhaustion story reports it, issue #1066). Keyed on the failure
+  /// class ([_Retryable.isRateLimit]), not the rotation flag: transport
+  /// outages don't count (the label must not call an outage a rate
+  /// limit), queue-mode quota waits do.
   var rateLimitWaitTotal = Duration.zero;
 
   /// One bounded line per failed attempt (the exhaustion story's
@@ -575,6 +584,7 @@ final class _AttemptBuffer {
         event.retryAfter,
         event.error,
         isTransport: true,
+        isRateLimit: death.kind == QueueDeathKind.quota,
         deathKind: death.kind,
         deathCooldown: death.cooldown,
         immediate: death.immediate,
@@ -589,7 +599,7 @@ final class _AttemptBuffer {
     if (event.reason == StopReason.error &&
         isRateLimitOrQuota(event.error, retryAfter: event.retryAfter)) {
       // Not forwarded: the buffer is discarded and the chain retries.
-      return _Retryable(event.retryAfter, event.error);
+      return _Retryable(event.retryAfter, event.error, isRateLimit: true);
     }
     final retryClass = finishReasonRetryClass(event.error);
     if (event.reason == StopReason.error &&
@@ -883,6 +893,10 @@ final class FallbackStreamFunction {
 
   /// Paid same-entry retry: sleeps once, then forces the next iteration to
   /// run an attempt. Returns false on abort or when control moved on.
+  /// [isTransport] selects the notice kind (the rotation-policy flag);
+  /// [isRateLimitWait] is the failure class the waited-total accounting
+  /// follows (issue #1066, review round 2: never infer one from the
+  /// other — queue mode runs transport-flagged quota deaths).
   Future<bool> _sleepAndRetry(
     AssistantMessageEventStream out,
     _DriveState state,
@@ -890,6 +904,7 @@ final class FallbackStreamFunction {
     String reason,
     CancelToken? cancelToken, {
     bool isTransport = false,
+    bool isRateLimitWait = false,
   }) async {
     state.attemptsOnEntry++;
     state.failures++;
@@ -908,7 +923,7 @@ final class FallbackStreamFunction {
       _pushAborted(out, _entries[state.entryIndex].model);
       return false;
     }
-    if (!isTransport) state.rateLimitWaitTotal += delay;
+    if (isRateLimitWait) state.rateLimitWaitTotal += delay;
     // After the wait: a single-key ring reuses its (benched) key — omp
     // retries the current credential after local backoff; our own bench
     // must not deadlock the retry. Multi-key rings re-select, picking up
@@ -949,9 +964,23 @@ final class FallbackStreamFunction {
         ? 'all API keys in backoff'
         : _shortReasonText(lastFailure.error);
     if (wait > policy.maxWait) {
-      return _onExcessiveWait(out, state, wait, reason, cancelToken);
+      return _onExcessiveWait(
+        out,
+        state,
+        wait,
+        reason,
+        cancelToken,
+        isRateLimit: true,
+      );
     }
-    return _sleepAndRetry(out, state, wait, reason, cancelToken);
+    return _sleepAndRetry(
+      out,
+      state,
+      wait,
+      reason,
+      cancelToken,
+      isRateLimitWait: true,
+    );
   }
 
   /// The first entry outside [tried] that is not cooling down, or null —
@@ -971,7 +1000,10 @@ final class FallbackStreamFunction {
   /// instead of dying in <1s — bounded by
   /// [ModelRolesRetryPolicy.maxWaitForLastEntry] so a pathological
   /// `Retry-After` (hours) still ends the chain. The wait-out consumes
-  /// attempts like any paid retry ([_sleepAndRetry]).
+  /// attempts like any paid retry ([_sleepAndRetry]); [isRateLimit] (the
+  /// failure class) keys the waited-total accounting and, for queue-mode
+  /// quota wait-outs, corrects the notice kind that the rotation flag
+  /// alone would mislabel as a transport retry.
   Future<bool> _onExcessiveWait(
     AssistantMessageEventStream out,
     _DriveState state,
@@ -979,6 +1011,7 @@ final class FallbackStreamFunction {
     String reason,
     CancelToken? cancelToken, {
     bool isTransport = false,
+    bool isRateLimit = false,
   }) async {
     if (_failoverTarget(state.tried) != null) {
       return _failOver(out, state);
@@ -991,7 +1024,8 @@ final class FallbackStreamFunction {
       bounded,
       reason,
       cancelToken,
-      isTransport: isTransport,
+      isTransport: isTransport && !isRateLimit,
+      isRateLimitWait: isRateLimit,
     );
   }
 
@@ -1050,6 +1084,7 @@ final class FallbackStreamFunction {
         _shortReasonText(outcome.error),
         cancelToken,
         isTransport: outcome.isTransport,
+        isRateLimit: outcome.isRateLimit,
       );
     }
     return _sleepAndRetry(
@@ -1059,6 +1094,7 @@ final class FallbackStreamFunction {
       _shortReasonText(outcome.error),
       cancelToken,
       isTransport: outcome.isTransport,
+      isRateLimitWait: outcome.isRateLimit,
     );
   }
 
