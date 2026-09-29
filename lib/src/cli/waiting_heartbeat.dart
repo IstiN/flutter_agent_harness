@@ -14,6 +14,7 @@ library;
 import 'dart:async';
 
 import '../exceptions.dart';
+import 'tool_liveness.dart';
 
 /// Default waiting-heartbeat cadence in minutes (`waiting:
 /// waitHeartbeatMinutes`; `0` = kill switch).
@@ -23,13 +24,17 @@ const defaultWaitHeartbeatMinutes = 20;
 /// (`waiting: waitCeilingMinutes`).
 const defaultWaitForJobsCeilingMinutes = 30;
 
-/// The `waiting:` yaml section: waiting-heartbeat cadence and the
-/// `--wait-for-jobs` ceiling. Parsed strictly like `subagents:` — a bad
-/// schema throws at boot; negative values are rejected.
+/// The `waiting:` yaml section: waiting-heartbeat cadence, the
+/// `--wait-for-jobs` ceiling, and the per-call foreground liveness knobs
+/// (gh-1055). Parsed strictly like `subagents:` — a bad schema throws at
+/// boot; negative values are rejected.
 final class WaitingConfig {
   const WaitingConfig({
     this.waitHeartbeatMinutes = defaultWaitHeartbeatMinutes,
     this.waitCeilingMinutes = defaultWaitForJobsCeilingMinutes,
+    this.toolLivenessSeconds = defaultToolLivenessSeconds,
+    this.toolLivenessTickSeconds = defaultToolLivenessTickSeconds,
+    this.toolEscalateSeconds = defaultToolEscalateSeconds,
   });
 
   /// Waiting-heartbeat cadence in minutes; `0` disables the heartbeat.
@@ -38,6 +43,17 @@ final class WaitingConfig {
   /// How long a `--wait-for-jobs` headless run may stay alive for its
   /// waiters before exiting with the summary line.
   final int waitCeilingMinutes;
+
+  /// Per-call foreground liveness (gh-1055): reminders start once a tool
+  /// call runs this many seconds; `0` disables them.
+  final int toolLivenessSeconds;
+
+  /// Liveness reminder cadence in seconds; `0` disables the timer chain.
+  final int toolLivenessTickSeconds;
+
+  /// The one-time background escape-hatch hint fires once a stuck call
+  /// runs this many seconds; `0` disables the hint.
+  final int toolEscalateSeconds;
 
   factory WaitingConfig.fromYaml(Object? node) {
     if (node == null) return const WaitingConfig();
@@ -57,11 +73,17 @@ final class WaitingConfig {
     }
 
     for (final key in node.keys) {
-      if (!{'waitHeartbeatMinutes', 'waitCeilingMinutes'}.contains('$key')) {
+      if (!{
+        'waitHeartbeatMinutes',
+        'waitCeilingMinutes',
+        'toolLivenessSeconds',
+        'toolLivenessTickSeconds',
+        'toolEscalateSeconds',
+      }.contains('$key')) {
         throw ConfigException('unknown "waiting" key: $key');
       }
     }
-    return WaitingConfig(
+    final parsed = WaitingConfig(
       waitHeartbeatMinutes: parse(
         'waitHeartbeatMinutes',
         defaultWaitHeartbeatMinutes,
@@ -70,13 +92,44 @@ final class WaitingConfig {
         'waitCeilingMinutes',
         defaultWaitForJobsCeilingMinutes,
       ),
+      toolLivenessSeconds: parse(
+        'toolLivenessSeconds',
+        defaultToolLivenessSeconds,
+      ),
+      toolLivenessTickSeconds: parse(
+        'toolLivenessTickSeconds',
+        defaultToolLivenessTickSeconds,
+      ),
+      toolEscalateSeconds: parse(
+        'toolEscalateSeconds',
+        defaultToolEscalateSeconds,
+      ),
     );
+    // Ordering (gh-1055 review): the hint fires at a LONGER threshold than
+    // the reminders — AC1 starts the reminders at the configured threshold,
+    // AC3 escalates past it. A smaller escalation would print the hint as
+    // the very first line; rejected at boot like every other bad `waiting:`
+    // schema. `0` disables either side and is exempt from the ordering.
+    if (parsed.toolLivenessSeconds > 0 &&
+        parsed.toolEscalateSeconds > 0 &&
+        parsed.toolEscalateSeconds < parsed.toolLivenessSeconds) {
+      throw ConfigException(
+        '"waiting.toolEscalateSeconds" must be 0 or >= '
+        '"waiting.toolLivenessSeconds" (${parsed.toolLivenessSeconds}) — '
+        'the background hint fires at a longer threshold than the '
+        'liveness reminders',
+      );
+    }
+    return parsed;
   }
 
   String toYaml() =>
       'waiting:\n'
       '  waitHeartbeatMinutes: $waitHeartbeatMinutes\n'
-      '  waitCeilingMinutes: $waitCeilingMinutes\n';
+      '  waitCeilingMinutes: $waitCeilingMinutes\n'
+      '  toolLivenessSeconds: $toolLivenessSeconds\n'
+      '  toolLivenessTickSeconds: $toolLivenessTickSeconds\n'
+      '  toolEscalateSeconds: $toolEscalateSeconds\n';
 }
 
 /// Default age belt for cross-run job manifest entries (`jobs:
