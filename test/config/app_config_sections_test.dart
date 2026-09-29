@@ -212,5 +212,36 @@ void main() {
       expect(app.mcpConfigured, isTrue);
       expect(app.warnings.single, contains('mcp'));
     });
+
+    test('a retry:-only doc is a silent no-op — CLI parity (round-1)', () {
+      final app = parseAppConfigSections(
+        userDoc: _doc('retry:\n  retriesPerEntry: 5\n'),
+      );
+      expect(app.roles, isNull);
+      expect(app.warnings, isEmpty);
+    });
+
+    test('a non-string agent.mode warns and keeps the default (round-1)',
+        () {
+      final app = parseAppConfigSections(userDoc: _doc('agent:\n  mode: 42\n'));
+      expect(app.loadMode, AgentLoadMode.defaultMode);
+      expect(app.warnings.single, contains('agent.mode'));
+      expect(app.warnings.single, contains('~/.fah/config.yaml'));
+    });
+
+    test('a non-map agent: node warns (round-1)', () {
+      final app = parseAppConfigSections(userDoc: _doc('agent: nope\n'));
+      expect(app.loadMode, AgentLoadMode.defaultMode);
+      expect(app.warnings.single, contains('agent'));
+    });
+
+    test('a non-map top-level doc warns and names the file (round-1)', () {
+      final app = parseAppConfigSections(
+        userDoc: loadYaml('- just\n- a list\n'),
+      );
+      expect(app.roles, isNull);
+      expect(app.warnings.single, contains('expected a map'));
+      expect(app.warnings.single, contains('~/.fah/config.yaml'));
+    });
   });
 }

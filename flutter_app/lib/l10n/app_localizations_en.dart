@@ -1761,6 +1761,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'Turn tools off or on for Fa — applies immediately, no restart.';
 
   @override
+  String get settingsRedaction => 'Secret redaction';
+
+  @override
+  String get settingsRedactionHint =>
+      'Mask API keys and secrets in everything Fa sends or stores. Applies immediately, no restart.';
+
+  @override
   String toolsAvailabilityUnavailable(Object reason) {
     return 'Unavailable: $reason';
   }

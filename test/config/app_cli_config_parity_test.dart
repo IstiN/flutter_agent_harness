@@ -187,4 +187,21 @@ void main() {
     expect(app.loadMode, AgentLoadMode.defaultMode);
     expect(app.warnings, isEmpty);
   });
+
+  test('a retry:-only doc is a silent no-op on BOTH sides (round-1)', () {
+    final doc = _parse('provider: openai-completions\nretry:\n  x: 1\n');
+    final cli = CliConfig.fromYaml(doc);
+    final app = parseAppConfigSections(userDoc: doc);
+    expect(cli.modelRoles, isNull);
+    expect(app.roles, isNull);
+    expect(app.warnings, isEmpty);
+  });
+
+  test('a non-string agent.mode errors on the CLI and warns on the app',
+      () {
+    final doc = _parse('provider: p\nagent:\n  mode: 42\n');
+    final app = parseAppConfigSections(userDoc: doc);
+    expect(app.loadMode, AgentLoadMode.defaultMode);
+    expect(app.warnings.single, contains('agent.mode'));
+  });
 }

@@ -306,8 +306,7 @@ class AgentService extends ChangeNotifier
     /// `createSessionParseExecutor()` (null on web → inline parsing).
     @visibleForTesting SessionParseExecutor? parseExecutor,
 
-    /// Overrides the `~/.fah` home the yaml config loader reads (issue
-    /// #1078); null reads the real home. Tests inject a sandbox dir.
+    /// Overrides the `~/.fah` home the yaml loader reads (issue #1078).
     String? configHomeDir,
   }) async {
     final resolvedEnv =
@@ -497,8 +496,7 @@ class AgentService extends ChangeNotifier
     String? skillsHomeDir,
     this.powerAssertion,
 
-    /// The `~/.fah` home the yaml config loader reads (issue #1078); null
-    /// reads the real home. Tests inject a sandbox dir.
+    /// The `~/.fah` home the yaml loader reads (issue #1078).
     String? configHomeDir,
   }) // ignore: prefer_initializing_formals — private fields, public params
     // ignore: prefer_initializing_formals
@@ -656,22 +654,16 @@ class AgentService extends ChangeNotifier
     // Project-level .fah/config.yaml memory: wins over the user one.
     final memoryConfig = loadAppMemoryConfig(env.sessionCwd);
     // The yaml sections the app honors (issue #1078): the CLI's own
-    // parsers over ~/.fah/config.yaml + the project pair. Null on web
-    // (E2: nothing to read, nothing to note). Warnings (unreadable or
-    // malformed sections) surface ONCE, here — the app stores keep their
-    // values either way and boot never blocks.
+    // parsers; warnings surface once here, boot never blocks (E2/AC7).
     final appConfig = loadAppFahConfig(
-      projectDir: env.sessionCwd,
-      homeDir: configHomeDir,
+      projectDir: env.sessionCwd, homeDir: configHomeDir,
     );
     for (final warning in appConfig?.warnings ?? const <String>[]) {
       AppLog.i('config', warning);
     }
-    // providerTimeouts: (AC5) — the SAME global the CLI publishes at boot;
-    // reassigned every service creation so a config edit (or removal)
-    // applies to the next session without stale overrides.
+    // AC5: the SAME global the CLI publishes — re-set every creation so
+    // a config edit applies to the next session; AC4's pipeline config.
     providerTimeoutsOverride = appConfig?.providerTimeouts;
-    // redact: (AC4) — the pipeline config [_attachRedactor] builds from.
     _yamlRedactConfig = appConfig?.redact;
     // Session image registry (`images:` section, issue #171): process-wide
     // like in the CLI; core default is on, user config honored where the
@@ -693,28 +685,20 @@ class AgentService extends ChangeNotifier
     // + explore) and `subagent` (delegation) overrides resolve through it;
     // the Map reads the store lazily, so settings changes apply on the next
     // spawn without rebuilding the agent. yaml `roles:` fills the gaps
-    // (issue #1078 AC1): store choices win per role (E1 — the explicit
-    // app-UI choice beats yaml), and the yaml retry/modelOverrides ride
-    // the same resolver. The app's MAIN model stays the explicit UI
-    // choice — yaml `roles.default` would override an explicit pick, so
-    // unlike the CLI the main connection is never re-pointed from config.
+    // (AC1, E1: store wins per role); the MAIN model is never re-pointed
+    // from config — unlike the CLI, it stays the explicit UI choice.
     final taskModelsStore = _taskModelsStore;
     final yamlRoles = appConfig?.roles;
     if (taskModelsStore != null || yamlRoles != null) {
       _taskRolesResolver = ModelRolesResolver(
         config: ModelRolesConfig(
-          roles: _StoreBackedRolesMap(
-            taskModelsStore,
-            fallback: yamlRoles?.roles,
-          ),
+          roles: _StoreBackedRolesMap(taskModelsStore, fallback: yamlRoles?.roles),
           pathOverrides: yamlRoles?.pathOverrides ?? const [],
           retry: yamlRoles?.retry ?? const ModelRolesRetryPolicy(),
         ),
         secrets: _secretsEnv?.secretsSnapshot() ?? const {},
       );
-      // Chain failover notes (429 rotation, key switches) surface in the
-      // log — the app twin of the CLI's `[roles]` line; the session id
-      // keeps the prompt-cache affinity across chain entries (CLI parity).
+      // 429 rotation notices surface in the log (CLI parity).
       _taskRolesResolver!.onNotice =
           (notice) => AppLog.i('roles', notice.describe());
       _taskRolesResolver!.sessionId = () => _session?.cachedId;
@@ -935,8 +919,7 @@ class AgentService extends ChangeNotifier
     };
     _attachRedactor(redactor, bootSecrets);
     _attachApproval();
-    // ttsr: rules (issue #1078 AC3) — the CLI's controller/manager pair
-    // over this agent, injecting at the session sink.
+    // ttsr: rules (AC3) — the CLI's controller/manager pair.
     _attachAppConfigTtsr(appConfig);
     // Structured compaction recall (issue #148 D3): `compact_expand`
     // resolves numeric marker ids against the LIVE session; the per-turn
@@ -960,17 +943,11 @@ class AgentService extends ChangeNotifier
       onDevice: isOnDevice,
       registry: registry,
       initialConfig: initialToolsConfig ?? const ToolsConfig(),
-      // yaml `tools:` scopes under the runtime store (issue #1078 AC2/E1):
-      // global < project < the app-UI choices.
+      // yaml `tools:` scopes under the runtime store (AC2/E1).
       configScopes: [
-        if (appConfig case final sections?)
-          (ToolScope.global, sections.userTools),
-        if (appConfig case final sections?) (
-          ToolScope.project,
-          sections.projectTools,
-        ),
+        if (appConfig case final s?) (ToolScope.global, s.userTools),
+        if (appConfig case final s?) (ToolScope.project, s.projectTools),
       ],
-      // agent.mode (AC2/E4): the load mode pins essentials + discovery.
       loadMode: appConfig?.loadMode ?? AgentLoadMode.defaultMode,
       rebuildPrompt: () {
         _agent.state.systemPrompt = _composeSystemPrompt(config);
@@ -1045,22 +1022,6 @@ class AgentService extends ChangeNotifier
     for (final tool in _agent.state.tools) tool.name,
   ];
 
-  /// The layered redaction pipeline ([_attachRedactor]); null when the
-  /// yaml section disabled redaction (issue #1078 AC4 tests).
-  @visibleForTesting
-  RedactionPipeline? get redactionPipelineForTest => _redactionPipeline;
-
-  /// The model-roles resolver ([create] wiring); null when neither the
-  /// TaskModelsStore nor yaml `roles:` provided anything (issue #1078
-  /// AC1 tests).
-  @visibleForTesting
-  ModelRolesResolver? get taskRolesResolverForTest => _taskRolesResolver;
-
-  /// The live agent (issue #1078 AC3 tests): the transcript is where a
-  /// ttsr injection lands ([UserMessage] with the rule body).
-  @visibleForTesting
-  Agent get agentForTest => _agent;
-
   /// Composes redaction hooks onto the agent so secret values never reach
   /// the model, the transcript, or the session files. Attached even for an
   /// empty redactor: `request_secret` grants register values at runtime and
@@ -1070,14 +1031,12 @@ class AgentService extends ChangeNotifier
     SecretRedactor? redactor, [
     Map<String, String> bootSecrets = const {},
   ]) {
+    // Seed for the live re-enable ([AgentServiceAppConfig]).
+    if (bootSecrets.isNotEmpty) _bootSecrets = bootSecrets;
     if (redactor == null) return;
     attachSecretRedactor(_agent, redactor);
-    // The layered pipeline (issue #24): config-driven now (issue #1078
-    // AC4) — the yaml `redact:` section builds it (blockMode denial rides
-    // the config), the historical default (mask mode) applies when the
-    // section is absent. A yaml-disabled pipeline stays null: hooks never
-    // attach, exactly like the CLI (runtime `request_secret` grants then
-    // mask through the legacy redactor only).
+    // The layered pipeline (issue #24), now config-driven (AC4); a
+    // yaml-disabled one stays null, exactly like the CLI.
     if (_yamlRedactConfig is RedactionConfig && !_yamlRedactConfig!.enabled) {
       return;
     }
@@ -1593,9 +1552,11 @@ class AgentService extends ChangeNotifier
   /// lazily on first attach from the redactor's registered values.
   RedactionPipeline? _redactionPipeline;
 
-  /// The yaml `redact:` section (issue #1078 AC4); null when absent —
-  /// the historical mask-mode default applies. Set once in [create].
+  /// The yaml `redact:` section (AC4); null = the mask-mode default.
   RedactionConfig? _yamlRedactConfig;
+
+  /// Boot secrets snapshot ([_attachRedactor]): the live re-enable seed.
+  Map<String, String> _bootSecrets = const {};
 
   /// Rendered skills + project-context sections appended to the composed
   /// system prompt (discovered in [AgentService.create]; re-discovered by

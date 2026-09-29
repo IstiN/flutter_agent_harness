@@ -10,6 +10,28 @@
 part of 'agent_service.dart';
 
 extension AgentServiceAppConfig on AgentService {
+  /// The layered redaction pipeline ([_attachRedactor]); null when the
+  /// yaml section disabled redaction (issue #1078 AC4 tests).
+  @visibleForTesting
+  RedactionPipeline? get redactionPipelineForTest => _redactionPipeline;
+
+  /// The model-roles resolver ([create] wiring); null when neither the
+  /// TaskModelsStore nor yaml `roles:` provided anything (AC1 tests).
+  @visibleForTesting
+  ModelRolesResolver? get taskRolesResolverForTest => _taskRolesResolver;
+
+  /// The live agent (AC3 tests): the transcript is where a ttsr
+  /// injection lands ([UserMessage] with the rule body).
+  @visibleForTesting
+  Agent get agentForTest => _agent;
+
+  /// Whether redaction is currently active on this service: the live
+  /// pipeline's switch, else the yaml intent, else the core default (on).
+  /// The settings Redaction section reads this.
+  bool get redactionEnabled =>
+      _redactionPipeline?.config.enabled ??
+      (_yamlRedactConfig?.enabled ?? true);
+
   /// Attaches the ttsr controller when the yaml section ships rules
   /// (issue #1078 AC3) — the CLI's exact pair ([TtsrManager] over
   /// [TtsrController]) watching this agent's stream. Injections persist
@@ -66,17 +88,23 @@ extension AgentServiceAppConfig on AgentService {
     );
   }
 
-  /// Live redaction toggle (issue #1078 AC4/E3 — the settings-screen
-  /// surface, mirroring the CLI settings flow): flips the layered
-  /// pipeline's config in place, building + attaching it on demand when
-  /// redaction was yaml-disabled or never configured. Persistence of the
-  /// choice is the caller's (settings store) — this is the engine side.
+  /// Live redaction toggle (issue #1078 AC4/E3 — the settings Redaction
+  /// section): flips the layered pipeline's config in place, building +
+  /// attaching it on demand when redaction was yaml-disabled or never
+  /// configured. Pure engine state — the section widget owns its repaint.
   void setRedactionEnabled(bool enabled) {
     final pipeline = _redactionPipeline;
     if (pipeline == null) {
       if (!enabled) return;
+      // Rebuild from the boot secrets snapshot: the yaml-disabled path
+      // early-returned before any pipeline existed, so without this the
+      // freshly enabled pipeline would mask nothing until a new
+      // request_secret grant lands.
       _redactionPipeline = RedactionPipeline(
-        registeredSecrets: const [],
+        registeredSecrets: [
+          for (final value in _bootSecrets.values)
+            if (value.length >= SecretRedactor.minValueLength) value,
+        ],
         config: (_yamlRedactConfig ?? const RedactionConfig()).copyWith(
           enabled: true,
         ),

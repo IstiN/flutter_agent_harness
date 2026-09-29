@@ -184,7 +184,8 @@ retry:
         'providerTimeouts:\n  connectTimeoutMs: 42000\n'
         '  streamIdleTimeoutMs: 25000\n',
       );
-      await buildService();
+      final service = await buildService();
+      addTearDown(service.dispose);
       expect(providerTimeoutsOverride!.connect, const Duration(seconds: 42));
       expect(
         providerTimeoutsOverride!.streamIdle,
@@ -196,7 +197,8 @@ retry:
       providerTimeoutsOverride = ProviderTimeoutsOverride(
         connect: const Duration(seconds: 1),
       );
-      await buildService();
+      final service = await buildService();
+      addTearDown(service.dispose);
       expect(providerTimeoutsOverride, isNull);
     });
   });

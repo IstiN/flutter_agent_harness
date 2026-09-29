@@ -110,15 +110,26 @@ AppFahSections parseAppConfigSections({
 }) {
   final warnings = <String>[];
   YamlMap? user;
-  if (userDoc is YamlMap) user = userDoc;
+  if (userDoc is YamlMap) {
+    user = userDoc;
+  } else if (userDoc != null) {
+    warnings.add('invalid config in $userSource: expected a map');
+  }
+  YamlMap? project;
+  if (projectDoc is YamlMap) {
+    project = projectDoc;
+  } else if (projectDoc != null) {
+    warnings.add('invalid config in $projectSource: expected a map');
+  }
 
   // roles: — user scope, the CLI's exact parse (whole-doc: it reads
-  // roles:/modelOverrides:/retry:).
+  // roles:/modelOverrides:/retry:) behind the CLI's exact trigger
+  // (cli_config.dart: roles || modelOverrides). A `retry:`-only doc is a
+  // silent no-op on the CLI — the retry policy only rides a roles parse —
+  // so it stays one here (parity over convenience).
   ModelRolesConfig? roles;
   if (user != null &&
-      (user['roles'] != null ||
-          user['modelOverrides'] != null ||
-          user['retry'] != null)) {
+      (user['roles'] != null || user['modelOverrides'] != null)) {
     try {
       roles = ModelRolesConfig.fromYaml(user);
     } on ConfigException catch (error) {
@@ -130,7 +141,7 @@ AppFahSections parseAppConfigSections({
   // (global < project < runtime) in the live resolution.
   final userTools = _parseTools(user?['tools'], userSource, warnings);
   final projectTools = _parseTools(
-    projectDoc is YamlMap ? projectDoc['tools'] : null,
+    project?['tools'],
     projectSource,
     warnings,
   );
@@ -202,7 +213,7 @@ AppFahSections parseAppConfigSections({
 
   // agent.mode — env first (the app has no --omp flag), then the config
   // value. The shared validator names the offending source (AC7).
-  final configMode = _agentModeOf(user);
+  final configMode = _agentModeOf(user, userSource, warnings);
   var loadMode = AgentLoadMode.defaultMode;
   for (final (source, value) in [('FA_AGENT_MODE', envMode), (
     'agent.mode',
@@ -254,10 +265,25 @@ ToolsConfig _parseTools(Object? node, String source, List<String> warnings) {
   }
 }
 
-/// The raw `agent.mode` label, or null.
-String? _agentModeOf(YamlMap? user) {
+/// The raw `agent.mode` label, or null — with an AC7 warning when the
+/// node or the label is malformed (the CLI's [resolveAgentLoadMode]
+/// errors on any non-empty non-label value; the app degrades to the
+/// warning + default instead of failing boot).
+String? _agentModeOf(YamlMap? user, String source, List<String> warnings) {
   final agent = user?['agent'];
-  if (agent is! YamlMap) return null;
+  if (agent == null) return null;
+  if (agent is! YamlMap) {
+    warnings.add('invalid agent section in $source: expected a map');
+    return null;
+  }
   final mode = agent['mode'];
-  return mode is String ? mode : null;
+  if (mode == null) return null;
+  if (mode is! String) {
+    warnings.add(
+      'invalid agent.mode in $source: expected one of '
+      '${agentLoadModeLabels.join('|')}',
+    );
+    return null;
+  }
+  return mode;
 }

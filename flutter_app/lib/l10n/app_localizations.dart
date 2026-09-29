@@ -3170,6 +3170,18 @@ abstract class AppLocalizations {
   /// **'Turn tools off or on for Fa — applies immediately, no restart.'**
   String get toolsAvailabilityHint;
 
+  /// No description provided for @settingsRedaction.
+  ///
+  /// In en, this message translates to:
+  /// **'Secret redaction'**
+  String get settingsRedaction;
+
+  /// No description provided for @settingsRedactionHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Mask API keys and secrets in everything Fa sends or stores. Applies immediately, no restart.'**
+  String get settingsRedactionHint;
+
   /// No description provided for @toolsAvailabilityUnavailable.
   ///
   /// In en, this message translates to:

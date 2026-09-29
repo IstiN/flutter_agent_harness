@@ -30,7 +30,6 @@ export 'src/browser/browser_tools.dart';
 export 'src/cancel_token.dart';
 export 'src/dap/dap_hub_snapshot.dart';
 export 'src/cli/agent_cli.dart';
-export 'src/cli/startup.dart' show buildRedactionPipeline;
 export 'src/cli/browser_bridge_commands.dart';
 export 'src/cli/custom_providers.dart';
 export 'src/cli/env_provider_preconfig.dart';
