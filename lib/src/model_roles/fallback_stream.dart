@@ -433,9 +433,10 @@ final class _DriveState {
   /// When the call started (the exhaustion story reports the elapsed time).
   final DateTime startedAt;
 
-  /// Total time slept for retries in this call (the exhaustion story
-  /// reports it, issue #1066).
-  var waitedTotal = Duration.zero;
+  /// Total time slept waiting out RATE-LIMIT waits in this call (the
+  /// exhaustion story reports it, issue #1066). Transport-retry backoffs
+  /// don't count — the label must not call an outage a rate limit.
+  var rateLimitWaitTotal = Duration.zero;
 
   /// One bounded line per failed attempt (the exhaustion story's
   /// per-attempt outcomes, issue #290 AC2).
@@ -907,7 +908,7 @@ final class FallbackStreamFunction {
       _pushAborted(out, _entries[state.entryIndex].model);
       return false;
     }
-    state.waitedTotal += delay;
+    if (!isTransport) state.rateLimitWaitTotal += delay;
     // After the wait: a single-key ring reuses its (benched) key — omp
     // retries the current credential after local backoff; our own bench
     // must not deadlock the retry. Multi-key rings re-select, picking up
@@ -944,26 +945,23 @@ final class FallbackStreamFunction {
       );
     }
     final lastFailure = state.lastFailure;
+    final reason = lastFailure == null
+        ? 'all API keys in backoff'
+        : _shortReasonText(lastFailure.error);
     if (wait > policy.maxWait) {
-      return _onExcessiveWait(
-        out,
-        state,
-        wait,
-        lastFailure == null
-            ? 'all API keys in backoff'
-            : _shortReasonText(lastFailure.error),
-        cancelToken,
-      );
+      return _onExcessiveWait(out, state, wait, reason, cancelToken);
     }
-    return _sleepAndRetry(
-      out,
-      state,
-      wait,
-      lastFailure == null
-          ? 'all API keys in backoff'
-          : _shortReasonText(lastFailure.error),
-      cancelToken,
-    );
+    return _sleepAndRetry(out, state, wait, reason, cancelToken);
+  }
+
+  /// The first entry outside [tried] that is not cooling down, or null —
+  /// the single source of truth for failover target selection, shared
+  /// with the sole-entry wait-out check (issue #1066).
+  int? _failoverTarget(Set<int> tried) {
+    for (var index = 0; index < _entries.length; index++) {
+      if (!tried.contains(index) && !isInCooldown(index)) return index;
+    }
+    return null;
   }
 
   /// Issue #1066: the required retry wait exceeds the failover threshold
@@ -982,7 +980,7 @@ final class FallbackStreamFunction {
     CancelToken? cancelToken, {
     bool isTransport = false,
   }) async {
-    if (_hasAvailableFallback(state.tried)) {
+    if (_failoverTarget(state.tried) != null) {
       return _failOver(out, state);
     }
     final bounded =
@@ -995,15 +993,6 @@ final class FallbackStreamFunction {
       cancelToken,
       isTransport: isTransport,
     );
-  }
-
-  /// Whether any entry outside [tried] is not cooling down right now —
-  /// i.e. [_failOver] would find a live target.
-  bool _hasAvailableFallback(Set<int> tried) {
-    for (var index = 0; index < _entries.length; index++) {
-      if (!tried.contains(index) && !isInCooldown(index)) return true;
-    }
-    return false;
   }
 
   /// Handles a retryable failure. Rate-limits follow omp's order: free
@@ -1121,23 +1110,19 @@ final class FallbackStreamFunction {
       _cooldownUntil[from] = until;
       queueState?.recordCooldown(from, until);
     }
-    for (var index = 0; index < _entries.length; index++) {
-      if (tried.contains(index)) continue;
-      if (isInCooldown(index)) continue;
-      final entry = _entries[index];
-      onNotice?.call(
-        FallbackNotice(
-          kind: FallbackNoticeKind.modelFallback,
-          fromModel: _entries[from].label,
-          toModel: entry.label,
-          delay: Duration.zero,
-          attempt: failures,
-          reason: reason,
-        ),
-      );
-      return index;
-    }
-    return null;
+    final next = _failoverTarget(tried);
+    if (next == null) return null;
+    onNotice?.call(
+      FallbackNotice(
+        kind: FallbackNoticeKind.modelFallback,
+        fromModel: _entries[from].label,
+        toModel: _entries[next].label,
+        delay: Duration.zero,
+        attempt: failures,
+        reason: reason,
+      ),
+    );
+    return next;
   }
 
   /// Per-entry health for the exhausted-chain terminal (UT-24): every
@@ -1220,7 +1205,7 @@ final class FallbackStreamFunction {
     final elapsedText = elapsed.inSeconds < 1 ? '<1s' : '${elapsed.inSeconds}s';
     // Issue #1066: say how long the chain already waited out rate limits
     // before giving up.
-    final waited = state.waitedTotal;
+    final waited = state.rateLimitWaitTotal;
     final waitedText = waited.inSeconds < 1
         ? ''
         : ' (waited ${_etaText(waited)} on rate limits)';

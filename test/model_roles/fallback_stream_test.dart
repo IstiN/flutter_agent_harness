@@ -640,6 +640,50 @@ void main() {
     );
 
     test(
+      'the waited-total label counts rate-limit waits only (issue #1066)',
+      () async {
+        final a = _model('openai', 'gpt-a');
+        final partial = _msg(a);
+        List<AssistantMessageEvent> transportTurn() => [
+          StartEvent(partial: partial),
+          ErrorEvent(
+            reason: StopReason.error,
+            error: _msg(
+              a,
+              stop: StopReason.error,
+              error: 'ClientException: Connection closed while receiving data',
+            ),
+            retryAfter: const Duration(seconds: 90),
+          ),
+        ];
+        final probe = _Probe({
+          'v-a': [transportTurn(), transportTurn(), transportTurn()],
+        });
+        final w = wrapper([
+          entry(probe, a, ['v-a']),
+        ], policy: const ModelRolesRetryPolicy(
+          retriesPerEntry: 2,
+          maxWait: Duration(seconds: 30),
+        ));
+
+        final events = await run(w);
+
+        // Two bounded 90s wait-outs, both transport-class: the chain
+        // exhausted after real waiting, but an outage must not be
+        // misdiagnosed as rate limiting in the story.
+        expect(sleeps, [
+          const Duration(seconds: 90),
+          const Duration(seconds: 90),
+        ]);
+        expect(
+          events.single,
+          startsWith('error(error):${a.id}:Provider chain exhausted'),
+        );
+        expect(events.single, isNot(contains('waited')));
+      },
+    );
+
+    test(
       'the last eligible entry waits out even after an instant failover '
       '(issue #1066)',
       () async {
