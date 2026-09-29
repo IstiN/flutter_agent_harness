@@ -41,6 +41,24 @@ factual: paths, commands, invariants — no essays.
   `builtinTools` in the CLI (`AgentCli`) and the app (`AgentService`).
   `LocalShell` merges `ShellExecOptions.env` OVER `Platform.environment`
   (never replaces), so injected vars keep the inherited environment.
+- `lib/src/env/io_execution_env.dart` — `LocalShell`: foreground `exec`
+  runs under `setsid` when the host has it (probe
+  `ownProcessGroupAvailable`, seam `ownProcessGroupOverride`) and the
+  timeout/cancel paths reap the whole tree (`killTree` + direct-kill
+  backstop) with a capped pipe-drain (`_drainGrace`) — timeout/cancel'd
+  calls complete in ≤ timeout + kill grace + drain grace; a no-timeout
+  call within `_drainGrace` of the direct child's exit (the drain is
+  capped unconditionally: after the child is reaped every remaining pipe
+  byte comes from an orphan). Killed calls are marked `timeout`/`aborted`
+  and carry the captured partial output on `ExecutionError.stdout`/
+  `stderr` — tail-capped at the source to the last 64 KiB (`_captureTail`)
+  — rendered by the bash tool and the skill renderer's `!cmd` failure
+  branch (every string that branch embeds is tail-capped to ~2 KB)
+  (gh-1053; the timeout timer stays
+  armed after the child exits because an orphaned descendant can hold
+  the pipes — a drain that outlives the deadline marks the call
+  `timedOut` even when the child exited 0). Background jobs (issue #517)
+  keep their own group + `stop()` semantics.
 - `lib/src/tools/checkpoint_tool.dart` — `checkpoint`/`rewind` tools:
   context hygiene for detours. `CheckpointRewindController` wraps
   `Agent.prepareNextTurn`, persists via host `CheckpointSessionSink`.
