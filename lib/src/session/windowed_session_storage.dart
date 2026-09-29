@@ -490,7 +490,9 @@ final class WindowedSessionStorage
     _indexChunk(chunk);
     _knownFileBytes = chunk.endOffset;
     if (_belowCount != null) {
-      _belowCount = (_belowCount! - chunk.entries.length).clamp(0, 1 << 31);
+      // 0x80000000 == the VM value of `1 << 31`; the shift form is negative
+      // on dart2js and would throw inside clamp (issue #1074).
+      _belowCount = (_belowCount! - chunk.entries.length).clamp(0, 0x80000000);
     }
     if (chunk.endOffset >= _fileSize) _belowCount = 0;
     final joined = _joinBranchDownward(chunk);
