@@ -39,6 +39,10 @@ final class _GatedEnv implements ExecutionEnv {
   /// How many tool writes were actually parked on a gate.
   int gatedWrites = 0;
 
+  /// When true, [absolutePath] mimics production IO envs: prefix cwd with
+  /// NO `.`/`..` normalization (`io_execution_env._resolve` semantics).
+  bool rawAbsolutePaths = false;
+
   /// Fires with every raw read path as it enters the window.
   void Function(String path)? onReadStart;
 
@@ -69,7 +73,9 @@ final class _GatedEnv implements ExecutionEnv {
 
   @override
   Future<Result<String, FileError>> absolutePath(String path) =>
-      _delegate.absolutePath(path);
+      rawAbsolutePaths
+          ? Future.value(Ok(path.startsWith('/') ? path : '$cwd/$path'))
+          : _delegate.absolutePath(path);
 
   @override
   Future<Result<String, FileError>> joinPath(List<String> parts) =>
@@ -130,7 +136,7 @@ final class _GatedEnv implements ExecutionEnv {
 /// Records a full read the way the hashline read tool does and returns the
 /// tag a model would cite (same minting convention as patcher_test).
 Future<String> _recordFullRead(
-  MemoryExecutionEnv env,
+  ExecutionEnv env,
   HashlineSnapshotStore store,
   String path,
 ) async {
@@ -394,6 +400,190 @@ void main() {
       expect(_text(results[1]), contains('Edited'));
       expect((await env.readTextFile('a.md')).valueOrNull, 'ONE');
       expect((await env.readTextFile('b.md')).valueOrNull, 'TWO');
+    });
+  });
+
+  group('per-path mutation lock: pairings, cancel, raw envs (review '
+      '#1084)', () {
+    test('E2: aliased spellings serialize even on a raw, non-normalizing '
+        'env (production IO semantics)', () async {
+      final env = _GatedEnv(cwd: '/w');
+      // io_execution_env._resolve merely prefixes the cwd — lock keys must
+      // not depend on the env collapsing `./`.
+      env.rawAbsolutePaths = true;
+      await env.writeFile('f.md', 'A B');
+      final edit = editFileTool(env);
+
+      final gate = Completer<void>();
+      env.readGates['f.md'] = gate;
+      final first = edit.execute(
+        {'path': 'f.md', 'oldText': 'A', 'newText': 'A1'},
+        null,
+        null,
+      );
+      await _pumpUntil(() => env.reads.length == 1);
+
+      final second = edit.execute(
+        {'path': './f.md', 'oldText': 'B', 'newText': 'B1'},
+        null,
+        null,
+      );
+      await _pumpTurns();
+      expect(
+        env.reads.length,
+        1,
+        reason: './f.md must hit the same lock key as f.md on a raw env',
+      );
+
+      gate.complete();
+      await Future.wait([first, second]);
+      expect((await env.readTextFile('f.md')).valueOrNull, 'A1 B1');
+    });
+
+    test('UT-2c: a call cancelled while queued on the lock never mutates',
+        () async {
+      final env = _GatedEnv(cwd: '/w');
+      await env.writeFile('g.md', 'seed');
+      final write = writeFileTool(env);
+      final edit = editFileTool(env);
+
+      final gate = Completer<void>();
+      env.writeGates['g.md'] = gate;
+      final writing = write.execute(
+        {'path': 'g.md', 'content': 'BASE tail'},
+        null,
+        null,
+      );
+      await _pumpUntil(() => env.gatedWrites == 1);
+
+      final source = CancelTokenSource();
+      final editing = edit.execute(
+        {'path': 'g.md', 'oldText': 'BASE', 'newText': 'BASE·EDIT'},
+        source.token,
+        null,
+      );
+      await _pumpTurns();
+      source.cancel('user changed direction');
+      gate.complete();
+
+      await expectLater(editing, throwsA(isA<CancelledException>()));
+      expect(_text(await writing), contains('Successfully wrote'));
+      expect(
+        (await env.readTextFile('g.md')).valueOrNull,
+        'BASE tail',
+        reason: 'the cancelled edit must not run its mutation',
+      );
+    });
+
+    test('P1: write + write on one path serialize — last content wins',
+        () async {
+      final env = _GatedEnv(cwd: '/w');
+      await env.writeFile('w.md', 'seed');
+      final write = writeFileTool(env);
+
+      final gate = Completer<void>();
+      env.writeGates['w.md'] = gate;
+      final first = write.execute(
+        {'path': 'w.md', 'content': 'one'},
+        null,
+        null,
+      );
+      await _pumpUntil(() => env.gatedWrites == 1);
+
+      final second = write.execute(
+        {'path': 'w.md', 'content': 'two'},
+        null,
+        null,
+      );
+      await _pumpTurns();
+      expect(
+        env.writes.length,
+        2,
+        reason: 'second write raced past the lock (seed + first = 2)',
+      );
+
+      gate.complete();
+      final results = await Future.wait([first, second]);
+      expect(_text(results[0]), contains('Successfully wrote'));
+      expect(_text(results[1]), contains('Successfully wrote'));
+      expect((await env.readTextFile('w.md')).valueOrNull, 'two');
+    });
+
+    test('P2: edit → write reversed pairing — the write still lands whole',
+        () async {
+      final env = _GatedEnv(cwd: '/w');
+      await env.writeFile('g.md', 'seed');
+      final edit = editFileTool(env);
+      final write = writeFileTool(env);
+
+      final gate = Completer<void>();
+      env.readGates['g.md'] = gate;
+      final editing = edit.execute(
+        {'path': 'g.md', 'oldText': 'seed', 'newText': 'seed·EDIT'},
+        null,
+        null,
+      );
+      await _pumpUntil(() => env.reads.length == 1);
+
+      final writing = write.execute(
+        {'path': 'g.md', 'content': 'fresh'},
+        null,
+        null,
+      );
+      await _pumpTurns();
+      expect(env.gatedWrites, 0, reason: 'write raced past the edit lock');
+
+      gate.complete();
+      final results = await Future.wait([editing, writing]);
+      expect(_text(results[0]), contains('Edited'));
+      expect(_text(results[1]), contains('Successfully wrote'));
+      expect(
+        (await env.readTextFile('g.md')).valueOrNull,
+        'fresh',
+        reason: 'a full overwrite after an edit replaces it — in order, '
+            'never interleaved',
+      );
+    });
+
+    test('P3: exact-match edit + same-tag hashline patch serialize — the '
+        'patch rejects stale instead of double-writing', () async {
+      final env = _GatedEnv(cwd: '/w');
+      const content = 'alpha\nbeta\ngamma\n';
+      await env.writeFile('h.md', content);
+      final store = HashlineSnapshotStore();
+      final edit = editFileTool(env, snapshots: store);
+      final tag = await _recordFullRead(env, store, 'h.md');
+
+      final gate = Completer<void>();
+      env.readGates['h.md'] = gate;
+      final exact = edit.execute(
+        {'path': 'h.md', 'oldText': 'beta', 'newText': 'BETA'},
+        null,
+        null,
+      );
+      // reads[0] is the tag-minting read; reads[1] is the parked edit read.
+      await _pumpUntil(() => env.reads.length == 2);
+
+      final patch = edit.execute(
+        {'patch': '[h.md#$tag]\nSWAP 1.=1:\n+ALPHA'},
+        null,
+        null,
+      );
+      await _pumpTurns();
+      expect(
+        env.reads.length,
+        2,
+        reason: 'patch raced past the exact edit',
+      );
+
+      gate.complete();
+      expect(_text(await exact), contains('Edited'));
+      await expectLater(patch, throwsA(isA<HashlineMismatchError>()));
+      expect(
+        (await env.readTextFile('h.md')).valueOrNull,
+        'alpha\nBETA\ngamma\n',
+        reason: 'the stale-tag patch must not write over the applied edit',
+      );
     });
   });
 

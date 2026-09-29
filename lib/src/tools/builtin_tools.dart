@@ -1790,13 +1790,33 @@ ToolExecutionResult _readSqliteSchema(
 /// by a `mutatesPath` tool hint if plugins ever need it.
 final _pathMutationLock = _PathMutationLock();
 
-/// The canonical lock key for [path]: the env-absolute spelling, so aliased
-/// spellings of one file (`f.md`, `./f.md`, absolute) serialize together.
-/// Mirrors `HashlinePatcher._canonicalPath`; symlink aliasing stays out of
-/// scope (the pure-Dart env seam does not resolve links).
+/// The canonical lock key for [path]: the env-absolute spelling collapsed
+/// to one POSIX-normal form, so aliased spellings of one file (`f.md`,
+/// `./f.md`, `x/../f.md`) serialize together on EVERY env — production IO
+/// envs do not normalize (`io_execution_env._resolve` merely prefixes the
+/// cwd) while [MemoryExecutionEnv] does, so the lock must not rely on
+/// either. Mirrors `HashlinePatcher._canonicalPath` for the absolute step;
+/// symlink aliasing stays out of scope (the pure-Dart env seam does not
+/// resolve links).
 Future<String> _canonicalPath(ExecutionEnv env, String path) async {
   final resolved = await env.absolutePath(path);
-  return resolved.valueOrNull ?? path;
+  return _normalizeLockKey(resolved.valueOrNull ?? path);
+}
+
+/// Collapses duplicate separators, `.` and `..` segments so one absolute
+/// file has exactly one lock-key spelling. Windows drive letters survive
+/// as a segment — keys only need to be equal iff the spellings alias.
+String _normalizeLockKey(String path) {
+  final out = <String>[];
+  for (final segment in path.replaceAll('\\', '/').split('/')) {
+    if (segment.isEmpty || segment == '.') continue;
+    if (segment == '..') {
+      if (out.isNotEmpty) out.removeLast();
+      continue;
+    }
+    out.add(segment);
+  }
+  return '/${out.join('/')}';
 }
 
 /// Per-path async mutex. Waiters chain per key: a body runs only after the
@@ -1812,11 +1832,10 @@ final class _PathMutationLock {
     final released = Completer<void>();
     _tails[path] = released.future;
     return Future<T>(() async {
-      try {
-        if (previous != null) await previous;
-      } catch (_) {
-        // The previous holder's failure is its own result; the path is free.
-      }
+      // [previous] always settles normally — [released] completes in a
+      // finally below, so a failed body leaves its error with its own
+      // caller and merely frees the path.
+      if (previous != null) await previous;
       try {
         return await body();
       } finally {
@@ -1872,6 +1891,9 @@ AgentTool writeFileTool(ExecutionEnv env) {
       // Issue #1083: hold the per-path lock across the whole mutation so a
       // concurrent same-file tool call queues behind it instead of racing.
       return _pathMutationLock.run(await _canonicalPath(env, path), () async {
+        // Re-check after the lock wait: the queue can span a cancel, and a
+        // cancelled call must not run its mutation once its turn arrives.
+        cancelToken?.throwIfCancelled();
         final written = await env.writeFile(path, content);
         if (written.isErr) throw StateError('${written.errorOrNull}');
         return ToolExecutionResult.text(
@@ -1963,13 +1985,25 @@ AgentTool editFileTool(ExecutionEnv env, {HashlineSnapshotStore? snapshots}) {
         if (parsed.sections.isEmpty) {
           throw StateError('No hashline sections found in patch input.');
         }
-        return _pathMutationLock.runAll(
-          {
-            for (final section in parsed.sections)
-              await _canonicalPath(env, section.path),
-          },
-          () => _executeHashlineEdit(env, store, path, parsed, cancelToken),
-        );
+        // Lock every file the patch can touch: the authored section paths
+        // AND the canonical paths that minted each cited tag — the
+        // patcher's missing-path recovery (_recoverSectionPathFromTag) can
+        // redirect a section onto a snapshot's file, which must not race
+        // its own mutations either. Extra keys only over-lock briefly;
+        // sorted acquisition in [runAll] keeps that deadlock-free.
+        final keys = <String>{
+          for (final section in parsed.sections)
+            await _canonicalPath(env, section.path),
+          for (final section in parsed.sections)
+            if (section.fileHash != null)
+              for (final snapshot in store.findByHash(section.fileHash!))
+                _normalizeLockKey(snapshot.path),
+        };
+        return _pathMutationLock.runAll(keys, () {
+          // Re-check after the lock wait: the queue can span a cancel.
+          cancelToken?.throwIfCancelled();
+          return _executeHashlineEdit(env, store, path, parsed, cancelToken);
+        });
       }
       if (path == null || oldText == null || newText == null) {
         throw StateError(
@@ -1981,6 +2015,8 @@ AgentTool editFileTool(ExecutionEnv env, {HashlineSnapshotStore? snapshots}) {
       // a concurrent same-file edit applies on top of this one's result
       // instead of both editing the same snapshot.
       return _pathMutationLock.run(await _canonicalPath(env, path), () {
+        // Re-check after the lock wait: the queue can span a cancel.
+        cancelToken?.throwIfCancelled();
         return _executeExactMatchEdit(env, path, oldText, newText, cancelToken);
       });
     },
