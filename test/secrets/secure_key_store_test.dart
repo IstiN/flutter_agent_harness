@@ -72,6 +72,27 @@ final class _MapStore implements SecureKeyStore {
   }
 }
 
+/// A store whose every read throws — the degraded-keychain shape whose
+/// silence gh-1059 is about: the preload must REPORT the failure, not
+/// quietly leave the snapshot empty.
+final class _ThrowingStore implements SecureKeyStore {
+  @override
+  String get label => 'throwing store';
+
+  @override
+  Future<bool> isAvailable() async => true;
+
+  @override
+  Future<String?> read(String name) async =>
+      throw StateError('keychain read failed (exit 45)');
+
+  @override
+  Future<void> write(String name, String value) async {}
+
+  @override
+  Future<void> delete(String name) async {}
+}
+
 void main() {
   group('macOS Keychain backend', () {
     test(
@@ -422,6 +443,7 @@ void main() {
       final sw = Stopwatch()..start();
       final result = await secureKeyProcessRunner('sleep', const ['30']);
       expect(result.exitCode, -1);
+      expect(result.timedOut, isTrue);
       expect(
         sw.elapsed,
         lessThan(const Duration(seconds: 10)),
@@ -434,6 +456,187 @@ void main() {
         'x',
       ]);
       expect(result.exitCode, -1);
+      expect(result.timedOut, isFalse);
+    });
+
+    test('the process runner captures the helper stderr', () async {
+      final result = await secureKeyProcessRunner('sh', const [
+        '-c',
+        'echo to-stdout; echo to-stderr >&2; exit 3',
+      ]);
+      expect(result.exitCode, 3);
+      expect(result.stdout, 'to-stdout\n');
+      expect(result.stderr, contains('to-stderr'));
+    });
+
+    test('helper environment overrides ride the inherited environment', () {
+      // gh-1059 H1: a non-null map on Process.start REPLACES the child env;
+      // the runner must merge overrides over the full inherited environment
+      // so a helper never runs without PATH/HOME/SystemRoot.
+      final merged = secureKeyChildEnvironment({'FAH_SECRET': 'x'});
+      expect(merged, isNotNull);
+      expect(merged!['FAH_SECRET'], 'x');
+      for (final inherited in Platform.environment.entries) {
+        expect(merged[inherited.key], inherited.value);
+      }
+      expect(secureKeyChildEnvironment(null), isNull);
+    });
+
+    test('a keychain read with an explicit env override still works '
+        '(inherited env survives the spawn)', () async {
+      // Real-spawn guard for the merge: the child sees BOTH the override
+      // and the inherited environment (sh prints the inherited PATH).
+      final result = await secureKeyProcessRunner(
+        'sh',
+        const ['-c', 'test -n "\$PATH" && echo "\$OVERRIDE_MARKER"'],
+        environment: {'OVERRIDE_MARKER': 'inherited-env-intact'},
+      );
+      expect(result.exitCode, 0);
+      expect(result.stdout, 'inherited-env-intact\n');
     });
   });
+
+  group('SecureKeyCache preload report (gh-1059)', () {
+    test('classifies found / absent / error per name', () async {
+      final runner = _FakeRunner()
+        ..queue.add(const SecureKeyRunResult(0, '/usr/bin/security\n')) // which
+        ..queue.add(const SecureKeyRunResult(0, 'sk-1\n')) // found
+        ..queue.add(const SecureKeyRunResult(44, '')) // not stored
+        ..queue.add(
+          const SecureKeyRunResult(
+            45,
+            '',
+            stderr:
+                'security: SecKeychainItemCopyFromAttributes:'
+                ' Interaction is not allowed.',
+          ),
+        ) // ACL refusal
+        ..queue.add(
+          const SecureKeyRunResult(-1, '', timedOut: true),
+        ); // bounded runner gave up
+      final cache = SecureKeyCache(
+        platformSecureKeyStore(runner: runner.call, platform: 'macos'),
+      );
+
+      final report = await cache.preload([
+        'OPENAI_API_KEY',
+        'MISSING_KEY',
+        'ACL_KEY',
+        'MODAL_KEY',
+      ]);
+
+      expect(report.storeAvailable, isTrue);
+      expect(report.outcomes.map((o) => o.status).toList(), [
+        SecureKeyReadStatus.found,
+        SecureKeyReadStatus.absent,
+        SecureKeyReadStatus.error,
+        SecureKeyReadStatus.error,
+      ]);
+      expect(report.foundCount, 1);
+      expect(report.absentCount, 1);
+      expect(report.errorCount, 2);
+      expect(cache.read('OPENAI_API_KEY'), 'sk-1');
+      // The ACL refusal carries the stderr diagnostic instead of reading
+      // as "no key ever saved" — the gh-1059 silent-absence hole.
+      expect(report.outcomes[2].error, contains('Interaction is not allowed'));
+      expect(report.outcomes[3].error, contains('timed out'));
+    });
+
+    test(
+      'a plain store still reports errors instead of silent absence',
+      () async {
+        final store = _MapStore()..map['GOOD_KEY'] = 'sk-1';
+        final cache = SecureKeyCache(store);
+
+        final report = await cache.preload(['GOOD_KEY', 'MISSING_KEY']);
+
+        expect(report.foundCount, 1);
+        expect(report.absentCount, 1);
+        expect(cache.read('GOOD_KEY'), 'sk-1');
+      },
+    );
+
+    test(
+      'a throwing read surfaces as an error outcome, preload still ends',
+      () async {
+        final store = _ThrowingStore();
+        final cache = SecureKeyCache(store);
+
+        final report = await cache.preload(['ANY_KEY']);
+
+        expect(report.storeAvailable, isTrue);
+        expect(report.errorCount, 1);
+        expect(report.outcomes.single.error, contains('keychain read failed'));
+      },
+    );
+
+    test('an unavailable store preloads nothing and reports it', () async {
+      final store = _MapStore(availability: false);
+      final cache = SecureKeyCache(store);
+
+      final report = await cache.preload(['OPENAI_API_KEY']);
+
+      expect(report.storeAvailable, isFalse);
+      expect(report.outcomes, isEmpty);
+    });
+
+    test('save degradations are counted for the /key status summary', () async {
+      final store = _MapStore()..failWrites = true;
+      final cache = SecureKeyCache(store);
+      await cache.probe();
+
+      expect(await cache.save('OPENAI_API_KEY', 'sk-1'), isFalse);
+      expect(cache.saveFailures, 1);
+      expect(cache.lastSaveError, contains('keychain write failed'));
+
+      final unavailable = SecureKeyCache(_MapStore(availability: false));
+      expect(await unavailable.save('OPENAI_API_KEY', 'sk-1'), isFalse);
+      expect(unavailable.saveFailures, 1);
+      expect(unavailable.lastSaveError, contains('unavailable'));
+    });
+  });
+
+  // `tags: integration` (gh-1059 review): this group performs a REAL
+  // `security add-generic-password` against the developer's default
+  // keychain — excluded from the pre-commit gate and the plain per-PR
+  // core shards, executed by ci.yml's macOS cube-kernel-live leg
+  // (`dart test test/secrets/secure_key_store_test.dart --tags
+  // integration`) and runnable standalone with `--tags integration`.
+  // (The file-level `@Tags` form would sweep the side-effect-free
+  // `sleep`/`sh` runner groups into the tag; the group parameter keeps
+  // them untagged.)
+  group('real keychain runner (gh-1059 AC4, macOS only)', () {
+    const testName = 'FA_KEY_SELFTEST_GH1059';
+
+    bool securityUsable = false;
+    setUpAll(() async {
+      if (!Platform.isMacOS) return;
+      // "Skip when no interactive keychain": a default keychain must exist
+      // (the same preflight the write path runs before add-generic-password).
+      final probe = await secureKeyProcessRunner('security', const [
+        'default-keychain',
+      ]);
+      securityUsable = probe.exitCode == 0;
+    });
+
+    test(
+      'the bounded runner writes, reads and deletes a real keychain item',
+      () async {
+        if (!Platform.isMacOS) return;
+        // CI guard, not an assumption: the setUpAll probe decides.
+        if (!securityUsable) return;
+        final store = platformSecureKeyStore();
+
+        await store.write(testName, 'sk-gh1059-selftest');
+        try {
+          final read = await store.read(testName);
+          expect(read, 'sk-gh1059-selftest');
+        } finally {
+          await store.delete(testName);
+        }
+        expect(await store.read(testName), isNull);
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
+  }, tags: 'integration');
 }
