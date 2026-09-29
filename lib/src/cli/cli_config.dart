@@ -581,8 +581,10 @@ final class CliConfig {
   final String? agentLoadMode;
 
   /// The `waiting:` section (issue #450): visible-waiting heartbeat
-  /// cadence (`waitHeartbeatMinutes`, 0 = off) and the `--wait-for-jobs`
-  /// ceiling (`waitCeilingMinutes`, default 30).
+  /// cadence (`waitHeartbeatMinutes`, 0 = off), the `--wait-for-jobs`
+  /// ceiling (`waitCeilingMinutes`, default 30), and the per-call
+  /// foreground liveness knobs (gh-1055: `toolLivenessSeconds`,
+  /// `toolLivenessTickSeconds`, `toolEscalateSeconds`).
   final WaitingConfig waiting;
 
   /// The `jobs:` section (issue #478): boot-maintenance knobs for the
