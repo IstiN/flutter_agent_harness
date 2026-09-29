@@ -10,6 +10,9 @@ import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+// dart:io side (host VMs only; the web build never imports this file —
+// wasm_run pulls dart:ffi): the low-disk probe for the job log ceiling.
+import 'package:flutter_agent_harness/io.dart' show diskFreeBytes;
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:wasm_run/wasm_run.dart';
@@ -532,11 +535,35 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     required CancelToken? token,
     required ShellExecOptions? options,
   }) {
+    // Issue #919: bound the log — size ceiling with head+marker+rolling
+    // tail, plus the low-disk guard probing the log's directory (same
+    // wiring as LocalShell).
+    final warn = options?.onJobLogWarning;
+    final ceiling = JobLogCeiling(
+      maxBytes: options?.jobLogMaxBytes ?? defaultJobLogMaxBytes,
+      probe: () => diskFreeBytes(io.File(logPath).parent.path),
+      onWarn: warn == null
+          ? null
+          : (message) => warn('background job $id: $message'),
+    );
     final job = SandboxShellJob(
       id: id,
       command: command,
       logPath: logPath,
       logWriter: logFile.writeString,
+      ceiling: ceiling,
+      applyLogOp: (op) async {
+        if (op.offset == null) {
+          await logFile.writeString(op.text);
+          return;
+        }
+        // In-place overwrite of the marker+tail region at the advancing
+        // offset, truncated to the new region end — the file stays exactly
+        // bounded (append-mode RAF honors setPosition/truncate).
+        await logFile.setPosition(op.offset!);
+        await logFile.writeString(op.text);
+        await logFile.truncate(op.offset! + utf8.encode(op.text).length);
+      },
       closeLog: () async {
         // Issue #925: a broken log sink must not break the settle path.
         try {

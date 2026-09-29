@@ -23,6 +23,7 @@ import 'dart:async';
 import 'dart:math';
 
 import '../env/execution_env.dart';
+import '../env/job_log_ceiling.dart';
 // The boot-sweep process-table probe is VM-only infrastructure (`ps` via
 // dart:io); web builds get a stub that always reports "no process table".
 import '../env/process_probe_stub.dart'
@@ -112,12 +113,17 @@ bool isOldFormatJobLogName(String name) {
 /// The session's background shell jobs. See the library doc.
 final class ShellJobRegistry {
   /// Creates a registry over [env]; [onStart] fires when a job starts
-  /// (the hub's start block), [onSettled] when a job exits.
+  /// (the hub's start block), [onSettled] when a job exits. [jobLogMaxBytes]
+  /// and [onJobLogWarning] (issue #919) are merged into every start's
+  /// options — the size ceiling and the low-disk warning channel; null
+  /// bytes means the shells' built-in default.
   ShellJobRegistry({
     required this.env,
     this.onStart,
     this.onSettled,
     this.onStaleJobLog,
+    this.jobLogMaxBytes,
+    this.onJobLogWarning,
     DateTime? bootTime,
   }) : _bootTime = bootTime ?? DateTime.now();
 
@@ -138,6 +144,14 @@ final class ShellJobRegistry {
   /// this directory and its job output can interleave with stale files.
   /// Hosts surface it as a "restart that instance" hint.
   final void Function(String path)? onStaleJobLog;
+
+  /// Log size ceiling merged into every job start (issue #919); null lets
+  /// the shell apply its built-in default ([defaultJobLogMaxBytes]).
+  final int? jobLogMaxBytes;
+
+  /// Low-disk warning channel merged into every job start (issue #919) —
+  /// fired at most once per job, when log writes stop.
+  final void Function(String message)? onJobLogWarning;
 
   /// Registry creation time; old-format logs modified before it are
   /// historical debris, not a live stale instance.
@@ -185,11 +199,26 @@ final class ShellJobRegistry {
     await baseEnv.createDir(dir);
     final logPath = '$dir/$id.log';
     unawaited(_checkStaleOldFormatJobLogs(dir));
+    // Issue #919: the ceiling and its warning channel ride the options so
+    // every BackgroundShell (local, sandboxed, WASI) enforces the same
+    // policy through the shared seam.
+    final mergedOptions = ShellExecOptions(
+      cwd: options?.cwd,
+      env: options?.env,
+      timeout: options?.timeout,
+      cancelToken: options?.cancelToken,
+      onStdout: options?.onStdout,
+      onStderr: options?.onStderr,
+      stdinData: options?.stdinData,
+      liveStdin: options?.liveStdin,
+      jobLogMaxBytes: jobLogMaxBytes,
+      onJobLogWarning: onJobLogWarning,
+    );
     final started = await bg.startShellJob(
       command,
       id: id,
       logPath: logPath,
-      options: options,
+      options: mergedOptions,
     );
     if (started.isErr) {
       throw StateError(started.errorOrNull!.message);

@@ -254,6 +254,83 @@ void main() {
       expect(await _liveProcesses('sleep $secs'), isEmpty);
     });
   });
+  group('bounded job logs (issue #919)', () {
+    test('UT-1/E4: a runaway job stays bounded, keeps running, and paging '
+        'reads the marker as content', () async {
+      // ~1.7 KiB of output into a 512-byte ceiling; the registry passes the
+      // ceiling through to every start (the shared seam).
+      final registry = ShellJobRegistry(env: env, jobLogMaxBytes: 512);
+      final entry = await registry.start(
+        'i=0; while [ \$i -lt 200 ]; do printf "line-\$i\\n"; i=\$((i+1)); done',
+      );
+      await entry.settled;
+      // The job itself is never killed — only capture degrades.
+      expect(entry.exitCode, 0);
+      expect(entry.stopReason, isNull);
+
+      final log = File(entry.logPath).readAsStringSync();
+      expect(log.length, lessThan(512 + 8192));
+      expect('[… log truncated:'.allMatches(log), hasLength(1));
+      // The tail is live: the last produced line survives verbatim.
+      expect(log.endsWith('line-199\n'), isTrue);
+
+      // E4: paging treats the marker line as ordinary content.
+      final paged = await registry.tail(entry.id);
+      expect(paged, contains('log truncated:'));
+      expect(paged, contains('line-199'));
+    });
+
+    test('UT-2: output under the ceiling lands in the file byte-identically',
+        () async {
+      final started = await env.startShellJob(
+        "printf 'a\nb\n'",
+        id: 'sh-919b',
+        logPath: '${tempDir.path}/sh-919b.log',
+        options: const ShellExecOptions(jobLogMaxBytes: 512),
+      );
+      final job = started.valueOrNull!;
+      await job.settled;
+      expect(job.exitCode, 0);
+      expect(File(job.logPath).readAsStringSync(), 'a\nb\n');
+    });
+
+    test('UT-4: a low-disk probe stops log writes and warns exactly once',
+        () async {
+      final warnings = <String>[];
+      final guardedEnv = LocalExecutionEnv(
+        cwd: tempDir.path,
+        diskFreeProbe: (_) async => 1024, // below the 1 GB threshold
+      );
+      final started = await guardedEnv.startShellJob(
+        'echo hi; sleep 0.2; echo bye2',
+        id: 'sh-919c',
+        logPath: '${tempDir.path}/sh-919c.log',
+        options: ShellExecOptions(onJobLogWarning: warnings.add),
+      );
+      final job = started.valueOrNull!;
+      await job.settled;
+      // The job runs to completion; its log stays empty.
+      expect(job.exitCode, 0);
+      expect(job.stopReason, isNull);
+      expect(File(job.logPath).readAsStringSync(), isEmpty);
+      expect(warnings, hasLength(1));
+      expect(warnings.single, contains('background job'));
+
+      // Control: a healthy probe lets the log fill normally.
+      final healthyEnv = LocalExecutionEnv(
+        cwd: tempDir.path,
+        diskFreeProbe: (_) async => 1 << 40,
+      );
+      final control = await healthyEnv.startShellJob(
+        'echo hi',
+        id: 'sh-919d',
+        logPath: '${tempDir.path}/sh-919d.log',
+      );
+      await control.valueOrNull!.settled;
+      expect(File('${tempDir.path}/sh-919d.log').readAsStringSync(),
+          contains('hi'));
+    });
+  });
 }
 
 /// Live `ps` rows matching [needle]; zombies and the scanner itself
