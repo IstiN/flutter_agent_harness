@@ -204,7 +204,7 @@ void main() {
 
     test(
       'boot sweep reaps a dead-leader group and warns once (AC3)',
-      skip: LocalShell.jobsGetOwnProcessGroup
+      skip: LocalShell.ownProcessGroupAvailable
           ? null
           : 'needs setsid (group leadership)',
       () async {
