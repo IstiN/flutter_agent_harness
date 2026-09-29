@@ -340,10 +340,12 @@ void main() {
     await service.loadSession(stored);
 
     // The FULL open read the whole file (bulk), everything is loaded,
-    // and the paging surfaces behave as a complete session.
+    // and the paging surfaces behave as a complete session: nothing
+    // above the window (issue #974 — `0`, not `null`, so the chat
+    // banner never renders on a full-open session).
     expect(flaky.bulkBytes, greaterThan(0));
     expect(service.messages, hasLength(500));
-    expect(service.historyAboveCount, isNull);
+    expect(service.historyAboveCount, 0);
     await service.loadOlderHistory();
     expect(service.messages, hasLength(500));
   });
