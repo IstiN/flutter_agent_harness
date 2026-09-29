@@ -261,6 +261,112 @@ void main() {
     });
   });
 
+  group('ToolLivenessTracker timer chain (production legs)', () {
+    // The production chain is a real Timer chain; fake_async is not a
+    // dependency, so the legs run shrunk to 1-2s and the assertions poll.
+    // Cancel-before-fire is synchronous (Timer.cancel), so the disarm
+    // assertions stay deterministic; only the fire moments carry jitter,
+    // and every fire assertion polls with slack.
+    late DateTime now;
+    late List<String> reminds;
+    late List<String> escalates;
+
+    ToolLivenessTracker build({
+      int livenessSeconds = 1,
+      int tickSeconds = 1,
+      int escalateSeconds = 0,
+    }) => ToolLivenessTracker(
+      onRemind: (call) => reminds.add(toolLivenessReminderLine(call, now)),
+      onEscalate: (call) =>
+          escalates.add(toolLivenessEscalationLine(call, now)),
+      clock: () => now,
+      livenessSeconds: () => livenessSeconds,
+      tickSeconds: () => tickSeconds,
+      escalateSeconds: () => escalateSeconds,
+    );
+
+    Future<void> waitForCount(
+      List<String> lines,
+      int count, {
+      String? reason,
+    }) async {
+      final deadline = DateTime.now().add(const Duration(seconds: 8));
+      while (lines.length < count) {
+        if (DateTime.now().isAfter(deadline)) {
+          fail('timed out waiting for ${count} line(s): '
+              '${reason ?? lines.join(' | ')}');
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+    }
+
+    /// Waits [seconds] of real time without asserting anything — used to
+    /// prove a negative (a cancelled/disarmed chain must stay silent).
+    Future<void> realSeconds(double seconds) =>
+        Future<void>.delayed(Duration(microseconds: (seconds * 1e6).round()));
+
+    setUp(() {
+      now = DateTime.utc(2026, 1, 1, 12);
+      reminds = [];
+      escalates = [];
+    });
+
+    test('callStarted arms the chain; the fired leg ticks and re-arms', () async {
+      final tracker = build(escalateSeconds: 4);
+      tracker.callStarted('t1', 'bash', 'sleep 500');
+      await waitForCount(reminds, 1, reason: 'first armed leg fired');
+      await waitForCount(reminds, 2, reason: 'the leg re-armed and re-fired');
+      // The escalation fires through the real chain too.
+      await waitForCount(escalates, 1, reason: 'escalation leg fired');
+      tracker.stop();
+      expect(reminds.first, startsWith('⏳ [bash] sleep 500 —'));
+    });
+
+    test('the last callEnded disarms the chain — no fire after', () async {
+      final tracker = build();
+      tracker.callStarted('t1', 'bash', 'sleep 500');
+      await waitForCount(reminds, 1);
+      tracker.callEnded('t1');
+      final count = reminds.length;
+      // More than a full cadence of real time: a live leg would have
+      // fired again — a cancelled one never does (deterministic).
+      await realSeconds(1.6);
+      expect(reminds.length, count, reason: 'the chain was disarmed');
+    });
+
+    test('tickSeconds: 0 keeps the chain disarmed; the tick seam still '
+        'evaluates', () async {
+      final tracker = build(tickSeconds: 0);
+      tracker.callStarted('t1', 'bash', 'sleep 500');
+      await realSeconds(1.6);
+      expect(reminds, isEmpty, reason: 'no chain was ever armed');
+      now = now.add(const Duration(seconds: 120));
+      tracker.tick();
+      expect(reminds, hasLength(1), reason: 'the manual seam evaluates');
+    });
+
+    test('a manual tick restarts the full leg (the WaitingHeartbeat '
+        'mirror: tick cancels the pending leg)', () async {
+      final tracker = build(tickSeconds: 2);
+      tracker.callStarted('t1', 'bash', 'sleep 500');
+      // Three quarters into the leg, fire the seam: the pending leg must
+      // be cancelled and re-armed from NOW — the next fire comes a full
+      // cadence after the tick, not at the original 2s mark.
+      await realSeconds(1.5);
+      tracker.tick();
+      expect(reminds, hasLength(1), reason: 'the seam evaluation itself');
+      await realSeconds(1.0);
+      expect(
+        reminds.length,
+        1,
+        reason: 'the original leg was cancelled by the tick — '
+            'it must not fire at its old 2s deadline',
+      );
+      await waitForCount(reminds, 2, reason: 'the re-armed leg fires');
+      tracker.stop();
+    });
+  });
+
   group('liveness line formatters', () {
     final start = DateTime.utc(2026, 1, 1, 12);
     final at120 = start.add(const Duration(seconds: 120));
@@ -287,6 +393,18 @@ void main() {
       expect(line, contains('bash background: true'));
       expect(line, contains('/tasks'));
       expect(line, contains('--wait-for-jobs'));
+    });
+
+    test('AC6: the escalation line carries the cancellation affordance '
+        '(background stop + foreground levers + unwinding note)', () {
+      final line = toolLivenessEscalationLine(call('sleep 500'), at120);
+      // The background case: once backgrounded, the job board's stop lever.
+      expect(line, contains('cancel: fa bash_job stop <id> once backgrounded'));
+      // The foreground case: the two levers that exist mid-call, plus the
+      // honest caveat that they land only once the call unwinds (#1053).
+      expect(line, contains('Ctrl+C / inbox steering'));
+      expect(line, contains('takes effect once the call unwinds'));
+      expect(line, contains('#1053'));
     });
 
     test('a multi-line detail flattens to one physical line', () {

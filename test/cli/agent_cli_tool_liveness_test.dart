@@ -101,8 +101,8 @@ void main() {
       expect(livenessLines(io.out.toString()), isEmpty);
     });
 
-    test('AC3: the escalation names the background hatch exactly once per '
-        'stuck call', () async {
+    test('AC3+AC6: the escalation names the background hatch and the '
+        'cancellation levers exactly once per stuck call', () async {
       final cli = cliFor(stuckCallFake());
       final run = cli.runHeadless('hi');
       await waitForIt(
@@ -120,7 +120,15 @@ void main() {
           'job board /tasks, --wait-for-jobs',
         ),
       );
+      // AC6: the cancellation affordance rides the same line — the
+      // background stop lever (job id once backgrounded) and the two
+      // foreground levers with the honest unwinding caveat (until #1053).
+      expect(out, contains('cancel: fa bash_job stop <id> once backgrounded'));
+      expect(out, contains('Ctrl+C / inbox steering'));
+      expect(out, contains('takes effect once the call unwinds'));
+      expect(out, contains('#1053'));
       expect('background candidate'.allMatches(out), hasLength(1));
+      expect('cancel:'.allMatches(out), hasLength(1));
 
       // Later ticks keep the liveness line but never re-escalate.
       now = now.add(const Duration(seconds: 60));
@@ -129,6 +137,7 @@ void main() {
         'background candidate'.allMatches(io.out.toString()),
         hasLength(1),
       );
+      expect('cancel:'.allMatches(io.out.toString()), hasLength(1));
       expect(io.out.toString(), contains('⏳ [bash] sleep 500 — running 360s'));
 
       shell.release();
@@ -217,17 +226,26 @@ void main() {
     expect(headless, [
       '⏳ [bash] sleep 500 — running 120s',
       '⏳ [bash] sleep 500 — running 300s · background candidate: '
-          'bash background: true, job board /tasks, --wait-for-jobs',
+          'bash background: true, job board /tasks, --wait-for-jobs · '
+          'cancel: fa bash_job stop <id> once backgrounded; '
+          'Ctrl+C / inbox steering takes effect once the call unwinds '
+          '(until #1053)',
     ]);
     expect(lineMode, headless);
   });
 
-  test('TUI mode is untouched: the watch never feeds there', () async {
+  test('TUI mode is untouched: neither seam of the pair feeds there', () async {
     final cli = cliFor(FakeStreamFunction([textTurn('ok')]), useTui: true);
     cli.toolCallStartedForTest('t1', 'bash', 'sleep 500');
     now = now.add(const Duration(seconds: 120));
     cli.toolLivenessTickForTest();
     expect(io.out, isEmpty, reason: 'the TUI waiting row owns this job');
+    // The symmetric end seam is gated too: an end-without-start in TUI
+    // mode must not touch the (idle) chain.
+    cli.toolCallEndedForTest('t1');
+    expect(cli.toolLivenessCallsForTest, isEmpty);
+    cli.toolLivenessTickForTest();
+    expect(io.out, isEmpty);
   });
 
   test('line mode (non-TUI): the watch prints through the seams', () async {
