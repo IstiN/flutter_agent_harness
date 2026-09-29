@@ -1051,6 +1051,14 @@ final class FaTuiModel extends Model {
     return (next, null);
   }
 
+  /// Picker dispatch: atomic open + the gh-1049 reveal hook (extracted so
+  /// `_updateAfterExitCheck` stays under the CRAP complexity threshold).
+  (Model, Cmd?)? _handlePickerMsg(Msg msg) {
+    if (msg is OpenPickerMsg) return _handleOpenPicker(msg);
+    if (msg is _RevealPickerRowsMsg) return _handleRevealPickerRows();
+    return null;
+  }
+
   (Model, Cmd?) _handleClearQueue() {
     if (queue.isEmpty) return (this, null);
     return (copyWith(queue: const []), null);
@@ -1067,8 +1075,7 @@ final class FaTuiModel extends Model {
     if (msg is _ModelsRefreshMsg) return _handleModelsRefresh();
     if (msg is _ThemeChangedMsg) return _handleThemeChanged();
     if (msg is _OpenModelMenuMsg) return _handleOpenModelMenu();
-    if (msg is OpenPickerMsg) return _handleOpenPicker(msg);
-    if (msg is _RevealPickerRowsMsg) return _handleRevealPickerRows();
+    if (_handlePickerMsg(msg) case final picker?) return picker;
     if (msg is HubStateMsg) return _handleHubStateMsg(msg);
     if (msg is _CloseHubMsg) return (copyWith(clearHub: true), null);
 
