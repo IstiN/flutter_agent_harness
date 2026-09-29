@@ -1205,8 +1205,17 @@ final class FaTuiModel extends Model {
 
   /// gh-1049 test hook: per-row reveal delay for the generic picker, read
   /// from `FA_TUI_PICKER_REVEAL_MS`. 0/unset = the production atomic open.
+  ///
+  /// Unit-test seam: `Platform.environment` is immutable in-process, so
+  /// model-level tests set [pickerRevealDelayMsOverride] instead; null
+  /// falls through to the env var (the production default).
+  @visibleForTesting
+  static int? pickerRevealDelayMsOverride;
+
   static int get _pickerRevealDelayMs =>
-      int.tryParse(Platform.environment['FA_TUI_PICKER_REVEAL_MS'] ?? '') ?? 0;
+      pickerRevealDelayMsOverride ??
+      int.tryParse(Platform.environment['FA_TUI_PICKER_REVEAL_MS'] ?? '') ??
+      0;
 
   (Model, Cmd?) _handleOpenPicker(OpenPickerMsg msg) {
     final reveal = _pickerRevealOpen(msg);
@@ -1264,12 +1273,17 @@ final class FaTuiModel extends Model {
     };
   }
 
-  /// Reveals the next picker row; re-arms while rows remain. A close or a
-  /// full reveal stops the chain (a reveal landing on a closed picker is a
-  /// no-op — the menu keys rebuilt/cleared [menuItems] in between).
+  /// Reveals the next picker row; re-arms while rows remain. A close, a
+  /// full reveal, or an ACTIVE TYPE-TO-FILTER stops the chain: the filter
+  /// owns [menuItems] (the rows are the filtered set) and the leg must
+  /// never clobber it with an unfiltered prefix (a reveal landing on a
+  /// closed picker is a no-op — the menu keys rebuilt/cleared [menuItems]
+  /// in between).
   (Model, Cmd?) _handleRevealPickerRows() {
     final all = menuAllItems;
-    if (!menuOpen || menuItems.length >= all.length) return (this, null);
+    if (!menuOpen || modelFilter.isNotEmpty || menuItems.length >= all.length) {
+      return (this, null);
+    }
     final revealed = (menuItems.length + 1).clamp(0, all.length);
     return (
       copyWith(menuItems: all.take(revealed).toList()),
