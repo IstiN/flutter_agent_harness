@@ -32,6 +32,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/ext_cli.dart';
+import 'package:flutter_agent_harness/src/cli/jsr_cli.dart';
 import 'package:flutter_agent_harness/src/cli/session_tree.dart';
 import 'package:flutter_agent_harness/src/cli/tui_key_hints.dart';
 import 'package:flutter_agent_harness/src/cli/trajectory_tui.dart';
@@ -1232,6 +1233,30 @@ Future<void> _runApp(List<String> args) async {
     );
   }
 
+  // `fa jsr widget:test|widget:screenshot …` — the js_widget_runtime agent
+  // CLI pass-through (gh-1033), intercepted like trajectory: no agent
+  // boot. The child's stdout/stderr stream straight through and its exit
+  // code propagates (CI-usable); platform bits (PATH) come from the
+  // process, the only dart:io layer here.
+  final jsr = parsed.jsr;
+  if (jsr != null) {
+    final jsrEnv = LocalExecutionEnv(cwd: parsed.cwd ?? Directory.current.path);
+    exit(
+      await runJsrCliCommand(
+        jsr,
+        io: SinkJsrCliIo(
+          onStdout: stdout.write,
+          onStderr: stderr.write,
+          onNote: stderr.writeln,
+        ),
+        env: jsrEnv,
+        projectDir: jsrEnv.cwd,
+        pathEnv: Platform.environment['PATH'] ?? '',
+        pathListSeparator: Platform.isWindows ? ';' : ':',
+        windowsQuoting: Platform.isWindows,
+      ),
+    );
+  }
   // `fa session list [--json] [--flat]` (issue #198) — the tree-grouped
   // session listing, intercepted like trajectory: no agent boot.
   final sessionList = parsed.sessionList;

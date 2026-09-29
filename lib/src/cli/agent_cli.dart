@@ -206,6 +206,7 @@ import '../env/process_probe_stub.dart'
     if (dart.library.io) '../env/process_probe_io.dart';
 
 import 'fa_tui_stub.dart' if (dart.library.io) 'fa_tui.dart';
+import 'jsr_cli.dart';
 import 'prompt_templates.dart';
 import 'ask_menu.dart';
 import 'slash_menu.dart';
@@ -256,6 +257,7 @@ part 'agent_cli_waiting.dart';
 part 'agent_cli_mcp_print.dart';
 part 'agent_cli_commands.dart';
 part 'agent_cli_ext.dart';
+part 'agent_cli_jsr.dart';
 part 'agent_cli_theme.dart';
 part 'agent_cli_composer.dart';
 part 'agent_cli_spill.dart';
