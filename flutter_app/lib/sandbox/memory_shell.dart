@@ -232,9 +232,12 @@ final class MemoryShell implements Shell, BackgroundShell {
       final appendStdout = redirects.appendStdout;
       final appendStderr = redirects.appendStderr;
       final stdinFile = redirects.stdinFile;
+      final stdinBody = redirects.stdinBody;
 
       String? stdinText;
-      if (stdinFile != null) {
+      if (stdinBody != null) {
+        stdinText = stdinBody;
+      } else if (stdinFile != null) {
         final read = await _fs.readTextFile(resolveSandboxPath(stdinFile, cwd));
         if (read.isErr) {
           stageResult = _StageResult(

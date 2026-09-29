@@ -683,10 +683,24 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     final expandedStage = expansion.valueOrNull!;
 
     final redirects = collectStageRedirects(expandedStage.redirects);
-    // Resolve input source for this stage.
-    final input = redirects.stdinFile != null
-        ? _resolveSandboxPath(redirects.stdinFile!, options?.cwd ?? _currentDir)
-        : inputSource;
+    // Resolve input source for this stage. A heredoc/here-string body
+    // (gh-1086) lands in a temp file — stdin flows by sandbox path here —
+    // and outranks a `< file` redirect / pipe input by POSIX last-wins
+    // (the collector already cleared [StageRedirects.stdinFile]).
+    String? input = inputSource;
+    if (redirects.stdinBody != null) {
+      final bodyFile = await _writePipeFile(
+        utf8.encode(redirects.stdinBody!),
+        'heredoc_$index',
+        tempFiles,
+      );
+      input = '/${bodyFile.path.split('/').last}';
+    } else if (redirects.stdinFile != null) {
+      input = _resolveSandboxPath(
+        redirects.stdinFile!,
+        options?.cwd ?? _currentDir,
+      );
+    }
 
     final result = await _runCommand(
       command: expandedStage.command,
@@ -802,7 +816,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   /// derives the next stage's sandbox input path from it.
   Future<io.File> _writePipeFile(
     List<int> bytes,
-    int index,
+    Object index,
     List<io.File> tempFiles,
   ) async {
     final temp = _hostFile('.fah_pipe_$index');

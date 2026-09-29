@@ -124,6 +124,7 @@ final class Redirect {
     required this.fd,
     required this.target,
     this.expandable = true,
+    this.body,
   });
 
   /// Redirect kind.
@@ -132,15 +133,23 @@ final class Redirect {
   /// File descriptor: `0` stdin, `1` stdout, `2` stderr, `-1` stdout+stderr.
   final int fd;
 
-  /// Target file path inside the sandbox.
+  /// Target file path inside the sandbox; for [RedirectKind.heredoc] and
+  /// [RedirectKind.hereString] this is the delimiter / source word instead.
   final String target;
 
-  /// Whether [target] allows `$VAR` expansion.
+  /// Whether [target] allows `$VAR` expansion. For a heredoc it also
+  /// decides whether [body] undergoes `$VAR`/`$(...)` expansion (false when
+  /// the delimiter was quoted, POSIX).
   final bool expandable;
+
+  /// The captured here-document body (raw at parse time; expanded by the
+  /// shell's expansion pass when [expandable]). Null for file redirects and
+  /// here-strings (whose text lives in [target]).
+  final String? body;
 }
 
 /// Kinds of redirect.
-enum RedirectKind { read, write, append }
+enum RedirectKind { read, write, append, heredoc, hereString, background }
 
 /// A parsed shell script: statements plus control-flow nodes.
 final class ShellScript {
@@ -292,12 +301,29 @@ final class _Redirect extends _Token {
   final RedirectKind kind;
 }
 
+/// A here-document operator (`<<DELIM` / `<<-DELIM`). The delimiter word
+/// follows as a normal word token; [body] is filled in when the tokenizer
+/// crosses the newline ending the command line (POSIX: bodies start on the
+/// next line, captured in operator order).
+final class _Heredoc extends _Token {
+  _Heredoc(this.fd, {required this.stripTabs});
+
+  final int fd;
+
+  /// `<<-` form: strip leading TABs from body and delimiter lines.
+  final bool stripTabs;
+
+  /// Captured body (set by [_captureHeredocs]).
+  String? body;
+}
+
 List<_Token> _tokenize(String input) {
   final tokens = <_Token>[];
   final buffer = StringBuffer();
   var i = 0;
   var wordExpandable = true;
   var wordQuoted = false;
+  final pendingHeredocs = <_Heredoc>[];
 
   void flushWord() {
     if (buffer.isEmpty) return;
@@ -327,6 +353,11 @@ List<_Token> _tokenize(String input) {
     // text (balanced/quoted regions honored); the shell executes them at
     // expansion time. Single quotes below never reach this branch.
     if ((ch == '\$' && peek() == '(') || ch == '`') {
+      if (ch == '\$' && i + 2 < input.length && input[i + 2] == '(') {
+        throw const ShellParseException(
+          'arithmetic expansion \$((...)) is not supported in the sandbox shell',
+        );
+      }
       i = _scanSubstitution(input, i, buffer);
       continue;
     }
@@ -336,6 +367,7 @@ List<_Token> _tokenize(String input) {
       // one word (`X="a b"` is ONE word, `a'b'` is `ab`). The word ends at
       // the next unquoted separator.
       wordExpandable = false;
+      wordQuoted = true;
       i = _scanSingleQuote(input, i, buffer);
       continue;
     }
@@ -354,11 +386,41 @@ List<_Token> _tokenize(String input) {
       continue;
     }
 
-    // A newline separates statements exactly like `;`.
+    // A newline separates statements exactly like `;`. Pending here-docs
+    // capture their bodies from the FOLLOWING lines first (POSIX): the
+    // body text is never tokenized as shell syntax.
     if (ch == '\n') {
       flushWord();
+      var next = i + 1;
+      if (pendingHeredocs.isNotEmpty) {
+        next = _captureHeredocs(input, i + 1, pendingHeredocs, tokens);
+        pendingHeredocs.clear();
+      }
       tokens.add(_Operator(';'));
-      i++;
+      i = next;
+      continue;
+    }
+
+    // Process substitution `<(cmd)` / `>(cmd)` is not supported (gh-1086).
+    if ((ch == '<' || ch == '>') && peek() == '(') {
+      throw const ShellParseException(
+        'process substitution <(...) / >(...) is not supported in the sandbox shell',
+      );
+    }
+
+    // Here-documents / here-strings: `<<DELIM`, `<<-DELIM`, `<<<word`.
+    if (ch == '<' && peek() == '<') {
+      flushWord();
+      if (i + 2 < input.length && input[i + 2] == '<') {
+        tokens.add(_Redirect(0, RedirectKind.hereString));
+        i += 3;
+      } else {
+        final strip = i + 2 < input.length && input[i + 2] == '-';
+        final heredoc = _Heredoc(0, stripTabs: strip);
+        tokens.add(heredoc);
+        pendingHeredocs.add(heredoc);
+        i += strip ? 3 : 2;
+      }
       continue;
     }
 
@@ -378,6 +440,7 @@ List<_Token> _tokenize(String input) {
       final (added, next) = _scanDigits(input, i);
       if (added.isNotEmpty) {
         tokens.addAll(added);
+        pendingHeredocs.addAll(added.whereType<_Heredoc>());
       } else {
         buffer.write(input.substring(i, next));
       }
@@ -389,7 +452,70 @@ List<_Token> _tokenize(String input) {
     i++;
   }
   flushWord();
+  if (pendingHeredocs.isNotEmpty) {
+    // The input ended on the command line itself: no body line exists.
+    final delim = _heredocDelimiter(pendingHeredocs.first, tokens);
+    throw ShellParseException(
+      "unterminated here-document (delimiter '$delim')",
+    );
+  }
   return tokens;
+}
+
+/// Captures the bodies of [pending] here-documents from [input] starting
+/// at [start] (just past the newline ending their command line) and
+/// returns the index just past the last delimiter line. Bodies are raw
+/// text — never tokenized. The delimiter of each pending operator is the
+/// word token immediately following it in [tokens].
+int _captureHeredocs(
+  String input,
+  int start,
+  List<_Heredoc> pending,
+  List<_Token> tokens,
+) {
+  var i = start;
+  for (final heredoc in pending) {
+    final delim = _heredocDelimiter(heredoc, tokens);
+    final body = StringBuffer();
+    while (true) {
+      if (i >= input.length) {
+        throw ShellParseException(
+          "unterminated here-document (delimiter '$delim')",
+        );
+      }
+      var end = input.indexOf('\n', i);
+      final hasNewline = end != -1;
+      if (!hasNewline) end = input.length;
+      var line = input.substring(i, end);
+      // Pragmatic CRLF: a carriage return is never part of the payload.
+      if (line.endsWith('\r')) line = line.substring(0, line.length - 1);
+      final compare = heredoc.stripTabs ? _stripLeadingTabs(line) : line;
+      i = hasNewline ? end + 1 : end;
+      if (compare == delim) break;
+      body.write(compare);
+      if (hasNewline) body.write('\n');
+    }
+    heredoc.body = body.toString();
+  }
+  return i;
+}
+
+/// The delimiter word of [heredoc]: the token right after it.
+String _heredocDelimiter(_Heredoc heredoc, List<_Token> tokens) {
+  final index = tokens.indexOf(heredoc);
+  final next = index + 1 < tokens.length ? tokens[index + 1] : null;
+  if (next is! _Word) {
+    throw const ShellParseException('missing here-document delimiter');
+  }
+  return next.value;
+}
+
+String _stripLeadingTabs(String line) {
+  var i = 0;
+  while (i < line.length && line[i] == '\t') {
+    i++;
+  }
+  return line.substring(i);
 }
 
 /// Consumes a raw command-substitution span (`$(...)` or a backquote pair)
@@ -448,6 +574,11 @@ int _scanSingleQuote(String input, int i, StringBuffer buffer) {
             i + 1 < input.length &&
             input[i + 1] == '(') ||
         input[i] == '`') {
+      if (input[i] == '\$' && i + 2 < input.length && input[i + 2] == '(') {
+        throw const ShellParseException(
+          'arithmetic expansion \$((...)) is not supported in the sandbox shell',
+        );
+      }
       i = _scanSubstitution(input, i, buffer);
     } else {
       buffer.write(input[i]);
@@ -491,10 +622,13 @@ int _scanSingleQuote(String input, int i, StringBuffer buffer) {
   } else if (ch == '>' && peek() == '>') {
     token = _Redirect(1, RedirectKind.append);
     i += 2;
-  } else if (ch == '<' && peek() == '<') {
-    throw const ShellParseException('here-documents are not supported');
   } else if (ch == '>') {
     token = _Redirect(1, RedirectKind.write);
+    i += 1;
+  } else if (ch == '&') {
+    // Bare `&` — background execution, rejected with a precise message by
+    // the stage parser (gh-1086 AC5).
+    token = _Redirect(-1, RedirectKind.background);
     i += 1;
   } else {
     token = _Redirect(0, RedirectKind.read);
@@ -518,6 +652,11 @@ int _scanSingleQuote(String input, int i, StringBuffer buffer) {
       return ([_Redirect(fd, RedirectKind.append)], j + 2);
     }
     if (input[j] == '>') return ([_Redirect(fd, RedirectKind.write)], j + 1);
+    // fd-prefixed here-document: `3<<DELIM` / `3<<-DELIM` (gh-1086).
+    if (input[j] == '<' && j + 1 < input.length && input[j + 1] == '<') {
+      final strip = j + 2 < input.length && input[j + 2] == '-';
+      return ([_Heredoc(fd, stripTabs: strip)], j + (strip ? 3 : 2));
+    }
     return ([_Redirect(fd, RedirectKind.read)], j + 1);
   }
   return (const <_Token>[], j);
@@ -525,6 +664,14 @@ int _scanSingleQuote(String input, int i, StringBuffer buffer) {
 
 bool _isDigit(String ch) =>
     ch.length == 1 && ch.codeUnitAt(0) >= 48 && ch.codeUnitAt(0) <= 57;
+
+/// Fail-fast guards (gh-1086 AC5): constructs the sandbox shell cannot
+/// honor must throw a NAMED parse error instead of silently producing
+/// wrong output.
+final _assignmentWord = RegExp(r'^[A-Za-z_][A-Za-z0-9_]*=');
+const _reservedWords = {'while', 'until', 'case', 'select', 'function'};
+
+final _braceExpansion = RegExp(r'\{[^{}]*,[^{}]*\}');
 
 /// ASCII identifier char class: `[A-Za-z_]` (pure, issue #568).
 bool _isIdentifierStart(int code) =>
@@ -756,10 +903,25 @@ final class _ScriptParser {
         expandable.add(token.expandable);
         quoted.add(token.quoted);
       } else if (token is _Redirect) {
+        if (token.kind == RedirectKind.background) {
+          throw const ShellParseException(
+            'background jobs (&) are not supported in the sandbox shell',
+          );
+        }
         if (_atEnd) throw const ShellParseException('missing redirect target');
         final next = _advance();
+        if (next is _Redirect && next.kind == RedirectKind.background) {
+          throw const ShellParseException(
+            'fd duplication (2>&1) is not supported in the sandbox shell',
+          );
+        }
         if (next is! _Word) {
           throw const ShellParseException('redirect target must be a word');
+        }
+        if (next.value.startsWith('&')) {
+          throw const ShellParseException(
+            'fd duplication (2>&1) is not supported in the sandbox shell',
+          );
         }
         redirects.add(
           Redirect(
@@ -767,6 +929,26 @@ final class _ScriptParser {
             fd: token.fd,
             target: next.value,
             expandable: next.expandable,
+          ),
+        );
+      } else if (token is _Heredoc) {
+        // The delimiter word follows the operator on the command line; the
+        // body was captured by the tokenizer. Any quoting of the delimiter
+        // (single or double) disables body expansion (POSIX).
+        if (_atEnd) {
+          throw const ShellParseException('missing here-document delimiter');
+        }
+        final next = _advance();
+        if (next is! _Word) {
+          throw const ShellParseException('missing here-document delimiter');
+        }
+        redirects.add(
+          Redirect(
+            kind: RedirectKind.heredoc,
+            fd: token.fd,
+            target: next.value,
+            expandable: next.expandable && !next.quoted,
+            body: token.body,
           ),
         );
       } else {
@@ -777,6 +959,7 @@ final class _ScriptParser {
     if (args.isEmpty) {
       throw const ShellParseException('missing command');
     }
+    _validateStageWords(args, quoted);
 
     return Stage(
       command: args.first,
@@ -785,6 +968,61 @@ final class _ScriptParser {
       argExpandable: expandable,
       argQuoted: quoted,
     );
+  }
+
+  /// AC5 (gh-1086) fail-fast word checks. Only UNQUOTED words are checked
+  /// — quoting passes the text through literally.
+  void _validateStageWords(List<String> args, List<bool> quoted) {
+    for (var i = 0; i < args.length; i++) {
+      if (i < quoted.length && quoted[i]) continue;
+      final word = args[i];
+      if (i == 0) {
+        // `X=1` / `A=1 B=2` (assignments only) are supported shell
+        // assignments; the ENV-PREFIX form `X=1 cmd` is not (it used to
+        // die as "X=1: command not found").
+        if (_assignmentWord.hasMatch(word) &&
+            args.skip(1).any((a) => !_assignmentWord.hasMatch(a))) {
+          throw ShellParseException(
+            "prefix assignments are not supported ('$word'): "
+            "use 'export $word' instead",
+          );
+        }
+        if (word.startsWith('(')) {
+          throw const ShellParseException(
+            'subshells (...) are not supported in the sandbox shell',
+          );
+        }
+        if (_reservedWords.contains(word)) {
+          throw ShellParseException(
+            "'$word': this shell construct is not supported "
+            'in the sandbox shell',
+          );
+        }
+      }
+      if (word.startsWith('~')) {
+        throw const ShellParseException(
+          'tilde expansion (~) is not supported; '
+          'use an absolute sandbox path',
+        );
+      }
+      // A bare `*` is allowed: it is the `expr` multiplication operand
+      // idiom the existing suites pin. `*` with other characters (`*.txt`,
+      // `src/*`) is a glob pattern — rejected (gh-1086 AC5). Bracket
+      // expressions pass literally: stat/jq idioms (`-c [%q-%s]`, `.[]`)
+      // need them, and a silent pass-through is their historical behavior.
+      if (word.contains('*') && word != '*') {
+        throw ShellParseException(
+          "glob patterns are not supported ('$word'): "
+          'quote the argument to pass it literally',
+        );
+      }
+      if (_braceExpansion.hasMatch(word)) {
+        throw ShellParseException(
+          "brace expansion is not supported ('$word'): "
+          'quote the argument to pass it literally',
+        );
+      }
+    }
   }
 
   bool get _atEnd => _pos >= tokens.length;
