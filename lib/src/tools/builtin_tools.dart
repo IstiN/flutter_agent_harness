@@ -2354,18 +2354,36 @@ StateError _bashFailureError(
   List<String> notices,
   num? timeoutArg,
 ) {
+  // gh-1053 (review rework): a killed call's error carries the captured
+  // partial output — render it so the model sees WHERE the call stalled,
+  // not just the verdict.
   return switch (error.code) {
     ExecutionErrorCode.aborted => StateError(
-      _appendStatus('', 'Command aborted'),
+      _bashFailureWithCapture(error, _appendStatus('', 'Command aborted')),
     ),
     ExecutionErrorCode.timeout => StateError(
-      _appendStatus(
-        _retryNoticePrefix(notices),
-        'Command timed out after ${timeoutArg ?? 'unknown'} seconds',
+      _bashFailureWithCapture(
+        error,
+        _appendStatus(
+          _retryNoticePrefix(notices),
+          'Command timed out after ${timeoutArg ?? 'unknown'} seconds',
+        ),
       ),
     ),
     _ => StateError('${_retryNoticePrefix(notices)}$error'),
   };
+}
+
+/// Appends the killed call's partial capture (stderr after stdout, each
+/// tail-truncated to the tool budget) to a bash failure message.
+String _bashFailureWithCapture(ExecutionError error, String message) {
+  final parts = <String>[
+    if (error.stdout.isNotEmpty)
+      '--- partial stdout ---\n${_truncateBashOutput(error.stdout)}',
+    if (error.stderr.isNotEmpty)
+      '--- partial stderr ---\n${_truncateBashOutput(error.stderr)}',
+  ];
+  return parts.isEmpty ? message : '$message\n${parts.join('\n')}';
 }
 
 /// Joins exec stdout and stderr (stderr after stdout).
