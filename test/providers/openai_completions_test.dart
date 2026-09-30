@@ -1599,6 +1599,68 @@ void main() {
       expect(capturedHeaders!.containsKey('authorization'), isFalse);
     });
 
+    test('authHeader sends the raw named header, no Bearer (issue #964)',
+        () async {
+      Map<String, String>? capturedHeaders;
+      final client = http_testing.MockClient.streaming((request, body) async {
+        capturedHeaders = request.headers;
+        return http.StreamedResponse(Stream.value(utf8.encode(okSse)), 200);
+      });
+
+      // An AWS API Gateway fronting Bedrock rejects `Authorization: Bearer`
+      // and requires `x-api-key` (issue #964).
+      final model = Model(
+        id: 'gpt-4o-mini',
+        api: 'openai-completions',
+        provider: 'openai',
+        baseUrl: 'https://gateway.example.com/v1',
+        contextWindow: 128000,
+        maxTokens: 16384,
+        authHeader: 'x-api-key',
+      );
+
+      final stream = streamOpenAICompletions(
+        model,
+        simpleContext(),
+        const OpenAICompletionsOptions(apiKey: 'gw-key'),
+        client,
+      );
+      await stream.result;
+
+      expect(capturedHeaders!['x-api-key'], 'gw-key');
+      expect(capturedHeaders!.containsKey('authorization'), isFalse);
+    });
+
+    test('authHeader without a key still sends no auth header (issue #964)',
+        () async {
+      Map<String, String>? capturedHeaders;
+      final client = http_testing.MockClient.streaming((request, body) async {
+        capturedHeaders = request.headers;
+        return http.StreamedResponse(Stream.value(utf8.encode(okSse)), 200);
+      });
+
+      final model = Model(
+        id: 'gpt-4o-mini',
+        api: 'openai-completions',
+        provider: 'openai',
+        baseUrl: 'https://gateway.example.com/v1',
+        contextWindow: 128000,
+        maxTokens: 16384,
+        authHeader: 'x-api-key',
+      );
+
+      final stream = streamOpenAICompletions(
+        model,
+        simpleContext(),
+        const OpenAICompletionsOptions(),
+        client,
+      );
+      await stream.result;
+
+      expect(capturedHeaders!.containsKey('x-api-key'), isFalse);
+      expect(capturedHeaders!.containsKey('authorization'), isFalse);
+    });
+
     test(
       'an explicit authorization header applies without an API key',
       () async {
