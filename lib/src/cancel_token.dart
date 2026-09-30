@@ -50,6 +50,21 @@ class CancelToken {
       scheduleMicrotask(listener);
     }
   }
+
+  /// Re-opens the latch after a machine-initiated cancel that a resuming
+  /// layer chose to recover from (issue #1126: the run-idle watchdog's
+  /// [TimeoutException] cancel — the transient-retry wrapper resumes the
+  /// generation and re-arms the SAME token in place).
+  ///
+  /// Every holder of this token — the loop's tool phases, a later
+  /// `Agent.abort()`, the next provider request — keeps working through
+  /// the same object: future [CancelTokenSource.cancel] calls re-latch and
+  /// fire listeners normally. Never call this for a USER abort: that
+  /// cancellation is intent and stands.
+  void reset() {
+    _cancelled = false;
+    _reason = null;
+  }
 }
 
 /// The writable side of a [CancelToken]. Keep it private to the caller that
@@ -74,6 +89,18 @@ class CancelledException implements Exception {
 
   @override
   String toString() => 'CancelledException${reason == null ? '' : ': $reason'}';
+}
+
+/// The run-idle watchdog's cancel reason (`agent.dart
+/// _onRunWatchdogFired`): the one MACHINE-initiated token cancel. The
+/// transient-retry wrapper discriminates on this type (issue #1126): a
+/// mid-stream abort under a watchdog fire resumes from the completed
+/// prefix, while ANY other cancel — a bare user abort, a compaction
+/// budget's plain [TimeoutException] kill — stands. Still a
+/// [TimeoutException], so existing `onRunIdleTimeout` consumers and
+/// `isA<TimeoutException>()` assertions keep working.
+class RunIdleWatchdogFire extends TimeoutException {
+  RunIdleWatchdogFire([super.message, super.duration]);
 }
 
 /// Zone key under which the agent loop publishes the current tool phase's
