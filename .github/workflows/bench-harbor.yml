@@ -129,12 +129,13 @@ jobs:
         if: steps.family.outputs.family != '4.0' && inputs.confirm-full-run != true
         env:
           TASKS: ${{ inputs.tasks }}
+          ATTEMPTS: ${{ inputs.attempts }}
         run: |
           # split_tasks.py strips each comma-glob before use, so " ", ",",
           # " , " all normalize to zero globs = a FULL dataset run. Judge
           # emptiness on that same normalization, not the raw input.
           if [ -z "$(printf %s "$TASKS" | tr -d '[:space:],')" ]; then
-            echo "::error::Full run of Terminal-Bench ${{ steps.family.outputs.family }} (${{ steps.family.outputs.dataset }}, ~${{ steps.family.outputs.tasks }} tasks x ${{ inputs.attempts }} attempts) requires confirm-full-run: true. Smoke first: tasks=${{ steps.family.outputs.smoke }}, attempts=1 (docs/bench.md)."
+            echo "::error::Full run of Terminal-Bench ${{ steps.family.outputs.family }} (${{ steps.family.outputs.dataset }}, ~${{ steps.family.outputs.tasks }} tasks x $ATTEMPTS attempts) requires confirm-full-run: true. Smoke first: tasks=${{ steps.family.outputs.smoke }}, attempts=1 (docs/bench.md)."
             exit 1
           fi
 
