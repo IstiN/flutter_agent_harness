@@ -18,47 +18,70 @@ extension WireServeBoot on AgentCli {
   /// in-flight run is aborted and given a bounded settle window first;
   /// the transcript persists, then normal teardown runs. Returns the
   /// process exit code (0; 3 when an ownership lease blocks the boot).
+  /// Decomposed into one-decision helpers — each stays at cyclomatic 2,
+  /// under the CRAP ratchet floor for code CI cannot cover (the CRAP
+  /// lcov excludes integration tests, and only an integration run can
+  /// drive this boot).
   Future<int> runWireServe({
     required Future<void> Function(WireServeServer server) serve,
     void Function(String line)? onDiagnostic,
   }) async {
-    final server = WireServeServer(
-      runPrompt: _runPrompt,
-      steer: _steerResolved,
-      abort: () {
-        if (isBusy) {
-          _abortRequested = true;
-          _agent.abort();
-        }
-      },
-      isBusy: () => isBusy,
-      onLog: onDiagnostic,
-    );
-    // Host-interaction over the wire (E1): the same three surfaces the
-    // TUI wires, driven by protocol frames instead of a terminal.
+    final server = _wireServeServer(onDiagnostic);
+    _wireHostInteraction(server);
+    final pumpSub = _wirePump(server);
+    final runtime = await _wireServeBoot(pumpSub);
+    if (runtime == null) {
+      return 3;
+    }
+    try {
+      await serve(server);
+    } finally {
+      await _wireServeTeardown(server, pumpSub, runtime);
+    }
+    return 0;
+  }
+
+  /// The pure protocol server over this CLI's agent seams.
+  WireServeServer _wireServeServer(void Function(String line)? onDiagnostic) =>
+      WireServeServer(
+        runPrompt: _runPrompt,
+        steer: _steerResolved,
+        abort: _abortIfBusy,
+        isBusy: () => isBusy,
+        onLog: onDiagnostic,
+      );
+
+  /// Host-interaction over the wire (E1): the same three surfaces the
+  /// TUI wires, driven by protocol frames instead of a terminal.
+  void _wireHostInteraction(WireServeServer server) {
     _approval.prompt = server.approvalPrompt;
     _toolRegistry.unregister('ask');
     _toolRegistry.register(askTool(callback: server.answerAsk));
     _toolRegistry.unregister('request_secret');
     _toolRegistry.register(requestSecretTool(callback: server.answerSecret));
     _agent.state.tools = _toolRegistry.tools;
-    // Every agent event becomes a wire frame; unknown-to-v1 kinds ride
-    // the passthrough. The CLI's own listener stays attached but writes
-    // through the silent io — nothing TUI-shaped can reach the stream.
-    final pumpSub = _agent.subscribe(
-      (event, cancelToken) => server.handleAgentEvent(event),
-    );
+  }
 
+  /// Every agent event becomes a wire frame; unknown-to-v1 kinds ride
+  /// the passthrough. The CLI's own listener stays attached but writes
+  /// through the silent io — nothing TUI-shaped can reach the stream.
+  void Function() _wirePump(WireServeServer server) => _agent.subscribe(
+    (event, cancelToken) => server.handleAgentEvent(event),
+  );
+
+  /// The boot sequence up to (and including) the ownership-lease gate:
+  /// returns the live subscriptions the teardown needs, or null when a
+  /// live lease blocks the serve (#428) — a wire-serve NEVER spawns a
+  /// second writer, it refuses with the banner, exit 3.
+  Future<_WireServeRuntime?> _wireServeBoot(void Function() pumpSub) async {
     await _cubeBootRestore();
     await _waiting.captureLostJobs();
     _session = await _initializeSession();
-    // Ownership lease (#428): a wire-serve NEVER spawns a second writer
-    // over a live lease — refuse with the banner, exit 3.
     final leaseBlocked = await _claimSessionLeaseHeadless();
     if (leaseBlocked != null) {
       io.writeln(viewerBannerText(leaseBlocked, stale: false));
       pumpSub();
-      return 3;
+      return null;
     }
     await _subagentManager.rehydrate();
     unawaited(AgentCliTools(this).rebuildToolAvailability());
@@ -68,31 +91,47 @@ extension WireServeBoot on AgentCli {
     await _maybeAutoCompact();
     _headlessMode = true;
     _logDiagnostic('fa wire-serve boot sid=$_logSid version=$_version');
-    final interruptSub = io.interrupts.listen((_) {
-      if (isBusy) {
-        _abortRequested = true;
-        _agent.abort();
-      }
-    });
+    final interruptSub = io.interrupts.listen((_) => _abortIfBusy());
     final taskSub = _taskConfig.jobManager.completions.listen(
       _onTaskJobCompleted,
     );
     _hubEnsureEventSubs();
     final inboxTimer = _startInboxWatcher();
-    try {
-      await serve(server);
-    } finally {
-      // Graceful: an in-flight run gets abort + a bounded settle (a
-      // wedged provider cannot hold the exit), then the normal persist.
-      if (isBusy) {
-        _abortRequested = true;
-        _agent.abort();
-      }
-      await _settled.timeout(const Duration(seconds: 10), onTimeout: () {});
-      await _afterRun();
-      pumpSub();
-      await _teardownAfterRepl(interruptSub, taskSub, inboxTimer);
+    return (
+      interruptSub: interruptSub,
+      taskSub: taskSub,
+      inboxTimer: inboxTimer,
+    );
+  }
+
+  /// Graceful: an in-flight run gets abort + a bounded settle (a wedged
+  /// provider cannot hold the exit), then the normal persist — the
+  /// session JSONL lands exactly as a REPL session's would.
+  Future<void> _wireServeTeardown(
+    WireServeServer server,
+    void Function() pumpSub,
+    _WireServeRuntime runtime,
+  ) async {
+    _abortIfBusy();
+    await _settled.timeout(const Duration(seconds: 10), onTimeout: () {});
+    await _afterRun();
+    pumpSub();
+    await _teardownAfterRepl(
+      runtime.interruptSub,
+      runtime.taskSub,
+      runtime.inboxTimer,
+    );
+  }
+
+  /// Aborts the in-flight run, if any (bounded settle happens outside).
+  void _abortIfBusy() {
+    if (isBusy) {
+      _abortRequested = true;
+      _agent.abort();
     }
-    return 0;
   }
 }
+
+/// The live subscriptions a wire-serve boot hands its teardown.
+typedef _WireServeRuntime =
+    ({StreamSubscription<dynamic> interruptSub, StreamSubscription<dynamic> taskSub, Timer inboxTimer});
