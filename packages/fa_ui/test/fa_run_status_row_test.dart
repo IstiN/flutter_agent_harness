@@ -77,10 +77,7 @@ void main() {
     expect(find.textContaining('Thinking'), findsOneWidget);
 
     service.rows.add(
-      FaChatMessage(
-        role: 'system',
-        content: '[wasm_shell] {"argv": ["true"]}',
-      ),
+      FaChatMessage(role: 'system', content: '[wasm_shell] {"argv": ["true"]}'),
     );
     service.notify();
     await tester.pump();
@@ -102,9 +99,7 @@ void main() {
       ..streaming = true;
     await _pump(tester, service);
 
-    service.rows.add(
-      FaChatMessage(role: 'assistant', content: 'partial ans'),
-    );
+    service.rows.add(FaChatMessage(role: 'assistant', content: 'partial ans'));
     service.notify();
     await tester.pump();
     // Issue #1042 fix contract: token emission reads «Fa is typing...» —
@@ -133,8 +128,9 @@ void main() {
     expect(find.textContaining('Fa is typing'), findsOneWidget);
 
     // Tool phase: still exactly one row.
-    service.rows
-        .add(FaChatMessage(role: 'system', content: '[bash] {"command": "ls"}'));
+    service.rows.add(
+      FaChatMessage(role: 'system', content: '[bash] {"command": "ls"}'),
+    );
     service.notify();
     await tester.pump();
     expect(find.byKey(content), findsOneWidget);
