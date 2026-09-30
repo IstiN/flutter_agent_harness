@@ -4429,6 +4429,11 @@
 - feat(1086): sandbox shell heredocs, here-strings, fail-fast guards (#1094)
 - chore(factory): pin dmtools-agents @cee5996 — mutexExcludeSelf + conflict-rework + release-bump authorship + teammate dev-leg timeout (#1111)
 
+## 1.0.496
+
+- fix(#1085): post-compaction run continuation — watchdog suspension + loud failure (#1090)
+- chore(factory): sm-kicker -> shared factory-sm-kicker stub (#1118)
+
 ## Unreleased
 
 ## Unreleased
