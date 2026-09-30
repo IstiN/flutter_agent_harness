@@ -158,10 +158,17 @@ extension on AgentCli {
             : TuiStatusLine(spec: resolveStatusLineSpec(config.statusLine)),
         prompt: prompt,
         onInterrupt: () {
-          // Marks the drain loop to discard queued messages (kimi-cli drops
-          // the queue on cancel instead of starting new turns).
-          _abortRequested = true;
-          if (isBusy) _agent.abort();
+          if (isBusy) {
+            // Marks the drain loop to discard queued messages (kimi-cli
+            // drops the queue on cancel instead of starting new turns).
+            _abortRequested = true;
+            _abortRunOrCompaction();
+          } else if (_activeCompactionAbort != null) {
+            // Compaction-ONLY interrupt (issue #1085 round-2 review): a
+            // bare /compact runs with isBusy false — Ctrl+C stops the
+            // compaction while the session stays alive.
+            _activeCompactionAbort?.cancel('interrupted by user');
+          }
         },
         // Double-press Ctrl+C press 2 (issue #830): the same SIGINT-parity
         // exit the host's SIGINT handler runs — abort-if-running bounded,
