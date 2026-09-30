@@ -182,12 +182,25 @@ Future<void> _drive(
   final startedAt = DateTime.now();
   final attemptLog = <String>[];
   AssistantMessage? lastFailure;
+  // Issue #1126: the resume-from-prefix state. `attemptContext`/`token`
+  // start at the caller's values and change only when a mid-stream abort
+  // resumes (the tail request carries the completed prefix as the anchor).
+  var attemptContext = context;
+  var token = cancelToken;
+  final resume = _ResumeState();
   for (var attempt = 1; attempt <= maxAttempts; attempt++) {
-    if (cancelToken?.isCancelled ?? false) {
+    if (token?.isCancelled ?? false) {
       _pushAborted(out, model, lastFailure);
       return;
     }
-    final outcome = await _runAttempt(out, inner, model, context, cancelToken);
+    final outcome = await _runAttempt(
+      out,
+      inner,
+      model,
+      attemptContext,
+      token,
+      resume: resume.isEmpty ? null : resume,
+    );
     switch (outcome) {
       case _Forwarded():
         return;
@@ -212,10 +225,49 @@ Future<void> _drive(
           delay,
           _shortReason(error.errorMessage),
         );
-        final survived = await transientRetrySleeper(delay, cancelToken);
+        final survived = await transientRetrySleeper(delay, token);
         if (!survived) {
           _pushAborted(out, model, lastFailure);
           return;
+        }
+      case _AbortedPartial(:final snapshot, :final keptBlocks):
+        lastFailure = snapshot;
+        attemptLog.add(_shortReason(snapshot.errorMessage));
+        if (attempt >= maxAttempts) {
+          // Budget exhausted mid-chain (issue #1126 AC2): loud death with
+          // the full partial content preserved — never an infinite retry.
+          // The rewrite prefixes the state from EARLIER attempts only: the
+          // snapshot's own blocks already ride inside the error message.
+          out.push(
+            _resumeEvent(
+              ErrorEvent(reason: StopReason.aborted, error: snapshot),
+              resume,
+            ),
+          );
+          return;
+        }
+        resume.absorb(snapshot, keptBlocks);
+        transientRetryNotice?.call(
+          attempt,
+          maxAttempts,
+          Duration.zero,
+          'mid-stream abort — resuming from '
+          '${resume.blocks.length} completed block(s)',
+        );
+        // The tail request continues from the anchor: the completed prefix
+        // rides as the last assistant message (issue #1126 AC1).
+        attemptContext = Context(
+          systemPrompt: context.systemPrompt,
+          messages: [...context.messages, _anchorMessage(model, resume.blocks)],
+          tools: context.tools,
+        );
+        // A token cancelled before the resume is the run-idle watchdog's
+        // fire (user aborts never reach this branch) — it is dead and the
+        // resume runs on a fresh one. ponytail: nothing forwards later
+        // host cancels to it; the tail is guarded by the provider
+        // idle/connect watchdogs instead.
+        if (token?.isCancelled ?? false) {
+          token = CancelTokenSource().token;
         }
     }
   }
@@ -301,6 +353,21 @@ final class _TransientFailure extends _AttemptOutcome {
   final AssistantMessage error;
 }
 
+/// The attempt aborted mid-stream AFTER observable output (issue #1126):
+/// the accumulated snapshot returns to [_drive], which resumes from the
+/// completed prefix instead of forwarding the failure.
+final class _AbortedPartial extends _AttemptOutcome {
+  const _AbortedPartial(this.snapshot, this.keptBlocks);
+
+  /// The aborted attempt's accumulated message (full content, dead usage).
+  final AssistantMessage snapshot;
+
+  /// How many leading content blocks completed (their end event arrived).
+  /// The remainder is the in-flight block at the abort and drops from the
+  /// anchor (E1: a truncated tool call never executes).
+  final int keptBlocks;
+}
+
 /// Issue #312: a wire finish_reason carries the structured verdict —
 /// terminal (content_filter family) never retries, transient and unknown
 /// vendor words do; without one the text nets decide. Pre-commit
@@ -318,39 +385,78 @@ bool _retryableWireFailure(ErrorEvent event) {
 /// Runs one attempt, buffering until the first observable output commits
 /// it (the same guard as the roles fallback: a pre-content failure leaves
 /// no trace, a post-content failure stands).
+///
+/// With [resume] set (a mid-stream abort is being recovered, issue #1126)
+/// every forwarded event is rewritten onto the anchor — shifted content
+/// indices, partials prefixed with the completed blocks — and the attempt's
+/// own [StartEvent] is swallowed, so hosts observe one continuous logical
+/// message: the prefix they already streamed plus the tail's continuation.
 Future<_AttemptOutcome> _runAttempt(
   AssistantMessageEventStream out,
   StreamFunction inner,
   Model model,
   Context context,
-  CancelToken? cancelToken,
-) async {
+  CancelToken? cancelToken, {
+  _ResumeState? resume,
+}) async {
   final buffer = <AssistantMessageEvent>[];
   var committed = false;
+  // Highest content index whose end event arrived in this attempt; blocks
+  // after it were in-flight at an abort and drop from the anchor (issue
+  // #1126 E1: a truncated tool call with best-effort JSON must never
+  // execute, and a truncated block is better regenerated than resumed).
+  var lastEnded = -1;
+
+  void push(AssistantMessageEvent event) {
+    if (resume != null) {
+      if (event is StartEvent) return;
+      event = _resumeEvent(event, resume);
+    }
+    out.push(event);
+  }
+
   await for (final event in inner(model, context, cancelToken: cancelToken)) {
     if (committed) {
-      if (event is ErrorEvent) {
-        out.push(_midAnswer(event));
-        return const _Forwarded();
-      }
-      out.push(event);
-      if (event is DoneEvent) {
-        return const _Forwarded();
+      switch (event) {
+        case TextEndEvent(:final contentIndex):
+        case ThinkingEndEvent(:final contentIndex):
+        case ToolCallEndEvent(:final contentIndex):
+          if (contentIndex > lastEnded) lastEnded = contentIndex;
+          push(event);
+        case ErrorEvent():
+          if (_resumableAbort(event, cancelToken) && lastEnded >= 0) {
+            return _AbortedPartial(event.error, lastEnded + 1);
+          }
+          push(resume == null ? _midAnswer(event) : event);
+          return const _Forwarded();
+        case DoneEvent():
+          push(event);
+          return const _Forwarded();
+        default:
+          push(event);
       }
       continue;
     }
     switch (event) {
       case DoneEvent():
-        buffer.forEach(out.push);
-        out.push(event);
+        for (final buffered in buffer) {
+          push(buffered);
+        }
+        push(event);
         return const _Forwarded();
       case ErrorEvent():
-        if (_retryableWireFailure(event)) {
+        if (_retryableWireFailure(event) ||
+            // In resume mode the abort class also replays the tail: the
+            // anchor prefix in the request context is untouched (issue
+            // #1126), while a first attempt keeps today's forward rule.
+            (resume != null && _resumableAbort(event, cancelToken))) {
           // Not forwarded: the buffer is discarded and the call retries.
           return _TransientFailure(event.error);
         }
-        buffer.forEach(out.push);
-        out.push(event);
+        for (final buffered in buffer) {
+          push(buffered);
+        }
+        push(event);
         return const _Forwarded();
       case ThinkingStartEvent() ||
           ThinkingDeltaEvent() ||
@@ -380,13 +486,41 @@ Future<_AttemptOutcome> _runAttempt(
         // semantics are unchanged: the transcript already holds visible
         // deltas, so a replay would duplicate them — the failure stands.
         committed = true;
-        buffer.forEach(out.push);
-        out.push(event);
+        for (final buffered in buffer) {
+          push(buffered);
+        }
+        push(event);
     }
   }
   // The stream closed without a terminal event: flush what we held.
-  buffer.forEach(out.push);
+  for (final buffered in buffer) {
+    push(buffered);
+  }
   return const _Forwarded();
+}
+
+/// Issue #1126: the mid-stream abort class — [StopReason.aborted] with
+/// `Request was aborted` wording — resumes from the completed prefix
+/// instead of killing the run, when the abort was not user intent. A token
+/// cancel is user/host intent (Ctrl-C, teardown, TTSR, the external
+/// harness kill) EXCEPT the run-idle watchdog's fire, which cancels with
+/// its [TimeoutException] as the reason (agent.dart
+/// `_onRunWatchdogFired`) — a machine abort the resume recovers from (E3).
+/// Mid-stream transport wordings (connection reset family) deliberately
+/// keep the #290 AC4 stand-rule — this card reclassifies the abort
+/// signature only.
+bool _resumableAbort(ErrorEvent event, CancelToken? cancelToken) {
+  if (event.reason != StopReason.aborted) return false;
+  return !_isUserAbort(cancelToken);
+}
+
+/// Whether [cancelToken]'s cancellation was user/host intent (AC3): a bare
+/// `Agent.abort()` cancels with no reason and any other non-timeout reason
+/// counts as intent too; the run-idle watchdog is the one machine cancel,
+/// distinguished by its [TimeoutException] reason.
+bool _isUserAbort(CancelToken? cancelToken) {
+  if (cancelToken == null || !cancelToken.isCancelled) return false;
+  return cancelToken.cancelReason is! TimeoutException;
 }
 
 /// A post-commit transport failure stands (issue #290 AC4 — the transcript
@@ -419,4 +553,142 @@ ErrorEvent _midAnswer(ErrorEvent event) {
       timestamp: error.timestamp,
     ),
   );
+}
+
+/// Accumulated completed prefix across a resume chain (issue #1126): the
+/// content blocks finished before each mid-stream abort, plus the dead
+/// attempts' usage — billed once, in the resumed terminal message.
+final class _ResumeState {
+  final blocks = <ContentBlock>[];
+
+  var usage = Usage.zero;
+
+  bool get isEmpty => blocks.isEmpty;
+
+  void absorb(AssistantMessage snapshot, int keptBlocks) {
+    blocks.addAll(snapshot.content.take(keptBlocks));
+    usage = _sumUsage(usage, snapshot.usage);
+  }
+}
+
+/// The anchor assistant message handed to the tail request: the completed
+/// prefix as a plain message the model continues from (issue #1126 AC1).
+AssistantMessage _anchorMessage(Model model, List<ContentBlock> blocks) {
+  return AssistantMessage(
+    content: List.of(blocks),
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: Usage.zero,
+    stopReason: StopReason.stop,
+    timestamp: DateTime.now(),
+  );
+}
+
+/// Sums two usage reports (issue #1126: the dead attempt's tokens ride in
+/// the resumed terminal message — counted once, never twice).
+Usage _sumUsage(Usage a, Usage b) {
+  int? sum(int? x, int? y) =>
+      x == null && y == null ? null : (x ?? 0) + (y ?? 0);
+  return Usage(
+    input: a.input + b.input,
+    output: a.output + b.output,
+    cacheRead: a.cacheRead + b.cacheRead,
+    cacheWrite: a.cacheWrite + b.cacheWrite,
+    cacheWrite1h: sum(a.cacheWrite1h, b.cacheWrite1h),
+    reasoning: sum(a.reasoning, b.reasoning),
+    totalTokens: a.totalTokens + b.totalTokens,
+    cost: UsageCost(
+      input: a.cost.input + b.cost.input,
+      output: a.cost.output + b.cost.output,
+      cacheRead: a.cost.cacheRead + b.cost.cacheRead,
+      cacheWrite: a.cost.cacheWrite + b.cost.cacheWrite,
+      total: a.cost.total + b.cost.total,
+    ),
+  );
+}
+
+/// Rewrites a tail-attempt event onto the resume anchor (issue #1126):
+/// content indices shift by the prefix length — index consumers (the
+/// stream-JSON host protocol, TTSR block lookup) stay valid — and every
+/// partial/final message carries the prefix blocks, so hosts observe ONE
+/// logical assistant message: the prefix they already streamed plus the
+/// tail's continuation.
+AssistantMessageEvent _resumeEvent(
+  AssistantMessageEvent event,
+  _ResumeState resume,
+) {
+  final shift = resume.blocks.length;
+  AssistantMessage prefixed(AssistantMessage tail) =>
+      tail.copyWith(content: [...resume.blocks, ...tail.content]);
+
+  return switch (event) {
+    // Unreachable — the tail's start event is swallowed in [_runAttempt] —
+    // but the switch must stay exhaustive.
+    StartEvent() => event,
+    TextStartEvent(:final contentIndex, :final partial) => TextStartEvent(
+      contentIndex: contentIndex + shift,
+      partial: prefixed(partial),
+    ),
+    TextDeltaEvent(:final contentIndex, :final delta, :final partial) =>
+      TextDeltaEvent(
+        contentIndex: contentIndex + shift,
+        delta: delta,
+        partial: prefixed(partial),
+      ),
+    TextEndEvent(:final contentIndex, :final content, :final partial) =>
+      TextEndEvent(
+        contentIndex: contentIndex + shift,
+        content: content,
+        partial: prefixed(partial),
+      ),
+    ThinkingStartEvent(:final contentIndex, :final partial) =>
+      ThinkingStartEvent(
+        contentIndex: contentIndex + shift,
+        partial: prefixed(partial),
+      ),
+    ThinkingDeltaEvent(:final contentIndex, :final delta, :final partial) =>
+      ThinkingDeltaEvent(
+        contentIndex: contentIndex + shift,
+        delta: delta,
+        partial: prefixed(partial),
+      ),
+    ThinkingEndEvent(:final contentIndex, :final content, :final partial) =>
+      ThinkingEndEvent(
+        contentIndex: contentIndex + shift,
+        content: content,
+        partial: prefixed(partial),
+      ),
+    ToolCallStartEvent(:final contentIndex, :final partial) =>
+      ToolCallStartEvent(
+        contentIndex: contentIndex + shift,
+        partial: prefixed(partial),
+      ),
+    ToolCallDeltaEvent(:final contentIndex, :final delta, :final partial) =>
+      ToolCallDeltaEvent(
+        contentIndex: contentIndex + shift,
+        delta: delta,
+        partial: prefixed(partial),
+      ),
+    ToolCallEndEvent(:final contentIndex, :final toolCall, :final partial) =>
+      ToolCallEndEvent(
+        contentIndex: contentIndex + shift,
+        toolCall: toolCall,
+        partial: prefixed(partial),
+      ),
+    DoneEvent(:final reason, :final message) => DoneEvent(
+      // The dead attempts' usage lands here, exactly once.
+      reason: reason,
+      message: prefixed(message).copyWith(
+        usage: _sumUsage(resume.usage, message.usage),
+      ),
+    ),
+    ErrorEvent(:final reason, :final error, :final retryAfter) => ErrorEvent(
+      reason: reason,
+      retryAfter: retryAfter,
+      error: prefixed(error).copyWith(
+        usage: _sumUsage(resume.usage, error.usage),
+      ),
+    ),
+  };
 }
