@@ -37,6 +37,7 @@ final _infoCommandHandlers = <String, Future<void> Function(AgentCli, String)>{
   '/ext': (cli, rest) async => cli._extSlash(rest),
   '/jsr': (cli, rest) async => cli._jsrSlash(rest),
   '/power': (cli, rest) async => cli._powerSlash(),
+  '/quota': (cli, rest) async => cli._quotaSlash(rest),
   // Hidden (issue #735): not in the slash menu — a diagnostics dump of
   // the live tty's termios state for steering-freeze triage.
   '/termios': (cli, rest) async => cli._printTermiosDump(),
@@ -169,6 +170,146 @@ extension SlashCommandDispatch on AgentCli {
       'power.hold: per-run|session (~/.fah/config.yaml, defaults '
       'idle + per-run)',
     );
+  }
+
+  /// `/quota [refresh]` (issue #823): the non-blocking provider-quota
+  /// table. Every render is cache-only ([ProviderQuotaService.peek]) — a
+  /// cold row shows `…` while the peek kick fetches in the background (E1);
+  /// `refresh` awaits one coalesced fetch per configured provider (E6)
+  /// before re-rendering. Capability-less providers (no adapter) render
+  /// `unknown (reason)`, never an error.
+  Future<void> _quotaSlash(String rest) async {
+    final arg = rest.trim();
+    if (arg.isNotEmpty && arg != 'refresh') {
+      io.writeln('usage: /quota [refresh]');
+      return;
+    }
+    final service = quotaService;
+    if (arg == 'refresh') {
+      for (final id in _configuredQuotaProviders) {
+        await service.refresh(id);
+      }
+    }
+    _printQuotaTable(service);
+  }
+
+  /// The configured provider ids with a quota surface: catalog providers
+  /// whose credential resolves (env or secure store) plus saved CodeMie
+  /// SSO entries (cookie auth has no env key — the entry IS the config).
+  List<String> get _configuredQuotaProviders => [
+    for (final spec in enabledProviders())
+      if (_quotaConfigured(spec)) spec.name,
+  ];
+
+  bool _quotaConfigured(ProviderSpec spec) {
+    if (spec.name == 'codemie') {
+      final registry = config.customProviders;
+      if (registry != null &&
+          registry.entries.any(
+            (entry) => entry.baseUrl.contains('/code-assistant-api/'),
+          )) {
+        return true;
+      }
+    }
+    return _providerKeyFor(spec, spec.defaultBaseUrl) != null;
+  }
+
+  /// Rebinds a boot-built queue runtime with the live quota feed
+  /// (issue #823): the boot constructs the runtime before the CLI — and
+  /// therefore before the service — exists. No-op without a queue, so
+  /// legacy boots stay byte-identical.
+  Future<void> attachProviderQueueQuotaFeed() async {
+    if (config.providersQueueRuntime != null) {
+      await _rebuildProviderQueueRuntime();
+    }
+  }
+
+  /// The session's quota service, built on first use — no IO at rest: the
+  /// adapters resolve credentials lazily and fetch only when a surface
+  /// peeks or refreshes. Tests inject the http client through
+  /// [AgentCliConfig.quotaHttpClient]; production shares the keep-alive
+  /// provider client.
+  ProviderQuotaService get quotaService =>
+      _quotaService ??= ProviderQuotaService(
+        adapters: {
+          'openrouter': OpenRouterQuotaAdapter(
+            client: config.quotaHttpClient ?? sharedProviderHttpClient(),
+            resolveApiKey: () async {
+              final spec = providerCatalog['openrouter']!;
+              return _providerKeyFor(spec, spec.defaultBaseUrl);
+            },
+          ),
+          'codemie': CodeMieQuotaAdapter(
+            client: config.quotaHttpClient ?? sharedProviderHttpClient(),
+            // OQ1 lean (b): no pinned limits endpoint — the adapter stays
+            // dark until the endpoint is confirmed, and renders its reason.
+            resolveSessionCookie: _resolveCodeMieSessionCookie,
+          ),
+        },
+        // DIAL-class endpoints carry no per-key billing surface.
+        unmeteredProviders: {
+          for (final spec in enabledProviders())
+            if (spec.kind == 'dial') spec.name,
+        },
+        ttl: config.quotaTtl ?? const Duration(minutes: 15),
+      );
+
+  Future<String?> _resolveCodeMieSessionCookie() async {
+    final registry = config.customProviders;
+    final entry = registry?.entries
+        .where((e) => e.baseUrl.contains('/code-assistant-api/'))
+        .firstOrNull;
+    return entry == null ? null : _resolveCodeMieCookie(entry.keyName);
+  }
+
+  /// The `/quota` table (AC4): one row per configured provider, rendered
+  /// cache-only. Cold rows show `…`; unknown rows carry the adapter's
+  /// one-line reason; unmetered rows are silent about billing they lack.
+  void _printQuotaTable(ProviderQuotaService service) {
+    final ids = _configuredQuotaProviders;
+    if (ids.isEmpty) {
+      io.writeln('no quota-reporting providers configured');
+      return;
+    }
+    final now = DateTime.now().toUtc();
+    io.writeln(
+      '${'provider'.padRight(12)}${'used/limit'.padRight(20)}'
+      '${'unit'.padRight(10)}${'reset'.padRight(8)}updated',
+    );
+    for (final id in ids) {
+      final result = service.peek(id);
+      final quota = result?.quota;
+      final row = StringBuffer(id.padRight(12));
+      if (result == null) {
+        row.write('…'); // cold — the peek kick fetches in the background
+      } else if (quota == null) {
+        row.write('unknown (${result.reason})');
+      } else if (quota.isUnmetered) {
+        row.write('unmetered');
+      } else {
+        final unit = switch (quota.unit) {
+          QuotaUnit.currencyUsd => 'usd',
+          QuotaUnit.requests => 'requests',
+          QuotaUnit.tokens => 'tokens',
+          QuotaUnit.unmetered => '',
+        };
+        row
+          ..write(formatQuotaUsedLimit(quota).padRight(20))
+          ..write(unit.padRight(10))
+          ..write(formatQuotaReset(quota.resetsAt, now).padRight(8))
+          ..write(_quotaAge(quota.updatedAt, now));
+      }
+      io.writeln(row.toString());
+    }
+  }
+
+  /// Coarse age bucket for the `updated` column (`now` / `5m` / `3h` / `2d`).
+  String _quotaAge(DateTime updated, DateTime now) {
+    final delta = now.difference(updated);
+    if (delta.inMinutes < 1) return 'now';
+    if (delta.inHours < 1) return '${delta.inMinutes}m';
+    if (delta.inDays < 1) return '${delta.inHours}h';
+    return '${delta.inDays}d';
   }
 
   /// `/exit`, `/help`, `/stats`, `/tasks`.
@@ -647,6 +788,7 @@ extension ProviderQueueEditor on AgentCli {
           : ProviderQueueRuntime.build(
               queue,
               secrets: _queueSecrets(queue.entries),
+              quotaFeed: quotaService,
             );
     } on ConfigException catch (error) {
       io.writeln('queue reload failed: ${error.message}');

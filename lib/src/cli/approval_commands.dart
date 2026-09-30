@@ -531,12 +531,36 @@ extension ApprovalCommands on AgentCli {
         ? ''
         : '[auto-compacted${_autoFoldCount > 1 ? ' ×$_autoFoldCount' : ''}'
               ' · continuing] · ';
-    return '$foldBadge$cwd · ctx $pct% '
+    var line = '$foldBadge$cwd · ctx $pct% '
         '(${_formatTokenCount(contextTokens)}/${_formatTokenCount(window)}) · '
         '${_formatTokenCount(totalTokens)}tok'
         '$costPart · turn ${_usage.turns}$badge · '
         '${_statusProviderLabel(model)}/${model.id}';
+    // Quota badge (issue #823 AC5): only when the config opts in — default
+    // OFF (OQ2). Cache-only peek: cold renders `[OR …]` and the peek kick
+    // fetches in the background (E1); unmetered renders nothing (silent).
+    final providerId = model.provider;
+    if (config.quotaBadge && providerId.isNotEmpty) {
+      final badgeText = formatQuotaBadge(
+        shortName: _quotaBadgeTag(providerId),
+        quota: quotaService.peek(providerId)?.quota,
+        now: DateTime.now().toUtc(),
+      );
+      if (badgeText.isNotEmpty) line += ' $badgeText';
+    }
+    return line;
   }
+
+  /// The 2-letter quota badge tag for a provider id. `openrouter` brands
+  /// as `OR` (the contract's example tag), `codemie` as `CM`; anything
+  /// unmapped falls back to its first two letters uppercased.
+  static const _quotaBadgeTags = {'openrouter': 'OR', 'codemie': 'CM'};
+
+  String _quotaBadgeTag(String providerId) =>
+      _quotaBadgeTags[providerId] ??
+      (providerId.length < 2
+          ? providerId.toUpperCase()
+          : providerId.substring(0, 2).toUpperCase());
 
   /// The host-built status-bar snapshot (issue #806, the S3 band
   /// attachment): everything the TUI's status band renders from,

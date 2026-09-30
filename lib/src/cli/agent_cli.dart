@@ -125,11 +125,16 @@ import '../providers/provider_common.dart'
         providerConnectTimeout,
         providerStreamIdleTimeout,
         providerTimeoutsOverride,
+        sharedProviderHttpClient,
         stripAuthExpiredMarker,
         textOnlyImageDropNotice;
 import '../providers/transient_retry_stream.dart';
 import '../prompts/prompt_overrides.dart';
 import '../providers/aiin_auth.dart';
+import '../providers/quota.dart';
+import '../providers/quota_codemie.dart';
+import '../providers/quota_openrouter.dart';
+import '../providers/quota_service.dart';
 import 'aiin_connect_server.dart';
 import 'chatgpt_oauth_server.dart';
 import 'codemie_sso_server.dart';
@@ -1271,6 +1276,10 @@ class AgentCli {
 
   /// Session sleep-prevention (#325): held on [run], freed on teardown.
   PowerAssertionController? _powerAssertions;
+
+  /// The provider-quota service (issue #823): built lazily on first peek —
+  /// no IO at rest. See `quotaFor`/`_quotaSlash` in agent_cli_commands.dart.
+  ProviderQuotaService? _quotaService;
   final Map<String, String> _pluginSlashDescriptions = {};
   final List<ExternalInbox> _pluginInboxes = [];
 

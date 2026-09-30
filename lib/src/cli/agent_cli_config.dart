@@ -77,6 +77,9 @@ final class AgentCliConfig {
     this.powerSleepPrevention = PowerAssertionLevel.idle,
     this.powerSleepPreventionHold = PowerAssertionHold.perRun,
     this.powerRunner,
+    this.quotaBadge = false,
+    this.quotaTtl,
+    this.quotaHttpClient,
     this.tuiTheme,
     this.tuiProgramHooks,
     this.sttyRunner,
@@ -488,6 +491,19 @@ final class AgentCliConfig {
   /// entirely — the test runtime and web hosts pass no runner, so no
   /// unit test ever spawns a real `caffeinate`.
   final PowerAssertionRunner? powerRunner;
+
+  /// Status-line provider-quota badge (`quota.badge`, issue #823): default
+  /// OFF (OQ2 lean) — the status line stays quiet until the user opts in.
+  final bool quotaBadge;
+
+  /// Quota-cache TTL override (`quota.ttl_minutes`, issue #823). Null keeps
+  /// the service's 15-minute default.
+  final Duration? quotaTtl;
+
+  /// Injectable http client for the quota adapters (issue #823): tests
+  /// inject a MockClient here; production shares the keep-alive provider
+  /// client. Null = shared client, no IO is made until a surface peeks.
+  final http.Client? quotaHttpClient;
 
   /// Headless TUI test hooks (scripted key bytes, captured frames) handed to
   /// the TUI controller — null in production, where the dart_tui program

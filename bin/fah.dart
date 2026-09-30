@@ -2150,6 +2150,10 @@ Future<void> _runApp(List<String> args) async {
       powerSleepPrevention:
           saved.powerSleepPrevention ?? PowerAssertionLevel.idle,
       powerRunner: hostPowerRunner(pid: pid),
+      // Provider quota monitoring (issue #823): badge opt-in (default off)
+      // + cache TTL; the http client stays the shared provider keep-alive.
+      quotaBadge: saved.quota.badge,
+      quotaTtl: Duration(minutes: saved.quota.ttlMinutes),
       sessionName: effective.session,
       visionConfig: visionConfig,
       transcribeConfig: transcribeConfig,
@@ -2342,6 +2346,11 @@ Future<void> _runApp(List<String> args) async {
     io: io,
   );
   if (redactorAttached) attachSecretRedactor(cli.agent, redactor);
+
+  // Issue #823: boot builds the queue runtime before the CLI (and its
+  // quota service) exist — rebind once so depletion hints steer the
+  // resolver from the first turn. No-op without a configured queue.
+  await cli.attachProviderQueueQuotaFeed();
 
   persistConfig = () async {
     await saveCliConfig(
