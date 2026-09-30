@@ -70,47 +70,55 @@ void main() {
   }
 
   group('AC2 tools + agent.mode', () {
-    test('yaml tools resolve under the runtime store; UI toggle wins (E1)',
-        () async {
-      writeConfig('tools:\n  web_search: false\n  no_such_tool: true\n');
-      final service = await buildService();
-      addTearDown(service.dispose);
+    test(
+      'yaml tools resolve under the runtime store; UI toggle wins (E1)',
+      () async {
+        writeConfig('tools:\n  web_search: false\n  no_such_tool: true\n');
+        final service = await buildService();
+        addTearDown(service.dispose);
 
-      expect(service.toolAvailability['web_search']!.enabled, isFalse);
-      expect(service.toolAvailability['web_search']!.scope, ToolScope.global);
-      // Unknown ids are the caller's warning, not a crash: the section
-      // still landed (the id simply resolves against no capability).
-      expect(service.toolsConfig.tools, isEmpty);
+        expect(service.toolAvailability['web_search']!.enabled, isFalse);
+        expect(service.toolAvailability['web_search']!.scope, ToolScope.global);
+        // Unknown ids are the caller's warning, not a crash: the section
+        // still landed (the id simply resolves against no capability).
+        expect(service.toolsConfig.tools, isEmpty);
 
-      // E1: an explicit app-UI choice sits ABOVE the yaml scope.
-      await service.setToolEnabled('web_search', true);
-      expect(service.toolAvailability['web_search']!.enabled, isTrue);
-      expect(service.toolAvailability['web_search']!.scope, ToolScope.runtime);
-      // Idempotent re-apply (E3): re-applying is a no-op, still live.
-      await service.setToolEnabled('web_search', true);
-      expect(service.toolAvailability['web_search']!.enabled, isTrue);
-    });
+        // E1: an explicit app-UI choice sits ABOVE the yaml scope.
+        await service.setToolEnabled('web_search', true);
+        expect(service.toolAvailability['web_search']!.enabled, isTrue);
+        expect(
+          service.toolAvailability['web_search']!.scope,
+          ToolScope.runtime,
+        );
+        // Idempotent re-apply (E3): re-applying is a no-op, still live.
+        await service.setToolEnabled('web_search', true);
+        expect(service.toolAvailability['web_search']!.enabled, isTrue);
+      },
+    );
 
-    test('agent.mode: omp demotes to discoverable; pi keeps the 4 base',
-        () async {
-      writeConfig('agent:\n  mode: pi\n');
-      final service = await buildService();
-      addTearDown(service.dispose);
+    test(
+      'agent.mode: omp demotes to discoverable; pi keeps the 4 base',
+      () async {
+        writeConfig('agent:\n  mode: pi\n');
+        final service = await buildService();
+        addTearDown(service.dispose);
 
-      // pi (#679): only the benchmark base stays schema-visible — every
-      // other id is discoverable with discovery OFF in pi.
-      final visible = service.toolAvailability.entries
-          .where((e) => e.value.enabled)
-          .map((e) => e.key)
-          .toSet();
-      expect(visible, containsAll(['read', 'write', 'edit', 'bash']));
-    });
+        // pi (#679): only the benchmark base stays schema-visible — every
+        // other id is discoverable with discovery OFF in pi.
+        final visible = service.toolAvailability.entries
+            .where((e) => e.value.enabled)
+            .map((e) => e.key)
+            .toSet();
+        expect(visible, containsAll(['read', 'write', 'edit', 'bash']));
+      },
+    );
   });
 
   group('AC1 roles', () {
-    test('store wins per role; yaml fills the gaps; retry rides along',
-        () async {
-      writeConfig('''
+    test(
+      'store wins per role; yaml fills the gaps; retry rides along',
+      () async {
+        writeConfig('''
 roles:
   smol:
     - provider: openai-completions
@@ -123,29 +131,29 @@ roles:
 retry:
   retriesPerEntry: 5
 ''');
-      final store = TaskModelsStore.inMemory({
-        'smol': TaskRoleConfig(
-          providerKind: 'openai-completions',
-          modelId: 'store-smol',
-          baseUrl: 'https://example.test',
-        ),
-      });
-      final service = await buildService(taskModelsStore: store);
-      addTearDown(service.dispose);
+        final store = TaskModelsStore.inMemory({
+          'smol': TaskRoleConfig(
+            providerKind: 'openai-completions',
+            modelId: 'store-smol',
+            baseUrl: 'https://example.test',
+          ),
+        });
+        final service = await buildService(taskModelsStore: store);
+        addTearDown(service.dispose);
 
-      final resolver = service.taskRolesResolverForTest;
-      expect(resolver, isNotNull);
-      // The explicit store choice beats the yaml chain (E1).
-      final smol = resolver!.resolveRole('smol')!;
-      expect(smol.model.id, 'store-smol');
-      // yaml-only roles resolve (the gap yaml fills).
-      expect(resolver.resolveRole('plan')!.model.id, 'planner');
-      // The retry policy came from yaml.
-      expect(resolver.config.retry.retriesPerEntry, 5);
-    });
+        final resolver = service.taskRolesResolverForTest;
+        expect(resolver, isNotNull);
+        // The explicit store choice beats the yaml chain (E1).
+        final smol = resolver!.resolveRole('smol')!;
+        expect(smol.model.id, 'store-smol');
+        // yaml-only roles resolve (the gap yaml fills).
+        expect(resolver.resolveRole('plan')!.model.id, 'planner');
+        // The retry policy came from yaml.
+        expect(resolver.config.retry.retriesPerEntry, 5);
+      },
+    );
 
-    test('yaml-only roles build a resolver when the store is absent',
-        () async {
+    test('yaml-only roles build a resolver when the store is absent', () async {
       writeConfig('roles:\n  smol:\n    - openai-completions/yaml-smol\n');
       final service = await buildService();
       addTearDown(service.dispose);
@@ -157,56 +165,62 @@ retry:
   });
 
   group('AC4 redact', () {
-    test('yaml config drives the pipeline; live toggle re-flips it (E3)',
-        () async {
-      writeConfig('redact:\n  enabled: true\n  blockMode: true\n');
-      final service = await buildService();
-      addTearDown(service.dispose);
+    test(
+      'yaml config drives the pipeline; live toggle re-flips it (E3)',
+      () async {
+        writeConfig('redact:\n  enabled: true\n  blockMode: true\n');
+        final service = await buildService();
+        addTearDown(service.dispose);
 
-      expect(service.redactionPipelineForTest, isNotNull);
-      expect(service.redactionPipelineForTest!.config.blockMode, isTrue);
-      // E3: the service-level toggle flips the LIVE pipeline.
-      service.setRedactionEnabled(false);
-      expect(service.redactionPipelineForTest!.config.enabled, isFalse);
-      service.setRedactionEnabled(true);
-      expect(service.redactionPipelineForTest!.config.enabled, isTrue);
-    });
+        expect(service.redactionPipelineForTest, isNotNull);
+        expect(service.redactionPipelineForTest!.config.blockMode, isTrue);
+        // E3: the service-level toggle flips the LIVE pipeline.
+        service.setRedactionEnabled(false);
+        expect(service.redactionPipelineForTest!.config.enabled, isFalse);
+        service.setRedactionEnabled(true);
+        expect(service.redactionPipelineForTest!.config.enabled, isTrue);
+      },
+    );
 
-    test('yaml-disabled redaction attaches no pipeline (CLI parity)',
-        () async {
+    test('yaml-disabled redaction attaches no pipeline (CLI parity)', () async {
       writeConfig('redact:\n  enabled: false\n');
       final service = await buildService();
       addTearDown(service.dispose);
       expect(service.redactionPipelineForTest, isNull);
     });
 
-    test('re-enabling a yaml-disabled boot rebuilds from boot secrets',
-        () async {
-      const bootSecret = 'sk-boot-0123456789abcdef';
-      writeConfig('redact:\n  enabled: false\n');
-      final service = await buildService(
-        sessionKeys: SessionKeysStore.inMemory({
-          'FAH_BOOT_SECRET_KEY': bootSecret,
-        }),
-      );
-      addTearDown(service.dispose);
+    test(
+      're-enabling a yaml-disabled boot rebuilds from boot secrets',
+      () async {
+        const bootSecret = 'sk-boot-0123456789abcdef';
+        writeConfig('redact:\n  enabled: false\n');
+        final service = await buildService(
+          sessionKeys: SessionKeysStore.inMemory({
+            'FAH_BOOT_SECRET_KEY': bootSecret,
+          }),
+        );
+        addTearDown(service.dispose);
 
-      // The yaml-disabled boot attached nothing.
-      expect(service.redactionPipelineForTest, isNull);
-      // Disabling a pipeline-less service stays a no-op.
-      service.setRedactionEnabled(false);
-      expect(service.redactionPipelineForTest, isNull);
+        // The yaml-disabled boot attached nothing.
+        expect(service.redactionPipelineForTest, isNull);
+        // Disabling a pipeline-less service stays a no-op.
+        service.setRedactionEnabled(false);
+        expect(service.redactionPipelineForTest, isNull);
 
-      // The re-enable rebuilds the layered pipeline SEEDED from the boot
-      // secrets snapshot — the exact masking the boot path would have
-      // provided (values below SecretRedactor.minValueLength stay out).
-      service.setRedactionEnabled(true);
-      final pipeline = service.redactionPipelineForTest;
-      expect(pipeline, isNotNull);
-      expect(pipeline!.config.enabled, isTrue);
-      expect(pipeline.registeredSecrets, contains(bootSecret));
-      expect(pipeline.redact('token $bootSecret end'), isNot(contains(bootSecret)));
-    });
+        // The re-enable rebuilds the layered pipeline SEEDED from the boot
+        // secrets snapshot — the exact masking the boot path would have
+        // provided (values below SecretRedactor.minValueLength stay out).
+        service.setRedactionEnabled(true);
+        final pipeline = service.redactionPipelineForTest;
+        expect(pipeline, isNotNull);
+        expect(pipeline!.config.enabled, isTrue);
+        expect(pipeline.registeredSecrets, contains(bootSecret));
+        expect(
+          pipeline.redact('token $bootSecret end'),
+          isNot(contains(bootSecret)),
+        );
+      },
+    );
   });
 
   group('AC5 providerTimeouts', () {
@@ -218,10 +232,7 @@ retry:
       final service = await buildService();
       addTearDown(service.dispose);
       expect(providerTimeoutsOverride!.connect, const Duration(seconds: 42));
-      expect(
-        providerTimeoutsOverride!.streamIdle,
-        const Duration(seconds: 25),
-      );
+      expect(providerTimeoutsOverride!.streamIdle, const Duration(seconds: 25));
     });
 
     test('no section clears any previous override', () async {
@@ -257,8 +268,11 @@ ttsr:
         stopReason: StopReason.stop,
         timestamp: DateTime.now(),
       );
-      AssistantMessageEventStream fakeStream(Model model, Context context,
-          {CancelToken? cancelToken}) {
+      AssistantMessageEventStream fakeStream(
+        Model model,
+        Context context, {
+        CancelToken? cancelToken,
+      }) {
         final stream = AssistantMessageEventStream();
         final leaked = calls == 0;
         calls++;
@@ -274,25 +288,31 @@ ttsr:
             Timer(const Duration(milliseconds: 5), tick);
           } else if (phase == 1) {
             phase++;
-            stream.push(TextDeltaEvent(
-              contentIndex: 0, delta: text, partial: msg(model, text)));
+            stream.push(
+              TextDeltaEvent(
+                contentIndex: 0,
+                delta: text,
+                partial: msg(model, text),
+              ),
+            );
             Timer(const Duration(milliseconds: 5), tick);
           } else {
-            stream.push(DoneEvent(
-              reason: StopReason.stop, message: msg(model, text)));
+            stream.push(
+              DoneEvent(reason: StopReason.stop, message: msg(model, text)),
+            );
           }
         }
+
         Timer(Duration.zero, tick);
         return stream;
       }
+
       final service = await buildService(streamFunction: fakeStream);
       addTearDown(service.dispose);
 
       await service.sendText('say something');
       // Wait out the abort + inject + retry chain (real timers, short).
-      for (var i = 0;
-          i < 100 && (service.isStreaming || calls < 2);
-          i++) {
+      for (var i = 0; i < 100 && (service.isStreaming || calls < 2); i++) {
         await Future<void>.delayed(const Duration(milliseconds: 20));
       }
       final texts = [
