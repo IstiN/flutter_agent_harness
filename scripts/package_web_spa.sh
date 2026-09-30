@@ -44,7 +44,9 @@ for f in index.html flutter_service_worker.js flutter_bootstrap.js manifest.json
   fi
   if grep -Fq "$forbidden" "$stage/$f"; then
     echo "::error::package_web_spa: absolute $forbidden reference found in $f (AC3 #1100)" >&2
-    grep -Fn "$forbidden" "$stage/$f" | head -5 >&2
+    # No head-truncation: grep|head closes the pipe early -> SIGPIPE 141
+    # under pipefail; these files are small, print every match.
+    grep -Fn "$forbidden" "$stage/$f" >&2
     exit 1
   fi
 done

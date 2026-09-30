@@ -5,7 +5,11 @@ Every [release](https://github.com/IstiN/flutter_agent_harness/releases) ships
 rewritten to `./`, so it runs from **any static host with zero edits**,
 including path-prefixed hosts (`https://host/some/prefix/`) and sandboxed
 iframes. The bundle is the same build that powers [fa1.dev](https://fa1.dev/app/)
-(whose `/app/` base is unchanged); the ONLY difference is the relative base tag.
+(whose `/app/` base is unchanged). The base tag is the only *intended* edit —
+and the release pipeline enforces that: `scripts/package_web_spa.sh` fails the
+release unless the four entry files (`index.html`, `flutter_service_worker.js`,
+`flutter_bootstrap.js`, `manifest.json`) contain zero absolute `/app/`
+references after the patch.
 
 ## Upload (read this first)
 
