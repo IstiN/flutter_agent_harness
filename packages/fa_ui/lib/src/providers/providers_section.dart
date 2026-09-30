@@ -249,7 +249,10 @@ class ProvidersSection extends StatelessWidget {
   /// One refresh per configured quota source: hosted presets the CLI chain
   /// keys, custom rows on quota-marked endpoints, and the on-device kinds.
   /// Unconfigured ids resolve to `unknown` instantly — refresh() coalesces
-  /// and never hammers an endpoint.
+  /// and never hammers an endpoint. Per-provider isolation makes the
+  /// refreshes independent, so they run in parallel (review round 2) —
+  /// same `Future.wait` shape as the CLI `/quota refresh`: the spinner
+  /// tracks the slowest single fetch, not the sum of the bounds.
   Future<void> _refreshQuotas(ProviderRegistry registry) async {
     final service = quotas;
     if (service == null) return;
@@ -269,9 +272,7 @@ class ProvidersSection extends StatelessWidget {
         ids.add(mark);
       }
     }
-    for (final id in ids) {
-      await service.refresh(id);
-    }
+    await Future.wait<void>([for (final id in ids) service.refresh(id)]);
   }
 
   Future<void> _openOnDeviceRoute(

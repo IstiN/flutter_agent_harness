@@ -18,8 +18,18 @@ import '../webllm/webllm_types.dart' show webLlmProviderKind;
 /// CodeMie dark until its endpoint is pinned), bridges the service's
 /// `changes` stream into ChangeNotifier so header/list surfaces repaint,
 /// and renders the active provider's header badge.
+///
+/// The app-side fetch timeout is deliberately more generous (12s vs the
+/// CLI's 5s, review round 2): on mobile a constrained network can
+/// legitimately take >5s to reach the endpoint, and a timeout caches as
+/// an unknown for the full TTL — one slow attempt would blank the
+/// gauge/badge for 15 minutes.
 class QuotaStore extends ChangeNotifier {
-  QuotaStore._({ProviderRegistry? registry, ProviderQuotaService? service}) {
+  QuotaStore._({
+    ProviderRegistry? registry,
+    ProviderQuotaService? service,
+    Duration fetchTimeout = const Duration(seconds: 12),
+  }) {
     _registry = registry;
     _service =
         service ??
@@ -40,6 +50,7 @@ class QuotaStore extends ChangeNotifier {
             transformersJsProviderKind,
             'dial',
           },
+          fetchTimeout: fetchTimeout,
         );
     // The instance lives for the whole app run — no cancellation needed.
     _service.changes.listen((_) => notifyListeners());

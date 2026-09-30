@@ -77,4 +77,15 @@ void main() {
           reason: 'no codemie adapter: peek is terminal unknown, never cold');
     },
   );
+
+  test('app-side fetch timeout is the generous 12s default (review round 2)',
+      () {
+    // The app runs on mobile networks where >5s to reach the endpoint is
+    // normal; a timeout caches as an unknown for the full TTL, so the
+    // shared instance must not inherit the CLI's tight 5s bound.
+    expect(
+      QuotaStore.instance.service.fetchTimeout,
+      const Duration(seconds: 12),
+    );
+  });
 }
