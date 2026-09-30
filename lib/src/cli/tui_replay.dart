@@ -9,14 +9,17 @@ import 'tui_theme.dart';
 
 /// The restored-transcript renderer (issue #446): ONE pipeline for live and
 /// replayed history. Every row type the live TUI draws is drawn here by the
-/// SAME builder — tool rows through [layoutToolRow]/[toolRowDetail] with the
-/// live end-row paints, system notices through [renderSystemNoticeLines],
-/// assistant text as raw markdown the view styles at render time — so a
-/// reopened session looks exactly like the moment the terminal was closed.
+/// SAME builder — tool rows through the live end-row grammar ([tuiToolCard]
+/// band chrome since #807, [layoutToolRow] under the chrome kill switch,
+/// [toolRowDetail] for the detail), system notices through
+/// [renderSystemNoticeLines], assistant text as raw markdown the view
+/// styles at render time — so a reopened session looks exactly like the
+/// moment the terminal was closed (issue #916: the replay rides the same
+/// chrome migration as the live edge, never the pre-#807 grammar).
 ///
 /// The only permitted live/replay difference is honest lossy bits: replayed
-/// tool rows carry no live durations (the `—` elapsed zone where a live row
-/// shows `3s`) and spinners never render from replay.
+/// tool rows carry no live durations (the `—` elapsed meta where a live
+/// card shows `3s`) and spinners never render from replay.
 
 /// A code-fence opener/closer line (```). Tracked by the replay so a
 /// truncated message never leaves a dangling fence: the view formats the
@@ -42,12 +45,14 @@ void _closeDanglingFence(List<String> rows) {
 }
 
 /// The tool row a persisted [ToolCall] replays as — the live end-row
-/// builder ([layoutToolRow] + the `_onToolExecutionEnd` paints) fed from the
-/// record itself: name + args preview, the attached result on errors. A
-/// call whose result never landed (crash mid-turn) renders in its
-/// interrupted `✗` state from the args — never a bare `[name]` marker.
-/// [styled] paints with the live theme roles (TUI); line mode keeps the
-/// plain grammar.
+/// grammar fed from the record itself: the settled band card ([tuiToolCard],
+/// the `_onToolExecutionEnd` paint since #807) in chrome mode, the legacy
+/// painted row under the [tuiChromeEnabled] kill switch, the plain
+/// unpainted row in line mode. Name + args preview; the attached result's
+/// first line on errors. A call whose result never landed (crash mid-turn)
+/// renders in its interrupted state from the args — never a bare `[name]`
+/// marker. The card's meta zone carries the honest `—` where a live card
+/// shows the elapsed cell (issue #446 contract point 2).
 String replayToolRow(
   ToolCall call,
   ToolResultMessage? result, {
@@ -71,9 +76,22 @@ String replayToolRow(
         .split('\n')
         .first;
   }
+  // TUI chrome (issue #916): the settled card IS the live end-row grammar
+  // since #807 — replaying the legacy row would show the user a transcript
+  // they never saw. Line mode and the kill switch keep the legacy row.
+  if (styled && tuiChromeEnabled) {
+    return tuiToolCard(
+      ToolCardSegments(
+        title: call.name,
+        description: detail,
+        // The one permitted live/replay difference: no live duration.
+        meta: const ['—'],
+      ),
+      failed ? TuiCardPhase.error : TuiCardPhase.success,
+      width,
+    ).join('\n');
+  }
   final row = layoutToolRow(
-    // Settled state without live durations: the `—` elapsed zone is the
-    // one permitted live/replay difference (issue #446 contract point 2).
     ToolRowSegments(
       glyph: failed ? '✗' : '✓',
       label: call.name,

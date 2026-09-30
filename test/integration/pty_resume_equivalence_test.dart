@@ -7,10 +7,9 @@
 /// — tool rows, notice blockquotes, markdown rows, user echo — must EQUAL
 /// the live screen's, modulo the contract's permitted differences (settled
 /// durations `—` vs live cells; board re-print cards are dropped from both
-/// sides, their shape is #429's own coverage; and since #807 the live edge
-/// paints band tool cards `✔ name: detail 0s` while the replay keeps the
-/// legacy row grammar `✓ name · detail —` — both canonicalize to the
-/// shared `name: detail` core).
+/// sides, their shape is #429's own coverage; and since #916 both edges
+/// paint the settled band tool card `✔ name: detail`, the replay's meta
+/// zone carrying the honest `—` where the live card shows `0s`).
 ///
 /// AC6/AC8: a 3k-record session resumes through the unified pipeline — the
 /// tail's pinned grammar rows render, zero `[name]` markers leak, and
@@ -120,20 +119,20 @@ final _runningCard = RegExp(r'^[⟳⏳] \S+: ');
 /// A live SETTLED band tool card (`✔ bash: sleep 2 … 0s`, `✘ … [exit 1]`).
 final _settledCard = RegExp(r'^[✔✘] (\S+): (.+)$');
 
-/// A replayed legacy tool row (`✓ bash · sleep 2 … —`, `✗ …` when the
-/// result record never landed).
+/// A replayed legacy tool row (`✓ bash · sleep 2 … —`) — reachable only
+/// under the [tuiChromeEnabled] kill switch, kept as canonicalizer
+/// tolerance.
 final _replayedRow = RegExp(r'^[✓✗] (\S+) · (.+)$');
 
-/// A settled card's trailing meta zone: the bracketed badge and/or the
-/// elapsed cell (`0s`, `12.4ms`).
-final _cardMeta = RegExp(r'(?:\s\[[^\]]+\]|\s\d+(?:\.\d+)?(?:ms|s))+$');
+/// A settled card's trailing meta zone: the bracketed badge, the elapsed
+/// cell (`0s`, `12.4ms`), or the replay's honest `—` (issue #916).
+final _cardMeta = RegExp(r'(?:\s\[[^\]]+\]|\s\d+(?:\.\d+)?(?:ms|s)|\s—)+$');
 
 /// Canonicalizes one settled tool row to its shared `name: detail`
-/// grammar. The live band card (`✔ bash: sleep 2 … 0s`) and the replayed
-/// row (`✓ bash · sleep 2 … —`) render the same call with different
-/// glyph/separator/elapsed chrome (#807 vs the legacy row grammar), so the
-/// comparison reads the name+detail core both share. Running cards
-/// (`⟳ …`) normalize to null: live-only transient.
+/// grammar. Both edges paint the settled band card since #916 (`✔ bash:
+/// sleep 2 … 0s` live, `—` meta replayed); the legacy row branch stays for
+/// kill-switch tolerance. Running cards (`⟳ …`) normalize to null:
+/// live-only transient.
 String? _canonicalToolRow(String t) {
   if (_runningCard.hasMatch(t)) return null;
   final card = _settledCard.firstMatch(t);
