@@ -304,10 +304,7 @@ void main() {
     // pass — run() rethrows the cancellation so callers (the CLI relief
     // path, the continuation funnel) see the abort instead of reading it
     // as "nothing changed" and relaunching.
-    await expectLater(
-      run,
-      throwsA(isA<CancelledException>()),
-    ).timeout(
+    await expectLater(run, throwsA(isA<CancelledException>())).timeout(
       const Duration(seconds: 5),
       onTimeout: () {
         fail('compaction did not settle after the linked cancel');
