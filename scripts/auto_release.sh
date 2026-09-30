@@ -61,6 +61,16 @@ if [ -n "$head_version" ] && ! git rev-parse -q --verify "refs/tags/v$head_versi
   echo "Auto-release: v$head_version merged but untagged for ${head_age}s — release-tag likely wedged; proceeding so the next range absorbs it."
 fi
 
+# chore:pin marks machine-created release PRs (gh-1134). Labeling is hygiene:
+# if the label is missing from the repo, warn loudly and ship the PR anyway —
+# the release is the payload, the label must never block it.
+label_args=()
+if gh label view "chore:pin" >/dev/null 2>&1; then
+  label_args=(--label "chore:pin")
+else
+  echo "Auto-release: WARNING: label 'chore:pin' missing from repo — release PRs will ship without it (fix: gh label create chore:pin)." >&2
+fi
+
 for attempt in 1 2 3; do
   git fetch origin main
   git reset --hard origin/main
@@ -152,10 +162,17 @@ PY
   fi
 
   if git push --force origin "HEAD:refs/heads/$branch"; then
-    if [ "$(gh pr list --head "$branch" --state open --json number --jq 'length' 2>/dev/null || echo 0)" -ge 1 ]; then
-      echo "Auto-release: $branch refreshed; open PR now carries v$next."
+    open_pr=$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty' 2>/dev/null || true)
+    if [ -n "$open_pr" ]; then
+      echo "Auto-release: $branch refreshed; open PR #$open_pr now carries v$next."
+      # Self-heal label-less PRs from before gh-1134: adding an already-present
+      # label is a server-side no-op, so this stays idempotent (AC3).
+      if ! gh pr edit "$open_pr" --add-label "chore:pin" >/dev/null 2>&1; then
+        echo "Auto-release: WARNING: could not add 'chore:pin' to PR #$open_pr — the PR itself is unaffected." >&2
+      fi
     else
       gh pr create --base main --head "$branch" \
+        ${label_args[@]+"${label_args[@]}"} \
         --title "chore(release): v$next" \
         --body "Automated patch release **v$next**.
 
