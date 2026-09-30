@@ -69,43 +69,43 @@ void main() {
       );
     });
 
-    test('E2: a pathological stream keeps exactly one marker per region',
-        () async {
-      final ceiling = JobLogCeiling(maxBytes: 1024);
-      final regions = <String>[];
-      for (final chunk in List.generate(200, (i) => 'noise-$i-' * 20)) {
-        for (final op in await ceiling.ingest(chunk)) {
-          regions.add(op.text);
+    test(
+      'E2: a pathological stream keeps exactly one marker per region',
+      () async {
+        final ceiling = JobLogCeiling(maxBytes: 1024);
+        final regions = <String>[];
+        for (final chunk in List.generate(200, (i) => 'noise-$i-' * 20)) {
+          for (final op in await ceiling.ingest(chunk)) {
+            regions.add(op.text);
+          }
         }
-      }
-      final settle = ceiling.settleFlush();
-      expect(settle, isNotNull);
-      regions.add(settle!.text);
+        final settle = ceiling.settleFlush();
+        expect(settle, isNotNull);
+        regions.add(settle!.text);
 
-      // Exactly two regions carry the marker — the crossing append and the
-      // final patch — and each contains it exactly once, never more.
-      final markerRegions =
-          regions.where((region) => region.contains('[… log truncated:'));
-      expect(markerRegions, hasLength(2));
-      for (final region in markerRegions) {
-        expect('[… log truncated:'.allMatches(region), hasLength(1));
-      }
-      // The first four 160-byte chunks filled the 640-byte head exactly;
-      // the final dropped count is the produced total minus head and tail.
-      expect(
-        settle.text,
-        startsWith(
-          jobLogTruncationMarker(ceiling.producedBytes - 640 - 256),
-        ),
-      );
-    });
+        // Exactly two regions carry the marker — the crossing append and the
+        // final patch — and each contains it exactly once, never more.
+        final markerRegions = regions.where(
+          (region) => region.contains('[… log truncated:'),
+        );
+        expect(markerRegions, hasLength(2));
+        for (final region in markerRegions) {
+          expect('[… log truncated:'.allMatches(region), hasLength(1));
+        }
+        // The first four 160-byte chunks filled the 640-byte head exactly;
+        // the final dropped count is the produced total minus head and tail.
+        expect(
+          settle.text,
+          startsWith(jobLogTruncationMarker(ceiling.producedBytes - 640 - 256)),
+        );
+      },
+    );
 
     test('E1: a multibyte tail trims on UTF-8 sequence boundaries', () async {
       const maxBytes = 4096; // head budget 2944, tail budget 1024
       final ceiling = JobLogCeiling(maxBytes: maxBytes);
       final regions = <String>[];
-      regions
-          .addAll((await ceiling.ingest('a' * 2944)).map((op) => op.text));
+      regions.addAll((await ceiling.ingest('a' * 2944)).map((op) => op.text));
       // 'é' is 2 UTF-8 bytes: 20 chunks x 200 bytes repeatedly overflow the
       // 1024-byte tail, forcing mid-sequence trims down to whole chars.
       for (var i = 0; i < 20; i++) {
@@ -118,8 +118,10 @@ void main() {
       // exactly 1024 bytes = 512 whole é characters. Matching this exact
       // text proves the region decodes cleanly (a split sequence would
       // surface as U+FFFD or a decode error inside _regionText).
-      expect(settle!.text,
-          jobLogTruncationMarker(6944 - 2944 - 1024) + 'é' * 512);
+      expect(
+        settle!.text,
+        jobLogTruncationMarker(6944 - 2944 - 1024) + 'é' * 512,
+      );
       for (final region in regions) {
         expect(region.contains('�'), isFalse);
       }
@@ -166,32 +168,34 @@ void main() {
   });
 
   group('low-disk guard (UT-4)', () {
-    test('a below-threshold probe stops writes and warns exactly once',
-        () async {
-      var probes = 0;
-      final warnings = <String>[];
-      final ceiling = JobLogCeiling(
-        probe: () async {
-          probes++;
-          return 1024; // far below the 1 GB threshold
-        },
-        onWarn: warnings.add,
-      );
-      expect(await ceiling.ingest('one'), isEmpty);
-      expect(ceiling.writesStopped, isTrue);
-      expect(warnings, hasLength(1));
-      expect(warnings.single, contains('log writes stopped'));
+    test(
+      'a below-threshold probe stops writes and warns exactly once',
+      () async {
+        var probes = 0;
+        final warnings = <String>[];
+        final ceiling = JobLogCeiling(
+          probe: () async {
+            probes++;
+            return 1024; // far below the 1 GB threshold
+          },
+          onWarn: warnings.add,
+        );
+        expect(await ceiling.ingest('one'), isEmpty);
+        expect(ceiling.writesStopped, isTrue);
+        expect(warnings, hasLength(1));
+        expect(warnings.single, contains('log writes stopped'));
 
-      // Later chunks are dropped wholesale and stay unproduced; the log is
-      // left frozen with no marker to fix up.
-      expect(await ceiling.ingest('two'), isEmpty);
-      expect(await ceiling.ingest('three'), isEmpty);
-      expect(warnings, hasLength(1));
-      expect(ceiling.producedBytes, 0);
-      expect(ceiling.truncated, isFalse);
-      expect(ceiling.settleFlush(), isNull);
-      expect(probes, 1);
-    });
+        // Later chunks are dropped wholesale and stay unproduced; the log is
+        // left frozen with no marker to fix up.
+        expect(await ceiling.ingest('two'), isEmpty);
+        expect(await ceiling.ingest('three'), isEmpty);
+        expect(warnings, hasLength(1));
+        expect(ceiling.producedBytes, 0);
+        expect(ceiling.truncated, isFalse);
+        expect(ceiling.settleFlush(), isNull);
+        expect(probes, 1);
+      },
+    );
 
     test('a null or healthy probe keeps writes flowing', () async {
       final unknown = JobLogCeiling(maxBytes: 1024, probe: () async => null);

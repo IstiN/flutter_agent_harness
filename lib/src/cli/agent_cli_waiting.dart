@@ -194,6 +194,39 @@ final class _WaitingCoordinator {
   /// survived get one warning line, then are reaped.
   Future<void> captureLostJobs() async {
     lostJobs = 0;
+    final reconcile = await _reconcileRegistry();
+    lostJobs = reconcile.dropped;
+    final pids = reconcile.pids;
+    final quarantined = reconcile.quarantined;
+    final dropped = reconcile.dropped;
+    final aged = reconcile.aged;
+    // The orphan-group reaper (issue #517) wants every previous-run pid —
+    // it skips live leaders itself.
+    await reapOrphanJobGroups(
+      env: _cli._env,
+      candidatePids: pids,
+      onWarn: (message) => _cli.io.writeln(tuiWarning('⚠ $message')),
+    );
+    final prunedLogs = await _pruneOldJobLogs();
+    final notes = <String>[
+      if (quarantined) 'corrupt running.json quarantined as running.json.bad',
+      if (dropped > 0)
+        '$dropped stale job ${dropped == 1 ? 'entry' : 'entries'} dropped'
+            '${aged > 0 ? ', $aged past the age belt' : ''}',
+      if (prunedLogs > 0) '$prunedLogs old job log(s) pruned',
+    ];
+    if (notes.isNotEmpty) {
+      _cli.io.writeln(tuiWarning('⚠ bash_jobs: ${notes.join(' · ')}'));
+    }
+  }
+
+  /// The registry reconcile half of [captureLostJobs] (extracted so the
+  /// public entry stays under the CRAP complexity threshold): verifies
+  /// each recorded entry against the live process table, drops the dead
+  /// and the past-the-age-belt ones, and rewrites the registry when
+  /// anything changed. Behavior is identical to the inlined loop.
+  Future<({List<int> pids, bool quarantined, int dropped, int aged})>
+  _reconcileRegistry() async {
     var pids = const <int>[];
     var quarantined = false;
     var dropped = 0;
@@ -225,29 +258,11 @@ final class _WaitingCoordinator {
         }
         kept.add(entry);
       }
-      lostJobs = dropped;
       if (quarantined || kept.length != entries.length) {
         await _writeRegistryEntries(kept);
       }
     });
-    // The orphan-group reaper (issue #517) wants every previous-run pid —
-    // it skips live leaders itself.
-    await reapOrphanJobGroups(
-      env: _cli._env,
-      candidatePids: pids,
-      onWarn: (message) => _cli.io.writeln(tuiWarning('⚠ $message')),
-    );
-    final prunedLogs = await _pruneOldJobLogs();
-    final notes = <String>[
-      if (quarantined) 'corrupt running.json quarantined as running.json.bad',
-      if (dropped > 0)
-        '$dropped stale job ${dropped == 1 ? 'entry' : 'entries'} dropped'
-            '${aged > 0 ? ', $aged past the age belt' : ''}',
-      if (prunedLogs > 0) '$prunedLogs old job log(s) pruned',
-    ];
-    if (notes.isNotEmpty) {
-      _cli.io.writeln(tuiWarning('⚠ bash_jobs: ${notes.join(' · ')}'));
-    }
+    return (pids: pids, quarantined: quarantined, dropped: dropped, aged: aged);
   }
 
   Future<void> _manifestAdd(
