@@ -137,7 +137,6 @@
   "chatSessionsTooltip": "Sessions & model",
   "chatSettingsTooltip": "Connection settings",
   "chatShowAll": "Show all ({count})",
-  "chatTyping": "Fa is typing...",
   "chatUploadFailed": "Upload failed: {error}",
   "commonCancel": "Cancel",
   "commonDelete": "Delete",
