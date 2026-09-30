@@ -376,6 +376,8 @@ final class ShellExecOptions {
     this.onStderr,
     this.stdinData,
     this.liveStdin,
+    this.jobLogMaxBytes,
+    this.onJobLogWarning,
   });
 
   /// Working directory for the command. Defaults to [FileSystem.cwd].
@@ -408,6 +410,16 @@ final class ShellExecOptions {
   /// arrives mid-run can be answered through [LiveStdinChannel.write].
   /// Null keeps the old behavior: stdin closes right after start.
   final LiveStdinChannel? liveStdin;
+
+  /// Size ceiling for a detached job's log in bytes (issue #919). Only
+  /// honored by [BackgroundShell.startShellJob]; null means the shell's
+  /// default ([defaultJobLogMaxBytes]). Foreground execs ignore it.
+  final int? jobLogMaxBytes;
+
+  /// Fired at most once per detached job when the low-disk guard stops log
+  /// writes (issue #919). Only honored by [BackgroundShell.startShellJob];
+  /// foreground execs ignore it.
+  final void Function(String message)? onJobLogWarning;
 }
 
 /// Outcome of a completed [Shell.exec] invocation.
