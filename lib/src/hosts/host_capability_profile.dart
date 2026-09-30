@@ -109,29 +109,28 @@ enum HostCapability {
   /// matrix — inventory-driven (AC10, fah.dart:2139).
   jsExtensions;
 
-
   /// Stable catalog id (snake_case, matches the matrix row).
   String get id => switch (this) {
-        configSections => 'config_sections',
-        compaction => 'compaction',
-        loadModes => 'load_modes',
-        mcp => 'mcp',
-        messagingFabric => 'messaging_fabric',
-        approvalGate => 'approval_gate',
-        skills => 'skills',
-        sandboxEnv => 'sandbox_env',
-        backgroundShellJobs => 'background_shell_jobs',
-        sqliteLspDap => 'sqlite_lsp_dap',
-        onDeviceProviders => 'on_device_providers',
-        jsApps => 'js_apps',
-        checkpointRewind => 'checkpoint_rewind',
-        hostExtensionApi => 'host_extension_api',
-        webSearch => 'web_search',
-        visionTranscribe => 'vision_transcribe',
-        subagents => 'subagents',
-        browserBridge => 'browser_bridge',
-        jsExtensions => 'js_extensions',
-      };
+    configSections => 'config_sections',
+    compaction => 'compaction',
+    loadModes => 'load_modes',
+    mcp => 'mcp',
+    messagingFabric => 'messaging_fabric',
+    approvalGate => 'approval_gate',
+    skills => 'skills',
+    sandboxEnv => 'sandbox_env',
+    backgroundShellJobs => 'background_shell_jobs',
+    sqliteLspDap => 'sqlite_lsp_dap',
+    onDeviceProviders => 'on_device_providers',
+    jsApps => 'js_apps',
+    checkpointRewind => 'checkpoint_rewind',
+    hostExtensionApi => 'host_extension_api',
+    webSearch => 'web_search',
+    visionTranscribe => 'vision_transcribe',
+    subagents => 'subagents',
+    browserBridge => 'browser_bridge',
+    jsExtensions => 'js_extensions',
+  };
 }
 
 /// The SDK's transport vocabulary for one capability.
@@ -158,10 +157,7 @@ const Map<HostCapability, CapabilityTransports> hostCapabilityTransports = {
     all: {'project-scan', 'registered-only'},
     defaults: {'project-scan'},
   ),
-  HostCapability.mcp: (
-    all: {'stdio', 'remote'},
-    defaults: {'stdio', 'remote'},
-  ),
+  HostCapability.mcp: (all: {'stdio', 'remote'}, defaults: {'stdio', 'remote'}),
   HostCapability.messagingFabric: (
     all: {'file', 'hub', 'a2a'},
     defaults: {'file', 'hub', 'a2a'},
@@ -222,23 +218,22 @@ sealed class CapabilityState {
   static CapabilityTransportState transport(
     Set<String> transports,
     String reason,
-  ) =>
-      CapabilityTransportState(transports, reason);
+  ) => CapabilityTransportState(transports, reason);
 
   /// Non-empty reason for `off`/`transport` states; null for `on`.
   String? get reason => switch (this) {
-        CapabilityOnState() => null,
-        CapabilityOffState(:final reason) => reason,
-        CapabilityTransportState(:final reason) => reason,
-      };
+    CapabilityOnState() => null,
+    CapabilityOffState(:final reason) => reason,
+    CapabilityTransportState(:final reason) => reason,
+  };
 
   @override
   String toString() => switch (this) {
-        CapabilityOnState() => 'on',
-        CapabilityOffState(:final reason) => 'off("$reason")',
-        CapabilityTransportState(:final transports, :final reason) =>
-          'transport(${transports.toList()..sort()}, "$reason")',
-      };
+    CapabilityOnState() => 'on',
+    CapabilityOffState(:final reason) => 'off("$reason")',
+    CapabilityTransportState(:final transports, :final reason) =>
+      'transport(${transports.toList()..sort()}, "$reason")',
+  };
 }
 
 /// `on`: the capability is wired with the SDK's default transports.
@@ -280,11 +275,10 @@ sealed class CapabilityFloor {
   /// Derives the default floor for a state when no explicit floor is given:
   /// the state's own envelope (the profile is its own ceiling).
   static CapabilityFloor fromState(CapabilityState state) => switch (state) {
-        CapabilityOnState() => const FloorOn(),
-        CapabilityOffState(:final reason) => FloorOff(reason),
-        CapabilityTransportState(:final transports) =>
-          FloorTransports(transports),
-      };
+    CapabilityOnState() => const FloorOn(),
+    CapabilityOffState(:final reason) => FloorOff(reason),
+    CapabilityTransportState(:final transports) => FloorTransports(transports),
+  };
 }
 
 /// Everything is allowed on this platform.
@@ -378,10 +372,10 @@ final class HostCapabilityProfile {
 
   /// Whether the capability is wired in any form (`on` or transport).
   bool isWired(HostCapability capability) => switch (states[capability]!) {
-        CapabilityOnState() => true,
-        CapabilityTransportState() => true,
-        CapabilityOffState() => false,
-      };
+    CapabilityOnState() => true,
+    CapabilityTransportState() => true,
+    CapabilityOffState() => false,
+  };
 
   /// Validates a complete state table against a complete floor table.
   static void _validate({
@@ -394,6 +388,34 @@ final class HostCapabilityProfile {
       final floor = floors[capability]!;
       _validateState(name, capability, state, floor);
     }
+  }
+
+  /// E2 guard: every capability needs a transport-vocabulary entry — a new
+  /// enum value without one dies as a named violation, not a null crash.
+  static CapabilityTransports _vocabularyOf(HostCapability capability) {
+    final vocabulary = hostCapabilityTransports[capability];
+    if (vocabulary == null) {
+      throw HostProfileViolation(
+        'Capability ${capability.id} has no hostCapabilityTransports entry — '
+        'declare its vocabulary (empty record for on/off-only) when adding '
+        'the enum value.',
+      );
+    }
+    return vocabulary;
+  }
+
+  /// `on` under [FloorTransports]: legal only when every default transport
+  /// is inside the floor.
+  static String? _onVsFloorTransports(
+    HostCapability capability,
+    FloorTransports floor,
+  ) {
+    final defaults = _vocabularyOf(capability).defaults;
+    return defaults.difference(floor.transports).isEmpty
+        ? null
+        : '"on" needs every default transport '
+              '(${defaults.toList()..sort()}) but the floor allows only '
+              '${floor.transports.toList()..sort()}';
   }
 
   /// E2 guard: every capability in the matrix needs an explicit state.
@@ -426,8 +448,10 @@ final class HostCapabilityProfile {
         'need a non-empty reason.',
       );
     }
+    // E2 guard: a new enum value without a vocabulary entry dies here, as a
+    // named violation — never as a raw null-check crash downstream.
+    final vocabulary = _vocabularyOf(capability);
     if (state is CapabilityTransportState) {
-      final vocabulary = hostCapabilityTransports[capability]!;
       final unknown = state.transports.difference(vocabulary.all);
       if (state.transports.isEmpty || unknown.isNotEmpty) {
         throw HostProfileViolation(
@@ -440,28 +464,19 @@ final class HostCapabilityProfile {
     final violation = switch (floor) {
       FloorOn() => null,
       FloorOff() => switch (state) {
-          CapabilityOffState() => null,
-          _ =>
-            'platform floor is off (${floor.reason}); a profile can narrow, '
-                'never force-enable',
-        },
+        CapabilityOffState() => null,
+        _ =>
+          'platform floor is off (${floor.reason}); a profile can narrow, '
+              'never force-enable',
+      },
       FloorTransports() => switch (state) {
-          CapabilityOffState() => null,
-          CapabilityTransportState(:final transports) =>
-            transports.difference(floor.transports).isEmpty
-                ? null
-                : 'floor allows only ${floor.transports.toList()..sort()}',
-          CapabilityOnState() =>
-            hostCapabilityTransports[capability]!.defaults
-                    .difference(floor.transports)
-                    .isEmpty
-                ? null
-                : '"on" needs every default transport '
-                    '(${hostCapabilityTransports[capability]!.defaults
-                        .toList()..sort()}) '
-                    'but the floor allows only '
-                    '${floor.transports.toList()..sort()}',
-        },
+        CapabilityOffState() => null,
+        CapabilityTransportState(:final transports) =>
+          transports.difference(floor.transports).isEmpty
+              ? null
+              : 'floor allows only ${floor.transports.toList()..sort()}',
+        CapabilityOnState() => _onVsFloorTransports(capability, floor),
+      },
     };
     if (violation != null) {
       throw HostProfileViolation(

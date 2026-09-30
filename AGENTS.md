@@ -1625,10 +1625,13 @@ in `lib/src/parity/settings_registry.dart` with a comment explaining WHY.
 **Capability rules (issue #1079, host-wiring SDK layer):** every NEW
 host-wiring capability declares its matrix state AT BIRTH — for all seven
 hosts (`cli`, `macos`, `ios`, `android`, `web`, `extension`, `outlook`) a
-state in `lib/src/hosts/host_capability_profile.dart`: `on`,
-`off(reason)`, or `transport(choice, reason)` for a partial/different
-transport. The matrix-completeness test rejects undeclared capabilities,
-so "CLI got X, app didn't" cannot happen silently. A capability that is
+state: `on`, `off(reason)`, or `transport(choice, reason)` for a
+partial/different transport. The record types, validation and transport
+vocabularies live in `lib/src/hosts/host_capability_profile.dart`; the
+seven built-in profiles — where those per-host cells are actually
+declared — live in `lib/src/hosts/host_wiring_builder.dart`. The
+matrix-completeness test rejects undeclared capabilities, so "CLI got X,
+app didn't" cannot happen silently. A capability that is
 `off` is INVISIBLE: hidden from the host's UI (menus, settings, slash
 commands, tool palettes) AND from everything model-facing (tool schemas,
 system-prompt sections, skills listings, help) — the agent never sees

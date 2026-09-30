@@ -13,7 +13,7 @@ import 'package:test/test.dart';
 
 import 'host_hiding.dart';
 
-/// Platform services every CLI-wired capability needs (E1 seam; the names
+/// Platform services the CLI-wired capabilities need (E1 seam; the names
 /// are the builder contract, the values are host-side in slice 2).
 final cliPlatformServices = {
   'mcpTransportFactory': Object(),
@@ -25,11 +25,23 @@ final cliPlatformServices = {
   'webSearchSecrets': Object(),
   'browserBridgeHandle': Object(),
   'extRuntimeFactory': Object(),
+  'visionConfig': Object(),
+  'transcribeConfig': Object(),
+  'sessionRoot': Object(),
 };
 
-HostWiringPlan buildFor(HostCapabilityProfile profile) =>
-    HostWiringBuilder(profile: profile, platformServices: cliPlatformServices)
-        .build();
+/// [cliPlatformServices] plus what the non-CLI hosts' wired rows need
+/// (on-device inference factory, the chat widget sink behind js_apps).
+final fullPlatformServices = {
+  ...cliPlatformServices,
+  'onDeviceProviderFactory': Object(),
+  'dynamicMessageSink': Object(),
+};
+
+HostWiringPlan buildFor(HostCapabilityProfile profile) => HostWiringBuilder(
+  profile: profile,
+  platformServices: fullPlatformServices,
+).build();
 
 void main() {
   group('AC3 — matrix completeness', () {
@@ -53,7 +65,8 @@ void main() {
             expect(
               reason.trim(),
               isNotEmpty,
-              reason: '${profile.name}/${entry.key.id} has a blank reason — '
+              reason:
+                  '${profile.name}/${entry.key.id} has a blank reason — '
                   'off/transition cells must say why (AC3)',
             );
           }
@@ -70,7 +83,8 @@ void main() {
             expect(
               state.transports.every(vocabulary.contains),
               isTrue,
-              reason: '${profile.name}/${entry.key.id} names transports '
+              reason:
+                  '${profile.name}/${entry.key.id} names transports '
                   '${state.transports} outside the vocabulary $vocabulary',
             );
             expect(state.transports, isNotEmpty);
@@ -85,44 +99,108 @@ void main() {
     String tx(String transports) => 'tx:$transports';
     final matrix = <HostCapability, List<String>>{
       HostCapability.configSections: [
-        on, on, on, on, tx('origin-storage'), tx('origin-storage'), tx('origin-storage'),
+        on,
+        on,
+        on,
+        on,
+        tx('origin-storage'),
+        tx('origin-storage'),
+        tx('origin-storage'),
       ],
       HostCapability.compaction: [
-        on, on, on, on, on, off, tx('origin-storage'),
+        on,
+        on,
+        on,
+        on,
+        on,
+        off,
+        tx('origin-storage'),
       ],
       HostCapability.loadModes: [
-        on, on, on, on, on, tx('registered-only'), tx('registered-only'),
+        on,
+        on,
+        on,
+        on,
+        on,
+        tx('registered-only'),
+        tx('registered-only'),
       ],
       HostCapability.mcp: [
-        on, tx('remote'), tx('remote'), tx('remote'), tx('remote'), tx('remote'), tx('remote'),
+        on,
+        tx('remote'),
+        tx('remote'),
+        tx('remote'),
+        tx('remote'),
+        tx('remote'),
+        tx('remote'),
       ],
       HostCapability.messagingFabric: [
-        on, tx('file,hub'), tx('hub'), tx('hub'), tx('hub'), tx('hub'), tx('hub'),
+        on,
+        tx('file,hub'),
+        tx('hub'),
+        tx('hub'),
+        tx('hub'),
+        tx('hub'),
+        tx('hub'),
       ],
       HostCapability.approvalGate: [on, on, on, on, on, on, on],
       HostCapability.skills: [
-        on, on, on, on, on, tx('registered'), tx('registered'),
+        on,
+        on,
+        on,
+        on,
+        on,
+        tx('registered'),
+        tx('registered'),
       ],
       HostCapability.sandboxEnv: [on, on, on, on, on, off, off],
       HostCapability.backgroundShellJobs: [
-        on, on, tx('future'), tx('async'), tx('async'), off, off,
+        on,
+        on,
+        tx('future'),
+        tx('async'),
+        tx('async'),
+        off,
+        off,
       ],
       HostCapability.sqliteLspDap: [
-        on, tx('ffi,process'), off, off, tx('sqljs'), off, off,
+        on,
+        tx('ffi,process'),
+        off,
+        off,
+        tx('sqljs'),
+        off,
+        off,
       ],
       HostCapability.onDeviceProviders: [
-        off, tx('in-process'), on, on, on, tx('in-process'), off,
+        off,
+        tx('in-process'),
+        on,
+        on,
+        on,
+        tx('in-process'),
+        off,
       ],
-      HostCapability.jsApps: [
-        off, on, on, on, on, tx('extension-subset'), on,
-      ],
+      HostCapability.jsApps: [off, on, on, on, on, tx('extension-subset'), on],
       HostCapability.checkpointRewind: [
-        on, on, tx('origin-storage'), tx('origin-storage'), tx('origin-storage'), off, off,
+        on,
+        on,
+        tx('origin-storage'),
+        tx('origin-storage'),
+        tx('origin-storage'),
+        off,
+        off,
       ],
       HostCapability.hostExtensionApi: [on, on, on, on, on, on, on],
     };
     const platformOrder = [
-      'cli', 'macos', 'ios', 'android', 'web', 'extension', 'outlook',
+      'cli',
+      'macos',
+      'ios',
+      'android',
+      'web',
+      'extension',
+      'outlook',
     ];
 
     test('the 14 matrix rows are pinned cell-exact (UT-2)', () {
@@ -136,12 +214,24 @@ void main() {
           final expected = row[i];
           switch (expected) {
             case 'on':
-              expect(state, isA<CapabilityOnState>(), reason: _cell(capability, platformOrder[i], expected));
+              expect(
+                state,
+                isA<CapabilityOnState>(),
+                reason: _cell(capability, platformOrder[i], expected),
+              );
             case 'off':
-              expect(state, isA<CapabilityOffState>(), reason: _cell(capability, platformOrder[i], expected));
+              expect(
+                state,
+                isA<CapabilityOffState>(),
+                reason: _cell(capability, platformOrder[i], expected),
+              );
             default:
               final transports = expected.substring(3).split(',');
-              expect(state, isA<CapabilityTransportState>(), reason: _cell(capability, platformOrder[i], expected));
+              expect(
+                state,
+                isA<CapabilityTransportState>(),
+                reason: _cell(capability, platformOrder[i], expected),
+              );
               expect(
                 (state as CapabilityTransportState).transports,
                 equals(transports.toSet()),
@@ -168,7 +258,8 @@ void main() {
           expect(
             state,
             isA<CapabilityOffState>(),
-            reason: '${entry.key}/${capability.id}: only the CLI wires this '
+            reason:
+                '${entry.key}/${capability.id}: only the CLI wires this '
                 'today',
           );
           expect(
@@ -187,44 +278,68 @@ void main() {
       expect(
         () => HostCapabilityProfile(name: 'custom', states: states),
         throwsA(
-          isA<HostProfileViolation>()
-              .having((e) => e.message, 'message', contains('compaction')),
+          isA<HostProfileViolation>().having(
+            (e) => e.message,
+            'message',
+            contains('compaction'),
+          ),
         ),
       );
     });
 
     test('a custom host can construct its own complete profile', () {
-      final states = <HostCapability, CapabilityState>{
-        for (final c in HostCapability.values) c: CapabilityState.on,
-      }
-        ..[HostCapability.jsApps] =
-            CapabilityState.off('kiosk host renders no browser APIs')
-        ..[HostCapability.mcp] =
-            CapabilityState.transport({'remote'}, 'kiosk allows remote only');
+      final states =
+          <HostCapability, CapabilityState>{
+              for (final c in HostCapability.values) c: CapabilityState.on,
+            }
+            ..[HostCapability.jsApps] = CapabilityState.off(
+              'kiosk host renders no browser APIs',
+            )
+            ..[HostCapability.mcp] = CapabilityState.transport({
+              'remote',
+            }, 'kiosk allows remote only');
       final profile = HostCapabilityProfile(name: 'kiosk', states: states);
-      expect(profile.stateFor(HostCapability.jsApps),
-          isA<CapabilityOffState>());
+      expect(
+        profile.stateFor(HostCapability.jsApps),
+        isA<CapabilityOffState>(),
+      );
+    });
+
+    test('transport vocabulary covers every capability (E2)', () {
+      for (final capability in HostCapability.values) {
+        expect(
+          hostCapabilityTransports.containsKey(capability),
+          isTrue,
+          reason:
+              '${capability.id} has no hostCapabilityTransports entry — '
+              'declare it (empty record for on/off-only) when adding the '
+              'enum value',
+        );
+      }
     });
   });
 
   group('AC4 — floor narrowing (UT-3)', () {
-    test('iosProfile cannot force-enable mcp over stdio (pinned example)',
-        () {
+    test('iosProfile cannot force-enable mcp over stdio (pinned example)', () {
       // `on` needs every default transport (stdio + remote); the iOS floor
       // allows remote only.
       expect(
         () => iosProfile.narrowed({HostCapability.mcp: CapabilityState.on}),
-        throwsA(isA<HostProfileViolation>().having(
-          (e) => e.message,
-          'message',
-          allOf(contains('mcp'), contains('ios'), contains('remote')),
-        )),
+        throwsA(
+          isA<HostProfileViolation>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('mcp'), contains('ios'), contains('remote')),
+          ),
+        ),
         reason: 'the violation must name the profile, capability and floor',
       );
       expect(
-        () => iosProfile.narrowed(
-          {HostCapability.mcp: CapabilityState.transport({'stdio'}, 'want stdio')},
-        ),
+        () => iosProfile.narrowed({
+          HostCapability.mcp: CapabilityState.transport({
+            'stdio',
+          }, 'want stdio'),
+        }),
         throwsA(isA<HostProfileViolation>()),
       );
     });
@@ -235,8 +350,11 @@ void main() {
       });
       expect(
         narrowed.stateFor(HostCapability.mcp),
-        isA<CapabilityOffState>()
-            .having((s) => s.reason, 'reason', 'policy disables MCP'),
+        isA<CapabilityOffState>().having(
+          (s) => s.reason,
+          'reason',
+          'policy disables MCP',
+        ),
       );
     });
 
@@ -261,22 +379,24 @@ void main() {
         'at construction', () {
       final states = {
         for (final c in HostCapability.values) c: CapabilityState.on,
-      }
-        ..[HostCapability.onDeviceProviders] = CapabilityState.on;
+      }..[HostCapability.onDeviceProviders] = CapabilityState.on;
       expect(
         () => HostCapabilityProfile(
           name: 'vm-plus',
           states: states,
           floors: {
-            HostCapability.onDeviceProviders:
-                const FloorOff('no inference runtime on the VM'),
+            HostCapability.onDeviceProviders: const FloorOff(
+              'no inference runtime on the VM',
+            ),
           },
         ),
-        throwsA(isA<HostProfileViolation>().having(
-          (e) => e.message,
-          'message',
-          contains('on_device_providers'),
-        )),
+        throwsA(
+          isA<HostProfileViolation>().having(
+            (e) => e.message,
+            'message',
+            contains('on_device_providers'),
+          ),
+        ),
       );
     });
 
@@ -294,10 +414,10 @@ void main() {
     test('macOS may explicitly narrow UP to stdio (floor keeps both '
         'transports)', () {
       final stdio = macosProfile.narrowed({
-        HostCapability.mcp: CapabilityState.transport(
-          {'stdio', 'remote'},
-          'unsandboxed kiosk mode opts into stdio',
-        ),
+        HostCapability.mcp: CapabilityState.transport({
+          'stdio',
+          'remote',
+        }, 'unsandboxed kiosk mode opts into stdio'),
       });
       expect(
         (stdio.stateFor(HostCapability.mcp) as CapabilityTransportState)
@@ -319,37 +439,61 @@ void main() {
     ///   configSections row.
     const inventory = <String, (String, HostCapability?)>{
       // — capability rows —
-      'config sections roles:/tools:/ttsr:/redact:/providerTimeouts:/agent:':
-          ('capability', HostCapability.configSections),
-      'compaction wiring (roles.smol, overWindowRelief, contextWindowCap)':
-          ('capability', HostCapability.compaction),
+      'config sections roles:/tools:/ttsr:/redact:/providerTimeouts:/agent:': (
+        'capability',
+        HostCapability.configSections,
+      ),
+      'compaction wiring (roles.smol, overWindowRelief, contextWindowCap)': (
+        'capability',
+        HostCapability.compaction,
+      ),
       'load modes + discover_tools': ('capability', HostCapability.loadModes),
       'mcp servers (stdio + remote)': ('capability', HostCapability.mcp),
-      'messaging fabric (file + hub + a2a)':
-          ('capability', HostCapability.messagingFabric),
-      'approval gate (modes + unattended + always-allow)':
-          ('capability', HostCapability.approvalGate),
+      'messaging fabric (file + hub + a2a)': (
+        'capability',
+        HostCapability.messagingFabric,
+      ),
+      'approval gate (modes + unattended + always-allow)': (
+        'capability',
+        HostCapability.approvalGate,
+      ),
       'skills + project context': ('capability', HostCapability.skills),
       'sandbox env (cube + local)': ('capability', HostCapability.sandboxEnv),
-      'background shell jobs (bash_job board)':
-          ('capability', HostCapability.backgroundShellJobs),
-      'sqlite reader / lsp / dap tools':
-          ('capability', HostCapability.sqliteLspDap),
+      'background shell jobs (bash_job board)': (
+        'capability',
+        HostCapability.backgroundShellJobs,
+      ),
+      'sqlite reader / lsp / dap tools': (
+        'capability',
+        HostCapability.sqliteLspDap,
+      ),
       'checkpoint + rewind': ('capability', HostCapability.checkpointRewind),
-      'plugin registration (PluginContext.register)':
-          ('capability', HostCapability.hostExtensionApi),
+      'plugin registration (PluginContext.register)': (
+        'capability',
+        HostCapability.hostExtensionApi,
+      ),
       'web_search / web_fetch tools': ('capability', HostCapability.webSearch),
-      'vision + transcribe (inspect_image, transcribe_audio, image gen)':
-          ('capability', HostCapability.visionTranscribe),
-      'subagents + task system (SubagentManager, task/agent tools)':
-          ('capability', HostCapability.subagents),
-      'browser tool family over the bridge handle':
-          ('capability', HostCapability.browserBridge),
-      'QuickJS JS extensions (extRuntimeFactory, initJsExtensions)':
-          ('capability', HostCapability.jsExtensions),
+      'vision + transcribe (inspect_image, transcribe_audio, image gen)': (
+        'capability',
+        HostCapability.visionTranscribe,
+      ),
+      'subagents + task system (SubagentManager, task/agent tools)': (
+        'capability',
+        HostCapability.subagents,
+      ),
+      'browser tool family over the bridge handle': (
+        'capability',
+        HostCapability.browserBridge,
+      ),
+      'QuickJS JS extensions + the fa-jsr widget pass-through (#1062)': (
+        'capability',
+        HostCapability.jsExtensions,
+      ),
       // — core invariants (AC9): identical everywhere, never a row —
-      'memory (MemoryController + memory_* tools)':
-          ('core-invariant (AC9)', null),
+      'memory (MemoryController + memory_* tools)': (
+        'core-invariant (AC9)',
+        null,
+      ),
       'JSONL tool session persistence': ('core-invariant (AC9)', null),
       'trajectory': ('core-invariant (AC9)', null),
       'context management': ('core-invariant (AC9)', null),
@@ -357,8 +501,7 @@ void main() {
       'TUI chrome (theme, HID, mouse, status line)': ('host-glue', null),
       'session presence store': ('host-glue', null),
       'power/sleep prevention': ('host-glue', null),
-      'secure key store (platform store behind the seam)':
-          ('host-glue', null),
+      'secure key store (platform store behind the seam)': ('host-glue', null),
       'prompt template dirs': ('host-glue', null),
       // — config consumers inside the configSections row —
       'providers queue runtime (boot failover)': ('config-consumer', null),
@@ -377,9 +520,13 @@ void main() {
         final (kind, capability) = entry.value;
         if (kind != 'capability') continue;
         final spec = hostCapabilityCatalog[capability];
-        expect(spec, isNotNull,
-            reason: '"${entry.key}" is CLI-wired but absent from the '
-                'catalog — the SDK ⊇ CLI ceiling is broken (AC10)');
+        expect(
+          spec,
+          isNotNull,
+          reason:
+              '"${entry.key}" is CLI-wired but absent from the '
+              'catalog — the SDK ⊇ CLI ceiling is broken (AC10)',
+        );
         expect(
           spec!.cliWiringSites,
           isNotEmpty,
@@ -406,7 +553,8 @@ void main() {
         expect(
           hostCapabilityCatalog[capability]!.cliWiringSites,
           isEmpty,
-          reason: '${capability.id} is matrix-floored off on the VM — it '
+          reason:
+              '${capability.id} is matrix-floored off on the VM — it '
               'must not claim CLI wiring',
         );
       }
@@ -419,7 +567,8 @@ void main() {
           expect(
             File(path).existsSync() || Directory(path).existsSync(),
             isTrue,
-            reason: '${spec.capability.id} cites missing wiring site "$path" '
+            reason:
+                '${spec.capability.id} cites missing wiring site "$path" '
                 '— update the catalog',
           );
         }
@@ -439,12 +588,10 @@ void main() {
   });
 
   group('AC7 — hiding (UT-4)', () {
-    test('the CLI plan hides the browser-API JS surface (pinned example)',
-        () {
+    test('the CLI plan hides the browser-API JS surface (pinned example)', () {
       final plan = buildFor(cliProfile);
       expectCapabilityHidden(plan, HostCapability.jsApps);
-      final entry =
-          plan.planFor(HostCapability.jsApps) as HiddenCapability;
+      final entry = plan.planFor(HostCapability.jsApps) as HiddenCapability;
       expect(entry.reason, contains('browser APIs'));
     });
 
@@ -457,6 +604,38 @@ void main() {
         cliHelpText('0.0.0-test'),
       );
     });
+
+    test('jsr token ownership: the CLI pass-through is wired, the '
+        'browser-API row stays hidden', () {
+      // #1062 wired `fa jsr` + `/jsr` into the CLI — they belong to
+      // jsExtensions (wired on the CLI), never to js_apps.
+      final plan = buildFor(cliProfile);
+      expectCapabilitySurfaces(plan, HostCapability.jsExtensions);
+      expect(plan.surfacedTokens, containsAll({'fa jsr', '/jsr'}));
+      expect(cliHelpText('0.0.0-test'), contains('jsr'));
+      // The browser-API row stays off, and its dynamic_message surface is
+      // absent from the same help text.
+      expectCapabilityHidden(plan, HostCapability.jsApps);
+      expectTextFreeOf(
+        'cliHelpText',
+        hostCapabilityCatalog[HostCapability.jsApps]!.surface,
+        cliHelpText('0.0.0-test'),
+      );
+    });
+
+    test(
+      'expectTextFreeOf matches on identifier boundaries, not substrings',
+      () {
+        const surface = CapabilitySurface(tokens: {'task', 'lsp'});
+        // Substring hits inside longer identifiers are NOT leaks: 'tasks',
+        // 'help'. Standalone occurrences are.
+        expectTextFreeOf('boundary probe', surface, 'run the tasks via help');
+        expect(
+          () => expectTextFreeOf('boundary probe', surface, 'use task here'),
+          throwsA(isA<TestFailure>()),
+        );
+      },
+    );
 
     test('every hidden cell of every built-in profile removes its whole '
         'surface', () {
@@ -508,9 +687,10 @@ void main() {
 
     test('a partially served profile names exactly what is missing', () {
       try {
-        HostWiringBuilder(profile: cliProfile, platformServices: {
-          'mcpTransportFactory': Object(),
-        }).build();
+        HostWiringBuilder(
+          profile: cliProfile,
+          platformServices: {'mcpTransportFactory': Object()},
+        ).build();
         fail('build() must reject');
       } on HostWiringException catch (e) {
         expect(e.message, contains('hubFabric'));
@@ -522,20 +702,24 @@ void main() {
       }
     });
 
-    test('the plan carries the platform services for the slice-2 wiring',
-        () {
+    test('the plan carries the platform services for the slice-2 wiring', () {
       final plan = buildFor(cliProfile);
-      expect(plan.platformServices, same(cliPlatformServices));
+      expect(plan.platformServices, same(fullPlatformServices));
     });
 
     test('a profile wiring fewer capabilities needs fewer services', () {
-      // The extension profile wires no sandbox/mcp-stdio/sqlite machinery:
-      // it builds with only the hub fabric + extension runtime factory.
-      final plan = HostWiringBuilder(profile: extensionProfile, platformServices: {
-        'hubFabric': Object(),
-        'mcpTransportFactory': Object(),
-        'extRuntimeFactory': Object(),
-      }).build();
+      // The extension profile wires only hub messaging, remote MCP, the
+      // extension runtime, on-device inference and the js-app subset.
+      final plan = HostWiringBuilder(
+        profile: extensionProfile,
+        platformServices: {
+          'hubFabric': Object(),
+          'mcpTransportFactory': Object(),
+          'extRuntimeFactory': Object(),
+          'onDeviceProviderFactory': Object(),
+          'dynamicMessageSink': Object(),
+        },
+      ).build();
       expect(plan.planFor(HostCapability.compaction), isA<HiddenCapability>());
     });
   });

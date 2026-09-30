@@ -31,7 +31,10 @@ final class CapabilitySurface {
   /// Prompt section ids gated by the capability.
   final Set<String> promptSectionIds;
 
-  const CapabilitySurface({this.tokens = const {}, this.promptSectionIds = const {}});
+  const CapabilitySurface({
+    this.tokens = const {},
+    this.promptSectionIds = const {},
+  });
 }
 
 /// One catalog entry: a wireable capability, its CLI-ceiling evidence, and
@@ -69,12 +72,17 @@ final class CapabilitySpec {
 /// The capability catalog — the CLI's ceiling (AC10). Wiring sites cite the
 /// verified sweep (2026-09-29); line anchors drift, the files are the
 /// contract.
-final Map<HostCapability, CapabilitySpec> hostCapabilityCatalog = Map.unmodifiable({
+final Map<HostCapability, CapabilitySpec>
+hostCapabilityCatalog = Map.unmodifiable({
   HostCapability.configSections: CapabilitySpec(
     capability: HostCapability.configSections,
-    title: 'Config sections (roles:/tools:/ttsr:/redact:/providerTimeouts:/agent:)',
+    title:
+        'Config sections (roles:/tools:/ttsr:/redact:/providerTimeouts:/agent:)',
     note: 'Parsed once, applied to every host whose profile has the row on.',
-    cliWiringSites: ['bin/fah.dart (AgentCliConfig)', 'lib/src/cli/cli_config.dart (fromYaml)'],
+    cliWiringSites: [
+      'bin/fah.dart (AgentCliConfig)',
+      'lib/src/cli/cli_config.dart (fromYaml)',
+    ],
     surface: CapabilitySurface(
       tokens: {'roles:', 'ttsr:', 'redact:', 'providerTimeouts:'},
       promptSectionIds: {'config-sections'},
@@ -84,7 +92,10 @@ final Map<HostCapability, CapabilitySpec> hostCapabilityCatalog = Map.unmodifiab
     capability: HostCapability.compaction,
     title: 'Compaction wiring',
     note: 'roles.smol judge, overWindowRelief, contextWindowCap (#1077).',
-    cliWiringSites: ['bin/fah.dart (compactionEngine, contextWindowCap)', 'lib/src/cli/agent_cli.dart'],
+    cliWiringSites: [
+      'bin/fah.dart (compactionEngine, contextWindowCap)',
+      'lib/src/cli/agent_cli.dart',
+    ],
     surface: CapabilitySurface(
       tokens: {'overWindowRelief', 'contextWindowCap'},
       promptSectionIds: {'compaction'},
@@ -94,45 +105,76 @@ final Map<HostCapability, CapabilitySpec> hostCapabilityCatalog = Map.unmodifiab
     capability: HostCapability.loadModes,
     title: 'Load modes + discover_tools',
     note: 'Essential-set demotion and the discover_tools registration.',
-    cliWiringSites: ['bin/fah.dart (loadMode)', 'lib/src/cli/agent_cli_tools.dart'],
+    cliWiringSites: [
+      'bin/fah.dart (loadMode)',
+      'lib/src/cli/agent_cli_tools.dart',
+    ],
     surface: CapabilitySurface(tokens: {'discover_tools'}),
   ),
   HostCapability.mcp: CapabilitySpec(
     capability: HostCapability.mcp,
     title: 'MCP servers',
     note: 'Transports: stdio (spawned) + remote (HTTP).',
-    cliWiringSites: ['bin/fah.dart (mcpConfig)', 'lib/src/mcp/io_mcp_transport.dart', 'lib/src/mcp/mcp_http_transport.dart'],
+    cliWiringSites: [
+      'bin/fah.dart (mcpConfig)',
+      'lib/src/mcp/io_mcp_transport.dart',
+      'lib/src/mcp/mcp_http_transport.dart',
+    ],
     requiredServices: {'mcpTransportFactory'},
-    surface: CapabilitySurface(tokens: {'mcp__', 'mcp:'}, promptSectionIds: {'mcp'}),
+    surface: CapabilitySurface(
+      tokens: {'mcp__', 'mcp:'},
+      promptSectionIds: {'mcp'},
+    ),
   ),
   HostCapability.messagingFabric: CapabilitySpec(
     capability: HostCapability.messagingFabric,
     title: 'Messaging fabric',
     note: 'Transports: file + hub (FallbackMessagingRepository) + a2a.',
-    cliWiringSites: ['lib/src/messaging/agent_fabric.dart (buildAgentFabric)', 'bin/fah.dart (a2aConfig, hubFabric)'],
+    cliWiringSites: [
+      'lib/src/messaging/agent_fabric.dart (buildAgentFabric)',
+      'bin/fah.dart (a2aConfig, hubFabric)',
+    ],
     requiredServices: {'hubFabric'},
-    surface: CapabilitySurface(tokens: {'schedule_message', 'agent_message', 'a2a'}),
+    surface: CapabilitySurface(
+      tokens: {'schedule_message', 'agent_message', 'a2a'},
+    ),
   ),
   HostCapability.approvalGate: CapabilitySpec(
     capability: HostCapability.approvalGate,
     title: 'Approval gate',
     note: 'Modes + unattended + always-allow sets.',
-    cliWiringSites: ['bin/fah.dart (approvalMode, alwaysAllowTools)', 'lib/src/cli/agent_cli.dart (ApprovalManager)'],
-    surface: CapabilitySurface(tokens: {'approval'}, promptSectionIds: {'approval'}),
+    cliWiringSites: [
+      'bin/fah.dart (approvalMode, alwaysAllowTools)',
+      'lib/src/cli/agent_cli.dart (ApprovalManager)',
+    ],
+    surface: CapabilitySurface(
+      tokens: {'approval'},
+      promptSectionIds: {'approval'},
+    ),
   ),
   HostCapability.skills: CapabilitySpec(
     capability: HostCapability.skills,
     title: 'Skills + project context',
     note: 'Skill discovery roots and the AGENTS.md project context.',
-    cliWiringSites: ['lib/src/cli/agent_cli.dart (discoverSkills)', 'bin/fah.dart (skillsAccess)'],
-    surface: CapabilitySurface(tokens: {'skills'}, promptSectionIds: {'skills'}),
+    cliWiringSites: [
+      'lib/src/cli/agent_cli.dart (discoverSkills)',
+      'bin/fah.dart (skillsAccess)',
+    ],
+    surface: CapabilitySurface(
+      tokens: {'skills'},
+      promptSectionIds: {'skills'},
+    ),
   ),
   HostCapability.sandboxEnv: CapabilitySpec(
     capability: HostCapability.sandboxEnv,
     title: 'Sandbox env',
-    note: 'Backends: cube (passthrough/policy/kernel) + local on the CLI; '
+    note:
+        'Backends: cube (passthrough/policy/kernel) + local on the CLI; '
         'platform / WasiSandbox / MemoryShell are host-side factories.',
-    cliWiringSites: ['bin/fah.dart (cubeSpec, fsProbe)', 'lib/src/cli/agent_cli.dart (SandboxedExecutionEnv)'],
+    cliWiringSites: [
+      'bin/fah.dart (cubeSpec, fsProbe)',
+      'lib/src/cli/agent_cli.dart (SandboxedExecutionEnv)',
+    ],
     requiredServices: {'cubeSpec', 'fsProbe'},
     surface: CapabilitySurface(tokens: {'cube', 'sandbox'}),
   ),
@@ -140,30 +182,45 @@ final Map<HostCapability, CapabilitySpec> hostCapabilityCatalog = Map.unmodifiab
     capability: HostCapability.backgroundShellJobs,
     title: 'Background shell jobs',
     note: 'The bash_job board over .fah/bash_jobs logs.',
-    cliWiringSites: ['bin/fah.dart (jobs)', 'lib/src/cli/agent_cli.dart (ShellJobRegistry)'],
+    cliWiringSites: [
+      'bin/fah.dart (jobs)',
+      'lib/src/cli/agent_cli.dart (ShellJobRegistry)',
+    ],
     surface: CapabilitySurface(tokens: {'bash_job'}),
   ),
   HostCapability.sqliteLspDap: CapabilitySpec(
     capability: HostCapability.sqliteLspDap,
     title: 'sqlite / lsp / dap',
     note: 'FFI sqlite reader, process lsp transport, dap_* via the hub plugin.',
-    cliWiringSites: ['bin/fah.dart (sqliteEngine, lspConfig, dapHubState)', 'bin/fah_hub_plugin.dart (registerTool)'],
+    cliWiringSites: [
+      'bin/fah.dart (sqliteEngine, lspConfig, dapHubState)',
+      'bin/fah_hub_plugin.dart (registerTool)',
+    ],
     requiredServices: {'sqliteEngine', 'lspTransportFactory'},
     surface: CapabilitySurface(tokens: {'sqlite', 'lsp', 'dap'}),
   ),
   HostCapability.onDeviceProviders: CapabilitySpec(
     capability: HostCapability.onDeviceProviders,
     title: 'On-device providers (webllm/gemma)',
-    note: 'NOT CLI-wired (matrix ❌ on the VM); wired in the Flutter app '
+    note:
+        'NOT CLI-wired (matrix ❌ on the VM); wired in the Flutter app '
         '(flutter_app/lib/main.dart).',
+    requiredServices: {'onDeviceProviderFactory'},
     surface: CapabilitySurface(tokens: {'webllm', 'gemma'}),
   ),
   HostCapability.jsApps: CapabilitySpec(
     capability: HostCapability.jsApps,
     title: 'JS apps (jsr) + dynamic_message',
-    note: 'The browser-API app surface — matrix-pinned off on the VM. The '
-        'CLI\'s process-based QuickJS extensions are [HostCapability.jsExtensions].',
-    surface: CapabilitySurface(tokens: {'jsr', 'dynamic_message'}, promptSectionIds: {'js-apps'}),
+    note:
+        'The browser-API app surface — matrix-pinned off on the VM. Owns '
+        'NO bare "jsr" token: the CLI wires an `fa jsr` widget pass-through '
+        '(#1062), claimed by [HostCapability.jsExtensions]. The CLI\'s '
+        'process-based QuickJS machinery is [HostCapability.jsExtensions].',
+    requiredServices: {'dynamicMessageSink'},
+    surface: CapabilitySurface(
+      tokens: {'dynamic_message'},
+      promptSectionIds: {'js-apps'},
+    ),
   ),
   HostCapability.checkpointRewind: CapabilitySpec(
     capability: HostCapability.checkpointRewind,
@@ -175,53 +232,88 @@ final Map<HostCapability, CapabilitySpec> hostCapabilityCatalog = Map.unmodifiab
   HostCapability.hostExtensionApi: CapabilitySpec(
     capability: HostCapability.hostExtensionApi,
     title: 'Host extension API',
-    note: 'PluginContext.register — host tools, inboxes, slash commands. '
+    note:
+        'PluginContext.register — host tools, inboxes, slash commands. '
         'Core behaviors stay SDK-invariant (AC9).',
-    cliWiringSites: ['bin/fah.dart (plugins, pluginConfig)', 'lib/src/cli/agent_cli.dart (PluginContext)'],
-    surface: CapabilitySurface(tokens: {'plugin'}, promptSectionIds: {'extensions'}),
+    cliWiringSites: [
+      'bin/fah.dart (plugins, pluginConfig)',
+      'lib/src/cli/agent_cli.dart (PluginContext)',
+    ],
+    surface: CapabilitySurface(
+      tokens: {'plugin'},
+      promptSectionIds: {'extensions'},
+    ),
   ),
   HostCapability.webSearch: CapabilitySpec(
     capability: HostCapability.webSearch,
     title: 'Web search',
-    note: 'Inventory-driven (AC10): web_search/web_fetch over '
+    note:
+        'Inventory-driven (AC10): web_search/web_fetch over '
         'WebSearchConfig secrets; no matrix row pins it.',
-    cliWiringSites: ['bin/fah.dart (webSearchConfig)', 'lib/src/cli/agent_cli_tools.dart'],
+    cliWiringSites: [
+      'bin/fah.dart (webSearchConfig)',
+      'lib/src/cli/agent_cli_tools.dart',
+    ],
     requiredServices: {'webSearchSecrets'},
     surface: CapabilitySurface(tokens: {'web_search', 'web_fetch'}),
   ),
   HostCapability.visionTranscribe: CapabilitySpec(
     capability: HostCapability.visionTranscribe,
     title: 'Vision + transcribe',
-    note: 'Inventory-driven (AC10): inspect_image/transcribe_audio/image '
+    note:
+        'Inventory-driven (AC10): inspect_image/transcribe_audio/image '
         'generation over the host vision/transcribe configs.',
-    cliWiringSites: ['bin/fah.dart (visionConfig, transcribeConfig)', 'lib/src/cli/agent_cli.dart'],
-    surface: CapabilitySurface(tokens: {'inspect_image', 'transcribe_audio', 'generate_image'}),
+    cliWiringSites: [
+      'bin/fah.dart (visionConfig, transcribeConfig)',
+      'lib/src/cli/agent_cli.dart',
+    ],
+    requiredServices: {'visionConfig', 'transcribeConfig'},
+    surface: CapabilitySurface(
+      tokens: {'inspect_image', 'transcribe_audio', 'generate_image'},
+    ),
   ),
   HostCapability.subagents: CapabilitySpec(
     capability: HostCapability.subagents,
     title: 'Subagents + task system',
-    note: 'Inventory-driven (AC10): subagents: config, SubagentManager, '
+    note:
+        'Inventory-driven (AC10): subagents: config, SubagentManager, '
         'task/agent tools, heartbeat.',
-    cliWiringSites: ['bin/fah.dart (subagents)', 'lib/src/cli/agent_cli.dart (SubagentManager, taskTool)'],
+    cliWiringSites: [
+      'bin/fah.dart (subagents)',
+      'lib/src/cli/agent_cli.dart (SubagentManager, taskTool)',
+    ],
+    requiredServices: {'sessionRoot'},
     surface: CapabilitySurface(tokens: {'task', 'agent_directory', 'subagent'}),
   ),
   HostCapability.browserBridge: CapabilitySpec(
     capability: HostCapability.browserBridge,
     title: 'Browser bridge tools',
-    note: 'Inventory-driven (AC10): the browser_* family over the loopback '
+    note:
+        'Inventory-driven (AC10): the browser_* family over the loopback '
         'bridge — the automation surface the CLI wires today.',
-    cliWiringSites: ['bin/fah.dart (browserBridgeHandle, browserController)', 'lib/src/cli/agent_cli.dart (browserTools)'],
+    cliWiringSites: [
+      'bin/fah.dart (browserBridgeHandle, browserController)',
+      'lib/src/cli/agent_cli.dart (browserTools)',
+    ],
     requiredServices: {'browserBridgeHandle'},
-    surface: CapabilitySurface(tokens: {'browser_navigate', 'browser_click', 'browser_eval'}),
+    surface: CapabilitySurface(
+      tokens: {'browser_navigate', 'browser_click', 'browser_eval'},
+    ),
   ),
   HostCapability.jsExtensions: CapabilitySpec(
     capability: HostCapability.jsExtensions,
-    title: 'QuickJS JS extensions',
-    note: 'Inventory-driven (AC10): per-extension isolated QuickJS engines '
-        '(process transport) — not the browser-API [HostCapability.jsApps] row.',
-    cliWiringSites: ['bin/fah.dart (extRuntimeFactory)', 'lib/src/cli/agent_cli.dart (initJsExtensions)'],
+    title: 'QuickJS JS extensions + jsr widget pass-through',
+    note:
+        'Inventory-driven (AC10): per-extension isolated QuickJS engines '
+        '(process transport) — not the browser-API [HostCapability.jsApps] '
+        'row. Owns the `fa jsr` widget pass-through + `/jsr` REPL alias '
+        '(#1062): the only legitimate "jsr" surfaces on the CLI.',
+    cliWiringSites: [
+      'bin/fah.dart (extRuntimeFactory)',
+      'lib/src/cli/agent_cli.dart (initJsExtensions)',
+    ],
     requiredServices: {'extRuntimeFactory'},
-    surface: CapabilitySurface(tokens: {'js_ext', 'jsr.ext'}),
+    surface: CapabilitySurface(tokens: {'js_ext', 'jsr.ext', 'fa jsr', '/jsr'}),
   ),
 });
 
@@ -272,8 +364,7 @@ final class HostWiringPlan {
     required this.platformServices,
   }) : entries = List.unmodifiable(entries);
 
-  Iterable<WiredCapability> get wired =>
-      entries.whereType<WiredCapability>();
+  Iterable<WiredCapability> get wired => entries.whereType<WiredCapability>();
 
   Iterable<HiddenCapability> get hidden =>
       entries.whereType<HiddenCapability>();
@@ -282,22 +373,21 @@ final class HostWiringPlan {
   /// surface tokens plus per-transport qualified tokens (`mcp:stdio`).
   /// Off capabilities contribute NOTHING — the AC7 hiding contract.
   Set<String> get surfacedTokens => {
-        for (final entry in wired)
-          ...hostCapabilityCatalog[entry.capability]!.surface.tokens,
-        for (final entry in wired)
-          if (entry.transports.isNotEmpty)
-            for (final t in entry.transports)
-              '${entry.capability.id}:$t',
-      };
+    for (final entry in wired)
+      ...hostCapabilityCatalog[entry.capability]!.surface.tokens,
+    for (final entry in wired)
+      if (entry.transports.isNotEmpty)
+        for (final t in entry.transports) '${entry.capability.id}:$t',
+  };
 
   /// Prompt sections the plan emits (wired capabilities only).
   Set<String> get promptSections => {
-        for (final entry in wired)
-          ...hostCapabilityCatalog[entry.capability]!.surface.promptSectionIds,
-      };
+    for (final entry in wired)
+      ...hostCapabilityCatalog[entry.capability]!.surface.promptSectionIds,
+  };
 
-  CapabilityPlanEntry planFor(HostCapability capability) => entries
-      .firstWhere((e) => e.capability == capability);
+  CapabilityPlanEntry planFor(HostCapability capability) =>
+      entries.firstWhere((e) => e.capability == capability);
 }
 
 /// Builds the typed wiring plan for a profile + platform services.
@@ -313,10 +403,7 @@ final class HostWiringBuilder {
   /// .requiredServices] names (transport factories, stores, probes).
   final Map<String, Object> platformServices;
 
-  HostWiringBuilder({
-    required this.profile,
-    this.platformServices = const {},
-  });
+  HostWiringBuilder({required this.profile, this.platformServices = const {}});
 
   HostWiringPlan build() {
     final entries = <CapabilityPlanEntry>[];
@@ -329,10 +416,12 @@ final class HostWiringBuilder {
           entries.add(HiddenCapability(capability, reason));
         case CapabilityOnState():
           _requireServices(missing, capability, spec);
-          entries.add(WiredCapability(
-            capability,
-            hostCapabilityTransports[capability]!.defaults,
-          ));
+          entries.add(
+            WiredCapability(
+              capability,
+              hostCapabilityTransports[capability]!.defaults,
+            ),
+          );
         case CapabilityTransportState(:final transports):
           _requireServices(missing, capability, spec);
           entries.add(WiredCapability(capability, transports));
@@ -357,7 +446,9 @@ final class HostWiringBuilder {
     HostCapability capability,
     CapabilitySpec spec,
   ) {
-    final absent = spec.requiredServices.difference(platformServices.keys.toSet());
+    final absent = spec.requiredServices.difference(
+      platformServices.keys.toSet(),
+    );
     if (absent.isNotEmpty) missing[capability.id] = absent;
   }
 }
@@ -372,10 +463,10 @@ final class HostWiringBuilder {
 /// `_inventoryRow`: the shared off-state for inventory-driven rows on
 /// hosts that have not wired them yet.
 CapabilityOffState _inventoryRow(String host) => CapabilityOffState(
-      'not wired in the $host host yet; the CLI is the only host wiring it '
-      'today (inventory sweep 2026-09-29); raising this host is an explicit '
-      'slice-2+ declaration',
-    );
+  'not wired in the $host host yet; the CLI is the only host wiring it '
+  'today (inventory sweep 2026-09-29); raising this host is an explicit '
+  'slice-2+ declaration',
+);
 
 final HostCapabilityProfile cliProfile = HostCapabilityProfile(
   name: 'cli',
@@ -429,10 +520,10 @@ final HostCapabilityProfile macosProfile = HostCapabilityProfile(
       'stdio servers need an unsandboxed host process; the app defaults to '
       'remote MCP (matrix: remote + stdio unsandboxed)',
     ),
-    HostCapability.messagingFabric: CapabilityTransportState(
-      {'file', 'hub'},
-      'the file fabric lives in the App Group container; no A2A gateway',
-    ),
+    HostCapability.messagingFabric: CapabilityTransportState({
+      'file',
+      'hub',
+    }, 'the file fabric lives in the App Group container; no A2A gateway'),
     HostCapability.approvalGate: CapabilityState.on,
     HostCapability.skills: CapabilityState.on,
     HostCapability.sandboxEnv: CapabilityState.on,
@@ -466,86 +557,83 @@ final HostCapabilityProfile macosProfile = HostCapabilityProfile(
   },
 );
 
-HostCapabilityProfile _mobileProfile(String name, String host, String jobsTransport) =>
-    HostCapabilityProfile(
-      name: name,
-      states: {
-        HostCapability.configSections: CapabilityState.on,
-        HostCapability.compaction: CapabilityState.on,
-        HostCapability.loadModes: CapabilityState.on,
-        HostCapability.mcp: CapabilityTransportState(
-          {'remote'},
-          '$host cannot spawn stdio servers; remote MCP only',
-        ),
-        HostCapability.messagingFabric: CapabilityTransportState(
-          {'hub'},
-          'no shared filesystem; hub-only messaging',
-        ),
-        HostCapability.approvalGate: CapabilityState.on,
-        HostCapability.skills: CapabilityState.on,
-        HostCapability.sandboxEnv: CapabilityState.on,
-        HostCapability.backgroundShellJobs: CapabilityTransportState(
-          {jobsTransport},
-          'no raw process board; background shell runs as $jobsTransport '
-          'jobs',
-        ),
-        HostCapability.sqliteLspDap: CapabilityOffState(
-          'no FFI and no child-process spawning in the $host sandbox',
-        ),
-        HostCapability.onDeviceProviders: CapabilityState.on,
-        HostCapability.jsApps: CapabilityState.on,
-        HostCapability.checkpointRewind: CapabilityTransportState(
-          {'origin-storage'},
-          'checkpoints persist in app storage, not the session root',
-        ),
-        HostCapability.hostExtensionApi: CapabilityState.on,
-        HostCapability.webSearch: _inventoryRow(host),
-        HostCapability.visionTranscribe: _inventoryRow(host),
-        HostCapability.subagents: _inventoryRow(host),
-        HostCapability.browserBridge: _inventoryRow(host),
-        HostCapability.jsExtensions: _inventoryRow(host),
-      },
-    );
-
-final HostCapabilityProfile iosProfile = _mobileProfile('ios', 'iOS', 'future');
-
-final HostCapabilityProfile androidProfile =
-    _mobileProfile('android', 'Android', 'async');
-
-final HostCapabilityProfile webProfile = HostCapabilityProfile(
-  name: 'web',
+HostCapabilityProfile _mobileProfile(
+  String name,
+  String host,
+  String jobsTransport,
+) => HostCapabilityProfile(
+  name: name,
   states: {
-    HostCapability.configSections: CapabilityTransportState(
-      {'origin-storage'},
-      'no filesystem; config lives in web origin storage',
-    ),
+    HostCapability.configSections: CapabilityState.on,
     HostCapability.compaction: CapabilityState.on,
     HostCapability.loadModes: CapabilityState.on,
-    HostCapability.mcp: CapabilityTransportState(
-      {'remote'},
-      'browsers cannot spawn stdio servers; remote MCP only',
-    ),
-    HostCapability.messagingFabric: CapabilityTransportState(
-      {'hub'},
-      'no shared filesystem; hub-only messaging',
-    ),
+    HostCapability.mcp: CapabilityTransportState({
+      'remote',
+    }, '$host cannot spawn stdio servers; remote MCP only'),
+    HostCapability.messagingFabric: CapabilityTransportState({
+      'hub',
+    }, 'no shared filesystem; hub-only messaging'),
     HostCapability.approvalGate: CapabilityState.on,
     HostCapability.skills: CapabilityState.on,
     HostCapability.sandboxEnv: CapabilityState.on,
     HostCapability.backgroundShellJobs: CapabilityTransportState(
-      {'async'},
-      'no process spawning; background jobs run on the platform event loop',
+      {jobsTransport},
+      'no raw process board; background shell runs as $jobsTransport '
+      'jobs',
     ),
-    HostCapability.sqliteLspDap: CapabilityTransportState(
-      {'sqljs'},
-      'sqlite runs via sql.js WASM; no lsp/dap process spawn',
+    HostCapability.sqliteLspDap: CapabilityOffState(
+      'no FFI and no child-process spawning in the $host sandbox',
     ),
     HostCapability.onDeviceProviders: CapabilityState.on,
     HostCapability.jsApps: CapabilityState.on,
-    HostCapability.checkpointRewind: CapabilityTransportState(
-      {'origin-storage'},
-      'checkpoints persist in origin storage, not the session root',
-    ),
+    HostCapability.checkpointRewind: CapabilityTransportState({
+      'origin-storage',
+    }, 'checkpoints persist in app storage, not the session root'),
+    HostCapability.hostExtensionApi: CapabilityState.on,
+    HostCapability.webSearch: _inventoryRow(host),
+    HostCapability.visionTranscribe: _inventoryRow(host),
+    HostCapability.subagents: _inventoryRow(host),
+    HostCapability.browserBridge: _inventoryRow(host),
+    HostCapability.jsExtensions: _inventoryRow(host),
+  },
+);
+
+final HostCapabilityProfile iosProfile = _mobileProfile('ios', 'iOS', 'future');
+
+final HostCapabilityProfile androidProfile = _mobileProfile(
+  'android',
+  'Android',
+  'async',
+);
+
+final HostCapabilityProfile webProfile = HostCapabilityProfile(
+  name: 'web',
+  states: {
+    HostCapability.configSections: CapabilityTransportState({
+      'origin-storage',
+    }, 'no filesystem; config lives in web origin storage'),
+    HostCapability.compaction: CapabilityState.on,
+    HostCapability.loadModes: CapabilityState.on,
+    HostCapability.mcp: CapabilityTransportState({
+      'remote',
+    }, 'browsers cannot spawn stdio servers; remote MCP only'),
+    HostCapability.messagingFabric: CapabilityTransportState({
+      'hub',
+    }, 'no shared filesystem; hub-only messaging'),
+    HostCapability.approvalGate: CapabilityState.on,
+    HostCapability.skills: CapabilityState.on,
+    HostCapability.sandboxEnv: CapabilityState.on,
+    HostCapability.backgroundShellJobs: CapabilityTransportState({
+      'async',
+    }, 'no process spawning; background jobs run on the platform event loop'),
+    HostCapability.sqliteLspDap: CapabilityTransportState({
+      'sqljs',
+    }, 'sqlite runs via sql.js WASM; no lsp/dap process spawn'),
+    HostCapability.onDeviceProviders: CapabilityState.on,
+    HostCapability.jsApps: CapabilityState.on,
+    HostCapability.checkpointRewind: CapabilityTransportState({
+      'origin-storage',
+    }, 'checkpoints persist in origin storage, not the session root'),
     HostCapability.hostExtensionApi: CapabilityState.on,
     HostCapability.webSearch: _inventoryRow('web app'),
     HostCapability.visionTranscribe: _inventoryRow('web app'),
@@ -559,10 +647,9 @@ HostCapabilityProfile _sandboxedWebProfile(String name, String host) =>
     HostCapabilityProfile(
       name: name,
       states: {
-        HostCapability.configSections: CapabilityTransportState(
-          {'origin-storage'},
-          '$host sandbox; config persisted in the host store',
-        ),
+        HostCapability.configSections: CapabilityTransportState({
+          'origin-storage',
+        }, '$host sandbox; config persisted in the host store'),
         HostCapability.compaction: name == 'extension'
             ? CapabilityOffState(
                 'the extension panel window is too small for compaction to '
@@ -573,14 +660,12 @@ HostCapabilityProfile _sandboxedWebProfile(String name, String host) =>
                 'compaction wired, but transcripts persist in the Office '
                 'store, not the session root',
               ),
-        HostCapability.loadModes: CapabilityTransportState(
-          {'registered-only'},
-          'no project tree; load modes apply to host-registered tools only',
-        ),
-        HostCapability.mcp: CapabilityTransportState(
-          {'remote'},
-          'the $host sandbox cannot spawn stdio servers; remote MCP only',
-        ),
+        HostCapability.loadModes: CapabilityTransportState({
+          'registered-only',
+        }, 'no project tree; load modes apply to host-registered tools only'),
+        HostCapability.mcp: CapabilityTransportState({
+          'remote',
+        }, 'the $host sandbox cannot spawn stdio servers; remote MCP only'),
         HostCapability.messagingFabric: CapabilityTransportState(
           {'hub'},
           name == 'extension'
@@ -588,10 +673,9 @@ HostCapabilityProfile _sandboxedWebProfile(String name, String host) =>
               : 'the add-in bridge routes hub messaging only',
         ),
         HostCapability.approvalGate: CapabilityState.on,
-        HostCapability.skills: CapabilityTransportState(
-          {'registered'},
-          'no project tree; host-registered skills only',
-        ),
+        HostCapability.skills: CapabilityTransportState({
+          'registered',
+        }, 'no project tree; host-registered skills only'),
         HostCapability.sandboxEnv: CapabilityOffState(
           'the $host sandbox provides no sandbox backend; the shell surface '
           'stays hidden',
@@ -603,19 +687,17 @@ HostCapabilityProfile _sandboxedWebProfile(String name, String host) =>
           'the $host sandbox has no FFI and no process spawning',
         ),
         HostCapability.onDeviceProviders: name == 'extension'
-            ? CapabilityTransportState(
-                {'in-process'},
-                'in-process inference inside the extension offscreen page',
-              )
+            ? CapabilityTransportState({
+                'in-process',
+              }, 'in-process inference inside the extension offscreen page')
             : CapabilityOffState(
                 'the Office add-in runtime has no headroom for in-process '
                 'inference (matrix ❌)',
               ),
         HostCapability.jsApps: name == 'extension'
-            ? CapabilityTransportState(
-                {'extension-subset'},
-                'JSR/dynamic_message subset inside the extension runtime',
-              )
+            ? CapabilityTransportState({
+                'extension-subset',
+              }, 'JSR/dynamic_message subset inside the extension runtime')
             // Outlook: ✅ with the matrix's "office tools" note.
             : CapabilityState.on,
         HostCapability.checkpointRewind: CapabilityOffState(
@@ -630,11 +712,15 @@ HostCapabilityProfile _sandboxedWebProfile(String name, String host) =>
       },
     );
 
-final HostCapabilityProfile extensionProfile =
-    _sandboxedWebProfile('extension', 'extension');
+final HostCapabilityProfile extensionProfile = _sandboxedWebProfile(
+  'extension',
+  'extension',
+);
 
-final HostCapabilityProfile outlookProfile =
-    _sandboxedWebProfile('outlook', 'Office add-in');
+final HostCapabilityProfile outlookProfile = _sandboxedWebProfile(
+  'outlook',
+  'Office add-in',
+);
 
 /// The seven built-in profiles by host name.
 final Map<String, HostCapabilityProfile> builtInProfiles = Map.unmodifiable({
