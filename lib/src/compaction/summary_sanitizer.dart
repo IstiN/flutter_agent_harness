@@ -38,9 +38,16 @@ final RegExp _secondPerson = RegExp(
 /// A bare second-person pronoun plus a bare temporal word anywhere in a
 /// sentence strips durable prose ("the user asked you to re-run the full
 /// suite after the previous fix lands"); only these claim shapes fire.
+///
+/// - The possessive arm additionally demands a loss/trim verb in the same
+///   sentence: "rebase your previous commits" is a constraint, not a drop
+///   claim; "your last tool call's result was dropped" is the claim.
+/// - The `you`-arm covers contracted and interpolated forms ("you've
+///   just", "you're about to", "you were (just) about to").
 final RegExp _ephemeralClaim = RegExp(
-  r'\byour\s+(?:last|previous|prior)\b'
-  r'|\byou\s+(?:just|were about to|are about to)\b'
+  r"\byour\s+(?:last|previous|prior)\b"
+  r"(?=[^.]*\b(?:dropped|trimmed|removed|lost)\b)"
+  r"|\byou(?:'ve\s+just|'re\s+about to|\s+(?:were\s+)?(?:just\s+)?about to|\s+just)\b"
   r'|\b(?:was|were)\s+dropped\b',
   caseSensitive: false,
 );
@@ -65,21 +72,32 @@ SanitizedSummary sanitizeSummary(String summary) {
 }
 
 /// Removes every `[context note …]` block — opened by a real bracket and
-/// closed by a `]` on the same line; an unterminated opener is prose that
-/// merely mentions a context note and is left untouched — recording each
-/// removed span as stripped.
+/// closed by a `]` within the same line or the two lines after it (LLM
+/// summaries reflow notes at ~80 columns); an unterminated or far-closed
+/// opener is prose that merely mentions a context note and is left
+/// untouched. Removed spans are recorded as stripped.
 String _stripContextNotes(String text, List<String> stripped) {
   final out = StringBuffer();
   var start = 0;
   for (final match in _contextNoteOpen.allMatches(text)) {
     if (match.start < start) continue; // opener inside a removed block
     final close = text.indexOf(']', match.end);
-    final newline = text.indexOf('\n', match.end);
-    if (close < 0 || (newline >= 0 && newline < close)) continue;
+    final searchEnd = close < 0 ? text.length : close;
+    final newlines =
+        '\n'.allMatches(text.substring(match.end, searchEnd)).length;
+    if (close < 0 || newlines > 2) continue;
     out.write(text.substring(start, match.start));
-    final removed = text.substring(match.start, close + 1);
+    var end = close + 1;
+    // A note occupying a whole line takes its line break with it, so the
+    // strip does not leave a blank line behind.
+    if (end < text.length &&
+        text[end] == '\n' &&
+        (match.start == 0 || text[match.start - 1] == '\n')) {
+      end++;
+    }
+    final removed = text.substring(match.start, end);
     if (removed.trim().isNotEmpty) stripped.add(removed.trim());
-    start = close + 1;
+    start = end;
   }
   out.write(text.substring(start));
   return out.toString();

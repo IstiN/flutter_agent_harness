@@ -312,4 +312,47 @@ void main() {
       expect(prompt, contains('The login crash is fixed.'));
     });
   });
+
+  group('round-2 review pins (#1133)', () {
+    test('R2-T1: possessive mentions of prior user artifacts survive', () {
+      const constraints =
+          '## Constraints & Preferences\n'
+          '- Rebase your previous commits before every push.\n'
+          '- Copy your last release notes into the announcement.\n';
+      final result = sanitizeSummary(constraints);
+      expect(result.text, constraints);
+      expect(result.stripped, isEmpty);
+    });
+
+    test('R2-T2: a line-wrapped context note is stripped whole', () {
+      const wrapped =
+          '[CONTEXT NOTE — Your LAST tool call\'s RESULT was dropped from\n'
+          'context; the drop happened DURING an earlier compacted span. If\n'
+          'you were mid-sweep, re-run only what you still need.]\n'
+          '- Fixed the parser\n';
+      final result = sanitizeSummary(wrapped);
+      expect(result.text, '- Fixed the parser\n');
+      expect(result.stripped, hasLength(1));
+      expect(result.stripped.single, contains('mid-sweep'));
+    });
+
+    test('R2-T2: a close beyond the 2-line window is not a note', () {
+      const far =
+          'Kept the [context note: one line\n\n\n\nthe close lands here]\n'
+          '- Fixed the parser\n';
+      final result = sanitizeSummary(far);
+      expect(result.text, far);
+      expect(result.stripped, isEmpty);
+    });
+
+    test('R2-T3: contracted and interpolated drop claims strip', () {
+      final result = sanitizeSummary(
+        'You\'ve just landed the fix. You\'re about to lose the staging '
+        'env. You were just about to run the sweep when the turn ended.\n'
+        '- The staging env still exists.\n',
+      );
+      expect(result.text, '- The staging env still exists.\n');
+      expect(result.stripped, hasLength(3));
+    });
+  });
 }
