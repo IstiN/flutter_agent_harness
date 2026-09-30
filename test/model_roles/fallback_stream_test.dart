@@ -579,6 +579,146 @@ void main() {
       },
     );
 
+    test(
+      'sole entry waits out a Retry-After beyond maxWait (issue #1066)',
+      () async {
+        final a = _model('openai', 'gpt-a');
+        final probe = _Probe({
+          'v-a': [
+            _rateLimitTurn(a, retryAfter: const Duration(seconds: 60)),
+            _okTurn(a, 'recovered after the wait'),
+          ],
+        });
+        final w = wrapper([
+          entry(probe, a, ['v-a']),
+        ], policy: const ModelRolesRetryPolicy(maxWait: Duration(seconds: 30)));
+
+        final events = await run(w);
+
+        // No fallback exists, so 60s > 30s maxWait no longer kills the
+        // chain: the engine waits out the full minute (under the 5m
+        // sole-entry ceiling) and the retry succeeds.
+        expect(sleeps, [const Duration(seconds: 60)]);
+        expect(probe.calls, ['v-a', 'v-a']);
+        expect(events.last, 'done:${a.id}');
+        expect(notices.single.kind, FallbackNoticeKind.retry);
+      },
+    );
+
+    test(
+      'a pathological Retry-After waits out the ceiling, then exhausts '
+      '(issue #1066)',
+      () async {
+        final a = _model('openai', 'gpt-a');
+        final probe = _Probe({
+          'v-a': [
+            _rateLimitTurn(a, retryAfter: const Duration(hours: 2)),
+            _rateLimitTurn(a, retryAfter: const Duration(hours: 2)),
+            _rateLimitTurn(a, retryAfter: const Duration(hours: 2)),
+          ],
+        });
+        final w = wrapper([
+          entry(probe, a, ['v-a']),
+        ], policy: const ModelRolesRetryPolicy(maxWait: Duration(seconds: 30)));
+
+        final events = await run(w);
+
+        // Each wait-out is bounded to the 5m sole-entry ceiling; the
+        // retries keep consuming the per-entry budget, so the chain still
+        // exhausts — with the waited total in the story.
+        expect(sleeps, [
+          const Duration(minutes: 5),
+          const Duration(minutes: 5),
+        ]);
+        expect(probe.calls, hasLength(3)); // 1 + retriesPerEntry(2)
+        expect(
+          events.single,
+          startsWith('error(error):${a.id}:Provider chain exhausted'),
+        );
+        expect(events.single, contains('waited 10m on rate limits'));
+      },
+    );
+
+    test(
+      'the waited-total label counts rate-limit waits only (issue #1066)',
+      () async {
+        final a = _model('openai', 'gpt-a');
+        final partial = _msg(a);
+        List<AssistantMessageEvent> transportTurn() => [
+          StartEvent(partial: partial),
+          ErrorEvent(
+            reason: StopReason.error,
+            error: _msg(
+              a,
+              stop: StopReason.error,
+              error: 'ClientException: Connection closed while receiving data',
+            ),
+            retryAfter: const Duration(seconds: 90),
+          ),
+        ];
+        final probe = _Probe({
+          'v-a': [transportTurn(), transportTurn(), transportTurn()],
+        });
+        final w = wrapper([
+          entry(probe, a, ['v-a']),
+        ], policy: const ModelRolesRetryPolicy(
+          retriesPerEntry: 2,
+          maxWait: Duration(seconds: 30),
+        ));
+
+        final events = await run(w);
+
+        // Two bounded 90s wait-outs, both transport-class: the chain
+        // exhausted after real waiting, but an outage must not be
+        // misdiagnosed as rate limiting in the story.
+        expect(sleeps, [
+          const Duration(seconds: 90),
+          const Duration(seconds: 90),
+        ]);
+        expect(
+          events.single,
+          startsWith('error(error):${a.id}:Provider chain exhausted'),
+        );
+        expect(events.single, isNot(contains('waited')));
+      },
+    );
+
+    test(
+      'the last eligible entry waits out even after an instant failover '
+      '(issue #1066)',
+      () async {
+        final a = _model('openai', 'gpt-a');
+        final b = _model('anthropic', 'claude-b');
+        final probe = _Probe({
+          'v-a': [_rateLimitTurn(a, retryAfter: const Duration(minutes: 10))],
+          'v-b': [
+            _rateLimitTurn(b, retryAfter: const Duration(seconds: 60)),
+            _okTurn(b, 'b waited it out'),
+          ],
+        });
+        final w = wrapper([
+          entry(probe, a, ['v-a']),
+          entry(probe, b, ['v-b']),
+        ], policy: const ModelRolesRetryPolicy(
+          retriesPerEntry: 1,
+          maxWait: Duration(seconds: 30),
+        ));
+
+        final events = await run(w);
+
+        // A's 10m wall instant-fails over to B (a fallback exists — the
+        // old policy); B is the last eligible entry, so its 60s wall is
+        // waited out instead of exhausting the chain.
+        expect(sleeps, [const Duration(seconds: 60)]);
+        expect(probe.calls, ['v-a', 'v-b', 'v-b']);
+        expect(events.last, 'done:${b.id}');
+        expect(notices.map((n) => n.kind), [
+          FallbackNoticeKind.modelFallback,
+          FallbackNoticeKind.retry,
+        ]);
+      },
+    );
+
     test('single-key exhaustion ends with the all-rate-limited path', () async {
       final a = _model('openai', 'gpt-a');
       final probe = _Probe({
@@ -868,10 +1008,18 @@ void main() {
         final w = wrapper([
           entry(probe, a, ['v-a', 'v-a2']),
           entry(probe, b, ['v-b', 'v-b2']),
-        ], policy: const ModelRolesRetryPolicy(retriesPerEntry: 1));
+        ], policy: const ModelRolesRetryPolicy(
+          retriesPerEntry: 1,
+          // Issue #1066: the 30s sole-entry ceiling keeps the wait-outs
+          // short so the 10m wall outlasts them and the budget burns out.
+          maxWaitForLastEntry: Duration(seconds: 30),
+        ));
 
-        // Call 1 benches every key (10m retryAfter) and cools both
-        // entries down; call 2 starts with the whole chain benched.
+        // Call 1 benches every key (10m retryAfter): A instant-fails over
+        // to B, B (last eligible) waits out 30s, and the spent budget
+        // exhausts the run. Call 2 starts with the whole chain still
+        // benched — no attempt lands, and the run tells the cooldown-wall
+        // story.
         await run(w);
         final events = await run(w);
 

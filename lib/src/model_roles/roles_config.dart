@@ -279,6 +279,7 @@ final class ModelRolesRetryPolicy {
     this.baseDelay = const Duration(milliseconds: 500),
     this.maxBackoff = const Duration(seconds: 8),
     this.maxWait = const Duration(minutes: 5),
+    this.maxWaitForLastEntry = const Duration(minutes: 5),
     this.keyBackoff = const Duration(minutes: 1),
   });
 
@@ -304,6 +305,8 @@ final class ModelRolesRetryPolicy {
       baseDelay: ms('baseDelayMs') ?? const Duration(milliseconds: 500),
       maxBackoff: ms('maxBackoffMs') ?? const Duration(seconds: 8),
       maxWait: ms('maxWaitMs') ?? const Duration(minutes: 5),
+      maxWaitForLastEntry:
+          ms('maxWaitForLastEntryMs') ?? const Duration(minutes: 5),
       keyBackoff: ms('keyBackoffMs') ?? const Duration(minutes: 1),
     );
   }
@@ -322,6 +325,13 @@ final class ModelRolesRetryPolicy {
   /// Give-up threshold: a required sleep longer than this fails over to the
   /// next chain entry instead of sleeping (omp `retry.maxDelayMs`).
   final Duration maxWait;
+
+  /// Sole-entry wait-out ceiling (issue #1066): when a required retry wait
+  /// exceeds [maxWait] and no other chain entry is available to fail over
+  /// to, the chain waits out the rate limit anyway — bounded to
+  /// `min(delay, maxWaitForLastEntry)` so a pathological `Retry-After`
+  /// (hours) still ends the chain.
+  final Duration maxWaitForLastEntry;
 
   /// How long a key (or chain entry) stays in backoff after a rate-limit
   /// failure that carried no `Retry-After` hint.
@@ -343,6 +353,7 @@ final class ModelRolesRetryPolicy {
         'baseDelayMs: ${baseDelay.inMilliseconds}\n'
         'maxBackoffMs: ${maxBackoff.inMilliseconds}\n'
         'maxWaitMs: ${maxWait.inMilliseconds}\n'
+        'maxWaitForLastEntryMs: ${maxWaitForLastEntry.inMilliseconds}\n'
         'keyBackoffMs: ${keyBackoff.inMilliseconds}\n';
   }
 }
