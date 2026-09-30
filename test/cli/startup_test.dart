@@ -68,6 +68,82 @@ void main() {
     });
   });
 
+  group('splitWireServeArgs', () {
+    test('a plain invocation passes through untouched', () {
+      final split = splitWireServeArgs(const ['--model', 'm', 'prompt']);
+      expect(split.wireServe, isFalse);
+      expect(split.cliArgs, const ['--model', 'm', 'prompt']);
+    });
+
+    test('stdio mode is detected and flags are stripped', () {
+      final split = splitWireServeArgs(const [
+        'wire-serve',
+        '--stdio',
+        '--model',
+        'm1',
+      ]);
+      expect(split.wireServe, isTrue);
+      expect(split.stdio, isTrue);
+      expect(split.port, isNull);
+      expect(split.token, isNull);
+      expect(split.cliArgs, const ['--model', 'm1']);
+    });
+
+    test('ws mode keeps port and token, strips flags and their values', () {
+      final split = splitWireServeArgs(const [
+        'wire-serve',
+        '--port',
+        '9999',
+        '--token',
+        'sekret',
+        '--model',
+        'm1',
+      ]);
+      expect(split.wireServe, isTrue);
+      expect(split.stdio, isFalse);
+      expect(split.port, 9999);
+      expect(split.token, 'sekret');
+      expect(split.cliArgs, const ['--model', 'm1']);
+    });
+
+    test('a value directly after --port/--token drops, the next one stays',
+        () {
+      final split = splitWireServeArgs(const [
+        'wire-serve',
+        '--token',
+        'sekret',
+        'positional',
+      ]);
+      expect(split.token, 'sekret');
+      expect(split.cliArgs, const ['positional']);
+    });
+
+    test('--stdio and --port together are a loud usage error', () {
+      expect(
+        () => splitWireServeArgs(const ['wire-serve', '--stdio', '--port', '1']),
+        throwsFormatException,
+      );
+    });
+
+    test('a missing or non-numeric --port value is a usage error', () {
+      expect(
+        () => splitWireServeArgs(const ['wire-serve', '--port']),
+        throwsFormatException,
+      );
+      expect(
+        () => splitWireServeArgs(const ['wire-serve', '--port', 'main']),
+        throwsFormatException,
+      );
+    });
+
+    test('a --token without a value is a usage error', () {
+      expect(
+        () => splitWireServeArgs(const ['wire-serve', '--token']),
+        throwsFormatException,
+      );
+    });
+  });
+
   group('splitServeA2aArgs', () {
     test('a plain invocation passes through untouched', () {
       final split = splitServeA2aArgs(const ['--model', 'm', 'prompt']);

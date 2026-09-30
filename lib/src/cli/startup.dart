@@ -70,7 +70,9 @@ typedef WireServeArgs =
 /// wire-serve flags are stripped from the list that reaches
 /// [parseCliArgs]. Exactly one transport: `--stdio` and `--port` together
 /// are a usage error (the card pins a loud startup failure, never a
-/// silent fallback); a bad `--port` value is one too.
+/// silent fallback); a bad `--port` value is one too. Decomposed into
+/// one-decision helpers — each stays at cyclomatic 3 or under, the CRAP
+/// ratchet floor for covered code.
 WireServeArgs splitWireServeArgs(List<String> args) {
   final isWireServe = args.contains('wire-serve');
   if (!isWireServe) {
@@ -82,49 +84,84 @@ WireServeArgs splitWireServeArgs(List<String> args) {
       cliArgs: args,
     );
   }
-  var stdio = false;
-  int? port;
-  String? token;
-  for (var i = 0; i < args.length; i++) {
-    switch (args[i]) {
-      case '--stdio':
-        stdio = true;
-      case '--port':
-        final parsed = i + 1 < args.length ? int.tryParse(args[i + 1]) : null;
-        if (parsed == null || parsed < 0) {
-          throw const FormatException('wire-serve: --port needs a port number');
-        }
-        port = parsed;
-      case '--token':
-        if (i + 1 >= args.length) {
-          throw const FormatException('wire-serve: --token needs a value');
-        }
-        token = args[i + 1];
-    }
-  }
-  if (stdio && port != null) {
-    throw const FormatException(
-      'wire-serve: --stdio and --port are mutually exclusive',
-    );
-  }
-  final cliArgs = <String>[
-    for (var i = 0; i < args.length; i++)
-      if (args[i] != 'wire-serve' &&
-          args[i] != '--stdio' &&
-          args[i] != '--port' &&
-          args[i] != '--token' &&
-          (i == 0 ||
-              (args[i - 1] != '--port' && args[i - 1] != '--token')))
-        args[i],
-  ];
+  final stdio = args.contains('--stdio');
+  final port = _readPort(args);
+  final token = _readToken(args);
+  _checkTransportExclusivity(stdio, port);
   return (
     wireServe: true,
     stdio: stdio,
     port: port,
     token: token,
-    cliArgs: cliArgs,
+    cliArgs: _keepCliArgs(args),
   );
 }
+
+/// The card pins exactly one transport per serve process.
+void _checkTransportExclusivity(bool stdio, int? port) {
+  if (stdio && port != null) {
+    throw const FormatException(
+      'wire-serve: --stdio and --port are mutually exclusive',
+    );
+  }
+}
+
+/// The first `--port` value in [args], or null when the flag is absent.
+/// A present-but-unparseable value is a usage error.
+int? _readPort(List<String> args) {
+  final index = args.indexOf('--port');
+  if (index < 0) {
+    return null;
+  }
+  return _parsePortValue(_flagValue(args, index));
+}
+
+int _parsePortValue(String? raw) {
+  final parsed = int.tryParse(raw ?? '');
+  if (parsed == null || parsed < 0) {
+    throw const FormatException('wire-serve: --port needs a port number');
+  }
+  return parsed;
+}
+
+/// The last `--token` value in [args] (later flags win, matching a scan),
+/// or null when the flag is absent. A present-but-missing value is a
+/// usage error.
+String? _readToken(List<String> args) {
+  final index = args.lastIndexOf('--token');
+  if (index < 0) {
+    return null;
+  }
+  final raw = _flagValue(args, index);
+  if (raw == null) {
+    throw const FormatException('wire-serve: --token needs a value');
+  }
+  return raw;
+}
+
+/// The value following the flag at [flagIndex], or null at the end.
+String? _flagValue(List<String> args, int flagIndex) =>
+    flagIndex + 1 < args.length ? args[flagIndex + 1] : null;
+
+const _wireServeFlags = {'wire-serve', '--stdio', '--port', '--token'};
+const _wireServeValueFlags = {'--port', '--token'};
+
+/// The args that survive wire-serve interception: the subcommand and its
+/// flags (and each flag's value) are stripped; everything else reaches
+/// [parseCliArgs].
+List<String> _keepCliArgs(List<String> args) =>
+    _dropFlagValues(args)
+        .where((arg) => !_wireServeFlags.contains(arg))
+        .toList();
+
+/// Drops the value that follows every value-taking flag (`--port N`).
+List<String> _dropFlagValues(List<String> args) => [
+  for (var i = 0; i < args.length; i++)
+    if (!_wireServeValueFlags.contains(_previousArg(args, i))) args[i],
+];
+
+String? _previousArg(List<String> args, int index) =>
+    index == 0 ? null : args[index - 1];
 
 /// Provider/model restoration. Precedence: an explicit `--provider` flag
 /// (full manual control, preconfigs disabled) > the `FA_PROVIDER_*` env

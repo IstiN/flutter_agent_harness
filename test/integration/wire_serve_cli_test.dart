@@ -18,7 +18,7 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show SocketException, Stdout, WebSocket, stderr;
+import 'dart:io' show SocketException, WebSocket, stderr;
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
