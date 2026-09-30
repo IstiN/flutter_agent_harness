@@ -602,6 +602,19 @@ jobs:
           echo "zip_name=$ZIP_NAME" >> $GITHUB_OUTPUT
           echo "manifest_name=$MANIFEST_NAME" >> $GITHUB_OUTPUT
 
+      # AC1 (#1096): per-entry uncompressed size table + +5% budget gate on
+      # the shipped mac zip (auto-update channel). arm64 baseline is
+      # committed (v1.0.493); other arches self-seed via --init-if-missing
+      # on their next release run — commit the printed manifest to arm.
+      - name: Size manifest + budget gate (mac zip)
+        run: |
+          MANIFEST_ARCH="$MATRIX_ARCH"
+          [ "$MANIFEST_ARCH" = "x86_64" ] && MANIFEST_ARCH="x64"
+          python3 scripts/size_manifest.py check "${{ steps.package.outputs.zip_name }}" \
+            --baseline "scripts/size_budget/fa-macos-${MANIFEST_ARCH}.tsv" --init-if-missing
+        env:
+          MATRIX_ARCH: ${{ matrix.arch }}
+
       - name: Package TestFlight PKG (arm64)
         if: matrix.arch == 'arm64'
         id: testflight_pkg
@@ -862,6 +875,12 @@ jobs:
       # landing page links it directly).
       - name: Build extension zip
         run: bash scripts/build_browser_ext.sh --with-app
+
+      # AC1 (#1096): per-entry uncompressed size table + +5% budget gate
+      # against the committed v1.0.493 release baseline. Shrink passes;
+      # growth (e.g. a dropped interpreter re-added) fails the release.
+      - name: Size manifest + budget gate (fa-extension.zip)
+        run: python3 scripts/size_manifest.py check build/fa-extension.zip --baseline scripts/size_budget/fa-extension.tsv
 
       - name: Upload extension to the release
         env:
