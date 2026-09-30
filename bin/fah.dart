@@ -2703,10 +2703,19 @@ Future<int> _runWireServeHost({
   };
   // WS mode: a supervisor closing our stdin pipe also ends the serve
   // (documented in docs/wire-protocol.md §8). The stdio transport owns
-  // stdin itself in --stdio mode.
+  // stdin itself in --stdio mode. A stdin ERROR is transport death, not
+  // silence: log it, then end the serve through the same graceful settle
+  // (review #1113 r4 — loud, never silent).
   StreamSubscription<void>? stdinSub;
   if (http != null) {
-    stdinSub = stdin.listen((_) {}, onDone: _wireServeSettle!);
+    stdinSub = stdin.listen(
+      (_) {},
+      onDone: _wireServeSettle!,
+      onError: (Object error) {
+        stderr.writeln('wire-serve: stdin failed: $error');
+        _wireServeSettle!();
+      },
+    );
   }
   try {
     final code = await cli.runWireServe(
@@ -2723,7 +2732,14 @@ Future<int> _runWireServeHost({
           // its full settle window and the persist never runs (review
           // #1113 r2, #3).
           await Future.any([shutdown.future, done]);
-          done.ignore();
+          // The race's loser still runs — surface a late transport
+          // failure (e.g. EPIPE on stdout mid-teardown) instead of the
+          // silent drop a bare `ignore()` would be (review #1113 r4).
+          unawaited(
+            done.catchError((Object error) {
+              stderr.writeln('wire-serve: stdio transport failed: $error');
+            }),
+          );
           return;
         }
         final listenDone = httpListen(http!, server, token);

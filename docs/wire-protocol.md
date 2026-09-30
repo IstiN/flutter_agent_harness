@@ -122,11 +122,12 @@ fa wire-serve [--port N] [--stdio] [--token T]
 stdin/stdout: one frame per line (framing above), blank lines ignored, EOF
 is a graceful shutdown. A parent process embeds fa with zero ports, zero
 tokens. Diagnostics never touch stdout — they go to stderr; the ONLY
-stdout traffic is frames.
+stdout traffic is frames. A line longer than 1 MiB is refused with a loud
+`bad_frame` frame and skipped — a memory bound, not a protocol change.
 
 **WebSocket (for independently-running servers).** Without `--stdio` the
 server binds `127.0.0.1` only (loopback; NOT a security boundary) and
-prints exactly ONE startup line to stdout before anything else:
+prints exactly ONE startup line to stdout (after the boot below):
 
 ```json
 {"wire_serve":{"port":4444,"token":"..."}}

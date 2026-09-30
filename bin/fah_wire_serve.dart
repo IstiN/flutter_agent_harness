@@ -109,32 +109,128 @@ String? _messageLine(Object message) {
   return null;
 }
 
+/// The NDJSON line bound: a line longer than this is refused with a loud
+/// `bad_frame` and skipped instead of growing memory without limit
+/// (review #1113 r4). In-frames are commands - prompts, steers, responses
+/// - so 1 MiB is far past any legitimate frame.
+const int _maxLineBytes = 1 << 20;
+
 /// Splits a raw byte stream into NDJSON lines on 0x0A (JSON never embeds
 /// a raw newline, so byte-level splitting is exact), carrying partial
 /// lines across chunks; a trailing 0x0D from CRLF writers is trimmed.
-Stream<List<int>> byteLines(Stream<List<int>> chunks) async* {
+/// The accumulator never copies the whole buffer per chunk (the carry
+/// completes at most once per chunk, the rest is scanned in place), and
+/// a line past [maxLineBytes] is dropped loudly via [onOversize] instead
+/// of growing without bound (review #1113 r4).
+Stream<List<int>> byteLines(
+  Stream<List<int>> chunks, {
+  void Function(String message)? onOversize,
+  int maxLineBytes = _maxLineBytes,
+}) async* {
   var carry = <int>[];
   await for (final chunk in chunks) {
-    final (lines, rest) = _drainByteLines(carry, chunk);
+    final (lines, carryRest) = _stepBytes(
+      carry,
+      chunk,
+      maxLineBytes,
+      onOversize,
+    );
     yield* Stream<List<int>>.fromIterable(lines);
-    carry = rest;
+    carry = carryRest;
   }
   if (carry.isNotEmpty) yield _trimCr(carry);
 }
 
-/// Drains every complete line out of `carry + chunk`; returns the lines
-/// and the trailing partial line (empty when the chunk ended on 0x0A).
-(List<List<int>>, List<int>) _drainByteLines(List<int> carry, List<int> chunk) {
-  final buffer = [...carry, ...chunk];
-  final lines = <List<int>>[];
-  var start = 0;
-  for (var i = 0; i < buffer.length; i++) {
-    if (buffer[i] == 0x0A) {
-      lines.add(_trimCr(buffer.sublist(start, i)));
-      start = i + 1;
-    }
+/// One drain step: emits the chunk's complete lines (oversized ones
+/// dropped with a loud [WireServeServer.protocolError]-shaped callback)
+/// and returns the trailing carry.
+(List<List<int>>, List<int>) _stepBytes(
+  List<int> carry,
+  List<int> chunk,
+  int maxLineBytes,
+  void Function(String message)? onOversize,
+) {
+  final (lines, rest, oversized) = _drainByteLines(carry, chunk, maxLineBytes);
+  if (oversized) onOversize?.call('ndjson line exceeded $maxLineBytes bytes');
+  return (lines, rest);
+}
+
+/// Drains every complete line out of `carry + chunk` without per-chunk
+/// copies of the accumulated buffer: the carry completes AT MOST once
+/// per chunk (one O(line) copy), everything after is scanned in place.
+/// Returns the lines, the trailing partial line, and whether an
+/// oversized line was discarded.
+(List<List<int>>, List<int>, bool) _drainByteLines(
+  List<int> carry,
+  List<int> chunk,
+  int maxLineBytes,
+) {
+  if (carry.isNotEmpty) return _drainCarryLine(carry, chunk, maxLineBytes);
+  return _finishSplit(chunk, 0, <List<int>>[], maxLineBytes);
+}
+
+/// The carry-completion branch: a line already in flight either finishes
+/// in this chunk, keeps growing (bounded - past the cap it is dropped),
+/// or is skipped to its terminating 0x0A when already oversized.
+(List<List<int>>, List<int>, bool) _drainCarryLine(
+  List<int> carry,
+  List<int> chunk,
+  int maxLineBytes,
+) {
+  if (carry.length > maxLineBytes) return _skipOversized(chunk, maxLineBytes);
+  final nl = chunk.indexOf(0x0A);
+  if (nl < 0) {
+    // A fresh growable list: the previous chunk's rest may be a
+    // fixed-length Uint8List view, which addAll would reject.
+    final merged = List<int>.of(carry)..addAll(chunk);
+    return (const <List<int>>[], merged, false);
   }
-  return (lines, buffer.sublist(start));
+  final merged = List<int>.of(carry)..addAll(chunk.sublist(0, nl));
+  return _finishSplit(chunk, nl + 1, <List<int>>[
+    _trimCr(merged),
+  ], maxLineBytes);
+}
+
+/// An oversized line is in flight: drop it and resume after the chunk's
+/// first newline (or consume the whole chunk when it has none). Always
+/// reports oversized - entering here means a line WAS discarded.
+(List<List<int>>, List<int>, bool) _skipOversized(
+  List<int> chunk,
+  int maxLineBytes,
+) {
+  final nl = chunk.indexOf(0x0A);
+  if (nl < 0) return (const <List<int>>[], <int>[], true);
+  final (lines, rest, _) = _finishSplit(
+    chunk,
+    nl + 1,
+    <List<int>>[],
+    maxLineBytes,
+  );
+  return (lines, rest, true);
+}
+
+/// Scans chunk[start..] for complete lines, prepending [head]; a
+/// complete line past [maxLineBytes] is dropped (not emitted) and marks
+/// the result oversized.
+(List<List<int>>, List<int>, bool) _finishSplit(
+  List<int> chunk,
+  int start,
+  List<List<int>> head,
+  int? maxLineBytes,
+) {
+  final lines = head;
+  var oversized = false;
+  for (var i = start; i < chunk.length; i++) {
+    if (chunk[i] != 0x0A) continue;
+    final line = _trimCr(chunk.sublist(start, i));
+    if (maxLineBytes != null && line.length > maxLineBytes) {
+      oversized = true;
+    } else {
+      lines.add(line);
+    }
+    start = i + 1;
+  }
+  return (lines, chunk.sublist(start), oversized);
 }
 
 List<int> _trimCr(List<int> line) => line.isNotEmpty && line.last == 0x0D
@@ -187,11 +283,23 @@ void writeStartupLine(WireServeStartupLine line) {
 /// Serves [WireServeServer.attach] over NDJSON stdin/stdout until stdin
 /// EOF; the returned future IS the graceful-shutdown trigger in stdio
 /// mode. Bytes decode through [byteLines] + strict per-line UTF-8 — a
-/// malformed byte is a loud `bad_frame`, never a silent server death.
+/// malformed byte or an oversized line is a loud `bad_frame`, never a
+/// silent server death.
 Future<void> serveStdio(WireServeServer server) {
   final send = (Map<String, dynamic> frame) {
     stdout.writeln(AgentWireProtocol.frameLine(frame));
     stdout.flush();
   };
-  return server.attach(decodeNdjson(server, byteLines(stdin), send), send);
+  return server.attach(
+    decodeNdjson(
+      server,
+      byteLines(
+        stdin,
+        onOversize: (message) =>
+            server.protocolError('bad_frame', message, send),
+      ),
+      send,
+    ),
+    send,
+  );
 }
