@@ -143,7 +143,11 @@ List<Message> _entryToMessages(SessionRecord entry) {
           ? const []
           : [
               UserMessage.text(
-                '$branchSummaryPrefix$summary$branchSummarySuffix',
+                '$branchSummaryPrefix'
+                // Issue #1131: heal before summarizing — raw poison must
+                // not ride the summarizer input and be paraphrased forward.
+                '${sanitizeSummary(summary).text}'
+                '$branchSummarySuffix',
                 timestamp: timestamp,
               ),
             ],
@@ -151,7 +155,9 @@ List<Message> _entryToMessages(SessionRecord entry) {
     // summaries as context (omp parity).
     CompactionRecord(:final summary, :final timestamp) => [
       UserMessage.text(
-        '$compactionSummaryPrefix$summary$compactionSummarySuffix',
+        '$compactionSummaryPrefix'
+        '${sanitizeSummary(summary).text}'
+        '$compactionSummarySuffix',
         timestamp: timestamp,
       ),
     ],

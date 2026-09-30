@@ -242,4 +242,74 @@ void main() {
       expect(checkpointText, contains('covers:'));
     });
   });
+
+  group('round-1 review pins (#1133)', () {
+    test('T1: durable reported speech with second person survives', () {
+      const durable =
+          '## Open User Requests\n'
+          '- [ ] The user asked you to re-run the full suite after the '
+          'previous fix lands.\n'
+          '- The user asked you to bump the version; CI currently fails on '
+          'the release job.\n';
+      final result = sanitizeSummary(durable);
+      expect(result.text, durable);
+      expect(result.stripped, isEmpty);
+    });
+
+    test('T2: unbracketed "context note:" mentions survive', () {
+      const prose =
+          'Documented the context note: format used by the pairing repairer. '
+          'See the docs page [redaction] for details.\n';
+      final result = sanitizeSummary(prose);
+      expect(result.text, prose);
+      expect(result.stripped, isEmpty);
+
+      const bullets =
+          '## Progress\n'
+          '- Added a context note: renderer\n'
+          '- Fixed the parser\n';
+      final bulletsResult = sanitizeSummary(bullets);
+      expect(bulletsResult.text, bullets);
+      expect(bulletsResult.stripped, isEmpty);
+    });
+
+    test('T2: an unterminated bracketed opener is left untouched', () {
+      const text =
+          'See [context note: docs for the format\n- Fixed the parser\n';
+      final result = sanitizeSummary(text);
+      expect(result.text, text);
+      expect(result.stripped, isEmpty);
+    });
+
+    test('T4: a bare list marker left by a strip is dropped, not duplicated',
+        () {
+      final result = sanitizeSummary(
+        '## Next Steps\n1. Ship the release.\n2. You just ran the 968 sweep.\n',
+      );
+      expect(result.text, '## Next Steps\n1. Ship the release.\n');
+      expect(result.stripped, hasLength(1));
+    });
+
+    test('T3: generateSummary heals previousSummary before the prompt',
+        () async {
+      const poisoned =
+          '## Progress\n- Your LAST tool call\'s RESULT was dropped from '
+          'context.\n- The login crash is fixed.\n';
+      final fake = _FakeSummarizer([
+        SummarizationResult.success(
+          '## Progress\n- The login crash is fixed.',
+        ),
+      ]);
+      await generateSummary(
+        [UserMessage.text('u1'), _assistant('a1')],
+        summarize: fake.call,
+        previousSummary: poisoned,
+      );
+      final prompt = fake.prompts.single.prompt;
+      expect(prompt, contains('<previous-checkpoint>'));
+      // The healed checkpoint rides the prompt; the poison does not.
+      expect(prompt, isNot(contains('was dropped')));
+      expect(prompt, contains('The login crash is fixed.'));
+    });
+  });
 }

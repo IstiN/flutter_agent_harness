@@ -25,7 +25,7 @@ library;
 typedef SanitizedSummary = ({String text, List<String> stripped});
 
 final RegExp _contextNoteOpen = RegExp(
-  r'\[?\s*context notes?\s*[—–\-:]',
+  r'\[\s*context notes?\s*[—–\-:]',
   caseSensitive: false,
 );
 
@@ -34,8 +34,14 @@ final RegExp _secondPerson = RegExp(
   caseSensitive: false,
 );
 
-final RegExp _recencyOrDrop = RegExp(
-  r'\b(?:dropped?|dropping|just|currently|about to|last|previous|prior)\b',
+/// The ephemeral constructions themselves — adjacency, not co-occurrence.
+/// A bare second-person pronoun plus a bare temporal word anywhere in a
+/// sentence strips durable prose ("the user asked you to re-run the full
+/// suite after the previous fix lands"); only these claim shapes fire.
+final RegExp _ephemeralClaim = RegExp(
+  r'\byour\s+(?:last|previous|prior)\b'
+  r'|\byou\s+(?:just|were about to|are about to)\b'
+  r'|\b(?:was|were)\s+dropped\b',
   caseSensitive: false,
 );
 
@@ -58,20 +64,22 @@ SanitizedSummary sanitizeSummary(String summary) {
   return (text: keptLines.join('\n'), stripped: stripped);
 }
 
-/// Removes every `[context note …]` block (to its closing `]`, or to the end
-/// of the text when unterminated), recording the removed spans as stripped.
+/// Removes every `[context note …]` block — opened by a real bracket and
+/// closed by a `]` on the same line; an unterminated opener is prose that
+/// merely mentions a context note and is left untouched — recording each
+/// removed span as stripped.
 String _stripContextNotes(String text, List<String> stripped) {
   final out = StringBuffer();
   var start = 0;
   for (final match in _contextNoteOpen.allMatches(text)) {
     if (match.start < start) continue; // opener inside a removed block
-    out.write(text.substring(start, match.start));
     final close = text.indexOf(']', match.end);
-    final end = close < 0 ? text.length : close + 1;
-    final removed = text.substring(match.start, end);
+    final newline = text.indexOf('\n', match.end);
+    if (close < 0 || (newline >= 0 && newline < close)) continue;
+    out.write(text.substring(start, match.start));
+    final removed = text.substring(match.start, close + 1);
     if (removed.trim().isNotEmpty) stripped.add(removed.trim());
-    if (close < 0) return out.toString();
-    start = end;
+    start = close + 1;
   }
   out.write(text.substring(start));
   return out.toString();
@@ -83,7 +91,7 @@ String? _sanitizeLine(String line, List<String> stripped) {
   final sentences = line.split(RegExp(r'(?<=[.!?])\s+'));
   final kept = <String>[];
   for (final sentence in sentences) {
-    if (_secondPerson.hasMatch(sentence) && _recencyOrDrop.hasMatch(sentence)) {
+    if (_secondPerson.hasMatch(sentence) && _ephemeralClaim.hasMatch(sentence)) {
       if (sentence.trim().isNotEmpty) stripped.add(sentence.trim());
       continue;
     }
@@ -92,6 +100,9 @@ String? _sanitizeLine(String line, List<String> stripped) {
   if (kept.length == sentences.length) return line;
   if (kept.isEmpty) return null;
   final text = kept.join(' ');
+  // A surviving bare list marker ("2." after its content was stripped)
+  // is noise, and re-attaching the original marker would duplicate it.
+  if (RegExp(r'^\s*(?:[-*+]|\d+\.)$').hasMatch(text)) return null;
   // A partially stripped bullet keeps its marker so the list stays valid.
   final bullet = RegExp(r'^(\s*(?:[-*+]|\d+\.)\s+)');
   if (bullet.hasMatch(line) && !bullet.hasMatch(text)) {

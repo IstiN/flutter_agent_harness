@@ -881,6 +881,12 @@ Future<String> generateSummary(
   String? userRequestCandidates,
   int? maxPromptTokens,
 }) async {
+  // Issue #1131: the previous checkpoint re-enters this prompt verbatim —
+  // heal it first so a poisoned old summary cannot be paraphrased forward
+  // into a fresh one (idempotent; clean records are unaffected).
+  previousSummary = previousSummary == null
+      ? null
+      : sanitizeSummary(previousSummary).text;
   var basePrompt = previousSummary != null
       ? prompts.summaryUpdate
       : prompts.summary;
@@ -1131,7 +1137,11 @@ List<Message> _entryToSummarizableMessages(SessionRecord entry) {
           ? const []
           : [
               UserMessage.text(
-                '$branchSummaryPrefix$summary$branchSummarySuffix',
+                '$branchSummaryPrefix'
+                // Issue #1131: summarize the healed text, never the raw
+                // persisted record — poison must not be paraphrased forward.
+                '${sanitizeSummary(summary).text}'
+                '$branchSummarySuffix',
                 timestamp: timestamp,
               ),
             ],

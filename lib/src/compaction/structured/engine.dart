@@ -720,7 +720,9 @@ final class StructuredCompactor {
       for (final folded in flattened) {
         prompt
           ..writeln('<folded-checkpoint>')
-          ..writeln(folded.text)
+          // Issue #1131: older persisted checkpoints re-enter this prompt
+          // verbatim — heal them so poison cannot be paraphrased forward.
+          ..writeln(sanitizeSummary(folded.text).text)
           ..writeln('</folded-checkpoint>');
       }
       if (priorFold != null) {
