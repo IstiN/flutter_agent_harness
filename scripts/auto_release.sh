@@ -153,10 +153,12 @@ PY
 
   if git push --force origin "HEAD:refs/heads/$branch"; then
     if [ "$(gh pr list --head "$branch" --state open --json number --jq 'length' 2>/dev/null || echo 0)" -ge 1 ]; then
+      gh pr edit "$branch" --add-label chore:pin 2>/dev/null || true
       echo "Auto-release: $branch refreshed; open PR now carries v$next."
     else
       gh pr create --base main --head "$branch" \
         --title "chore(release): v$next" \
+        --label chore:pin \
         --body "Automated patch release **v$next**.
 
 - \`pubspec.yaml\` + \`flutter_app/pubspec.yaml\` bumped to \`$next\`
