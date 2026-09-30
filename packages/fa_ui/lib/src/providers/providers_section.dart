@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show
         ModelsEndpointFetcher,
+        ProviderQuotaService,
         isCodeMieBaseUrl,
         isCopilotBaseUrl,
         isAiinBaseUrl;
@@ -19,6 +20,7 @@ import 'package:fa_ui/src/providers/openrouter_oauth_button.dart';
 import 'package:fa_ui/src/providers/provider_editor_page.dart';
 import 'package:fa_ui/src/providers/provider_marks.dart';
 import 'package:fa_ui/src/providers/provider_preset.dart';
+import 'package:fa_ui/src/providers/quota_gauge.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
 import 'package:fa_ui/src/utils/page_presentation.dart';
@@ -50,6 +52,7 @@ class ProvidersSection extends StatelessWidget {
     this.onCopilotConnect,
     this.onProviderReauthenticate,
     this.modelsFetcher,
+    this.quotas,
   });
 
   /// The user-added providers; `null` falls back to a non-persisting
@@ -111,12 +114,19 @@ class ProvidersSection extends StatelessWidget {
   /// model selector (preset, edit, and add flows).
   final ModelsEndpointFetcher? modelsFetcher;
 
+  /// The quota cache the rows render meters from (issue #823). Null keeps
+  /// the plain list — no gauges, no pull-to-refresh. When set, every
+  /// quota-marked row (OpenRouter, CodeMie, DIAL, on-device) trails a
+  /// [QuotaGauge] and the list gains pull-to-refresh over the configured
+  /// quota sources.
+  final ProviderQuotaService? quotas;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final strings = FaUiStrings.of(context);
     final registry = this.registry ?? ProviderRegistry.inMemory();
-    return ListenableBuilder(
+    final rows = ListenableBuilder(
       listenable: registry,
       builder: (context, _) {
         return Column(
@@ -153,6 +163,7 @@ class ProvidersSection extends StatelessWidget {
                       '${providerHostOf(preset.baseUrl!)}',
                   // The same branded mark the add-provider picker shows.
                   leading: ProviderMark(providerMarkKey(preset)),
+                  trailing: _quotaGauge(providerMarkKey(preset)),
                   onTap: () => _editPreset(context, registry, preset),
                 ),
             for (final provider in registry.providers)
@@ -175,6 +186,10 @@ class ProvidersSection extends StatelessWidget {
                 leading: ProviderMark(
                   providerMarkKeyForBaseUrl(provider.baseUrl),
                 ),
+                trailing: _quotaGauge(
+                  providerMarkKeyForBaseUrl(provider.baseUrl),
+                  connected: (registry.keyFor(provider.id) ?? '').isNotEmpty,
+                ),
                 onTap: () => _editCustom(context, registry, provider),
               ),
             // On-device engines are provider types too — plain rows in the
@@ -186,6 +201,9 @@ class ProvidersSection extends StatelessWidget {
                   theme,
                   label: route.label,
                   leading: ProviderMark(route.id),
+                  trailing: quotas == null
+                      ? null
+                      : QuotaGauge(service: quotas!, providerId: route.id),
                   onTap: () {
                     unawaited(_openOnDeviceRoute(context, route));
                   },
@@ -201,6 +219,60 @@ class ProvidersSection extends StatelessWidget {
         );
       },
     );
+    final service = quotas;
+    if (service == null) return rows;
+    // Pull-to-refresh (issue #823 AC6): the widget-publications-sheet
+    // pattern — RefreshIndicator over an always-scrollable shrink-wrapped
+    // list, re-fetching every configured quota source.
+    return RefreshIndicator(
+      onRefresh: () => _refreshQuotas(registry),
+      child: ListView(
+        shrinkWrap: true,
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [rows],
+      ),
+    );
+  }
+
+  /// Quota marks the gauge renders for (everything else stays gauge-free).
+  static const _quotaMarks = {'openrouter', 'codemie', 'dial'};
+
+  /// The trailing gauge for a row identified by its provider mark, or null
+  /// when the row has no quota surface (no store wired, a non-quota mark,
+  /// or no stored connection — an unconnected row would render a doomed
+  /// `unknown (no api key)` forever; review round 1).
+  Widget? _quotaGauge(String mark, {bool connected = true}) =>
+      quotas == null || !_quotaMarks.contains(mark) || !connected
+      ? null
+      : QuotaGauge(service: quotas!, providerId: mark);
+
+  /// One refresh per configured quota source: hosted presets the CLI chain
+  /// keys, custom rows on quota-marked endpoints, and the on-device kinds.
+  /// Unconfigured ids resolve to `unknown` instantly — refresh() coalesces
+  /// and never hammers an endpoint. Per-provider isolation makes the
+  /// refreshes independent, so they run in parallel (review round 2) —
+  /// same `Future.wait` shape as the CLI `/quota refresh`: the spinner
+  /// tracks the slowest single fetch, not the sum of the bounds.
+  Future<void> _refreshQuotas(ProviderRegistry registry) async {
+    final service = quotas;
+    if (service == null) return;
+    final ids = {for (final route in onDeviceProviders) route.id};
+    for (final preset in hostedProviderPresets) {
+      final mark = providerMarkKey(preset);
+      if (_quotaMarks.contains(mark) && hostedProviderConnected(preset)) {
+        ids.add(mark);
+      }
+    }
+    for (final provider in registry.providers) {
+      final mark = providerMarkKeyForBaseUrl(provider.baseUrl);
+      // Same connectivity rule the gauge renders under: an unconnected
+      // row would only cache a doomed `unknown (no api key)`.
+      if (_quotaMarks.contains(mark) &&
+          (registry.keyFor(provider.id) ?? '').isNotEmpty) {
+        ids.add(mark);
+      }
+    }
+    await Future.wait<void>([for (final id in ids) service.refresh(id)]);
   }
 
   Future<void> _openOnDeviceRoute(
@@ -225,6 +297,7 @@ class ProvidersSection extends StatelessWidget {
     String? badge,
     String? subtitle,
     Widget? leading,
+    Widget? trailing,
     IconData? leadingIcon = Icons.cloud_outlined,
     required VoidCallback onTap,
   }) {
@@ -272,6 +345,7 @@ class ProvidersSection extends StatelessWidget {
                 ],
               ),
             ),
+            if (trailing != null) ...[trailing, const SizedBox(width: 8)],
             Icon(
               Icons.chevron_right,
               size: 18,
