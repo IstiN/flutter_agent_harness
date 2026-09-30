@@ -1480,6 +1480,12 @@ Future<void> _runApp(List<String> args) async {
           provider,
           modelId: folderState.modelId,
           baseUrl: folderState.baseUrl,
+          // A saved custom-provider entry carrying this endpoint's
+          // authHeader (issue #964) must survive the restore.
+          authHeader: authHeaderForBaseUrl(
+            saved.customProviders,
+            folderState.baseUrl,
+          ),
           thinkingLevel: faPreconfig?.thinkingLevel,
         )
       : _buildModel(

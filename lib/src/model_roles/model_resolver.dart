@@ -212,6 +212,7 @@ final class ModelRolesResolver {
         maxTokens: ref.maxTokens,
         input: ref.input,
         thinkingLevel: ref.thinkingLevel,
+        authHeader: ref.authHeader,
       ),
       keyRing: ring,
       streamForKey: (apiKey) {
