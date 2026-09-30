@@ -22,6 +22,17 @@ final class SetInputHistoryMsg extends Msg {
   final List<String> history;
 }
 
+/// Message restoring the current-turn anchor on a resumed session (issue
+/// #827): [trailingLines] counts transcript lines written AFTER the
+/// replayed last-prompt echo's first row, so the model resolves the echo's
+/// index against its own output length when the message lands — after the
+/// replayed output it prefixes (`_send` flushes output ahead of every
+/// non-output message). -1 rides the pre-#827 global-bottom follow.
+final class SetTurnStartMsg extends Msg {
+  const SetTurnStartMsg(this.trailingLines);
+  final int trailingLines;
+}
+
 /// Message asking the model picker to refresh its items.
 final class _ModelsRefreshMsg extends Msg {}
 

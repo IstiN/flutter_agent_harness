@@ -532,4 +532,66 @@ void main() {
       expect(render(turned), golden(goldens, 'F4'), reason: 'F4 canonical frame');
     });
   });
+
+  group('resume restores the turn anchor (#827 × #446 1:1)', () {
+    // The replayed stream: 40 old rows, the last prompt echo (rule + text
+    // + blank = lines 40..42), a 20-row reply. All short lines — wrapped
+    // rows equal logical lines, so indices are inspectable.
+    List<String> replayed() => [
+      for (var i = 0; i < 40; i++) 'old row $i',
+      '─' * 80,
+      'RESUMED-PROMPT check the fold',
+      '',
+      // 12 reply rows: the turn (echo + reply = 15 rows) must FIT the
+      // 19-row viewport for the anchor to pin above the bottom.
+      for (var i = 0; i < 12; i++) 'resumed answer $i',
+    ];
+
+    test('SetTurnStartMsg resolves the echo index from the stream tail', () {
+      final model = _send(
+        _build().copyWith(outputLines: replayed()),
+        // Lines after the echo's first line: the blank echo tail + the
+        // 12-row reply.
+        const SetTurnStartMsg(14),
+      );
+      expect(model.turnStartLine, 40,
+          reason: '55 lines - 1 - 14 trailing = the echo line');
+      final rows = _rowsOf(model);
+      // The resumed window pins at the echo, exactly like a live submit:
+      // the echo box (rule first) is on the glass, the 40 old rows are
+      // above the fold, the turn pads blanks below.
+      expect(_hintN(rows), 40);
+      expect(rows.first, contains('──'));
+      expect(rows[1], contains('RESUMED-PROMPT'));
+      expect(
+        rows.take(19).any((r) => r.contains('old row')),
+        isFalse,
+        reason: 'pre-echo rows stay above the fold',
+      );
+    });
+
+    test('resumed frame is 1:1 with the live-submit frame', () {
+      final live = _build()
+          .copyWith(outputLines: replayed(), turnStartLine: 40);
+      final resumed = _send(
+        _build().copyWith(outputLines: replayed()),
+        const SetTurnStartMsg(14),
+      );
+      expect(_rowsOf(resumed), _rowsOf(live),
+          reason: 'resume must render the same window as the live turn');
+    });
+
+    test('an overlong trailing count degrades to the global-bottom follow',
+        () {
+      final anchored = _send(
+        _build().copyWith(outputLines: replayed()),
+        const SetTurnStartMsg(999),
+      );
+      expect(anchored.turnStartLine, -1);
+      final plain = _build().copyWith(outputLines: replayed());
+      expect(_hintN(_rowsOf(anchored)), _hintN(_rowsOf(plain)),
+          reason: 'degraded anchor rides the same bottom the pre-#827 '
+              'follow rode');
+    });
+  });
 }

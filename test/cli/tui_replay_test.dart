@@ -468,7 +468,7 @@ void main() {
       ];
       // Budget admits only the last entry: the kept region is fence-balanced
       // here (no synthetic fence needed).
-      var (entries, _) = buildReplayEntries(
+      var (entries, _, _) = buildReplayEntries(
         messages,
         tui: true,
         width: 40,
@@ -484,7 +484,7 @@ void main() {
         assistant([TextContent(text: '```\nlong code block')]),
         assistant([TextContent(text: '```\nafter the block')]),
       ];
-      (entries, _) = buildReplayEntries(
+      (entries, _, _) = buildReplayEntries(
         midCut,
         tui: true,
         width: 40,
@@ -509,7 +509,7 @@ void main() {
         assistant([call, TextContent(text: 'new answer')]),
         okResult('c9', 'hi'),
       ];
-      final (entries, firstIndex) = buildReplayEntries(
+      final (entries, firstIndex, _) = buildReplayEntries(
         [...old, ...recent],
         tui: true,
         width: 80,
@@ -558,7 +558,7 @@ void main() {
         UserMessage.text(notice),
         assistant([TextContent(text: 'done — the run is cancelled')]),
       ];
-      final (entries, _) = buildReplayEntries(
+      final (entries, _, _) = buildReplayEntries(
         messages,
         tui: true,
         width: 80,
@@ -586,6 +586,64 @@ void main() {
         return;
       }
       expect(rendered, file.readAsStringSync());
+    });
+  });
+
+  group('userEchoTrailing — the resumed turn anchor (#827)', () {
+    test('counts lines after the last real prompt echo, TUI shape agnostic',
+        () {
+      final messages = [
+        UserMessage.text('q1'),
+        assistant([TextContent(text: 'a1\na1 continues')]),
+        UserMessage.text('q2 — the last real prompt'),
+        assistant([TextContent(text: 'a2')]),
+      ];
+      final (entries, _, trailing) = buildReplayEntries(
+        messages,
+        tui: true,
+        width: 80,
+        dim: dim,
+      );
+      // Four entries in message order; the echo is the third entry. The
+      // count must equal everything below its first row — regardless of
+      // the bubble's row shape.
+      expect(entries, hasLength(4));
+      expect(
+        trailing,
+        entries[3].length + entries[2].length - 1,
+      );
+    });
+
+    test('chrome user rows never anchor the turn', () {
+      const notice =
+          '<system-notice>\nBackground shell job sh-1 finished.\n</system-notice>';
+      final messages = [
+        UserMessage.text('the only real prompt'),
+        assistant([TextContent(text: 'answer')]),
+        UserMessage.text('context $notice'),
+        assistant([TextContent(text: 'tail answer')]),
+      ];
+      final (entries, _, trailing) = buildReplayEntries(
+        messages,
+        tui: true,
+        width: 80,
+        dim: dim,
+      );
+      // The anchor is the FIRST entry (the only real echo): every written
+      // line but its own first row trails it.
+      final total = entries.fold<int>(0, (n, e) => n + e.length);
+      expect(trailing, total - 1);
+    });
+
+    test('no real prompt in the kept region degrades to -1', () {
+      const notice = '<system-notice>\nonly chrome\n</system-notice>';
+      final (_, _, trailing) = buildReplayEntries(
+        [UserMessage.text(notice), assistant([TextContent(text: 'a')])],
+        tui: true,
+        width: 80,
+        dim: dim,
+      );
+      expect(trailing, -1);
     });
   });
 }

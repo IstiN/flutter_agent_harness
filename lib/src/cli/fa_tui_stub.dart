@@ -123,6 +123,10 @@ final class FaTuiController {
 
   void setInputHistory(List<String> history) {}
 
+  /// No-op on web (the TUI never runs there). Mirrors the dart_tui
+  /// controller's method so agent_cli call sites compile for BOTH targets.
+  void setReplayTurnAnchor(int trailingLines) {}
+
   void sendBusy(bool busy, {String source = 'run'}) {}
 
   /// No-op on web: the stub controller renders nothing, so silent

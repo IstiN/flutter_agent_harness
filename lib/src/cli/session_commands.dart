@@ -123,7 +123,7 @@ extension on AgentCli {
     // Below the TUI history cap (2000 lines) so the replay never trims its
     // own head in TUI mode.
     final width = io.columns > 0 ? io.columns : 80;
-    final (entries, firstIndex) = buildReplayEntries(
+    final (entries, firstIndex, userEchoTrailing) = buildReplayEntries(
       messages,
       tui: _useTui,
       width: width,
@@ -141,6 +141,14 @@ extension on AgentCli {
       }
     }
     io.writeln(_style.dim('─' * 20));
+    if (userEchoTrailing >= 0) {
+      // Restore the current-turn anchor (issue #827): +1 for the separator
+      // row just written. The resumed window pins at the replayed last
+      // prompt's echo — the same boundary a live submit pinned at — so
+      // resume renders 1:1 with live (#446) now that follow anchors at the
+      // turn start.
+      _tuiController?.setReplayTurnAnchor(userEchoTrailing + 1);
+    }
   }
 
   /// `/resume`: switches to the most recently created session across every

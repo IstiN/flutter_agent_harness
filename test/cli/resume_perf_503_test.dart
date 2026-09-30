@@ -125,7 +125,7 @@ void main() {
     expect(messages.length, greaterThanOrEqualTo(500));
 
     final sw = Stopwatch()..start();
-    final (entries, _) = buildReplayEntries(
+    final (entries, _, _) = buildReplayEntries(
       messages,
       tui: true,
       width: 80,
@@ -159,7 +159,7 @@ void main() {
 
   test('keystroke repaint stays under 50ms with a marathon transcript', () {
     final messages = marathonMessages();
-    final (entries, _) = buildReplayEntries(
+    final (entries, _, _) = buildReplayEntries(
       messages,
       tui: true,
       width: 80,
