@@ -434,4 +434,212 @@ void main() {
       expect(metadata.cwd, '/work');
     });
   });
+
+  group('JsonlSessionStorage segment rotation', () {
+    late MemoryFileSystem fs;
+    const path = '/sessions/r.jsonl';
+    const rotate = 200;
+    const hardCap = 400;
+
+    setUp(() {
+      fs = MemoryFileSystem();
+    });
+
+    Future<JsonlSessionStorage> createRotating() {
+      return JsonlSessionStorage.create(
+        fs,
+        path,
+        cwd: '/work',
+        sessionId: 'r1',
+      ).then(
+        (storage) => storage.withRotationLimits(
+          rotateBytes: rotate,
+          hardCapBytes: hardCap,
+        ),
+      );
+    }
+
+    JsonlSessionStorage rotating(JsonlSessionStorage storage) =>
+        storage.withRotationLimits(rotateBytes: rotate, hardCapBytes: hardCap);
+
+    test(
+      'rotate: oversized primary moves to .part-0001, primary reseeds',
+      () async {
+        final storage = await createRotating();
+        await storage.appendEntry(
+          MessageRecord(
+            id: 'e1',
+            parentId: null,
+            timestamp: DateTime.utc(2026),
+            message: UserMessage.text('x' * 220),
+          ),
+        );
+        // The big record pushed the primary past the rotate threshold; the
+        // NEXT append rotates it away first.
+        await storage.appendEntry(
+          MessageRecord(
+            id: 'e2',
+            parentId: 'e1',
+            timestamp: DateTime.utc(2026),
+            message: UserMessage.text('e2'),
+          ),
+        );
+        final primary = (await fs.readTextFile(path)).getOrThrow();
+        expect(
+          primary.contains('"e2"'),
+          isTrue,
+          reason: 'active record in primary',
+        );
+        final part = (await fs.readTextFile('$path.part-0001')).getOrThrow();
+        expect(part.contains('"e1"'), isTrue, reason: 'old segment archived');
+        expect(
+          part.startsWith('{'),
+          isTrue,
+          reason: 'part keeps a header copy',
+        );
+      },
+    );
+
+    test('reopen loads parts + primary as one record chain', () async {
+      final storage = await createRotating();
+      await storage.appendEntry(
+        MessageRecord(
+          id: 'e1',
+          parentId: null,
+          timestamp: DateTime.utc(2026),
+          message: UserMessage.text('x' * 220),
+        ),
+      );
+      await storage.appendEntry(
+        MessageRecord(
+          id: 'e2',
+          parentId: 'e1',
+          timestamp: DateTime.utc(2026),
+          message: UserMessage.text('e2'),
+        ),
+      );
+      final reopened = await JsonlSessionStorage.open(fs, path);
+      expect((await reopened.getEntries()).map((e) => e.id), ['e1', 'e2']);
+      expect(await reopened.getLeafId(), 'e2');
+      // The whole parent chain resolves across the segment boundary.
+      final chain = await reopened.getPathToRoot('e2');
+      expect(chain.map((e) => e.id), ['e1', 'e2']);
+    });
+
+    test('rotation continues after reopen (no part overwrite)', () async {
+      final storage = await createRotating();
+      await storage.appendEntry(
+        MessageRecord(
+          id: 'e1',
+          parentId: null,
+          timestamp: DateTime.utc(2026),
+          message: UserMessage.text('x' * 220),
+        ),
+      );
+      await storage.appendEntry(
+        MessageRecord(
+          id: 'e2',
+          parentId: 'e1',
+          timestamp: DateTime.utc(2026),
+          message: UserMessage.text('e2'),
+        ),
+      );
+      final reopened = rotating(await JsonlSessionStorage.open(fs, path));
+      await reopened.appendEntry(
+        MessageRecord(
+          id: 'e3',
+          parentId: 'e2',
+          timestamp: DateTime.utc(2026),
+          message: UserMessage.text('x' * 220),
+        ),
+      );
+      await reopened.appendEntry(
+        MessageRecord(
+          id: 'e4',
+          parentId: 'e3',
+          timestamp: DateTime.utc(2026),
+          message: UserMessage.text('e4'),
+        ),
+      );
+      final part1 = (await fs.readTextFile('$path.part-0001')).getOrThrow();
+      final part2 = (await fs.readTextFile('$path.part-0002')).getOrThrow();
+      expect(part1.contains('"e1"'), isTrue);
+      expect(part2.contains('"e2"'), isTrue);
+      final reopened2 = await JsonlSessionStorage.open(fs, path);
+      expect((await reopened2.getEntries()).map((e) => e.id).toList(), [
+        'e1',
+        'e2',
+        'e3',
+        'e4',
+      ]);
+    });
+
+    test(
+      'hard cap: oldest records dropped with a warning, append never fails',
+      () async {
+        final warnings = <String>[];
+        final oldWarn = JsonlSessionStorage.onRotationWarning;
+        JsonlSessionStorage.onRotationWarning = warnings.add;
+        try {
+          final storage = await createRotating();
+          await storage.appendEntry(
+            MessageRecord(
+              id: 'big1',
+              parentId: null,
+              timestamp: DateTime.utc(2026),
+              message: UserMessage.text('a' * 300),
+            ),
+          );
+          // hardCap 400: the big record + header already sit above the cap
+          // band once a similar record lands; the cap must truncate the
+          // OLDEST records instead of failing.
+          await storage.appendEntry(
+            MessageRecord(
+              id: 'big2',
+              parentId: 'big1',
+              timestamp: DateTime.utc(2026),
+              message: UserMessage.text('b' * 300),
+            ),
+          );
+          final primary = (await fs.readTextFile(path)).getOrThrow();
+          expect(
+            primary.contains('"big2"'),
+            isTrue,
+            reason: 'the newest record survives the cap',
+          );
+          expect(warnings, isNotEmpty, reason: 'truncation surfaces a warning');
+        } finally {
+          JsonlSessionStorage.onRotationWarning = oldWarn;
+        }
+      },
+    );
+
+    test('no rotation below the thresholds', () async {
+      final storage = await createRotating().then(
+        (s) => s.withRotationLimits(rotateBytes: 10240, hardCapBytes: 20480),
+      );
+      await storage.appendEntry(
+        MessageRecord(
+          id: 'small1',
+          parentId: null,
+          timestamp: DateTime.utc(2026),
+          message: UserMessage.text('small'),
+        ),
+      );
+      await storage.appendEntry(
+        MessageRecord(
+          id: 'small2',
+          parentId: 'small1',
+          timestamp: DateTime.utc(2026),
+          message: UserMessage.text('small too'),
+        ),
+      );
+      expect((await fs.exists('$path.part-0001')).getOrThrow(), isFalse);
+      final storage2 = await JsonlSessionStorage.open(fs, path);
+      expect((await storage2.getEntries()).map((e) => e.id), [
+        'small1',
+        'small2',
+      ]);
+    });
+  });
 }

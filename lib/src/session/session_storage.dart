@@ -344,10 +344,48 @@ Future<SessionMetadata> loadJsonlSessionMetadata(
   _invalidSession(filePath, 'missing session header');
 }
 
+/// Session segment rotation thresholds (fa dev-leg gh-1077, 2026-09-30):
+/// the factory persists session traces into git, and one unbounded JSONL
+/// grew to 192.95 MB — GitHub rejected the whole push (GH001: file limit
+/// 100 MB) AFTER the agent had finished. The active segment rotates to a
+/// `<path>.part-NN` sibling at [kSessionSegmentRotateBytes]; the hard cap
+/// [kSessionSegmentHardCapBytes] drops the OLDEST records of the active
+/// segment (with a warning) instead of ever failing the append. Both sit
+/// well under the remote 100 MB file limit.
+const int kSessionSegmentRotateBytes = 80 << 20;
+const int kSessionSegmentHardCapBytes = 95 << 20;
+
+/// Suffix of the rotated segment siblings: `<primary>.part-0001`, …
+const String kSessionPartSuffix = '.part-';
+
+String sessionPartPath(String filePath, int seq) =>
+    '$filePath$kSessionPartSuffix${seq.toString().padLeft(4, '0')}';
+
+int? _parseSessionPartSeq(String name, String baseName) {
+  final prefix = '$baseName$kSessionPartSuffix';
+  if (!name.startsWith(prefix)) return null;
+  return int.tryParse(name.substring(prefix.length));
+}
+
+String? _sessionDirOf(String filePath) {
+  final i = filePath.lastIndexOf('/');
+  return i < 0 ? null : filePath.substring(0, i);
+}
+
+String _sessionBaseName(String filePath) {
+  final i = filePath.lastIndexOf('/');
+  return i < 0 ? filePath : filePath.substring(i + 1);
+}
+
 /// Append-only JSONL session storage on top of a [FileSystem].
 ///
 /// Ported from pi's `JsonlSessionStorage`.
 final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
+  /// Warning sink for segment-rotation events (hard-cap truncations,
+  /// rotation fallbacks). Silent by default — the CLI wires
+  /// `stderr.writeln` at startup. Never throws.
+  static void Function(String message)? onRotationWarning;
+
   JsonlSessionStorage._(
     this._fs,
     this._filePath,
@@ -356,11 +394,20 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     String? leafId, {
     int quarantined = 0,
     this._ioRetry = const SessionIoRetryConfig(),
+    String? headerLine,
+    int nextPartSeq = 1,
+    int? rotateBytes,
+    int? hardCapBytes,
   }) : _metadata = headerToSessionMetadata(header, _filePath),
+       _partSeq = nextPartSeq,
+       _rotateBytes = rotateBytes ?? kSessionSegmentRotateBytes,
+       _hardCapBytes = hardCapBytes ?? kSessionSegmentHardCapBytes,
        _entries = entries,
        _byId = {for (final entry in entries) entry.id: entry},
        _currentLeafId = leafId,
        _quarantinedEntries = quarantined {
+    _headerLine = headerLine;
+    _header = header;
     for (final entry in entries) {
       updateSessionLabelCache(_labelsById, entry);
     }
@@ -383,6 +430,23 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
   final int _quarantinedEntries;
   int get quarantinedEntries => _quarantinedEntries;
 
+  /// Raw JSON of the session header line — the seed of every rotated
+  /// segment. `null` only when the open path did not retain it; rotation
+  /// re-reads it from disk once, lazily.
+  String? _headerLine;
+
+  /// The parsed session header — kept so [withRotationLimits] can rebuild
+  /// an equivalent storage.
+  SessionHeader? _header;
+
+  /// Rotation sequence: continues after the `.part-NN` segments observed
+  /// at open.
+  int _partSeq = 0;
+
+  /// Active-segment thresholds — see [kSessionSegmentRotateBytes].
+  final int _rotateBytes;
+  final int _hardCapBytes;
+
   /// Milliseconds the last [open] spent inside the file lock (read +
   /// parse + rebuild); the wrapper logs `lock_wait = total - inner`.
   int _openInnerMs = 0;
@@ -391,6 +455,27 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
   /// construction). Backs [Session.cachedId].
   @override
   SessionMetadata get cachedMetadata => _metadata;
+
+  /// Test/host hook: the same session state with different rotation
+  /// limits (the shipped defaults ride the top-level constants).
+  JsonlSessionStorage withRotationLimits({
+    int? rotateBytes,
+    int? hardCapBytes,
+  }) {
+    return JsonlSessionStorage._(
+      _fs,
+      _filePath,
+      _header!,
+      [..._entries],
+      _currentLeafId,
+      quarantined: _quarantinedEntries,
+      ioRetry: _ioRetry,
+      headerLine: _headerLine,
+      nextPartSeq: _partSeq,
+      rotateBytes: rotateBytes,
+      hardCapBytes: hardCapBytes,
+    );
+  }
 
   /// Opens an existing session file.
   ///
@@ -429,76 +514,103 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
   ) async {
     final totalSw = Stopwatch()..start();
     var phaseSw = Stopwatch()..start();
-    final content = _fsOrThrow(
-      // Issue #427: the whole-file read behind an open can momentarily
-      // fail with a not-found-shaped error on some hosts; a short capped
-      // retry rides it out before the open gives up with a named error.
-      await retryTransientSessionFileIo(
-        () => fs.readTextFile(filePath),
-        op: 'open',
-        path: filePath,
-        config: ioRetry,
-      ),
-      'Failed to read session $filePath',
-    );
-    final readMs = phaseSw.elapsedMilliseconds;
-    phaseSw
-      ..reset()
-      ..start();
-    final allLines = [
-      for (final line in content.split('\n'))
-        if (line.trim().isNotEmpty) line,
-    ];
-    if (allLines.isEmpty) _invalidSession(filePath, 'missing session header');
-    final header = parseSessionHeaderLine(allLines.first, filePath);
-    final splitMs = phaseSw.elapsedMilliseconds;
-    phaseSw
-      ..reset()
-      ..start();
-    // The body (everything below the header) parses in bounded batches
-    // through [parseSessionLines] — inside a background isolate when a
-    // [SessionParseExecutor] is injected, inline-batched otherwise
-    // (issue #199). Torn lines come back as null slots and keep the exact
-    // quarantine flow below.
-    final parsed = await parseSessionLines(
-      allLines.sublist(1),
-      filePath: filePath,
-      firstLineNumber: 2,
-      executor: parseExecutor,
-    );
-    final parseMs = phaseSw.elapsedMilliseconds;
-    phaseSw
-      ..reset()
-      ..start();
-    final entries = <SessionRecord>[];
-    final goodLines = <String>[allLines.first];
-    final tornLines = <String>[];
-    String? leafId;
-    for (var i = 0; i < parsed.length; i++) {
-      final entry = parsed[i];
-      if (entry == null) {
-        // A malformed line is a torn write: drop the record, keep the raw
-        // bytes for the sidecar below. Never fatal.
-        tornLines.add(allLines[i + 1]);
-        continue;
-      }
-      entries.add(entry);
-      goodLines.add(allLines[i + 1]);
-      leafId = leafIdAfterSessionRecord(entry);
-    }
-    var quarantined = 0;
+    // Segment rotation (fa gh-1077): `<path>.part-NN` siblings hold older
+    // segments, the primary holds a header copy + the active tail. They
+    // are loaded in order — a resumed session must see the whole record
+    // chain (parents of recent records live in older segments).
+    final parts = await _listSessionParts(fs, filePath);
+    final segmentPaths = [...parts, filePath];
+    var primaryBytes = 0;
+    var readMs = 0;
+    var splitMs = 0;
+    var parseMs = 0;
     var rewriteMs = 0;
-    if (tornLines.isNotEmpty) {
-      quarantined = tornLines.length;
-      // Forensics sidecar first; read-only storage skips both writes and
-      // still loads fine with the torn records simply absent from memory.
-      try {
-        await fs.appendFile('$filePath.corrupt', '${tornLines.join('\n')}\n');
-        await fs.writeFile(filePath, '${goodLines.join('\n')}\n');
-        rewriteMs = phaseSw.elapsedMilliseconds;
-      } on Object {
-        // Read-only storage: the in-memory state is still consistent.
+    SessionHeader? header;
+    String? headerLine;
+    final entries = <SessionRecord>[];
+    var quarantined = 0;
+    for (final segmentPath in segmentPaths) {
+      final content = _fsOrThrow(
+        // Issue #427: the whole-file read behind an open can momentarily
+        // fail with a not-found-shaped error on some hosts; a short capped
+        // retry rides it out before the open gives up with a named error.
+        await retryTransientSessionFileIo(
+          () => fs.readTextFile(segmentPath),
+          op: 'open',
+          path: segmentPath,
+          config: ioRetry,
+        ),
+        'Failed to read session $segmentPath',
+      );
+      if (segmentPath == filePath) primaryBytes = content.length;
+      readMs += phaseSw.elapsedMilliseconds;
+      phaseSw
+        ..reset()
+        ..start();
+      final allLines = [
+        for (final line in content.split('\n'))
+          if (line.trim().isNotEmpty) line,
+      ];
+      if (allLines.isEmpty) {
+        _invalidSession(segmentPath, 'missing session header');
       }
+      final segmentHeader = parseSessionHeaderLine(allLines.first, segmentPath);
+      // Every segment carries a copy of the same header; the primary's
+      // is the one the storage exposes.
+      header ??= segmentHeader;
+      headerLine ??= allLines.first;
+      splitMs += phaseSw.elapsedMilliseconds;
+      phaseSw
+        ..reset()
+        ..start();
+      // The body (everything below the header) parses in bounded batches
+      // through [parseSessionLines] — inside a background isolate when a
+      // [SessionParseExecutor] is injected, inline-batched otherwise
+      // (issue #199). Torn lines come back as null slots and keep the exact
+      // quarantine flow below.
+      final parsed = await parseSessionLines(
+        allLines.sublist(1),
+        filePath: segmentPath,
+        firstLineNumber: 2,
+        executor: parseExecutor,
+      );
+      parseMs += phaseSw.elapsedMilliseconds;
+      phaseSw
+        ..reset()
+        ..start();
+      final goodLines = <String>[allLines.first];
+      final tornLines = <String>[];
+      for (var i = 0; i < parsed.length; i++) {
+        final entry = parsed[i];
+        if (entry == null) {
+          // A malformed line is a torn write: drop the record, keep the raw
+          // bytes for the sidecar below. Never fatal.
+          tornLines.add(allLines[i + 1]);
+          continue;
+        }
+        entries.add(entry);
+        goodLines.add(allLines[i + 1]);
+      }
+      if (tornLines.isNotEmpty) {
+        quarantined += tornLines.length;
+        // Forensics sidecar first; read-only storage skips both writes and
+        // still loads fine with the torn records simply absent from memory.
+        try {
+          await fs.appendFile(
+            '$segmentPath.corrupt',
+            '${tornLines.join('\n')}\n',
+          );
+          await fs.writeFile(segmentPath, '${goodLines.join('\n')}\n');
+          rewriteMs += phaseSw.elapsedMilliseconds;
+        } on Object {
+          // Read-only storage: the in-memory state is still consistent.
+        }
+      }
+    }
+    if (header == null) _invalidSession(filePath, 'missing session header');
+    String? leafId;
+    for (final entry in entries) {
+      leafId = leafIdAfterSessionRecord(entry);
     }
     phaseSw
       ..reset()
@@ -511,12 +623,15 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       leafId,
       quarantined: quarantined,
       ioRetry: ioRetry,
+      headerLine: headerLine,
+      nextPartSeq: parts.length + 1,
     );
     final buildMs = phaseSw.elapsedMilliseconds;
     storage._openInnerMs = totalSw.elapsedMilliseconds;
     timingLog?.call(
       'resume_timing open-detail file=${filePath.split('/').last} mode=full '
-      'bytes=${content.length} read_ms=$readMs split_ms=$splitMs '
+      'segments=${segmentPaths.length} bytes=$primaryBytes read_ms=$readMs '
+      'split_ms=$splitMs '
       'parse_ms=$parseMs records=${entries.length} torn=$quarantined '
       'rewrite_ms=$rewriteMs build_ms=$buildMs '
       'inner_ms=${storage._openInnerMs}',
@@ -559,6 +674,7 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       [],
       null,
       ioRetry: ioRetry,
+      headerLine: jsonEncode(header.toJson()),
     );
   }
 
@@ -604,6 +720,9 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     // message records landing while subagent-registry snapshots flush —
     // can never interleave their byte ranges mid-record.
     await withSessionFileLock(_filePath, () async {
+      // Segment rotation + hard cap ride the same lock as the append so a
+      // concurrent reader never sees a segment mid-rotation.
+      await _rotateIfNeededLocked(record);
       // Issue #427: a transient ENOENT on the record append (the
       // submit-death path) rides a short capped retry instead of losing
       // the record; exhaustion still fails as a named SessionException.
@@ -621,6 +740,180 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     _byId[record.id] = record;
     updateSessionLabelCache(_labelsById, record);
     _currentLeafId = leafIdAfterSessionRecord(record);
+  }
+
+  /// Rotates the active segment when it has grown past the rotate
+  /// threshold, then enforces the hard cap by dropping the OLDEST records
+  /// of the active segment. Best effort in both directions: any failure
+  /// falls through to the plain (unbounded) append — persistence must
+  /// never fail because housekeeping could not run.
+  Future<void> _rotateIfNeededLocked(SessionRecord incoming) async {
+    if (_headerLine == null) {
+      // Rotation needs a header line to seed the next segment; recover it
+      // from disk once. Unreadable → keep the plain append path.
+      try {
+        final lines = await _fs.readTextLines(_filePath, maxLines: 1);
+        final line = lines.valueOrNull?.firstOrNull;
+        if (line == null || line.trim().isEmpty) return;
+        _headerLine = line;
+      } on Object {
+        return;
+      }
+    }
+    final size = await _sessionFileSize();
+    if (size == null) return;
+    var active = size;
+    if (active >= _rotateBytes) {
+      active = await _rotateSegmentLocked();
+    }
+    final incomingBytes = jsonEncode(incoming.toJson()).length + 1;
+    if (active + incomingBytes > _hardCapBytes) {
+      await _truncateOldestLocked(incomingBytes);
+    }
+  }
+
+  /// Renames the primary to the next `.part-NN` sibling and seeds a fresh
+  /// primary with just the header. Returns the new (header-only) size, or
+  /// the pre-call size when the rotation could not complete (the caller
+  /// then still applies the hard cap to the un-rotated segment).
+  Future<int> _rotateSegmentLocked() async {
+    final partPath = sessionPartPath(_filePath, _nextPartSeq());
+    var renamed = false;
+    if (_fs is RenamableFileSystem) {
+      final result = await (_fs as RenamableFileSystem).renamePath(
+        _filePath,
+        partPath,
+      );
+      renamed = result.isOk;
+    }
+    if (!renamed) {
+      // No atomic-rename capability (or the rename failed): copy the
+      // segment out, then truncate the primary in place.
+      try {
+        final content = await _fs.readTextFile(_filePath);
+        if (content.isErr) return 0;
+        final written = await _fs.writeFile(partPath, content.valueOrNull!);
+        if (written.isErr) return 0;
+      } on Object {
+        return 0;
+      }
+    }
+    final seeded = await retryTransientSessionFileIo(
+      () => _fs.writeFile(_filePath, '${_headerLine!}\n'),
+      op: 'rotate',
+      path: _filePath,
+      config: _ioRetry,
+    );
+    if (seeded.isErr) {
+      // The primary must exist (appendFile alone would recreate it without
+      // a header and the next open would fail). Restore it from the part.
+      try {
+        final content = await _fs.readTextFile(partPath);
+        if (content.isOk) {
+          await _fs.writeFile(_filePath, content.valueOrNull!);
+          onRotationWarning?.call(
+            'session rotation: could not seed a fresh primary '
+            '($_filePath) — restored the pre-rotation segment',
+          );
+          return 0;
+        }
+      } on Object {
+        // fall through to the warning below
+      }
+      onRotationWarning?.call(
+        'session rotation: primary $_filePath missing a header — the next '
+        'append recreates it without one and the next open fails',
+      );
+      return 0;
+    }
+    onRotationWarning?.call(
+      'session rotation: ${_filePath.split('/').last} -> '
+      '${partPath.split('/').last}',
+    );
+    return _headerLine!.length + 1;
+  }
+
+  /// Drops the oldest records of the ACTIVE segment (never the header,
+  /// never the newest record) until the segment plus the incoming record
+  /// fits the hard cap. Rewrites the file in place; a no-op on any error.
+  Future<void> _truncateOldestLocked(int incomingBytes) async {
+    try {
+      final read = await _fs.readTextFile(_filePath);
+      if (read.isErr) return;
+      final lines = [
+        for (final line in read.valueOrNull!.split('\n'))
+          if (line.trim().isNotEmpty) line,
+      ];
+      // header + at most one record — nothing safe to drop.
+      if (lines.length <= 2) return;
+      final budget = _hardCapBytes - incomingBytes;
+      var kept = lines.first.length + 1 + lines.last.length + 1;
+      var keepFrom = lines.length - 1;
+      for (var i = lines.length - 2; i >= 2; i--) {
+        final lineSize = lines[i].length + 1;
+        if (kept + lineSize > budget) break;
+        kept += lineSize;
+        keepFrom = i;
+      }
+      final dropped = keepFrom - 1;
+      if (dropped <= 0) return;
+      final written = await _fs.writeFile(
+        _filePath,
+        '${[lines.first, ...lines.sublist(keepFrom)].join('\n')}\n',
+      );
+      if (written.isOk) {
+        onRotationWarning?.call(
+          'session hard cap $_hardCapBytes: dropped $dropped oldest '
+          'record(s) from ${_filePath.split('/').last} to fit the '
+          'incoming one',
+        );
+      }
+    } on Object {
+      // Best effort: never fail the append because of the cap.
+    }
+  }
+
+  /// Size of the active segment in bytes; null when the backend cannot
+  /// stat (rotation degrades to the plain append).
+  Future<int?> _sessionFileSize() async {
+    try {
+      final info = await _fs.fileInfo(_filePath);
+      return info.valueOrNull?.size;
+    } on Object {
+      return null;
+    }
+  }
+
+  int _nextPartSeq() {
+    var seq = _partSeq;
+    _partSeq = seq + 1;
+    return seq;
+  }
+
+  /// Lists the `<primary>.part-NN` siblings in rotation order.
+  static Future<List<String>> _listSessionParts(
+    FileSystem fs,
+    String filePath,
+  ) async {
+    final dir = _sessionDirOf(filePath);
+    final baseName = _sessionBaseName(filePath);
+    try {
+      final listing = await fs.listDir(dir ?? '.');
+      final files = listing.valueOrNull;
+      if (files == null) return const [];
+      final seqs = <int>[];
+      for (final file in files) {
+        final seq = _parseSessionPartSeq(file.name, baseName);
+        if (seq != null) seqs.add(seq);
+      }
+      seqs.sort();
+      final prefix = dir == null ? '' : '$dir/';
+      return [
+        for (final seq in seqs) '$prefix${sessionPartPath(baseName, seq)}',
+      ];
+    } on Object {
+      return const [];
+    }
   }
 
   @override

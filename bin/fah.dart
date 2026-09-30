@@ -238,6 +238,10 @@ void _handleUncaughtError(Object error, StackTrace stackTrace) {
 }
 
 Future<void> main(List<String> args) async {
+  // Session segment rotation warnings (fa gh-1077): the session layer has
+  // no console dependency — the CLI surfaces hard-cap truncations and
+  // rotation fallbacks on stderr.
+  JsonlSessionStorage.onRotationWarning = stderr.writeln;
   await runZoned(
     () => _runApp(args),
     zoneSpecification: ZoneSpecification(
