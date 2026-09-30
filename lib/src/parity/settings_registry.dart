@@ -314,11 +314,13 @@ const fileOnlyConfigKeys = <String, String>{
       'file.',
 
   // Background-job registry knobs (issue #478): the stale-entry age
-  // belt (`staleHours`) and the boot log GC (`logRetentionDays`) —
-  // operational knobs, tuned in the file; 0 disables either.
+  // belt (`staleHours`), the boot log GC (`logRetentionDays`), and the
+  // per-log size ceiling (`maxLogBytes`, issue #919) — operational knobs,
+  // tuned in the file; 0 disables the first two.
   'jobs':
-      'Job-registry reconcile knobs (issue #478) — staleHours age belt '
-      '+ logRetentionDays boot GC; operational, tuned in the file.',
+      'Job-registry knobs (issue #478) — staleHours age belt '
+      '+ logRetentionDays boot GC + maxLogBytes per-log ceiling '
+      '(issue #919); operational, tuned in the file.',
 
   // Visible-waiting heartbeat cadence + `--wait-for-jobs` ceiling
   // (issue #450) and the per-call foreground liveness knobs (gh-1055:

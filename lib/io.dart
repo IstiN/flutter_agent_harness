@@ -22,6 +22,7 @@ export 'src/cli/prompt_overrides_io.dart';
 export 'src/cli/ext_engine_process.dart';
 export 'src/env/isolate_session_parse_executor.dart';
 export 'src/env/session_parse_executor.dart';
+export 'src/env/free_space_io.dart';
 export 'src/env/io_execution_env.dart';
 export 'src/hub/local_hub.dart';
 export 'src/messaging/hub_transport.dart';
