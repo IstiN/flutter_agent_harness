@@ -301,8 +301,8 @@ final class _ChatGptCodexSession {
       while (await lines.moveNext().timeout(
         idle,
         onTimeout: () => throw TimeoutException(
-          'chatgpt-codex $_endpoint stalled: no SSE bytes for '
-          '${idle.inSeconds}s (stream idle timeout)',
+          'chatgpt-codex ${redactProviderUrl(_endpoint)} stalled: no SSE '
+          'bytes for ${idle.inSeconds}s (stream idle timeout)',
         ),
       )) {
         cancelToken?.throwIfCancelled();
@@ -351,7 +351,8 @@ final class _ChatGptCodexSession {
         .timeout(
           effectiveProviderConnectTimeout,
           onTimeout: () => throw TimeoutException(
-            'chatgpt-codex $_endpoint timed out: no response headers within '
+            'chatgpt-codex ${redactProviderUrl(_endpoint)} timed out: no '
+            'response headers within '
             '${effectiveProviderConnectTimeout.inSeconds}s '
             '(connect watchdog)',
           ),

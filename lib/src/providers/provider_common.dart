@@ -572,8 +572,8 @@ Future<http.StreamedResponse> _sendWatched(
   // the rendered "TimeoutException: …" text is the always-retryable contract
   // the failover/queue classifiers match on.
   http.StreamedResponse watchdogTimedOut() => throw TimeoutException(
-    'provider stream request to ${request.url} timed out: no response '
-    'headers within ${effectiveProviderConnectTimeout.inSeconds}s '
+    'provider stream request to ${redactProviderUrl(request.url)} timed out: '
+    'no response headers within ${effectiveProviderConnectTimeout.inSeconds}s '
     '(connect watchdog)',
   );
   if (cancelToken == null) {
@@ -647,6 +647,16 @@ Future<http.StreamedResponse> _validateStreamResponse(
     );
   }
   return response;
+}
+
+/// Renders [url] for watchdog/error text: scheme, host, port and path
+/// survive; userinfo and query are dropped — a custom provider's baseUrl
+/// can carry credentials (`https://user:key@gateway/…`, `?api_key=…`), and
+/// the rendered assistant error lands in the transcript verbatim
+/// (issue #1036, review round 2).
+String redactProviderUrl(Uri url) {
+  final port = url.hasPort ? ':${url.port}' : '';
+  return '${url.scheme}://${url.host}$port${url.path}';
 }
 
 /// Connect/first-headers watchdog for provider calls: an endpoint that

@@ -373,4 +373,59 @@ void main() {
       expect(msg, contains('models list'));
     });
   });
+
+  group('watchdog URL redaction (issue #1036 review round 2)', () {
+    test('redactProviderUrl keeps host, port and path, drops userinfo '
+        'and query', () {
+      expect(
+        redactProviderUrl(
+          Uri.parse(
+            'https://user:secret-token@gateway.example.com:8443/v1/responses'
+            '?api_key=k-123',
+          ),
+        ),
+        'https://gateway.example.com:8443/v1/responses',
+      );
+      expect(
+        redactProviderUrl(Uri.parse('https://api.example.com/v1/models')),
+        'https://api.example.com/v1/models',
+      );
+    });
+
+    test('a connect watchdog on a credentialed endpoint never leaks the '
+        'secret into the message', () async {
+      addTearDown(() => providerTimeoutsOverride = null);
+      providerTimeoutsOverride = const ProviderTimeoutsOverride(
+        connect: Duration(milliseconds: 150),
+      );
+      final client = http_testing.MockClient.streaming(
+        (request, requestBody) => Completer<http.StreamedResponse>().future,
+      );
+      await expectLater(
+        sendProviderRequest(
+          client,
+          http.Request(
+            'POST',
+            Uri.parse(
+              'https://user:secret-token@gateway.example.com/v1/responses'
+              '?api_key=k-123',
+            ),
+          ),
+          null,
+        ),
+        throwsA(
+          isA<TimeoutException>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('gateway.example.com/v1/responses'),
+              isNot(contains('secret-token')),
+              isNot(contains('api_key')),
+              isNot(contains('user:')),
+            ),
+          ),
+        ),
+      );
+    });
+  });
 }
