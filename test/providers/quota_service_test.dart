@@ -155,7 +155,7 @@ void main() {
       final first = await service.quotaFor('openrouter');
       expect(first.reason, 'HTTP 401');
       await service.quotaFor('openrouter');
-      await service.peek('openrouter');
+      service.peek('openrouter');
       expect(adapter.calls, 1, reason: 'no retry storm inside ttl');
 
       t = t.add(const Duration(minutes: 16));
