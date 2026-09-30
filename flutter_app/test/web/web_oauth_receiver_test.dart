@@ -56,7 +56,10 @@ void main() {
     final callback = await receiver.callback.timeout(
       const Duration(seconds: 5),
     );
-    expect(callback.host, html.window.location.host);
+    // Uri.host EXCLUDES the port; the authority carries host:port —
+    // compare like-for-like with window.location.host (CI serves on a
+    // non-default port).
+    expect(callback.authority, html.window.location.host);
     expect(callback.path, '/oauth/callback');
     expect(callback.queryParameters['code'], 'c-1');
     expect(callback.queryParameters['state'], 'st-1');
