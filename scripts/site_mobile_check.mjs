@@ -4,7 +4,7 @@
 // Asserts, in a real headless Chromium (Playwright, pinned 1.49.1 — the same
 // pin the Pages workflow uses for the boot smoke):
 //   AC1/AC4  every inventory page has documentElement.scrollWidth <= innerWidth
-//            at 360x640, 390x844, 768x1024, 641x800 and 1280x800 (desktop);
+//            at 360x640, 390x844, 768x1024, 641x800, 1024x768 and 1280x800 (desktop);
 //   AC2      header collapses into a disclosure menu: tap/Esc open-close,
 //            aria-expanded/aria-controls, every header link reachable, sticky
 //            bar height constant while open, Esc (not backdrop tap) refocuses;
@@ -14,6 +14,10 @@
 //            committed goldens in test/site/goldens/site-mobile/ (REG-D1);
 //   E2/E3/E5 landscape panel fits, rotate-to-desktop auto-closes,
 //            prefers-reduced-motion keeps the menu functional;
+//   gh-881   App Store CTA placements: header badge visible with the menu
+//            collapsed (AC2/E1), hero CTA + badge in the FIRST viewport at
+//            360px and 1440px (AC1, first-viewport goldens), desktop nav
+//            stays one row (E2), no-JS badge still visible (E3)
 //   E6       no-JS degrades to the wrapped-links layout, never a dead button.
 //
 // Link counts are read from the page, never hard-coded: the header link set
@@ -63,11 +67,13 @@ const VIEWPORTS = [
   [390, 844],
   [768, 1024],
   [641, 800],
+  [1024, 768],
   [1280, 800],
 ];
-// The menu collapse breakpoint is 960px (measured: the 11-link row fits
-// from ~945px). Keep this in sync with site/styles.css.
-const MENU_MAX_WIDTH = 960;
+// The menu collapse breakpoint is 1080px (re-measured for gh-881: the
+// 11-link row + header badge fits from ~1050px). Keep this in sync with
+// site/styles.css.
+const MENU_MAX_WIDTH = 1080;
 
 let failures = 0;
 let checks = 0;
@@ -85,6 +91,44 @@ async function shot(page, name) {
   if (!SHOTS) return;
   mkdirSync(SHOTS, { recursive: true });
   await page.screenshot({ path: path.join(SHOTS, `${name}.png`), fullPage: false });
+}
+
+// REG golden discipline shared by every byte-compare leg (gh-756 full-page
+// and gh-881 first-viewport alike): bake only under the pinned Playwright
+// Chromium, compare otherwise.
+function compareGolden(goldenPath, actual, label) {
+  if (UPDATE_GOLDENS) {
+    if (process.env.CHROMIUM_PATH) {
+      console.error(
+        'REFUSING to re-bake goldens under CHROMIUM_PATH: CI byte-compares\n' +
+        'against the pinned Playwright Chromium (no CHROMIUM_PATH). System\n' +
+        'Chromium rasterizes the site\'s system font stacks differently and\n' +
+        'would bake goldens that fail the leg. Install the pinned browser\n' +
+        '(`npm i playwright@1.49.1 && npx playwright install chromium`) and\n' +
+        're-run --update-goldens without CHROMIUM_PATH.');
+      process.exit(2);
+    }
+    mkdirSync(GOLDENS, { recursive: true });
+    writeFileSync(goldenPath, actual);
+    console.log(`  ok   golden re-baked: ${path.relative(root, goldenPath)} (${actual.length} bytes)`);
+    checks++;
+    return;
+  }
+  let expected;
+  try {
+    expected = readFileSync(goldenPath);
+  } catch {
+    ok(`${label} golden byte-compare`, false,
+      `golden missing: ${path.relative(root, goldenPath)} — re-bake with --update-goldens`);
+    return;
+  }
+  const same = expected.equals(actual);
+  if (!same && SHOTS) {
+    mkdirSync(SHOTS, { recursive: true });
+    writeFileSync(path.join(SHOTS, `REG-${path.basename(goldenPath)}`), actual);
+  }
+  ok(`${label} golden byte-compare (${expected.length} bytes)`, same,
+    same ? '' : `differs from ${path.relative(root, goldenPath)} — if the change is intended, re-bake with --update-goldens (pinned Playwright Chromium, NO CHROMIUM_PATH)`);
 }
 
 async function launch() {
@@ -200,8 +244,9 @@ async function main() {
   {
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
-    // Collapsed menu mode also covers the 641-960 band: the link row only
-    // fits from ~945px (measured), so 768 renders the burger too.
+    // Collapsed menu mode also covers the 641-1080 band: the link row +
+    // badge only fits from ~1050px (measured), so 768 renders the burger
+    // too.
     for (const [w, h] of [[360, 640], [390, 844], [768, 1024]]) {
       await page.setViewportSize({ width: w, height: h });
       await page.goto(`${BASE}/index.html`, { waitUntil: 'load' });
@@ -393,39 +438,91 @@ async function main() {
       await page.waitForTimeout(500);
       const actual = await page.screenshot({ fullPage: true, animations: 'disabled' });
       await ctx.close();
-      if (UPDATE_GOLDENS) {
-        if (process.env.CHROMIUM_PATH) {
-          console.error(
-            'REFUSING to re-bake goldens under CHROMIUM_PATH: CI byte-compares\n' +
-            'against the pinned Playwright Chromium (no CHROMIUM_PATH). System\n' +
-            'Chromium rasterizes the site\'s system font stacks differently and\n' +
-            'would bake goldens that fail the leg. Install the pinned browser\n' +
-            '(`npm i playwright@1.49.1 && npx playwright install chromium`) and\n' +
-            're-run --update-goldens without CHROMIUM_PATH.');
-          process.exit(2);
-        }
-        mkdirSync(GOLDENS, { recursive: true });
-        writeFileSync(goldenPath, actual);
-        console.log(`  ok   golden re-baked: ${path.relative(root, goldenPath)} (${actual.length} bytes)`);
-        checks++;
-        continue;
-      }
-      let expected;
-      try {
-        expected = readFileSync(goldenPath);
-      } catch {
-        ok(`${p} desktop golden byte-compare`, false,
-          `golden missing: ${path.relative(root, goldenPath)} — re-bake with --update-goldens`);
-        continue;
-      }
-      const same = expected.equals(actual);
-      if (!same && SHOTS) {
-        mkdirSync(SHOTS, { recursive: true });
-        writeFileSync(path.join(SHOTS, `REG-${p.replace(/\//g, '_')}@1280x800.png`), actual);
-      }
-      ok(`${p} desktop golden byte-compare (${expected.length} bytes)`, same,
-        same ? '' : `differs from ${path.relative(root, goldenPath)} — if the desktop change is intended, re-bake with --update-goldens (pinned Playwright Chromium, NO CHROMIUM_PATH)`);
+      compareGolden(goldenPath, actual, `${p} desktop`);
     }
+  }
+
+  // ── gh-881: App Store CTA placements — header badge + hero CTA ──────────
+  // AC1  first-viewport CTA at 360px and 1440px with zero scrolling
+  //      (+ viewport screenshot goldens, same REG rule as AC5);
+  // AC2  the header badge renders OUTSIDE the collapsed ☰ menu — visible
+  //      on mobile without any tap;
+  // E1   360px header budget: badge shows icon+«App Store», never
+  //      truncated to icon-only;
+  // E2   the badge does not wrap the desktop nav to two rows;
+  // E3   js-disabled: the badge is a plain link, still visible.
+  console.log('gh-881 — App Store CTA placements');
+  {
+    const ctx = await browser.newContext();
+    const page = await ctx.newPage();
+    // 1024 rides in the collapsed band since gh-881: the link row + badge
+    // fits only from ~1050px.
+    for (const [w, h] of [[360, 640], [390, 844], [768, 1024], [1024, 768]]) {
+      await page.setViewportSize({ width: w, height: h });
+      await page.goto(`${BASE}/index.html`, { waitUntil: 'load' });
+      await page.waitForTimeout(200);
+      const badge = page.locator('[data-store-referral="appstore-header"]');
+      ok(`@${w} header badge present`, (await badge.count()) === 1);
+      ok(`@${w} badge visible with menu collapsed, no tap (AC2)`,
+        (await page.locator('.nav-toggle').getAttribute('aria-expanded')) === 'false' &&
+        await badge.isVisible());
+      ok(`@${w} badge outside #nav-menu (AC2)`, await page.evaluate(() =>
+        !document.querySelector('[data-store-referral="appstore-header"]')
+          .closest('#nav-menu')));
+      const txt = await page.locator('.store-badge-text').boundingBox();
+      ok(`@${w} badge text visible, not icon-only (E1)`,
+        !!txt && txt.width > 30 && txt.height > 0, JSON.stringify(txt));
+      const r = await badge.boundingBox();
+      ok(`@${w} badge inside first viewport`,
+        !!r && r.y >= 0 && r.y + r.height <= h, JSON.stringify(r));
+    }
+    for (const [w, h] of [[360, 640], [1440, 900]]) {
+      await page.setViewportSize({ width: w, height: h });
+      await page.goto(`${BASE}/index.html`, { waitUntil: 'load' });
+      await page.waitForTimeout(300);
+      const hero = await page
+        .locator('[data-store-referral="appstore-hero"]')
+        .boundingBox();
+      ok(`@${w}x${h} hero CTA in first viewport, zero scroll (AC1)`,
+        !!hero && hero.y >= 0 && hero.y + hero.height <= h &&
+        hero.x >= 0 && hero.x + hero.width <= w, JSON.stringify(hero));
+      if (w > MENU_MAX_WIDTH) {
+        const nav = await page.evaluate(() => {
+          const n = document.querySelector('.nav').getBoundingClientRect();
+          const l = document.querySelector('.nav-links a').getBoundingClientRect();
+          return { navH: Math.round(n.height), linkTop: Math.round(l.top) };
+        });
+        ok(`@${w} nav stays one row with the badge (E2)`,
+          nav.navH <= 70 && nav.linkTop < 60, JSON.stringify(nav));
+      }
+    }
+    await ctx.close();
+
+    // AC1 goldens: first-viewport captures at both card widths.
+    for (const [w, h] of [[360, 640], [1440, 900]]) {
+      const goldenPath = path.join(GOLDENS, `index_first@${w}x${h}.png`);
+      const ctxG = await browser.newContext({
+        reducedMotion: 'reduce',
+        viewport: { width: w, height: h },
+      });
+      const pageG = await ctxG.newPage();
+      await pageG.goto(`${BASE}/index.html`, { waitUntil: 'load' });
+      await pageG.waitForTimeout(500);
+      const actual = await pageG.screenshot({ animations: 'disabled' });
+      await ctxG.close();
+      compareGolden(goldenPath, actual, `index first-viewport @${w}x${h}`);
+    }
+
+    // E3: no-JS — the badge is a plain link, still visible.
+    const ctxN = await browser.newContext({ javaScriptEnabled: false });
+    const pageN = await ctxN.newPage();
+    for (const [w, h] of [[360, 640], [1280, 800]]) {
+      await pageN.setViewportSize({ width: w, height: h });
+      await pageN.goto(`${BASE}/index.html`, { waitUntil: 'load' });
+      ok(`E3 no-JS @${w}: badge visible`,
+        await pageN.locator('[data-store-referral="appstore-header"]').isVisible());
+    }
+    await ctxN.close();
   }
 
   await browser.close();
