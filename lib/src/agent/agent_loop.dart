@@ -1211,22 +1211,39 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
     }
 
     // Mid-turn over-window guard (issue #387): tool outputs can balloon one
-    // turn far past the model window. Returns the relief-updated context
-    // plus either a terminal guard turn or a retry flag (relief replaced
-    // the context — the request is rebuilt and retried).
-    final guard = await _overWindowGuardTurn(
-      context,
-      requestContext,
-      config,
-      emit,
-      reliefUsed,
-      cancelToken,
+    // turn far past the model window. The cheap window check runs
+    // SYNCHRONOUSLY and only an actual overflow awaits
+    // [_overWindowGuardTurn] — an unconditional await here yields a
+    // microtask on EVERY turn, which reshuffles host event-listener
+    // interleaving downstream (issue #1085 CI: the flutter service's
+    // persist passes lost the final assistant append). Same shape, no
+    // yield on the normal path.
+    final window = effectiveContextWindow(
+      config.model.contextWindow,
+      config.contextWindowCap,
     );
-    reliefUsed = guard.reliefUsed;
-    if (guard.terminal != null) return guard.terminal!;
-    if (guard.retried) {
-      context = guard.context;
-      continue;
+    final tokens = estimateRequestTokens(
+      requestContext.messages,
+      systemPrompt: requestContext.systemPrompt,
+      tools: requestContext.tools ?? const [],
+    );
+    if (window > 0 && tokens > window) {
+      final guard = await _overWindowGuardTurn(
+        context,
+        requestContext,
+        config,
+        emit,
+        reliefUsed,
+        cancelToken,
+        window,
+        tokens,
+      );
+      reliefUsed = guard.reliefUsed;
+      if (guard.terminal != null) return guard.terminal!;
+      if (guard.retried) {
+        context = guard.context;
+        continue;
+      }
     }
 
     AssistantMessageEventStream response;
@@ -1309,22 +1326,16 @@ Future<_OverWindowGuardStep> _overWindowGuardTurn(
   AgentEventSink emit,
   bool reliefUsed,
   CancelToken? cancelToken,
+  int window,
+  int tokens,
 ) async {
-  final window = effectiveContextWindow(
-    config.model.contextWindow,
-    config.contextWindowCap,
-  );
-  // The same accounting basis as the host's ctx meter and the
-  // compaction threshold: transcript estimate PLUS the system-prompt /
-  // tool-schema overhead when no provider-usage anchor prices them in
-  // (an unanchored estimate otherwise undercounts every request by
-  // that overhead — the "meter said 64% but the request was
-  // over-window" mismatch).
-  final tokens = estimateRequestTokens(
-    requestContext.messages,
-    systemPrompt: requestContext.systemPrompt,
-    tools: requestContext.tools ?? const [],
-  );
+  // `window`/`tokens` are computed synchronously by the caller (the same
+  // accounting basis as the host's ctx meter and the compaction
+  // threshold: transcript estimate PLUS the system-prompt / tool-schema
+  // overhead when no provider-usage anchor prices them in — an
+  // unanchored estimate otherwise undercounts every request by that
+  // overhead — the "meter said 64% but the request was over-window"
+  // mismatch).
   if (window <= 0 || tokens <= window) {
     return (
       context: context,
