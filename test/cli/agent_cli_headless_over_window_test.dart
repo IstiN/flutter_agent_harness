@@ -146,8 +146,13 @@ void main() {
       expect(exitCode, 1, reason: 'the guard stop is a failed run');
       expect(
         io.out.toString(),
-        contains('could not free the context window'),
+        contains('compaction did not run'),
         reason: 'the settle path ran: the note follows the compact attempt',
+      );
+      expect(
+        io.out.toString(),
+        contains('The task was NOT continued'),
+        reason: 'the loud terminal verdict names the stopped task',
       );
     },
   );
