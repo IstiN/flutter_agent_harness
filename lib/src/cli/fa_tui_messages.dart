@@ -23,14 +23,18 @@ final class SetInputHistoryMsg extends Msg {
 }
 
 /// Message marking the resumed boot's replay anchor (issue #446 wave-14):
-/// the model records its CURRENT output-line count as the restored
-/// transcript's first row. The controller queues it between the banner
-/// drain and the replay writes, so the count lands exactly on the
-/// reconciliation summary / restored-session header — the follow window
-/// anchors there while the boot chrome + transcript fit the glass
+/// [line] is the controller's newline count at the `markReplayAnchor()`
+/// call — the exact outputLines index the next write (the reconciliation
+/// summary) lands on. The count is captured at the call site, NOT when
+/// the model consumes the queued message: the queue lag after the boot
+/// backlog made a model-side count name the transcript END, folding the
+/// whole boot banner on every boot (CI round 2). The follow window
+/// anchors there while the boot chrome + transcript overflow the glass
 /// together (the banner rides the fold under the #827 indicator).
 final class SetBootAnchorMsg extends Msg {
-  const SetBootAnchorMsg();
+  const SetBootAnchorMsg(this.line);
+
+  final int line;
 }
 
 /// Message asking the model picker to refresh its items.

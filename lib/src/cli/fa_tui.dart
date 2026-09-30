@@ -2588,6 +2588,12 @@ final class FaTuiController {
   /// the whole output history — PER DELTA, saturating the event loop so
   /// keystrokes queued up behind them (typing lag while a run streamed).
   final _outputBuffer = StringBuffer();
+
+  /// Newlines handed to [sendOutput] so far — the transcript index the
+  /// next write lands on (the model's outputLines grow exactly per '\n').
+  /// The boot replay anchor captures this at its call site (issue #446
+  /// wave-14); a model-side count would race the boot backlog drain.
+  int _sentNewlines = 0;
   Timer? _outputFlushTimer;
   // 16ms (~60 fps): frames are micro-cheap (traced p50 build 37µs on a
   // huge session), so flushing thrice as often just makes streamed text

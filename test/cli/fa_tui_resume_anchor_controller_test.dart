@@ -203,6 +203,44 @@ void main() {
         reason: 'the boot anchor dissolved — turn N+1 owns the window');
   }, timeout: const Timeout(Duration(seconds: 60)));
 
+  test('a boot whose transcript fits the glass NEVER folds the banner '
+      '(CI round-2 regression: the queue-lag anchor parked the window at '
+      'the transcript end and [Model] never reached the glass)', () async {
+    final frames = _FrameSink();
+    final keys = StreamController<List<int>>();
+    final controller = FaTuiController(
+      callbacks: _callbacks(),
+      isExited: () => false,
+      programHooks: TuiProgramHooks(
+        input: keys.stream,
+        output: frames,
+        width: 80,
+        height: 24,
+      ),
+    );
+    for (final line in _banner) {
+      controller.sendOutput(line, newline: true);
+    }
+    // agent_cli_repl_boot.dart calls markReplayAnchor on EVERY boot —
+    // resumed or not. The carried count (13) names the row AFTER the
+    // banner; with the banner + nothing else fitting the glass the
+    // window must stay at offset 0.
+    controller.markReplayAnchor();
+    controller.sendOutput(_summary, newline: true);
+    final run = controller.run();
+    await waitForIt(() => frames.text.contains('lost on restart'));
+    final screen = stripAnsi(frames.text);
+    expect(screen, contains('[Model]'),
+        reason: 'the banner paints when everything fits (waitForBoot '
+            'sentinel — its absence timed out every PTY suite)');
+    expect(_hintN(screen), isNull,
+        reason: 'nothing may fold while the transcript fits the glass');
+    keys.add([0x03]);
+    keys.add([0x03]);
+    await run;
+    await keys.close();
+  }, timeout: const Timeout(Duration(seconds: 60)));
+
   test('a marathon transcript still rides the bottom — the tail outranks '
       'the boot region when the two cannot share the glass', () async {
     final frames = _FrameSink();

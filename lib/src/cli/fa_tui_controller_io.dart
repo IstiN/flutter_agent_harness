@@ -12,6 +12,7 @@ extension FaTuiControllerIo on FaTuiController {
     // role of the flag's extra empty line).
     _outputBuffer.write(text);
     if (newline) _outputBuffer.write('\n');
+    _sentNewlines += '\n'.allMatches(text).length + (newline ? 1 : 0);
     if (_running) {
       _outputFlushTimer ??= Timer(
         FaTuiController._outputFlushInterval,
@@ -92,14 +93,13 @@ extension FaTuiControllerIo on FaTuiController {
   }
 
   /// Marks the resumed boot's replay anchor (issue #446 wave-14): the
-  /// model records its CURRENT output-line count as the restored
-  /// transcript's first row, so the follow window anchors there while the
-  /// boot chrome + transcript fit the glass together. Call BEFORE the
-  /// reconciliation summary / replay writes — the flush-then-queue
-  /// ordering lands the count exactly on the summary row.
+  /// newline count captured HERE — before the summary/replay writes —
+  /// rides the message, so the queue lag after the boot backlog can never
+  /// re-name the anchor (CI round 2: a model-side count consumed after
+  /// the drain named the transcript END and folded the whole banner).
   void markReplayAnchor() {
     _flushOutput();
-    _send(const SetBootAnchorMsg());
+    _send(SetBootAnchorMsg(_sentNewlines));
   }
 
 

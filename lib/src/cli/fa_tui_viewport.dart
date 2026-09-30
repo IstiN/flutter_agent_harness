@@ -63,14 +63,15 @@ extension _TuiViewport on FaTuiModel {
     if (msg is HubStateMsg) return _handleHubStateMsg(msg);
     if (msg is _CloseHubMsg) return (copyWith(clearHub: true), null);
     if (msg is SetBootAnchorMsg) {
-      // The anchor names the row the restored transcript starts on (issue
-      // #446 wave-14). The newline flag's trailing phantom row is not
-      // content — the next append fills it (the summary lands ON it), so
-      // it must not count into the anchor. With no output yet this
-      // degrades to no-op (0).
-      final pending =
-          outputLines.isNotEmpty && outputLines.last.isEmpty ? 1 : 0;
-      return (copyWith(bootAnchorLine: outputLines.length - pending), null);
+      // The count is captured at the CONTROLLER call site (issue #446
+      // wave-14, CI round 2): the queued message is consumed only after
+      // the boot backlog drained into the model, so reading
+      // outputLines.length here named the transcript END and folded the
+      // entire boot banner on every PTY boot ('[Model]' never reached the
+      // glass). The carried count = '\n's written before the anchor call
+      // = the exact row the next write (the reconciliation summary)
+      // lands on — the trailing phantom slot.
+      return (copyWith(bootAnchorLine: msg.line), null);
     }
 
     if (msg is _SetInputTextMsg) {
@@ -105,18 +106,25 @@ extension _TuiViewport on FaTuiModel {
   /// bottom, where the fold indicator owns the explanation.
   ///
   /// The resumed boot's replay anchor joins the same max() (issue #446
-  /// wave-14): while following, the window also refuses to start later
-  /// than the restored transcript's first row, so a boot whose banner
-  /// chrome + summary + replayed tail overflow the glass anchors at the
-  /// transcript start — the banner rides the fold under the #827
-  /// indicator instead of pushing the tail's head off the glass.
+  /// wave-14) — but ONLY when the glass must fold something: banner
+  /// chrome + restored transcript overflowing the viewport anchors at the
+  /// transcript start (the banner rides the fold under the #827
+  /// indicator, the tail's head stays on the glass); a transcript that
+  /// fits alone keeps offset 0 — parking the window on the anchor row
+  /// folded the whole boot banner on every healthy boot (CI round 2:
+  /// '[Model]' never painted, every PTY suite timed out at waitForBoot).
+  /// And when even the anchored region overflows, the tail outranks the
+  /// boot region and the anchor degrades to the bottom.
   int _turnAnchor(List<String> wrapped) {
     final bottom = _scrollBottom(wrapped);
     var anchor = bottom;
     final start = _turnStartRow();
     if (start > anchor) anchor = start;
     final boot = _bootAnchorRow();
-    if (boot != null && boot > anchor) anchor = boot;
+    if (boot != null && wrapped.length > _viewportHeight) {
+      final region = wrapped.length - boot;
+      if (region <= _viewportHeight && boot > anchor) anchor = boot;
+    }
     return anchor;
   }
 
