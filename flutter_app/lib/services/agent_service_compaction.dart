@@ -135,27 +135,39 @@ class _AutoCompactorFlutterHooks implements AutoCompactorHooks {
 final class _StoreBackedRolesMap
     with MapMixin<String, List<ModelRef>>
     implements Map<String, List<ModelRef>> {
-  _StoreBackedRolesMap(this._store);
+  /// [fallback] carries the yaml `roles:` chains (issue #1078): a store
+  /// miss reads through to it (E1 — the explicit app-UI store wins, yaml
+  /// fills the gaps). The store is null when no TaskModelsStore was
+  /// wired (yaml-only services).
+  _StoreBackedRolesMap(this._store, {Map<String, List<ModelRef>>? fallback})
+    // ignore: prefer_initializing_formals
+    : _fallback = fallback;
 
-  final TaskModelsStore _store;
+  final TaskModelsStore? _store;
+  final Map<String, List<ModelRef>>? _fallback;
 
   @override
   List<ModelRef>? operator [](Object? key) {
     if (key is! String) return null;
-    final config = _store.overrideFor(key);
-    if (config == null) return null;
-    return [
-      ModelRef(
-        provider: config.providerKind,
-        modelId: config.modelId,
-        apiKeyName: config.apiKeyName,
-        baseUrl: config.baseUrl,
-      ),
-    ];
+    final config = _store?.overrideFor(key);
+    if (config != null) {
+      return [
+        ModelRef(
+          provider: config.providerKind,
+          modelId: config.modelId,
+          apiKeyName: config.apiKeyName,
+          baseUrl: config.baseUrl,
+        ),
+      ];
+    }
+    return _fallback?[key];
   }
 
   @override
-  Iterable<String> get keys => _store.configuredRoles.toList(growable: false);
+  Iterable<String> get keys => {
+    ...?_store?.configuredRoles,
+    ...?_fallback?.keys,
+  }.toList(growable: false);
 
   @override
   void operator []=(String key, List<ModelRef> value) =>

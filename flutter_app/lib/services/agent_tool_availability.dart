@@ -30,8 +30,19 @@ class AgentToolAvailability {
     required this.registry,
     required this.rebuildPrompt,
     ToolsConfig initialConfig = const ToolsConfig(),
+    // yaml scope entries under the runtime one (issue #1078): user
+    // `~/.fah/config.yaml` (global) + project `.fah/config.yaml`
+    // (project) — the app-UI store stays the runtime scope above them
+    // (E1: explicit choice wins, yaml fills the gaps).
+    List<(ToolScope, ToolsConfig)> configScopes = const [],
+    AgentLoadMode loadMode = AgentLoadMode.defaultMode,
+    // ignore: prefer_initializing_formals — private fields, public params
   }) : _agent = agent,
-       _config = initialConfig {
+       _config = initialConfig,
+       // ignore: prefer_initializing_formals
+       _configScopes = configScopes,
+       // ignore: prefer_initializing_formals
+       _loadMode = loadMode {
     final agentTools = tools.whereType<AgentTool>().toList();
     _capabilities = _capabilitiesFor(agentTools, onDevice: onDevice);
     final toolsById = <String, List<AgentTool>>{};
@@ -40,6 +51,10 @@ class AgentToolAvailability {
       if (id != null) toolsById.putIfAbsent(id, () => []).add(tool);
     }
     _gate = ToolAvailabilityGate(toolsById: toolsById);
+    // Load-mode discovery surface (issue #680): omp keeps the
+    // `discover_tools` path live, pi keeps the exact benchmark shape.
+    _gate.discoveryEnabled =
+        discoveryEnabledByLoadMode[_loadMode] ?? false;
     // Tombstones calls to disabled tools even when the model names one.
     agent.toolExecutor = _gate.wrapExecutor(agent.toolExecutor);
     _apply();
@@ -54,6 +69,8 @@ class AgentToolAvailability {
 
   final Agent _agent;
   ToolsConfig _config;
+  final List<(ToolScope, ToolsConfig)> _configScopes;
+  final AgentLoadMode _loadMode;
   late final ToolAvailabilityGate _gate;
   Map<String, ToolCapability> _capabilities = const {};
 
@@ -69,16 +86,23 @@ class AgentToolAvailability {
   /// matches [enabled] (no-op). An absent capability stays off (the hard
   /// floor); persistence is the caller's job.
   bool setEnabled(String id, bool enabled) {
-    if ((_config.tools[id] ?? true) == enabled) return false;
+    // The RESOLVED intent decides the no-op (issue #1078 E1): a yaml
+    // `tools:` scope can shadow the runtime default, so `_config.tools[
+    // id] ?? true` alone would wrongly skip a flip back to visible.
+    if ((_resolve().byId[id]?.enabled ?? true) == enabled) return false;
     _config = ToolsConfig(tools: {..._config.tools, id: enabled});
     _apply();
     return true;
   }
 
   /// The resolved availability decision for the current config + wiring.
+  /// The full scope stack: yaml global < project < the app-UI runtime
+  /// store (deepest wins per key), with the load mode's essential pin +
+  /// discovery surface (issue #1078 AC2/E4).
   ToolAvailabilityResolution _resolve() => resolveToolAvailability(
     capabilities: _capabilities,
-    scopes: [(ToolScope.runtime, _config)],
+    scopes: [..._configScopes, (ToolScope.runtime, _config)],
+    essentialToolIds: essentialToolIdsByLoadMode[_loadMode],
   );
 
   /// Re-applies the availability resolution to the live registry and

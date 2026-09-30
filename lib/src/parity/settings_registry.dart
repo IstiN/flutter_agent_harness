@@ -151,10 +151,6 @@ const cliOnlySettings = <SharedSetting>{
   // not yet wired in the Flutter app's sandbox.
   SharedSetting.mcpServers,
 
-  // TTSR rules monitor the raw streaming delta for regex matches and abort
-  // mid-turn — the app's stream wrapper does not expose per-delta hooks yet.
-  SharedSetting.ttsrRules,
-
   // Host-process sandboxing primitives + a host shell: the app's mobile
   // shells are already WASI/memory-confined and web has no shell at all.
   SharedSetting.cubeSandbox,
@@ -180,12 +176,6 @@ const cliOnlySettings = <SharedSetting>{
   // agent loop and has no hook chain to attach to. File-tuned section.
   SharedSetting.spillHooks,
 
-  // The redaction pipeline runs inside the CLI host process with the
-  // process's registered secrets in memory; the app has no pipeline
-  // instance to re-toggle live (issue #391 is the CLI half — the app
-  // keeps consuming the section read-only per #288's umbrella).
-  SharedSetting.redactionPolicy,
-
   // The image registry is process-wide state inside the CLI host's agent
   // loop (the request-build rewrite reads a global published at boot);
   // the app composes its own requests and consumes the section read-only
@@ -202,19 +192,6 @@ const cliOnlySettings = <SharedSetting>{
   // app has no agent loop to re-cap live (issue #394 is the CLI half —
   // the app keeps consuming the section read-only per #288's umbrella).
   SharedSetting.contextWindowCap,
-  // The load preset re-shapes the CLI agent loop's tool schema LIVE (the
-  // availability-gate rebuild + the discover_tools meta tool, issue
-  // #680); the app composes its own per-surface tool sets and has no
-  // gate to re-apply a preset to (the app keeps consuming agent.mode
-  // read-only per #288's umbrella).
-  SharedSetting.loadMode,
-  // The resilience knobs (watchdog timeouts + retry policy) govern the
-  // CLI host process's provider connections: the timeouts are published
-  // onto a process-wide override and the retry policy rides the roles
-  // resolver's cached stream wrappers (issue #393 is the CLI half — the
-  // app keeps consuming the sections read-only per #288's umbrella).
-  SharedSetting.resiliencePolicy,
-
   // The TUI palette colors a terminal: the app renders through Flutter's
   // own theming stack (separate system by design — issue #279 non-goal).
   SharedSetting.tuiTheme,
@@ -268,9 +245,6 @@ const cliOnlyJustifications = <SharedSetting, String>{
   SharedSetting.mcpServers:
       'MCP servers spawn external processes on the host; the app cannot '
       'start them from its sandbox. Configure them in the CLI.',
-  SharedSetting.ttsrRules:
-      'Time-traveling stream rules watch every raw streaming delta to abort '
-      'mid-turn; the app chat surface has no per-delta hook for them.',
   SharedSetting.cubeSandbox:
       'fa_cube sandbox profiles need host-process sandboxing and a host '
       'shell; the app runs WASI/memory-confined (or in a browser with no '
@@ -278,10 +252,6 @@ const cliOnlyJustifications = <SharedSetting, String>{
   SharedSetting.promptOverrides:
       'The app ships its prompt templates compiled in; runtime prompt '
       'overrides are a CLI config-file feature.',
-  SharedSetting.redactionPolicy:
-      'The redaction pipeline runs inside the CLI host process with its '
-      'registered secrets in memory; the app reads the section but has no '
-      'pipeline to re-toggle live. Configure it in the CLI (issue #391).',
   SharedSetting.imageRegistry:
       'The image registry is process-wide state inside the CLI host agent '
       'loop (the request-build rewrite reads a global published at boot); '
@@ -296,11 +266,6 @@ const cliOnlyJustifications = <SharedSetting, String>{
       'The context cap feeds the CLI agent loop and compaction math '
       'running in the CLI host process; the app has no agent loop to '
       're-cap live. Configure it in the CLI (issue #394).',
-  SharedSetting.loadMode:
-      'The load preset curates the CLI agent loop\'s tool schema live '
-      '(the availability gate + discover_tools, issue #680); the app '
-      'composes its own per-surface tool sets and has no gate to re-apply '
-      'a preset to. Configure it in the CLI (issue #680).',
   SharedSetting.agentMode:
       'Agent modes are CLI REPL prompt presets; the app composes its own '
       'prompts per surface and has no mode presets to switch.',
@@ -310,11 +275,6 @@ const cliOnlyJustifications = <SharedSetting, String>{
   SharedSetting.tuiTheme:
       'The TUI palette colors a terminal emulator; the app themes through '
       'its own Flutter theming stack (separate system by design).',
-  SharedSetting.resiliencePolicy:
-      'The watchdog timeouts and retry policy govern the CLI host '
-      'process\'s provider connections; the app has no process-wide '
-      'override or roles resolver to re-arm. Configure them in the CLI '
-      '(issue #393).',
   SharedSetting.spillHooks:
       'Spill hooks run inside the CLI host process\'s agent loop (result '
       '→ redact → size check → spill → preview, issue #678); the app has '
@@ -525,12 +485,15 @@ const settingSurfaces = <SharedSetting, SettingSurfaces>{
     extensionPanel: false,
     gapWhy: 'MCP servers spawn host processes; no app surface can.',
   ),
+  // The app applies the yaml rules at boot (issue #1078 AC3).
   SharedSetting.ttsrRules: SettingSurfaces(
-    macos: false,
-    ios: false,
+    macos: true,
+    ios: true,
     web: false,
     extensionPanel: false,
-    gapWhy: 'No app surface exposes per-delta stream hooks.',
+    gapWhy:
+        'The web stub reads no ~/.fah/config.yaml (browser sandbox has '
+        'no config file), so the rules have nothing to load from.',
   ),
   SharedSetting.cubeSandbox: SettingSurfaces(
     macos: false,
@@ -580,14 +543,15 @@ const settingSurfaces = <SharedSetting, SettingSurfaces>{
         'The palette colors a terminal emulator; the app themes through '
         'its own Flutter theming stack.',
   ),
+  // The app ships the live toggle (issue #1078 AC4/E3).
   SharedSetting.redactionPolicy: SettingSurfaces(
-    macos: false,
-    ios: false,
+    macos: true,
+    ios: true,
     web: false,
     extensionPanel: false,
     gapWhy:
-        'The redaction pipeline lives in the CLI host process (registered '
-        'secrets in memory); no app surface has a pipeline to reconfigure.',
+        'The web stub reads no ~/.fah/config.yaml, so the toggle has '
+        'no yaml config to reflect or persist into.',
   ),
   SharedSetting.imageRegistry: SettingSurfaces(
     macos: false,
@@ -599,14 +563,16 @@ const settingSurfaces = <SharedSetting, SettingSurfaces>{
         'loop (the request-build rewrite); the app composes its own '
         'requests and reads the section read-only.',
   ),
+  // providerTimeouts publishes the CLI's global in the app too
+  // (issue #1078 AC5); the retry policy rides the app roles resolver.
   SharedSetting.resiliencePolicy: SettingSurfaces(
-    macos: false,
-    ios: false,
+    macos: true,
+    ios: true,
     web: false,
     extensionPanel: false,
     gapWhy:
-        'The watchdog override and roles resolver live in the CLI host '
-        'process; no app surface re-arms them.',
+        'The web stub reads no ~/.fah/config.yaml, so the overrides '
+        'have nothing to load from.',
   ),
   SharedSetting.sleepPrevention: SettingSurfaces(
     macos: false,
@@ -636,15 +602,15 @@ const settingSurfaces = <SharedSetting, SettingSurfaces>{
         'The benchmark mode presets the CLI REPL boot (tool scope pin, '
         'bare prompt composition); no app surface runs the fa REPL.',
   ),
+  // The app pins the preset at agent build (issue #1078 AC2/E4).
   SharedSetting.loadMode: SettingSurfaces(
-    macos: false,
-    ios: false,
+    macos: true,
+    ios: true,
     web: false,
     extensionPanel: false,
     gapWhy:
-        'The preset curates the CLI agent loop\'s tool schema through the '
-        'availability gate; the app composes its own per-surface tool '
-        'sets with no gate to re-apply a preset to.',
+        'The web stub reads no ~/.fah/config.yaml, so agent.mode has '
+        'nothing to load from.',
   ),
 };
 
@@ -703,7 +669,10 @@ const sharedSettingMetadata = <SharedSetting, _SettingMeta>{
   ),
   SharedSetting.ttsrRules: _SettingMeta(
     cliRef: 'TtsrConfig',
-    appRef: null, // exempted — not yet supported in the app.
+    // The app applies the yaml rules at boot (issue #1078 AC3): the
+    // CLI's controller/manager pair over the app agent. No editor yet —
+    // the section stays file-driven on the app.
+    appRef: 'attachAppConfigTtsr',
     yamlKeys: ['ttsr'],
     description: 'Time-traveling stream rules.',
   ),
@@ -788,7 +757,9 @@ const sharedSettingMetadata = <SharedSetting, _SettingMeta>{
   ),
   SharedSetting.redactionPolicy: _SettingMeta(
     cliRef: 'startRedactionFlow',
-    appRef: null, // exempted — pipeline lives in the CLI host (see above).
+    // The app's settings surface is the live toggle (issue #1078
+    // AC4/E3); the richer loader symbols live in the app config loader.
+    appRef: 'RedactionSection',
     yamlKeys: ['redact'],
     description: 'Redaction pipeline policy (issue #391).',
   ),
@@ -812,7 +783,8 @@ const sharedSettingMetadata = <SharedSetting, _SettingMeta>{
   ),
   SharedSetting.loadMode: _SettingMeta(
     cliRef: 'startLoadModeFlow',
-    appRef: null, // exempted — no availability gate in the app (see above).
+    // The app pins the preset at agent build (issue #1078 AC2/E4).
+    appRef: 'AgentLoadMode',
     // The load mode is the `agent.mode` LEAF of the agent: section: the
     // top-level `agent` key stays owned by contextWindowCap above (the
     // completeness gate's single-owner rule) — this entry owns the
@@ -823,7 +795,9 @@ const sharedSettingMetadata = <SharedSetting, _SettingMeta>{
   ),
   SharedSetting.resiliencePolicy: _SettingMeta(
     cliRef: 'startResilienceFlow',
-    appRef: null, // exempted — lives in the CLI host (see above).
+    // The app publishes the same process-wide override (issue #1078
+    // AC5); the retry policy rides the app's roles resolver (AC1).
+    appRef: 'providerTimeoutsOverride',
     yamlKeys: ['providerTimeouts', 'retry'],
     description: 'Provider failure resilience (issue #393).',
   ),
