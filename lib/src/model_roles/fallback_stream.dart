@@ -39,6 +39,7 @@ import '../context.dart';
 import '../event_stream.dart';
 import '../model.dart';
 import '../overflow.dart';
+import '../providers/quota.dart';
 import '../types.dart';
 import 'key_rotation.dart';
 import 'roles_config.dart';
@@ -652,6 +653,13 @@ final class FallbackStreamFunction {
     /// Issue #418: the sticky-cursor/health state the queue editor reads.
     /// Null in roles mode.
     this.queueState,
+
+    /// Issue #823 (AC8): the quota depletion hint. A depleted provider is
+    /// SOFT-BENCHED — selection prefers non-depleted entries, but a fully
+    /// depleted chain still serves (order-based pick), never dead-ends a
+    /// run. The feed is consulted fresh at every decision and a throwing
+    /// feed counts as "not depleted". Null keeps routing byte-identical.
+    this.quotaFeed,
   }) : _entries = List.unmodifiable(entries),
        _now = now ?? DateTime.now,
        _jitterFraction = jitterFraction ?? Random().nextDouble,
@@ -670,6 +678,10 @@ final class FallbackStreamFunction {
 
   /// The queue's sticky cursor + per-entry health; null in roles mode.
   final ProviderQueueState? queueState;
+
+  /// The quota depletion hint (issue #823 AC8); null keeps routing
+  /// byte-identical.
+  final QuotaFeed? quotaFeed;
 
   final List<ChainEntry> _entries;
   final DateTime Function() _now;
@@ -708,6 +720,20 @@ final class FallbackStreamFunction {
   Duration? cooldownRemaining(int index) {
     if (!isInCooldown(index)) return null;
     return _cooldownUntil[index]!.difference(_now());
+  }
+
+  /// Whether entry [index]'s provider is depleted per the quota feed
+  /// (issue #823). A steering hint only: a null feed and a throwing feed
+  /// both degrade to "not depleted" — a broken feed must never break
+  /// streaming. Consulted fresh at every decision, never cached.
+  bool _isDepleted(int index) {
+    final feed = quotaFeed;
+    if (feed == null) return false;
+    try {
+      return feed.isDepleted(_entries[index].model.provider);
+    } catch (_) {
+      return false;
+    }
   }
 
   /// The [StreamFunction] entry point. The passed [model] is ignored — the
@@ -985,12 +1011,19 @@ final class FallbackStreamFunction {
 
   /// The first entry outside [tried] that is not cooling down, or null —
   /// the single source of truth for failover target selection, shared
-  /// with the sole-entry wait-out check (issue #1066).
+  /// with the sole-entry wait-out check (issue #1066). Issue #823 (AC8):
+  /// depleted entries are soft-benched — the scan prefers non-depleted
+  /// candidates; when every candidate is depleted the first order pick
+  /// still wins (a depleted provider serves rather than dead-ends the
+  /// run).
   int? _failoverTarget(Set<int> tried) {
+    int? depleted;
     for (var index = 0; index < _entries.length; index++) {
-      if (!tried.contains(index) && !isInCooldown(index)) return index;
+      if (tried.contains(index) || isInCooldown(index)) continue;
+      if (!_isDepleted(index)) return index;
+      depleted ??= index;
     }
-    return null;
+    return depleted;
   }
 
   /// Issue #1066: the required retry wait exceeds the failover threshold
@@ -1180,12 +1213,18 @@ final class FallbackStreamFunction {
   }
 
   /// First entry not in cooldown (omp's cooldown-expiry revert policy);
-  /// falls back to entry 0 when every entry is cooling down.
+  /// falls back to entry 0 when every entry is cooling down. Issue #823
+  /// (AC8): depleted entries are soft-benched — the scan prefers
+  /// non-depleted entries; when every entry is depleted the first order
+  /// pick still serves.
   int _firstAvailableIndex() {
+    int? depleted;
     for (var index = 0; index < _entries.length; index++) {
-      if (!isInCooldown(index)) return index;
+      if (isInCooldown(index)) continue;
+      if (!_isDepleted(index)) return index;
+      depleted ??= index;
     }
-    return 0;
+    return depleted ?? 0;
   }
 
   /// Streams one attempt, buffering events until the first observable output
