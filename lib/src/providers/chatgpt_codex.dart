@@ -280,15 +280,40 @@ final class _ChatGptCodexSession {
       throw await _httpError(response);
     }
     events.push(StartEvent(partial: state.snapshot()));
-    await for (final line
-        in response.stream
-            .transform(utf8.decoder)
-            .transform(const LineSplitter())) {
-      cancelToken?.throwIfCancelled();
-      _sse.add(line, _handleEvent);
-    }
+    await _consumeSseLines(response);
     _sse.finish(_handleEvent);
     _finish();
+  }
+
+  /// Consumes the SSE byte stream line by line under the stream-idle
+  /// watchdog (issue #1036 review round 1): codex bypasses the shared
+  /// [createSseIterator], so without this a connected-but-silent endpoint
+  /// hung the turn forever after headers arrived. No decoded line for
+  /// [effectiveProviderStreamIdleTimeout] errors the turn (the resolver can
+  /// fail over) and the finally-cancel detaches the byte pipeline — the
+  /// issue-#921 safe abandonment this bypass would otherwise lose.
+  Future<void> _consumeSseLines(http.StreamedResponse response) async {
+    final idle = effectiveProviderStreamIdleTimeout;
+    final lines = StreamIterator<String>(
+      response.stream.transform(utf8.decoder).transform(const LineSplitter()),
+    );
+    try {
+      while (await lines.moveNext().timeout(
+        idle,
+        onTimeout: () => throw TimeoutException(
+          'chatgpt-codex $_endpoint stalled: no SSE bytes for '
+          '${idle.inSeconds}s (stream idle timeout)',
+        ),
+      )) {
+        cancelToken?.throwIfCancelled();
+        _sse.add(lines.current, _handleEvent);
+      }
+    } finally {
+      // Detach on every exit short of a clean stream end (idle watchdog,
+      // abort): a flaky link's late failure must find an owned sink, not a
+      // handlerless chain.
+      unawaited(lines.cancel().then((_) {}, onError: (Object _) {}));
+    }
   }
 
   Uri get _endpoint => Uri.parse('${model.baseUrl}/responses');
@@ -319,7 +344,8 @@ final class _ChatGptCodexSession {
       ..body = jsonEncode(_requestBody());
     // Issue #1036: this send had NO watchdog — a wedged endpoint hung the
     // turn (and the resume re-entered the same hang). Same connect bound
-    // as _sendWatched; the SSE consumption below keeps its own pacing.
+    // as _sendWatched; the SSE line consumption below carries the
+    // stream-idle watchdog.
     final response = await client
         .send(request)
         .timeout(

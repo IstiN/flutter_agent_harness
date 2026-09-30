@@ -334,6 +334,16 @@ void main() {
             ),
           ),
         );
+        // The abandoned body subscription is detached — the socket is not
+        // left trickling into a handlerless sink (issue #921 class).
+        for (
+          var waited = 0;
+          neverBody.hasListener && waited < 2000;
+          waited += 10
+        ) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        expect(neverBody.hasListener, isFalse);
       },
     );
 
@@ -350,14 +360,17 @@ void main() {
       expect(response.body, '{"ok":true}');
     });
 
-    test('formatProviderError renders a bare TimeoutException message', () {
+    test('formatProviderError keeps the TimeoutException keyword in front '
+        '(the classifier contract, issue #1036 review round 1)', () {
       final msg = formatProviderError(
         TimeoutException(
           'provider fetch (models list): no response headers within 30s',
         ),
       );
+      // The failover/queue classifiers match `timeout ?exception` on the
+      // RENDERED text: the keyword is load-bearing, the diagnostic follows.
+      expect(msg, startsWith('TimeoutException: '));
       expect(msg, contains('models list'));
-      expect(msg, isNot(contains('TimeoutException:')));
     });
   });
 }

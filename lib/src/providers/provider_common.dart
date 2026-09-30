@@ -11,6 +11,7 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -334,10 +335,14 @@ String formatProviderError(Object error) {
   if (error is http.ClientException) {
     return error.message;
   }
-  // Issue #1036: a watchdog timeout carries its own diagnostic (endpoint
-  // class + which leg) — render the message, not the exception wrapper.
+  // Issue #1036 (review round 1): keep the "TimeoutException" word in the
+  // rendered text — it IS the contract the model-roles failover chain
+  // (`fallback_stream._transportPatterns`) and the providers queue
+  // (`providers_queue_runtime._timeoutPatterns`) classify on, routing every
+  // watchdog timeout to the retry/failover path. Render the diagnostic
+  // message after the keyword, not the exception wrapper's clock noise.
   if (error is TimeoutException) {
-    return error.message ?? 'provider request timed out';
+    return 'TimeoutException: ${error.message ?? 'provider request timed out'}';
   }
   if (error is StateError) {
     return error.message;
@@ -563,15 +568,26 @@ Future<http.StreamedResponse> _sendWatched(
   CancelToken? cancelToken,
 ) async {
   final responseFuture = httpClient.send(request);
+  // Issue #1036 (review round 1): name the endpoint in the watchdog error —
+  // the rendered "TimeoutException: …" text is the always-retryable contract
+  // the failover/queue classifiers match on.
+  http.StreamedResponse watchdogTimedOut() => throw TimeoutException(
+    'provider stream request to ${request.url} timed out: no response '
+    'headers within ${effectiveProviderConnectTimeout.inSeconds}s '
+    '(connect watchdog)',
+  );
   if (cancelToken == null) {
-    return responseFuture.timeout(effectiveProviderConnectTimeout);
+    return responseFuture.timeout(
+      effectiveProviderConnectTimeout,
+      onTimeout: watchdogTimedOut,
+    );
   }
   return Future.any([
     responseFuture,
     cancelToken.onCancel.then<http.StreamedResponse>(
       (_) => throw const AbortedError(),
     ),
-  ]).timeout(effectiveProviderConnectTimeout);
+  ]).timeout(effectiveProviderConnectTimeout, onTimeout: watchdogTimedOut);
 }
 
 /// The terminal-hop validations: non-200 statuses and the 200 answers
@@ -740,8 +756,11 @@ Duration get effectiveProviderFetchConnectTimeout {
 /// a clear, retryable error instead of hanging forever.
 ///
 /// This is the bounded counterpart of [_sendWatched] for the call paths
-/// streaming adapters never take. The underlying socket is not force-closed
-/// on timeout (same ceiling as the streaming connect watchdog).
+/// streaming adapters never take. The connect leg cannot cancel the in-flight
+/// socket (no headers, no response object — same ceiling as the streaming
+/// connect watchdog); the read leg cancels the abandoned body subscription so
+/// the socket is released back to the client instead of trickling into a
+/// dead listener (the non-SSE twin of the issue-#921 abandonment).
 Future<http.Response> sendProviderFetch(
   http.Client client,
   http.BaseRequest request, {
@@ -756,14 +775,43 @@ Future<http.Response> sendProviderFetch(
       '${connect.inSeconds}s (connect watchdog)',
     ),
   );
-  return http.Response.fromStream(streamed).timeout(
-    read,
-    onTimeout: () => throw TimeoutException(
+  // The read leg owns the body subscription directly: `Response.fromStream`
+  // hides its listen, so on timeout the abandoned body would keep trickling
+  // into a handlerless sink (the issue-#921 class). Owning the subscription
+  // makes the watchdog's cancellation real.
+  final body = BytesBuilder(copy: false);
+  final completer = Completer<http.Response>();
+  final subscription = streamed.stream.listen(
+    body.add,
+    onError: (Object error, StackTrace stackTrace) {
+      if (!completer.isCompleted) completer.completeError(error, stackTrace);
+    },
+    onDone: () {
+      if (!completer.isCompleted) {
+        completer.complete(
+          // The field set mirrors `Response.fromStream`.
+          http.Response.bytes(
+            body.takeBytes(),
+            streamed.statusCode,
+            request: request,
+            headers: streamed.headers,
+            isRedirect: streamed.isRedirect,
+            persistentConnection: streamed.persistentConnection,
+            reasonPhrase: streamed.reasonPhrase,
+          ),
+        );
+      }
+    },
+  );
+  return completer.future.timeout(read, onTimeout: () {
+    // Detach so the socket closes (or returns to the keep-alive pool).
+    unawaited(subscription.cancel().then((_) {}, onError: (Object _) {}));
+    throw TimeoutException(
       'provider fetch ($endpoint): response did not complete within '
       '${read.inSeconds}s (read watchdog; FA_PROVIDER_TIMEOUT_SECONDS '
       'overrides this)',
-    ),
-  );
+    );
+  });
 }
 
 /// Wires an SSE [StreamIterator] over [response]'s body, cancelling the

@@ -243,6 +243,52 @@ void main() {
       expect(sessionIds[1], sessionIds[0]);
     });
 
+    test('a connected-but-silent SSE stream errors under the stream idle '
+        'watchdog, never hangs (#1036)', () async {
+      providerTimeoutsOverride = ProviderTimeoutsOverride(
+        streamIdle: const Duration(milliseconds: 150),
+      );
+      addTearDown(() => providerTimeoutsOverride = null);
+      // One line arrives, then the endpoint goes silent forever: the codex
+      // consumption bypasses createSseIterator, so before the fix this hung
+      // on the pending moveNext with no watchdog anywhere on the path.
+      final controller = StreamController<List<int>>();
+      final client = http_testing.MockClient.streaming((request, body) async {
+        unawaited(
+          controller
+              .addStream(
+                Stream.value(
+                  utf8.encode(
+                    sseChunk({
+                      'type': 'response.created',
+                      'response': {'id': 'resp_1', 'model': 'gpt-5-codex'},
+                    }),
+                  ),
+                ),
+              )
+              .then((_) {}, onError: (Object _) {}),
+        );
+        return http.StreamedResponse(
+          controller.stream,
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      });
+
+      final events = await streamChatGptCodex(
+        chatGptModel,
+        simpleContext(),
+        credentials: credentials.encode(),
+        client: client,
+      ).toList().timeout(const Duration(seconds: 10));
+
+      expect(events.whereType<TextDeltaEvent>(), isEmpty);
+      final message = events.whereType<ErrorEvent>().single.error.errorMessage!;
+      expect(message, contains('TimeoutException'));
+      expect(message, contains('stalled'));
+      expect(message, contains('stream idle timeout'));
+    });
+
     test('replays learned Cloudflare cookies on a challenge retry', () async {
       final sentHeaders = <Map<String, String>>[];
       final client = queueClient(sentHeaders, [

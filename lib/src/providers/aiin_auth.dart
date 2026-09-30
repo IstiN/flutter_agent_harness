@@ -409,19 +409,24 @@ Future<http.Response> _postOrGet({
     request.body = body;
   }
   request.headers.addAll(headers);
+  final httpClient = client ?? http.Client();
+  final ownsClient = client == null;
   try {
     // Issue #1036: this path had NO timeout — a wedged auth endpoint hung
     // the session (and the watchdog-resume re-entered the same hang).
-    final response = await sendProviderFetch(
-      client ?? http.Client(),
+    return await sendProviderFetch(
+      httpClient,
       request,
       endpoint: 'aiin auth (${url.host})',
     );
-    return response;
   } on Object catch (error) {
     throw AiinAuthException(
       'AIIN request to ${url.host} failed: $error',
       code: 'network_error',
     );
+  } finally {
+    // A fresh client is owned here: close it so a timed-out request's
+    // socket is released instead of lingering until GC.
+    if (ownsClient) httpClient.close();
   }
 }
