@@ -6,14 +6,18 @@ import 'dart:async';
 import 'dart:html' as html;
 
 import 'auth_flow.dart';
+import 'oauth_callback_message.dart';
 
 /// The browser OAuth receiver: the sandbox cannot bind a loopback HTTP
 /// server, so the sign-in runs in a popup window instead. The popup
 /// navigates the SAME authorization URL as the desktop flow; the auth
 /// service's proxy redirect lands it back on our origin
-/// (`{origin}/oauth/callback?code=…&state=…`) — same-origin, so this
-/// frame may read its location and finish the flow without an app
-/// restart.
+/// (`{origin}/oauth/callback?code=…&state=…`). The grant reaches this
+/// receiver two ways (issue #1117): the `/oauth/callback` page posts it
+/// to `window.opener` / broadcasts it — the path that works even when
+/// this window cannot read the popup (extension/Office pane embeds,
+/// throttled poll timers) — and the same-origin location poll remains
+/// as the fast path.
 ///
 /// Popup blockers key off the transient user activation of the click
 /// that started the flow: `NetworkAuthFlow.signIn` awaits the
@@ -50,6 +54,17 @@ final class WebOAuthReceiver implements OAuthCallbackReceiver {
     final receiver = WebOAuthReceiver._();
     _active = receiver;
     receiver._popup = _tryOpenPopup('about:blank', _popupFeatures);
+    // The callback page hands the grant back via postMessage /
+    // BroadcastChannel (issue #1117) — the only channel that works when
+    // this window cannot same-origin-read the popup (extension and
+    // Office pane embeds) or its poll timers are throttled.
+    receiver._messages = html.window.onMessage.listen(receiver._onMessage);
+    try {
+      receiver._channel = html.BroadcastChannel(faOAuthBroadcastChannel)
+        ..onMessage.listen(receiver._onMessage);
+    } on Object {
+      // Very old browsers; the postMessage path covers them.
+    }
     receiver._timeout = Timer(timeout, () {
       if (!receiver._completer.isCompleted) {
         receiver._completer.completeError(
@@ -88,6 +103,8 @@ final class WebOAuthReceiver implements OAuthCallbackReceiver {
   final Completer<Uri> _completer = Completer<Uri>();
   Timer? _poll;
   Timer? _timeout;
+  StreamSubscription<html.MessageEvent>? _messages;
+  html.BroadcastChannel? _channel;
   html.WindowBase? _popup;
 
   @override
@@ -99,7 +116,9 @@ final class WebOAuthReceiver implements OAuthCallbackReceiver {
   /// Polls [popup] until the proxy redirect lands it on our origin (the
   /// location read THROWS while the popup is still on the provider's
   /// cross-origin pages — that throw IS the not-yet signal), the user
-  /// closes it, or the flow times out.
+  /// closes it, or the flow times out. Same-origin fast path only: the
+  /// callback page's postMessage hand-off covers the cross-origin cases
+  /// via [_onMessage].
   void trackPopup(html.WindowBase popup) {
     _poll = Timer.periodic(const Duration(milliseconds: 300), (_) {
       if (!_isUsable(popup)) {
@@ -117,19 +136,60 @@ final class WebOAuthReceiver implements OAuthCallbackReceiver {
             href.startsWith(html.window.location.origin) &&
             (Uri.parse(href).queryParameters.containsKey('code') ||
                 Uri.parse(href).queryParameters.containsKey('error'))) {
-          popup.close();
-          if (!_completer.isCompleted) _completer.complete(Uri.parse(href));
+          _completeGrant(Uri.parse(href));
         }
       } on Object {
-        // Cross-origin until the redirect lands — keep polling.
+        // Cross-origin until the redirect lands — keep polling; the
+        // callback page's message delivers the grant instead.
       }
     });
+  }
+
+  /// Handles a callback-page hand-off (postMessage or BroadcastChannel):
+  /// foreign/undecodable messages and untrusted origins are ignored; a
+  /// trusted grant completes the flow with the same callback URI shape
+  /// the same-origin poll would have produced.
+  void _onMessage(html.MessageEvent event) {
+    if (_completer.isCompleted) return;
+    final message = decodeOAuthCallbackMessage(event.data);
+    if (message == null) return;
+    if (!isTrustedCallbackOrigin(event.origin, html.window.location.origin)) {
+      return;
+    }
+    _completeGrant(message.toUri(event.origin));
+  }
+
+  /// Completes the flow with [callbackUri] exactly once: stops polling
+  /// and closes the popup — including from the message path, where the
+  /// popup may sit cross-origin on the callback page but is still a
+  /// window this page opened (`popup.close()` is allowed for those).
+  void _completeGrant(Uri callbackUri) {
+    if (_completer.isCompleted) return;
+    _poll?.cancel();
+    _poll = null;
+    final popup = _popup;
+    if (popup != null && _isUsable(popup)) {
+      try {
+        popup.close();
+      } on Object {
+        // Already gone — nothing to clean up.
+      }
+    }
+    _completer.complete(callbackUri);
   }
 
   @override
   void close() {
     _poll?.cancel();
     _timeout?.cancel();
+    unawaited(_messages?.cancel());
+    _messages = null;
+    try {
+      _channel?.close();
+    } on Object {
+      // Already gone.
+    }
+    _channel = null;
     // Abandoned flows (initiate failed, timeout, …) must not leave a
     // stray blank popup behind; a completed flow already closed its own.
     final popup = _popup;
