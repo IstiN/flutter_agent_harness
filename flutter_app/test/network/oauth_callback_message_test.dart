@@ -3,10 +3,18 @@
 // found in the LICENSE file.
 
 import 'package:fa/network/oauth_callback_message.dart';
+import 'package:fa/network/production_origins.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('decodeOAuthCallbackMessage', () {
+    test('derives the production origin from the shared constant', () {
+      // Drift guard: the trust check must track the shared site origin,
+      // not a second spelling of it.
+      expect(productionSiteOrigin, 'https://fa1.dev');
+      expect(isTrustedCallbackOrigin(productionSiteOrigin, 'other'), isTrue);
+    });
+
     test('decodes a grant hand-off', () {
       final message = decodeOAuthCallbackMessage({
         'type': faOAuthMessageType,
@@ -120,6 +128,76 @@ void main() {
         isFalse,
       );
       expect(isTrustedCallbackOrigin('', 'https://fa1.dev'), isFalse);
+    });
+  });
+
+  group('OAuthCallbackMessage.matchesExpectedState', () {
+    final message = decodeOAuthCallbackMessage({
+      'type': faOAuthMessageType,
+      'code': 'c-1',
+      'state': 'st-1',
+    })!;
+
+    test('accepts the echoed state', () {
+      expect(message.matchesExpectedState('st-1'), isTrue);
+    });
+
+    test('rejects another flow\'s state', () {
+      expect(message.matchesExpectedState('st-other'), isFalse);
+    });
+
+    test('stays ungated when the auth URL carried no state', () {
+      expect(message.matchesExpectedState(null), isTrue);
+    });
+  });
+
+  group('oauthCallbackFromStorage', () {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    Map<String, Object?> payload({int? ts}) => {
+      'type': faOAuthMessageType,
+      'code': 'c-1',
+      'state': 'st-1',
+      'error': null,
+      'error_description': null,
+      'ts': ts ?? now,
+    };
+
+    test('accepts a fresh entry', () {
+      final message = oauthCallbackFromStorage(payload(), now);
+      expect(message, isNotNull);
+      expect(message!.code, 'c-1');
+    });
+
+    test('accepts an entry right at the freshness edge', () {
+      final message = oauthCallbackFromStorage(
+        payload(ts: now - oauthCallbackStorageMaxAgeMs),
+        now,
+      );
+      expect(message, isNotNull);
+    });
+
+    test('rejects a stale entry', () {
+      expect(
+        oauthCallbackFromStorage(payload(ts: now - oauthCallbackStorageMaxAgeMs - 1), now),
+        isNull,
+      );
+    });
+
+    test('rejects a future-dated entry (clock skew guard)', () {
+      expect(oauthCallbackFromStorage(payload(ts: now + 5), now), isNull);
+    });
+
+    test('rejects an entry without a timestamp', () {
+      expect(oauthCallbackFromStorage(payload()..remove('ts'), now), isNull);
+    });
+
+    test('rejects foreign payloads', () {
+      expect(
+        oauthCallbackFromStorage(payload()..['type'] = 'aiin_oauth_code', now),
+        isNull,
+      );
+      expect(oauthCallbackFromStorage('not a map', now), isNull);
+      expect(oauthCallbackFromStorage(null, now), isNull);
     });
   });
 }

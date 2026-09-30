@@ -14,17 +14,18 @@
 /// unit-testable on the VM.
 library;
 
+import 'production_origins.dart';
+
 /// `type` marker every `/oauth/callback` hand-off message carries.
 const faOAuthMessageType = 'fa_oauth_code';
 
 /// BroadcastChannel name paired with [faOAuthMessageType].
 const faOAuthBroadcastChannel = 'fa_oauth';
 
-/// Origin of the production callback page. The ai-native auth service
-/// redirects the popup there regardless of where the app is embedded
-/// (see aiin_web_auth.dart for the same constant in the AIIN flow), so a
-/// cross-origin opener must trust messages posted from it.
-const faOAuthSiteOrigin = 'https://fa1.dev';
+/// How far back the app's localStorage hand-off consumer accepts a
+/// stored grant (mirrors the AIIN page's freshness window): a stale
+/// entry must never complete a later flow.
+const oauthCallbackStorageMaxAgeMs = 90000;
 
 /// One delivered grant message from the callback page. All fields except
 /// [type] mirror the callback URL's query parameters.
@@ -52,6 +53,14 @@ final class OAuthCallbackMessage {
   /// explicit provider error must be present.
   bool get isCompletable =>
       (code != null && code!.isNotEmpty) || (error != null && error!.isNotEmpty);
+
+  /// Whether the message may complete a flow that initiated with
+  /// [expectedState]: a null expectation (the auth URL carried no state)
+  /// stays ungated, otherwise the echoed state must match — a forged or
+  /// stale hand-off for another flow is ignored instead of failing the
+  /// live one with a confusing state-mismatch error.
+  bool matchesExpectedState(String? expectedState) =>
+      expectedState == null || state == expectedState;
 
   /// The callback URI [code]/[state]/[error]… resolve through — the same
   /// `{origin}/oauth/callback?code=…&state=…` shape the desktop loopback
@@ -108,4 +117,23 @@ OAuthCallbackMessage? decodeOAuthCallbackMessage(Object? data) {
 /// callback page (cross-origin openers — extension/Office pane embeds)
 /// or the app's own origin (same-origin deploys, local dev).
 bool isTrustedCallbackOrigin(String origin, String ownOrigin) =>
-    origin == faOAuthSiteOrigin || origin == ownOrigin;
+    origin == productionSiteOrigin || origin == ownOrigin;
+
+/// Decodes the localStorage hand-off the callback page writes as a
+/// last-resort channel (key `fa_oauth_code`, a JSON payload): same rules
+/// as [decodeOAuthCallbackMessage] plus a freshness window of
+/// [maxAgeMs] against [nowMs] via the payload's `ts` — a stale entry
+/// (this or a previous browser session) must never complete a flow.
+OAuthCallbackMessage? oauthCallbackFromStorage(
+  Object? decoded,
+  int nowMs, {
+  int maxAgeMs = oauthCallbackStorageMaxAgeMs,
+}) {
+  final message = decodeOAuthCallbackMessage(decoded);
+  if (message == null) return null;
+  final dynamic anyMap = decoded;
+  final dynamic ts = anyMap['ts'];
+  if (ts is! int && ts is! num) return null;
+  if (nowMs - ts > maxAgeMs || ts > nowMs) return null;
+  return message;
+}

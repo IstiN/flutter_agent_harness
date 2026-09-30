@@ -52,9 +52,15 @@
       }
 
       // The opener may be served from fa1.dev, localhost (dev), or a
-      // browser-extension/Office pane origin; the payload carries no
-      // secrets — only the short-lived code (+ state, which the app
-      // verifies against its own initiate).
+      // browser-extension/Office pane origin. The payload IS a
+      // completable grant for whoever this popup names as opener:
+      // `code` + `state` complete via the anonymous /oauth-proxy/exchange
+      // — which is why the app validates the state against its own
+      // initiate before completing. The opener's origin cannot be learned
+      // here (document.referrer is the auth service after the redirect
+      // chain, cross-origin opener origins are unreadable), so the
+      // postMessage target stays '*'; server-side PKCE on the proxy is
+      // the proper hardening (see the follow-up on #1117).
       var payload = {
         type: 'fa_oauth_code',
         code: code,
@@ -68,14 +74,30 @@
         try { window.opener.postMessage(payload, '*'); delivered = true; }
         catch (e) { /* cross-origin or closed opener */ }
       }
-      // Safari's ITP can strip window.opener across the redirect chain;
-      // broadcast on the channel the app listens on as a fallback.
+      // Safari's ITP can strip window.opener across the redirect chain.
+      // Honest guarantees: BroadcastChannel post "succeeds" even with
+      // zero listeners, and it is same-origin-scoped — it reaches an app
+      // served from THIS origin only (exactly the ITP case it exists
+      // for), never a cross-origin pane. delivered is therefore
+      // optimistic: "a channel accepted the payload".
       try {
         var channel = new BroadcastChannel('fa_oauth');
         channel.postMessage(payload);
         channel.close();
         delivered = true;
       } catch (e) { /* unsupported */ }
+      // Last resort (parity with the AIIN/OpenRouter pages): localStorage
+      // hand-off for browsers with neither opener postMessage nor BC.
+      // Same-origin by definition; the app's receiver polls the key with
+      // a 90s freshness window and clears it after consuming.
+      try {
+        var existing = window.localStorage.getItem('fa_oauth_code');
+        var existingTs = existing ? (JSON.parse(existing).ts || 0) : 0;
+        if (payload.ts >= existingTs) {
+          window.localStorage.setItem('fa_oauth_code', JSON.stringify(payload));
+        }
+        delivered = true;
+      } catch (e) { /* private mode */ }
 
       function closePopup() {
         try { window.close(); } catch (e) { /* ignore */ }

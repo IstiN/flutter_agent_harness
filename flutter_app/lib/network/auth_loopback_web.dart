@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:html' as html;
 
 import 'auth_flow.dart';
@@ -65,6 +66,13 @@ final class WebOAuthReceiver implements OAuthCallbackReceiver {
     } on Object {
       // Very old browsers; the postMessage path covers them.
     }
+    // localStorage hand-off poll — the callback page's last-resort
+    // channel for browsers with neither opener postMessage nor
+    // BroadcastChannel (mirror of the AIIN flow's consumer).
+    receiver._storagePoll = Timer.periodic(
+      const Duration(milliseconds: 300),
+      (_) => receiver._consumeStorageGrant(),
+    );
     receiver._timeout = Timer(timeout, () {
       if (!receiver._completer.isCompleted) {
         receiver._completer.completeError(
@@ -102,16 +110,27 @@ final class WebOAuthReceiver implements OAuthCallbackReceiver {
 
   final Completer<Uri> _completer = Completer<Uri>();
   Timer? _poll;
+  Timer? _storagePoll;
   Timer? _timeout;
   StreamSubscription<html.MessageEvent>? _messages;
   html.BroadcastChannel? _channel;
   html.WindowBase? _popup;
+
+  /// The CSRF `state` of the live flow, captured from the authorization
+  /// URL in [openAuthUrlImpl] — hand-offs echoing another state are
+  /// ignored instead of clobbering the flow.
+  String? _expectedState;
 
   @override
   final Uri redirectUri;
 
   @override
   Future<Uri> get callback => _completer.future;
+
+  /// Whether the flow already resolved (grant completed or failed) —
+  /// lets the browser-seam tests assert that a forged/stale hand-off
+  /// left the flow untouched.
+  bool get isCompleted => _completer.isCompleted;
 
   /// Polls [popup] until the proxy redirect lands it on our origin (the
   /// location read THROWS while the popup is still on the provider's
@@ -156,7 +175,41 @@ final class WebOAuthReceiver implements OAuthCallbackReceiver {
     if (!isTrustedCallbackOrigin(event.origin, html.window.location.origin)) {
       return;
     }
+    if (!message.matchesExpectedState(_expectedState)) return;
     _completeGrant(message.toUri(event.origin));
+  }
+
+  /// Consumes the callback page's localStorage hand-off (its last-resort
+  /// channel): freshness-gated, state-gated, cleared after use so it can
+  /// never complete a later flow.
+  void _consumeStorageGrant() {
+    if (_completer.isCompleted) return;
+    String? raw;
+    try {
+      raw = html.window.localStorage['fa_oauth_code'];
+    } on Object {
+      return; // Storage unavailable (private mode) — other channels cover.
+    }
+    if (raw == null) return;
+    Object? decoded;
+    try {
+      decoded = jsonDecode(raw);
+    } on Object {
+      return;
+    }
+    final message = oauthCallbackFromStorage(
+      decoded,
+      DateTime.now().millisecondsSinceEpoch,
+    );
+    if (message == null || !message.matchesExpectedState(_expectedState)) {
+      return;
+    }
+    try {
+      html.window.localStorage.remove('fa_oauth_code');
+    } on Object {
+      // Best effort — the completer guard still prevents replay.
+    }
+    _completeGrant(message.toUri(html.window.location.origin));
   }
 
   /// Completes the flow with [callbackUri] exactly once: stops polling
@@ -181,6 +234,7 @@ final class WebOAuthReceiver implements OAuthCallbackReceiver {
   @override
   void close() {
     _poll?.cancel();
+    _storagePoll?.cancel();
     _timeout?.cancel();
     unawaited(_messages?.cancel());
     _messages = null;
@@ -217,6 +271,10 @@ Future<OAuthCallbackReceiver> startOAuthCallbackReceiverImpl() =>
 /// activation may still be alive — before giving up.
 Future<void> openAuthUrlImpl(Uri authUrl) async {
   final receiver = WebOAuthReceiver._active;
+  // The CSRF state rides on the authorization URL — the callback echoes
+  // it back; hand-offs (message/storage) carrying another state are
+  // ignored so a forged or stale grant can't clobber the live flow.
+  receiver?._expectedState = authUrl.queryParameters['state'];
   final eager = receiver?._popup;
   if (eager != null && WebOAuthReceiver._isUsable(eager)) {
     try {
