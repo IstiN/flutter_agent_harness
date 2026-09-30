@@ -125,6 +125,44 @@ void main() {
       }
       expect(ceiling.producedBytes, 6944);
     });
+
+    test('the tail region is capped at 1 MiB at large ceilings and the '
+        'patch churn stays within ~2x the post-crossing bytes (review: '
+        'write amplification)', () async {
+      const mib = 1024 * 1024;
+      final ceiling = JobLogCeiling(maxBytes: 8 * mib);
+      var patchBytes = 0;
+      var produced = 0;
+      // Pipe-sized chunks: the runaway pattern that once grew a log to
+      // 335 GB. A ceiling-proportional tail rewritten at a fixed 64 KiB
+      // cadence would amplify these into hundreds of MB of rewrites.
+      while (produced < 9 * mib) {
+        final ops = await ceiling.ingest('x' * 8192);
+        produced += 8192;
+        for (final op in ops) {
+          // Region = marker + capped tail, never a ceiling-proportional
+          // region (the old maxBytes/4 tail at 8 MiB was 2 MiB).
+          expect(op.text.length, lessThan(mib + 128));
+          patchBytes += op.text.length;
+        }
+      }
+      final settle = ceiling.settleFlush();
+      patchBytes += settle?.text.length ?? 0;
+      expect(ceiling.truncated, isTrue);
+      expect(patchBytes, lessThan(2 * produced + 2 * mib));
+    });
+  });
+
+  group('validation', () {
+    test('non-positive ceilings are rejected loudly (public API)', () {
+      for (final bad in [0, -1, -50 * 1024 * 1024]) {
+        expect(
+          () => JobLogCeiling(maxBytes: bad),
+          throwsArgumentError,
+          reason: 'maxBytes=$bad must not silently degrade the layout',
+        );
+      }
+    });
   });
 
   group('low-disk guard (UT-4)', () {

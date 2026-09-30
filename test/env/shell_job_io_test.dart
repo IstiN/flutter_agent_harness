@@ -269,7 +269,8 @@ void main() {
       expect(entry.stopReason, isNull);
 
       final log = File(entry.logPath).readAsStringSync();
-      expect(log.length, lessThan(512 + 8192));
+      // Bounded ≈ ceiling: head + marker + tail ≤ maxBytes + marker slack.
+      expect(log.length, lessThan(512 + jobLogTruncationMarker(1).length * 2));
       expect('[… log truncated:'.allMatches(log), hasLength(1));
       // The tail is live: the last produced line survives verbatim.
       expect(log.endsWith('line-199\n'), isTrue);

@@ -24,7 +24,10 @@ final class SandboxShellJob implements ShellJob {
     this._closeLog,
     this._ceiling,
     this._applyLogOp,
-  });
+  }) : assert(
+         _ceiling == null || _applyLogOp != null,
+         'a ceiling without an applyLogOp silently drops every log op',
+       );
 
   final FutureOr<void> Function(String chunk) _logWriter;
   final FutureOr<void> Function()? _closeLog;
@@ -132,14 +135,16 @@ final class SandboxShellJob implements ShellJob {
     _noteBackendFailure(result);
     try {
       await _writeChain;
-      // Issue #919: final tail patch with the exact dropped count. A
-      // failing settle op is swallowed (issue #925 spirit) — never break
-      // the settle.
+      // Issue #919: final tail patch with the exact dropped count. Same
+      // settle contract as the local shell job (issue #925): the failure
+      // marks the log broken (frozen content) and never breaks the settle.
       if (!_logBroken) {
         try {
           final finalOp = _ceiling?.settleFlush();
           if (finalOp != null) await _applyLogOp?.call(finalOp);
-        } on Object {}
+        } on Object {
+          _logBroken = true;
+        }
       }
       await _closeLogQuietly();
       _applyOutcome(result);

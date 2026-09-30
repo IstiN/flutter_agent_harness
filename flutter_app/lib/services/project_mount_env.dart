@@ -112,6 +112,8 @@ final class ProjectMountEnv
             cancelToken: options?.cancelToken,
             onStdout: options?.onStdout,
             onStderr: options?.onStderr,
+            jobLogMaxBytes: options?.jobLogMaxBytes,
+            onJobLogWarning: options?.onJobLogWarning,
           );
     final delegate = _delegate;
     if (delegate case final BackgroundShell bg) {

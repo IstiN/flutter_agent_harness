@@ -40,8 +40,10 @@ const defaultJobLogMinFreeBytes = 1024 * 1024 * 1024;
 /// bytes per job (aggregate backstop for many concurrent jobs, E3).
 const jobLogFreeCheckEveryBytes = 1024 * 1024;
 
-/// Rolling-tail flush cadence: patch the marker+tail region into the file
-/// at most once per this many tail bytes (amortizes the rewrite).
+/// Rolling-tail flush cadence floor: patch the marker+tail region into the
+/// file at least this often, and at most once per tail/2 new bytes — the
+/// region rewrite is thus bounded at ~2× write amplification (issue #919
+/// review: a fixed cadence under a ceiling-proportional tail meant ~195×).
 const jobLogTailFlushEveryBytes = 64 * 1024;
 
 /// Marker written once at the truncation seam. `X` is patched in place as
@@ -53,6 +55,12 @@ String jobLogTruncationMarker(int bytesDropped) =>
 /// Reserve for the marker line inside the ceiling budget (the widest
 /// realistic marker is ~50 bytes; 128 leaves headroom).
 const _markerReserveBytes = 128;
+
+/// Upper bound on the rolling tail regardless of the ceiling: keeps the
+/// per-flush region rewrite small at large ceilings (a 50 MB ceiling with
+/// a 12.5 MB tail rewritten on every flush would turn the runaway-job path
+/// into heavy write amplification — the exact #919 scenario).
+const _maxTailBytes = 1024 * 1024;
 
 /// Queries the free space (in bytes) of the filesystem holding the job
 /// log's directory. Returns null when unknown (probe unavailable,
@@ -75,16 +83,21 @@ final class JobLogWrite {
 
 /// The streaming truncation policy. See the library doc.
 final class JobLogCeiling {
-  /// Creates a ceiling policy. [maxBytes] caps the log; [probe] (optional —
-  /// absent on web) enables the low-disk guard with [minFreeBytes];
-  /// [onWarn] fires at most once per job when the guard stops writes.
+  /// Creates a ceiling policy. [maxBytes] caps the log and must be > 0;
+  /// [probe] (optional — absent on web) enables the low-disk guard with
+  /// [minFreeBytes]; [onWarn] fires at most once per job when the guard
+  /// stops writes.
   JobLogCeiling({
     this.maxBytes = defaultJobLogMaxBytes,
     this.minFreeBytes = defaultJobLogMinFreeBytes,
     this.probe,
     this.onWarn,
-  }) : _tailBudget = maxBytes ~/ 4,
-       _headBudget = _headBudgetFor(maxBytes);
+  }) : _tailBudget = _tailBudgetFor(maxBytes),
+       _headBudget = _headBudgetFor(maxBytes) {
+    if (maxBytes <= 0) {
+      throw ArgumentError.value(maxBytes, 'maxBytes', 'must be > 0');
+    }
+  }
 
   /// Log size ceiling in produced bytes.
   final int maxBytes;
@@ -98,14 +111,31 @@ final class JobLogCeiling {
   /// Fires at most once per job when the low-disk guard stops writes.
   final void Function(String message)? onWarn;
 
-  /// Head keeps everything up to this byte count before the seam.
+  /// Head keeps everything up to this byte count before the seam. The tail
+  /// keeps the last [maxBytes]/4 bytes, capped at [_maxTailBytes] so the
+  /// patched region stays small at large ceilings.
   final int _tailBudget;
   final int _headBudget;
 
+  static int _tailBudgetFor(int maxBytes) {
+    final budget = maxBytes ~/ 4;
+    return budget > _maxTailBytes ? _maxTailBytes : budget;
+  }
+
   static int _headBudgetFor(int maxBytes) {
-    final tail = maxBytes ~/ 4;
+    final tail = _tailBudgetFor(maxBytes);
     final head = maxBytes - tail - _markerReserveBytes;
     return head > 0 ? head : 0;
+  }
+
+  /// Region-rewrite cadence: half the tail, floored at the 64 KiB minimum —
+  /// write amplification stays ≤ ~2× (one region rewrite per tail/2 bytes
+  /// produced) at any ceiling.
+  int get _tailFlushEveryBytes {
+    final half = _tailBudget ~/ 2;
+    return half > jobLogTailFlushEveryBytes
+        ? half
+        : jobLogTailFlushEveryBytes;
   }
 
   /// Total produced bytes so far (stdout + stderr).
@@ -144,7 +174,7 @@ final class JobLogCeiling {
     _tail.addAll(bytes);
     _unflushedTail += bytes.length;
     _trimTail();
-    if (_unflushedTail < jobLogTailFlushEveryBytes) return const [];
+    if (_unflushedTail < _tailFlushEveryBytes) return const [];
     _unflushedTail = 0;
     return [_patchOp()];
   }

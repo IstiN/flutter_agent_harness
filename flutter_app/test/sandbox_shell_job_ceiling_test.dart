@@ -51,7 +51,10 @@ void main() {
       final log = (await env.readTextFile(job.logPath)).valueOrNull!;
       // Bounded: head + marker + rolling tail stays far below the produced
       // ~90 KB and under the ceiling plus one patch's worth of slack.
-      expect(utf8.encode(log).length, lessThan(maxBytes + 8192));
+      expect(
+        utf8.encode(log).length,
+        lessThan(maxBytes + jobLogTruncationMarker(1).length * 2),
+      );
       // Exactly one truncation marker line (patches overwrite it in place).
       final markers = RegExp('… log truncated: (\\d+) bytes dropped …')
           .allMatches(log)

@@ -116,7 +116,8 @@ final class ShellJobRegistry {
   /// (the hub's start block), [onSettled] when a job exits. [jobLogMaxBytes]
   /// and [onJobLogWarning] (issue #919) are merged into every start's
   /// options — the size ceiling and the low-disk warning channel; null
-  /// bytes means the shells' built-in default.
+  /// bytes means the shells' built-in default. A caller's own options
+  /// values take precedence over these session defaults.
   ShellJobRegistry({
     required this.env,
     this.onStart,
@@ -211,8 +212,10 @@ final class ShellJobRegistry {
       onStderr: options?.onStderr,
       stdinData: options?.stdinData,
       liveStdin: options?.liveStdin,
-      jobLogMaxBytes: jobLogMaxBytes,
-      onJobLogWarning: onJobLogWarning,
+      // Caller-supplied values win — the registry fields are session
+      // defaults, not a black hole for per-call overrides (issue #919).
+      jobLogMaxBytes: options?.jobLogMaxBytes ?? jobLogMaxBytes,
+      onJobLogWarning: options?.onJobLogWarning ?? onJobLogWarning,
     );
     final started = await bg.startShellJob(
       command,
