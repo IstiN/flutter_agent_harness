@@ -134,7 +134,6 @@
   "chatSessionsTooltip": "Сессии и модель",
   "chatSettingsTooltip": "Настройки подключения",
   "chatShowAll": "Показать все ({count})",
-  "chatTyping": "Fa печатает...",
   "chatUploadFailed": "Ошибка загрузки: {error}",
   "commonCancel": "Отмена",
   "commonDelete": "Удалить",
