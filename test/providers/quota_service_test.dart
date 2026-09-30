@@ -166,9 +166,6 @@ void main() {
 
   group('E4 past resetsAt auto-invalidates the cache entry', () {
     test('stale limit after billing reset does not persist', () async {
-      final adapter = FakeAdapter(() async => metered());
-      final service = serviceWith(adapters: {'openrouter': adapter});
-
       // First fetch reports a reset already in the future.
       final resetAt = t.add(const Duration(minutes: 10));
       final gated = FakeAdapter(() async => metered(resetsAt: resetAt));
