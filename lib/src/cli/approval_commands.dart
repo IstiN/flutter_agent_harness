@@ -536,28 +536,31 @@ extension ApprovalCommands on AgentCli {
         '(${_formatTokenCount(contextTokens)}/${_formatTokenCount(window)}) · '
         '${_formatTokenCount(totalTokens)}tok'
         '$costPart · turn ${_usage.turns}$badge · '
-        '${_statusProviderLabel(model)}/${model.id}';
-    // Quota badge (issue #823 AC5): only when the config opts in — default
-    // OFF (OQ2). Cache-only peek: cold renders `[OR …]` and the peek kick
-    // fetches in the background (E1); unmetered renders nothing (silent).
-    final providerId = model.provider;
-    if (config.quotaBadge &&
-        providerId.isNotEmpty &&
-        quotaService.hasSource(providerId)) {
-      final result = quotaService.peek(providerId);
-      // Terminal unknowns (dark adapter, rejected auth) render nothing —
-      // the badge carries state, not failure noise; `/quota` shows the
-      // reason (review round 1). Cold (null) still renders `[OR …]`.
-      if (result == null || result.quota != null) {
-        final badgeText = formatQuotaBadge(
-          shortName: _quotaBadgeTag(providerId),
-          quota: result?.quota,
-          now: DateTime.now().toUtc(),
-        );
-        if (badgeText.isNotEmpty) line += ' $badgeText';
-      }
-    }
+        '${_statusProviderLabel(model)}/${model.id}'
+        '${_quotaBadgeSuffix(model.provider)}';
     return line;
+  }
+
+  /// The status-line quota badge (issue #823 AC5): `' [OR $48/$150 · 11d]'`
+  /// when fresh, `' [OR …]'` while cold, and empty when the config opts
+  /// out (default OFF, OQ2), the provider has no quota source, the state
+  /// is unmetered (silent), or the cached state is a terminal unknown —
+  /// failure reasons live in `/quota`, not the chrome (review round 1).
+  /// Cache-only peek: cold kicks a background fetch without blocking (E1).
+  String _quotaBadgeSuffix(String providerId) {
+    if (!config.quotaBadge ||
+        providerId.isEmpty ||
+        !quotaService.hasSource(providerId)) {
+      return '';
+    }
+    final result = quotaService.peek(providerId);
+    if (result != null && result.quota == null) return '';
+    final badgeText = formatQuotaBadge(
+      shortName: _quotaBadgeTag(providerId),
+      quota: result?.quota,
+      now: DateTime.now().toUtc(),
+    );
+    return badgeText.isEmpty ? '' : ' $badgeText';
   }
 
   /// The 2-letter quota badge tag for a provider id. `openrouter` brands
