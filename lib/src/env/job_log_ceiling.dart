@@ -40,10 +40,12 @@ const defaultJobLogMinFreeBytes = 1024 * 1024 * 1024;
 /// bytes per job (aggregate backstop for many concurrent jobs, E3).
 const jobLogFreeCheckEveryBytes = 1024 * 1024;
 
-/// Rolling-tail flush cadence floor: patch the marker+tail region into the
-/// file at least this often, and at most once per tail/2 new bytes — the
-/// region rewrite is thus bounded at ~2× write amplification (issue #919
-/// review: a fixed cadence under a ceiling-proportional tail meant ~195×).
+/// Rolling-tail flush cadence floor: after truncation, the marker+tail
+/// region is patched at most once per max(tail ~/ 2, this many) new tail
+/// bytes — so the region rewrite is bounded at ≤ ~2× write amplification
+/// at any ceiling (issue #919 review: a fixed 64 KiB cadence under a
+/// ceiling-proportional tail meant ~195× at the 50 MB default). This floor
+/// keeps tiny-ceiling tails from flushing on every small chunk.
 const jobLogTailFlushEveryBytes = 64 * 1024;
 
 /// Marker written once at the truncation seam. `X` is patched in place as
@@ -129,7 +131,8 @@ final class JobLogCeiling {
   }
 
   /// Region-rewrite cadence: half the tail, floored at the 64 KiB minimum —
-  /// write amplification stays ≤ ~2× (one region rewrite per tail/2 bytes
+  /// patches land at most once per this many new tail bytes, so write
+  /// amplification stays ≤ ~2× (one region rewrite per tail/2 bytes
   /// produced) at any ceiling.
   int get _tailFlushEveryBytes {
     final half = _tailBudget ~/ 2;

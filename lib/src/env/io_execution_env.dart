@@ -864,6 +864,30 @@ final class LocalShell implements Shell, BackgroundShell {
     if (token?.isCancelled ?? false) {
       return const Err(ExecutionError(ExecutionErrorCode.aborted, 'aborted'));
     }
+    // Issue #919 (review): build the ceiling BEFORE anything is spawned —
+    // a bad ceiling used to throw after `Process.start` plus the eager log
+    // open, stranding an orphan child and leaking the fd with no job
+    // object to stop or settle. Here it degrades to a plain Err.
+    final warn = options?.onJobLogWarning;
+    final JobLogCeiling ceiling;
+    try {
+      ceiling = JobLogCeiling(
+        maxBytes: options?.jobLogMaxBytes ?? defaultJobLogMaxBytes,
+        probe: diskFreeProbe == null
+            ? null
+            : () => diskFreeProbe!(File(logPath).parent.path),
+        onWarn:
+            warn == null ? null : (message) => warn('background job $id: $message'),
+      );
+    } on ArgumentError catch (error) {
+      return Err(
+        ExecutionError(
+          ExecutionErrorCode.spawnError,
+          'invalid jobLogMaxBytes: ${error.message}',
+          cause: error,
+        ),
+      );
+    }
     final ownGroup = LocalShell.ownProcessGroupAvailable;
     final started = await _start(command, options, ownSession: ownGroup);
     if (started.isErr) return Err(started.errorOrNull!);
@@ -905,16 +929,9 @@ final class LocalShell implements Shell, BackgroundShell {
         ),
       );
     }
-    // Issue #919: bound the log — size ceiling with head+marker+rolling
-    // tail, plus the low-disk guard (probe injectable via [LocalShell]).
-    final warn = options?.onJobLogWarning;
-    final ceiling = JobLogCeiling(
-      maxBytes: options?.jobLogMaxBytes ?? defaultJobLogMaxBytes,
-      probe: diskFreeProbe == null
-          ? null
-          : () => diskFreeProbe!(File(logPath).parent.path),
-      onWarn: warn == null ? null : (message) => warn('background job $id: $message'),
-    );
+    // Issue #919: bound the log — the ceiling (size ceiling with
+    // head+marker+rolling tail, plus the low-disk guard with the probe
+    // injectable via [LocalShell]) was built pre-spawn above.
     return Ok(
       _LocalShellJob(
         id: id,

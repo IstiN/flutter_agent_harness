@@ -331,6 +331,23 @@ void main() {
       expect(File('${tempDir.path}/sh-919d.log').readAsStringSync(),
           contains('hi'));
     });
+
+    test('a bad ceiling fails as a clean Err before anything spawns '
+        '(review round 2)', () async {
+      final logPath = '${tempDir.path}/sh-919bad.log';
+      final started = await env.startShellJob(
+        'echo hi',
+        id: 'sh-919bad',
+        logPath: logPath,
+        options: const ShellExecOptions(jobLogMaxBytes: 0),
+      );
+      expect(started.isErr, isTrue);
+      expect(started.errorOrNull!.message, contains('jobLogMaxBytes'));
+      // Nothing was spawned or opened: the eager log open (issue #925)
+      // would have created the file before the old post-spawn validation
+      // threw, stranding the child and leaking the fd.
+      expect(File(logPath).existsSync(), isFalse);
+    });
   });
 }
 
