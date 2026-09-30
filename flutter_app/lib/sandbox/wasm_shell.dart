@@ -759,7 +759,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       _captureStageStdout(data.stdout);
     }
     if (isLast) return null;
-    return _writePipeFile(data.stdout, index, tempFiles);
+    return _writePipeFile(data.stdout, '$index', tempFiles);
   }
 
   /// Appends the final stage's stdout text to the exec accumulator and the
@@ -816,10 +816,10 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   /// derives the next stage's sandbox input path from it.
   Future<io.File> _writePipeFile(
     List<int> bytes,
-    Object index,
+    String name,
     List<io.File> tempFiles,
   ) async {
-    final temp = _hostFile('.fah_pipe_$index');
+    final temp = _hostFile('.fah_pipe_$name');
     await temp.parent.create(recursive: true);
     await temp.writeAsBytes(bytes);
     tempFiles.add(temp);

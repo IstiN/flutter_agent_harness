@@ -25,6 +25,13 @@ void main() {
       // Process substitution (was: read a file literally named `(echo`).
       'diff <(echo a) <(echo b)': 'process substitution',
       'tee >(cat)': 'process substitution',
+      // fd-prefixed process substitution (was: wrote a file named `(tee`).
+      'echo x 2>(tee y)': 'process substitution',
+      'cat 2<(echo x)': 'process substitution',
+      // fd-prefixed here-string (was: misleading heredoc + read redirect).
+      'cat 3<<<word': 'fd-prefixed here-strings',
+      // Heredoc on a bare assignment (was: body silently dropped).
+      'X=1 <<EOF\nbody\nEOF': 'bare assignment',
       // Unquoted globs (were: passed literally, never expanded).
       'ls *.dart': 'glob patterns',
       // Brace expansion.
@@ -40,6 +47,8 @@ void main() {
       'while true; do echo x; done': "'while'",
       'until false; do echo x; done': "'until'",
       'case x in esac': "'case'",
+      'select x in a; do echo; done': "'select'",
+      'function f { echo; }': "'function'",
     };
 
     for (final entry in battery.entries) {

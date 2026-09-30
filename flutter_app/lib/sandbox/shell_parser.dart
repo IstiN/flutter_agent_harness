@@ -648,12 +648,25 @@ int _scanSingleQuote(String input, int i, StringBuffer buffer) {
   final number = input.substring(i, j);
   if (j < input.length && (input[j] == '>' || input[j] == '<')) {
     final fd = int.parse(number);
+    // fd-prefixed process substitution `2>(cmd)` / `2<(cmd)` — the main
+    // loop's `<(`/`>(` guard never sees these (gh-1086 review).
+    if (j + 1 < input.length && input[j + 1] == '(') {
+      throw const ShellParseException(
+        'process substitution <(...) / >(...) is not supported in the sandbox shell',
+      );
+    }
     if (input[j] == '>' && j + 1 < input.length && input[j + 1] == '>') {
       return ([_Redirect(fd, RedirectKind.append)], j + 2);
     }
     if (input[j] == '>') return ([_Redirect(fd, RedirectKind.write)], j + 1);
     // fd-prefixed here-document: `3<<DELIM` / `3<<-DELIM` (gh-1086).
     if (input[j] == '<' && j + 1 < input.length && input[j + 1] == '<') {
+      if (j + 2 < input.length && input[j + 2] == '<') {
+        throw const ShellParseException(
+          'fd-prefixed here-strings (3<<<word) are not supported; '
+          'use plain <<<word',
+        );
+      }
       final strip = j + 2 < input.length && input[j + 2] == '-';
       return ([_Heredoc(fd, stripTabs: strip)], j + (strip ? 3 : 2));
     }
@@ -960,6 +973,18 @@ final class _ScriptParser {
       throw const ShellParseException('missing command');
     }
     _validateStageWords(args, quoted);
+    // `X=1 <<EOF` — a bare assignment carries no stdin consumer; the body
+    // would be captured and silently dropped (gh-1086 review).
+    if (redirects.any(
+          (r) =>
+              r.kind == RedirectKind.heredoc ||
+              r.kind == RedirectKind.hereString,
+        ) &&
+        args.every(_assignmentWord.hasMatch)) {
+      throw const ShellParseException(
+        'a heredoc on a bare assignment is not supported in the sandbox shell',
+      );
+    }
 
     return Stage(
       command: args.first,
