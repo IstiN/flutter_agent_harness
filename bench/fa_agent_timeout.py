@@ -61,11 +61,22 @@ def _number(env, name, default):
     return value
 
 
+_FLAG_TRUE = ("1", "true", "yes", "on")
+_FLAG_FALSE = ("0", "false", "no", "off")
+
+
 def _flag(env, name, default=False):
     raw = _optional(env, name)
     if raw is None:
         return default
-    return raw.lower() in ("1", "true", "yes", "on")
+    value = raw.lower()
+    if value in _FLAG_TRUE:
+        return True
+    if value in _FLAG_FALSE:
+        return False
+    # A mistyped flag must never silently disable the extension (a silent
+    # mis-parse costs a multi-hour run) - fail loud, same as _number().
+    raise ValueError(f"{name} must be boolean (true/false), got: {raw!r}")
 
 
 @dataclass(frozen=True)

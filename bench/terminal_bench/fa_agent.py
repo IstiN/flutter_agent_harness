@@ -28,6 +28,7 @@ Host-side inputs (environment):
 
 import base64
 import json
+import logging
 import os
 import shlex
 import sys
@@ -39,6 +40,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import fa_agent_timeout as _timeout
+
+_LOG = logging.getLogger(__name__)
 
 from terminal_bench.agents.base_agent import AgentResult
 from terminal_bench.agents.failure_mode import FailureMode
@@ -172,6 +175,14 @@ class FaAgent(AbstractInstalledAgent):
         # the run is a stall/ceiling timeout, the harness must see exactly
         # the timeout classification it would have produced itself.
         if outcome:
+            if crashed:
+                # Never swallow the worker's failure silently - surface it
+                # in the run log for the postmortem.
+                _LOG.warning(
+                    "stock body crashed after %s verdict; error: %r",
+                    outcome,
+                    box["error"],
+                )
             return AgentResult(
                 total_input_tokens=0,
                 total_output_tokens=0,

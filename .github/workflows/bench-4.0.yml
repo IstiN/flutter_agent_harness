@@ -224,7 +224,7 @@ jobs:
             export FA_AGENT_TIMEOUT_SEC="$AGENT_TIMEOUT"
           fi
           case "$PROGRESS_EXTENSION" in
-            ''|1|true|TRUE|True|yes|on|false|FALSE|False|no|off) ;;
+            ''|0|1|true|TRUE|True|yes|on|false|FALSE|False|no|off) ;;
             *) echo "::error::progress-extension must be boolean (true/false), got '$PROGRESS_EXTENSION'"; exit 1 ;;
           esac
           case "$PROGRESS_EXTENSION" in

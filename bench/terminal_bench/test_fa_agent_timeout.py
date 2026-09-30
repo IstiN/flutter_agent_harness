@@ -94,6 +94,20 @@ class KnobParsingTest(unittest.TestCase):
                     clean_env(FA_AGENT_CEILING_MULTIPLIER=bad)
                 )
 
+    def test_flag_garbage_fails_loud_and_zero_is_explicit_off(self):
+        # round-2 thread 1: a mistyped flag must not silently disable
+        # the extension.
+        with self.assertRaises(ValueError):
+            TimeoutKnobs.from_env(
+                clean_env(
+                    FA_AGENT_TIMEOUT_SEC="600", FA_PROGRESS_EXTENSION="maybe"
+                )
+            )
+        knobs = TimeoutKnobs.from_env(
+            clean_env(FA_AGENT_TIMEOUT_SEC="600", FA_PROGRESS_EXTENSION="0")
+        )
+        self.assertFalse(knobs.progress_extension)  # explicit off, cap on
+
 
 class LadderTest(unittest.TestCase):
     """Ladder semantics; times are seconds elapsed since the agent started."""
@@ -354,6 +368,30 @@ class LegacyWatcherTest(unittest.TestCase):
                 agent.perform_task("instr", session, logging_dir)
         audit = json.loads((logging_dir / "fa-agent-timeout.json").read_text())
         self.assertEqual(audit["outcome"], "crashed")
+
+    def test_verdict_over_late_crash_logs_the_error(self):
+        # round-2 thread 3: the ladder verdict wins over a late stock-body
+        # crash, but the dropped exception must be logged for postmortem.
+        agent = self._agent()
+        session = FakeTmuxSession()
+
+        def stock(**kwargs):
+            session.interrupted.wait(10)  # silent: dies only at the kill
+            raise RuntimeError("late crash after C-c")
+
+        with mock.patch.dict(
+            os.environ, clean_env(FA_AGENT_TIMEOUT_SEC="0.5")
+        ), mock.patch.object(self.legacy_fa, "_POLL_SEC", 0.05), self._with_stock(
+            agent, stock
+        ), self.assertLogs(
+            self.legacy_fa._LOG, level="WARNING"
+        ) as logs:
+            result = agent.perform_task("instr", session, None)
+        self.assertEqual(
+            result.failure_mode, self.legacy_fa.FailureMode.AGENT_TIMEOUT
+        )
+        self.assertIn("stall", result.timestamped_markers[0][1])
+        self.assertTrue(any("late crash after C-c" in line for line in logs.output))
 
 
 @unittest.skipUnless(HARBOR_AVAILABLE, "harbor not installed")
