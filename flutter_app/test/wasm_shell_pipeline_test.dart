@@ -215,6 +215,37 @@ void main() {
         'expr: division by zero\n',
       );
     });
+
+    test('heredoc body feeds a builtin stage (gh-1086)', () async {
+      final r = await shell().exec('tac <<EOF\na\nb\nEOF');
+      expect(r.valueOrNull!.stdout, 'b\na\n');
+    });
+
+    test('heredoc composes with an output redirect (gh-1086)', () async {
+      final s = shell();
+      await s.exec('tr a-z A-Z <<EOF > out.txt\nhello\nEOF');
+      expect(io.File('${sandbox.path}/out.txt').readAsStringSync(), 'HELLO\n');
+    });
+
+    test('heredoc body expands \$VAR when the delimiter is unquoted '
+        '(gh-1086)', () async {
+      final s = shell();
+      await s.exec('export HD_VAR=world');
+      final r = await s.exec('tr a-z A-Z <<EOF\nhello \$HD_VAR\nEOF');
+      expect(r.valueOrNull!.stdout, 'HELLO WORLD\n');
+    });
+
+    test('quoted heredoc delimiter keeps the body literal (gh-1086)', () async {
+      final s = shell();
+      await s.exec('export HD_VAR=world');
+      final r = await s.exec("tr a-z A-Z <<'EOF'\nhello \$HD_VAR\nEOF");
+      expect(r.valueOrNull!.stdout, 'HELLO \$HD_VAR\n');
+    });
+
+    test('here-string feeds a builtin stage (gh-1086)', () async {
+      final r = await shell().exec('tr a-z A-Z <<< "hi there"');
+      expect(r.valueOrNull!.stdout, 'HI THERE\n');
+    });
   });
 
   group('stage engine over scripted modules', () {
@@ -711,7 +742,6 @@ void main() {
   });
 
   group('lazy interpreter loading (issue #640)', () {
-
     /// A shell with the eight eager modules only; heavy interpreters are
     /// compiled through a counting loader. Pass [failure] to make every
     /// lazy compile throw.
