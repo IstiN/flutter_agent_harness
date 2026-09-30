@@ -67,7 +67,8 @@ List<AssistantMessageEvent> _toolTurn(List<ToolCall> calls) {
   return events;
 }
 
-ToolCall _call(String id) => ToolCall(id: id, name: 'bash', arguments: const {});
+ToolCall _call(String id) =>
+    ToolCall(id: id, name: 'bash', arguments: const {});
 
 /// Drops the oldest messages until the estimate fits under [limit].
 List<Message> _trimTo(List<Message> messages, int limit) {
@@ -180,19 +181,31 @@ void main() {
     final run = agent.prompt('u' * 300);
     await reliefEntered.future;
     agent.abort();
-    await run.timeout(const Duration(seconds: 5), onTimeout: () {
-      fail('abort during relief did not settle the run promptly');
-    });
+    await run.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () {
+        fail('abort during relief did not settle the run promptly');
+      },
+    );
     await agent.waitForIdle();
 
-    expect(watchdogFires, 0, reason: 'the abort is the user’s, not the '
-        'watchdog’s — suspension must not swallow it');
+    expect(
+      watchdogFires,
+      0,
+      reason:
+          'the abort is the user’s, not the '
+          'watchdog’s — suspension must not swallow it',
+    );
     expect(fireError, isNull);
     final last = agent.state.messages.last as AssistantMessage;
-    expect(last.stopReason, StopReason.aborted,
-        reason: 'aborted, NOT the context-window guard error: the guard '
-            'error would re-arm the auto-continuation funnel after an '
-            'explicit stop');
+    expect(
+      last.stopReason,
+      StopReason.aborted,
+      reason:
+          'aborted, NOT the context-window guard error: the guard '
+          'error would re-arm the auto-continuation funnel after an '
+          'explicit stop',
+    );
   });
 
   test('UT-2b: classic-engine compaction tokens are linked to the run '
@@ -264,25 +277,35 @@ void main() {
     );
 
     final run = factory.run();
-    await summarizerInFlight.future.timeout(const Duration(seconds: 5),
-        onTimeout: () {
-      fail('summarizer never started — test fixture is broken');
-    });
+    await summarizerInFlight.future.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () {
+        fail('summarizer never started — test fixture is broken');
+      },
+    );
     // The summarizer is in flight; cancel the RUN token — exactly the
     // user-abort-during-relief shape — and the linked attempt token must
     // reach it promptly (the completer completes ON the cancel).
     final stopwatch = Stopwatch()..start();
     runTokenSource.cancel('user abort');
-    await summarizerCancelled.future.timeout(const Duration(seconds: 5),
-        onTimeout: () {
-      fail('linked cancel did not reach the in-flight summarizer');
-    });
+    await summarizerCancelled.future.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () {
+        fail('linked cancel did not reach the in-flight summarizer');
+      },
+    );
     stopwatch.stop();
-    expect(stopwatch.elapsed, lessThan(const Duration(seconds: 5)),
-        reason: 'the cancel propagated through the token link, not a timeout');
-    await run.timeout(const Duration(seconds: 5), onTimeout: () {
-      fail('compaction did not settle after the linked cancel');
-    });
+    expect(
+      stopwatch.elapsed,
+      lessThan(const Duration(seconds: 5)),
+      reason: 'the cancel propagated through the token link, not a timeout',
+    );
+    await run.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () {
+        fail('compaction did not settle after the linked cancel');
+      },
+    );
   });
 }
 

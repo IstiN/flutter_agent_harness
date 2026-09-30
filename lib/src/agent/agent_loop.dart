@@ -1326,7 +1326,12 @@ Future<_OverWindowGuardStep> _overWindowGuardTurn(
     tools: requestContext.tools ?? const [],
   );
   if (window <= 0 || tokens <= window) {
-    return (context: context, reliefUsed: reliefUsed, retried: false, terminal: null);
+    return (
+      context: context,
+      reliefUsed: reliefUsed,
+      retried: false,
+      terminal: null,
+    );
   }
   if (_reliefAvailable(reliefUsed, config)) {
     try {

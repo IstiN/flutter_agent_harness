@@ -298,6 +298,12 @@ extension AgentCliCompactionRun on AgentCli {
     final session = _session;
     if (session == null) return false;
     if (_agent.state.messages.isEmpty) return false;
+    // An aborted turn gets no fresh compaction pass (issue #1085 round-2
+    // review): the sticky abort flag used to belt-throw CancelledException
+    // out of the post-run compaction and print a spurious `error:` line
+    // after the abort was already reported. The over-window guard simply
+    // re-fires on the next turn if the transcript is still too big.
+    if (_runAbortRequested) return false;
     // The same request-size basis as the loop's over-window guard and the
     // status-line meter (transcript + system-prompt/tool-schema overhead
     // when unanchored) — the threshold must trip on what the next request
@@ -314,6 +320,16 @@ extension AgentCliCompactionRun on AgentCli {
     _logDiagnostic('auto-compact start sid=$_logSid tokens=$tokens');
     try {
       await _runAutoCompact('[auto-compacted]');
+    } on CancelledException {
+      // A compaction-ONLY interrupt (issue #1085 round-2 review: Ctrl+C
+      // during a bare compaction window stops the compaction, not the
+      // session): the turn is not aborted — say so quietly and let the
+      // guard re-fire later. A real run abort still propagates (the
+      // sticky flag is set; the entry gate above only covers aborts that
+      // landed BEFORE this compaction started).
+      if (_runAbortRequested) rethrow;
+      io.writeln(_style.dim('compaction interrupted'));
+      return false;
     } finally {
       // Hand the busy row back to the run even when the compaction throws
       // or is cancelled (issue #1085): a stale 'Compacting context…'
@@ -355,19 +371,28 @@ extension AgentCliCompactionRun on AgentCli {
     _runAbortRequested = false;
     _pushBusyPhase('Compacting context…');
     final before = _liveRequestTokens();
-    final reported = await _runAutoCompact('[compacted]');
-    if (!reported && _liveRequestTokens() >= before) {
-      // A no-op manual /compact (already compacted at the leaf) prints no
-      // report block — say why instead of looking like a silent hang.
-      // A run that DID report (or trimmed) never gets the note: its
-      // receipt is already on screen, and a tiny transcript can free
-      // nothing while still really compacting.
-      io.writeln(
-        _style.dim(
-          'nothing to compact — every message is already summarized or '
-          'the transcript is at its smallest',
-        ),
-      );
+    try {
+      final reported = await _runAutoCompact('[compacted]');
+      if (!reported && _liveRequestTokens() >= before) {
+        // A no-op manual /compact (already compacted at the leaf) prints no
+        // report block — say why instead of looking like a silent hang.
+        // A run that DID report (or trimmed) never gets the note: its
+        // receipt is already on screen, and a tiny transcript can free
+        // nothing while still really compacting.
+        io.writeln(
+          _style.dim(
+            'nothing to compact — every message is already summarized or '
+            'the transcript is at its smallest',
+          ),
+        );
+      }
+    } on CancelledException {
+      // Compaction-ONLY interrupt (issue #1085 round-2 review): Ctrl+C
+      // during a bare /compact stops the compaction, not the session —
+      // a dim receipt, no `error:` line, the REPL keeps working.
+      io.writeln(_style.dim('compaction interrupted'));
+    } finally {
+      _pushBusyPhase('');
     }
   }
 
@@ -546,9 +571,7 @@ extension OverWindowGuardRelief on AgentCli {
     // returned list on the window basis).
     if (afterTokens <= _effectiveContextWindow) {
       io.writeln(
-        _style.dim(
-          '[resuming] continuing the turn on the compacted context',
-        ),
+        _style.dim('[resuming] continuing the turn on the compacted context'),
       );
     }
     return after;
@@ -618,11 +641,7 @@ extension OverWindowContinuation on AgentCli {
     await _persistMessages();
     final passesBefore = _compactionPassesStarted;
     String? lastFailure;
-    for (
-      var attempt = 1;
-      attempt <= _overWindowContinueAttempts;
-      attempt++
-    ) {
+    for (var attempt = 1; attempt <= _overWindowContinueAttempts; attempt++) {
       // The user's explicit stop wins over any retry (issue #1085
       // round-1, review 🚨): the engines report a cancelled compaction as
       // a failed pass, so without this gate the loop would relaunch a
@@ -630,14 +649,17 @@ extension OverWindowContinuation on AgentCli {
       _throwIfUserAborted();
       try {
         if (await _maybeAutoCompact()) {
+          // Abort gate between a successful funnel compaction and the
+          // resumed run (issue #1085 round-2 review): the fresh prompt
+          // below RESETS the sticky flag, so the belt alone cannot see
+          // an abort that lands in this window.
+          _throwIfUserAborted();
           io.writeln(
             tuiWarning(
               '[context overflowed — auto-compacted; continuing the turn]',
             ),
           );
-          io.writeln(
-            _style.dim('[resuming] continuing the interrupted task'),
-          );
+          io.writeln(_style.dim('[resuming] continuing the interrupted task'));
           await _runContinuationPromptSafe();
           return true;
         }
@@ -684,12 +706,8 @@ extension OverWindowContinuation on AgentCli {
       final prompt = await _overWindowContinuationPrompt();
       await _runPrompt(prompt, isAutoContinue: true);
     } on Object catch (error) {
-      _logDiagnostic(
-        'over-window continuation failed sid=$_logSid: $error',
-      );
-      io.writeln(
-        tuiError('error: compaction continuation failed: $error'),
-      );
+      _logDiagnostic('over-window continuation failed sid=$_logSid: $error');
+      io.writeln(tuiError('error: compaction continuation failed: $error'));
     }
   }
 
@@ -722,7 +740,7 @@ extension OverWindowContinuation on AgentCli {
     final attemptsNote = passesRan == 0
         ? 'compaction did not run (disabled or nothing to summarize)'
         : '$passesRan compaction ${passesRan == 1 ? 'pass' : 'passes'} '
-            'did not free it';
+              'did not free it';
     final cause = lastFailure == null ? '' : ' Last failure: $lastFailure.';
     io.writeln(
       tuiError(

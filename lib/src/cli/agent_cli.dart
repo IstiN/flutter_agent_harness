@@ -1465,16 +1465,20 @@ class AgentCli {
     // from previous runs — restart-survivable reminders.
     unawaited(_scheduledMessages.start());
     final interruptSub = io.interrupts.listen((_) {
-      // A live run bracket OR a compaction window (issue #1085 round-1):
-      // manual /compact and headless pre-flight compactions run with
-      // isBusy false — Ctrl+C must still stop their 15-30 min work.
-      if (isBusy || _activeCompactionAbort != null) {
+      if (isBusy) {
         // Line-mode abort marker: the settle path uses it to DROP the
         // leftover steering loudly instead of re-running it (the TUI sets
         // the same flag in its onInterrupt and resets it in its submit
         // finally).
         _abortRequested = true;
         _abortRunOrCompaction();
+      } else if (_activeCompactionAbort != null) {
+        // Compaction-ONLY interrupt (issue #1085 round-2 review): a bare
+        // /compact or post-run compaction runs outside the run bracket —
+        // Ctrl+C stops the compaction while the SESSION stays alive. No
+        // run-abort markers here: the sticky abort belt would otherwise
+        // insta-abort the next prompt and kill the REPL.
+        _activeCompactionAbort?.cancel('interrupted by user');
       }
     });
     final taskSub = _taskConfig.jobManager.completions.listen(
@@ -1802,13 +1806,16 @@ class AgentCli {
             : TuiStatusLine(spec: resolveStatusLineSpec(config.statusLine)),
         prompt: prompt,
         onInterrupt: () {
-          // Marks the drain loop to discard queued messages (kimi-cli drops
-          // the queue on cancel instead of starting new turns).
-          _abortRequested = true;
-          // Compaction window too (issue #1085 round-1): a manual /compact
-          // runs with isBusy false — Ctrl+C still stops it.
-          if (isBusy || _activeCompactionAbort != null) {
+          if (isBusy) {
+            // Marks the drain loop to discard queued messages (kimi-cli
+            // drops the queue on cancel instead of starting new turns).
+            _abortRequested = true;
             _abortRunOrCompaction();
+          } else if (_activeCompactionAbort != null) {
+            // Compaction-ONLY interrupt (issue #1085 round-2 review): a
+            // bare /compact runs with isBusy false — Ctrl+C stops the
+            // compaction while the session stays alive.
+            _activeCompactionAbort?.cancel('interrupted by user');
           }
         },
         // Double-press Ctrl+C press 2 (issue #830): the same SIGINT-parity
@@ -2159,9 +2166,14 @@ class AgentCli {
     await _maybeAutoCompact();
     final interruptSub = io.interrupts.listen((_) {
       // Headless has no run bracket for pre-flight (`_runStarting` stays
-      // false) — cover the compaction window too (issue #1085 round-1).
-      if (isBusy || _activeCompactionAbort != null) {
+      // false): a live run aborts; a bare compaction window (pre-flight,
+      // post-run) is cancelled ALONE (issue #1085 round-2 review) — the
+      // turn then proceeds and fails loudly over-window if it must,
+      // instead of the session dying on a fake abort.
+      if (isBusy) {
         _abortRunOrCompaction();
+      } else if (_activeCompactionAbort != null) {
+        _activeCompactionAbort?.cancel('interrupted by user');
       }
     });
     final taskSub = _taskConfig.jobManager.completions.listen(
