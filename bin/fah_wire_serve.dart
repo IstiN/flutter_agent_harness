@@ -40,8 +40,10 @@ final class WireServeStartupLine {
 
   String encode() => jsonEncode(toJson());
 
+  // E4: the token rides `encode()` ONLY (the one stdout startup line).
+  // String interpolation in logs/debuggers must never leak it.
   @override
-  String toString() => encode();
+  String toString() => 'WireServeStartupLine(port: $port, token: <redacted>)';
 }
 
 /// Mints the per-start bearer token: 32 secure random bytes as 64 lowercase
@@ -59,6 +61,34 @@ Future<HttpServer> bindLoopback(int port) =>
 bool tokenOk(HttpRequest request, String token) =>
     request.headers.value(HttpHeaders.authorizationHeader) == 'Bearer $token' ||
     request.uri.queryParameters['token'] == token;
+
+/// NDJSON decode for both transports: blank lines are skipped; a
+/// malformed line is a loud `protocol_error` frame and the stream STAYS
+/// ALIVE (review #1113 r2, BLOCKING #1 — one bad line never kills the
+/// connection; stdio decode failures used to end the whole server with
+/// exit 0).
+Stream<Map<String, dynamic>> decodeNdjson(
+  WireServeServer server,
+  Stream<String> lines,
+  void Function(Map<String, dynamic> frame) send,
+) => lines
+    .map((line) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) {
+        return null;
+      }
+      try {
+        return AgentWireProtocol.parseLine(trimmed);
+      } on FormatException catch (error) {
+        server.protocolError('bad_frame', '$error', send);
+        return null;
+      } on WireProtocolException catch (error) {
+        server.protocolError('bad_frame', '$error', send);
+        return null;
+      }
+    })
+    .where((frame) => frame != null)
+    .cast<Map<String, dynamic>>();
 
 /// Accept loop: upgrade + token-gate each request, then hand the decoded
 /// frame stream to [WireServeServer.attach]. One NDJSON line per frame in
@@ -78,18 +108,14 @@ Future<void> httpListen(HttpServer http, WireServeServer server, String token) {
     }
     try {
       final ws = await WebSocketTransformer.upgrade(request);
-      final frames = ws
-          .cast<String>()
-          .map(AgentWireProtocol.parseLine)
-          .where((frame) => frame != null)
-          .cast<Map<String, dynamic>>();
+      final send = (Map<String, dynamic> frame) =>
+          ws.add(AgentWireProtocol.frameLine(frame));
       await server
-          .attach(frames, (frame) => ws.add(AgentWireProtocol.frameLine(frame)))
+          .attach(decodeNdjson(server, ws.cast<String>(), send), send)
           .whenComplete(ws.close);
     } on Object catch (error) {
       // Upgrade raced a disconnect, or the attach raced shutdown —
       // nothing to serve on a dead socket.
-      // ignore: avoid_print
       stderr.writeln('wire-serve: ws handler failed: $error');
     }
   });
@@ -105,20 +131,18 @@ void writeStartupLine(WireServeStartupLine line) {
 
 /// Serves [WireServeServer.attach] over NDJSON stdin/stdout until stdin
 /// EOF; the returned future IS the graceful-shutdown trigger in stdio
-/// mode. Blank lines are skipped; a malformed line is a loud protocol
-/// error frame (the pure core's rule), never a silent drop.
+/// mode.
 Future<void> serveStdio(WireServeServer server) {
+  final send = (Map<String, dynamic> frame) {
+    stdout.writeln(AgentWireProtocol.frameLine(frame));
+    stdout.flush();
+  };
   return server.attach(
-    stdin
-        .transform(utf8.decoder)
-        .transform(const LineSplitter())
-        .where((line) => line.trim().isNotEmpty)
-        .map(AgentWireProtocol.parseLine)
-        .where((frame) => frame != null)
-        .cast<Map<String, dynamic>>(),
-    (frame) {
-      stdout.writeln(AgentWireProtocol.frameLine(frame));
-      stdout.flush();
-    },
+    decodeNdjson(
+      server,
+      stdin.transform(utf8.decoder).transform(const LineSplitter()),
+      send,
+    ),
+    send,
   );
 }

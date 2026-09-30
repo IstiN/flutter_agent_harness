@@ -1179,8 +1179,10 @@ Future<void> _runApp(List<String> args) async {
   try {
     wireServe = splitWireServeArgs(args);
   } on FormatException catch (error) {
-    _fail('usage: fa wire-serve [--port N] [--stdio] [--token T]\n'
-        '${error.message}');
+    _fail(
+      'usage: fa wire-serve [--port N] [--stdio] [--token T]\n'
+      '${error.message}',
+    );
   }
   // `fa hub serve [--port N]` — a local DAP hub, no agent boot
   // (docs/dap.md §8.1). Intercepted on the raw args BEFORE the serve
@@ -2583,10 +2585,13 @@ Future<void> _runApp(List<String> args) async {
   }
 
   // `fa wire-serve` (issue #1103): headless Agent Wire Protocol v1
-  // server. SIGTERM: graceful — end the transport, let runWireServe's
-  // finally persist, exit 0 (143 on a second SIGTERM, the usual
-  // supervisor escalation). SIGINT rides the generic headless path
-  // above via _wireServeSettle + _headlessRun (exit 130).
+  // server. SIGINT/SIGTERM: both route through _gracefulHeadlessExit,
+  // whose fireInterrupt aborts any in-flight run and whose
+  // _wireServeSettle call ends the transport — runWireServe's finally
+  // persists, and this branch's `exit(code)` continuation (registered
+  // before _gracefulHeadlessExit's) wins the race: a graceful server
+  // shutdown is a success, exit 0 (143 on a second SIGTERM, the usual
+  // supervisor escalation).
   if (wireServe.wireServe) {
     var sigtermSeen = false;
     final sigtermSub = ProcessSignal.sigterm.watch().listen((_) {
@@ -2659,17 +2664,29 @@ String? wakeExecutable() {
 }
 
 /// `fa wire-serve` transport host (issue #1103). WS mode: binds the
-/// loopback port and prints the one-time startup line BEFORE [runWireServe]
-/// boots the agent — a parent can connect the moment the line lands. stdio
-/// mode: NDJSON over stdin/stdout, no startup line. Shutdown triggers:
-/// stdin EOF and SIGTERM (routed through [_wireServeSettle]); the boot,
+/// loopback port early (fail fast on an occupied port), and prints the
+/// one-time startup line only AFTER the boot — and its lease gate —
+/// succeeded ([runWireServe]'s `onReady`), so a parent never reads a
+/// startup line for a serve that refuses to boot. stdio mode: NDJSON
+/// over stdin/stdout, no startup line. Shutdown triggers: stdin EOF and
+/// SIGTERM (routed through [_wireServeSettle]) — BOTH transports race
+/// the shutdown trigger, so a signal never strands the teardown; boot,
 /// persist, and teardown live in [AgentCli.runWireServe].
 Future<int> _runWireServeHost({
   required AgentCli cli,
   required WireServeArgs wireServe,
   required _TerminalCliIO terminalIo,
 }) async {
-  final token = wireServe.token ?? wireServeToken();
+  // --token T is visible in the process list; the env var keeps it out
+  // of `ps` for hosts that prefer that (review #1113 r2, suggestion #5).
+  final token =
+      wireServe.token ??
+      () {
+        final fromEnv = Platform.environment['FA_WIRE_SERVE_TOKEN'];
+        return (fromEnv == null || fromEnv.isEmpty)
+            ? wireServeToken()
+            : fromEnv;
+      }();
   HttpServer? http;
   if (!wireServe.stdio) {
     try {
@@ -2679,23 +2696,34 @@ Future<int> _runWireServeHost({
     } on SocketException catch (error) {
       _fail('wire-serve: cannot bind 127.0.0.1:${wireServe.port ?? 0}: $error');
     }
-    writeStartupLine(WireServeStartupLine(port: http.port, token: token));
   }
   final shutdown = Completer<void>();
   _wireServeSettle = () {
     if (!shutdown.isCompleted) shutdown.complete();
   };
-  // A supervisor closing the pipe also ends a WS server (the stdio
-  // transport owns stdin itself in --stdio mode).
+  // WS mode: a supervisor closing our stdin pipe also ends the serve
+  // (documented in docs/wire-protocol.md §8). The stdio transport owns
+  // stdin itself in --stdio mode.
   StreamSubscription<void>? stdinSub;
   if (http != null) {
     stdinSub = stdin.listen((_) {}, onDone: _wireServeSettle!);
   }
   try {
     final code = await cli.runWireServe(
+      onReady: http == null
+          ? null
+          : () => writeStartupLine(
+              WireServeStartupLine(port: http!.port, token: token),
+            ),
       serve: (server) async {
         if (wireServe.stdio) {
-          await serveStdio(server);
+          final done = serveStdio(server);
+          // stdin EOF is the natural end; a signal-completed shutdown
+          // must ALSO end the serve, or the graceful teardown waits out
+          // its full settle window and the persist never runs (review
+          // #1113 r2, #3).
+          await Future.any([shutdown.future, done]);
+          done.ignore();
           return;
         }
         final listenDone = httpListen(http!, server, token);

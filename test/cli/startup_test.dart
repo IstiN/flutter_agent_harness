@@ -106,8 +106,7 @@ void main() {
       expect(split.cliArgs, const ['--model', 'm1']);
     });
 
-    test('a value directly after --port/--token drops, the next one stays',
-        () {
+    test('a value directly after --port/--token drops, the next one stays', () {
       final split = splitWireServeArgs(const [
         'wire-serve',
         '--token',
@@ -118,9 +117,43 @@ void main() {
       expect(split.cliArgs, const ['positional']);
     });
 
+    test(
+      'the word as any non-subcommand argument never intercepts (r2 #6)',
+      () {
+        final split = splitWireServeArgs(const ['-p', 'wire-serve']);
+        expect(split.wireServe, isFalse);
+        expect(split.cliArgs, const ['-p', 'wire-serve']);
+      },
+    );
+
+    test('repeated flags: last occurrence wins for --port and --token (r2 #7)',
+        () {
+      final split = splitWireServeArgs(const [
+        'wire-serve',
+        '--port',
+        '1111',
+        '--port',
+        '2222',
+        '--token',
+        'a',
+        '--token',
+        'b',
+      ]);
+      expect(split.port, 2222);
+      expect(split.token, 'b');
+    });
+
+    test('a value-flag value is consumed verbatim (r2 #7): --token --stdio',
+        () {
+      final split = splitWireServeArgs(const ['wire-serve', '--token', '--stdio']);
+      expect(split.stdio, isFalse, reason: 'the word is the token VALUE');
+      expect(split.token, '--stdio');
+    });
+
     test('--stdio and --port together are a loud usage error', () {
       expect(
-        () => splitWireServeArgs(const ['wire-serve', '--stdio', '--port', '1']),
+        () =>
+            splitWireServeArgs(const ['wire-serve', '--stdio', '--port', '1']),
         throwsFormatException,
       );
     });

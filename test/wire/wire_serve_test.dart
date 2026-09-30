@@ -113,10 +113,7 @@ void main() {
       await _untilAttached(h);
 
       final secondSent = <Map<String, dynamic>>[];
-      await h.server.attach(
-        Stream.value(hello()),
-        secondSent.add,
-      );
+      await h.server.attach(Stream.value(hello()), secondSent.add);
       expect(secondSent, hasLength(1));
       expect(secondSent.single['kind'], 'error');
       expect(secondSent.single['code'], 'already_attached');
@@ -219,33 +216,40 @@ void main() {
         AgentWireProtocol().encodeCommand(const WireAbortCommand()),
       );
       await pump();
-      expect(h.allOf('error').map((e) => e['code']), ['not_running', 'not_running']);
+      expect(h.allOf('error').map((e) => e['code']), [
+        'not_running',
+        'not_running',
+      ]);
       expect(h.aborts, 0);
       await h.close();
       await served;
     });
 
-    test('unknown command and session_control are loud, run stays alive', () async {
-      final h = _Harness();
-      final served = h.attach();
-      h.clientSends(hello());
-      await _untilAttached(h);
+    test(
+      'unknown command and session_control are loud, run stays alive',
+      () async {
+        final h = _Harness();
+        final served = h.attach();
+        h.clientSends(hello());
+        await _untilAttached(h);
 
-      h.clientSends({'v': 1, 'kind': 'teleport', 'x': 1});
-      h.clientSends(
-        AgentWireProtocol()
-            .encodeCommand(const WireSessionControlCommand(op: 'ping')),
-      );
-      await pump();
-      final codes = h.allOf('error').map((e) => e['code']).toList();
-      expect(codes, contains('unknown_command'));
-      expect(codes, contains('unsupported_session_control_op'));
-      // The connection survives (E3 discipline).
-      h.server.handleAgentEvent(nativeEventFor('turn_start'));
-      expect(h.kind('turn_start'), isNotEmpty);
-      await h.close();
-      await served;
-    });
+        h.clientSends({'v': 1, 'kind': 'teleport', 'x': 1});
+        h.clientSends(
+          AgentWireProtocol().encodeCommand(
+            const WireSessionControlCommand(op: 'ping'),
+          ),
+        );
+        await pump();
+        final codes = h.allOf('error').map((e) => e['code']).toList();
+        expect(codes, contains('unknown_command'));
+        expect(codes, contains('unsupported_session_control_op'));
+        // The connection survives (E3 discipline).
+        h.server.handleAgentEvent(nativeEventFor('turn_start'));
+        expect(h.kind('turn_start'), isNotEmpty);
+        await h.close();
+        await served;
+      },
+    );
 
     test('malformed frame is a loud per-frame error, not a teardown', () async {
       final h = _Harness();
@@ -331,48 +335,52 @@ void main() {
       await served;
     });
 
-    test('pending approval survives detach and is re-delivered to the next attach',
-        () async {
-      final h = _Harness();
-      final served = h.attach();
-      h.clientSends(hello());
-      await _untilAttached(h);
+    test(
+      'pending approval survives detach and is re-delivered to the next attach',
+      () async {
+        final h = _Harness();
+        final served = h.attach();
+        h.clientSends(hello());
+        await _untilAttached(h);
 
-      h.clientSends(
-        AgentWireProtocol().encodeCommand(const WirePromptCommand('go')),
-      );
-      await pump();
-      final firstDelivery = h.kind('approval_request');
-      final requestId = firstDelivery['id'] as String;
+        h.clientSends(
+          AgentWireProtocol().encodeCommand(const WirePromptCommand('go')),
+        );
+        await pump();
+        final firstDelivery = h.kind('approval_request');
+        final requestId = firstDelivery['id'] as String;
 
-      // Client dies mid-approval.
-      await h.close();
-      await served;
+        // Client dies mid-approval.
+        await h.close();
+        await served;
 
-      final secondSent = <Map<String, dynamic>>[];
-      final secondIncoming = StreamController<Map<String, dynamic>>();
-      final second = h.server.attach(secondIncoming.stream, secondSent.add);
-      secondIncoming.add(hello());
-      await pump();
-      // Re-delivered: same kind, same id, re-encoded for the new attach.
-      final redelivered = secondSent
-          .firstWhere((f) => f['kind'] == 'approval_request', orElse: () => {});
-      expect(redelivered['id'], requestId);
+        final secondSent = <Map<String, dynamic>>[];
+        final secondIncoming = StreamController<Map<String, dynamic>>();
+        final second = h.server.attach(secondIncoming.stream, secondSent.add);
+        secondIncoming.add(hello());
+        await pump();
+        // Re-delivered: same kind, same id, re-encoded for the new attach.
+        final redelivered = secondSent.firstWhere(
+          (f) => f['kind'] == 'approval_request',
+          orElse: () => {},
+        );
+        expect(redelivered['id'], requestId);
 
-      // The SAME id resolves the ORIGINAL waiter.
-      secondIncoming.add(
-        AgentWireProtocol().encodeCommand(
-          WireApprovalResponseCommand(
-            id: requestId,
-            decision: ApprovalDecision.approveOnce,
+        // The SAME id resolves the ORIGINAL waiter.
+        secondIncoming.add(
+          AgentWireProtocol().encodeCommand(
+            WireApprovalResponseCommand(
+              id: requestId,
+              decision: ApprovalDecision.approveOnce,
+            ),
           ),
-        ),
-      );
-      await pump();
-      expect(h.decisions, [ApprovalDecision.approveOnce]);
-      await secondIncoming.close();
-      await second;
-    });
+        );
+        await pump();
+        expect(h.decisions, [ApprovalDecision.approveOnce]);
+        await secondIncoming.close();
+        await second;
+      },
+    );
 
     test('ask and secret round-trip; cancel maps to null', () async {
       final h = _Harness()..withApproval = false;
@@ -384,17 +392,12 @@ void main() {
       h.askGate = Completer<List<AskQuestion>?>();
       h.secretGate = Completer<RequestSecretResult?>();
       h.clientSends(
-        AgentWireProtocol().encodeCommand(
-          const WirePromptCommand('deploy'),
-        ),
+        AgentWireProtocol().encodeCommand(const WirePromptCommand('deploy')),
       );
       await pump();
       final askFrame = h.kind('ask_request');
       expect(askFrame['id'], isNotEmpty);
-      expect(
-        (askFrame['questions'] as List).first['question'],
-        'Deploy now?',
-      );
+      expect((askFrame['questions'] as List).first['question'], 'Deploy now?');
 
       h.clientSends(
         AgentWireProtocol().encodeCommand(
@@ -506,6 +509,46 @@ void main() {
       expect(h.sent, isEmpty);
     });
   });
+  group('protocol_error (review #1113 r2, BLOCKING #1)', () {
+    test('a malformed line emits a loud error frame pre-handshake', () {
+      final h = _Harness();
+      h.server.protocolError('bad_frame', 'FormatException: bad JSON', h.sent.add);
+      expect(h.sent, hasLength(1));
+      final frame = h.sent.single;
+      expect(frame['kind'], 'error');
+      expect(frame['code'], 'bad_frame');
+      expect(frame['message'], contains('bad JSON'));
+      expect(frame['v'], wireProtocolVersion);
+    });
+
+    test('a malformed line post-handshake keeps the attach alive', () async {
+      final h = _Harness();
+      final incoming = StreamController<String>();
+      final done = h.server.attach(
+        incoming.stream
+            .map((line) {
+              try {
+                return AgentWireProtocol.parseLine(line);
+              } on FormatException catch (error) {
+                h.server.protocolError('bad_frame', '$error', h.sent.add);
+                return null;
+              }
+            })
+            .where((f) => f != null)
+            .cast<Map<String, dynamic>>(),
+        h.sent.add,
+      );
+      incoming.add('not json');
+      await pump();
+      expect(h.sent.map((f) => f['code']), contains('bad_frame'));
+      // Still attached: a valid hello after the bad line completes fine.
+      incoming.add('{"v":1,"kind":"hello","versions":[1]}');
+      await _untilAttached(h);
+      expect(h.server.attached, isTrue);
+      await incoming.close();
+      await done;
+    });
+  });
 }
 
 /// Waits until the client finished the handshake.
@@ -516,5 +559,9 @@ Future<void> _untilAttached(_Harness h) async {
   }
   fail('client never attached');
 }
+
+/// Drives a full attach + hello, then hands the server [line] as a raw
+/// NDJSON line through [decodeLine] (the bin host's decode step) and
+/// returns what came back out.
 
 Future<void> pump() => Future<void>.delayed(Duration.zero);

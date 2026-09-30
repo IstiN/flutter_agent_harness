@@ -94,8 +94,7 @@ void main() {
     }
   });
 
-  test('IT-1: WS handshake, single-attach, reattach; E1 re-delivery',
-      () async {
+  test('IT-1: WS handshake, single-attach, reattach; E1 re-delivery', () async {
     final fake = FakeStreamFunction([
       toolTurn([
         const ToolCall(
@@ -197,8 +196,10 @@ void main() {
     // above must yield an unknown_request_id error, then the real id
     // answers the pending approval.
     await _waitFor(third, (f) => f['kind'] == 'error');
-    expect(third.lastWhere((f) => f['kind'] == 'error')['code'],
-        'unknown_request_id');
+    expect(
+      third.lastWhere((f) => f['kind'] == 'error')['code'],
+      'unknown_request_id',
+    );
     ws3.add(
       jsonEncode(
         WireApprovalResponseCommand(
@@ -210,9 +211,7 @@ void main() {
     await _waitFor(third, (f) => f['kind'] == 'agent_end');
     expect(
       third.any(
-        (f) =>
-            f['kind'] == 'turn_end' &&
-            jsonEncode(f).contains('"done"'),
+        (f) => f['kind'] == 'turn_end' && jsonEncode(f).contains('"done"'),
       ),
       isTrue,
       reason: 'final assistant text rides turn_end',
@@ -222,67 +221,111 @@ void main() {
     await served.timeout(const Duration(seconds: 20));
   });
 
-  test('IT-2: NDJSON stdio scripted run emits the golden event sequence',
-      () async {
-    final fake = FakeStreamFunction([textTurn('Hello from the wire')]);
-    final cli = bootCli(fake: fake, approvalMode: ApprovalMode.yolo);
-    final incoming = StreamController<String>();
-    final outLines = <String>[];
-    final done = Completer<void>();
-    final served = cli.runWireServe(
-      serve: (server) {
-        return server
-            .attach(
-              incoming.stream
-                  .where((l) => l.trim().isNotEmpty)
-                  .map(AgentWireProtocol.parseLine)
-                  .where((f) => f != null)
-                  .cast<Map<String, dynamic>>(),
-              (frame) {
-                outLines.add(AgentWireProtocol.frameLine(frame));
-                if (frame['kind'] == 'agent_settled') {
-                  done.complete();
-                }
-              },
-            )
-            .whenComplete(() {
-              if (!done.isCompleted) done.complete();
-            });
-      },
-    );
+  test(
+    'IT-2: NDJSON stdio scripted run emits the golden event sequence',
+    () async {
+      final fake = FakeStreamFunction([textTurn('Hello from the wire')]);
+      final cli = bootCli(fake: fake, approvalMode: ApprovalMode.yolo);
+      final incoming = StreamController<String>();
+      final outLines = <String>[];
+      final done = Completer<void>();
+      final served = cli.runWireServe(
+        serve: (server) {
+          final send = (Map<String, dynamic> frame) {
+            outLines.add(AgentWireProtocol.frameLine(frame));
+            if (frame['kind'] == 'agent_settled') {
+              done.complete();
+            }
+          };
+          return server
+              .attach(decodeNdjson(server, incoming.stream, send), send)
+              .whenComplete(() {
+                if (!done.isCompleted) done.complete();
+              });
+        },
+      );
 
-    incoming.add(
-      jsonEncode({
-        'v': 1,
-        'kind': 'hello',
-        'versions': [1],
-      }),
-    );
-    incoming.add(jsonEncode(const WirePromptCommand('hi').toJson()));
-    await done.future.timeout(const Duration(seconds: 20));
-    await incoming.close();
-    expect(await served.timeout(const Duration(seconds: 20)), 0);
+      incoming.add(
+        jsonEncode({
+          'v': 1,
+          'kind': 'hello',
+          'versions': [1],
+        }),
+      );
+      incoming.add(jsonEncode(const WirePromptCommand('hi').toJson()));
+      await done.future.timeout(const Duration(seconds: 20));
+      await incoming.close();
+      expect(await served.timeout(const Duration(seconds: 20)), 0);
 
-    final kinds = outLines.map((l) => decodeLine(l)['kind']).toList();
-    expect(kinds.first, 'welcome');
-    expect(kinds, contains('agent_start'));
-    expect(kinds, contains('turn_start'));
-    expect(kinds, contains('turn_end'));
-    expect(kinds, contains('agent_end'));
-    expect(kinds, contains('agent_settled'));
-    // The final assistant text is present on the turn_end frame.
-    final turnEnd = outLines
-        .map(decodeLine)
-        .lastWhere((f) => f['kind'] == 'turn_end');
-    expect(jsonEncode(turnEnd), contains('Hello from the wire'));
-    // NDJSON discipline: exactly one JSON object per line (UTF-8 plus a
-    // trailing \n; no embedded newlines ever).
-    for (final line in outLines) {
-      expect(line.endsWith('\n'), isTrue, reason: line);
-      expect(line.trim().contains('\n'), isFalse, reason: line);
-      expect(() => jsonDecode(line.trim()), returnsNormally, reason: line);
-    }
-  });
+      final kinds = outLines.map((l) => decodeLine(l)['kind']).toList();
+      expect(kinds.first, 'welcome');
+      expect(kinds, contains('agent_start'));
+      expect(kinds, contains('turn_start'));
+      expect(kinds, contains('turn_end'));
+      expect(kinds, contains('agent_end'));
+      expect(kinds, contains('agent_settled'));
+      // The final assistant text is present on the turn_end frame.
+      final turnEnd = outLines
+          .map(decodeLine)
+          .lastWhere((f) => f['kind'] == 'turn_end');
+      expect(jsonEncode(turnEnd), contains('Hello from the wire'));
+      // NDJSON discipline: exactly one JSON object per line (UTF-8 plus a
+      // trailing \n; no embedded newlines ever).
+      for (final line in outLines) {
+        expect(line.endsWith('\n'), isTrue, reason: line);
+        expect(line.trim().contains('\n'), isFalse, reason: line);
+        expect(() => jsonDecode(line.trim()), returnsNormally, reason: line);
+      }
+    },
+  );
+
+  test(
+    'T1/r2: a malformed line is a loud protocol_error and the serve survives',
+    () async {
+      final fake = FakeStreamFunction([textTurn('still here')]);
+      final cli = bootCli(fake: fake, approvalMode: ApprovalMode.yolo);
+      final incoming = StreamController<String>();
+      final outFrames = <Map<String, dynamic>>[];
+      final gotError = Completer<void>();
+      final settled = Completer<void>();
+      final served = cli.runWireServe(
+        serve: (server) {
+          final send = (Map<String, dynamic> frame) {
+            outFrames.add(frame);
+            if (frame['kind'] == 'error' && !gotError.isCompleted) {
+              gotError.complete();
+            }
+            if (frame['kind'] == 'agent_settled' && !settled.isCompleted) {
+              settled.complete();
+            }
+          };
+          return server.attach(
+            decodeNdjson(server, incoming.stream, send),
+            send,
+          );
+        },
+      );
+
+      incoming.add(
+        jsonEncode({
+          'v': 1,
+          'kind': 'hello',
+          'versions': [1],
+        }),
+      );
+      incoming.add('not json'); // the BLOCKING repro from review round 2.
+      incoming.add(jsonEncode(const WirePromptCommand('hi').toJson()));
+      await gotError.future.timeout(const Duration(seconds: 20));
+      final error = outFrames.lastWhere((f) => f['kind'] == 'error');
+      expect(error['code'], 'bad_frame');
+      expect(error['message'], isNotEmpty);
+      // The connection — and the whole serve — is still alive: the NEXT
+      // prompt after the bad line runs to completion.
+      await settled.future.timeout(const Duration(seconds: 20));
+      await incoming.close();
+      expect(await served.timeout(const Duration(seconds: 20)), 0);
+    },
+  );
 
   test('IT-3: shutdown persists; a second CLI resumes the session', () async {
     final fake1 = FakeStreamFunction([textTurn('first-run-answer')]);
@@ -295,18 +338,12 @@ void main() {
     final settled = Completer<void>();
     final served1 = cli1.runWireServe(
       serve: (server) {
-        return server.attach(
-          incoming.stream
-              .where((l) => l.trim().isNotEmpty)
-              .map(AgentWireProtocol.parseLine)
-              .where((f) => f != null)
-              .cast<Map<String, dynamic>>(),
-          (frame) {
-            if (frame['kind'] == 'agent_settled' && !settled.isCompleted) {
-              settled.complete();
-            }
-          },
-        );
+        final send = (Map<String, dynamic> frame) {
+          if (frame['kind'] == 'agent_settled' && !settled.isCompleted) {
+            settled.complete();
+          }
+        };
+        return server.attach(decodeNdjson(server, incoming.stream, send), send);
       },
     );
     incoming.add(
@@ -334,20 +371,13 @@ void main() {
     final resumeSettled = Completer<void>();
     final served2 = cli2.runWireServe(
       serve: (server) {
+        final send = (Map<String, dynamic> frame) {
+          if (frame['kind'] == 'agent_settled' && !resumeSettled.isCompleted) {
+            resumeSettled.complete();
+          }
+        };
         return server
-            .attach(
-              resumeIncoming.stream
-                  .where((l) => l.trim().isNotEmpty)
-                  .map(AgentWireProtocol.parseLine)
-                  .where((f) => f != null)
-                  .cast<Map<String, dynamic>>(),
-              (frame) {
-                if (frame['kind'] == 'agent_settled' &&
-                    !resumeSettled.isCompleted) {
-                  resumeSettled.complete();
-                }
-              },
-            )
+            .attach(decodeNdjson(server, resumeIncoming.stream, send), send)
             .whenComplete(() {
               if (!resumeSettled.isCompleted) resumeSettled.complete();
             });
@@ -371,63 +401,58 @@ void main() {
         if (message is UserMessage)
           switch (message.content) {
             final String text => text,
-            final List parts => parts
-                .whereType<TextContent>()
-                .map((t) => t.text)
-                .join(),
+            final List parts =>
+              parts.whereType<TextContent>().map((t) => t.text).join(),
             _ => '',
           },
     ];
-    expect(texts.join('\n'), contains('remember me'),
-        reason: 'the first run survived the shutdown via the session file');
+    expect(
+      texts.join('\n'),
+      contains('remember me'),
+      reason: 'the first run survived the shutdown via the session file',
+    );
   });
 
-  test('E4 + authn-lite: bad token is rejected; token stays out of records',
-      () async {
-    final fake = FakeStreamFunction([textTurn('shh')]);
-    final cli = bootCli(fake: fake, approvalMode: ApprovalMode.yolo);
-    final http = await bindLoopback(0);
-    final served = cli.runWireServe(
-      serve: (server) => httpListen(http, server, 'sekrit-token'),
-      onDiagnostic: (line) => stderr.writeln(line),
-    );
-    // Wrong token: the upgrade is refused (HTTP 401) — WebSocket.connect
-    // fails; the loud gate is the transport, not a protocol frame.
-    await expectLater(
-      WebSocket.connect('ws://127.0.0.1:${http.port}?token=wrong')
-          .then<void>((_) {}),
-      throwsA(anything),
-    ).timeout(const Duration(seconds: 10));
-    // The right token works: handshake (hello -> welcome), like any v1
-    // client — the server never speaks before the client's hello.
-    final ws = await connect(http.port, token: 'sekrit-token');
-    ws.add(
-      jsonEncode({
-        'v': 1,
-        'kind': 'hello',
-        'versions': [1],
-      }),
-    );
-    final first = await ws.first.timeout(const Duration(seconds: 10));
-    expect(decodeLine(first as String)['kind'], 'welcome');
-    await ws.close();
-    await http.close(force: true);
-    await served.timeout(const Duration(seconds: 20));
-    // E4: the token never reached the session records. Sweep the whole
-    // persisted session tree under the session root.
-    final files = await env.listDir('/sessions');
-    expect(files.isOk, isTrue, reason: 'session root exists after persist');
-    for (final info in files.getOrThrow()) {
-      final path = info.path;
-      expect(path.contains('sekrit-token'), isFalse, reason: 'file name');
-      final content = await env.readTextFile(path);
-      expect(
-        content.isOk ? content.getOrThrow().contains('sekrit-token') : false,
-        isFalse,
-        reason: 'E4: bearer token leaked into $path',
+  test(
+    'E4 + authn-lite: bad token is rejected; token stays out of records',
+    () async {
+      final fake = FakeStreamFunction([textTurn('shh')]);
+      final cli = bootCli(fake: fake, approvalMode: ApprovalMode.yolo);
+      final http = await bindLoopback(0);
+      final served = cli.runWireServe(
+        serve: (server) => httpListen(http, server, 'sekrit-token'),
+        onDiagnostic: (line) => stderr.writeln(line),
       );
-    }
-  });
+      // Wrong token: the upgrade is refused (HTTP 401) — WebSocket.connect
+      // fails; the loud gate is the transport, not a protocol frame.
+      await expectLater(
+        WebSocket.connect(
+          'ws://127.0.0.1:${http.port}?token=wrong',
+        ).then<void>((_) {}),
+        throwsA(anything),
+      ).timeout(const Duration(seconds: 10));
+      // The right token works: handshake (hello -> welcome), like any v1
+      // client — the server never speaks before the client's hello.
+      final ws = await connect(http.port, token: 'sekrit-token');
+      ws.add(
+        jsonEncode({
+          'v': 1,
+          'kind': 'hello',
+          'versions': [1],
+        }),
+      );
+      final first = await ws.first.timeout(const Duration(seconds: 10));
+      expect(decodeLine(first as String)['kind'], 'welcome');
+      await ws.close();
+      await http.close(force: true);
+      await served.timeout(const Duration(seconds: 20));
+      // E4: the token never reached the session records. Sweep the whole
+      // persisted session tree under the session root — recursively, and
+      // LOUD on anything unreadable (a silent skip would hide a leak;
+      // review #1113 r2, #9).
+      await _sweepNoToken(env, '/sessions');
+    },
+  );
 }
 
 Future<void> _waitFor(
@@ -439,6 +464,38 @@ Future<void> _waitFor(
     await _pump();
   }
   fail('frame never arrived; got: ${frames.map((f) => f['kind']).toList()}');
+}
+
+/// Recursively asserts the bearer token never appears in any file (name
+/// or content) under [dir]; an unreadable entry FAILS the sweep — a
+/// silent skip would hide exactly the leak this sweep exists to catch.
+Future<void> _sweepNoToken(MemoryExecutionEnv env, String dir) async {
+  final listing = await env.listDir(dir);
+  expect(listing.isOk, isTrue, reason: 'E4 sweep: cannot read directory $dir');
+  for (final info in listing.getOrThrow()) {
+    expect(
+      info.name.contains('sekrit-token'),
+      isFalse,
+      reason: 'E4: token in file name ${info.path}',
+    );
+    switch (info.kind) {
+      case FileKind.directory:
+        await _sweepNoToken(env, info.path);
+      case FileKind.file:
+      case FileKind.symlink:
+        final content = await env.readTextFile(info.path);
+        expect(
+          content.isOk,
+          isTrue,
+          reason: 'E4 sweep: cannot read ${info.path}',
+        );
+        expect(
+          content.getOrThrow().contains('sekrit-token'),
+          isFalse,
+          reason: 'E4: bearer token leaked into ${info.path}',
+        );
+    }
+  }
 }
 
 Future<void> _pump() => Future<void>.delayed(const Duration(milliseconds: 5));

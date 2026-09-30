@@ -136,10 +136,18 @@ The port is ephemeral unless `--port N` (an occupied port is a loud
 startup error naming it, never a silent fallback). Every WS request must
 carry the per-start bearer token — `Authorization: Bearer <token>` or
 `?token=` — or the upgrade is refused (401). The token is minted per
-start (`--token` overrides), never written to session records or logs,
-and exists to stop bystanders, not adversaries; treat loopback + token as
-authn-lite. Frames ride the socket one NDJSON line per message, both
-directions.
+start (`--token` overrides; set `FA_WIRE_SERVE_TOKEN` in the environment
+instead of `--token` when you need it out of the `ps` listing), never
+written to session records or logs, and exists to stop bystanders, not
+adversaries; treat loopback + token as authn-lite. Frames ride the
+socket one NDJSON line per message, both directions. A malformed line is
+answered with a loud `bad_frame` error frame (the same code the
+protocol answers schema-invalid frames with) and the connection STAYS
+ALIVE — one bad line never kills a connection (and in stdio mode never
+the server). The startup line is printed only after the boot (and its
+session-ownership lease) succeeded. In WS mode a supervisor closing the
+process's stdin pipe also ends the serve, same as stdin EOF in stdio
+mode.
 
 **Lifecycle.** Single-attach: the first client's `hello` wins; a second
 client is answered with a loud `already_attached` error frame and

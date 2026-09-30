@@ -18,13 +18,17 @@ extension WireServeBoot on AgentCli {
   /// in-flight run is aborted and given a bounded settle window first;
   /// the transcript persists, then normal teardown runs. Returns the
   /// process exit code (0; 3 when an ownership lease blocks the boot).
-  /// Decomposed into one-decision helpers — each stays at cyclomatic 2,
-  /// under the CRAP ratchet floor for code CI cannot cover (the CRAP
-  /// lcov excludes integration tests, and only an integration run can
-  /// drive this boot).
+  /// [onReady] fires after the boot (and its lease gate) succeeded but
+  /// before the transport starts — the WS host prints its one stdout
+  /// startup line there, so a parent never reads a startup line for a
+  /// serve that refuses to boot. Decomposed into one-decision helpers —
+  /// each stays at cyclomatic 3 or under, the CRAP ratchet floor for
+  /// code CI cannot cover (the CRAP lcov excludes integration tests,
+  /// and only an integration run can drive this boot).
   Future<int> runWireServe({
     required Future<void> Function(WireServeServer server) serve,
     void Function(String line)? onDiagnostic,
+    void Function()? onReady,
   }) async {
     final server = _wireServeServer(onDiagnostic);
     _wireHostInteraction(server);
@@ -33,6 +37,7 @@ extension WireServeBoot on AgentCli {
     if (runtime == null) {
       return 3;
     }
+    onReady?.call();
     try {
       await serve(server);
     } finally {
@@ -65,9 +70,8 @@ extension WireServeBoot on AgentCli {
   /// Every agent event becomes a wire frame; unknown-to-v1 kinds ride
   /// the passthrough. The CLI's own listener stays attached but writes
   /// through the silent io — nothing TUI-shaped can reach the stream.
-  void Function() _wirePump(WireServeServer server) => _agent.subscribe(
-    (event, cancelToken) => server.handleAgentEvent(event),
-  );
+  void Function() _wirePump(WireServeServer server) =>
+      _agent.subscribe((event, cancelToken) => server.handleAgentEvent(event));
 
   /// The boot sequence up to (and including) the ownership-lease gate:
   /// returns the live subscriptions the teardown needs, or null when a
@@ -106,12 +110,15 @@ extension WireServeBoot on AgentCli {
 
   /// Graceful: an in-flight run gets abort + a bounded settle (a wedged
   /// provider cannot hold the exit), then the normal persist — the
-  /// session JSONL lands exactly as a REPL session's would.
+  /// session JSONL lands exactly as a REPL session's would. The pure
+  /// server's [WireServeServer.shutdown] resolves every still-pending
+  /// approval/ask/secret with its safe refusal first (review #1113 r2).
   Future<void> _wireServeTeardown(
     WireServeServer server,
     void Function() pumpSub,
     _WireServeRuntime runtime,
   ) async {
+    await server.shutdown();
     _abortIfBusy();
     await _settled.timeout(const Duration(seconds: 10), onTimeout: () {});
     await _afterRun();
@@ -133,5 +140,8 @@ extension WireServeBoot on AgentCli {
 }
 
 /// The live subscriptions a wire-serve boot hands its teardown.
-typedef _WireServeRuntime =
-    ({StreamSubscription<dynamic> interruptSub, StreamSubscription<dynamic> taskSub, Timer inboxTimer});
+typedef _WireServeRuntime = ({
+  StreamSubscription<dynamic> interruptSub,
+  StreamSubscription<dynamic> taskSub,
+  Timer inboxTimer,
+});

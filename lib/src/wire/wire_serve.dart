@@ -130,7 +130,7 @@ final class WireServeServer {
         _error(
           'already_attached',
           'another client is attached to this session; '
-          'retry after it disconnects',
+              'retry after it disconnects',
         ),
       );
       return Future<void>.value();
@@ -304,7 +304,7 @@ final class WireServeServer {
           _error(
             'unsupported_session_control_op',
             'no session_control ops are supported in protocol v1 '
-            '(got "$op")',
+                '(got "$op")',
           ),
         );
       case WireUnknownCommand(:final kind):
@@ -319,7 +319,7 @@ final class WireServeServer {
         _error(
           'unknown_request_id',
           'no pending $kind with id "$id" '
-          '(already answered, or never issued)',
+              '(already answered, or never issued)',
         ),
       );
       return;
@@ -375,6 +375,21 @@ final class WireServeServer {
     'code': code,
     'message': message,
   };
+
+  /// A transport-level decode failure (a malformed NDJSON line): the
+  /// documented rule is a loud `bad_frame` error frame — the SAME code
+  /// the core answers schema-invalid frames with — and the connection
+  /// STAYS ALIVE; one bad line never kills the stream (review #1113 r2,
+  /// BLOCKING #1). Valid pre-handshake too: the version is fixed at
+  /// construction.
+  void protocolError(String code, String message, WireFrameSink send) {
+    _sendSafely({
+      'v': _protocol.version,
+      'kind': 'error',
+      'code': code,
+      'message': message,
+    }, send);
+  }
 
   void _log(String line) => _onLog?.call('wire-serve: $line');
 }
