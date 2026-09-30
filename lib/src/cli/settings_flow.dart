@@ -2148,6 +2148,7 @@ extension SettingsFlow on AgentCli {
       case 'baseDelayMs':
       case 'maxBackoffMs':
       case 'maxWaitMs':
+      case 'maxWaitForLastEntryMs':
       case 'keyBackoffMs':
         await _askRetryScalar(picked);
     }
@@ -2155,7 +2156,7 @@ extension SettingsFlow on AgentCli {
 
   /// The main menu of [startResilienceFlow]: the two watchdog knobs (the
   /// built-in defaults shown, so an override reads as an override) and
-  /// the five retry knobs (each marked `default` when it equals the
+  /// the six retry knobs (each marked `default` when it equals the
   /// parser default). Pure builder.
   List<FlowOption> _resilienceMenuOptions() {
     final retry = _effectiveRetryPolicy;
@@ -2197,6 +2198,11 @@ extension SettingsFlow on AgentCli {
         '${retry.maxWait.inMilliseconds}ms (${inherit(retry.maxWait.inMilliseconds, defaults.maxWait.inMilliseconds)})',
       ),
       (
+        'maxWaitForLastEntryMs',
+        'Sole-entry wait-out ceiling',
+        '${retry.maxWaitForLastEntry.inMilliseconds}ms (${inherit(retry.maxWaitForLastEntry.inMilliseconds, defaults.maxWaitForLastEntry.inMilliseconds)})',
+      ),
+      (
         'keyBackoffMs',
         'Key cooldown',
         '${retry.keyBackoff.inMilliseconds}ms (${inherit(retry.keyBackoff.inMilliseconds, defaults.keyBackoff.inMilliseconds)})',
@@ -2228,6 +2234,7 @@ extension SettingsFlow on AgentCli {
       'baseDelayMs' => '${retry.baseDelay.inMilliseconds}',
       'maxBackoffMs' => '${retry.maxBackoff.inMilliseconds}',
       'maxWaitMs' => '${retry.maxWait.inMilliseconds}',
+      'maxWaitForLastEntryMs' => '${retry.maxWaitForLastEntry.inMilliseconds}',
       _ => '${retry.keyBackoff.inMilliseconds}',
     };
     final answer = await _askLine('$key (empty keeps $current): ');
