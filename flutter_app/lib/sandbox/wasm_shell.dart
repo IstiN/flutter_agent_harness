@@ -490,6 +490,29 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     if (token != null && token.isCancelled) {
       return const Err(ExecutionError(ExecutionErrorCode.aborted, 'aborted'));
     }
+    // Issue #919 (review round 3): build the ceiling BEFORE the eager log
+    // open — a bad ceiling used to throw out of _wireJob after the open
+    // succeeded, leaking the RAF fd (no job existed to run closeLog).
+    // Here it degrades to a plain Err.
+    final warn = options?.onJobLogWarning;
+    final JobLogCeiling ceiling;
+    try {
+      ceiling = JobLogCeiling(
+        maxBytes: options?.jobLogMaxBytes ?? defaultJobLogMaxBytes,
+        probe: () => diskFreeBytes(io.File(logPath).parent.path),
+        onWarn: warn == null
+            ? null
+            : (message) => warn('background job $id: $message'),
+      );
+    } on ArgumentError catch (error) {
+      return Err(
+        ExecutionError(
+          ExecutionErrorCode.spawnError,
+          'invalid jobLogMaxBytes: ${error.message}',
+          cause: error,
+        ),
+      );
+    }
     final logOpen = await _openJobLog(logPath);
     if (logOpen.isErr) return Err(logOpen.errorOrNull!);
     return Ok(
@@ -498,8 +521,9 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         id: id,
         logPath: logPath,
         logFile: logOpen.valueOrNull!,
-        token: token,
+        ceiling: ceiling,
         options: options,
+        token: token,
       ),
     );
   }
@@ -527,25 +551,17 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   /// Builds the job over the opened log, wires the cancel token, and
   /// detaches the script run. SandboxShellJob serializes writers
   /// (RandomAccessFile allows one op at a time) and consumes write errors.
+  /// [ceiling] is built by the caller before the log opens; [options] still
+  /// carries the exec side (cwd/env/timeout) into the job-local run.
   SandboxShellJob _wireJob(
     String command, {
     required String id,
     required String logPath,
     required io.RandomAccessFile logFile,
-    required CancelToken? token,
+    required JobLogCeiling ceiling,
     required ShellExecOptions? options,
+    required CancelToken? token,
   }) {
-    // Issue #919: bound the log — size ceiling with head+marker+rolling
-    // tail, plus the low-disk guard probing the log's directory (same
-    // wiring as LocalShell).
-    final warn = options?.onJobLogWarning;
-    final ceiling = JobLogCeiling(
-      maxBytes: options?.jobLogMaxBytes ?? defaultJobLogMaxBytes,
-      probe: () => diskFreeBytes(io.File(logPath).parent.path),
-      onWarn: warn == null
-          ? null
-          : (message) => warn('background job $id: $message'),
-    );
     final job = SandboxShellJob(
       id: id,
       command: command,
