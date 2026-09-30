@@ -169,7 +169,7 @@ void main() {
         reliefEntered.complete();
         // Hangs until the USER abort cancels the run token — the linked
         // in-flight compaction in production.
-        final token = agent.activeRunToken;
+        final token = agent.cancelToken;
         while (token == null || !token.isCancelled) {
           await Future<void>.delayed(const Duration(milliseconds: 10));
         }

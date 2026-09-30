@@ -350,6 +350,9 @@ extension AgentCliCompactionRun on AgentCli {
       io.writeln('nothing to compact');
       return;
     }
+    // An explicit /compact is a fresh user intent (issue #1085 round-1):
+    // it overrides a stale abort marker from an earlier stopped run.
+    _runAbortRequested = false;
     _pushBusyPhase('Compacting context…');
     final before = _liveRequestTokens();
     final reported = await _runAutoCompact('[compacted]');
@@ -373,6 +376,16 @@ extension AgentCliCompactionRun on AgentCli {
   /// [shouldCompact]) and [_runManualCompact] (unconditional).
   /// Returns whether a pass reported success (a rendered report block).
   Future<bool> _runAutoCompact(String label) async {
+    // The user's explicit stop wins over any compaction (issue #1085
+    // round-1): the abort must not merely cancel the IN-FLIGHT pass — it
+    // must not be answered with a FRESH pass either (an aborted run's
+    // post-fold, a relief retry after a cancelled relief). The engines
+    // report cancelled summarizers as failed passes, so the funnel cannot
+    // see this off the return value; the sticky flag can.
+    _throwIfUserAborted();
+    // Honest attempt accounting for the funnel's exhaustion verdict
+    // (issue #1085 round-1): only passes that actually started count.
+    _compactionPassesStarted++;
     // Backend agent mode (issue #155): bracket the run so the supervisor
     // sees why a turn stalled. Pre-flight runs carry the upcoming turn id
     // (the following agent_start reuses it). The end frame comes from the
@@ -388,7 +401,7 @@ extension AgentCliCompactionRun on AgentCli {
     // never cancels through here.
     final abort = CancelTokenSource();
     _activeCompactionAbort = abort;
-    final runToken = _agent.activeRunToken;
+    final runToken = _agent.cancelToken;
     if (runToken != null) {
       unawaited(
         runToken.onCancel.then((_) => abort.cancel(runToken.cancelReason)),
@@ -398,6 +411,15 @@ extension AgentCliCompactionRun on AgentCli {
       return await _runAutoCompactWithToken(label, abort.token);
     } finally {
       _activeCompactionAbort = null;
+      // Issue #1085 round-1 (review 🚨): a cancelled compaction must
+      // surface as an ABORT, not as a failed pass. Both engines convert
+      // the cancelled summarizer into `ok: false` (the classic `_attempt`
+      // catch-all, and the structured judge's `on Object` fallback, which
+      // then fires a SECOND provider call after the abort), so the
+      // funnel's `on CancelledException` could never fire off the return
+      // value alone and the loop relaunched compaction the user just
+      // stopped.
+      abort.token.throwIfCancelled();
     }
   }
 
@@ -594,11 +616,18 @@ extension OverWindowContinuation on AgentCli {
     _overWindowAutoResumed = true;
     await _ttsr?.settled;
     await _persistMessages();
+    final passesBefore = _compactionPassesStarted;
+    String? lastFailure;
     for (
       var attempt = 1;
       attempt <= _overWindowContinueAttempts;
       attempt++
     ) {
+      // The user's explicit stop wins over any retry (issue #1085
+      // round-1, review 🚨): the engines report a cancelled compaction as
+      // a failed pass, so without this gate the loop would relaunch a
+      // fresh compaction after Ctrl+C and even resume the stopped task.
+      _throwIfUserAborted();
       try {
         if (await _maybeAutoCompact()) {
           io.writeln(
@@ -615,17 +644,33 @@ extension OverWindowContinuation on AgentCli {
       } on CancelledException {
         // A user abort (Ctrl+C, issue #1085) must stay an abort: no
         // retry, no loud-continue error — it propagates to
-        // [_handleRunError] like any cancelled run.
+        // [_handleRunError] like any cancelled run. Reached via the
+        // [_runAutoCompact] rethrow of a cancelled token; the belt above
+        // covers the aborts that land between attempts.
         rethrow;
       } on Object catch (error) {
+        lastFailure = '$error';
         _logDiagnostic(
           'over-window compaction attempt $attempt failed '
           'sid=$_logSid: $error',
         );
       }
     }
-    await _reportContinuationExhausted();
+    _throwIfUserAborted();
+    await _reportContinuationExhausted(
+      _compactionPassesStarted - passesBefore,
+      lastFailure,
+    );
     return true;
+  }
+
+  /// The funnel's abort gate (issue #1085 round-1): an explicit user stop
+  /// surfaces as [CancelledException] — no retry, no false "exhausted"
+  /// verdict, no resumed task.
+  void _throwIfUserAborted() {
+    if (_runAbortRequested) {
+      throw CancelledException('interrupted by user');
+    }
   }
 
   /// The resumed prompt run with its failure armor: ANY failure inside the
@@ -650,20 +695,37 @@ extension OverWindowContinuation on AgentCli {
 
   /// The bounded-retry exhaustion path (issue #1085 M2c): persist the
   /// compacted transcript so nothing rides on the dead turn, then end the
-  /// task with the real exit reason — never silence.
-  Future<void> _reportContinuationExhausted() async {
+  /// task with the real exit reason — never silence. The verdict names
+  /// what actually happened: how many compaction passes ran (zero is
+  /// possible — compaction disabled or refused), the last failure, and
+  /// the honest token/window numbers.
+  Future<void> _reportContinuationExhausted(
+    int passesRan,
+    String? lastFailure,
+  ) async {
     final tokens = _liveRequestTokens();
     await _persistMessages();
+    // The turn is consumed with no inner run, so the normal finish path
+    // ([_afterRun]) never runs — its hub-panel bookkeeping must not be
+    // skipped (issue #1085 round-1), while its post-run compaction must
+    // (the transcript is still over the window; another automatic pass
+    // would fight the verdict just printed).
+    _hubCompletePanels();
     _logDiagnostic(
       'over-window continuation exhausted sid=$_logSid '
-      'tokens=$tokens window=$_effectiveContextWindow',
+      'passes=$passesRan tokens=$tokens '
+      'window=$_effectiveContextWindow failure=$lastFailure',
     );
+    final attemptsNote = passesRan == 0
+        ? 'compaction did not run (disabled or nothing to summarize)'
+        : '$passesRan compaction ${passesRan == 1 ? 'pass' : 'passes'} '
+            'did not free it';
+    final cause = lastFailure == null ? '' : ' Last failure: $lastFailure.';
     io.writeln(
       tuiError(
-        'error: could not free the context window after '
-        '$_overWindowContinueAttempts compaction attempts — the transcript '
-        'is still ~$tokens tokens vs a $_effectiveContextWindow-token '
-        'window. The task was NOT continued. Run /compact (or start a '
+        'error: the transcript is still ~$tokens tokens vs a '
+        '$_effectiveContextWindow-token window — $attemptsNote. '
+        'The task was NOT continued.$cause Run /compact (or start a '
         'fresh session with /new), then repeat your message.',
       ),
     );
@@ -675,13 +737,11 @@ extension OverWindowContinuation on AgentCli {
   /// Issue #1085 M2b: auto-continued runs get the nudge LIKE ANY RUN —
   /// the old `!isAutoContinue` exclusion left a degenerate continuation
   /// idle forever (silent after the compaction, again). The budget is
-  /// per logical turn (reset at every real user prompt, [_beginUserPrompt]),
-  /// so the nudged run itself cannot re-nudge: empty → nudge → empty
-  /// settles instead of looping forever.
-  bool _shouldContinueAfterEmptyReply(
-    Message? lastMessage,
-    bool isAutoContinue,
-  ) {
+  /// per logical turn (reset at every real user prompt, [_beginUserPrompt];
+  /// auto-continues skip that reset on purpose), so the nudged run itself
+  /// cannot re-nudge: empty → nudge → empty settles instead of looping
+  /// forever.
+  bool _shouldContinueAfterEmptyReply(Message? lastMessage) {
     if (_emptyReplyNudgesLeft <= 0) return false;
     return lastMessage is AssistantMessage &&
         lastMessage.stopReason != StopReason.error &&

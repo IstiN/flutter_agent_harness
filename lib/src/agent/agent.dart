@@ -378,7 +378,10 @@ class Agent {
     return _steeringQueue.hasItems() || _followUpQueue.hasItems();
   }
 
-  /// Active cancel token for the current run, if any.
+  /// Active cancel token for the current run, if any. Hosts use it to
+  /// LINK secondary work (issue #1085: the over-window relief's
+  /// compaction tokens) to the run, so a user abort reaches in-flight
+  /// work the watchdog never owned.
   CancelToken? get cancelToken => _activeRun?.source.token;
 
   /// Aborts the current run, if one is active. Also disarms the idle
@@ -389,12 +392,6 @@ class Agent {
     _disarmRunWatchdog();
     _activeRun?.source.cancel();
   }
-
-  /// The current run's cancellation token, or `null` outside a run. Hosts
-  /// use it to LINK secondary work (issue #1085: the over-window relief's
-  /// compaction tokens) to the run, so a user abort reaches in-flight work
-  /// the watchdog never owned.
-  CancelToken? get activeRunToken => _activeRun?.source.token;
 
   /// Resolves when the current run and all awaited event listeners have
   /// finished (after `agent_end` listeners settle).
@@ -525,8 +522,13 @@ class Agent {
       overWindowRelief: relief == null
           ? null
           : (messages) async {
+              // Signal BEFORE disarming: the pause is observable only if
+              // the check sees the still-armed timer (a watchdog that was
+              // actually running — with runIdleTimeout disabled nothing
+              // was armed and no fiction is reported).
+              final watchdogWasArmed = _runWatchdogTimer != null;
               _disarmRunWatchdog();
-              onRunWatchdogPaused?.call();
+              if (watchdogWasArmed) onRunWatchdogPaused?.call();
               try {
                 return await relief(messages);
               } finally {

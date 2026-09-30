@@ -1465,7 +1465,10 @@ class AgentCli {
     // from previous runs — restart-survivable reminders.
     unawaited(_scheduledMessages.start());
     final interruptSub = io.interrupts.listen((_) {
-      if (isBusy) {
+      // A live run bracket OR a compaction window (issue #1085 round-1):
+      // manual /compact and headless pre-flight compactions run with
+      // isBusy false — Ctrl+C must still stop their 15-30 min work.
+      if (isBusy || _activeCompactionAbort != null) {
         // Line-mode abort marker: the settle path uses it to DROP the
         // leftover steering loudly instead of re-running it (the TUI sets
         // the same flag in its onInterrupt and resets it in its submit
@@ -1802,7 +1805,11 @@ class AgentCli {
           // Marks the drain loop to discard queued messages (kimi-cli drops
           // the queue on cancel instead of starting new turns).
           _abortRequested = true;
-          if (isBusy) _abortRunOrCompaction();
+          // Compaction window too (issue #1085 round-1): a manual /compact
+          // runs with isBusy false — Ctrl+C still stops it.
+          if (isBusy || _activeCompactionAbort != null) {
+            _abortRunOrCompaction();
+          }
         },
         // Double-press Ctrl+C press 2 (issue #830): the same SIGINT-parity
         // exit the host's SIGINT handler runs — abort-if-running bounded,
@@ -2151,7 +2158,11 @@ class AgentCli {
     // the first request, or it goes out over-window and gets rejected.
     await _maybeAutoCompact();
     final interruptSub = io.interrupts.listen((_) {
-      if (isBusy) _abortRunOrCompaction();
+      // Headless has no run bracket for pre-flight (`_runStarting` stays
+      // false) — cover the compaction window too (issue #1085 round-1).
+      if (isBusy || _activeCompactionAbort != null) {
+        _abortRunOrCompaction();
+      }
     });
     final taskSub = _taskConfig.jobManager.completions.listen(
       _onTaskJobCompleted,
@@ -2439,6 +2450,22 @@ class AgentCli {
   /// in [_runAutoCompact], cancelled by [_abortRunOrCompaction].
   CancelTokenSource? _activeCompactionAbort;
 
+  /// Sticky user-abort marker for the compaction windows (issue #1085
+  /// round-1): the compaction engines convert a cancelled summarizer
+  /// into a failed pass (`ok: false`) instead of throwing, so the
+  /// over-window funnel cannot tell "compaction failed" from "the user
+  /// just stopped the task" off the return value alone.
+  /// [_abortRunOrCompaction] sets this; the funnel checks it before every
+  /// attempt and before the exhaustion verdict; [_beginUserPrompt] resets
+  /// it with the fresh turn.
+  bool _runAbortRequested = false;
+
+  /// Every compaction pass that actually STARTED (issue #1085 round-1):
+  /// the over-window funnel's exhaustion verdict names how many passes
+  /// ran — zero is possible (compaction disabled or nothing to
+  /// summarize) and must not read as "N attempts failed".
+  int _compactionPassesStarted = 0;
+
   /// Empty-reply "continue" nudge budget per LOGICAL turn
   /// (issue #1085 M2b): auto-continued runs get the nudge like any run,
   /// but the nudged run cannot nudge again — a degenerate model that
@@ -2450,6 +2477,7 @@ class AgentCli {
   /// null (and during relief the run token alone would not reach the
   /// summarizer), so the user-wired compaction token carries the abort.
   void _abortRunOrCompaction() {
+    _runAbortRequested = true;
     _activeCompactionAbort?.cancel('interrupted by user');
     _agent.abort();
   }
@@ -2544,6 +2572,10 @@ class AgentCli {
     _autoFoldCount = 0;
     // One empty-reply nudge per logical turn (issue #1085 M2b).
     _emptyReplyNudgesLeft = 1;
+    // The user's explicit stop ends with the turn that was stopped
+    // (issue #1085 round-1): a fresh prompt re-arms the funnel's abort
+    // gate.
+    _runAbortRequested = false;
     // Pre-flight context guard: when the LIVE context already exceeds the
     // compaction threshold, compact BEFORE sending the request — a failed
     // post-run compaction (quota-limited smol role, provider outage) used to
@@ -2574,7 +2606,7 @@ class AgentCli {
 
     // An assistant turn that produced nothing actionable (no text, no tool
     // calls) reads as a hang; nudge the model once with "continue".
-    if (_shouldContinueAfterEmptyReply(lastMessage, isAutoContinue)) {
+    if (_shouldContinueAfterEmptyReply(lastMessage)) {
       _emptyReplyNudgesLeft--;
       await _runPrompt('continue', isAutoContinue: true);
       return false;
