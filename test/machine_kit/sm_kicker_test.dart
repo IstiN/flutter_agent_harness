@@ -6,8 +6,9 @@
 //
 // Text-level grep-guard over every workflow file (repo convention:
 // test/store_automation_guard_test.dart, factory_stub_ref_test.dart): every
-// dispatch site must carry the explicit flag, and the sm-kicker rescue
-// dispatch is pinned verbatim.
+// local dispatch site must carry the explicit flag, and the sm-kicker stub
+// must delegate the rescue to the factory kicker (factory-sm-kicker.yml,
+// dmtools-agents #585) — whose live dispatch is guarded pack-side (#586).
 import 'dart:io';
 
 import 'package:test/test.dart';
@@ -65,25 +66,45 @@ void main() {
           );
         }
       }
+      final kicker = File('.github/workflows/sm-kicker.yml').readAsStringSync();
+      final delegates = kicker.contains(
+        'uses: IstiN/dmtools-agents/.github/workflows/factory-sm-kicker.yml@',
+      );
       expect(
-        dispatchSites,
-        greaterThanOrEqualTo(1),
+        dispatchSites >= 1 || delegates,
+        isTrue,
         reason:
-            'expected the sm-kicker rescue dispatch (and any future tooling '
-            'dispatch sites) for machine-sm.yml to exist in .github/workflows',
+            'expected either a local machine-sm.yml dispatch site (each one '
+            'carrying -f dryRun=) or the sm-kicker stub delegating the '
+            'liveness rescue to the factory kicker (factory-sm-kicker.yml) '
+            '— the SM must always have a live rescue path',
       );
     });
 
-    test('sm-kicker rescue dispatch carries -f dryRun=false verbatim', () {
+    test('sm-kicker delegates the live rescue dispatch to the factory kicker',
+        () {
       final kicker = File('.github/workflows/sm-kicker.yml').readAsStringSync();
       expect(
-        'gh workflow run machine-sm.yml -R "\$GITHUB_REPOSITORY" '
-        '-f dryRun=false',
-        isIn(kicker),
+        kicker,
+        contains(
+          'uses: IstiN/dmtools-agents/.github/workflows/factory-sm-kicker.yml@',
+        ),
         reason:
-            'the sm-kicker rescue tick must dispatch a LIVE tick — this exact '
-            'line is what un-sticks the SM after a missed cron window',
+            'the rescue dispatch now lives in the factory pack '
+            '(factory-sm-kicker.yml, dmtools-agents #585): the stub must '
+            'delegate — otherwise nothing re-sticks the SM after a missed '
+            'cron window',
       );
+      expect(
+        kicker,
+        contains('smWorkflow: machine-sm.yml'),
+        reason:
+            "the delegation must name this repo's SM stub so the factory "
+            'kicker liveness job watches and re-dispatches the right workflow',
+      );
+      // The pack side pins the LIVE tick: dmtools-agents #586 makes the
+      // factory kicker pass -f dryRun=false explicitly (the dryRun=true
+      // dispatch trap stays guarded at the source of the dispatch).
     });
   });
 }
