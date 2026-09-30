@@ -2162,10 +2162,10 @@ class AgentCli {
     // Warm the endpoint metadata (model list, dial features, reported
     // limits) BEFORE the first turn; failures are silent.
     await _warmModelCacheQuietly();
-    // The same pre-flight compaction guard as the REPL's [_runPrompt]:
-    // a resumed session already over the threshold must compact BEFORE
-    // the first request, or it goes out over-window and gets rejected.
-    await _maybeAutoCompact();
+    // The interrupt listener MUST be registered BEFORE the pre-flight
+    // compaction (issue #1085 round-4 review): that window runs with no
+    // run bracket, and a listener registered after it made Ctrl+C there
+    // uncancellable for the whole 15-30 min pass.
     final interruptSub = io.interrupts.listen((_) {
       // Headless has no run bracket for pre-flight (`_runStarting` stays
       // false): a live run aborts; a bare compaction window (pre-flight,
@@ -2202,6 +2202,13 @@ class AgentCli {
     });
     _headlessMode = true;
     try {
+      // The same pre-flight compaction guard as the REPL's [_runPrompt]:
+      // a resumed session already over the threshold must compact BEFORE
+      // the first request, or it goes out over-window and gets rejected.
+      // Inside the guarded section (issue #1085 round-4): a cancel here
+      // surfaces through the same loud error line as any run failure —
+      // the listener above is already live for it.
+      await _maybeAutoCompact();
       if (images.isEmpty) {
         await _agent.prompt(_redactUserText(prompt));
       } else {
@@ -2720,7 +2727,16 @@ class AgentCli {
     await _ttsr?.settled;
     _hubCompletePanels();
     await _persistMessages();
-    await _maybeAutoCompact();
+    try {
+      await _maybeAutoCompact();
+    } on CancelledException {
+      // Abort during the POST-RUN compaction window (issue #1085 round-4
+      // review): the turn has already settled and reported its outcome —
+      // rethrowing here would re-enter error handling and print a
+      // spurious `error: CancelledException` line over a finished turn.
+      // The dim note is the receipt; the next prompt starts clean.
+      io.writeln(_style.dim('compaction interrupted'));
+    }
   }
 
   /// Idle-wake guard: one inbox-triggered run at a time.

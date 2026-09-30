@@ -15,7 +15,13 @@
 // 5. Ctrl+C during a BARE compaction (manual /compact, no run bracket)
 //    stops the compaction while the session lives on — the round-2
 //    review split: a run abort is run+compaction, a bare-compaction
-//    interrupt is the compaction only (no sticky abort, no exit).
+//    interrupt is the compaction only (no sticky abort, no exit);
+// 6. HEADLESS: the funnel's compaction runs outside any run bracket,
+//    so its interrupt is compaction-only — but the FUNNEL must see the
+//    cancel, not a "nothing changed" false (the round-4 blocker: the
+//    swallowed cancel relaunched attempt 2). AutoCompactorFactory.run()
+//    throws on cancel, the funnel rethrow is live, the task ends with
+//    the loud interrupted-by-user error and no resumed task.
 import 'dart:async';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -452,6 +458,147 @@ void main() {
       io.sendLine('/exit');
       await run;
       await io.close();
-    },
-  );
+    });
+  test('headless: Ctrl+C during the in-loop relief aborts the run, no relaunch',
+      timeout: const Timeout(Duration(seconds: 120)), () async {
+    final env = MemoryExecutionEnv(cwd: '/work');
+    await env.writeFile('/work/.fah/memory/.last_maintenance', '');
+    env.writeFile('big.txt', List.filled(1000, 'x' * 45).join('\n'));
+    final io = FakeCliIO();
+    // Call 2 is the over-window relief's summarizer, running INSIDE the
+    // live agent run. The interrupt must cancel it and end the run as an
+    // abort — never a relaunch of the pass and never the guard error
+    // (which would hand the task to the continuation funnel).
+    final fake = ScriptedThenHangStream([
+      toolTurn([
+        const ToolCall(id: 't1', name: 'read', arguments: {'path': 'big.txt'}),
+      ]),
+      textTurn('unused — call 2 is the hung relief summarizer'),
+    ], hangFromCall: 2);
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: const Model(
+          id: 'tiny-window',
+          api: 'test-api',
+          provider: 'test-provider',
+          baseUrl: 'https://example.test',
+          contextWindow: 12000,
+          maxTokens: 4096,
+        ),
+        apiKey: 'test-key',
+        env: env,
+        sessionRoot: '/sessions',
+        providerKind: 'openai-completions',
+        compactionEngine: CompactionEngine.classic,
+        compactionSettings: const CompactionSettings(
+          enabled: true,
+          reserveTokens: 100,
+          keepRecentTokens: 40000,
+        ),
+      ),
+      io: io,
+      streamFunction: fake.call,
+    );
+
+    final run = cli.runHeadless('count the words');
+    await waitForIt(
+      () => fake.calls >= 2,
+      reason: 'the relief compaction summarizer started',
+    );
+    io.interrupt();
+    final exitCode = await run;
+    // No attempt-2 relaunch after the cancel: give it ample time, then
+    // pin the call count.
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    expect(fake.calls, 2, reason: 'the pass is never relaunched');
+
+    final output = io.out.toString();
+    // The relief abort ends the run: headless SIGINT parity is exit 130
+    // (runHeadless maps StopReason.aborted to 130) — a user-intended
+    // stop, not silence and not a fake success.
+    expect(
+      exitCode,
+      130,
+      reason: 'the abort surfaces as the headless abort exit code',
+    );
+    // The relief abort never reaches the funnel: no dim receipt, no
+    // exhaustion verdict, no resumed marker.
+    expect(output, isNot(contains('compaction interrupted')));
+    expect(output, isNot(contains('The task was NOT continued')));
+    expect(output, isNot(contains('[resuming]')));
+    await io.close();
+  });
+
+  test('headless: Ctrl+C during the settle-funnel compaction aborts loudly, no relaunch',
+      timeout: const Timeout(Duration(seconds: 120)), () async {
+    final env = MemoryExecutionEnv(cwd: '/work');
+    await env.writeFile('/work/.fah/memory/.last_maintenance', '');
+    env.writeFile('big.txt', List.filled(1000, 'x' * 45).join('\n'));
+    final io = FakeCliIO();
+    // Headless settles OUTSIDE any run bracket, so the funnel's
+    // compaction cancel is compaction-only — and the funnel must still
+    // SEE the cancel and rethrow it loudly. Call 2 is the one-shot
+    // in-loop relief (completes, but keepRecentTokens keeps everything,
+    // so it frees nothing and the guard stops the turn with the
+    // exhausted error); call 3 is the settle funnel's compaction, hung
+    // when the interrupt lands. Before the fix the funnel swallowed that
+    // cancel as "compaction interrupted" and RELAUNCHED the pass as
+    // attempt 2 (call 4) — the silence-with-spinner bug.
+    final fake = ScriptedThenHangStream([
+      toolTurn([
+        const ToolCall(id: 't1', name: 'read', arguments: {'path': 'big.txt'}),
+      ]),
+      textTurn('relief pass summary that frees nothing'),
+      textTurn('attempt-2 relaunch probe — must never be consumed'),
+    ], hangFromCall: 3);
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: const Model(
+          id: 'tiny-window',
+          api: 'test-api',
+          provider: 'test-provider',
+          baseUrl: 'https://example.test',
+          contextWindow: 12000,
+          maxTokens: 4096,
+        ),
+        apiKey: 'test-key',
+        env: env,
+        sessionRoot: '/sessions',
+        providerKind: 'openai-completions',
+        compactionEngine: CompactionEngine.classic,
+        compactionSettings: const CompactionSettings(
+          enabled: true,
+          reserveTokens: 100,
+          keepRecentTokens: 40000,
+        ),
+      ),
+      io: io,
+      streamFunction: fake.call,
+    );
+
+    final run = cli.runHeadless('count the words');
+    await waitForIt(
+      () => fake.calls >= 3,
+      reason: 'the funnel compaction summarizer started',
+    );
+    io.interrupt();
+    final exitCode = await run;
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    expect(fake.calls, 3, reason: 'no attempt-2 relaunch after the cancel');
+
+    final output = io.out.toString();
+    // The cancel surfaces as the loud abort through the run's error
+    // handling — exit 1 with the real reason on the transcript.
+    expect(
+      exitCode,
+      1,
+      reason: 'the cancel surfaces as a loud abort via the error line',
+    );
+    expect(output, contains('interrupted by user'));
+    // Not the bare-window dim receipt and not the exhaustion verdict.
+    expect(output, isNot(contains('compaction interrupted')));
+    expect(output, isNot(contains('The task was NOT continued')));
+    expect(output, isNot(contains('[resuming]')));
+    await io.close();
+  });
 }

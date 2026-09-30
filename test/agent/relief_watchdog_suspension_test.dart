@@ -300,7 +300,14 @@ void main() {
       lessThan(const Duration(seconds: 5)),
       reason: 'the cancel propagated through the token link, not a timeout',
     );
-    await run.timeout(
+    // Issue #1085 round-4: a cancelled compaction is NEVER a mere failed
+    // pass — run() rethrows the cancellation so callers (the CLI relief
+    // path, the continuation funnel) see the abort instead of reading it
+    // as "nothing changed" and relaunching.
+    await expectLater(
+      run,
+      throwsA(isA<CancelledException>()),
+    ).timeout(
       const Duration(seconds: 5),
       onTimeout: () {
         fail('compaction did not settle after the linked cancel');

@@ -269,24 +269,35 @@ final class AutoCompactor {
   /// transcript fits in [window]), `false` when the loop gave up or
   /// every summarizer failed.
   Future<bool> run() async {
-    if (window <= 0) return true;
-    final initial = _requestTokens();
-    if (!force && !shouldCompact(initial, window, settings)) return true;
+    try {
+      if (window <= 0) return true;
+      final initial = _requestTokens();
+      if (!force && !shouldCompact(initial, window, settings)) return true;
 
-    final runFallback = _shouldRunFallback();
-    final clock = Stopwatch()..start();
+      final runFallback = _shouldRunFallback();
+      final clock = Stopwatch()..start();
 
-    for (var pass = 1; pass <= maxPasses; pass++) {
-      final result = await _runPass(
-        pass,
-        runFallback: runFallback,
-        clock: clock,
-      );
-      if (result.done) return result.success;
+      for (var pass = 1; pass <= maxPasses; pass++) {
+        final result = await _runPass(
+          pass,
+          runFallback: runFallback,
+          clock: clock,
+        );
+        if (result.done) return result.success;
+      }
+      final tokens = _requestTokens();
+      hooks.onDone(maxPasses, tokens);
+      return false;
+    } finally {
+      // A cancelled compaction is NEVER a mere failed pass (issue #1085
+      // round-4): both engines fold a cancelled summarizer into
+      // `ok: false`, which callers read as "nothing changed" — the
+      // over-window funnel then RELAUNCHES the compaction the user just
+      // stopped. Surface the cancel as an exception so every host's
+      // abort handling sees it; a success that races a late cancel is
+      // equally dead (the next request rides a cancelled run token).
+      runToken?.throwIfCancelled();
     }
-    final tokens = _requestTokens();
-    hooks.onDone(maxPasses, tokens);
-    return false;
   }
 
   /// Whether the smol summarizer is distinct from the main one and should be

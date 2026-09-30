@@ -320,16 +320,6 @@ extension AgentCliCompactionRun on AgentCli {
     _logDiagnostic('auto-compact start sid=$_logSid tokens=$tokens');
     try {
       await _runAutoCompact('[auto-compacted]');
-    } on CancelledException {
-      // A compaction-ONLY interrupt (issue #1085 round-2 review: Ctrl+C
-      // during a bare compaction window stops the compaction, not the
-      // session): the turn is not aborted — say so quietly and let the
-      // guard re-fire later. A real run abort still propagates (the
-      // sticky flag is set; the entry gate above only covers aborts that
-      // landed BEFORE this compaction started).
-      if (_runAbortRequested) rethrow;
-      io.writeln(_style.dim('compaction interrupted'));
-      return false;
     } finally {
       // Hand the busy row back to the run even when the compaction throws
       // or is cancelled (issue #1085): a stale 'Compacting context…'
