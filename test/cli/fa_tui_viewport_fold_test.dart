@@ -581,65 +581,72 @@ void main() {
     });
   });
 
-  group('resume restores the turn anchor (#827 × #446 1:1)', () {
+  group('resume rides the closed moment (bottom); live pins the echo', () {
     // The replayed stream: 40 old rows, the last prompt echo (rule + text
-    // + blank = lines 40..42), a 20-row reply. All short lines — wrapped
+    // + blank = lines 40..42), a 12-row reply. All short lines — wrapped
     // rows equal logical lines, so indices are inspectable.
     List<String> replayed() => [
       for (var i = 0; i < 40; i++) 'old row $i',
       '─' * 80,
       'RESUMED-PROMPT check the fold',
       '',
-      // 12 reply rows: the turn (echo + reply = 15 rows) must FIT the
-      // 19-row viewport for the anchor to pin above the bottom.
       for (var i = 0; i < 12; i++) 'resumed answer $i',
     ];
 
-    test('SetTurnStartMsg resolves the echo index from the stream tail', () {
-      final model = _send(
-        _build().copyWith(outputLines: replayed()),
-        // Lines after the echo's first line: the blank echo tail + the
-        // 12-row reply.
-        const SetTurnStartMsg(14),
+    test('a resumed transcript that fits the glass shows every row', () {
+      // Boot chrome (banner tail + the #503 lost-summary) above a short
+      // replayed turn: the resumed window rides the global bottom, and
+      // with the whole transcript on the glass NOTHING may fold — the
+      // reconciliation notice stays visible (issue #503 AC).
+      final model = _build().copyWith(
+        outputLines: [
+          ...replayed().take(3), // boot chrome stands in for the banner
+          '✗ 2 background tasks lost on restart',
+          ...replayed().skip(40),
+        ],
       );
-      expect(model.turnStartLine, 40,
-          reason: '55 lines - 1 - 14 trailing = the echo line');
       final rows = _rowsOf(model);
-      // The resumed window pins at the echo, exactly like a live submit:
-      // the echo box (rule first) is on the glass, the 40 old rows are
-      // above the fold, the turn pads blanks below.
-      expect(_hintN(rows), 40);
-      expect(rows.first, contains('──'));
-      expect(rows[1], contains('RESUMED-PROMPT'));
+      expect(_hintN(rows), isNull,
+          reason: 'nothing is hidden when the transcript fits the glass');
+      expect(rows.join('\n'), contains('lost on restart'));
+      expect(rows.join('\n'), contains('RESUMED-PROMPT'));
+    });
+
+    test('a resumed transcript taller than the glass rides the bottom '
+        'and explains the fold', () {
+      final model = _build().copyWith(outputLines: replayed());
+      final rows = _rowsOf(model);
+      // The live edge wins: the replayed tail is on the glass, the older
+      // rows are named by the hint — the same window the session rode at
+      // close (#446 1:1), with the #827 indicator owning the explanation.
+      expect(rows.join('\n'), contains('RESUMED-PROMPT'));
+      expect(rows.join('\n'), contains('resumed answer 11'));
+      expect(_hintN(rows), 36,
+          reason: 'the hint names the 55 - 19 wrapped rows above the '
+              'bottom-riding window');
       expect(
-        rows.take(19).any((r) => r.contains('old row')),
+        rows.join('\n').contains('old row 0 '),
         isFalse,
-        reason: 'pre-echo rows stay above the fold',
+        reason: 'deep pre-tail rows stay above the fold',
       );
     });
 
-    test('resumed frame is 1:1 with the live-submit frame', () {
-      final live = _build()
-          .copyWith(outputLines: replayed(), turnStartLine: 40);
-      final resumed = _send(
-        _build().copyWith(outputLines: replayed()),
-        const SetTurnStartMsg(14),
+    test('the first LIVE submit after a resume pins at its own echo',
+        () async {
+      // Resume itself never anchors (the boot glass must keep the
+      // reconciliation notices) — the turn-boundary invariant returns
+      // with the user's next submit.
+      final resumed = _build().copyWith(outputLines: replayed());
+      final result = resumed.copyWith(inputText: 'next turn').update(
+        KeyPressMsg(const TeaKey(code: KeyCode.enter)),
       );
-      expect(_rowsOf(resumed), _rowsOf(live),
-          reason: 'resume must render the same window as the live turn');
-    });
-
-    test('an overlong trailing count degrades to the global-bottom follow',
-        () {
-      final anchored = _send(
-        _build().copyWith(outputLines: replayed()),
-        const SetTurnStartMsg(999),
-      );
-      expect(anchored.turnStartLine, -1);
-      final plain = _build().copyWith(outputLines: replayed());
-      expect(_hintN(_rowsOf(anchored)), _hintN(_rowsOf(plain)),
-          reason: 'degraded anchor rides the same bottom the pre-#827 '
-              'follow rode');
+      final model = result.$1 as FaTuiModel;
+      await result.$2?.call();
+      expect(model.turnStartLine, 55,
+          reason: 'the new echo lands right after the 55 replayed rows');
+      expect(_rowsOf(model).first, contains('next turn'),
+          reason: 'the window pins at the NEW turn boundary');
     });
   });
+
 }

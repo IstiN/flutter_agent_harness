@@ -311,7 +311,7 @@ List<String> restoredInputHistory(List<Message> messages) {
 /// WHOLE messages rather than decapitating the tail's content. Tool results
 /// attach to their calls' rows (see [replayToolRow]); they never render
 /// standalone.
-(List<List<String>> entries, int firstIndex, int userEchoTrailing)
+(List<List<String>> entries, int firstIndex)
 buildReplayEntries(
   List<Message> messages, {
   required bool tui,
@@ -331,12 +331,6 @@ buildReplayEntries(
   };
   final entries = <List<String>>[];
   var firstIndex = messages.length;
-  // Lines after the LAST real user echo's first row, counted across the
-  // entry stream (issue #827): entries are built back-to-front, so [rows]
-  // at the first echo hit already holds everything the echo precedes. The
-  // session replay turns this into the restored turn anchor — the resumed
-  // window pins at the same boundary a live submit pinned at.
-  var userEchoTrailing = -1;
   var rows = 0;
   for (var i = messages.length - 1; i >= 0; i--) {
     // Boot budget guard: nothing further from the head can fit — stop
@@ -374,14 +368,6 @@ buildReplayEntries(
     // head with an explicit marker (the tail stays intact — messages at
     // the END are kept whole as long as the row budget lasts).
     entry = _clipReplayEntry(entry, dim);
-    if (userEchoTrailing < 0 &&
-        message is UserMessage &&
-        !_isChromeText(_blocksText(message.content))) {
-      // First (== last) real prompt echo: every line of its own entry but
-      // the first, plus everything already kept below it. Computed after
-      // the clip so the count matches the lines actually written.
-      userEchoTrailing = rows + entry.length - 1;
-    }
     entries.insert(0, entry);
     rows += entry.length;
     firstIndex = i;
@@ -389,7 +375,6 @@ buildReplayEntries(
   return (
     _withFenceFixup(messages, firstIndex, entries),
     firstIndex,
-    userEchoTrailing,
   );
 }
 

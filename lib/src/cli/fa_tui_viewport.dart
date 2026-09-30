@@ -54,6 +54,37 @@ extension _TuiViewport on FaTuiModel {
     return shifted < 0 ? -1 : shifted;
   }
 
+  /// Host-driven state pushes: the hub overlay board and the composer
+  /// text/history setters. Split out of [_updateAfterExitCheck] to keep
+  /// the dispatcher's decision count under the CRAP ratchet.
+  (Model, Cmd?)? _handleHostStateMsg(Msg msg) {
+    if (msg is HubStateMsg) return _handleHubStateMsg(msg);
+    if (msg is _CloseHubMsg) return (copyWith(clearHub: true), null);
+
+    if (msg is _SetInputTextMsg) {
+      return (
+        copyWith(
+          inputText: msg.text,
+          cursor: msg.text.length,
+          menuOpen: false,
+          menuTokenStart: -1,
+        ),
+        null,
+      );
+    }
+    if (msg is SetInputHistoryMsg) {
+      return (
+        copyWith(
+          inputHistory: msg.history,
+          historyIndex: -1,
+          historyDraft: null,
+        ),
+        null,
+      );
+    }
+    return null;
+  }
+
   /// The follow anchor (issue #827): the live edge, but never below the
   /// current turn's first wrapped row while that turn fits the viewport —
   /// a freshly submitted prompt's window starts at its OWN echo, not at
@@ -119,16 +150,4 @@ extension _TuiViewport on FaTuiModel {
   int _clampScroll(int offset, List<String> wrapped) =>
       offset.clamp(0, _scrollBottom(wrapped));
 
-  /// Resolves a restored session's turn anchor (issue #827): the message
-  /// lands AFTER the replayed output (`_send` flushes output ahead of every
-  /// non-output message), so the replayed last-prompt echo's index counts
-  /// back from THIS model's own output length — no absolute index can
-  /// survive the host's banner/boot writes around the replay.
-  (FaTuiModel, Cmd?) _replayTurnStart(SetTurnStartMsg msg) {
-    final line = outputLines.length - 1 - msg.trailingLines;
-    return (
-      copyWith(turnStartLine: line.clamp(-1, outputLines.length - 1)),
-      null,
-    );
-  }
 }

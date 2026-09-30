@@ -91,15 +91,6 @@ extension FaTuiControllerIo on FaTuiController {
     _send(SetInputHistoryMsg(history));
   }
 
-  /// Restores the current-turn anchor after a resume replay (issue #827):
-  /// [trailingLines] counts transcript lines written after the replayed
-  /// last-prompt echo's first row. Sending it flushes the buffered replay
-  /// output first (`_send` ordering), so the model resolves the echo index
-  /// against the full replayed transcript — the resumed window pins at the
-  /// same turn boundary a live submit pinned at (resume 1:1 with live).
-  void setReplayTurnAnchor(int trailingLines) {
-    _send(SetTurnStartMsg(trailingLines));
-  }
 
   /// Opens the interactive prompt zone (ask/secret/approval) and resolves
   /// when the user answers (or cancels). The caller awaits the returned

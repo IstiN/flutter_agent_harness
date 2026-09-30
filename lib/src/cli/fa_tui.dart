@@ -1065,31 +1065,7 @@ final class FaTuiModel extends Model {
     if (msg is _ThemeChangedMsg) return _handleThemeChanged();
     if (msg is _OpenModelMenuMsg) return _handleOpenModelMenu();
     if (_handlePickerMsg(msg) case final picker?) return picker;
-    if (msg is HubStateMsg) return _handleHubStateMsg(msg);
-    if (msg is _CloseHubMsg) return (copyWith(clearHub: true), null);
-
-    if (msg is _SetInputTextMsg) {
-      return (
-        copyWith(
-          inputText: msg.text,
-          cursor: msg.text.length,
-          menuOpen: false,
-          menuTokenStart: -1,
-        ),
-        null,
-      );
-    }
-    if (msg is SetInputHistoryMsg) {
-      return (
-        copyWith(
-          inputHistory: msg.history,
-          historyIndex: -1,
-          historyDraft: null,
-        ),
-        null,
-      );
-    }
-    if (msg is SetTurnStartMsg) return _replayTurnStart(msg);
+    if (_handleHostStateMsg(msg) case final host?) return host;
     if (msg is _QuitRequestedMsg) return (this, () => quit());
     if (msg is ThemeSwappedMsg) return _handleThemeSwapped();
     if (msg is PasteboardResultMsg) return _handlePasteboardResult(msg);
