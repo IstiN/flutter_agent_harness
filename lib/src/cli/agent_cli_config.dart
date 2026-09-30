@@ -723,7 +723,8 @@ final class AgentCliConfig {
   final WaitingConfig waiting;
 
   /// The `jobs:` section (issue #478): boot-maintenance knobs for the
-  /// cross-run shell-job state (manifest age belt + log GC).
+  /// cross-run shell-job state (manifest age belt + log GC), plus the
+  /// `maxLogBytes` per-log ceiling (issue #919).
   final JobsConfig jobs;
 
   /// This host's machine name for `name@machine` addressing (issue #27
