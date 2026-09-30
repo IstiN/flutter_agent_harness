@@ -353,11 +353,7 @@ List<_Token> _tokenize(String input) {
     // text (balanced/quoted regions honored); the shell executes them at
     // expansion time. Single quotes below never reach this branch.
     if ((ch == '\$' && peek() == '(') || ch == '`') {
-      if (ch == '\$' && i + 2 < input.length && input[i + 2] == '(') {
-        throw const ShellParseException(
-          'arithmetic expansion \$((...)) is not supported in the sandbox shell',
-        );
-      }
+      _rejectArithmeticExpansion(input, i);
       i = _scanSubstitution(input, i, buffer);
       continue;
     }
@@ -402,25 +398,15 @@ List<_Token> _tokenize(String input) {
     }
 
     // Process substitution `<(cmd)` / `>(cmd)` is not supported (gh-1086).
-    if ((ch == '<' || ch == '>') && peek() == '(') {
-      throw const ShellParseException(
-        'process substitution <(...) / >(...) is not supported in the sandbox shell',
-      );
-    }
+    _rejectProcessSubstitution(input, i);
 
     // Here-documents / here-strings: `<<DELIM`, `<<-DELIM`, `<<<word`.
-    if (ch == '<' && peek() == '<') {
+    final heredocOp = _scanHeredocOperator(input, i);
+    if (heredocOp != null) {
       flushWord();
-      if (i + 2 < input.length && input[i + 2] == '<') {
-        tokens.add(_Redirect(0, RedirectKind.hereString));
-        i += 3;
-      } else {
-        final strip = i + 2 < input.length && input[i + 2] == '-';
-        final heredoc = _Heredoc(0, stripTabs: strip);
-        tokens.add(heredoc);
-        pendingHeredocs.add(heredoc);
-        i += strip ? 3 : 2;
-      }
+      tokens.addAll(heredocOp.$1);
+      pendingHeredocs.addAll(heredocOp.$1.whereType<_Heredoc>());
+      i = heredocOp.$2;
       continue;
     }
 
@@ -460,6 +446,45 @@ List<_Token> _tokenize(String input) {
     );
   }
   return tokens;
+}
+
+/// `$((` (arithmetic expansion) is rejected at the tokenizer level
+/// (gh-1086 AC5): it used to misparse into garbage output. Called at every
+/// `$( `- or backquote-position so the message names the construct.
+void _rejectArithmeticExpansion(String input, int i) {
+  if (input[i] == '\$' && i + 2 < input.length && input[i + 2] == '(') {
+    throw const ShellParseException(
+      'arithmetic expansion \$((...)) is not supported in the sandbox shell',
+    );
+  }
+}
+
+/// `<(cmd)` / `>(cmd)` (process substitution) is rejected at the tokenizer
+/// level (gh-1086 AC5): it used to fold into a `<`/`>` file redirect and
+/// read/write a file literally named `(...`.
+void _rejectProcessSubstitution(String input, int i) {
+  final ch = input[i];
+  if ((ch == '<' || ch == '>') && i + 1 < input.length && input[i + 1] == '(') {
+    throw const ShellParseException(
+      'process substitution <(...) / >(...) is not supported in the sandbox shell',
+    );
+  }
+}
+
+/// Scans a here-document / here-string operator (`<<DELIM`, `<<-DELIM`,
+/// `<<<word`) at [i]; returns the emitted tokens and the index just past
+/// the operator, or null when [i] does not hold one. The here-document
+/// token registers as pending — its body is captured by [_captureHeredocs]
+/// when the tokenizer crosses the newline ending the command line.
+(List<_Token>, int)? _scanHeredocOperator(String input, int i) {
+  if (input[i] != '<' || i + 1 >= input.length || input[i + 1] != '<') {
+    return null;
+  }
+  if (i + 2 < input.length && input[i + 2] == '<') {
+    return (<_Token>[_Redirect(0, RedirectKind.hereString)], i + 3);
+  }
+  final strip = i + 2 < input.length && input[i + 2] == '-';
+  return (<_Token>[_Heredoc(0, stripTabs: strip)], i + (strip ? 3 : 2));
 }
 
 /// Captures the bodies of [pending] here-documents from [input] starting
@@ -574,11 +599,7 @@ int _scanSingleQuote(String input, int i, StringBuffer buffer) {
             i + 1 < input.length &&
             input[i + 1] == '(') ||
         input[i] == '`') {
-      if (input[i] == '\$' && i + 2 < input.length && input[i + 2] == '(') {
-        throw const ShellParseException(
-          'arithmetic expansion \$((...)) is not supported in the sandbox shell',
-        );
-      }
+      _rejectArithmeticExpansion(input, i);
       i = _scanSubstitution(input, i, buffer);
     } else {
       buffer.write(input[i]);
