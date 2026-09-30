@@ -704,6 +704,9 @@ extension OverWindowContinuation on AgentCli {
     String? lastFailure,
   ) async {
     final tokens = _liveRequestTokens();
+    // Same ordering as [_afterRun]: let an in-flight TTSR abort/inject/
+    // retry chain finish before the panels report completion.
+    await _ttsr?.settled;
     await _persistMessages();
     // The turn is consumed with no inner run, so the normal finish path
     // ([_afterRun]) never runs — its hub-panel bookkeeping must not be
