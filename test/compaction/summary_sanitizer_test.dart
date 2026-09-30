@@ -1,0 +1,245 @@
+// Copyright (c) 2026, the Flutter Agent Harness authors.
+// Use of this source code is governed by a MIT license that can be found in
+// the LICENSE file.
+
+/// Issue #1131 — stale ephemeral claims in compaction summaries.
+///
+/// A compaction summary re-renders on every later turn, so a time-scoped
+/// observation written at fold time ("your LAST tool call's RESULT was
+/// dropped from context") re-renders forever as a current fact. Regression
+/// coverage, three layers:
+///
+/// 1. the sanitizer itself (units, incl. E1 false-positive pins);
+/// 2. the persist path (classic `compact`, branch summaries, structured
+///    checkpoints) strips before recording and logs the fires;
+/// 3. the render path (context projection) heals summaries poisoned by
+///    older sessions without touching the session JSONL.
+
+library;
+
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/compaction/structured/projection.dart';
+import 'package:test/test.dart';
+
+/// The incident sentence (issue #1131, orchestrator session 01a06644-…).
+const _incidentNote =
+    '[CONTEXT NOTE — Your LAST tool call\'s RESULT was dropped from context; '
+    'the drop happened DURING an earlier compacted span (the type 968 '
+    'multi-file sweep). If you were mid-sweep, re-run only what you still '
+    'need.]';
+
+AssistantMessage _assistant(String text) {
+  return AssistantMessage(
+    content: [TextContent(text: text)],
+    api: 'openai-completions',
+    provider: 'openrouter',
+    model: 'm1',
+    usage: Usage.zero,
+    stopReason: StopReason.stop,
+    timestamp: DateTime.utc(2026),
+  );
+}
+
+/// Fake summarizer: records every request, replays scripted results.
+class _FakeSummarizer {
+  _FakeSummarizer(this.results);
+
+  final List<SummarizationResult> results;
+  final prompts = <SummarizationRequest>[];
+
+  Future<SummarizationResult> call(SummarizationRequest request) async {
+    prompts.add(request);
+    return results.removeAt(0);
+  }
+}
+
+void main() {
+  group('sanitizeSummary units', () {
+    test('strips the incident claim (second person + drop)', () {
+      final result = sanitizeSummary(
+        '## Progress\n### Done\n- Fixed the login crash.\n'
+        '$_incidentNote\n'
+        '- The parser now handles unicode paths.\n',
+      );
+      expect(result.text, isNot(contains('was dropped')));
+      expect(result.text, isNot(contains('mid-sweep')));
+      expect(result.text, contains('Fixed the login crash.'));
+      expect(result.text, contains('The parser now handles unicode paths.'));
+    });
+
+    test('reports every stripped span (the log payload)', () {
+      final result = sanitizeSummary(
+        'Your last tool call\'s result was dropped. Keep going.\n'
+        '$_incidentNote\n',
+      );
+      expect(result.stripped, hasLength(2));
+      expect(
+        result.stripped.where((s) => s.contains('was dropped')),
+        isNotEmpty,
+      );
+      expect(result.stripped.where((s) => s.contains('968')), isNotEmpty);
+    });
+
+    test('E1 pins: durable temporal facts survive verbatim', () {
+      const durable =
+          '## Key Decisions\n'
+          '- **Pin**: the last release was v1.0.492.\n'
+          '- The current maintainer is IstiN.\n'
+          '- The user asked you to re-run the tests after the fix.\n';
+      final result = sanitizeSummary(durable);
+      expect(result.text, durable);
+      expect(result.stripped, isEmpty);
+    });
+
+    test('clean summaries survive byte-identical', () {
+      const clean =
+          '## Open User Requests\n- [ ] ship it (asked 2026-09-30, r1)\n\n'
+          '## Goal\nFix the compaction loop.\n';
+      final result = sanitizeSummary(clean);
+      expect(result.text, clean);
+      expect(result.stripped, isEmpty);
+    });
+
+    test('a partially stripped bullet keeps its marker', () {
+      final result = sanitizeSummary(
+        '- [x] Landed the fix. Your last tool call was dropped.\n',
+      );
+      expect(result.text.trim(), '- [x] Landed the fix.');
+      expect(result.stripped, hasLength(1));
+    });
+  });
+
+  group('classic persist path (AC3)', () {
+    test('compact() strips ephemeral claims and logs them in details', () async {
+      const poisoned =
+          '## Progress\n- Your LAST tool call\'s RESULT was dropped from '
+          'context.\n- The login crash is fixed.\n';
+      final manager = CompactionManager(
+        summarize: _FakeSummarizer([
+          SummarizationResult.success(poisoned),
+        ]).call,
+      );
+      final result = await manager.compact(
+        CompactionPreparation(
+          firstKeptEntryId: 'r9',
+          messagesToSummarize: [UserMessage.text('u1'), _assistant('a1')],
+          turnPrefixMessages: const [],
+          isSplitTurn: false,
+          tokensBefore: 100,
+        ),
+      );
+      expect(result.summary, isNot(contains('was dropped')));
+      expect(result.summary, contains('The login crash is fixed.'));
+      final details = result.details! as Map;
+      final stripped = (details['sanitizedEphemeral'] as List).single as String;
+      expect(stripped, contains('was dropped'));
+    });
+  });
+
+  group('render path heals poisoned records (UT-1/AC1/E2)', () {
+    late MemoryFileSystem fs;
+    late JsonlSessionRepo repo;
+
+    setUp(() {
+      fs = MemoryFileSystem();
+      repo = JsonlSessionRepo(fs: fs, sessionsRoot: '/sessions');
+    });
+
+    test('poisoned compaction record projects clean many turns later',
+        () async {
+      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+      final firstId = await session.appendMessage(
+        UserMessage.text('run the 968 sweep'),
+      );
+      await session.appendMessage(_assistant('sweeping'));
+      await session.appendCompaction(
+        summary:
+            '## Progress\n- Fixed the parser.\n$_incidentNote\n',
+        firstKeptEntryId: firstId,
+        tokensBefore: 100,
+      );
+      // Simulate 20 later turns of history after the poisoned record.
+      for (var i = 0; i < 20; i++) {
+        await session.appendMessage(UserMessage.text('turn $i'));
+      }
+      final messages = await session.buildContextMessages();
+      final summaryMessage = messages
+          .whereType<UserMessage>()
+          .singleWhere(
+            (m) => (m.content as String).contains(compactionSummaryPrefix),
+          );
+      final summaryText = summaryMessage.content as String;
+      expect(summaryText, startsWith(compactionSummaryPrefix));
+      expect(summaryText, contains(compactionSummarySuffix));
+      expect(summaryText, isNot(contains('was dropped')));
+      expect(summaryText, isNot(contains('mid-sweep')));
+      // Durable content of the same summary survives (E2: no JSONL rewrite,
+      // only ephemeral phrasing suppressed).
+      expect(summaryText, contains('Fixed the parser.'));
+      // The persisted record is untouched (byte-identical JSONL invariant).
+      final branch = await session.getBranch();
+      final record = branch.whereType<CompactionRecord>().single;
+      expect(record.summary, contains('was dropped'));
+    });
+  });
+
+  group('branch summary persist path', () {
+    test('generateBranchSummary sanitizes the LLM prose', () async {
+      final fake = _FakeSummarizer([
+        SummarizationResult.success(
+          '## Goal\nFix the loop.\n$_incidentNote\n',
+        ),
+      ]);
+      final result = await generateBranchSummary([
+        MessageRecord(
+          id: 'r1',
+          parentId: null,
+          timestamp: DateTime.utc(2026),
+          message: UserMessage.text('fix the loop'),
+        ),
+      ], summarize: fake.call);
+      expect(result.summary, isNot(contains('was dropped')));
+      expect(result.summary, contains('Fix the loop.'));
+    });
+  });
+
+  group('structured checkpoint paths', () {
+    test('checkpoint render sanitizes poisoned text (E2 for old checkpoints)',
+        () {
+      final path = <SessionRecord>[
+        MessageRecord(
+          id: 'r1',
+          parentId: null,
+          timestamp: DateTime.utc(2026),
+          message: UserMessage.text('fix the loop'),
+        ),
+        CompactCheckpointRecord(
+          id: 'r2',
+          parentId: 'r1',
+          timestamp: DateTime.utc(2026),
+          firstRecordId: 'r1',
+          lastRecordId: 'r1',
+          text: 'Checkpoint: the loop was fixed. $_incidentNote',
+          coversRecordIds: const ['r1'],
+          flattenedRecordIds: const [],
+        ),
+      ];
+      final messages = renderStructuredMessages(
+        path: path,
+        seqs: RecordSeqIndex(path),
+        projectEntry: (record) =>
+            record is MessageRecord ? [record.message] : const [],
+      );
+      final checkpoint = messages
+          .whereType<UserMessage>()
+          .firstWhere(
+            (m) => (m.content as String).contains('Checkpoint:'),
+          );
+      final checkpointText = checkpoint.content as String;
+      expect(checkpointText, isNot(contains('was dropped')));
+      expect(checkpointText, contains('the loop was fixed'));
+      // The span stamp survives: structured checkpoints render covers-scoped.
+      expect(checkpointText, contains('covers:'));
+    });
+  });
+}

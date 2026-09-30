@@ -19,6 +19,7 @@
 library;
 
 import 'markers.dart';
+import '../summary_sanitizer.dart';
 import '../token_estimation.dart';
 import '../../context.dart';
 import '../../types.dart';
@@ -348,7 +349,7 @@ Message _checkpointMessage(
       if (!state.hiddenRecordIds.contains(id)) ?byId[id],
   ], seqs);
   return UserMessage.text(
-    '$header\n${record.text}$index',
+    '$header\n${sanitizeSummary(record.text).text}$index',
     timestamp: record.timestamp,
   );
 }

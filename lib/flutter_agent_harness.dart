@@ -105,6 +105,7 @@ export 'src/cli/prompt_templates.dart';
 export 'src/cli/tui_mouse_mode.dart';
 export 'src/compaction/branch_summarization.dart';
 export 'src/compaction/compaction.dart';
+export 'src/compaction/summary_sanitizer.dart';
 export 'src/compaction/token_estimation.dart';
 export 'src/context.dart';
 export 'src/cube/cube.dart';

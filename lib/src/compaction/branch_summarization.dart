@@ -28,6 +28,7 @@ import '../session/session_record.dart';
 import '../session/session_tree.dart';
 import '../types.dart';
 import 'compaction.dart';
+import 'summary_sanitizer.dart';
 import 'token_estimation.dart';
 
 export '../prompts/prompts.g.dart' show branchSummaryPrompt;
@@ -280,8 +281,11 @@ Future<BranchSummaryResult> generateBranchSummary(
   }
 
   final fileLists = computeFileLists(preparation.fileOps);
+  // Issue #1131: the summary persists and re-renders every turn — strip
+  // ephemeral, time-scoped claims from the LLM prose before recording it.
+  final sanitized = sanitizeSummary(text);
   final summary =
-      '$branchSummaryPreamble\n$text'
+      '$branchSummaryPreamble\n${sanitized.text}'
       '${formatFileOperations(fileLists.readFiles, fileLists.modifiedFiles)}';
   return BranchSummaryResult(
     summary: summary.isEmpty ? 'No summary generated' : summary,

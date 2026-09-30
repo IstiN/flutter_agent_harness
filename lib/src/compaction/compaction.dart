@@ -43,6 +43,7 @@ import '../session/session_record.dart';
 import '../session/session_tree.dart';
 import '../session/uuid.dart';
 import '../types.dart';
+import 'summary_sanitizer.dart';
 import 'token_estimation.dart';
 
 export '../compaction/compaction_engine.dart'
@@ -1375,6 +1376,12 @@ final class CompactionManager {
       );
     }
 
+    // Issue #1131: a summary re-renders on every later turn, so ephemeral,
+    // time-scoped claims ("your last tool call's result was dropped") are
+    // stripped pre-persist; the fires are logged in the record details.
+    final sanitized = sanitizeSummary(summary);
+    summary = sanitized.text;
+
     summary += formatFileOperations(
       preparation.readFiles,
       preparation.modifiedFiles,
@@ -1387,6 +1394,8 @@ final class CompactionManager {
       details: {
         'readFiles': preparation.readFiles,
         'modifiedFiles': preparation.modifiedFiles,
+        if (sanitized.stripped.isNotEmpty)
+          'sanitizedEphemeral': sanitized.stripped,
       },
     );
   }
