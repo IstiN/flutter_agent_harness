@@ -2163,7 +2163,23 @@ jobs:
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
         run: |
-          gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" > /tmp/jobs.json
+          set -euo pipefail
+          # The jobs endpoint intermittently answers 502 (live on the
+          # gh-1086 rework head 81ed7186: a single 502 failed the whole
+          # telemetry leg). Same 3-attempt pattern as build-mobile's
+          # "Install Flutter dependencies" — transient API errors retry,
+          # a real failure still reds the step loudly.
+          for attempt in 1 2 3; do
+            if gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" > /tmp/jobs.json; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              echo "::error::gh api jobs fetch failed after 3 attempts — GitHub API is erroring (502-class)"
+              exit 1
+            fi
+            echo "::warning::gh api jobs fetch failed (attempt $attempt/3) — retrying in 10s"
+            sleep 10
+          done
           python3 - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
           import datetime, json
           jobs = json.load(open('/tmp/jobs.json'))['jobs']
