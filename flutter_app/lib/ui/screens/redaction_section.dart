@@ -3,6 +3,7 @@
 // in the LICENSE file.
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/analytics.dart';
 import 'package:fa_ui/fa_ui.dart' as faui;
 import 'package:flutter/material.dart';
 
@@ -33,6 +34,10 @@ class _RedactionSectionState extends State<RedactionSection> {
       onChanged: (enabled) {
         setState(() => _enabled = enabled);
         widget.service.setRedactionEnabled(enabled);
+        AppAnalytics.instance.widgetEvent(
+          'redaction_toggled',
+          params: {'enabled': enabled},
+        );
       },
       contentPadding: EdgeInsets.zero,
       secondary: Icon(

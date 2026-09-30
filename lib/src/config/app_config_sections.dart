@@ -113,34 +113,9 @@ AppFahSections parseAppConfigSections({
   String? envMode,
 }) {
   final warnings = <String>[];
-  YamlMap? user;
-  if (userDoc is YamlMap) {
-    user = userDoc;
-  } else if (userDoc != null) {
-    warnings.add('invalid config in $userSource: expected a map');
-  }
-  YamlMap? project;
-  if (projectDoc is YamlMap) {
-    project = projectDoc;
-  } else if (projectDoc != null) {
-    warnings.add('invalid config in $projectSource: expected a map');
-  }
-
-  // roles: — user scope, the CLI's exact parse (whole-doc: it reads
-  // roles:/modelOverrides:/retry:) behind the CLI's exact trigger
-  // (cli_config.dart: roles || modelOverrides). A `retry:`-only doc is a
-  // silent no-op on the CLI — the retry policy only rides a roles parse —
-  // so it stays one here (parity over convenience).
-  ModelRolesConfig? roles;
-  if (user != null &&
-      (user['roles'] != null || user['modelOverrides'] != null)) {
-    try {
-      roles = ModelRolesConfig.fromYaml(user);
-    } on ConfigException catch (error) {
-      warnings.add('invalid roles section in $userSource: ${error.message}');
-    }
-  }
-
+  final user = _coerceScopeDoc(userDoc, userSource, warnings);
+  final project = _coerceScopeDoc(projectDoc, projectSource, warnings);
+  final roles = _parseRolesSection(user, userSource, warnings);
   // tools: — both scopes parse independently; the caller stacks them
   // (global < project < runtime) in the live resolution.
   final userTools = _parseTools(user?['tools'], userSource, warnings);
@@ -149,91 +124,16 @@ AppFahSections parseAppConfigSections({
     projectSource,
     warnings,
   );
-
-  // ttsr: — user settings + rules, project .fah/rules.yaml rules first
-  // (the CLI _resolveTtsr merge: project rules win name clashes).
-  TtsrConfig? ttsr;
-  TtsrConfig? userTtsr;
-  if (user?['ttsr'] != null) {
-    try {
-      userTtsr = TtsrConfig.fromYaml(
-        user!['ttsr'],
-        sourcePath: userSource,
-        warnings: warnings,
-      );
-    } on ConfigException catch (error) {
-      warnings.add('invalid ttsr section in $userSource: ${error.message}');
-    }
-  }
-  List<TtsrRule>? projectRules;
-  if (projectRulesDoc != null) {
-    try {
-      projectRules = TtsrConfig.rulesFromYaml(
-        projectRulesDoc,
-        sourcePath: projectRulesSource,
-        warnings: warnings,
-      );
-    } on ConfigException catch (error) {
-      warnings.add(
-        'invalid ttsr rules in $projectRulesSource: ${error.message}',
-      );
-    }
-  }
-  if (userTtsr != null || (projectRules != null && projectRules.isNotEmpty)) {
-    ttsr = TtsrConfig(
-      settings: userTtsr?.settings ?? TtsrSettings.defaultSettings,
-      rules: [...?projectRules, ...?userTtsr?.rules],
-    );
-  }
-
-  // redact: — tolerant parse (invalid values already fall back to defaults
-  // inside RedactionConfig.fromYaml); a structural failure warns.
-  RedactionConfig? redact;
-  if (user?['redact'] != null) {
-    final node = user!['redact'];
-    if (node is Map<dynamic, dynamic>) {
-      try {
-        redact = RedactionConfig.fromYaml(node);
-      } on Object catch (error) {
-        warnings.add('invalid redact section in $userSource: $error');
-      }
-    } else {
-      redact = RedactionConfig.fromYaml(null);
-      warnings.add('invalid redact section in $userSource: expected a map');
-    }
-  }
-
-  // providerTimeouts: — the CLI's own strict parser.
-  ProviderTimeoutsOverride? providerTimeouts;
-  if (user?['providerTimeouts'] != null) {
-    try {
-      providerTimeouts = parseProviderTimeouts(user!['providerTimeouts']);
-    } on ConfigException catch (error) {
-      warnings.add(
-        'invalid providerTimeouts section in $userSource: ${error.message}',
-      );
-    }
-  }
-
-  // agent.mode — env first (the app has no --omp flag), then the config
-  // value. The shared validator names the offending source (AC7).
-  final configMode = _agentModeOf(user, userSource, warnings);
-  var loadMode = AgentLoadMode.defaultMode;
-  for (final (source, value) in [('FA_AGENT_MODE', envMode), (
-    'agent.mode',
-    configMode,
-  )]) {
-    if (value == null || value.isEmpty) continue;
-    final invalid = agentLoadModeValidationError(value);
-    if (invalid != null) {
-      final origin = source == 'FA_AGENT_MODE' ? 'environment' : userSource;
-      warnings.add('invalid $source in $origin: $invalid');
-      continue;
-    }
-    loadMode = agentLoadModeFromLabel(value)!;
-    break; // first accepted intent wins: env overrides the config label
-  }
-
+  final ttsr = _parseTtsrSection(
+    user,
+    userSource,
+    projectRulesDoc,
+    projectRulesSource,
+    warnings,
+  );
+  final redact = _parseRedactSection(user, userSource, warnings);
+  final providerTimeouts = _parseTimeoutsSection(user, userSource, warnings);
+  final loadMode = _resolveLoadMode(envMode, user, userSource, warnings);
   // Inventory #2 interim: `mcp:` stays CLI-only on mobile — say so instead
   // of silently ignoring it.
   final mcpConfigured = user?['mcp'] != null;
@@ -243,7 +143,6 @@ AppFahSections parseAppConfigSections({
       '(MCP servers connect through the CLI harness)',
     );
   }
-
   return AppFahSections(
     roles: roles,
     ttsr: ttsr,
@@ -256,6 +155,204 @@ AppFahSections parseAppConfigSections({
     warnings: warnings,
     userDoc: userDoc,
   );
+}
+
+/// One scope's yaml document: the map itself, a named warning for any
+/// other node, null for absence (AC7 — the warning names the file).
+YamlMap? _coerceScopeDoc(Object? doc, String source, List<String> warnings) {
+  if (doc is YamlMap) return doc;
+  if (doc != null) warnings.add('invalid config in $source: expected a map');
+  return null;
+}
+
+/// The `roles:` section — user scope, the CLI's exact parse (whole-doc:
+/// it reads roles:/modelOverrides:/retry:) behind the CLI's exact trigger.
+ModelRolesConfig? _parseRolesSection(
+  YamlMap? user,
+  String userSource,
+  List<String> warnings,
+) {
+  if (user == null || !_shipsRolesSection(user)) return null;
+  try {
+    return ModelRolesConfig.fromYaml(user);
+  } on ConfigException catch (error) {
+    warnings.add('invalid roles section in $userSource: ${error.message}');
+    return null;
+  }
+}
+
+/// The CLI's exact roles trigger (cli_config.dart: roles ||
+/// modelOverrides). A `retry:`-only doc is a silent no-op on the CLI —
+/// the retry policy only rides a roles parse — so it stays one here
+/// (parity over convenience).
+bool _shipsRolesSection(YamlMap? user) =>
+    user != null &&
+    (user['roles'] != null || user['modelOverrides'] != null);
+
+/// The `ttsr:` section: user settings + rules, project `.fah/rules.yaml`
+/// rules first (the CLI _resolveTtsr merge: project rules win name
+/// clashes). Null when neither scope ships anything.
+TtsrConfig? _parseTtsrSection(
+  YamlMap? user,
+  String userSource,
+  Object? projectRulesDoc,
+  String projectRulesSource,
+  List<String> warnings,
+) {
+  final userTtsr = _parseUserTtsr(user, userSource, warnings);
+  final projectRules = _parseProjectTtsrRules(
+    projectRulesDoc,
+    projectRulesSource,
+    warnings,
+  );
+  if (userTtsr == null && _isAbsent(projectRules)) return null;
+  return TtsrConfig(
+    settings: userTtsr?.settings ?? TtsrSettings.defaultSettings,
+    rules: [...?projectRules, ...?userTtsr?.rules],
+  );
+}
+
+/// The user `ttsr:` section, or null (absent or structurally dead).
+TtsrConfig? _parseUserTtsr(
+  YamlMap? user,
+  String userSource,
+  List<String> warnings,
+) {
+  if (user?['ttsr'] == null) return null;
+  try {
+    return TtsrConfig.fromYaml(
+      user!['ttsr'],
+      sourcePath: userSource,
+      warnings: warnings,
+    );
+  } on ConfigException catch (error) {
+    warnings.add('invalid ttsr section in $userSource: ${error.message}');
+    return null;
+  }
+}
+
+/// The project `.fah/rules.yaml` rules, or null (absent or dead).
+List<TtsrRule>? _parseProjectTtsrRules(
+  Object? projectRulesDoc,
+  String projectRulesSource,
+  List<String> warnings,
+) {
+  if (projectRulesDoc == null) return null;
+  try {
+    return TtsrConfig.rulesFromYaml(
+      projectRulesDoc,
+      sourcePath: projectRulesSource,
+      warnings: warnings,
+    );
+  } on ConfigException catch (error) {
+    warnings.add(
+      'invalid ttsr rules in $projectRulesSource: ${error.message}',
+    );
+    return null;
+  }
+}
+
+/// Null-or-empty: an absent project rules layer.
+bool _isAbsent(List<TtsrRule>? rules) => rules == null || rules.isEmpty;
+
+/// The `redact:` section — tolerant parse (invalid values fall back to
+/// defaults inside [RedactionConfig.fromYaml]); a non-map node or a
+/// structural failure (bad allowlist regex) warns and falls back.
+RedactionConfig? _parseRedactSection(
+  YamlMap? user,
+  String userSource,
+  List<String> warnings,
+) {
+  final node = user?['redact'];
+  if (node == null) return null;
+  if (node is! Map<dynamic, dynamic>) {
+    warnings.add('invalid redact section in $userSource: expected a map');
+    return RedactionConfig.fromYaml(null);
+  }
+  return _redactConfigOf(node, userSource, warnings);
+}
+
+/// The parsed `redact:` map, or null when even the tolerant parse fails.
+RedactionConfig? _redactConfigOf(
+  Map<dynamic, dynamic> node,
+  String userSource,
+  List<String> warnings,
+) {
+  try {
+    return RedactionConfig.fromYaml(node);
+  } on Object catch (error) {
+    warnings.add('invalid redact section in $userSource: $error');
+    return null;
+  }
+}
+
+/// The `providerTimeouts:` section — the CLI's own strict parser.
+ProviderTimeoutsOverride? _parseTimeoutsSection(
+  YamlMap? user,
+  String userSource,
+  List<String> warnings,
+) {
+  if (user?['providerTimeouts'] == null) return null;
+  try {
+    return parseProviderTimeouts(user!['providerTimeouts']);
+  } on ConfigException catch (error) {
+    warnings.add(
+      'invalid providerTimeouts section in $userSource: ${error.message}',
+    );
+    return null;
+  }
+}
+
+/// agent.mode — env first (the app has no --omp flag), then the config
+/// value. The shared validator names the offending source (AC7).
+AgentLoadMode _resolveLoadMode(
+  String? envMode,
+  YamlMap? user,
+  String userSource,
+  List<String> warnings,
+) {
+  final env = _modeLabelIntent(
+    'FA_AGENT_MODE',
+    envMode,
+    'environment',
+    warnings,
+  );
+  if (env != null) return agentLoadModeFromLabel(env)!;
+  final config = _modeLabelIntent(
+    'agent.mode',
+    _agentModeOf(user, userSource, warnings),
+    userSource,
+    warnings,
+  );
+  if (config != null) return agentLoadModeFromLabel(config)!;
+  return AgentLoadMode.defaultMode;
+}
+
+/// A present, non-empty mode label — null means "no intent from here".
+String? _modeLabelIntent(
+  String source,
+  String? value,
+  String origin,
+  List<String> warnings,
+) {
+  if (value == null || value.isEmpty) return null;
+  return _validModeLabel(source, value, origin, warnings);
+}
+
+/// The label, or a named AC7 warning + null when the CLI validator
+/// rejects it (the app degrades instead of failing boot).
+String? _validModeLabel(
+  String source,
+  String value,
+  String origin,
+  List<String> warnings,
+) {
+  final invalid = agentLoadModeValidationError(value);
+  if (invalid != null) {
+    warnings.add('invalid $source in $origin: $invalid');
+    return null;
+  }
+  return value;
 }
 
 /// One scope's `tools:` parse with the named warning on a bad section.
@@ -276,18 +373,26 @@ ToolsConfig _parseTools(Object? node, String source, List<String> warnings) {
 String? _agentModeOf(YamlMap? user, String source, List<String> warnings) {
   final agent = user?['agent'];
   if (agent == null) return null;
+  return _agentModeLeaf(agent, source, warnings);
+}
+
+/// The `mode:` leaf of a present `agent:` section.
+String? _agentModeLeaf(Object? agent, String source, List<String> warnings) {
   if (agent is! YamlMap) {
     warnings.add('invalid agent section in $source: expected a map');
     return null;
   }
   final mode = agent['mode'];
   if (mode == null) return null;
-  if (mode is! String) {
-    warnings.add(
-      'invalid agent.mode in $source: expected one of '
-      '${agentLoadModeLabels.join('|')}',
-    );
-    return null;
-  }
-  return mode;
+  return _modeLabelOrWarn(mode, source, warnings);
+}
+
+/// The raw label, or the AC7 warning when the CLI's label set rejects it.
+String? _modeLabelOrWarn(Object? mode, String source, List<String> warnings) {
+  if (mode is String) return mode;
+  warnings.add(
+    'invalid agent.mode in $source: expected one of '
+    '${agentLoadModeLabels.join('|')}',
+  );
+  return null;
 }

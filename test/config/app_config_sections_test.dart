@@ -190,9 +190,24 @@ void main() {
       expect(app.warnings.single, contains('environment'));
     });
 
+    test('an empty FA_AGENT_MODE is an absent intent, not a warning', () {
+      final app = parseAppConfigSections(envMode: '');
+      expect(app.loadMode, AgentLoadMode.defaultMode);
+      expect(app.warnings, isEmpty);
+    });
+
     test('malformed redact falls back to defaults with a warning', () {
       final app = parseAppConfigSections(userDoc: _doc('redact: [1, 2]\n'));
       expect(app.redact!.enabled, RedactionConfig.fromYaml(null).enabled);
+      expect(app.warnings.single, contains('redact'));
+      expect(app.warnings.single, contains('~/.fah/config.yaml'));
+    });
+
+    test('a redact allowlist entry that is not a valid regex warns', () {
+      final app = parseAppConfigSections(
+        userDoc: _doc('redact:\n  allowlist: ["([bad"]\n'),
+      );
+      expect(app.redact, isNull);
       expect(app.warnings.single, contains('redact'));
       expect(app.warnings.single, contains('~/.fah/config.yaml'));
     });
