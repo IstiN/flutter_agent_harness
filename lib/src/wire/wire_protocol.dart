@@ -1000,25 +1000,38 @@ class AgentWireProtocol {
     return json;
   }
 
-  /// Deep-copies [frame] with every SECRET-class field replaced by
-  /// `[REDACTED]`. Use for LOGGING and PERSISTENCE copies only — the live
-  /// frame keeps its values so the engine can work.
-  static Map<String, dynamic> redactForLog(Map<String, dynamic> frame) {
-    final kind = frame['kind'];
-    final secretFields = kind is String ? _secretFieldsByKind[kind] : null;
+  /// Deep-copies [frame] with every SECRET-class field replaced by the
+  /// repo-standard `[REDACTED:<kind>]` marker — the layered redaction
+  /// pipeline keys on the kind label, so nested maps inherit the frame's
+  /// kind (unknown-kind frames mark as `[REDACTED:unknown]`). Use for
+  /// LOGGING and PERSISTENCE copies only — the live frame keeps its
+  /// values so the engine can work.
+  static Map<String, dynamic> redactForLog(Map<String, dynamic> frame) =>
+      _redactForLog(
+        frame,
+        frame['kind'] is String ? frame['kind'] as String : 'unknown',
+      );
+
+  static Map<String, dynamic> _redactForLog(
+    Map<String, dynamic> frame,
+    String kindLabel,
+  ) {
+    final secretFields = _secretFieldsByKind[kindLabel];
     return frame.map((key, value) {
       // NOTE: ?? binds looser than || in Dart - the registry check must be
       // parenthesized or a false `contains` short-circuits the anywhere-rule
       // for kinds that HAVE a registry entry (secret_response, model_request).
       if ((secretFields?.contains(key) ?? false) ||
           _secretFieldNamesAnywhere.contains(key)) {
-        return MapEntry(key, '[REDACTED]');
+        return MapEntry(key, '[REDACTED:$kindLabel]');
       }
       final valueCopy = switch (value) {
-        Map<String, dynamic> map => redactForLog(map),
+        Map<String, dynamic> map => _redactForLog(map, kindLabel),
         List<dynamic> list => [
           for (final item in list)
-            item is Map<String, dynamic> ? redactForLog(item) : item,
+            item is Map<String, dynamic>
+                ? _redactForLog(item, kindLabel)
+                : item,
         ],
         _ => value,
       };

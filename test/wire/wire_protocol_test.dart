@@ -406,7 +406,7 @@ void main() {
       final frame = protocol.encodeCommand(nativeCommandFor('secret_response'));
       frame['rawBody'] = 'TOP-LEVEL-STRAY';
       final redacted = AgentWireProtocol.redactForLog(frame);
-      expect(redacted['rawBody'], '[REDACTED]');
+      expect(redacted['rawBody'], '[REDACTED:secret_response]');
       expect(frame['rawBody'], 'TOP-LEVEL-STRAY');
       // Nested stray under a registry kind too.
       final nested = AgentWireProtocol.redactForLog({
@@ -415,7 +415,30 @@ void main() {
         'id': 'x',
         'wrapper': {'rawBody': 'NESTED'},
       });
-      expect((nested['wrapper'] as Map)['rawBody'], '[REDACTED]');
+      expect(
+        (nested['wrapper'] as Map)['rawBody'],
+        '[REDACTED:secret_response]',
+      );
+    });
+
+    test('markers are kind-qualified per the layered pipeline format', () {
+      // Unknown-kind frames still get a parseable marker.
+      final foreign = AgentWireProtocol.redactForLog({
+        'v': 1,
+        'kind': 'foreign_kind',
+        'rawBody': 'x',
+      });
+      expect(foreign['rawBody'], '[REDACTED:foreign_kind]');
+      // A frame without a kind at all degrades to the unknown label.
+      final kindless = AgentWireProtocol.redactForLog({'rawBody': 'x'});
+      expect(kindless['rawBody'], '[REDACTED:unknown]');
+      // Markers match the pipeline's existing-marker pattern.
+      expect(
+        RegExp(
+          r'^\[REDACTED:[^\]\n]*\]$',
+        ).hasMatch(foreign['rawBody'] as String),
+        isTrue,
+      );
     });
 
     test('session_control params are loud-optional', () {
@@ -529,7 +552,7 @@ void main() {
       expect(
         ((redacted['message'] as Map<String, dynamic>)['rateLimit']
             as Map<String, dynamic>)['rawBody'],
-        '[REDACTED]',
+        '[REDACTED:message_end]',
       );
     });
 
@@ -544,7 +567,7 @@ void main() {
       );
       final redacted = AgentWireProtocol.redactForLog(frame);
       expect(jsonEncode(redacted), isNot(contains(secret)));
-      expect(redacted['value'], '[REDACTED]');
+      expect(redacted['value'], '[REDACTED:secret_response]');
       // The live frame keeps the value (the engine needs it); only LOG
       // copies are redacted.
       expect(frame['value'], secret);
@@ -555,7 +578,7 @@ void main() {
       final protocol = AgentWireProtocol();
       final frame = protocol.encodeEvent(nativeEventFor('model_request'));
       final redacted = AgentWireProtocol.redactForLog(frame);
-      expect(redacted['rawWireDump'], '[REDACTED]');
+      expect(redacted['rawWireDump'], '[REDACTED:model_request]');
       expect(jsonEncode(redacted), isNot(contains('raw-wire-dump')));
     });
 
@@ -574,7 +597,11 @@ void main() {
         // redaction rewrites — nothing here is a real credential.
         final redacted = AgentWireProtocol.redactForLog(fixture.frame);
         for (final field in secretFields) {
-          expect(redacted[field], '[REDACTED]', reason: fixture.path);
+          expect(
+            redacted[field],
+            '[REDACTED:${fixture.frame['kind']}]',
+            reason: fixture.path,
+          );
           expect(
             jsonEncode(redacted),
             isNot(contains(fixture.frame[field])),

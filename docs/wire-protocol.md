@@ -89,7 +89,10 @@ SECRET-class frame fields are registered in
 `model_request.rawWireDump`, and `rawBody` (anywhere in a frame — it only
 ever carries the raw provider 429 payload, `RateLimitInfo.rawBody`).
 **Hosts MUST pass frames through `AgentWireProtocol.redactForLog` before
-logging or persisting them.** Additionally, `rateLimit.rawBody` never
+logging or persisting them.** Redacted fields carry the repo-standard
+`[REDACTED:<kind>]` marker (kind = frame kind), which the layered
+redaction pipeline recognizes and keys on. Additionally,
+`rateLimit.rawBody` never
 rides a wire frame at all: the engine strips it when embedding messages
 (the live in-process object keeps the diagnostics payload). Secret values
 never enter the session JSONL, the trajectory, or logs; the redaction
