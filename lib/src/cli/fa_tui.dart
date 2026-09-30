@@ -674,15 +674,27 @@ final class FaTuiModel extends Model {
   }
 
   /// The current turn's first wrapped row (issue #827). -1 (nothing
-  /// submitted yet) and out-of-range (the transcript head-trim dropped the
-  /// echo — the index goes stale by the cut count) both return 0, riding
-  /// the global bottom exactly like the pre-#827 follow.
+  /// submitted yet) and out-of-range (a foreign stale index) both return
+  /// 0, riding the global bottom exactly like the pre-#827 follow. The
+  /// bounded-history head-trim is NOT stale-by-design: every append shifts
+  /// the index by the cut ([_turnStartShiftedBy]), so it keeps naming the
+  /// echo across 2000+-line turns.
   int _turnStartRow() {
     if (turnStartLine < 0) return 0;
     _wrappedLines(); // refresh the shared wrap cache when stale
     final starts = _wrapCache.lineStartRows;
     if (turnStartLine >= starts.length) return 0;
     return starts[turnStartLine];
+  }
+
+  /// The turn-start index after a transcript head-trim dropped [cut] lines
+  /// from the head (issue #827): every transcript index shifts by the cut.
+  /// A turn whose echo was dropped entirely degrades to -1 — the
+  /// pre-#827 global-bottom follow.
+  int _turnStartShiftedBy(int cut) {
+    if (cut == 0 || turnStartLine < 0) return turnStartLine;
+    final shifted = turnStartLine - cut;
+    return shifted < 0 ? -1 : shifted;
   }
 
   /// The follow anchor (issue #827): the live edge, but never below the
@@ -700,7 +712,11 @@ final class FaTuiModel extends Model {
   /// The effective viewport offset while the follow latch holds: the
   /// anchor, unless the user parked the window inside the turn-boundary
   /// pad zone above the live edge ([_scrollTopMax] allows that without
-  /// detaching — the newest row is still on the glass there).
+  /// detaching — the newest row is still on the glass there). The park
+  /// survives frames with no new output (spinner ticks, keys, resize);
+  /// the next streamed append hands the window back to the stream, which
+  /// re-anchors at [_turnAnchor] — [_handleOutputMsg] owns that decision
+  /// ("the stream owns the window").
   int _followOffset(List<String> wrapped) {
     if (scrollOffset > _scrollBottom(wrapped)) return scrollOffset;
     return _turnAnchor(wrapped);
@@ -710,13 +726,10 @@ final class FaTuiModel extends Model {
   /// bottom, plus — while the latch holds — the pad zone of a SHORT
   /// current turn (window above the bottom, blank-padded below without
   /// losing the live edge). Detached scrolls stay clamped to the bottom,
-  /// as before.
-  int _scrollTopMax(List<String> wrapped) {
-    final bottom = _scrollBottom(wrapped);
-    if (!followTail) return bottom;
-    final start = _turnStartRow();
-    return start > bottom ? start : bottom;
-  }
+  /// as before. Same computation as [_turnAnchor] while latched: the
+  /// stream re-anchor and the user-scroll ceiling must not drift.
+  int _scrollTopMax(List<String> wrapped) =>
+      followTail ? _turnAnchor(wrapped) : _scrollBottom(wrapped);
 
   /// The output history formatted and wrapped to physical rows at [width]
   /// (default: the current terminal width). All scroll math happens in
@@ -980,8 +993,13 @@ final class FaTuiModel extends Model {
     final displayText = needsSystemNoticeRewrite(msg.text)
         ? renderSystemNoticeLines(msg.text).join('\n')
         : msg.text;
-    final newLines = _appendOutput(outputLines, displayText, msg.newline);
-    final next = copyWith(outputLines: newLines);
+    final (newLines, cut) = _appendOutput(outputLines, displayText, msg.newline);
+    final next = copyWith(
+      outputLines: newLines,
+      // A head trim shifts every transcript index — the turn anchor with
+      // them (issue #827).
+      turnStartLine: _turnStartShiftedBy(cut),
+    );
     final nextWrapped = next._wrappedLines();
     // Auto-follow the stream while the latch holds; preserve the scroll
     // position (clamped) when the user scrolled up. Following re-anchors
@@ -1102,14 +1120,18 @@ final class FaTuiModel extends Model {
     msg.completer.complete([for (final m in queued) m.text]);
     if (queued.isEmpty) return (this, null);
     var lines = outputLines;
+    var echoCut = 0;
     for (final message in queued) {
-      lines = _echoAppend(lines, message.text);
+      final (appended, cut) = _echoAppend(lines, message.text);
+      lines = appended;
+      echoCut += cut;
     }
     final cleared = copyWith(
       queue: const [],
       outputLines: lines,
-      // The first drained echo opens the next turn's window (issue #827).
-      turnStartLine: outputLines.length,
+      // The first drained echo opens the next turn's window (issue #827);
+      // echo-time head-trims shift it by the accumulated cut.
+      turnStartLine: outputLines.length - echoCut,
     );
     final next = cleared.copyWith(
       scrollOffset: cleared._turnAnchor(cleared._wrappedLines()),
@@ -1896,19 +1918,29 @@ final class FaTuiModel extends Model {
   /// turn separator — and wraps the input in [tuiUserBubble] (blank band
   /// rows above/below, one leading space per row). The pre-styled contract
   /// is shared: rows carry the bg SGR marker and the view re-pads/repaints.
-  List<String> _echoAppend(List<String> lines, String text) {
+  (List<String>, int) _echoAppend(List<String> lines, String text) {
     if (tuiChromeEnabled) {
-      final appended = _appendOutput(
+      final (appended, cut) = _appendOutput(
         lines,
         tuiUserBubble(text.split('\n')).join('\n'),
         true,
       );
-      return _appendOutput(appended, '', true);
+      final (rest, tailCut) = _appendOutput(appended, '', true);
+      return (rest, cut + tailCut);
     }
     final rule = _dim('─' * termWidth);
     final styledInput = text.split('\n').map(tuiUserMessageLine).join('\n');
-    final appended = _appendOutput(lines, '$rule\n$styledInput', true);
-    return _appendOutput(appended, '', true);
+    final (appended, cut) = _appendOutput(lines, '$rule\n$styledInput', true);
+    final (rest, tailCut) = _appendOutput(appended, '', true);
+    return (rest, cut + tailCut);
+  }
+
+  /// Appends [text] as a service line (dim hint/error) and keeps the
+  /// turn-start index accurate across a head-trim the append may fire
+  /// (issue #827).
+  FaTuiModel _appendServiceLine(String text) {
+    final (lines, cut) = _appendOutput(outputLines, text, true);
+    return copyWith(outputLines: lines, turnStartLine: _turnStartShiftedBy(cut));
   }
 
   /// Submits [text]: echoes the input into the history immediately (no rule
@@ -1941,7 +1973,7 @@ final class FaTuiModel extends Model {
         _submitCmd(text, images),
       );
     }
-    final echoed = _echoAppend(outputLines, inputText);
+    final (echoed, echoCut) = _echoAppend(outputLines, inputText);
     // Shell-style input history: plain messages only (no slash/bang
     // commands), consecutive duplicates collapsed, capped at 100.
     final history = _recordInputHistory(inputHistory, text);
@@ -1957,10 +1989,11 @@ final class FaTuiModel extends Model {
       menuTokenStart: -1,
       stickyLines: sticky,
       // The echo lands at the old length — the new turn's first line
-      // (issue #827); the sticky math shares the exact same index.
+      // (issue #827); the sticky math shares the exact same index. An
+      // echo that itself fired the head-trim shifts it by the cut.
       stickyIndex: outputLines.length,
       stickyEchoLineCount: stickyEchoLineCount,
-      turnStartLine: outputLines.length,
+      turnStartLine: outputLines.length - echoCut,
       attachments: keepAttachments ? null : const [],
     );
     return (
@@ -2053,17 +2086,22 @@ final class FaTuiModel extends Model {
     ];
     if (messages.isEmpty) return (this, null);
     var lines = outputLines;
+    var echoCut = 0;
     for (final message in messages) {
-      lines = _echoAppend(lines, message);
+      final (appended, cut) = _echoAppend(lines, message);
+      lines = appended;
+      echoCut += cut;
     }
     // A visible receipt: an echoed-but-unanswered message otherwise reads
     // as "sent into the void" while the turn runs (or wedges on a dead
     // endpoint).
-    lines = _appendOutput(
+    final (receipted, receiptCut) = _appendOutput(
       lines,
       _dim('⤷ steered into the running turn — esc aborts'),
       true,
     );
+    lines = receipted;
+    echoCut += receiptCut;
     // Steered messages are sent for real — they join the input history.
     var history = inputHistory;
     for (final message in messages) {
@@ -2084,8 +2122,9 @@ final class FaTuiModel extends Model {
       historyDraft: null,
       outputLines: lines,
       // The first steered echo starts the interrupted turn's window
-      // (issue #827 — each steered message is a separate user turn).
-      turnStartLine: outputLines.length,
+      // (issue #827 — each steered message is a separate user turn);
+      // echo-time head-trims shift it by the accumulated cut.
+      turnStartLine: outputLines.length - echoCut,
     );
     return (
       cleared.copyWith(
@@ -2327,12 +2366,19 @@ final class FaTuiModel extends Model {
   /// retained history must agree with what the renderer will compute.
   static final RegExp _fenceLineStart = RegExp(r'^\s*```');
 
-  static List<String> _appendOutput(
+  /// Appends [text] (split on `\n`; the first part merges into the last
+  /// line) to [lines], and returns `(result, headCut)` — [headCut] is the
+  /// number of lines every stored transcript index must shift by after
+  /// the bounded-history trim dropped lines from the head (one less when
+  /// the synthetic fence-repair line was prepended, since it occupies the
+  /// first retained slot), 0 when no trim fired. Issue #827's turn start
+  /// is the one such index today.
+  static (List<String>, int) _appendOutput(
     List<String> lines,
     String text,
     bool newline,
   ) {
-    if (text.isEmpty && !newline) return lines;
+    if (text.isEmpty && !newline) return (lines, 0);
     final result = List.of(lines);
     final parts = text.split('\n');
     if (result.isEmpty) result.add('');
@@ -2385,9 +2431,12 @@ final class FaTuiModel extends Model {
       }
       final trimmed = result.sublist(cut);
       if (open) trimmed.insert(0, '```');
-      return trimmed;
+      // The synthetic fence line occupies index 0, so every RETAINED line
+      // sits one slot lower than after a plain cut — the head shift for
+      // stored transcript indices is cut - 1 when the repair fires.
+      return (trimmed, open ? cut - 1 : cut);
     }
-    return result;
+    return (result, 0);
   }
 }
 

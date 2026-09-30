@@ -21,6 +21,8 @@ import 'package:flutter_agent_harness/src/cli/tui_repl.dart'
     show QueuedMessage, stripAnsi;
 import 'package:test/test.dart';
 
+import 'tui_render_harness.dart';
+
 FaTuiCallbacks _callbacks() => FaTuiCallbacks(
   onSubmit: (_, {images = const []}) async {},
   onModelSelected: (_) async {},
@@ -48,7 +50,7 @@ FaTuiModel _send(FaTuiModel m, Msg msg) => m.update(msg).$1 as FaTuiModel;
 List<String> _rowsOf(FaTuiModel m) =>
     m.view().content.split('\n').map((r) => stripAnsi(r)).toList();
 
-final _hint = RegExp(r'\^ (\d+) lines above fold - PgUp');
+final _hint = RegExp(r'\^ (\d+) lines? above fold - PgUp');
 
 /// The `^ N lines above fold` count in the frame, or null when absent.
 int? _hintN(List<String> rows) {
@@ -399,6 +401,68 @@ void main() {
       expect(rows.first, contains('stream 2'),
           reason: 'the hidden head is named, not lost');
     });
+
+    test('E6: exactly one hidden row pluralizes correctly', () {
+      // 20 copied rows, vh 19: bottom = 1, one row hides above the fold.
+      final model = _build().copyWith(
+        outputLines: [for (var i = 0; i < 20; i++) 'row $i'],
+      );
+      final frame = _rowsOf(model).join('\n');
+      expect(frame, contains('^ 1 line above fold - PgUp'));
+      expect(frame, isNot(contains('1 lines')));
+      expect(_hintN(_rowsOf(model)), 1);
+    });
+  });
+
+  group('head-trim keeps the turn anchor honest', () {
+    // 2401 lines: the first append crosses maxLines(2000) + slack(400),
+    // the amortized trim cuts result.length - 2000 = 403 head lines.
+    FaTuiModel trimmed({
+      required int turnStartLine,
+      bool openFence = false,
+    }) {
+      final lines = [
+        if (openFence) '```dart',
+        for (var i = 0; i < 2400; i++) 'pad $i',
+        'TURN-ECHO-MARK',
+      ];
+      return _build().copyWith(outputLines: lines, turnStartLine: turnStartLine);
+    }
+
+    test('a partial trim shifts turnStartLine — the anchor keeps naming '
+        'the echo', () {
+      final model = trimmed(turnStartLine: 2400);
+      final streamed = _send(model, OutputMsg('tick', newline: true));
+      // The append merges into the echo line and adds the trailing blank:
+      // 2401 + 1 = 2402 lines -> cut 402, 2000 retained; the echo lands
+      // at 2400 - 402 = 1998 — above vh-bottom 1981, so the window pins
+      // at the echo, not at the bottom.
+      expect(streamed.turnStartLine, 1998);
+      expect(_rowsOf(streamed).first, contains('TURN-ECHO-MARK'),
+          reason: 'the anchor still names the echo after the trim');
+    });
+
+    test('a trim that swallows the echo degrades to the pre-#827 bottom '
+        'follow', () {
+      final model = trimmed(turnStartLine: 5);
+      final streamed = _send(model, OutputMsg('tick', newline: true));
+      expect(streamed.turnStartLine, -1, reason: 'the documented fallback');
+      expect(_rowsOf(streamed).first, contains('pad 2383'),
+          reason: 'rides the global bottom (2000 - 19 vh = 1981 -> '
+              'retained index 1981 = original line 1981 + 402)');
+    });
+
+    test('a trim landing in an open code fence shifts by cut - 1', () {
+      // The dropped head opens a fence: the repair prepends a synthetic
+      // fence line that occupies index 0, so retained lines sit one slot
+      // lower than a plain cut — shift = 403 - 1 = 402. The echo is the
+      // last line (2401) of the 2402-line fixture.
+      final model = trimmed(turnStartLine: 2401, openFence: true);
+      final streamed = _send(model, OutputMsg('tick', newline: true));
+      expect(streamed.turnStartLine, 1999);
+      expect(_rowsOf(streamed).first, contains('TURN-ECHO-MARK'),
+          reason: 'the anchor still names the echo after the repair');
+    });
   });
 
   group('AC7 — byte-identical rendering where the feature is inert', () {
@@ -409,15 +473,24 @@ void main() {
       ).readAsLinesSync()) {
         if (line.isEmpty || line.startsWith('#')) continue;
         final split = line.split(' ');
+        expect(split, hasLength(2), reason: 'malformed golden line: $line');
         goldens[split[0]] = split[1];
       }
       return goldens;
     }
 
+    /// A golden frame by key — fails loudly on a missing/renamed key
+    /// instead of comparing against a cryptic null.
+    String golden(Map<String, String> goldens, String key) {
+      final value = goldens[key];
+      expect(value, isNotNull, reason: 'missing golden $key');
+      return value!;
+    }
+
     String render(FaTuiModel model) {
       final buf = StringBuffer();
       CellRenderer(
-        output: _BufSink(buf),
+        output: StringSinkIOSink(buf),
         logSink: null,
         defaultAltScreen: false,
         defaultHideCursor: false,
@@ -430,7 +503,7 @@ void main() {
 
       var short = _build();
       short = _send(short, OutputMsg('hello world', newline: true));
-      expect(render(short), goldens['F1'],
+      expect(render(short), golden(goldens, 'F1'),
           reason: 'F1: bare frame, offset 0 — no hint row content');
 
       var long = _build();
@@ -442,7 +515,7 @@ void main() {
         KeyPressMsg(const TeaKey(code: KeyCode.pageUp)),
       );
       up = _send(up, KeyPressMsg(const TeaKey(code: KeyCode.pageUp)));
-      expect(render(up), goldens['F3'],
+      expect(render(up), golden(goldens, 'F3'),
           reason: 'F3: detached percent frame — legacy bytes untouched');
     });
 
@@ -456,40 +529,7 @@ void main() {
       // The snapshot pins the hint row AND every stable region; any
       // accidental layout drift fails here (REG blocks merge).
       expect(_hintN(_rowsOf(turned)), isNotNull);
-      expect(render(turned), goldens['F4'], reason: 'F4 canonical frame');
+      expect(render(turned), golden(goldens, 'F4'), reason: 'F4 canonical frame');
     });
   });
-}
-
-/// Minimal [IOSink] over a [StringBuffer] capturing what the renderer would
-/// write to the tty (same as fa_tui_sticky_scroll_test.dart).
-final class _BufSink implements IOSink {
-  _BufSink(this._buf);
-  final StringBuffer _buf;
-
-  @override
-  void write(Object? obj) => _buf.write(obj);
-  @override
-  void writeln([Object? obj = '']) => _buf.writeln(obj);
-  @override
-  void writeAll(Iterable<Object?> objects, [String separator = '']) =>
-      _buf.writeAll(objects, separator);
-  @override
-  void writeCharCode(int charCode) => _buf.writeCharCode(charCode);
-  @override
-  Future<void> flush() async {}
-  @override
-  Future<void> close() async {}
-  @override
-  Future<void> get done async {}
-  @override
-  void add(List<int> data) {}
-  @override
-  void addError(Object error, [StackTrace? stackTrace]) {}
-  @override
-  Future<void> addStream(Stream<List<int>> stream) async {}
-  @override
-  Encoding get encoding => utf8;
-  @override
-  set encoding(Encoding value) {}
 }

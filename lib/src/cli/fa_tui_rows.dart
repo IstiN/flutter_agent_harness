@@ -174,7 +174,8 @@ extension _TuiRowRenderers on FaTuiModel {
     if (followTail && above > 0 && offset < wrapped.length) {
       // A window that shows no rows (zero-height history) announces
       // nothing — the budget rule yields the hint, never the prompt row.
-      final hint = ' ^ $above lines above fold - PgUp';
+      final noun = above == 1 ? 'line' : 'lines';
+      final hint = ' ^ $above $noun above fold - PgUp';
       b.writeln(_dim(tuiPadRight(tuiFitWidth(hint, termWidth), termWidth)));
     } else if (!followTail && below > 0) {
       final bottom = _scrollBottom(wrapped);
