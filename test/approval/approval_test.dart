@@ -689,8 +689,16 @@ void main() {
                 'newText': 'world',
               },
             ),
-            ToolCall(id: 'tc-3', name: 'ls', arguments: {'path': '.'}),
           ]),
+          // ls runs in a follow-up turn: within one batch the loop runs
+          // non-conflicting calls in parallel by design (issue #1084), so a
+          // same-batch ls races the write — the per-path mutation lock keys
+          // on the resolved path (an await ahead of the mutation), which
+          // deterministically lets the parallel ls list the directory
+          // before the write lands. Reads observing same-batch writes is
+          // not a modeled ordering; asserting it pinned accidental
+          // microtask timing.
+          _toolTurn(const [ToolCall(id: 'tc-3', name: 'ls', arguments: {'path': '.'})]),
           _textTurn('done'),
         ],
         tools: tools,
