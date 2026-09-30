@@ -80,6 +80,7 @@ import '../prompts/prompts.g.dart'
     show cliMessagingSectionPrompt, readSqliteSectionPrompt, cliPiModePrompt;
 import '../prompts/project_context.dart';
 import '../approval/approval.dart';
+import '../wire/wire_serve.dart';
 import '../approval/approval_hook.dart';
 import '../cancel_token.dart';
 import '../compaction/compaction.dart';
@@ -263,6 +264,7 @@ part 'agent_cli_composer.dart';
 part 'agent_cli_spill.dart';
 part 'agent_cli_prompt.dart';
 part 'agent_cli_repl_boot.dart';
+part 'agent_cli_wire_serve.dart';
 part 'agent_cli_diag_log.dart';
 
 /// The CLI harness: agent + built-in tools + session persistence +

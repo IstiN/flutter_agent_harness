@@ -72,6 +72,11 @@ void main() {
       final protocol = AgentWireProtocol();
       for (final fixture in eventFixtures) {
         if (fixture.kind == 'unknown_event') continue;
+        if (serverEventKinds.contains(fixture.kind)) {
+          // Server-emitted kinds (fa wire-serve, #1103) have no native
+          // engine event to push through toWire.
+          continue;
+        }
         final fileName = fixture.path.split('/').last.replaceAll('.json', '');
         final AgentEvent native;
         if (fixture.kind == 'message_update') {

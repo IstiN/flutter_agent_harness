@@ -32,6 +32,11 @@ const Set<String> requestEventKinds = {
   'secret_request',
 };
 
+/// Wire kinds a SERVER emits without a native [AgentEvent] counterpart
+/// (`fa wire-serve`, issue #1103): they decode as the documented unknown
+/// passthrough on the host side and have no native round-trip builder.
+const Set<String> serverEventKinds = {'error'};
+
 /// Directory holding the v1 command fixtures.
 const String commandFixturesDir = 'test/wire/fixtures/v1/commands';
 

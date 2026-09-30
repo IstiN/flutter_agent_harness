@@ -109,3 +109,44 @@ Native hosts embed the fa engine in-app (zero WebView, zero remote — owner
 ruling 2026-09-30). The DAP hub is out of scope and frozen; `fa wire-serve`
 is a separate card (#1103). Reference clients per platform land in `sdk/`
 (slices 2–3 of #1101).
+
+## 8. Serving the protocol: `fa wire-serve` (#1103)
+
+A fa process can SERVE the protocol to hosts that cannot embed the engine:
+
+```
+fa wire-serve [--port N] [--stdio] [--token T]
+```
+
+**stdio (primary for process-embedding).** `--stdio` speaks NDJSON on
+stdin/stdout: one frame per line (framing above), blank lines ignored, EOF
+is a graceful shutdown. A parent process embeds fa with zero ports, zero
+tokens. Diagnostics never touch stdout — they go to stderr; the ONLY
+stdout traffic is frames.
+
+**WebSocket (for independently-running servers).** Without `--stdio` the
+server binds `127.0.0.1` only (loopback; NOT a security boundary) and
+prints exactly ONE startup line to stdout before anything else:
+
+```json
+{"wire_serve":{"port":4444,"token":"..."}}
+```
+
+The port is ephemeral unless `--port N` (an occupied port is a loud
+startup error naming it, never a silent fallback). Every WS request must
+carry the per-start bearer token — `Authorization: Bearer <token>` or
+`?token=` — or the upgrade is refused (401). The token is minted per
+start (`--token` overrides), never written to session records or logs,
+and exists to stop bystanders, not adversaries; treat loopback + token as
+authn-lite. Frames ride the socket one NDJSON line per message, both
+directions.
+
+**Lifecycle.** Single-attach: the first client's `hello` wins; a second
+client is answered with a loud `already_attached` error frame and
+disconnected. After a disconnect a new client attaches cleanly and every
+still-pending `approval_request` / `ask_request` / `secret_request` is
+re-delivered with the SAME id, so responses stay idempotent. Graceful
+shutdown: stdin EOF (stdio) or SIGTERM (both modes) ends the transport,
+the session persists like any normal run, and `fa --session <name>`
+resumes it. No TUI/REPL output ever reaches the protocol stream: the
+serve boot uses a silent CliIO, diagnostics go to stderr.
