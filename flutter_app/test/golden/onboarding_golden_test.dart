@@ -164,8 +164,9 @@ void main() {
       await tester.pumpAndSettle();
 
       // Back to page 2: the configured card shows the check, Continue is
-      // unlocked.
-      await tester.tap(find.text('Back'));
+      // unlocked. (The editor page's AppBar auto-inserts a BackButton —
+      // an icon, not a 'Back' text label — after the fa_ui chrome change.)
+      await tester.tap(find.byType(BackButton));
       await tester.pumpAndSettle();
       await expectGolden(tester, 'onboarding_p2_configured_phone');
     });

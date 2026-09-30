@@ -80,6 +80,10 @@ abstract class FaUiStrings {
   /// Validation error: the API key field is empty.
   String get settingsApiKeyRequired;
 
+  /// Validation error: the name is already used by an entry serving
+  /// [baseUrl] — a different endpoint (issue #977).
+  String settingsProviderNameClash(String baseUrl);
+
   /// Label of the provider name field.
   String get settingsProviderNameLabel;
 
@@ -356,6 +360,9 @@ class FaUiStringsEn extends FaUiStrings {
   @override
   String get settingsProviderNameHint => 'My provider';
   @override
+  String settingsProviderNameClash(String baseUrl) =>
+      'This name is already used by a provider on $baseUrl — pick another name';
+  @override
   String get settingsBaseUrlLabel => 'Base URL';
   @override
   String get settingsBaseUrlHelper => 'OpenAI-compatible endpoint';
@@ -587,6 +594,9 @@ class FaUiStringsRu extends FaUiStrings {
   String get settingsProviderNameLabel => 'Имя';
   @override
   String get settingsProviderNameHint => 'Мой провайдер';
+  @override
+  String settingsProviderNameClash(String baseUrl) =>
+      'Это имя уже используется провайдером на $baseUrl — выберите другое';
   @override
   String get settingsBaseUrlLabel => 'Базовый URL';
   @override
