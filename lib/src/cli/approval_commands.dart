@@ -531,12 +531,48 @@ extension ApprovalCommands on AgentCli {
         ? ''
         : '[auto-compacted${_autoFoldCount > 1 ? ' ×$_autoFoldCount' : ''}'
               ' · continuing] · ';
-    return '$foldBadge$cwd · ctx $pct% '
+    var line =
+        '$foldBadge$cwd · ctx $pct% '
         '(${_formatTokenCount(contextTokens)}/${_formatTokenCount(window)}) · '
         '${_formatTokenCount(totalTokens)}tok'
         '$costPart · turn ${_usage.turns}$badge · '
-        '${_statusProviderLabel(model)}/${model.id}';
+        '${_statusProviderLabel(model)}/${model.id}'
+        '${_quotaBadgeSuffix(model.provider)}';
+    return line;
   }
+
+  /// The status-line quota badge (issue #823 AC5): `' [OR $48/$150 · 11d]'`
+  /// when fresh, `' [OR …]'` while cold, and empty when the config opts
+  /// out (default OFF, OQ2), the provider has no quota source, the state
+  /// is unmetered (silent), or the cached state is a terminal unknown —
+  /// failure reasons live in `/quota`, not the chrome (review round 1).
+  /// Cache-only peek: cold kicks a background fetch without blocking (E1).
+  String _quotaBadgeSuffix(String providerId) {
+    if (!config.quotaBadge ||
+        providerId.isEmpty ||
+        !quotaService.hasSource(providerId)) {
+      return '';
+    }
+    final result = quotaService.peek(providerId);
+    if (result != null && result.quota == null) return '';
+    final badgeText = formatQuotaBadge(
+      shortName: _quotaBadgeTag(providerId),
+      quota: result?.quota,
+      now: DateTime.now().toUtc(),
+    );
+    return badgeText.isEmpty ? '' : ' $badgeText';
+  }
+
+  /// The 2-letter quota badge tag for a provider id. `openrouter` brands
+  /// as `OR` (the contract's example tag), `codemie` as `CM`; anything
+  /// unmapped falls back to its first two letters uppercased.
+  static const _quotaBadgeTags = {'openrouter': 'OR', 'codemie': 'CM'};
+
+  String _quotaBadgeTag(String providerId) =>
+      _quotaBadgeTags[providerId] ??
+      (providerId.length < 2
+          ? providerId.toUpperCase()
+          : providerId.substring(0, 2).toUpperCase());
 
   /// The host-built status-bar snapshot (issue #806, the S3 band
   /// attachment): everything the TUI's status band renders from,

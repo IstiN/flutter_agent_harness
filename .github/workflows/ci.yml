@@ -231,6 +231,52 @@ jobs:
             -exec sh -c 'lines=$(wc -l < "$1"); if [ "$lines" -gt 2800 ]; then echo "$1: $lines lines"; fi' _ {} \;)
           if [ -n "$violations" ]; then echo "$violations"; exit 1; fi
 
+      # Issue #1100: the fa-web-spa.zip packaging guard (base-tag patch +
+      # absolute-/app/ grep) must stay functional on every PR — a release
+      # run is the wrong place to first discover a broken guard. Fixture
+      # self-test: positive path + all red exits, pure bash, no web build.
+      - name: Web SPA packaging guard self-test (#1100)
+        run: |
+          set -euo pipefail
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          mkdir -p "$d/build"
+          printf '<html><head>\n<base href="/app/">\n</head></html>\n' > "$d/build/index.html"
+          for f in flutter_service_worker.js flutter_bootstrap.js; do echo "// $f" > "$d/build/$f"; done
+          echo '{"name":"fa"}' > "$d/build/manifest.json"
+          bash scripts/package_web_spa.sh "$d/build" "$d/out.zip" > /dev/null
+          unzip -p "$d/out.zip" index.html | grep -F '<base href="./">'
+          # AC4 pin: packaging never mutates its input — the Pages deploy's
+          # build dir must stay byte-identical.
+          grep -F '<base href="/app/">' "$d/build/index.html"
+          # Red exit 1: an absolute /app/ sneaking into a touchpoint.
+          echo '{"x":"/app/y"}' > "$d/build/manifest.json"
+          if bash scripts/package_web_spa.sh "$d/build" "$d/bad.zip" 2>/dev/null; then
+            echo "::error::package_web_spa guard passed a build containing /app/ (AC3 #1100)"
+            exit 1
+          fi
+          # Red exit 2: no base tag to patch.
+          echo '{"name":"fa"}' > "$d/build/manifest.json"
+          echo '<html></html>' > "$d/build/index.html"
+          if bash scripts/package_web_spa.sh "$d/build" "$d/bad2.zip" 2>/dev/null; then
+            echo "::error::package_web_spa guard passed an unpatchable base tag (AC1 #1100)"
+            exit 1
+          fi
+          # Red exit 3: a missing touchpoint file.
+          rm "$d/build/manifest.json"
+          if bash scripts/package_web_spa.sh "$d/build" "$d/bad3.zip" 2>/dev/null; then
+            echo "::error::package_web_spa guard passed an incomplete build (AC3 #1100)"
+            exit 1
+          fi
+          # fa1.dev parity pin: both web builds must keep the identical
+          # release flags AND the same pinned SDK — the bundle's only edit
+          # stays the base tag.
+          for wf in .github/workflows/pages.yml .github/workflows/ci.yml; do
+            grep -q -- '--release' "$wf" || { echo "::error::$wf lost the --release web flag (#1100 parity)"; exit 1; }
+            grep -q -- '--base-href /app/' "$wf" || { echo "::error::$wf lost --base-href /app/ (#1100 parity, pages + bundle must share it)"; exit 1; }
+            grep -q "flutter-version: '3.47.x'" "$wf" || { echo "::error::$wf unpinned Flutter SDK (#1100 parity, pages + bundle must share it)"; exit 1; }
+          done
+
       # Issue #433 AC1: README CRAP badge must equal the crap4dart.yaml
       # threshold (they drifted to 8.0-vs-12.0 once). Pure python — runs on
       # every PR, including docs-only ones (a README edit is exactly the
@@ -2117,7 +2163,23 @@ jobs:
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
         run: |
-          gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" > /tmp/jobs.json
+          set -euo pipefail
+          # The jobs endpoint intermittently answers 502 (live on the
+          # gh-1086 rework head 81ed7186: a single 502 failed the whole
+          # telemetry leg). Same 3-attempt pattern as build-mobile's
+          # "Install Flutter dependencies" — transient API errors retry,
+          # a real failure still reds the step loudly.
+          for attempt in 1 2 3; do
+            if gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" > /tmp/jobs.json; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              echo "::error::gh api jobs fetch failed after 3 attempts — GitHub API is erroring (502-class)"
+              exit 1
+            fi
+            echo "::warning::gh api jobs fetch failed (attempt $attempt/3) — retrying in 10s"
+            sleep 10
+          done
           python3 - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
           import datetime, json
           jobs = json.load(open('/tmp/jobs.json'))['jobs']
@@ -2541,6 +2603,89 @@ jobs:
           fi
           gh release upload "${GITHUB_REF_NAME}" "$asset" --clobber --repo "${GITHUB_REPOSITORY}"
 
+  # Rehostable web SPA bundle (issue #1100): every release ships
+  # fa-web-spa.zip — the release web build with <base href> rewritten to
+  # ./, so it rehosts on any static host (incl. path-prefixed) or sandboxed
+  # iframe with zero edits (docs/web-rehosting.md). Same build command AND
+  # base-href as the Pages deploy; scripts/package_web_spa.sh patches the
+  # tag on a COPY and enforces the absolute-path guard (AC3) before zipping.
+  # Lives here, not in pages.yml: release commits (pubspec/CHANGELOG bumps)
+  # fall outside pages.yml's path filters, so a Pages-produced bundle could
+  # never attach to the actual release commit.
+  web-spa:
+    name: Build web SPA bundle
+    runs-on: ubuntu-latest
+    needs: quality-gate
+    timeout-minutes: 30
+    # Additive asset: a web-build failure (guard trip, SDK flake) must NOT
+    # hold the release hostage — CLI provenance (SHA256SUMS) and the vpinned
+    # bump still ship. Job-level continue-on-error reports the job (and its
+    # check) as SUCCESS — the failed steps stay visible on the run page for
+    # the manual check. Downstream needs see success; the provenance fa-*
+    # sweep then deterministically finds no zip (success -> signed,
+    # failure -> absent — never a half-updated manifest).
+    continue-on-error: true
+    if: >-
+      !cancelled() && needs.quality-gate.result == 'success' &&
+      ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      github.event_name == 'release')
+    permissions:
+      contents: write # attach fa-web-spa.zip to the GitHub Release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Same pinned SDK as build-web / the release path (#281).
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: '3.47.x'
+          channel: stable
+          cache: true
+
+      - name: Example app pub get
+        working-directory: flutter_app
+        run: flutter pub get
+
+      # Same placeholders as the Pages job (both files are gitignored).
+      - name: Placeholder .env for the example app
+        run: touch flutter_app/.env
+
+      - name: Placeholder firebase_options.dart for the example app
+        run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
+
+      - name: Build web (release, Pages base)
+        working-directory: flutter_app
+        run: flutter build web --release --base-href /app/
+
+      - name: Package fa-web-spa.zip (relative base + AC3 guard)
+        run: bash scripts/package_web_spa.sh flutter_app/build/web fa-web-spa.zip
+
+      - name: Upload bundle to GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # gh release upload needs the release to exist; create it lazily
+          # (matrix jobs race here, so a duplicate create is tolerated).
+          if ! gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "${GITHUB_REF_NAME}" --generate-notes \
+              --repo "${GITHUB_REPOSITORY}" || true
+          fi
+          gh release upload "${GITHUB_REF_NAME}" fa-web-spa.zip --clobber --repo "${GITHUB_REPOSITORY}"
+
+      # continue-on-error keeps the job/check green even on failure — a
+      # release can then only be gated on a MISSING asset. Surface the miss
+      # in the run's step summary too (covers upload flakes, not just guard
+      # trips); the failed steps remain visible in the job view.
+      - name: Flag missing bundle in step summary
+        if: failure()
+        run: |
+          {
+            echo '## fa-web-spa.zip NOT shipped this release'
+            echo ''
+            echo 'The web SPA bundle job failed (continue-on-error: the release ships without it). See the failed steps above.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # SEC-07 (#795): the installer's default trust path is SIGNED checksums.
   # This job aggregates every fa-* asset of the release into SHA256SUMS and
   # signs it with the FA_RELEASE_SIGNING_KEY repo secret (openssl RSA —
@@ -2549,10 +2694,14 @@ jobs:
   # the same compromised source as the binary cannot vouch for itself.
   # Fail-closed: without the secret the release publishes NO provenance and
   # this job goes red — install.sh aborts with E_PROVENANCE_MISSING on it.
+  # Needs web-spa (#1100, continue-on-error) for ordering only: the web
+  # bundle cannot hold CLI provenance hostage. The ordering makes the fa-*
+  # sweep deterministic — web-spa success -> zip signed, web-spa failure ->
+  # zip absent — never a half-updated manifest.
   release-provenance:
     name: Sign release checksums
     runs-on: ubuntu-latest
-    needs: binaries
+    needs: [binaries, web-spa]
     timeout-minutes: 10
     if: >-
       !cancelled() && needs.binaries.result == 'success' &&

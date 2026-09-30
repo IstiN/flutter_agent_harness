@@ -94,6 +94,7 @@ final class StageRedirects {
     required this.stdinFile,
     required this.appendStdout,
     required this.appendStderr,
+    this.stdinBody,
   });
 
   /// `> file` / `>> file` target for stdout, or `null`.
@@ -104,6 +105,11 @@ final class StageRedirects {
 
   /// `< file` stdin source, or `null`.
   final String? stdinFile;
+
+  /// `<<`/`<<<` inline stdin body (gh-1086), already expanded; wins over
+  /// [stdinFile] by POSIX last-redirect-wins (the collector clears the
+  /// other field).
+  final String? stdinBody;
 
   /// Stdout target opened for append (`>>`).
   final bool appendStdout;
@@ -125,9 +131,18 @@ StageRedirects collectStageRedirects(List<Redirect> redirects) {
   var appendStdout = false;
   var appendStderr = false;
 
+  String? stdinBody;
   for (final redirect in redirects) {
     if (redirect.fd == 0 && redirect.kind == RedirectKind.read) {
       stdinFile = redirect.target;
+      stdinBody = null;
+    } else if (redirect.fd == 0 && redirect.kind == RedirectKind.heredoc) {
+      stdinBody = redirect.body ?? '';
+      stdinFile = null;
+    } else if (redirect.fd == 0 && redirect.kind == RedirectKind.hereString) {
+      // POSIX here-strings append a trailing newline after expansion.
+      stdinBody = '${redirect.target}\n';
+      stdinFile = null;
     } else if (redirect.fd == 1 || redirect.fd == -1) {
       if (redirect.kind == RedirectKind.write) {
         stdoutFile = redirect.target;
@@ -150,6 +165,7 @@ StageRedirects collectStageRedirects(List<Redirect> redirects) {
     stdoutFile: stdoutFile,
     stderrFile: stderrFile,
     stdinFile: stdinFile,
+    stdinBody: stdinBody,
     appendStdout: appendStdout,
     appendStderr: appendStderr,
   );

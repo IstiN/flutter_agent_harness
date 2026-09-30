@@ -48,7 +48,7 @@ permissions:
 
 jobs:
   sm:
-    # Pinned to the immutable dmtools-agents main @cee599626b0ee12111dc8fb27ece83daebd9ae6e — ships:
+    # Pinned to the immutable dmtools-agents main @9bea0f9052e877a0dd44149aaaa92d31e114d6c0 — ships:
     # #579 (conflict-rework: PR-anchored dispatch when no OPEN linked
     # issue — DIRTY machines PRs no longer dead-letter on closed issues),
     # #577/#578 (mutexExcludeSelf by fact of holding: a self-holding
@@ -69,11 +69,11 @@ jobs:
     # runner overrides).
     # Flip in lockstep with ai-teammate.yml — guarded by
     # test/machine_kit/factory_stub_ref_test.dart.
-    uses: IstiN/dmtools-agents/.github/workflows/factory-sm.yml@cee599626b0ee12111dc8fb27ece83daebd9ae6e
+    uses: IstiN/dmtools-agents/.github/workflows/factory-sm.yml@9bea0f9052e877a0dd44149aaaa92d31e114d6c0
     with:
       # The literal uses-ref: the factory requires it (it cannot derive its
       # own ref — github.workflow_ref in a called workflow is the CALLER's).
-      factory_ref: cee599626b0ee12111dc8fb27ece83daebd9ae6e
+      factory_ref: 9bea0f9052e877a0dd44149aaaa92d31e114d6c0
       # Manual ticks default to dry; cron ticks run live.
       dryRun: ${{ github.event.inputs.dryRun || 'false' }}
       # #687: one source of truth for the machine login (repo variable).
