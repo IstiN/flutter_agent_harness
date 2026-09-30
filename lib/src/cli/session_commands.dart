@@ -619,10 +619,17 @@ extension on AgentCli {
     }
     final Model built;
     try {
+      // A saved custom-provider entry carrying this endpoint's authHeader
+      // (issue #964) must survive the restore — a gateway endpoint without
+      // its header 401s.
       built = buildCliDefaultModel(
         state.providerKind,
         modelId: state.modelId,
         baseUrl: state.baseUrl,
+        authHeader: authHeaderForBaseUrl(
+          config.customProviders?.entries ?? const [],
+          state.baseUrl,
+        ),
       );
     } on ConfigException {
       io.writeln(
