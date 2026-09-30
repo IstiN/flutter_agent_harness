@@ -254,14 +254,37 @@ AgentEvent nativeMessageUpdateFor(String fileName) {
   };
   final partial = message;
   final AssistantMessageEvent nested = switch (fileName) {
+    'message_update_start' => StartEvent(partial: partial),
+    'message_update_text_start' => TextStartEvent(
+      contentIndex: 0,
+      partial: partial,
+    ),
     'message_update_text_delta' => TextDeltaEvent(
       contentIndex: 0,
       delta: 'Hel',
       partial: partial,
     ),
+    'message_update_text_end' => TextEndEvent(
+      contentIndex: 0,
+      content: 'Hello',
+      partial: partial,
+    ),
+    'message_update_thinking_start' => ThinkingStartEvent(
+      contentIndex: 0,
+      partial: partial,
+    ),
     'message_update_thinking_delta' => ThinkingDeltaEvent(
       contentIndex: 0,
       delta: 'hmm',
+      partial: partial,
+    ),
+    'message_update_thinking_end' => ThinkingEndEvent(
+      contentIndex: 0,
+      content: 'pondering',
+      partial: partial,
+    ),
+    'message_update_tool_call_start' => ToolCallStartEvent(
+      contentIndex: 1,
       partial: partial,
     ),
     'message_update_tool_call_delta' => ToolCallDeltaEvent(

@@ -31,10 +31,12 @@ Every frame is `{"v": <version>, "kind": "<name>", ...payload}`. Version
   `{"v":1,"kind":"hello","versions":[1],"caps":[...]}`; the server answers
   `{"v":1,"kind":"welcome","version":<negotiated>,"caps":[...]}` with the
   highest mutually supported version. **No overlap is a loud handshake
-  error** — the connection must not limp on a guessed version. A
-  multi-version client talking to a v1 server is DOWNGRADED: every
-  subsequent frame is encoded at the negotiated version, and fields added
-  after that version are filtered out (E5).
+  error** — the connection must not limp on a guessed version. The
+  hello frame's own `v` caps only that frame's encoding: it is accepted
+  (unknown fields tolerated) and IGNORED for negotiation — the `versions`
+  array is what negotiates. A multi-version client talking to a v1 server
+  is DOWNGRADED: every subsequent frame is encoded at the negotiated
+  version, and fields added after that version are filtered out (E5).
 - Every schema change ships golden fixtures for **all live versions**, and
   the fixture `kind`/`protocolVersion`/`frame` keys are load-validated —
   a half-written fixture is a CI failure, not a silent pin.
@@ -84,10 +86,14 @@ they are frames the host answers with commands, echoing `id`):
 
 SECRET-class frame fields are registered in
 `AgentWireProtocol.isSecretField` — today: `secret_response.value`,
-`model_request.rawWireDump`. **Hosts MUST pass frames through
-`AgentWireProtocol.redactForLog` before logging or persisting them.**
-Secret values never enter the session JSONL, the trajectory, or logs; the
-redaction pipeline precedent applies.
+`model_request.rawWireDump`, and `rawBody` (anywhere in a frame — it only
+ever carries the raw provider 429 payload, `RateLimitInfo.rawBody`).
+**Hosts MUST pass frames through `AgentWireProtocol.redactForLog` before
+logging or persisting them.** Additionally, `rateLimit.rawBody` never
+rides a wire frame at all: the engine strips it when embedding messages
+(the live in-process object keeps the diagnostics payload). Secret values
+never enter the session JSONL, the trajectory, or logs; the redaction
+pipeline precedent applies.
 
 ## 6. What a host renders (host obligations)
 

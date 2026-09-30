@@ -322,9 +322,11 @@ class AgentWireProtocol {
   };
 
   /// Validates a client `hello` and negotiates the highest mutually
-  /// supported version. Throws [WireVersionError] when there is no overlap
-  /// (the loud unsupported-version error) and [WireProtocolException] when
-  /// the frame itself is malformed.
+  /// supported version. The hello frame's own `v` participates in
+  /// negotiation alongside the frame's `versions` array; negotiation is
+  /// max-overlap and throws [WireVersionError] when there is no overlap
+  /// (the loud unsupported-version error). [WireProtocolException] is
+  /// thrown when the frame itself is malformed.
   static ({AgentWireProtocol protocol, Map<String, dynamic> welcome})
   acceptHello(
     Map<String, dynamic> helloFrame, {
@@ -335,11 +337,8 @@ class AgentWireProtocol {
       throw WireProtocolException('expected a hello frame, got kind: $kind');
     }
     final rawVersion = helloFrame['v'];
-    if (rawVersion is! int || !supportedWireVersions.contains(rawVersion)) {
-      throw WireVersionError(
-        'unsupported wire protocol version $rawVersion '
-        '(supported: ${supportedWireVersions.toList()..sort()})',
-      );
+    if (rawVersion is! int) {
+      throw WireProtocolException('hello frame must carry an integer version');
     }
     final rawVersions = helloFrame['versions'];
     if (rawVersions is! List || rawVersions.isEmpty) {
@@ -352,6 +351,11 @@ class AgentWireProtocol {
         throw WireProtocolException('hello versions must be integers');
       }
     }
+    // The frame's own `v` caps only THIS frame's encoding: it is accepted
+    // (and its unknown fields tolerated) but ignored for negotiation — a
+    // client may send its hello in an older frame version while offering
+    // newer ones. Negotiation reads the `versions` array; the single loud
+    // gate is the overlap check in [negotiate].
     final negotiated = negotiate(rawVersions.cast<int>());
     final protocol = AgentWireProtocol(version: negotiated);
     return (
@@ -386,21 +390,21 @@ class AgentWireProtocol {
       AgentSettledEvent() => const <String, dynamic>{},
       TurnStartEvent() => const <String, dynamic>{},
       AgentEndEvent(:final messages) => {
-        'messages': [for (final message in messages) message.toJson()],
+        'messages': [for (final message in messages) _messageFrameJson(message)],
       },
       TurnEndEvent(:final message, :final toolResults) => {
-        'message': message.toJson(),
+        'message': _messageFrameJson(message),
         'toolResults': [for (final result in toolResults) result.toJson()],
       },
-      MessageStartEvent(:final message) => {'message': message.toJson()},
-      MessageEndEvent(:final message) => {'message': message.toJson()},
+      MessageStartEvent(:final message) => {'message': _messageFrameJson(message)},
+      MessageEndEvent(:final message) => {'message': _messageFrameJson(message)},
       MessageUpdateEvent(
         :final message,
         :final assistantMessageEvent,
       ) => {
         // The partial snapshot IS `message`; the nested event adds only the
         // delta discriminator so frames stay compact.
-        'message': message.toJson(),
+        'message': _messageFrameJson(message),
         'event': encodeAssistantEvent(assistantMessageEvent),
       },
       ToolExecutionStartEvent(
@@ -549,15 +553,21 @@ class AgentWireProtocol {
 
   /// Decodes an event frame. Unknown kinds (and `unknown_event` itself)
   /// return [UnknownWireEvent]; malformed known frames and unsupported
-  /// versions throw [WireProtocolException].
+  /// versions throw [WireProtocolException]/[WireVersionError] — declared
+  /// types are the only escapes (a malformed field must not surface as a
+  /// raw [TypeError] from a nested `fromJson`).
   DecodedWireEvent decodeEvent(Map<String, dynamic> frame) {
     _requireFrameVersion(frame, 'event');
     final kind = _requireFrameKind(frame, 'event');
     final decoder = _eventDecoders[kind];
-    if (decoder != null) return decoder(frame);
-    if (kind == 'unknown_event') return _decodeUnknownEvent(frame);
-    // Forward-compat passthrough (E3): unknown kinds keep the run alive.
-    return UnknownWireEvent(kind, frame);
+    try {
+      if (decoder != null) return decoder(frame);
+      if (kind == 'unknown_event') return _decodeUnknownEvent(frame);
+      // Forward-compat passthrough (E3): unknown kinds keep the run alive.
+      return UnknownWireEvent(kind, frame);
+    } on TypeError catch (error) {
+      throw WireProtocolException('malformed "$kind" event frame: $error');
+    }
   }
 
   static KnownWireEvent _decodeAgentStart(Map<String, dynamic> frame) =>
@@ -675,23 +685,39 @@ class AgentWireProtocol {
         promptBlob: _optionalBlob(
           frame['promptBlob'],
           TrajectoryPromptBlob.fromJson,
+          'promptBlob',
         ),
         manifestBlob: _optionalBlob(
           frame['manifestBlob'],
           TrajectoryToolManifestBlob.fromJson,
+          'manifestBlob',
         ),
-        rawWireDump: frame['rawWireDump'] as String?,
+        rawWireDump: _optionalString(frame['rawWireDump'], 'rawWireDump'),
       ),
       frame,
     );
   }
 
-  /// Optional blob field: present-and-object decodes, anything else is
-  /// absent (additive tolerance on optional payload fields).
+  /// Optional blob field: absent stays null, present-and-object decodes,
+  /// anything else is a LOUD malformed frame (silent degradation would
+  /// hide a producer bug behind an empty payload).
   static T? _optionalBlob<T>(
     Object? raw,
     T Function(Map<String, dynamic> json) fromJson,
-  ) => raw is Map<String, dynamic> ? fromJson(raw) : null;
+    String field,
+  ) {
+    if (raw == null) return null;
+    if (raw is Map<String, dynamic>) return fromJson(raw);
+    throw WireProtocolException('field "$field" must be an object');
+  }
+
+  /// Optional string field: absent stays null, strings decode, anything
+  /// else is loud.
+  static String? _optionalString(Object? raw, String field) {
+    if (raw == null) return null;
+    if (raw is String) return raw;
+    throw WireProtocolException('field "$field" must be a string');
+  }
 
   static KnownWireEvent _decodeToolPairingRepair(Map<String, dynamic> frame) {
     _requireKind(frame, 'tool_pairing_repair');
@@ -812,13 +838,19 @@ class AgentWireProtocol {
   };
 
   /// Decodes a command frame. Unknown kinds return [WireUnknownCommand];
-  /// malformed known frames throw [WireProtocolException].
+  /// malformed known frames and unsupported versions throw
+  /// [WireProtocolException]/[WireVersionError] — declared types are the
+  /// only escapes.
   WireCommand decodeCommand(Map<String, dynamic> frame) {
     _requireFrameVersion(frame, 'command');
     final kind = _requireFrameKind(frame, 'command');
     final decoder = _commandDecoders[kind];
-    if (decoder != null) return decoder(frame);
-    return WireUnknownCommand(kind: kind, raw: frame);
+    try {
+      if (decoder != null) return decoder(frame);
+      return WireUnknownCommand(kind: kind, raw: frame);
+    } on TypeError catch (error) {
+      throw WireProtocolException('malformed "$kind" command frame: $error');
+    }
   }
 
   static WireCommand _decodePromptCommand(Map<String, dynamic> frame) =>
@@ -899,9 +931,31 @@ class AgentWireProtocol {
     'model_request': {'rawWireDump'},
   };
 
+  /// Field names that are SECRET-class ANYWHERE in a frame (E4) — they only
+  /// ever carry raw provider payloads. A name joins here deliberately:
+  /// `rawBody` is the diagnostics-only 429 body ([RateLimitInfo.rawBody],
+  /// issue #867) and must never survive a log/persist copy, even nested
+  /// under `rateLimit` inside a message.
+  static const Set<String> _secretFieldNamesAnywhere = {'rawBody'};
+
   /// Whether [field] of frame kind [kind] is SECRET-class (E4).
   static bool isSecretField(String kind, String field) =>
-      _secretFieldsByKind[kind]?.contains(field) ?? false;
+      _secretFieldsByKind[kind]?.contains(field) ??
+      _secretFieldNamesAnywhere.contains(field);
+
+  /// A message as it may appear ON the wire. E4: diagnostics-only secret
+  /// payloads never ride protocol frames — [RateLimitInfo.rawBody] stays on
+  /// the live in-process object (the engine may still log it through
+  /// [redactForLog]) and is stripped from every embedded copy.
+  static Map<String, dynamic> _messageFrameJson(Message message) {
+    final json = message.toJson();
+    if (message is! AssistantMessage) return json;
+    final rateLimit = json['rateLimit'];
+    if (rateLimit is Map<String, dynamic> && rateLimit['rawBody'] != null) {
+      json['rateLimit'] = {...rateLimit}..remove('rawBody');
+    }
+    return json;
+  }
 
   /// Deep-copies [frame] with every SECRET-class field replaced by
   /// `[REDACTED]`. Use for LOGGING and PERSISTENCE copies only — the live
@@ -910,7 +964,8 @@ class AgentWireProtocol {
     final kind = frame['kind'];
     final secretFields = kind is String ? _secretFieldsByKind[kind] : null;
     return frame.map((key, value) {
-      if (secretFields?.contains(key) ?? false) {
+      if (secretFields?.contains(key) ?? false ||
+          _secretFieldNamesAnywhere.contains(key)) {
         return MapEntry(key, '[REDACTED]');
       }
       final valueCopy = switch (value) {
@@ -972,47 +1027,47 @@ class AgentWireProtocol {
     required AssistantMessage partial,
   }) {
     final kind = _requireString(encoded['kind'], 'event.kind');
-    final int index = encoded['contentIndex'] is int
-        ? encoded['contentIndex'] as int
-        : 0;
+    // Index-kinds must carry their content index loudly — defaulting to 0
+    // would silently mis-render a producer bug.
+    int index() => _requireInt(encoded['contentIndex'], 'event.contentIndex');
     return switch (kind) {
       'start' => StartEvent(partial: partial),
-      'text_start' => TextStartEvent(contentIndex: index, partial: partial),
+      'text_start' => TextStartEvent(contentIndex: index(), partial: partial),
       'text_delta' => TextDeltaEvent(
-        contentIndex: index,
+        contentIndex: index(),
         delta: _requireString(encoded['delta'], 'event.delta'),
         partial: partial,
       ),
       'text_end' => TextEndEvent(
-        contentIndex: index,
+        contentIndex: index(),
         content: _requireString(encoded['content'], 'event.content'),
         partial: partial,
       ),
       'thinking_start' => ThinkingStartEvent(
-        contentIndex: index,
+        contentIndex: index(),
         partial: partial,
       ),
       'thinking_delta' => ThinkingDeltaEvent(
-        contentIndex: index,
+        contentIndex: index(),
         delta: _requireString(encoded['delta'], 'event.delta'),
         partial: partial,
       ),
       'thinking_end' => ThinkingEndEvent(
-        contentIndex: index,
+        contentIndex: index(),
         content: _requireString(encoded['content'], 'event.content'),
         partial: partial,
       ),
       'tool_call_start' => ToolCallStartEvent(
-        contentIndex: index,
+        contentIndex: index(),
         partial: partial,
       ),
       'tool_call_delta' => ToolCallDeltaEvent(
-        contentIndex: index,
+        contentIndex: index(),
         delta: _requireString(encoded['delta'], 'event.delta'),
         partial: partial,
       ),
       'tool_call_end' => ToolCallEndEvent(
-        contentIndex: index,
+        contentIndex: index(),
         toolCall: ToolCall.fromJson(
           _requireMap(encoded['toolCall'], 'event.toolCall'),
         ),
@@ -1133,8 +1188,11 @@ class AgentWireProtocol {
     throw WireProtocolException('unknown approval decision: $name');
   }
 
-  static StopReason _decodeStopReason(String name) => StopReason.values
-      .firstWhere((reason) => reason.name == name, orElse: () => StopReason.stop);
+  static StopReason _decodeStopReason(String name) =>
+      StopReason.values.firstWhere(
+        (reason) => reason.name == name,
+        orElse: () => throw WireProtocolException('unknown stop reason: $name'),
+      );
 
   // Loud required-field helpers: corrupt KNOWN frames must not silently
   // degrade into empty payloads.
@@ -1145,12 +1203,15 @@ class AgentWireProtocol {
   }
 
   /// Base-frame guard shared by every decoder: the frame must carry a
-  /// version this library speaks.
+  /// version this library speaks. Unsupported versions are the LOUD
+  /// [WireVersionError] (the library's declared version contract), not a
+  /// generic protocol error.
   static void _requireFrameVersion(Map<String, dynamic> frame, String what) {
     final frameVersion = frame['v'];
     if (frameVersion is! int || !supportedWireVersions.contains(frameVersion)) {
-      throw WireProtocolException(
-        '$what frame carries unsupported version $frameVersion',
+      throw WireVersionError(
+        '$what frame carries unsupported version $frameVersion '
+        '(supported: ${supportedWireVersions.toList()..sort()})',
       );
     }
   }

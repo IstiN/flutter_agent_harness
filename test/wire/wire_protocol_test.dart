@@ -9,7 +9,10 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_agent_harness/src/agent/agent_loop.dart';
+import 'package:flutter_agent_harness/src/rate_limit_info.dart';
 import 'package:flutter_agent_harness/src/tools/request_secret_tool.dart';
+import 'package:flutter_agent_harness/src/types.dart';
 import 'package:flutter_agent_harness/src/wire/wire_protocol.dart';
 import 'package:test/test.dart';
 
@@ -30,6 +33,34 @@ void main() {
       for (final f in [...eventFixtures, ...commandFixtures]) {
         expect(f.protocolVersion, 1, reason: f.path);
       }
+    });
+
+    test('all 12 nested message_update variants have goldens', () {
+      const variants = [
+        'start',
+        'text_start',
+        'text_delta',
+        'text_end',
+        'thinking_start',
+        'thinking_delta',
+        'thinking_end',
+        'tool_call_start',
+        'tool_call_delta',
+        'tool_call_end',
+        'done',
+        'error',
+      ];
+      for (final variant in variants) {
+        expect(
+          () => fixtureFor(eventFixturesDir, 'message_update_$variant'),
+          returnsNormally,
+          reason: 'missing golden for message_update_$variant',
+        );
+      }
+      expect(
+        eventFixtures.where((f) => f.kind == 'message_update'),
+        hasLength(variants.length),
+      );
     });
 
     for (final fixture in eventFixtures) {
@@ -265,6 +296,29 @@ void main() {
       );
     });
 
+    test('the hello frame version is accepted, then ignored', () {
+      // The frame's own `v` caps only this frame's encoding: a hello SENT
+      // in a frame version outside this server's support is accepted when
+      // the `versions` array names a shared one — negotiation reads the
+      // array, not the frame version.
+      final accepted = AgentWireProtocol.acceptHello({
+        'v': 99,
+        'kind': 'hello',
+        'versions': [1],
+      });
+      expect(accepted.protocol.version, 1);
+      expect(accepted.welcome['version'], 1);
+      // No shared version in the array — the single loud gate.
+      expect(
+        () => AgentWireProtocol.acceptHello({
+          'v': 99,
+          'kind': 'hello',
+          'versions': [99],
+        }),
+        throwsA(isA<WireVersionError>()),
+      );
+    });
+
     test('malformed hello frames fail loud with the reason', () {
       expect(
         () => AgentWireProtocol.acceptHello({'v': 1, 'kind': 'welcome'}),
@@ -272,6 +326,10 @@ void main() {
       );
       expect(
         () => AgentWireProtocol.acceptHello({'v': 1, 'kind': 'hello'}),
+        throwsA(isA<WireProtocolException>()),
+      );
+      expect(
+        () => AgentWireProtocol.acceptHello({'v': 'x', 'kind': 'hello'}),
         throwsA(isA<WireProtocolException>()),
       );
       expect(
@@ -289,14 +347,6 @@ void main() {
           'versions': ['1'],
         }),
         throwsA(isA<WireProtocolException>()),
-      );
-      expect(
-        () => AgentWireProtocol.acceptHello({
-          'v': 99,
-          'kind': 'hello',
-          'versions': [1],
-        }),
-        throwsA(isA<WireVersionError>()),
       );
     });
 
@@ -319,11 +369,72 @@ void main() {
   });
 
   group('E4: secrets over the wire', () {
-    test('secret-class fields are marked', () {
+    test('isSecretField marks rawBody anywhere', () {
       expect(AgentWireProtocol.isSecretField('secret_response', 'value'), isTrue);
       expect(AgentWireProtocol.isSecretField('model_request', 'rawWireDump'), isTrue);
+      expect(AgentWireProtocol.isSecretField('message_end', 'rawBody'), isTrue);
       expect(AgentWireProtocol.isSecretField('secret_response', 'name'), isFalse);
       expect(AgentWireProtocol.isSecretField('prompt', 'text'), isFalse);
+    });
+
+    test('rateLimit.rawBody never rides a wire frame', () {
+      final protocol = AgentWireProtocol();
+      AssistantMessage rateLimited() => AssistantMessage(
+        content: const [TextContent(text: 'quota')],
+        api: 'openai-completions',
+        provider: 'openai',
+        model: 'gpt-test',
+        usage: const Usage(
+          input: 1,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 1,
+          cost: UsageCost(),
+        ),
+        stopReason: StopReason.error,
+        errorMessage: 'usage limit reached',
+        rateLimit: const RateLimitInfo(planType: 'free', rawBody: 'LIVE-429-RAW-BODY'),
+        timestamp: DateTime.fromMillisecondsSinceEpoch(fixtureTimestampMs),
+      );
+      // Single-message embeddings…
+      final messageEnd = protocol.encodeEvent(MessageEndEvent(rateLimited()));
+      expect(jsonEncode(messageEnd), isNot(contains('LIVE-429-RAW-BODY')));
+      expect(jsonEncode(messageEnd), isNot(contains('rawBody')));
+      // …and list embeddings (agent_end)…
+      final agentEnd = protocol.encodeEvent(AgentEndEvent([rateLimited()]));
+      expect(jsonEncode(agentEnd), isNot(contains('LIVE-429-RAW-BODY')));
+      // …while the structured rate-limit data still rides.
+      expect(
+        (messageEnd['message'] as Map<String, dynamic>)['rateLimit'],
+        {'planType': 'free'},
+      );
+      // The live in-process object keeps the diagnostics payload.
+      expect(rateLimited().rateLimit!.rawBody, 'LIVE-429-RAW-BODY');
+    });
+
+    test('redactForLog strips a nested rawBody from a foreign frame', () {
+      // A frame that arrived from another host may carry the diagnostics
+      // body nested under rateLimit inside a message; the log copy must
+      // still lose it.
+      final redacted = AgentWireProtocol.redactForLog({
+        'v': 1,
+        'kind': 'message_end',
+        'message': {
+          'role': 'assistant',
+          'rateLimit': {'planType': 'free', 'rawBody': 'FOREIGN-RAW-BODY'},
+        },
+        'messages': [
+          {'role': 'assistant', 'rateLimit': {'rawBody': 'FOREIGN-RAW-2'}},
+        ],
+      });
+      expect(jsonEncode(redacted), isNot(contains('FOREIGN-RAW-BODY')));
+      expect(jsonEncode(redacted), isNot(contains('FOREIGN-RAW-2')));
+      expect(
+        ((redacted['message'] as Map<String, dynamic>)['rateLimit']
+            as Map<String, dynamic>)['rawBody'],
+        '[REDACTED]',
+      );
     });
 
     test('redactForLog strips secret values, never mutates the input', () {
@@ -376,6 +487,99 @@ void main() {
           );
         }
       }
+    });
+  });
+
+  group('declared exception contract', () {
+    test('unsupported frame versions throw WireVersionError', () {
+      final protocol = AgentWireProtocol();
+      expect(
+        () => protocol.decodeEvent({'v': 2, 'kind': 'agent_start'}),
+        throwsA(isA<WireVersionError>()),
+      );
+      expect(
+        () =>
+            protocol.decodeCommand({'v': 2, 'kind': 'prompt', 'text': 'hi'}),
+        throwsA(isA<WireVersionError>()),
+      );
+      expect(
+        () => protocol.decodeEvent({'kind': 'agent_start'}),
+        throwsA(isA<WireVersionError>()),
+      );
+    });
+
+    test('malformed known frames never escape as raw TypeError', () {
+      final protocol = AgentWireProtocol();
+      // Non-string optional field: was an unchecked `as String?` cast.
+      final modelRequest = fixtureFor(
+        eventFixturesDir,
+        'model_request',
+      ).frame;
+      expect(
+        () => protocol.decodeEvent({...modelRequest, 'rawWireDump': 42}),
+        throwsA(isA<WireProtocolException>()),
+      );
+      // A nested fromJson TypeError is wrapped into the declared type
+      // (toolCall.arguments as a non-map is a hard cast in types.dart).
+      final toolCallEnd = fixtureFor(
+        eventFixturesDir,
+        'message_update_tool_call_end',
+      ).frame;
+      expect(
+        () => protocol.decodeEvent({
+          ...toolCallEnd,
+          'event': {
+            ...(toolCallEnd['event'] as Map<String, dynamic>),
+            'toolCall': {
+              ...((toolCallEnd['event'] as Map<String, dynamic>)['toolCall']
+                  as Map<String, dynamic>),
+              'arguments': 'not-a-map',
+            },
+          },
+        }),
+        throwsA(isA<WireProtocolException>()),
+      );
+      // Unknown-kind tolerance (E3) is untouched by the wrap.
+      expect(
+        protocol.decodeEvent({'v': 1, 'kind': 'future_widget', 'x': 1}),
+        isA<UnknownWireEvent>(),
+      );
+    });
+
+    test('nested event decode is loud on corrupt payloads', () {
+      final protocol = AgentWireProtocol();
+      // Unknown stop reason degrades LOUDLY, not to StopReason.stop.
+      final done = fixtureFor(eventFixturesDir, 'message_update_done').frame;
+      expect(
+        () => protocol.decodeEvent({
+          ...done,
+          'event': {...(done['event'] as Map<String, dynamic>), 'reason': 'banana'},
+        }),
+        throwsA(isA<WireProtocolException>()),
+      );
+      // Optional blobs decode only from objects.
+      final modelRequest = fixtureFor(
+        eventFixturesDir,
+        'model_request',
+      ).frame;
+      expect(
+        () => protocol.decodeEvent({...modelRequest, 'promptBlob': 'x'}),
+        throwsA(isA<WireProtocolException>()),
+      );
+      // Index-kind nested events require their content index.
+      final textDelta = fixtureFor(
+        eventFixturesDir,
+        'message_update_text_delta',
+      ).frame;
+      expect(
+        () => protocol.decodeEvent({
+          ...textDelta,
+          'event': {
+            ...(textDelta['event'] as Map<String, dynamic>),
+          }..remove('contentIndex'),
+        }),
+        throwsA(isA<WireProtocolException>()),
+      );
     });
   });
 
