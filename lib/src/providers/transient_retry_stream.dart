@@ -301,6 +301,20 @@ final class _TransientFailure extends _AttemptOutcome {
   final AssistantMessage error;
 }
 
+/// Issue #312: a wire finish_reason carries the structured verdict —
+/// terminal (content_filter family) never retries, transient and unknown
+/// vendor words do; without one the text nets decide. Pre-commit
+/// ([_runAttempt]) and mid-answer ([_midAnswer]) failures share the
+/// classification; a non-error reason is never retryable.
+bool _retryableWireFailure(ErrorEvent event) {
+  if (event.reason != StopReason.error) return false;
+  final retryClass = finishReasonRetryClass(event.error);
+  final transient = retryClass != null
+      ? retryClass != FinishReasonClass.terminal
+      : isTransientNetworkError(event.error);
+  return transient;
+}
+
 /// Runs one attempt, buffering until the first observable output commits
 /// it (the same guard as the roles fallback: a pre-content failure leaves
 /// no trace, a post-content failure stands).
@@ -331,14 +345,7 @@ Future<_AttemptOutcome> _runAttempt(
         out.push(event);
         return const _Forwarded();
       case ErrorEvent():
-        // Issue #312: a wire finish_reason carries the structured verdict —
-        // terminal (content_filter family) never retries, transient and
-        // unknown vendor words do; without one the text nets decide.
-        final retryClass = finishReasonRetryClass(event.error);
-        final transient = retryClass != null
-            ? retryClass != FinishReasonClass.terminal
-            : isTransientNetworkError(event.error);
-        if (event.reason == StopReason.error && transient) {
+        if (_retryableWireFailure(event)) {
           // Not forwarded: the buffer is discarded and the call retries.
           return _TransientFailure(event.error);
         }
@@ -388,17 +395,10 @@ Future<_AttemptOutcome> _runAttempt(
 /// the mid-answer failure and keeps the provider line as evidence.
 ErrorEvent _midAnswer(ErrorEvent event) {
   final error = event.error;
-  if (event.reason != StopReason.error) {
-    return event;
-  }
   // Issue #312: a classified non-terminal finish_reason mid-answer gets
   // the same hygiene wrap (the transcript already holds the deltas); a
   // TERMINAL verdict (content_filter family) keeps its verbatim story.
-  final retryClass = finishReasonRetryClass(error);
-  final transient = retryClass != null
-      ? retryClass != FinishReasonClass.terminal
-      : isTransientNetworkError(error);
-  if (!transient) {
+  if (!_retryableWireFailure(event)) {
     return event;
   }
   return ErrorEvent(
