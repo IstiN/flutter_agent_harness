@@ -18,6 +18,7 @@ import 'golden_fixtures.dart';
 /// Drives [WireServeServer] with in-memory closures — no agent, no network.
 class _Harness {
   final sent = <Map<String, dynamic>>[];
+  final logs = <String>[];
   final incoming = StreamController<Map<String, dynamic>>();
   final prompts = <String>[];
   final steers = <String>[];
@@ -70,6 +71,7 @@ class _Harness {
       steer: steers.add,
       abort: () => aborts++,
       isBusy: () => busy,
+      onLog: logs.add,
     );
   }
 
@@ -77,6 +79,9 @@ class _Harness {
   Future<void> attach() => server.attach(incoming.stream, sent.add);
 
   void clientSends(Map<String, dynamic> frame) => incoming.add(frame);
+
+  /// A genuine transport fault (socket-reset analog), not a clean close.
+  void clientError(Object error) => incoming.addError(error);
 
   Map<String, dynamic> kind(String kind) =>
       sent.firstWhere((f) => f['kind'] == kind, orElse: () => {});
@@ -141,6 +146,36 @@ void main() {
       await thirdIncoming.close();
       await third;
     });
+
+    test(
+      'a transport FAULT detaches loudly and reattach still works',
+      () async {
+        final h = _Harness();
+        final served = h.attach();
+        h.clientSends(hello());
+        await _untilAttached(h);
+        // The detach below must be distinguishable from a clean hangup in
+        // the diagnostics.
+        h.clientError(StateError('socket reset'));
+        await pump();
+        await served;
+        expect(
+          h.logs.where((l) => l.contains('client detached: ')),
+          isNotEmpty,
+          reason: 'the fault must reach the diagnostics, not vanish',
+        );
+
+        // The server survives the fault and accepts a fresh client.
+        final nextSent = <Map<String, dynamic>>[];
+        final nextIncoming = StreamController<Map<String, dynamic>>();
+        final next = h.server.attach(nextIncoming.stream, nextSent.add);
+        nextIncoming.add(hello());
+        await pump();
+        expect(nextSent.first['kind'], 'welcome');
+        await nextIncoming.close();
+        await next;
+      },
+    );
   });
 
   group('command dispatch', () {

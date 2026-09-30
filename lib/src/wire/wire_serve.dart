@@ -141,7 +141,7 @@ final class WireServeServer {
     _frames = frames.listen(
       (frame) => _onClientFrame(frame, send),
       onDone: () => _detach(),
-      onError: (Object _) => _detach(),
+      onError: (Object error) => _detach(error),
       cancelOnError: true,
     );
     return done.future;
@@ -174,7 +174,7 @@ final class WireServeServer {
     }
   }
 
-  void _detach() {
+  void _detach([Object? error]) {
     _client = null;
     _attaching = false;
     unawaited(_frames?.cancel());
@@ -182,7 +182,15 @@ final class WireServeServer {
     final done = _attachDone;
     _attachDone = null;
     if (done != null && !done.isCompleted) done.complete();
-    _log('client detached (pending=${_pending.length})');
+    // A clean hangup and a transport fault must stay distinguishable in
+    // the diagnostics (review #1113 r4): with decode failures answered
+    // as bad_frame in the transport, whatever reaches the error handler
+    // is a genuine stream fault.
+    _log(
+      error == null
+          ? 'client detached (pending=${_pending.length})'
+          : 'client detached: $error (pending=${_pending.length})',
+    );
   }
 
   // ---------------------------------------------------------------------------
