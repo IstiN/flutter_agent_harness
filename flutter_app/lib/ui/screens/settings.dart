@@ -45,6 +45,7 @@ import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/skills_access_store.dart';
 import 'package:fa/ui/screens/settings_key_dialogs.dart';
 import 'package:fa/ui/screens/tools_availability_section.dart';
+import 'package:fa/ui/screens/redaction_section.dart';
 import 'package:fa/services/task_models_store.dart';
 import 'package:fa/services/theme_controller.dart';
 import 'package:fa/services/theme_pack_store.dart';
@@ -2153,6 +2154,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       // Capability-gated tools (issue #19): live toggles, every
       // platform — the tool set exists everywhere.
       ToolsAvailabilitySection(service: service),
+      const SizedBox(height: 24),
+      const Divider(),
+      const SizedBox(height: 16),
+      // Secret redaction (issue #1078 AC4/E3): the live pipeline toggle.
+      RedactionSection(service: service),
       const SizedBox(height: 24),
       const Divider(),
       const SizedBox(height: 16),
