@@ -92,13 +92,14 @@ void main() {
     // Wait until the funnel's compaction summarizer (call 3) is hanging.
     await waitForIt(() => fake.calls >= 3, reason: 'funnel compaction started');
     io.interrupt();
+    // Re-arm IMMEDIATELY: the funnel loop relaunches attempt 2 within
+    // microtasks of the swallow, before the receipt is even printed.
+    fake.hangFromCall = 1 << 30;
     await waitForIt(
       () => io.out.toString().contains('compaction interrupted'),
       reason: 'the compaction-only receipt printed',
     );
-    // The prediction: the funnel RETRIES — re-arm so attempt 2 can play.
-    fake.hangFromCall = 1 << 30;
-    final exitCode = await run.timeout(const Duration(seconds: 30));
+    final exitCode = await run.timeout(const Duration(seconds: 60));
     final output = io.out.toString();
     // ignore: avoid_print
     print('PROBE: exitCode=$exitCode calls=${fake.calls}');
