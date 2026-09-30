@@ -15,17 +15,24 @@ import 'package:test/test.dart';
 
 /// A client whose `send` stalls forever (endpoint accepted the connection
 /// but never sends headers) for the first [stalls] calls, then answers
-/// 200 with an empty SSE body. Records every outbound request.
+/// 200 with an empty SSE body. [lateFirstAnswer] overrides the first send
+/// with a custom late-completing future (the slow-but-alive endpoint).
+/// Records every outbound request.
 final class _StallClient extends http.BaseClient {
-  _StallClient(this.stalls);
+  _StallClient(this.stalls, {this.lateFirstAnswer});
 
   final int stalls;
+
+  final Future<http.StreamedResponse> Function()? lateFirstAnswer;
 
   final requests = <http.BaseRequest>[];
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) {
     requests.add(request);
+    if (requests.length == 1 && lateFirstAnswer != null) {
+      return lateFirstAnswer!();
+    }
     if (requests.length <= stalls) {
       return Completer<http.StreamedResponse>().future;
     }
@@ -41,6 +48,7 @@ final class _StallClient extends http.BaseClient {
 
 http.Request _post(String url) => http.Request('POST', Uri.parse(url))
   ..headers['content-type'] = 'application/json'
+  ..headers['authorization'] = 'Bearer sk-test'
   ..body = '{"model":"m","stream":true}';
 
 void main() {
@@ -94,6 +102,23 @@ void main() {
         // (2 retries / 3 attempts), not a roles-failover attempt.
         expect(response.statusCode, 200);
         expect(client.requests, hasLength(3));
+        // The identical payload is re-sent: body bytes, method, target and
+        // the identity-bearing headers survive every _reissue clone (issue
+        // #1121 review round 1 — pin the safety argument).
+        final sent = client.requests.cast<http.Request>().toList();
+        for (final resend in sent.skip(1)) {
+          expect(resend.bodyBytes, sent.first.bodyBytes);
+          expect(resend.method, sent.first.method);
+          expect(resend.url, sent.first.url);
+          expect(
+            resend.headers['content-type'],
+            sent.first.headers['content-type'],
+          );
+          expect(
+            resend.headers['authorization'],
+            sent.first.headers['authorization'],
+          );
+        }
         expect(notices, hasLength(2));
         expect(notices[0], [
           1,
@@ -192,6 +217,51 @@ void main() {
           throwsA(isA<CancelledException>()),
         );
         expect(client.requests, hasLength(1));
+      },
+    );
+    test(
+      'a LATE answer to an abandoned attempt is announced and detached',
+      () async {
+        final notices = <List<Object?>>[];
+        transientRetryNotice = (a, m, d, r) => notices.add([a, m, d, r]);
+        // First send answers 60ms in (watchdog fires at 20ms): the slow-but-
+        // alive endpoint case. The late response must be announced on the
+        // retry surface and its body detached, while the retry proceeds.
+        final lateSubscribed = Completer<void>();
+        final client = _StallClient(
+          0,
+          lateFirstAnswer: () {
+            final body = StreamController<List<int>>(
+              onListen: lateSubscribed.complete,
+            );
+            return Future<http.StreamedResponse>.delayed(
+              const Duration(milliseconds: 60),
+              () => http.StreamedResponse(
+                body.stream,
+                200,
+                headers: {'content-type': 'text/event-stream'},
+              ),
+            );
+          },
+        );
+
+        final response = await sendProviderRequest(
+          client,
+          _post('https://api.example.com/v1/chat/completions'),
+          null,
+        );
+        expect(response.statusCode, 200);
+        expect(client.requests, hasLength(2)); // orphan + retry both sent
+        // The late answer lands ~40ms after the response returned — wait for
+        // the janitor to take the body over before reading the notices.
+        await lateSubscribed.future;
+        final orphan = notices.firstWhere((n) => n[2] == Duration.zero);
+        expect(orphan[0], 0); // labels the abandoned attempt, not a retry
+        expect(orphan[1], providerConnectRetries + 1);
+        expect(orphan[3], contains('answered late'));
+        final retry = notices.firstWhere((n) => n[2] != Duration.zero);
+        expect(retry[0], 1);
+        expect(retry[3], 'connect stall: no response bytes');
       },
     );
   });

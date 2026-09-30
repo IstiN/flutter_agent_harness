@@ -542,7 +542,11 @@ Future<http.StreamedResponse> sendProviderRequest(
   request.followRedirects = false;
   var current = request;
   for (var redirects = 0; ; redirects++) {
-    final response = await _sendWatched(httpClient, current, cancelToken);
+    final response = await sendWatchedProviderRequest(
+      httpClient,
+      current,
+      cancelToken,
+    );
     final location = response.headers['location'];
     final target = _redirectTarget(current.url, response.statusCode, location);
     if (target == null) return _validateStreamResponse(current, response);
@@ -565,7 +569,13 @@ Future<http.StreamedResponse> sendProviderRequest(
 /// One watched send: the cancel-token race plus the connect watchdog, with
 /// a bounded TRANSPARENT retry when the watchdog kills a request that never
 /// received a byte (issue #1121).
-Future<http.StreamedResponse> _sendWatched(
+///
+/// Public for transports that must own their response semantics and so
+/// bypass [sendProviderRequest]'s redirect decision and status/body
+/// validation — chatgpt-codex stores Cloudflare cookies from error
+/// responses and replays challenges itself, so it takes the raw watched
+/// send and keeps its own cookie/challenge logic.
+Future<http.StreamedResponse> sendWatchedProviderRequest(
   http.Client httpClient,
   http.Request request,
   CancelToken? cancelToken,
@@ -578,7 +588,12 @@ Future<http.StreamedResponse> _sendWatched(
         ? request
         : _reissue(request, request.url, 0);
     try {
-      return await _sendWatchedOnce(httpClient, attemptRequest, cancelToken);
+      return await _sendWatchedOnce(
+        httpClient,
+        attemptRequest,
+        cancelToken,
+        attempt,
+      );
     } on TimeoutException {
       // The connect watchdog fired (issue #1121). `httpClient.send`
       // completes only when the response HEADERS arrive, so a timeout in
@@ -615,21 +630,53 @@ Future<http.StreamedResponse> _sendWatched(
   }
 }
 
-/// One connect-watched send attempt: no retry.
+/// One connect-watched send attempt: no retry. [attempt] (0-based) only
+/// labels the orphan janitor's notice.
 Future<http.StreamedResponse> _sendWatchedOnce(
   http.Client httpClient,
   http.Request request,
   CancelToken? cancelToken,
+  int attempt,
 ) async {
   final responseFuture = httpClient.send(request);
   // Issue #1036 (review round 1): name the endpoint in the watchdog error —
   // the rendered "TimeoutException: …" text is the always-retryable contract
   // the failover/queue classifiers match on.
-  http.StreamedResponse watchdogTimedOut() => throw TimeoutException(
-    'provider stream request to ${redactProviderUrl(request.url)} timed out: '
-    'no response headers within ${effectiveProviderConnectTimeout.inSeconds}s '
-    '(connect watchdog)',
-  );
+  http.StreamedResponse watchdogTimedOut() {
+    // The attempt is ABANDONED, not aborted: package:http cannot cancel a
+    // pending send, and a slow-but-alive endpoint (reasoning model over
+    // the first-byte budget) may still answer. Attach a janitor so the
+    // late answer is (a) announced on the existing `[net]`/fa.log retry
+    // surface instead of dropping silently — the provider may have started
+    // generating a body nobody will read — and (b) released: cancelling
+    // the body subscription closes the connection at once rather than
+    // draining a dead generation into the void (which usually aborts the
+    // generation server-side, keeping the nothing-double-billed claim as
+    // true as the protocol allows). Late errors land in the janitor's own
+    // handler, never the zone (issue #921 discipline). The retry cap
+    // bounds the abandoned-attempt multiplication at
+    // providerConnectRetries + 1 per stalled turn.
+    unawaited(
+      responseFuture.then<Object?>((late) {
+        transientRetryNotice?.call(
+          0,
+          providerConnectRetries + 1,
+          Duration.zero,
+          'abandoned connect attempt ${attempt + 1} answered late — '
+          'response detached, generation dropped',
+        );
+        return late.stream
+            .listen((_) {}, onError: (Object _) {}, cancelOnError: true)
+            .cancel();
+      }, onError: (Object _) {}),
+    );
+    throw TimeoutException(
+      'provider stream request to ${redactProviderUrl(request.url)} timed out: '
+      'no response headers within ${effectiveProviderConnectTimeout.inSeconds}s '
+      '(connect watchdog)',
+    );
+  }
+
   if (cancelToken == null) {
     return responseFuture.timeout(
       effectiveProviderConnectTimeout,
@@ -722,9 +769,16 @@ const providerConnectTimeout = Duration(seconds: 180);
 /// Bounded connect-stall retry budget (issue #1121): how many times a
 /// request the connect watchdog killed with ZERO response bytes is re-sent
 /// before the failure escalates to the run. 2 retries (3 total attempts):
-/// worst case ≈ 3×(180s + backoff) ≈ 10 min — the unattended/bench tradeoff
-/// the issue priced. This budget is NOT the roles failover ladder's — a
-/// connect stall never consumes a failover attempt.
+/// the connect leg alone costs ≈ 3×(180s + 1s+2s backoff) ≈ 9 min against
+/// an endpoint that black-holes. This leg sits BELOW TransientRetryStream
+/// (3 attempts, 5s apart) and the roles failover ladder, so a hard-down
+/// endpoint stacks ≈ 3 connect legs × 3 transient attempts ≈ 27 min per
+/// role entry before failover (pre-PR: ≈ 9 min), and the ladder repeats
+/// per queue entry — the recovery path of last resort stays the ladder's
+/// own budgets, and environments that prefer faster failure shrink
+/// `providerTimeouts: connect:` in `~/.fah/config.yaml` (issue #1036),
+/// which this retry inherits automatically. This budget is NOT the roles
+/// failover ladder's — a connect stall never consumes a failover attempt.
 const providerConnectRetries = 2;
 
 /// Base backoff between connect-stall retries; doubles per retry (1s, 2s).

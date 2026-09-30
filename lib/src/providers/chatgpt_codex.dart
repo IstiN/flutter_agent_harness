@@ -291,12 +291,25 @@ final class _ChatGptCodexSession {
   /// hung the turn forever after headers arrived. No decoded line for
   /// [effectiveProviderStreamIdleTimeout] errors the turn (the resolver can
   /// fail over) and the finally-cancel detaches the byte pipeline — the
-  /// issue-#921 safe abandonment this bypass would otherwise lose.
+  /// issue-#921 safe abandonment this bypass would otherwise lose. The
+  /// cancel token detaches at once too (issue #1121 review round 1): an
+  /// abort during a silent stretch must not wait for the next line or the
+  /// idle watchdog.
   Future<void> _consumeSseLines(http.StreamedResponse response) async {
     final idle = effectiveProviderStreamIdleTimeout;
     final lines = StreamIterator<String>(
       response.stream.transform(utf8.decoder).transform(const LineSplitter()),
     );
+    final token = cancelToken;
+    if (token != null) {
+      // Same prompt-abort latency createSseIterator gives every other
+      // adapter; the finally-cancel below stays as the backstop.
+      unawaited(
+        token.onCancel.then((_) async {
+          await lines.cancel().catchError((_) {});
+        }),
+      );
+    }
     try {
       while (await lines.moveNext().timeout(
         idle,
@@ -314,6 +327,9 @@ final class _ChatGptCodexSession {
       // handlerless chain.
       unawaited(lines.cancel().then((_) {}, onError: (Object _) {}));
     }
+    // A cancel that fired mid-silence unblocked the loop above — surface
+    // it as the abort it is instead of finishing a phantom message.
+    cancelToken?.throwIfCancelled();
   }
 
   Uri get _endpoint => Uri.parse('${model.baseUrl}/responses');
@@ -342,21 +358,18 @@ final class _ChatGptCodexSession {
         ...?model.headers,
       })
       ..body = jsonEncode(_requestBody());
-    // Issue #1036: this send had NO watchdog — a wedged endpoint hung the
-    // turn (and the resume re-entered the same hang). Same connect bound
-    // as _sendWatched; the SSE line consumption below carries the
-    // stream-idle watchdog.
-    final response = await client
-        .send(request)
-        .timeout(
-          effectiveProviderConnectTimeout,
-          onTimeout: () => throw TimeoutException(
-            'chatgpt-codex ${redactProviderUrl(_endpoint)} timed out: no '
-            'response headers within '
-            '${effectiveProviderConnectTimeout.inSeconds}s '
-            '(connect watchdog)',
-          ),
-        );
+    // Issue #1121 (review round 1): route through the SHARED watched send —
+    // the hand-rolled `.timeout` below predated it, so a codex connect
+    // stall got the watchdog but not the bounded zero-byte retry every
+    // other adapter has, and a user abort during a wedged connect waited
+    // out the full watchdog instead of propagating. Raw send (no
+    // redirect/validity layer): Cloudflare cookies must be stored from
+    // error responses too, and the challenge replay above owns that flow.
+    final response = await sendWatchedProviderRequest(
+      client,
+      request,
+      cancelToken,
+    );
     // Cloudflare sets its cookies even on error responses — store always.
     _cookies.store(uri, response.headers);
     return response;
