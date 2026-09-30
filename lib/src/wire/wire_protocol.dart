@@ -524,156 +524,195 @@ class AgentWireProtocol {
     'payload': payload ?? const {},
   };
 
+  /// Per-kind event decoders — table-driven so the dispatch stays a tiny,
+  /// fully-covered method (CRAP ratchet) and adding a kind is one map
+  /// entry plus one small static method.
+  static final Map<String, DecodedWireEvent Function(Map<String, dynamic>)>
+  _eventDecoders = {
+    'agent_start': _decodeAgentStart,
+    'agent_settled': _decodeAgentSettled,
+    'turn_start': _decodeTurnStart,
+    'agent_end': _decodeAgentEnd,
+    'turn_end': _decodeTurnEnd,
+    'message_start': _decodeMessageStart,
+    'message_end': _decodeMessageEnd,
+    'message_update': _decodeMessageUpdate,
+    'tool_execution_start': _decodeToolExecutionStart,
+    'tool_execution_update': _decodeToolExecutionUpdate,
+    'tool_execution_end': _decodeToolExecutionEnd,
+    'model_request': _decodeModelRequest,
+    'tool_pairing_repair': _decodeToolPairingRepair,
+    'approval_request': _decodeApprovalRequest,
+    'ask_request': _decodeAskRequest,
+    'secret_request': _decodeSecretRequest,
+  };
+
   /// Decodes an event frame. Unknown kinds (and `unknown_event` itself)
   /// return [UnknownWireEvent]; malformed known frames and unsupported
   /// versions throw [WireProtocolException].
   DecodedWireEvent decodeEvent(Map<String, dynamic> frame) {
-    final frameVersion = frame['v'];
-    if (frameVersion is! int || !supportedWireVersions.contains(frameVersion)) {
-      throw WireProtocolException(
-        'event frame carries unsupported version $frameVersion',
-      );
-    }
-    final kind = frame['kind'];
-    if (kind is! String || kind.isEmpty) {
-      throw WireProtocolException('event frame is missing its kind');
-    }
-    switch (kind) {
-      case 'agent_start':
-        return KnownWireEvent(const AgentStartEvent(), frame);
-      case 'agent_settled':
-        return KnownWireEvent(const AgentSettledEvent(), frame);
-      case 'turn_start':
-        return KnownWireEvent(const TurnStartEvent(), frame);
-      case 'agent_end':
-        return KnownWireEvent(
-          AgentEndEvent(_requireMessageList(frame, 'agent_end')),
-          frame,
-        );
-      case 'turn_end':
-        return KnownWireEvent(
-          TurnEndEvent(
-            message: _requireAssistant(frame['message'], 'turn_end'),
-            toolResults: [
-              for (final raw
-                  in _requireList(frame['toolResults'], 'turn_end.toolResults'))
-                ToolResultMessage.fromJson(_requireMap(raw, 'toolResults[]')),
-            ],
-          ),
-          frame,
-        );
-      case 'message_start':
-        return KnownWireEvent(
-          MessageStartEvent(messageFromJson(
-            _requireMap(frame['message'], 'message_start.message'),
-          )),
-          frame,
-        );
-      case 'message_end':
-        return KnownWireEvent(
-          MessageEndEvent(messageFromJson(
-            _requireMap(frame['message'], 'message_end.message'),
-          )),
-          frame,
-        );
-      case 'message_update':
-        final message = _requireAssistant(frame['message'], 'message_update');
-        return KnownWireEvent(
-          MessageUpdateEvent(
-            message: message,
-            assistantMessageEvent: _decodeAssistantEvent(
-              _requireMap(frame['event'], 'message_update.event'),
-              partial: message,
-            ),
-          ),
-          frame,
-        );
-      case 'tool_execution_start':
-        return KnownWireEvent(
-          ToolExecutionStartEvent(
-            toolCallId: _requireString(frame['toolCallId'], 'toolCallId'),
-            toolName: _requireString(frame['toolName'], 'toolName'),
-            args: _requireMap(frame['args'], 'args'),
-            timestamp: DateTime.fromMillisecondsSinceEpoch(
-              _requireInt(frame['timestamp'], 'timestamp'),
-            ),
-          ),
-          frame,
-        );
-      case 'tool_execution_update':
-        return KnownWireEvent(
-          ToolExecutionUpdateEvent(
-            toolCallId: _requireString(frame['toolCallId'], 'toolCallId'),
-            toolName: _requireString(frame['toolName'], 'toolName'),
-            args: _requireMap(frame['args'], 'args'),
-            partialResult: _decodeToolResult(
-              _requireMap(frame['partialResult'], 'partialResult'),
-            ),
-          ),
-          frame,
-        );
-      case 'tool_execution_end':
-        return KnownWireEvent(
-          ToolExecutionEndEvent(
-            toolCallId: _requireString(frame['toolCallId'], 'toolCallId'),
-            toolName: _requireString(frame['toolName'], 'toolName'),
-            result: _decodeToolResult(
-              _requireMap(frame['result'], 'result'),
-            ),
-            isError: _requireBool(frame['isError'], 'isError'),
-          ),
-          frame,
-        );
-      case 'model_request':
-        return KnownWireEvent(
-          ModelRequestEvent(
-            detail: TrajectoryRequestDetail.fromJson(
-              _requireMap(frame['detail'], 'detail'),
-            ),
-            promptBlob: frame['promptBlob'] is Map<String, dynamic>
-                ? TrajectoryPromptBlob.fromJson(
-                    frame['promptBlob'] as Map<String, dynamic>,
-                  )
-                : null,
-            manifestBlob: frame['manifestBlob'] is Map<String, dynamic>
-                ? TrajectoryToolManifestBlob.fromJson(
-                    frame['manifestBlob'] as Map<String, dynamic>,
-                  )
-                : null,
-            rawWireDump: frame['rawWireDump'] as String?,
-          ),
-          frame,
-        );
-      case 'tool_pairing_repair':
-        return KnownWireEvent(
-          ToolPairingRepairEvent(
-            report: _decodeRepairReport(
-              _requireMap(frame['report'], 'report'),
-            ),
-            providerError: frame['providerError'] as String?,
-          ),
-          frame,
-        );
-      case 'approval_request':
-        return _decodeApprovalRequest(frame);
-      case 'ask_request':
-        return _decodeAskRequest(frame);
-      case 'secret_request':
-        return _decodeSecretRequest(frame);
-      case 'unknown_event':
-        return UnknownWireEvent(
-          frame['originalKind'] is String
-              ? frame['originalKind'] as String
-              : '<unnamed>',
-          frame,
-        );
-      default:
-        // Forward-compat passthrough (E3): unknown kinds keep the run alive.
-        return UnknownWireEvent(kind, frame);
-    }
+    _requireFrameVersion(frame, 'event');
+    final kind = _requireFrameKind(frame, 'event');
+    final decoder = _eventDecoders[kind];
+    if (decoder != null) return decoder(frame);
+    if (kind == 'unknown_event') return _decodeUnknownEvent(frame);
+    // Forward-compat passthrough (E3): unknown kinds keep the run alive.
+    return UnknownWireEvent(kind, frame);
   }
 
-  RequestWireEvent _decodeApprovalRequest(Map<String, dynamic> frame) {
+  static KnownWireEvent _decodeAgentStart(Map<String, dynamic> frame) =>
+      KnownWireEvent(const AgentStartEvent(), frame);
+
+  static KnownWireEvent _decodeAgentSettled(Map<String, dynamic> frame) =>
+      KnownWireEvent(const AgentSettledEvent(), frame);
+
+  static KnownWireEvent _decodeTurnStart(Map<String, dynamic> frame) =>
+      KnownWireEvent(const TurnStartEvent(), frame);
+
+  static KnownWireEvent _decodeAgentEnd(Map<String, dynamic> frame) =>
+      KnownWireEvent(AgentEndEvent(_requireMessageList(frame)), frame);
+
+  static KnownWireEvent _decodeTurnEnd(Map<String, dynamic> frame) {
+    _requireKind(frame, 'turn_end');
+    return KnownWireEvent(
+      TurnEndEvent(
+        message: _requireAssistant(frame['message'], 'turn_end'),
+        toolResults: [
+          for (final raw
+              in _requireList(frame['toolResults'], 'turn_end.toolResults'))
+            ToolResultMessage.fromJson(_requireMap(raw, 'toolResults[]')),
+        ],
+      ),
+      frame,
+    );
+  }
+
+  static KnownWireEvent _decodeMessageStart(Map<String, dynamic> frame) =>
+      KnownWireEvent(
+        MessageStartEvent(
+          messageFromJson(
+            _requireMap(frame['message'], 'message_start.message'),
+          ),
+        ),
+        frame,
+      );
+
+  static KnownWireEvent _decodeMessageEnd(Map<String, dynamic> frame) =>
+      KnownWireEvent(
+        MessageEndEvent(
+          messageFromJson(
+            _requireMap(frame['message'], 'message_end.message'),
+          ),
+        ),
+        frame,
+      );
+
+  static KnownWireEvent _decodeMessageUpdate(Map<String, dynamic> frame) {
+    _requireKind(frame, 'message_update');
+    final message = _requireAssistant(frame['message'], 'message_update');
+    return KnownWireEvent(
+      MessageUpdateEvent(
+        message: message,
+        assistantMessageEvent: _decodeAssistantEvent(
+          _requireMap(frame['event'], 'message_update.event'),
+          partial: message,
+        ),
+      ),
+      frame,
+    );
+  }
+
+  static KnownWireEvent _decodeToolExecutionStart(Map<String, dynamic> frame) {
+    _requireKind(frame, 'tool_execution_start');
+    return KnownWireEvent(
+      ToolExecutionStartEvent(
+        toolCallId: _requireString(frame['toolCallId'], 'toolCallId'),
+        toolName: _requireString(frame['toolName'], 'toolName'),
+        args: _requireMap(frame['args'], 'args'),
+        timestamp: DateTime.fromMillisecondsSinceEpoch(
+          _requireInt(frame['timestamp'], 'timestamp'),
+        ),
+      ),
+      frame,
+    );
+  }
+
+  static KnownWireEvent _decodeToolExecutionUpdate(Map<String, dynamic> frame) {
+    _requireKind(frame, 'tool_execution_update');
+    return KnownWireEvent(
+      ToolExecutionUpdateEvent(
+        toolCallId: _requireString(frame['toolCallId'], 'toolCallId'),
+        toolName: _requireString(frame['toolName'], 'toolName'),
+        args: _requireMap(frame['args'], 'args'),
+        partialResult: _decodeToolResult(
+          _requireMap(frame['partialResult'], 'partialResult'),
+        ),
+      ),
+      frame,
+    );
+  }
+
+  static KnownWireEvent _decodeToolExecutionEnd(Map<String, dynamic> frame) {
+    _requireKind(frame, 'tool_execution_end');
+    return KnownWireEvent(
+      ToolExecutionEndEvent(
+        toolCallId: _requireString(frame['toolCallId'], 'toolCallId'),
+        toolName: _requireString(frame['toolName'], 'toolName'),
+        result: _decodeToolResult(_requireMap(frame['result'], 'result')),
+        isError: _requireBool(frame['isError'], 'isError'),
+      ),
+      frame,
+    );
+  }
+
+  static KnownWireEvent _decodeModelRequest(Map<String, dynamic> frame) {
+    _requireKind(frame, 'model_request');
+    return KnownWireEvent(
+      ModelRequestEvent(
+        detail: TrajectoryRequestDetail.fromJson(
+          _requireMap(frame['detail'], 'detail'),
+        ),
+        promptBlob: _optionalBlob(
+          frame['promptBlob'],
+          TrajectoryPromptBlob.fromJson,
+        ),
+        manifestBlob: _optionalBlob(
+          frame['manifestBlob'],
+          TrajectoryToolManifestBlob.fromJson,
+        ),
+        rawWireDump: frame['rawWireDump'] as String?,
+      ),
+      frame,
+    );
+  }
+
+  /// Optional blob field: present-and-object decodes, anything else is
+  /// absent (additive tolerance on optional payload fields).
+  static T? _optionalBlob<T>(
+    Object? raw,
+    T Function(Map<String, dynamic> json) fromJson,
+  ) => raw is Map<String, dynamic> ? fromJson(raw) : null;
+
+  static KnownWireEvent _decodeToolPairingRepair(Map<String, dynamic> frame) {
+    _requireKind(frame, 'tool_pairing_repair');
+    return KnownWireEvent(
+      ToolPairingRepairEvent(
+        report: _decodeRepairReport(_requireMap(frame['report'], 'report')),
+        providerError: frame['providerError'] as String?,
+      ),
+      frame,
+    );
+  }
+
+  static UnknownWireEvent _decodeUnknownEvent(Map<String, dynamic> frame) =>
+      UnknownWireEvent(
+        frame['originalKind'] is String
+            ? frame['originalKind'] as String
+            : '<unnamed>',
+        frame,
+      );
+
+  static RequestWireEvent _decodeApprovalRequest(Map<String, dynamic> frame) {
     _requireKind(frame, 'approval_request');
     return RequestWireEvent(
       kind: 'approval_request',
@@ -688,7 +727,7 @@ class AgentWireProtocol {
     );
   }
 
-  RequestWireEvent _decodeAskRequest(Map<String, dynamic> frame) {
+  static RequestWireEvent _decodeAskRequest(Map<String, dynamic> frame) {
     _requireKind(frame, 'ask_request');
     return RequestWireEvent(
       kind: 'ask_request',
@@ -702,7 +741,7 @@ class AgentWireProtocol {
     );
   }
 
-  RequestWireEvent _decodeSecretRequest(Map<String, dynamic> frame) {
+  static RequestWireEvent _decodeSecretRequest(Map<String, dynamic> frame) {
     _requireKind(frame, 'secret_request');
     return RequestWireEvent(
       kind: 'secret_request',
@@ -760,72 +799,92 @@ class AgentWireProtocol {
   Map<String, dynamic> encodeCommand(WireCommand command) =>
       command.toJson(version: version);
 
+  /// Per-kind command decoders — same table-driven seam as events.
+  static final Map<String, WireCommand Function(Map<String, dynamic>)>
+  _commandDecoders = {
+    'prompt': _decodePromptCommand,
+    'steer': _decodeSteerCommand,
+    'abort': _decodeAbortCommand,
+    'approval_response': _decodeApprovalResponse,
+    'ask_response': _decodeAskResponse,
+    'secret_response': _decodeSecretResponse,
+    'session_control': _decodeSessionControl,
+  };
+
   /// Decodes a command frame. Unknown kinds return [WireUnknownCommand];
   /// malformed known frames throw [WireProtocolException].
   WireCommand decodeCommand(Map<String, dynamic> frame) {
-    final frameVersion = frame['v'];
-    if (frameVersion is! int || !supportedWireVersions.contains(frameVersion)) {
-      throw WireProtocolException(
-        'command frame carries unsupported version $frameVersion',
-      );
-    }
-    switch (frame['kind']) {
-      case 'prompt':
-        return WirePromptCommand(
-          _requireString(frame['text'], 'prompt.text'),
-        );
-      case 'steer':
-        return WireSteerCommand(
-          _requireString(frame['text'], 'steer.text'),
-        );
-      case 'abort':
-        return const WireAbortCommand();
-      case 'approval_response':
-        return WireApprovalResponseCommand(
-          id: _requireString(frame['id'], 'approval_response.id'),
-          decision: _decodeDecision(
-            _requireString(frame['decision'], 'approval_response.decision'),
-          ),
-        );
-      case 'ask_response':
-        final cancelled = _requireBool(frame['cancelled'], 'ask_response.cancelled');
-        return WireAskResponseCommand(
-          id: _requireString(frame['id'], 'ask_response.id'),
-          answers: cancelled
-              ? null
-              : [
-                  for (final raw
-                      in _requireList(frame['answers'], 'ask_response.answers'))
-                    _decodeAnswer(_requireMap(raw, 'answers[]')),
-                ],
-        );
-      case 'secret_response':
-        final granted = _requireBool(frame['granted'], 'secret_response.granted');
-        return WireSecretResponseCommand(
-          id: _requireString(frame['id'], 'secret_response.id'),
-          result: granted
-              ? RequestSecretResult(
-                  name: _requireString(frame['name'], 'secret_response.name'),
-                  // E4: stays SECRET-class through every decode.
-                  value: _requireString(frame['value'], 'secret_response.value'),
-                  persisted:
-                      _requireBool(frame['persisted'], 'secret_response.persisted'),
-                )
-              : null,
-        );
-      case 'session_control':
-        return WireSessionControlCommand(
-          op: _requireString(frame['op'], 'session_control.op'),
-          params: frame['params'] is Map<String, dynamic>
-              ? frame['params'] as Map<String, dynamic>
-              : const {},
-        );
-      case null:
-      case '':
-        throw WireProtocolException('command frame is missing its kind');
-      default:
-        return WireUnknownCommand(kind: frame['kind'] as String, raw: frame);
-    }
+    _requireFrameVersion(frame, 'command');
+    final kind = _requireFrameKind(frame, 'command');
+    final decoder = _commandDecoders[kind];
+    if (decoder != null) return decoder(frame);
+    return WireUnknownCommand(kind: kind, raw: frame);
+  }
+
+  static WireCommand _decodePromptCommand(Map<String, dynamic> frame) =>
+      WirePromptCommand(_requireString(frame['text'], 'prompt.text'));
+
+  static WireCommand _decodeSteerCommand(Map<String, dynamic> frame) =>
+      WireSteerCommand(_requireString(frame['text'], 'steer.text'));
+
+  static WireCommand _decodeAbortCommand(Map<String, dynamic> frame) =>
+      const WireAbortCommand();
+
+  static WireCommand _decodeApprovalResponse(Map<String, dynamic> frame) {
+    _requireKind(frame, 'approval_response');
+    return WireApprovalResponseCommand(
+      id: _requireString(frame['id'], 'approval_response.id'),
+      decision: _decodeDecision(
+        _requireString(frame['decision'], 'approval_response.decision'),
+      ),
+    );
+  }
+
+  static WireCommand _decodeAskResponse(Map<String, dynamic> frame) {
+    _requireKind(frame, 'ask_response');
+    final cancelled = _requireBool(
+      frame['cancelled'],
+      'ask_response.cancelled',
+    );
+    return WireAskResponseCommand(
+      id: _requireString(frame['id'], 'ask_response.id'),
+      answers: cancelled
+          ? null
+          : [
+              for (final raw
+                  in _requireList(frame['answers'], 'ask_response.answers'))
+                _decodeAnswer(_requireMap(raw, 'answers[]')),
+            ],
+    );
+  }
+
+  static WireCommand _decodeSecretResponse(Map<String, dynamic> frame) {
+    _requireKind(frame, 'secret_response');
+    final granted = _requireBool(frame['granted'], 'secret_response.granted');
+    return WireSecretResponseCommand(
+      id: _requireString(frame['id'], 'secret_response.id'),
+      result: granted
+          ? RequestSecretResult(
+              name: _requireString(frame['name'], 'secret_response.name'),
+              // E4: stays SECRET-class through every decode.
+              value: _requireString(frame['value'], 'secret_response.value'),
+              persisted: _requireBool(
+                frame['persisted'],
+                'secret_response.persisted',
+              ),
+            )
+          : null,
+    );
+  }
+
+  static WireCommand _decodeSessionControl(Map<String, dynamic> frame) {
+    _requireKind(frame, 'session_control');
+    return WireSessionControlCommand(
+      op: _requireString(frame['op'], 'session_control.op'),
+      params: frame['params'] is Map<String, dynamic>
+          ? frame['params'] as Map<String, dynamic>
+          : const {},
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -908,7 +967,7 @@ class AgentWireProtocol {
     ToolPairingRepairEvent() => 'tool_pairing_repair',
   };
 
-  AssistantMessageEvent _decodeAssistantEvent(
+  static AssistantMessageEvent _decodeAssistantEvent(
     Map<String, dynamic> encoded, {
     required AssistantMessage partial,
   }) {
@@ -1085,6 +1144,26 @@ class AgentWireProtocol {
     }
   }
 
+  /// Base-frame guard shared by every decoder: the frame must carry a
+  /// version this library speaks.
+  static void _requireFrameVersion(Map<String, dynamic> frame, String what) {
+    final frameVersion = frame['v'];
+    if (frameVersion is! int || !supportedWireVersions.contains(frameVersion)) {
+      throw WireProtocolException(
+        '$what frame carries unsupported version $frameVersion',
+      );
+    }
+  }
+
+  /// Base-frame guard shared by every decoder: the frame must name its kind.
+  static String _requireFrameKind(Map<String, dynamic> frame, String what) {
+    final kind = frame['kind'];
+    if (kind is! String || kind.isEmpty) {
+      throw WireProtocolException('$what frame is missing its kind');
+    }
+    return kind;
+  }
+
   static String _requireString(Object? value, String field) {
     if (value is String && value.isNotEmpty) return value;
     throw WireProtocolException('field "$field" must be a non-empty string');
@@ -1118,10 +1197,10 @@ class AgentWireProtocol {
     return AssistantMessage.fromJson(map);
   }
 
-  static List<Message> _requireMessageList(Map<String, dynamic> frame, String field) {
+  static List<Message> _requireMessageList(Map<String, dynamic> frame) {
     final raw = frame['messages'];
     if (raw is! List) {
-      throw WireProtocolException('field "$field.messages" must be an array');
+      throw WireProtocolException('field "agent_end.messages" must be an array');
     }
     return [
       for (final message in raw) messageFromJson(_requireMap(message, 'messages[]')),
