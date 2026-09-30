@@ -567,6 +567,10 @@ class AgentWireProtocol {
       return UnknownWireEvent(kind, frame);
     } on TypeError catch (error) {
       throw WireProtocolException('malformed "$kind" event frame: $error');
+    } on FormatException catch (error) {
+      // Nested fromJson layers signal malformed payloads as FormatException
+      // (e.g. an unknown message role) — surface the declared type.
+      throw WireProtocolException('malformed "$kind" event frame: $error');
     }
   }
 
@@ -719,6 +723,22 @@ class AgentWireProtocol {
     throw WireProtocolException('field "$field" must be a string');
   }
 
+  /// Optional int field: absent stays null, ints decode, anything else is
+  /// loud.
+  static int? _optionalInt(Object? raw, String field) {
+    if (raw == null) return null;
+    if (raw is int) return raw;
+    throw WireProtocolException('field "$field" must be an integer');
+  }
+
+  /// Optional list field: absent stays an empty list, lists decode,
+  /// anything else is loud.
+  static List<dynamic> _optionalList(Object? raw, String field) {
+    if (raw == null) return const [];
+    if (raw is List) return raw;
+    throw WireProtocolException('field "$field" must be an array');
+  }
+
   static KnownWireEvent _decodeToolPairingRepair(Map<String, dynamic> frame) {
     _requireKind(frame, 'tool_pairing_repair');
     return KnownWireEvent(
@@ -850,6 +870,8 @@ class AgentWireProtocol {
       return WireUnknownCommand(kind: kind, raw: frame);
     } on TypeError catch (error) {
       throw WireProtocolException('malformed "$kind" command frame: $error');
+    } on FormatException catch (error) {
+      throw WireProtocolException('malformed "$kind" command frame: $error');
     }
   }
 
@@ -938,9 +960,12 @@ class AgentWireProtocol {
   /// under `rateLimit` inside a message.
   static const Set<String> _secretFieldNamesAnywhere = {'rawBody'};
 
-  /// Whether [field] of frame kind [kind] is SECRET-class (E4).
+  /// Whether [field] of frame kind [kind] is SECRET-class (E4). The
+  /// anywhere-rule is NOT dead for registry kinds: a `rawBody` under
+  /// `secret_response` must still be marked, so the registry check and
+  /// the anywhere-rule OR together (?? would fall through on `false`).
   static bool isSecretField(String kind, String field) =>
-      _secretFieldsByKind[kind]?.contains(field) ??
+      (_secretFieldsByKind[kind]?.contains(field) ?? false) ||
       _secretFieldNamesAnywhere.contains(field);
 
   /// A message as it may appear ON the wire. E4: diagnostics-only secret
@@ -1150,29 +1175,49 @@ class AgentWireProtocol {
 
   static AskQuestion _decodeQuestion(Map<String, dynamic> encoded) =>
       AskQuestion(
-        question: encoded['question'] as String? ?? '',
+        question: _requireString(
+          encoded['question'],
+          'ask_request.questions[].question',
+        ),
         options: [
-          for (final raw in (encoded['options'] as List?) ?? const <dynamic>[])
+          for (final raw in _requireList(
+            encoded['options'],
+            'ask_request.questions[].options',
+          ))
             _decodeOption(_requireMap(raw, 'options[]')),
         ],
-        multiSelect: encoded['multiSelect'] as bool? ?? false,
-        recommended: encoded['recommended'] is int
-            ? encoded['recommended'] as int
-            : null,
+        multiSelect: _requireBool(
+          encoded['multiSelect'],
+          'ask_request.questions[].multiSelect',
+        ),
+        recommended: _optionalInt(
+          encoded['recommended'],
+          'ask_request.questions[].recommended',
+        ),
       );
 
   static AskOption _decodeOption(Map<String, dynamic> encoded) => AskOption(
-    label: encoded['label'] as String? ?? '',
-    description: encoded['description'] as String?,
+    label: _requireString(encoded['label'], 'ask_request.options[].label'),
+    description: _optionalString(
+      encoded['description'],
+      'ask_request.options[].description',
+    ),
   );
 
   static AskAnswer _decodeAnswer(Map<String, dynamic> encoded) => AskAnswer(
+    // The encoder omits `selected` for freeText-only answers - absent is
+    // the domain default (empty), wrong-typed is loud.
     selected: [
-      for (final label
-          in (encoded['selected'] as List?) ?? const <dynamic>[])
+      for (final label in _optionalList(
+        encoded['selected'],
+        'ask_response.answers[].selected',
+      ))
         label as String,
     ],
-    freeText: encoded['freeText'] as String?,
+    freeText: _optionalString(
+      encoded['freeText'],
+      'ask_response.answers[].freeText',
+    ),
   );
 
   static ApprovalTier _decodeTier(String name) =>

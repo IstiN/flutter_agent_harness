@@ -373,6 +373,9 @@ void main() {
       expect(AgentWireProtocol.isSecretField('secret_response', 'value'), isTrue);
       expect(AgentWireProtocol.isSecretField('model_request', 'rawWireDump'), isTrue);
       expect(AgentWireProtocol.isSecretField('message_end', 'rawBody'), isTrue);
+      // The anywhere-rule is NOT dead for registry kinds: a rawBody under
+      // secret_response must still be marked (?? fell through on false).
+      expect(AgentWireProtocol.isSecretField('secret_response', 'rawBody'), isTrue);
       expect(AgentWireProtocol.isSecretField('secret_response', 'name'), isFalse);
       expect(AgentWireProtocol.isSecretField('prompt', 'text'), isFalse);
     });
@@ -577,6 +580,96 @@ void main() {
           'event': {
             ...(textDelta['event'] as Map<String, dynamic>),
           }..remove('contentIndex'),
+        }),
+        throwsA(isA<WireProtocolException>()),
+      );
+    });
+
+    test('nested FormatException surfaces as the declared type', () {
+      final protocol = AgentWireProtocol();
+      // messageFromJson throws FormatException on an unknown role - it
+      // must not escape decodeEvent raw.
+      final agentEnd = fixtureFor(eventFixturesDir, 'agent_end').frame;
+      expect(
+        () => protocol.decodeEvent({
+          ...agentEnd,
+          'messages': [
+            {'role': 'martian', 'content': []},
+          ],
+        }),
+        throwsA(isA<WireProtocolException>()),
+      );
+    });
+
+    test('ask decoders are loud on missing keys', () {
+      final protocol = AgentWireProtocol();
+      final askRequest = fixtureFor(eventFixturesDir, 'ask_request').frame;
+      Map<String, dynamic> clobbered(Map<String, dynamic> question) => {
+        ...askRequest,
+        'questions': [question],
+      };
+      // Missing question text silently becoming '' hid producer bugs.
+      expect(
+        () => protocol.decodeEvent(clobbered({
+          'options': [
+            {'label': 'SQLite'},
+          ],
+          'multiSelect': false,
+        })),
+        throwsA(isA<WireProtocolException>()),
+      );
+      // Missing options silently becoming [] did too.
+      expect(
+        () => protocol.decodeEvent(clobbered({
+          'question': 'Which database?',
+          'multiSelect': false,
+        })),
+        throwsA(isA<WireProtocolException>()),
+      );
+      // Missing multiSelect silently becoming false did too.
+      expect(
+        () => protocol.decodeEvent(clobbered({
+          'question': 'Which database?',
+          'options': [
+            {'label': 'SQLite'},
+          ],
+        })),
+        throwsA(isA<WireProtocolException>()),
+      );
+      // An option without a label is malformed, not an empty label.
+      expect(
+        () => protocol.decodeEvent(clobbered({
+          'question': 'Which database?',
+          'options': [
+            {'description': 'no label here'},
+          ],
+          'multiSelect': false,
+        })),
+        throwsA(isA<WireProtocolException>()),
+      );
+      // Same philosophy for answers, but `selected` is absent-legal: the
+      // encoder omits it for freeText-only answers, so a missing key is
+      // the empty default while a WRONG-TYPED key is loud.
+      final askResponse = fixtureFor(commandFixturesDir, 'ask_response').frame;
+      final freeTextOnly = protocol.decodeCommand({
+        ...askResponse,
+        'cancelled': false,
+        'answers': [
+          {'freeText': 'postgres'},
+        ],
+      });
+      expect(freeTextOnly, isA<WireAskResponseCommand>());
+      expect(
+        (freeTextOnly as WireAskResponseCommand).answers?.single.selected,
+        isEmpty,
+      );
+      expect(
+        () => protocol.decodeCommand({
+          ...askResponse,
+          'cancelled': false,
+          'answers': [
+            {'selected': 'postgres'},
+          ],
         }),
         throwsA(isA<WireProtocolException>()),
       );
