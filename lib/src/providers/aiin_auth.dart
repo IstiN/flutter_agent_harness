@@ -25,6 +25,7 @@ library;
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:flutter_agent_harness/src/providers/provider_common.dart';
 import 'package:http/http.dart' as http;
 
 /// The production AIIN auth service (sign-in, OAuth proxy flow).
@@ -409,9 +410,14 @@ Future<http.Response> _postOrGet({
   }
   request.headers.addAll(headers);
   try {
-    final response = await (client ?? http.Client()).send(request);
-    // Await the stream so socket errors land in the catch below.
-    return await http.Response.fromStream(response);
+    // Issue #1036: this path had NO timeout — a wedged auth endpoint hung
+    // the session (and the watchdog-resume re-entered the same hang).
+    final response = await sendProviderFetch(
+      client ?? http.Client(),
+      request,
+      endpoint: 'aiin auth (${url.host})',
+    );
+    return response;
   } on Object catch (error) {
     throw AiinAuthException(
       'AIIN request to ${url.host} failed: $error',

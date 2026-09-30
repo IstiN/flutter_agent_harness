@@ -317,7 +317,19 @@ final class _ChatGptCodexSession {
         ...?model.headers,
       })
       ..body = jsonEncode(_requestBody());
-    final response = await client.send(request);
+    // Issue #1036: this send had NO watchdog — a wedged endpoint hung the
+    // turn (and the resume re-entered the same hang). Same connect bound
+    // as _sendWatched; the SSE consumption below keeps its own pacing.
+    final response = await client
+        .send(request)
+        .timeout(
+          effectiveProviderConnectTimeout,
+          onTimeout: () => throw TimeoutException(
+            'chatgpt-codex $_endpoint timed out: no response headers within '
+            '${effectiveProviderConnectTimeout.inSeconds}s '
+            '(connect watchdog)',
+          ),
+        );
     // Cloudflare sets its cookies even on error responses — store always.
     _cookies.store(uri, response.headers);
     return response;

@@ -67,6 +67,35 @@ ProviderTimeoutsOverride? parseProviderTimeouts(Object? node) {
   return ProviderTimeoutsOverride(connect: connect, streamIdle: streamIdle);
 }
 
+/// Folds the `FA_PROVIDER_TIMEOUT_SECONDS` env override (issue #1036) into
+/// [base]: a positive integer number of seconds bounding every
+/// NON-streaming provider fetch (model lists, OAuth/token endpoints, quota
+/// probes) — [ProviderTimeoutsOverride.fetchRead].
+///
+/// Resolution order (one, documented): **env wins over the yaml section,
+/// both over the defaults** — a CI runner (the issue's leg 36353318722)
+/// tightens the bound at boot without editing `~/.fah/config.yaml`. Blank /
+/// unset keeps [base] as-is; any other invalid value throws
+/// [ConfigException] naming the env var, like every other `FA_*` input.
+ProviderTimeoutsOverride? applyProviderTimeoutEnvOverride(
+  ProviderTimeoutsOverride? base,
+  String? raw,
+) {
+  if (raw == null || raw.trim().isEmpty) return base;
+  final seconds = int.tryParse(raw.trim());
+  if (seconds == null || seconds <= 0) {
+    throw ConfigException(
+      'FA_PROVIDER_TIMEOUT_SECONDS must be a positive integer of seconds, '
+      'got: "$raw"',
+    );
+  }
+  return ProviderTimeoutsOverride(
+    connect: base?.connect,
+    streamIdle: base?.streamIdle,
+    fetchRead: Duration(seconds: seconds),
+  );
+}
+
 /// Parses the `trajectory:` section (issue #385): today only the
 /// `wireDump` boolean. Unknown keys are strict errors (a typo must never
 /// silently skip the opt-in).

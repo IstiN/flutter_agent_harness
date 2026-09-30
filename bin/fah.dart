@@ -1337,8 +1337,17 @@ Future<void> _runApp(List<String> args) async {
     _fail('invalid ~/.fah/config.yaml: ${error.message}');
   }
   // Provider watchdog overrides (`providerTimeouts:` section): process-wide,
-  // read by the adapters' connect/idle watchdogs on every request.
-  providerTimeoutsOverride = saved.providerTimeouts;
+  // read by the adapters' connect/idle watchdogs on every request. The
+  // FA_PROVIDER_TIMEOUT_SECONDS env value folds in over the section
+  // (issue #1036: non-streaming fetch bound; env wins for CI runners).
+  try {
+    providerTimeoutsOverride = applyProviderTimeoutEnvOverride(
+      saved.providerTimeouts,
+      Platform.environment['FA_PROVIDER_TIMEOUT_SECONDS'],
+    );
+  } on ConfigException catch (error) {
+    _fail(error.message);
+  }
   // Session image registry (`images:` section, issue #171): process-wide,
   // read inside the agent loop's request build. Default: on.
   imageRegistryConfig = saved.images ?? const ImageRegistryConfig();

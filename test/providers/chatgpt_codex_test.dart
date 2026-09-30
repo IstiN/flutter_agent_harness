@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -1122,5 +1123,33 @@ void main() {
       expect(error.retryAfter, const Duration(minutes: 2));
       expect(error.error.rateLimit?.retryAfter, const Duration(minutes: 2));
     });
+
+    test(
+      'a /responses send that never completes errors fast with a timeout '
+      'naming the endpoint instead of hanging (issue #1036)',
+      timeout: const Timeout(Duration(seconds: 20)),
+      () async {
+        addTearDown(() => providerTimeoutsOverride = null);
+        providerTimeoutsOverride = const ProviderTimeoutsOverride(
+          connect: Duration(milliseconds: 150),
+        );
+        // The send future never completes — a wedged endpoint.
+        final client = http_testing.MockClient.streaming(
+          (request, requestBody) => Completer<http.StreamedResponse>().future,
+        );
+        final events = await streamChatGptCodex(
+          chatGptModel,
+          simpleContext(),
+          credentials: credentials.encode(),
+          client: client,
+        ).toList();
+
+        final error = events.whereType<ErrorEvent>().single;
+        expect(
+          error.error.errorMessage,
+          allOf(contains('timed out'), contains('/responses')),
+        );
+      },
+    );
   });
 }

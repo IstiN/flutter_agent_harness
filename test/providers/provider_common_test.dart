@@ -1,4 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart' as http_testing;
 import 'package:test/test.dart';
 
 void main() {
@@ -248,6 +252,112 @@ void main() {
         () => downgradeUnsupportedImages([imageTurn()], textOnly),
         returnsNormally,
       );
+    });
+  });
+
+  group('sendProviderFetch watchdogs (issue #1036)', () {
+    tearDown(() => providerTimeoutsOverride = null);
+
+    test('defaults: 30s connect (capped by the read budget), 120s read', () {
+      expect(providerFetchConnectTimeout, const Duration(seconds: 30));
+      expect(providerFetchReadTimeout, const Duration(seconds: 120));
+      expect(effectiveProviderFetchReadTimeout, const Duration(seconds: 120));
+      // The connect leg never exceeds the overall fetch budget.
+      expect(
+        effectiveProviderFetchConnectTimeout,
+        const Duration(seconds: 30),
+      );
+      providerTimeoutsOverride = const ProviderTimeoutsOverride(
+        fetchRead: Duration(seconds: 10),
+      );
+      expect(effectiveProviderFetchReadTimeout, const Duration(seconds: 10));
+      expect(effectiveProviderFetchConnectTimeout, const Duration(seconds: 10));
+    });
+
+    test(
+      'a send that never completes fails with a connect TimeoutException '
+      'naming the endpoint',
+      timeout: const Timeout(Duration(seconds: 20)),
+      () async {
+        providerTimeoutsOverride = const ProviderTimeoutsOverride(
+          fetchRead: Duration(milliseconds: 150),
+        );
+        final client = http_testing.MockClient(
+          (_) => Completer<http.Response>().future,
+        );
+        await expectLater(
+          sendProviderFetch(
+            client,
+            http.Request('GET', Uri.parse('https://quota.example.com/v1/limit')),
+            endpoint: 'provider quota probe',
+          ),
+          throwsA(
+            isA<TimeoutException>().having(
+              (e) => e.message,
+              'message',
+              allOf(contains('provider quota probe'), contains('connect')),
+            ),
+          ),
+        );
+      },
+    );
+
+    test(
+      'a body that never completes fails with a read TimeoutException '
+      'naming the endpoint and the env override',
+      timeout: const Timeout(Duration(seconds: 20)),
+      () async {
+        providerTimeoutsOverride = const ProviderTimeoutsOverride(
+          fetchRead: Duration(milliseconds: 150),
+        );
+        // Headers arrive instantly; the body stream never emits a byte
+        // and never closes.
+        final neverBody = StreamController<List<int>>();
+        final client = http_testing.MockClient.streaming((request, body) async {
+          return http.StreamedResponse(neverBody.stream, 200);
+        });
+        await expectLater(
+          sendProviderFetch(
+            client,
+            http.Request('GET', Uri.parse('https://api.example.com/v1/models')),
+            endpoint: 'models list',
+          ),
+          throwsA(
+            isA<TimeoutException>().having(
+              (e) => e.message,
+              'message',
+              allOf(
+                contains('models list'),
+                contains('read'),
+                contains('FA_PROVIDER_TIMEOUT_SECONDS'),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    test('a fast endpoint passes straight through', () async {
+      final client = http_testing.MockClient(
+        (_) async => http.Response('{"ok":true}', 200),
+      );
+      final response = await sendProviderFetch(
+        client,
+        http.Request('GET', Uri.parse('https://api.example.com/v1/models')),
+        endpoint: 'models list',
+      );
+      expect(response.statusCode, 200);
+      expect(response.body, '{"ok":true}');
+    });
+
+    test('formatProviderError renders a bare TimeoutException message', () {
+      final msg = formatProviderError(
+        TimeoutException(
+          'provider fetch (models list): no response headers within 30s',
+        ),
+      );
+      expect(msg, contains('models list'));
+      expect(msg, isNot(contains('TimeoutException:')));
     });
   });
 }

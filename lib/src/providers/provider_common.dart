@@ -334,6 +334,11 @@ String formatProviderError(Object error) {
   if (error is http.ClientException) {
     return error.message;
   }
+  // Issue #1036: a watchdog timeout carries its own diagnostic (endpoint
+  // class + which leg) — render the message, not the exception wrapper.
+  if (error is TimeoutException) {
+    return error.message ?? 'provider request timed out';
+  }
   if (error is StateError) {
     return error.message;
   }
@@ -643,16 +648,26 @@ const providerStreamIdleTimeout = Duration(minutes: 5);
 
 /// Provider watchdog overrides from the `providerTimeouts:` section of
 /// `~/.fah/config.yaml` (strict [ConfigException] parsing in
-/// `cli_config.dart`).
+/// `cli_config.dart`) plus the `FA_PROVIDER_TIMEOUT_SECONDS` env override
+/// folded in at boot (issue #1036).
 final class ProviderTimeoutsOverride {
   /// Creates an override; null fields keep the defaults.
-  const ProviderTimeoutsOverride({this.connect, this.streamIdle});
+  const ProviderTimeoutsOverride({
+    this.connect,
+    this.streamIdle,
+    this.fetchRead,
+  });
 
   /// Connect/first-headers watchdog override ([providerConnectTimeout]).
   final Duration? connect;
 
   /// Idle-stream watchdog override ([providerStreamIdleTimeout]).
   final Duration? streamIdle;
+
+  /// Non-streaming fetch watchdog override ([providerFetchReadTimeout]) —
+  /// the `FA_PROVIDER_TIMEOUT_SECONDS` env value; the yaml section has no
+  /// key for it by design.
+  final Duration? fetchRead;
 }
 
 /// Process-wide watchdog override, set once at startup from the config file
@@ -691,6 +706,65 @@ Duration get effectiveProviderConnectTimeout =>
 /// The effective stream-idle watchdog: the config override or the default.
 Duration get effectiveProviderStreamIdleTimeout =>
     providerTimeoutsOverride?.streamIdle ?? providerStreamIdleTimeout;
+
+/// Connect/first-headers watchdog for NON-streaming provider fetches
+/// (model lists, OAuth/token endpoints, quota probes): an endpoint that
+/// never even answers headers fails fast instead of hanging the session
+/// (issue #1036). Tighter than [providerConnectTimeout] on purpose — a
+/// fetch is small, unlike a streamed generation.
+const providerFetchConnectTimeout = Duration(seconds: 30);
+
+/// Read watchdog for NON-streaming provider fetches: the whole response
+/// (headers already arrived) must complete within this budget. The
+/// `FA_PROVIDER_TIMEOUT_SECONDS` env override (folded into
+/// [ProviderTimeoutsOverride.fetchRead] at boot) replaces this default.
+const providerFetchReadTimeout = Duration(seconds: 120);
+
+/// The effective fetch read watchdog: the override or the default.
+Duration get effectiveProviderFetchReadTimeout =>
+    providerTimeoutsOverride?.fetchRead ?? providerFetchReadTimeout;
+
+/// The effective fetch connect watchdog: the 30s default capped by the
+/// overall read budget — one knob ([effectiveProviderFetchReadTimeout])
+/// tightens both legs.
+Duration get effectiveProviderFetchConnectTimeout {
+  final read = effectiveProviderFetchReadTimeout;
+  return providerFetchConnectTimeout < read ? providerFetchConnectTimeout : read;
+}
+
+/// Sends a NON-streaming provider HTTP request under the fetch watchdogs
+/// (issue #1036): connect/first-headers
+/// ([effectiveProviderFetchConnectTimeout]) then the full body
+/// ([effectiveProviderFetchReadTimeout]). On timeout throws a
+/// [TimeoutException] whose message names [endpoint] — the caller surfaces
+/// a clear, retryable error instead of hanging forever.
+///
+/// This is the bounded counterpart of [_sendWatched] for the call paths
+/// streaming adapters never take. The underlying socket is not force-closed
+/// on timeout (same ceiling as the streaming connect watchdog).
+Future<http.Response> sendProviderFetch(
+  http.Client client,
+  http.BaseRequest request, {
+  String endpoint = 'provider endpoint',
+}) async {
+  final connect = effectiveProviderFetchConnectTimeout;
+  final read = effectiveProviderFetchReadTimeout;
+  final streamed = await client.send(request).timeout(
+    connect,
+    onTimeout: () => throw TimeoutException(
+      'provider fetch ($endpoint): no response headers within '
+      '${connect.inSeconds}s (connect watchdog)',
+    ),
+  );
+  return http.Response.fromStream(streamed).timeout(
+    read,
+    onTimeout: () => throw TimeoutException(
+      'provider fetch ($endpoint): response did not complete within '
+      '${read.inSeconds}s (read watchdog; FA_PROVIDER_TIMEOUT_SECONDS '
+      'overrides this)',
+    ),
+  );
+}
 
 /// Wires an SSE [StreamIterator] over [response]'s body, cancelling the
 /// subscription when [cancelToken] fires so the connection closes promptly.
