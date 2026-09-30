@@ -1494,23 +1494,26 @@ void main() {
       // ...and the composer renders no typing UI at all (issue #459).
     });
 
-    testWidgets('AC2: expanding flips the indicator to the transcript status row; '
-        'collapsing returns it to the bar', (tester) async {
-      final service = await pumpSheet(tester);
-      await startRun(tester, service);
-      expect(find.byKey(orbitKey), findsOneWidget);
+    testWidgets(
+      'AC2: expanding flips the indicator to the transcript status row; '
+      'collapsing returns it to the bar',
+      (tester) async {
+        final service = await pumpSheet(tester);
+        await startRun(tester, service);
+        expect(find.byKey(orbitKey), findsOneWidget);
 
-      await expandPanel(tester);
-      expect(find.byKey(_panelKey), findsOneWidget);
-      expect(find.byKey(orbitKey), findsNothing);
-      expect(find.byKey(statusRowKey), findsOneWidget);
+        await expandPanel(tester);
+        expect(find.byKey(_panelKey), findsOneWidget);
+        expect(find.byKey(orbitKey), findsNothing);
+        expect(find.byKey(statusRowKey), findsOneWidget);
 
-      await collapsePanel(tester);
-      expect(find.byKey(_panelKey), findsNothing);
-      expect(find.byKey(orbitKey), findsOneWidget);
-      expect(find.byKey(statusRowKey), findsNothing);
-      expect(service.isStreaming, isTrue);
-    });
+        await collapsePanel(tester);
+        expect(find.byKey(_panelKey), findsNothing);
+        expect(find.byKey(orbitKey), findsOneWidget);
+        expect(find.byKey(statusRowKey), findsNothing);
+        expect(service.isStreaming, isTrue);
+      },
+    );
 
     testWidgets('AC3: one service-level flag drives both surfaces — the '
         'stream toggles flip rendering exclusively', (tester) async {
@@ -1630,9 +1633,11 @@ void main() {
       // Scroll the row (slot 0, the reversed list's newest end) out of the
       // viewport AND the cache extent — the builder unmounts (or,
       // keep-alive: buckets) its State there.
-      final position = tester.state<ScrollableState>(
-        find.descendant(of: list, matching: find.byType(Scrollable)).first,
-      ).position;
+      final position = tester
+          .state<ScrollableState>(
+            find.descendant(of: list, matching: find.byType(Scrollable)).first,
+          )
+          .position;
       position.jumpTo(1400);
       await tester.pump();
       expect(find.byKey(statusRowKey), findsNothing);

@@ -196,8 +196,10 @@ final class JobsConfig {
         throw ConfigException('"jobs.maxLogBytes" must be an integer');
       }
       if (maxLogBytesValue <= 0) {
-        throw ConfigException('"jobs.maxLogBytes" must be > 0 (a log '
-            'ceiling cannot be disabled — that is the disk-exhaustion bug)');
+        throw ConfigException(
+          '"jobs.maxLogBytes" must be > 0 (a log '
+          'ceiling cannot be disabled — that is the disk-exhaustion bug)',
+        );
       }
     }
     for (final key in node.keys) {

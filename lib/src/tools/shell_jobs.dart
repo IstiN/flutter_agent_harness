@@ -22,6 +22,8 @@ library;
 import 'dart:async';
 import 'dart:math';
 
+import 'package:meta/meta.dart';
+
 import '../env/execution_env.dart';
 import '../env/job_log_ceiling.dart';
 // The boot-sweep process-table probe is VM-only infrastructure (`ps` via
@@ -292,6 +294,7 @@ Future<({int groups, int processes})> reapOrphanJobGroups({
   required ExecutionEnv env,
   required Iterable<int> candidatePids,
   void Function(String message)? onWarn,
+  @visibleForTesting Future<String?> Function()? groupTableOverride,
 }) async {
   const zero = (groups: 0, processes: 0);
   final pids = candidatePids.where((pid) => pid > 1).toSet();
@@ -300,7 +303,7 @@ Future<({int groups, int processes})> reapOrphanJobGroups({
   // command: it bypasses [Shell.exec] (and its decorations) so no
   // phantom `ps` surfaces in the recorded command stream (CI run
   // 35213198081). The `kill` below stays a real shell action.
-  final listed = await processGroupTableSnapshot();
+  final listed = await (groupTableOverride ?? processGroupTableSnapshot)();
   if (listed == null) return zero;
   final livePids = <int>{};
   final groupOf = <int, int>{};

@@ -243,32 +243,38 @@ void main() {
       );
     });
 
-    test('a failing injection tail-caps the embedded output (exit path)', () async {
-      await env.createDir('/work/.claude/skills/bigfail');
-      await env.writeFile(
-        '/work/.claude/skills/bigfail/SKILL.md',
-        '!`bigfail-cmd`\n',
-      );
-      shell.canned['bigfail-cmd'] = ShellExecResult(
-        stdout: 'HEAD-SENTINEL-222${'G' * 5000}TAIL-MARKER-888',
-        stderr: '',
-        exitCode: 2,
-      );
-      await expectLater(
-        renderSkillBody(env, skillAt('/work/.claude/skills/bigfail/SKILL.md')),
-        throwsA(
-          isA<SkillRenderException>().having(
-            (e) => e.message,
-            'message',
-            allOf(
-              contains('TAIL-MARKER-888'),
-              isNot(contains('HEAD-SENTINEL')),
-              hasLength(lessThan(3000)),
+    test(
+      'a failing injection tail-caps the embedded output (exit path)',
+      () async {
+        await env.createDir('/work/.claude/skills/bigfail');
+        await env.writeFile(
+          '/work/.claude/skills/bigfail/SKILL.md',
+          '!`bigfail-cmd`\n',
+        );
+        shell.canned['bigfail-cmd'] = ShellExecResult(
+          stdout: 'HEAD-SENTINEL-222${'G' * 5000}TAIL-MARKER-888',
+          stderr: '',
+          exitCode: 2,
+        );
+        await expectLater(
+          renderSkillBody(
+            env,
+            skillAt('/work/.claude/skills/bigfail/SKILL.md'),
+          ),
+          throwsA(
+            isA<SkillRenderException>().having(
+              (e) => e.message,
+              'message',
+              allOf(
+                contains('TAIL-MARKER-888'),
+                isNot(contains('HEAD-SENTINEL')),
+                hasLength(lessThan(3000)),
+              ),
             ),
           ),
-        ),
-      );
-    });
+        );
+      },
+    );
 
     test('disabled shell execution renders the placeholder', () async {
       await env.createDir('/work/.claude/skills/off');
