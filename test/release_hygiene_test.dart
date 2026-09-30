@@ -234,7 +234,30 @@ case "\$cmd" in
       *) cat "\$GH_STUB_DIR/releases.json" ;;
     esac
     ;;
-  label) : ;;
+  label)
+    case "\$2" in
+      # gh-1134: view succeeds only when the fixture label exists; create
+      # self-heals it (unless label-create-fails is planted) — mirrors real
+      # GitHub: create is idempotent-failure when the label already exists.
+      view) [ -f "\$GH_STUB_DIR/label-exists" ] && exit 0 || exit 1 ;;
+      create)
+        if [ -f "\$GH_STUB_DIR/label-create-fails" ]; then
+          echo "gh: label create failed (stub)" >&2
+          exit 1
+        fi
+        touch "\$GH_STUB_DIR/label-exists" ;;
+      *) : ;;
+    esac
+    ;;
+  pr)
+    case "\$2" in
+      list)
+        if printf '%s' "\$*" | grep -q -- '--state closed'; then echo 0
+        elif printf '%s' "\$*" | grep -q 'headRefName'; then echo 0
+        else cat "\$GH_STUB_DIR/open-pr.txt" 2>/dev/null || true; fi ;;
+      *) : ;;
+    esac
+    ;;
   run) [ "\$2" = "list" ] && cat "\$GH_STUB_DIR/runs.tsv" 2>/dev/null || true ;;
   issue)
     if [ "\$2" = "list" ]; then cat "\$GH_STUB_DIR/issues.tsv" 2>/dev/null || true; exit 0; fi
@@ -285,6 +308,104 @@ exit 0
 ''');
   Process.runSync('chmod', ['+x', '${bin.path}/gh']);
   return bin.path;
+}
+
+class AutoRun {
+  AutoRun(this.exitCode, this.output, this.log);
+  final int exitCode;
+  final String output;
+  final List<String> log;
+}
+
+/// Full behavioral sandbox for scripts/auto_release.sh (gh-1134): a bare
+/// origin whose main carries pubspec 0.1.495 tagged v0.1.495 three hours ago
+/// (past the 2h coalesce window) plus one pending commit, a seed clone the
+/// script runs in, and the stubbed gh. [staleBranch] pushes an older tree to
+/// chore/release-v0.1.496 so the refresh path runs instead of create;
+/// [openPr] is the PR number the stub reports for that branch; [labelExists]
+/// pre-seeds the chore:pin label; [labelCreateWorks]=false makes even
+/// `gh label create` fail (E1's hard case).
+AutoRun runAutoRelease(
+  String name, {
+  bool labelExists = true,
+  bool labelCreateWorks = true,
+  bool staleBranch = false,
+  String? openPr,
+}) {
+  final root = Directory(
+          '${_fixtureRoot.path}/auto-$name-${DateTime.now().microsecondsSinceEpoch}')
+    ..createSync(recursive: true);
+  final origin = '${root.path}/origin.git';
+  final seed = '${root.path}/seed';
+  final bin = stubGh(root.path);
+  // auto_release.sh uses GNU `sed -i` (CI-authored, ubuntu); BSD hosts need
+  // the empty-suffix form — transparent shim, real sed either way.
+  File('$bin/sed').writeAsStringSync('''
+#!/usr/bin/env bash
+if [ "\${1:-}" = "-i" ]; then shift
+  if /usr/bin/sed --version >/dev/null 2>&1; then exec /usr/bin/sed -i "\$@"
+  else exec /usr/bin/sed -i '' "\$@"; fi
+fi
+exec /usr/bin/sed "\$@"
+''');
+  Process.runSync('chmod', ['+x', '$bin/sed']);
+
+  void git(List<String> args, {String? cwd, Map<String, String> env = const {}}) {
+    final r = Process.runSync('git', args,
+        workingDirectory: cwd ?? seed,
+        environment: env,
+        includeParentEnvironment: true);
+    expect(r.exitCode, 0, reason: 'fixture git $args failed: ${r.stderr}');
+  }
+
+  Directory(origin).createSync();
+  git(['init', '-q', '--bare', '-b', 'main', origin], cwd: root.path);
+  git(['clone', '-q', origin, seed], cwd: root.path);
+  git(['config', 'user.email', 't@t']);
+  git(['config', 'user.name', 't']);
+  Directory('$seed/flutter_app').createSync();
+  File('$seed/pubspec.yaml').writeAsStringSync('version: 0.1.495\n');
+  File('$seed/flutter_app/pubspec.yaml').writeAsStringSync('version: 0.1.495+1\n');
+  File('$seed/CHANGELOG.md').writeAsStringSync('# Changelog\n\n## Unreleased\n');
+  git(['add', '-A']);
+  git(['commit', '-q', '-m', 'seed'],
+      env: {
+        'GIT_COMMITTER_DATE':
+            DateTime.now().subtract(const Duration(hours: 3)).secondsSinceEpoch.toString()
+      });
+  git(['tag', 'v0.1.495']);
+  File('$seed/README.md').writeAsStringSync('pending\n');
+  git(['add', '-A']);
+  git(['commit', '-q', '-m', 'pending work']);
+  git(['push', '-q', 'origin', 'main']);
+  if (staleBranch) {
+    final c1 = Process.runSync('git', ['rev-list', '--max-parents=0', 'HEAD'],
+            workingDirectory: seed)
+        .stdout
+        .toString()
+        .trim();
+    git(['push', '-q', 'origin', '$c1:refs/heads/chore/release-v0.1.496']);
+  }
+  if (openPr != null) File('${root.path}/open-pr.txt').writeAsStringSync(openPr);
+  if (labelExists) File('${root.path}/label-exists').writeAsStringSync('');
+  if (!labelCreateWorks) {
+    File('${root.path}/label-create-fails').writeAsStringSync('');
+  }
+  File('${root.path}/log').writeAsStringSync('');
+
+  final res = Process.runSync(
+    'bash',
+    ['${Directory.current.path}/scripts/auto_release.sh'],
+    workingDirectory: seed,
+    environment: {
+      'PATH': '$bin:${Platform.environment['PATH']}',
+      'GH_STUB_DIR': root.path,
+      'GH_LOG_FILE': '${root.path}/log',
+      'GH_TOKEN': 'dummy-stub',
+    },
+  );
+  return AutoRun(res.exitCode, '${res.stdout}${res.stderr}',
+      File('${root.path}/log').readAsLinesSync());
 }
 
 class SweepRun {
@@ -853,6 +974,56 @@ gh release create "v9.9.9" \
     });
   });
 
+  // ── gh-1134 — auto_release.sh labels release PRs chore:pin ──────────────
+  // Behavioral: full sandbox (bare origin + seeded main @ v0.1.495 + stubbed
+  // gh), same stubbed-gh pattern as the draft guard / sweeper tests above.
+  group('gh-1134 — release PRs carry chore:pin (create + refresh self-heal)', () {
+    List<String> calls(AutoRun r, String prefix) =>
+        r.log.where((l) => l.startsWith(prefix)).toList();
+
+    test('AC1: fresh branch — gh pr create carries --label chore:pin', () {
+      final r = runAutoRelease('ac1-create');
+      expect(r.exitCode, 0, reason: r.output);
+      final creates = calls(r, 'gh pr create');
+      expect(creates, hasLength(1), reason: r.log.join('\n'));
+      expect(creates.single, contains('--label chore:pin'));
+      expect(creates.single, contains('--title chore(release): v0.1.496'));
+      expect(creates.single, contains('--head chore/release-v0.1.496'));
+    });
+
+    test('AC2+AC3: refresh adds the label to the open PR; already-labeled stays silent', () {
+      final r = runAutoRelease('ac2-refresh', staleBranch: true, openPr: '12');
+      expect(r.exitCode, 0, reason: r.output);
+      final edits = calls(r, 'gh pr edit');
+      expect(edits, hasLength(1), reason: r.log.join('\n'));
+      expect(edits.single, contains('gh pr edit 12 --add-label chore:pin'));
+      expect(r.output, isNot(contains('WARNING')),
+          reason: 'label present: refresh must not warn (AC3)');
+    });
+
+    test('E1a: label missing — self-heals via gh label create, PR still labeled', () {
+      final r = runAutoRelease('e1a-selfheal', labelExists: false);
+      expect(r.exitCode, 0, reason: r.output);
+      expect(calls(r, 'gh label create'), hasLength(1));
+      final creates = calls(r, 'gh pr create');
+      expect(creates, hasLength(1));
+      expect(creates.single, contains('--label chore:pin'));
+      expect(r.output, isNot(contains('WARNING')));
+    });
+
+    test('E1b: even the label create fails — loud warning, PR still ships unlabeled', () {
+      final r = runAutoRelease('e1b-create-fails',
+          labelExists: false, labelCreateWorks: false);
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.output, contains("WARNING: label 'chore:pin' missing"));
+      final creates = calls(r, 'gh pr create');
+      expect(creates, hasLength(1));
+      expect(creates.single, contains('--head chore/release-v0.1.496'));
+      expect(creates.single, isNot(contains('--label')),
+          reason: 'must not pass --label when the label could not be ensured');
+    });
+  });
+
   // ── AC6 — regression: no "Release v" bodies, atomic flow intact ─────────
   group('AC6 — regression', () {
     test('no "Release vX" filler bodies remain', () {
@@ -882,6 +1053,21 @@ gh release create "v9.9.9" \
       final tagScript = read('scripts/tag_release.sh');
       expect(tagScript, contains(r'git tag -a "$tag"'));
       expect(tagScript, contains(r'git push origin "$tag"'));
+    });
+
+    test('auto_release.sh labels release PRs chore:pin on create and refresh (gh-1134)', () {
+      // PR #1130 shipped with zero labels: no --label anywhere in
+      // auto_release.sh. Pin the real wiring (both paths + the self-heal),
+      // never a script comment — same lesson as the RELEASE_PAT pin above.
+      final auto = read('scripts/auto_release.sh');
+      expect(auto, contains('release_label="chore:pin"'),
+          reason: 'one shared constant so create and refresh paths cannot desync');
+      expect(auto, contains(r'--label "$release_label"'),
+          reason: 'release PRs must be created with chore:pin (gh-1134)');
+      expect(auto, contains(r'--add-label "$release_label"'),
+          reason: 'refresh path must self-heal label-less release PRs (gh-1134)');
+      expect(auto, contains(r'gh label create "$release_label"'),
+          reason: 'a missing label must self-heal per repo convention, warn-only on failure');
     });
 
     test('release jobs authenticate gh via RELEASE_PAT (env + checkout), not by comment (#1093 review)', () {

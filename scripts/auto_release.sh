@@ -62,13 +62,15 @@ if [ -n "$head_version" ] && ! git rev-parse -q --verify "refs/tags/v$head_versi
 fi
 
 # chore:pin marks machine-created release PRs (gh-1134). Labeling is hygiene:
-# if the label is missing from the repo, warn loudly and ship the PR anyway —
-# the release is the payload, the label must never block it.
+# the label self-heals per repo convention (cf. daily_publish_report.sh) and a
+# PR must never block on it — if even the create fails, warn and ship unlabeled.
+release_label="chore:pin"
 label_args=()
-if gh label view "chore:pin" >/dev/null 2>&1; then
-  label_args=(--label "chore:pin")
+gh label create "$release_label" >/dev/null 2>&1 || true
+if gh label view "$release_label" >/dev/null 2>&1; then
+  label_args=(--label "$release_label")
 else
-  echo "Auto-release: WARNING: label 'chore:pin' missing from repo — release PRs will ship without it (fix: gh label create chore:pin)." >&2
+  echo "Auto-release: WARNING: label '$release_label' missing from repo (create failed) — release PRs will ship without it." >&2
 fi
 
 for attempt in 1 2 3; do
@@ -167,8 +169,8 @@ PY
       echo "Auto-release: $branch refreshed; open PR #$open_pr now carries v$next."
       # Self-heal label-less PRs from before gh-1134: adding an already-present
       # label is a server-side no-op, so this stays idempotent (AC3).
-      if ! gh pr edit "$open_pr" --add-label "chore:pin" >/dev/null 2>&1; then
-        echo "Auto-release: WARNING: could not add 'chore:pin' to PR #$open_pr — the PR itself is unaffected." >&2
+      if ! gh pr edit "$open_pr" --add-label "$release_label" >/dev/null 2>&1; then
+        echo "Auto-release: WARNING: could not add '$release_label' to PR #$open_pr — the PR itself is unaffected." >&2
       fi
     else
       gh pr create --base main --head "$branch" \
