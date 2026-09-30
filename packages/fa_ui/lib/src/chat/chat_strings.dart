@@ -45,9 +45,8 @@ abstract class FaChatStrings {
   String get chatInputHint;
   String get chatTyping;
 
-  /// The composer-adjacent status row (issue #865): the phase labels.
+  /// The single run-status row (issues #865, #1042): the phase labels.
   String get chatStatusThinking;
-  String get chatStatusWriting;
   String chatStatusRunningTool(String tool);
   String get chatSendTooltip;
   String get chatSteerTooltip;
@@ -185,8 +184,6 @@ class FaChatStringsEn extends FaChatStrings {
   String get chatTyping => 'Fa is typing...';
   @override
   String get chatStatusThinking => 'Thinking...';
-  @override
-  String get chatStatusWriting => 'Writing...';
   @override
   String chatStatusRunningTool(String tool) => 'Running $tool';
   @override
@@ -391,8 +388,6 @@ class FaChatStringsRu extends FaChatStrings {
   String get chatTyping => 'Fa печатает...';
   @override
   String get chatStatusThinking => 'Думает...';
-  @override
-  String get chatStatusWriting => 'Пишет...';
   @override
   String chatStatusRunningTool(String tool) => 'Запускает $tool';
   @override

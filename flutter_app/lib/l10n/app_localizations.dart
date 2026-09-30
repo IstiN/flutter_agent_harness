@@ -806,12 +806,6 @@ abstract class AppLocalizations {
   /// **'Show all ({count})'**
   String chatShowAll(Object count);
 
-  /// No description provided for @chatTyping.
-  ///
-  /// In en, this message translates to:
-  /// **'Fa is typing...'**
-  String get chatTyping;
-
   /// No description provided for @chatUploadFailed.
   ///
   /// In en, this message translates to:

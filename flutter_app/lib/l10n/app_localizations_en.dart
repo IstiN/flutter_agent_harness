@@ -425,9 +425,6 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get chatTyping => 'Fa is typing...';
-
-  @override
   String chatUploadFailed(Object error) {
     return 'Upload failed: $error';
   }
