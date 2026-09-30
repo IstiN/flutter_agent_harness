@@ -203,7 +203,10 @@ final class MemoryShell implements Shell, BackgroundShell {
     }
     final head = utf8.encode(read.valueOrNull!).sublist(0, op.offset!);
     final region = utf8.encode(op.text);
-    final written = await _fs.writeFile(logPath, utf8.decode([...head, ...region]));
+    final written = await _fs.writeFile(
+      logPath,
+      utf8.decode([...head, ...region]),
+    );
     if (written.isErr) {
       throw StateError('job log write failed: ${written.errorOrNull}');
     }
