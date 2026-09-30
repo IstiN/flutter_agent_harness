@@ -151,8 +151,11 @@ final class WirePromptCommand extends WireCommand {
   final String text;
 
   @override
-  Map<String, dynamic> toJson({int version = wireProtocolVersion}) =>
-      {'v': version, 'kind': 'prompt', 'text': text};
+  Map<String, dynamic> toJson({int version = wireProtocolVersion}) => {
+    'v': version,
+    'kind': 'prompt',
+    'text': text,
+  };
 }
 
 /// Inject [text] into the running turn (steering).
@@ -162,8 +165,11 @@ final class WireSteerCommand extends WireCommand {
   final String text;
 
   @override
-  Map<String, dynamic> toJson({int version = wireProtocolVersion}) =>
-      {'v': version, 'kind': 'steer', 'text': text};
+  Map<String, dynamic> toJson({int version = wireProtocolVersion}) => {
+    'v': version,
+    'kind': 'steer',
+    'text': text,
+  };
 }
 
 /// Abort the active run (the wire form of the run's [CancelToken]).
@@ -171,8 +177,10 @@ final class WireAbortCommand extends WireCommand {
   const WireAbortCommand();
 
   @override
-  Map<String, dynamic> toJson({int version = wireProtocolVersion}) =>
-      {'v': version, 'kind': 'abort'};
+  Map<String, dynamic> toJson({int version = wireProtocolVersion}) => {
+    'v': version,
+    'kind': 'abort',
+  };
 }
 
 /// Answer an `approval_request` with the user's [ApprovalDecision].
@@ -328,10 +336,7 @@ class AgentWireProtocol {
   /// (the loud unsupported-version error). [WireProtocolException] is
   /// thrown when the frame itself is malformed.
   static ({AgentWireProtocol protocol, Map<String, dynamic> welcome})
-  acceptHello(
-    Map<String, dynamic> helloFrame, {
-    List<String> caps = const [],
-  }) {
+  acceptHello(Map<String, dynamic> helloFrame, {List<String> caps = const []}) {
     final kind = helloFrame['kind'];
     if (kind != 'hello') {
       throw WireProtocolException('expected a hello frame, got kind: $kind');
@@ -390,18 +395,21 @@ class AgentWireProtocol {
       AgentSettledEvent() => const <String, dynamic>{},
       TurnStartEvent() => const <String, dynamic>{},
       AgentEndEvent(:final messages) => {
-        'messages': [for (final message in messages) _messageFrameJson(message)],
+        'messages': [
+          for (final message in messages) _messageFrameJson(message),
+        ],
       },
       TurnEndEvent(:final message, :final toolResults) => {
         'message': _messageFrameJson(message),
         'toolResults': [for (final result in toolResults) result.toJson()],
       },
-      MessageStartEvent(:final message) => {'message': _messageFrameJson(message)},
-      MessageEndEvent(:final message) => {'message': _messageFrameJson(message)},
-      MessageUpdateEvent(
-        :final message,
-        :final assistantMessageEvent,
-      ) => {
+      MessageStartEvent(:final message) => {
+        'message': _messageFrameJson(message),
+      },
+      MessageEndEvent(:final message) => {
+        'message': _messageFrameJson(message),
+      },
+      MessageUpdateEvent(:final message, :final assistantMessageEvent) => {
         // The partial snapshot IS `message`; the nested event adds only the
         // delta discriminator so frames stay compact.
         'message': _messageFrameJson(message),
@@ -412,46 +420,50 @@ class AgentWireProtocol {
         :final toolName,
         :final args,
         :final timestamp,
-      ) => {
-        'toolCallId': toolCallId,
-        'toolName': toolName,
-        'args': args,
-        'timestamp': timestamp.millisecondsSinceEpoch,
-      },
+      ) =>
+        {
+          'toolCallId': toolCallId,
+          'toolName': toolName,
+          'args': args,
+          'timestamp': timestamp.millisecondsSinceEpoch,
+        },
       ToolExecutionUpdateEvent(
         :final toolCallId,
         :final toolName,
         :final args,
         :final partialResult,
-      ) => {
-        'toolCallId': toolCallId,
-        'toolName': toolName,
-        'args': args,
-        'partialResult': _encodeToolResult(partialResult),
-      },
+      ) =>
+        {
+          'toolCallId': toolCallId,
+          'toolName': toolName,
+          'args': args,
+          'partialResult': _encodeToolResult(partialResult),
+        },
       ToolExecutionEndEvent(
         :final toolCallId,
         :final toolName,
         :final result,
         :final isError,
-      ) => {
-        'toolCallId': toolCallId,
-        'toolName': toolName,
-        'result': _encodeToolResult(result),
-        'isError': isError,
-      },
+      ) =>
+        {
+          'toolCallId': toolCallId,
+          'toolName': toolName,
+          'result': _encodeToolResult(result),
+          'isError': isError,
+        },
       ModelRequestEvent(
         :final detail,
         :final promptBlob,
         :final manifestBlob,
         :final rawWireDump,
-      ) => {
-        'detail': detail.toJson(),
-        'promptBlob': ?promptBlob?.toJson(),
-        'manifestBlob': ?manifestBlob?.toJson(),
-        // SECRET-class (E4): redact via [redactForLog] before logging.
-        'rawWireDump': ?rawWireDump,
-      },
+      ) =>
+        {
+          'detail': detail.toJson(),
+          'promptBlob': ?promptBlob?.toJson(),
+          'manifestBlob': ?manifestBlob?.toJson(),
+          // SECRET-class (E4): redact via [redactForLog] before logging.
+          'rawWireDump': ?rawWireDump,
+        },
       ToolPairingRepairEvent(:final report, :final providerError) => {
         'report': _encodeRepairReport(report),
         'providerError': ?providerError,
@@ -592,8 +604,10 @@ class AgentWireProtocol {
       TurnEndEvent(
         message: _requireAssistant(frame['message'], 'turn_end'),
         toolResults: [
-          for (final raw
-              in _requireList(frame['toolResults'], 'turn_end.toolResults'))
+          for (final raw in _requireList(
+            frame['toolResults'],
+            'turn_end.toolResults',
+          ))
             ToolResultMessage.fromJson(_requireMap(raw, 'toolResults[]')),
         ],
       ),
@@ -614,9 +628,7 @@ class AgentWireProtocol {
   static KnownWireEvent _decodeMessageEnd(Map<String, dynamic> frame) =>
       KnownWireEvent(
         MessageEndEvent(
-          messageFromJson(
-            _requireMap(frame['message'], 'message_end.message'),
-          ),
+          messageFromJson(_requireMap(frame['message'], 'message_end.message')),
         ),
         frame,
       );
@@ -779,8 +791,10 @@ class AgentWireProtocol {
       kind: 'ask_request',
       requestId: _requireString(frame['id'], 'id'),
       questions: [
-        for (final raw
-            in _requireList(frame['questions'], 'ask_request.questions'))
+        for (final raw in _requireList(
+          frame['questions'],
+          'ask_request.questions',
+        ))
           _decodeQuestion(_requireMap(raw, 'questions[]')),
       ],
       raw: frame,
@@ -905,8 +919,10 @@ class AgentWireProtocol {
       answers: cancelled
           ? null
           : [
-              for (final raw
-                  in _requireList(frame['answers'], 'ask_response.answers'))
+              for (final raw in _requireList(
+                frame['answers'],
+                'ask_response.answers',
+              ))
                 _decodeAnswer(_requireMap(raw, 'answers[]')),
             ],
     );
@@ -935,9 +951,11 @@ class AgentWireProtocol {
     _requireKind(frame, 'session_control');
     return WireSessionControlCommand(
       op: _requireString(frame['op'], 'session_control.op'),
-      params: frame['params'] is Map<String, dynamic>
-          ? frame['params'] as Map<String, dynamic>
-          : const {},
+      // The encoder omits `params` when empty - absent is the empty map,
+      // a PRESENT non-map is loud.
+      params: frame['params'] == null
+          ? const {}
+          : _requireMap(frame['params'], 'session_control.params'),
     );
   }
 
@@ -989,7 +1007,10 @@ class AgentWireProtocol {
     final kind = frame['kind'];
     final secretFields = kind is String ? _secretFieldsByKind[kind] : null;
     return frame.map((key, value) {
-      if (secretFields?.contains(key) ?? false ||
+      // NOTE: ?? binds looser than || in Dart - the registry check must be
+      // parenthesized or a false `contains` short-circuits the anywhere-rule
+      // for kinds that HAVE a registry entry (secret_response, model_request).
+      if ((secretFields?.contains(key) ?? false) ||
           _secretFieldNamesAnywhere.contains(key)) {
         return MapEntry(key, '[REDACTED]');
       }
@@ -1121,8 +1142,7 @@ class AgentWireProtocol {
   static ToolExecutionResult _decodeToolResult(Map<String, dynamic> encoded) =>
       ToolExecutionResult(
         content: [
-          for (final raw
-              in (encoded['content'] as List?) ?? const <dynamic>[])
+          for (final raw in (encoded['content'] as List?) ?? const <dynamic>[])
             ContentBlock.fromJson(_requireMap(raw, 'content[]')),
         ],
         terminate: encoded['terminate'] as bool? ?? false,
@@ -1139,26 +1159,37 @@ class AgentWireProtocol {
     ],
   };
 
-  static ToolPairingRepairReport _decodeRepairReport(Map<String, dynamic> encoded) =>
-      ToolPairingRepairReport(
-        droppedResultIds: [
-          for (final id
-              in (encoded['droppedResultIds'] as List?) ?? const <dynamic>[])
-            id as String,
-        ],
-        synthesizedResultIds: [
-          for (final id in (encoded['synthesizedResultIds'] as List?) ??
-              const <dynamic>[])
-            id as String,
-        ],
-        renamedIds: [
-          for (final rename in (encoded['renamedIds'] as List?) ?? const <dynamic>[])
-            (
-              from: _requireMap(rename, 'renamedIds[]')['from'] as String? ?? '',
-              to: _requireMap(rename, 'renamedIds[]')['to'] as String? ?? '',
-            ),
-        ],
-      );
+  static ToolPairingRepairReport _decodeRepairReport(
+    Map<String, dynamic> encoded,
+  ) => ToolPairingRepairReport(
+    droppedResultIds: [
+      for (final id in _requireList(
+        encoded['droppedResultIds'],
+        'tool_pairing_repair.report.droppedResultIds',
+      ))
+        id as String,
+    ],
+    synthesizedResultIds: [
+      for (final id in _requireList(
+        encoded['synthesizedResultIds'],
+        'tool_pairing_repair.report.synthesizedResultIds',
+      ))
+        id as String,
+    ],
+    renamedIds: [
+      for (final rename in _requireList(
+        encoded['renamedIds'],
+        'tool_pairing_repair.report.renamedIds',
+      ))
+        () {
+          final entry = _requireMap(rename, 'renamedIds[]');
+          return (
+            from: _requireString(entry['from'], 'renamedIds[].from'),
+            to: _requireString(entry['to'], 'renamedIds[].to'),
+          );
+        }(),
+    ],
+  );
 
   static Map<String, dynamic> _encodeQuestion(AskQuestion question) => {
     'question': question.question,
@@ -1223,7 +1254,8 @@ class AgentWireProtocol {
   static ApprovalTier _decodeTier(String name) =>
       ApprovalTier.values.firstWhere(
         (tier) => tier.name == name,
-        orElse: () => throw WireProtocolException('unknown approval tier: $name'),
+        orElse: () =>
+            throw WireProtocolException('unknown approval tier: $name'),
       );
 
   static ApprovalDecision _decodeDecision(String name) {
@@ -1298,7 +1330,9 @@ class AgentWireProtocol {
   static AssistantMessage _requireAssistant(Object? value, String field) {
     final map = _requireMap(value, '$field.message');
     if (map['role'] != 'assistant') {
-      throw WireProtocolException('field "$field" must be an assistant message');
+      throw WireProtocolException(
+        'field "$field" must be an assistant message',
+      );
     }
     return AssistantMessage.fromJson(map);
   }
@@ -1306,10 +1340,13 @@ class AgentWireProtocol {
   static List<Message> _requireMessageList(Map<String, dynamic> frame) {
     final raw = frame['messages'];
     if (raw is! List) {
-      throw WireProtocolException('field "agent_end.messages" must be an array');
+      throw WireProtocolException(
+        'field "agent_end.messages" must be an array',
+      );
     }
     return [
-      for (final message in raw) messageFromJson(_requireMap(message, 'messages[]')),
+      for (final message in raw)
+        messageFromJson(_requireMap(message, 'messages[]')),
     ];
   }
 }

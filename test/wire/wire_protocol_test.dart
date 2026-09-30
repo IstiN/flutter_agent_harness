@@ -22,9 +22,8 @@ void main() {
   final eventFixtures = loadGoldenFixtures(eventFixturesDir);
   final commandFixtures = loadGoldenFixtures(commandFixturesDir);
 
-  GoldenFixture fixtureFor(String dir, String name) => loadGoldenFixtures(
-    dir,
-  ).firstWhere((f) => f.path.endsWith('$name.json'));
+  GoldenFixture fixtureFor(String dir, String name) =>
+      loadGoldenFixtures(dir).firstWhere((f) => f.path.endsWith('$name.json'));
 
   group('UT-1: golden event round-trips', () {
     test('fixture corpus is non-empty and versioned v1', () {
@@ -156,7 +155,9 @@ void main() {
           final protocol = AgentWireProtocol();
           final withExtra = <String, dynamic>{
             ...fixture.frame,
-            'x_future_field': {'a': [1, 2]},
+            'x_future_field': {
+              'a': [1, 2],
+            },
           };
           final decoded = protocol.decodeEvent(withExtra);
           expect(
@@ -216,7 +217,11 @@ void main() {
           throwsA(isA<WireProtocolException>()),
         );
         expect(
-          () => protocol.decodeCommand({'v': 1, 'kind': 'ask_response', 'id': 'a'}),
+          () => protocol.decodeCommand({
+            'v': 1,
+            'kind': 'ask_response',
+            'id': 'a',
+          }),
           throwsA(isA<WireProtocolException>()),
         );
       });
@@ -244,10 +249,7 @@ void main() {
       File('${tmp.path}/broken.json').writeAsStringSync(
         '{"kind":"prompt","protocolVersion":1,"frame":{"v":1,"kind":"steer"}}',
       );
-      expect(
-        () => loadGoldenFixtures(tmp.path),
-        throwsA(isA<StateError>()),
-      );
+      expect(() => loadGoldenFixtures(tmp.path), throwsA(isA<StateError>()));
     });
   });
 
@@ -261,7 +263,10 @@ void main() {
         'versions': [1],
         'caps': ['streaming'],
       });
-      final accepted = AgentWireProtocol.acceptHello(hello, caps: ['streaming']);
+      final accepted = AgentWireProtocol.acceptHello(
+        hello,
+        caps: ['streaming'],
+      );
       expect(accepted.protocol.version, 1);
       expect(accepted.welcome, {
         'v': 1,
@@ -363,21 +368,104 @@ void main() {
       final accepted = AgentWireProtocol.acceptHello(
         AgentWireProtocol(version: 1).hello(versions: [2, 1]),
       );
-      final frame = accepted.protocol.encodeEvent(nativeEventFor('agent_start'));
+      final frame = accepted.protocol.encodeEvent(
+        nativeEventFor('agent_start'),
+      );
       expect(frame['v'], accepted.protocol.version);
     });
   });
 
   group('E4: secrets over the wire', () {
     test('isSecretField marks rawBody anywhere', () {
-      expect(AgentWireProtocol.isSecretField('secret_response', 'value'), isTrue);
-      expect(AgentWireProtocol.isSecretField('model_request', 'rawWireDump'), isTrue);
+      expect(
+        AgentWireProtocol.isSecretField('secret_response', 'value'),
+        isTrue,
+      );
+      expect(
+        AgentWireProtocol.isSecretField('model_request', 'rawWireDump'),
+        isTrue,
+      );
       expect(AgentWireProtocol.isSecretField('message_end', 'rawBody'), isTrue);
       // The anywhere-rule is NOT dead for registry kinds: a rawBody under
       // secret_response must still be marked (?? fell through on false).
-      expect(AgentWireProtocol.isSecretField('secret_response', 'rawBody'), isTrue);
-      expect(AgentWireProtocol.isSecretField('secret_response', 'name'), isFalse);
+      expect(
+        AgentWireProtocol.isSecretField('secret_response', 'rawBody'),
+        isTrue,
+      );
+      expect(
+        AgentWireProtocol.isSecretField('secret_response', 'name'),
+        isFalse,
+      );
       expect(AgentWireProtocol.isSecretField('prompt', 'text'), isFalse);
+    });
+
+    test('redactForLog anywhere-rule survives registry kinds', () {
+      // ?? binds looser than ||: a registry kind with secretFields=={value}
+      // must STILL redact a stray rawBody (the round-2 precedence bug).
+      final protocol = AgentWireProtocol();
+      final frame = protocol.encodeCommand(nativeCommandFor('secret_response'));
+      frame['rawBody'] = 'TOP-LEVEL-STRAY';
+      final redacted = AgentWireProtocol.redactForLog(frame);
+      expect(redacted['rawBody'], '[REDACTED]');
+      expect(frame['rawBody'], 'TOP-LEVEL-STRAY');
+      // Nested stray under a registry kind too.
+      final nested = AgentWireProtocol.redactForLog({
+        'v': 1,
+        'kind': 'secret_response',
+        'id': 'x',
+        'wrapper': {'rawBody': 'NESTED'},
+      });
+      expect((nested['wrapper'] as Map)['rawBody'], '[REDACTED]');
+    });
+
+    test('session_control params are loud-optional', () {
+      final protocol = AgentWireProtocol();
+      // Absent params = empty map (encoder omits when empty).
+      final noParams = protocol.decodeCommand({
+        'v': 1,
+        'kind': 'session_control',
+        'op': 'compact',
+      });
+      expect((noParams as WireSessionControlCommand).params, isEmpty);
+      // A PRESENT non-map is malformed.
+      expect(
+        () => protocol.decodeCommand({
+          'v': 1,
+          'kind': 'session_control',
+          'op': 'compact',
+          'params': 'nope',
+        }),
+        throwsA(isA<WireProtocolException>()),
+      );
+    });
+
+    test('repair report decoder is loud on missing keys', () {
+      final protocol = AgentWireProtocol();
+      final repair = fixtureFor(eventFixturesDir, 'tool_pairing_repair').frame;
+      // Missing droppedResultIds silently becoming [] is malformed.
+      expect(
+        () => protocol.decodeEvent({
+          ...repair,
+          'report': {
+            ...(repair['report'] as Map<String, dynamic>)
+              ..remove('droppedResultIds'),
+          },
+        }),
+        throwsA(isA<WireProtocolException>()),
+      );
+      // A rename entry without `to` is malformed, not an empty id.
+      expect(
+        () => protocol.decodeEvent({
+          ...repair,
+          'report': {
+            ...(repair['report'] as Map<String, dynamic>),
+            'renamedIds': [
+              {'from': 'a'},
+            ],
+          },
+        }),
+        throwsA(isA<WireProtocolException>()),
+      );
     });
 
     test('rateLimit.rawBody never rides a wire frame', () {
@@ -397,7 +485,10 @@ void main() {
         ),
         stopReason: StopReason.error,
         errorMessage: 'usage limit reached',
-        rateLimit: const RateLimitInfo(planType: 'free', rawBody: 'LIVE-429-RAW-BODY'),
+        rateLimit: const RateLimitInfo(
+          planType: 'free',
+          rawBody: 'LIVE-429-RAW-BODY',
+        ),
         timestamp: DateTime.fromMillisecondsSinceEpoch(fixtureTimestampMs),
       );
       // Single-message embeddings…
@@ -408,10 +499,9 @@ void main() {
       final agentEnd = protocol.encodeEvent(AgentEndEvent([rateLimited()]));
       expect(jsonEncode(agentEnd), isNot(contains('LIVE-429-RAW-BODY')));
       // …while the structured rate-limit data still rides.
-      expect(
-        (messageEnd['message'] as Map<String, dynamic>)['rateLimit'],
-        {'planType': 'free'},
-      );
+      expect((messageEnd['message'] as Map<String, dynamic>)['rateLimit'], {
+        'planType': 'free',
+      });
       // The live in-process object keeps the diagnostics payload.
       expect(rateLimited().rateLimit!.rawBody, 'LIVE-429-RAW-BODY');
     });
@@ -428,7 +518,10 @@ void main() {
           'rateLimit': {'planType': 'free', 'rawBody': 'FOREIGN-RAW-BODY'},
         },
         'messages': [
-          {'role': 'assistant', 'rateLimit': {'rawBody': 'FOREIGN-RAW-2'}},
+          {
+            'role': 'assistant',
+            'rateLimit': {'rawBody': 'FOREIGN-RAW-2'},
+          },
         ],
       });
       expect(jsonEncode(redacted), isNot(contains('FOREIGN-RAW-BODY')));
@@ -468,15 +561,14 @@ void main() {
 
     test('fixtures never carry a live secret', () {
       for (final fixture in [...eventFixtures, ...commandFixtures]) {
-        final secretFields =
-            fixture.frame.keys
-                .where(
-                  (field) => AgentWireProtocol.isSecretField(
-                    fixture.frame['kind'] as String,
-                    field,
-                  ),
-                )
-                .toList();
+        final secretFields = fixture.frame.keys
+            .where(
+              (field) => AgentWireProtocol.isSecretField(
+                fixture.frame['kind'] as String,
+                field,
+              ),
+            )
+            .toList();
         if (secretFields.isEmpty) continue;
         // Secret-class fields in the corpus are placeholders that
         // redaction rewrites — nothing here is a real credential.
@@ -501,8 +593,7 @@ void main() {
         throwsA(isA<WireVersionError>()),
       );
       expect(
-        () =>
-            protocol.decodeCommand({'v': 2, 'kind': 'prompt', 'text': 'hi'}),
+        () => protocol.decodeCommand({'v': 2, 'kind': 'prompt', 'text': 'hi'}),
         throwsA(isA<WireVersionError>()),
       );
       expect(
@@ -514,10 +605,7 @@ void main() {
     test('malformed known frames never escape as raw TypeError', () {
       final protocol = AgentWireProtocol();
       // Non-string optional field: was an unchecked `as String?` cast.
-      final modelRequest = fixtureFor(
-        eventFixturesDir,
-        'model_request',
-      ).frame;
+      final modelRequest = fixtureFor(eventFixturesDir, 'model_request').frame;
       expect(
         () => protocol.decodeEvent({...modelRequest, 'rawWireDump': 42}),
         throwsA(isA<WireProtocolException>()),
@@ -556,15 +644,15 @@ void main() {
       expect(
         () => protocol.decodeEvent({
           ...done,
-          'event': {...(done['event'] as Map<String, dynamic>), 'reason': 'banana'},
+          'event': {
+            ...(done['event'] as Map<String, dynamic>),
+            'reason': 'banana',
+          },
         }),
         throwsA(isA<WireProtocolException>()),
       );
       // Optional blobs decode only from objects.
-      final modelRequest = fixtureFor(
-        eventFixturesDir,
-        'model_request',
-      ).frame;
+      final modelRequest = fixtureFor(eventFixturesDir, 'model_request').frame;
       expect(
         () => protocol.decodeEvent({...modelRequest, 'promptBlob': 'x'}),
         throwsA(isA<WireProtocolException>()),
@@ -577,9 +665,8 @@ void main() {
       expect(
         () => protocol.decodeEvent({
           ...textDelta,
-          'event': {
-            ...(textDelta['event'] as Map<String, dynamic>),
-          }..remove('contentIndex'),
+          'event': {...(textDelta['event'] as Map<String, dynamic>)}
+            ..remove('contentIndex'),
         }),
         throwsA(isA<WireProtocolException>()),
       );
@@ -610,41 +697,46 @@ void main() {
       };
       // Missing question text silently becoming '' hid producer bugs.
       expect(
-        () => protocol.decodeEvent(clobbered({
-          'options': [
-            {'label': 'SQLite'},
-          ],
-          'multiSelect': false,
-        })),
+        () => protocol.decodeEvent(
+          clobbered({
+            'options': [
+              {'label': 'SQLite'},
+            ],
+            'multiSelect': false,
+          }),
+        ),
         throwsA(isA<WireProtocolException>()),
       );
       // Missing options silently becoming [] did too.
       expect(
-        () => protocol.decodeEvent(clobbered({
-          'question': 'Which database?',
-          'multiSelect': false,
-        })),
+        () => protocol.decodeEvent(
+          clobbered({'question': 'Which database?', 'multiSelect': false}),
+        ),
         throwsA(isA<WireProtocolException>()),
       );
       // Missing multiSelect silently becoming false did too.
       expect(
-        () => protocol.decodeEvent(clobbered({
-          'question': 'Which database?',
-          'options': [
-            {'label': 'SQLite'},
-          ],
-        })),
+        () => protocol.decodeEvent(
+          clobbered({
+            'question': 'Which database?',
+            'options': [
+              {'label': 'SQLite'},
+            ],
+          }),
+        ),
         throwsA(isA<WireProtocolException>()),
       );
       // An option without a label is malformed, not an empty label.
       expect(
-        () => protocol.decodeEvent(clobbered({
-          'question': 'Which database?',
-          'options': [
-            {'description': 'no label here'},
-          ],
-          'multiSelect': false,
-        })),
+        () => protocol.decodeEvent(
+          clobbered({
+            'question': 'Which database?',
+            'options': [
+              {'description': 'no label here'},
+            ],
+            'multiSelect': false,
+          }),
+        ),
         throwsA(isA<WireProtocolException>()),
       );
       // Same philosophy for answers, but `selected` is absent-legal: the
@@ -686,7 +778,9 @@ void main() {
 
     test('parseLine round-trips frameLine', () {
       final frame = fixtureFor(commandFixturesDir, 'prompt').frame;
-      final parsed = AgentWireProtocol.parseLine(AgentWireProtocol.frameLine(frame));
+      final parsed = AgentWireProtocol.parseLine(
+        AgentWireProtocol.frameLine(frame),
+      );
       expect(parsed, frame);
     });
 
