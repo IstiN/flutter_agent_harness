@@ -210,7 +210,14 @@ void main() {
     // reconnect, and the queued mail is forwarded on the next fabric
     // call (the 2s inbox probe in production).
     final revived = LocalHub(port: port);
-    await revived.start();
+    // Bound bind-retry (#948 shape), not a bare start(): on a loaded
+    // runner the freed ephemeral port can be re-grabbed for a few ms by a
+    // concurrent bind(0) (CI run 36732676599: errno 98 here), and
+    // LocalHub.start is a DELIBERATELY loud plain bind (#943 — no
+    // SO_REUSEADDR, two hubs on one port must fail loudly). Retrying the
+    // production-shaped 150ms..1.2s backoff keeps that contract and only
+    // rides out a transient holder.
+    await _startHubWithRetry(revived);
     addTearDown(revived.stop);
     await _waitFor(() => fabric.isConnected);
     await _waitFor(() => browser.connected);
@@ -228,7 +235,40 @@ void main() {
 
     // The file copy is gone — a file-polling peer never sees it twice.
     expect(await fileFabric.peek(peerId), isEmpty);
-  }, timeout: timeout);
+    // 45s, not the shared 20s: the 15s arrival wait plus a full bind-retry
+    // window must both fit on a loaded runner (run 36327531059 precedent).
+  }, timeout: const Timeout(Duration(seconds: 45)));
+}
+
+/// Bounded bind-retry for a hub reviving its old port (#948: 150ms..1.2s
+/// backoff, capped ~6s). Only rides out "address already in use" — every
+/// other bind error rethrows immediately, keeping the loud-bind contract.
+Future<void> _startHubWithRetry(LocalHub hub) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 6));
+  var attempt = 0;
+  while (true) {
+    try {
+      await hub.start();
+      return;
+    } on SocketException catch (e) {
+      final inUse =
+          e.osError?.errorCode == 98 ||
+          e.osError?.errorCode == 48 /* macOS EADDRINUSE */ ||
+          e.osError?.errorCode == 10048 /* Windows */;
+      if (!inUse || attempt >= 8 || DateTime.now().isAfter(deadline)) {
+        rethrow;
+      }
+      // 150ms doubling, capped at 1.2s — hubServe's production backoff.
+      await Future<void>.delayed(
+        Duration(
+          milliseconds: 150 * (1 << attempt) > 1200
+              ? 1200
+              : 150 * (1 << attempt),
+        ),
+      );
+      attempt++;
+    }
+  }
 }
 
 /// Waits for [probe] with a short poll loop (bounded at ~5s).
