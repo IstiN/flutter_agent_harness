@@ -96,6 +96,68 @@ void main() {
   );
 
   test(
+    'a folder-state restore adopts the saved entry’s authHeader '
+    '(issue #964)',
+    timeout: const Timeout(Duration(seconds: 60)),
+    () async {
+      // Boot 1: create the session on the launch default.
+      final first = cliFactory(sessionName: 'gateway');
+      final firstIo = ios.single;
+      final run1 = first.run();
+      firstIo.sendLine('hi');
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      firstIo.sendLine('/exit');
+      await run1;
+
+      // The folder last used a gateway endpoint whose saved entry declares
+      // x-api-key (issue #964): the restore must carry the header.
+      await saveFolderModelState(
+        env,
+        sessionsRoot: '/sessions',
+        cwd: '/work',
+        providerKind: 'openai-completions',
+        modelId: 'bedrock-model',
+        baseUrl: 'https://gateway.example.com/v1',
+      );
+
+      final second = AgentCli(
+        config: AgentCliConfig(
+          model: Model(
+            id: 'other-model',
+            api: 'test-api',
+            provider: 'test-provider',
+            baseUrl: 'https://example.test',
+            contextWindow: 100000,
+            maxTokens: 4096,
+          ),
+          apiKey: 'test-key',
+          env: env,
+          sessionRoot: '/sessions',
+          sessionName: 'gateway',
+          customProviders: CustomProviderRegistry([
+            CustomProviderEntry(
+              name: 'gateway.example.com',
+              apiType: 'openai',
+              baseUrl: 'https://gateway.example.com/v1',
+              modelId: 'bedrock-model',
+              authHeader: 'x-api-key',
+            ),
+          ]),
+        ),
+        io: freshIo(),
+        streamFunction: _singleTextResponse('ok'),
+      );
+      final secondIo = ios.last;
+      final run2 = second.run();
+      secondIo.sendLine('/exit');
+      await run2;
+
+      expect(second.agent.state.model.id, 'bedrock-model');
+      expect(second.agent.state.model.authHeader, 'x-api-key');
+    },
+  );
+
+  test(
     'a name-shaped folder state restores through the seam (issue #772)',
     timeout: const Timeout(Duration(seconds: 60)),
     () async {
