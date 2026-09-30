@@ -89,6 +89,76 @@ bool _parseTrajectorySection(Object? node) {
   return wireDump;
 }
 
+/// The parsed `quota:` section (issue #823): the status-line badge opt-in
+/// and the quota-cache TTL. Strict like every section: unknown keys and
+/// bad scalars throw [ConfigException] at boot; defaults are never written
+/// so the file stays minimal.
+final class QuotaSection {
+  const QuotaSection({
+    this.badge = false,
+    this.ttlMinutes = defaultQuotaTtlMinutes,
+  });
+
+  /// Render the provider-quota badge on the status line (OQ2 lean: OFF by
+  /// default — the status line stays quiet until the user asks for it).
+  final bool badge;
+
+  /// The quota-cache TTL in minutes (fed to [ProviderQuotaService]).
+  final int ttlMinutes;
+
+  @override
+  bool operator ==(Object other) =>
+      other is QuotaSection &&
+      other.badge == badge &&
+      other.ttlMinutes == ttlMinutes;
+
+  @override
+  int get hashCode => Object.hash(badge, ttlMinutes);
+
+  @override
+  String toString() => 'QuotaSection(badge: $badge, ttlMinutes: $ttlMinutes)';
+}
+
+/// The `quota.badge` default (issue #823 OQ2): off.
+const defaultQuotaBadge = false;
+
+/// The `quota.ttl_minutes` default: the service's own 15-minute TTL.
+const defaultQuotaTtlMinutes = 15;
+
+/// Parses the `quota:` yaml section (issue #823). A null [node] means the
+/// section is absent — the caller applies the defaults. Any present-but-
+/// invalid shape, value or key throws [ConfigException], consistent with
+/// the other strict config sections.
+QuotaSection parseQuotaSection(Object? node) {
+  if (node == null) return const QuotaSection();
+  if (node is! YamlMap) {
+    throw ConfigException('quota must be a map, got: $node');
+  }
+  var badge = defaultQuotaBadge;
+  var ttlMinutes = defaultQuotaTtlMinutes;
+  for (final key in node.keys) {
+    switch (key) {
+      case 'badge':
+        final value = node[key];
+        if (value is! bool) {
+          throw ConfigException('"quota.badge" must be a boolean');
+        }
+        badge = value;
+      case 'ttl_minutes':
+        final value = node[key];
+        if (value is! int || value <= 0) {
+          throw ConfigException(
+            '"quota.ttl_minutes" must be a positive integer (minutes)',
+          );
+        }
+        ttlMinutes = value;
+      default:
+        throw ConfigException('unknown "quota" key: $key');
+    }
+  }
+  return QuotaSection(badge: badge, ttlMinutes: ttlMinutes);
+}
+
 /// Validates one `agent.mode` value (issues #679/#680): the shared rule
 /// lives in [agentLoadModeValidationError] (load_modes.dart) — this
 /// parser and the settings validator (config_service.dart) throw its
@@ -252,6 +322,7 @@ final class CliConfig {
     this.jobs = const JobsConfig(),
     this.powerSleepPrevention,
     this.powerHold,
+    this.quota = const QuotaSection(),
     this.tuiTheme,
     this.tuiClassic = false,
     this.statusLine,
@@ -263,6 +334,8 @@ final class CliConfig {
     // The power section (sleep-prevention level + hold lifecycle) is
     // parsed once, strictly (issues #325/#326).
     final powerSection = parsePowerSection(map['power']);
+    // The quota section (issue #823) is parsed once, strictly too.
+    final quotaSection = parseQuotaSection(map['quota']);
     final agentSection = _parseAgentSection(map['agent']);
     // The tui section (issue #805) is strict: theme, classic kill
     // switch and statusLine parsed once, schema errors throw.
@@ -371,6 +444,8 @@ final class CliConfig {
       images: parseImagesSection(map['images']),
       powerSleepPrevention: powerSection.sleepPrevention,
       powerHold: powerSection.hold,
+      // The quota section (issue #823): badge opt-in + cache TTL, strict.
+      quota: quotaSection,
       // The agent section (owner-side context cap + mode, issues
       // #273/#679/#680) is strict too.
       contextWindowCap: agentSection?.contextWindowCap,
@@ -611,6 +686,11 @@ final class CliConfig {
   /// session opt-in.
   final PowerAssertionHold? powerHold;
 
+  /// The `quota:` section (issue #823): status-line badge opt-in and the
+  /// quota-cache TTL. Defaults (`badge: false`, `ttl_minutes: 15`) are
+  /// never written so the file stays minimal.
+  final QuotaSection quota;
+
   /// Persisted TUI theme name (`tui.theme`): a built-in key or a user
   /// theme file stem from `~/.fah/themes/<name>.json`. `null` = default
   /// theme; an unknown name warns at boot and keeps the default.
@@ -667,6 +747,7 @@ final class CliConfig {
       agentLoadMode: agentLoadMode,
       powerSleepPrevention: powerSleepPrevention,
       powerHold: powerHold,
+      quota: quota,
       tuiTheme: tuiTheme,
       tuiClassic: tuiClassic,
       statusLine: statusLine,
@@ -756,6 +837,7 @@ final class CliConfig {
     buffer.write(_jobsYaml());
     buffer.write(_linksYaml());
     buffer.write(_powerYaml());
+    buffer.write(_quotaYaml());
     return buffer.toString();
   }
 
@@ -820,6 +902,18 @@ final class CliConfig {
     }
     if (hold != null) {
       buffer.write('  hold: ${hold.value}\n');
+    }
+    return buffer.toString();
+  }
+
+  /// The `quota:` section (issue #823), only when explicitly configured;
+  /// defaults are never written so the file stays minimal.
+  String _quotaYaml() {
+    if (quota == const QuotaSection()) return '';
+    final buffer = StringBuffer('quota:\n');
+    if (quota.badge) buffer.write('  badge: true\n');
+    if (quota.ttlMinutes != defaultQuotaTtlMinutes) {
+      buffer.write('  ttl_minutes: ${quota.ttlMinutes}\n');
     }
     return buffer.toString();
   }

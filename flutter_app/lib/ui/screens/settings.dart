@@ -33,6 +33,7 @@ import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/services/keychain_store.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/ondevice_config_store.dart';
+import 'package:fa/services/quota_store.dart';
 import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/services/openrouter_oauth_coordinator.dart';
 import 'package:fa/services/openrouter_oauth_links_stub.dart'
@@ -2000,6 +2001,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return ProvidersSection(
       registry: widget.registry,
       modelsFetcher: widget.modelsFetcher,
+      // Quota meters + pull-to-refresh (issue #823 AC6).
+      quotas: QuotaStore.instance.service,
       openRouterOAuthCallbackUrl:
           OpenRouterOAuthCoordinator.instance.platformCallbackUrl,
       openRouterOAuthCapture: OpenRouterOAuthCoordinator.instance.capture,

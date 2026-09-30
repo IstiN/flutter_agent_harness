@@ -96,6 +96,8 @@ const _nonSettingsCommands = <String, String>{
   '/queue': 'in-memory queued follow-ups (view/clear), nothing persisted',
   '/power': 'read-only sleep-prevention level/held state',
   '/termios': 'read-only stty -a dump (issue #735 steering-freeze triage)',
+  '/quota': 'read-only quota table/refresh (issue #823), changes no '
+      'persisted setting',
   '/mouse':
       'session TUI mouse-capture toggle, nothing persisted (the '
       'capture default is the FA_TUI_MOUSE env/config, not config.yaml)',
