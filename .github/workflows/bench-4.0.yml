@@ -116,12 +116,17 @@ jobs:
       - run: pip install 'harbor[modal]==0.23.0'
 
       # Same gate as bench.yml (stdlib-only bench script tests), covering the
-      # harbor parity tests too: terminal-bench is installed just for the
-      # legacy-adapter test import.
+      # harbor parity tests too. bench/harbor_fa has no test files of its
+      # own - its parity suite lives in
+      # bench/terminal_bench/test_fa_agent_timeout.py (HarborParityTest), so
+      # one discovery covers both; discovering bench/harbor_fa directly
+      # would run 0 tests and fail with unittest's exit code 5. terminal-
+      # bench is installed just for the legacy-adapter import surface
+      # (test-only pin; the legacy bench itself installs its harness in
+      # bench.yml).
       - name: Unit-test bench scripts
         run: |
-          pip install terminal-bench
-          python -m unittest discover -s bench/harbor_fa -v
+          pip install 'terminal-bench==0.2.18'
           python -m unittest discover -s bench/terminal_bench -v
 
       # Download the dataset once for classification; harbor re-fetches
@@ -218,6 +223,10 @@ jobs:
               echo '::error::agent-timeout must be integer seconds'; exit 1;; esac
             export FA_AGENT_TIMEOUT_SEC="$AGENT_TIMEOUT"
           fi
+          case "$PROGRESS_EXTENSION" in
+            ''|1|true|TRUE|True|yes|on|false|FALSE|False|no|off) ;;
+            *) echo "::error::progress-extension must be boolean (true/false), got '$PROGRESS_EXTENSION'"; exit 1 ;;
+          esac
           case "$PROGRESS_EXTENSION" in
             1|true|TRUE|True|yes|on) export FA_PROGRESS_EXTENSION=1;;
           esac

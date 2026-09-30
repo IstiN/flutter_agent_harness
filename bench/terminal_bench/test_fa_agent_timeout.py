@@ -24,8 +24,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import fa_agent_timeout
 from fa_agent_timeout import ProgressLadder, TimeoutKnobs, audit_dict
 
-TB_AVAILABLE = importlib.util.find_spec("terminal_bench") is not None
-HARBOR_AVAILABLE = importlib.util.find_spec("harbor") is not None
+def _importable(name: str) -> bool:
+    # find_spec is not enough: with bench/terminal_bench on sys.path (as
+    # unittest discover does), find_spec("terminal_bench") matches the
+    # DIRECTORY itself as a namespace package and false-positives.
+    try:
+        importlib.import_module(name)
+        return True
+    except ImportError:
+        return False
+
+
+TB_AVAILABLE = _importable("terminal_bench.agents.base_agent")
+HARBOR_AVAILABLE = _importable("harbor")
 
 KNOB_NAMES = (
     "FA_AGENT_TIMEOUT_SEC",
@@ -72,6 +83,16 @@ class KnobParsingTest(unittest.TestCase):
     def test_nonpositive_value_fails_loud(self):
         with self.assertRaises(ValueError):
             TimeoutKnobs.from_env(clean_env(FA_AGENT_TIMEOUT_SEC="0"))
+
+    def test_nonfinite_value_fails_loud(self):
+        # inf/nan parse as float - reject them explicitly (round-1 thread 5)
+        for bad in ("inf", "nan", "-inf"):
+            with self.assertRaises(ValueError):
+                TimeoutKnobs.from_env(clean_env(FA_AGENT_TIMEOUT_SEC=bad))
+            with self.assertRaises(ValueError):
+                TimeoutKnobs.from_env(
+                    clean_env(FA_AGENT_CEILING_MULTIPLIER=bad)
+                )
 
 
 class LadderTest(unittest.TestCase):
@@ -315,6 +336,25 @@ class LegacyWatcherTest(unittest.TestCase):
         audit = json.loads((logging_dir / "fa-agent-timeout.json").read_text())
         self.assertEqual(audit["outcome"], "hard-ceiling")
 
+    def test_crashed_stock_body_audited_as_crashed(self):
+        # Round-1 thread 3: a stock-body crash must not be audited
+        # "completed" - the audit records the true outcome class.
+        agent = self._agent()
+        session = FakeTmuxSession()
+        logging_dir = Path(self.tmpdir.name)
+
+        def stock(**kwargs):
+            raise RuntimeError("fa exploded")
+
+        with mock.patch.dict(
+            os.environ,
+            clean_env(FA_AGENT_TIMEOUT_SEC="3600", FA_PROGRESS_EXTENSION="1"),
+        ), self._with_stock(agent, stock):
+            with self.assertRaises(RuntimeError):
+                agent.perform_task("instr", session, logging_dir)
+        audit = json.loads((logging_dir / "fa-agent-timeout.json").read_text())
+        self.assertEqual(audit["outcome"], "crashed")
+
 
 @unittest.skipUnless(HARBOR_AVAILABLE, "harbor not installed")
 class HarborParityTest(unittest.TestCase):
@@ -430,6 +470,37 @@ class HarborParityTest(unittest.TestCase):
             self.assertEqual(payload["outcome"], "completed")
             self.assertGreaterEqual(len(payload["extensions"]), 1)
             self.assertFalse(any("pkill" in c for c in env.commands))
+
+    def test_crashed_exec_audited_as_crashed(self):
+        # Round-1 thread 3: a non-zero fa exit re-raises (today's
+        # semantics) and the audit records "crashed", not "completed".
+        agent = self._agent()
+        with mock.patch.dict(
+            os.environ,
+            clean_env(
+                FA_AGENT_TIMEOUT_SEC="0.4",
+                FA_PROGRESS_EXTENSION="1",
+                FA_PROVIDER_CONFIG="{}",
+            ),
+        ), mock.patch.object(self.harbor_fa, "_POLL_SEC", 0.05):
+            knobs = TimeoutKnobs.from_env()
+            counter = {"bytes": 0}
+            audit_sink = []
+            env = self._fake_env(counter, audit_sink=audit_sink)
+            original_exec = env.exec
+
+            async def failing_exec(command, **kwargs):
+                result = await original_exec(command, **kwargs)
+                if "fa --session-root" in command:
+                    result.return_code = 1
+                return result
+
+            env.exec = failing_exec
+            with self.assertRaises(Exception) as ctx:
+                asyncio.run(agent._run_with_deadline(knobs, "work", env))
+            self.assertNotIsInstance(ctx.exception, asyncio.TimeoutError)
+            payload = self._audit_payload(audit_sink)
+            self.assertEqual(payload["outcome"], "crashed")
 
     def test_silent_agent_killed_and_classified_as_timeout(self):
         agent = self._agent()

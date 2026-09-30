@@ -202,13 +202,39 @@ class FaAgent(BaseInstalledAgent):
                     pass
                 if not exec_task.done():
                     exec_task.cancel()
+                    # An abandoned cancelled task is GC-destroyed with
+                    # "pending task" warnings and its exception never
+                    # retrieved - await the cancellation instead. Only our
+                    # own cancellation is swallowed; an external cancel of
+                    # this coroutine still propagates.
+                    try:
+                        await exec_task
+                    except asyncio.CancelledError:
+                        if not exec_task.cancelled():
+                            raise
+                    except Exception:
+                        pass
                 break
-        await self._write_audit(environment, knobs, ladder, outcome)
+        # Natural completion: awaiting the task surfaces the exec's own
+        # failure (e.g. NonZeroAgentExitCodeError) - today's semantics
+        # verbatim. The audit records the true outcome class: a crash must
+        # not be labelled "completed" (issue #1122 round 1).
+        error = None
+        if not outcome:
+            try:
+                await exec_task
+            except BaseException as exc:  # noqa: BLE001 - re-raised below
+                error = exc
+        await self._write_audit(
+            environment, knobs, ladder,
+            outcome or ("crashed" if error is not None else "completed"),
+        )
         if outcome:
             raise asyncio.TimeoutError(
                 f"fa agent killed by bench timeout ladder: {outcome}"
             )
-        await exec_task
+        if error is not None:
+            raise error
 
     async def _progress_bytes(self, environment) -> int | None:
         try:

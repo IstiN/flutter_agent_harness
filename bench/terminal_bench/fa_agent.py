@@ -55,10 +55,6 @@ _VERSION = "0.1.0"
 # there is no keep-alive noise (issue #1122 E1).
 _PROGRESS_LOG = "/tmp/fa-progress.log"
 _POLL_SEC = 5.0
-# If even C-c + pkill leave the worker thread alive (container wedge), stop
-# watching after this much extra time instead of interfering with the
-# harness's post-agent test phase.
-_GIVE_UP_SEC = 600.0
 
 
 class FaAgent(AbstractInstalledAgent):
@@ -160,13 +156,18 @@ class FaAgent(AbstractInstalledAgent):
                     )
                     worker.join(30)
                 break
-            if (time.monotonic() - start) > ladder.kill_at + _GIVE_UP_SEC:
-                outcome = "kill-failed"
-                break
 
         self._tap_pane(session, on=False)
+        crashed = "error" in box
         if logging_dir is not None:
-            self._write_audit(logging_dir, knobs, ladder, outcome)
+            self._write_audit(
+                logging_dir,
+                knobs,
+                ladder,
+                # Audit the true outcome class (issue #1122): a stock-body
+                # crash must not be recorded as a completed run.
+                outcome or ("crashed" if crashed else "completed"),
+            )
         # Our ladder's verdict outranks a late worker error: once we decided
         # the run is a stall/ceiling timeout, the harness must see exactly
         # the timeout classification it would have produced itself.
@@ -177,7 +178,7 @@ class FaAgent(AbstractInstalledAgent):
                 failure_mode=FailureMode.AGENT_TIMEOUT,
                 timestamped_markers=[(0.0, f"agent_timeout({outcome})")],
             )
-        if "error" in box:
+        if crashed:
             raise box["error"]
         return box.get("result") or AgentResult(
             total_input_tokens=0, total_output_tokens=0
@@ -200,7 +201,10 @@ class FaAgent(AbstractInstalledAgent):
             )
             if result.exit_code == 0:
                 return int(result.output.decode(errors="replace").strip() or 0)
-        except (ValueError, OSError):
+        except Exception:
+            # Best-effort sample: a broken/wedged container must never kill
+            # a healthy run — None keeps the ladder's previous state, and a
+            # genuinely dead container fails the stock body on its own.
             pass
         return None
 

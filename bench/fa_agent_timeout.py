@@ -27,6 +27,7 @@ live in this module, so the ladder is deterministic and unit-testable.
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass, field
 
@@ -55,8 +56,8 @@ def _number(env, name, default):
         raise ValueError(
             f"{name} must be a number of seconds, got: {raw!r}"
         ) from None
-    if value <= 0:
-        raise ValueError(f"{name} must be positive, got: {raw!r}")
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be a finite positive number, got: {raw!r}")
     return value
 
 

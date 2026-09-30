@@ -195,6 +195,10 @@ jobs:
             args+=(--global-agent-timeout-sec "$((AGENT_TIMEOUT * 4 + 180))")
           fi
           case "$PROGRESS_EXTENSION" in
+            ''|1|true|TRUE|True|yes|on|false|FALSE|False|no|off) ;;
+            *) echo "::error::progress-extension must be boolean (true/false), got '$PROGRESS_EXTENSION'"; exit 1 ;;
+          esac
+          case "$PROGRESS_EXTENSION" in
             1|true|TRUE|True|yes|on) export FA_PROGRESS_EXTENSION=1;;
           esac
           # Pinned --run-id: one tb-runs/shard-N/ dir per shard, so the merge
