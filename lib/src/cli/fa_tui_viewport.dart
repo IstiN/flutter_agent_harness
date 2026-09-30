@@ -9,13 +9,15 @@ part of 'fa_tui.dart';
 extension _TuiViewport on FaTuiModel {
   /// Applies a user scroll: moves the offset (clamped) and re-evaluates the
   /// follow latch — scrolling up detaches, landing back on the exact bottom
-  /// re-attaches.
+  /// re-attaches. Any user scroll dissolves the boot anchor: the park is
+  /// the boot's, not the user's.
   FaTuiModel _scrolledTo(int offset) {
     final wrapped = _wrappedLines();
     final next = offset.clamp(0, _scrollTopMax(wrapped));
     return copyWith(
       scrollOffset: next,
       followTail: next >= _scrollBottom(wrapped),
+      bootAnchorLine: 0,
     );
   }
 
@@ -60,6 +62,16 @@ extension _TuiViewport on FaTuiModel {
   (Model, Cmd?)? _handleHostStateMsg(Msg msg) {
     if (msg is HubStateMsg) return _handleHubStateMsg(msg);
     if (msg is _CloseHubMsg) return (copyWith(clearHub: true), null);
+    if (msg is SetBootAnchorMsg) {
+      // The anchor names the row the restored transcript starts on (issue
+      // #446 wave-14). The newline flag's trailing phantom row is not
+      // content — the next append fills it (the summary lands ON it), so
+      // it must not count into the anchor. With no output yet this
+      // degrades to no-op (0).
+      final pending =
+          outputLines.isNotEmpty && outputLines.last.isEmpty ? 1 : 0;
+      return (copyWith(bootAnchorLine: outputLines.length - pending), null);
+    }
 
     if (msg is _SetInputTextMsg) {
       return (
@@ -91,10 +103,43 @@ extension _TuiViewport on FaTuiModel {
   /// turn N-1's tail (the cross-turn bleed the sticky echo used to paper
   /// over). Long turns exceed the viewport and the anchor degrades to the
   /// bottom, where the fold indicator owns the explanation.
+  ///
+  /// The resumed boot's replay anchor joins the same max() (issue #446
+  /// wave-14): while following, the window also refuses to start later
+  /// than the restored transcript's first row, so a boot whose banner
+  /// chrome + summary + replayed tail overflow the glass anchors at the
+  /// transcript start — the banner rides the fold under the #827
+  /// indicator instead of pushing the tail's head off the glass.
   int _turnAnchor(List<String> wrapped) {
     final bottom = _scrollBottom(wrapped);
+    var anchor = bottom;
     final start = _turnStartRow();
-    return start > bottom ? start : bottom;
+    if (start > anchor) anchor = start;
+    final boot = _bootAnchorRow();
+    if (boot != null && boot > anchor) anchor = boot;
+    return anchor;
+  }
+
+  /// The boot anchor's wrapped row, or null when absent/foreign (0 = no
+  /// anchor; an index past the transcript degrades the same way a stale
+  /// turn start does).
+  int? _bootAnchorRow() {
+    if (bootAnchorLine <= 0 || bootAnchorLine >= outputLines.length) {
+      return null;
+    }
+    _wrappedLines(); // refresh the shared wrap cache when stale
+    final starts = _wrapCache.lineStartRows;
+    if (bootAnchorLine >= starts.length) return null;
+    return starts[bootAnchorLine];
+  }
+
+  /// The boot-anchor index after a transcript head-trim dropped [cut]
+  /// lines: every transcript index shifts by the cut; a trim that
+  /// swallowed the anchor drops it (0 — plain bottom follow).
+  int _bootAnchorShiftedBy(int cut) {
+    if (cut == 0 || bootAnchorLine <= 0) return bootAnchorLine;
+    final shifted = bootAnchorLine - cut;
+    return shifted < 0 ? 0 : shifted;
   }
 
   /// The effective viewport offset while the follow latch holds: the

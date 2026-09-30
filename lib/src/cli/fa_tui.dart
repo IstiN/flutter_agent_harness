@@ -284,6 +284,7 @@ final class FaTuiModel extends Model {
     this.stickyIndex = -1,
     this.stickyEchoLineCount = 0,
     this.turnStartLine = -1,
+    this.bootAnchorLine = 0,
     this.queue = const [],
     this.attachments = const [],
     this.inputHistory = const [],
@@ -483,6 +484,17 @@ final class FaTuiModel extends Model {
   /// row while the turn still fits, so a fresh prompt's window starts at
   /// its own echo instead of showing turn N-1 above the prompt line.
   final int turnStartLine;
+
+  /// The resumed boot's replay anchor (issue #446 wave-14): the LOGICAL
+  /// line index of the restored session's first row (the reconciliation
+  /// summary + restored-session header). While following, the window
+  /// anchors here when the summary + replayed transcript fit the viewport
+  /// together — the banner above rides the fold under the #827 indicator
+  /// instead of pushing the replayed tail off the glass. 0 = no boot
+  /// anchor (plain bottom follow). Cleared by the first live submit (the
+  /// turn boundary re-arms) and by any user scroll (the park is the
+  /// boot's, not the user's).
+  final int bootAnchorLine;
 
   /// Messages typed while a run streams (kimi-cli's queue): Enter enqueues
   /// a follow-up, ↑ pops the last one back into the input, ctrl+x deletes
@@ -694,6 +706,7 @@ final class FaTuiModel extends Model {
     int? stickyIndex,
     int? stickyEchoLineCount,
     int? turnStartLine,
+    int? bootAnchorLine,
     List<QueuedMessage>? queue,
     List<TuiImageAttachment>? attachments,
     List<String>? inputHistory,
@@ -753,6 +766,7 @@ final class FaTuiModel extends Model {
       stickyIndex: stickyIndex ?? this.stickyIndex,
       stickyEchoLineCount: stickyEchoLineCount ?? this.stickyEchoLineCount,
       turnStartLine: turnStartLine ?? this.turnStartLine,
+      bootAnchorLine: bootAnchorLine ?? this.bootAnchorLine,
       queue: queue ?? this.queue,
       attachments: attachments ?? this.attachments,
       inputHistory: inputHistory ?? this.inputHistory,
@@ -898,6 +912,7 @@ final class FaTuiModel extends Model {
       outputLines: newLines,
       // A head trim shifts every transcript index — anchor and pin (#827).
       turnStartLine: _turnStartShiftedBy(cut),
+      bootAnchorLine: _bootAnchorShiftedBy(cut),
       stickyIndex: _stickyShiftedBy(cut),
     );
     final nextWrapped = next._wrappedLines();
@@ -1030,8 +1045,10 @@ final class FaTuiModel extends Model {
       queue: const [],
       outputLines: lines,
       // The first drained echo opens the next turn's window (issue #827);
-      // echo-time head-trims shift it by the accumulated cut.
+      // echo-time head-trims shift it by the accumulated cut. A live
+      // submit also dissolves the boot anchor — the boundary re-arms.
       turnStartLine: outputLines.length - echoCut,
+      bootAnchorLine: 0,
     );
     final next = cleared.copyWith(
       scrollOffset: cleared._turnAnchor(cleared._wrappedLines()),
@@ -1820,6 +1837,7 @@ final class FaTuiModel extends Model {
     return copyWith(
       outputLines: lines,
       turnStartLine: _turnStartShiftedBy(cut),
+      bootAnchorLine: _bootAnchorShiftedBy(cut),
       stickyIndex: _stickyShiftedBy(cut),
     );
   }
@@ -1875,6 +1893,9 @@ final class FaTuiModel extends Model {
       stickyIndex: outputLines.length - echoCut,
       stickyEchoLineCount: stickyEchoLineCount,
       turnStartLine: outputLines.length - echoCut,
+      // A live submit dissolves the boot anchor: the turn boundary re-arms
+      // at this echo (issue #446 wave-14).
+      bootAnchorLine: 0,
       attachments: keepAttachments ? null : const [],
     );
     return (

@@ -91,6 +91,17 @@ extension FaTuiControllerIo on FaTuiController {
     _send(SetInputHistoryMsg(history));
   }
 
+  /// Marks the resumed boot's replay anchor (issue #446 wave-14): the
+  /// model records its CURRENT output-line count as the restored
+  /// transcript's first row, so the follow window anchors there while the
+  /// boot chrome + transcript fit the glass together. Call BEFORE the
+  /// reconciliation summary / replay writes — the flush-then-queue
+  /// ordering lands the count exactly on the summary row.
+  void markReplayAnchor() {
+    _flushOutput();
+    _send(const SetBootAnchorMsg());
+  }
+
 
   /// Opens the interactive prompt zone (ask/secret/approval) and resolves
   /// when the user answers (or cancels). The caller awaits the returned

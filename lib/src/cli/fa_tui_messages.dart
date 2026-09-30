@@ -22,9 +22,17 @@ final class SetInputHistoryMsg extends Msg {
   final List<String> history;
 }
 
-/// Message restoring the current-turn anchor on a resumed session (issue
-/// #827): [trailingLines] counts transcript lines written AFTER the
-/// replayed last-prompt echo's first row, so the model resolves the echo's
+/// Message marking the resumed boot's replay anchor (issue #446 wave-14):
+/// the model records its CURRENT output-line count as the restored
+/// transcript's first row. The controller queues it between the banner
+/// drain and the replay writes, so the count lands exactly on the
+/// reconciliation summary / restored-session header — the follow window
+/// anchors there while the boot chrome + transcript fit the glass
+/// together (the banner rides the fold under the #827 indicator).
+final class SetBootAnchorMsg extends Msg {
+  const SetBootAnchorMsg();
+}
+
 /// Message asking the model picker to refresh its items.
 final class _ModelsRefreshMsg extends Msg {}
 
