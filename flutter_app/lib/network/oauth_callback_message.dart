@@ -22,6 +22,14 @@ const faOAuthMessageType = 'fa_oauth_code';
 /// BroadcastChannel name paired with [faOAuthMessageType].
 const faOAuthBroadcastChannel = 'fa_oauth';
 
+/// The localStorage key the callback page writes its last-resort
+/// hand-off into — pairs with the page's
+/// `localStorage.setItem('fa_oauth_code', …)` (same JS/Dart split as
+/// [faOAuthBroadcastChannel]: JS cannot share the Dart symbol, keep the
+/// literals in sync). The AIIN callback flow uses its own disjoint key
+/// (`aiin_oauth_code`).
+const faOAuthStorageKey = 'fa_oauth_code';
+
 /// How far back the app's localStorage hand-off consumer accepts a
 /// stored grant (mirrors the AIIN page's freshness window): a stale
 /// entry must never complete a later flow.
@@ -120,7 +128,7 @@ bool isTrustedCallbackOrigin(String origin, String ownOrigin) =>
     origin == productionSiteOrigin || origin == ownOrigin;
 
 /// Decodes the localStorage hand-off the callback page writes as a
-/// last-resort channel (key `fa_oauth_code`, a JSON payload): same rules
+/// last-resort channel (key [faOAuthStorageKey], a JSON payload): same rules
 /// as [decodeOAuthCallbackMessage] plus a freshness window of
 /// [maxAgeMs] against [nowMs] via the payload's `ts` — a stale entry
 /// (this or a previous browser session) must never complete a flow.

@@ -121,6 +121,13 @@ final class WebOAuthReceiver implements OAuthCallbackReceiver {
   /// ignored instead of clobbering the flow.
   String? _expectedState;
 
+  /// Whether a flow has been initiated ([openAuthUrlImpl] ran): between
+  /// `bind()` and the `/initiate` round-trip no grant can exist, so
+  /// hand-offs arriving before arming are by definition stale or forged
+  /// — accepted-before-arm would let a leftover entry complete the
+  /// not-yet-started flow and die later in the flow's state check.
+  bool _armed = false;
+
   @override
   final Uri redirectUri;
 
@@ -169,7 +176,7 @@ final class WebOAuthReceiver implements OAuthCallbackReceiver {
   /// trusted grant completes the flow with the same callback URI shape
   /// the same-origin poll would have produced.
   void _onMessage(html.MessageEvent event) {
-    if (_completer.isCompleted) return;
+    if (_completer.isCompleted || !_armed) return;
     final message = decodeOAuthCallbackMessage(event.data);
     if (message == null) return;
     if (!isTrustedCallbackOrigin(event.origin, html.window.location.origin)) {
@@ -180,13 +187,17 @@ final class WebOAuthReceiver implements OAuthCallbackReceiver {
   }
 
   /// Consumes the callback page's localStorage hand-off (its last-resort
-  /// channel): freshness-gated, state-gated, cleared after use so it can
-  /// never complete a later flow.
+  /// channel): gated on the armed flow, freshness-gated, state-gated.
+  /// The read is consumptive — an entry that decodes as OUR hand-off
+  /// type is removed whether or not the gates admit it (a removed entry
+  /// can never become valid: its state belongs to a dead flow and its
+  /// ts only ages), so no grant-shaped blob lingers to re-feed every
+  /// future poll.
   void _consumeStorageGrant() {
-    if (_completer.isCompleted) return;
+    if (_completer.isCompleted || !_armed) return;
     String? raw;
     try {
-      raw = html.window.localStorage['fa_oauth_code'];
+      raw = html.window.localStorage[faOAuthStorageKey];
     } on Object {
       return; // Storage unavailable (private mode) — other channels cover.
     }
@@ -195,7 +206,23 @@ final class WebOAuthReceiver implements OAuthCallbackReceiver {
     try {
       decoded = jsonDecode(raw);
     } on Object {
+      // Torn write — nothing decodable; clear the key rather than
+      // re-feeding every future poll with an unreadable blob. Best
+      // effort: private-mode storage may refuse the remove.
+      try {
+        html.window.localStorage.remove(faOAuthStorageKey);
+      } on Object {
+        // Left in place; the next landing's ts-gated write overwrites it.
+      }
       return;
+    }
+    // Ownership: only a payload decoding as our hand-off type is ours to
+    // remove (the AIIN flow keeps its own disjoint key; stay defensive).
+    if (decodeOAuthCallbackMessage(decoded) == null) return;
+    try {
+      html.window.localStorage.remove(faOAuthStorageKey);
+    } on Object {
+      return; // Could not clear — retry the whole read next tick.
     }
     final message = oauthCallbackFromStorage(
       decoded,
@@ -203,11 +230,6 @@ final class WebOAuthReceiver implements OAuthCallbackReceiver {
     );
     if (message == null || !message.matchesExpectedState(_expectedState)) {
       return;
-    }
-    try {
-      html.window.localStorage.remove('fa_oauth_code');
-    } on Object {
-      // Best effort — the completer guard still prevents replay.
     }
     _completeGrant(message.toUri(html.window.location.origin));
   }
@@ -274,7 +296,10 @@ Future<void> openAuthUrlImpl(Uri authUrl) async {
   // The CSRF state rides on the authorization URL — the callback echoes
   // it back; hand-offs (message/storage) carrying another state are
   // ignored so a forged or stale grant can't clobber the live flow.
+  // Arming ALSO flips the pre-arm guard: between bind() and here no
+  // grant can exist, so earlier hand-offs are by definition stale.
   receiver?._expectedState = authUrl.queryParameters['state'];
+  receiver?._armed = true;
   final eager = receiver?._popup;
   if (eager != null && WebOAuthReceiver._isUsable(eager)) {
     try {
