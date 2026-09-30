@@ -51,8 +51,10 @@ SMOKE_TASKS = {
     "4.0": "bun-sourcemap-leak",
 }
 
-# Task count per family (Harbor Hub, 2026-09-30) — shard-count guidance in
-# docs/bench.md scales on these.
+# Task count per family (Harbor Hub snapshot, 2026-09-30). Consumed by
+# `resolve` (surfaces run size in the log + cost guard). The 2.x ids are
+# @latest-mutable, so treat these as informational, not load-bearing;
+# docs/bench.md cites them in prose.
 TASK_COUNTS = {
     "2.0": 89,
     "2.1": 89,
@@ -80,11 +82,21 @@ def _normalize_label(text: str) -> str:
     return f"{major}.{minor}"
 
 
+def _sanitize(spec: str) -> str:
+    """Single-line, truncated spec for embedding in error text/annotations."""
+    return " ".join(str(spec).split())[:160]
+
+
 def resolve(spec: str) -> tuple[str, str]:
     """Map a dataset input to (family label, canonical Harbor dataset id)."""
     s = (spec or "").strip()
     if s in FAMILIES:
         return s, FAMILIES[s]
+    # Canonical ids round-trip (incl. the @latest 2.x sets): copying a run's
+    # printed dataset id back into the next dispatch just works, with no
+    # fallback ambiguity — it IS one of the pinned values.
+    if s in FAMILIES.values():
+        return next(k for k, v in FAMILIES.items() if v == s), s
     if "@" in s:
         name, _, tag = s.partition("@")
         try:
@@ -101,10 +113,10 @@ def resolve(spec: str) -> tuple[str, str]:
         if label and label in FAMILIES:
             return label, FAMILIES[label]
     raise FamilyError(
-        f"dataset spec '{spec}' is not part of the pinned Terminal-Bench "
-        f"family; pass a family label (2.0, 2.1, 3.0, 4.0) or one of the "
-        f"exact Harbor ids: {_known_ids()}. Version-less specs are rejected "
-        f"(no silent fallback to 4.0)."
+        f"dataset spec '{_sanitize(spec)}' is not part of the pinned "
+        f"Terminal-Bench family; pass a family label (2.0, 2.1, 3.0, 4.0) or "
+        f"one of the exact Harbor ids: {_known_ids()}. Version-less specs "
+        f"are rejected (no silent fallback to 4.0)."
     )
 
 
@@ -124,12 +136,16 @@ def main() -> int:
     pairs = [
         ("family", family),
         ("dataset", dataset),
+        # Hub-snapshot count (see TASK_COUNTS): surfaces run size in the
+        # resolve log and the cost-guard error (full run ≈ tasks × attempts).
+        ("tasks", str(TASK_COUNTS[family])),
         ("smoke", SMOKE_TASKS[family]),
     ]
     # Human-readable line for the run log (machine output goes to
     # GITHUB_OUTPUT / stdout below).
     print(
-        f"resolved: family={family} dataset={dataset} smoke={SMOKE_TASKS[family]}",
+        f"resolved: family={family} dataset={dataset} "
+        f"tasks={TASK_COUNTS[family]} smoke={SMOKE_TASKS[family]}",
         file=sys.stderr,
     )
     target = os.environ.get("GITHUB_OUTPUT")

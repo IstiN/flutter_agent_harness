@@ -50,6 +50,12 @@ class ResolveTest(unittest.TestCase):
         # AC4: the workflow default dispatches today's 4.0 run exactly.
         self.assertEqual(FAMILIES["4.0"], "terminal-bench/terminal-bench@4.0.0")
 
+    def test_canonical_ids_round_trip(self):
+        # Copy the dataset id a run printed, paste it into the next
+        # dispatch — works for every family, incl. the @latest 2.x sets.
+        for label, dataset in FAMILIES.items():
+            self.assertEqual(resolve(dataset), (label, dataset))
+
     def test_unknown_version_errors_loudly(self):
         with self.assertRaises(FamilyError) as ctx:
             resolve("terminal-bench/terminal-bench@2.2.0")
@@ -57,6 +63,17 @@ class ResolveTest(unittest.TestCase):
         self.assertIn("2.2.0", msg)
         for label in FAMILIES:
             self.assertIn(label, msg)
+
+    def test_error_message_is_single_line_annotation_safe(self):
+        # The spec comes from a dispatch input and lands in a ::error::
+        # annotation: whitespace runs (incl. newlines) must collapse so
+        # the injected text cannot start its own annotation line, and the
+        # spec stays embedded verbatim-in-quotes (collapsed) for triage.
+        with self.assertRaises(FamilyError) as ctx:
+            resolve("terminal-bench/terminal-bench@9.9\n::warning::forged")
+        msg = str(ctx.exception)
+        self.assertNotIn("\n", msg)
+        self.assertIn("'terminal-bench/terminal-bench@9.9 ::warning::forged'", msg)
 
     def test_version_less_spec_never_falls_back(self):
         with self.assertRaises(FamilyError):
@@ -92,6 +109,7 @@ class CliTest(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertIn("family=2.1", p.stdout)
         self.assertIn("dataset=terminal-bench/terminal-bench-2-1@latest", p.stdout)
+        self.assertIn("tasks=89", p.stdout)
         self.assertIn("smoke=fix-git", p.stdout)
 
     def test_unknown_errors_loudly(self):
@@ -108,6 +126,7 @@ class CliTest(unittest.TestCase):
             lines = (out.read_text().splitlines())
             self.assertIn("family=4.0", lines)
             self.assertIn("dataset=terminal-bench/terminal-bench@4.0.0", lines)
+            self.assertIn("tasks=66", lines)
             self.assertIn("smoke=bun-sourcemap-leak", lines)
 
 

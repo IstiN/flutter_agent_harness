@@ -126,10 +126,17 @@ jobs:
       # confirmation. Smoke runs (non-empty tasks) and 4.0 (the
       # historical default, AC4) are unaffected.
       - name: Confirm full intermediate-family run
-        if: steps.family.outputs.family != '4.0' && inputs.tasks == '' && inputs.confirm-full-run != true
+        if: steps.family.outputs.family != '4.0' && inputs.confirm-full-run != true
+        env:
+          TASKS: ${{ inputs.tasks }}
         run: |
-          echo "::error::Full run of Terminal-Bench ${{ steps.family.outputs.family }} (${{ steps.family.outputs.dataset }}) requires confirm-full-run: true. Smoke first: tasks=${{ steps.family.outputs.smoke }}, attempts=1 (docs/bench.md)."
-          exit 1
+          # split_tasks.py strips each comma-glob before use, so " ", ",",
+          # " , " all normalize to zero globs = a FULL dataset run. Judge
+          # emptiness on that same normalization, not the raw input.
+          if [ -z "$(printf %s "$TASKS" | tr -d '[:space:],')" ]; then
+            echo "::error::Full run of Terminal-Bench ${{ steps.family.outputs.family }} (${{ steps.family.outputs.dataset }}, ~${{ steps.family.outputs.tasks }} tasks x ${{ inputs.attempts }} attempts) requires confirm-full-run: true. Smoke first: tasks=${{ steps.family.outputs.smoke }}, attempts=1 (docs/bench.md)."
+            exit 1
+          fi
 
       # Same bundle as bench/terminal_bench/run.sh: tar the bundle/ dir so
       # the adapter extracts bin/fah at the top level of /opt/fa.

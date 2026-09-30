@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Unit tests for summary.py (issue #1124). Run: python3 -m unittest discover -s bench/harbor_fa"""
+import contextlib
+import io
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,16 +27,41 @@ def make_jobs(root: Path, name: str, trials: list[dict]) -> None:
 
 class SummaryTest(unittest.TestCase):
     def setUp(self):
+        # Hermetic: CI exports GITHUB_STEP_SUMMARY for EVERY step, and
+        # summary.py prefers that sink over stdout when set — the first
+        # revision of these tests failed on real Actions runners. Pop it
+        # by default; the sink test below re-points it at a temp file.
+        self._summary_bak = os.environ.pop("GITHUB_STEP_SUMMARY", None)
+        self.addCleanup(self._restore_summary)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.jobs = Path(tmp.name)
 
+    def _restore_summary(self):
+        if self._summary_bak is not None:
+            os.environ["GITHUB_STEP_SUMMARY"] = self._summary_bak
+
     def _run(self, *argv) -> tuple[int, str]:
-        import contextlib, io
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             rc = main(list(argv))
         return rc, out.getvalue()
+
+    def test_step_summary_sink(self):
+        # The sink CI actually uses: with GITHUB_STEP_SUMMARY set, the
+        # report must land in the file (stdout stays quiet).
+        sink = self.jobs / "step-summary.md"
+        make_jobs(self.jobs, "fa-3.0-modal-cpu-0", [{"resolved": True}])
+        os.environ["GITHUB_STEP_SUMMARY"] = str(sink)
+        rc, out = self._run(
+            str(self.jobs), "--family", "3.0", "--model", "glm-5.3-flash",
+            "--fa-ref", "abc1234", "--run-url", "https://ci/run/1",
+        )
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, "")
+        report = sink.read_text()
+        self.assertIn("### fa on Terminal-Bench 3.0", report)
+        self.assertIn("Ledger row", report)
 
     def test_ledger_separation_across_versions(self):
         # A merged jobs dir carrying two dataset versions: the 2.1 report
