@@ -211,6 +211,28 @@ void main() {
       expect(chain.last.keyRing.baseName, 'OPENAI_API_KEY');
     });
 
+    test('a chain entry authHeader reaches the built model (issue #964 '
+        'IT-1)', () {
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: {
+            'default': [
+              ModelRef(
+                provider: 'openai',
+                modelId: 'gw-model',
+                baseUrl: 'https://gateway.example.com/v1',
+                authHeader: 'x-api-key',
+              ),
+            ],
+          },
+        ),
+        secrets: const {'OPENAI_API_KEY': 'gw-key'},
+        streamFactory: _neverStream,
+      );
+      final model = resolver.chainFor('default')!.single.model;
+      expect(model.authHeader, 'x-api-key');
+    });
+
     test('path-scoped overrides pin the chain for a matching cwd', () {
       final resolver = ModelRolesResolver(
         config: config,
