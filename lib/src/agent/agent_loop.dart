@@ -1210,73 +1210,40 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
       await emit(ToolPairingRepairEvent(report: repairReport));
     }
 
-    // Mid-turn over-window guard: tool outputs can balloon one turn far past
-    // the model window (a 287k-token live context on a 200k model was seen in
-    // the wild because compaction only runs at turn boundaries). Stop BEFORE
-    // the request instead of silently sending a context the model cannot
-    // fit — the run ends with a clear error, the tool results stay in the
-    // session, and the post-run auto-compaction (with its local-trim valve)
-    // shrinks the transcript for the next turn. Only a GROSS overflow trips
-    // this (past the window itself): between the compaction trigger
-    // (window - reserve) and the window, the normal post-run compaction
-    // flow still owns the decision.
+    // Mid-turn over-window guard (issue #387): tool outputs can balloon one
+    // turn far past the model window. The cheap window check runs
+    // SYNCHRONOUSLY and only an actual overflow awaits
+    // [_overWindowGuardTurn] — an unconditional await here yields a
+    // microtask on EVERY turn, which reshuffles host event-listener
+    // interleaving downstream (issue #1085 CI: the flutter service's
+    // persist passes lost the final assistant append). Same shape, no
+    // yield on the normal path.
     final window = effectiveContextWindow(
       config.model.contextWindow,
       config.contextWindowCap,
     );
-    // The same accounting basis as the host's ctx meter and the
-    // compaction threshold: transcript estimate PLUS the system-prompt /
-    // tool-schema overhead when no provider-usage anchor prices them in
-    // (an unanchored estimate otherwise undercounts every request by
-    // that overhead — the "meter said 64% but the request was
-    // over-window" mismatch).
     final tokens = estimateRequestTokens(
       requestContext.messages,
       systemPrompt: requestContext.systemPrompt,
       tools: requestContext.tools ?? const [],
     );
     if (window > 0 && tokens > window) {
-      // Issue #387 emergency relief: offer the host ONE synchronous
-      // compaction over the live transcript before giving up. A non-null
-      // result replaces the loop context and the request is retried;
-      // null, a throw, or a still-over result keeps the verbatim error
-      // below. Bounded to one attempt — a tool result bigger than the
-      // window fails fast here instead of looping.
-      if (_reliefAvailable(reliefUsed, config)) {
-        reliefUsed = true;
-        try {
-          final relieved = await config.overWindowRelief!(context.messages);
-          if (relieved != null) {
-            // The relieved transcript becomes the loop's live context:
-            // the retried request is built from it and every later turn
-            // rides it (the tuple return hands it back to the host).
-            context = Context(
-              systemPrompt: context.systemPrompt,
-              messages: relieved,
-              tools: context.tools,
-            );
-            continue;
-          }
-        } catch (_) {
-          // A failed relief = no relief; the error below is the answer.
-        }
-      }
-      return (
-        await _finishWithoutStream(
-          context,
-          emit,
-          _terminalMessage(
-            config.model,
-            StopReason.error,
-            '$contextWindowExhaustedMarker: the outgoing context is '
-            '~$tokens tokens, '
-            'the ${config.model.id} effective window is $window. The request '
-            'was not sent. Auto-compaction runs next; if it keeps failing, '
-            'run /compact or start a fresh session.',
-          ),
-        ),
+      final guard = await _overWindowGuardTurn(
         context,
+        requestContext,
+        config,
+        emit,
+        reliefUsed,
+        cancelToken,
+        window,
+        tokens,
       );
+      reliefUsed = guard.reliefUsed;
+      if (guard.terminal != null) return guard.terminal!;
+      if (guard.retried) {
+        context = guard.context;
+        continue;
+      }
     }
 
     AssistantMessageEventStream response;
@@ -1324,6 +1291,126 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
       context,
     );
   }
+}
+
+/// The mid-turn over-window guard (issue #387): tool outputs can balloon
+/// one turn far past the model window (a 287k-token live context on a
+/// 200k model was seen in the wild because compaction only runs at turn
+/// boundaries). Stops BEFORE the request instead of silently sending a
+/// context the model cannot fit — the run ends with a clear error, the
+/// tool results stay in the session, and the post-run auto-compaction
+/// (with its local-trim valve) shrinks the transcript for the next turn.
+/// Only a GROSS overflow trips this (past the window itself): between the
+/// compaction trigger (window - reserve) and the window, the normal
+/// post-run compaction flow still owns the decision.
+///
+/// Issue #387 emergency relief: offers the host ONE synchronous
+/// compaction over the live transcript before giving up. A non-null
+/// result replaces the loop context (`retried`) and the request is
+/// rebuilt and retried; null, a throw, or a still-over result keeps the
+/// verbatim guard error. Bounded to one attempt — a tool result bigger
+/// than the window fails fast here instead of looping.
+typedef _OverWindowGuardStep = ({
+  /// The loop's live context after the guard (relief may have replaced
+  /// it — adopt when [retried]).
+  Context context,
+  bool reliefUsed,
+  bool retried,
+  (AssistantMessage, Context)? terminal,
+});
+
+Future<_OverWindowGuardStep> _overWindowGuardTurn(
+  Context context,
+  Context requestContext,
+  AgentLoopConfig config,
+  AgentEventSink emit,
+  bool reliefUsed,
+  CancelToken? cancelToken,
+  int window,
+  int tokens,
+) async {
+  // `window`/`tokens` are computed synchronously by the caller (the same
+  // accounting basis as the host's ctx meter and the compaction
+  // threshold: transcript estimate PLUS the system-prompt / tool-schema
+  // overhead when no provider-usage anchor prices them in — an
+  // unanchored estimate otherwise undercounts every request by that
+  // overhead — the "meter said 64% but the request was over-window"
+  // mismatch).
+  if (window <= 0 || tokens <= window) {
+    return (
+      context: context,
+      reliefUsed: reliefUsed,
+      retried: false,
+      terminal: null,
+    );
+  }
+  if (_reliefAvailable(reliefUsed, config)) {
+    try {
+      final relieved = await config.overWindowRelief!(context.messages);
+      if (_isCancelRequested(cancelToken)) {
+        // Issue #1085: the relief tokens are linked to the run token —
+        // a USER abort mid-relief cancels the compaction and lands
+        // here. The run must end aborted, NOT with the guard error:
+        // the guard error re-arms the host's auto-continuation funnel,
+        // which would silently resume the task the user just stopped.
+        return (
+          context: context,
+          reliefUsed: true,
+          retried: false,
+          terminal: await _abortedTurn(context, config, emit),
+        );
+      }
+      if (relieved != null) {
+        // The relieved transcript becomes the loop's live context:
+        // the retried request is built from it and every later turn
+        // rides it (the tuple return hands it back to the host).
+        return (
+          context: Context(
+            systemPrompt: context.systemPrompt,
+            messages: relieved,
+            tools: context.tools,
+          ),
+          reliefUsed: true,
+          retried: true,
+          terminal: null,
+        );
+      }
+    } catch (_) {
+      // A failed relief = no relief; the error below is the answer —
+      // unless the failure WAS a cancellation (user abort mid-relief,
+      // issue #1085): that must surface as aborted, never as the
+      // guard error.
+      if (_isCancelRequested(cancelToken)) {
+        return (
+          context: context,
+          reliefUsed: true,
+          retried: false,
+          terminal: await _abortedTurn(context, config, emit),
+        );
+      }
+    }
+  }
+  return (
+    context: context,
+    reliefUsed: true,
+    retried: false,
+    terminal: (
+      await _finishWithoutStream(
+        context,
+        emit,
+        _terminalMessage(
+          config.model,
+          StopReason.error,
+          '$contextWindowExhaustedMarker: the outgoing context is '
+          '~$tokens tokens, '
+          'the ${config.model.id} effective window is $window. The request '
+          'was not sent. Auto-compaction runs next; if it keeps failing, '
+          'run /compact or start a fresh session.',
+        ),
+      ),
+      context,
+    ),
+  );
 }
 
 /// Whether the host's one-shot over-window relief is still on the table.
