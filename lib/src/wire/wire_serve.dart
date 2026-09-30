@@ -231,6 +231,12 @@ final class WireServeServer {
     String kind,
     Map<String, dynamic> Function(AgentWireProtocol protocol) encode,
   ) {
+    // A request arriving after shutdown() can never be answered - no
+    // client is coming back. Resolve to the safe refusal (deny /
+    // cancelled / declined, per the callers' null mapping) immediately
+    // instead of registering a pending that only the settle-window
+    // timeout would reap (review #1113 r3).
+    if (_shutDown) return Future<Object?>.value(null);
     final pending = _PendingRequest(kind: kind, encode: encode);
     _pending[id] = pending;
     // First delivery: to the attached client, if any. Detached callers

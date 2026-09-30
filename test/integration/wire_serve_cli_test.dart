@@ -280,7 +280,7 @@ void main() {
   );
 
   test(
-    'T1/r2: a malformed line is a loud protocol_error and the serve survives',
+    'T1/r2: a malformed line is a loud bad_frame and the serve survives',
     () async {
       final fake = FakeStreamFunction([textTurn('still here')]);
       final cli = bootCli(fake: fake, approvalMode: ApprovalMode.yolo);
@@ -326,6 +326,58 @@ void main() {
       expect(await served.timeout(const Duration(seconds: 20)), 0);
     },
   );
+
+  test('T1/r3: bad BYTES are a loud bad_frame and the serve survives',
+      () async {
+    final fake = FakeStreamFunction([textTurn('bytes ok')]);
+    final cli = bootCli(fake: fake, approvalMode: ApprovalMode.yolo);
+    final incoming = StreamController<List<int>>();
+    final outFrames = <Map<String, dynamic>>[];
+    final gotError = Completer<void>();
+    final settled = Completer<void>();
+    final served = cli.runWireServe(
+      serve: (server) {
+        final send = (Map<String, dynamic> frame) {
+          outFrames.add(frame);
+          if (frame['kind'] == 'error' && !gotError.isCompleted) {
+            gotError.complete();
+          }
+          if (frame['kind'] == 'agent_settled' && !settled.isCompleted) {
+            settled.complete();
+          }
+        };
+        // The REAL stdio byte path: raw bytes -> byteLines -> guarded
+        // decode (review #1113 r3, #1).
+        return server
+            .attach(decodeNdjson(server, byteLines(incoming.stream), send),
+                send)
+            .whenComplete(() {
+              if (!settled.isCompleted) settled.complete();
+            });
+      },
+    );
+
+    // hello split across two chunks (exercises the byte-line carry),
+    // then a line of invalid UTF-8 bytes, then a blank line, then a
+    // valid prompt.
+    final hello = utf8.encode('{"v":1,"kind":"hello","versions":[1]}\n');
+    incoming.add(hello.sublist(0, 10));
+    incoming.add(hello.sublist(10));
+    incoming.add(const [0xFF, 0xFE, 0x0A]);
+    incoming.add(utf8.encode('\n'));
+    incoming.add(
+      utf8.encode(
+        '${jsonEncode(const WirePromptCommand('hi').toJson())}\n',
+      ),
+    );
+    await gotError.future.timeout(const Duration(seconds: 20));
+    final error = outFrames.lastWhere((f) => f['kind'] == 'error');
+    expect(error['code'], 'bad_frame');
+    // The serve is alive: the NEXT prompt after the bad bytes runs.
+    await settled.future.timeout(const Duration(seconds: 20));
+    await incoming.close();
+    expect(await served.timeout(const Duration(seconds: 20)), 0);
+  });
 
   test('IT-3: shutdown persists; a second CLI resumes the session', () async {
     final fake1 = FakeStreamFunction([textTurn('first-run-answer')]);

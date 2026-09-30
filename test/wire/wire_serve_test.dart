@@ -509,10 +509,14 @@ void main() {
       expect(h.sent, isEmpty);
     });
   });
-  group('protocol_error (review #1113 r2, BLOCKING #1)', () {
+  group('bad_frame (review #1113 r2, BLOCKING #1)', () {
     test('a malformed line emits a loud error frame pre-handshake', () {
       final h = _Harness();
-      h.server.protocolError('bad_frame', 'FormatException: bad JSON', h.sent.add);
+      h.server.protocolError(
+        'bad_frame',
+        'FormatException: bad JSON',
+        h.sent.add,
+      );
       expect(h.sent, hasLength(1));
       final frame = h.sent.single;
       expect(frame['kind'], 'error');
@@ -548,6 +552,39 @@ void main() {
       await incoming.close();
       await done;
     });
+
+    test(
+      'a request after shutdown resolves to the safe refusal immediately',
+      () async {
+        final h = _Harness();
+        await h.server.shutdown();
+        final sw = Stopwatch()..start();
+        final decision = await h.server.approvalPrompt(
+          const ApprovalRequest(
+            toolName: 'bash',
+            tier: ApprovalTier.exec,
+            arguments: {'command': 'rm -rf /tmp/x'},
+            reason: 'critical pattern matched',
+          ),
+        );
+        expect(decision, ApprovalDecision.deny);
+        expect(
+          sw.elapsedMilliseconds,
+          lessThan(1000),
+          reason: 'no settle-window wedge after shutdown (review r3)',
+        );
+        expect(
+          await h.server.answerAsk(const [
+            AskQuestion(
+              question: 'Deploy now?',
+              options: [AskOption(label: 'yes')],
+            ),
+          ]),
+          isNull,
+        );
+        expect(await h.server.answerSecret('k', 'why'), isNull);
+      },
+    );
   });
 }
 

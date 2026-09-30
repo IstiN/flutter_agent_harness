@@ -5,8 +5,9 @@
 // handshake (`Authorization: Bearer <token>` or `?token=<token>`), exactly
 // one live client (the pure core enforces single-attach; a second client
 // gets the loud `already_attached` error frame). The one-time startup line
-// `{"wire_serve":{"port":N,"token":"..."}}` goes to real stdout BEFORE the
-// caller starts the agent boot.
+// `{"wire_serve":{"port":N,"token":"..."}}` goes to real stdout only AFTER
+// the agent boot (and its lease gate) succeeded - the port itself binds
+// early so a race fails loudly before the boot (review #1113 r3).
 //
 // stdio: NDJSON frames on stdin (blank lines skipped), frames out through
 // [AgentWireProtocol.frameLine] + flush — the pipe-embedding contract
@@ -62,33 +63,83 @@ bool tokenOk(HttpRequest request, String token) =>
     request.headers.value(HttpHeaders.authorizationHeader) == 'Bearer $token' ||
     request.uri.queryParameters['token'] == token;
 
-/// NDJSON decode for both transports: blank lines are skipped; a
-/// malformed line is a loud `protocol_error` frame and the stream STAYS
-/// ALIVE (review #1113 r2, BLOCKING #1 — one bad line never kills the
-/// connection; stdio decode failures used to end the whole server with
-/// exit 0).
+/// NDJSON decode for both transports. One message in — a WS text frame,
+/// a WS binary frame's bytes, or one stdio line's raw bytes (via
+/// [byteLines]) — becomes at most one frame. Blank lines are skipped;
+/// ANY decode failure, byte-level (invalid UTF-8) or line-level (not
+/// JSON, not a frame), is a loud `bad_frame` frame and the stream STAYS
+/// ALIVE (review #1113 r2 BLOCKING #1 + r3 #1: one bad line or one bad
+/// BYTE never kills the connection — stdio used to die with exit 0).
 Stream<Map<String, dynamic>> decodeNdjson(
   WireServeServer server,
-  Stream<String> lines,
+  Stream<Object> messages,
   void Function(Map<String, dynamic> frame) send,
-) => lines
-    .map((line) {
-      final trimmed = line.trim();
-      if (trimmed.isEmpty) {
-        return null;
-      }
-      try {
-        return AgentWireProtocol.parseLine(trimmed);
-      } on FormatException catch (error) {
-        server.protocolError('bad_frame', '$error', send);
-        return null;
-      } on WireProtocolException catch (error) {
-        server.protocolError('bad_frame', '$error', send);
-        return null;
-      }
-    })
+) => messages
+    .map((message) => _decodeMessage(server, message, send))
     .where((frame) => frame != null)
     .cast<Map<String, dynamic>>();
+
+/// One transport message -> at most one frame; every failure mode
+/// answers [WireServeServer.protocolError] and yields null.
+Map<String, dynamic>? _decodeMessage(
+  WireServeServer server,
+  Object message,
+  void Function(Map<String, dynamic> frame) send,
+) {
+  try {
+    final line = _messageLine(message);
+    if (line == null) {
+      throw const FormatException('unsupported frame payload');
+    }
+    return AgentWireProtocol.parseLine(line);
+  } on Object catch (error) {
+    // Transport boundary: any decode failure (byte, JSON, or frame
+    // shape) is the client's line problem, not the server's.
+    server.protocolError('bad_frame', '$error', send);
+    return null;
+  }
+}
+
+/// Decodes one message to its NDJSON line text, or null for an
+/// unsupported payload type. Byte payloads decode STRICTLY - a malformed
+/// byte throws [FormatException] (the caller turns it into bad_frame).
+String? _messageLine(Object message) {
+  if (message is List<int>) return utf8.decode(message).trim();
+  if (message is String) return message.trim();
+  return null;
+}
+
+/// Splits a raw byte stream into NDJSON lines on 0x0A (JSON never embeds
+/// a raw newline, so byte-level splitting is exact), carrying partial
+/// lines across chunks; a trailing 0x0D from CRLF writers is trimmed.
+Stream<List<int>> byteLines(Stream<List<int>> chunks) async* {
+  var carry = <int>[];
+  await for (final chunk in chunks) {
+    final (lines, rest) = _drainByteLines(carry, chunk);
+    yield* Stream<List<int>>.fromIterable(lines);
+    carry = rest;
+  }
+  if (carry.isNotEmpty) yield _trimCr(carry);
+}
+
+/// Drains every complete line out of `carry + chunk`; returns the lines
+/// and the trailing partial line (empty when the chunk ended on 0x0A).
+(List<List<int>>, List<int>) _drainByteLines(List<int> carry, List<int> chunk) {
+  final buffer = [...carry, ...chunk];
+  final lines = <List<int>>[];
+  var start = 0;
+  for (var i = 0; i < buffer.length; i++) {
+    if (buffer[i] == 0x0A) {
+      lines.add(_trimCr(buffer.sublist(start, i)));
+      start = i + 1;
+    }
+  }
+  return (lines, buffer.sublist(start));
+}
+
+List<int> _trimCr(List<int> line) => line.isNotEmpty && line.last == 0x0D
+    ? line.sublist(0, line.length - 1)
+    : line;
 
 /// Accept loop: upgrade + token-gate each request, then hand the decoded
 /// frame stream to [WireServeServer.attach]. One NDJSON line per frame in
@@ -110,8 +161,12 @@ Future<void> httpListen(HttpServer http, WireServeServer server, String token) {
       final ws = await WebSocketTransformer.upgrade(request);
       final send = (Map<String, dynamic> frame) =>
           ws.add(AgentWireProtocol.frameLine(frame));
+      // Text frames arrive as String, binary frames as Uint8List (a
+      // List<int>) — both decode through the guarded path. (Invalid
+      // UTF-8 in a TEXT frame fails the socket inside dart:io per RFC
+      // 6455; that layer is not ours to guard.)
       await server
-          .attach(decodeNdjson(server, ws.cast<String>(), send), send)
+          .attach(decodeNdjson(server, ws.cast<Object>(), send), send)
           .whenComplete(ws.close);
     } on Object catch (error) {
       // Upgrade raced a disconnect, or the attach raced shutdown —
@@ -131,18 +186,12 @@ void writeStartupLine(WireServeStartupLine line) {
 
 /// Serves [WireServeServer.attach] over NDJSON stdin/stdout until stdin
 /// EOF; the returned future IS the graceful-shutdown trigger in stdio
-/// mode.
+/// mode. Bytes decode through [byteLines] + strict per-line UTF-8 — a
+/// malformed byte is a loud `bad_frame`, never a silent server death.
 Future<void> serveStdio(WireServeServer server) {
   final send = (Map<String, dynamic> frame) {
     stdout.writeln(AgentWireProtocol.frameLine(frame));
     stdout.flush();
   };
-  return server.attach(
-    decodeNdjson(
-      server,
-      stdin.transform(utf8.decoder).transform(const LineSplitter()),
-      send,
-    ),
-    send,
-  );
+  return server.attach(decodeNdjson(server, byteLines(stdin), send), send);
 }
