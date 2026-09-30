@@ -14,6 +14,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 
@@ -22,6 +23,7 @@ import 'package:xterm/xterm.dart';
 
 import '../golden/golden_test_helper.dart';
 import 'cli_visual_harness.dart';
+
 import 'package:flutter_agent_harness/src/cli/omp_reg_scenarios.dart';
 
 void main() {
@@ -210,6 +212,15 @@ void main() {
 
       // "Provider" is the first settings entry — open the provider picker.
       harness.sendEnter();
+      // gh-1026 family: 'test-provider' paints on the idle [Providers]
+      // status panel and below the open hub too, so the positive wait below
+      // can resolve BEFORE the provider picker replaces the hub — and the
+      // Enter after it races the swap (a key mid-transition activates the
+      // hub row again; the Edit/Delete picker never opens; the run flakes
+      // under host load, a different test each time). The hub closing is
+      // the transition-complete signal: '[Settings]' is the hub picker's
+      // title row and paints only while the hub menu is active.
+      await _waitForScreenGone(tester, harness, '[Settings]');
       await harness.liveWaitForText(
         'test-provider',
         timeout: const Duration(seconds: 15),
@@ -286,6 +297,9 @@ void main() {
         timeout: const Duration(seconds: 15),
       );
       harness.sendEnter();
+      // Same hub→provider-picker race as the Edit test above: pin the wait
+      // to the hub closing before the next Enter (gh-1026 family).
+      await _waitForScreenGone(tester, harness, '[Settings]');
       await harness.liveWaitForScreen(
         'test-provider',
         timeout: const Duration(seconds: 15),
@@ -1153,9 +1167,9 @@ http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
 
       // Job ids carry a unique suffix (sh-1-<uniq>) — cancel the EXACT id
       // the listing shows.
-      final shellJobId = RegExp(
-        'sh-[A-Za-z0-9-]+',
-      ).firstMatch(harness.screenText)?.group(0);
+      final shellJobId = RegExp('sh-[A-Za-z0-9-]+')
+          .firstMatch(harness.screenText)
+          ?.group(0);
       expect(shellJobId, isNotNull);
 
       await harness.runSlashCommand('/tasks cancel $shellJobId');
@@ -1667,6 +1681,33 @@ Future<void> _seedHubFleet(
 }
 
 /// Creates a temp HOME with a saved custom provider.
+/// gh-1026 family: bounded poll until [pattern] has LEFT the painted
+/// screen — the transition-complete signal for a picker swap whose
+/// successor shares all of its row text with the panels underneath (the
+/// provider picker re-renders the same 'test-provider' line the idle
+/// status panel paints). Same poll shape as
+/// [CliVisualHarness.liveWaitForScreen], inverted; runs in the real-async
+/// zone so frames keep painting while the poll samples.
+Future<void> _waitForScreenGone(
+  WidgetTester tester,
+  CliVisualHarness harness,
+  Pattern pattern, {
+  Duration timeout = const Duration(seconds: 15),
+}) async {
+  await tester.runAsync(() async {
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      if (!harness.screenText.contains(pattern)) return;
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+    throw TimeoutException(
+      'Timed out waiting for "$pattern" to leave the screen.\n'
+      '--- screen ---\n${harness.screenText}',
+      timeout,
+    );
+  });
+}
+
 Directory _tempHomeWithProvider() {
   final tempHome = Directory.systemTemp.createTempSync('fa_test_');
   File('${tempHome.path}/.fah/config.yaml')
