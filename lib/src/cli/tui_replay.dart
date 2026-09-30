@@ -45,14 +45,15 @@ void _closeDanglingFence(List<String> rows) {
 }
 
 /// The tool row a persisted [ToolCall] replays as — the live end-row
-/// grammar fed from the record itself: the settled band card ([tuiToolCard],
-/// the `_onToolExecutionEnd` paint since #807) in chrome mode, the legacy
-/// painted row under the [tuiChromeEnabled] kill switch, the plain
-/// unpainted row in line mode. Name + args preview; the attached result's
-/// first line on errors. A call whose result never landed (crash mid-turn)
-/// renders in its interrupted state from the args — never a bare `[name]`
-/// marker. The card's meta zone carries the honest `—` where a live card
-/// shows the elapsed cell (issue #446 contract point 2).
+/// grammar fed from the record itself: the settled band card through the
+/// SHARED builder the live `_onToolExecutionEnd` paints
+/// ([settledToolCardRows], issue #916) in chrome mode, the legacy painted
+/// row under the [tuiChromeEnabled] kill switch, the plain unpainted row in
+/// line mode. Name + args preview; the attached result's first line on
+/// errors. A call whose result never landed (crash mid-turn) renders in
+/// its interrupted state from the args — never a bare `[name]` marker. The
+/// card's meta zone carries the honest `—` where a live card shows the
+/// elapsed cell (issue #446 contract point 2).
 String replayToolRow(
   ToolCall call,
   ToolResultMessage? result, {
@@ -61,47 +62,43 @@ String replayToolRow(
   String? home,
   bool styled = true,
 }) {
-  final failed = result == null || result.isError;
-  var detail = toolRowDetail(call.name, call.arguments, cwd: cwd, home: home);
-  var glyphPaint = tuiAccentSoft;
-  var detailPaint = tuiDim;
-  if (result != null && result.isError) {
-    // The failure text is the news: bright first line, like the live row.
-    glyphPaint = tuiError;
-    detailPaint = (s) => s;
-    detail = result.content
-        .whereType<TextContent>()
-        .map((block) => block.text)
-        .join()
-        .split('\n')
-        .first;
-  }
+  final detail = toolRowDetail(call.name, call.arguments, cwd: cwd, home: home);
   // TUI chrome (issue #916): the settled card IS the live end-row grammar
-  // since #807 — replaying the legacy row would show the user a transcript
-  // they never saw. Line mode and the kill switch keep the legacy row.
+  // since #807 — both edges render through [settledToolCardRows], so the
+  // parity cannot drift again. Line mode and the kill switch keep the
+  // legacy row.
   if (styled && tuiChromeEnabled) {
-    return tuiToolCard(
-      ToolCardSegments(
-        title: call.name,
-        description: detail,
-        // The one permitted live/replay difference: no live duration.
-        meta: const ['—'],
-      ),
-      failed ? TuiCardPhase.error : TuiCardPhase.success,
-      width,
+    return settledToolCardRows(
+      toolName: call.name,
+      successDetail: detail,
+      isError: result != null && result.isError,
+      width: width,
+      resultContent: result?.content ?? const <ContentBlock>[],
+      // The one permitted live/replay difference: no live duration.
+      meta: const ['—'],
+      interrupted: result == null,
     ).join('\n');
   }
+  final failed = result == null || result.isError;
+  final hasError = result != null && result.isError;
   final row = layoutToolRow(
     ToolRowSegments(
       glyph: failed ? '✗' : '✓',
       label: call.name,
-      detail: detail,
+      // The failure text is the news: bright first line, like the live row.
+      detail: hasError ? failureFirstLine(result.content) : detail,
       elapsed: '—',
     ),
     width,
   );
   return styled
-      ? row.style(glyph: glyphPaint, label: tuiAccent2, dim: detailPaint)
+      ? row.style(
+          // An interrupted call keeps the soft glyph paint — only a real
+          // error result paints the error role.
+          glyph: hasError ? tuiError : tuiAccentSoft,
+          label: tuiAccent2,
+          dim: hasError ? (String s) => s : tuiDim,
+        )
       : row.join();
 }
 

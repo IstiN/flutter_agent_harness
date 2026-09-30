@@ -4,11 +4,7 @@ import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/system_notice_render.dart';
 import 'package:flutter_agent_harness/src/cli/tool_rows.dart';
 import 'package:flutter_agent_harness/src/cli/tui_chrome.dart'
-    show
-        ToolCardSegments,
-        TuiCardPhase,
-        tuiChromeEnabled,
-        tuiToolCard;
+    show settledToolCardRows, tuiChromeEnabled;
 import 'package:flutter_agent_harness/src/cli/tui_replay.dart';
 import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:flutter_agent_harness/src/context.dart';
@@ -76,33 +72,25 @@ void main() {
     ).style(glyph: glyphPaint, label: tuiAccent2, dim: detailPaint);
   }
 
-  /// The live SETTLED CARD for [call] — the exact `_onToolExecutionEnd`
-  /// band-card paint (issue #807 chrome, issue #916 replay parity), minus
-  /// the live duration (the meta zone carries the honest `—`). The replayed
-  /// TUI tool row must equal this byte for byte.
+  /// The live SETTLED CARD for [call] — the SAME [settledToolCardRows]
+  /// builder `_onToolExecutionEnd` and [replayToolRow] render through
+  /// (issue #807 chrome, #916 parity by construction), minus the live
+  /// duration (the meta zone carries the honest `—`). The replayed TUI
+  /// tool row must equal this byte for byte.
   String liveEndCard(
     ToolCall call,
     ToolResultMessage? result, {
     int width = 80,
   }) {
-    final failed = result == null || result.isError;
-    var detail = toolRowDetail(call.name, call.arguments);
-    if (result != null && result.isError) {
-      detail = result.content
-          .whereType<TextContent>()
-          .map((b) => b.text)
-          .join()
-          .split('\n')
-          .first;
-    }
-    return tuiToolCard(
-      ToolCardSegments(
-        title: call.name,
-        description: detail,
-        meta: const ['—'],
-      ),
-      failed ? TuiCardPhase.error : TuiCardPhase.success,
-      width,
+    final hasError = result != null && result.isError;
+    return settledToolCardRows(
+      toolName: call.name,
+      successDetail: toolRowDetail(call.name, call.arguments),
+      isError: hasError,
+      width: width,
+      resultContent: result?.content ?? const [],
+      meta: const ['—'],
+      interrupted: result == null,
     ).join('\n');
   }
 
@@ -135,18 +123,38 @@ void main() {
       expect(lines.join(), isNot(contains('✓ bash')));
     });
 
-    test('chrome kill switch keeps the legacy painted row, byte-pinned', () {
+    test('chrome kill switch keeps the legacy painted row, byte-pinned — '
+        'success, error, and interrupted', () {
       addTearDown(() => tuiChromeEnabled = true);
       tuiChromeEnabled = false;
       final result = okResult('c1', 'M lib/a.dart\n');
-      final lines = replayLinesTui(
+      final error = ToolResultMessage(
+        toolCallId: 'c1',
+        toolName: 'bash',
+        content: [TextContent(text: 'fatal: not a repo\nstack')],
+        isError: true,
+        timestamp: DateTime.utc(2026),
+      );
+      final success = replayLinesTui(
         assistant([call]),
         width: 80,
         dim: dim,
         results: {'c1': result},
       );
-      expect(lines, [liveEndRow(call, result)]);
-      expect(lines.single, contains('✓'));
+      expect(success, [liveEndRow(call, result)]);
+      expect(success.single, contains('✓'));
+      final failed = replayLinesTui(
+        assistant([call]),
+        width: 80,
+        dim: dim,
+        results: {'c1': error},
+      );
+      expect(failed, [liveEndRow(call, error)]);
+      expect(failed.single, contains('✗'));
+      expect(failed.single, contains('fatal: not a repo'));
+      final interrupted = replayLinesTui(assistant([call]), width: 80, dim: dim);
+      expect(interrupted, [liveEndRow(call, null)]);
+      expect(interrupted.single, contains('✗'));
     });
 
     test('the args preview is the human detail (command text), not JSON', () {

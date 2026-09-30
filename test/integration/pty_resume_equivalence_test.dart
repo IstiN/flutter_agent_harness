@@ -119,28 +119,21 @@ final _runningCard = RegExp(r'^[⟳⏳] \S+: ');
 /// A live SETTLED band tool card (`✔ bash: sleep 2 … 0s`, `✘ … [exit 1]`).
 final _settledCard = RegExp(r'^[✔✘] (\S+): (.+)$');
 
-/// A replayed legacy tool row (`✓ bash · sleep 2 … —`) — reachable only
-/// under the [tuiChromeEnabled] kill switch, kept as canonicalizer
-/// tolerance.
-final _replayedRow = RegExp(r'^[✓✗] (\S+) · (.+)$');
-
 /// A settled card's trailing meta zone: the bracketed badge, the elapsed
 /// cell (`0s`, `12.4ms`), or the replay's honest `—` (issue #916).
 final _cardMeta = RegExp(r'(?:\s\[[^\]]+\]|\s\d+(?:\.\d+)?(?:ms|s)|\s—)+$');
 
-/// Canonicalizes one settled tool row to its shared `name: detail`
-/// grammar. Both edges paint the settled band card since #916 (`✔ bash:
-/// sleep 2 … 0s` live, `—` meta replayed); the legacy row branch stays for
-/// kill-switch tolerance. Running cards (`⟳ …`) normalize to null:
-/// live-only transient.
+/// Canonicalizes one settled tool row to its shared `name: detail` core.
+/// Since #916 BOTH edges paint the settled band card — it is the ONLY
+/// tool-row grammar — so this is a strict parser, not a tolerance layer: a
+/// card canonicalizes, a running card (`⟳ …`, live-only transient)
+/// normalizes to null, and ANYTHING else (e.g. a regressed legacy
+/// `✓ name · detail` row) passes through raw and breaks the live/replay
+/// equality — drift detection is this canonicalizer's whole job.
 String? _canonicalToolRow(String t) {
   if (_runningCard.hasMatch(t)) return null;
   final card = _settledCard.firstMatch(t);
   if (card != null) return '${card[1]}: ${card[2]!.replaceAll(_cardMeta, '')}';
-  final row = _replayedRow.firstMatch(t);
-  if (row != null) {
-    return '${row[1]}: ${row[2]!.replaceFirst(RegExp(r'\s+—$'), '')}';
-  }
   return t;
 }
 
