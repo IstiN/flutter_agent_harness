@@ -2734,6 +2734,12 @@ jobs:
       cancel-in-progress: false
     permissions:
       contents: write
+    env:
+      # auto_release.sh's gh calls (pr list / pr create) authenticate via the
+      # PAT — the job env carries no GH_TOKEN by default, so without this
+      # every call dies under set -e and no bump PR ever opens (BLOCK
+      # finding on PR #1093, live review 2026-09-30).
+      GH_TOKEN: ${{ secrets.RELEASE_PAT }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -2770,6 +2776,13 @@ jobs:
       cancel-in-progress: false
     permissions:
       contents: write
+    env:
+      # tag_release.sh's `gh release create` needs a token; RELEASE_PAT keeps
+      # one credential for the tag push + release create. Without it the
+      # create || true was a guaranteed silent no-op and the curated
+      # CHANGELOG notes never reached the release object (BLOCK finding on
+      # PR #1093, live review 2026-09-30).
+      GH_TOKEN: ${{ secrets.RELEASE_PAT }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

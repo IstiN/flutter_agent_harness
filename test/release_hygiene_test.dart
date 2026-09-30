@@ -882,8 +882,46 @@ gh release create "v9.9.9" \
       final tagScript = read('scripts/tag_release.sh');
       expect(tagScript, contains(r'git tag -a "$tag"'));
       expect(tagScript, contains(r'git push origin "$tag"'));
-      expect(tagScript, contains('RELEASE_PAT'),
-          reason: 'the tag push must use RELEASE_PAT — GITHUB_TOKEN tags never fire tag-scoped jobs');
+    });
+
+    test('release jobs authenticate gh via RELEASE_PAT (env + checkout), not by comment (#1093 review)', () {
+      // BLOCK finding on PR #1093 (2026-09-30): neither release job set
+      // GH_TOKEN, so `gh pr create` in auto_release.sh died under set -e and
+      // `gh release create` in tag_release.sh was a guaranteed silent no-op
+      // — the curated notes never reached the release object. Pin the REAL
+      // wiring (job env + checkout token), never a script comment.
+      final ci = jobsOf('.github/workflows/ci.yml');
+      for (final jobName in ['release', 'release-tag']) {
+        final job = ci[jobName] as YamlMap;
+        final env = job['env'] as YamlMap?;
+        expect(env?['GH_TOKEN']?.toString(),
+            equals(r'${{ secrets.RELEASE_PAT }}'),
+            reason: '$jobName must export GH_TOKEN=RELEASE_PAT for its gh calls');
+        final steps = job['steps'] as YamlList;
+        final checkout = steps
+            .map((s) => s as YamlMap)
+            .firstWhere((s) => s['uses']?.toString().startsWith('actions/checkout') ?? false);
+        expect(checkout['with']['token']?.toString(),
+            equals(r'${{ secrets.RELEASE_PAT }}'),
+            reason:
+                '$jobName checkout must ride RELEASE_PAT — GITHUB_TOKEN tags/pushes never fire tag-scoped jobs');
+      }
+    });
+
+    test('auto_release.sh untagged guard keys on pubspec version with a wedge escape, and remembers rejections', () {
+      // IMPORTANT findings on PR #1093 (2026-09-30): subject-keying wedged
+      // auto-release forever when release-tag missed (any non-squash or
+      // interleaved merge changes the subject, not the version), and a
+      // machine-closed release PR was re-created every 2h forever.
+      final auto = read('scripts/auto_release.sh');
+      expect(
+          auto,
+          contains(r'''head_version=$(git show origin/main:pubspec.yaml | sed -n 's/^version: //p')'''),
+          reason: 'the untagged guard must key on the pubspec version');
+      expect(auto, contains('-lt 3600'),
+          reason: 'after 1h untagged the guard must let the next bump absorb the range (no indefinite wedge)');
+      expect(auto, contains("--state closed"),
+          reason: 'rejection memory: a machine-closed release PR must not be re-created every 2h');
     });
 
     test('daily-publish.yml carries the sweeper job, ungated by leg results', () {

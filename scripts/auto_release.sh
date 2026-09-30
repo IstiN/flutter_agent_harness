@@ -41,22 +41,25 @@ fi
 # One release PR at a time; and if the previous bump merged but its tag hasn't
 # been cut yet (release-tag job is still running its quality gate), wait —
 # tagging the next bump before the previous one would mis-tag the range.
+# Keyed on the PUBSPEC VERSION, not the head commit subject: a missed
+# release-tag run must not wedge auto-release forever (any interleaved or
+# non-squash merge changes the subject but not the version), so after 1h the
+# guard lets a fresh bump absorb the untagged one instead of blocking.
 open_release_prs=$(gh pr list --state open --json headRefName \
   --jq '[.[].headRefName | select(startswith("chore/release-v"))] | length' 2>/dev/null || echo 0)
 if [ "${open_release_prs:-0}" -ge 1 ]; then
   echo "Auto-release: an open release PR is already queued for the machine — skipping."
   exit 0
 fi
-head_subject=$(git log -1 --format=%s origin/main)
-case "$head_subject" in
-  chore\(release\)*)
-    head_version=$(git show origin/main:pubspec.yaml | sed -n 's/^version: //p')
-    if ! git rev-parse -q --verify "refs/tags/v$head_version^{commit}" >/dev/null 2>&1; then
-      echo "Auto-release: v$head_version merged but untagged (release-tag job pending) — skipping."
-      exit 0
-    fi
-    ;;
-esac
+head_version=$(git show origin/main:pubspec.yaml | sed -n 's/^version: //p')
+if [ -n "$head_version" ] && ! git rev-parse -q --verify "refs/tags/v$head_version^{commit}" >/dev/null 2>&1; then
+  head_age=$(( $(date +%s) - $(git log -1 --format=%ct origin/main) ))
+  if [ "$head_age" -lt 3600 ]; then
+    echo "Auto-release: v$head_version merged but untagged (release-tag job pending, ${head_age}s old) — skipping."
+    exit 0
+  fi
+  echo "Auto-release: v$head_version merged but untagged for ${head_age}s — release-tag likely wedged; proceeding so the next range absorbs it."
+fi
 
 for attempt in 1 2 3; do
   git fetch origin main
@@ -121,6 +124,16 @@ PY
   git commit -m "chore(release): v$next"
   branch="chore/release-v$next"
 
+  # Rejection memory: if the machine already CLOSED a release PR for exactly
+  # this bump and the tag still doesn't exist, stop — re-creating the same
+  # PR every 2h forever just burns review cycles on a rejection the machine
+  # already voiced. Resurrecting the release is a human decision.
+  rejected=$(gh pr list --head "$branch" --state closed --json number --jq 'length' 2>/dev/null || echo 0)
+  if [ "${rejected:-0}" -ge 1 ] && ! git rev-parse -q --verify "refs/tags/v$next^{commit}" >/dev/null 2>&1; then
+    echo "Auto-release: a release PR for $branch was already closed (machine rejection) and v$next is untagged — skipping; human decision required."
+    exit 0
+  fi
+
   # Idempotency: if the release branch already carries exactly this tree and
   # its PR is open, leave it alone (the cron would otherwise rewrite the head
   # every run and re-trigger validation + review each time).
@@ -139,7 +152,7 @@ PY
   fi
 
   if git push --force origin "HEAD:refs/heads/$branch"; then
-    if [ "$(gh pr list --head "$branch" --state open --json number --jq 'length')" -ge 1 ]; then
+    if [ "$(gh pr list --head "$branch" --state open --json number --jq 'length' 2>/dev/null || echo 0)" -ge 1 ]; then
       echo "Auto-release: $branch refreshed; open PR now carries v$next."
     else
       gh pr create --base main --head "$branch" \
