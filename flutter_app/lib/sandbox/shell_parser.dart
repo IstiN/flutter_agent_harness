@@ -982,7 +982,8 @@ final class _ScriptParser {
         ) &&
         args.every(_assignmentWord.hasMatch)) {
       throw const ShellParseException(
-        'a heredoc on a bare assignment is not supported in the sandbox shell',
+        'a here-document/here-string on a bare assignment is not supported '
+        'in the sandbox shell',
       );
     }
 

@@ -31,7 +31,10 @@ void main() {
       // fd-prefixed here-string (was: misleading heredoc + read redirect).
       'cat 3<<<word': 'fd-prefixed here-strings',
       // Heredoc on a bare assignment (was: body silently dropped).
-      'X=1 <<EOF\nbody\nEOF': 'bare assignment',
+      'X=1 <<EOF\nbody\nEOF': 'here-document/here-string on a bare assignment',
+      // Same guard fires for here-strings — the named error must cover
+      // both forms (gh-1086 review round 2).
+      'X=1 <<<word': 'here-document/here-string on a bare assignment',
       // Unquoted globs (were: passed literally, never expanded).
       'ls *.dart': 'glob patterns',
       // Brace expansion.
