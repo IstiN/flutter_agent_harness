@@ -288,11 +288,7 @@ extension AgentCliSkillsExt on AgentCli {
   /// piece stays under the CRAP ratchet even where only the line-mode paths
   /// are test-covered.
   Future<void> _skillsSlash(String rest) async {
-    final parts = rest
-        .split(RegExp(r'\s+'))
-        .where((p) => p.isNotEmpty)
-        .toList();
-    final sub = parts.isEmpty ? '' : parts.first;
+    final (sub, parts) = splitSlashArgs(rest);
     switch (sub) {
       case '':
         await _skillsListOrMenu();

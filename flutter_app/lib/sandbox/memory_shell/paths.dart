@@ -6,18 +6,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// Normalizes a sandbox path: collapses `.` and `..` segments and always
 /// returns an absolute path starting at the sandbox root `/`.
-String normalizeSandboxPath(String path) {
-  final segments = <String>[];
-  for (final part in path.split('/')) {
-    if (part.isEmpty || part == '.') continue;
-    if (part == '..') {
-      if (segments.isNotEmpty) segments.removeLast();
-      continue;
-    }
-    segments.add(part);
-  }
-  return '/${segments.join('/')}';
-}
+String normalizeSandboxPath(String path) => normalizeLexicalPath(path);
 
 /// Resolves [path] against [cwd] inside the sandbox, returning an absolute
 /// sandbox path.

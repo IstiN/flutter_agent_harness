@@ -471,11 +471,7 @@ extension AgentCliTools on AgentCli {
   /// Dispatch only — each branch body lives in its own CC≤2 helper (the
   /// `/skills` pattern).
   Future<void> _toolsSlash(String rest) async {
-    final parts = rest
-        .split(RegExp(r'\s+'))
-        .where((part) => part.isNotEmpty)
-        .toList();
-    final sub = parts.isEmpty ? '' : parts.first;
+    final (sub, parts) = splitSlashArgs(rest);
     switch (sub) {
       case '':
         _toolsList();

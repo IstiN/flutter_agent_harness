@@ -267,18 +267,7 @@ final class WebGitCommands {
     return _normalize('$cwd/$path');
   }
 
-  String _normalize(String path) {
-    final segments = <String>[];
-    for (final part in path.split('/')) {
-      if (part.isEmpty || part == '.') continue;
-      if (part == '..') {
-        if (segments.isNotEmpty) segments.removeLast();
-        continue;
-      }
-      segments.add(part);
-    }
-    return '/${segments.join('/')}';
-  }
+  String _normalize(String path) => normalizeLexicalPath(path);
 
   ({String stdout, String stderr, int exitCode}) _ok(String stdout) =>
       (stdout: stdout, stderr: '', exitCode: 0);
