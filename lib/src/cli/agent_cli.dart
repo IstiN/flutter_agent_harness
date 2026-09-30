@@ -388,6 +388,8 @@ class AgentCli {
       onSettled: AgentCliShellJobSettle(this)._onShellJobSettled,
       onStart: _onShellJobStarted,
       onStaleJobLog: _onStaleJobLog,
+      jobLogMaxBytes: config.jobs.maxLogBytes,
+      onJobLogWarning: _onJobLogWarning,
     );
     final coreTools = <AgentTool>[
       ...builtinTools(
@@ -2718,6 +2720,14 @@ class AgentCli {
       ),
     );
     _logDiagnostic('stale old-format job log detected: $path');
+  }
+
+  /// Low-disk guard fired at most once per background job (issue #919):
+  /// its log writes stopped (free space under the safety threshold), the
+  /// job itself keeps running with degraded capture.
+  void _onJobLogWarning(String message) {
+    io.writeln(tuiWarning('warning: $message'));
+    _logDiagnostic('job log guard: $message');
   }
 
   Future<void> _afterRun() async {
