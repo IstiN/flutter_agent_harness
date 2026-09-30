@@ -40,6 +40,7 @@ import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/provider_registry.dart';
+import 'package:fa/services/quota_store.dart';
 import 'package:fa/services/session_names_store.dart';
 import 'package:fa/services/upload.dart';
 import 'package:fa/ui/app_theme.dart';
@@ -809,6 +810,16 @@ class SessionChatSheetState extends State<SessionChatSheet>
       openPicker = () => unawaited(_openModelPicker(active));
       openSettings = () => unawaited(_openModelSettings(active));
     }
+    final modelChip = QuickModelChip(
+      key: const ValueKey('fullChatModelChip'),
+      modelId: service?.modelId ?? '',
+      tooltip: context.l10n.chatModelSwitchTooltip,
+      maxWidth: 132,
+      // The chip's tap is non-null by contract; without an active
+      // service the full chat is unreachable and the tap is a no-op.
+      onTap: openPicker ?? () {},
+      onLongPress: openSettings,
+    );
     return ChatScreen(
       manager: widget.manager,
       registry: widget.registry,
@@ -825,16 +836,9 @@ class SessionChatSheetState extends State<SessionChatSheet>
           ? Theme.of(context).colorScheme.primary
           : Theme.of(context).colorScheme.onSurfaceVariant,
       projectLabel: _projectLabel(service),
-      modelChip: QuickModelChip(
-        key: const ValueKey('fullChatModelChip'),
-        modelId: service?.modelId ?? '',
-        tooltip: context.l10n.chatModelSwitchTooltip,
-        maxWidth: 132,
-        // The chip's tap is non-null by contract; without an active
-        // service the full chat is unreachable and the tap is a no-op.
-        onTap: openPicker ?? () {},
-        onLongPress: openSettings,
-      ),
+      modelChip: active == null
+          ? modelChip
+          : _withQuotaBadge(active, modelChip),
       onModelChipTap: openPicker,
       chipMenuLabel: service?.modelId,
       // The full chat's Apps button (issue #224) pops back here AND
@@ -1487,6 +1491,35 @@ class SessionChatSheetState extends State<SessionChatSheet>
     );
   }
 
+  /// Prepends the ACTIVE provider's quota badge to a header chip (issue
+  /// #823 AC6): `[OR $48/$150 · 11d]` metered, `[OR …]` cold, and nothing
+  /// at all for unmetered or non-quota providers — the chip passes
+  /// through unchanged. Repaints through the store's change bridge.
+  Widget _withQuotaBadge(AgentService service, Widget modelChip) {
+    return ListenableBuilder(
+      listenable: QuotaStore.instance,
+      builder: (context, _) {
+        final badge = QuotaStore.instance.badgeForBaseUrl(
+          service.activeBaseUrl,
+        );
+        if (badge == null) return modelChip;
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              badge,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(width: 8),
+            modelChip,
+          ],
+        );
+      },
+    );
+  }
+
   Widget _buildHeader(FahColors colors, AgentService service) {
     final activeId = widget.manager.activeId ?? '';
     final title =
@@ -1513,13 +1546,16 @@ class SessionChatSheetState extends State<SessionChatSheet>
         ),
         title: title,
         titleStyle: Theme.of(context).textTheme.titleSmall,
-        chip: QuickModelChip(
-          key: const ValueKey('sessionChatModelChip'),
-          modelId: service.modelId,
-          tooltip: context.l10n.chatModelSwitchTooltip,
-          maxWidth: 132,
-          onTap: () => unawaited(_openModelPicker(service)),
-          onLongPress: () => unawaited(_openModelSettings(service)),
+        chip: _withQuotaBadge(
+          service,
+          QuickModelChip(
+            key: const ValueKey('sessionChatModelChip'),
+            modelId: service.modelId,
+            tooltip: context.l10n.chatModelSwitchTooltip,
+            maxWidth: 132,
+            onTap: () => unawaited(_openModelPicker(service)),
+            onLongPress: () => unawaited(_openModelSettings(service)),
+          ),
         ),
         onChipTap: () => unawaited(_openModelPicker(service)),
         chipMenuLabel: service.modelId,
