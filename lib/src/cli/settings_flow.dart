@@ -209,6 +209,7 @@ extension SettingsFlow on AgentCli {
             choice.modelId,
             token: token,
             tokenKeyName: keyName,
+            authHeader: entry.authHeader,
           );
           // Keep the entry's last-used model in sync (the flow bypasses
           // _switchModel, which normally records it).

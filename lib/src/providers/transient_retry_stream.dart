@@ -11,9 +11,16 @@
 ///   overflow belongs to compaction, and the idle watchdog's own
 ///   `TimeoutException` wording deliberately does NOT match (that error
 ///   means "the endpoint went silent", which a retry re-arms anyway).
-/// - omp's observable-output guard is kept: a stream that already emitted
-///   content is never replayed — its failure stands (a retried generation
-///   would duplicate text in the transcript).
+/// - omp's observable-output guard is kept, keyed on USER-VISIBLE content
+///   (issue #964): a stream that already emitted text/tool-call content is
+///   never replayed — its failure stands (a retried generation would
+///   duplicate it). Thinking-only streams still replay: thinking deltas
+///   buffer until the first visible event commits the attempt, so a drop
+///   mid-reasoning leaves no trace and the retry regenerates the reasoning
+///   (re-billed reasoning accepted, same as any retry). The buffering is
+///   withheld from the host until commit/Done — a pure-reasoning phase
+///   renders as silence, the price of replayability (forwarding an event
+///   is committing it).
 /// - Providers-never-throw is preserved: a defensive catch converts a
 ///   throwing inner stream into an error event.
 library;
@@ -294,6 +301,20 @@ final class _TransientFailure extends _AttemptOutcome {
   final AssistantMessage error;
 }
 
+/// Issue #312: a wire finish_reason carries the structured verdict —
+/// terminal (content_filter family) never retries, transient and unknown
+/// vendor words do; without one the text nets decide. Pre-commit
+/// ([_runAttempt]) and mid-answer ([_midAnswer]) failures share the
+/// classification; a non-error reason is never retryable.
+bool _retryableWireFailure(ErrorEvent event) {
+  if (event.reason != StopReason.error) return false;
+  final retryClass = finishReasonRetryClass(event.error);
+  final transient = retryClass != null
+      ? retryClass != FinishReasonClass.terminal
+      : isTransientNetworkError(event.error);
+  return transient;
+}
+
 /// Runs one attempt, buffering until the first observable output commits
 /// it (the same guard as the roles fallback: a pre-content failure leaves
 /// no trace, a post-content failure stands).
@@ -324,24 +345,40 @@ Future<_AttemptOutcome> _runAttempt(
         out.push(event);
         return const _Forwarded();
       case ErrorEvent():
-        // Issue #312: a wire finish_reason carries the structured verdict —
-        // terminal (content_filter family) never retries, transient and
-        // unknown vendor words do; without one the text nets decide.
-        final retryClass = finishReasonRetryClass(event.error);
-        final transient = retryClass != null
-            ? retryClass != FinishReasonClass.terminal
-            : isTransientNetworkError(event.error);
-        if (event.reason == StopReason.error && transient) {
+        if (_retryableWireFailure(event)) {
           // Not forwarded: the buffer is discarded and the call retries.
           return _TransientFailure(event.error);
         }
         buffer.forEach(out.push);
         out.push(event);
         return const _Forwarded();
+      case ThinkingStartEvent() ||
+          ThinkingDeltaEvent() ||
+          ThinkingEndEvent():
+        // Issue #964: thinking deltas are not user-visible content — they
+        // buffer like the start event, so a stream that dies mid-reasoning
+        // (minutes of thinking, zero visible deltas) is retried under the
+        // existing policy with no trace of the dead attempt. The buffered
+        // reasoning flushes in order when the attempt commits or ends.
+        //
+        // Visibility tradeoff (issue #964 review): until the first visible
+        // delta (or the terminal event) the host sees NOTHING of the
+        // reasoning — a thinking-only phase renders as silence, where the
+        // pre-#964 behavior showed it live. That is the price of
+        // replayability, not an oversight: forwarding an event IS
+        // committing it (the host may have rendered it), and a committed
+        // stream can never be replayed — the same reason omp's original
+        // guard withheld all content. Providers that emit visible content
+        // early are unaffected; pure-reasoning marathons are the case this
+        // retry exists for.
+        buffer.add(event);
       case StartEvent():
         buffer.add(event);
       default:
-        // Any content event commits the attempt.
+        // The first user-visible content event (text/tool-call family)
+        // commits the attempt (issue #964). From there the post-content
+        // semantics are unchanged: the transcript already holds visible
+        // deltas, so a replay would duplicate them — the failure stands.
         committed = true;
         buffer.forEach(out.push);
         out.push(event);
@@ -358,17 +395,10 @@ Future<_AttemptOutcome> _runAttempt(
 /// the mid-answer failure and keeps the provider line as evidence.
 ErrorEvent _midAnswer(ErrorEvent event) {
   final error = event.error;
-  if (event.reason != StopReason.error) {
-    return event;
-  }
   // Issue #312: a classified non-terminal finish_reason mid-answer gets
   // the same hygiene wrap (the transcript already holds the deltas); a
   // TERMINAL verdict (content_filter family) keeps its verbatim story.
-  final retryClass = finishReasonRetryClass(error);
-  final transient = retryClass != null
-      ? retryClass != FinishReasonClass.terminal
-      : isTransientNetworkError(error);
-  if (!transient) {
+  if (!_retryableWireFailure(event)) {
     return event;
   }
   return ErrorEvent(
