@@ -71,6 +71,27 @@ void main() {
       expect(r.resetsAt, isNull);
       expect(r.isUnmetered, isFalse);
     });
+
+    test('fromJson falls back to epoch when updatedAt is absent', () {
+      final r = ProviderQuota.fromJson({'used': 1.0, 'limit': 2.0});
+      expect(r.updatedAt, DateTime.fromMillisecondsSinceEpoch(0, isUtc: true));
+    });
+
+    test('unknown unit strings fall back to currencyUsd', () {
+      expect(QuotaUnit.fromJson('bogus'), QuotaUnit.currencyUsd);
+      expect(QuotaUnit.fromJson(null), QuotaUnit.currencyUsd);
+    });
+
+    test('toString renders via the shared formatters', () {
+      final q = ProviderQuota(used: 48.2, limit: 150, updatedAt: now);
+      expect(q.toString(), contains(r'$48.20/$150'));
+      final unknown = QuotaFetchResult.unknown('HTTP 401');
+      expect(unknown.toString(), contains('HTTP 401'));
+      expect(
+        QuotaFetchResult.ok(q).toString(),
+        contains('QuotaFetchResult'),
+      );
+    });
   });
 
   group('UT-2 rendered strings (AC4/E2)', () {
@@ -144,6 +165,39 @@ void main() {
           now: now,
         ),
         '',
+      );
+    });
+
+    test(r'badge renders unlimited, used-only, and requests forms', () {
+      expect(
+        formatQuotaBadge(
+          shortName: 'OR',
+          quota: ProviderQuota(updatedAt: now),
+          now: now,
+        ),
+        '[OR unlimited]',
+      );
+      expect(
+        formatQuotaBadge(
+          shortName: 'OR',
+          quota: ProviderQuota(used: 48.2, updatedAt: now),
+          now: now,
+        ),
+        r'[OR $48/no cap]',
+      );
+      expect(
+        formatQuotaBadge(
+          shortName: 'GH',
+          quota: ProviderQuota(
+            used: 160,
+            limit: 2000,
+            unit: QuotaUnit.requests,
+            resetsAt: now.add(const Duration(days: 3)),
+            updatedAt: now,
+          ),
+          now: now,
+        ),
+        '[GH 160/2000 · 3d]',
       );
     });
   });

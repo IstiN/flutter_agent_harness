@@ -40,12 +40,7 @@ class OpenRouterQuotaAdapter implements QuotaAdapter, QuotaAwareProvider {
     if (key == null || key.isEmpty) {
       return const QuotaFetchResult.unknown('no api key');
     }
-    final Uri uri;
-    try {
-      uri = endpoint ?? Uri.parse(defaultEndpointUrl);
-    } on FormatException catch (_) {
-      return const QuotaFetchResult.unknown('invalid endpoint');
-    }
+    final uri = endpoint ?? Uri.parse(defaultEndpointUrl);
     final http.Response response;
     try {
       response = await client.get(

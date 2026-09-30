@@ -69,23 +69,6 @@ class ProviderQuota {
   bool isResetOverdue(DateTime now) =>
       resetsAt != null && now.isAfter(resetsAt!);
 
-  ProviderQuota copyWith({
-    double? used,
-    double? limit,
-    QuotaUnit? unit,
-    DateTime? resetsAt,
-    bool? isUnmetered,
-    DateTime? updatedAt,
-  }) =>
-      ProviderQuota(
-        used: used ?? this.used,
-        limit: limit ?? this.limit,
-        unit: unit ?? this.unit,
-        resetsAt: resetsAt ?? this.resetsAt,
-        isUnmetered: isUnmetered ?? this.isUnmetered,
-        updatedAt: updatedAt ?? this.updatedAt,
-      );
-
   Map<String, Object?> toJson() => {
         'used': used,
         'limit': limit,

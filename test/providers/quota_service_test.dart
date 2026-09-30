@@ -268,5 +268,21 @@ void main() {
       expect(result.quota, isNull);
       expect(result.reason, isNotNull);
     });
+
+    test('default wall clock serves static results without injection', () {
+      final service = ProviderQuotaService(unmeteredProviders: {'dial'});
+      expect(service.peek('dial')!.quota!.isUnmetered, isTrue);
+    });
+
+    test('changes fires after a completed fetch (UI invalidation)', () async {
+      final adapter = FakeAdapter(() async => metered());
+      final service = serviceWith(adapters: {'openrouter': adapter});
+      final events = <void>[];
+      final sub = service.changes.listen(events.add);
+      await service.quotaFor('openrouter');
+      await pumpEventQueue();
+      expect(events, hasLength(1));
+      await sub.cancel();
+    });
   });
 }

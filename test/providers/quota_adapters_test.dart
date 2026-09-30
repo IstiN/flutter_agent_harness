@@ -277,5 +277,52 @@ void main() {
       expect(result.reason, contains('no session'));
       expect(captured, isEmpty);
     });
+
+    test('401 degrades to unknown with a one-line reason (E3)', () async {
+      final adapter = CodeMieQuotaAdapter(
+        client: http_testing.MockClient(
+          (request) async => http.Response('expired', 401),
+        ),
+        resolveSessionCookie: () async => 'sso=cookie',
+        limitsEndpoint: Uri.parse('https://codemie.example/quota'),
+        now: () => now,
+      );
+      expect((await adapter.fetch()).reason, 'HTTP 401');
+    });
+
+    test('client exceptions degrade to unknown, never throw', () async {
+      final adapter = CodeMieQuotaAdapter(
+        client: http_testing.MockClient(
+          (request) async => throw http.ClientException('reset by peer'),
+        ),
+        resolveSessionCookie: () async => 'sso=cookie',
+        limitsEndpoint: Uri.parse('https://codemie.example/quota'),
+        now: () => now,
+      );
+      final result = await adapter.fetch();
+      expect(result.quota, isNull);
+      expect(result.reason, isNotNull);
+    });
+
+    test('QuotaAwareProvider contract surfaces the parsed quota', () async {
+      final codemie = CodeMieQuotaAdapter(
+        client: mockClient((request) => {'usage': 12.5, 'limit': 100}),
+        resolveSessionCookie: () async => 'sso=cookie',
+        limitsEndpoint: Uri.parse('https://codemie.example/quota'),
+        now: () => now,
+      );
+      expect(await codemie.fetchQuota(), isNotNull);
+      expect(await codemie.fetchQuota(forceRefresh: true), isNotNull);
+
+      final openrouter = OpenRouterQuotaAdapter(
+        client: mockClient(
+          (request) => {'data': {'usage': 1, 'limit': 2}},
+        ),
+        resolveApiKey: keyResolver,
+        now: () => now,
+      );
+      final viaContract = await openrouter.fetchQuota();
+      expect(viaContract!.limit, 2);
+    });
   });
 }

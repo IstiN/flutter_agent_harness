@@ -122,9 +122,6 @@ class ProviderQuotaService implements QuotaFeed {
     if (_cache.length != before) _changes.add(null);
   }
 
-  Future<QuotaFetchResult>? inFlightFor(String providerId) =>
-      _inFlight[providerId];
-
   Future<QuotaFetchResult?> _fetchOnce(String providerId) async {
     final adapter = _adapters[providerId];
     if (adapter == null) return null;
