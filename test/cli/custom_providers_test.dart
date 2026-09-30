@@ -114,12 +114,38 @@ void main() {
             'message',
             allOf(
               contains('customProviders entry "acme-gw"'),
-              contains('anthropic'),
-              contains('anthropic-messages'),
+              contains('provider "anthropic"'),
+              contains('anthropic adapter'),
             ),
           ),
         ),
       );
+    });
+
+    test('rejects authHeader on dial and copilot — openai-completions-'
+        'shaped apis whose adapters ignore it (issue #964 round-2)', () {
+      for (final apiType in const ['dial', 'copilot']) {
+        expect(
+          () => CustomProviderEntry.fromYaml({
+            'name': 'acme-gw',
+            'apiType': apiType,
+            'baseUrl': 'https://gateway.acme.com/v1',
+            'modelId': 'm',
+            'authHeader': 'x-api-key',
+          }),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              allOf(
+                contains('customProviders entry "acme-gw"'),
+                contains('routes to the $apiType adapter, which ignores it'),
+              ),
+            ),
+          ),
+          reason: apiType,
+        );
+      }
     });
   });
 

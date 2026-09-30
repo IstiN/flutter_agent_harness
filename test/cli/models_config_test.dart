@@ -374,8 +374,18 @@ models:
           'models:\n  custom:\n    fast:\n      provider: anthropic\n'
               '      baseUrl: https://x\n      model: m\n'
               '      authHeader: x-api-key',
-          'models.custom.fast: authHeader only applies to '
-              'openai-completions endpoints',
+          'models.custom.fast: authHeader only applies to the '
+              'OpenAI-completions adapter',
+        );
+      });
+
+      test('custom authHeader on the dial adapter is rejected — dial '
+          'hardcodes Api-Key (issue #964 round-2)', () {
+        expectBad(
+          'models:\n  custom:\n    fast:\n      provider: dial\n'
+              '      baseUrl: https://x\n      model: m\n'
+              '      authHeader: x-api-key',
+          'provider "dial" routes to the dial adapter, which ignores it',
         );
       });
     });

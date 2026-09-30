@@ -123,8 +123,8 @@ maxTokens: 4096
             'message',
             allOf(
               contains('model chain entry in role "default"'),
-              contains('anthropic'),
-              contains('anthropic-messages'),
+              contains('provider "anthropic"'),
+              contains('anthropic adapter'),
             ),
           ),
         ),

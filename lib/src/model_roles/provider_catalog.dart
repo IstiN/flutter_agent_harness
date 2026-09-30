@@ -439,9 +439,23 @@ String? parseAuthHeaderName(Object? value, String where) {
   return name;
 }
 
-/// Rejects a config-declared `authHeader` on a provider whose adapter
-/// dialect is not `openai-completions` (issue #964 review): only that
-/// adapter reads the field — everywhere else the header would be silently
+/// The adapter kinds whose stream function routes through
+/// [streamOpenAICompletions] — the only wire that reads
+/// [Model.authHeader]. `dial` carries its own transport with a hardcoded
+/// `Api-Key` header, and `copilot`/`chatgpt-codex` authenticate via OAuth
+/// — all three speak openai-completions-shaped APIs (`spec.api`) but
+/// ignore the field, so a config-declared authHeader on them is rejected
+/// loudly instead of silently dropped (issue #964 round-2 review).
+const _authHeaderAdapterKinds = {
+  'openai-completions',
+  'minimax',
+  'zai',
+  'aiin',
+};
+
+/// Rejects a config-declared `authHeader` on a provider whose adapter does
+/// not read the field (issue #964 review): only the OpenAI-completions
+/// adapter family honors it — everywhere else the header would be silently
 /// ignored. A null [spec] (provider unknown at parse time — roles chain
 /// entries skip unknown providers at resolve) passes; nothing reaches a
 /// builder for it.
@@ -450,13 +464,15 @@ void validateAuthHeaderDialect(
   ProviderSpec? spec,
   String where,
 ) {
-  if (authHeader == null || spec == null || spec.api == 'openai-completions') {
+  if (authHeader == null ||
+      spec == null ||
+      _authHeaderAdapterKinds.contains(spec.kind)) {
     return;
   }
   throw ConfigException(
-    '$where: authHeader only applies to openai-completions endpoints — '
-    'provider "${spec.name}" speaks ${spec.api}, which would silently '
-    'ignore the header',
+    '$where: authHeader only applies to the OpenAI-completions adapter '
+    '(openai-completions, minimax, zai, aiin) — provider "${spec.name}" '
+    'routes to the ${spec.kind} adapter, which ignores it',
   );
 }
 
