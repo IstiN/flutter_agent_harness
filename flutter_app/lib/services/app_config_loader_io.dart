@@ -11,7 +11,14 @@
 /// none); an unreadable or malformed one degrades to a warning naming the
 /// file — the app stores keep their values and boot never blocks.
 /// Project scope is gated on a readable mount (OQ2): no home, no project
-/// read either.
+/// read either. Desktop-only by construction (AC7 scope): Android/iOS have
+/// no user home ([desktopHomeDir] answers null) and degrade to silence.
+///
+/// The read is synchronous on the calling isolate — the established
+/// pattern (memory_config_loader, compaction_engine_loader do the same):
+/// the file is a few KB, read once per service creation, so blocking
+/// longer than a frame is not realistic. If configs ever grow, move this
+/// behind `Isolate.run` here, not in the callers.
 library;
 
 import 'dart:io';

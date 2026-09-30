@@ -13,7 +13,11 @@
 /// re-implements a schema. The difference is policy, not parsing: the CLI
 /// treats a bad section as a hard boot failure, the app treats it as a
 /// named warning plus the default (AC7 — a bad yaml file must never brick
-/// the mobile boot).
+/// the boot). AC7's scope is DESKTOP-only by construction: the yaml
+/// pipeline exists where a user home exists (macOS/Windows/Linux); on
+/// Android/iOS [desktopHomeDir] is null and the whole read is a silent
+/// no-op — the app stores keep their UI-chosen values (there is no
+/// `~/.fah` in a mobile sandbox to mis-parse).
 ///
 /// Scope mirrors the CLI reads exactly: `roles:`/`ttsr:`/`redact:`/
 /// `providerTimeouts:`/`agent.mode` are USER-scope (`~/.fah/config.yaml`);
