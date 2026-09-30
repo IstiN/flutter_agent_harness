@@ -1,0 +1,1 @@
+{"kind":"tool_pairing_repair","protocolVersion":1,"frame":{"v":1,"kind":"tool_pairing_repair","report":{"droppedResultIds":["call_9"],"synthesizedResultIds":["call_7"],"renamedIds":[{"from":"call_1","to":"call_1_renamed"}]},"providerError":"unexpected tool_use_id"}}
