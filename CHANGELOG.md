@@ -4424,6 +4424,11 @@
 - fix(#1083): per-path mutation lock for same-file concurrent tool edits (#1084)
 - feat(#1078): flutter_app honors ~/.fah/config.yaml (parity v1) (#1087)
 
+## 1.0.495
+
+- feat(1086): sandbox shell heredocs, here-strings, fail-fast guards (#1094)
+- chore(factory): pin dmtools-agents @cee5996 — mutexExcludeSelf + conflict-rework + release-bump authorship + teammate dev-leg timeout (#1111)
+
 ## Unreleased
 
 ## Unreleased
