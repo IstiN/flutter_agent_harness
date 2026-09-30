@@ -43,6 +43,17 @@ extension _TuiViewport on FaTuiModel {
     return shifted < 0 ? -1 : shifted;
   }
 
+  /// The sticky-echo index after a transcript head-trim dropped [cut]
+  /// lines (issue #827 review): the pinned echo is a transcript index
+  /// exactly like the turn anchor — it shifts by the cut too, and a trim
+  /// that swallowed the pinned echo drops the pin (-1) instead of leaving
+  /// it aimed at a foreign line.
+  int _stickyShiftedBy(int cut) {
+    if (cut == 0 || stickyIndex < 0) return stickyIndex;
+    final shifted = stickyIndex - cut;
+    return shifted < 0 ? -1 : shifted;
+  }
+
   /// The follow anchor (issue #827): the live edge, but never below the
   /// current turn's first wrapped row while that turn fits the viewport —
   /// a freshly submitted prompt's window starts at its OWN echo, not at

@@ -463,6 +463,54 @@ void main() {
       expect(_rowsOf(streamed).first, contains('TURN-ECHO-MARK'),
           reason: 'the anchor still names the echo after the repair');
     });
+
+    test('a mid-stream trim shifts the pinned sticky index too', () {
+      // The sticky pins at submit; the stream then crosses the cap and
+      // the append fires the trim. The pinned echo is a transcript index
+      // like any other — it shifts with the cut instead of pointing at a
+      // foreign line (issue #827 review).
+      final model = trimmed(turnStartLine: 2399).copyWith(
+        stickyLines: const ['pinned echo'],
+        stickyIndex: 2399,
+        stickyEchoLineCount: 1,
+      );
+      final streamed = _send(model, OutputMsg('tick', newline: true));
+      expect(streamed.stickyIndex, 1997,
+          reason: '2399 - 402 cut = the same line the anchor names');
+      expect(streamed.turnStartLine, 1997,
+          reason: 'the fixture pinned anchor and echo on one index');
+    });
+
+    test('a trim that swallows the pinned echo drops the pin', () {
+      final model = trimmed(turnStartLine: 5).copyWith(
+        stickyLines: const ['pinned echo'],
+        stickyIndex: 5,
+        stickyEchoLineCount: 1,
+      );
+      final streamed = _send(model, OutputMsg('tick', newline: true));
+      expect(streamed.stickyIndex, -1,
+          reason: 'a stale pin aimed at a foreign line is worse than '
+              'no pin');
+    });
+
+    test('the submit echo trim lands sticky and anchor on one index',
+        () async {
+      var submitted = _build()
+          .copyWith(outputLines: [for (var i = 0; i < 2400; i++) 'pad $i'])
+          .copyWith(inputText: 'SUBMIT-TRIM-MARK');
+      final result = submitted.update(
+        KeyPressMsg(const TeaKey(code: KeyCode.enter)),
+      );
+      submitted = result.$1 as FaTuiModel;
+      await result.$2?.call();
+
+      expect(submitted.turnStartLine, submitted.stickyIndex,
+          reason: 'the pinned echo and the turn anchor are the same '
+              'echo index — the trim shifts both');
+      // The trimmed transcript keeps the echo on the glass from its own
+      // row (window anchored at the turn start).
+      expect(_rowsOf(submitted).first, contains('SUBMIT-TRIM-MARK'));
+    });
   });
 
   group('AC7 — byte-identical rendering where the feature is inert', () {

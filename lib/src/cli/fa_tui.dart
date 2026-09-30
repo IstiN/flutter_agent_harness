@@ -896,9 +896,9 @@ final class FaTuiModel extends Model {
     final (newLines, cut) = _appendOutput(outputLines, displayText, msg.newline);
     final next = copyWith(
       outputLines: newLines,
-      // A head trim shifts every transcript index — the turn anchor with
-      // them (issue #827).
+      // A head trim shifts every transcript index — anchor and pin (#827).
       turnStartLine: _turnStartShiftedBy(cut),
+      stickyIndex: _stickyShiftedBy(cut),
     );
     final nextWrapped = next._wrappedLines();
     // Auto-follow the stream while the latch holds; preserve the scroll
@@ -1841,7 +1841,11 @@ final class FaTuiModel extends Model {
   /// (issue #827).
   FaTuiModel _appendServiceLine(String text) {
     final (lines, cut) = _appendOutput(outputLines, text, true);
-    return copyWith(outputLines: lines, turnStartLine: _turnStartShiftedBy(cut));
+    return copyWith(
+      outputLines: lines,
+      turnStartLine: _turnStartShiftedBy(cut),
+      stickyIndex: _stickyShiftedBy(cut),
+    );
   }
 
   /// Submits [text]: echoes the input into the history immediately (no rule
@@ -1889,10 +1893,10 @@ final class FaTuiModel extends Model {
       menuOpen: false,
       menuTokenStart: -1,
       stickyLines: sticky,
-      // The echo lands at the old length — the new turn's first line
-      // (issue #827); the sticky math shares the exact same index. An
-      // echo that itself fired the head-trim shifts it by the cut.
-      stickyIndex: outputLines.length,
+      // The echo lands at the old length minus the cut the append may
+      // have fired — the new turn's first line (issue #827); the sticky
+      // math shares the exact same index.
+      stickyIndex: outputLines.length - echoCut,
       stickyEchoLineCount: stickyEchoLineCount,
       turnStartLine: outputLines.length - echoCut,
       attachments: keepAttachments ? null : const [],
