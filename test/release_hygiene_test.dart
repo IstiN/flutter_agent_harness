@@ -370,8 +370,8 @@ exec /usr/bin/sed "\$@"
   git(['add', '-A']);
   git(['commit', '-q', '-m', 'seed'],
       env: {
-        'GIT_COMMITTER_DATE':
-            DateTime.now().subtract(const Duration(hours: 3)).secondsSinceEpoch.toString()
+        'GIT_COMMITTER_DATE': (DateTime.now().subtract(const Duration(hours: 3)).millisecondsSinceEpoch ~/ 1000)
+            .toString()
       });
   git(['tag', 'v0.1.495']);
   File('$seed/README.md').writeAsStringSync('pending\n');
@@ -977,6 +977,8 @@ gh release create "v9.9.9" \
   // ── gh-1134 — auto_release.sh labels release PRs chore:pin ──────────────
   // Behavioral: full sandbox (bare origin + seeded main @ v0.1.495 + stubbed
   // gh), same stubbed-gh pattern as the draft guard / sweeper tests above.
+  // The stub logs ARGV ONLY (`echo "$*"` — no `gh ` prefix), so matchers
+  // key on the bare subcommand lines.
   group('gh-1134 — release PRs carry chore:pin (create + refresh self-heal)', () {
     List<String> calls(AutoRun r, String prefix) =>
         r.log.where((l) => l.startsWith(prefix)).toList();
@@ -984,7 +986,7 @@ gh release create "v9.9.9" \
     test('AC1: fresh branch — gh pr create carries --label chore:pin', () {
       final r = runAutoRelease('ac1-create');
       expect(r.exitCode, 0, reason: r.output);
-      final creates = calls(r, 'gh pr create');
+      final creates = calls(r, 'pr create');
       expect(creates, hasLength(1), reason: r.log.join('\n'));
       expect(creates.single, contains('--label chore:pin'));
       expect(creates.single, contains('--title chore(release): v0.1.496'));
@@ -994,9 +996,9 @@ gh release create "v9.9.9" \
     test('AC2+AC3: refresh adds the label to the open PR; already-labeled stays silent', () {
       final r = runAutoRelease('ac2-refresh', staleBranch: true, openPr: '12');
       expect(r.exitCode, 0, reason: r.output);
-      final edits = calls(r, 'gh pr edit');
+      final edits = calls(r, 'pr edit');
       expect(edits, hasLength(1), reason: r.log.join('\n'));
-      expect(edits.single, contains('gh pr edit 12 --add-label chore:pin'));
+      expect(edits.single, contains('pr edit 12 --add-label chore:pin'));
       expect(r.output, isNot(contains('WARNING')),
           reason: 'label present: refresh must not warn (AC3)');
     });
@@ -1004,8 +1006,8 @@ gh release create "v9.9.9" \
     test('E1a: label missing — self-heals via gh label create, PR still labeled', () {
       final r = runAutoRelease('e1a-selfheal', labelExists: false);
       expect(r.exitCode, 0, reason: r.output);
-      expect(calls(r, 'gh label create'), hasLength(1));
-      final creates = calls(r, 'gh pr create');
+      expect(calls(r, 'label create'), hasLength(1));
+      final creates = calls(r, 'pr create');
       expect(creates, hasLength(1));
       expect(creates.single, contains('--label chore:pin'));
       expect(r.output, isNot(contains('WARNING')));
@@ -1016,7 +1018,7 @@ gh release create "v9.9.9" \
           labelExists: false, labelCreateWorks: false);
       expect(r.exitCode, 0, reason: r.output);
       expect(r.output, contains("WARNING: label 'chore:pin' missing"));
-      final creates = calls(r, 'gh pr create');
+      final creates = calls(r, 'pr create');
       expect(creates, hasLength(1));
       expect(creates.single, contains('--head chore/release-v0.1.496'));
       expect(creates.single, isNot(contains('--label')),
