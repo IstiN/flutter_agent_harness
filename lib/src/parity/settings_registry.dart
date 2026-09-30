@@ -305,6 +305,15 @@ const fileOnlyConfigKeys = <String, String>{
       'debugging escape hatch (issue #385); provisioned deliberately in '
       'the file per environment.',
 
+  // Quota monitoring knobs (issue #823): the badge is a deliberate opt-in
+  // chrome choice and the TTL is an operational cadence — both provisioned
+  // in the file per environment; surfaces only READ quota state, no
+  // settings UI writes this section.
+  'quota':
+      'Quota-monitoring knobs (issue #823): opt-in badge and cache TTL, '
+      'provisioned per environment in the file; /quota and the surfaces '
+      'read quota state and change no setting.',
+
   // Background-subagent heartbeat cadence and stall threshold (issue
   // #383): operational knobs for long-running sessions, tuned in the
   // file; 0/0 disables the heartbeat entirely.
