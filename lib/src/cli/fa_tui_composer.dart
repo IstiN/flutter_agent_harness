@@ -68,7 +68,7 @@ extension _TuiComposerLayout on FaTuiModel {
     final scheduledWanted = scheduledCount > 0 ? 1 : 0;
     final chipsWanted = attachments.isEmpty ? 0 : attachments.length + 1;
     final queueWanted = queue.isEmpty ? 0 : queue.length + 2;
-    final stickyWanted = _stickyActive ? _formattedStickyRows(width).length : 0;
+    final stickyWanted = _stickyArmed ? _formattedStickyRows(width).length : 0;
     return (
       boardWanted,
       waitingWanted,
@@ -157,7 +157,23 @@ extension _TuiComposerLayout on FaTuiModel {
     // #502 CI failure: sticky painted but history kept its unsqueezed
     // height, the 14-row frame overran a 12-row terminal and the guard
     // dropped rows from the TOP — the echo first).
-    final sticky = stickyWanted <= consumable ? stickyWanted : 0;
+    final historyNoSticky = consumable + reserve;
+    var sticky = stickyWanted <= consumable ? stickyWanted : 0;
+    // The wrap-turn dedupe (issue #917): pin only when the echo is above
+    // the window THIS frame paints — the follow bottom, or the stored
+    // offset detached — computed with the pin's own rows taken. The old
+    // raw-[scrollOffset] check raced the painter: keystrokes re-wrap the
+    // input zone between output events, the painted window moved while
+    // the stored offset stood still, and the echo painted twice (pinned
+    // AND re-scrolled into the window) or vanished unpinned. Deciding on
+    // the painted geometry makes the dedupe exact — one paint wins under
+    // any event interleaving — and needs no recursion: both candidate
+    // heights are already in scope here.
+    if (sticky > 0) {
+      final paintedTop = _wrappedLines().length - (historyNoSticky - sticky);
+      final top = followTail ? paintedTop : scrollOffset.clamp(0, paintedTop);
+      if (top < _echoEndRow()) sticky = 0;
+    }
     consumable -= sticky;
     return _FramePlan(
       board: board,
@@ -222,7 +238,10 @@ extension _TuiComposerLayout on FaTuiModel {
   /// echo itself has scrolled out of view (Copilot-style, issue #496:
   /// paints only the plan's visible rows — yields whole when squeezed).
   int _writeStickyEcho(StringBuffer b, int visible) {
-    if (!_stickyActive || visible <= 0) return 0;
+    // The pin-vs-transcript decision is the frame plan's ([_framePlanFor]):
+    // [visible] (plan.sticky) is already zero when the transcript window
+    // owns the echo.
+    if (visible <= 0) return 0;
     final rows = _formattedStickyRows(termWidth);
     final count = visible < rows.length ? visible : rows.length;
     for (var i = 0; i < count; i++) {

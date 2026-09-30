@@ -110,6 +110,91 @@ void main() {
         reason: 'the sticky echo must stay pinned, never scroll off');
   });
   }
+
+  // Wrap-turn dedupe (issue #917): the pin-vs-transcript decision used the
+  // RAW stored scroll offset while the frame paints at the freshly computed
+  // follow bottom. Keystrokes re-wrap the input zone between output events
+  // (the painted window moves, the stored offset does not), so a slow-PTY
+  // backspace burst landing after the last streamed line dropped the window
+  // top back below the echo while the pin stayed on: the same turn row
+  // painted twice (pinned AND in the transcript).
+  //
+  // Geometry (termHeight 24, classic chrome: 6 fixed rows → 18 history
+  // rows): prior turns + echo put the echo TEXT at window row 3 and its
+  // end past row 6 (chrome) / 5 (legacy, the dim rule merges nothing here
+  // — both counts land the text at 3). A draft of D wrapped rows shrinks
+  // history to 18-(D-1); the streamed sync then stores offset ≥ echo end
+  // while D-1 ≥ echo rows above the text, and deleting the draft drops the
+  // painted window top back ONTO the text row — pre-fix: pin still on.
+  for (final chrome in [true, false]) {
+    // A draft of 8 wrapped rows steals 7 history rows: the streamed sync
+    // (draft present) stores an offset past the echo end; deleting the
+    // draft grows the window back but the pin reclaims 2 of the rows, so
+    // the painted top lands exactly on the echo text while the stored
+    // offset still says the echo is above the window.
+    const draftRows = 8;
+    // chrome's bubble echo block is one line taller than the legacy rule
+    // echo — the same dup geometry lands one streamed line earlier.
+    final answers = chrome ? 11 : 12;
+    test('deleting a wrapped draft mid-run never duplicates the pinned '
+        'echo (chrome=$chrome, #917)', () {
+      addTearDown(() => tuiChromeEnabled = true);
+      tuiChromeEnabled = chrome;
+      var model = FaTuiModel(
+        callbacks: callbacks(),
+        isExited: () => false,
+        termWidth: 80,
+        termHeight: 24,
+        outputLines: const ['older line one', 'older line two', ''],
+      );
+
+      // Real submit path (idle), then the run bracket lands.
+      model = model.copyWith(inputText: 'the racy prompt row');
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.enter)));
+      model = send(model, const BusyMsg(true, source: 'run'));
+      expect(model.busy, isTrue, reason: 'submit must start a run');
+
+      // Stream the answer; the echo stays visible in the transcript.
+      for (var i = 0; i < answers; i++) {
+        model = send(model, OutputMsg('answer line $i', newline: true));
+      }
+
+      // Mid-run the owner composes a long wrapped draft: the input zone
+      // grows, the history window shrinks — keystrokes never move the
+      // stored scroll offset.
+      final draft = ('loremipsum ' * (7 * draftRows)).trim();
+      for (final ch in draft.split('')) {
+        model = send(model, KeyPressMsg(TeaKey(code: KeyCode.rune, text: ch)));
+      }
+      // One more streamed line WITH the draft present: the stored offset
+      // syncs to the bottom of the draft-squeezed window — past the echo.
+      model = send(model, OutputMsg('answer line $answers', newline: true));
+
+      List<String> rows() => model.view().content
+          .split('\n')
+          .map((l) => l.replaceAll(ansi, ''))
+          .toList();
+      int paints() =>
+          rows().where((l) => l.contains('the racy prompt row')).length;
+
+      // Fixture guard: never a duplicate through every state so far (the
+      // pre-fix lost-echo transient — echo neither pinned nor painted —
+      // is the sibling raw-offset artifact; the dup is what #917 pins).
+      expect(paints(), lessThanOrEqualTo(1),
+          reason: 'fixture: no duplicate while composing');
+
+      // The draft goes away (a backspace burst lands after the last output
+      // event — the slow-PTY interleave): the input zone shrinks, the
+      // window top drops back onto the echo text, while the stored offset
+      // — and with it the pre-fix pin decision — still says the echo is
+      // above the window. One paint must win, deterministically.
+      for (var i = 0; i < draft.length; i++) {
+        model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.backspace)));
+      }
+      expect(paints(), 1, reason: 'the turn row paints exactly once — '
+          'pinned OR in the transcript window, never both');
+    });
+  }
 }
 
 final class _Replay {
