@@ -123,6 +123,8 @@ final class SessionVarsExecutionEnv
       // stdinData + liveStdin (issue #367): see exec above.
       stdinData: options?.stdinData,
       liveStdin: options?.liveStdin,
+      jobLogMaxBytes: options?.jobLogMaxBytes,
+      onJobLogWarning: options?.onJobLogWarning,
     );
     return bg.startShellJob(command, id: id, logPath: logPath, options: merged);
   }
