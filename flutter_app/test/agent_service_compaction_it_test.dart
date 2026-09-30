@@ -171,26 +171,34 @@ void main() {
         'stays usable', () async {
       final seen = <String>[];
       final env = MemoryExecutionEnv();
+      // Window 512 → reserve 128, keep 256, trigger 384. ~1200-char replies
+      // (~300 tokens): after two turns the transcript is ~700 tokens — over
+      // the trigger, under the window, and the NEWEST message alone exceeds
+      // the kept region — so the local-trim valve has nothing droppable and
+      // the failure must surface instead of silently no-oping.
       final service = AgentService(
-        agent: _agent(_failingSummarizer(seen, 'still here'), contextWindow: 2048),
+        agent: _agent(
+          _failingSummarizer(seen, 'r' * 1200),
+          contextWindow: 512,
+        ),
         env: env,
         sessionsRoot: '/sessions',
       );
       addTearDown(service.dispose);
       await service.initialize();
 
-      // Window 2048 → reserve 512, keep 1024, trigger 1536. A ~2400-char
-      // turn (~600 tokens) plus a ~5000-char turn (~1250 tokens): over the
-      // trigger, under the window, and the NEWEST message alone exceeds the
-      // kept region — the local-trim valve has nothing droppable, so the
-      // failure must surface instead of silently no-oping.
-      await service.sendText('a' * 2400);
+      await service.sendText('a' * 200);
       await service.waitForIdle();
       expect(service.error, isNull);
       expect(service.overWindowReliefCountForTest, 0,
           reason: 'the guard never fired — the turn fits the window');
+      expect(
+        service.messages.any((m) => m.role == 'system'),
+        isFalse,
+        reason: 'under the threshold: no compaction, no notice yet',
+      );
 
-      await service.sendText('b' * 5000);
+      await service.sendText('b' * 200);
       await service.waitForIdle();
 
       // AC2: an in-chat notice names where to fix the summarizer.
@@ -207,13 +215,17 @@ void main() {
       expect(service.error, isNull);
       final rendered = service.messages.map((m) => m.content).join('\n');
       expect(rendered, isNot(contains('compacted into the following summary')));
-      expect(rendered, contains('b' * 5000));
+      expect(rendered, contains('b' * 200));
+      expect(service.messages.where((m) => m.role == 'user'), hasLength(2));
 
-      // E4: the next turn retries cleanly — the session is usable.
+      // E4: the next turn's request no longer fits the window — the loop's
+      // guard hands it to the relief, the local trim succeeds there (the
+      // newest message is tiny), and the session keeps working.
       await service.sendText('ping');
       await service.waitForIdle();
       expect(service.error, isNull);
-      expect(service.messages.last.content, 'still here');
+      expect(service.overWindowReliefCountForTest, 1);
+      expect(service.messages.last.content, 'r' * 1200);
     });
   });
 
@@ -295,6 +307,10 @@ void main() {
         env: env,
         sessionsRoot: '/sessions',
       );
+      // This test exercises the over-window guard, not approval: unattended
+      // run (write mode would deny the unknown tool with a 37-char note and
+      // the ballooned result would never exist).
+      service.approval.mode = ApprovalMode.yolo;
       addTearDown(service.dispose);
       await service.initialize();
 
