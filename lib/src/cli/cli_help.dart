@@ -326,7 +326,8 @@ MODEL ROLES (~/.fah/config.yaml)
             - anthropic/claude-opus-4-5
     retry:
       retriesPerEntry: 2               # + baseDelayMs, maxBackoffMs,
-                                       #   maxWaitMs, keyBackoffMs
+                                       #   maxWaitMs, keyBackoffMs,
+                                       #   maxWaitForLastEntryMs
 
   With no roles: section the CLI runs the single --provider/--model pair.
   /model lists the resolved roles and chains.
