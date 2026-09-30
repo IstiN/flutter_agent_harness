@@ -855,6 +855,46 @@ void main() {
     );
 
     test(
+      'sole queue entry waits out a quota wall: waited total in the story '
+      '(issue #1066)',
+      () async {
+        final m = _model('anthropic', 'm1');
+        List<AssistantMessageEvent> quotaWallTurn() => [
+          StartEvent(partial: _msg(m)),
+          _err(m, '429: quota', retryAfter: const Duration(seconds: 90)),
+        ];
+        final probe = _Probe({
+          'key-head': [quotaWallTurn(), quotaWallTurn(), quotaWallTurn()],
+        });
+        final rt = runtime([
+          _entry('anthropic', 'm1'),
+        ], probe, policy: const ModelRolesRetryPolicy(
+          retriesPerEntry: 2,
+          maxWait: Duration(seconds: 30),
+        ));
+
+        final events = await drive(rt.streamFunction);
+
+        // Queue deaths ride the transport-flagged rotation path, but the
+        // QUOTA class keys the accounting: two 90s wait-outs announced as
+        // plain retries, and the story reports the waited total.
+        expect(sleeps, [
+          const Duration(seconds: 90),
+          const Duration(seconds: 90),
+        ]);
+        expect(
+          notices.map((n) => n.kind),
+          everyElement(FallbackNoticeKind.retry),
+        );
+        final error = events.whereType<ErrorEvent>().single;
+        final text = error.error.errorMessage!;
+        expect(text, contains('Provider chain exhausted'));
+        expect(text, contains('waited 3m on rate limits'));
+        expect(text, contains('Queue health'));
+      },
+    );
+
+    test(
       'mid-turn committed failure stands; next turn uses the next entry (UT-midturn-boundary)',
       () async {
         final m1 = _model('anthropic', 'm1');
