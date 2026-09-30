@@ -2541,6 +2541,64 @@ jobs:
           fi
           gh release upload "${GITHUB_REF_NAME}" "$asset" --clobber --repo "${GITHUB_REPOSITORY}"
 
+  # Rehostable web SPA bundle (issue #1100): every release ships
+  # fa-web-spa.zip — the release web build with <base href> rewritten to
+  # ./, so it rehosts on any static host (incl. path-prefixed) or sandboxed
+  # iframe with zero edits (docs/web-rehosting.md). Same build command AND
+  # base-href as the Pages deploy; scripts/package_web_spa.sh patches the
+  # tag on a COPY and enforces the absolute-path guard (AC3) before zipping.
+  # Lives here, not in pages.yml: release commits (pubspec/CHANGELOG bumps)
+  # fall outside pages.yml's path filters, so a Pages-produced bundle could
+  # never attach to the actual release commit.
+  web-spa:
+    name: Build web SPA bundle
+    runs-on: ubuntu-latest
+    needs: quality-gate
+    timeout-minutes: 30
+    if: >-
+      !cancelled() && needs.quality-gate.result == 'success' &&
+      ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      github.event_name == 'release')
+    permissions:
+      contents: write # attach fa-web-spa.zip to the GitHub Release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Same pinned SDK as build-web / the release path (#281).
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: '3.47.x'
+          channel: stable
+          cache: true
+
+      # Same placeholders as the Pages job (both files are gitignored).
+      - name: Placeholder .env for the example app
+        run: touch flutter_app/.env
+
+      - name: Placeholder firebase_options.dart for the example app
+        run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
+
+      - name: Build web (release, Pages base)
+        working-directory: flutter_app
+        run: flutter build web --release --base-href /app/
+
+      - name: Package fa-web-spa.zip (relative base + AC3 guard)
+        run: bash scripts/package_web_spa.sh flutter_app/build/web fa-web-spa.zip
+
+      - name: Upload bundle to GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # gh release upload needs the release to exist; create it lazily
+          # (matrix jobs race here, so a duplicate create is tolerated).
+          if ! gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "${GITHUB_REF_NAME}" --generate-notes \
+              --repo "${GITHUB_REPOSITORY}" || true
+          fi
+          gh release upload "${GITHUB_REF_NAME}" fa-web-spa.zip --clobber --repo "${GITHUB_REPOSITORY}"
+
   # SEC-07 (#795): the installer's default trust path is SIGNED checksums.
   # This job aggregates every fa-* asset of the release into SHA256SUMS and
   # signs it with the FA_RELEASE_SIGNING_KEY repo secret (openssl RSA —
@@ -2549,13 +2607,15 @@ jobs:
   # the same compromised source as the binary cannot vouch for itself.
   # Fail-closed: without the secret the release publishes NO provenance and
   # this job goes red — install.sh aborts with E_PROVENANCE_MISSING on it.
+  # Needs web-spa (#1100): fa-web-spa.zip matches the fa-* sweep, so the
+  # bundle lands in the SIGNED SHA256SUMS deterministically (not by a race).
   release-provenance:
     name: Sign release checksums
     runs-on: ubuntu-latest
-    needs: binaries
+    needs: [binaries, web-spa]
     timeout-minutes: 10
     if: >-
-      !cancelled() && needs.binaries.result == 'success' &&
+      !cancelled() && needs.binaries.result == 'success' && needs.web-spa.result == 'success' &&
       ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
       github.event_name == 'release')
     permissions:
