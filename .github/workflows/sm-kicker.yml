@@ -11,7 +11,7 @@
 #   2. head-completeness — codeless merge heads (2 parents, 0 files) with
 #      zero required contexts get a CI dispatch (strict up-to-date).
 #
-# Pinned to the immutable dmtools-agents main @01a45d24a071536a9f39603c2571f2e10f84a0b1 — ships the kicker
+# Pinned to the immutable dmtools-agents main @a5e377d (dryRun=false + inline github.token) — ships the kicker
 # together with the #577-#584 loop fixes (lockstep with machine-sm /
 # machine-merge / ai-teammate stubs' pin wave).
 
@@ -44,11 +44,9 @@ concurrency:
 
 jobs:
   kicker:
-    uses: IstiN/dmtools-agents/.github/workflows/factory-sm-kicker.yml@01a45d24a071536a9f39603c2571f2e10f84a0b1
+    uses: IstiN/dmtools-agents/.github/workflows/factory-sm-kicker.yml@a5e377d9aa417d7537efd452a0dba06454132dec
     with:
       smWorkflow: machine-sm.yml
       ciWorkflow: ci.yml
       requiredContexts: 'Quality gate,JS engine integration (quickjs-ng),Binaries smoke gate'
       graceSeconds: '45'
-    secrets:
-      githubToken: ${{ github.token }}
