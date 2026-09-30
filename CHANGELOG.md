@@ -4414,6 +4414,16 @@
 
 - chore(deps): bump ruby/setup-ruby in the github-actions group (#1056)
 
+## 1.0.494
+
+- fix(release): land the version bump as a PR — protected main rejects direct bot pushes (#1093)
+- fix(sm-kicker): rescue ticks must pass -f dryRun=false (machine-sm defaults dry) (#1092)
+- fix(#964): configurable auth header (x-api-key) + reasoning-aware stream retry boundary (#1088)
+- revert: undo the stale-tree mass revert in 80a5ebeeb, keep the FFI web fix (#1071)
+- fix(web): restore /oauth/callback page + open the OAuth popup eagerly on user gesture (#1068)
+- fix(#1083): per-path mutation lock for same-file concurrent tool edits (#1084)
+- feat(#1078): flutter_app honors ~/.fah/config.yaml (parity v1) (#1087)
+
 ## Unreleased
 
 ## Unreleased
