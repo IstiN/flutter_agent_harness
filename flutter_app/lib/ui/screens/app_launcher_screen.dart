@@ -1602,11 +1602,15 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   }
 
   /// The corner badge on a tile whose demo seed failed (missing/corrupt
-  /// asset): the app stays on the grid — flagged, never fatal.
+  /// asset) or whose manifest no longer parses (an agent edit, issue
+  /// #866): the app stays on the grid — flagged, never fatal.
   Widget _maybeSeedErrorBadge(FahColors colors, String key, Widget tile) {
     if (!key.startsWith('app:')) return tile;
-    final failed = _appsStore.failedSeeds.value;
-    if (!failed.containsKey(key.substring(4))) return tile;
+    final id = key.substring(4);
+    final failed =
+        _appsStore.failedSeeds.value.containsKey(id) ||
+        (_appsById[id]?.error != null);
+    if (!failed) return tile;
     return Stack(
       clipBehavior: Clip.none,
       children: [
@@ -1719,13 +1723,30 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     // dead-end launch — copyable, so the user can hand it to Fa for a fix.
     final seedError = _appsStore.failedSeeds.value[app.id];
     if (seedError != null) {
-      unawaited(_showSeedError(app, seedError));
+      unawaited(
+        _showAppError(app, seedError, context.l10n.launcherSeedErrorTitle),
+      );
+      return;
+    }
+    // Same for a manifest the agent edited into garbage (issue #866): the
+    // error state is visible, copyable, fixable — never a silent stale app.
+    final manifestError = app.error;
+    if (manifestError != null) {
+      unawaited(
+        _showAppError(
+          app,
+          manifestError,
+          context.l10n.launcherManifestErrorTitle,
+        ),
+      );
       return;
     }
     unawaited(_launchApp(app));
   }
 
-  Future<void> _showSeedError(JsAppInfo app, String error) async {
+  /// Copyable error dialog for a tile that cannot launch: a failed demo
+  /// seed or a manifest the agent broke (issue #866).
+  Future<void> _showAppError(JsAppInfo app, String error, String title) async {
     final l10n = context.l10n;
     final appName = app.displayName(
       Localizations.localeOf(context).toLanguageTag(),
@@ -1733,7 +1754,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text(l10n.launcherSeedErrorTitle),
+        title: Text(title),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,

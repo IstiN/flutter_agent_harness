@@ -42,7 +42,7 @@ AgentTool appsCatalogTool({
     switch (action) {
       case 'list':
       case 'search':
-        return _list(arguments, action == 'search', service);
+        return _list(arguments, action == 'search', service, store);
       case 'get-source':
       case 'install':
       case 'remove':
@@ -110,35 +110,57 @@ Future<ToolExecutionResult> _list(
   Map<String, dynamic> arguments,
   bool isSearch,
   CatalogService service,
+  AppsStore store,
 ) async {
+  final query = (arguments['query'] ?? '').toString().trim().toLowerCase();
+  if (isSearch && query.isEmpty) {
+    return ToolExecutionResult.text('Provide a "query" for search.');
+  }
+  bool matches(String id, String name, String description) =>
+      !isSearch ||
+      id.contains(query) ||
+      name.toLowerCase().contains(query) ||
+      description.toLowerCase().contains(query);
+  final lines = <String>[];
+  // The local workspace FIRST (issue #866): apps the agent just wrote
+  // under apps/ exist before the remote catalog ever hears of them — a
+  // fresh creation must be visible to the agent that wrote it.
+  try {
+    for (final app in await store.listApps()) {
+      if (!matches(app.id, app.name, app.description)) continue;
+      lines.add(
+        app.error != null
+            ? '${app.id} — BROKEN: ${app.error}'
+            : '${app.id} v${app.version}'
+                  '${app.description.isEmpty ? '' : ' — ${app.description}'}'
+                  ' (installed in apps/)',
+      );
+    }
+  } on Object {
+    // A store scan failure must not hide the remote catalog.
+  }
   try {
     final result = await service.fetchCatalog();
-    var entries = result.entries;
-    if (isSearch) {
-      final query = (arguments['query'] ?? '').toString().trim().toLowerCase();
-      if (query.isEmpty) {
-        return ToolExecutionResult.text('Provide a "query" for search.');
+    final entries = result.entries.where((e) {
+      if (!matches(e.id, e.name, e.description)) {
+        if (!isSearch) return false;
+        // Remote search also matches tags (pre-#866 behavior, kept).
+        return e.tags.any((tag) => tag.contains(query));
       }
-      bool matches(CatalogEntry e) =>
-          e.id.contains(query) ||
-          e.name.toLowerCase().contains(query) ||
-          e.description.toLowerCase().contains(query) ||
-          e.tags.any((tag) => tag.contains(query));
-      entries = entries.where(matches).toList();
+      return true;
+    }).toList();
+    for (final e in entries) {
+      lines.add(
+        '${e.id} v${e.version}'
+        '${e.description.isEmpty ? '' : ' — ${e.description}'}',
+      );
     }
-    if (entries.isEmpty) return ToolExecutionResult.text('No widgets found.');
+    if (lines.isEmpty) return ToolExecutionResult.text('No widgets found.');
     final suffix = result.stale ? '\n(offline — cached catalog)' : '';
-    return ToolExecutionResult.text(
-      entries
-              .map(
-                (e) =>
-                    '${e.id} v${e.version}'
-                    '${e.description.isEmpty ? '' : ' — ${e.description}'}',
-              )
-              .join('\n') +
-          suffix,
-    );
+    return ToolExecutionResult.text(lines.join('\n') + suffix);
   } on CatalogError catch (error) {
+    // Remote unavailable: the local listing still answers.
+    if (lines.isNotEmpty) return ToolExecutionResult.text(lines.join('\n'));
     return ToolExecutionResult.text('Catalog unavailable: $error');
   }
 }

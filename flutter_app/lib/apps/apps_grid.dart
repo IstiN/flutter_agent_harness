@@ -205,8 +205,12 @@ class _AppCard extends StatelessWidget {
               ),
               const SizedBox(height: 2),
               Text(
-                app.displayDescription(locale),
-                style: theme.textTheme.bodySmall,
+                // Issue #866: a manifest the agent broke is a visible
+                // error state on the card, never a silent stale app.
+                app.error ?? app.displayDescription(locale),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: app.error == null ? null : theme.colorScheme.error,
+                ),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),

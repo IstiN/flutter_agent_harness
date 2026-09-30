@@ -309,6 +309,7 @@ class JsAppInfo {
     this.bundled = false,
     this.platforms,
     this.dirOverride,
+    this.error,
   });
 
   factory JsAppInfo.fromManifest(
@@ -384,6 +385,7 @@ class JsAppInfo {
     bundled: bundled,
     platforms: platforms,
     dirOverride: dirOverride,
+    error: error,
   );
 
   final String icon;
@@ -424,6 +426,12 @@ class JsAppInfo {
   /// dynamic-message widgets store their code and `storage.json` under the
   /// session folder instead of the shared apps folder; null for normal apps.
   final String? dirOverride;
+
+  /// Non-null when the app's `manifest.json` exists but does not parse
+  /// (an agent edit can break it): the tile renders a visible error
+  /// affordance and taps surface the message instead of launching — never
+  /// a silently stale or missing app (issue #866). Null for healthy apps.
+  final String? error;
 
   /// Env-relative path of the app directory (`apps/<id>`, or the session
   /// folder override for dynamic-message widgets — see [dirOverride]).
@@ -564,32 +572,83 @@ class AppsStore {
   /// Asset reader — reads bundled demo app sources; injectable for tests.
   final Future<String> Function(String path) _readAsset;
 
+  /// Last scan's parsed state per app id: manifest content hash → parsed
+  /// model (with i18n contents attached). [listApps] re-parses ONLY apps
+  /// whose manifest changed (the hash-diff gate, issue #866).
+  final Map<String, String> _manifestHashes = {};
+  final Map<String, JsAppInfo> _parsedApps = {};
+
   /// Lists all apps found in `apps/`, sorted by name.
+  ///
+  /// Incremental (issue #866): every manifest.json is hashed against the
+  /// last scan; only changed manifests are re-parsed, so panel opens and
+  /// post-agent-write reloads cost one small read per unchanged app and
+  /// zero re-parses. Honesty rules from #866: a manifest that no longer
+  /// parses yields a visible error entry ([JsAppInfo.error]) instead of
+  /// silently dropping the app, and `.installed.json` records whose app
+  /// directory has vanished (agent `rm -rf`) are pruned.
   Future<List<JsAppInfo>> listApps() async {
     final apps = <JsAppInfo>[];
-    final result = await _env.listDir('apps');
-    final entries = result.valueOrNull ?? const <FileInfo>[];
+    final seen = <String>{};
+    final entries =
+        (await _env.listDir('apps')).valueOrNull ?? const <FileInfo>[];
     for (final entry in entries) {
       if (entry.kind != FileKind.directory) continue;
-      final manifest = await _env.readTextFile(
-        'apps/${entry.name}/manifest.json',
-      );
-      final raw = manifest.valueOrNull;
-      if (raw == null) continue;
+      final id = entry.name;
+      if (id.startsWith('.')) continue;
+      seen.add(id);
+      final raw = (await _env.readTextFile(
+        'apps/$id/manifest.json',
+      )).valueOrNull;
+      if (raw == null) continue; // half-created folder — healer's domain
+      final hash = _digest(raw);
+      final cached = _parsedApps[id];
+      if (cached != null && _manifestHashes[id] == hash) {
+        // Unchanged manifest — zero rescans (AC3): the cached model (i18n
+        // contents included) is still the parsed truth.
+        apps.add(cached);
+        continue;
+      }
+      JsAppInfo app;
       try {
         final decoded = jsonDecode(raw);
-        if (decoded is Map<String, Object?>) {
-          var app = JsAppInfo.fromManifest(
-            decoded,
-            bundled: false,
-            fallbackId: entry.name,
-          );
-          app = await _withI18nContents(app);
-          if (app.supportsPlatform(platform)) apps.add(app);
+        if (decoded is! Map<String, Object?>) {
+          throw const FormatException('manifest must be a JSON object');
         }
-      } on FormatException {
-        // Skip malformed app folders.
+        app = await _withI18nContents(
+          JsAppInfo.fromManifest(decoded, bundled: false, fallbackId: id),
+        );
+      } on FormatException catch (e) {
+        // The agent edited the manifest into garbage: flag the tile, keep
+        // the app discoverable — never a silent stale/missing row.
+        app = JsAppInfo(
+          id: id,
+          name: id,
+          description: '',
+          icon: '📦',
+          declaredPermissions: const AppPermissions(),
+          error: 'manifest.json does not parse: ${e.message}',
+        );
       }
+      _manifestHashes[id] = hash;
+      _parsedApps[id] = app;
+      if (app.supportsPlatform(platform)) apps.add(app);
+    }
+    // Directories that vanished since the last scan: forget their cached
+    // parses and prune the stale `.installed.json` records (issue #866 —
+    // no zombie installs after an agent deletes an app dir).
+    final gone = _manifestHashes.keys
+        .where((id) => !seen.contains(id))
+        .toList();
+    if (gone.isNotEmpty) {
+      final installed = await _readInstalled();
+      var pruned = false;
+      for (final id in gone) {
+        _manifestHashes.remove(id);
+        _parsedApps.remove(id);
+        if (installed.remove(id) != null) pruned = true;
+      }
+      if (pruned) await _writeInstalled(installed);
     }
     apps.sort((a, b) => a.name.compareTo(b.name));
     return apps;

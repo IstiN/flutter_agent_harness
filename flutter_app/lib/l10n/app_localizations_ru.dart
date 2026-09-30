@@ -765,6 +765,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get launcherSeedErrorTitle => 'Приложение не установилось';
 
   @override
+  String get launcherManifestErrorTitle => 'Не удалось запустить приложение';
+
+  @override
   String get launcherTileSizeIcon => 'Иконка (1×1)';
 
   @override

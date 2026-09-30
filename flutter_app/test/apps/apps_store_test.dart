@@ -331,12 +331,19 @@ void main() {
       expect(tile.valueOrNull, isNull);
     });
 
-    test('skips malformed app folders', () async {
-      final env = MemoryExecutionEnv();
-      await env.writeFile('apps/broken/manifest.json', '{not json');
-      final apps = await AppsStore(env, readAsset: _fakeAssets).listApps();
-      expect(apps, isEmpty);
-    });
+    test(
+      'flags malformed app folders instead of skipping them (#866)',
+      () async {
+        final env = MemoryExecutionEnv();
+        await env.writeFile('apps/broken/manifest.json', '{not json');
+        final apps = await AppsStore(env, readAsset: _fakeAssets).listApps();
+        // Issue #866 honesty: the broken app stays discoverable as a visible
+        // error entry — never a silently missing (stale) row.
+        expect(apps, hasLength(1));
+        expect(apps.single.id, 'broken');
+        expect(apps.single.error, contains('does not parse'));
+      },
+    );
 
     test('readWidgetSource returns the JS source', () async {
       final env = MemoryExecutionEnv();
@@ -615,6 +622,137 @@ iOS row <!-- fa-platforms: ios -->
       expect(store.forApp(app).llm, isFalse);
       await store.clearOverride('demo');
       expect(store.forApp(app).llm, isTrue);
+    });
+  });
+
+  // Issue #866 — the apps panel reflects reality: agent-side manifest
+  // writes are visible without reinstall or restart, unchanged apps cost
+  // zero rescans, broken manifests surface, deleted apps leave no zombies.
+  group('AppsStore reflects reality (#866)', () {
+    Future<AppsStore> storeWithApp(MemoryExecutionEnv env, String name) async {
+      await env.writeFile(
+        'apps/2048/manifest.json',
+        '{"id": "2048", "name": "$name"}',
+      );
+      await env.writeFile('apps/2048/widget.js', '(function(){});');
+      return AppsStore(env, readAsset: _fakeAssets);
+    }
+
+    test('AC1 — an agent rename shows up on the next scan', () async {
+      final env = MemoryExecutionEnv();
+      final store = await storeWithApp(env, '2048');
+      expect((await store.listApps()).single.name, '2048');
+      // The agent edits the manifest in place — no reinstall, no restart.
+      await env.writeFile(
+        'apps/2048/manifest.json',
+        '{"id": "2048", "name": "2048 Renamed"}',
+      );
+      final apps = await store.listApps();
+      expect(apps.single.name, '2048 Renamed');
+      expect(apps.single.error, isNull);
+    });
+
+    test(
+      'AC3 — unchanged manifests reuse the parsed model (zero rescans)',
+      () async {
+        final env = MemoryExecutionEnv();
+        final store = await storeWithApp(env, '2048');
+        final first = (await store.listApps()).single;
+        final second = (await store.listApps()).single;
+        // SAME instance: the hash gate skipped the re-parse entirely.
+        expect(identical(first, second), isTrue);
+      },
+    );
+
+    test(
+      'E2 — same-content rewrite (hash equal, mtime newer) skips rescan',
+      () async {
+        final env = MemoryExecutionEnv();
+        final store = await storeWithApp(env, '2048');
+        final first = (await store.listApps()).single;
+        await env.writeFile(
+          'apps/2048/manifest.json',
+          '{"id": "2048", "name": "2048"}',
+        );
+        final second = (await store.listApps()).single;
+        // Content is the name source: an identical rewrite re-parses nothing.
+        expect(identical(first, second), isTrue);
+      },
+    );
+
+    test('E3 — nameI18n rename resolves per locale after rescan', () async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile(
+        'apps/2048/manifest.json',
+        '{"id": "2048", "name": "2048", '
+            '"nameI18n": {"pt-BR": "Vinte e Quarenta e Oito"}}',
+      );
+      final store = AppsStore(env, readAsset: _fakeAssets);
+      expect(
+        (await store.listApps()).single.displayName('pt-BR'),
+        'Vinte e Quarenta e Oito',
+      );
+      await env.writeFile(
+        'apps/2048/manifest.json',
+        '{"id": "2048", "name": "2048", '
+            '"nameI18n": {"pt-BR": "2048 Brasileiro"}}',
+      );
+      expect(
+        (await store.listApps()).single.displayName('pt-BR'),
+        '2048 Brasileiro',
+      );
+    });
+
+    test(
+      'AC4 — a manifest broken by an edit yields a flagged error entry',
+      () async {
+        final env = MemoryExecutionEnv();
+        final store = await storeWithApp(env, '2048');
+        expect((await store.listApps()).single.error, isNull);
+        await env.writeFile('apps/2048/manifest.json', '{"name": ');
+        final broken = (await store.listApps()).single;
+        expect(broken.id, '2048');
+        expect(broken.error, isNotNull);
+        // Repairing the manifest heals the entry — no restart.
+        await env.writeFile(
+          'apps/2048/manifest.json',
+          '{"id": "2048", "name": "Healed"}',
+        );
+        final healed = (await store.listApps()).single;
+        expect(healed.name, 'Healed');
+        expect(healed.error, isNull);
+      },
+    );
+
+    test('E4 — an agent-deleted app dir drops the row and prunes '
+        '.installed.json', () async {
+      final env = MemoryExecutionEnv();
+      final store = AppsStore(env, readAsset: _fakeAssets);
+      await store.installWidget(
+        id: '2048',
+        version: '1.0.0',
+        files: {
+          'manifest.json': utf8.encode('{"id": "2048", "name": "2048"}'),
+          'widget.js': utf8.encode('(function(){});'),
+        },
+      );
+      expect(await store.isCatalogInstalled('2048'), isTrue);
+      expect((await store.listApps()).single.id, '2048');
+      // The agent removes the whole dir behind the store's back.
+      await env.remove('apps/2048', recursive: true);
+      expect(await store.listApps(), isEmpty);
+      // No zombie install record.
+      expect(await store.isCatalogInstalled('2048'), isFalse);
+    });
+
+    test('installed.json is NOT rewritten when nothing was pruned', () async {
+      final env = MemoryExecutionEnv();
+      final store = await storeWithApp(env, '2048');
+      await store.listApps();
+      expect(
+        (await env.readTextFile('apps/.installed.json')).valueOrNull,
+        isNull,
+      );
     });
   });
 }
