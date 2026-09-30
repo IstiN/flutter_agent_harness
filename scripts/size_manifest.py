@@ -15,9 +15,10 @@ Usage:
 `<artifact>` is a zip-family file (.zip/.ipa/.aab — uncompressed entry sizes
 via zipfile) or a directory (tree of file sizes, for the web deploy root).
 
-Manifest format (TSV, path-sorted, stable for diffs):
+Manifest format (TSV, path-sorted; TOTAL sorts among the paths — do not
+rely on its position, the parser keys by name):
   <uncompressed_bytes>\t<path>
-  TOTAL\t<total_bytes>            (always last)
+  TOTAL\t<total_bytes>
 
 Gate semantics (`check`):
   - growth > budget%% on any baseline line or on TOTAL  -> FAIL
@@ -28,9 +29,12 @@ Gate semantics (`check`):
   - removed lines are improvements, reported only
   - --init-if-missing: no baseline file yet -> write it and pass with a
     loud notice (ratchet bootstrap; commit the file to arm the gate)
+  - --reseed: overwrite an EXISTING baseline from this artifact and pass
+    with a notice — the escape hatch for intentional growth; commit the
+    rewritten file to make the new shape the floor
 
 CI escape hatch for intentional growth: re-run locally with the same
-artifact and `--init-if-missing` (it rewrites the baseline) and commit it.
+artifact and `--reseed`, commit the rewritten baseline.
 """
 
 import argparse
@@ -98,7 +102,8 @@ def write_baseline(path: Path, manifest: "dict[str, int]") -> None:
 
 
 def check(artifact: Path, baseline_path: Path, budget_pct: float,
-          init_if_missing: bool, manifest_out=None) -> int:
+          init_if_missing: bool = False, reseed: bool = False,
+          manifest_out=None) -> int:
     manifest = build_manifest(artifact, MIN_BYTES)
     if manifest_out:
         write_baseline(manifest_out, manifest)
@@ -113,6 +118,14 @@ def check(artifact: Path, baseline_path: Path, budget_pct: float,
         print(f"::error::size_manifest: baseline {baseline_path} missing "
               f"(run with --init-if-missing to seed it)")
         return 2
+
+    if reseed:
+        write_baseline(baseline_path, manifest)
+        print(f"::notice::size_manifest: baseline RESEEDED from this "
+              f"artifact — {baseline_path} rewritten; COMMIT it to make "
+              f"the new shape the floor")
+        print(fmt_table(manifest))
+        return 0
 
     baseline = load_baseline(baseline_path)
     base_total = baseline["TOTAL"]
@@ -159,8 +172,9 @@ def check(artifact: Path, baseline_path: Path, budget_pct: float,
               f"({len(failures)} line(s) beyond +{budget_pct}%):")
         for f in failures:
             print(f)
-        print("intentional growth? re-seed with: python3 scripts/size_manifest.py "
-              f"check <artifact> --baseline {baseline_path} --init-if-missing")
+        print("intentional growth? re-seed the floor with: python3 "
+              "scripts/size_manifest.py check <artifact> --baseline "
+              f"{baseline_path} --reseed")
         return 1
     print(f"size budget OK (TOTAL {total_pct:+.1f}% vs baseline)")
     return 0
@@ -169,7 +183,6 @@ def check(artifact: Path, baseline_path: Path, budget_pct: float,
 def selftest() -> int:
     """Synthetic-artifact assertions; exits nonzero on any failure."""
     import tempfile
-    import os
 
     ok = True
 
@@ -194,29 +207,36 @@ def selftest() -> int:
         make_zip(base_zip, 100 * 1024)
         make_zip(cur_zip, 100 * 1024)
         base = td / "base.tsv"
-        r = check(cur_zip, base, 5.0, True, None)
+        r = check(cur_zip, base, 5.0, init_if_missing=True)
         expect("init-if-missing seeds + passes", r, 0)
 
         make_zip(cur_zip, 104 * 1024)  # +4%: within budget
-        expect("within-budget growth passes", check(cur_zip, base, 5.0, False, None), 0)
+        expect("within-budget growth passes", check(cur_zip, base, 5.0), 0)
 
         make_zip(cur_zip, 106 * 1024)  # +6%: regression
-        expect("over-budget growth fails", check(cur_zip, base, 5.0, False, None), 1)
+        expect("over-budget growth fails", check(cur_zip, base, 5.0), 1)
 
         make_zip(cur_zip, 100 * 1024, {"bin/new.bin": 6 * 1024 * 1024})
-        expect("heavy new line fails", check(cur_zip, base, 5.0, False, None), 1)
+        expect("heavy new line fails", check(cur_zip, base, 5.0), 1)
 
-        make_zip(cur_zip, 50 * 1024)  # shrink: improvement, never a failure
-        expect("shrink passes", check(cur_zip, base, 5.0, False, None), 0)
+        make_zip(cur_zip, 80 * 1024)  # still tracked (> 64 KB), 20% smaller
+        expect("tracked-line shrink passes", check(cur_zip, base, 5.0), 0)
+
+        make_zip(cur_zip, 106 * 1024)  # reseed overwrites an EXISTING baseline
+        expect("reseed rewrites + passes", check(cur_zip, base, 5.0, reseed=True), 0)
+        expect("smaller-than-floor still passes", check(base_zip, base, 5.0), 0)
+        bigger = td / "bigger.zip"
+        make_zip(bigger, 120 * 1024)  # +13% vs the reseeded floor
+        expect("post-reseed regrowth fails", check(bigger, base, 5.0), 1)
 
         tree = td / "root" / "app"
         (tree / "assets").mkdir(parents=True)
         (tree / "index.html").write_bytes(b"\0" * (200 * 1024))
         (tree / "assets" / "x.bin").write_bytes(b"\0" * (150 * 1024))
         dir_base = td / "dir.tsv"
-        expect("dir artifact init", check(tree, dir_base, 5.0, True, None), 0)
+        expect("dir artifact init", check(tree, dir_base, 5.0, init_if_missing=True), 0)
         (tree / "index.html").write_bytes(b"\0" * (220 * 1024))  # +10%
-        expect("dir over-budget fails", check(tree, dir_base, 5.0, False, None), 1)
+        expect("dir over-budget fails", check(tree, dir_base, 5.0), 1)
 
     print("selftest:", "PASS" if ok else "FAIL")
     return 0 if ok else 1
@@ -235,6 +255,10 @@ def main() -> int:
     p_chk.add_argument("--baseline", type=Path, required=True)
     p_chk.add_argument("--budget-pct", type=float, default=5.0)
     p_chk.add_argument("--init-if-missing", action="store_true")
+    p_chk.add_argument("--reseed", action="store_true",
+                       help="overwrite an EXISTING baseline from this "
+                            "artifact and pass (intentional-growth escape "
+                            "hatch; commit the rewritten file)")
     p_chk.add_argument("--manifest-out", type=Path)
 
     sub.add_parser("selftest", help="synthetic end-to-end assertions")
@@ -247,7 +271,8 @@ def main() -> int:
         return 0
     if args.cmd == "check":
         return check(args.artifact, args.baseline, args.budget_pct,
-                     args.init_if_missing, args.manifest_out)
+                     args.init_if_missing, reseed=args.reseed,
+                     manifest_out=args.manifest_out)
     return selftest()
 
 

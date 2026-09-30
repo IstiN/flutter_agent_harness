@@ -601,19 +601,20 @@ jobs:
             > "$MANIFEST_NAME"
           echo "zip_name=$ZIP_NAME" >> $GITHUB_OUTPUT
           echo "manifest_name=$MANIFEST_NAME" >> $GITHUB_OUTPUT
+          echo "baseline_arch=$MANIFEST_ARCH" >> $GITHUB_OUTPUT
 
       # AC1 (#1096): per-entry uncompressed size table + +5% budget gate on
       # the shipped mac zip (auto-update channel). arm64 baseline is
-      # committed (v1.0.493); other arches self-seed via --init-if-missing
-      # on their next release run — commit the printed manifest to arm.
+      # committed (the cut is extension/web-only, so the release shape
+      # stays the floor); unknown archs FAIL — never self-seed green.
       - name: Size manifest + budget gate (mac zip)
         run: |
-          MANIFEST_ARCH="$MATRIX_ARCH"
-          [ "$MANIFEST_ARCH" = "x86_64" ] && MANIFEST_ARCH="x64"
+          case "${{ steps.package.outputs.baseline_arch }}" in
+            arm64|x64) ;;
+            *) echo "::error::mac arch '${{ steps.package.outputs.baseline_arch }}' has no size baseline mapping — add scripts/size_budget/fa-macos-<arch>.tsv and extend this whitelist" >&2; exit 1 ;;
+          esac
           python3 scripts/size_manifest.py check "${{ steps.package.outputs.zip_name }}" \
-            --baseline "scripts/size_budget/fa-macos-${MANIFEST_ARCH}.tsv" --init-if-missing
-        env:
-          MATRIX_ARCH: ${{ matrix.arch }}
+            --baseline "scripts/size_budget/fa-macos-${{ steps.package.outputs.baseline_arch }}.tsv" --init-if-missing
 
       - name: Package TestFlight PKG (arm64)
         if: matrix.arch == 'arm64'
