@@ -234,7 +234,7 @@ jobs:
       # Issue #1100: the fa-web-spa.zip packaging guard (base-tag patch +
       # absolute-/app/ grep) must stay functional on every PR — a release
       # run is the wrong place to first discover a broken guard. Fixture
-      # self-test: positive path + a red case, pure bash, no web build.
+      # self-test: positive path + all red exits, pure bash, no web build.
       - name: Web SPA packaging guard self-test (#1100)
         run: |
           set -euo pipefail
@@ -246,12 +246,34 @@ jobs:
           echo '{"name":"fa"}' > "$d/build/manifest.json"
           bash scripts/package_web_spa.sh "$d/build" "$d/out.zip" > /dev/null
           unzip -p "$d/out.zip" index.html | grep -F '<base href="./">'
-          # Red case: an absolute /app/ sneaking into a touchpoint must fail.
+          # AC4 pin: packaging never mutates its input — the Pages deploy's
+          # build dir must stay byte-identical.
+          grep -F '<base href="/app/">' "$d/build/index.html"
+          # Red exit 1: an absolute /app/ sneaking into a touchpoint.
           echo '{"x":"/app/y"}' > "$d/build/manifest.json"
           if bash scripts/package_web_spa.sh "$d/build" "$d/bad.zip" 2>/dev/null; then
             echo "::error::package_web_spa guard passed a build containing /app/ (AC3 #1100)"
             exit 1
           fi
+          # Red exit 2: no base tag to patch.
+          echo '{"name":"fa"}' > "$d/build/manifest.json"
+          echo '<html></html>' > "$d/build/index.html"
+          if bash scripts/package_web_spa.sh "$d/build" "$d/bad2.zip" 2>/dev/null; then
+            echo "::error::package_web_spa guard passed an unpatchable base tag (AC1 #1100)"
+            exit 1
+          fi
+          # Red exit 3: a missing touchpoint file.
+          rm "$d/build/manifest.json"
+          if bash scripts/package_web_spa.sh "$d/build" "$d/bad3.zip" 2>/dev/null; then
+            echo "::error::package_web_spa guard passed an incomplete build (AC3 #1100)"
+            exit 1
+          fi
+          # fa1.dev parity pin: both web builds must keep the identical
+          # release flags — the bundle's only edit stays the base tag.
+          for wf in .github/workflows/pages.yml .github/workflows/ci.yml; do
+            grep -q -- '--release' "$wf" || { echo "::error::$wf lost the --release web flag (#1100 parity)"; exit 1; }
+            grep -q -- '--base-href /app/' "$wf" || { echo "::error::$wf lost --base-href /app/ (#1100 parity, pages + bundle must share it)"; exit 1; }
+          done
 
       # Issue #433 AC1: README CRAP badge must equal the crap4dart.yaml
       # threshold (they drifted to 8.0-vs-12.0 once). Pure python — runs on
@@ -2579,9 +2601,10 @@ jobs:
     timeout-minutes: 30
     # Additive asset: a web-build failure (guard trip, SDK flake) must NOT
     # hold the release hostage — CLI provenance (SHA256SUMS) and the vpinned
-    # bump still ship. Job-level continue-on-error keeps this leg red for
-    # the manual check while downstream needs see success; the provenance
-    # fa-* sweep then deterministically finds no zip (success -> signed,
+    # bump still ship. Job-level continue-on-error reports the job (and its
+    # check) as SUCCESS — the failed steps stay visible on the run page for
+    # the manual check. Downstream needs see success; the provenance fa-*
+    # sweep then deterministically finds no zip (success -> signed,
     # failure -> absent — never a half-updated manifest).
     continue-on-error: true
     if: >-
