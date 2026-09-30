@@ -522,8 +522,21 @@ Future<Result<Stage, ExecutionError>> expandShellStage(
       if (expanded.isErr) return Err(expanded.errorOrNull!);
       target = expanded.valueOrNull!.text;
     }
+    // Here-document bodies expand `$VAR`/`$(...)` when the delimiter was
+    // unquoted (POSIX); the result is never word-split (gh-1086).
+    var body = redirect.body;
+    if (body != null && redirect.expandable) {
+      final expanded = await expandShellWord(body, env, substitute);
+      if (expanded.isErr) return Err(expanded.errorOrNull!);
+      body = expanded.valueOrNull!.text;
+    }
     redirects.add(
-      Redirect(kind: redirect.kind, fd: redirect.fd, target: target),
+      Redirect(
+        kind: redirect.kind,
+        fd: redirect.fd,
+        target: target,
+        body: body,
+      ),
     );
   }
   return Ok(
