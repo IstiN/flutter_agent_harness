@@ -60,8 +60,13 @@ customProviders:
         timeout: const Duration(seconds: 20),
       );
       harness.sendEnter();
+      // The anchor is the picker ROW (`label + description`), not the bare
+      // name: the status band renders the ACTIVE provider label
+      // (`test-provider / test-model`) from the first frame, so a bare-name
+      // gate fires before the provider picker opens and the next Enter is
+      // eaten by the still-open settings hub (issue #920 round 3).
       await harness.waitForText(
-        'test-provider',
+        'test-provider http://',
         timeout: const Duration(seconds: 20),
       );
       harness.sendEnter();
@@ -70,6 +75,10 @@ customProviders:
       // picker (the ▸ marker, the 'provider' word) must still deliver the
       // new picker BOTH to the emulator screen AND as contiguous bytes in
       // the PTY output stream (screen-scraping consumers read the bytes).
+      // Each half of the contract waits on its own channel: the raw wait
+      // proves the bytes, the screen waits prove the paint — an immediate
+      // screenText read between the two channels raced frame painting on
+      // loaded runners (#550/#557 family).
       final raw = await harness.waitForText(
         'Edit provider',
         timeout: const Duration(seconds: 20),

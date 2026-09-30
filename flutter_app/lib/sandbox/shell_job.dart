@@ -120,8 +120,8 @@ final class SandboxShellJob implements ShellJob {
           }
         })
         .catchError((Object _) {
-      _logBroken = true;
-    });
+          _logBroken = true;
+        });
   }
 
   /// Completes the job from the script's exec result (called by the owning

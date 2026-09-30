@@ -136,9 +136,7 @@ final class JobLogCeiling {
   /// produced) at any ceiling.
   int get _tailFlushEveryBytes {
     final half = _tailBudget ~/ 2;
-    return half > jobLogTailFlushEveryBytes
-        ? half
-        : jobLogTailFlushEveryBytes;
+    return half > jobLogTailFlushEveryBytes ? half : jobLogTailFlushEveryBytes;
   }
 
   /// Total produced bytes so far (stdout + stderr).
@@ -221,7 +219,8 @@ final class JobLogCeiling {
   Future<bool> _checkFreeSpace() async {
     final probe = this.probe;
     if (probe == null || _truncated) return true;
-    if (_lastProbeAt >= 0 && _produced - _lastProbeAt < jobLogFreeCheckEveryBytes) {
+    if (_lastProbeAt >= 0 &&
+        _produced - _lastProbeAt < jobLogFreeCheckEveryBytes) {
       return true;
     }
     _lastProbeAt = _produced;
