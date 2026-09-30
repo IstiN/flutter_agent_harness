@@ -34,13 +34,6 @@ import os
 import sys
 from pathlib import Path
 
-_BENCH_DIR = str(Path(__file__).resolve().parent.parent)
-if _BENCH_DIR not in sys.path:
-    sys.path.insert(0, _BENCH_DIR)
-import fa_usage  # noqa: E402
-
-_PRICING_PATH = Path(_BENCH_DIR) / "pricing.json"
-
 
 def _trial_rows(job_dir: Path) -> list[dict]:
     rows = []

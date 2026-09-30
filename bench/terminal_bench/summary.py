@@ -38,38 +38,91 @@ import fa_usage
 _PRICING_PATH = Path(_BENCH_DIR) / "pricing.json"
 
 
-def _model_override():
-    """--model flag, then MODEL / FA_PROVIDER_CONFIG env, else None."""
-    args = sys.argv[1:]
-    if "--model" in args:
-        i = args.index("--model")
-        if i + 1 < len(args):
-            return args[i + 1]
-    if os.environ.get("MODEL"):
-        return os.environ["MODEL"]
-    config = os.environ.get("FA_PROVIDER_CONFIG")
-    if config:
-        try:
-            return json.loads(config).get("model")
-        except json.JSONDecodeError:
-            pass
-    return None
+def _parse_args(argv):
+    """Parse [--no-fail] <runs-dir> [expected-count] [--model MODEL_ID].
+
+    Single parse point (the reviewer's thread 6): --model without a
+    non-empty value is a loud usage error, never a silent env fallback;
+    a non-numeric expected-count is the same. Falls back to the MODEL /
+    FA_PROVIDER_CONFIG env only when no --model was given.
+    """
+    no_fail = False
+    model = None
+    positional = []
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--no-fail":
+            no_fail = True
+        elif arg == "--model":
+            if i + 1 >= len(argv) or not argv[i + 1]:
+                print(
+                    "[summary] error: --model requires a model id", file=sys.stderr
+                )
+                sys.exit(2)
+            model = argv[i + 1]
+            i += 1
+        else:
+            positional.append(arg)
+        i += 1
+    if not positional:
+        print(
+            "[summary] error: usage: summary.py [--no-fail] <runs-dir>"
+            " [expected-count] [--model MODEL_ID]",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    try:
+        expected = int(positional[1]) if len(positional) > 1 else None
+    except ValueError:
+        print(
+            f"[summary] error: expected-count must be an integer, got:"
+            f" {positional[1]!r}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    if model is None:
+        model = os.environ.get("MODEL")
+    if model is None:
+        config = os.environ.get("FA_PROVIDER_CONFIG")
+        if config:
+            try:
+                model = json.loads(config).get("model")
+            except json.JSONDecodeError:
+                print(
+                    "[summary] warning: FA_PROVIDER_CONFIG is not JSON — "
+                    "ignoring it for the model id",
+                    file=sys.stderr,
+                )
+    return no_fail, Path(positional[0]), expected, model
 
 
 def _session_facts(runs_dir: Path) -> dict:
     """trial_name → {"model": str|None, "estimated": int} from synced sessions.
 
-    tb ships each trial's fa sessions in the run artifacts
-    (<run>/<task>/<trial>/agent-logs|agent/fah-sessions). Best-effort and
-    fail-soft: old artifacts without session logs just yield no facts.
+    tb ships each trial's fa sessions in the run artifacts. The glob is
+    pinned to the two shipped layouts — <run>/<task>/<trial>/agent-logs/
+    fah-sessions (tb sync) and <run>/<task>/<trial>/agent/fah-sessions
+    (older artifact shape) — and warns loudly when a run with results has
+    no session logs at all, so a layout drift can't silently zero the
+    cost columns. Best-effort overall: old artifacts just yield no facts.
     """
     facts = {}
     try:
-        # <runs>/<run>/<task>/<trial>/agent-logs|agent/fah-sessions (both
-        # the tb-synced and the pinned issue layout have 4 levels above).
-        candidates = list(runs_dir.glob("*/*/*/*/fah-sessions"))
+        candidates = list(runs_dir.glob("*/*/*/agent-logs/fah-sessions")) + list(
+            runs_dir.glob("*/*/*/agent/fah-sessions")
+        )
     except OSError:
-        return facts
+        candidates = []
+    if not candidates:
+        # Only reachable when at least one results.json exists, so this is
+        # a real run whose session logs went missing or drifted layout.
+        print(
+            f"[summary] warning: no fa session logs found "
+            f"(*/*/*/agent*/fah-sessions under {runs_dir}) — per-trial model "
+            f"unknown, cost renders n/a unless --model/env provides one",
+            file=sys.stderr,
+        )
     for sessions in candidates:
         usage = fa_usage.extract_from_dir(sessions)
         models = sorted(m for m in usage.models if m)
@@ -82,12 +135,12 @@ def _session_facts(runs_dir: Path) -> dict:
 
 
 def _cost_cell(pricing, facts, trial, tin, tout, model_override):
-    """(cost_usd|None, model) for one trial row; None cost renders n/a."""
+    """USD for one trial row; None renders n/a (unpriced/unknown model)."""
     model = (facts.get(trial) or {}).get("model") or model_override
     entry = fa_usage.price_entry(pricing, model) if model else None
     if entry is None:
-        return None, model
-    return fa_usage.cost_usd(entry, tin or 0, tout or 0), model
+        return None
+    return fa_usage.cost_usd(entry, tin or 0, tout or 0)
 
 
 def render(runs_dir: Path, expected=None, model_override=None):
@@ -112,7 +165,7 @@ def render(runs_dir: Path, expected=None, model_override=None):
             mark = {True: "yes", False: "no", None: "pending"}[resolved]
             tin = r.get("total_input_tokens")
             tout = r.get("total_output_tokens")
-            cost, model = _cost_cell(
+            cost = _cost_cell(
                 pricing, facts, r.get("trial_name", "?"), tin, tout, model_override
             )
             rows.append((
@@ -146,7 +199,10 @@ def render(runs_dir: Path, expected=None, model_override=None):
     total_in = sum(r[4] or 0 for r in rows)
     total_out = sum(r[5] or 0 for r in rows)
     priced = [r[6] for r in rows if r[6] is not None]
-    unpriced = len(rows) - len(priced)
+    # Same unpriced rule as the harbor summary: only rows that recorded
+    # tokens but carry no price count. Zero-token rows render n/a but are
+    # not unpriced spend.
+    unpriced = sum(1 for r in rows if (r[4] or r[5]) and r[6] is None)
     if any(r[4] or r[5] for r in rows):
         cost_total = f"${sum(priced):.4f}" if priced else "n/a"
         suffix = f" — {unpriced} trial(s) unpriced (model missing from pricing.json)" if unpriced else ""
@@ -169,16 +225,9 @@ def render(runs_dir: Path, expected=None, model_override=None):
 
 
 def main():
-    args = sys.argv[1:]
-    no_fail = "--no-fail" in args
-    args = [a for a in args if a != "--no-fail"]
-    if "--model" in args:
-        i = args.index("--model")
-        args = args[:i] + args[i + 2 :]
-    runs_dir = Path(args[0])
-    expected = int(args[1]) if len(args) > 1 else None
+    no_fail, runs_dir, expected, model = _parse_args(sys.argv[1:])
 
-    lines, problems = render(runs_dir, expected, _model_override())
+    lines, problems = render(runs_dir, expected, model)
 
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:

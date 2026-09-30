@@ -3,7 +3,9 @@
 
 Run: python3 -m unittest discover -s bench/terminal_bench
 """
+import contextlib
 import importlib.util
+import io
 import json
 import sys
 import tempfile
@@ -49,7 +51,8 @@ class SummaryRenderTest(unittest.TestCase):
         trial_name = "t.1-of-1.shard-1"
         self.write_run(
             [trial("task-a", trial_name, True, 310, 80),
-             trial("task-b", "u.1-of-1.shard-1", False, 0, 0)],
+             trial("task-b", "u.1-of-1.shard-1", False, 40, 20),
+             trial("task-c", "v.1-of-1.shard-1", False, 0, 0)],
             sessions={
                 trial_name: json.dumps({
                     "type": "message",
@@ -65,11 +68,42 @@ class SummaryRenderTest(unittest.TestCase):
         self.assertEqual(problems, [])
         # Cost comes from bench/pricing.json: (310*0.15 + 80*0.5) / 1e6.
         self.assertIn("$0.0001", out)
-        self.assertIn("tokens in/out: 310/80", out)
+        self.assertIn("tokens in/out: 350/100", out)
         self.assertIn("est. cost: $0.0001", out)
-        # The zero-token trial stays 0 with no fake cost (model unknown → n/a).
-        self.assertIn("| task-b | u.1-of-1.shard-1 | no |  | 0/0 | n/a |", out)
+        # Rows with tokens but no price count as unpriced; the zero-token
+        # row renders n/a but is NOT unpriced spend (harbor-aligned rule).
+        self.assertIn("| task-b | u.1-of-1.shard-1 | no |  | 40/20 | n/a |", out)
+        self.assertIn("| task-c | v.1-of-1.shard-1 | no |  | 0/0 | n/a |", out)
         self.assertIn("1 trial(s) unpriced", out)
+
+    def test_agent_layout_sessions_found(self):
+        # Pinned alternative layout: <run>/<task>/<trial>/agent/fah-sessions.
+        run = self.runs / "shard-1"
+        run.mkdir(parents=True)
+        (run / "results.json").write_text(json.dumps(
+            {"results": [trial("task-a", "t.1-of-1.shard-1", True, 10, 5)]}))
+        sessions = run / "task" / "t.1-of-1.shard-1" / "agent" / "fah-sessions"
+        sessions.mkdir(parents=True)
+        (sessions / "s.jsonl").write_text(json.dumps({
+            "type": "message",
+            "message": {
+                "role": "assistant", "model": "glm-5.3-flash",
+                "content": [{"type": "text", "text": "Done"}],
+                "usage": {"input": 10, "output": 5, "cacheRead": 0, "cacheWrite": 0},
+            },
+        }))
+        lines, _ = summary.render(self.runs)
+        out = "\n".join(lines)
+        # Model came from the session record: priced, not n/a.
+        self.assertIn("$0.0000", out)
+        self.assertNotIn("| n/a |", out)
+
+    def test_missing_sessions_warn_loudly(self):
+        self.write_run([trial("task-a", "t.1-of-1.shard-1", True, 10, 5)])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            lines, _ = summary.render(self.runs)
+        self.assertIn("no fa session logs found", err.getvalue())
 
     def test_model_override_prices_every_row(self):
         self.write_run([trial("task-b", "u.1-of-1.shard-1", False, 0, 0)])
@@ -107,6 +141,37 @@ class SummaryRenderTest(unittest.TestCase):
         self.write_run([trial("task-a", "t.1-of-1.shard-1", True, 0, 0)])
         lines, problems = summary.render(self.runs, expected=5)
         self.assertIn("only 1/5 expected tasks attempted", problems)
+
+
+class ParseArgsTest(unittest.TestCase):
+    def test_flags_and_positionals(self):
+        no_fail, runs, expected, model = summary._parse_args(
+            ["--no-fail", "runs", "5", "--model", "glm-5.3-flash"]
+        )
+        self.assertTrue(no_fail)
+        self.assertEqual(runs, Path("runs"))
+        self.assertEqual(expected, 5)
+        self.assertEqual(model, "glm-5.3-flash")
+
+    def test_valueless_model_flag_is_loud(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            with self.assertRaises(SystemExit) as ctx:
+                summary._parse_args(["runs", "--model"])
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertIn("--model requires a model id", err.getvalue())
+
+    def test_missing_runs_dir_is_loud(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as ctx:
+                summary._parse_args([])
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_non_numeric_expected_count_is_loud(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as ctx:
+                summary._parse_args(["runs", "many"])
+        self.assertEqual(ctx.exception.code, 2)
 
 
 if __name__ == "__main__":

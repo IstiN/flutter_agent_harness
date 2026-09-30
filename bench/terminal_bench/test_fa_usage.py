@@ -305,6 +305,31 @@ class ExtractorTest(unittest.TestCase):
         self.assertEqual(usage.warnings, [])
 
 
+    def test_float_usage_parsed_not_estimated(self):
+        # Some providers emit floats (310.0); they are real usage and must
+        # not silently become 0 and reroute into the estimate path.
+        rec = {"type": "message", "message": {
+            "role": "assistant", "model": "m",
+            "content": [{"type": "text", "text": "hello"}],
+            "usage": {"input": 310.0, "output": 80.5}}}
+        usage = fa_usage.extract_from_text(json.dumps(rec))
+        self.assertEqual(usage.input_tokens, 310)
+        self.assertEqual(usage.output_tokens, 81)
+        self.assertEqual(usage.estimated_tokens, 0)
+        self.assertEqual(usage.warnings, [])
+
+    def test_malformed_usage_warns_and_estimates(self):
+        # A record that LOOKS like it carries usage but has no numeric
+        # token fields: loud warning + chars/4 estimate, not a silent zero.
+        rec = {"type": "message", "message": {
+            "role": "assistant", "model": "m",
+            "content": [{"type": "text", "text": "hello world"}],
+            "usage": {"input": "many", "output": None}}}
+        usage = fa_usage.extract_from_text(json.dumps(rec))
+        self.assertTrue(any("malformed usage" in w for w in usage.warnings))
+        self.assertEqual(usage.estimated_tokens, 3)  # ceil(11/4)
+
+
 class PricingTest(unittest.TestCase):
     def setUp(self):
         self.pricing = fa_usage.load_pricing(_BENCH / "pricing.json")

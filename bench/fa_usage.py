@@ -68,7 +68,11 @@ def _per_model(usage: SessionUsage, model: str) -> dict:
 
 
 def _content_chars(content) -> int:
-    """Char volume of an assistant message's content blocks (estimate input)."""
+    """Char volume of an assistant message's content blocks.
+
+    Estimate basis for records whose usage the provider omitted — tallied
+    as ESTIMATED OUTPUT (the content is the response side of the request).
+    """
     if isinstance(content, str):
         return len(content)
     if not isinstance(content, list):
@@ -106,12 +110,35 @@ def _feed(usage: SessionUsage, obj) -> None:
 
     def num(key) -> int:
         value = usage_or_flat.get(key)
-        return value if isinstance(value, int) and not isinstance(value, bool) else 0
+        # Some providers emit floats (or strings) for token counts; a
+        # silent 0 here would reroute a real report into the estimate path.
+        if isinstance(value, bool):
+            return 0
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            # Fractional token counts round UP: under-counting spend is
+            # the worse failure, and ceil matches the estimate path.
+            return int(value) if value.is_integer() else math.ceil(value)
+        return 0
 
     inp, out = num("input"), num("output")
     cr, cw = num("cacheRead"), num("cacheWrite")
     if inp == 0 and out == 0 and cr == 0 and cw == 0:
         # Provider omitted usage: contribute a chars/4 estimate, marked as such.
+        reported = [
+            usage_or_flat.get(key)
+            for key in ("input", "output", "cacheRead", "cacheWrite")
+        ]
+        if reported and not any(
+            isinstance(v, (int, float)) and not isinstance(v, bool) for v in reported
+        ):
+            # The record LOOKS like it carries usage but nothing parsed —
+            # say so instead of quietly estimating real spend away.
+            usage.warnings.append(
+                "malformed usage record (no numeric token fields); "
+                "estimated from content chars/4"
+            )
         est = math.ceil(_content_chars(message.get("content")) / _CHARS_PER_TOKEN)
         usage.estimated_output_tokens += est
         _per_model(usage, model)["estimatedOutput"] += est
