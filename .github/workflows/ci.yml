@@ -269,10 +269,12 @@ jobs:
             exit 1
           fi
           # fa1.dev parity pin: both web builds must keep the identical
-          # release flags — the bundle's only edit stays the base tag.
+          # release flags AND the same pinned SDK — the bundle's only edit
+          # stays the base tag.
           for wf in .github/workflows/pages.yml .github/workflows/ci.yml; do
             grep -q -- '--release' "$wf" || { echo "::error::$wf lost the --release web flag (#1100 parity)"; exit 1; }
             grep -q -- '--base-href /app/' "$wf" || { echo "::error::$wf lost --base-href /app/ (#1100 parity, pages + bundle must share it)"; exit 1; }
+            grep -q "flutter-version: '3.47.x'" "$wf" || { echo "::error::$wf unpinned Flutter SDK (#1100 parity, pages + bundle must share it)"; exit 1; }
           done
 
       # Issue #433 AC1: README CRAP badge must equal the crap4dart.yaml
@@ -2654,6 +2656,19 @@ jobs:
               --repo "${GITHUB_REPOSITORY}" || true
           fi
           gh release upload "${GITHUB_REF_NAME}" fa-web-spa.zip --clobber --repo "${GITHUB_REPOSITORY}"
+
+      # continue-on-error keeps the job/check green even on failure — a
+      # release can then only be gated on a MISSING asset. Surface the miss
+      # in the run's step summary too (covers upload flakes, not just guard
+      # trips); the failed steps remain visible in the job view.
+      - name: Flag missing bundle in step summary
+        if: failure()
+        run: |
+          {
+            echo '## fa-web-spa.zip NOT shipped this release'
+            echo ''
+            echo 'The web SPA bundle job failed (continue-on-error: the release ships without it). See the failed steps above.'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # SEC-07 (#795): the installer's default trust path is SIGNED checksums.
   # This job aggregates every fa-* asset of the release into SHA256SUMS and

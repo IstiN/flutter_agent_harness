@@ -4,10 +4,11 @@ Every [release](https://github.com/IstiN/flutter_agent_harness/releases) ships
 **`fa-web-spa.zip`** — the release Flutter web build with `<base href>`
 rewritten to `./`, so it runs from **any static host with zero edits**,
 including path-prefixed hosts (`https://host/some/prefix/`) and sandboxed
-iframes. The bundle is built with the same command as the deploy that powers
-[fa1.dev](https://fa1.dev/app/) (`--release --base-href /app/`; a static
-guard asserts both workflow invocations keep these flags, so the bundle's
-only edit stays the base tag). The release pipeline enforces the deeper
+iframes. The bundle is built with the same command and the same pinned
+Flutter SDK as the deploy that powers [fa1.dev](https://fa1.dev/app/)
+(`--release --base-href /app/` on Flutter 3.47.x in both workflows; a static
+guard asserts both invocations keep these, so the bundle's only edit stays
+the base tag). The release pipeline enforces the deeper
 invariant too: `scripts/package_web_spa.sh` fails the release unless the
 four entry files (`index.html`, `flutter_service_worker.js`,
 `flutter_bootstrap.js`, `manifest.json`) contain zero absolute `/app/`
