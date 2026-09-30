@@ -940,6 +940,10 @@ final class CliConfig {
       if (entry.keyName != null) {
         buffer.write('    keyName: ${_yamlScalar(entry.keyName!)}\n');
       }
+      final authHeader = entry.authHeader;
+      if (authHeader != null) {
+        buffer.write('    authHeader: ${_yamlScalar(authHeader)}\n');
+      }
       buffer.write('    modelId: ${_yamlScalar(entry.modelId)}\n');
     }
     return buffer.toString();
