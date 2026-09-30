@@ -148,12 +148,36 @@ extension _TuiRowRenderers on FaTuiModel {
     return height;
   }
 
+  /// The hidden-rows accounting both scroll indicators read (issue #827):
+  /// [above] counts wrapped rows over the window's top edge (the
+  /// tail-follow hint names these), [below] the wrapped rows under its
+  /// bottom edge (the detached percent rule). ONE computation for both
+  /// directions — the two indicators can never drift apart.
+  (int above, int below) _foldAccount(List<String> wrapped, int offset) {
+    final bottom = _scrollBottom(wrapped);
+    return (
+      offset.clamp(0, wrapped.length),
+      (bottom - offset).clamp(0, wrapped.length),
+    );
+  }
+
   /// Scroll progress indicator — only while the user scrolled away from
   /// the live edge (a "you are here" hint); while following, the row stays
-  /// blank so the layout never shifts. (A transient viewport shrink, e.g.
+  /// blank so the layout never shifts. Issue #827: while the tail latch
+  /// holds and wrapped rows hide above the window, the same reserved row
+  /// names them (`^ N lines above fold - PgUp`) — the streaming default
+  /// was the one state the old gate left unannounced. Both directions read
+  /// [_foldAccount]; the hint rides the row the budget already reserves,
+  /// so it never costs a content row.
   int _writeScrollIndicator(StringBuffer b, List<String> wrapped, int offset) {
-    final bottom = _scrollBottom(wrapped);
-    if (!followTail && offset < bottom) {
+    final (above, below) = _foldAccount(wrapped, offset);
+    if (followTail && above > 0 && offset < wrapped.length) {
+      // A window that shows no rows (zero-height history) announces
+      // nothing — the budget rule yields the hint, never the prompt row.
+      final hint = ' ^ $above lines above fold - PgUp';
+      b.writeln(_dim(tuiPadRight(tuiFitWidth(hint, termWidth), termWidth)));
+    } else if (!followTail && below > 0) {
+      final bottom = _scrollBottom(wrapped);
       final scrollPercent = bottom == 0
           ? 100
           : ((offset / bottom) * 100).round().clamp(0, 100);

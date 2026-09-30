@@ -282,6 +282,7 @@ final class FaTuiModel extends Model {
     this.stickyLines = const [],
     this.stickyIndex = -1,
     this.stickyEchoLineCount = 0,
+    this.turnStartLine = -1,
     this.queue = const [],
     this.attachments = const [],
     this.inputHistory = const [],
@@ -474,6 +475,14 @@ final class FaTuiModel extends Model {
   /// scrolled out of view.
   final int stickyEchoLineCount;
 
+  /// Output-lines index where the CURRENT turn starts — the last submitted
+  /// prompt's echo (or the first steered/drained echo); -1 until then
+  /// (issue #827). Drives the follow anchor [_turnAnchor]: while the tail
+  /// latch holds, the viewport never dips below this turn's first wrapped
+  /// row while the turn still fits, so a fresh prompt's window starts at
+  /// its own echo instead of showing turn N-1 above the prompt line.
+  final int turnStartLine;
+
   /// Messages typed while a run streams (kimi-cli's queue): Enter enqueues
   /// a follow-up, ↑ pops the last one back into the input, ctrl+x deletes
   /// it, ctrl+s steers everything into the running agent, and the host
@@ -657,11 +666,56 @@ final class FaTuiModel extends Model {
   /// re-attaches.
   FaTuiModel _scrolledTo(int offset) {
     final wrapped = _wrappedLines();
-    final next = _clampScroll(offset, wrapped);
+    final next = offset.clamp(0, _scrollTopMax(wrapped));
     return copyWith(
       scrollOffset: next,
       followTail: next >= _scrollBottom(wrapped),
     );
+  }
+
+  /// The current turn's first wrapped row (issue #827). -1 (nothing
+  /// submitted yet) and out-of-range (the transcript head-trim dropped the
+  /// echo — the index goes stale by the cut count) both return 0, riding
+  /// the global bottom exactly like the pre-#827 follow.
+  int _turnStartRow() {
+    if (turnStartLine < 0) return 0;
+    _wrappedLines(); // refresh the shared wrap cache when stale
+    final starts = _wrapCache.lineStartRows;
+    if (turnStartLine >= starts.length) return 0;
+    return starts[turnStartLine];
+  }
+
+  /// The follow anchor (issue #827): the live edge, but never below the
+  /// current turn's first wrapped row while that turn fits the viewport —
+  /// a freshly submitted prompt's window starts at its OWN echo, not at
+  /// turn N-1's tail (the cross-turn bleed the sticky echo used to paper
+  /// over). Long turns exceed the viewport and the anchor degrades to the
+  /// bottom, where the fold indicator owns the explanation.
+  int _turnAnchor(List<String> wrapped) {
+    final bottom = _scrollBottom(wrapped);
+    final start = _turnStartRow();
+    return start > bottom ? start : bottom;
+  }
+
+  /// The effective viewport offset while the follow latch holds: the
+  /// anchor, unless the user parked the window inside the turn-boundary
+  /// pad zone above the live edge ([_scrollTopMax] allows that without
+  /// detaching — the newest row is still on the glass there).
+  int _followOffset(List<String> wrapped) {
+    if (scrollOffset > _scrollBottom(wrapped)) return scrollOffset;
+    return _turnAnchor(wrapped);
+  }
+
+  /// The highest offset a user scroll may store: the usual live-edge
+  /// bottom, plus — while the latch holds — the pad zone of a SHORT
+  /// current turn (window above the bottom, blank-padded below without
+  /// losing the live edge). Detached scrolls stay clamped to the bottom,
+  /// as before.
+  int _scrollTopMax(List<String> wrapped) {
+    final bottom = _scrollBottom(wrapped);
+    if (!followTail) return bottom;
+    final start = _turnStartRow();
+    return start > bottom ? start : bottom;
   }
 
   /// The output history formatted and wrapped to physical rows at [width]
@@ -726,6 +780,7 @@ final class FaTuiModel extends Model {
     List<String>? stickyLines,
     int? stickyIndex,
     int? stickyEchoLineCount,
+    int? turnStartLine,
     List<QueuedMessage>? queue,
     List<TuiImageAttachment>? attachments,
     List<String>? inputHistory,
@@ -784,6 +839,7 @@ final class FaTuiModel extends Model {
       stickyLines: stickyLines ?? this.stickyLines,
       stickyIndex: stickyIndex ?? this.stickyIndex,
       stickyEchoLineCount: stickyEchoLineCount ?? this.stickyEchoLineCount,
+      turnStartLine: turnStartLine ?? this.turnStartLine,
       queue: queue ?? this.queue,
       attachments: attachments ?? this.attachments,
       inputHistory: inputHistory ?? this.inputHistory,
@@ -928,10 +984,11 @@ final class FaTuiModel extends Model {
     final next = copyWith(outputLines: newLines);
     final nextWrapped = next._wrappedLines();
     // Auto-follow the stream while the latch holds; preserve the scroll
-    // position (clamped) when the user scrolled up.
+    // position (clamped) when the user scrolled up. Following re-anchors
+    // at the turn boundary (issue #827) — the stream owns the window.
     final nextOffset = followTail
-        ? _scrollBottom(nextWrapped)
-        : _clampScroll(scrollOffset, nextWrapped);
+        ? next._turnAnchor(nextWrapped)
+        : next._clampScroll(scrollOffset, nextWrapped);
     return (next.copyWith(scrollOffset: nextOffset), null);
   }
 
@@ -1048,9 +1105,14 @@ final class FaTuiModel extends Model {
     for (final message in queued) {
       lines = _echoAppend(lines, message.text);
     }
-    final cleared = copyWith(queue: const [], outputLines: lines);
+    final cleared = copyWith(
+      queue: const [],
+      outputLines: lines,
+      // The first drained echo opens the next turn's window (issue #827).
+      turnStartLine: outputLines.length,
+    );
     final next = cleared.copyWith(
-      scrollOffset: cleared._scrollBottom(cleared._wrappedLines()),
+      scrollOffset: cleared._turnAnchor(cleared._wrappedLines()),
       followTail: true,
     );
     return (next, null);
@@ -1894,16 +1956,21 @@ final class FaTuiModel extends Model {
       menuOpen: false,
       menuTokenStart: -1,
       stickyLines: sticky,
+      // The echo lands at the old length — the new turn's first line
+      // (issue #827); the sticky math shares the exact same index.
       stickyIndex: outputLines.length,
       stickyEchoLineCount: stickyEchoLineCount,
+      turnStartLine: outputLines.length,
       attachments: keepAttachments ? null : const [],
     );
     return (
       // A fresh submit always jumps to the bottom AND re-attaches follow:
       // without it, a latch detached by an earlier scroll-up froze the
-      // stream off-screen (and the sticky echo never activated).
+      // stream off-screen (and the sticky echo never activated). #827: the
+      // landing spot is the turn anchor — this turn's echo — not a window
+      // over turn N-1's tail.
       cleared.copyWith(
-        scrollOffset: cleared._scrollBottom(cleared._wrappedLines()),
+        scrollOffset: cleared._turnAnchor(cleared._wrappedLines()),
         followTail: true,
       ),
       _submitCmd(text, images),
@@ -2016,10 +2083,13 @@ final class FaTuiModel extends Model {
       historyIndex: -1,
       historyDraft: null,
       outputLines: lines,
+      // The first steered echo starts the interrupted turn's window
+      // (issue #827 — each steered message is a separate user turn).
+      turnStartLine: outputLines.length,
     );
     return (
       cleared.copyWith(
-        scrollOffset: cleared._scrollBottom(cleared._wrappedLines()),
+        scrollOffset: cleared._turnAnchor(cleared._wrappedLines()),
         followTail: true,
       ),
       () async {
@@ -2090,9 +2160,11 @@ final class FaTuiModel extends Model {
     // A following tail rides the CURRENT bottom (issue #496): when the
     // frame squeezes, the viewport shrinks without any history append —
     // only re-clamping here keeps the live edge (the sent echo) on screen
-    // instead of stranding the window at a stale offset.
+    // instead of stranding the window at a stale offset. Issue #827: the
+    // ride floors at the current turn's first row, so a fresh prompt's
+    // window starts at its echo (fold indicator explains the rest).
     final offset = followTail
-        ? _scrollBottom(wrapped)
+        ? _followOffset(wrapped)
         : _clampScroll(scrollOffset, wrapped);
     final historyRows = _writeHistoryRows(b, height, wrapped, offset);
     _writeScrollIndicator(b, wrapped, offset);
