@@ -1777,6 +1777,13 @@ class AppLocalizationsRu extends AppLocalizations {
       'Включайте и отключайте инструменты Fa — применяется сразу, без перезапуска.';
 
   @override
+  String get settingsRedaction => 'Скрытие секретов';
+
+  @override
+  String get settingsRedactionHint =>
+      'Маскирует API-ключи и секреты во всём, что Fa отправляет или сохраняет. Применяется сразу, без перезапуска.';
+
+  @override
   String toolsAvailabilityUnavailable(Object reason) {
     return 'Недоступно: $reason';
   }

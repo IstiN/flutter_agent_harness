@@ -581,6 +581,8 @@
   "workspaceDialogRestrictToolsHint": "Disable anything that would read or write outside the mounted folder. Off-project attempts will be blocked (and a dialog will ask you to approve them once that flow is wired up).",
   "toolsAvailabilityTitle": "Tools",
   "toolsAvailabilityHint": "Turn tools off or on for Fa — applies immediately, no restart.",
+  "settingsRedaction": "Secret redaction",
+  "settingsRedactionHint": "Mask API keys and secrets in everything Fa sends or stores. Applies immediately, no restart.",
   "toolsAvailabilityUnavailable": "Unavailable: {reason}",
   "githubAccountSection": "GitHub account",
   "githubAccountHint": "Connect GitHub to publish your widgets to the fa_widgets catalog.",
