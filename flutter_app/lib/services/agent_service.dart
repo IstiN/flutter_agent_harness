@@ -920,7 +920,7 @@ class AgentService extends ChangeNotifier
     _attachRedactor(redactor, bootSecrets);
     _attachApproval();
     // ttsr: rules (AC3) — the CLI's controller/manager pair.
-    _attachAppConfigTtsr(appConfig);
+    attachAppConfigTtsr(appConfig);
     // Structured compaction recall (issue #148 D3): `compact_expand`
     // resolves numeric marker ids against the LIVE session; the per-turn
     // expand budget resets on every new user message through the agent

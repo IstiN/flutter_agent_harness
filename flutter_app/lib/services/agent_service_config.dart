@@ -34,11 +34,13 @@ extension AgentServiceAppConfig on AgentService {
 
   /// Attaches the ttsr controller when the yaml section ships rules
   /// (issue #1078 AC3) — the CLI's exact pair ([TtsrManager] over
-  /// [TtsrController]) watching this agent's stream. Injections persist
-  /// through the same crash-safe chain the transcript uses
-  /// ([AgentServicePersistence]); the closure reads the LIVE session, so
-  /// a session switch re-points the sink without a re-attach.
-  void _attachAppConfigTtsr(AppFahSections? appConfig) {
+  /// [TtsrController]) watching this agent's stream. Public: this is the
+  /// documented app surface the settings registry's `ttsrRules` appRef
+  /// names. Injections persist through the same crash-safe chain the
+  /// transcript uses ([AgentServicePersistence]); the closure reads the
+  /// LIVE session, so a session switch re-points the sink without a
+  /// re-attach.
+  void attachAppConfigTtsr(AppFahSections? appConfig) {
     final ttsr = appConfig?.ttsr;
     if (ttsr == null || !ttsr.settings.enabled) return;
     final manager = TtsrManager(settings: ttsr.settings);
