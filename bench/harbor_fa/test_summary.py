@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""Unit tests for summary.py (issue #1124). Run: python3 -m unittest discover -s bench/harbor_fa"""
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from summary import main
+
+
+def make_jobs(root: Path, name: str, trials: list[dict]) -> None:
+    """trials: [{'resolved': bool} | {'exception': 'TimeoutError'}, ...]"""
+    job = root / name
+    for i, trial in enumerate(trials):
+        d = job / f"trial-{i}"
+        d.mkdir(parents=True)
+        if "exception" in trial:
+            data = {"exception_info": {"exception_type": trial["exception"]}}
+        else:
+            score = 1.0 if trial["resolved"] else 0.0
+            data = {"verifier_result": {"rewards": {"r": score}}}
+        (d / "result.json").write_text(json.dumps(data))
+
+
+class SummaryTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.jobs = Path(tmp.name)
+
+    def _run(self, *argv) -> tuple[int, str]:
+        import contextlib, io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = main(list(argv))
+        return rc, out.getvalue()
+
+    def test_ledger_separation_across_versions(self):
+        # A merged jobs dir carrying two dataset versions: the 2.1 report
+        # must count ONLY the fa-2.1-* jobs (no cross-contamination).
+        make_jobs(self.jobs, "fa-2.1-modal-cpu-0", [{"resolved": True}, {"resolved": False}])
+        make_jobs(self.jobs, "fa-2.1-modal-gpu-0", [{"resolved": True}])
+        make_jobs(self.jobs, "fa-4.0-modal-cpu-0", [{"resolved": True}, {"resolved": True}])
+        rc, out = self._run(
+            str(self.jobs), "--family", "2.1", "--model", "glm-5.3-flash",
+            "--fa-ref", "abc1234", "--run-url", "https://ci/run/1",
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("### fa on Terminal-Bench 2.1 (terminal-bench/terminal-bench-2-1@latest)", out)
+        self.assertIn("**Resolution: 2/3 scored trials**", out)
+        self.assertIn("| CPU shards | 1/2 | 50.0% |", out)
+        self.assertIn("| GPU shards | 1/1 | 100.0% |", out)
+        # The foreign 4.0 trials are filtered out, not merged in (4/5).
+        self.assertNotIn("4/5", out)
+        # Paste-ready ledger row, keyed per version.
+        self.assertIn("| terminal-bench/terminal-bench-2-1@latest | glm-5.3-flash | abc1234 |", out)
+        self.assertIn("| 2/3 trials (66.7%) |", out)
+
+    def test_errored_trials_excluded_from_ledger_counts(self):
+        make_jobs(self.jobs, "fa-3.0-docker-cpu-0", [{"resolved": True}, {"exception": "TimeoutError"}])
+        rc, out = self._run(str(self.jobs), "--family", "3.0")
+        self.assertIn("**Resolution: 1/1 scored trials**", out)
+        self.assertIn("TimeoutError ×1", out)
+
+    def test_incomplete_run_fails(self):
+        make_jobs(self.jobs, "fa-2.0-docker-cpu-0", [{"resolved": True}])
+        rc, out = self._run(str(self.jobs), "--family", "2.0", "--expected-trials", "10")
+        self.assertEqual(rc, 1)
+        self.assertIn("1/10 expected trials", out)
+
+    def test_no_jobs_for_family_fails(self):
+        make_jobs(self.jobs, "fa-4.0-docker-cpu-0", [{"resolved": True}])
+        rc, out = self._run(str(self.jobs), "--family", "2.1")
+        self.assertEqual(rc, 1)
+        self.assertIn("No harbor jobs found", out)
+
+    def test_unknown_family_rejected(self):
+        with self.assertRaises(SystemExit):
+            self._run(str(self.jobs), "--family", "9.9")
+
+    def test_legacy_invocation_unchanged(self):
+        # No --family: pre-#1124 behaviour (all job dirs, 4.0 title).
+        make_jobs(self.jobs, "fa-4.0-docker-cpu-0", [{"resolved": True}])
+        rc, out = self._run(str(self.jobs))
+        self.assertEqual(rc, 0)
+        self.assertIn("### fa on Terminal-Bench 4.0", out)
+        self.assertIn("**Resolution: 1/1 scored trials**", out)
+        self.assertNotIn("Ledger row", out)
+
+
+if __name__ == "__main__":
+    unittest.main()
