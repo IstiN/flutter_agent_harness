@@ -6,12 +6,14 @@
 library;
 
 /// Splits a slash-command [rest] into its subcommand token and the
-/// remaining positional parts (`"/skills access ask"` → `('access',
-/// ['access', 'ask'])`; an empty rest yields `('', [])`).
-(String sub, List<String> parts) splitSlashArgs(String rest) {
+/// positional tail *excluding* the subcommand (`"/skills access ask"` →
+/// `(sub: 'access', args: ['ask'])`; a bare `/skills` yields
+/// `(sub: '', args: [])`).
+({String sub, List<String> args}) splitSlashArgs(String rest) {
   final parts = rest
       .split(RegExp(r'\s+'))
       .where((part) => part.isNotEmpty)
       .toList();
-  return (parts.isEmpty ? '' : parts.first, parts);
+  if (parts.isEmpty) return (sub: '', args: const []);
+  return (sub: parts.first, args: parts.sublist(1));
 }

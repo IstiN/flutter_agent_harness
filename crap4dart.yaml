@@ -59,6 +59,20 @@ gates:
   # only ADD findings, never lose exact copies. severity: warning starts
   # soft — escalate to error once the 13-file triage debt is paid
   # (follow-up, owner-side). The global jscpd <1% guards stay as-is.
+  #
+  # Two suppression channels with different contracts:
+  # - `// crap:ignore` (needs ignorable: true) = a JUSTIFIED structural
+  #   twin, suppressed forever, with a one-line reason in the comment.
+  # - `.crap-baseline.json` (via `check --baseline`) = LEGACY debt; the
+  #   committed snapshot must only SHRINK: after each triage batch re-run
+  #   `dart pub global run crap4dart check --save-baseline` and commit the
+  #   only-down diff, or the snapshot rots and starts masking shifts.
+  #
+  # WINDOW (until severity flips to error): the gate never fails a build —
+  # new (not-baselined) duplication only surfaces as a `[WARN]` line in
+  # `check` output. Enforcement becomes hard exactly when the owner-side
+  # escalation lands; from then on any finding outside the two channels
+  # fails CI/pre-commit.
   duplication:
     enabled: true
     severity: warning

@@ -1084,6 +1084,6 @@ final class JsExtensionHost {
   }
 }
 
-/// POSIX-lexical path normalization lives in `utils/path_text.dart`
-/// (`normalizeLexicalPath`), shared with the sandbox shells and the cube
-/// fs policy.
+// POSIX-lexical path normalization lives in `utils/path_text.dart`
+// (`normalizeLexicalPath`), shared with the sandbox shells and the cube
+// fs policy.
