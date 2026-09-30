@@ -1305,21 +1305,22 @@ class _FaChatScreenState extends State<FaChatScreen>
                               _suppressInsertAnimations
                               ? const Duration(milliseconds: 1)
                               : const Duration(milliseconds: 250),
-                          // The typing indicator lives IN the list (issue #459):
-                          // in a reversed scroll view the bottom sliver renders
-                          // visually LAST — below the newest message, right
-                          // above the composer — scrolling away with the
-                          // content instead of pinning above the input bar.
-                          bottomSliver: _isStreaming
-                              ? const SliverToBoxAdapter(
-                                  key: ValueKey('faChatTypingFooter'),
-                                  child: FaTypingFooter(),
-                                )
-                              : null,
+                          // The single transient status row lives IN the list
+                          // (issues #459, #1042): in a reversed scroll view
+                          // the bottom sliver renders visually LAST — below
+                          // the newest message, right above the composer —
+                          // and on completion it is replaced by the assistant
+                          // message (it self-hides when the run ends; never a
+                          // composer-docked second row).
+                          bottomSliver: SliverToBoxAdapter(
+                            key: const ValueKey('faChatRunStatusRow'),
+                            child: FaRunStatusRow(service: widget.service),
+                          ),
                         ),
-                    // While streaming with an empty transcript the footer is the
-                    // only item (E1) — the package's default "No messages yet"
-                    // overlay would stack under it; idle keeps the default.
+                    // While streaming with an empty transcript the status row
+                    // is the only item (E1) — the package's default
+                    // "No messages yet" overlay would stack under it; idle
+                    // keeps the default (the row renders nothing then).
                     emptyChatListBuilder: (context) => _isStreaming
                         ? const SizedBox.shrink()
                         : const EmptyChatList(),
@@ -1347,14 +1348,6 @@ class _FaChatScreenState extends State<FaChatScreen>
                   : strings.chatLoadNewerCount('$historyBelow'),
               tappable: !_historyLoading,
             ),
-          // The live phase/tool status row (issue #865): sits directly
-          // above the composer, subscribes to the service itself (message
-          // changes alone must flip it, the screen rebuilds only on flag
-          // changes) and hides itself the frame the run ends.
-          FaRunStatusRow(
-            key: const ValueKey('faChatRunStatusRow'),
-            service: widget.service,
-          ),
           composerBuilder != null
               ? composerBuilder(context, widget.service, _dropBridge)
               : ChatComposer(

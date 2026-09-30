@@ -14,6 +14,8 @@ import 'dart:typed_data';
 import '../cancel_token.dart';
 import '../cube/config/fs_policy.dart';
 import 'execution_env.dart';
+import 'free_space_io.dart';
+import 'job_log_ceiling.dart';
 
 FileError _toFileError(Object error, String path) {
   if (error is FileError) return error;
@@ -399,7 +401,11 @@ final class LocalCubeFsProbe implements CubeFsProbe {
 /// is deferred until a tool actually needs it.
 final class LocalShell implements Shell, BackgroundShell {
   /// Creates a [LocalShell].
-  const LocalShell();
+  const LocalShell({this.diskFreeProbe = diskFreeBytes});
+
+  /// Low-disk probe for the job-log guard (issue #919); takes the log's
+  /// directory, injectable for tests. Null disables the guard.
+  final Future<int?> Function(String directory)? diskFreeProbe;
 
   @override
   bool get backgroundJobsSupported => true;
@@ -858,6 +864,31 @@ final class LocalShell implements Shell, BackgroundShell {
     if (token?.isCancelled ?? false) {
       return const Err(ExecutionError(ExecutionErrorCode.aborted, 'aborted'));
     }
+    // Issue #919 (review): build the ceiling BEFORE anything is spawned —
+    // a bad ceiling used to throw after `Process.start` plus the eager log
+    // open, stranding an orphan child and leaking the fd with no job
+    // object to stop or settle. Here it degrades to a plain Err.
+    final warn = options?.onJobLogWarning;
+    final JobLogCeiling ceiling;
+    try {
+      ceiling = JobLogCeiling(
+        maxBytes: options?.jobLogMaxBytes ?? defaultJobLogMaxBytes,
+        probe: diskFreeProbe == null
+            ? null
+            : () => diskFreeProbe!(File(logPath).parent.path),
+        onWarn: warn == null
+            ? null
+            : (message) => warn('background job $id: $message'),
+      );
+    } on ArgumentError catch (error) {
+      return Err(
+        ExecutionError(
+          ExecutionErrorCode.spawnError,
+          'invalid jobLogMaxBytes: ${error.message}',
+          cause: error,
+        ),
+      );
+    }
     final ownGroup = LocalShell.ownProcessGroupAvailable;
     final started = await _start(command, options, ownSession: ownGroup);
     if (started.isErr) return Err(started.errorOrNull!);
@@ -899,6 +930,9 @@ final class LocalShell implements Shell, BackgroundShell {
         ),
       );
     }
+    // Issue #919: bound the log — the ceiling (size ceiling with
+    // head+marker+rolling tail, plus the low-disk guard with the probe
+    // injectable via [LocalShell]) was built pre-spawn above.
     return Ok(
       _LocalShellJob(
         id: id,
@@ -906,6 +940,7 @@ final class LocalShell implements Shell, BackgroundShell {
         logPath: logPath,
         process: process,
         logSink: logSink,
+        ceiling: ceiling,
         timeout: options?.timeout,
         token: token,
         ownGroup: ownGroup,
@@ -923,6 +958,7 @@ final class _LocalShellJob implements ShellJob {
     required this.logPath,
     required Process process,
     required this._logSink,
+    required this._ceiling,
     required this._ownGroup,
     Duration? timeout,
     CancelToken? token,
@@ -939,12 +975,21 @@ final class _LocalShellJob implements ShellJob {
     // at the last successful chunk. RandomAccessFile allows one op at a
     // time, so writes serialize through the chain and the settle path
     // drains it before flush/close.
+    //
+    // Issue #919: chunks flow through the ceiling policy first — below the
+    // ceiling it yields the plain append (byte-identical to the old
+    // `writeString(chunk)`); past it, patch ops that keep the file bounded
+    // while the job keeps running. A write stop (low disk) yields no ops.
     void fanOut(String chunk) {
       if (!_logBroken) {
         _writeChain = _writeChain
-            .then((_) => _logSink.writeString(chunk))
+            .then((_) => _ceiling.ingest(chunk))
             .then(
-              (_) {},
+              (ops) async {
+                for (final op in ops) {
+                  await _applyLogWrite(op);
+                }
+              },
               onError: (Object _) {
                 _logBroken = true;
               },
@@ -1001,6 +1046,15 @@ final class _LocalShellJob implements ShellJob {
         // Drain pending writes first (RAF allows one op at a time), then
         // swallow every sink failure and settle regardless.
         await _writeChain;
+        // Issue #919: final tail patch — the exact dropped count.
+        if (!_logBroken) {
+          try {
+            final finalOp = _ceiling.settleFlush();
+            if (finalOp != null) await _applyLogWrite(finalOp);
+          } on Object {
+            _logBroken = true;
+          }
+        }
         // Guarded separately so a failed flush never skips close() — a
         // leaked RAF fd would live for the whole fa process (issue #925).
         try {
@@ -1020,6 +1074,22 @@ final class _LocalShellJob implements ShellJob {
 
   final Process _process;
   final RandomAccessFile _logSink;
+  final JobLogCeiling _ceiling;
+
+  /// Executes one ceiling op against the sink: a plain append at the
+  /// advancing position, or an in-place overwrite of the marker+tail
+  /// region (Dart's append-mode RAF honors setPosition/truncate, so the
+  /// file never needs reopening). Region overwrites also truncate to the
+  /// new region end, keeping the file exactly bounded.
+  Future<void> _applyLogWrite(JobLogWrite op) async {
+    if (op.offset == null) {
+      await _logSink.writeString(op.text);
+      return;
+    }
+    await _logSink.setPosition(op.offset!);
+    await _logSink.writeString(op.text);
+    await _logSink.truncate(op.offset! + utf8.encode(op.text).length);
+  }
 
   /// Set on the first log-sink failure (issue #925): the job keeps
   /// running but its log stays frozen at the last successful write.
@@ -1101,10 +1171,20 @@ final class LocalExecutionEnv
   /// Creates a [LocalExecutionEnv] rooted at [cwd].
   ///
   /// A custom [shell] may be provided to swap the default [LocalShell] for a
-  /// sandboxed WASM shell on mobile targets.
-  LocalExecutionEnv({String? cwd, Shell? shell})
+  /// sandboxed WASM shell on mobile targets. [diskFreeProbe] backs the
+  /// job-log low-disk guard of the default shell (issue #919); injectable
+  /// for tests, ignored when [shell] is given.
+  LocalExecutionEnv({String? cwd, Shell? shell, this.diskFreeProbe})
     : _fs = LocalFileSystem(cwd: cwd),
-      _shell = shell ?? const LocalShell();
+      _shell =
+          shell ??
+          (diskFreeProbe == null
+              ? const LocalShell()
+              : LocalShell(diskFreeProbe: diskFreeProbe));
+
+  /// Low-disk probe for background-job logs (issue #919); null = default
+  /// `df`-based probe.
+  final Future<int?> Function(String directory)? diskFreeProbe;
 
   final LocalFileSystem _fs;
   final Shell _shell;

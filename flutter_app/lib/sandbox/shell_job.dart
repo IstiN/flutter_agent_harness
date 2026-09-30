@@ -13,16 +13,32 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 /// the WASI shell, the memory FS for the web shell).
 final class SandboxShellJob implements ShellJob {
   /// Creates a job; [_closeLog] flushes/closes the log writer at completion.
+  /// When [ceiling] is set (issue #919), log chunks flow through the
+  /// size-ceiling policy first and each returned [JobLogWrite] op is
+  /// executed via [applyLogOp] against the host's sink.
   SandboxShellJob({
     required this.id,
     required this.command,
     required this.logPath,
     required this._logWriter,
     this._closeLog,
-  });
+    this._ceiling,
+    this._applyLogOp,
+  }) : assert(
+         _ceiling == null || _applyLogOp != null,
+         'a ceiling without an applyLogOp silently drops every log op',
+       );
 
   final FutureOr<void> Function(String chunk) _logWriter;
   final FutureOr<void> Function()? _closeLog;
+
+  /// Size-ceiling policy for the log (issue #919); null keeps the plain
+  /// append path byte-identical.
+  final JobLogCeiling? _ceiling;
+
+  /// Executes one ceiling op against the host's sink (required whenever
+  /// [_ceiling] is set).
+  final FutureOr<void> Function(JobLogWrite op)? _applyLogOp;
   final _cancelSource = CancelTokenSource();
   final _settled = Completer<void>();
   Future<void> _writeChain = Future<void>.value();
@@ -81,11 +97,31 @@ final class SandboxShellJob implements ShellJob {
   /// (issue #925: a broken log must never kill the host or hang the job).
   void writeLog(String chunk) {
     if (_logBroken) return;
-    _writeChain = _writeChain.then((_) => _logWriter(chunk)).catchError((
-      Object _,
-    ) {
-      _logBroken = true;
-    });
+    final ceiling = _ceiling;
+    if (ceiling == null) {
+      _writeChain = _writeChain.then((_) => _logWriter(chunk)).catchError((
+        Object _,
+      ) {
+        _logBroken = true;
+      });
+      return;
+    }
+    // Issue #919: chunks flow through the ceiling policy first — below the
+    // ceiling it yields the plain append (byte-identical to the direct
+    // writer); past it, patch ops that keep the file bounded while the job
+    // keeps running. A write stop (low disk) yields no ops. Same failure
+    // contract as the plain path: a broken sink marks the log broken
+    // instead of poisoning the chain (issue #925).
+    _writeChain = _writeChain
+        .then((_) => ceiling.ingest(chunk))
+        .then((ops) async {
+          for (final op in ops) {
+            await _applyLogOp?.call(op);
+          }
+        })
+        .catchError((Object _) {
+          _logBroken = true;
+        });
   }
 
   /// Completes the job from the script's exec result (called by the owning
@@ -99,6 +135,17 @@ final class SandboxShellJob implements ShellJob {
     _noteBackendFailure(result);
     try {
       await _writeChain;
+      // Issue #919: final tail patch with the exact dropped count. Same
+      // settle contract as the local shell job (issue #925): the failure
+      // marks the log broken (frozen content) and never breaks the settle.
+      if (!_logBroken) {
+        try {
+          final finalOp = _ceiling?.settleFlush();
+          if (finalOp != null) await _applyLogOp?.call(finalOp);
+        } on Object {
+          _logBroken = true;
+        }
+      }
       await _closeLogQuietly();
       _applyOutcome(result);
     } finally {

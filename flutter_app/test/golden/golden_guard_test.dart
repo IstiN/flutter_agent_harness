@@ -172,6 +172,10 @@ const _exempt = <String, String>{
       'auth state to render anything but an empty shell',
   'lib/services/codemie_sso_flow.dart':
       'service flow orchestrator; coordinates SSO + model picker dialogs (no widget of its own)',
+  'lib/services/codemie_sso_flow_steps.dart':
+      'provider-name prompt dialog (issue #977); covered by the flow-steps '
+      'widget tests in test/services/codemie_sso_flow_steps_test.dart — the '
+      'dialog needs the live SSO flow context to render meaningfully',
   'lib/services/chatgpt_oauth_flow.dart':
       'OAuth flow orchestrator; no widget of its own',
 };

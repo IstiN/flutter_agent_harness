@@ -589,7 +589,8 @@ final class CliConfig {
 
   /// The `jobs:` section (issue #478): boot-maintenance knobs for the
   /// cross-run shell-job state — `staleHours` (manifest age belt,
-  /// default 24) and `logRetentionDays` (log GC, default 3; 0 keeps all).
+  /// default 24), `logRetentionDays` (log GC, default 3; 0 keeps all),
+  /// and `maxLogBytes` (per-log ceiling, issue #919, default 50 MB).
   final JobsConfig jobs;
 
   /// The `subagents:` section (issue #383): heartbeat cadence

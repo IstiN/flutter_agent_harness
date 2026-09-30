@@ -23,7 +23,8 @@ import '../widgets/snackbars.dart';
 /// The chat composer: attachment chips + staging into the sandbox `uploads/`
 /// folder, the queued-steer chips, the text field, the voice-input mic
 /// button, and the gradient send/stop button. The streaming indicator is
-/// NOT here — it is a list footer ([FaTypingFooter], issue #459).
+/// NOT here — it is the single transient status row ([FaRunStatusRow],
+/// issues #459, #1042), mounted by hosts as the transcript's last entry.
 ///
 /// Backend-agnostic: sends through [FaChatService], picks files/images
 /// through [FaChatHost] hooks (or the constructor overrides, which tests
@@ -995,41 +996,6 @@ class ChatComposerState extends State<ChatComposer>
         shape: BoxShape.circle,
       ),
       child: idle,
-    );
-  }
-}
-
-/// The in-list typing indicator footer (issue #459): the compact spinner
-/// + «Fa is typing…» entry rendered as the visually-last item of the
-/// scrollable transcript — it scrolls with the content instead of
-/// occupying fixed space above the input bar. Hosts mount it from the
-/// service's streaming state (the full screen via the chat list's bottom
-/// sliver, the session sheet's transcript as the last list item); the
-/// composer itself never renders typing UI — in docked mode the host's
-/// embedded work bar owns the state (single ownership, issue #464).
-class FaTypingFooter extends StatelessWidget {
-  const FaTypingFooter({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final palette = fahChatColorsOf(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-      child: Row(
-        children: [
-          const SizedBox(
-            width: 14,
-            height: 14,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            FaChatStrings.of(context).chatTyping,
-            style: theme.textTheme.bodySmall?.copyWith(color: palette.dim),
-          ),
-        ],
-      ),
     );
   }
 }

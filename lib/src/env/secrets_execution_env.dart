@@ -112,6 +112,8 @@ final class SecretsExecutionEnv
       cancelToken: options?.cancelToken,
       onStdout: options?.onStdout,
       onStderr: options?.onStderr,
+      jobLogMaxBytes: options?.jobLogMaxBytes,
+      onJobLogWarning: options?.onJobLogWarning,
     );
     return bg.startShellJob(command, id: id, logPath: logPath, options: merged);
   }

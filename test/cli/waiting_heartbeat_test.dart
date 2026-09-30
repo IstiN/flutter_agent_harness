@@ -5,8 +5,8 @@ library;
 
 import 'dart:async';
 
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/cli/waiting_heartbeat.dart';
-import 'package:flutter_agent_harness/src/cli/agent_cli.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -42,10 +42,12 @@ void main() {
   });
 
   group('JobsConfig', () {
-    test('defaults: 24h age belt, 3-day log retention', () {
+    test('defaults: 24h age belt, 3-day log retention, 50 MB log ceiling', () {
       const config = JobsConfig();
       expect(config.staleHours, 24);
       expect(config.logRetentionDays, 3);
+      expect(config.maxLogBytes, defaultJobLogMaxBytes);
+      expect(defaultJobLogMaxBytes, 50 * 1024 * 1024);
     });
 
     test('fromYaml(null) keeps defaults', () {
@@ -63,9 +65,35 @@ void main() {
       expect(config.logRetentionDays, 7);
     });
 
+    test('fromYaml parses maxLogBytes (issue #919)', () {
+      final config = JobsConfig.fromYaml({'maxLogBytes': 1024});
+      expect(config.maxLogBytes, 1024);
+    });
+
+    test('fromYaml rejects a disabled or non-integer log ceiling', () {
+      expect(() => JobsConfig.fromYaml({'maxLogBytes': 0}), throwsA(anything));
+      expect(() => JobsConfig.fromYaml({'maxLogBytes': -1}), throwsA(anything));
+      expect(
+        () => JobsConfig.fromYaml({'maxLogBytes': 'abc'}),
+        throwsA(anything),
+      );
+    });
+
+    test('fromYaml still rejects unknown keys alongside maxLogBytes', () {
+      expect(
+        () => JobsConfig.fromYaml({'maxLogBytes': 1024, 'bogus': 1}),
+        throwsA(anything),
+      );
+    });
+
     test('fromYaml rejects unknown and negative values', () {
       expect(() => JobsConfig.fromYaml({'staleHours': -1}), throwsA(anything));
       expect(() => JobsConfig.fromYaml({'bogus': 1}), throwsA(anything));
+    });
+
+    test('toYaml includes the maxLogBytes line (issue #919)', () {
+      const config = JobsConfig(maxLogBytes: 1024);
+      expect(config.toYaml(), contains('maxLogBytes: 1024'));
     });
   });
 

@@ -1,7 +1,10 @@
-/// Golden (snapshot) tests for the composer-adjacent live run status row
-/// (issue #865): the phase/tool/elapsed line that keeps the chat from
-/// looking dead while the agent works — provider wait («Thinking...») and
-/// an in-flight tool call («Running bash»), light + dark.
+/// Golden (snapshot) tests for the single transient run-status row
+/// (issues #865, #1042): the visually-LAST transcript entry while the run
+/// is active — provider wait («Thinking... · 0s») and an in-flight tool
+/// call («Running bash · 0s»), light + dark. The thinking frame is the
+/// #1042 REG fixture: it used to capture the bug's double state (the
+/// retired «Fa is typing...» footer stacked under the status row); it
+/// must show exactly one row.
 ///
 /// Full [ChatScreen] frames over a REAL [AgentService] forced into the
 /// streaming state (the setter's OS hooks are iOS-gated / try-caught, so
@@ -79,9 +82,8 @@ Future<void> _pumpStatusFrame(
 void main() {
   setUpAll(ensureGoldenFonts);
 
-  testWidgets('provider wait — thinking row above the composer (light)', (
-    tester,
-  ) async {
+  testWidgets('provider wait — thinking row as the transcript last entry '
+      '(light; #1042 REG: exactly one row)', (tester) async {
     await _pumpStatusFrame(
       tester,
       rows: [
@@ -92,9 +94,8 @@ void main() {
     await expectGolden(tester, 'chat/run_status_thinking_light');
   });
 
-  testWidgets('in-flight tool — running row above the composer (light)', (
-    tester,
-  ) async {
+  testWidgets('in-flight tool — running row as the transcript last entry '
+      '(light)', (tester) async {
     await _pumpStatusFrame(
       tester,
       rows: [
@@ -109,9 +110,8 @@ void main() {
     await expectGolden(tester, 'chat/run_status_tool_light');
   });
 
-  testWidgets('in-flight tool — running row above the composer (dark)', (
-    tester,
-  ) async {
+  testWidgets('in-flight tool — running row as the transcript last entry '
+      '(dark)', (tester) async {
     await _pumpStatusFrame(
       tester,
       rows: [
@@ -124,5 +124,19 @@ void main() {
       light: false,
     );
     await expectGolden(tester, 'chat/run_status_tool_dark');
+  });
+
+  // E1 (#1042/#459): an empty transcript + active run — the row is the
+  // only content; the package's "No messages yet" overlay stays hidden.
+  testWidgets('empty transcript — the thinking row is the only item '
+      '(light)', (tester) async {
+    await _pumpStatusFrame(tester, rows: const [], light: true);
+    await expectGolden(tester, 'chat/run_status_empty_light');
+  });
+
+  testWidgets('empty transcript — the thinking row is the only item '
+      '(dark)', (tester) async {
+    await _pumpStatusFrame(tester, rows: const [], light: false);
+    await expectGolden(tester, 'chat/run_status_empty_dark');
   });
 }
