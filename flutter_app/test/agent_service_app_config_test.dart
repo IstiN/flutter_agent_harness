@@ -43,13 +43,16 @@ void main() {
   Future<AgentService> buildService({
     TaskModelsStore? taskModelsStore,
     StreamFunction? streamFunction,
+    SessionKeysStore? sessionKeys,
   }) {
     // Role chains resolve API keys through the session-keys snapshot —
     // the app's own credential surface.
-    final sessionKeys = SessionKeysStore.inMemory({
-      'OPENROUTER_API_KEY': 'k',
-      'FAH_TEST_ROLE_KEY': 'k',
-    });
+    final keys =
+        sessionKeys ??
+        SessionKeysStore.inMemory({
+          'OPENROUTER_API_KEY': 'k',
+          'FAH_TEST_ROLE_KEY': 'k',
+        });
     return AgentService.create(
       config: AgentConfig(
         providerKind: 'openai-completions',
@@ -60,7 +63,7 @@ void main() {
       env: MemoryExecutionEnv(cwd: project.path),
       taskModelsStore: taskModelsStore,
       streamFunction: streamFunction,
-      sessionKeys: sessionKeys,
+      sessionKeys: keys,
       configHomeDir: home.path,
       watchExternalSessions: false,
     );
@@ -175,6 +178,34 @@ retry:
       final service = await buildService();
       addTearDown(service.dispose);
       expect(service.redactionPipelineForTest, isNull);
+    });
+
+    test('re-enabling a yaml-disabled boot rebuilds from boot secrets',
+        () async {
+      const bootSecret = 'sk-boot-0123456789abcdef';
+      writeConfig('redact:\n  enabled: false\n');
+      final service = await buildService(
+        sessionKeys: SessionKeysStore.inMemory({
+          'FAH_BOOT_SECRET_KEY': bootSecret,
+        }),
+      );
+      addTearDown(service.dispose);
+
+      // The yaml-disabled boot attached nothing.
+      expect(service.redactionPipelineForTest, isNull);
+      // Disabling a pipeline-less service stays a no-op.
+      service.setRedactionEnabled(false);
+      expect(service.redactionPipelineForTest, isNull);
+
+      // The re-enable rebuilds the layered pipeline SEEDED from the boot
+      // secrets snapshot — the exact masking the boot path would have
+      // provided (values below SecretRedactor.minValueLength stay out).
+      service.setRedactionEnabled(true);
+      final pipeline = service.redactionPipelineForTest;
+      expect(pipeline, isNotNull);
+      expect(pipeline!.config.enabled, isTrue);
+      expect(pipeline.registeredSecrets, contains(bootSecret));
+      expect(pipeline.redact('token $bootSecret end'), isNot(contains(bootSecret)));
     });
   });
 
