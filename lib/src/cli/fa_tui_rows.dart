@@ -165,18 +165,33 @@ extension _TuiRowRenderers on FaTuiModel {
   /// the live edge (a "you are here" hint); while following, the row stays
   /// blank so the layout never shifts. Issue #827: while the tail latch
   /// holds and wrapped rows hide above the window, the same reserved row
-  /// names them (`^ N lines above fold - PgUp`) — the streaming default
-  /// was the one state the old gate left unannounced. Both directions read
-  /// [_foldAccount]; the hint rides the row the budget already reserves,
-  /// so it never costs a content row.
+  /// names them (`──── ^ N lines above fold - PgUp ────`) — the streaming
+  /// default was the one state the old gate left unannounced. Both
+  /// directions read [_foldAccount]; the hint rides the row the budget
+  /// already reserves, so it never costs a content row.
+  ///
+  /// Both states embed into the dim RULE row (the detached percent reads
+  /// `── NN% ──`): a transcript region is a row stream, and a standalone
+  /// hint row reads as CONTENT to every screen consumer — the wave-14 PTY
+  /// resume-equivalence diff treated the padded hint as a transcript row,
+  /// shifting its tail slice by one (issue #827 wave-14). A rule-embedded
+  /// hint stays chrome (`────…`) to every grammar that already strips the
+  /// separator.
   int _writeScrollIndicator(StringBuffer b, List<String> wrapped, int offset) {
     final (above, below) = _foldAccount(wrapped, offset);
     if (followTail && above > 0 && offset < wrapped.length) {
       // A window that shows no rows (zero-height history) announces
       // nothing — the budget rule yields the hint, never the prompt row.
+      // Four leading rules keep the row unambiguous chrome even at widths
+      // where the centered form would run out of left padding.
       final noun = above == 1 ? 'line' : 'lines';
-      final hint = ' ^ $above $noun above fold - PgUp';
-      b.writeln(_dim(tuiPadRight(tuiFitWidth(hint, termWidth), termWidth)));
+      final hint = '──── ^ $above $noun above fold - PgUp ';
+      final fitted = tuiFitWidth(hint, termWidth);
+      // Dash-padded, not space-padded: the row previously carried rules
+      // end to end, and the renderer only overwrites written cells — a
+      // space pad leaves stale dashes right of a shorter hint.
+      final fill = (termWidth - tuiTextWidth(fitted)).clamp(0, termWidth);
+      b.writeln(_dim('$fitted${'─' * fill}'));
     } else if (!followTail && below > 0) {
       final bottom = _scrollBottom(wrapped);
       final scrollPercent = bottom == 0

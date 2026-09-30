@@ -412,6 +412,24 @@ void main() {
       expect(frame, isNot(contains('1 lines')));
       expect(_hintN(_rowsOf(model)), 1);
     });
+
+    test('the hint rides the rule row — chrome to every screen grammar', () {
+      // Wave-14 regression: a STANDALONE padded hint row reads as content
+      // to PTY/resume transcript normalizers (they strip rule rows), and
+      // the extra row shifted the resume-equivalence diff slice by one.
+      // The hint embeds into the dim rule exactly like the detached
+      // percent bar (`── NN% ──`): rule-prefixed, rule-padded, no gap.
+      final model = _build().copyWith(
+        outputLines: [for (var i = 0; i < 40; i++) 'row $i'],
+      );
+      final hintRow = _rowsOf(model).firstWhere(_hint.hasMatch);
+      expect(hintRow.startsWith('────'), isTrue,
+          reason: 'rule prefix keeps the row chrome');
+      expect(hintRow.trimRight().endsWith('─'), isTrue,
+          reason: 'rule padding, never spaces — stale cells cannot survive');
+      expect(hintRow, isNot(startsWith(' ')),
+          reason: 'a leading gap would break rule-row grammars');
+    });
   });
 
   group('head-trim keeps the turn anchor honest', () {
