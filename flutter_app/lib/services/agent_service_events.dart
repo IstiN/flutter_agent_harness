@@ -175,10 +175,12 @@ extension AgentServiceEvents on AgentService {
     // listener re-enters the loop's failure path, duplicates the
     // failure events, and escapes the run as an unhandled error).
     //
-    // Through the SAME `_persistChain` as `_persistSoon` — a direct
-    // call races the queued passes: both read `_persistedCount == 0`
-    // before either finishes, and every message is appended twice
-    // (duplicate JSONL records, duplicated transcripts on reload).
+    // `_persist()` is single-flight: the finalizer either runs the pass
+    // itself or joins the in-flight drain (which re-runs any state that
+    // landed mid-sweep). It resolves only when every persist-worthy
+    // change so far is on disk, so when this returns the transcript is
+    // fully written and the idle boundary (`waitForIdle`) can't overtake
+    // a pending append (issue #1102).
     try {
       await _persist();
     } on Object {

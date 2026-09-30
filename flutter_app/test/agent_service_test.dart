@@ -29,6 +29,108 @@ StreamFunction _singleTextResponse(String text) {
   };
 }
 
+/// Issue #1102 repro: one event-loop turn between the model-request-summary
+/// persist window (ModelRequestEvent) and the assistant MessageEnd persist —
+/// the interleave under which the old `_persistRunning` early-return dropped
+/// the assistant record.
+StreamFunction _yieldBeforeText(String text) {
+  return (model, context, {cancelToken}) {
+    final stream = AssistantMessageEventStream();
+    unawaited(
+      Future<void>(() async {
+        await Future<void>.delayed(Duration.zero);
+        final message = AssistantMessage(
+          content: [TextContent(text: text)],
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.now(),
+        );
+        stream.push(DoneEvent(reason: StopReason.stop, message: message));
+        stream.end();
+      }),
+    );
+    return stream;
+  };
+}
+
+/// Session appends resolve on a later event-loop turn (macrotask), like
+/// real file I/O: a persist pass suspended mid-append is provably still
+/// pending at the idle boundary (issue #1102). Decorates a memory env,
+/// deferring only appends.
+class _DeferredAppendEnv implements ExecutionEnv {
+  final MemoryExecutionEnv _delegate = MemoryExecutionEnv();
+
+  @override
+  Future<Result<void, FileError>> appendFile(String path, String content) async {
+    await Future<void>.delayed(Duration.zero);
+    return _delegate.appendFile(path, content);
+  }
+
+  @override
+  String get cwd => _delegate.cwd;
+
+  @override
+  Future<Result<String, FileError>> absolutePath(String path) =>
+      _delegate.absolutePath(path);
+
+  @override
+  Future<Result<String, FileError>> joinPath(List<String> parts) =>
+      _delegate.joinPath(parts);
+
+  @override
+  Future<Result<String, FileError>> readTextFile(String path) =>
+      _delegate.readTextFile(path);
+
+  @override
+  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
+      _delegate.readBinaryFile(path);
+
+  @override
+  Future<Result<List<String>, FileError>> readTextLines(
+    String path, {
+    int? maxLines,
+  }) => _delegate.readTextLines(path, maxLines: maxLines);
+
+  @override
+  Future<Result<void, FileError>> writeBinaryFile(String path, Uint8List content) =>
+      _delegate.writeBinaryFile(path, content);
+
+  @override
+  Future<Result<void, FileError>> writeFile(String path, String content) =>
+      _delegate.writeFile(path, content);
+
+  @override
+  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
+      _delegate.fileInfo(path);
+
+  @override
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
+      _delegate.listDir(path);
+
+  @override
+  Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
+
+  @override
+  Future<Result<void, FileError>> createDir(String path, {bool recursive = true}) =>
+      _delegate.createDir(path, recursive: recursive);
+
+  @override
+  Future<Result<void, FileError>> remove(
+    String path, {
+    bool recursive = false,
+    bool force = false,
+  }) => _delegate.remove(path, recursive: recursive, force: force);
+
+  @override
+  Future<Result<ShellExecResult, ExecutionError>> exec(
+    String command, {
+    ShellExecOptions? options,
+  }) => _delegate.exec(command, options: options);
+}
+
 StreamFunction _hungResponse() {
   fn(Model model, dynamic context, {cancelToken}) {
     final stream = AssistantMessageEventStream();
@@ -331,6 +433,74 @@ void main() {
             .single;
         expect(assistant.requestDetail, isNotNull);
         expect(assistant.requestDetail!.systemPromptChars, greaterThan(0));
+      },
+    );
+
+    test(
+      'a persist pass skipped by the run finalizer still lands by idle (#1102)',
+      () async {
+        final env = _DeferredAppendEnv();
+        final service = AgentService(
+          agent: _createAgent(_yieldBeforeText('hello back')),
+          env: env,
+          sessionsRoot: '/sessions',
+        );
+        await service.initialize();
+
+        await service.sendText('hello');
+        await service.waitForIdle();
+
+        // Appends resolve on a later event-loop turn, so at the idle
+        // boundary any still-pending pass is provably unfinished. The
+        // finalizer's persist must join the queue (not early-return),
+        // or idle resolves while the assistant append is still pending.
+        final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+        final session = await repo.open((await repo.list()).single);
+        final entries = await session.getEntries();
+        expect(
+          entries.whereType<MessageRecord>().any(
+            (r) => r.message is AssistantMessage,
+          ),
+          isTrue,
+          reason:
+              'assistant record missing at the idle boundary: '
+              '${entries.map((e) => e.runtimeType).toList()}',
+        );
+      },
+    );
+
+    test(
+      'coalesced persist passes land the full final state by idle (#1102)',
+      () async {
+        final env = _DeferredAppendEnv();
+        final service = AgentService(
+          agent: _createAgent(_yieldBeforeText('hello back')),
+          env: env,
+          sessionsRoot: '/sessions',
+        );
+        await service.initialize();
+
+        await service.sendText('hello');
+        await service.waitForIdle();
+
+        // Every pass re-runs the snapshot diff, so the final on-disk state
+        // matches the in-memory transcript — user, summary, prompt blob and
+        // assistant record, in replay order.
+        final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+        final session = await repo.open((await repo.list()).single);
+        final entries = await session.getEntries();
+        final summaryIndex = entries.indexWhere(
+          (e) => e is CustomRecord && e.customType == 'model_request_summary',
+        );
+        final assistantIndex = entries.indexWhere(
+          (e) => e is MessageRecord && e.message is AssistantMessage,
+        );
+        expect(
+          entries.whereType<MessageRecord>().map((r) => r.message.role),
+          ['user', 'assistant'],
+          reason: 'transcript rows missing at idle: ${entries.map((e) => e.runtimeType).toList()}',
+        );
+        expect(summaryIndex, lessThan(assistantIndex));
       },
     );
 
