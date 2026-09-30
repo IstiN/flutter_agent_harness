@@ -37,10 +37,12 @@ extension AgentServicePersistence on AgentService {
       final info = (await env.fileInfo(file)).valueOrNull;
       if (info != null) _sessionWatchBytes = info.size;
     }());
-    unawaited(_persist().catchError((Object _) {
-      // Best effort: the transcript stays in memory; the next trigger
-      // retries the missed appends (see _persistedCount).
-    }));
+    unawaited(
+      _persist().catchError((Object _) {
+        // Best effort: the transcript stays in memory; the next trigger
+        // retries the missed appends (see _persistedCount).
+      }),
+    );
   }
 
   /// Persists everything not yet on disk, single-flight: while one pass
