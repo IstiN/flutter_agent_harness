@@ -38,7 +38,9 @@ final Random _shellJobRandom = Random.secure();
 /// cross-process collisions practically impossible.
 String newShellJobId(int n) {
   final micros = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
-  final rand = _shellJobRandom.nextInt(1 << 32).toRadixString(36);
+  // dart2js: shifts are 32-bit — `1 << 32` == 0, so nextInt(0) would throw
+  // on web and kill every bash call (issue #1074). Spell the bound literally.
+  final rand = _shellJobRandom.nextInt(0xFFFFFFFF).toRadixString(36);
   return 'sh-$n-$micros$rand';
 }
 
