@@ -427,9 +427,6 @@ class AppLocalizationsRu extends AppLocalizations {
   }
 
   @override
-  String get chatTyping => 'Fa печатает...';
-
-  @override
   String chatUploadFailed(Object error) {
     return 'Ошибка загрузки: $error';
   }
