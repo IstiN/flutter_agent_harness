@@ -10,6 +10,9 @@ import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+// dart:io side (host VMs only; the web build never imports this file —
+// wasm_run pulls dart:ffi): the low-disk probe for the job log ceiling.
+import 'package:flutter_agent_harness/io.dart' show diskFreeBytes;
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:wasm_run/wasm_run.dart';
@@ -487,6 +490,29 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     if (token != null && token.isCancelled) {
       return const Err(ExecutionError(ExecutionErrorCode.aborted, 'aborted'));
     }
+    // Issue #919 (review round 3): build the ceiling BEFORE the eager log
+    // open — a bad ceiling used to throw out of _wireJob after the open
+    // succeeded, leaking the RAF fd (no job existed to run closeLog).
+    // Here it degrades to a plain Err.
+    final warn = options?.onJobLogWarning;
+    final JobLogCeiling ceiling;
+    try {
+      ceiling = JobLogCeiling(
+        maxBytes: options?.jobLogMaxBytes ?? defaultJobLogMaxBytes,
+        probe: () => diskFreeBytes(io.File(logPath).parent.path),
+        onWarn: warn == null
+            ? null
+            : (message) => warn('background job $id: $message'),
+      );
+    } on ArgumentError catch (error) {
+      return Err(
+        ExecutionError(
+          ExecutionErrorCode.spawnError,
+          'invalid jobLogMaxBytes: ${error.message}',
+          cause: error,
+        ),
+      );
+    }
     final logOpen = await _openJobLog(logPath);
     if (logOpen.isErr) return Err(logOpen.errorOrNull!);
     return Ok(
@@ -495,8 +521,9 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         id: id,
         logPath: logPath,
         logFile: logOpen.valueOrNull!,
-        token: token,
+        ceiling: ceiling,
         options: options,
+        token: token,
       ),
     );
   }
@@ -524,19 +551,35 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   /// Builds the job over the opened log, wires the cancel token, and
   /// detaches the script run. SandboxShellJob serializes writers
   /// (RandomAccessFile allows one op at a time) and consumes write errors.
+  /// [ceiling] is built by the caller before the log opens; [options] still
+  /// carries the exec side (cwd/env/timeout) into the job-local run.
   SandboxShellJob _wireJob(
     String command, {
     required String id,
     required String logPath,
     required io.RandomAccessFile logFile,
-    required CancelToken? token,
+    required JobLogCeiling ceiling,
     required ShellExecOptions? options,
+    required CancelToken? token,
   }) {
     final job = SandboxShellJob(
       id: id,
       command: command,
       logPath: logPath,
       logWriter: logFile.writeString,
+      ceiling: ceiling,
+      applyLogOp: (op) async {
+        if (op.offset == null) {
+          await logFile.writeString(op.text);
+          return;
+        }
+        // In-place overwrite of the marker+tail region at the advancing
+        // offset, truncated to the new region end — the file stays exactly
+        // bounded (append-mode RAF honors setPosition/truncate).
+        await logFile.setPosition(op.offset!);
+        await logFile.writeString(op.text);
+        await logFile.truncate(op.offset! + utf8.encode(op.text).length);
+      },
       closeLog: () async {
         // Issue #925: a broken log sink must not break the settle path.
         try {
