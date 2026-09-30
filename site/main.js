@@ -165,7 +165,7 @@
   });
 
   if (nav && navToggle && navMenu) {
-    navToggle.hidden = false; // CSS decides visibility (html.js + ≤960px)
+    navToggle.hidden = false; // CSS decides visibility (html.js + ≤1080px)
     function setMenu(open) {
       if (open) { nav.setAttribute('data-open', ''); }
       else { nav.removeAttribute('data-open'); }
@@ -195,7 +195,9 @@
       if (e.target.closest('a')) { setMenu(false); }
     });
     // Rotating past the breakpoint auto-closes — no stale overlay (E3).
-    var menuMq = window.matchMedia('(min-width: 961px)');
+    // 1081 = the CSS collapse breakpoint (styles.css, re-measured for
+    // gh-881) — keep the two in sync.
+    var menuMq = window.matchMedia('(min-width: 1081px)');
     function onMenuMq() { if (menuMq.matches) { setMenu(false); } }
     if (menuMq.addEventListener) { menuMq.addEventListener('change', onMenuMq); }
     else if (menuMq.addListener) { menuMq.addListener(onMenuMq); } // old Safari

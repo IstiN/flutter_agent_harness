@@ -303,11 +303,24 @@ async function main() {
       ok(`@${w} Esc returns focus to toggle`,
         await page.evaluate(() => document.activeElement === document.querySelector('.nav-toggle')));
 
-      // Backdrop (click outside the header) closes — pointer dismissal must
-      // NOT yank focus to the toggle (touch users never asked for it).
+      // Backdrop (a click anywhere outside the header) closes — dismissal
+      // must NOT yank focus to the toggle (touch users never asked for it).
+      // The click is dispatched on <body> so it bubbles into the same
+      // document-level handler (main.js: !nav.contains(target)) a real tap
+      // runs — a bare mouse.click(x, y) is layout-dependent: on the linux
+      // font metrics it landed ON a hero link and navigated away, detaching
+      // the toggle mid-check (CI, gh-881). A synthetic click fires no
+      // mousedown, so the browser's blur-on-backdrop default is reproduced
+      // explicitly; the assertion keeps its teeth: a dismissal path that
+      // called navToggle.focus() (like Esc) would still fail this.
       await toggle.click();
       await page.waitForTimeout(120);
-      await page.mouse.click(Math.round(w / 2), h - 40);
+      await page.evaluate(() => {
+        if (document.activeElement) document.activeElement.blur();
+      });
+      await page.evaluate(() =>
+        document.body.dispatchEvent(
+          new MouseEvent('click', { bubbles: true })));
       await page.waitForTimeout(120);
       ok(`@${w} backdrop closes`, (await toggle.getAttribute('aria-expanded')) === 'false');
       ok(`@${w} backdrop leaves focus alone`,

@@ -167,7 +167,8 @@ a:hover { text-decoration: underline; }
   html.js .nav-inner { flex-wrap: nowrap; gap: 14px; padding: 12px 18px; }
   html.js .nav-toggle { display: inline-flex; margin-left: auto; }
   /* Conscious brand-sub decision (audit #3): it hides in the collapsed
-     header, and now the collapse starts at 960, not 640. */
+     header, and now the collapse starts at 1080, not 640 (gh-881
+     re-measure). */
   html.js .brand-sub { display: none; }
   /* Absolutely positioned under the sticky bar: the bar itself never
      changes height while the menu is open (AC2). Capped at viewport
