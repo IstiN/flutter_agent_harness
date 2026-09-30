@@ -332,6 +332,197 @@ void main() {
     });
 
     test(
+      'a thinking-only drop replays — nothing user-visible was emitted '
+      '(issue #964)',
+      () async {
+        var calls = 0;
+        final wrapped = transientRetryStreamFunction((
+          model,
+          context, {
+          cancelToken,
+        }) {
+          calls++;
+          if (calls == 1) {
+            final stream = AssistantMessageEventStream();
+            scheduleMicrotask(() {
+              stream
+                ..push(StartEvent(partial: testAssistant()))
+                ..push(
+                  ThinkingStartEvent(
+                    contentIndex: 0,
+                    partial: testAssistant(),
+                  ),
+                );
+              for (var i = 1; i <= 3; i++) {
+                stream.push(
+                  ThinkingDeltaEvent(
+                    contentIndex: 0,
+                    delta: 'pondering $i',
+                    partial: testAssistant(
+                      content: [ThinkingContent(thinking: 'pondering $i')],
+                    ),
+                  ),
+                );
+              }
+              stream.push(
+                ErrorEvent(
+                  reason: StopReason.error,
+                  error: testAssistant(
+                    stopReason: StopReason.error,
+                    errorMessage: 'Connection reset by peer',
+                  ),
+                ),
+              );
+              stream.end();
+            });
+            return stream;
+          }
+          return FakeStreamFunction([
+            textTurn('recovered'),
+          ]).call(model, context, cancelToken: cancelToken);
+        });
+
+        final message = await wrapped(
+          testModel,
+          const Context(messages: []),
+        ).result;
+
+        expect(calls, 2, reason: 'thinking-only deltas did not commit');
+        expect(message.stopReason, StopReason.stop);
+        expect(
+          message.content.whereType<TextContent>().single.text,
+          'recovered',
+        );
+      },
+    );
+
+    test('a thinking-only success flushes the buffered reasoning '
+        '(issue #964)', () async {
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
+        final stream = AssistantMessageEventStream();
+        scheduleMicrotask(() {
+          final full = testAssistant(
+            content: const [ThinkingContent(thinking: 'deep thought')],
+          );
+          stream
+            ..push(StartEvent(partial: testAssistant()))
+            ..push(
+              ThinkingStartEvent(contentIndex: 0, partial: testAssistant()),
+            )
+            ..push(
+              ThinkingDeltaEvent(
+                contentIndex: 0,
+                delta: 'deep ',
+                partial: testAssistant(
+                  content: const [ThinkingContent(thinking: 'deep ')],
+                ),
+              ),
+            )
+            ..push(
+              ThinkingDeltaEvent(
+                contentIndex: 0,
+                delta: 'thought',
+                partial: testAssistant(
+                  content: const [ThinkingContent(thinking: 'deep thought')],
+                ),
+              ),
+            )
+            ..push(
+              ThinkingEndEvent(
+                contentIndex: 0,
+                content: 'deep thought',
+                partial: full,
+              ),
+            )
+            ..push(DoneEvent(reason: StopReason.stop, message: full));
+          stream.end();
+        });
+        return stream;
+      });
+
+      final events = await wrapped(
+        testModel,
+        const Context(messages: []),
+      ).toList();
+
+      expect(
+        events.whereType<ThinkingDeltaEvent>().map((e) => e.delta).toList(),
+        ['deep ', 'thought'],
+        reason: 'buffered thinking flushes in order at Done — never lost',
+      );
+      expect(events.last, isA<DoneEvent>());
+      expect(events.whereType<ErrorEvent>(), isEmpty);
+    });
+
+    test('a drop after visible content still stands despite thinking deltas '
+        '(issue #964 AC4)', () async {
+      var calls = 0;
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
+        calls++;
+        final stream = AssistantMessageEventStream();
+        scheduleMicrotask(() {
+          stream
+            ..push(StartEvent(partial: testAssistant()))
+            ..push(
+              ThinkingStartEvent(contentIndex: 0, partial: testAssistant()),
+            )
+            ..push(
+              ThinkingDeltaEvent(
+                contentIndex: 0,
+                delta: 'hmm ',
+                partial: testAssistant(
+                  content: const [ThinkingContent(thinking: 'hmm ')],
+                ),
+              ),
+            )
+            ..push(
+              TextDeltaEvent(
+                contentIndex: 1,
+                delta: 'partial',
+                partial: testAssistant(
+                  content: const [
+                    ThinkingContent(thinking: 'hmm '),
+                    TextContent(text: 'partial'),
+                  ],
+                ),
+              ),
+            )
+            ..push(
+              ErrorEvent(
+                reason: StopReason.error,
+                error: testAssistant(
+                  stopReason: StopReason.error,
+                  errorMessage: 'Connection reset by peer',
+                ),
+              ),
+            );
+          stream.end();
+        });
+        return stream;
+      });
+
+      final events = await wrapped(
+        testModel,
+        const Context(messages: []),
+      ).toList();
+
+      expect(calls, 1, reason: 'the text delta committed the attempt');
+      // The buffered thinking flushed in order with the commit; the visible
+      // delta and the mid-answer failure stand (no replay).
+      expect(events.whereType<ThinkingDeltaEvent>().single.delta, 'hmm ');
+      expect(events.whereType<TextDeltaEvent>().single.delta, 'partial');
+      expect(events.whereType<ErrorEvent>(), hasLength(1));
+    });
+
+    test(
       'a cancel during the retry sleep aborts instead of replaying',
       () async {
         var calls = 0;
