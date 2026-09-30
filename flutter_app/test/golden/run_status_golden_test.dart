@@ -83,9 +83,7 @@ void main() {
   setUpAll(ensureGoldenFonts);
 
   testWidgets('provider wait — thinking row as the transcript last entry '
-      '(light; #1042 REG: exactly one row)', (
-    tester,
-  ) async {
+      '(light; #1042 REG: exactly one row)', (tester) async {
     await _pumpStatusFrame(
       tester,
       rows: [
@@ -97,9 +95,7 @@ void main() {
   });
 
   testWidgets('in-flight tool — running row as the transcript last entry '
-      '(light)', (
-    tester,
-  ) async {
+      '(light)', (tester) async {
     await _pumpStatusFrame(
       tester,
       rows: [
@@ -115,9 +111,7 @@ void main() {
   });
 
   testWidgets('in-flight tool — running row as the transcript last entry '
-      '(dark)', (
-    tester,
-  ) async {
+      '(dark)', (tester) async {
     await _pumpStatusFrame(
       tester,
       rows: [
