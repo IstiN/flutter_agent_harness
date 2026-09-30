@@ -65,7 +65,11 @@ jobs:
             echo "SM alive ($active active run(s)) — nothing to do"
           else
             echo "SM idle — dispatching a tick"
-            gh workflow run machine-sm.yml -R "$GITHUB_REPOSITORY"
+            # dryRun input defaults to TRUE: without the explicit flag the
+            # rescue tick logs its plan and performs no action (live:
+            # 2026-09-29 21:14/21:22/21:24 — kicker-dispatched ticks all ran
+            # "dryRun: true" and the SM stayed idle through a missed cron).
+            gh workflow run machine-sm.yml -R "$GITHUB_REPOSITORY" -f dryRun=false
           fi
 
   head-completeness:
