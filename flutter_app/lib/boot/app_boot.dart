@@ -39,6 +39,7 @@ import 'package:fa/services/onboarding_store.dart';
 import 'package:fa/services/ondevice_config_store.dart';
 import 'package:fa/services/platform_http_client.dart';
 import 'package:fa/services/provider_registry.dart';
+import 'package:fa/services/quota_store.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/settings_env.dart';
 import 'package:fa/services/skills_access_store.dart';
@@ -76,6 +77,7 @@ final class BootStores {
     required this.networkWallet,
     required this.networkMode,
     required this.networkSessions,
+    required this.quotas,
   });
 
   /// The shared execution env (also on [BootStores] so the routes stage
@@ -123,6 +125,10 @@ final class BootStores {
 
   /// The fa_network session owner (join/resume/leave, issue #955).
   final NetworkSessionManager networkSessions;
+
+  /// The provider quota view (issue #823): meters in the providers list
+  /// and the chat header's remaining badge.
+  final QuotaStore quotas;
 }
 
 /// The boot pipeline. `main()` constructs it with the app's routes stage
@@ -258,6 +264,9 @@ Future<BootStores> loadBootStores(ExecutionEnv env) async {
   // an unexpired token becomes the JWT, an expired one is refreshed
   // silently. Fire-and-forget — boot never blocks on the network.
   unawaited(networkSessions.restoreAccount());
+  // Provider quota (issue #823): the shared store reads keys through the
+  // persisted registry; the changes stream drives the app surfaces.
+  QuotaStore.instance.attachRegistry(registry);
   return BootStores(
     env: env,
     sessionKeys: sessionKeys,
@@ -274,6 +283,7 @@ Future<BootStores> loadBootStores(ExecutionEnv env) async {
     networkWallet: networkWallet,
     networkMode: networkMode,
     networkSessions: networkSessions,
+    quotas: QuotaStore.instance,
   );
 }
 
