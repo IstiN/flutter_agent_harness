@@ -42,6 +42,10 @@ jobs:
 
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
+          # Same pinned SDK as ci.yml web-spa (#1100): fa1.dev and
+          # fa-web-spa.zip must never drift onto different Flutter stables
+          # (resolves to the same SDK the floating channel picked today).
+          flutter-version: '3.47.x'
           channel: stable
 
       - name: Example app pub get
