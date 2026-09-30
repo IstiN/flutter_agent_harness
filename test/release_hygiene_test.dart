@@ -1034,5 +1034,33 @@ gh release create "v9.9.9" \
           .toString(), contains('pty-integration-linux'));
     });
   });
+
+  group('committed-artifact hygiene (gh-1033 review thread 11)', () {
+    test('no cov-*/ raw coverage dump directories exist in the tree', () {
+      final offenders = Directory('.')
+          .listSync()
+          .whereType<Directory>()
+          .map((d) => d.path.split('/').last)
+          .where((name) => name.startsWith('cov-'))
+          .toList();
+      expect(
+        offenders,
+        isEmpty,
+        reason: 'scratch coverage runs must write under the ignored '
+            'coverage/ dir — a WIP auto-save swept cov-raw2/ (2.8 MB of '
+            'VM coverage JSON with absolute runner paths) onto the branch '
+            'once already',
+      );
+    });
+
+    test('.gitignore sweeps future cov-*/ scratch dirs', () {
+      expect(
+        read('.gitignore').split('\n').map((line) => line.trim()),
+        contains('cov-*/'),
+        reason: 'next to the coverage/ entries: a stray cov-* run dir '
+            'must never become committable again',
+      );
+    });
+  });
 }
 
