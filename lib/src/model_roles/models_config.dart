@@ -18,6 +18,8 @@
 ///       contextWindow: 128000       # optional (catalog default otherwise)
 ///       maxTokens: 4096             # optional
 ///       input: [text, image]        # optional
+///       authHeader: x-api-key       # optional; sends `x-api-key: <key>`
+///                                   # instead of `Authorization: Bearer`
 /// ```
 ///
 /// Parsed strictly like `roles:`/`ttsr:`: any schema error throws
@@ -44,6 +46,7 @@ final class CustomModelDefinition {
     this.contextWindow,
     this.maxTokens,
     this.input,
+    this.authHeader,
   });
 
   /// Parses one definition from yaml, strictly: [name] is the map key;
@@ -64,6 +67,7 @@ final class CustomModelDefinition {
       'contextWindow',
       'maxTokens',
       'input',
+      'authHeader',
     ];
     for (final key in node.keys) {
       if (!knownFields.contains(key)) {
@@ -86,12 +90,15 @@ final class CustomModelDefinition {
     // (both identifiers, FA_PROVIDERS filter) — a kind-shaped or
     // filtered-out entry fails HERE with the enabled list, never later
     // at `/model` (issue #772 review).
-    if (resolveCliProviderSpec(provider, honorBuildFilter: true) == null) {
+    final spec = resolveCliProviderSpec(provider, honorBuildFilter: true);
+    if (spec == null) {
       throw ConfigException(
         'unknown provider "$provider" in $where — supported providers: '
         '${enabledProviderNames().join(', ')}',
       );
     }
+    final authHeader = parseAuthHeaderName(node['authHeader'], where);
+    validateAuthHeaderDialect(authHeader, spec, where);
     int? optionalInt(String field) {
       final value = node[field];
       if (value == null) return null;
@@ -124,6 +131,7 @@ final class CustomModelDefinition {
       contextWindow: optionalInt('contextWindow'),
       maxTokens: optionalInt('maxTokens'),
       input: input,
+      authHeader: authHeader,
     );
   }
 
@@ -145,6 +153,11 @@ final class CustomModelDefinition {
   /// Input modalities (`text`/`image`; catalog default when null).
   final List<String>? input;
 
+  /// Auth header name riding the model to the wire (`authHeader:` on the
+  /// entry, issue #964): `x-api-key` sends `x-api-key: <key>` instead of
+  /// `Authorization: Bearer <key>`. Null keeps the Bearer default.
+  final String? authHeader;
+
   /// Writes the definition as yaml lines at [indent] (string values are
   /// JSON-quoted — valid yaml scalars that round-trip any url/model id).
   void writeYaml(StringBuffer buffer, String indent) {
@@ -159,6 +172,10 @@ final class CustomModelDefinition {
     final modalities = input;
     if (modalities != null) {
       buffer.write('${indent}input: ${jsonEncode(modalities)}\n');
+    }
+    final authName = authHeader;
+    if (authName != null) {
+      buffer.write('${indent}authHeader: ${jsonEncode(authName)}\n');
     }
   }
 

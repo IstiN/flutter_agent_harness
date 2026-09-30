@@ -65,11 +65,13 @@ final class OpenAICompletionsOptions {
   /// depending on [OpenAICompletionsCompat.maxTokensField]).
   final int? maxTokens;
 
-  /// API key sent as `Authorization: Bearer ...`. Empty or absent sends no
-  /// Authorization header at all (keyless local endpoints such as llama.cpp,
-  /// Ollama, or LM Studio; an explicit `authorization` entry in [headers]
-  /// still applies) — an endpoint that requires auth then answers 401,
-  /// surfaced as an error event.
+  /// API key sent as `Authorization: Bearer ...` — or, when [Model.authHeader]
+  /// declares a header name (issue #964), as a raw `<authHeader>: <key>`
+  /// header with no Bearer prefix. Empty or absent sends no auth header at
+  /// all (keyless local endpoints such as llama.cpp, Ollama, or LM Studio;
+  /// an explicit `authorization` entry in [headers] still applies) — an
+  /// endpoint that requires auth then answers 401, surfaced as an error
+  /// event.
   final String? apiKey;
 
   /// Extra request headers, merged over [Model.headers]; a `null` value
@@ -814,6 +816,17 @@ Map<String, String> _buildHeaders(
   OpenAICompletionsOptions? options,
 ) {
   final apiKey = options?.apiKey;
+  // Issue #964: a config-declared auth header name replaces the Bearer
+  // scheme — `authHeader: x-api-key` sends `x-api-key: <key>` with NO
+  // `authorization` header (enterprise gateways, e.g. AWS API Gateway
+  // fronting Bedrock, reject Bearer). Unset keeps the Bearer default
+  // byte-identical; keyless requests still send neither (below).
+  final authHeaderName = model.authHeader;
+  final customAuth =
+      authHeaderName != null &&
+      authHeaderName.isNotEmpty &&
+      apiKey != null &&
+      apiKey.isNotEmpty;
   // pi's session-affinity headers: OpenRouter pins a session to one upstream
   // provider via `x-session-id`, so cache locality survives across turns.
   // Suppressed under `none` retention (pi's `cacheSessionId`).
@@ -828,9 +841,12 @@ Map<String, String> _buildHeaders(
       // bogus `Bearer ` value. An endpoint that does require auth answers
       // 401, which surfaces as a normal error event. Hosts can still pass an
       // explicit `authorization` entry through [Model.headers] or
-      // [OpenAICompletionsOptions.headers].
-      if (apiKey != null && apiKey.isNotEmpty)
+      // [OpenAICompletionsOptions.headers]; a config-declared
+      // `authHeader` (issue #964) swaps the Bearer entry for a raw
+      // `<name>: <key>` header instead.
+      if (!customAuth && apiKey != null && apiKey.isNotEmpty)
         'authorization': 'Bearer $apiKey',
+      if (customAuth) authHeaderName: apiKey,
       if (sessionId != null &&
           sessionId.isNotEmpty &&
           _isOpenRouterModel(model))
