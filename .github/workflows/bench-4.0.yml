@@ -54,6 +54,14 @@ on:
         description: 'Runner label hosting the harbor CLI (it orchestrates Modal sandboxes; needs docker only with cpu-env=docker)'
         required: false
         default: 'self-hosted'
+      agent-timeout:
+        description: 'Base agent cap seconds (issue #1122; absent = dataset-declared task caps)'
+        required: false
+        default: ''
+      progress-extension:
+        description: 'Extend the agent cap while the agent output grows (idle window 120s, hard ceiling 4x base)'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -106,6 +114,15 @@ jobs:
 
       # Pinned: the adapter targets the 0.23.0 BaseInstalledAgent contract.
       - run: pip install 'harbor[modal]==0.23.0'
+
+      # Same gate as bench.yml (stdlib-only bench script tests), covering the
+      # harbor parity tests too: terminal-bench is installed just for the
+      # legacy-adapter test import.
+      - name: Unit-test bench scripts
+        run: |
+          pip install terminal-bench
+          python -m unittest discover -s bench/harbor_fa -v
+          python -m unittest discover -s bench/terminal_bench -v
 
       # Download the dataset once for classification; harbor re-fetches
       # into its own cache during the run.
@@ -177,6 +194,8 @@ jobs:
           NCONC: ${{ inputs.n-concurrent }}
           ENV_TYPE: ${{ matrix.env }}
           DATASET: ${{ inputs.dataset }}
+          AGENT_TIMEOUT: ${{ inputs.agent-timeout }}
+          PROGRESS_EXTENSION: ${{ inputs.progress-extension }}
           # shard task names: dataset dir names, no whitespace — safe to word-split.
           SHARD_TASKS: ${{ matrix.tasks }}
         run: |
@@ -190,6 +209,18 @@ jobs:
           echo "::add-mask::$(printf %s "$FA_KEY_API_Z_AI_Z_AI" | base64 -w0)"
           args=()
           for t in $SHARD_TASKS; do args+=(-i "$t"); done
+          # Issue #1122 knobs, same env contract as bench.yml (shared
+          # bench/fa_agent_timeout.py); absent inputs stay byte-for-byte
+          # today's run (REG-1). A ceiling beyond a task's declared cap is
+          # clipped by harbor's own per-task timeout (min of the two wins).
+          if [ -n "$AGENT_TIMEOUT" ]; then
+            case "$AGENT_TIMEOUT" in *[!0-9]*)
+              echo '::error::agent-timeout must be integer seconds'; exit 1;; esac
+            export FA_AGENT_TIMEOUT_SEC="$AGENT_TIMEOUT"
+          fi
+          case "$PROGRESS_EXTENSION" in
+            1|true|TRUE|True|yes|on) export FA_PROGRESS_EXTENSION=1;;
+          esac
           # Pinned --job-name: one jobs/<name>/ dir per shard, so the summary
           # job's downloads cannot collide on harbor's timestamped default.
           .bench-venv/bin/harbor run -d "$DATASET" -a fa_agent:FaAgent \
