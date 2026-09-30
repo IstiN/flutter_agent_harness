@@ -876,8 +876,9 @@ final class LocalShell implements Shell, BackgroundShell {
         probe: diskFreeProbe == null
             ? null
             : () => diskFreeProbe!(File(logPath).parent.path),
-        onWarn:
-            warn == null ? null : (message) => warn('background job $id: $message'),
+        onWarn: warn == null
+            ? null
+            : (message) => warn('background job $id: $message'),
       );
     } on ArgumentError catch (error) {
       return Err(
@@ -1175,7 +1176,8 @@ final class LocalExecutionEnv
   /// for tests, ignored when [shell] is given.
   LocalExecutionEnv({String? cwd, Shell? shell, this.diskFreeProbe})
     : _fs = LocalFileSystem(cwd: cwd),
-      _shell = shell ??
+      _shell =
+          shell ??
           (diskFreeProbe == null
               ? const LocalShell()
               : LocalShell(diskFreeProbe: diskFreeProbe));

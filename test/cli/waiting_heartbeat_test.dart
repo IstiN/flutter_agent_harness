@@ -42,8 +42,7 @@ void main() {
   });
 
   group('JobsConfig', () {
-    test('defaults: 24h age belt, 3-day log retention, 50 MB log ceiling',
-        () {
+    test('defaults: 24h age belt, 3-day log retention, 50 MB log ceiling', () {
       const config = JobsConfig();
       expect(config.staleHours, 24);
       expect(config.logRetentionDays, 3);
@@ -73,10 +72,7 @@ void main() {
 
     test('fromYaml rejects a disabled or non-integer log ceiling', () {
       expect(() => JobsConfig.fromYaml({'maxLogBytes': 0}), throwsA(anything));
-      expect(
-        () => JobsConfig.fromYaml({'maxLogBytes': -1}),
-        throwsA(anything),
-      );
+      expect(() => JobsConfig.fromYaml({'maxLogBytes': -1}), throwsA(anything));
       expect(
         () => JobsConfig.fromYaml({'maxLogBytes': 'abc'}),
         throwsA(anything),
