@@ -616,7 +616,11 @@ jobs:
   // ── AC3 — one naming scheme: bare vX.Y.Z (UT-naming) ────────────────────
   group('AC3 — bare vX.Y.Z titles everywhere', () {
     test('no "Fa " title prefix survives in any release-creating path', () {
-      final haystacks = [...workflows.map(read), read('scripts/auto_release.sh')];
+      final haystacks = [
+        ...workflows.map(read),
+        read('scripts/auto_release.sh'),
+        read('scripts/tag_release.sh'),
+      ];
       for (final text in haystacks) {
         expect(text, isNot(contains('--title "Fa ')),
             reason: 'release titles must be bare vX.Y.Z, not "Fa vX.Y.Z"');
@@ -634,9 +638,16 @@ jobs:
           }
         });
       }
-      final scriptCreates = extractCreates(read('scripts/auto_release.sh'));
-      expect(scriptCreates, isNotEmpty);
-      for (final c in scriptCreates) {
+      // PR-path (2026-09-29): auto_release.sh only opens the chore/release-vX.Y.Z
+      // bump PR and creates nothing; tag_release.sh (the release-tag job) owns
+      // the single gh release create cut from the merged bump commit.
+      expect(extractCreates(read('scripts/auto_release.sh')), isEmpty,
+          reason: 'auto_release.sh must not create releases — the bump rides a PR; '
+              'tag_release.sh owns the create');
+      final tagCreates = extractCreates(read('scripts/tag_release.sh'));
+      expect(tagCreates, hasLength(1),
+          reason: 'tag_release.sh is the one race-free release-create path');
+      for (final c in tagCreates) {
         expect(c.title, c.tag);
       }
       final attachCreates = extractCreates(read('scripts/release_attach_or_create.sh'));
@@ -833,8 +844,8 @@ gh release create "v9.9.9" \
       }
     });
 
-    test('auto_release.sh marks the new release latest explicitly', () {
-      final creates = extractCreates(read('scripts/auto_release.sh'));
+    test('tag_release.sh marks the new release latest explicitly', () {
+      final creates = extractCreates(read('scripts/tag_release.sh'));
       expect(creates, isNotEmpty);
       for (final c in creates) {
         expect(c.text, contains('--latest'));
@@ -845,16 +856,72 @@ gh release create "v9.9.9" \
   // ── AC6 — regression: no "Release v" bodies, atomic flow intact ─────────
   group('AC6 — regression', () {
     test('no "Release vX" filler bodies remain', () {
-      final haystacks = [...workflows.map(read), read('scripts/auto_release.sh')];
+      final haystacks = [
+        ...workflows.map(read),
+        read('scripts/auto_release.sh'),
+        read('scripts/tag_release.sh'),
+      ];
       for (final text in haystacks) {
         expect(text, isNot(contains('--notes "Release v')));
       }
     });
 
-    test('auto_release.sh atomic push+tag flow unchanged', () {
-      final text = read('scripts/auto_release.sh');
-      expect(text, contains('git push --atomic origin main --follow-tags'));
-      expect(text, contains(r'git tag -a "v$next"'));
+    test('release flow is PR-path: auto_release.sh opens the bump PR, tag_release.sh cuts tag+release', () {
+      // Protected main enforces admins+strict (2026-09-29): direct bot pushes
+      // to main are rejected, so the bump lands as a chore/release-vX.Y.Z PR
+      // (owner directive: tag-only variant rejected) and the release-tag job
+      // cuts the tag + GitHub Release from the merged bump commit — the tag
+      // must ride RELEASE_PAT so the tag-scoped binaries/publish jobs fire.
+      final auto = read('scripts/auto_release.sh');
+      expect(auto, contains('chore/release-v'));
+      expect(auto, contains('gh pr create'));
+      expect(auto, isNot(contains('git push --atomic origin main')),
+          reason: 'direct main pushes are rejected by branch protection — PR path only');
+      expect(auto, isNot(contains('git tag -a')),
+          reason: 'tagging moved to tag_release.sh (tag rides RELEASE_PAT)');
+      final tagScript = read('scripts/tag_release.sh');
+      expect(tagScript, contains(r'git tag -a "$tag"'));
+      expect(tagScript, contains(r'git push origin "$tag"'));
+    });
+
+    test('release jobs authenticate gh via RELEASE_PAT (env + checkout), not by comment (#1093 review)', () {
+      // BLOCK finding on PR #1093 (2026-09-30): neither release job set
+      // GH_TOKEN, so `gh pr create` in auto_release.sh died under set -e and
+      // `gh release create` in tag_release.sh was a guaranteed silent no-op
+      // — the curated notes never reached the release object. Pin the REAL
+      // wiring (job env + checkout token), never a script comment.
+      final ci = jobsOf('.github/workflows/ci.yml');
+      for (final jobName in ['release', 'release-tag']) {
+        final job = ci[jobName] as YamlMap;
+        final env = job['env'] as YamlMap?;
+        expect(env?['GH_TOKEN']?.toString(),
+            equals(r'${{ secrets.RELEASE_PAT }}'),
+            reason: '$jobName must export GH_TOKEN=RELEASE_PAT for its gh calls');
+        final steps = job['steps'] as YamlList;
+        final checkout = steps
+            .map((s) => s as YamlMap)
+            .firstWhere((s) => s['uses']?.toString().startsWith('actions/checkout') ?? false);
+        expect(checkout['with']['token']?.toString(),
+            equals(r'${{ secrets.RELEASE_PAT }}'),
+            reason:
+                '$jobName checkout must ride RELEASE_PAT — GITHUB_TOKEN tags/pushes never fire tag-scoped jobs');
+      }
+    });
+
+    test('auto_release.sh untagged guard keys on pubspec version with a wedge escape, and remembers rejections', () {
+      // IMPORTANT findings on PR #1093 (2026-09-30): subject-keying wedged
+      // auto-release forever when release-tag missed (any non-squash or
+      // interleaved merge changes the subject, not the version), and a
+      // machine-closed release PR was re-created every 2h forever.
+      final auto = read('scripts/auto_release.sh');
+      expect(
+          auto,
+          contains(r'''head_version=$(git show origin/main:pubspec.yaml | sed -n 's/^version: //p')'''),
+          reason: 'the untagged guard must key on the pubspec version');
+      expect(auto, contains('-lt 3600'),
+          reason: 'after 1h untagged the guard must let the next bump absorb the range (no indefinite wedge)');
+      expect(auto, contains("--state closed"),
+          reason: 'rejection memory: a machine-closed release PR must not be re-created every 2h');
     });
 
     test('daily-publish.yml carries the sweeper job, ungated by leg results', () {
