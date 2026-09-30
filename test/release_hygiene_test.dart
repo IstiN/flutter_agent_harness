@@ -371,7 +371,8 @@ exec /usr/bin/sed "\$@"
   git(['commit', '-q', '-m', 'seed'],
       env: {
         'GIT_COMMITTER_DATE':
-            DateTime.now().subtract(const Duration(hours: 3)).secondsSinceEpoch.toString()
+            (DateTime.now().subtract(const Duration(hours: 3)).millisecondsSinceEpoch ~/ 1000)
+                .toString()
       });
   git(['tag', 'v0.1.495']);
   File('$seed/README.md').writeAsStringSync('pending\n');
