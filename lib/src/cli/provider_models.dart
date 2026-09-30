@@ -1069,6 +1069,7 @@ extension on AgentCli {
           apiKeyName:
               _rolesKeyNameFor(spec.name, def.baseUrl) ??
               _scopedKeyNameForNonDefault(spec.name, def.baseUrl),
+          authHeader: def.authHeader,
         ),
       ]);
       rolesResolver.applyToAgent(_agent);
@@ -1091,6 +1092,7 @@ extension on AgentCli {
         contextWindow: def.contextWindow,
         maxTokens: def.maxTokens,
         input: def.input,
+        authHeader: def.authHeader,
       );
       _agent.state.model = built;
     }
@@ -1189,6 +1191,9 @@ extension on AgentCli {
           contextWindow: window,
           maxTokens: cap,
           apiKeyName: pinnedKeyName,
+          // A saved entry's authHeader must survive /model switches
+          // (issue #964) — the pin rebuilds the model.
+          authHeader: current.authHeader,
         ),
       ]);
       rolesResolver.applyToAgent(_agent);
@@ -1222,6 +1227,7 @@ extension on AgentCli {
       maxTokens: cap,
       headers: current.headers,
       compat: current.compat,
+      authHeader: current.authHeader,
     );
     await _session?.appendModelChange(
       provider: current.provider,
@@ -1340,6 +1346,7 @@ extension on AgentCli {
       maxTokens: maxTokens ?? current.maxTokens,
       headers: current.headers,
       compat: current.compat,
+      authHeader: current.authHeader,
     );
     unawaited(config.onModelChanged?.call(_agent.state.model));
   }
