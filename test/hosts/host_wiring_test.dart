@@ -608,19 +608,13 @@ void main() {
     test('jsr token ownership: the CLI pass-through is wired, the '
         'browser-API row stays hidden', () {
       // #1062 wired `fa jsr` + `/jsr` into the CLI — they belong to
-      // jsExtensions (wired on the CLI), never to js_apps.
+      // jsExtensions (wired on the CLI), never to js_apps. The absence
+      // half of js_apps is covered by the preceding help-text test; this
+      // one pins the split itself.
       final plan = buildFor(cliProfile);
       expectCapabilitySurfaces(plan, HostCapability.jsExtensions);
       expect(plan.surfacedTokens, containsAll({'fa jsr', '/jsr'}));
       expect(cliHelpText('0.0.0-test'), contains('jsr'));
-      // The browser-API row stays off, and its dynamic_message surface is
-      // absent from the same help text.
-      expectCapabilityHidden(plan, HostCapability.jsApps);
-      expectTextFreeOf(
-        'cliHelpText',
-        hostCapabilityCatalog[HostCapability.jsApps]!.surface,
-        cliHelpText('0.0.0-test'),
-      );
     });
 
     test(
@@ -705,6 +699,19 @@ void main() {
     test('the plan carries the platform services for the slice-2 wiring', () {
       final plan = buildFor(cliProfile);
       expect(plan.platformServices, same(fullPlatformServices));
+    });
+
+    test('a sqljs-only web host needs no lsp process factory (E1 '
+        'by-transport)', () {
+      // webProfile pins sqlite_lsp_dap to transport({sqljs}): the
+      // sql.js-backed engine is required, the process lsp factory is not —
+      // the cell's transports subset the required set.
+      final plan = HostWiringBuilder(
+        profile: webProfile,
+        platformServices: {...fullPlatformServices}
+          ..remove('lspTransportFactory'),
+      ).build();
+      expect(plan.planFor(HostCapability.sqliteLspDap), isA<WiredCapability>());
     });
 
     test('a profile wiring fewer capabilities needs fewer services', () {

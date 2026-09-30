@@ -53,9 +53,15 @@ final class CapabilitySpec {
   /// capabilities the CLI floors off (the row exists for other hosts).
   final List<String> cliWiringSites;
 
-  /// Platform-service keys [HostWiringBuilder] requires when the
+  /// Platform-service keys [HostWiringBuilder] requires whenever the
   /// capability is wired (E1: a missing service fails at build, named).
   final Set<String> requiredServices;
+
+  /// Extra service keys required only when the cell's declared transports
+  /// include the key's transport — on top of [requiredServices]. This keeps
+  /// E1 honest for split cells: a web `sqlite_lsp_dap: transport({sqljs})`
+  /// host needs the sql.js-backed engine but no process lsp factory.
+  final Map<String, Set<String>> requiredServicesByTransport;
 
   final CapabilitySurface surface;
 
@@ -65,6 +71,7 @@ final class CapabilitySpec {
     required this.note,
     this.cliWiringSites = const [],
     this.requiredServices = const {},
+    this.requiredServicesByTransport = const {},
     this.surface = const CapabilitySurface(),
   });
 }
@@ -114,7 +121,12 @@ hostCapabilityCatalog = Map.unmodifiable({
   HostCapability.mcp: CapabilitySpec(
     capability: HostCapability.mcp,
     title: 'MCP servers',
-    note: 'Transports: stdio (spawned) + remote (HTTP).',
+    note:
+        'Transports: stdio (spawned) + remote (HTTP). One '
+        'transport-parametrized factory: it creates exactly the transports '
+        'the cell declares — stdio spawn on process hosts, remote fetch on '
+        'web/extension — so a remote-only host never supplies a stdio '
+        'spawner.',
     cliWiringSites: [
       'bin/fah.dart (mcpConfig)',
       'lib/src/mcp/io_mcp_transport.dart',
@@ -196,7 +208,10 @@ hostCapabilityCatalog = Map.unmodifiable({
       'bin/fah.dart (sqliteEngine, lspConfig, dapHubState)',
       'bin/fah_hub_plugin.dart (registerTool)',
     ],
-    requiredServices: {'sqliteEngine', 'lspTransportFactory'},
+    requiredServices: {'sqliteEngine'},
+    requiredServicesByTransport: {
+      'process': {'lspTransportFactory'},
+    },
     surface: CapabilitySurface(tokens: {'sqlite', 'lsp', 'dap'}),
   ),
   HostCapability.onDeviceProviders: CapabilitySpec(
@@ -399,8 +414,9 @@ final class HostWiringPlan {
 final class HostWiringBuilder {
   final HostCapabilityProfile profile;
 
-  /// Host-provided platform services, keyed by [CapabilitySpec
-  /// .requiredServices] names (transport factories, stores, probes).
+  /// Host-provided platform services, keyed by
+  /// [CapabilitySpec.requiredServices] names (transport factories, stores,
+  /// probes).
   final Map<String, Object> platformServices;
 
   HostWiringBuilder({required this.profile, this.platformServices = const {}});
@@ -415,7 +431,12 @@ final class HostWiringBuilder {
         case CapabilityOffState(:final reason):
           entries.add(HiddenCapability(capability, reason));
         case CapabilityOnState():
-          _requireServices(missing, capability, spec);
+          _requireServices(
+            missing,
+            capability,
+            spec,
+            hostCapabilityTransports[capability]!.defaults,
+          );
           entries.add(
             WiredCapability(
               capability,
@@ -423,7 +444,7 @@ final class HostWiringBuilder {
             ),
           );
         case CapabilityTransportState(:final transports):
-          _requireServices(missing, capability, spec);
+          _requireServices(missing, capability, spec, transports);
           entries.add(WiredCapability(capability, transports));
       }
     }
@@ -445,10 +466,16 @@ final class HostWiringBuilder {
     Map<String, Set<String>> missing,
     HostCapability capability,
     CapabilitySpec spec,
+    Set<String> wiredTransports,
   ) {
-    final absent = spec.requiredServices.difference(
-      platformServices.keys.toSet(),
-    );
+    // Baseline services plus the per-transport extras the wired cell
+    // actually declares — never the transports it cannot use.
+    final needed = <String>{
+      ...spec.requiredServices,
+      for (final entry in spec.requiredServicesByTransport.entries)
+        if (wiredTransports.contains(entry.key)) ...entry.value,
+    };
+    final absent = needed.difference(platformServices.keys.toSet());
     if (absent.isNotEmpty) missing[capability.id] = absent;
   }
 }

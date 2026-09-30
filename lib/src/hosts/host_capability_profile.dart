@@ -82,13 +82,12 @@ enum HostCapability {
   hostExtensionApi,
 
   /// `web_search`/`web_fetch` tools over the `WebSearchConfig` secrets.
-  /// Beyond the issue matrix — inventory-driven (AC10): the CLI wires it
-  /// (fah.dart:2114) and no matrix row covers it.
+  /// Beyond the issue matrix — inventory-driven (AC10, bin/fah.dart).
   webSearch,
 
   /// Vision + transcribe: `inspect_image`/`transcribe_audio`/image
   /// generation over the host `visionConfig`/`transcribeConfig`.
-  /// Beyond the issue matrix — inventory-driven (AC10, fah.dart:2112-2113).
+  /// Beyond the issue matrix — inventory-driven (AC10, bin/fah.dart).
   visionTranscribe,
 
   /// Subagents + task system: `subagents:` config, SubagentManager,
@@ -98,7 +97,7 @@ enum HostCapability {
 
   /// The browser tool family over the loopback bridge handle
   /// (`browser_navigate`, `browser_click`, …). Distinct from [jsApps]:
-  /// this is the automation surface the CLI wires today (fah.dart:2143).
+  /// this is the automation surface the CLI wires today (bin/fah.dart).
   /// Beyond the issue matrix — inventory-driven (AC10).
   browserBridge,
 
@@ -106,7 +105,7 @@ enum HostCapability {
   /// `jsr_runtime`) — the CLI's process-based JS extension mechanism.
   /// Distinct from [jsApps] (the browser-API app surface, matrix-pinned
   /// off on the VM): QuickJS runs without a browser. Beyond the issue
-  /// matrix — inventory-driven (AC10, fah.dart:2139).
+  /// matrix — inventory-driven (AC10, bin/fah.dart).
   jsExtensions;
 
   /// Stable catalog id (snake_case, matches the matrix row).
