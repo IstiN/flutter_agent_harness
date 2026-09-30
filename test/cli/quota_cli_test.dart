@@ -145,10 +145,7 @@ void main() {
       file.createSync(recursive: true);
       file.writeAsStringSync('quota:\n  badge: true\n  ttl_minutes: 30\n');
       final loaded = loadCliConfig(tmp.path);
-      expect(
-        loaded.quota,
-        const QuotaSection(badge: true, ttlMinutes: 30),
-      );
+      expect(loaded.quota, const QuotaSection(badge: true, ttlMinutes: 30));
 
       await saveCliConfig(tmp.path, loaded);
       final reloaded = loadCliConfig(tmp.path);
@@ -210,91 +207,100 @@ void main() {
   });
 
   group('IT-1 /quota table (AC4, AC9)', () {
-    test('renders metered/unmetered/unknown rows, cold first then fresh',
-        () async {
-      final endpoint = FakeOpenRouterQuotaEndpoint();
-      final fake = FakeStreamFunction([textTurn('ok')]);
-      final cli = quotaCli(
-        env,
-        io,
-        fake.call,
-        quotaHttpClient: endpoint.client(),
-        envVarValue: quotaEnvKeys,
-      );
-
-      final out = await driveQuotaRepl(cli, io, () async {
-        io.sendLine('/quota');
-        await waitForIt(
-          () => quotaTableCount(io.out.toString()) >= 1,
-          reason: 'first (cold) table',
+    test(
+      'renders metered/unmetered/unknown rows, cold first then fresh',
+      () async {
+        final endpoint = FakeOpenRouterQuotaEndpoint();
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = quotaCli(
+          env,
+          io,
+          fake.call,
+          quotaHttpClient: endpoint.client(),
+          envVarValue: quotaEnvKeys,
         );
-        // The cold render kicked the background fetch; wait for it to land.
-        await waitForIt(() => endpoint.served == 1, reason: 'peek kick fetch');
-        io.sendLine('/quota');
-        await waitForIt(
-          () => io.out.toString().contains(r'$48.20/$150'),
-          reason: 'warm table',
-        );
-      });
 
-      expect(quotaTableCount(out), 2, reason: 'one table per /quota');
-      // Columns (AC4).
-      expect(out, contains('used/limit'));
-      expect(out, contains('unit'));
-      expect(out, contains('reset'));
-      expect(out, contains('updated'));
-      // Measured row.
-      expect(out, contains(r'$48.20/$150'));
-      // Unmetered row (dial) and unknown row (anthropic, no adapter).
-      expect(out, matches(RegExp(r'^dial\s+unmetered$', multiLine: true)));
-      expect(
-        out,
-        matches(RegExp(r'^anthropic\s+unknown \(.+\)$', multiLine: true)),
-      );
-      // Cold render happened before the fetch landed (E1).
-      expect(out, matches(RegExp(r'^openrouter\s+…$', multiLine: true)));
-      // AC9: credential bytes never render.
-      expect(out, isNot(contains(fakeOpenRouterKey)));
-      expect(out, isNot(contains(fakeAnthropicKey)));
-      expect(out, isNot(contains(fakeDialKey)));
-    });
+        final out = await driveQuotaRepl(cli, io, () async {
+          io.sendLine('/quota');
+          await waitForIt(
+            () => quotaTableCount(io.out.toString()) >= 1,
+            reason: 'first (cold) table',
+          );
+          // The cold render kicked the background fetch; wait for it to land.
+          await waitForIt(
+            () => endpoint.served == 1,
+            reason: 'peek kick fetch',
+          );
+          io.sendLine('/quota');
+          await waitForIt(
+            () => io.out.toString().contains(r'$48.20/$150'),
+            reason: 'warm table',
+          );
+        });
+
+        expect(quotaTableCount(out), 2, reason: 'one table per /quota');
+        // Columns (AC4).
+        expect(out, contains('used/limit'));
+        expect(out, contains('unit'));
+        expect(out, contains('reset'));
+        expect(out, contains('updated'));
+        // Measured row.
+        expect(out, contains(r'$48.20/$150'));
+        // Unmetered row (dial) and unknown row (anthropic, no adapter).
+        expect(out, matches(RegExp(r'^dial\s+unmetered$', multiLine: true)));
+        expect(
+          out,
+          matches(RegExp(r'^anthropic\s+unknown \(.+\)$', multiLine: true)),
+        );
+        // Cold render happened before the fetch landed (E1).
+        expect(out, matches(RegExp(r'^openrouter\s+…$', multiLine: true)));
+        // AC9: credential bytes never render.
+        expect(out, isNot(contains(fakeOpenRouterKey)));
+        expect(out, isNot(contains(fakeAnthropicKey)));
+        expect(out, isNot(contains(fakeDialKey)));
+      },
+    );
   });
 
   group('IT-2 /quota refresh (AC4, E6)', () {
-    test('coalesces with the in-flight peek kick, re-renders per call',
-        () async {
-      final endpoint = FakeOpenRouterQuotaEndpoint()
-        ..delay = const Duration(milliseconds: 80);
-      final fake = FakeStreamFunction([textTurn('ok')]);
-      final cli = quotaCli(
-        env,
-        io,
-        fake.call,
-        quotaHttpClient: endpoint.client(),
-        envVarValue: quotaEnvKeys,
-      );
-
-      final out = await driveQuotaRepl(cli, io, () async {
-        // Cold render starts fetch A (80 ms). The refresh below coalesces
-        // with A instead of hammering a second endpoint hit (E6).
-        io.sendLine('/quota');
-        io.sendLine('/quota refresh');
-        await waitForIt(
-          () =>
-              endpoint.served == 1 &&
-              quotaTableCount(io.out.toString()) >= 2,
-          reason: 'refresh re-render after coalesced fetch',
+    test(
+      'coalesces with the in-flight peek kick, re-renders per call',
+      () async {
+        final endpoint = FakeOpenRouterQuotaEndpoint()
+          ..delay = const Duration(milliseconds: 80);
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = quotaCli(
+          env,
+          io,
+          fake.call,
+          quotaHttpClient: endpoint.client(),
+          envVarValue: quotaEnvKeys,
         );
-        // Fetch A settled: this refresh fetches once more.
-        io.sendLine('/quota refresh');
-        await waitForIt(() => endpoint.served == 2, reason: 'second refresh');
-      });
 
-      expect(endpoint.requests, 2,
-          reason: 'kick+refresh coalesce to ONE hit; 3 renders, 2 hits');
-      expect(quotaTableCount(out), 3, reason: 'one table per command');
-      expect(out, contains(r'$48.20/$150'));
-    });
+        final out = await driveQuotaRepl(cli, io, () async {
+          // Cold render starts fetch A (80 ms). The refresh below coalesces
+          // with A instead of hammering a second endpoint hit (E6).
+          io.sendLine('/quota');
+          io.sendLine('/quota refresh');
+          await waitForIt(
+            () =>
+                endpoint.served == 1 && quotaTableCount(io.out.toString()) >= 2,
+            reason: 'refresh re-render after coalesced fetch',
+          );
+          // Fetch A settled: this refresh fetches once more.
+          io.sendLine('/quota refresh');
+          await waitForIt(() => endpoint.served == 2, reason: 'second refresh');
+        });
+
+        expect(
+          endpoint.requests,
+          2,
+          reason: 'kick+refresh coalesce to ONE hit; 3 renders, 2 hits',
+        );
+        expect(quotaTableCount(out), 3, reason: 'one table per command');
+        expect(out, contains(r'$48.20/$150'));
+      },
+    );
   });
 
   group('IT-3 status badge (AC5, E1)', () {
@@ -320,43 +326,77 @@ void main() {
       expect(out, isNot(contains(fakeOpenRouterKey)));
     });
 
-    test('badge on: cold [OR …] renders non-blocking, then data (AC5, E1)',
-        () async {
-      final endpoint = FakeOpenRouterQuotaEndpoint()
-        ..gate = Completer<void>();
+    test(
+      'badge on: cold [OR …] renders non-blocking, then data (AC5, E1)',
+      () async {
+        final endpoint = FakeOpenRouterQuotaEndpoint()
+          ..gate = Completer<void>();
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = quotaCli(
+          env,
+          io,
+          fake.call,
+          quotaHttpClient: endpoint.client(),
+          envVarValue: quotaEnvKeys,
+          quotaBadge: true,
+        );
+
+        final out = await driveQuotaRepl(cli, io, () async {
+          // The gated endpoint never answers here; the badge must still
+          // render its cold form without blocking (E1).
+          await waitForIt(
+            () => io.out.toString().contains('[OR …]'),
+            reason: 'cold badge rendered while the fetch hangs',
+          );
+          endpoint.gate!.complete();
+          await waitForIt(
+            () => endpoint.served == 1,
+            reason: 'gated response delivered',
+          );
+          // Any next line re-renders the idle prompt with fresh cache.
+          io.sendLine('/stats');
+          await waitForIt(
+            () => io.out.toString().contains('[OR \$48/\$150]'),
+            reason: 'warm badge after re-render',
+          );
+        });
+
+        expect(out, contains('[OR …]'));
+        expect(out, contains('[OR \$48/\$150]'));
+        expect(out, isNot(contains(fakeOpenRouterKey)));
+      },
+    );
+
+    test('badge on: provider without a quota source renders no badge '
+        '(review round 1)', () async {
       final fake = FakeStreamFunction([textTurn('ok')]);
       final cli = quotaCli(
         env,
         io,
         fake.call,
-        quotaHttpClient: endpoint.client(),
+        quotaHttpClient: FakeOpenRouterQuotaEndpoint().client(),
         envVarValue: quotaEnvKeys,
         quotaBadge: true,
+        model: const Model(
+          id: 'claude-sonnet',
+          api: 'anthropic-messages',
+          provider: 'anthropic',
+          baseUrl: 'https://api.anthropic.com',
+          contextWindow: 200000,
+          maxTokens: 8192,
+        ),
       );
 
       final out = await driveQuotaRepl(cli, io, () async {
-        // The gated endpoint never answers here; the badge must still
-        // render its cold form without blocking (E1).
         await waitForIt(
-          () => io.out.toString().contains('[OR …]'),
-          reason: 'cold badge rendered while the fetch hangs',
-        );
-        endpoint.gate!.complete();
-        await waitForIt(
-          () => endpoint.served == 1,
-          reason: 'gated response delivered',
-        );
-        // Any next line re-renders the idle prompt with fresh cache.
-        io.sendLine('/stats');
-        await waitForIt(
-          () => io.out.toString().contains('[OR \$48/\$150]'),
-          reason: 'warm badge after re-render',
+          () => io.out.toString().contains('ctx '),
+          reason: 'status line rendered',
         );
       });
 
-      expect(out, contains('[OR …]'));
-      expect(out, contains('[OR \$48/\$150]'));
-      expect(out, isNot(contains(fakeOpenRouterKey)));
+      // No quota adapter for `anthropic`: a permanent `[AN …]` would be
+      // failure noise — the badge stays silent entirely.
+      expect(out, isNot(contains('[AN')));
     });
   });
 }

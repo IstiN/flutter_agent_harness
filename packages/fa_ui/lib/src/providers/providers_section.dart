@@ -188,6 +188,7 @@ class ProvidersSection extends StatelessWidget {
                 ),
                 trailing: _quotaGauge(
                   providerMarkKeyForBaseUrl(provider.baseUrl),
+                  connected: (registry.keyFor(provider.id) ?? '').isNotEmpty,
                 ),
                 onTap: () => _editCustom(context, registry, provider),
               ),
@@ -237,9 +238,11 @@ class ProvidersSection extends StatelessWidget {
   static const _quotaMarks = {'openrouter', 'codemie', 'dial'};
 
   /// The trailing gauge for a row identified by its provider mark, or null
-  /// when the row has no quota surface (or no store was wired).
-  Widget? _quotaGauge(String mark) =>
-      quotas == null || !_quotaMarks.contains(mark)
+  /// when the row has no quota surface (no store wired, a non-quota mark,
+  /// or no stored connection — an unconnected row would render a doomed
+  /// `unknown (no api key)` forever; review round 1).
+  Widget? _quotaGauge(String mark, {bool connected = true}) =>
+      quotas == null || !_quotaMarks.contains(mark) || !connected
       ? null
       : QuotaGauge(service: quotas!, providerId: mark);
 
@@ -259,7 +262,12 @@ class ProvidersSection extends StatelessWidget {
     }
     for (final provider in registry.providers) {
       final mark = providerMarkKeyForBaseUrl(provider.baseUrl);
-      if (_quotaMarks.contains(mark)) ids.add(mark);
+      // Same connectivity rule the gauge renders under: an unconnected
+      // row would only cache a doomed `unknown (no api key)`.
+      if (_quotaMarks.contains(mark) &&
+          (registry.keyFor(provider.id) ?? '').isNotEmpty) {
+        ids.add(mark);
+      }
     }
     for (final id in ids) {
       await service.refresh(id);
@@ -336,10 +344,7 @@ class ProvidersSection extends StatelessWidget {
                 ],
               ),
             ),
-            if (trailing != null) ...[
-              trailing,
-              const SizedBox(width: 8),
-            ],
+            if (trailing != null) ...[trailing, const SizedBox(width: 8)],
             Icon(
               Icons.chevron_right,
               size: 18,

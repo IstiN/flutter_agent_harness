@@ -90,33 +90,35 @@ void main() {
   });
 
   group('IT-3 hanging fetch never blocks (AC3)', () {
-    test('peek returns null immediately while fetch hangs; stream completes',
-        () async {
-      final gate = Completer<QuotaFetchResult>();
-      final adapter = FakeAdapter(() => gate.future);
-      final service = serviceWith(adapters: {'openrouter': adapter});
+    test(
+      'peek returns null immediately while fetch hangs; stream completes',
+      () async {
+        final gate = Completer<QuotaFetchResult>();
+        final adapter = FakeAdapter(() => gate.future);
+        final service = serviceWith(adapters: {'openrouter': adapter});
 
-      final peeked = service.peek('openrouter');
-      expect(peeked, isNull, reason: 'cold cache renders … without awaiting');
+        final peeked = service.peek('openrouter');
+        expect(peeked, isNull, reason: 'cold cache renders … without awaiting');
 
-      // The chat hot path: a streaming turn completes while the quota fetch
-      // is still hanging.
-      var streamDone = false;
-      Future<void> chatTurn() async {
-        await Future<void>.delayed(Duration.zero);
-        await Future<void>.delayed(Duration.zero);
-        streamDone = true;
-      }
+        // The chat hot path: a streaming turn completes while the quota fetch
+        // is still hanging.
+        var streamDone = false;
+        Future<void> chatTurn() async {
+          await Future<void>.delayed(Duration.zero);
+          await Future<void>.delayed(Duration.zero);
+          streamDone = true;
+        }
 
-      await chatTurn();
-      expect(streamDone, isTrue);
-      expect(gate.isCompleted, isFalse);
+        await chatTurn();
+        expect(streamDone, isTrue);
+        expect(gate.isCompleted, isFalse);
 
-      gate.complete(metered());
-      await pumpEventQueue();
-      final fresh = service.peek('openrouter');
-      expect(fresh!.quota!.limit, 150);
-    });
+        gate.complete(metered());
+        await pumpEventQueue();
+        final fresh = service.peek('openrouter');
+        expect(fresh!.quota!.limit, 150);
+      },
+    );
   });
 
   group('AC7 unmetered and capability-less providers', () {
@@ -175,33 +177,41 @@ void main() {
 
       // Clock passes the reset: entry must be invalidated.
       t = resetAt.add(const Duration(minutes: 1));
-      expect(service2.peek('openrouter'), isNull,
-          reason: 'reset overdue entry dropped');
+      expect(
+        service2.peek('openrouter'),
+        isNull,
+        reason: 'reset overdue entry dropped',
+      );
       await pumpEventQueue();
       expect(gated.calls, 2, reason: 'background refetch kicked');
-      expect(
-        formatQuotaReset(resetAt, t),
-        'reset overdue',
-      );
+      expect(formatQuotaReset(resetAt, t), 'reset overdue');
     });
   });
 
   group('E5 provider removed from config mid-session', () {
     test('retainOnly drops orphan cache entries', () async {
       final orphan = FakeAdapter(() async => metered(used: 150, limit: 150));
-      final service = serviceWith(adapters: {
-        'openrouter': FakeAdapter(() async => metered()),
-        'removed-provider': orphan,
-      });
+      final service = serviceWith(
+        adapters: {
+          'openrouter': FakeAdapter(() async => metered()),
+          'removed-provider': orphan,
+        },
+      );
       await service.quotaFor('openrouter');
       await service.quotaFor('removed-provider');
       expect(service.isDepleted('removed-provider'), isTrue);
 
       service.retainOnly({'openrouter'});
-      expect(service.isDepleted('removed-provider'), isFalse,
-          reason: 'orphan cache entry dropped, cannot steer anything');
-      expect(service.peek('openrouter')!.quota, isNotNull,
-          reason: 'configured provider keeps its entry');
+      expect(
+        service.isDepleted('removed-provider'),
+        isFalse,
+        reason: 'orphan cache entry dropped, cannot steer anything',
+      );
+      expect(
+        service.peek('openrouter')!.quota,
+        isNotNull,
+        reason: 'configured provider keeps its entry',
+      );
     });
   });
 
@@ -219,20 +229,70 @@ void main() {
     });
   });
 
+  group('fetch timeout bounds every adapter (review round 1)', () {
+    test(
+      'a hung endpoint degrades to unknown(timeout), never wedges',
+      () async {
+        // A dedicated service with a tiny bound: the fetch must resolve to a
+        // cached unknown well under the test timeout.
+        final bounded = ProviderQuotaService(
+          adapters: {
+            'openrouter': FakeAdapter(
+              () => Completer<QuotaFetchResult>().future,
+            ),
+          },
+          now: fakeNow,
+          fetchTimeout: const Duration(milliseconds: 30),
+        );
+        final result = await bounded.refresh('openrouter');
+        expect(result.quota, isNull);
+        expect(result.reason, 'timeout');
+        // The failure is cached like any unknown: peek is terminal, no storm.
+        expect(bounded.peek('openrouter')!.reason, 'timeout');
+      },
+    );
+
+    test(
+      'hasSource gates badge surfaces: adapter or unmetered marking',
+      () async {
+        final service = serviceWith(
+          adapters: {'openrouter': FakeAdapter(() async => metered())},
+          unmeteredProviders: {'dial'},
+        );
+        expect(service.hasSource('openrouter'), isTrue);
+        expect(service.hasSource('dial'), isTrue);
+        expect(
+          service.hasSource('anthropic'),
+          isFalse,
+          reason: 'adapter-less providers never badge',
+        );
+      },
+    );
+  });
+
   group('AC8 QuotaFeed depletion signal (soft, resolver-facing)', () {
-    test('isDepleted true only for fresh, exhausted, metered entries', () async {
-      final adapter = FakeAdapter(() async => metered(used: 150, limit: 150));
-      final service = serviceWith(adapters: {'openrouter': adapter});
+    test(
+      'isDepleted true only for fresh, exhausted, metered entries',
+      () async {
+        final adapter = FakeAdapter(() async => metered(used: 150, limit: 150));
+        final service = serviceWith(adapters: {'openrouter': adapter});
 
-      expect(service.isDepleted('openrouter'), isFalse,
-          reason: 'nothing fetched yet');
-      await service.quotaFor('openrouter');
-      expect(service.isDepleted('openrouter'), isTrue);
+        expect(
+          service.isDepleted('openrouter'),
+          isFalse,
+          reason: 'nothing fetched yet',
+        );
+        await service.quotaFor('openrouter');
+        expect(service.isDepleted('openrouter'), isTrue);
 
-      t = t.add(const Duration(minutes: 16));
-      expect(service.isDepleted('openrouter'), isFalse,
-          reason: 'stale entries must not steer the resolver');
-    });
+        t = t.add(const Duration(minutes: 16));
+        expect(
+          service.isDepleted('openrouter'),
+          isFalse,
+          reason: 'stale entries must not steer the resolver',
+        );
+      },
+    );
 
     test('unmetered and unknown providers are never depleted', () async {
       final service = serviceWith(
@@ -245,8 +305,11 @@ void main() {
       );
       expect(service.isDepleted('dial'), isFalse);
       await service.quotaFor('openrouter');
-      expect(service.isDepleted('openrouter'), isFalse,
-          reason: 'unknown is not depleted');
+      expect(
+        service.isDepleted('openrouter'),
+        isFalse,
+        reason: 'unknown is not depleted',
+      );
     });
   });
 

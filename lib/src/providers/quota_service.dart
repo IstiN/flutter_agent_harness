@@ -32,9 +32,10 @@ class ProviderQuotaService implements QuotaFeed {
     Set<String> unmeteredProviders = const {},
     DateTime Function()? now,
     this.ttl = const Duration(minutes: 15),
-  })  : _adapters = Map.of(adapters),
-        _unmetered = Set.of(unmeteredProviders),
-        _now = now ?? _defaultNow;
+    this.fetchTimeout = const Duration(seconds: 5),
+  }) : _adapters = Map.of(adapters),
+       _unmetered = Set.of(unmeteredProviders),
+       _now = now ?? _defaultNow;
 
   static DateTime _defaultNow() => DateTime.now().toUtc();
 
@@ -42,6 +43,11 @@ class ProviderQuotaService implements QuotaFeed {
   final Set<String> _unmetered;
   final DateTime Function() _now;
   final Duration ttl;
+
+  /// Hard bound on every adapter fetch: a hung endpoint degrades to an
+  /// `unknown (timeout)` entry instead of wedging /quota refresh,
+  /// pull-to-refresh, or the background kick (review round 1).
+  final Duration fetchTimeout;
 
   final Map<String, _CacheEntry> _cache = {};
   final Map<String, Future<QuotaFetchResult>> _inFlight = {};
@@ -65,7 +71,8 @@ class ProviderQuotaService implements QuotaFeed {
       return const QuotaFetchResult.unknown('no quota source');
     }
     final entry = _cache[providerId];
-    final fresh = entry != null &&
+    final fresh =
+        entry != null &&
         now.difference(entry.fetchedAt) < ttl &&
         !_isResetOverdue(entry, now);
     if (fresh) return entry.result;
@@ -126,20 +133,28 @@ class ProviderQuotaService implements QuotaFeed {
     final adapter = _adapters[providerId];
     if (adapter == null) return null;
     try {
-      return await adapter.fetch();
+      return await adapter.fetch().timeout(
+        fetchTimeout,
+        onTimeout: () => const QuotaFetchResult.unknown('timeout'),
+      );
     } catch (_) {
       return const QuotaFetchResult.unknown('fetch failed');
     }
   }
 
+  /// True when [providerId] has any quota surface at all — an adapter or
+  /// a static unmetered marking. Badge render paths gate on this so
+  /// adapter-less providers never show a stuck `[XX …]` badge.
+  bool hasSource(String providerId) =>
+      _unmetered.contains(providerId) || _adapters.containsKey(providerId);
+
   void _kick(String providerId) {
-    unawaited(
-      refresh(providerId).catchError((_) => _noSource()),
-    );
+    unawaited(refresh(providerId).catchError((_) => _noSource()));
   }
 
   bool _isResetOverdue(_CacheEntry entry, DateTime now) =>
       entry.result.quota?.isResetOverdue(now) ?? false;
 
-  QuotaFetchResult _noSource() => const QuotaFetchResult.unknown('no quota source');
+  QuotaFetchResult _noSource() =>
+      const QuotaFetchResult.unknown('no quota source');
 }

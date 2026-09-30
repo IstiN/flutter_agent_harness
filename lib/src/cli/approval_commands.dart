@@ -531,7 +531,8 @@ extension ApprovalCommands on AgentCli {
         ? ''
         : '[auto-compacted${_autoFoldCount > 1 ? ' ×$_autoFoldCount' : ''}'
               ' · continuing] · ';
-    var line = '$foldBadge$cwd · ctx $pct% '
+    var line =
+        '$foldBadge$cwd · ctx $pct% '
         '(${_formatTokenCount(contextTokens)}/${_formatTokenCount(window)}) · '
         '${_formatTokenCount(totalTokens)}tok'
         '$costPart · turn ${_usage.turns}$badge · '
@@ -540,13 +541,21 @@ extension ApprovalCommands on AgentCli {
     // OFF (OQ2). Cache-only peek: cold renders `[OR …]` and the peek kick
     // fetches in the background (E1); unmetered renders nothing (silent).
     final providerId = model.provider;
-    if (config.quotaBadge && providerId.isNotEmpty) {
-      final badgeText = formatQuotaBadge(
-        shortName: _quotaBadgeTag(providerId),
-        quota: quotaService.peek(providerId)?.quota,
-        now: DateTime.now().toUtc(),
-      );
-      if (badgeText.isNotEmpty) line += ' $badgeText';
+    if (config.quotaBadge &&
+        providerId.isNotEmpty &&
+        quotaService.hasSource(providerId)) {
+      final result = quotaService.peek(providerId);
+      // Terminal unknowns (dark adapter, rejected auth) render nothing —
+      // the badge carries state, not failure noise; `/quota` shows the
+      // reason (review round 1). Cold (null) still renders `[OR …]`.
+      if (result == null || result.quota != null) {
+        final badgeText = formatQuotaBadge(
+          shortName: _quotaBadgeTag(providerId),
+          quota: result?.quota,
+          now: DateTime.now().toUtc(),
+        );
+        if (badgeText.isNotEmpty) line += ' $badgeText';
+      }
     }
     return line;
   }

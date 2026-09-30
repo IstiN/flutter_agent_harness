@@ -186,10 +186,17 @@ extension SlashCommandDispatch on AgentCli {
     }
     final service = quotaService;
     if (arg == 'refresh') {
-      for (final id in _configuredQuotaProviders) {
-        await service.refresh(id);
-      }
+      // Parallel with per-provider isolation: refresh() never throws — every
+      // failure resolves to a cached `unknown` (E3, one attempt) — so one
+      // dead endpoint can neither stall the others nor wedge the command
+      // (and each fetch is bounded by the service's fetchTimeout).
+      await Future.wait<void>([
+        for (final id in _configuredQuotaProviders) service.refresh(id),
+      ]);
     }
+    // E5: prune entries for providers that left the config since the last
+    // render — the cache never outlives the configuration that seeded it.
+    service.retainOnly(_configuredQuotaProviders.toSet());
     _printQuotaTable(service);
   }
 

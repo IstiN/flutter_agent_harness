@@ -45,10 +45,7 @@ class OpenRouterQuotaAdapter implements QuotaAdapter, QuotaAwareProvider {
     try {
       response = await client.get(
         uri,
-        headers: {
-          'Authorization': 'Bearer $key',
-          'Accept': 'application/json',
-        },
+        headers: {'Authorization': 'Bearer $key', 'Accept': 'application/json'},
       );
     } on http.ClientException catch (e) {
       return QuotaFetchResult.unknown('request failed: ${e.message}');
@@ -66,7 +63,9 @@ class OpenRouterQuotaAdapter implements QuotaAdapter, QuotaAwareProvider {
     }
     final quota = parseOpenRouterKeyQuota(body, now: now());
     if (quota == null) {
-      return const QuotaFetchResult.unknown('invalid response: unexpected shape');
+      return const QuotaFetchResult.unknown(
+        'invalid response: unexpected shape',
+      );
     }
     return QuotaFetchResult.ok(quota);
   }
@@ -88,12 +87,10 @@ ProviderQuota? parseOpenRouterKeyQuota(Object? body, {required DateTime now}) {
   final limit = rawLimit is num ? rawLimit.toDouble() : null;
   // Both keys present but null => an unlimited / uncapped key: a real,
   // valid answer rendering as `unlimited`. Keys absent or non-numeric =>
-  // shape drift, degrade to unknown (E2).
-  final present =
-      data.containsKey('usage') || data.containsKey('limit');
-  final wellTyped =
-      (rawUsage is num? || rawUsage == null) &&
-          (rawLimit is num? || rawLimit == null);
+  // shape drift, degrade to unknown (E2). (`num?` already admits null —
+  // no extra null clause.)
+  final present = data.containsKey('usage') || data.containsKey('limit');
+  final wellTyped = rawUsage is num? && rawLimit is num?;
   if (!present || !wellTyped) return null;
   return ProviderQuota(
     used: usage,

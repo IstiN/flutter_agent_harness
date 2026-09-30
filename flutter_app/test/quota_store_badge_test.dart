@@ -10,7 +10,9 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _FakeAdapter implements QuotaAdapter {
-  QuotaFetchResult next = const QuotaFetchResult.unknown('HTTP 401');
+  _FakeAdapter({this.next = const QuotaFetchResult.unknown('HTTP 401')});
+
+  QuotaFetchResult next;
 
   @override
   Future<QuotaFetchResult> fetch() async => next;
@@ -19,29 +21,60 @@ class _FakeAdapter implements QuotaAdapter {
 void main() {
   const orUrl = 'https://openrouter.ai/api/v1';
 
-  test(r'badge: cold → [OR …], metered → [OR $48/$150], unmetered → none', () async {
-    // Non-quota endpoints never badge.
-    final adapter = _FakeAdapter();
-    final store = QuotaStore.forTest(
-      ProviderQuotaService(adapters: {'openrouter': adapter}),
-    );
-    expect(store.badgeForBaseUrl('https://example.com/v1'), isNull);
+  test(
+    r'badge: cold → [OR …], metered → [OR $48/$150], unmetered → none',
+    () async {
+      // Non-quota endpoints never badge.
+      final adapter = _FakeAdapter();
+      final store = QuotaStore.forTest(
+        ProviderQuotaService(adapters: {'openrouter': adapter}),
+      );
+      expect(store.badgeForBaseUrl('https://example.com/v1'), isNull);
 
-    // Metered: one real fetch, then the remaining string.
-    adapter.next = QuotaFetchResult.ok(ProviderQuota(used: 48.2, limit: 150));
-    await store.service.refresh('openrouter');
-    expect(store.badgeForBaseUrl(orUrl), r'[OR $48/$150]');
+      // Metered: one real fetch, then the remaining string.
+      adapter.next = QuotaFetchResult.ok(ProviderQuota(used: 48.2, limit: 150));
+      await store.service.refresh('openrouter');
+      expect(store.badgeForBaseUrl(orUrl), r'[OR $48/$150]');
 
-    // Cold cache on a fresh store — synchronous ellipsis form.
-    final cold = QuotaStore.forTest(
-      ProviderQuotaService(adapters: {'openrouter': _FakeAdapter()}),
-    );
-    expect(cold.badgeForBaseUrl(orUrl), '[OR …]');
+      // Cold cache on a fresh store — synchronous ellipsis form.
+      final cold = QuotaStore.forTest(
+        ProviderQuotaService(adapters: {'openrouter': _FakeAdapter()}),
+      );
+      expect(cold.badgeForBaseUrl(orUrl), '[OR …]');
 
-    // Unmetered stays silent (no chip).
-    final silent = QuotaStore.forTest(
-      ProviderQuotaService(unmeteredProviders: {'openrouter'}),
-    );
-    expect(silent.badgeForBaseUrl(orUrl), isNull);
-  });
+      // Unmetered stays silent (no chip).
+      final silent = QuotaStore.forTest(
+        ProviderQuotaService(unmeteredProviders: {'openrouter'}),
+      );
+      expect(silent.badgeForBaseUrl(orUrl), isNull);
+
+      // Dark CodeMie adapter (endpoint not pinned, review round 1): a
+      // terminal unknown must never pin a `[CodeMie …]` to the header.
+      const cmUrl = 'https://codemie.lab.example/code-assistant-api/v1';
+      final dark = QuotaStore.forTest(
+        ProviderQuotaService(
+          adapters: {
+            'codemie': _FakeAdapter(
+              next: const QuotaFetchResult.unknown('endpoint not pinned'),
+            ),
+          },
+        ),
+      );
+      await dark.service.refresh('codemie');
+      expect(
+        dark.badgeForBaseUrl(cmUrl),
+        isNull,
+        reason: 'dark adapter renders no header badge',
+      );
+
+      // Adapter-less ids are equally silent (no source, no fetch, no badge).
+      final sourceless = QuotaStore.forTest(
+        ProviderQuotaService(adapters: {
+          'openrouter': _FakeAdapter(),
+        }),
+      );
+      expect(sourceless.badgeForBaseUrl(cmUrl), isNull,
+          reason: 'no codemie adapter: peek is terminal unknown, never cold');
+    },
+  );
 }

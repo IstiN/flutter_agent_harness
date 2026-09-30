@@ -63,7 +63,13 @@ void main() {
       final adapter = _FakeQuotaAdapter(QuotaFetchResult.ok(_meteredQuota()));
       final service = ProviderQuotaService(adapters: {'openrouter': adapter});
       final registry = ProviderRegistry.inMemory();
-      await registry.add(name: 'OpenRouter', baseUrl: orBaseUrl, modelId: 'm');
+      final provider = await registry.add(
+        name: 'OpenRouter',
+        baseUrl: orBaseUrl,
+        modelId: 'm',
+      );
+      // The gauge renders for CONNECTED rows only (review round 1).
+      registry.rememberKey(provider.id, 'k');
 
       await _pumpSection(tester, _section(registry, service));
 
@@ -102,10 +108,17 @@ void main() {
     testWidgets('unknown result renders the reason without crashing', (
       tester,
     ) async {
-      final adapter = _FakeQuotaAdapter(const QuotaFetchResult.unknown('HTTP 401'));
+      final adapter = _FakeQuotaAdapter(
+        const QuotaFetchResult.unknown('HTTP 401'),
+      );
       final service = ProviderQuotaService(adapters: {'openrouter': adapter});
       final registry = ProviderRegistry.inMemory();
-      await registry.add(name: 'OpenRouter', baseUrl: orBaseUrl, modelId: 'm');
+      final provider = await registry.add(
+        name: 'OpenRouter',
+        baseUrl: orBaseUrl,
+        modelId: 'm',
+      );
+      registry.rememberKey(provider.id, 'k');
 
       await _pumpSection(tester, _section(registry, service));
       expect(find.text('…'), findsOneWidget);
@@ -137,13 +150,23 @@ void main() {
       );
       or.release();
       cm.release();
-      final service = ProviderQuotaService(adapters: {
-        'openrouter': or,
-        'codemie': cm,
-      });
+      final service = ProviderQuotaService(
+        adapters: {'openrouter': or, 'codemie': cm},
+      );
       final registry = ProviderRegistry.inMemory();
-      await registry.add(name: 'OpenRouter', baseUrl: orBaseUrl, modelId: 'a');
-      await registry.add(name: 'CodeMie', baseUrl: cmBaseUrl, modelId: 'b');
+      final orProvider = await registry.add(
+        name: 'OpenRouter',
+        baseUrl: orBaseUrl,
+        modelId: 'a',
+      );
+      final cmProvider = await registry.add(
+        name: 'CodeMie',
+        baseUrl: cmBaseUrl,
+        modelId: 'b',
+      );
+      // Connected rows only are gauged and refreshed (review round 1).
+      registry.rememberKey(orProvider.id, 'k');
+      registry.rememberKey(cmProvider.id, 'k');
 
       await _pumpSection(tester, _section(registry, service));
       // The build-time cold peeks already fetched once (released above).
@@ -158,6 +181,29 @@ void main() {
 
       expect(or.calls, 2, reason: 'pull-to-refresh re-fetches openrouter');
       expect(cm.calls, 2, reason: 'pull-to-refresh re-fetches codemie');
+    });
+
+    testWidgets('unconnected custom row renders no gauge and is not '
+        'refreshed (review round 1)', (tester) async {
+      final or = _FakeQuotaAdapter(QuotaFetchResult.ok(_meteredQuota()));
+      final service = ProviderQuotaService(adapters: {'openrouter': or});
+      final registry = ProviderRegistry.inMemory();
+      // No rememberKey: the row exists but has no stored connection.
+      await registry.add(name: 'OpenRouter', baseUrl: orBaseUrl, modelId: 'm');
+
+      await _pumpSection(tester, _section(registry, service));
+      await tester.pumpAndSettle();
+
+      // A doomed `unknown (no api key)` must not render, and the adapter
+      // must never be hit for a row the user has not connected.
+      expect(find.text('…'), findsNothing);
+      expect(find.textContaining('unknown'), findsNothing);
+      expect(or.calls, 0);
+
+      await tester.fling(find.byType(ListView), const Offset(0, 300), 1200);
+      await tester.pump();
+      await tester.pumpAndSettle();
+      expect(or.calls, 0, reason: 'pull-to-refresh skips unconnected rows');
     });
   });
 }

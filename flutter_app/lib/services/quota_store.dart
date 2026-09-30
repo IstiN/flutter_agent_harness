@@ -58,8 +58,18 @@ class QuotaStore extends ChangeNotifier {
   /// The underlying service (gauges and the badge read through it).
   ProviderQuotaService get service => _service;
 
-  /// Boot wiring: the persisted registry backs key resolution.
-  void attachRegistry(ProviderRegistry registry) => _registry = registry;
+  /// Boot wiring: the persisted registry backs key resolution and prunes
+  /// cache entries for providers the registry no longer holds (E5).
+  void attachRegistry(ProviderRegistry registry) {
+    _registry = registry;
+    _service.retainOnly({
+      for (final provider in registry.providers)
+        if (_markToQuotaId.containsKey(
+          providerMarkKeyForBaseUrl(provider.baseUrl),
+        ))
+          _markToQuotaId[providerMarkKeyForBaseUrl(provider.baseUrl)]!,
+    });
+  }
 
   /// The key/cookie stored for the first custom provider on a
   /// quota-marked endpoint — the same registry path the editor writes.
@@ -74,27 +84,30 @@ class QuotaStore extends ChangeNotifier {
     return null;
   }
 
+  /// Endpoint mark -> quota service id (the two quota-marked endpoints).
+  static const _markToQuotaId = {
+    'openrouter': 'openrouter',
+    'codemie': 'codemie',
+  };
+
   /// The header badge for the ACTIVE provider's endpoint: `[OR $48/$150 ·
-  /// 11d]`, `[OR …]` while cold, null when the endpoint has no quota badge
-  /// (unmetered, or not a quota-marked provider).
+  /// 11d]`, `[OR …]` while cold, null when the endpoint has no renderable
+  /// badge — unmetered, not a quota-marked provider, or a terminal unknown
+  /// (the dark CodeMie adapter must never pin a `[CodeMie …]` to the
+  /// header; review round 1).
   String? badgeForBaseUrl(String? baseUrl) {
     final mark = (baseUrl == null || baseUrl.isEmpty)
         ? ''
         : providerMarkKeyForBaseUrl(baseUrl);
-    final String id;
-    final String shortName;
-    if (mark == 'openrouter') {
-      id = 'openrouter';
-      shortName = 'OR';
-    } else if (mark == 'codemie') {
-      id = 'codemie';
-      shortName = 'CodeMie';
-    } else {
-      return null;
-    }
+    final id = _markToQuotaId[mark];
+    if (id == null) return null;
+    final result = _service.peek(id);
+    // Terminal unknown (dark adapter, rejected auth): no badge — the
+    // failure reason lives in the meters, not the compact chrome.
+    if (result != null && result.quota == null) return null;
     final badge = formatQuotaBadge(
-      shortName: shortName,
-      quota: _service.peek(id)?.quota,
+      shortName: id == 'openrouter' ? 'OR' : 'CodeMie',
+      quota: result?.quota,
       now: DateTime.now(),
     );
     return badge.isEmpty ? null : badge;
