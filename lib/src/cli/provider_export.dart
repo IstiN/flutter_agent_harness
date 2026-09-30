@@ -36,6 +36,7 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart' as crypto;
 
 import '../env/execution_env.dart';
+import '../model_roles/provider_catalog.dart' show parseAuthHeaderName;
 import 'agent_cli.dart';
 import 'cli_args.dart';
 import 'custom_providers.dart';
@@ -306,6 +307,7 @@ ExportedProvider _parseProviderEntry(Object? raw) {
       baseUrl: baseUrl,
       modelId: modelId,
       keyName: keyName is String && keyName.isNotEmpty ? keyName : null,
+      authHeader: parseAuthHeaderName(raw['authHeader'], 'exported "$name"'),
     ),
     key: key is String && key.isNotEmpty ? key : null,
   );
@@ -389,6 +391,7 @@ Future<int> _exportProviders(
       'modelId': entry.modelId,
       'authMethod': entry.authMethod.name,
       'keyName': ?entry.keyName,
+      'authHeader': ?entry.authHeader,
       'key': ?key,
     });
   }
