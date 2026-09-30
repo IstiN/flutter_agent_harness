@@ -29,40 +29,42 @@ void main() {
       return started.valueOrNull!;
     }
 
-    test('a runaway job log is bounded, marked once, and keeps a live tail',
-        () async {
-      final shell = MemoryShell();
-      final env = MemoryExecutionEnv(cwd: '/', shell: shell);
-      shell.attach(env);
-      await env.createDir('/.fah/bash_jobs');
+    test(
+      'a runaway job log is bounded, marked once, and keeps a live tail',
+      () async {
+        final shell = MemoryShell();
+        final env = MemoryExecutionEnv(cwd: '/', shell: shell);
+        shell.attach(env);
+        await env.createDir('/.fah/bash_jobs');
 
-      const maxBytes = 8192;
-      const total = 9000; // under the interpreter's runaway guard
-      final words = List.generate(total, (i) => 'w$i').join(' ');
-      final job = await startJob(
-        env,
-        'for w in $words; do echo pad-\$w; done',
-        id: 'ceiling-runaway',
-        options: const ShellExecOptions(jobLogMaxBytes: maxBytes),
-      );
-      await job.settled;
-      expect(job.exitCode, 0);
+        const maxBytes = 8192;
+        const total = 9000; // under the interpreter's runaway guard
+        final words = List.generate(total, (i) => 'w$i').join(' ');
+        final job = await startJob(
+          env,
+          'for w in $words; do echo pad-\$w; done',
+          id: 'ceiling-runaway',
+          options: const ShellExecOptions(jobLogMaxBytes: maxBytes),
+        );
+        await job.settled;
+        expect(job.exitCode, 0);
 
-      final log = (await env.readTextFile(job.logPath)).valueOrNull!;
-      // Bounded: head + marker + rolling tail stays far below the produced
-      // ~90 KB and under the ceiling plus one patch's worth of slack.
-      expect(
-        utf8.encode(log).length,
-        lessThan(maxBytes + jobLogTruncationMarker(1).length * 2),
-      );
-      // Exactly one truncation marker line (patches overwrite it in place).
-      final markers = RegExp('… log truncated: (\\d+) bytes dropped …')
-          .allMatches(log)
-          .toList();
-      expect(markers, hasLength(1));
-      // The tail is live: the job's LAST emitted line survived (E4).
-      expect(log, contains('pad-w${total - 1}'));
-    });
+        final log = (await env.readTextFile(job.logPath)).valueOrNull!;
+        // Bounded: head + marker + rolling tail stays far below the produced
+        // ~90 KB and under the ceiling plus one patch's worth of slack.
+        expect(
+          utf8.encode(log).length,
+          lessThan(maxBytes + jobLogTruncationMarker(1).length * 2),
+        );
+        // Exactly one truncation marker line (patches overwrite it in place).
+        final markers = RegExp(
+          '… log truncated: (\\d+) bytes dropped …',
+        ).allMatches(log).toList();
+        expect(markers, hasLength(1));
+        // The tail is live: the job's LAST emitted line survived (E4).
+        expect(log, contains('pad-w${total - 1}'));
+      },
+    );
 
     test('a job under the ceiling produces byte-identical logs', () async {
       final shell = MemoryShell();
