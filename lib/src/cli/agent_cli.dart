@@ -625,6 +625,12 @@ class AgentCli {
       // lands in fa.log with the session id.
       onRunIdleTimeout: (error) =>
           _logDiagnostic('RUN IDLE WATCHDOG fired sid=$_logSid error=$error'),
+      // Issue #1085 M3: the watchdog PAUSE (mid-run relief compaction) is
+      // a visible dim note, not only a fa.log line — a quiet stretch the
+      // user can now attribute.
+      onRunWatchdogPaused: () => io.writeln(
+        _style.dim('watchdog paused — over-window compaction in progress'),
+      ),
       contextWindowCap: config.contextWindowCap,
       wireDump: config.wireDump,
       // Issue #387: the loop's over-window guard hands the transcript to
@@ -1471,7 +1477,14 @@ class AgentCli {
         // the same flag in its onInterrupt and resets it in its submit
         // finally).
         _abortRequested = true;
-        _agent.abort();
+        _abortRunOrCompaction();
+      } else if (_activeCompactionAbort != null) {
+        // Compaction-ONLY interrupt (issue #1085 round-2 review): a bare
+        // /compact or post-run compaction runs outside the run bracket —
+        // Ctrl+C stops the compaction while the SESSION stays alive. No
+        // run-abort markers here: the sticky abort belt would otherwise
+        // insta-abort the next prompt and kill the REPL.
+        _activeCompactionAbort?.cancel('interrupted by user');
       }
     });
     final taskSub = _taskConfig.jobManager.completions.listen(
@@ -1642,6 +1655,9 @@ class AgentCli {
     // (memory stores initialize lazily; recompose on arrival).
     unawaited(_refreshMemorySection());
   }
+
+  /// The line-mode REPL: banner, restored-session replay, then the
+  /// read-dispatch loop.
 
   /// The `fa --session …` resume line, or null when nothing was persisted.
   /// Separate from [printSessionResumeHint] so non-REPL callers (the SIGINT
@@ -2008,12 +2024,21 @@ class AgentCli {
     // Warm the endpoint metadata (model list, dial features, reported
     // limits) BEFORE the first turn; failures are silent.
     await _warmModelCacheQuietly();
-    // The same pre-flight compaction guard as the REPL's [_runPrompt]:
-    // a resumed session already over the threshold must compact BEFORE
-    // the first request, or it goes out over-window and gets rejected.
-    await _maybeAutoCompact();
+    // The interrupt listener MUST be registered BEFORE the pre-flight
+    // compaction (issue #1085 round-4 review): that window runs with no
+    // run bracket, and a listener registered after it made Ctrl+C there
+    // uncancellable for the whole 15-30 min pass.
     final interruptSub = io.interrupts.listen((_) {
-      if (isBusy) _agent.abort();
+      // Headless has no run bracket for pre-flight (`_runStarting` stays
+      // false): a live run aborts; a bare compaction window (pre-flight,
+      // post-run) is cancelled ALONE (issue #1085 round-2 review) — the
+      // turn then proceeds and fails loudly over-window if it must,
+      // instead of the session dying on a fake abort.
+      if (isBusy) {
+        _abortRunOrCompaction();
+      } else if (_activeCompactionAbort != null) {
+        _activeCompactionAbort?.cancel('interrupted by user');
+      }
     });
     final taskSub = _taskConfig.jobManager.completions.listen(
       _onTaskJobCompleted,
@@ -2039,6 +2064,13 @@ class AgentCli {
     });
     _headlessMode = true;
     try {
+      // The same pre-flight compaction guard as the REPL's [_runPrompt]:
+      // a resumed session already over the threshold must compact BEFORE
+      // the first request, or it goes out over-window and gets rejected.
+      // Inside the guarded section (issue #1085 round-4): a cancel here
+      // surfaces through the same loud error line as any run failure —
+      // the listener above is already live for it.
+      await _maybeAutoCompact();
       if (images.isEmpty) {
         await _agent.prompt(_redactUserText(prompt));
       } else {
@@ -2290,40 +2322,48 @@ class AgentCli {
   /// opens the browser SSO flow to refresh the token automatically. Other
   /// provider errors are printed through [KeyStatusRenderer.errorLine]. An empty assistant
   /// message (no text, no tool calls) is retried once with 'continue'.
-  /// Delivered to the model when the over-window guard stopped a run and
-  /// the post-run compaction freed the window: names what happened and
-  /// how to avoid re-filling the context.
-  static const String _overWindowContinuationNotice =
-      '<system-notice>\n'
-      'The previous run was stopped by the context-window guard: the '
-      'outgoing request exceeded the model window and was NOT sent. The '
-      'transcript was auto-compacted just now (most of it is preserved as '
-      'a summary; the session file keeps the full history). Continue the '
-      'interrupted task from where it stopped. Avoid re-reading whatever '
-      'filled the window (huge tool outputs, whole files) — use targeted '
-      'reads (offset/limit or :A-B selectors) instead.\n'
-      '</system-notice>';
-
-  /// The continuation prompt for an over-window resume, naming what the
-  /// compaction hid — record kinds + turn spans — and how to recover it
-  /// via `compact_expand` (issue #438 AC4). Nothing hidden (classic
-  /// compaction) keeps the fixed notice.
-  Future<String> _overWindowContinuationPrompt() async {
-    final session = _session;
-    final recoverables = session == null
-        ? ''
-        : hiddenRecoverablesSummary(await session.getEntries());
-    if (recoverables.isEmpty) return _overWindowContinuationNotice;
-    return _overWindowContinuationNotice.replaceFirst(
-      '</system-notice>',
-      '$recoverables\n</system-notice>',
-    );
-  }
-
   /// Whether the over-window guard's one-shot auto-continuation was used
   /// for the current user prompt (reset at every non-auto-continue
   /// [_runPrompt] entry).
   bool _overWindowAutoResumed = false;
+
+  /// The user-wired cancellation for the in-flight compaction, if any
+  /// (issue #1085 M3): Ctrl+C during a 15-30 min pre-flight / relief /
+  /// post-run compaction must stop the compaction, not wait it out. Set
+  /// in [_runAutoCompact], cancelled by [_abortRunOrCompaction].
+  CancelTokenSource? _activeCompactionAbort;
+
+  /// Sticky user-abort marker for the compaction windows (issue #1085
+  /// round-1): the compaction engines convert a cancelled summarizer
+  /// into a failed pass (`ok: false`) instead of throwing, so the
+  /// over-window funnel cannot tell "compaction failed" from "the user
+  /// just stopped the task" off the return value alone.
+  /// [_abortRunOrCompaction] sets this; the funnel checks it before every
+  /// attempt and before the exhaustion verdict; [_beginUserPrompt] resets
+  /// it with the fresh turn.
+  bool _runAbortRequested = false;
+
+  /// Every compaction pass that actually STARTED (issue #1085 round-1):
+  /// the over-window funnel's exhaustion verdict names how many passes
+  /// ran — zero is possible (compaction disabled or nothing to
+  /// summarize) and must not read as "N attempts failed".
+  int _compactionPassesStarted = 0;
+
+  /// Empty-reply "continue" nudge budget per LOGICAL turn
+  /// (issue #1085 M2b): auto-continued runs get the nudge like any run,
+  /// but the nudged run cannot nudge again — a degenerate model that
+  /// answers empty settles instead of nudging itself forever.
+  int _emptyReplyNudgesLeft = 1;
+
+  /// Ctrl+C (issue #1085 M3): stop the streaming run AND any in-flight
+  /// compaction. During pre-flight / post-run compaction `_activeRun` is
+  /// null (and during relief the run token alone would not reach the
+  /// summarizer), so the user-wired compaction token carries the abort.
+  void _abortRunOrCompaction() {
+    _runAbortRequested = true;
+    _activeCompactionAbort?.cancel('interrupted by user');
+    _agent.abort();
+  }
 
   /// Auto-compaction folds this run (issue #438 AC3): the status badge
   /// «[auto-compacted · continuing]» shows while the run continues after
@@ -2413,6 +2453,12 @@ class AgentCli {
     // A fresh user text clears the over-window badge: the new run starts
     // clean, and only THIS run's folds may badge it (issue #438 E1).
     _autoFoldCount = 0;
+    // One empty-reply nudge per logical turn (issue #1085 M2b).
+    _emptyReplyNudgesLeft = 1;
+    // The user's explicit stop ends with the turn that was stopped
+    // (issue #1085 round-1): a fresh prompt re-arms the funnel's abort
+    // gate.
+    _runAbortRequested = false;
     // Pre-flight context guard: when the LIVE context already exceeds the
     // compaction threshold, compact BEFORE sending the request — a failed
     // post-run compaction (quota-limited smol role, provider outage) used to
@@ -2443,71 +2489,12 @@ class AgentCli {
 
     // An assistant turn that produced nothing actionable (no text, no tool
     // calls) reads as a hang; nudge the model once with "continue".
-    if (_shouldContinueAfterEmptyReply(lastMessage, isAutoContinue)) {
+    if (_shouldContinueAfterEmptyReply(lastMessage)) {
+      _emptyReplyNudgesLeft--;
       await _runPrompt('continue', isAutoContinue: true);
       return false;
     }
     return true;
-  }
-
-  /// One-shot over-window auto-continuation: on a context-window-exhausted
-  /// stop, persist, auto-compact and — when the window was actually freed —
-  /// resume the interrupted task on its own (ending the run there left
-  /// live agents idle mid-task, a harness hang). `true` = turn consumed.
-  Future<bool> _maybeOverWindowContinue(
-    AssistantMessage lastMessage, {
-    required bool isAutoContinue,
-  }) async {
-    if (isAutoContinue ||
-        _overWindowAutoResumed ||
-        !isContextWindowExhaustedError(lastMessage.errorMessage)) {
-      return false;
-    }
-    _overWindowAutoResumed = true;
-    await _ttsr?.settled;
-    await _persistMessages();
-    if (!await _maybeAutoCompact()) {
-      // Compaction freed nothing droppable: keep the resume budget for the
-      // next user prompt and tell the user the way out (the guard message
-      // itself rendered as a calm note already).
-      _overWindowAutoResumed = false;
-      io.writeln(
-        tuiWarning(
-          'note: could not free the context window — run /compact or '
-          'start a fresh session',
-        ),
-      );
-      return false;
-    }
-    io.writeln(
-      tuiWarning('[context overflowed — auto-compacted; continuing the turn]'),
-    );
-    // Issue #673 AC4: ANY failure inside the continuation machinery (the
-    // recoverables scan over the resident set, the notice build, the
-    // resumed prompt's pre-flight) surfaces as a NAMED error and leaves
-    // the session resumable — never a bare "Null check operator used on a
-    // null value" line killing the turn.
-    try {
-      final prompt = await _overWindowContinuationPrompt();
-      await _runPrompt(prompt, isAutoContinue: true);
-    } on Object catch (error) {
-      _logDiagnostic('over-window continuation failed sid=$_logSid: $error');
-      io.writeln(tuiError('error: compaction continuation failed: $error'));
-    }
-    return true;
-  }
-
-  /// Whether an empty assistant reply should get the one-shot "continue"
-  /// nudge: real prompt, clean stop, nothing actionable.
-  bool _shouldContinueAfterEmptyReply(
-    Message? lastMessage,
-    bool isAutoContinue,
-  ) {
-    return !isAutoContinue &&
-        lastMessage is AssistantMessage &&
-        lastMessage.stopReason != StopReason.error &&
-        lastMessage.stopReason != StopReason.aborted &&
-        _assistantMessageIsEmpty(lastMessage);
   }
 
   /// Handles a CodeMie auth-session expiry if [message] matches one. Returns
@@ -2602,7 +2589,16 @@ class AgentCli {
     await _ttsr?.settled;
     _hubCompletePanels();
     await _persistMessages();
-    await _maybeAutoCompact();
+    try {
+      await _maybeAutoCompact();
+    } on CancelledException {
+      // Abort during the POST-RUN compaction window (issue #1085 round-4
+      // review): the turn has already settled and reported its outcome —
+      // rethrowing here would re-enter error handling and print a
+      // spurious `error: CancelledException` line over a finished turn.
+      // The dim note is the receipt; the next prompt starts clean.
+      io.writeln(_style.dim('compaction interrupted'));
+    }
   }
 
   /// Idle-wake guard: one inbox-triggered run at a time.
