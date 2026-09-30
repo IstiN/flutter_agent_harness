@@ -1,5 +1,4 @@
-// Scratch probe: Ctrl+C during a manual `/compact` (line mode) — does the
-// CancelledException from _runAutoCompact's rethrow kill the REPL loop?
+// Scratch probe v3: prompt first (transcript exists), then /compact + Ctrl+C.
 import 'dart:async';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -7,12 +6,25 @@ import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
 
-AssistantMessageEventStream hangUntilCancelled(
+var calls = 0;
+
+AssistantMessageEventStream stream(
   Model model,
   Context context, {
   CancelToken? cancelToken,
 }) {
+  final n = ++calls;
   final stream = AssistantMessageEventStream();
+  if (n == 1) {
+    // A plain turn — settles fast, leaves a small transcript behind.
+    for (final event in textTurn('done')) {
+      stream.push(event);
+    }
+    stream.end();
+    return stream;
+  }
+  // Every later call: the manual compaction summarizer — hangs until the
+  // cancel token fires.
   stream.push(StartEvent(partial: testAssistant()));
   cancelToken?.onCancel.then((_) {
     stream.push(
@@ -30,57 +42,76 @@ AssistantMessageEventStream hangUntilCancelled(
 }
 
 void main() {
-  test('probe: interrupt during manual /compact', () async {
+  test('probe v3: interrupt during manual /compact after a real turn',
+      timeout: const Timeout(Duration(seconds: 90)), () async {
+    const window32k = Model(
+      id: 'test-model',
+      api: 'test-api',
+      provider: 'test-provider',
+      baseUrl: 'https://example.test',
+      contextWindow: 32768,
+      maxTokens: 4096,
+    );
     final env = MemoryExecutionEnv(cwd: '/work');
     await env.writeFile('/work/.fah/memory/.last_maintenance', '');
-    env.writeFile('big.txt', List.filled(500, 'x' * 45).join('\n'));
     final io = FakeCliIO();
     final cli = AgentCli(
       config: AgentCliConfig(
-        model: const Model(
-          id: 'test-model',
-          api: 'test-api',
-          provider: 'test-provider',
-          baseUrl: 'https://example.test',
-          contextWindow: 32768,
-          maxTokens: 4096,
-        ),
+        model: window32k,
         apiKey: '[REDACTED:Sensitive Value]',
         env: env,
         sessionRoot: '/sessions',
         providerKind: 'openai-completions',
+        skillsAccess: SkillsAccess.granted,
         compactionEngine: CompactionEngine.classic,
       ),
       io: io,
-      streamFunction: hangUntilCancelled,
+      streamFunction: stream,
     );
     final run = cli.run();
 
+    io.sendLine('go');
+    await waitForIt(() => calls >= 1 && !cli.isBusy, reason: 'turn settled');
+    // ignore: avoid_print
+    print('PROBE: turn settled, calls=$calls — sending /compact');
     io.sendLine('/compact');
-    await waitForIt(() => !cli.isBusy, reason: 'manual compaction started');
-    await Future<void>.delayed(const Duration(milliseconds: 100));
+    await waitForIt(() => calls >= 2, reason: 'manual compaction started');
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    // ignore: avoid_print
+    print('PROBE: interrupting now');
     io.interrupt();
 
-    final crash = Completer<Object?>();
+    Object? runError;
+    var runDone = false;
     final done = Completer<void>();
-    run.then((_) => done.complete(), onError: (Object e) {
-      crash.complete(e);
-      done.complete();
-    });
-    await done.future.timeout(const Duration(seconds: 10), onTimeout: () {
+    run.then(
+      (_) {
+        runDone = true;
+        done.complete();
+      },
+      onError: (Object e) {
+        runError = e;
+        runDone = true;
+        done.complete();
+      },
+    );
+    await done.future.timeout(const Duration(seconds: 8), onTimeout: () {
       // ignore: avoid_print
-      print('PROBE: run() still alive after interrupt (no crash)');
+      print('PROBE: run() still alive 8s after interrupt');
       return;
     });
     // ignore: avoid_print
-    print('PROBE: run() completed with error: ${crash.isCompleted}');
-    if (crash.isCompleted) {
+    print('PROBE: runDone=$runDone runError=$runError');
+    // If still alive, is the REPL interactive? Try a second /compact: the
+    // summarizer would go to call 3.
+    if (!runDone) {
+      io.sendLine('/compact');
+      await Future<void>.delayed(const Duration(seconds: 3));
       // ignore: avoid_print
-      print('PROBE: error = ${await crash.future}');
+      print('PROBE: after second /compact, calls=$calls');
     }
+    final out = io.out.toString();
     // ignore: avoid_print
-    print('PROBE: output tail: ${io.out.toString().substring(
-      io.out.toString().length > 600 ? io.out.toString().length - 600 : 0,
-    )}');
+    print('PROBE: output tail: ${out.substring(out.length > 1000 ? out.length - 1000 : 0)}');
   });
 }
