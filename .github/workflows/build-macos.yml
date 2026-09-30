@@ -616,6 +616,17 @@ jobs:
           python3 scripts/size_manifest.py check "${{ steps.package.outputs.zip_name }}" \
             --baseline "scripts/size_budget/fa-macos-${{ steps.package.outputs.baseline_arch }}.tsv" --init-if-missing
 
+      # A self-seeded baseline (e.g. first x86_64 release) lands only in
+      # this job's ephemeral workspace — upload it so it can be fetched
+      # and committed to arm that arch's gate (same as pages.yml).
+      - name: Upload seeded size baselines (#1096 ratchet)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: size-baselines-macos
+          path: scripts/size_budget/*.tsv
+          if-no-files-found: ignore
+
       - name: Package TestFlight PKG (arm64)
         if: matrix.arch == 'arm64'
         id: testflight_pkg

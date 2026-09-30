@@ -15,10 +15,11 @@ Usage:
 `<artifact>` is a zip-family file (.zip/.ipa/.aab — uncompressed entry sizes
 via zipfile) or a directory (tree of file sizes, for the web deploy root).
 
-Manifest format (TSV, path-sorted; TOTAL sorts among the paths — do not
-rely on its position, the parser keys by name):
+Manifest format (TSV; every row is `<bytes>\t<name>`, path-sorted. TOTAL
+is an ordinary row — `<total_bytes>\tTOTAL` — and sorts among the paths;
+do not rely on its position, the parser keys by name):
   <uncompressed_bytes>\t<path>
-  TOTAL\t<total_bytes>
+  <total_bytes>\tTOTAL
 
 Gate semantics (`check`):
   - growth > budget%% on any baseline line or on TOTAL  -> FAIL
