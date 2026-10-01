@@ -34,8 +34,13 @@ YamlMap restoreStep() {
       .whereType<YamlMap>()
       .where((s) => s['name'] == stepName)
       .toList(growable: false);
-  expect(hits, hasLength(1), reason: '$workflowPath must keep exactly one '
-      '"$stepName" step — the lint below guards that step');
+  expect(
+    hits,
+    hasLength(1),
+    reason:
+        '$workflowPath must keep exactly one '
+        '"$stepName" step — the lint below guards that step',
+  );
   return hits.single;
 }
 
@@ -59,33 +64,42 @@ class DownloadLoop {
 
   static DownloadLoop parse(String runText) {
     final lines = runText.split('\n');
-    final headerIndex =
-        lines.indexWhere((l) => RegExp(r'^\s*for\s+\w+\s+in\s+').hasMatch(l));
+    final headerIndex = lines.indexWhere(
+      (l) => RegExp(r'^\s*for\s+\w+\s+in\s+').hasMatch(l),
+    );
     if (headerIndex < 0) {
-      fail('no `for attempt in …` download loop in the "$stepName" step — '
-          'retries must live in an explicit bash loop whose budget the lint '
-          'can check (gh-1149)');
+      fail(
+        'no `for attempt in …` download loop in the "$stepName" step — '
+        'retries must live in an explicit bash loop whose budget the lint '
+        'can check (gh-1149)',
+      );
     }
     final doneIndex = lines.indexWhere((l) => l.trim() == 'done', headerIndex);
-    expect(doneIndex, greaterThan(headerIndex),
-        reason: 'unterminated for loop in the "$stepName" step');
+    expect(
+      doneIndex,
+      greaterThan(headerIndex),
+      reason: 'unterminated for loop in the "$stepName" step',
+    );
     final header = lines[headerIndex];
     final bodyLines = lines.sublist(headerIndex + 1, doneIndex);
-    final items =
-        RegExp(r'in\s+([^#]+)').firstMatch(header)!.group(1)!.trim();
-    final attempts = items.split(RegExp(r'\s+'))
+    final items = RegExp(r'in\s+([^#]+)').firstMatch(header)!.group(1)!.trim();
+    final attempts = items
+        .split(RegExp(r'\s+'))
         .where((w) => w.isNotEmpty && int.tryParse(w) != null)
         .length;
-    expect(attempts, greaterThanOrEqualTo(1),
-        reason: 'download loop `for … in $items` yields no attempts');
+    expect(
+      attempts,
+      greaterThanOrEqualTo(1),
+      reason: 'download loop `for … in $items` yields no attempts',
+    );
 
-    final curlStart = bodyLines
-        .indexWhere((l) => RegExp(r'^\s*(if\s+)?curl\s').hasMatch(l));
+    final curlStart = bodyLines.indexWhere(
+      (l) => RegExp(r'^\s*(if\s+)?curl\s').hasMatch(l),
+    );
     if (curlStart < 0) fail('no curl invocation inside the download loop');
     final cmd = <String>[bodyLines[curlStart]];
     var j = curlStart;
-    while (cmd.last.trimRight().endsWith(r'\') &&
-        j < bodyLines.length - 1) {
+    while (cmd.last.trimRight().endsWith(r'\') && j < bodyLines.length - 1) {
       j++;
       cmd.add(bodyLines[j]);
     }
@@ -113,35 +127,46 @@ class DownloadLoop {
 
 void main() {
   group('build-macos.yml WasmRun restore step budget (gh-1149)', () {
-    test('download retry budget fits inside the step timeout-minutes cap',
-        () {
+    test('download retry budget fits inside the step timeout-minutes cap', () {
       final step = restoreStep();
       final timeoutMinutes = step['timeout-minutes'] as int?;
-      expect(timeoutMinutes, isNotNull,
-          reason: 'the step must carry an explicit timeout — it is the cap '
-              'the download budget is sized against');
+      expect(
+        timeoutMinutes,
+        isNotNull,
+        reason:
+            'the step must carry an explicit timeout — it is the cap '
+            'the download budget is sized against',
+      );
 
       final loop = DownloadLoop.parse(step['run'] as String);
       final maxTime = loop.intFlag(r'--max-time');
-      expect(maxTime, isNotNull,
-          reason: 'curl must pin --max-time explicitly (per-attempt cap)');
-      expect(loop.intFlag(r'--retry'), isNull, reason:
-          'curl --retry must NOT be combined with the bash loop: --retry N '
-          'adds N MORE attempts (an off-by-one that produced gh-1149\'s 975s '
-          'worst case) and its internal retries restart+truncate instead of '
-          'resuming. The loop owns retries — exactly one retry layer.');
+      expect(
+        maxTime,
+        isNotNull,
+        reason: 'curl must pin --max-time explicitly (per-attempt cap)',
+      );
+      expect(
+        loop.intFlag(r'--retry'),
+        isNull,
+        reason:
+            'curl --retry must NOT be combined with the bash loop: --retry N '
+            'adds N MORE attempts (an off-by-one that produced gh-1149\'s 975s '
+            'worst case) and its internal retries restart+truncate instead of '
+            'resuming. The loop owns retries — exactly one retry layer.',
+      );
 
       // Worst case: every loop attempt burns its full --max-time, plus the
       // inter-attempt sleeps. 3 × 240s + 2 × 5s = 730s, leaving ~170s of
       // the 900s cap for connect + unzip + slack.
-      final worstCaseSeconds = loop.attempts * maxTime! +
-          (loop.attempts - 1) * loop.sleepSeconds;
+      final worstCaseSeconds =
+          loop.attempts * maxTime! + (loop.attempts - 1) * loop.sleepSeconds;
       const reserveSeconds = 60; // one connect timeout + unzip + slack
       final budgetSeconds = timeoutMinutes! * 60;
       expect(
         worstCaseSeconds + reserveSeconds,
         lessThanOrEqualTo(budgetSeconds),
-        reason: 'download worst case $worstCaseSeconds s (${loop.attempts} '
+        reason:
+            'download worst case $worstCaseSeconds s (${loop.attempts} '
             'attempts × ${maxTime}s + sleeps) + $reserveSeconds s '
             'connect/unzip reserve must fit the ${timeoutMinutes}m step cap '
             '($budgetSeconds s) — gh-1149 timed out at 15m because '
@@ -151,32 +176,40 @@ void main() {
 
     test('each download attempt resumes the partial zip (-C -)', () {
       final loop = DownloadLoop.parse(restoreStep()['run'] as String);
-      final resumable =
-          RegExp(r'(^|\s)-C\s+-($|\s)|--continue-at\s+-($|\s)')
-              .hasMatch(loop.curl);
-      expect(resumable, isTrue, reason:
-          'each attempt must RESUME the partial zip from its byte offset '
-          '(GitHub release assets serve Range requests). Without -C - every '
-          '--max-time-capped attempt restarts from byte 0: at the observed '
-          '~300 KB/s the 92.7 MB asset needs ~309 s, which no 240 s attempt '
-          'can deliver — the download could never succeed regardless of the '
-          'retry count (gh-1149)');
-    });
-
-    test('the download starts from a fresh /tmp zip (deterministic -C - seed)',
-        () {
-      final run = restoreStep()['run'] as String;
-      final loopStart = run.indexOf(RegExp(r'^\s*for\s+\w+\s+in\s+',
-          multiLine: true));
-      expect(loopStart, greaterThan(0));
-      final beforeLoop = run.substring(0, loopStart);
+      final resumable = RegExp(
+        r'(^|\s)-C\s+-($|\s)|--continue-at\s+-($|\s)',
+      ).hasMatch(loop.curl);
       expect(
-        beforeLoop,
-        contains('rm -f /tmp/WasmRun.xcframework.zip'),
-        reason: 'a stale /tmp zip from a previous run must never seed -C - '
-            'with an unknown byte offset — rm -f it before the loop so only '
-            'THIS step\'s own partial bytes are resumed',
+        resumable,
+        isTrue,
+        reason:
+            'each attempt must RESUME the partial zip from its byte offset '
+            '(GitHub release assets serve Range requests). Without -C - every '
+            '--max-time-capped attempt restarts from byte 0: at the observed '
+            '~300 KB/s the 92.7 MB asset needs ~309 s, which no 240 s attempt '
+            'can deliver — the download could never succeed regardless of the '
+            'retry count (gh-1149)',
       );
     });
+
+    test(
+      'the download starts from a fresh /tmp zip (deterministic -C - seed)',
+      () {
+        final run = restoreStep()['run'] as String;
+        final loopStart = run.indexOf(
+          RegExp(r'^\s*for\s+\w+\s+in\s+', multiLine: true),
+        );
+        expect(loopStart, greaterThan(0));
+        final beforeLoop = run.substring(0, loopStart);
+        expect(
+          beforeLoop,
+          contains('rm -f /tmp/WasmRun.xcframework.zip'),
+          reason:
+              'a stale /tmp zip from a previous run must never seed -C - '
+              'with an unknown byte offset — rm -f it before the loop so only '
+              'THIS step\'s own partial bytes are resumed',
+        );
+      },
+    );
   });
 }
