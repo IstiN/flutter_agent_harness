@@ -17,8 +17,17 @@ made-up price). The table gains per-split tokens/cost columns next to the
 resolution rate; a spend line carries the overall totals.
 
 Jobs named fa-4.0-<env>-gpu-<shard> count as the GPU split; everything
-else is CPU (bench-4.0.yml names jobs fa-4.0-<env>-<kind>-<shard>; the
-legacy fa-4.0-{docker,modal}-<shard> names map modal -> GPU).
+else is CPU (bench-harbor.yml names jobs fa-<family>-<env>-<kind>-<shard>;
+the legacy fa-4.0-{docker,modal}-<shard> names map modal -> GPU).
+
+--family (issue #1124) keys the report to one Terminal-Bench dataset
+family: job dirs from OTHER families are ignored — merged artifacts from
+different dataset versions never cross-contaminate a report — and the
+report ends in a paste-ready row for the per-version results ledger in
+docs/bench.md (dataset, model, fa commit, date, resolution, cost, run —
+cost from the same pricing.json accounting, n/a when unpriced). Without
+--family the legacy behaviour applies (all job dirs; title pinned to 4.0;
+no ledger block).
 
 A trial is resolved when every verifier reward is 1.0; the resolution rate
 is resolved trials / attempted trials. harbor exits 0 even with unresolved
@@ -32,6 +41,7 @@ import glob
 import json
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -58,9 +68,15 @@ def _trial_rows(job_dir: Path) -> list[dict]:
     return rows
 
 
-def render(splits: dict, expected=None):
-    """Build the summary (lines, problems) — pure, testable."""
-    lines = ["### fa on Terminal-Bench 4.0", ""]
+def render(splits: dict, expected=None, title=None, ledger=None):
+    """Build the summary (lines, problems) — pure, testable.
+
+    title: report heading (family mode, issue #1124); defaults to the
+    legacy 4.0 heading. ledger: dict(dataset=, model=, fa_ref=, run_url=)
+    — when set, a paste-ready per-version results-ledger row is appended
+    with the real cost totals computed below (issue #1124 + #1123).
+    """
+    lines = [title or "### fa on Terminal-Bench 4.0", ""]
     problems: list[str] = []
     has_jobs = any(rows for rows in splits.values())
 
@@ -134,17 +150,41 @@ def render(splits: dict, expected=None):
             " (lost or timed-out shard).**"
         )
         problems.append(f"only {total_rows}/{expected} expected trials attempted")
+
+    if ledger:
+        rate = f"{total_resolved / total_rows:.1%}" if total_rows else "no trials"
+        cost_cell = f"${sum(costs):.4f}" if costs else "n/a"
+        date = datetime.now(timezone.utc).date().isoformat()
+        lines += [
+            "",
+            "### Ledger row — append to docs/bench.md (rows are append-only)",
+            "",
+            "| dataset | model | fa | date | resolution | cost | run |",
+            "|---|---|---|---|---|---|---|",
+            f"| {ledger['dataset']} | {ledger['model']} | {ledger['fa_ref']} | {date} |"
+            f" {total_resolved}/{total_rows} trials ({rate}) | {cost_cell} |"
+            f" {ledger['run_url']} |",
+        ]
     return lines, problems
 
 
-def main() -> int:
+def main(argv=None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("jobs_dir", type=Path)
     parser.add_argument("--expected-trials", type=int, default=None)
-    args = parser.parse_args()
+    parser.add_argument("--family", default=None)
+    parser.add_argument("--model", default=None)
+    parser.add_argument("--fa-ref", dest="fa_ref", default=None)
+    parser.add_argument("--run-url", dest="run_url", default=None)
+    args = parser.parse_args(argv)
+
+    # Issue #1124: key the report to one dataset family — ignore job dirs
+    # from other families so merged artifacts never cross-contaminate.
+    job_dirs = [d for d in sorted(args.jobs_dir.glob("*")) if d.is_dir()]
+    if args.family:
+        job_dirs = [d for d in job_dirs if d.name.startswith(f"fa-{args.family}-")]
 
     splits: dict[str, list[dict]] = {"cpu": [], "gpu": []}
-    job_dirs = [d for d in sorted(args.jobs_dir.glob("*")) if d.is_dir()]
     for job_dir in job_dirs:
         name = job_dir.name
         if "-gpu-" in name:
@@ -156,7 +196,33 @@ def main() -> int:
             split = "gpu" if "modal" in name else "cpu"
         splits[split].extend(_trial_rows(job_dir))
 
-    lines, problems = render(splits, args.expected_trials)
+    # Lazy: only the family path needs the manifest, and importlib-based
+    # test harnesses load this module without the dir on sys.path.
+    title = ledger = None
+    if args.family:
+        import families
+
+        if args.family not in families.FAMILIES:
+            # Defense in depth: the workflow resolves the dataset via
+            # families.py before dispatch, but a direct summary call must
+            # not silently render a mis-keyed report.
+            print(
+                f"::error::unknown Terminal-Bench family '{args.family}' —"
+                f" resolve the dataset id first (families.py resolve);"
+                f" known: {', '.join(sorted(families.FAMILIES))}",
+                file=sys.stderr,
+            )
+            return 2
+
+        title = f"### fa on Terminal-Bench {args.family} ({families.FAMILIES[args.family]})"
+        ledger = {
+            "dataset": families.FAMILIES[args.family],
+            "model": args.model or "—",
+            "fa_ref": args.fa_ref or "—",
+            "run_url": args.run_url or "—",
+        }
+
+    lines, problems = render(splits, args.expected_trials, title=title, ledger=ledger)
 
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
