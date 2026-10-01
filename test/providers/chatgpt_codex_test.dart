@@ -1008,12 +1008,21 @@ void main() {
             isNull,
             reason: 'corpus case $name must convert grammar-valid',
           );
-          // Idempotence (E5): re-converting the converted shapes — e.g.
-          // codex → another provider → codex — drifts nowhere.
+          // Idempotence (E5): a provider switch does NOT keep the typed
+          // objects in memory — every record round-trips the session JSONL
+          // (toJson → messageFromJson) before the codex wire sees it
+          // again. Re-converting that round-tripped history must produce
+          // byte-identical items, so no signature/field the converter
+          // reads can silently drift across the switch.
+          final roundTripped = [
+            for (final message in messages)
+              messageFromJson(message.toJson()),
+          ];
           expect(
-            responsesInputItems(messages),
+            responsesInputItems(roundTripped),
             input,
-            reason: 'corpus case $name must convert deterministically',
+            reason: 'corpus case $name must survive a switch round-trip '
+                'without conversion drift',
           );
         });
       },

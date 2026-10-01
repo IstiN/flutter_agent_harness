@@ -420,6 +420,7 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     List<SessionRecord> entries,
     String? leafId, {
     int quarantined = 0,
+    int healedLeafEntries = 0,
     this._ioRetry = const SessionIoRetryConfig(),
     String? headerLine,
     int nextPartSeq = 1,
@@ -436,6 +437,9 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
        _quarantinedEntries = quarantined {
     _headerLine = headerLine;
     _header = header;
+    // Assigned in the body: the lint prefers an initializing formal, which
+    // a private named parameter cannot be.
+    _healedLeafEntries = healedLeafEntries;
     for (final entry in entries) {
       updateSessionLabelCache(_labelsById, entry);
     }
@@ -479,6 +483,15 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
   /// suspended (fail closed — a blind sequence could overwrite an
   /// existing part); the plain append + hard cap still run.
   final bool _rotationSuspended;
+
+  /// Whether the last [open] healed a dangling tracked leaf to the newest
+  /// surviving record (quarantine had dropped the leaf's record — issue
+  /// #858; surfaced like [quarantinedEntries] instead of failing the
+  /// resume silently).
+  // Set once by [JsonlSessionStorage._] from the open-time heal; mutable
+  // only because a private named initializing formal is not expressible.
+  int _healedLeafEntries = 0;
+  int get healedLeafEntries => _healedLeafEntries;
 
   /// Milliseconds the last [open] spent inside the file lock (read +
   /// parse + rebuild); the wrapper logs `lock_wait = total - inner`.
@@ -647,9 +660,13 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     // A quarantined record can leave the tracked leaf dangling — either a
     // torn leaf record itself or a LeafRecord whose target dropped
     // (issue #858). Heal to the newest surviving record: the resume walk
-    // must never start from an id the tree cannot resolve.
+    // must never start from an id the tree cannot resolve. The heal is
+    // surfaced through [JsonlSessionStorage.healedLeafEntries] the same
+    // way quarantine reports through [JsonlSessionStorage.quarantinedEntries].
+    var healedLeafEntries = 0;
     if (leafId != null && !entries.any((entry) => entry.id == leafId)) {
       leafId = entries.isEmpty ? null : entries.last.id;
+      healedLeafEntries = leafId == null ? 0 : 1;
     }
     phaseSw
       ..reset()
@@ -661,6 +678,7 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       entries,
       leafId,
       quarantined: quarantined,
+      healedLeafEntries: healedLeafEntries,
       ioRetry: ioRetry,
       headerLine: headerLine,
       nextPartSeq: (listed?.maxSeq ?? 0) + 1,
@@ -1257,6 +1275,10 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     }
     while (current != null) {
       path.add(current);
+      // An adversarial file can carry a parentId cycle (a→b→a); a
+      // legitimate root path can never exceed the record count, so stop
+      // there instead of spinning (issue #858 round-1 review).
+      if (path.length > _entries.length) break;
       final parentId = current.parentId;
       if (parentId == null) break;
       final parent = _byId[parentId];

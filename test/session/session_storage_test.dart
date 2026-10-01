@@ -1229,12 +1229,42 @@ void main() {
 
       final reopened = await JsonlSessionStorage.open(fs, path);
       expect(reopened.quarantinedEntries, 1);
+      // The heal is surfaced, not silent — same convention as quarantine.
+      expect(reopened.healedLeafEntries, 1);
       // The tracked leaf dangled ('rp' quarantined); load healed it to the
       // newest surviving record — the LeafRecord itself.
       expect(await reopened.getLeafId(), 'L1');
       final session = Session(reopened);
       final messages = await session.buildContextMessages();
       expect(messages, hasLength(1));
+    });
+
+    test('a parentId cycle terminates the walk instead of spinning',
+        () async {
+      final storage = await createStorage();
+      // An adversarial/foreign-authored file can carry a cycle; appendEntry
+      // does not validate tree shape, so it is reachable through the API.
+      await storage.appendEntry(
+        MessageRecord(
+          id: 'a',
+          parentId: 'b',
+          timestamp: DateTime.utc(2026),
+          message: UserMessage.text('a'),
+        ),
+      );
+      await storage.appendEntry(
+        MessageRecord(
+          id: 'b',
+          parentId: 'a',
+          timestamp: DateTime.utc(2026),
+          message: UserMessage.text('b'),
+        ),
+      );
+
+      final reopened = await JsonlSessionStorage.open(fs, path);
+      // Terminates bounded by the record count; never spins, never throws.
+      final walked = await reopened.getPathToRoot('a');
+      expect(walked.length, lessThanOrEqualTo(3));
     });
 
     test(
