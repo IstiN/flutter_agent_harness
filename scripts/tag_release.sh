@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Cut the annotated tag + GitHub Release for the release bump that just merged
-# via PR (see auto_release.sh). Runs on the merged 'chore(release):' push to
-# main — the `release-tag` job in ci.yml. Idempotent: an existing tag is a
-# no-op. The tag is pushed with the checkout token (RELEASE_PAT) because
-# GITHUB_TOKEN pushes never trigger the tag-scoped binaries/publish jobs.
+# Cut the annotated tag + GitHub Release for the release bump that just landed
+# on main (see auto_release.sh). Runs on the 'chore(release):' push to main —
+# the `release-tag` job in ci.yml. Idempotent: an existing tag is a no-op.
+# The tag is pushed with the fa-release-bot App token (checkout token,
+# gh-1172) because GITHUB_TOKEN pushes never trigger the tag-scoped
+# binaries/publish jobs.
 set -euo pipefail
 
 git config user.name "github-actions[bot]"

@@ -1,25 +1,37 @@
 #!/usr/bin/env bash
-# Auto-release: bump the patch version, update CHANGELOG.md, open the release PR.
+# Auto-release: bump the patch version, update CHANGELOG.md, push straight to
+# protected main as the fa-release-bot GitHub App (gh-1172).
 #
-# Runs in CI on every push to main / the 2h catch-up cron (the `release` job in
-# .github/workflows/ci.yml). Protected main rejects the bot's direct bump push
-# ("3 of 3 required status checks are expected" — enforce_admins + strict since
-# 2026-09-29), so the bump lands as a PR the machine reviews, validates and
-# merges. The tag + GitHub Release are cut from the merged 'chore(release):'
-# commit by scripts/tag_release.sh (the `release-tag` job) — a tag push with the
-# RELEASE_PAT still fires the tag-scoped binaries/publish jobs.
+# Runs in CI on every push to main / the 2h catch-up cron / manual dispatch
+# (the `release` job in .github/workflows/ci.yml). The job authenticates via
+# actions/create-github-app-token (RELEASE_APP_ID + RELEASE_APP_PRIVATE_KEY);
+# the App is the ONLY bypass actor on the main ruleset, so the bump commit
+# pushes directly — no release PR, no machine review round-trip, no CI queue
+# burn on a chore change. The tag + GitHub Release are still cut from the
+# pushed 'chore(release):' commit by scripts/tag_release.sh (the `release-tag`
+# job), riding the same App token so the tag-scoped binaries/publish jobs fire.
+#
+# Dry-run: RELEASE_DRY_RUN=1 (or "true") computes and commits the bump locally,
+# logs the exact commit + tag that WOULD land, and skips the push.
 #
 # Changelog rules:
 # - a curated `## Unreleased` section becomes the new version's notes;
 # - otherwise notes are generated from commit subjects since the last tag;
-# - a fresh empty `## Unreleased` is appended at the end.
+# - a fresh empty `## Unreleased` is appended at the end (once — repeated runs
+#   must not stack duplicates).
 #
-# Idempotent: an open release PR whose branch tree already matches the computed
-# bump is left alone (the 2h cron and racing pushes re-run this harmlessly).
+# Main-race honesty (E1): the push is fast-forward-only; a main that moved
+# during the run rejects it and the retry loop re-computes from the fresh
+# origin/main — never a blind push over new commits.
 set -euo pipefail
 
-git config user.name "github-actions[bot]"
-git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+# Commit authorship names the App so release commits are attributable in
+# history (auditability contract, gh-1172).
+git config user.name "fa-release-bot[bot]"
+git config user.email "fa-release-bot[bot]@users.noreply.github.com"
+
+dry_run=0
+case "${RELEASE_DRY_RUN:-0}" in 1|true|yes) dry_run=1 ;; esac
 
 # Coalescing guards: pub.dev rate-limits publishes (~12/day), so releases are
 # capped at one per 2h; runs with nothing new since the last tag are skipped.
@@ -38,40 +50,22 @@ if [ -n "$last_tag" ]; then
   fi
 fi
 
-# One release PR at a time; and if the previous bump merged but its tag hasn't
-# been cut yet (release-tag job is still running its quality gate), wait —
-# tagging the next bump before the previous one would mis-tag the range.
-# Keyed on the PUBSPEC VERSION, not the head commit subject: a missed
-# release-tag run must not wedge auto-release forever (any interleaved or
-# non-squash merge changes the subject but not the version), so after 1h the
-# guard lets a fresh bump absorb the untagged one instead of blocking.
-open_release_prs=$(gh pr list --state open --json headRefName \
-  --jq '[.[].headRefName | select(startswith("chore/release-v"))] | length' 2>/dev/null || echo 0)
-if [ "${open_release_prs:-0}" -ge 1 ]; then
-  echo "Auto-release: an open release PR is already queued for the machine — skipping."
-  exit 0
-fi
+# If the previous bump pushed but its tag hasn't been cut yet (the release-tag
+# job is still running its quality gate), wait — tagging the next bump before
+# the previous one would mis-tag the range. Keyed on the PUBSPEC VERSION, not
+# the head commit subject: a missed release-tag run must not wedge auto-release
+# forever, so after 1h the guard lets a fresh bump absorb the untagged one
+# instead of blocking.
 head_version=$(git show origin/main:pubspec.yaml | sed -n 's/^version: //p')
 if [ -n "$head_version" ] && ! git rev-parse -q --verify "refs/tags/v$head_version^{commit}" >/dev/null 2>&1; then
   head_age=$(( $(date +%s) - $(git log -1 --format=%ct origin/main) ))
   if [ "$head_age" -lt 3600 ]; then
-    echo "Auto-release: v$head_version merged but untagged (release-tag job pending, ${head_age}s old) — skipping."
+    echo "Auto-release: v$head_version pushed but untagged (release-tag job pending, ${head_age}s old) — skipping."
     exit 0
   fi
-  echo "Auto-release: v$head_version merged but untagged for ${head_age}s — release-tag likely wedged; proceeding so the next range absorbs it."
+  echo "Auto-release: v$head_version pushed but untagged for ${head_age}s — release-tag likely wedged; proceeding so the next range absorbs it."
 fi
 
-# chore:pin marks machine-created release PRs (gh-1134). Labeling is hygiene:
-# the label self-heals per repo convention (cf. daily_publish_report.sh) and a
-# PR must never block on it — if even the create fails, warn and ship unlabeled.
-release_label="chore:pin"
-label_args=()
-gh label create "$release_label" >/dev/null 2>&1 || true
-if gh label view "$release_label" >/dev/null 2>&1; then
-  label_args=(--label "$release_label")
-else
-  echo "Auto-release: WARNING: label '$release_label' missing from repo (create failed) — release PRs will ship without it." >&2
-fi
 
 for attempt in 1 2 3; do
   git fetch origin main
@@ -122,7 +116,11 @@ if m:
 else:
     text = text.rstrip() + "\n\n" + section
 
-text = text.rstrip() + "\n\n## Unreleased\n"
+text = text.rstrip() + "\n"
+# Append a fresh empty Unreleased exactly once — repeated runs (or a rerun
+# after a raced push) must not stack duplicate sections.
+if not re.search(r"^## Unreleased[ \t]*$", text, re.M):
+    text += "\n## Unreleased\n"
 open(path, "w", encoding="utf-8").write(text)
 PY
 
@@ -134,59 +132,21 @@ PY
 
   git add pubspec.yaml flutter_app/pubspec.yaml CHANGELOG.md
   git commit -m "chore(release): v$next"
-  branch="chore/release-v$next"
 
-  # Rejection memory: if the machine already CLOSED a release PR for exactly
-  # this bump and the tag still doesn't exist, stop — re-creating the same
-  # PR every 2h forever just burns review cycles on a rejection the machine
-  # already voiced. Resurrecting the release is a human decision.
-  rejected=$(gh pr list --head "$branch" --state closed --json number --jq 'length' 2>/dev/null || echo 0)
-  if [ "${rejected:-0}" -ge 1 ] && ! git rev-parse -q --verify "refs/tags/v$next^{commit}" >/dev/null 2>&1; then
-    echo "Auto-release: a release PR for $branch was already closed (machine rejection) and v$next is untagged — skipping; human decision required."
+  if [ "$dry_run" -eq 1 ]; then
+    echo "Auto-release DRY-RUN: would push to main: $(git rev-parse --short HEAD) 'chore(release): v$next'"
+    echo "Auto-release DRY-RUN: release-tag job would then cut annotated tag v$next + GitHub Release."
     exit 0
   fi
 
-  # Idempotency: if the release branch already carries exactly this tree and
-  # its PR is open, leave it alone (the cron would otherwise rewrite the head
-  # every run and re-trigger validation + review each time).
-  tree_now=$(git rev-parse HEAD^{tree})
-  tree_branch=$(git ls-remote origin "refs/heads/$branch" | awk '{print $1}')
-  if [ -n "$tree_branch" ]; then
-    git fetch -q origin "$branch"
-    tree_branch=$(git rev-parse "FETCH_HEAD^{tree}" 2>/dev/null || echo none)
-  fi
-  if [ "$tree_branch" = "$tree_now" ]; then
-    open_pr=$(gh pr list --head "$branch" --state open --json number --jq 'length' 2>/dev/null || echo 0)
-    if [ "${open_pr:-0}" -ge 1 ]; then
-      echo "Auto-release: PR for $branch already open with identical content — nothing to do."
-      exit 0
-    fi
-  fi
-
-  if git push --force origin "HEAD:refs/heads/$branch"; then
-    open_pr=$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty' 2>/dev/null || true)
-    if [ -n "$open_pr" ]; then
-      echo "Auto-release: $branch refreshed; open PR #$open_pr now carries v$next."
-      # Self-heal label-less PRs from before gh-1134: adding an already-present
-      # label is a server-side no-op, so this stays idempotent (AC3).
-      if ! gh pr edit "$open_pr" --add-label "$release_label" >/dev/null 2>&1; then
-        echo "Auto-release: WARNING: could not add '$release_label' to PR #$open_pr — the PR itself is unaffected." >&2
-      fi
-    else
-      gh pr create --base main --head "$branch" \
-        ${label_args[@]+"${label_args[@]}"} \
-        --title "chore(release): v$next" \
-        --body "Automated patch release **v$next**.
-
-- \`pubspec.yaml\` + \`flutter_app/pubspec.yaml\` bumped to \`$next\`
-- \`CHANGELOG.md\`: new \`## $next\` section (curated \`## Unreleased\` notes or generated bullets)
-
-Protected main no longer accepts direct release pushes (enforce_admins + strict, 2026-09-29), so the bump rides the machine: review → validate → merge. The \`release-tag\` job cuts the annotated tag + GitHub Release from the merged commit — the tag is pushed with RELEASE_PAT so the tag-scoped binaries/publish jobs still fire."
-      echo "Auto-release: PR for v$next opened."
-    fi
+  # Direct push to protected main as the bypass-listed App. Fast-forward only:
+  # a main that moved since `reset --hard` rejects the push and the loop
+  # re-computes the bump on the fresh head (E1 — never push over new commits).
+  if git push origin HEAD:main; then
+    echo "Auto-release: pushed chore(release): v$next to main; release-tag job cuts v$next next."
     exit 0
   fi
-  echo "Branch push raced, retrying..."
+  echo "Main push raced, retrying..."
 done
 
 echo "Auto-release failed after 3 attempts"
