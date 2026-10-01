@@ -34,26 +34,12 @@ extension FaTuiPaste on FaTuiModel {
       final reason = read is PasteboardUnavailable
           ? read.reason
           : 'clipboard read failed';
-      return (
-        copyWith(
-          outputLines: FaTuiModel._appendOutput(
-            outputLines,
-            _dim(reason),
-            true,
-          ),
-        ),
-        null,
-      );
+      return (_appendServiceLine(_dim(reason)), null);
     }
     final error = pasteImageError(read.bytes);
     if (error != null) {
       if (msg.silentFailure) return (this, null);
-      return (
-        copyWith(
-          outputLines: FaTuiModel._appendOutput(outputLines, _dim(error), true),
-        ),
-        null,
-      );
+      return (_appendServiceLine(_dim(error)), null);
     }
     final mime = sniffImageMime(read.bytes)!;
     final attachment = TuiImageAttachment(
@@ -102,16 +88,7 @@ extension FaTuiPaste on FaTuiModel {
     if (msg.key != 'ctrl+v') return null;
     final reader = callbacks.readClipboardImage;
     if (reader == null) {
-      return (
-        copyWith(
-          outputLines: FaTuiModel._appendOutput(
-            outputLines,
-            _dim(clipboardUnavailableHint),
-            true,
-          ),
-        ),
-        null,
-      );
+      return (_appendServiceLine(_dim(clipboardUnavailableHint)), null);
     }
     return _firePasteboardProbe(reader, silentFailure: false);
   }
