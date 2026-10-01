@@ -1,23 +1,10 @@
-# SM kicker — thin stub over the dmtools-agents factory (reusable pack).
-#
-# ALL logic lives in IstiN/dmtools-agents/.github/workflows/factory-sm-kicker.yml
-# (this repo carries only triggers + concurrency + this call — no logic to drift).
-# Ported from the previous local copy (fa history: two-job watchdog,
-# #911 concurrency diagnosis).
-#
-# Why it exists: this repo's CI is dispatch-only (ci.yml `on.push` fires
-# nothing on PR heads) and the Machine SM is the sole trigger:
-#   1. sm-liveness — SM idle → dispatch one tick;
-#   2. head-completeness — codeless merge heads (2 parents, 0 files) with
-#      zero required contexts get a CI dispatch (strict up-to-date).
-#
-# Pinned to the immutable dmtools-agents main @a5e377d (dryRun=false + inline github.token) — ships the kicker
-# together with the #577-#584 loop fixes (lockstep with machine-sm /
-# machine-merge / ai-teammate stubs' pin wave).
-
+# SM kicker — thin stub over the canonical watchdog in the factory home.
+# All logic (sm-liveness + head-completeness) lives in
+# IstiN/dmtools-agentic-workflows/.github/workflows/factory-sm-kicker.yml;
+# defaults below match this repo (ci.yml, three required contexts).
 name: SM kicker
 
-run-name: 🥁 kicker ${{ github.event_name }} ${{ github.ref_name }}
+run-name: '🥁 kicker ${{ github.event_name }} ${{ github.ref_name }}'
 
 on:
   push:
@@ -27,26 +14,16 @@ on:
   workflow_dispatch:
 
 permissions:
-  actions: write        # workflow_dispatch: machine-sm.yml / ci.yml
+  actions: write
   contents: read
   pull-requests: read
   checks: read
 
-concurrency:
-  # Global group, but NO cancel-in-progress (fa #911 diagnosis, 2026-09-25):
-  # a push on ANY PR branch used to kill the in-flight kicker for every
-  # other branch, leaving sm-liveness/head-completeness check-runs stamped
-  # CANCELLED on random heads ("Cancelled after 6s") and polluting PR
-  # check rolls repo-wide. The kicker jobs are seconds-cheap watchdogs —
-  # let them queue instead of cancelling; a bounded backlog is harmless.
-  group: sm-kicker
-  cancel-in-progress: false
-
 jobs:
   kicker:
-    uses: IstiN/dmtools-agents/.github/workflows/factory-sm-kicker.yml@a5e377d9aa417d7537efd452a0dba06454132dec
+    uses: IstiN/dmtools-agentic-workflows/.github/workflows/factory-sm-kicker.yml@f0fe78c6225b99ca350f8354af112db937699b61
     with:
-      smWorkflow: machine-sm.yml
-      ciWorkflow: ci.yml
-      requiredContexts: 'Quality gate,JS engine integration (quickjs-ng),Binaries smoke gate'
-      graceSeconds: '45'
+      sm_workflow: machine-sm.yml
+      ci_workflow: ci.yml
+      ci_display_name: CI
+      required_contexts: 'Quality gate,JS engine integration (quickjs-ng),Binaries smoke gate'
