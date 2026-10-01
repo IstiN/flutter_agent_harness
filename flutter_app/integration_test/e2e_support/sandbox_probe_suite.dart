@@ -14,13 +14,12 @@
 /// `test/sandbox_probe_suite_host_test.dart` runs it on macOS/desktop hosts
 /// where the wasm_run dylib is available — same shell class, same asserts.
 ///
-/// Network rows hit a local fixture server (`_ProbeServer`), not the public
+/// Network rows hit a local fixture server (`ProbeFixtureServer`), not the public
 /// internet: the table's httpbin/archive.org endpoints are stand-ins for the
 /// same curl shapes (POST echo, binary download, media fetch), kept
 /// deterministic for CI.
 library;
 
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io' as io;
 
@@ -29,6 +28,7 @@ import 'package:fa/sandbox/wasm_shell.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
 
 // ---------------------------------------------------------------------------
 // Fixture data
@@ -50,8 +50,8 @@ final Uint8List videoFixture = Uint8List.fromList(
 
 /// Local stand-in for the public endpoints the issue's table probed: an echo
 /// POST (httpbin /post), a binary download, and a media fetch.
-final class _ProbeServer {
-  _ProbeServer();
+final class ProbeFixtureServer {
+  ProbeFixtureServer();
 
   io.HttpServer? _server;
 
@@ -132,7 +132,7 @@ typedef ProbeBody = Future<void> Function();
 /// construction from `main()`.
 List<(String, ProbeBody)> sandboxProbes({
   required Future<WasiSandboxShell> Function() loadShell,
-  required _ProbeServer server,
+  required ProbeFixtureServer server,
   required String sandboxRoot,
 }) {
   Future<ShellExecResult> run(String command) async {
@@ -416,14 +416,22 @@ List<(String, ProbeBody)> sandboxProbes({
 
 /// Builds the probe list plus fixture server for a probe run. The shell
 /// itself loads lazily inside the first probe body (see [sandboxProbes]).
-Future<List<(String, ProbeBody)>> makeProbeSuite(String sandboxRoot) async {
-  final server = _ProbeServer();
+Future<List<(String, ProbeBody)>> makeProbeSuite(
+  String sandboxRoot, {
+  required http.Client httpClient,
+}) async {
+  // [httpClient] must be constructed BEFORE the test binding initializes:
+  // flutter_test replaces `HttpOverrides.global` with a 400 stub for the
+  // whole process, so a client built after that can never reach the local
+  // fixture server. Clients built pre-binding keep real sockets.
+  final server = ProbeFixtureServer();
   await server.start();
   WasiSandboxShell? shell;
   Future<WasiSandboxShell> loadShell() async =>
       shell ??= await WasiSandboxShell.load(
         workingDirectory: '/',
         sandboxHostPath: sandboxRoot,
+        httpClient: httpClient,
       );
   return [
     ...sandboxProbes(

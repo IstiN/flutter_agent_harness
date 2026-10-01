@@ -19,10 +19,13 @@ import 'dart:io';
 
 import '../integration_test/e2e_support/sandbox_probe_suite.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:wasm_run/wasm_run.dart';
+import 'package:http/http.dart' as http;
 import 'package:wasm_run_flutter/wasm_run_flutter.dart';
 
 Future<void> main() async {
+  // BEFORE the binding init: flutter_test swaps HttpOverrides.global for a
+  // 400 stub, so the curl builtin's client must exist before that happens.
+  final httpClient = http.Client();
   TestWidgetsFlutterBinding.ensureInitialized();
 
   String? skipReason;
@@ -38,7 +41,7 @@ Future<void> main() async {
   }
 
   final root = await Directory.systemTemp.createTemp('fah_probe_sandbox_');
-  final probes = await makeProbeSuite(root.path);
+  final probes = await makeProbeSuite(root.path, httpClient: httpClient);
 
   for (final (name, body) in probes) {
     test(
