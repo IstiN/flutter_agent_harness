@@ -12,8 +12,6 @@
 // tests) so the assertions see what a real terminal would show.
 library;
 
-import 'dart:convert';
-import 'dart:io';
 
 import 'package:dart_tui/dart_tui.dart';
 import 'package:dart_tui/src/renderer.dart';
@@ -21,6 +19,8 @@ import 'package:dart_tui/src/renderer.dart';
 import 'package:flutter_agent_harness/src/cli/fa_tui.dart';
 import 'package:flutter_agent_harness/src/cli/tui_chrome.dart' show tuiChromeEnabled;
 import 'package:test/test.dart';
+
+import 'tui_render_harness.dart';
 
 void main() {
   FaTuiCallbacks callbacks() => FaTuiCallbacks(
@@ -82,7 +82,7 @@ void main() {
     // Feed eleven consecutive streaming frames through the real renderer.
     final buf = StringBuffer();
     final renderer = CellRenderer(
-      output: _BufSink(buf),
+      output: StringSinkIOSink(buf),
       logSink: null,
       defaultAltScreen: false,
       defaultHideCursor: false,
@@ -298,37 +298,4 @@ _Replay _replay(String bytes, {required int rows, required int cols}) {
   }
   return _Replay(screen.map((row) => row.join().trimRight()).join('\n'),
       scrollback.join('\n'));
-}
-
-/// Minimal [IOSink] over a [StringBuffer] capturing what the renderer would
-/// write to the tty.
-final class _BufSink implements IOSink {
-  _BufSink(this._buf);
-  final StringBuffer _buf;
-
-  @override
-  void write(Object? obj) => _buf.write(obj);
-  @override
-  void writeln([Object? obj = '']) => _buf.writeln(obj);
-  @override
-  void writeAll(Iterable<Object?> objects, [String separator = '']) =>
-      _buf.writeAll(objects, separator);
-  @override
-  void writeCharCode(int charCode) => _buf.writeCharCode(charCode);
-  @override
-  Future<void> flush() async {}
-  @override
-  Future<void> close() async {}
-  @override
-  Future<void> get done async {}
-  @override
-  void add(List<int> data) {}
-  @override
-  void addError(Object error, [StackTrace? stackTrace]) {}
-  @override
-  Future<void> addStream(Stream<List<int>> stream) async {}
-  @override
-  Encoding get encoding => utf8;
-  @override
-  set encoding(Encoding value) {}
 }
