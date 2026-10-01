@@ -1717,16 +1717,20 @@ class AgentCli {
     await _deleteEmptySessionFile();
   }
 
-  /// Whether [trimmed] names an existing file with its first token
-  /// (`/abs/path`, `~/…`, `./…`, `../…` + more path segments): such a
-  /// line is an attachment message, never a slash command.
-  bool _isAttachableFileInput(String trimmed) {
+  /// Whether [trimmed] is chat that merely starts with a path-shaped token
+  /// (`/a/b`, `~/…`, `./…`, `../…`): more text after the token means the
+  /// user is talking to the agent, not invoking a command (issue #1152),
+  /// and a bare token naming an existing file is an attachment paste —
+  /// either steers as a message instead of dispatching as a command.
+  bool _isPathLedChat(String trimmed) {
+    final token = trimmed.split(_commandWhitespace).first;
     final pathLike =
-        _leadingPathLike.hasMatch(trimmed) ||
-        trimmed.startsWith('~/') ||
-        trimmed.startsWith('./') ||
-        trimmed.startsWith('../');
+        _leadingPathLike.hasMatch(token) ||
+        token.startsWith('~/') ||
+        token.startsWith('./') ||
+        token.startsWith('../');
     if (!pathLike) return false;
+    if (trimmed.length > token.length) return true;
     return resolveInteractiveFileReference(trimmed) != trimmed;
   }
 
@@ -2183,13 +2187,15 @@ class AgentCli {
       // text instead). Run-starting commands are refused by _startRun's
       // busy guard below.
       if (trimmed.startsWith('/') || trimmed.startsWith('!')) {
-        // EXCEPT a leading file path: a message that begins with an
-        // existing file is chat with an attachment, not a command. It used
-        // to reach the command dispatcher, fall through to _startRun, and
-        // die on the busy guard — silently dropped (user report:
-        // "messages that start with a file go straight into the session
-        // or vanish"). Steer it with the attachment marker instead.
-        if (!trimmed.startsWith('!') && _isAttachableFileInput(trimmed)) {
+        // EXCEPT path-led chat: a message that begins with a path-shaped
+        // token is chat with an optional attachment (issue #1152 — a
+        // folder or nonexistent path plus prose is a message, never a
+        // command), not a command. It used to reach the command
+        // dispatcher, fall through to _startRun, and die on the busy guard
+        // — silently dropped (user report: "messages that start with a
+        // file go straight into the session or vanish"). Steer it with
+        // the attachment marker instead.
+        if (!trimmed.startsWith('!') && _isPathLedChat(trimmed)) {
           _steerResolved(trimmed);
           return;
         }

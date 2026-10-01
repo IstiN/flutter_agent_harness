@@ -236,6 +236,51 @@ void main() {
   );
 
   test(
+    'a path-led message typed mid-run steers verbatim — a folder or '
+    'nonexistent leading path is never refused nor bounced by the busy '
+    'guard (issue #1152)',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      final dir = await Directory.systemTemp.createTemp('fah_busy_dir_1152');
+      addTearDown(() => dir.delete(recursive: true));
+      final stream = _GatedStream([
+        textTurn('first answer'),
+        textTurn('steered answer'),
+      ], gateOnCall: 1);
+      final cli = buildCli(stream);
+      final run = cli.run();
+      await waitForSessions(env);
+
+      io.sendLine('start');
+      await waitForIt(() => stream.calls >= 1 && cli.isBusy);
+      final message = '${dir.path} найди в fa create goal скилл';
+      io.sendLine(message);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      stream.gate.complete();
+      await waitForIt(() => !cli.isBusy, reason: 'first run settles');
+
+      // The steered message becomes a follow-up run carrying the full
+      // sentence verbatim — a directory attaches nothing, refuses nothing.
+      await waitForIt(() => stream.calls >= 2);
+      await waitForIt(() => !cli.isBusy);
+      final text = _messageText(
+        stream.contexts[1].messages.last as UserMessage,
+      );
+      expect(text, contains(message));
+      final out = io.out.toString();
+      expect(out, isNot(contains('looks like a filesystem path')));
+      expect(
+        out,
+        isNot(contains('a run is already streaming')),
+        reason: 'the busy guard must not bounce path-led chat',
+      );
+
+      io.sendLine('/exit');
+      await run;
+    },
+  );
+
+  test(
     'plain text typed mid-run is delivered to the model',
     timeout: const Timeout(Duration(seconds: 120)),
     () async {

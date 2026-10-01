@@ -82,6 +82,16 @@ void main() {
     fail('timed out waiting for async condition');
   }
 
+  /// The text of a user message (string or content-block content).
+  String messageText(UserMessage message) {
+    final content = message.content;
+    if (content is String) return content;
+    return [
+      for (final block in content as List<ContentBlock>)
+        if (block is TextContent) block.text,
+    ].join();
+  }
+
   test('an untouched session leaves no file behind on exit', () async {
     // Session-start memory maintenance is due on a fresh env (no stamp);
     // its consolidate() would consume a scripted turn on a slow runner.
@@ -1023,24 +1033,107 @@ void main() {
     await run;
   });
 
-  test(
-    'a pasted absolute filesystem path is not treated as a slash command',
-    () async {
-      final fake = FakeStreamFunction([]);
-      final cli = cliFor(fake.call);
-      final run = cli.run();
+  test('a message that starts with a nonexistent path is a message, sent '
+      'verbatim — never refused (issue #1152 AC1)', () async {
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
 
-      io.sendLine(
-        '/var/folders/91/d70565j93ssdm9_0k159x5jm0000gn/T/yoloit_clip/clip_1787736718973.txt посмотри лог',
-      );
-      await waitForIt(
-        () => io.out.toString().contains('looks like a filesystem path'),
-      );
-      expect(io.out.toString(), isNot(contains('unknown command:')));
-      io.sendLine('/exit');
-      await run;
-    },
-  );
+    const message =
+        '/var/folders/fa_missing_1152/clip.txt посмотри лог и расскажи';
+    io.sendLine(message);
+    await waitForIt(() => io.out.toString().contains('ok'));
+    expect(
+      io.out.toString(),
+      isNot(contains('looks like a filesystem path')),
+      reason: 'multi-word input is a message, not a bare path',
+    );
+    expect(io.out.toString(), isNot(contains('unknown command:')));
+    expect(
+      messageText(fake.contexts.last.messages.last as UserMessage),
+      message,
+      reason: 'the agent receives the full sentence verbatim',
+    );
+    io.sendLine('/exit');
+    await run;
+  });
+
+  test('a message that starts with an EXISTING folder is sent, never refused '
+      '(issue #1152 AC2/E3)', () async {
+    final dir = await Directory.systemTemp.createTemp('fa_dir_test_1152');
+    addTearDown(() => dir.delete(recursive: true));
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+
+    final message = '${dir.path} что внутри этой папки?';
+    io.sendLine(message);
+    await waitForIt(() => io.out.toString().contains('ok'));
+    expect(io.out.toString(), isNot(contains('looks like a filesystem path')));
+    // A folder rides verbatim (the @folder semantics): the model sees
+    // the path and explores it with its own tools.
+    expect(
+      messageText(fake.contexts.last.messages.last as UserMessage),
+      message,
+    );
+    io.sendLine('/exit');
+    await run;
+  });
+
+  test('a bare single-token path that does not exist still shows the load '
+      'hint and starts no run (issue #1152 AC3)', () async {
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+
+    io.sendLine('/var/folders/fa_missing_1152/clip.txt');
+    await waitForIt(
+      () => io.out.toString().contains('looks like a filesystem path'),
+    );
+    expect(fake.calls, 0, reason: 'a bare missing path is only a hint');
+    io.sendLine('/exit');
+    await run;
+  });
+
+  test('a bare single-token path that EXISTS attaches and starts the run '
+      '(issue #1152 AC4)', () async {
+    final dir = await Directory.systemTemp.createTemp('fa_path_test');
+    final file = File('${dir.path}/note.md')..writeAsStringSync('hello');
+    addTearDown(() => dir.delete(recursive: true));
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+
+    io.sendLine(file.path);
+    await waitForIt(
+      () => io.out.toString().contains('[file] pasted path attached'),
+    );
+    await waitForIt(() => io.out.toString().contains('ok'));
+    expect(
+      messageText(fake.contexts.last.messages.last as UserMessage),
+      contains('[attached file:'),
+    );
+    io.sendLine('/exit');
+    await run;
+  });
+
+  test('an unknown slash token followed by text is a message, not an '
+      '"unknown command" (issue #1152 AC5)', () async {
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+
+    const message = '/unknowntoken объясни этот вывод';
+    io.sendLine(message);
+    await waitForIt(() => io.out.toString().contains('ok'));
+    expect(io.out.toString(), isNot(contains('unknown command:')));
+    expect(
+      messageText(fake.contexts.last.messages.last as UserMessage),
+      message,
+    );
+    io.sendLine('/exit');
+    await run;
+  });
 
   test('a pasted absolute path that EXISTS is sent as a message with the file '
       'attached, not refused', () async {

@@ -573,7 +573,14 @@ extension SlashCommandDispatch on AgentCli {
   /// slash command. When the referenced file EXISTS, the message is sent
   /// with the file attached (resolveInteractiveFileReference); a
   /// nonexistent path keeps the load hint — it cannot be attached.
+  /// Multi-word input is a message that starts with a path (issue #1152):
+  /// it always reaches the agent — with the leading token attached when it
+  /// names an existing file, verbatim otherwise — never refused.
   void _handlePathLikeInput(String trimmed) {
+    if (trimmed.contains(_commandWhitespace)) {
+      _startRun(trimmed);
+      return;
+    }
     if (!_leadingPathLike.hasMatch(trimmed) && !trimmed.startsWith('~/')) {
       _printHelp(filter: trimmed.substring(1));
       return;
