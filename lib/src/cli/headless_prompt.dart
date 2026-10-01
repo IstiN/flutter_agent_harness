@@ -152,7 +152,8 @@ String resolveInteractiveFileReference(
 /// Broad by design: any `/`-leading token qualifies (a root-level file
 /// like `/note.md` is a real paste). Route classification that must keep
 /// single-segment `/word` command-shaped (e.g. `/model gpt`) narrows the
-/// returned token itself — see `AgentCli._isPathLedChat`.
+/// returned token itself — callers re-check the token for a second `/`
+/// and treat a hit as a command, not a path.
 String? leadingPathLikeToken(String text) {
   final trimmedStart = text.trimLeft();
   final match = RegExp(r'^\S+').firstMatch(trimmedStart);
