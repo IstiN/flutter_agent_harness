@@ -103,8 +103,10 @@ def missing_secrets(provider: str, stage: str, env=None) -> list[str]:
 
 def check_secrets(provider: str, stage: str, env=None) -> None:
     missing = missing_secrets(provider, stage, env)
-    for secret in missing:
-        print(f"::error::{secret} secret is not set", file=sys.stderr)
+    # Only key NAMES are ever printed (repo pattern: fail fast naming the
+    # exact key to add); values are never touched here.
+    for name in missing:
+        print(f"::error::{name} secret is not set", file=sys.stderr)
     if missing:
         raise SystemExit(1)
 
