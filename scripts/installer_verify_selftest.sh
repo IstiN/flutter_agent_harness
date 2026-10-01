@@ -102,12 +102,17 @@ rm "$work/release-unsigned/SHA256SUMS.sig"
 expect_fail "$work/release-unsigned" "E_PROVENANCE_MISSING" "AC2 unsigned"
 
 cp -R "$fixture" "$work/release-badsig"
-printf 'X' | dd of="$work/release-badsig/SHA256SUMS.sig" bs=1 seek=10 conv=notrunc 2>/dev/null
+# 32 fresh random bytes over the signature head — a single-byte flip can hit
+# an identical byte (1/256; the key is regenerated every run) and silently
+# no-op the tamper, so the fixture would verify garbage instead of failing.
+dd if=/dev/urandom of="$work/release-badsig/SHA256SUMS.sig" bs=1 count=32 conv=notrunc 2>/dev/null
 expect_fail "$work/release-badsig" "E_PROVENANCE_INVALID" "AC2 bad-sig"
 
 # ── AC1: tampered artifact (bit-flip inside the archive) ────────────────────
 cp -R "$fixture" "$work/release-tampered"
-printf '\x00' | dd of="$work/release-tampered/$asset" bs=1 seek=100 count=1 conv=notrunc 2>/dev/null
+# Same no-op-tamper guard as AC2: 32 random bytes cannot collide with the
+# original gzip stream (2^-256), a single flipped byte can (1/256).
+dd if=/dev/urandom of="$work/release-tampered/$asset" bs=1 seek=100 count=32 conv=notrunc 2>/dev/null
 rm -f "$work/xattr.log"
 expect_fail "$work/release-tampered" "E_CHECKSUM_MISMATCH" "AC1 tampered"
 
