@@ -422,7 +422,10 @@ ${resumeTail.join('\n')}''',
         );
         // The tail rides the unified pipeline: pinned rows visible.
         final tail = resumed.screenText;
-        expect(tail, contains('✓ bash'));
+        // Post-#916 the replayed settled tool row IS the band card
+        // (`✔ bash: echo probe-N —`); a legacy `✓ bash` row here would be
+        // the #916 drift class regressing.
+        expect(tail, contains('✔ bash:'));
         expect(tail, contains('echo probe-$turns'));
         expect(tail, contains('answer $turns'));
         expect(tail, isNot(contains('[bash]')));
