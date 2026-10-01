@@ -60,10 +60,8 @@ final class GithubPull {
     state: (json['state'] ?? 'open').toString(),
     merged: json['merged_at'] != null || json['merged'] == true,
     title: (json['title'] ?? '').toString(),
-    headSha: (json['head'] is Map
-        ? (json['head'] as Map)['sha']
-        : null)
-      ?.toString(),
+    headSha: (json['head'] is Map ? (json['head'] as Map)['sha'] : null)
+        ?.toString(),
   );
 
   final int number;
@@ -96,7 +94,9 @@ final class GithubCheckRun {
   factory GithubCheckRun.fromJson(Map<String, dynamic> json) {
     final output = json['output'];
     String? outputField(String key) =>
-        output is Map && output[key] != null && output[key].toString().isNotEmpty
+        output is Map &&
+            output[key] != null &&
+            output[key].toString().isNotEmpty
         ? output[key].toString()
         : null;
     return GithubCheckRun(
@@ -300,9 +300,8 @@ class GithubApiClient {
       jsonDecode(response.body) as Map<String, dynamic>,
     );
     final raw = response.headers['x-oauth-scopes'] ?? '';
-    final scopes = [
-      for (final part in raw.split(',')) part.trim(),
-    ]..removeWhere((scope) => scope.isEmpty);
+    final scopes = [for (final part in raw.split(',')) part.trim()]
+      ..removeWhere((scope) => scope.isEmpty);
     return (user, scopes);
   }
 
@@ -541,7 +540,12 @@ class GithubApiClient {
           await _request(
                 'POST',
                 '/repos/$owner/$repo/pulls',
-                body: {'head': head, 'base': base, 'title': title, 'body': body},
+                body: {
+                  'head': head,
+                  'base': base,
+                  'title': title,
+                  'body': body,
+                },
               )
               as Map<String, dynamic>;
     } on GithubApiException catch (error) {
@@ -615,12 +619,13 @@ class GithubApiClient {
     var page = 1;
     var totalCount = 0;
     while (true) {
-      final json = await _request(
-            'GET',
-            '/repos/$owner/$repo/commits/$ref/check-runs'
-            '?per_page=100&page=$page',
-          )
-          as Map<String, dynamic>;
+      final json =
+          await _request(
+                'GET',
+                '/repos/$owner/$repo/commits/$ref/check-runs'
+                    '?per_page=100&page=$page',
+              )
+              as Map<String, dynamic>;
       totalCount = (json['total_count'] as num?)?.toInt() ?? 0;
       final batch = json['check_runs'];
       if (batch is! List || batch.isEmpty) break;
@@ -640,10 +645,20 @@ class GithubApiClient {
   /// (expired, rate-limited) — the caller keeps the last-known errors and
   /// the run link instead.
   Future<String?> jobLog(String owner, String repo, int jobId) async {
-    final uri = Uri.parse('$baseUrl/repos/$owner/$repo/actions/jobs/$jobId/logs');
+    final uri = Uri.parse(
+      '$baseUrl/repos/$owner/$repo/actions/jobs/$jobId/logs',
+    );
     final request = http.Request('GET', uri)..headers.addAll(_headers);
-    final streamed = await _http.send(request);
-    final response = await http.Response.fromStream(streamed);
+    // refreshStatus polls this once per failing check every tick — bound
+    // the fetch so a wedged log endpoint degrades to "keep last-known"
+    // instead of hanging the poller. Plain `.timeout(d)` (no onTimeout
+    // closure): the timeout THROWS, so there is no value substitution to
+    // mis-reify against a real IOClient (the gh-1125 failure shape).
+    const logTimeout = Duration(seconds: 30);
+    final streamed = await _http.send(request).timeout(logTimeout);
+    final response = await http.Response.fromStream(
+      streamed,
+    ).timeout(logTimeout);
     if (response.statusCode >= 400) return null;
     return response.body;
   }

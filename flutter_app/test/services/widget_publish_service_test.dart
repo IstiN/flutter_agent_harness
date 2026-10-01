@@ -1273,7 +1273,8 @@ void main() {
       'status': status,
       'conclusion': ?conclusion,
       'html_url':
-          htmlUrl ?? 'https://github.com/IstiN/fa_widgets/actions/runs/9/job/$id',
+          htmlUrl ??
+          'https://github.com/IstiN/fa_widgets/actions/runs/9/job/$id',
     };
 
     Future<(MemoryExecutionEnv, WidgetPublicationStore, WidgetPublication)>
@@ -1292,50 +1293,54 @@ void main() {
           })
           ..on('GET', '/repos/IstiN/fa_widgets/commits/$sha/check-runs', runs);
 
-    test('failed validate check → invalid with verbatim job-log errors',
-        () async {
-      final (env, ledger, publication) = await seeded();
-      final gh = checksOn('deadbeef', {
-        'total_count': 2,
-        'check_runs': [
-          checkRun(1, conclusion: 'success'),
-          checkRun(
-            2,
-            conclusion: 'failure',
-            htmlUrl:
-                'https://github.com/IstiN/fa_widgets/actions/runs/99/job/2',
-          ),
-        ],
-      })
-        ..on('GET', '/repos/IstiN/fa_widgets/actions/jobs/2/logs',
-            'ERROR 2048: external manifest: minRuntime must be a '
-            'non-empty string.\n');
+    test(
+      'failed validate check → invalid with verbatim job-log errors',
+      () async {
+        final (env, ledger, publication) = await seeded();
+        final gh =
+            checksOn('deadbeef', {
+              'total_count': 2,
+              'check_runs': [
+                checkRun(1, conclusion: 'success'),
+                checkRun(
+                  2,
+                  conclusion: 'failure',
+                  htmlUrl:
+                      'https://github.com/IstiN/fa_widgets/actions/runs/99/job/2',
+                ),
+              ],
+            })..on(
+              'GET',
+              '/repos/IstiN/fa_widgets/actions/jobs/2/logs',
+              'ERROR 2048: external manifest: minRuntime must be a '
+                  'non-empty string.\n',
+            );
 
-      final account = await _connectedAccount();
-      final state = await _service(
-        env,
-        account,
-        ledger,
-        gh,
-      ).refreshStatus(publication);
+        final account = await _connectedAccount();
+        final state = await _service(
+          env,
+          account,
+          ledger,
+          gh,
+        ).refreshStatus(publication);
 
-      expect(state, WidgetPublicationState.invalid);
-      final stored = ledger.byWidgetId('pomodoro')!;
-      expect(stored.validatorErrors, isNotEmpty);
-      expect(
-        stored.validatorErrors.join('\n'),
-        contains('ERROR 2048: external manifest: minRuntime'),
-      );
-      expect(stored.runHtmlUrl, contains('actions/runs/99'));
-    });
+        expect(state, WidgetPublicationState.invalid);
+        final stored = ledger.byWidgetId('pomodoro')!;
+        expect(stored.validatorErrors, isNotEmpty);
+        expect(
+          stored.validatorErrors.join('\n'),
+          contains('ERROR 2048: external manifest: minRuntime'),
+        );
+        expect(stored.runHtmlUrl, contains('actions/runs/99'));
+      },
+    );
 
     test('timed_out validate check counts as failed, not open', () async {
       final (env, ledger, publication) = await seeded();
       final gh = checksOn('deadbeef', {
         'total_count': 1,
         'check_runs': [checkRun(3, conclusion: 'timed_out')],
-      })
-        ..on('GET', '/repos/IstiN/fa_widgets/actions/jobs/3/logs', '');
+      })..on('GET', '/repos/IstiN/fa_widgets/actions/jobs/3/logs', '');
 
       final account = await _connectedAccount();
       final state = await _service(
@@ -1369,6 +1374,40 @@ void main() {
         WidgetPublicationState.open,
       );
       expect(ledger.byWidgetId('pomodoro')!.lastKnownState, 'open');
+    });
+    test('non-ERROR crash log still surfaces verbatim CI lines', () async {
+      // A `dart run` step that dies without an `error`-shaped line (Dart
+      // compile crashes print `Error:`, an OOM kill prints nothing) must
+      // not store an empty validatorErrors list — the ticket's headline
+      // outcome is verbatim errors with no digging into CI (r2 review).
+      final (env, ledger, publication) = await seeded();
+      final account = await _connectedAccount();
+      final gh =
+          checksOn('deadbeef', {
+            'total_count': 1,
+            'check_runs': [checkRun(7, conclusion: 'failure')],
+          })..on(
+            'GET',
+            '/repos/IstiN/fa_widgets/actions/jobs/7/logs',
+            '2026-10-01T00:00:00.000Z Build flutter assemble\n'
+                '2026-10-01T00:00:01.000Z Unhandled exception:\n'
+                '2026-10-01T00:00:01.100Z OSError (code = -9, errno = 9)\n'
+                '2026-10-01T00:00:02.000Z Process completed with exit code 255\n',
+            status: 200,
+          );
+      final state = await _service(
+        env,
+        account,
+        ledger,
+        gh,
+      ).refreshStatus(publication);
+      expect(state, WidgetPublicationState.invalid);
+      final stored = ledger.byWidgetId('pomodoro')!;
+      expect(stored.validatorErrors, isNotEmpty);
+      expect(
+        stored.validatorErrors.join('\n'),
+        contains('OSError (code = -9, errno = 9)'),
+      );
     });
   });
 
@@ -1406,8 +1445,7 @@ void main() {
       expect(paths, everyElement(isNot(contains('//'))));
     });
 
-    test('second startPublish while a flow is in flight fails fast',
-        () async {
+    test('second startPublish while a flow is in flight fails fast', () async {
       final env = MemoryExecutionEnv();
       final app = await _seedWidget(env);
       final account = await _connectedAccount();
@@ -1432,5 +1470,41 @@ void main() {
       // error so it is not an unhandled async failure.
       pending.flow.ignore();
     });
+
+    test(
+      'the in-flight guard is process-wide, not per service instance',
+      () async {
+        // Every publish entry point (launcher menu, account section, apps
+        // panel) constructs its OWN WidgetPublishService — the guard must
+        // live per widget, not per instance (issue #1045 review r2).
+        final env = MemoryExecutionEnv();
+        final app = await _seedWidget(env);
+        final account = await _connectedAccount();
+        final ledger = await WidgetPublicationStore.load(env);
+        final first = _service(
+          env,
+          account,
+          ledger,
+          _ScriptedGithub(),
+        ).startPublish(app: app);
+        await expectLater(
+          _service(
+            env,
+            account,
+            ledger,
+            _ScriptedGithub(),
+          ).startPublish(app: app),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              contains('publish_in_progress'),
+            ),
+          ),
+        );
+        final pending = await first;
+        pending.flow.ignore();
+      },
+    );
   });
 }

@@ -165,9 +165,11 @@ class _WidgetStatusDetailSheetState extends State<WidgetStatusDetailSheet> {
               Expanded(
                 child: Text(widget.title, style: theme.textTheme.titleMedium),
               ),
+              // Read-only degrade (no service): the refresh affordance
+              // must not look live while doing nothing (issue #1045 r2).
               IconButton(
                 tooltip: l10n.publicationsRefresh,
-                onPressed: _refreshing ? null : _refresh,
+                onPressed: (_refreshing || _service == null) ? null : _refresh,
                 icon: _refreshing
                     ? const SizedBox(
                         width: 18,
@@ -240,11 +242,13 @@ class _StatusSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final l10n = context.l10n;
     final theme = Theme.of(context);
     final publication = this.publication;
     if (publication == null) {
-      return PublicationStateChip(state: WidgetPublicationState.unknown, missing: true);
+      return PublicationStateChip(
+        state: WidgetPublicationState.unknown,
+        missing: true,
+      );
     }
     final state = publication.state;
     return Column(
@@ -274,54 +278,15 @@ class _StatusSection extends StatelessWidget {
               ),
           ],
         ),
-        if (state == WidgetPublicationState.invalid &&
-            publication.validatorErrors.isNotEmpty) ...[
+        // Verbatim errors + lastError + run link: the shared block
+        // (issue #1045 review r2 — was copy-pasted with the publications
+        // sheet).
+        if (publication.validatorErrors.isNotEmpty ||
+            publication.runHtmlUrl != null ||
+            (publication.state == WidgetPublicationState.failed &&
+                publication.lastError != null)) ...[
           const SizedBox(height: 12),
-          Text(
-            l10n.widgetStatusErrors,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.error,
-            ),
-          ),
-          const SizedBox(height: 6),
-          // VERBATIM validator output (issue #1045): selectable plain text,
-          // never reworded or aggregated — what CI said is what renders.
-          SelectableText(
-            publication.validatorErrors.join('\n'),
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.error,
-              fontFamily: 'JetBrainsMono',
-              height: 1.4,
-            ),
-          ),
-        ],
-        if (state == WidgetPublicationState.failed &&
-            publication.lastError != null) ...[
-          const SizedBox(height: 12),
-          SelectableText(
-            publication.lastError!,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.error,
-            ),
-          ),
-        ],
-        if (publication.runHtmlUrl != null) ...[
-          const SizedBox(height: 8),
-          InkWell(
-            onTap: () => unawaited(
-              url_launcher.launchUrl(
-                Uri.parse(publication.runHtmlUrl!),
-                mode: url_launcher.LaunchMode.externalApplication,
-              ),
-            ),
-            child: Text(
-              l10n.widgetStatusOpenRun,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.primary,
-                decoration: TextDecoration.underline,
-              ),
-            ),
-          ),
+          PublicationErrorDetails(publication: publication),
         ],
       ],
     );

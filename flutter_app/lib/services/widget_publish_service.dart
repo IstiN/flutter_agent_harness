@@ -115,8 +115,11 @@ class WidgetPublishService {
   /// Widgets with a live publish flow (issue #1045 review): fire-and-forget
   /// removed the sheet-level serialization, so one widget has at most one
   /// in-flight flow — a second [startPublish] for the same id fails fast
-  /// instead of double-writing the ledger.
-  final Set<String> _activePublishes = <String>{};
+  /// instead of double-writing the ledger. Process-wide ON PURPOSE: every
+  /// publish entry point (launcher menu, account section, apps panel)
+  /// constructs its own [WidgetPublishService], so an instance field would
+  /// never see the second flow.
+  static final Set<String> _activePublishes = <String>{};
 
   /// Catalog pre-flight limits (edge case E4; the fa_widgets validator
   /// enforces the same numbers).
@@ -127,6 +130,12 @@ class WidgetPublishService {
   /// AC2): stamped into the overlay when the widget's manifest never
   /// declares one, so a publish-bound manifest is never empty of
   /// `minRuntime` — the exact failure that sank fa_widgets PR #8.
+  ///
+  /// CROSS-REPO POINTER: the rule's authority is the catalog validator in
+  /// github.com/IstiN/fa_widgets (its CI rejects manifests under its
+  /// floor). When the catalog raises the floor, bump THIS constant in the
+  /// same change — the fa_widgets_tool package it could be imported from
+  /// exports no floor value yet (r2 review).
   static const catalogFloorRuntime = '0.4.79';
 
   /// Newest reviewer comments kept per publication in the ledger.
@@ -317,8 +326,10 @@ class WidgetPublishService {
       return _runCatalogEngine(app, stamped, entry, icon);
     } on UnsupportedError {
       // No usable dart:io directory (web sandbox — Directory/file APIs
-      // throw UnsupportedError there); parse through the engine's manifest
-      // layer instead. Genuine engine bugs on the VM still propagate.
+      // throw UnsupportedError there; checked on both dart2js and
+      // dart2wasm builds of the publish sheet); parse through the engine's
+      // manifest layer instead. Genuine engine bugs on the VM still
+      // propagate.
       return _manifestLevelValidatorIssues(stamped);
     }
   }
@@ -435,12 +446,6 @@ class WidgetPublishService {
     final issues = await preflight(app);
     if (issues.isNotEmpty) {
       _activePublishes.remove(app.id);
-      throw StateError(
-        'Widget "${app.id}" failed pre-flight:\n'
-        '${issues.map((i) => ' - [${i.code}] ${i.message}').join('\n')}',
-      );
-    }
-    if (issues.isNotEmpty) {
       throw StateError(
         'Widget "${app.id}" failed pre-flight:\n'
         '${issues.map((i) => ' - [${i.code}] ${i.message}').join('\n')}',
@@ -783,15 +788,13 @@ class WidgetPublishService {
           validatorErrors = await _verbatimValidatorErrors(client, failing);
           runUrl = failing.first.htmlUrl;
         } else {
-          // ignore: avoid_print
-          print('DBG green path hit');
           effective = WidgetPublication.stateOpen;
           validatorErrors = const [];
           runUrl = null;
         }
-      } on Object catch (e) {
-        // ignore: avoid_print
-        print('DBG checks fetch failed: $e');
+      } on Object {
+        // Offline / rate limit: keep the plain open state — never invent a
+        // verdict the API did not confirm.
       }
     }
 
@@ -881,12 +884,19 @@ class WidgetPublishService {
         jobId,
       );
       if (log == null) continue;
-      lines.addAll(
-        log
-            .split('\n')
-            .where((line) => line.contains('ERROR'))
-            .map(_stripLogPrefix),
-      );
+      final logLines = log.split('\n').map(_stripLogPrefix).toList();
+      final errorLines = logLines
+          .where((line) => line.toLowerCase().contains('error'))
+          .toList();
+      if (errorLines.isNotEmpty) {
+        lines.addAll(errorLines);
+        continue;
+      }
+      // A failure with no `error`-shaped line at all (OOM kill, silent
+      // crash): keep the tail of the log verbatim — still CI's own words,
+      // never a rewording (issue #1045 "no digging into CI").
+      final tail = logLines.where((line) => line.trim().isNotEmpty).toList();
+      lines.addAll(tail.length > 5 ? tail.sublist(tail.length - 5) : tail);
     }
     return List<String>.unmodifiable([
       for (final line in lines.take(_maxValidatorErrors))

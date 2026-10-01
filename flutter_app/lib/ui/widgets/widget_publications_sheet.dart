@@ -310,53 +310,14 @@ class _PublicationTileState extends State<_PublicationTile> {
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
-                // Issue #1045: the validator's error lines render verbatim,
-                // right where the status chip lives — no digging into CI.
-                if (publication.validatorErrors.isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    l10n.widgetStatusErrors,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.error,
-                    ),
-                  ),
-                  SelectableText(
-                    publication.validatorErrors.join('\n'),
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.error,
-                      fontFamily: 'JetBrainsMono',
-                    ),
-                  ),
-                ],
-                if (publication.state == WidgetPublicationState.failed &&
-                    publication.lastError != null) ...[
-                  const SizedBox(height: 4),
-                  SelectableText(
-                    publication.lastError!,
-                    maxLines: 6,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.error,
-                    ),
-                  ),
-                ],
-                if (publication.runHtmlUrl != null) ...[
-                  const SizedBox(height: 2),
-                  InkWell(
-                    onTap: () => unawaited(
-                      url_launcher.launchUrl(
-                        Uri.parse(publication.runHtmlUrl!),
-                        mode: url_launcher.LaunchMode.externalApplication,
-                      ),
-                    ),
-                    child: Text(
-                      l10n.widgetStatusOpenRun,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.primary,
-                        decoration: TextDecoration.underline,
-                      ),
-                    ),
-                  ),
-                ],
+                // Verbatim errors + lastError + run link: the shared
+                // block (issue #1045 review r2 — was copy-pasted here and
+                // in the detail sheet).
+                if (publication.validatorErrors.isNotEmpty ||
+                    publication.runHtmlUrl != null ||
+                    (publication.state == WidgetPublicationState.failed &&
+                        publication.lastError != null))
+                  PublicationErrorDetails(publication: publication),
                 if (publication.comments.isNotEmpty) ...[
                   const SizedBox(height: 2),
                   // Reviewer feedback (AC7): plain text only — comment
