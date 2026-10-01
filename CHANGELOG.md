@@ -4431,6 +4431,14 @@
 
 ## 1.0.496
 
+- fix(#916): replayed tool rows paint the settled band card — #807 chrome migration completed (#1136)
+- feat(#864): one-Fa-one-session tap (#1144)
+- fix(#1131): compaction summaries must not re-render time-scoped claims as current facts (#1133)
+- feat(#1124): Terminal-Bench family coverage 2.0/2.1/3.0/4.0 from one dispatch surface (#1128)
+- fix(#1126): resume mid-stream provider aborts with partial content via TransientRetryStream (#1132)
+- feat(#1123): real token/cost accounting in bench results (#1129)
+- fix(app): flutter_agent_memory override 0.2.1 -> ^0.2.3 — track the lib floor (#1158)
+- chore(factory): runners parent agent packs from the registry, not the git checkout (#1155)
 - feat(#1122): configurable + progress-aware bench agent timeout (#1127)
 - feat(#827): TUI viewport never loses shown content (#1097)
 - pin: factory workflows -> dmtools-agentic-workflows@b93dc51 (#1146)
