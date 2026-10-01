@@ -32,8 +32,8 @@ name: Bench MLS
 # Artifacts (owner ruling 2026-09-30: publishing material): per-trial
 # result.json + logs + the run identity (dataset SHA, model, fa commit,
 # budget statement) with 90-day retention, plus a permanent copy attached to
-# the `bench-mls-archive` release. Scores stay pending until #1123 (token/cost
-# accounting) lands — see docs/bench.md.
+# the `bench-mls-archive` release. Scores stay pending the first full run (cost
+# attribution via bench/pricing.json, #1123) — see docs/bench.md.
 #
 # Secrets (owner-provisioned; the workflow never hardcodes them):
 #   FA_BENCH_ZAI_KEY        — z.ai key for glm-5.3-flash (shared with bench-4.0.yml)
@@ -493,6 +493,6 @@ jobs:
           gh release view bench-mls-archive --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
             gh release create bench-mls-archive --repo "$GITHUB_REPOSITORY" \
               --title "MLS-Bench run archive" \
-              --notes "Permanent copies of bench-mls.yml result bundles (issue #1160). One zip per workflow run; scores pending until #1123 lands."
+              --notes "Permanent copies of bench-mls.yml result bundles (issue #1160). One zip per workflow run; scores pending the first full run; cost via bench/pricing.json (#1123)."
           gh release upload bench-mls-archive "$asset" --repo "$GITHUB_REPOSITORY"
           echo "archived: $asset"

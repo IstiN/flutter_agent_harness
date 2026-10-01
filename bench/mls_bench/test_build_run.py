@@ -234,10 +234,12 @@ class RegressionPinsTest(unittest.TestCase):
         self.assertIn("fa_agent:FaAgent", text)
         self.assertNotIn("mls", text.lower())
 
-    def test_bench_4_0_yml_untouched(self):
-        text = (WORKFLOWS / "bench-4.0.yml").read_text()
+    def test_bench_harbor_family_anchors(self):
+        # #1128 folded bench-4.0.yml into the whole-family surface; the
+        # 4.0 anchors and the MLS-free boundary move with it.
+        text = (WORKFLOWS / "bench-harbor.yml").read_text()
         self.assertIn("terminal-bench/terminal-bench@4.0.0", text)
-        self.assertIn("-a fa_agent:FaAgent", text)
+        self.assertIn("fa_agent:FaAgent", text)
         self.assertNotIn("mls", text.lower())
 
     def test_bench_mls_is_dispatch_only(self):
