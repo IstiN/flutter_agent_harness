@@ -75,6 +75,7 @@ import 'package:fa/services/session_listing.dart';
 import 'package:fa/services/sessions_root.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/skills_access_store.dart';
+import 'package:fa/services/skills_toggles_store.dart';
 import 'package:fa/prompts.g.dart';
 import 'package:fa/sandbox/sandbox_registry.dart';
 import 'package:fa/services/secrets_store.dart';
@@ -174,6 +175,7 @@ class AgentService extends ChangeNotifier
        _skillsAccessStore = null,
        _skillsHomeDir = null,
        _skillsAccess = SkillsAccess.granted,
+       _skillTogglesStore = null,
        _toolsAvailabilityStore = null,
        approval = ApprovalManager(
          mode: initialApprovalMode ?? ApprovalMode.write,
@@ -319,6 +321,8 @@ class AgentService extends ChangeNotifier
     final savedSkillsAccess = await skillsAccessStore.load();
     final toolsAvailabilityStore = ToolsAvailabilityStore(resolvedEnv);
     final savedToolsConfig = await toolsAvailabilityStore.load();
+    final skillTogglesStore = SkillsTogglesStore(resolvedEnv);
+    final savedSkillToggles = await skillTogglesStore.load();
     final redactor = SecretRedactor.fromSecrets(secrets);
     // Agent skills + project context files (AGENTS.md & friends) ride the
     // same ExecutionEnv, so they work on every platform (web sandbox too):
@@ -336,6 +340,7 @@ class AgentService extends ChangeNotifier
       resolvedEnv,
       savedSkillsAccess ?? SkillsAccess.granted,
       homeDir: desktopHomeDir(),
+      skillToggles: savedSkillToggles,
     );
     // Always wrap: the `request_secret` tool injects user-granted keys into
     // the LIVE env at runtime (see [_handleSecretRequest]), so the wrapper
@@ -362,6 +367,8 @@ class AgentService extends ChangeNotifier
       approvalModeStore: approvalModeStore,
       initialSkillsAccess: savedSkillsAccess ?? SkillsAccess.granted,
       skillsAccessStore: skillsAccessStore,
+      initialSkillToggles: savedSkillToggles,
+      skillTogglesStore: skillTogglesStore,
       initialToolsConfig: savedToolsConfig,
       toolsAvailabilityStore: toolsAvailabilityStore,
       // Sleep prevention (issue #325): one assertion for the app
@@ -403,17 +410,18 @@ class AgentService extends ChangeNotifier
     return merged;
   }
 
-  /// Writes bundled agent skills (see `assets/skills/`) into the env's
-  /// project skill root so [discoverSkills] picks them up. Files are
-  /// refreshed when the bundled content changed (the skills are ours, not
-  /// user data). Best-effort: a missing asset or unwritable env must not
-  /// block session creation.
+  /// Writes the bundled app-only agent skill (`assets/skills/js-apps/`)
+  /// into the env's project skill root so [discoverSkills] picks it up.
+  /// The file is refreshed when the bundled content changed (the skill is
+  /// ours, not user data). Best-effort: a missing asset or unwritable env
+  /// must not block session creation.
+  ///
+  /// The package builtins (`create-goal`, `self-settings`) are NOT seeded:
+  /// they ship compiled into fa itself (`builtinSkills()`) on every host,
+  /// and seeding project copies would shadow the package source with a
+  /// duplicate listing (issue #1151).
   static Future<void> _seedBundledSkills(ExecutionEnv env) async {
-    const bundled = {
-      'js-apps': 'assets/skills/js-apps/SKILL.md',
-      'create-goal': 'assets/skills/create-goal/SKILL.md',
-      'fa-self-config': 'assets/skills/fa-self-config/SKILL.md',
-    };
+    const bundled = {'js-apps': 'assets/skills/js-apps/SKILL.md'};
     for (final entry in bundled.entries) {
       try {
         final target = '.fah/skills/${entry.key}/SKILL.md';
@@ -437,10 +445,17 @@ class AgentService extends ChangeNotifier
   /// [SkillsAccess.denied] (or an explicit `ask` still awaiting its startup
   /// prompt) — discovery is on by default; only those restrict discovery to
   /// the first-party roots (`.fah/skills`, `.agents/skills`).
+  ///
+  /// The package builtins (`create-goal`, `self-settings`, issue #1151)
+  /// merge LAST — every on-disk skill of the same name shadows them — and
+  /// [skillToggles] (the app store's `skills:`-shaped wishes; the single
+  /// app-side scope, project config.yaml toggles are NOT read here) filter
+  /// the discovered list down to the enabled skills.
   static Future<String> _discoverPromptSuffix(
     ExecutionEnv env,
     SkillsAccess access, {
     String? homeDir,
+    Map<String, bool> skillToggles = const {},
   }) async {
     // User-level roots (~/.claude/skills, ~/.copilot/skills, ...) need the
     // real home directory - without it the desktop app only ever saw
@@ -456,13 +471,19 @@ class AgentService extends ChangeNotifier
       allowedSources: skillsAccessAllowsDiscovery(access, interactive: false)
           ? null
           : const {SkillSource.fah, SkillSource.agents},
+      builtins: builtinSkills(),
     );
+    final resolution = resolveSkillAvailability(
+      skills: skills,
+      scopes: [(SkillToggleScope.project, SkillsConfig(skills: skillToggles))],
+    );
+    final enabled = enabledSkills(skills, resolution);
     final contextFiles = await loadProjectContextFiles(env);
     return [
       if (formatProjectContext(contextFiles).isNotEmpty)
         formatProjectContext(contextFiles),
-      if (formatSkillsForPrompt(skills).isNotEmpty)
-        formatSkillsForPrompt(skills),
+      if (formatSkillsForPrompt(enabled).isNotEmpty)
+        formatSkillsForPrompt(enabled),
     ].join('\n\n');
   }
 
@@ -491,6 +512,8 @@ class AgentService extends ChangeNotifier
     this._approvalModeStore,
     SkillsAccess? initialSkillsAccess,
     this._skillsAccessStore,
+    Map<String, bool> initialSkillToggles = const {},
+    this._skillTogglesStore,
     ToolsConfig? initialToolsConfig,
     this._toolsAvailabilityStore,
     String? skillsHomeDir,
@@ -507,6 +530,7 @@ class AgentService extends ChangeNotifier
        _includeSharedSessionRoots = includeSharedSessionRoots,
        _config = config,
        _skillsAccess = initialSkillsAccess ?? SkillsAccess.granted,
+       _skillToggles = initialSkillToggles,
        _resolveSecretName = resolveSecretName,
        // ignore: prefer_initializing_formals
        _providerRegistry = providerRegistry,
@@ -656,7 +680,8 @@ class AgentService extends ChangeNotifier
     // The yaml sections the app honors (issue #1078): the CLI's own
     // parsers; warnings surface once here, boot never blocks (E2/AC7).
     final appConfig = loadAppFahConfig(
-      projectDir: env.sessionCwd, homeDir: configHomeDir,
+      projectDir: env.sessionCwd,
+      homeDir: configHomeDir,
     );
     for (final warning in appConfig?.warnings ?? const <String>[]) {
       AppLog.i('config', warning);
@@ -705,15 +730,18 @@ class AgentService extends ChangeNotifier
     if (taskModelsStore != null || yamlRoles != null) {
       _taskRolesResolver = ModelRolesResolver(
         config: ModelRolesConfig(
-          roles: _StoreBackedRolesMap(taskModelsStore, fallback: yamlRoles?.roles),
+          roles: _StoreBackedRolesMap(
+            taskModelsStore,
+            fallback: yamlRoles?.roles,
+          ),
           pathOverrides: yamlRoles?.pathOverrides ?? const [],
           retry: yamlRoles?.retry ?? const ModelRolesRetryPolicy(),
         ),
         secrets: _secretsEnv?.secretsSnapshot() ?? const {},
       );
       // 429 rotation notices surface in the log (CLI parity).
-      _taskRolesResolver!.onNotice =
-          (notice) => AppLog.i('roles', notice.describe());
+      _taskRolesResolver!.onNotice = (notice) =>
+          AppLog.i('roles', notice.describe());
       _taskRolesResolver!.sessionId = () => _session?.cachedId;
     }
     // Task tool config: childTools is set after the full registry is built
@@ -1104,6 +1132,19 @@ class AgentService extends ChangeNotifier
   /// [setSkillsAccess] writes through fire-and-forget.
   final SkillsAccessStore? _skillsAccessStore;
 
+  /// The user's per-skill on/off wishes (issue #1151 — the app twin of the
+  /// CLI `skills:` entries; persisted via [SkillsTogglesStore]). Names
+  /// absent from the map are default-on.
+  Map<String, bool> _skillToggles = const {};
+
+  /// Generation guard for [setSkillToggle]'s async re-discovery: a newer
+  /// toggle change wins over a stale suffix.
+  int _skillTogglesGeneration = 0;
+
+  /// The persisted per-skill toggles store ([AgentService.create] path
+  /// only); [setSkillToggle] writes through fire-and-forget.
+  final SkillsTogglesStore? _skillTogglesStore;
+
   /// The tool-availability wiring (issue #19): capability floor + gate +
   /// live config, extracted to [AgentToolAvailability]. Built in both
   /// constructors, right after the agent exists.
@@ -1362,6 +1403,38 @@ class AgentService extends ChangeNotifier
     );
     // A newer choice made while discovery ran wins — don't clobber it.
     if (access != _skillsAccess) return;
+    _promptSuffix = suffix;
+    _agent.state.systemPrompt = _composeSystemPrompt(config);
+  }
+
+  /// Whether the skill [name] is enabled — the per-skill toggles
+  /// ([SkillsTogglesStore]) default every unmentioned skill ON.
+  bool isSkillEnabled(String name) => _skillToggles[name] ?? true;
+
+  /// Switches one skill's availability (the settings "Built-in skills"
+  /// rows, issue #1151): persists the choice when a store is wired
+  /// (fire-and-forget), then re-discovers skills under the new toggles and
+  /// recomposes the system prompt — same shape as [setSkillsAccess].
+  /// Services built from a pre-constructed [Agent] (tests) have no config:
+  /// they record the choice but skip the re-discovery.
+  Future<void> setSkillToggle(String name, bool enabled) async {
+    if (isSkillEnabled(name) == enabled) return;
+    _skillToggles = {..._skillToggles, name: enabled};
+    _skillTogglesGeneration++;
+    notifyListeners();
+    final store = _skillTogglesStore;
+    if (store != null) unawaited(store.save(_skillToggles));
+    final config = _config;
+    if (config == null) return;
+    final generation = _skillTogglesGeneration;
+    final suffix = await _discoverPromptSuffix(
+      env,
+      _skillsAccess,
+      homeDir: _skillsHomeDir ?? desktopHomeDir(),
+      skillToggles: _skillToggles,
+    );
+    // A newer toggle change made while discovery ran wins — don't clobber.
+    if (generation != _skillTogglesGeneration) return;
     _promptSuffix = suffix;
     _agent.state.systemPrompt = _composeSystemPrompt(config);
   }

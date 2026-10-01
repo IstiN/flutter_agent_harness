@@ -586,6 +586,18 @@ void main() {
       await expectGolden(tester, 'settings_skills_access');
     });
 
+    testWidgets('skills toggles section', (tester) async {
+      final service = _fakeService();
+      await _pumpSettingsFrame(
+        tester,
+        child: SkillsTogglesSection(service: service),
+      );
+
+      // One default-on switch per package builtin (create-goal,
+      // self-settings), each with a one-line description.
+      await expectGolden(tester, 'settings_skills_toggles');
+    });
+
     testWidgets('redaction section', (tester) async {
       final service = _fakeService();
       await _pumpSettingsFrame(

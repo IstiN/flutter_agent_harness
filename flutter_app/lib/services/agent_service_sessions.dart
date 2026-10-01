@@ -192,6 +192,10 @@ extension AgentServiceSessions on AgentService {
       // Same for the skills-access consent: the live choice + shared store.
       initialSkillsAccess: _skillsAccess,
       skillsAccessStore: _skillsAccessStore,
+      // Same for the per-skill toggles (issue #1151): the live wishes +
+      // shared store.
+      initialSkillToggles: Map.of(_skillToggles),
+      skillTogglesStore: _skillTogglesStore,
       // Same for the per-tool availability: the live config + shared store.
       initialToolsConfig: _toolsAvailability.config,
       toolsAvailabilityStore: _toolsAvailabilityStore,
