@@ -86,7 +86,9 @@ automatically (`bench/harbor_fa/split_tasks.py` reads each task's
    logs and this is what tbench.ai's leaderboard reads.
 2. **Job summary** — the `Aggregate resolution rate` step writes the
    resolution table (resolved/attempted per split + overall) to the
-   GitHub job summary (`bench/harbor_fa/summary.py`).
+   GitHub job summary (`bench/harbor_fa/summary.py`), with per-split
+   token totals and derived cost from `bench/pricing.json` (issue #1123;
+   unpriced models render n/a).
 3. **Artifacts** — `harbor-jobs-merged` carries every trial's full
    `result.json` + agent session logs (fa sessions under
    `<trial>/agent/fah-sessions/`) even when the Hub upload is skipped.
