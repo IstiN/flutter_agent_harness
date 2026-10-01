@@ -6,13 +6,14 @@ import 'dart:async';
 
 import 'package:http/http.dart' as http;
 
+import 'package:fa/network/production_origins.dart';
 import 'package:fa/services/aiin_oauth_web_stub.dart'
     if (dart.library.html) 'package:fa/services/aiin_oauth_web_impl.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// The hosted callback page handing the OAuth code back to the app
 /// (postMessage / BroadcastChannel / localStorage — see the page source).
-const aiinWebCallbackUrl = 'https://fa1.dev/oauth/aiin.html';
+const aiinWebCallbackUrl = '$productionSiteOrigin/oauth/aiin.html';
 
 /// One-click AIIN sign-in for the web build, mirroring the OpenRouter flow.
 /// The app opens the HOSTED AIIN sign-in page
