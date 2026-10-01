@@ -1956,6 +1956,9 @@ class AppLocalizationsRu extends AppLocalizations {
   }
 
   @override
+  String get sessionMintFailed => 'Не удалось создать новую сессию.';
+
+  @override
   String sessionBootSkippedOversize(String name, String size) {
     return 'Открыта новая сессия — «$name» ($size МБ) превышает бюджет мгновенного открытия.';
   }
