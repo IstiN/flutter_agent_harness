@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
@@ -365,5 +366,37 @@ void main() {
         ),
       );
     });
+
+    test(
+      'a hanging token endpoint fails fast with a TimeoutException instead '
+      'of hanging the refresh (issue #1036)',
+      timeout: const Timeout(Duration(seconds: 20)),
+      () async {
+        providerTimeoutsOverride = const ProviderTimeoutsOverride(
+          fetchRead: Duration(milliseconds: 150),
+        );
+        final client = http_testing.MockClient(
+          (_) => Completer<http.Response>().future,
+        );
+        await expectLater(
+          exchangeChatGptAuthorizationCode(
+            code: 'x',
+            redirectUri: 'y',
+            codeVerifier: 'z',
+            client: client,
+          ),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              allOf(
+                contains('TimeoutException'),
+                contains('ChatGPT OAuth token'),
+              ),
+            ),
+          ),
+        );
+      },
+    );
   });
 }
