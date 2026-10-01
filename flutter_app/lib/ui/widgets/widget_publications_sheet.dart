@@ -313,10 +313,7 @@ class _PublicationTileState extends State<_PublicationTile> {
                 // Verbatim errors + lastError + run link: the shared
                 // block (issue #1045 review r2 — was copy-pasted here and
                 // in the detail sheet).
-                if (publication.validatorErrors.isNotEmpty ||
-                    publication.runHtmlUrl != null ||
-                    (publication.state == WidgetPublicationState.failed &&
-                        publication.lastError != null))
+                if (PublicationErrorDetails.matches(publication))
                   PublicationErrorDetails(publication: publication),
                 if (publication.comments.isNotEmpty) ...[
                   const SizedBox(height: 2),

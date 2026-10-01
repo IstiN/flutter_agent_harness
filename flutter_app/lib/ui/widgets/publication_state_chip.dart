@@ -85,6 +85,14 @@ class PublicationErrorDetails extends StatelessWidget {
 
   final WidgetPublication publication;
 
+  /// Whether [publication] has anything this widget would render — the
+  /// single mount predicate, so callers never restate the internals.
+  static bool matches(WidgetPublication publication) =>
+      publication.validatorErrors.isNotEmpty ||
+      publication.runHtmlUrl != null ||
+      (publication.state == WidgetPublicationState.failed &&
+          publication.lastError != null);
+
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;

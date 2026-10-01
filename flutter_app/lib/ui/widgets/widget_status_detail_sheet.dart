@@ -281,10 +281,7 @@ class _StatusSection extends StatelessWidget {
         // Verbatim errors + lastError + run link: the shared block
         // (issue #1045 review r2 — was copy-pasted with the publications
         // sheet).
-        if (publication.validatorErrors.isNotEmpty ||
-            publication.runHtmlUrl != null ||
-            (publication.state == WidgetPublicationState.failed &&
-                publication.lastError != null)) ...[
+        if (PublicationErrorDetails.matches(publication)) ...[
           const SizedBox(height: 12),
           PublicationErrorDetails(publication: publication),
         ],
@@ -292,6 +289,3 @@ class _StatusSection extends StatelessWidget {
     );
   }
 }
-
-/// The status chip: one label per lifecycle state (issue #1045 states
-/// included), reusing the publications-sheet palette.
