@@ -86,7 +86,7 @@ class AggregateTest(unittest.TestCase):
 
     def test_full_summary_text_and_exit(self):
         run_config = dict(RUN_CONFIG)
-        lines, problems = summary_mls.build_summary(run_config, summary_mls.load_trials(self.jobs))
+        lines, problems, warnings = summary_mls.build_summary(run_config, summary_mls.load_trials(self.jobs))
         text = "\n".join(lines)
         self.assertIn("80cf5c5", text)              # dataset SHA replayed
         self.assertIn("glm-5.3-flash", text)        # model replayed
@@ -121,7 +121,7 @@ class ClipFlagTest(unittest.TestCase):
         jobs = Path(tmp.name) / "jobs"
         make_jobs(jobs, "fa-mls-modal-agent-shard-0", [trial("beta", 0.5)])
         run_config = dict(RUN_CONFIG, provider="modal")
-        lines, _ = summary_mls.build_summary(run_config, summary_mls.load_trials(jobs))
+        lines, _, _ = summary_mls.build_summary(run_config, summary_mls.load_trials(jobs))
         self.assertTrue(any("Modal 24h sandbox cap" in line for line in lines))
         self.assertTrue(any("mls-bench__beta" in line for line in lines))
         tmp.cleanup()
@@ -131,7 +131,7 @@ class ClipFlagTest(unittest.TestCase):
         jobs = Path(tmp.name) / "jobs"
         make_jobs(jobs, "fa-mls-modal-agent-shard-0", [trial("alpha", 0.5)])
         run_config = dict(RUN_CONFIG, provider="modal")
-        lines, _ = summary_mls.build_summary(run_config, summary_mls.load_trials(jobs))
+        lines, _, _ = summary_mls.build_summary(run_config, summary_mls.load_trials(jobs))
         self.assertFalse(any("Modal 24h sandbox cap" in line for line in lines))
         tmp.cleanup()
 
@@ -139,7 +139,7 @@ class ClipFlagTest(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         jobs = Path(tmp.name) / "jobs"
         make_jobs(jobs, "fa-mls-daytona-agent-shard-0", [trial("beta", 0.5)])
-        lines, _ = summary_mls.build_summary(dict(RUN_CONFIG), summary_mls.load_trials(jobs))
+        lines, _, _ = summary_mls.build_summary(dict(RUN_CONFIG), summary_mls.load_trials(jobs))
         self.assertFalse(any("Modal 24h" in line for line in lines))
         tmp.cleanup()
 
@@ -175,14 +175,14 @@ class BundleInspectTest(unittest.TestCase):
     def test_missing_identity_field_is_a_problem(self):
         run_config = dict(RUN_CONFIG)
         del run_config["fa_commit"]
-        lines, problems = summary_mls.build_summary(run_config, [])
+        lines, problems, warnings = summary_mls.build_summary(run_config, [])
         self.assertTrue(any("fa_commit" in p for p in problems))
 
     def test_incomplete_run_is_a_problem(self):
         tmp = tempfile.TemporaryDirectory()
         jobs = Path(tmp.name) / "jobs"
         make_jobs(jobs, "fa-mls-daytona-agent-shard-0", [trial("alpha", 0.5)])
-        _, problems = summary_mls.build_summary(dict(RUN_CONFIG), summary_mls.load_trials(jobs))
+        _, problems, _ = summary_mls.build_summary(dict(RUN_CONFIG), summary_mls.load_trials(jobs))
         self.assertTrue(any("1/3 expected trials" in p for p in problems))
         tmp.cleanup()
 
@@ -191,12 +191,12 @@ class BundleInspectTest(unittest.TestCase):
         jobs = Path(tmp.name) / "jobs"
         make_jobs(jobs, "fa-mls-daytona-agent-shard-0",
                   [trial("alpha", 0.5), trial("beta", 0.5), trial("gamma", 0.5)])
-        _, problems = summary_mls.build_summary(dict(RUN_CONFIG), summary_mls.load_trials(jobs))
+        _, problems, _ = summary_mls.build_summary(dict(RUN_CONFIG), summary_mls.load_trials(jobs))
         self.assertEqual(problems, [])
         tmp.cleanup()
 
     def test_empty_jobs_dir_is_a_problem(self):
-        _, problems = summary_mls.build_summary(dict(RUN_CONFIG), [])
+        _, problems, _ = summary_mls.build_summary(dict(RUN_CONFIG), [])
         self.assertTrue(any("no agent trials" in p for p in problems))
 
     def test_unreadable_run_config_exits_1(self):
@@ -211,6 +211,55 @@ class BundleInspectTest(unittest.TestCase):
             sys.argv = old
         self.assertEqual(code, 1)
         tmp.cleanup()
+
+
+class ExitContractTest(unittest.TestCase):
+    """Round-3 review: errored trials are routine frontier outcomes - they
+    warn, never fail; only structural problems (comparability, completeness,
+    unreadable artifacts) exit 1."""
+
+    def run_main(self, tmp, trials, run_config=None):
+        jobs = Path(tmp.name) / "jobs"
+        make_jobs(jobs, "fa-mls-daytona-agent-shard-0", trials)
+        rc = Path(tmp.name) / "mls-run-config.json"
+        rc.write_text(json.dumps(run_config or dict(RUN_CONFIG, expected_trials=len(trials))))
+        old = sys.argv
+        sys.argv = ["summary_mls.py", "--run-config", str(rc), str(jobs)]
+        try:
+            code = summary_mls.main()
+        finally:
+            sys.argv = old
+        return code
+
+    def test_errored_trial_warns_and_exits_0(self):
+        tmp = tempfile.TemporaryDirectory()
+        # One clean task + one AgentTimeoutError: the realistic frontier run.
+        code = self.run_main(tmp, [trial("alpha", 0.5), trial("beta", exception="AgentTimeoutError")])
+        self.assertEqual(code, 0)
+
+    def test_errored_trial_is_warning_not_problem(self):
+        tmp = tempfile.TemporaryDirectory()
+        jobs = Path(tmp.name) / "jobs"
+        make_jobs(jobs, "fa-mls-daytona-agent-shard-0", [trial("beta", exception="AgentTimeoutError")])
+        lines, problems, warnings = summary_mls.build_summary(
+            dict(RUN_CONFIG, expected_trials=1), summary_mls.load_trials(jobs))
+        self.assertEqual(problems, [])
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("1 trial(s) errored", warnings[0])
+        self.assertTrue(any("Errored/unscored trials (1)" in line for line in lines))
+
+    def test_unparseable_multiplier_is_structural(self):
+        tmp = tempfile.TemporaryDirectory()
+        code = self.run_main(tmp, [trial("alpha", 0.5, multiplier="2x")])
+        self.assertEqual(code, 1)
+
+    def test_nonnumeric_reward_is_errored_not_crash(self):
+        rows = [{"job": "fa-mls-daytona-agent-shard-0", "trial": "t",
+                 "data": {"task_name": "mls-bench__alpha", "exception_info": None,
+                          "verifier_result": {"rewards": {"combined_score": "n/a"}}}}]
+        per, errored = summary_mls.aggregate(rows, AREAS)
+        self.assertEqual(errored, ["alpha"])
+        self.assertNotIn("CAL", per)
 
 
 if __name__ == "__main__":

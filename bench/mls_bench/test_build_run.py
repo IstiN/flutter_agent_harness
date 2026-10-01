@@ -11,23 +11,17 @@ REG-1/AC5 - bench.yml / bench-4.0.yml byte-for-byte today's surfaces:
 
 Run: python3 -m unittest discover -s bench/mls_bench
 """
-import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 import build_run
 
 WORKFLOWS = Path(__file__).resolve().parents[2] / ".github" / "workflows"
-
-
-def subset_arg(kind_task):
-    return kind_task
 
 
 class SubsetParseTest(unittest.TestCase):
@@ -104,8 +98,6 @@ class EnvFailFastTest(unittest.TestCase):
     def test_cli_passes_with_all_env_set(self):
         env = dict(os.environ)
         env.update(self.ENV)
-        env.pop("DAYTONA_API_KEY", None)
-        env.update(DAYTONA_API_KEY="d")
         proc = subprocess.run(
             [sys.executable, "-m", "build_run", "check-env",
              "--provider", "daytona", "--stage", "agent", "--subset", "smoke-cpu"],
@@ -261,6 +253,64 @@ class RegressionPinsTest(unittest.TestCase):
         text = (WORKFLOWS / "bench-mls.yml").read_text()
         self.assertIn("Imbernoulli/MLS-Bench", text)
         self.assertNotIn("git submodule", text.lower())
+
+    def test_bench_mls_agent_precheck_exposes_model_env_var(self):
+        # Structural pin for the AC2 seam (round-3 review): the agent check
+        # step must map the z.ai secret under the exact name build_run
+        # requires (MODEL_ENV_VAR). An aliased mapping (e.g.
+        # FA_KEY: secrets.FA_BENCH_ZAI_KEY) strands the agent leg behind a
+        # permanently-missing env var - every shard fails its first step.
+        text = (WORKFLOWS / "bench-mls.yml").read_text()
+        self.assertIn(
+            f"{build_run.MODEL_ENV_VAR}: ${{{{ secrets.FA_BENCH_ZAI_KEY }}}}", text)
+        self.assertNotIn("FA_KEY: ${{ secrets.", text)
+
+    def test_bench_mls_inputs_via_env_indirection(self):
+        # GHA script-injection pin (round-3 review): dispatch inputs reach
+        # run: blocks only via env: indirection - never interpolated into a
+        # quoted shell string.
+        text = (WORKFLOWS / "bench-mls.yml").read_text()
+        # env:/with:/name: lines legitimately carry ${{ inputs.* }}; the
+        # sink is a quoted interpolation inside a run: block. Every run:
+        # line in this file quotes shell vars, so any remaining quoted
+        # interpolation is a violation.
+        for line in text.splitlines():
+            stripped = line.strip()
+            if "'${{ inputs." in stripped or '"${{ inputs.' in stripped:
+                self.fail(f"quoted input interpolation in run block: {stripped}")
+
+    def test_bench_mls_preconfig_model_wired_from_input(self):
+        # Round-3 review (-a5C): the run identity must name the model that
+        # actually ran - the agent step builds FA_PROVIDER_CONFIG from the
+        # --model input via the builder, never a hardcoded preconfig.
+        text = (WORKFLOWS / "bench-mls.yml").read_text()
+        self.assertIn("build_run.py preconfig --model \"$MODEL\"", text)
+        self.assertNotIn('"model":"glm-5.3-flash"', text)
+
+
+class PreconfigTest(unittest.TestCase):
+    """Round-3 review (-a5C): the preconfig model comes from the dispatch
+    input, json-escaped, so the archived identity names what ran."""
+
+    def test_model_wired_through(self):
+        cfg = json.loads(build_run.preconfig_json("glm-5.3-flash"))
+        self.assertEqual(cfg["model"], "glm-5.3-flash")
+        self.assertEqual(cfg["apiKeyEnvVar"], "FA_KEY_API_Z_AI_Z_AI")
+        self.assertTrue(cfg["baseUrl"].startswith("https://"))
+
+    def test_model_json_escaped(self):
+        cfg = json.loads(build_run.preconfig_json('x"y\\z'))
+        self.assertEqual(cfg["model"], 'x"y\\z')
+
+    def test_cli_preconfig_matches_builder(self):
+        proc = subprocess.run(
+            [sys.executable, "-m", "build_run", "preconfig",
+             "--provider", "daytona", "--subset", "smoke-cpu", "--model", "m1"],
+            capture_output=True, text=True, env=os.environ,
+            cwd=Path(__file__).resolve().parent,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(json.loads(proc.stdout), json.loads(build_run.preconfig_json("m1")))
 
 
 if __name__ == "__main__":

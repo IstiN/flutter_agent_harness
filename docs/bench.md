@@ -116,7 +116,11 @@ builds + sandbox start on the sanity CPU task, no agent) → `oracle`
 Dispatch inputs: `subset` = `smoke-cpu` (default) | `lite` | `full`
 (~138 GPU-sandboxed tasks; requires `confirm-full=yes`) | `task=<name>`;
 `provider` = `daytona` | `modal` (required); `model`, `gpu-type` (H100
-default), `mls-sha`, `shards`. Runs are serialized (`concurrency: bench-mls`).
+default), `mls-sha`, `shards`. The `model` input is wired into the z.ai
+provider preconfig (the builder emits the JSON), so `-m`, the preconfig,
+and the archived run identity all name the same model. Dispatch inputs
+reach `run:` steps only via `env:` indirection (no shell interpolation of
+free-form input). Runs are serialized (`concurrency: bench-mls`).
 
 ### Timeout discipline
 
@@ -124,7 +128,10 @@ Every task ships `[agent] timeout_sec = 18000` (5 h) and Harbor enforces
 it; the builder (`bench/mls_bench/build_run.py`) never emits
 `--*-timeout-multiplier` or override flags — changing the budget voids
 comparability with the published leaderboard. The summary step re-checks
-recorded trial configs and fails the run on a violation.
+recorded trial configs and fails the run on a violation. Errored trials
+(a routine 5 h-budget frontier outcome) are `::warning::` annotations and
+stay out of the per-domain means — the step fails only on structural
+problems (lost shard, comparability violation, unreadable artifacts).
 
 ### Secrets (owner-provisioned, env-only, never echoed)
 

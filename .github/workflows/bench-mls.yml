@@ -187,27 +187,35 @@ jobs:
           path: mls
 
       - name: Install harbor (uv-managed python 3.13)
+        env:
+          PROVIDER: ${{ inputs.provider }}
         run: |
           export PATH="$HOME/.local/bin:$PATH"
           command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
           export PATH="$HOME/.local/bin:$PATH"
           uv venv --python 3.13 .bench-venv
-          uv pip install --python .bench-venv/bin/python 'harbor[${{ inputs.provider }}]==0.23.0'
+          uv pip install --python .bench-venv/bin/python "harbor[$PROVIDER]==0.23.0"
           .bench-venv/bin/python -c 'import sys; print("venv python:", sys.version.split()[0])'
 
       - name: Check provider secrets (AC2)
         env:
+          PROVIDER: ${{ inputs.provider }}
+          SUBSET: ${{ inputs.subset }}
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
           .bench-venv/bin/python bench/mls_bench/build_run.py check-env \
-            --provider '${{ inputs.provider }}' --stage nop --subset '${{ inputs.subset }}'
+            --provider "$PROVIDER" --stage nop --subset "$SUBSET"
 
       # PYTHONPATH=. so the run config's harbor_env:<provider> environment
       # import resolves exactly as upstream documents it (E2).
       - name: Run ladder nop stage
         env:
+          PROVIDER: ${{ inputs.provider }}
+          SUBSET: ${{ inputs.subset }}
+          MODEL: ${{ inputs.model }}
+          GPU_TYPE: ${{ inputs.gpu-type }}
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
@@ -216,9 +224,9 @@ jobs:
           export PATH="$GITHUB_WORKSPACE/.bench-venv/bin:$PATH"
           export PYTHONPATH="$GITHUB_WORKSPACE/mls/harbor"
           cmd="$(.bench-venv/bin/python bench/mls_bench/build_run.py command \
-            --stage nop --provider '${{ inputs.provider }}' --subset '${{ inputs.subset }}' \
-            --model '${{ inputs.model }}' --gpu-type '${{ inputs.gpu-type }}' \
-            --job-name "fa-mls-${{ inputs.provider }}-nop")"
+            --stage nop --provider "$PROVIDER" --subset "$SUBSET" \
+            --model "$MODEL" --gpu-type "$GPU_TYPE" \
+            --job-name "fa-mls-$PROVIDER-nop")"
           echo "+ $cmd"
           cd mls/harbor
           eval "$cmd"
@@ -255,28 +263,37 @@ jobs:
           path: mls
 
       - name: Install harbor (uv-managed python 3.13)
+        env:
+          PROVIDER: ${{ inputs.provider }}
         run: |
           export PATH="$HOME/.local/bin:$PATH"
           command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
           export PATH="$HOME/.local/bin:$PATH"
           uv venv --python 3.13 .bench-venv
-          uv pip install --python .bench-venv/bin/python 'harbor[${{ inputs.provider }}]==0.23.0'
+          uv pip install --python .bench-venv/bin/python "harbor[$PROVIDER]==0.23.0"
           .bench-venv/bin/python -c 'import sys; print("venv python:", sys.version.split()[0])'
 
       - name: Check provider secrets (AC2)
         env:
+          PROVIDER: ${{ inputs.provider }}
+          SUBSET: ${{ inputs.subset }}
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
           .bench-venv/bin/python bench/mls_bench/build_run.py check-env \
-            --provider '${{ inputs.provider }}' --stage oracle --subset '${{ inputs.subset }}'
+            --provider "$PROVIDER" --stage oracle --subset "$SUBSET"
 
       # Oracle replays the strongest declared baseline through the same guard
       # and verifier — no model key involved; this validates the environment
       # before the agent leg spends tokens.
       - name: Run ladder oracle stage (shard ${{ matrix.i }})
         env:
+          PROVIDER: ${{ inputs.provider }}
+          SUBSET: ${{ inputs.subset }}
+          MODEL: ${{ inputs.model }}
+          GPU_TYPE: ${{ inputs.gpu-type }}
+          TASKS: ${{ matrix.tasks }}
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
@@ -285,10 +302,10 @@ jobs:
           export PATH="$GITHUB_WORKSPACE/.bench-venv/bin:$PATH"
           export PYTHONPATH="$GITHUB_WORKSPACE/mls/harbor"
           cmd="$(.bench-venv/bin/python bench/mls_bench/build_run.py command \
-            --stage oracle --provider '${{ inputs.provider }}' --subset '${{ inputs.subset }}' \
-            --model '${{ inputs.model }}' --gpu-type '${{ inputs.gpu-type }}' \
-            --tasks '${{ matrix.tasks }}' \
-            --job-name "fa-mls-${{ inputs.provider }}-oracle-shard-${{ matrix.i }}")"
+            --stage oracle --provider "$PROVIDER" --subset "$SUBSET" \
+            --model "$MODEL" --gpu-type "$GPU_TYPE" \
+            --tasks "$TASKS" \
+            --job-name "fa-mls-$PROVIDER-oracle-shard-${{ matrix.i }}")"
           echo "+ $cmd"
           cd mls/harbor
           eval "$cmd"
@@ -326,24 +343,31 @@ jobs:
           name: fa-bundle
 
       - name: Install harbor (uv-managed python 3.13)
+        env:
+          PROVIDER: ${{ inputs.provider }}
         run: |
           export PATH="$HOME/.local/bin:$PATH"
           command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
           export PATH="$HOME/.local/bin:$PATH"
           uv venv --python 3.13 .bench-venv
-          uv pip install --python .bench-venv/bin/python 'harbor[${{ inputs.provider }}]==0.23.0'
+          uv pip install --python .bench-venv/bin/python "harbor[$PROVIDER]==0.23.0"
           .bench-venv/bin/python -c 'import sys; print("venv python:", sys.version.split()[0])'
 
       - name: Check provider + model secrets (AC2)
         env:
+          PROVIDER: ${{ inputs.provider }}
+          SUBSET: ${{ inputs.subset }}
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-          FA_KEY: ${{ secrets.FA_BENCH_ZAI_KEY }}
+          # The builder requires the secret under its own name (MODEL_ENV_VAR);
+          # inside the task container it travels as FA_KEY_API_Z_AI_Z_AI via
+          # the provider preconfig in the run step below.
+          FA_BENCH_ZAI_KEY: ${{ secrets.FA_BENCH_ZAI_KEY }}
         run: |
-          [ -n "$FA_KEY" ] || { echo '::error::FA_BENCH_ZAI_KEY secret is not set'; exit 1; }
+          [ -n "$FA_BENCH_ZAI_KEY" ] || { echo '::error::FA_BENCH_ZAI_KEY secret is not set'; exit 1; }
           .bench-venv/bin/python bench/mls_bench/build_run.py check-env \
-            --provider '${{ inputs.provider }}' --stage agent --subset '${{ inputs.subset }}'
+            --provider "$PROVIDER" --stage agent --subset "$SUBSET"
 
       # Same env contract as bench.yml / bench-4.0.yml: the adapter reads
       # FA_PROVIDER_* / the key from the harbor process env and ships them
@@ -355,7 +379,11 @@ jobs:
           FA_BUNDLE_TARBALL: ${{ github.workspace }}/fa-bundle.tar.gz
           PYTHONPATH: ${{ github.workspace }}/mls/harbor:${{ github.workspace }}
           FA_PROVIDER_TYPE: zai
-          FA_PROVIDER_CONFIG: '{"baseUrl":"https://api.z.ai/api/coding/paas/v4","model":"glm-5.3-flash","apiKeyEnvVar":"FA_KEY_API_Z_AI_Z_AI"}'
+          PROVIDER: ${{ inputs.provider }}
+          SUBSET: ${{ inputs.subset }}
+          MODEL: ${{ inputs.model }}
+          GPU_TYPE: ${{ inputs.gpu-type }}
+          TASKS: ${{ matrix.tasks }}
           FA_KEY_API_Z_AI_Z_AI: ${{ secrets.FA_BENCH_ZAI_KEY }}
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
@@ -363,14 +391,20 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$GITHUB_WORKSPACE/.bench-venv/bin:$PATH"
+          # The preconfig model comes from the dispatch input (builder emits
+          # the JSON, json-escaped), so the archived run identity names the
+          # model that actually ran. apiKeyEnvVar names the env var mapped
+          # above; the adapter ships it base64-encoded into the container.
+          FA_PROVIDER_CONFIG="$(.bench-venv/bin/python bench/mls_bench/build_run.py preconfig --model "$MODEL")"
+          export FA_PROVIDER_CONFIG
           # fa_agent.py ships the key into the container base64-encoded; GitHub
           # auto-masks only the raw value, so mask the base64 form too.
           echo "::add-mask::$(printf %s "$FA_KEY_API_Z_AI_Z_AI" | base64 -w0)"
           cmd="$(.bench-venv/bin/python bench/mls_bench/build_run.py command \
-            --stage agent --provider '${{ inputs.provider }}' --subset '${{ inputs.subset }}' \
-            --model '${{ inputs.model }}' --gpu-type '${{ inputs.gpu-type }}' \
-            --tasks '${{ matrix.tasks }}' \
-            --job-name "fa-mls-${{ inputs.provider }}-agent-shard-${{ matrix.i }}")"
+            --stage agent --provider "$PROVIDER" --subset "$SUBSET" \
+            --model "$MODEL" --gpu-type "$GPU_TYPE" \
+            --tasks "$TASKS" \
+            --job-name "fa-mls-$PROVIDER-agent-shard-${{ matrix.i }}")"
           echo "+ $cmd"
           cd mls/harbor
           eval "$cmd"

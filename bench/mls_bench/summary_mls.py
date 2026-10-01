@@ -20,8 +20,9 @@ and writes to $GITHUB_STEP_SUMMARY (or stdout):
     (harbor exits 0 even with lost trials)
 
 Exit 1 only for infra problems (incomplete run, comparability violation,
-missing run-config fields). Unresolved/low scores are the scoreboard, not a
-failure. stdlib-only.
+missing run-config fields). Errored trials are routine frontier-run outcomes
+(5h agent budgets time out); they are reported as ::warning:: annotations and
+kept out of the per-domain means - the scoreboard, not a failure. stdlib-only.
 """
 import argparse
 import json
@@ -74,7 +75,11 @@ def aggregate(rows: list[dict], areas: dict[str, str]) -> tuple[dict[str, list[f
         if exception:
             errored.append(trial_task(data))
             continue
-        score = trial_score(data)
+        try:
+            score = trial_score(data)
+        except (TypeError, ValueError):
+            errored.append(trial_task(data))
+            continue
         if score is None:
             errored.append(trial_task(data))
             continue
@@ -88,8 +93,14 @@ def comparability_violations(rows: list[dict]) -> list[str]:
     for row in rows:
         config = row["data"].get("config") or {}
         multiplier = config.get("timeout_multiplier")
-        if multiplier is not None and float(multiplier) != 1.0:
-            bad.append(f"{row['trial']}: timeout_multiplier={multiplier}")
+        if multiplier is not None:
+            try:
+                value = float(multiplier)
+            except (TypeError, ValueError):
+                bad.append(f"{row['trial']}: unparseable timeout_multiplier={multiplier!r}")
+                continue
+            if value != 1.0:
+                bad.append(f"{row['trial']}: timeout_multiplier={multiplier}")
         if config.get("override_timeout_sec") is not None:
             bad.append(f"{row['trial']}: override_timeout_sec={config['override_timeout_sec']}")
     return bad
@@ -106,15 +117,23 @@ def clip_flag(run_config: dict, rows: list[dict]) -> list[str]:
     ]
 
 
-def build_summary(run_config: dict, rows: list[dict]) -> tuple[list[str], list[str]]:
+def build_summary(run_config: dict, rows: list[dict]) -> tuple[list[str], list[str], list[str]]:
+    """-> (summary lines, structural problems, outcome warnings).
+
+    Problems fail the step (infra/comparability); warnings are ::warning::
+    annotations for ordinary outcomes like errored trials (review round 3,
+    -ayZ: a timed-out frontier task must not train anyone to ignore the
+    verdict that catches real infra failures).
+    """
     lines = ["### fa on MLS-Bench", ""]
     problems: list[str] = []
+    warnings: list[str] = []
 
     missing = [k for k in REQUIRED_RUN_FIELDS if run_config.get(k) in (None, "")]
     if missing:
         problems.append(f"run-config.json missing field(s): {', '.join(missing)}")
         lines.append("**Incomplete run-config artifact - run identity cannot be replayed.**")
-        return lines, problems
+        return lines, problems, warnings
 
     # AC6 restore-and-inspect: replay the exact run identity from the bundle.
     lines += [
@@ -130,7 +149,7 @@ def build_summary(run_config: dict, rows: list[dict]) -> tuple[list[str], list[s
     if not rows:
         lines.append("**No agent trials found - the run did not complete.**")
         problems.append("no agent trials found")
-        return lines, problems
+        return lines, problems, warnings
 
     per, errored = aggregate(rows, run_config.get("areas") or {})
     table = ["| area | tasks | arithmetic mean combined_score |", "|---|---|---|"]
@@ -148,7 +167,7 @@ def build_summary(run_config: dict, rows: list[dict]) -> tuple[list[str], list[s
             "",
             f"Errored/unscored trials ({len(errored)}): " + ", ".join(sorted(set(errored))),
         ]
-        problems.append(f"{len(errored)} trial(s) errored before producing a verdict")
+        warnings.append(f"{len(errored)} trial(s) errored before producing a verdict (reported, not failing)")
 
     clips = clip_flag(run_config, rows)
     if clips:
@@ -172,7 +191,7 @@ def build_summary(run_config: dict, rows: list[dict]) -> tuple[list[str], list[s
         ]
         problems.append(f"only {len(rows)}/{expected} expected trials attempted")
 
-    return lines, problems
+    return lines, problems, warnings
 
 
 def main() -> int:
@@ -187,7 +206,7 @@ def main() -> int:
         print(f"::error::run-config artifact unreadable: {exc}", file=sys.stderr)
         return 1
 
-    lines, problems = build_summary(run_config, load_trials(args.jobs_dir))
+    lines, problems, warnings = build_summary(run_config, load_trials(args.jobs_dir))
     text = "\n".join(lines) + "\n"
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
@@ -195,6 +214,8 @@ def main() -> int:
     else:
         print(text, end="")
 
+    for warning in warnings:
+        print(f"::warning::{warning}", file=sys.stderr)
     for problem in problems:
         print(f"::error::{problem}", file=sys.stderr)
     return 0 if not problems else 1

@@ -19,7 +19,10 @@ Subcommands:
                   agent). AC4: the builder NEVER emits a timeout knob -
                   dataset-declared [agent] timeout_sec = 18000 is the budget,
                   and changing it voids leaderboard comparability.
-    check-env exit 1 naming the exact missing secret(s) (AC2)
+    check-env    exit 1 naming the exact missing env var(s) (AC2)
+    preconfig    print the z.ai provider preconfig JSON with the --model
+                 input wired in, so the archived run identity names the
+                 model that actually ran
 
 stdlib-only (tomllib needs 3.11+); the upstream run configs' simple
 task_names blocks are parsed line-wise so no YAML dep is added.
@@ -58,6 +61,21 @@ TIMEOUT_KNOBS = (
 # E1: Modal caps a sandbox at 24h; a task whose agent+verifier budgets exceed
 # it can be cut off while verifying (upstream documents 29 such tasks).
 MODAL_SANDBOX_CAP_SEC = 86400
+
+# z.ai coding endpoint; same preconfig shape as bench.yml / bench-4.0.yml,
+# with the model taken from the dispatch input (review round 3, -a5C).
+ZAI_BASE_URL = "https://api.z.ai/api/coding/paas/v4"
+ZAI_KEY_ENV = "FA_KEY_API_Z_AI_Z_AI"
+
+
+def preconfig_json(model: str) -> str:
+    """The z.ai provider preconfig for `model` (json.dumps-escaped).
+
+    apiKeyEnvVar is the harbor-process env name the workflow maps the
+    FA_BENCH_ZAI_KEY secret into (adapter contract, unchanged); the env-var
+    name check-env requires stays the secret's own name.
+    """
+    return json.dumps({"baseUrl": ZAI_BASE_URL, "model": model, "apiKeyEnvVar": ZAI_KEY_ENV})
 
 _AREA_ROW = re.compile(r"^\| ([A-Za-z&]+) \| \[([a-z0-9-]+)\]\(tasks/\2\) \|")
 
@@ -322,6 +340,11 @@ def cmd_check_required_env(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_preconfig(args: argparse.Namespace) -> int:
+    print(preconfig_json(args.model))
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -352,6 +375,9 @@ def main() -> int:
     p = with_common(sub.add_parser("check-env"))
     p.add_argument("--stage", required=True, choices=("nop", "oracle", "agent", "plan"))
     p.set_defaults(func=cmd_check_required_env)
+
+    p = with_common(sub.add_parser("preconfig"))
+    p.set_defaults(func=cmd_preconfig)
 
     args = parser.parse_args()
     return args.func(args)
