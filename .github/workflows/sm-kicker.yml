@@ -22,3 +22,8 @@ permissions:
 jobs:
   kicker:
     uses: IstiN/dmtools-agentic-workflows/.github/workflows/factory-sm-kicker.yml@f0fe78c6225b99ca350f8354af112db937699b61
+    with:
+      sm_workflow: machine-sm.yml
+      ci_workflow: ci.yml
+      ci_display_name: CI
+      required_contexts: 'Quality gate,JS engine integration (quickjs-ng),Binaries smoke gate'
