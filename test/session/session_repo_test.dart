@@ -621,6 +621,48 @@ void main() {
       expect(await repo.sessionNameQuick(metadata), 'tail');
     });
 
+    test('a name archived by segment rotation still resolves', () async {
+      // gh-1077 review: sessionNameQuick probed the primary file only,
+      // so a name set before a rotation (its record archived to a
+      // `.part-NN` segment) silently resolved to null.
+      final metadata = await namedSession('early');
+      final session = await repo.open(metadata);
+      await session.appendMessage(UserMessage.text('later'));
+      // Simulate a rotation: header + session_info archived, header +
+      // message stays primary.
+      final content = (await fs.readTextFile(metadata.path)).getOrThrow();
+      final lines = content.trim().split('\n');
+      await fs.writeFile(
+        '${metadata.path}.part-0001',
+        '${lines[0]}\n${lines[1]}\n',
+      );
+      await fs.writeFile(
+        metadata.path,
+        '${lines[0]}\n${lines.sublist(2).join('\n')}\n',
+      );
+      expect(await repo.sessionNameQuick(metadata), 'early');
+    });
+
+    test(
+      'an empty rename in the active segment clears an archived name',
+      () async {
+        final metadata = await namedSession('early');
+        final session = await repo.open(metadata);
+        await session.appendSessionName('');
+        final content = (await fs.readTextFile(metadata.path)).getOrThrow();
+        final lines = content.trim().split('\n');
+        await fs.writeFile(
+          '${metadata.path}.part-0001',
+          '${lines[0]}\n${lines[1]}\n',
+        );
+        await fs.writeFile(
+          metadata.path,
+          '${lines[0]}\n${lines.sublist(2).join('\n')}\n',
+        );
+        expect(await repo.sessionNameQuick(metadata), isNull);
+      },
+    );
+
     test('newest empty name clears an older name', () async {
       final metadata = await namedSession('early');
       final session = await repo.open(metadata);

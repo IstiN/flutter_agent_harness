@@ -187,5 +187,38 @@ void main() {
         expect((records.single.data as Map)['text'], 'aligned-at-boundary');
       },
     );
+
+    test('scans the whole segment chain of a rotated session', () async {
+      // gh-1077 review: registry snapshots flushed before a rotation
+      // live in a `.part-NN` segment — a primary-only scan makes them
+      // invisible to subagent adoption (#488), memory refresh and ttsr.
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
+      await session.appendCustomEntry(
+        customType: 'steering',
+        data: {'text': 'before rotation'},
+      );
+      await session.appendCustomEntry(
+        customType: 'steering',
+        data: {'text': 'after rotation'},
+      );
+      final meta = (await repo.list(cwd: '/work')).single;
+      // Simulate a rotation between the two records: header + first
+      // record archived to the part, header + second stays primary.
+      final content = (await env.readTextFile(meta.path)).getOrThrow();
+      final lines = content.trim().split('\n');
+      await env.writeFile(
+        '${meta.path}.part-0001',
+        '${lines[0]}\n${lines[1]}\n',
+      );
+      await env.writeFile(meta.path, '${lines[0]}\n${lines[2]}\n');
+
+      final records = await repo.readCustomRecordsOfType(meta, {'steering'});
+      expect(records.map((r) => (r.data as Map)['text']), [
+        'before rotation',
+        'after rotation',
+      ]);
+    });
   });
 }

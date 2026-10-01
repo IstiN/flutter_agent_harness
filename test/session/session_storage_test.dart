@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
+import 'flaky_session_fs.dart';
+
 void main() {
   late MemoryFileSystem fs;
   const path = '/sessions/s.jsonl';
@@ -326,23 +328,18 @@ void main() {
       );
     });
 
-    test('getPathToRoot fails on a dangling parentId', () async {
+    test('getPathToRoot stops at a dangling parentId (partial path)', () async {
       await createStorage();
       await fs.appendFile(
         path,
         '${jsonEncode({'type': 'message', 'id': 'orphan', 'parentId': 'ghost', 'timestamp': DateTime.utc(2026).toIso8601String(), 'message': UserMessage.text('x').toJson()})}\n',
       );
       final storage = await JsonlSessionStorage.open(fs, path);
-      expect(
-        () => storage.getPathToRoot('orphan'),
-        throwsA(
-          isA<SessionException>().having(
-            (e) => e.code,
-            'code',
-            SessionErrorCode.invalidSession,
-          ),
-        ),
-      );
+      // A missing parent is a hole (torn write, hard-cap truncation), not
+      // a fatal corruption: the walk returns the partial path, matching
+      // the windowed storage's behavior at the window edge.
+      final pathToRoot = await storage.getPathToRoot('orphan');
+      expect(pathToRoot.map((e) => e.id), ['orphan']);
     });
 
     test('open rejects a missing file as storage error', () async {
@@ -461,6 +458,14 @@ void main() {
 
     JsonlSessionStorage rotating(JsonlSessionStorage storage) =>
         storage.withRotationLimits(rotateBytes: rotate, hardCapBytes: hardCap);
+
+    MessageRecord msg(String id, String? parentId, String text) =>
+        MessageRecord(
+          id: id,
+          parentId: parentId,
+          timestamp: DateTime.utc(2026),
+          message: UserMessage.text(text),
+        );
 
     test(
       'rotate: oversized primary moves to .part-0001, primary reseeds',
@@ -641,5 +646,357 @@ void main() {
         'small2',
       ]);
     });
+
+    /// Encoded on-disk size (UTF-8 bytes + the newline) of a record —
+    /// keeps the cap arithmetic below stable when the record schema
+    /// gains a field.
+    int encodedRecordBytes(SessionRecord r) =>
+        utf8.encode(jsonEncode(r.toJson())).length + 1;
+
+    Future<int> headerBytes() async =>
+        utf8.encode((await fs.readTextFile(path)).getOrThrow()).length;
+
+    test(
+      'hard cap truncation keeps the parent chain walkable after reopen',
+      () async {
+        final warnings = <String>[];
+        final oldWarn = JsonlSessionStorage.onRotationWarning;
+        JsonlSessionStorage.onRotationWarning = warnings.add;
+        try {
+          final base = await JsonlSessionStorage.create(
+            fs,
+            path,
+            cwd: '/work',
+            sessionId: 'r1',
+          );
+          final r1 = msg('r1', null, 'x' * 220);
+          final r2 = msg('r2', 'r1', 'y' * 220);
+          final r3 = msg('r3', 'r2', 'z' * 220);
+          final r4 = msg('r4', 'r3', 'w' * 220);
+          // header + 4 records exceed the cap; header + the newest 3
+          // fit — the truncation drops r1 mid-segment.
+          final s = encodedRecordBytes(r1);
+          final storage = base.withRotationLimits(
+            rotateBytes: 10 * 1024 * 1024,
+            hardCapBytes: await headerBytes() + 3 * s + 5,
+          );
+          await storage.appendEntry(r1);
+          await storage.appendEntry(r2);
+          await storage.appendEntry(r3);
+          await storage.appendEntry(r4);
+          expect(
+            warnings.where((w) => w.contains('hard cap')),
+            isNotEmpty,
+            reason: 'the cap must have truncated the active segment',
+          );
+          // The in-memory index is pruned in step with the rewrite —
+          // a stale index masked the severed chain until the next open.
+          expect((await storage.getEntries()).map((e) => e.id), [
+            'r2',
+            'r3',
+            'r4',
+          ]);
+          expect(await storage.getLeafId(), 'r4');
+          // The partial chain resolves instead of crashing the resume
+          // (getBranch is on the agent loop's hot path).
+          final chain = await storage.getPathToRoot('r4');
+          expect(chain.map((e) => e.id), ['r2', 'r3', 'r4']);
+          // …and a fresh open agrees.
+          final reopened = await JsonlSessionStorage.open(fs, path);
+          expect((await reopened.getEntries()).map((e) => e.id), [
+            'r2',
+            'r3',
+            'r4',
+          ]);
+          expect((await reopened.getPathToRoot('r4')).map((e) => e.id), [
+            'r2',
+            'r3',
+            'r4',
+          ]);
+          expect(await reopened.getLeafId(), 'r4');
+        } finally {
+          JsonlSessionStorage.onRotationWarning = oldWarn;
+        }
+      },
+    );
+
+    test('failed rotation seed does not duplicate records on reopen', () async {
+      final warnings = <String>[];
+      final oldWarn = JsonlSessionStorage.onRotationWarning;
+      JsonlSessionStorage.onRotationWarning = warnings.add;
+      try {
+        final base = await JsonlSessionStorage.create(
+          fs,
+          path,
+          cwd: '/work',
+          sessionId: 'r1',
+        );
+        await base.appendEntry(msg('e1', null, 'x' * 220));
+        final flaky = FlakySessionFs(fs);
+        final storage = (await JsonlSessionStorage.open(
+          flaky,
+          path,
+        )).withRotationLimits(rotateBytes: 200, hardCapBytes: 1 << 20);
+        // Every header-only write to the primary (the rotation seed)
+        // fails; the multi-line restore write still lands.
+        flaky.failWritesWhere = (p, content) =>
+            p == path && !content.trim().contains('\n');
+        await storage.appendEntry(msg('e2', 'e1', 'e2'));
+        expect(
+          warnings.where((w) => w.contains('restored')),
+          isNotEmpty,
+          reason: 'the restore path ran',
+        );
+        // The stale part is an exact copy of the restored primary —
+        // deleting it would bypass the AC3 session-deletion gate, so
+        // the open path dedupes repeated record ids across segments…
+        expect((await fs.exists('$path.part-0001')).getOrThrow(), isTrue);
+        final reopened = await JsonlSessionStorage.open(fs, path);
+        expect((await reopened.getEntries()).map((e) => e.id), ['e1', 'e2']);
+        // …and the open-time rewrite scrubs the duplicated lines, so the
+        // NEXT open is clean too.
+        final again = await JsonlSessionStorage.open(fs, path);
+        expect((await again.getEntries()).map((e) => e.id), ['e1', 'e2']);
+      } finally {
+        JsonlSessionStorage.onRotationWarning = oldWarn;
+      }
+    });
+
+    test('hard cap still applies when the rotation itself fails', () async {
+      final warnings = <String>[];
+      final oldWarn = JsonlSessionStorage.onRotationWarning;
+      JsonlSessionStorage.onRotationWarning = warnings.add;
+      try {
+        final base = await JsonlSessionStorage.create(
+          fs,
+          path,
+          cwd: '/work',
+          sessionId: 'r1',
+        );
+        final r1 = msg('r1', null, 'x' * 220);
+        final r2 = msg('r2', 'r1', 'y' * 220);
+        final r3 = msg('r3', 'r2', 'z' * 220);
+        final s = encodedRecordBytes(r1);
+        // header + 3 records exceed the cap; header + 2 fit — a working
+        // cap must drop r1 even though the rotation below fails.
+        final hardCap = await headerBytes() + 2 * s + 5;
+        await base.appendEntry(r1);
+        await base.appendEntry(r2);
+        final flaky = FlakySessionFs(fs);
+        final storage = (await JsonlSessionStorage.open(
+          flaky,
+          path,
+        )).withRotationLimits(rotateBytes: 1, hardCapBytes: hardCap);
+        flaky.failWritesWhere = (p, _) => p.contains('.part-');
+        await storage.appendEntry(r3);
+        expect(
+          warnings.where((w) => w.contains('hard cap')),
+          isNotEmpty,
+          reason: 'the cap applies to the un-rotated segment',
+        );
+        final ids = (await JsonlSessionStorage.open(
+          fs,
+          path,
+        )).getEntries().then((es) => es.map((e) => e.id).toList());
+        expect(await ids, ['r2', 'r3']);
+      } finally {
+        JsonlSessionStorage.onRotationWarning = oldWarn;
+      }
+    });
+
+    test(
+      'open heals a primary lost mid-rotation (crash between rename and seed)',
+      () async {
+        final base = await JsonlSessionStorage.create(
+          fs,
+          path,
+          cwd: '/work',
+          sessionId: 'r1',
+        );
+        await base.appendEntry(msg('e1', null, 'e1'));
+        // The crash window: the segment was archived to the part, the
+        // fresh primary was never seeded.
+        final segment = (await fs.readTextFile(path)).getOrThrow();
+        (await fs.writeFile('$path.part-0001', segment)).getOrThrow();
+        (await fs.remove(path)).getOrThrow();
+
+        final reopened = await JsonlSessionStorage.open(fs, path);
+        expect((await reopened.getEntries()).map((e) => e.id), ['e1']);
+        // …and the healed primary accepts appends again.
+        await reopened.appendEntry(msg('e2', 'e1', 'e2'));
+        final again = await JsonlSessionStorage.open(fs, path);
+        expect((await again.getEntries()).map((e) => e.id), ['e1', 'e2']);
+        expect((await again.getPathToRoot('e2')).map((e) => e.id), [
+          'e1',
+          'e2',
+        ]);
+      },
+    );
+
+    test('open heals a header-less primary left by a racing append', () async {
+      final base = await JsonlSessionStorage.create(
+        fs,
+        path,
+        cwd: '/work',
+        sessionId: 'r1',
+      );
+      await base.appendEntry(msg('e1', null, 'e1'));
+      final segment = (await fs.readTextFile(path)).getOrThrow();
+      (await fs.writeFile('$path.part-0001', segment)).getOrThrow();
+      // A writer in another process recreated the primary with a bare
+      // append: a record line, no header.
+      final e2line = jsonEncode(msg('e2', 'e1', 'e2').toJson());
+      (await fs.writeFile(path, '$e2line\n')).getOrThrow();
+
+      final reopened = await JsonlSessionStorage.open(fs, path);
+      // The header is restored and the raced record is kept.
+      expect((await reopened.getEntries()).map((e) => e.id), ['e1', 'e2']);
+      expect((await reopened.getPathToRoot('e2')).map((e) => e.id), [
+        'e1',
+        'e2',
+      ]);
+    });
+
+    test(
+      'a failed part listing suspends rotation instead of overwriting parts',
+      () async {
+        final storage = await createRotating();
+        await storage.appendEntry(msg('e1', null, 'x' * 220));
+        await storage.appendEntry(msg('e2', 'e1', 'e2'));
+        final partBefore = (await fs.readTextFile(
+          '$path.part-0001',
+        )).getOrThrow();
+
+        // The open cannot see the parts: a blind sequence reset would
+        // retarget part-0001 and destroy it (rename overwrites).
+        final flaky = FlakySessionFs(fs)..failNextListings = 1 << 30;
+        final reopened = (await JsonlSessionStorage.open(
+          flaky,
+          path,
+        )).withRotationLimits(rotateBytes: 200, hardCapBytes: 1 << 20);
+        await reopened.appendEntry(msg('e3', 'e2', 'x' * 220));
+        await reopened.appendEntry(msg('e4', 'e3', 'e4'));
+        expect(
+          (await fs.readTextFile('$path.part-0001')).getOrThrow(),
+          partBefore,
+          reason: 'the existing part survives a blind open',
+        );
+        expect((await fs.exists('$path.part-0002')).getOrThrow(), isFalse);
+      },
+    );
+
+    test('a fileInfo failure degrades rotation to the plain append', () async {
+      final flaky = FlakySessionFs(fs)..failNextFileInfos = 1 << 30;
+      final storage = (await JsonlSessionStorage.create(
+        flaky,
+        path,
+        cwd: '/work',
+        sessionId: 'r1',
+      )).withRotationLimits(rotateBytes: 1, hardCapBytes: 1 << 20);
+      // The stat behind the size check never lands: rotation is skipped
+      // (the documented degradation), the record itself is not lost.
+      await storage.appendEntry(msg('e1', null, 'x' * 220));
+      await storage.appendEntry(msg('e2', 'e1', 'e2'));
+      expect((await fs.exists('$path.part-0001')).getOrThrow(), isFalse);
+      final reopened = await JsonlSessionStorage.open(fs, path);
+      expect((await reopened.getEntries()).map((e) => e.id), ['e1', 'e2']);
+    });
+
+    test(
+      'failed rotation with a failed restore still never loses the append',
+      () async {
+        final warnings = <String>[];
+        final oldWarn = JsonlSessionStorage.onRotationWarning;
+        JsonlSessionStorage.onRotationWarning = warnings.add;
+        try {
+          final base = await JsonlSessionStorage.create(
+            fs,
+            path,
+            cwd: '/work',
+            sessionId: 'r1',
+          );
+          await base.appendEntry(msg('e1', null, 'x' * 220));
+          final flaky = FlakySessionFs(fs);
+          final storage = (await JsonlSessionStorage.open(
+            flaky,
+            path,
+          )).withRotationLimits(rotateBytes: 200, hardCapBytes: 1 << 20);
+          // EVERY primary write fails: the rotation seed AND the restore.
+          flaky.failWritesWhere = (p, _) => p == path;
+          await storage.appendEntry(msg('e2', 'e1', 'e2'));
+          expect(
+            warnings.where((w) => w.contains('missing a header')),
+            isNotEmpty,
+            reason: 'the unrecoverable rotation warns',
+          );
+          // The append landed on a header-less primary; the open heal
+          // (parts exist) restores the header and keeps every record.
+          flaky.failWritesWhere = null;
+          final reopened = await JsonlSessionStorage.open(fs, path);
+          expect((await reopened.getEntries()).map((e) => e.id), ['e1', 'e2']);
+        } finally {
+          JsonlSessionStorage.onRotationWarning = oldWarn;
+        }
+      },
+    );
+
+    test('size math counts UTF-8 bytes, not UTF-16 code units', () async {
+      final warnings = <String>[];
+      final oldWarn = JsonlSessionStorage.onRotationWarning;
+      JsonlSessionStorage.onRotationWarning = warnings.add;
+      try {
+        final base = await JsonlSessionStorage.create(
+          fs,
+          path,
+          cwd: '/work',
+          sessionId: 'r1',
+        );
+        final c1 = msg('c1', null, '界' * 60);
+        final c2 = msg('c2', 'c1', '界' * 60);
+        final c3 = msg('c3', 'c2', '界' * 60);
+        final bytes = encodedRecordBytes(c1);
+        final units = jsonEncode(c1.toJson()).length + 1;
+        expect(bytes, greaterThan(units), reason: 'CJK costs 3 bytes/char');
+        // Between the UTF-16 total and the UTF-8 total: only exact byte
+        // math sees the overflow.
+        final hardCap = await headerBytes() + 2 * bytes + units + 10;
+        await base.appendEntry(c1);
+        await base.appendEntry(c2);
+        final storage = base.withRotationLimits(
+          rotateBytes: 1 << 20,
+          hardCapBytes: hardCap,
+        );
+        await storage.appendEntry(c3);
+        expect(
+          warnings.where((w) => w.contains('hard cap')),
+          isNotEmpty,
+          reason: 'the byte-exact cap fires',
+        );
+        final ids = (await JsonlSessionStorage.open(
+          fs,
+          path,
+        )).getEntries().then((es) => es.map((e) => e.id).toList());
+        expect(await ids, isNot(contains('c1')));
+        expect(await ids, contains('c3'));
+      } finally {
+        JsonlSessionStorage.onRotationWarning = oldWarn;
+      }
+    });
+
+    test(
+      'windowed open reads only the active segment (documented boundary)',
+      () async {
+        final storage = await createRotating();
+        await storage.appendEntry(msg('e1', null, 'x' * 220));
+        await storage.appendEntry(msg('e2', 'e1', 'e2'));
+        // The windowed/chat path is bound to the primary file: history
+        // archived in .part-NN segments is NOT pageable through it
+        // (loadOlder stops at the segment boundary). Full-chain reads
+        // go through JsonlSessionStorage.open / readCustomRecordsOfType.
+        final windowed = await WindowedSessionStorage.open(fs, path);
+        expect((await windowed.getEntries()).map((e) => e.id), ['e2']);
+        expect(windowed.hasOlder, isFalse);
+      },
+    );
   });
 }
