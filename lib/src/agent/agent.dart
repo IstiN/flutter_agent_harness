@@ -686,7 +686,7 @@ class Agent {
     _runWatchdogTimer = null;
     final run = _activeRun;
     if (run == null) return;
-    final error = TimeoutException(
+    final error = RunIdleWatchdogFire(
       'agent run produced no events for '
       '${runIdleTimeout.inSeconds}s (run idle watchdog)',
       runIdleTimeout,
