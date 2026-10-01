@@ -1,6 +1,6 @@
 {
   "parent": {
-    "path": "../../factory-agents/pr_review.json"
+    "path": "pr_review@latest"
   },
   "params": {
     "envVariables": {

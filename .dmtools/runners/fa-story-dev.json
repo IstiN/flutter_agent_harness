@@ -1,6 +1,6 @@
 {
   "parent": {
-    "path": "../../factory-agents/story_development.json"
+    "path": "story_development@latest"
   },
   "params": {
     "envVariables": {

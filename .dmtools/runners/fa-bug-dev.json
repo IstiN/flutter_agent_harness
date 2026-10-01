@@ -1,6 +1,6 @@
 {
   "parent": {
-    "path": "../../factory-agents/bug_development.json"
+    "path": "bug_development@latest"
   },
   "params": {
     "envVariables": {
