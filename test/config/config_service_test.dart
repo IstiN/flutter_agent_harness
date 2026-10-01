@@ -651,7 +651,9 @@ void main() {
         await env.writeFile(_globalConfig, 'skills:\n  bogus: 1\n');
         expect(
           (await service.check()).errors.single.message,
-          contains('unknown "skills" key: bogus'),
+          // Per-skill keys are legal since issue #1151; only a bad value
+          // shape is rejected now.
+          contains('skills.bogus must be on/off'),
         );
       },
     );

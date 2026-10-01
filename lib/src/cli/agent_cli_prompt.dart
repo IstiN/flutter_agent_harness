@@ -34,7 +34,7 @@ extension AgentCliPromptComposition on AgentCli {
       config.systemPrompt ?? _currentMode.systemPrompt,
       contextSection: formatProjectContext(_contextFiles),
       skillsSection: formatSkillsForPrompt(
-        _skills,
+        _enabledSkills,
         touchedPaths: _touchedPaths,
         cwd: _env.cwd,
       ),

@@ -112,7 +112,9 @@ Future<SkillRenderResult> renderSkillBody(
   String? projectDir,
   bool shellExecutionEnabled = true,
 }) async {
-  final text = (await env.readTextFile(skill.filePath)).valueOrNull;
+  final text =
+      skill.embeddedText ??
+      (await env.readTextFile(skill.filePath)).valueOrNull;
   if (text == null) {
     throw SkillRenderException('cannot read skill file: ${skill.filePath}');
   }

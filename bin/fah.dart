@@ -2399,10 +2399,14 @@ Future<void> _runApp(List<String> args) async {
       // skill bodies follow `disableShellExecution`.
       skillsAccess: saved.skillsAccess,
       skillsDisableShellExecution: saved.skillsDisableShellExecution,
+      // Global per-skill toggles (`skills:` config section, issue #1151):
+      // the CLI owns the live view; persistConfig writes it back.
+      skillToggles: saved.skillToggles,
       onSkillsAccessChanged: (access) async {
         skillsAccess = access;
         await persistConfig();
       },
+      onSkillTogglesChanged: () async => persistConfig(),
       // Shift+Enter in the TUI: HID polling when the startup gate allows
       // it (issue #355) — null over SSH, under FA_TUI_SHIFT_HID=0, after
       // a probe timeout, and on non-macOS hosts.
@@ -2467,6 +2471,10 @@ Future<void> _runApp(List<String> args) async {
         // `/skills access`); shell-execution policy is static per session.
         skillsAccess: skillsAccess,
         skillsDisableShellExecution: saved.skillsDisableShellExecution,
+        // The live global `skills:` toggles (read from the loaded config,
+        // updated by `/skills <name> global`); null before the first
+        // resolution, in which case the loaded section is kept as-is.
+        skillToggles: cli.globalSkillToggles ?? saved.skillToggles,
         // The saved cube default (the live value the Cube sandbox flow
         // rewrites; `saved.cube` keeps the section when nothing changed).
         cube: cli.config.cubeSettings ?? saved.cube,

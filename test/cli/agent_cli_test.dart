@@ -454,8 +454,10 @@ void main() {
         );
         io.sendLine('2'); // "Not now" — stays undecided and hidden.
         io.sendLine('/skills');
+        // Builtins are first-party: they list even while consent is
+        // withheld (issue #1151); the third-party skill stays hidden.
         await waitForIt(
-          () => io.out.toString().contains('no skills discovered'),
+          () => io.out.toString().contains('create-goal — Turn a feature'),
         );
         expect(io.out.toString(), isNot(contains('review — Review code')));
 
@@ -489,7 +491,11 @@ void main() {
         () => io.out.toString().contains('skills access: denied'),
       );
       io.sendLine('/skills');
-      await waitForIt(() => io.out.toString().contains('no skills discovered'));
+      // Builtins list even under denied consent (issue #1151); the codex
+      // skill stays hidden.
+      await waitForIt(
+        () => io.out.toString().contains('create-goal — Turn a feature'),
+      );
       io.sendLine('/exit');
       await run;
       expect(io.out.toString(), isNot(contains('release — Ship a release')));
@@ -542,7 +548,12 @@ void main() {
         () => io.out.toString().contains('skills access: denied'),
       );
       io.sendLine('/skills');
-      await waitForIt(() => io.out.toString().contains('no skills discovered'));
+      // Builtins list even under denied consent (issue #1151); the claude
+      // skill stays hidden.
+      await waitForIt(
+        () => io.out.toString().contains('create-goal — Turn a feature'),
+      );
+      expect(io.out.toString(), isNot(contains('review — Review code')));
       io.sendLine('/exit');
       await run;
     });
