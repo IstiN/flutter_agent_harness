@@ -50,6 +50,7 @@ final class GithubPull {
     required this.state,
     required this.merged,
     required this.title,
+    this.headSha,
   });
 
   factory GithubPull.fromJson(Map<String, dynamic> json) => GithubPull(
@@ -59,6 +60,8 @@ final class GithubPull {
     state: (json['state'] ?? 'open').toString(),
     merged: json['merged_at'] != null || json['merged'] == true,
     title: (json['title'] ?? '').toString(),
+    headSha: (json['head'] is Map ? (json['head'] as Map)['sha'] : null)
+        ?.toString(),
   );
 
   final int number;
@@ -70,6 +73,73 @@ final class GithubPull {
   final String state;
   final bool merged;
   final String title;
+
+  /// Head commit sha of the PR branch — the ref CI check-runs attach to
+  /// (issue #1045 status mapping). Null on synthesized/partial responses.
+  final String? headSha;
+}
+
+/// One CI check run on a ref (subset the publish-status flow needs).
+final class GithubCheckRun {
+  const GithubCheckRun({
+    required this.name,
+    required this.status,
+    this.conclusion,
+    this.htmlUrl,
+    this.outputTitle,
+    this.outputSummary,
+    this.outputText,
+  });
+
+  factory GithubCheckRun.fromJson(Map<String, dynamic> json) {
+    final output = json['output'];
+    String? outputField(String key) =>
+        output is Map &&
+            output[key] != null &&
+            output[key].toString().isNotEmpty
+        ? output[key].toString()
+        : null;
+    return GithubCheckRun(
+      name: (json['name'] ?? '').toString(),
+      status: (json['status'] ?? '').toString(),
+      conclusion: json['conclusion']?.toString(),
+      htmlUrl: json['html_url']?.toString(),
+      outputTitle: outputField('title'),
+      outputSummary: outputField('summary'),
+      outputText: outputField('text'),
+    );
+  }
+
+  /// Check name (the catalog's validator check is `validate`).
+  final String name;
+
+  /// `queued` | `in_progress` | `completed`.
+  final String status;
+
+  /// When completed: `success` | `failure` | `neutral` | `skipped` | ….
+  final String? conclusion;
+
+  /// Browser URL — for the catalog's job checks this is the Actions job
+  /// URL (`…/actions/runs/<run>/job/<job>`).
+  final String? htmlUrl;
+
+  /// The check's rendered output, when the workflow writes one (plain
+  /// `dart run` steps carry none — the verbatim errors then come from the
+  /// job log; see [GithubApiClient.jobLog]).
+  final String? outputTitle;
+  final String? outputSummary;
+  final String? outputText;
+
+  bool get isCompleted => status == 'completed';
+
+  /// Conclusions the catalog treats as a validator verdict AGAINST the
+  /// widget (issue #1045 review): plain failure, a run that outlived its
+  /// budget, and an infrastructure startup failure. `cancelled` and
+  /// `action_required` have no verdict — they keep the PR 'open'.
+  bool get isFailed =>
+      conclusion == 'failure' ||
+      conclusion == 'timed_out' ||
+      conclusion == 'startup_failure';
 }
 
 /// One PR conversation entry (issue comment or review comment, unified).
@@ -230,9 +300,8 @@ class GithubApiClient {
       jsonDecode(response.body) as Map<String, dynamic>,
     );
     final raw = response.headers['x-oauth-scopes'] ?? '';
-    final scopes = [
-      for (final part in raw.split(',')) part.trim(),
-    ]..removeWhere((scope) => scope.isEmpty);
+    final scopes = [for (final part in raw.split(',')) part.trim()]
+      ..removeWhere((scope) => scope.isEmpty);
     return (user, scopes);
   }
 
@@ -471,7 +540,12 @@ class GithubApiClient {
           await _request(
                 'POST',
                 '/repos/$owner/$repo/pulls',
-                body: {'head': head, 'base': base, 'title': title, 'body': body},
+                body: {
+                  'head': head,
+                  'base': base,
+                  'title': title,
+                  'body': body,
+                },
               )
               as Map<String, dynamic>;
     } on GithubApiException catch (error) {
@@ -528,6 +602,74 @@ class GithubApiClient {
         _comment(raw as Map<String, dynamic>, isReview: true),
     ]..sort((a, b) => a.createdAt.compareTo(b.createdAt));
     return all;
+  }
+
+  // --- check runs (issue #1045 publish status) ------------------------------
+
+  /// Check runs attached to [ref] (a commit sha) in `<owner>/<repo>` —
+  /// for a catalog PR the head-sha runs carry the `validate` verdict.
+  Future<List<GithubCheckRun>> listCheckRuns(
+    String owner,
+    String repo,
+    String ref,
+  ) async {
+    // Paginate — a bare first page would treat a failing check beyond 100
+    // entries as "all green" (issue #1045 review). Bounded at 5 pages.
+    final raw = <Object?>[];
+    var page = 1;
+    var totalCount = 0;
+    while (true) {
+      final json =
+          await _request(
+                'GET',
+                '/repos/$owner/$repo/commits/$ref/check-runs'
+                    '?per_page=100&page=$page',
+              )
+              as Map<String, dynamic>;
+      totalCount = (json['total_count'] as num?)?.toInt() ?? 0;
+      final batch = json['check_runs'];
+      if (batch is! List || batch.isEmpty) break;
+      raw.addAll(batch);
+      if (raw.length >= totalCount || page >= 5) break;
+      page++;
+    }
+    return [
+      for (final run in raw)
+        GithubCheckRun.fromJson(Map<String, dynamic>.from(run as Map)),
+    ];
+  }
+
+  /// The plain-text log of an Actions job — where the catalog validator's
+  /// `ERROR <id>: …` lines live verbatim (the check-run output itself is
+  /// empty for plain `dart run` steps). Null when the log is unreachable
+  /// (expired, rate-limited) — the caller keeps the last-known errors and
+  /// the run link instead.
+  Future<String?> jobLog(String owner, String repo, int jobId) async {
+    final uri = Uri.parse(
+      '$baseUrl/repos/$owner/$repo/actions/jobs/$jobId/logs',
+    );
+    final request = http.Request('GET', uri)..headers.addAll(_headers);
+    // refreshStatus polls this once per failing check every tick — bound
+    // the fetch so a wedged log endpoint degrades to "keep last-known"
+    // instead of hanging the poller. Plain `.timeout(d)` (no onTimeout
+    // closure): the timeout THROWS, so there is no value substitution to
+    // mis-reify against a real IOClient (the gh-1125 failure shape).
+    const logTimeout = Duration(seconds: 30);
+    final streamed = await _http.send(request).timeout(logTimeout);
+    final response = await http.Response.fromStream(
+      streamed,
+    ).timeout(logTimeout);
+    if (response.statusCode >= 400) return null;
+    return response.body;
+  }
+
+  /// The Actions job id encoded in a check-run's job URL
+  /// (`…/actions/runs/<run>/job/<job>`), or null when [htmlUrl] is not a
+  /// job URL.
+  static int? jobIdFromUrl(String? htmlUrl) {
+    if (htmlUrl == null) return null;
+    final match = RegExp(r'/job/(\d+)').firstMatch(htmlUrl);
+    return match == null ? null : int.parse(match.group(1)!);
   }
 
   GithubComment _comment(Map<String, dynamic> json, {required bool isReview}) {
