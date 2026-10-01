@@ -92,6 +92,17 @@ List<AssistantMessageEvent> toolTurn(List<ToolCall> calls) {
   return events;
 }
 
+/// The text of a user message (string or content-block content) — the
+/// shared assertion helper for outbound prompts (issue #1152).
+String messageText(UserMessage message) {
+  final content = message.content;
+  if (content is String) return content;
+  return [
+    for (final block in content as List<ContentBlock>)
+      if (block is TextContent) block.text,
+  ].join();
+}
+
 /// Scripted [StreamFunction] replaying pre-recorded turns.
 class FakeStreamFunction {
   FakeStreamFunction(this.turns);

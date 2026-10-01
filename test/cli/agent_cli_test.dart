@@ -82,16 +82,6 @@ void main() {
     fail('timed out waiting for async condition');
   }
 
-  /// The text of a user message (string or content-block content).
-  String messageText(UserMessage message) {
-    final content = message.content;
-    if (content is String) return content;
-    return [
-      for (final block in content as List<ContentBlock>)
-        if (block is TextContent) block.text,
-    ].join();
-  }
-
   test('an untouched session leaves no file behind on exit', () async {
     // Session-start memory maintenance is due on a fresh env (no stamp);
     // its consolidate() would consume a scripted turn on a slow runner.

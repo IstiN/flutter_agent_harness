@@ -1721,15 +1721,16 @@ class AgentCli {
   /// (`/a/b`, `~/…`, `./…`, `../…`): more text after the token means the
   /// user is talking to the agent, not invoking a command (issue #1152),
   /// and a bare token naming an existing file is an attachment paste —
-  /// either steers as a message instead of dispatching as a command.
+  /// either takes the message route instead of the command dispatcher.
+  ///
+  /// The path-prefix/token shape comes from the shared
+  /// [leadingPathLikeToken]; a bare single-segment `/word` is excluded —
+  /// that shape is a slash command (`/model gpt` must keep dispatching),
+  /// not a path.
   bool _isPathLedChat(String trimmed) {
-    final token = trimmed.split(_commandWhitespace).first;
-    final pathLike =
-        _leadingPathLike.hasMatch(token) ||
-        token.startsWith('~/') ||
-        token.startsWith('./') ||
-        token.startsWith('../');
-    if (!pathLike) return false;
+    final token = leadingPathLikeToken(trimmed);
+    if (token == null) return false;
+    if (token.startsWith('/') && !token.contains('/', 1)) return false;
     if (trimmed.length > token.length) return true;
     return resolveInteractiveFileReference(trimmed) != trimmed;
   }
@@ -2196,7 +2197,7 @@ class AgentCli {
         // file go straight into the session or vanish"). Steer it with
         // the attachment marker instead.
         if (!trimmed.startsWith('!') && _isPathLedChat(trimmed)) {
-          _steerResolved(trimmed);
+          _steerResolved(trimmed, images: images);
           return;
         }
         await _dispatchInput(line, trimmed, images);
@@ -2250,21 +2251,33 @@ class AgentCli {
       await _runSkillCommand(trimmed.substring('/skill:'.length));
       return;
     }
-    if (trimmed.startsWith('/')) {
+    // Chat that merely starts with a path-shaped token (issue #1152) is
+    // never a command: it skips the dispatcher entirely and falls through
+    // to the shared message tail below (viewer routing, per-turn grant
+    // reset, clipboard-image passthrough).
+    if (trimmed.startsWith('/') && !_isPathLedChat(trimmed)) {
       await _handleCommand(trimmed);
       return;
     }
-    // Viewer mode (#428): plain input is composer mail to the driving
-    // agent — never a second writer, never a takeover.
+    await _sendUserMessage(line, images);
+  }
+
+  /// The shared pre-run message tail of [_dispatchInput]: viewer mode
+  /// routes composer mail to the driving agent (#428 — zero local bytes),
+  /// a new user message ends the previous turn's per-turn skill tool
+  /// grants, then the run starts with any clipboard images riding along.
+  /// The path-guard's multi-word fallback arm reuses it so every message
+  /// path gets the same bookkeeping (issue #1152 round-1).
+  Future<void> _sendUserMessage(
+    String text,
+    List<TuiImageAttachment> images,
+  ) async {
     if (_viewer != null) {
-      await _viewerSend(line);
+      await _viewerSend(text);
       return;
     }
-    // A new user message ends the previous turn: per-turn skill tool grants
-    // (`allowed-tools`) do not leak into it. The skill path re-grants after
-    // this clear (it goes through `/skill:` / the slash alias above).
     _approval.clearTurnGrants();
-    _startRun(line, images: images);
+    _startRun(text, images: images);
   }
 
   void _startRun(String text, {List<TuiImageAttachment> images = const []}) {
