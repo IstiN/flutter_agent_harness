@@ -170,9 +170,25 @@ extension _TuiComposerLayout on FaTuiModel {
     // any event interleaving — and needs no recursion: both candidate
     // heights are already in scope here.
     if (sticky > 0) {
-      final paintedTop = _wrappedLines().length - (historyNoSticky - sticky);
-      final top = followTail ? paintedTop : scrollOffset.clamp(0, paintedTop);
-      if (top < _echoEndRow()) sticky = 0;
+      final endRow = _echoEndRow();
+      // An empty wrap cache carries no geometry to dedupe against — the
+      // transcript keeps the echo.
+      if (endRow < 0) {
+        sticky = 0;
+      } else {
+        final wrapped = _wrappedLines();
+        // Floored at 0 exactly like _scrollBottom: a transcript shorter
+        // than the window paints from the top row. A raw negative anchor
+        // also put the detached clamp below into an invalid range —
+        // ArgumentError, frame killed mid-run (review round 1).
+        final paintedTop =
+            (wrapped.length - (historyNoSticky - sticky)).clamp(
+          0,
+          wrapped.length,
+        );
+        final top = followTail ? paintedTop : scrollOffset.clamp(0, paintedTop);
+        if (top < endRow) sticky = 0;
+      }
     }
     consumable -= sticky;
     return _FramePlan(

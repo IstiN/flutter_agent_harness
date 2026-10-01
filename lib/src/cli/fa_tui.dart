@@ -567,9 +567,13 @@ final class FaTuiModel extends Model {
   /// shared wrap cache, refreshed here when stale. Comparing against the
   /// RAW [stickyIndex] line instead once pinned a duplicate while the
   /// message was still visible in the chat.
+  ///
+  /// Returns -1 when the cache holds no row starts (no geometry to dedupe
+  /// against) — callers keep the echo with the transcript then.
   int _echoEndRow() {
     _wrappedLines();
     final starts = _wrapCache.lineStartRows;
+    if (starts.isEmpty) return -1;
     final echoEndLine = (stickyIndex + stickyEchoLineCount).clamp(
       0,
       starts.length - 1,
