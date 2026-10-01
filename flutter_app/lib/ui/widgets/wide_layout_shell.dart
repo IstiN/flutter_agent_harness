@@ -497,7 +497,11 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     // long-press mints a fresh session (haptic, no dialog); a tap needs
     // no action here — the wide layout always shows the active chat.
     final brandIcon = Tooltip(
+      // Hover-only hint: triggerMode manual — the touch long-press is
+      // deliberately yielded to the InkWell below so it ALWAYS mints
+      // (#864); the hint still reaches screen readers via semantics.
       message: context.l10n.faEntryHintTooltip,
+      triggerMode: TooltipTriggerMode.manual,
       child: InkWell(
         key: const ValueKey('wideShellFaBrand'),
         borderRadius: BorderRadius.circular(8),
@@ -872,13 +876,27 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   /// The Fa brand mark's long-press (#864): mint one new session straight
   /// from the active config — no folder dialog (the owner ruling is
   /// long-press = new; the sidebar's explicit flow keeps its dialog).
+  /// Single-flight like the sheet's [mintAndOpenNewSession]: createSession
+  /// is not internally serialized, so a rapid second long-press inside the
+  /// clone window would double-mint (ticket E3).
+  bool _mintingFromBrand = false;
+
   Future<void> _mintSessionFromBrand() async {
-    final target = _newSessionTarget;
-    if (target == null) return;
-    if (await _resetViaRelay(target.service)) return;
-    // Fire-and-forget: the ack is flow control for nobody.
-    unawaited(HapticFeedback.mediumImpact());
-    _createSessionInChosenFolder(target.service, target.config);
+    if (_mintingFromBrand) return;
+    _mintingFromBrand = true;
+    try {
+      final target = _newSessionTarget;
+      if (target == null) return;
+      if (await _resetViaRelay(target.service)) return;
+      // Fire-and-forget: the ack is flow control for nobody.
+      unawaited(HapticFeedback.mediumImpact());
+      await widget.manager.createSession(
+        config: target.config,
+        serviceFactory: () async => target.service.clone(),
+      );
+    } finally {
+      _mintingFromBrand = false;
+    }
   }
 
   /// The folder is already set ('current' or a freshly applied pick);

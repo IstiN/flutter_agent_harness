@@ -1017,8 +1017,13 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
               // (expand the sheet, zero minting); long-press is the ONLY
               // navigation way to mint a fresh one. The hint tooltip names
               // both gestures.
+              // Hover-only hint: triggerMode manual — the touch long-press
+              // is deliberately yielded to the InkWell below so it ALWAYS
+              // mints (#864) and can never degrade into a tooltip; the
+              // hint still reaches screen readers via semantics.
               Tooltip(
                 message: context.l10n.faEntryHintTooltip,
+                triggerMode: TooltipTriggerMode.manual,
                 child: InkWell(
                   key: const ValueKey('launcherFaBrand'),
                   borderRadius: BorderRadius.circular(8),
