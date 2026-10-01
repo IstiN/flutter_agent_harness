@@ -7,10 +7,9 @@
 /// — tool rows, notice blockquotes, markdown rows, user echo — must EQUAL
 /// the live screen's, modulo the contract's permitted differences (settled
 /// durations `—` vs live cells; board re-print cards are dropped from both
-/// sides, their shape is #429's own coverage; and since #807 the live edge
-/// paints band tool cards `✔ name: detail 0s` while the replay keeps the
-/// legacy row grammar `✓ name · detail —` — both canonicalize to the
-/// shared `name: detail` core).
+/// sides, their shape is #429's own coverage; and since #916 both edges
+/// paint the settled band tool card `✔ name: detail`, the replay's meta
+/// zone carrying the honest `—` where the live card shows `0s`).
 ///
 /// AC6/AC8: a 3k-record session resumes through the unified pipeline — the
 /// tail's pinned grammar rows render, zero `[name]` markers leak, and
@@ -120,28 +119,21 @@ final _runningCard = RegExp(r'^[⟳⏳] \S+: ');
 /// A live SETTLED band tool card (`✔ bash: sleep 2 … 0s`, `✘ … [exit 1]`).
 final _settledCard = RegExp(r'^[✔✘] (\S+): (.+)$');
 
-/// A replayed legacy tool row (`✓ bash · sleep 2 … —`, `✗ …` when the
-/// result record never landed).
-final _replayedRow = RegExp(r'^[✓✗] (\S+) · (.+)$');
+/// A settled card's trailing meta zone: the bracketed badge, the elapsed
+/// cell (`0s`, `12.4ms`), or the replay's honest `—` (issue #916).
+final _cardMeta = RegExp(r'(?:\s\[[^\]]+\]|\s\d+(?:\.\d+)?(?:ms|s)|\s—)+$');
 
-/// A settled card's trailing meta zone: the bracketed badge and/or the
-/// elapsed cell (`0s`, `12.4ms`).
-final _cardMeta = RegExp(r'(?:\s\[[^\]]+\]|\s\d+(?:\.\d+)?(?:ms|s))+$');
-
-/// Canonicalizes one settled tool row to its shared `name: detail`
-/// grammar. The live band card (`✔ bash: sleep 2 … 0s`) and the replayed
-/// row (`✓ bash · sleep 2 … —`) render the same call with different
-/// glyph/separator/elapsed chrome (#807 vs the legacy row grammar), so the
-/// comparison reads the name+detail core both share. Running cards
-/// (`⟳ …`) normalize to null: live-only transient.
+/// Canonicalizes one settled tool row to its shared `name: detail` core.
+/// Since #916 BOTH edges paint the settled band card — it is the ONLY
+/// tool-row grammar — so this is a strict parser, not a tolerance layer: a
+/// card canonicalizes, a running card (`⟳ …`, live-only transient)
+/// normalizes to null, and ANYTHING else (e.g. a regressed legacy
+/// `✓ name · detail` row) passes through raw and breaks the live/replay
+/// equality — drift detection is this canonicalizer's whole job.
 String? _canonicalToolRow(String t) {
   if (_runningCard.hasMatch(t)) return null;
   final card = _settledCard.firstMatch(t);
   if (card != null) return '${card[1]}: ${card[2]!.replaceAll(_cardMeta, '')}';
-  final row = _replayedRow.firstMatch(t);
-  if (row != null) {
-    return '${row[1]}: ${row[2]!.replaceFirst(RegExp(r'\s+—$'), '')}';
-  }
   return t;
 }
 
@@ -430,7 +422,10 @@ ${resumeTail.join('\n')}''',
         );
         // The tail rides the unified pipeline: pinned rows visible.
         final tail = resumed.screenText;
-        expect(tail, contains('✓ bash'));
+        // Post-#916 the replayed settled tool row IS the band card
+        // (`✔ bash: echo probe-N —`); a legacy `✓ bash` row here would be
+        // the #916 drift class regressing.
+        expect(tail, contains('✔ bash:'));
         expect(tail, contains('echo probe-$turns'));
         expect(tail, contains('answer $turns'));
         expect(tail, isNot(contains('[bash]')));

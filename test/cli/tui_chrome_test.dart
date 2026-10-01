@@ -2,6 +2,7 @@ import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/tui_chrome.dart';
 import 'package:flutter_agent_harness/src/cli/tui_text_width.dart';
 import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
+import 'package:flutter_agent_harness/src/types.dart' show TextContent;
 import 'package:test/test.dart';
 
 /// Strips every SGR sequence so assertions read on visible cells only
@@ -292,6 +293,67 @@ void main() {
       expect(
         fmt.formatLine('${tuiUserMessageBgSgr()}hello\x1b[0m'),
         startsWith(tuiUserMessageBgSgr()),
+      );
+    });
+  });
+
+  group('settledToolCardRows + failureFirstLine (issue #916 shared builder)', () {
+    test('drops empty meta fragments — byte-compat with the live '
+        'empty-elapsed cell', () {
+      final withCell = settledToolCardRows(
+        toolName: 'bash',
+        successDetail: 'echo hi',
+        isError: false,
+        width: 80,
+        meta: const ['0s'],
+      );
+      final withoutCell = settledToolCardRows(
+        toolName: 'bash',
+        successDetail: 'echo hi',
+        isError: false,
+        width: 80,
+        meta: const [''],
+      );
+      expect(cells(withCell.join('\n')), contains('0s'));
+      // A filtered-away fragment must leave exactly the card that never
+      // had one: the pre-#916 live edge painted no elapsed cell when the
+      // clock never started, and the shared builder keeps those bytes.
+      expect(withoutCell, tuiToolCard(
+        const ToolCardSegments(title: 'bash', description: 'echo hi'),
+        TuiCardPhase.success,
+        80,
+      ));
+    });
+
+    test('interrupted (replay-only): error phase over the plain detail — '
+        'resultContent never becomes the description', () {
+      final rows = settledToolCardRows(
+        toolName: 'bash',
+        successDetail: 'git status',
+        isError: false,
+        width: 60,
+        resultContent: const [TextContent(text: 'boom')],
+        interrupted: true,
+      );
+      expect(rows, tuiToolCard(
+        const ToolCardSegments(title: 'bash', description: 'git status'),
+        TuiCardPhase.error,
+        60,
+      ));
+    });
+
+    test('failureFirstLine: empty content is empty; first line of the '
+        'joined blocks', () {
+      expect(failureFirstLine(const []), '');
+      expect(failureFirstLine(const [TextContent(text: 'boom\nstack')]), 'boom');
+      // Blocks join WITHOUT a separator: a block boundary inside one
+      // visual line stays one line.
+      expect(
+        failureFirstLine(const [
+          TextContent(text: 'one'),
+          TextContent(text: '\ntwo'),
+        ]),
+        'one',
       );
     });
   });
