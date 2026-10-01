@@ -638,7 +638,18 @@ Future<http.StreamedResponse> _sendWatchedOnce(
   CancelToken? cancelToken,
   int attempt,
 ) async {
-  final responseFuture = httpClient.send(request);
+  // Re-pin the runtime type parameter BEFORE the watchdog: IOClient.send's
+  // future is reified as package:http's internal IOStreamedResponse, and
+  // `.timeout` runtime-checks its value-returning onTimeout closure against
+  // that reified type — the () => http.StreamedResponse watchdog fails the
+  // cast the moment a REAL client is used (CI core shard 1/4, run
+  // 36802277315: "type '() => StreamedResponse' is not a subtype of type
+  // '(() => FutureOr<IOStreamedResponse>)?' of 'onTimeout'"). A `.then<S>`
+  // round-trip reifies the future as Future<http.StreamedResponse> so the
+  // closure matches; one microtask hop at header time, no semantic change.
+  final responseFuture = httpClient
+      .send(request)
+      .then<http.StreamedResponse>((response) => response);
   // Issue #1036 (review round 1): name the endpoint in the watchdog error —
   // the rendered "TimeoutException: …" text is the always-retryable contract
   // the failover/queue classifiers match on.
