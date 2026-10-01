@@ -402,20 +402,7 @@ final class TaskExecutor {
       // Issue #862 review (round 2): the resume output carries the same
       // loud duplicate-registration warning as a fresh spawn — a resumed
       // child's second life must not re-wire the leak silently.
-      final resumeDuplicateNotes = resumeRegistry.duplicateNotes;
-      if (resumeDuplicateNotes.isNotEmpty) {
-        // Read-modify-write: `put` replaces, and the spawn-time output
-        // under this id must survive the resume's warning (round-3
-        // review).
-        final existing = store.get(id);
-        store.put(
-          id,
-          '${existing == null || existing.isEmpty ? '' : '$existing\n\n'}'
-          '[fah] warning: duplicate tool registration in the child surface '
-          '(child-specific tool won): '
-          '${resumeDuplicateNotes.join(' | ')}',
-        );
-      }
+      _surfaceResumeDuplicateNotes(resumeRegistry.duplicateNotes, id);
       await _flushChildTranscript(id, child);
       // Turn-boundary billing already added each finished turn (issue
       // #332); the completion update bills only what is left and settles
@@ -454,6 +441,22 @@ final class TaskExecutor {
       _currentSubagentIds.remove(id);
       _inFlightCancels.remove(id);
     }
+  }
+
+  /// Appends the loud duplicate-registration warning to the child's stored
+  /// output artifact (issue #862 review, round 2). Read-modify-write:
+  /// [AgentOutputStore.put] replaces, and the spawn-time output under the
+  /// child's id must survive the resumed second life (round-3 review).
+  void _surfaceResumeDuplicateNotes(List<String> duplicateNotes, String id) {
+    if (duplicateNotes.isEmpty) return;
+    final existing = store.get(id);
+    store.put(
+      id,
+      '${existing == null || existing.isEmpty ? '' : '$existing\n\n'}'
+      '[fah] warning: duplicate tool registration in the child surface '
+      '(child-specific tool won): '
+      '${duplicateNotes.join(' | ')}',
+    );
   }
 
   /// Failure-path requeue of warm-wake mail (issue #647): the drained
