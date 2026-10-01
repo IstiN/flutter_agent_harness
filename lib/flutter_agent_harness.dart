@@ -241,6 +241,7 @@ export 'src/hosts/host_capability_profile.dart';
 export 'src/hosts/host_wiring_builder.dart';
 export 'src/types.dart';
 export 'src/usage_summary.dart';
+export 'src/utils/path_text.dart';
 export 'src/wire/wire_adapter.dart';
 export 'src/wire/wire_protocol.dart';
 export 'src/wire/wire_serve.dart';
