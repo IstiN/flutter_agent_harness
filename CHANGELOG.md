@@ -4429,14 +4429,24 @@
 - feat(1086): sandbox shell heredocs, here-strings, fail-fast guards (#1094)
 - chore(factory): pin dmtools-agents @cee5996 — mutexExcludeSelf + conflict-rework + release-bump authorship + teammate dev-leg timeout (#1111)
 
-## Unreleased
+## 1.0.496
 
-## Unreleased
-
-## Unreleased
-
-## Unreleased
-
-## Unreleased
+- feat(#1122): configurable + progress-aware bench agent timeout (#1127)
+- feat(#827): TUI viewport never loses shown content (#1097)
+- pin: factory workflows -> dmtools-agentic-workflows@b93dc51 (#1146)
+- fix(#1036): bound provider HTTP calls with client-side timeouts (#1108)
+- fix(#1045): per-widget publish status with verbatim validator errors (#1141)
+- fix(#1121): transparent bounded retry on zero-byte connect-stall watchdog timeout (#1125)
+- feat(#1106): enable Type-2 duplication gate (crap4dart 0.11.0) + 13-file triage (#1116)
+- feat(#1103): fa wire-serve - headless AWP server over WS + NDJSON-stdio (#1113)
+- feat(#1096): release size manifest gate + unambiguous extension/web cuts (slice 1) (#1110)
+- fix(#1117): close web network-auth popup after grant + handle post-auth redirect (#1119)
+- fix(#1102): persist chain re-runs skipped passes (lost assistant record) (#1112)
+- feat(#1101): Agent Wire Protocol v1 schema, versioning, fixtures, in-process adapter (slice 1) (#1109)
+- feat(#1100): ship rehostable web SPA bundle (fa-web-spa.zip) on releases (#1107)
+- feat(#823): provider quota & budget monitoring — CORE tier (model, OpenRouter adapter, TTL service, CLI /quota + badge, app meters, resolver feed) (#1099)
+- feat(#1079): SDK slice 1 — HostCapabilityProfile + HostWiringBuilder foundation (#1091)
+- fix(#1085): post-compaction run continuation — watchdog suspension + loud failure (#1090)
+- chore(factory): sm-kicker -> shared factory-sm-kicker stub (#1118)
 
 ## Unreleased
