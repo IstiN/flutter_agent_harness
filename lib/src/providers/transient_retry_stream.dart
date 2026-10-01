@@ -109,11 +109,29 @@ bool isTransientNetworkError(AssistantMessage message) {
   if (text.toLowerCase().contains('certificate')) return false;
   if (isContextOverflow(message)) return false;
   if (isBudgetExhaustion(message)) return false;
+  // A resumed-exhaustion terminal (issue #1168) is a consumed verdict:
+  // its per-attempt evidence quotes raw transport wordings, but the
+  // chain already spent its budget - upper layers must neither rewrap
+  // ("not retried" would be false) nor rotate on a false pretext.
+  if (isTransientExhaustionStory(text)) return false;
   if (_rateLimitGuardPatterns.any((pattern) => pattern.hasMatch(text))) {
     return false;
   }
   return _transientNetworkPatterns.any((pattern) => pattern.hasMatch(text));
 }
+
+/// The headline of a resumed-exhaustion terminal (issue #1168): a retry
+/// chain that resumed from its completed prefix and STILL spent its
+/// budget. Classification layers (here and in the roles ladder above)
+/// treat the signature as terminal - no further retries, no "not
+/// retried" rewrap of an already-consumed verdict.
+const String transientExhaustionHeadline =
+    'Provider retry chain exhausted after';
+
+/// Whether [errorMessage] is a resumed-exhaustion terminal (see
+/// [transientExhaustionHeadline]).
+bool isTransientExhaustionStory(String? errorMessage) =>
+    (errorMessage ?? '').startsWith(transientExhaustionHeadline);
 
 /// The no-silent-retry note: fired before each retry sleep so the user
 /// sees "connection lost — retrying in 5s (attempt 2/3)" instead of a
@@ -255,12 +273,28 @@ Future<void> _drive(
           // snapshot's own blocks already ride inside the error message.
           // The failure's own reason rides too (issue #1168): a transport
           // death surfaces as error, never as "aborted".
-          out.push(
-            _resumeEvent(
-              ErrorEvent(reason: reason, error: snapshot),
-              resume,
-            ),
-          );
+          //
+          // A TRANSPORT-class death (issue #1168 review) carries the
+          // exhaustion story instead of the raw provider wording: the
+          // roles ladder above this wrapper classifies the raw wording as
+          // retryable and would rewrap it as "not retried" — false after
+          // this chain spent its budget — and the story's signature makes
+          // every classification layer treat it as the consumed verdict
+          // it is. The abort class keeps the snapshot verbatim (its
+          // wording is never classified retryable).
+          final terminal = reason == StopReason.error
+              ? ErrorEvent(
+                  reason: reason,
+                  error: _resumedExhaustion(
+                    model,
+                    snapshot,
+                    attemptLog,
+                    resume,
+                    startedAt,
+                  ),
+                )
+              : ErrorEvent(reason: reason, error: snapshot);
+          out.push(_resumeEvent(terminal, resume));
           return;
         }
         resume.absorb(snapshot, keptBlocks);
@@ -340,6 +374,51 @@ AssistantMessage _exhausted(
         'over $elapsedText — the endpoint kept failing. '
         'Attempts: $log. '
         'Check the provider status or try again later.',
+    timestamp: DateTime.now(),
+  );
+}
+
+/// The resumed-exhaustion terminal (issue #1168 review): a transport
+/// chain that resumed from its completed prefix and STILL spent its
+/// budget surfaces the full story - attempts, elapsed, the resume
+/// provenance - instead of the raw provider wording. The
+/// [transientExhaustionHeadline] signature lets every classification
+/// layer above (this file's, the roles ladder's) recognize the consumed
+/// verdict: no further retries, no "not retried" rewrap. The snapshot's
+/// own content blocks and raw vendor verdict ride along unchanged; the
+/// `_resumeEvent` rewrite adds the earlier attempts' prefix and usage.
+AssistantMessage _resumedExhaustion(
+  Model model,
+  AssistantMessage snapshot,
+  List<String> attemptLog,
+  _ResumeState resume,
+  DateTime startedAt,
+) {
+  final elapsed = DateTime.now().difference(startedAt);
+  final elapsedText = elapsed.inSeconds < 1 ? '<1s' : '${elapsed.inSeconds}s';
+  final log = attemptLog
+      .map(
+        (line) =>
+            line.endsWith('.') ? line.substring(0, line.length - 1) : line,
+      )
+      .join('; ');
+  final resumeNote = resume.isEmpty
+      ? ''
+      : ' The turn resumed from ${resume.blocks.length} completed '
+          'block(s) after each failure; the preserved partial answer is '
+          'above.';
+  return AssistantMessage(
+    content: snapshot.content,
+    api: snapshot.api,
+    provider: snapshot.provider,
+    model: snapshot.model,
+    usage: snapshot.usage,
+    stopReason: StopReason.error,
+    errorMessage:
+        '$transientExhaustionHeadline ${attemptLog.length} attempt(s) '
+        'over $elapsedText - the endpoint kept failing. Attempts: $log.'
+        '$resumeNote This verdict is final - no further retries.',
+    rawStopReason: snapshot.rawStopReason,
     timestamp: DateTime.now(),
   );
 }
@@ -644,9 +723,18 @@ bool _resumableAbort(ErrorEvent event, CancelToken? cancelToken) {
 /// would still duplicate text, the resume does not. Non-connection
 /// classes (auth, rate limit, overflow, budget, validation) never
 /// resume: [_retryableWireFailure] stands them here.
+///
+/// Cancel contract (aligned with [_resumableAbort], issue #1168 review):
+/// a bare user cancel is host intent and stands; a
+/// [RunIdleWatchdogFire]-cancelled token is machine intent — the same
+/// exception the abort class grants — so the transport class resumes and
+/// `_drive` re-arms the latch in place.
 bool _resumableTransportFailure(ErrorEvent event, CancelToken? cancelToken) {
-  // A cancelled token is host intent: the failure never resumes.
-  if (cancelToken != null && cancelToken.isCancelled) return false;
+  if (cancelToken != null &&
+      cancelToken.isCancelled &&
+      cancelToken.cancelReason is! RunIdleWatchdogFire) {
+    return false;
+  }
   return _retryableWireFailure(event);
 }
 

@@ -2054,7 +2054,7 @@ void main() {
         expect(calls, 1, reason: 'a budget kill must not spin the resume');
         final terminal = events.whereType<ErrorEvent>().single;
         expect(terminal.error.stopReason, StopReason.aborted);
-        // The token stays latched - the kill keeps its teeth.
+        // The token stays latched — the kill keeps its teeth.
         expect(source.token.isCancelled, isTrue);
       },
     );
@@ -2062,14 +2062,17 @@ void main() {
 
   group('issue #1168 - mid-stream connection failures resume from the prefix',
       () {
-    AssistantMessage errorMsg(String text, {List<ContentBlock> content =
-        const []}) =>
+    AssistantMessage errorMsg(
+      String text, {
+      List<ContentBlock> content = const [],
+      Usage usage = Usage.zero,
+    }) =>
         AssistantMessage(
           content: content,
           api: 'test-api',
           provider: 'test-provider',
           model: 'test-model',
-          usage: Usage.zero,
+          usage: usage,
           stopReason: StopReason.error,
           errorMessage: text,
           timestamp: DateTime.utc(2026),
@@ -2144,7 +2147,18 @@ void main() {
               ..push(
                 ErrorEvent(
                   reason: StopReason.error,
-                  error: errorMsg(ownerTimeout, content: part.content),
+                  error: errorMsg(
+                    ownerTimeout,
+                    content: part.content,
+                    usage: const Usage(
+                      input: 5,
+                      output: 1,
+                      cacheRead: 0,
+                      cacheWrite: 0,
+                      totalTokens: 6,
+                      cost: UsageCost(),
+                    ),
+                  ),
                 ),
               );
           } else {
@@ -2194,8 +2208,10 @@ void main() {
         ['part', 'tail'],
         reason: 'the transcript keeps what the host already streamed',
       );
-      // The dead attempt's usage is billed once in the terminal message.
-      expect(done.message.usage.output, 2);
+      // The dead attempt's usage is billed once in the terminal message:
+      // 5/1 (the dead attempt's error snapshot) + 3/2 (the tail).
+      expect(done.message.usage.input, 8);
+      expect(done.message.usage.output, 3);
       // The retry is voiced, naming the resumed prefix.
       expect(notices, hasLength(1));
       expect(notices.single, contains('resuming from 1 completed block(s)'));
@@ -2244,7 +2260,23 @@ void main() {
       final terminal = events.whereType<ErrorEvent>().single;
       // A transport death surfaces as error, never as aborted.
       expect(terminal.reason, StopReason.error);
+      // The terminal carries the exhaustion STORY (issue #1168 review):
+      // the resume provenance names the consumed verdict so layers above
+      // neither rewrap it ("not retried" would be false) nor retry it.
+      expect(
+        terminal.error.errorMessage,
+        startsWith('Provider retry chain exhausted after 3 attempt(s)'),
+      );
       expect(terminal.error.errorMessage, contains('Operation timed out'));
+      expect(
+        terminal.error.errorMessage,
+        contains('resumed from 2 completed block(s)'),
+      );
+      expect(terminal.error.errorMessage, contains('no further retries'));
+      // The verdict is un-classifiable as transient: this layer and the
+      // roles ladder above both stand down on it.
+      expect(isTransientNetworkError(terminal.error), isFalse);
+      expect(isTransientExhaustionStory(terminal.error.errorMessage), isTrue);
       expect(
         terminal.error.content
             .whereType<TextContent>()
@@ -2340,7 +2372,13 @@ void main() {
       ).toList();
 
       expect(calls, 1, reason: 'host intent outranks the transport class');
-      expect(events.whereType<ErrorEvent>(), isNotEmpty);
+      // The failure stands as the mid-answer wrap: the terminal names the
+      // wrap and keeps the raw provider line as evidence, never a resume.
+      final terminal = events.whereType<ErrorEvent>().single;
+      expect(terminal.reason, StopReason.error);
+      expect(terminal.error.errorMessage, startsWith('Provider failed '
+          'mid-answer'));
+      expect(terminal.error.errorMessage, contains('Operation timed out'));
     });
 
     test('a pre-commit connection-closed cut (stripped ClientException) '
@@ -2386,6 +2424,67 @@ void main() {
         events.whereType<DoneEvent>().single.message.content,
         hasLength(1),
       );
+    });
+
+    test('a watchdog-fired cancel does not outrank the transport class',
+        () async {
+      // Aligned with the abort class (issue #1168 review): a
+      // RunIdleWatchdogFire cancel is machine intent, so the transport
+      // class resumes and the latch re-arms; a bare user cancel stands
+      // (the test above).
+      final source = CancelTokenSource();
+      var calls = 0;
+      final wrapped = transientRetryStreamFunction((model, context,
+          {cancelToken}) {
+        final stream = AssistantMessageEventStream();
+        scheduleMicrotask(() {
+          final n = ++calls;
+          final part = testAssistant(
+            content: [TextContent(text: n == 1 ? 'part' : 'tail')],
+          );
+          if (n == 1) {
+            // The watchdog's cancel races the stream: the token is
+            // latched when the transport error arrives.
+            source.cancel(RunIdleWatchdogFire('watchdog'));
+          }
+          stream
+            ..push(StartEvent(partial: testAssistant()))
+            ..push(TextStartEvent(contentIndex: 0, partial: testAssistant()))
+            ..push(
+              TextDeltaEvent(
+                  contentIndex: 0,
+                  delta: n == 1 ? 'part' : 'tail',
+                  partial: part),
+            )
+            ..push(
+              TextEndEvent(
+                  contentIndex: 0,
+                  content: n == 1 ? 'part' : 'tail',
+                  partial: part),
+            );
+          if (n == 1) {
+            stream.push(
+              ErrorEvent(
+                reason: StopReason.error,
+                error: errorMsg(ownerTimeout, content: part.content),
+              ),
+            );
+          } else {
+            stream.push(DoneEvent(reason: StopReason.stop, message: part));
+          }
+          stream.end();
+        });
+        return stream;
+      });
+
+      final events = await wrapped(
+        testModel,
+        const Context(messages: []),
+        cancelToken: source.token,
+      ).toList();
+
+      expect(calls, 2, reason: 'the watchdog fire is machine intent');
+      expect(events.whereType<DoneEvent>(), isNotEmpty);
     });
   });
 }

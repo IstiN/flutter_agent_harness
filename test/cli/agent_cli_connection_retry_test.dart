@@ -155,21 +155,23 @@ void main() {
 
   test('headless: the retry is visible as a [net] notice, never silent',
       () async {
+    // No global override: null the hook first, so the ONLY way the [net]
+    // line can appear is runHeadless's own boot wiring (issue #1168
+    // review - headless must voice the resume exactly like the REPL).
     await stubSleep();
+    transientRetryNotice = null;
     final io = FakeCliIO();
-    final reasons = <String>[];
-    transientRetryNotice = (attempt, maxAttempts, delay, reason) {
-      reasons.add(reason);
-    };
 
     final exitCode = await cli(diesOnceThenCompletes(), io).runHeadless(
       'say hi',
     );
 
     expect(exitCode, 0);
-    expect(reasons, hasLength(1));
-    expect(reasons.single, contains('mid-stream connection failure'));
-    expect(reasons.single, contains('resuming from 1 completed block(s)'));
+    // The dim [net] line names the mid-stream resume with the completed
+    // prefix - a multi-second pause is never silent in headless.
+    expect(io.out.toString(), contains('[net] connection lost'));
+    expect(io.out.toString(), contains('mid-stream connection failure'));
+    expect(io.out.toString(), contains('resuming from 1 completed block(s)'));
   });
 
   test('headless: an auth error stays fatal — exit 1 and the error line',
