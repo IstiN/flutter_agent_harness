@@ -58,6 +58,12 @@ echo "building fa web app (flutter build web --release)…"
 rm -rf "$out/app"
 mkdir -p "$out/app"
 cp -R flutter_app/build/web/. "$out/app/"
+# Vendored WASI interpreter assets are mobile-only (#1096 AC3): loaded
+# exclusively through WasiSandboxShell (env_factory_io.dart — Android/iOS);
+# the web pane compiles env_factory_stub (wasm_run needs dart:ffi) and
+# runs python/js/sqlite from cdn.jsdelivr.net (web_interpreters_web.dart).
+# ~47MB that never loads in the browser — drop from the bundle.
+rm -rf "$out/app/assets/assets/wasm"
 
 # fa1.dev is a hosted page (no extension CSP): CDN scripts are allowed,
 # but the canvaskit copy still must mirror the layout the bootstrap
@@ -94,6 +100,9 @@ if [ -n "$REV" ]; then
     }
   done
   echo "canvaskit mirrored to canvaskit/$REV/chromium/ (verified)"
+  # canvaskit dedup (#1096): the engine only requests canvaskit/<rev>/…,
+  # the flat top-level copy from build/web is unreachable (~13MB dup).
+  find "build/pages/root/outlook/app/canvaskit" -mindepth 1 -maxdepth 1 ! -name "$REV" -exec rm -rf {} +
 else
   echo "FATAL: engineRevision not found in flutter_bootstrap.js" >&2
   exit 1
