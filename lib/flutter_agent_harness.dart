@@ -41,6 +41,7 @@ export 'src/cli/cli_args.dart';
 export 'src/cli/cli_config.dart'
     show
         CliConfig,
+        applyProviderTimeoutEnvOverride,
         loadCliConfig,
         loadProjectCompactionEngine,
         loadProjectMemoryConfig,
