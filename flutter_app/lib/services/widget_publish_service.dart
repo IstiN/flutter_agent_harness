@@ -4,6 +4,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart' show listEquals;
 
@@ -11,6 +12,16 @@ import 'package:fa/apps/apps_store.dart';
 import 'package:fa/services/github_account_store.dart';
 import 'package:fa/services/github_api_client.dart';
 import 'package:fa/services/widget_publication_store.dart';
+// The public barrel (fa_widgets_tool.dart) also exports the zip packager,
+// which does not compile against the app's archive 4 (it declares ^3.6.1).
+// The client validates ONLY, so it imports the validator subtree directly —
+// one ruleset either way (issue #1045 I1).
+// ignore: implementation_imports
+import 'package:fa_widgets_tool/src/issues.dart';
+// ignore: implementation_imports
+import 'package:fa_widgets_tool/src/manifest.dart';
+// ignore: implementation_imports
+import 'package:fa_widgets_tool/src/validator.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// One static pre-flight failure, with an actionable fix hint.
@@ -46,6 +57,17 @@ final class WidgetPublishResult {
 
   /// Browser URL of the opened (or reused) catalog pull request.
   String get prUrl => publication.prUrl;
+}
+
+/// A publish attempt kicked off by [WidgetPublishService.startPublish]:
+/// [publication] is the optimistic `publishing` ledger record (the UI
+/// shows «publishing…» from it), [flow] completes with the PR result or
+/// throws after the failure has been recorded in the ledger (I4).
+final class PendingPublish {
+  const PendingPublish({required this.publication, required this.flow});
+
+  final WidgetPublication publication;
+  final Future<WidgetPublishResult> flow;
 }
 
 /// Thrown by [WidgetPublishService.publish] when no GitHub account is
@@ -90,10 +112,31 @@ class WidgetPublishService {
        _clock = clock ?? DateTime.now,
        _sleep = sleep ?? Future<void>.delayed;
 
+  /// Widgets with a live publish flow (issue #1045 review): fire-and-forget
+  /// removed the sheet-level serialization, so one widget has at most one
+  /// in-flight flow — a second [startPublish] for the same id fails fast
+  /// instead of double-writing the ledger. Process-wide ON PURPOSE: every
+  /// publish entry point (launcher menu, account section, apps panel)
+  /// constructs its own [WidgetPublishService], so an instance field would
+  /// never see the second flow.
+  static final Set<String> _activePublishes = <String>{};
+
   /// Catalog pre-flight limits (edge case E4; the fa_widgets validator
   /// enforces the same numbers).
   static const maxFolderBytes = 5 * 1024 * 1024;
   static const maxFolderFiles = 100;
+
+  /// The catalog's canonical minimum `js_widget_runtime` (issue #1045
+  /// AC2): stamped into the overlay when the widget's manifest never
+  /// declares one, so a publish-bound manifest is never empty of
+  /// `minRuntime` — the exact failure that sank fa_widgets PR #8.
+  ///
+  /// CROSS-REPO POINTER: the rule's authority is the catalog validator in
+  /// github.com/IstiN/fa_widgets (its CI rejects manifests under its
+  /// floor). When the catalog raises the floor, bump THIS constant in the
+  /// same change — the fa_widgets_tool package it could be imported from
+  /// exports no floor value yet (r2 review).
+  static const catalogFloorRuntime = '0.4.79';
 
   /// Newest reviewer comments kept per publication in the ledger.
   static const _maxStoredComments = 50;
@@ -239,8 +282,115 @@ class WidgetPublishService {
       );
     }
 
+    // The catalog's own rule engine (issue #1045 AC1): every manifest rule
+    // the CI validator enforces — required strings, strict semver,
+    // minRuntime — checked on-device with the engine's VERBATIM error
+    // strings, so what the user sees here is byte-identical to what the
+    // run would have said. Advisory only (I2): CI stays the authority.
+    if (manifest != null) {
+      issues.addAll(await _catalogValidatorIssues(app, manifest));
+    }
+
     return issues;
   }
+
+  /// [manifest] with `minRuntime` stamped (issue #1045 AC2): a present,
+  /// non-empty value wins (the version the widget was authored against);
+  /// missing or empty falls to [catalogFloorRuntime] — never empty.
+  static Map<String, Object?> stampedManifest(Map<String, Object?> manifest) {
+    final existing = manifest['minRuntime'];
+    final minRuntime = existing is String && existing.trim().isNotEmpty
+        ? existing.trim()
+        : catalogFloorRuntime;
+    return {...manifest, 'minRuntime': minRuntime};
+  }
+
+  /// Runs the imported fa_widgets rule engine over the widget with the
+  /// stamped manifest. On VM platforms the engine sees a real directory
+  /// (a temp copy carrying the stamped manifest + entry + icon), so every
+  /// error — including the strict-semver strings — comes from the SAME
+  /// code the catalog CI runs. Where `dart:io` cannot serve a directory
+  /// (web), the manifest-level rules still run through the engine's own
+  /// [WidgetManifest] parser (verbatim `'x' must be a non-empty string`
+  /// errors); directory-only checks stay advisory to CI (I2).
+  Future<List<WidgetPreflightIssue>> _catalogValidatorIssues(
+    JsAppInfo app,
+    Map<String, Object?> manifest,
+  ) async {
+    final stamped = stampedManifest(manifest);
+    // Env reads complete on microtasks (in-memory envs resolve inline), so
+    // they stay async; only the real-file materialization below is sync.
+    final entry = await _readEnvFile('${app.dir}/widget.js');
+    final icon = await _readEnvFile('${app.dir}/icon.svg');
+    try {
+      return _runCatalogEngine(app, stamped, entry, icon);
+    } on UnsupportedError {
+      // No usable dart:io directory (web sandbox — Directory/file APIs
+      // throw UnsupportedError there; checked on both dart2js and
+      // dart2wasm builds of the publish sheet); parse through the engine's
+      // manifest layer instead. Genuine engine bugs on the VM still
+      // propagate.
+      return _manifestLevelValidatorIssues(stamped);
+    }
+  }
+
+  /// The engine pass over a materialized widget directory. The dart:io
+  /// calls are deliberately SYNCHRONOUS: widget tests run in a fakeAsync
+  /// zone where real async file I/O never completes — a sync materialize
+  /// keeps preflight resolvable everywhere (issue #1045 golden suites).
+  List<WidgetPreflightIssue> _runCatalogEngine(
+    JsAppInfo app,
+    Map<String, Object?> stamped,
+    String? entry,
+    String? icon,
+  ) {
+    final temp = Directory.systemTemp.createTempSync('fa-validate-');
+    try {
+      final widgetDir = Directory('${temp.path}/${app.id.split('/').last}')
+        ..createSync(recursive: true);
+      // The materialized manifest is the OVERLAY-MERGED one (what CI
+      // actually validates): the publish overlay rewrites `icon` to the
+      // packaged icon.svg when one ships, so the engine must see the
+      // same merged shape — validate the manifest you publish, not the
+      // one on disk.
+      File('${widgetDir.path}/manifest.json').writeAsStringSync(
+        jsonEncode({...stamped, if (icon != null) 'icon': 'icon.svg'}),
+      );
+      if (entry != null) {
+        File('${widgetDir.path}/widget.js').writeAsStringSync(entry);
+      }
+      if (icon != null) {
+        File('${widgetDir.path}/icon.svg').writeAsStringSync(icon);
+      }
+      final result = validateWidgetDirectory(widgetDir);
+      return [
+        // VERBATIM: the engine's own message, unmodified (issue #1045).
+        for (final error in result.errors)
+          WidgetPreflightIssue('validator', error.message),
+      ];
+    } finally {
+      temp.deleteSync(recursive: true);
+    }
+  }
+
+  /// Manifest-rule-only pass (web fallback): the engine's parser throws
+  /// [ManifestException] with the same strings the CI surfaces.
+  static List<WidgetPreflightIssue> _manifestLevelValidatorIssues(
+    Map<String, Object?> stamped,
+  ) {
+    try {
+      WidgetManifest.fromJson(stamped);
+      return const [];
+    } on ManifestException catch (error) {
+      return [
+        for (final message in error.errors)
+          WidgetPreflightIssue('validator', message),
+      ];
+    }
+  }
+
+  Future<String?> _readEnvFile(String path) async =>
+      (await _env.readTextFile(path)).valueOrNull;
 
   Future<bool> _nonEmptyFile(String path) async {
     final info = (await _env.fileInfo(path)).valueOrNull;
@@ -268,31 +418,131 @@ class WidgetPublishService {
 
   // --- publish -------------------------------------------------------------
 
-  /// Runs the whole publish flow. Throws [GithubNotConnectedException] when
-  /// no account is connected, and [StateError] listing the issues when
-  /// pre-flight fails.
-  Future<WidgetPublishResult> publish({
+  /// Fire-and-forget publish entry (issue #1045 AC6): validates, records
+  /// the optimistic `publishing` state into the ledger, and RETURNS — the
+  /// PR creation and CI run continue in [PendingPublish.flow] while the UI
+  /// shows «publishing…» and the detail sheet resolves the outcome later.
+  /// Throws [GithubNotConnectedException] when no account is connected,
+  /// and [StateError] listing the issues when pre-flight fails (AC1: a
+  /// rule-incomplete manifest never reaches the network).
+  Future<PendingPublish> startPublish({
     required JsAppInfo app,
     String? repoName,
   }) async {
+    // One flow per widget (issue #1045 review): fire-and-forget removed the
+    // UI-level serialization, so the service owns the invariant. The check
+    // + add run before the first await — no interleaving window.
+    if (_activePublishes.contains(app.id)) {
+      throw StateError(
+        'publish_in_progress: widget "${app.id}" is already publishing',
+      );
+    }
+    _activePublishes.add(app.id);
     final token = _account.token;
-    if (token == null) throw const GithubNotConnectedException();
+    if (token == null) {
+      _activePublishes.remove(app.id);
+      throw const GithubNotConnectedException();
+    }
     final issues = await preflight(app);
     if (issues.isNotEmpty) {
+      _activePublishes.remove(app.id);
       throw StateError(
         'Widget "${app.id}" failed pre-flight:\n'
         '${issues.map((i) => ' - [${i.code}] ${i.message}').join('\n')}',
       );
     }
+    final previous = _ledger.byWidgetId(app.id);
+    final publication = await _ledger.record(
+      WidgetPublication(
+        widgetId: app.id,
+        version: app.version,
+        repoFullName: previous?.repoFullName ?? '',
+        repoCommit: previous?.repoCommit ?? '',
+        step: WidgetPublication.stepPublishing,
+        submittedAt: _clock().toUtc(),
+        prNumber: previous?.prNumber,
+        prHtmlUrl: previous?.prHtmlUrl,
+        lastKnownState: WidgetPublication.statePublishing,
+      ),
+    );
+    return PendingPublish(
+      publication: publication,
+      // The in-flight guard releases when the background flow settles —
+      // success, recorded failure, or anything thrown by _recordFailure.
+      flow: _recordFailure(
+        app: app,
+        previous: previous,
+        flow: _executePublish(
+          app: app,
+          repoName: repoName,
+          // The ledger already carries the optimistic `publishing` record
+          // by the time the flow runs — the pre-publish snapshot decides
+          // repo reuse / kill-resume (E7), not the optimistic entry.
+          existing: previous,
+        ),
+      ).whenComplete(() => _activePublishes.remove(app.id)),
+    );
+  }
+
+  /// Classic awaiting contract over [startPublish]: resolves with the PR
+  /// result (or throws after recording the failure in the ledger — I4).
+  Future<WidgetPublishResult> publish({
+    required JsAppInfo app,
+    String? repoName,
+  }) async {
+    final pending = await startPublish(app: app, repoName: repoName);
+    return pending.flow;
+  }
+
+  /// Keeps a background publish failure visible (issue #1045 I4): the
+  /// failed attempt lands in the ledger — `failed` + the verbatim error —
+  /// while preserving any earlier PR pointer so the detail sheet still
+  /// links the widget's open PR. Then rethrows for the live UI.
+  Future<WidgetPublishResult> _recordFailure({
+    required JsAppInfo app,
+    required WidgetPublication? previous,
+    required Future<WidgetPublishResult> flow,
+  }) async {
+    try {
+      return await flow;
+    } on Object catch (error) {
+      await _ledger.record(
+        (previous ??
+                _ledger.byWidgetId(app.id) ??
+                WidgetPublication(
+                  widgetId: app.id,
+                  version: app.version,
+                  repoFullName: '',
+                  repoCommit: '',
+                  step: WidgetPublication.stepPublishing,
+                  submittedAt: _clock().toUtc(),
+                ))
+            .copyWith(
+              lastKnownState: WidgetPublication.stateFailed,
+              lastError: error.toString(),
+              validatorErrors: const [],
+            ),
+      );
+      rethrow;
+    }
+  }
+
+  Future<WidgetPublishResult> _executePublish({
+    required JsAppInfo app,
+    String? repoName,
+    WidgetPublication? existing,
+  }) async {
+    final token = _account.token!;
     final client = _clientFactory(token);
     final login = _account.login ?? (await client.getUser()).login;
-    final existing = _ledger.byWidgetId(app.id);
 
     final String owner;
     final String name;
     final String repoCommit;
 
-    if (existing != null && existing.step == WidgetPublication.stepRepoPushed) {
+    if (existing != null &&
+        existing.step == WidgetPublication.stepRepoPushed &&
+        existing.repoFullName.contains('/')) {
       // E7 kill-resume: sources were already pushed before the app died —
       // reuse the recorded repo + commit and continue at the PR step.
       final parts = existing.repoFullName.split('/');
@@ -300,8 +550,11 @@ class WidgetPublishService {
       name = parts.last;
       repoCommit = existing.repoCommit;
     } else {
-      // Repo step: reuse the ledger-recorded repo when re-publishing.
-      if (existing != null) {
+      // Repo step: reuse the ledger-recorded repo when re-publishing. An
+      // optimistic record with an EMPTY repoFullName (a failed first
+      // attempt that never reached the repo step) is not a recorded repo —
+      // recompute, so a retry after a failure is never `GET /repos//`.
+      if (existing != null && existing.repoFullName.contains('/')) {
         final parts = existing.repoFullName.split('/');
         owner = parts.first;
         name = parts.last;
@@ -408,12 +661,16 @@ class WidgetPublishService {
     final manifest = await _readManifest(app);
     final hasIconFile =
         (await _env.exists('${app.dir}/icon.svg')).valueOrNull == true;
+    // minRuntime is ALWAYS written (issue #1045 AC2 — the PR #8 failure
+    // was an empty minRuntime): stamped from the manifest when declared,
+    // from the catalog floor otherwise. The catalog validator merges the
+    // overlay onto the pinned sources' manifest, so the merged manifest
+    // the CI validates can never miss the field.
     final overlay = <String, Object?>{
       'icon': hasIconFile ? 'icon.svg' : app.icon,
       'description': app.description,
       if (manifest?['tags'] != null) 'tags': manifest!['tags'],
-      if (manifest?['minRuntime'] != null)
-        'minRuntime': manifest!['minRuntime'],
+      'minRuntime': stampedManifest(manifest ?? const {})['minRuntime'],
       'author': login,
       'source': {'repo': '$owner/$name', 'commit': repoCommit},
     };
@@ -476,9 +733,19 @@ class WidgetPublishService {
   /// state and returns the refreshed UI-facing state. Returns the stored
   /// projection unchanged when the publication has no PR yet or the account
   /// is disconnected (offline degrade, AC8).
+  ///
+  /// Issue #1045: an open PR is further resolved through the CI check runs
+  /// on its head sha — pending → `validating`, any failure → `invalid`
+  /// with the validator's error lines stored VERBATIM plus the run link,
+  /// all green → plain `open`.
   Future<WidgetPublicationState> refreshStatus(
     WidgetPublication publication,
   ) async {
+    // Rebase onto the ledger's newest record: a stale snapshot (two
+    // refreshes in flight, or a caller holding a pre-refresh copy) would
+    // make the change-detector below compare against the wrong baseline
+    // and skip persisting a real state transition.
+    publication = _ledger.byWidgetId(publication.widgetId) ?? publication;
     final prNumber = publication.prNumber;
     final token = _account.token;
     if (prNumber == null || token == null) {
@@ -497,6 +764,39 @@ class WidgetPublishService {
         : pull.merged
         ? WidgetPublication.stateMerged
         : WidgetPublication.stateClosed;
+
+    // CI verdict on the PR head (issue #1045 AC3). A failed check read
+    // (offline / rate limit) keeps the plain open state — never invent a
+    // verdict the API did not confirm.
+    var effective = state;
+    var validatorErrors = publication.validatorErrors;
+    var runUrl = publication.runHtmlUrl;
+    if (state == WidgetPublication.stateOpen && pull?.headSha != null) {
+      try {
+        final checks = await client.listCheckRuns(
+          GithubApiClient.catalogOwner,
+          GithubApiClient.catalogRepo,
+          pull!.headSha!,
+        );
+        final failing = checks.where((check) => check.isFailed).toList();
+        if (checks.isEmpty || checks.any((check) => !check.isCompleted)) {
+          effective = WidgetPublication.stateValidating;
+          validatorErrors = const [];
+          runUrl = null;
+        } else if (failing.isNotEmpty) {
+          effective = WidgetPublication.stateInvalid;
+          validatorErrors = await _verbatimValidatorErrors(client, failing);
+          runUrl = failing.first.htmlUrl;
+        } else {
+          effective = WidgetPublication.stateOpen;
+          validatorErrors = const [];
+          runUrl = null;
+        }
+      } on Object {
+        // Offline / rate limit: keep the plain open state — never invent a
+        // verdict the API did not confirm.
+      }
+    }
 
     // Reviewer feedback snapshot (AC7): the latest comments ride the same
     // refresh as the state so the publications view needs one action per
@@ -528,21 +828,88 @@ class WidgetPublishService {
       }
     }
 
-    // Persist only on a real change: state moved, or the comment snapshot
-    // differs. The poller runs on a timer — re-recording an unchanged
-    // publication would rewrite the ledger file and notify listeners
-    // every tick for nothing. An unreachable PR only downgrades the
-    // stored state.
+    // Persist only on a real change: the effective state (PR state merged
+    // with the CI verdict — `open` under the hood must NOT re-record every
+    // tick while the stored verdict is `validating`), the verbatim error
+    // lines, the run link, or the comment snapshot differs. The poller
+    // runs on a timer — re-recording an unchanged publication would
+    // rewrite the ledger file and notify listeners every tick for nothing.
     final changed =
-        state != publication.lastKnownState ||
+        effective != publication.lastKnownState ||
+        !listEquals(validatorErrors, publication.validatorErrors) ||
+        runUrl != publication.runHtmlUrl ||
         (pull != null && !listEquals(comments, publication.comments));
     if (changed) {
       await _ledger.record(
-        publication.copyWith(lastKnownState: state, comments: comments),
+        publication.copyWith(
+          lastKnownState: effective,
+          comments: comments,
+          validatorErrors: validatorErrors,
+          runHtmlUrl: runUrl,
+        ),
       );
     }
-    return widgetPublicationStateOf(state);
+    return widgetPublicationStateOf(effective);
   }
+
+  /// The failing checks' error lines, VERBATIM (issue #1045 — "no
+  /// swallowing, no aggregate-only failure"): the check-run output when
+  /// the workflow writes one, else the `ERROR` lines of the Actions job
+  /// log (GitHub's per-line log timestamp is presentation framing and is
+  /// stripped; the error text itself is byte-for-byte).
+  // ponytail: 20-line/2000-char cap is a ledger-size bound, not filtering —
+  // the run link always carries the full log.
+  static const _maxValidatorErrors = 20;
+  static const _maxValidatorErrorLength = 2000;
+
+  Future<List<String>> _verbatimValidatorErrors(
+    GithubApiClient client,
+    List<GithubCheckRun> failing,
+  ) async {
+    final lines = <String>[];
+    for (final check in failing) {
+      final fromOutput =
+          check.outputText ?? check.outputSummary ?? check.outputTitle ?? '';
+      if (fromOutput.isNotEmpty) {
+        lines.addAll(
+          fromOutput.split('\n').where((line) => line.trim().isNotEmpty),
+        );
+        continue;
+      }
+      final jobId = GithubApiClient.jobIdFromUrl(check.htmlUrl);
+      if (jobId == null) continue;
+      final log = await client.jobLog(
+        GithubApiClient.catalogOwner,
+        GithubApiClient.catalogRepo,
+        jobId,
+      );
+      if (log == null) continue;
+      final logLines = log.split('\n').map(_stripLogPrefix).toList();
+      final errorLines = logLines
+          .where((line) => line.toLowerCase().contains('error'))
+          .toList();
+      if (errorLines.isNotEmpty) {
+        lines.addAll(errorLines);
+        continue;
+      }
+      // A failure with no `error`-shaped line at all (OOM kill, silent
+      // crash): keep the tail of the log verbatim — still CI's own words,
+      // never a rewording (issue #1045 "no digging into CI").
+      final tail = logLines.where((line) => line.trim().isNotEmpty).toList();
+      lines.addAll(tail.length > 5 ? tail.sublist(tail.length - 5) : tail);
+    }
+    return List<String>.unmodifiable([
+      for (final line in lines.take(_maxValidatorErrors))
+        line.length > _maxValidatorErrorLength
+            ? line.substring(0, _maxValidatorErrorLength)
+            : line,
+    ]);
+  }
+
+  /// Drops GitHub's leading log timestamp (`2026-09-28T07:00:00.000Z `),
+  /// keeping the validator's own line verbatim.
+  static String _stripLogPrefix(String line) =>
+      line.replaceFirst(RegExp(r'^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s+'), '');
 
   // --- helpers -------------------------------------------------------------
 
@@ -644,5 +1011,4 @@ class WidgetPublishService {
     });
     return files;
   }
-
 }

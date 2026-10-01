@@ -1853,6 +1853,30 @@ class AppLocalizationsRu extends AppLocalizations {
   String get publicationStateUnknown => 'Неизвестно';
 
   @override
+  String get widgetStatusNotPublished => 'Не опубликован';
+
+  @override
+  String get widgetStatusValidating => 'Проверка…';
+
+  @override
+  String get widgetStatusInvalid => 'Ошибка валидации';
+
+  @override
+  String get widgetStatusFailed => 'Не удалось опубликовать';
+
+  @override
+  String get widgetStatusErrors => 'Ошибки валидатора:';
+
+  @override
+  String get widgetStatusOpenRun => 'Открыть CI-запуск';
+
+  @override
+  String get widgetDetailVersion => 'Версия';
+
+  @override
+  String get widgetDetailAuthor => 'Автор';
+
+  @override
   String publicationSubmittedAt(Object date) {
     return 'Отправлено $date';
   }
