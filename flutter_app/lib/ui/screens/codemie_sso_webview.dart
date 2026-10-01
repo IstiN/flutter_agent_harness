@@ -62,6 +62,10 @@ class CodeMieSsoWebViewPage extends StatelessWidget {
           'CodeMie Sign In', // l10n:ignore — proper noun, fallback-only screen
       initialUrl: buildCodeMieSsoUrl(orgUrl, _dummyPort),
       timeout: timeout,
+      // This page is never a passkey-capable primary surface (iOS runs the
+      // system auth session first — issue #861); wherever it runs, say so
+      // before the login page renders.
+      degradedNotice: oauthWebViewPasskeyNotice,
       onNavigationRequest: (request, ops) => codeMieNavigationDecision(
         request.url,
         onToken: (rawToken) {

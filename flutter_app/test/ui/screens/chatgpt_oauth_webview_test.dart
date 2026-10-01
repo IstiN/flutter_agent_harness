@@ -377,4 +377,18 @@ void main() {
       await tester.pump();
     });
   });
+
+  group('the no-passkey notice (issue #861 AC2)', () {
+    testWidgets('visible from the first build — before the page renders', (
+      tester,
+    ) async {
+      await pumpPage(tester);
+      // No onPageFinished has fired: the page has not rendered, yet the
+      // degradation is already stated.
+      expect(
+        find.textContaining('Passkey sign-in (Face ID) is not available'),
+        findsOneWidget,
+      );
+    });
+  });
 }
