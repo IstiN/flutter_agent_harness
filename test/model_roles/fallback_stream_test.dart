@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
@@ -1299,6 +1301,58 @@ void main() {
           isTransientTransportError(errorMessage(text)),
           isTrue,
           reason: text,
+        );
+      }
+    });
+
+    test('formatProviderError keeps every watchdog timeout retryable '
+        '(issue #1036)', () {
+      // The five TimeoutException shapes the provider watchdogs produce —
+      // message texts are the asserted contracts in
+      // provider_common_test/chatgpt_codex_test. Each is classified through
+      // the REAL transcript path: formatProviderError renders the
+      // assistant error, the failover chain reads it.
+      final m = _model('openai', 'gpt-a');
+      for (final exception in [
+        // sendProviderFetch connect leg.
+        TimeoutException(
+          'provider fetch (models list): no response headers within '
+          '30s (connect watchdog)',
+        ),
+        // sendProviderFetch read leg.
+        TimeoutException(
+          'provider fetch (models list): response did not complete within '
+          '120s (read watchdog; FA_PROVIDER_TIMEOUT_SECONDS overrides this)',
+        ),
+        // _sendWatched connect leg.
+        TimeoutException(
+          'provider stream request to https://example.test/v1/responses '
+          'timed out: no response headers within 180s (connect watchdog)',
+        ),
+        // createSseIterator idle leg.
+        TimeoutException(
+          'no events from the endpoint for 300s (stream idle timeout)',
+        ),
+        // codex bypass idle leg.
+        TimeoutException(
+          'chatgpt-codex https://example.test/v1/responses stalled: no SSE '
+          'bytes for 300s (stream idle timeout)',
+        ),
+      ]) {
+        final message = _msg(
+          m,
+          stop: StopReason.error,
+          error: formatProviderError(exception),
+        );
+        expect(
+          message.errorMessage,
+          contains('TimeoutException'),
+          reason: 'rendered watchdog error must keep the keyword',
+        );
+        expect(
+          isTransientTransportError(message),
+          isTrue,
+          reason: message.errorMessage,
         );
       }
     });
