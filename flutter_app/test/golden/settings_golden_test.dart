@@ -34,6 +34,7 @@ import 'package:fa/ui/screens/dap_settings_page.dart';
 import 'package:fa/services/dap_service.dart';
 import 'package:fa/ui/screens/providers_section.dart';
 import 'package:fa/ui/screens/settings.dart';
+import 'package:fa/ui/screens/skills_toggles_section.dart';
 import 'package:fa/ui/screens/redaction_section.dart';
 import 'package:fa/services/task_models_store.dart';
 import 'package:fa/ui/app_theme.dart';

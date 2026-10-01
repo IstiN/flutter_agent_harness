@@ -9,6 +9,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/skills_toggles_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/settings.dart';
+import 'package:fa/ui/screens/skills_toggles_section.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
