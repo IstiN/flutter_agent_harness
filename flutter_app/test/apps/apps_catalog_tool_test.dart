@@ -225,4 +225,41 @@ void main() {
     // No bare remote duplicate of the installed widget.
     expect(text, isNot(contains('focus-timer v1.0.0 — Pomodoro')));
   });
+
+  test('R5 — a duplicate remote id annotates at most once', () async {
+    await env.writeFile(
+      'apps/focus-timer/manifest.json',
+      '{"id": "focus-timer", "name": "Focus timer", "version": "0.9.0"}',
+    );
+    await env.writeFile('apps/focus-timer/widget.js', '(function(){});');
+    // Bad catalog data: the same id listed twice with the same version.
+    final dupCatalog = {
+      'widgets': [
+        {
+          'id': 'focus-timer',
+          'version': '1.0.0',
+          'description': 'Pomodoro',
+          'tags': ['timer'],
+          'zip': {'file': 'focus-timer-1.0.0.zip'},
+        },
+        {
+          'id': 'focus-timer',
+          'version': '1.0.0',
+          'description': 'Pomodoro',
+          'tags': ['timer'],
+          'zip': {'file': 'focus-timer-1.0.0.zip'},
+        },
+      ],
+    };
+    final dup = appsCatalogTool(
+      env: env,
+      catalog: CatalogService(env, httpClient: server(dupCatalog)),
+      apps: store,
+    );
+    final result = await call(dup, {'action': 'list'});
+    expect(
+      '(update available: v1.0.0)'.allMatches(textOf(result)),
+      hasLength(1),
+    );
+  });
 }

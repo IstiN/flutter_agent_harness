@@ -623,7 +623,7 @@ class AppsStore {
       final cached = _parsedApps[id];
       if (cached != null &&
           _manifestHashes[id] == hash &&
-          await _i18nRefsUnchanged(cached)) {
+          await _i18nRefsUnchanged(cached, id)) {
         // Unchanged manifest (and i18n ref files) — zero rescans (AC3):
         // the cached model (i18n contents included) is still the truth.
         if (cached.supportsPlatform(platform)) apps.add(cached);
@@ -637,23 +637,14 @@ class AppsStore {
         }
         app = await _withI18nContents(
           JsAppInfo.fromManifest(decoded, bundled: false, fallbackId: id),
-        );
-      } on FormatException catch (e) {
-        // The agent edited the manifest into garbage: flag the tile, keep
-        // the app discoverable — never a silent stale/missing row.
-        _refHashes.remove(id);
-        app = JsAppInfo(
-          id: id,
-          name: id,
-          description: '',
-          icon: '📦',
-          declaredPermissions: const AppPermissions(),
-          error: 'manifest.json does not parse: ${e.message}',
+          id,
         );
       } on Object catch (e) {
-        // Type-garbage (e.g. "allowedCommands": 5) escapes the strict
-        // casts as a TypeError, not a FormatException — the same honesty
-        // contract applies: one flagged tile, the listing survives.
+        // The agent edited the manifest into garbage: flag the tile, keep
+        // the app discoverable — never a silent stale/missing row. Both
+        // failure shapes land here: FormatException (JSON syntax / not an
+        // object) and strict-cast TypeErrors ("allowedCommands": 5) — one
+        // flagged entry, one construction site (issue #866 review r2).
         _refHashes.remove(id);
         app = JsAppInfo(
           id: id,
@@ -661,7 +652,9 @@ class AppsStore {
           description: '',
           icon: '📦',
           declaredPermissions: const AppPermissions(),
-          error: 'manifest.json is invalid: $e',
+          error: e is FormatException
+              ? 'manifest.json does not parse: ${e.message}'
+              : 'manifest.json is invalid: $e',
         );
       }
       _manifestHashes[id] = hash;
@@ -693,16 +686,18 @@ class AppsStore {
   /// name/description and returns the app with their contents attached, so
   /// display sites resolve localized strings synchronously. Missing or
   /// unreadable ref files are skipped (resolution falls through to the
-  /// next locale candidate). Records each ref file's content digest so the
-  /// [listApps] cache gate notices agent edits to the ref files too —
-  /// the manifest itself never changes in that workflow (issue #866).
-  Future<JsAppInfo> _withI18nContents(JsAppInfo app) async {
+  /// next locale candidate). Records each ref file's content digest under
+  /// [dirId] — the apps/ directory name every per-app cache uses, NOT the
+  /// manifest's declared id (the two may differ) — so the [listApps] cache
+  /// gate notices agent edits to the ref files too; the manifest itself
+  /// never changes in that workflow (issue #866).
+  Future<JsAppInfo> _withI18nContents(JsAppInfo app, String dirId) async {
     final paths = {
       ...?app.nameText?.refPaths,
       ...?app.descriptionText?.refPaths,
     };
     if (paths.isEmpty) {
-      _refHashes.remove(app.id);
+      _refHashes.remove(dirId);
       return app;
     }
     final contents = <String, String>{};
@@ -716,16 +711,16 @@ class AppsStore {
         AppLog.i('apps', 'i18n ref ${app.dir}/$path missing — skipped');
       }
     }
-    _refHashes[app.id] = digests;
+    _refHashes[dirId] = digests;
     return app.withI18nContents(contents);
   }
 
-  /// True when every i18n ref file [app] embeds still matches the digest
-  /// recorded at parse time. One small read per ref file per scan — apps
-  /// without refs cost nothing (issue #866 review: an agent editing
+  /// True when every i18n ref file recorded under [dirId] still matches the
+  /// digest recorded at parse time. One small read per ref file per scan —
+  /// apps without refs cost nothing (issue #866 review: an agent editing
   /// `apps/<id>/i18n/*.json` must invalidate the cache like any write).
-  Future<bool> _i18nRefsUnchanged(JsAppInfo app) async {
-    final recorded = _refHashes[app.id];
+  Future<bool> _i18nRefsUnchanged(JsAppInfo app, String dirId) async {
+    final recorded = _refHashes[dirId];
     if (recorded == null) return true;
     for (final entry in recorded.entries) {
       final current = (await _env.readTextFile(

@@ -123,7 +123,7 @@ Future<ToolExecutionResult> _list(
       name.toLowerCase().contains(query) ||
       description.toLowerCase().contains(query);
   final lines = <String>[];
-  final localApps = <JsAppInfo>[];
+  final localAppById = <String, JsAppInfo>{};
   final localLineByAppId = <String, int>{};
   // The local workspace FIRST (issue #866): apps the agent just wrote
   // under apps/ exist before the remote catalog ever hears of them — a
@@ -132,7 +132,7 @@ Future<ToolExecutionResult> _list(
     for (final app in await store.listApps()) {
       if (!matches(app.id, app.name, app.description)) continue;
       localLineByAppId[app.id] = lines.length;
-      localApps.add(app);
+      localAppById[app.id] = app;
       lines.add(
         app.error != null
             ? '${app.id} — BROKEN: ${app.error}'
@@ -146,6 +146,7 @@ Future<ToolExecutionResult> _list(
     // diagnosable (issue #866 review).
     AppLog.i('apps', 'apps_catalog local scan failed: $e');
   }
+  final annotated = <String>{};
   try {
     final result = await service.fetchCatalog();
     final entries = result.entries.where((e) {
@@ -159,11 +160,14 @@ Future<ToolExecutionResult> _list(
     for (final e in entries) {
       // Same id locally and remotely is ONE widget, not two (issue #866
       // review): the local line wins; a newer remote version is surfaced
-      // as an update annotation on it.
+      // as an update annotation on it — at most once per id, even if a
+      // bad catalog lists the same id twice (issue #866 review r2).
       final localLine = localLineByAppId[e.id];
       if (localLine != null) {
-        final local = localApps.where((a) => a.id == e.id).firstOrNull;
-        if (local != null && semverNewer(local.version, e.version)) {
+        final local = localAppById[e.id];
+        if (local != null &&
+            semverNewer(local.version, e.version) &&
+            annotated.add(e.id)) {
           lines[localLine] =
               '${lines[localLine]} (update available: v${e.version})';
         }
