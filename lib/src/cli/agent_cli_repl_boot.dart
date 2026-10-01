@@ -95,6 +95,11 @@ extension on AgentCli {
     // Issue #503: the reconciliation notices paint BEFORE the history
     // replay — the replay is the final paint, so the resumed session's
     // tail (the last assistant message) stays on the first glass.
+    // Wave-14 (#446): the anchor goes down BEFORE the summary — the boot
+    // window starts at the summary + transcript region, and the banner
+    // above rides the fold under the #827 indicator instead of pushing
+    // the replayed tail's head off the glass.
+    controller.markReplayAnchor();
     await _rehydrateJobBoard();
 
     await _replayRestoredSession();
