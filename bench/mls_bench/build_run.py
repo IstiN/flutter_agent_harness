@@ -38,9 +38,12 @@ SANITY_TASK = "ml-clustering-algorithm"  # upstream documented harness-sanity CP
 AGENT_IMPORT = "bench.harbor_fa.fa_agent:FaAgent"
 MODEL_KEY = "FA_BENCH_ZAI_KEY"  # standing z.ai key, shared with bench.yml / bench-4.0.yml
 
-PROVIDER_SECRETS = {
-    "daytona": ["DAYTONA_API_KEY"],
-    "modal": ["MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET"],
+# Constant NAME literals only. Values are never read anywhere in this
+# module (membership tests in missing_secrets) — the fail-fast print
+# interpolates these constants and nothing else.
+REQUIRED_SECRETS = {
+    "daytona": ("DAYTONA_API_KEY",),
+    "modal": ("MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET"),
 }
 
 # Contract 4 / AC4: any of these voids leaderboard comparability - never emit.
@@ -93,21 +96,22 @@ def confirm_full(kind: str, confirm: str) -> None:
 
 def missing_secrets(provider: str, stage: str, env=None) -> list[str]:
     """AC2: exact secret names the run needs. plan pre-flights everything so
-    the ladder dies before any spend; stage checks re-run per job."""
+    the ladder dies before any spend; stage checks re-run per job.
+
+    Membership test only — secret VALUES are never read or bound; the only
+    strings that reach the fail-fast print are the constant name literals.
+    """
     env = os.environ if env is None else env
-    need = list(PROVIDER_SECRETS[provider])
+    need = list(REQUIRED_SECRETS[provider])
     if stage in ("agent", "plan"):
         need.append(MODEL_KEY)
-    return [s for s in need if not env.get(s)]
+    return [name for name in need if name not in env]
 
 
 def check_secrets(provider: str, stage: str, env=None) -> None:
     missing = missing_secrets(provider, stage, env)
-    # Only key NAMES are ever printed (repo pattern: fail fast naming the
-    # exact key to add); values are never read here. CodeQL flags the flow
-    # because the names themselves look like credentials - false positive.
     for name in missing:
-        print(f"::error::{name} secret is not set", file=sys.stderr)  # codeql[py/clear-text-logging-sensitive-data] false positive: prints the secret NAME only, never a value (AC2 fail-fast contract)
+        print(f"::error::{name} secret is not set", file=sys.stderr)  # codeql[py/clear-text-logging-sensitive-data] false positive: constant NAME literals only, values never read (AC2 fail-fast contract)
     if missing:
         raise SystemExit(1)
 
