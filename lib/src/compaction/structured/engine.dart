@@ -31,6 +31,7 @@ import '../../session/session_record.dart';
 import '../../session/session_tree.dart';
 import '../../types.dart';
 import '../compaction.dart';
+import '../summary_sanitizer.dart';
 import '../token_estimation.dart';
 import 'judge.dart';
 import 'ledger.dart';
@@ -719,7 +720,9 @@ final class StructuredCompactor {
       for (final folded in flattened) {
         prompt
           ..writeln('<folded-checkpoint>')
-          ..writeln(folded.text)
+          // Issue #1131: older persisted checkpoints re-enter this prompt
+          // verbatim — heal them so poison cannot be paraphrased forward.
+          ..writeln(sanitizeSummary(folded.text).text)
           ..writeln('</folded-checkpoint>');
       }
       if (priorFold != null) {
@@ -811,7 +814,10 @@ final class StructuredCompactor {
             },
           );
       final text = result.text?.trim();
-      return (text == null || text.isEmpty) ? null : text;
+      if (text == null || text.isEmpty) return null;
+      // Issue #1131: checkpoints re-render every turn — strip ephemeral,
+      // time-scoped claims the summarizer may have copied from context.
+      return sanitizeSummary(text).text;
     } on TimeoutException {
       // A budget kill surfaces as a named error (issue #515) — the pass
       // loop must not dissolve it into the failure-safety null.
