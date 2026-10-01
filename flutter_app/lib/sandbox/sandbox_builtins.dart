@@ -424,6 +424,18 @@ final class SandboxBuiltins {
         curlArgs.add('-s');
       } else if (arg == '--no-check-certificate') {
         // Ignored: TLS verification is not configurable in the curl builtin.
+      } else if (arg == '-w' ||
+          arg == '--wait' ||
+          arg.startsWith('--wait=') ||
+          arg.startsWith('--waitretry')) {
+        // wget wait flags: not curl flags — drop them (with `-w`/`--wait`'s
+        // separate seconds value) instead of leaking into curl's parser,
+        // where `-w` means --write-out (issue #1156 review).
+        if ((arg == '-w' || arg == '--wait') &&
+            i + 1 < args.length &&
+            !args[i + 1].startsWith('-')) {
+          i++;
+        }
       } else {
         curlArgs.add(arg);
       }

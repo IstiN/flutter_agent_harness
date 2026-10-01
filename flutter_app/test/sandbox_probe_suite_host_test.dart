@@ -13,6 +13,7 @@
 /// Requires the wasm_run native library (see WASM_RUN_DART_DYNAMIC_LIBRARY
 /// or `.dart_tool/wasm_run/`); without it the suite SKIPs with a loud
 /// reason — the simulator lane is the gate there.
+@Tags(['integration'])
 library;
 
 import 'dart:io';

@@ -105,19 +105,6 @@ final class ProbeFixtureServer {
 // Suite definition
 // ---------------------------------------------------------------------------
 
-/// Sandbox root for a probe run: the app documents directory on mobile (the
-/// production layout), a host temp dir elsewhere.
-Future<String> probeSandboxRoot() async {
-  if (defaultTargetPlatform == TargetPlatform.iOS ||
-      defaultTargetPlatform == TargetPlatform.android) {
-    // path_provider without importing it here: the integration entry passes
-    // its own root when running on a device.
-    throw StateError('mobile runs must pass sandboxRoot explicitly');
-  }
-  final dir = await io.Directory.systemTemp.createTemp('fah_probe_sandbox_');
-  return dir.path;
-}
-
 /// Builds the probe probe list: each entry is (name, async body). Entry
 /// files wrap these in their own test/testWidgets registration.
 typedef ProbeBody = Future<void> Function();
@@ -359,15 +346,34 @@ List<(String, ProbeBody)> sandboxProbes({
         expect(r.stdout, '300000\n');
       },
     ),
-    // E2 — writing to a read-only sandbox path: clean error, non-zero exit,
-    // never a silent success or a host exception.
+    // E2 — writing to an unwritable sandbox path: clean error, non-zero
+    // exit, never a silent success or a host exception.
     (
       'E2: read-only redirect fails cleanly',
       () async {
+        final shell = await loadShell();
+        if (defaultTargetPlatform == TargetPlatform.iOS ||
+            defaultTargetPlatform == TargetPlatform.android) {
+          // iOS has no process spawning and dart:io has no chmod: a
+          // file-as-parent target gives the same clean-failure contract
+          // without host helpers.
+          io.File('$sandboxRoot/ro_file').writeAsStringSync('x');
+          final r = await shell.exec('echo x > /ro_file/f.txt');
+          expect(r.isOk, isTrue, reason: '${r.errorOrNull}');
+          final res = r.valueOrNull!;
+          expect(res.exitCode, isNot(0), reason: 'never silent success');
+          expect(res.stderr, isNot(isEmpty));
+          expect(res.stderr, startsWith('sh:'));
+          expect(res.stderr, contains('/ro_file/f.txt'));
+          expect(res.stderr, isNot(contains(sandboxRoot)));
+          return;
+        }
         final roDir = io.Directory('$sandboxRoot/ro_dir')..createSync();
         // chmod after create: the owner keeps read/execute, loses write.
+        // Desktop hosts only — dart:io Process spawning is unavailable on
+        // iOS, so the mobile lane uses the file-as-parent variant above.
         await io.Process.run('chmod', ['555', roDir.path]);
-        final r = await (await loadShell()).exec('echo x > /ro_dir/f.txt');
+        final r = await shell.exec('echo x > /ro_dir/f.txt');
         expect(r.isOk, isTrue, reason: '${r.errorOrNull}');
         final res = r.valueOrNull!;
         expect(res.exitCode, isNot(0), reason: 'never silent success');

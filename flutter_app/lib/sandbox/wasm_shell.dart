@@ -82,10 +82,40 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     http.Client? httpClient,
     this.moduleLoader,
   }) : _httpClient = httpClient ?? http.Client(),
-       _currentDir = workingDirectory ?? '/';
+       _currentDir = workingDirectory ?? '/' {
+    _sweepStalePipeDirs();
+  }
 
   /// `coreutils` multicall module.
   final WasmModule coreutils;
+
+  /// Best-effort sweep of pipe dirs leaked by a previous crash (issue
+  /// #1156 review): the `finally` cleanup cannot run when the app is
+  /// killed mid-command, so dirs older than an hour are removed at shell
+  /// construction — no live job can own them yet. Never throws.
+  static const Duration _stalePipeDirAge = Duration(hours: 1);
+
+  void _sweepStalePipeDirs() {
+    final root = sandboxHostPath;
+    if (root == null || root.isEmpty) return;
+    try {
+      final tmp = io.Directory('$root/.fah/tmp');
+      if (!tmp.existsSync()) return;
+      final cutoff = DateTime.now().subtract(_stalePipeDirAge);
+      for (final entry in tmp.listSync()) {
+        if (entry is! io.Directory) continue;
+        if (!entry.uri.pathSegments.any((s) => s.startsWith('pipe-'))) {
+          continue;
+        }
+        final modified = entry.statSync().modified;
+        if (modified.isBefore(cutoff)) {
+          entry.deleteSync(recursive: true);
+        }
+      }
+    } on Object {
+      // Sweep is opportunistic; a failure must never block the shell.
+    }
+  }
 
   /// ripgrep module.
   final WasmModule rg;
@@ -431,8 +461,8 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     }
     // tar_util.wasm has no `--version` — it exits 1 with a usage error on
     // the version probe (issue #1156 row 9); answer directly instead.
-    if (command == 'tar' &&
-        (args.contains('--version') || args.contains('-V'))) {
+    // Only the long flag: GNU tar's `-V` is `--label`, not a version flag.
+    if (command == 'tar' && args.contains('--version')) {
       return Ok(
         StageResult(
           stdout: utf8.encode('tar 1.35 (Fa sandbox)\n'),
@@ -1240,6 +1270,10 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       options?.onStderr,
       captureStderr,
     );
+    // Not captured = not subscribed = nothing can arrive: done up front so
+    // the drain's quiet window only covers streams that can still emit.
+    if (stdoutSub == null) io.stdoutDone = true;
+    if (stderrSub == null) io.stderrDone = true;
     final run = await _runWasiStart(
       instance,
       io,
@@ -1385,7 +1419,10 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
             if (clean.isNotEmpty) {
               io.collect(io.stdoutBuffer, Uint8List.fromList(clean), onStdout);
             }
-          }, onDone: () => debugPrint('[wasm_shell] stdout done'))
+          }, onDone: () {
+            io.stdoutDone = true;
+            debugPrint('[wasm_shell] stdout done');
+          })
         : null;
   }
 
@@ -1399,7 +1436,10 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         ? instance.stderr.listen((chunk) {
             debugPrint('[wasm_shell] stderr chunk: ${chunk.length} bytes');
             io.collect(io.stderrBuffer, chunk, onStderr);
-          }, onDone: () => debugPrint('[wasm_shell] stderr done'))
+          }, onDone: () {
+            io.stderrDone = true;
+            debugPrint('[wasm_shell] stderr done');
+          })
         : null;
   }
 
@@ -1456,17 +1496,20 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   /// Quiet-window stdio drain: waits until no new bytes have arrived for
   /// [_drainQuiet] (or [_drainBudget] elapses — WASM streams may simply
   /// never close), so buffered output of fast-exiting guests is captured
-  /// before the subscriptions are cancelled.
+  /// before the subscriptions are cancelled. Skipped entirely once both
+  /// streams report done — no window can be swallowed after close.
   static const Duration _drainTick = Duration(milliseconds: 20);
   static const Duration _drainQuiet = Duration(milliseconds: 40);
   static const Duration _drainBudget = Duration(seconds: 2);
 
   Future<void> _drainStageStdio(_StageIo io) async {
+    if (io.stdoutDone && io.stderrDone) return;
     final sw = Stopwatch()..start();
     var stableFor = Duration.zero;
     var last = io.stdoutBuffer.length + io.stderrBuffer.length;
     while (stableFor < _drainQuiet && sw.elapsed < _drainBudget) {
       await Future<void>.delayed(_drainTick);
+      if (io.stdoutDone && io.stderrDone) return;
       final now = io.stdoutBuffer.length + io.stderrBuffer.length;
       if (now == last) {
         stableFor += _drainTick;
@@ -2732,6 +2775,12 @@ final class _StageIo {
   final stdoutBuffer = <int>[];
   final stderrBuffer = <int>[];
   ExecutionError? callbackError;
+
+  /// Stream-closed markers (issue #1156 review): the drain can skip its
+  /// quiet window entirely once both stdio streams are done — the common
+  /// fast-exit-guest case.
+  bool stdoutDone = false;
+  bool stderrDone = false;
 
   bool get hasOutput => stdoutBuffer.isNotEmpty || stderrBuffer.isNotEmpty;
 

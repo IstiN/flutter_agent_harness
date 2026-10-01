@@ -12,10 +12,10 @@
 /// builtin versions), exercised through `AgentService` exactly like a user
 /// chat would.
 ///
-/// Shared by the host entry (`test/sandbox_agent_chat_host_test.dart`, host
-/// shell env) and the simulator lane
+/// Owned by the simulator lane
 /// (`integration_test/sandbox_agent_chat_test.dart`, WASI env via
-/// `createPlatformEnv`).
+/// `createPlatformEnv`); there is deliberately no host entry — the app
+/// service stack does not run under flutter_tester.
 library;
 
 import 'package:fa/sandbox/env_factory.dart';
@@ -27,19 +27,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// Runs the chat mini-test against `createPlatformEnv()` (or the injected
-/// [env]) and [llm].
+/// Runs the chat mini-test against `createPlatformEnv()`.
 ///
-/// [screenshot] captures a named screenshot when the binding supports it
-/// (the integration-test binding does; the host VM binding omits it).
+/// Starts a [MockLlmServer] unless [llm] is passed (the caller then owns
+/// stopping it); the self-started one is stopped via `addTearDown`.
+/// [screenshot] captures a named screenshot when the binding supports it.
 Future<void> sandboxAgentChatProbe(
   WidgetTester tester, {
   MockLlmServer? llm,
-  ExecutionEnv? env,
   Future<void> Function(String name)? screenshot,
 }) async {
-  final resolvedEnv = env ?? await createPlatformEnv();
+  final resolvedEnv = await createPlatformEnv();
   final server = llm ?? await MockLlmServer.start();
+  addTearDown(server.stop);
 
   // Three sandbox probes, then the model quotes the last tool result.
   server
