@@ -15,7 +15,9 @@ import 'tui_theme.dart';
 /// [renderSystemNoticeLines], assistant text as raw markdown the view
 /// styles at render time — so a reopened session looks exactly like the
 /// moment the terminal was closed (issue #916: the replay rides the same
-/// chrome migration as the live edge, never the pre-#807 grammar).
+/// chrome migration as the live edge by default — the `tuiChromeEnabled`
+/// kill switch and line mode intentionally keep the legacy row,
+/// byte-pinned).
 ///
 /// The only permitted live/replay difference is honest lossy bits: replayed
 /// tool rows carry no live durations (the `—` elapsed meta where a live
