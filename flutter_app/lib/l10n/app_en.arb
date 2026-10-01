@@ -606,6 +606,14 @@
   "publicationStatePublished": "Published",
   "publicationStateRejected": "Rejected",
   "publicationStateUnknown": "Unknown",
+  "widgetStatusNotPublished": "Not published",
+  "widgetStatusValidating": "Validating…",
+  "widgetStatusInvalid": "Invalid",
+  "widgetStatusFailed": "Publish failed",
+  "widgetStatusErrors": "Validator errors:",
+  "widgetStatusOpenRun": "Open CI run",
+  "widgetDetailVersion": "Version",
+  "widgetDetailAuthor": "Author",
   "publicationSubmittedAt": "Submitted {date}",
   "@publicationSubmittedAt": {
     "placeholders": {
