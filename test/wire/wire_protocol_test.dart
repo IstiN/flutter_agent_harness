@@ -81,6 +81,16 @@ void main() {
           );
           return;
         }
+        if (serverEventKinds.contains(fixture.kind)) {
+          // Server-emitted kinds (fa wire-serve, #1103) have no native
+          // engine event: hosts decode them as the passthrough and read
+          // `code`/`message` off the raw frame.
+          final decoded = protocol.decodeEvent(fixture.frame);
+          expect(decoded, isA<UnknownWireEvent>(), reason: fixture.path);
+          expect((decoded as UnknownWireEvent).kind, fixture.kind);
+          expect(decoded.raw['code'], isA<String>(), reason: fixture.path);
+          return;
+        }
         final decoded = protocol.decodeEvent(fixture.frame);
         if (requestEventKinds.contains(fixture.kind)) {
           // Host-interaction requests decode to RequestWireEvent and
@@ -118,7 +128,10 @@ void main() {
       // Request frames are pinned through their native payload builders
       // in the round-trip branch above.
       final corpus = eventFixtures.where(
-        (f) => f.kind != 'unknown_event' && !requestEventKinds.contains(f.kind),
+        (f) =>
+            f.kind != 'unknown_event' &&
+            !requestEventKinds.contains(f.kind) &&
+            !serverEventKinds.contains(f.kind),
       );
       for (final fixture in corpus) {
         final fileName = fixture.path.split('/').last.replaceAll('.json', '');
@@ -162,7 +175,8 @@ void main() {
           final decoded = protocol.decodeEvent(withExtra);
           expect(
             decoded,
-            fixture.kind == 'unknown_event'
+            fixture.kind == 'unknown_event' ||
+                    serverEventKinds.contains(fixture.kind)
                 ? isA<UnknownWireEvent>()
                 : requestEventKinds.contains(fixture.kind)
                 ? isA<RequestWireEvent>()

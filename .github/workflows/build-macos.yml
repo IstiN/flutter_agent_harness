@@ -601,6 +601,31 @@ jobs:
             > "$MANIFEST_NAME"
           echo "zip_name=$ZIP_NAME" >> $GITHUB_OUTPUT
           echo "manifest_name=$MANIFEST_NAME" >> $GITHUB_OUTPUT
+          echo "baseline_arch=$MANIFEST_ARCH" >> $GITHUB_OUTPUT
+
+      # AC1 (#1096): per-entry uncompressed size table + +5% budget gate on
+      # the shipped mac zip (auto-update channel). arm64 baseline is
+      # committed (the cut is extension/web-only, so the release shape
+      # stays the floor); unknown archs FAIL — never self-seed green.
+      - name: Size manifest + budget gate (mac zip)
+        run: |
+          case "${{ steps.package.outputs.baseline_arch }}" in
+            arm64|x64) ;;
+            *) echo "::error::mac arch '${{ steps.package.outputs.baseline_arch }}' has no size baseline mapping — add scripts/size_budget/fa-macos-<arch>.tsv and extend this whitelist" >&2; exit 1 ;;
+          esac
+          python3 scripts/size_manifest.py check "${{ steps.package.outputs.zip_name }}" \
+            --baseline "scripts/size_budget/fa-macos-${{ steps.package.outputs.baseline_arch }}.tsv" --init-if-missing
+
+      # A self-seeded baseline (e.g. first x86_64 release) lands only in
+      # this job's ephemeral workspace — upload it so it can be fetched
+      # and committed to arm that arch's gate (same as pages.yml).
+      - name: Upload seeded size baselines (#1096 ratchet)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: size-baselines-macos
+          path: scripts/size_budget/*.tsv
+          if-no-files-found: ignore
 
       - name: Package TestFlight PKG (arm64)
         if: matrix.arch == 'arm64'
@@ -862,6 +887,12 @@ jobs:
       # landing page links it directly).
       - name: Build extension zip
         run: bash scripts/build_browser_ext.sh --with-app
+
+      # AC1 (#1096): per-entry uncompressed size table + +5% budget gate
+      # against the committed v1.0.493 release baseline. Shrink passes;
+      # growth (e.g. a dropped interpreter re-added) fails the release.
+      - name: Size manifest + budget gate (fa-extension.zip)
+        run: python3 scripts/size_manifest.py check build/fa-extension.zip --baseline scripts/size_budget/fa-extension.tsv
 
       - name: Upload extension to the release
         env:
