@@ -176,6 +176,33 @@ void main() {
     await run;
   });
 
+  test('AC3: a broken project skills: section is data, not a crash (CQIw)',
+      () async {
+    await env.writeFile(
+      '/work/.fah/config.yaml',
+      'skills:\n  create-goal: yes-please\n',
+    );
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+    await waitForIt(() => cli.systemPrompt.contains('<name>create-goal</name>'));
+
+    // Boot survived; the error printed once and the builtins stayed on
+    // (no project scope applied, last good = none).
+    expect(io.out.toString(), contains('invalid skills section in'));
+    expect(io.out.toString(), contains('project scope ignored, keeping last good'));
+    expect(io.out.toString(), isNot(contains('ConfigException')));
+
+    // /skills reload reports the same error without killing the REPL.
+    io.sendLine('/skills reload');
+    await waitForIt(
+      () => io.out.toString().contains('skills: invalid skills section in'),
+    );
+    io.sendLine('/exit');
+    // The REPL unwind-free exit (run() completing) IS the crash-free proof.
+    await run;
+  });
+
   test('AC3: global off loses to project on (deepest scope wins)', () async {
     await env.writeFile(
       '/work/.fah/config.yaml',

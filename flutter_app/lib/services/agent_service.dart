@@ -4,6 +4,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
+import 'package:crypto/crypto.dart' show sha256;
 import 'package:flutter/widgets.dart' show WidgetsBinding;
 import 'package:fa_ui/fa_ui.dart'
     show
@@ -409,83 +410,6 @@ class AgentService extends ChangeNotifier
       }
     }
     return merged;
-  }
-
-  /// Writes the bundled app-only agent skill (`assets/skills/js-apps/`)
-  /// into the env's project skill root so [discoverSkills] picks it up.
-  /// The file is refreshed when the bundled content changed (the skill is
-  /// ours, not user data). Best-effort: a missing asset or unwritable env
-  /// must not block session creation.
-  ///
-  /// The package builtins (`create-goal`, `self-settings`) are NOT seeded:
-  /// they ship compiled into fa itself (`builtinSkills()`) on every host,
-  /// and seeding project copies would shadow the package source with a
-  /// duplicate listing (issue #1151).
-  static Future<void> _seedBundledSkills(ExecutionEnv env) async {
-    const bundled = {'js-apps': 'assets/skills/js-apps/SKILL.md'};
-    for (final entry in bundled.entries) {
-      try {
-        final target = '.fah/skills/${entry.key}/SKILL.md';
-        final bundledBody = await rootBundle.loadString(entry.value);
-        final body = filterPlatformInstructions(
-          bundledBody,
-          platform: currentFaPlatform,
-        );
-        final existing = await env.readTextFile(target);
-        if (existing.valueOrNull == body) continue;
-        await env.writeFile(target, body);
-      } on Object {
-        // skip this skill
-      }
-    }
-  }
-
-  /// Discovers agent skills + project context files (AGENTS.md & friends)
-  /// and renders the system-prompt suffix. Third-party skill roots
-  /// (`.claude`, `.github/skills`, `.codex`) are read unless [access] is
-  /// [SkillsAccess.denied] (or an explicit `ask` still awaiting its startup
-  /// prompt) — discovery is on by default; only those restrict discovery to
-  /// the first-party roots (`.fah/skills`, `.agents/skills`).
-  ///
-  /// The package builtins (`create-goal`, `self-settings`, issue #1151)
-  /// merge LAST — every on-disk skill of the same name shadows them — and
-  /// [skillToggles] (the app store's `skills:`-shaped wishes; the single
-  /// app-side scope, project config.yaml toggles are NOT read here) filter
-  /// the discovered list down to the enabled skills.
-  static Future<String> _discoverPromptSuffix(
-    ExecutionEnv env,
-    SkillsAccess access, {
-    String? homeDir,
-    Map<String, bool> skillToggles = const {},
-  }) async {
-    // User-level roots (~/.claude/skills, ~/.copilot/skills, ...) need the
-    // real home directory - without it the desktop app only ever saw
-    // project-local skills no matter what the consent said.
-    final roots = defaultSkillRoots(
-      cwd: env.cwd,
-      homeDir: homeDir ?? desktopHomeDir(),
-    );
-    final skills = await discoverSkills(
-      env,
-      projectRoots: roots.projectRoots,
-      userRoots: roots.userRoots,
-      allowedSources: skillsAccessAllowsDiscovery(access, interactive: false)
-          ? null
-          : const {SkillSource.fah, SkillSource.agents},
-      builtins: builtinSkills(),
-    );
-    final resolution = resolveSkillAvailability(
-      skills: skills,
-      scopes: [(SkillToggleScope.project, SkillsConfig(skills: skillToggles))],
-    );
-    final enabled = enabledSkills(skills, resolution);
-    final contextFiles = await loadProjectContextFiles(env);
-    return [
-      if (formatProjectContext(contextFiles).isNotEmpty)
-        formatProjectContext(contextFiles),
-      if (formatSkillsForPrompt(enabled).isNotEmpty)
-        formatSkillsForPrompt(enabled),
-    ].join('\n\n');
   }
 
   AgentService._withEnv({

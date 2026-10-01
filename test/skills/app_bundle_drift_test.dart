@@ -91,11 +91,12 @@ void main() {
     // The audit (issue #29 AC10): the drift guard must pin the SEEDER,
     // not just the files — a skill added to assets + pubspec but not to
     // the seeder map would never reach a session. The map lives in the
-    // app source; parse it (a string-literal map, VM-only guard).
+    // app source (the skills part file since #1151's size gate); parse
+    // it (a string-literal map, VM-only guard).
     final source = File(
-      'flutter_app/lib/services/agent_service.dart',
+      'flutter_app/lib/services/agent_service_skills.dart',
     ).readAsStringSync();
-    final decl = source.indexOf('static Future<void> _seedBundledSkills');
+    final decl = source.indexOf('Future<void> _seedBundledSkills');
     expect(decl, greaterThanOrEqualTo(0), reason: 'seeder missing');
     final brace = source.indexOf('= {', decl);
     final mapEnd = source.indexOf('};', brace);

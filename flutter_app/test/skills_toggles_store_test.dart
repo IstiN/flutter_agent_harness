@@ -3,6 +3,7 @@
 // in the LICENSE file.
 
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/services/agent_service.dart';
@@ -89,6 +90,57 @@ void main() {
   });
 
   group('AgentService builtin skill discovery (issue #1151 AC6)', () {
+    test('upgrade path: stale app-seeded copies are removed at boot, '
+        'customized overrides stay (issue #1151 review CQE1)', () async {
+      final env = MemoryExecutionEnv();
+      // What earlier app versions wrote for create-goal: the LAST
+      // SEEDED bytes (the repo's .fah/skills copy at the time — the
+      // drift guard pinned assets byte-identical to it; the builtin
+      // port tweaked two sentences, so this copy carries the OLD
+      // description). fa-self-config names a retired skill.
+      final stale = await File(
+        '../.fah/skills/create-goal/SKILL.md',
+      ).readAsString();
+      await env.writeFile('${env.cwd}/.fah/skills/create-goal/SKILL.md', stale);
+      final orphan = await File(
+        '../.fah/skills/fa-self-config/SKILL.md',
+      ).readAsString();
+      await env.writeFile(
+        '${env.cwd}/.fah/skills/fa-self-config/SKILL.md',
+        orphan,
+      );
+      // A deliberate project override: different bytes, user-owned.
+      await env.writeFile(
+        '${env.cwd}/.fah/skills/self-settings/SKILL.md',
+        '---\nname: self-settings\ndescription: PROJECT OVERRIDE MARKER\n---\nBody\n',
+      );
+      final service = await AgentService.create(config: _config(), env: env);
+      addTearDown(service.dispose);
+
+      // Both stale seeds are gone: create-goal no longer shadows the
+      // compiled-in builtin, fa-self-config is not listed at all.
+      expect(
+        (await env.readTextFile(
+          '${env.cwd}/.fah/skills/create-goal/SKILL.md',
+        )).valueOrNull,
+        isNull,
+      );
+      expect(
+        (await env.readTextFile(
+          '${env.cwd}/.fah/skills/fa-self-config/SKILL.md',
+        )).valueOrNull,
+        isNull,
+      );
+      final prompt = service.systemPromptForTest;
+      expect(prompt, contains('PROJECT OVERRIDE MARKER'));
+      expect('<name>create-goal</name>'.allMatches(prompt), hasLength(1));
+      expect(
+        prompt,
+        contains('<location>builtin://skills/create-goal/SKILL.md</location>'),
+      );
+      expect(prompt, isNot(contains('fa-self-config')));
+    });
+
     test('a fresh env resolves the builtins without any seeded copy', () async {
       final env = MemoryExecutionEnv();
       final service = await AgentService.create(config: _config(), env: env);

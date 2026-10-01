@@ -1326,30 +1326,6 @@ ToolsConfig? loadProjectToolsConfig(String projectDir) {
   }
 }
 
-/// Loads the PROJECT-level per-skill `skills:` entries from
-/// `<projectDir>/.fah/config.yaml` (issue #1151) — the git-backed skill
-/// policy travels with the repo. Only `<name>: on|off` entries are read
-/// here (`access`/`disableShellExecution` stay user-file settings); the
-/// project scope wins over the global [CliConfig.skillToggles] per name.
-/// Null when the file or the section is absent/unreadable;
-/// a present-but-invalid section throws [ConfigException] (strict, like
-/// the user config).
-Map<String, bool>? loadProjectSkillToggles(String projectDir) {
-  final file = File('$projectDir/.fah/config.yaml');
-  if (!file.existsSync()) return null;
-  try {
-    final doc = loadYaml(file.readAsStringSync());
-    if (doc is! YamlMap) return null;
-    final node = doc['skills'];
-    if (node == null) return null;
-    return SkillsConfig.fromYaml(node).skills;
-  } on ConfigException {
-    rethrow;
-  } on Object {
-    return null;
-  }
-}
-
 /// Parses the `FA_TOOLS` env twin of the `--tools` flag: the same csv
 /// spec, for Docker/headless hosts that cannot pass flags. Absent or empty
 /// yields null (no runtime intent); a malformed value throws

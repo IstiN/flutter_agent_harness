@@ -76,8 +76,9 @@ extension AgentCliSkillsExt on AgentCli {
   /// [AgentCliConfig.skillToggles] < project `.fah/config.yaml`) against
   /// [_skills], warns about unknown toggle ids once per distinct name,
   /// and recomputes [_enabledSkills] + [_skillResolution]. A broken
-  /// project section throws [ConfigException], surfacing like the boot
-  /// config parse instead of silently ignoring the file.
+  /// project section is data, not an exception: the error prints and the
+  /// last good project toggles stay in effect (the tools twin,
+  /// `readToolsScopeFile`, works the same way).
   Future<void> _resolveSkillAvailability() async {
     if (!_globalSkillTogglesLoaded) {
       _globalSkillToggles = Map.of(config.skillToggles);
@@ -116,23 +117,41 @@ extension AgentCliSkillsExt on AgentCli {
   /// The project `skills:` toggles, read through the [ExecutionEnv] —
   /// scopes travel with the env, mirroring the tools wiring (web-safe,
   /// and visible to the MemoryExecutionEnv test harness). Null when the
-  /// file or the section is absent/unreadable; a present-but-invalid
-  /// section throws [ConfigException] (strict, like the user config).
+  /// file or the section is absent; a present-but-invalid section is
+  /// reported and the LAST GOOD toggles stay in effect — one broken
+  /// project file must never kill `/skills`, the REPL loop, or boot
+  /// (issue #1151 review; the tools twin is `readToolsScopeFile`).
   Future<Map<String, bool>?> _readProjectSkillToggles() async {
-    final source = (await _env.readTextFile(
-      '${_env.cwd}/.fah/config.yaml',
-    )).valueOrNull;
-    if (source == null || source.trim().isEmpty) return null;
+    final (read, error) = await _readProjectSkillTogglesFile();
+    if (error != null) {
+      io.writeln('skills: $error — project scope ignored, keeping last good');
+      return _lastGoodProjectSkillToggles;
+    }
+    if (read != null) _lastGoodProjectSkillToggles = read;
+    return read;
+  }
+
+  /// The strict parse behind [_readProjectSkillToggles]: returns
+  /// `(null, null)` when the file or the section is absent, `(null,
+  /// message)` when the file/section is broken, else the parsed toggles.
+  Future<(Map<String, bool>?, String?)> _readProjectSkillTogglesFile() async {
+    final path = '${_env.cwd}/.fah/config.yaml';
+    final source = (await _env.readTextFile(path)).valueOrNull;
+    if (source == null || source.trim().isEmpty) return (null, null);
     final Object? doc;
     try {
       doc = loadYaml(source);
-    } on Object {
-      return null;
+    } on Object catch (error) {
+      return (null, 'cannot parse $path: $error');
     }
-    if (doc is! YamlMap) return null;
+    if (doc is! YamlMap) return (null, 'cannot parse $path: not a yaml map');
     final node = doc['skills'];
-    if (node == null) return null;
-    return SkillsConfig.fromYaml(node).skills;
+    if (node == null) return (null, null);
+    try {
+      return (SkillsConfig.fromYaml(node).skills, null);
+    } on ConfigException catch (error) {
+      return (null, 'invalid skills section in $path: ${error.message}');
+    }
   }
 
   /// Changes the third-party consent, persists it through the host callback,

@@ -1334,6 +1334,11 @@ class AgentCli {
   /// [AgentCliConfig.onSkillTogglesChanged]).
   Map<String, bool> _globalSkillToggles = const {};
   bool _globalSkillTogglesLoaded = false;
+
+  /// The last successfully parsed project `skills:` toggles — what
+  /// "keeping last good" serves when the project section turns broken
+  /// (issue #1151 review; mirrors the tools scope cache).
+  Map<String, bool>? _lastGoodProjectSkillToggles;
   List<ProjectContextFile> _contextFiles = const [];
 
   /// Consent for third-party (Claude/Copilot/Codex) skill & agent roots.

@@ -13,7 +13,6 @@
 library;
 
 import '../prompts/prompts.g.dart' show builtinSkillFiles;
-import '../utils/frontmatter_parser.dart';
 import 'skills.dart';
 
 export 'skills.dart' show Skill;
@@ -27,48 +26,24 @@ const builtinSkillPathPrefix = 'builtin://skills/';
 String builtinSkillPath(String name) => '$builtinSkillPathPrefix$name/SKILL.md';
 
 /// The compiled-in built-in skills, in name order, parsed exactly like an
-/// on-disk SKILL.md (frontmatter → [SkillManifest]). Empty until
-/// `scripts/gen_prompts.dart` has run — hosts merge them into discovery
-/// last so real skills always win a name clash.
+/// on-disk SKILL.md (frontmatter → [SkillManifest]) — [skillFromText] is
+/// the shared parse, so disk discovery and the built-ins cannot drift.
+/// Empty until `scripts/gen_prompts.dart` has run — hosts merge them into
+/// discovery last so real skills always win a name clash.
 List<Skill> builtinSkills() {
   final skills = <Skill>[];
   for (final entry in builtinSkillFiles.entries) {
-    final (frontmatter, body) = parseFrontmatterTyped(entry.value);
-    final manifest = SkillManifest.fromFrontmatter(
-      frontmatter,
-      skillName: entry.key,
+    final skill = skillFromText(
+      entry.value,
+      filePath: builtinSkillPath(entry.key),
+      fallbackName: entry.key,
+      scope: SkillScope.builtin,
+      source: SkillSource.builtin,
+      embeddedText: entry.value,
     );
-    final name = ('${frontmatter['name'] ?? entry.key}').trim();
-    if (name.isEmpty) continue;
-    skills.add(
-      Skill(
-        name: name,
-        description: _builtinSkillDescription(manifest, body),
-        filePath: builtinSkillPath(name),
-        scope: SkillScope.builtin,
-        source: SkillSource.builtin,
-        manifest: manifest,
-        embeddedText: entry.value,
-      ),
-    );
+    if (skill != null) skills.add(skill);
   }
   return skills;
-}
-
-/// Same derivation as skills.dart's `_skillDescription`.
-String _builtinSkillDescription(SkillManifest manifest, String body) {
-  var description = (manifest.catalogDescription ?? '').trim();
-  if (description.isEmpty) {
-    description = body
-        .split('\n')
-        .map((line) => line.trim())
-        .firstWhere((line) => line.isNotEmpty, orElse: () => '');
-    if (description.length > 240) {
-      description = '${description.substring(0, 240)}…';
-    }
-  }
-  if (description.isEmpty) description = 'No description provided.';
-  return description;
 }
 
 /// The built-in skill text at [path] (`builtin://skills/<name>/SKILL.md`),

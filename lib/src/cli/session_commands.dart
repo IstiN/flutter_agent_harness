@@ -527,8 +527,7 @@ extension on AgentCli {
     // live loop carried before exit (issue #1151: builtin-skills
     // metadata exhausted the record-bucket slack this race left).
     if (_subagentManager.messaging != null && metadata.id.isNotEmpty) {
-      _subagentManager.mailboxPrefix = metadata.id;
-      _applyPromptComposition();
+      _assignMailboxPrefix(metadata.id);
     }
     void stage(String name) => _logDiagnostic(
       'boot_stage $name ms=${bootSw.elapsedMilliseconds} sid=${metadata.id}',
