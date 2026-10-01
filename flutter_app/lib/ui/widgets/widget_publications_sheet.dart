@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart' as url_launcher;
 
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa/ui/widgets/publication_state_chip.dart';
 import 'package:fa/services/widget_publication_store.dart';
 import 'package:fa/services/widget_publish_service.dart';
 
@@ -309,6 +310,11 @@ class _PublicationTileState extends State<_PublicationTile> {
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
+                // Verbatim errors + lastError + run link: the shared
+                // block (issue #1045 review r2 — was copy-pasted here and
+                // in the detail sheet).
+                if (PublicationErrorDetails.matches(publication))
+                  PublicationErrorDetails(publication: publication),
                 if (publication.comments.isNotEmpty) ...[
                   const SizedBox(height: 2),
                   // Reviewer feedback (AC7): plain text only — comment
@@ -358,7 +364,7 @@ class _PublicationTileState extends State<_PublicationTile> {
               ],
             ),
           ),
-          _StateChip(state: publication.state),
+          PublicationStateChip(state: publication.state),
         ],
       ),
     );
@@ -369,38 +375,5 @@ class _PublicationTileState extends State<_PublicationTile> {
     final month = local.month.toString().padLeft(2, '0');
     final day = local.day.toString().padLeft(2, '0');
     return '${local.year}-$month-$day';
-  }
-}
-
-class _StateChip extends StatelessWidget {
-  const _StateChip({required this.state});
-
-  final WidgetPublicationState state;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = context.l10n;
-    final (label, color) = switch (state) {
-      WidgetPublicationState.open => (l10n.publicationStateOpen, Colors.blue),
-      WidgetPublicationState.published => (
-        l10n.publicationStatePublished,
-        Colors.green,
-      ),
-      WidgetPublicationState.rejected => (
-        l10n.publicationStateRejected,
-        Colors.red,
-      ),
-      WidgetPublicationState.unknown => (
-        l10n.publicationStateUnknown,
-        Colors.grey,
-      ),
-    };
-    return Chip(
-      label: Text(label),
-      labelStyle: TextStyle(color: color),
-      side: BorderSide(color: color),
-      backgroundColor: color.withValues(alpha: 0.08),
-      visualDensity: VisualDensity.compact,
-    );
   }
 }

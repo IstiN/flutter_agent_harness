@@ -18,6 +18,12 @@ class _FakePublishService implements WidgetPublishService {
   var calls = 0;
 
   @override
+  Future<PendingPublish> startPublish({
+    required JsAppInfo app,
+    String? repoName,
+  }) => throw UnimplementedError();
+
+  @override
   Future<WidgetPublicationState> refreshStatus(
     WidgetPublication publication,
   ) async {
