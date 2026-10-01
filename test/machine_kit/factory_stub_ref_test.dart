@@ -162,9 +162,17 @@ void main() {
       reason: 'issues trigger must key on the ASSIGNEE, not the author',
     );
     expect(
-      teammate.contains('types: [assigned, labeled]'),
+      teammate.contains('types: [assigned]'),
       isTrue,
-      reason: 'the `opened` trigger is gone: nothing starts until assigned',
+      reason:
+          '`labeled` removed 2026-10-01 (echo twins, dmd gh-317/318): '
+          'label echoes queued duplicate runs behind the per-issue '
+          'concurrency group; legs are dispatch-only now',
+    );
+    expect(
+      teammate.contains('types: [assigned, labeled]'),
+      isFalse,
+      reason: 'the labeled trigger must not come back (echo-twin class)',
     );
     expect(
       teammate.contains('pull_request:'),
