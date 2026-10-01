@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 
-import 'package:flutter/services.dart' show Clipboard, ClipboardData;
+import 'package:flutter/services.dart'
+    show Clipboard, ClipboardData, HapticFeedback;
 
 import 'package:path/path.dart' as p;
 
@@ -492,12 +493,26 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
 
   Widget _buildBrandHeader(FahColors colors) {
     // The Fa brand mark: sparkle SVG without any background (matching the
-    // prototype's clean icon style).
-    const brandIcon = SizedBox(
-      width: 28,
-      height: 28,
-      child: Center(
-        child: SizedBox(width: 24, height: 24, child: FaBrandTile(size: 24)),
+    // prototype's clean icon style). The entry gesture contract (#864):
+    // long-press mints a fresh session (haptic, no dialog); a tap needs
+    // no action here — the wide layout always shows the active chat.
+    final brandIcon = Tooltip(
+      message: context.l10n.faEntryHintTooltip,
+      child: InkWell(
+        key: const ValueKey('wideShellFaBrand'),
+        borderRadius: BorderRadius.circular(8),
+        onLongPress: () => unawaited(_mintSessionFromBrand()),
+        child: const SizedBox(
+          width: 28,
+          height: 28,
+          child: Center(
+            child: SizedBox(
+              width: 24,
+              height: 24,
+              child: FaBrandTile(size: 24),
+            ),
+          ),
+        ),
       ),
     );
 
@@ -853,6 +868,18 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     subtitle: mountedPath != null ? Text(mountedPath) : null,
     leading: const Icon(Icons.folder_outlined),
   );
+
+  /// The Fa brand mark's long-press (#864): mint one new session straight
+  /// from the active config — no folder dialog (the owner ruling is
+  /// long-press = new; the sidebar's explicit flow keeps its dialog).
+  Future<void> _mintSessionFromBrand() async {
+    final target = _newSessionTarget;
+    if (target == null) return;
+    if (await _resetViaRelay(target.service)) return;
+    // Fire-and-forget: the ack is flow control for nobody.
+    unawaited(HapticFeedback.mediumImpact());
+    _createSessionInChosenFolder(target.service, target.config);
+  }
 
   /// The folder is already set ('current' or a freshly applied pick);
   /// the created session's cwd (and its drawer group) follows it.

@@ -1013,7 +1013,22 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
           padding: EdgeInsets.fromLTRB(20, faIsMacOSDesktop ? 32 : 16, 20, 8),
           child: Row(
             children: [
-              const FaBrandTile(size: 28),
+              // The Fa entry (#864): tap ALWAYS continues the active session
+              // (expand the sheet, zero minting); long-press is the ONLY
+              // navigation way to mint a fresh one. The hint tooltip names
+              // both gestures.
+              Tooltip(
+                message: context.l10n.faEntryHintTooltip,
+                child: InkWell(
+                  key: const ValueKey('launcherFaBrand'),
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () => _sheetKey.currentState?.expand(),
+                  onLongPress: () => unawaited(
+                    _sheetKey.currentState?.mintAndOpenNewSession(),
+                  ),
+                  child: const FaBrandTile(size: 28),
+                ),
+              ),
               const SizedBox(width: 10),
               // The screen title yields to the session chip on narrow frames:
               // it ellipsizes first, the chip keeps a readable width.
