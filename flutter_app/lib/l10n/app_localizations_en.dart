@@ -1833,6 +1833,30 @@ class AppLocalizationsEn extends AppLocalizations {
   String get publicationStateUnknown => 'Unknown';
 
   @override
+  String get widgetStatusNotPublished => 'Not published';
+
+  @override
+  String get widgetStatusValidating => 'Validating…';
+
+  @override
+  String get widgetStatusInvalid => 'Invalid';
+
+  @override
+  String get widgetStatusFailed => 'Publish failed';
+
+  @override
+  String get widgetStatusErrors => 'Validator errors:';
+
+  @override
+  String get widgetStatusOpenRun => 'Open CI run';
+
+  @override
+  String get widgetDetailVersion => 'Version';
+
+  @override
+  String get widgetDetailAuthor => 'Author';
+
+  @override
   String publicationSubmittedAt(Object date) {
     return 'Submitted $date';
   }
