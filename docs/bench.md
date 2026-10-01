@@ -91,6 +91,68 @@ automatically (`bench/harbor_fa/split_tasks.py` reads each task's
    `result.json` + agent session logs (fa sessions under
    `<trial>/agent/fah-sessions/`) even when the Hub upload is skipped.
 
+## MLS-Bench (Harbor)
+
+`bench/mls_bench/` + `Bench MLS` workflow — runs fa on
+[MLS-Bench](https://github.com/Imbernoulli/MLS-Bench) (140 ML-science
+research tasks; the 30-task MLS-Bench-Lite slice is the cheap comparison
+set) through the same Harbor runtime and `bench/harbor_fa/fa_agent.py`
+adapter as Bench 4.0:
+
+```
+harbor run -c run-<provider>[-lite].yaml -a bench.harbor_fa.fa_agent:FaAgent
+```
+
+No fork: the workflow checks out Imbernoulli/MLS-Bench at a pinned SHA and
+runs its own configs verbatim, including their `harbor_env:` provider
+environment clamps (provider ceilings are upstream's).
+
+### Staging ladder (cost discipline)
+
+Each job needs the previous one, so a failure stops the spend before the
+next stage: `plan` (bundle + subset + secret fail-fast) → `nop` (image
+builds + sandbox start on the sanity CPU task, no agent) → `oracle`
+(strongest declared baseline replay) → `agent` (fa over the subset).
+Dispatch inputs: `subset` = `smoke-cpu` (default) | `lite` | `full`
+(~138 GPU-sandboxed tasks; requires `confirm-full=yes`) | `task=<name>`;
+`provider` = `daytona` | `modal` (required); `model`, `gpu-type` (H100
+default), `mls-sha`, `shards`. Runs are serialized (`concurrency: bench-mls`).
+
+### Timeout discipline
+
+Every task ships `[agent] timeout_sec = 18000` (5 h) and Harbor enforces
+it; the builder (`bench/mls_bench/build_run.py`) never emits
+`--*-timeout-multiplier` or override flags — changing the budget voids
+comparability with the published leaderboard. The summary step re-checks
+recorded trial configs and fails the run on a violation.
+
+### Secrets (owner-provisioned, env-only, never echoed)
+
+| Secret | Used for |
+|---|---|
+| `FA_BENCH_ZAI_KEY` | z.ai key for glm-5.3-flash (shared with Bench 4.0) |
+| `DAYTONA_API_KEY` | provider=daytona |
+| `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET` | provider=modal |
+
+A missing secret fails the `plan` job before any spend, naming the exact
+key. On `modal`, tasks whose declared budgets exceed the 24 h sandbox cap
+are flagged as clip-risk in the summary (not silently clipped).
+
+### Results
+
+1. **Job summary** — per-domain arithmetic-mean aggregate
+   (`bench/mls_bench/summary_mls.py`) over the agent trials, plus run
+   identity (dataset SHA, model, fa commit, budget statement) and a
+   completeness verdict.
+2. **Artifacts** — per-trial `result.json` + logs + `mls-run-config.json`
+   with 90-day retention; `mls-jobs-merged` bundles everything.
+3. **Permanent archive** — each run's bundle is attached to the
+   `bench-mls-archive` release.
+
+**Scores are pending until #1123 (token/cost accounting) lands** — the
+workflow and aggregation are live, but leaderboard-comparable numbers
+need cost attribution per trial.
+
 ## Legacy: terminal-bench-core 0.1.1
 
 `bench/terminal_bench/` + `Bench` workflow — kept for regression runs of
