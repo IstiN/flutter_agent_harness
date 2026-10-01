@@ -663,7 +663,20 @@ class AgentService extends ChangeNotifier
     }
     // AC5: the SAME global the CLI publishes — re-set every creation so
     // a config edit applies to the next session; AC4's pipeline config.
-    providerTimeoutsOverride = appConfig?.providerTimeouts;
+    // FA_PROVIDER_TIMEOUT_SECONDS folds in over the yaml section (issue
+    // #1036, review round 1): the same env-wins precedence the CLI boot
+    // applies, so both hosts resolve identical watchdog budgets.
+    try {
+      providerTimeoutsOverride = applyProviderTimeoutEnvOverride(
+        appConfig?.providerTimeouts,
+        faProviderTimeoutSecondsEnv(),
+      );
+    } on ConfigException catch (error) {
+      // Degrade like every other config problem here (E2): warn and keep
+      // the yaml section — boot never blocks on a malformed env override.
+      AppLog.i('config', error.message);
+      providerTimeoutsOverride = appConfig?.providerTimeouts;
+    }
     _yamlRedactConfig = appConfig?.redact;
     // Session image registry (`images:` section, issue #171): process-wide
     // like in the CLI; core default is on, user config honored where the
