@@ -36,7 +36,8 @@ void main() {
         .split('\n')
         .firstWhere(
           (l) => l.contains(
-              'dmtools-agentic-workflows/.github/workflows/$workflowFile@'),
+            'dmtools-agentic-workflows/.github/workflows/$workflowFile@',
+          ),
           orElse: () => '',
         );
     if (!usesLine.contains('@')) return null;
@@ -102,20 +103,25 @@ void main() {
 
   test('engine pin: ai-teammate passes a 40-hex factory_ref; sm/merge '
       'carry none (AW resolves the engine from releases)', () {
-    final engineRef =
-        RegExp(r'factory_ref:\s*([0-9a-f]{40})').firstMatch(teammate);
+    final engineRef = RegExp(
+      r'factory_ref:\s*([0-9a-f]{40})',
+    ).firstMatch(teammate);
     expect(
       engineRef,
       isNotNull,
-      reason: 'ai-teammate must pass factory_ref — the factory declares it '
+      reason:
+          'ai-teammate must pass factory_ref — the factory declares it '
           'required and cannot derive its own engine commit',
     );
-    for (final entry in {'machine-sm.yml': sm, 'machine-merge.yml': merge}
-        .entries) {
+    for (final entry in {
+      'machine-sm.yml': sm,
+      'machine-merge.yml': merge,
+    }.entries) {
       expect(
         entry.value.contains('factory_ref:'),
         isFalse,
-        reason: '${entry.key}: AW factory-sm/merge have no factory_ref '
+        reason:
+            '${entry.key}: AW factory-sm/merge have no factory_ref '
             'input — the engine resolves from dmtools-agents releases '
             'via vars (latest default)',
       );
@@ -156,9 +162,17 @@ void main() {
       reason: 'issues trigger must key on the ASSIGNEE, not the author',
     );
     expect(
-      teammate.contains('types: [assigned, labeled]'),
+      teammate.contains('types: [assigned]'),
       isTrue,
-      reason: 'the `opened` trigger is gone: nothing starts until assigned',
+      reason:
+          '`labeled` removed 2026-10-01 (echo twins, dmd gh-317/318): '
+          'label echoes queued duplicate runs behind the per-issue '
+          'concurrency group; legs are dispatch-only now',
+    );
+    expect(
+      teammate.contains('types: [assigned, labeled]'),
+      isFalse,
+      reason: 'the labeled trigger must not come back (echo-twin class)',
     );
     expect(
       teammate.contains('pull_request:'),
