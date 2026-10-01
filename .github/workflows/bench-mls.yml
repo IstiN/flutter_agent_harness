@@ -201,7 +201,7 @@ jobs:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
-          .bench-venv/bin/python bench/mls_bench/build_run.py check-secrets \
+          .bench-venv/bin/python bench/mls_bench/build_run.py check-env \
             --provider '${{ inputs.provider }}' --stage nop --subset '${{ inputs.subset }}'
 
       # PYTHONPATH=. so the run config's harbor_env:<provider> environment
@@ -269,7 +269,7 @@ jobs:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
-          .bench-venv/bin/python bench/mls_bench/build_run.py check-secrets \
+          .bench-venv/bin/python bench/mls_bench/build_run.py check-env \
             --provider '${{ inputs.provider }}' --stage oracle --subset '${{ inputs.subset }}'
 
       # Oracle replays the strongest declared baseline through the same guard
@@ -342,7 +342,7 @@ jobs:
           FA_KEY: ${{ secrets.FA_BENCH_ZAI_KEY }}
         run: |
           [ -n "$FA_KEY" ] || { echo '::error::FA_BENCH_ZAI_KEY secret is not set'; exit 1; }
-          .bench-venv/bin/python bench/mls_bench/build_run.py check-secrets \
+          .bench-venv/bin/python bench/mls_bench/build_run.py check-env \
             --provider '${{ inputs.provider }}' --stage agent --subset '${{ inputs.subset }}'
 
       # Same env contract as bench.yml / bench-4.0.yml: the adapter reads

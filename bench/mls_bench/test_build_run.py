@@ -68,46 +68,46 @@ class FullConfirmTest(unittest.TestCase):
         build_run.confirm_full("lite", "")
 
 
-class SecretFailFastTest(unittest.TestCase):
+class EnvFailFastTest(unittest.TestCase):
     """AC2: missing secret fails fast naming the exact key to add."""
 
     ENV = {"DAYTONA_API_KEY": "d", "MODAL_TOKEN_ID": "i", "MODAL_TOKEN_SECRET": "s",
-           build_run.MODEL_KEY: "k"}
+           build_run.MODEL_ENV_VAR: "k"}
 
     def test_daytona_missing_names_key(self):
-        missing = build_run.missing_secrets("daytona", "agent", env={})
-        self.assertEqual(missing, ["DAYTONA_API_KEY", build_run.MODEL_KEY])
+        missing = build_run.missing_env_names("daytona", "agent", env={})
+        self.assertEqual(missing, ["DAYTONA_API_KEY", build_run.MODEL_ENV_VAR])
 
     def test_modal_missing_names_both_tokens(self):
-        missing = build_run.missing_secrets("modal", "plan", env={"MODAL_TOKEN_ID": "i"})
-        self.assertEqual(missing, ["MODAL_TOKEN_SECRET", build_run.MODEL_KEY])
+        missing = build_run.missing_env_names("modal", "plan", env={"MODAL_TOKEN_ID": "i"})
+        self.assertEqual(missing, ["MODAL_TOKEN_SECRET", build_run.MODEL_ENV_VAR])
 
     def test_ladder_stages_skip_model_key(self):
         # nop/oracle provision no model tokens; only the agent leg needs the key.
-        self.assertEqual(build_run.missing_secrets("daytona", "nop", env={}),
+        self.assertEqual(build_run.missing_env_names("daytona", "nop", env={}),
                          ["DAYTONA_API_KEY"])
-        self.assertEqual(build_run.missing_secrets("daytona", "oracle", env={"DAYTONA_API_KEY": "d"}), [])
+        self.assertEqual(build_run.missing_env_names("daytona", "oracle", env={"DAYTONA_API_KEY": "d"}), [])
 
-    def test_cli_exits_naming_secret(self):
+    def test_cli_exits_naming_env_var(self):
         env = {k: v for k, v in os.environ.items()
-               if k not in self.ENV and k not in ("DAYTONA_API_KEY", build_run.MODEL_KEY)}
+               if k not in self.ENV and k not in ("DAYTONA_API_KEY", build_run.MODEL_ENV_VAR)}
         proc = subprocess.run(
-            [sys.executable, "-m", "build_run", "check-secrets",
+            [sys.executable, "-m", "build_run", "check-env",
              "--provider", "daytona", "--stage", "agent", "--subset", "smoke-cpu"],
             capture_output=True, text=True, env=env,
             cwd=Path(__file__).resolve().parent,
         )
         self.assertEqual(proc.returncode, 1)
         self.assertIn("::error::DAYTONA_API_KEY secret is not set", proc.stderr)
-        self.assertIn(f"::error::{build_run.MODEL_KEY} secret is not set", proc.stderr)
+        self.assertIn(f"::error::{build_run.MODEL_ENV_VAR} secret is not set", proc.stderr)
 
-    def test_cli_passes_with_all_secrets(self):
+    def test_cli_passes_with_all_env_set(self):
         env = dict(os.environ)
         env.update(self.ENV)
         env.pop("DAYTONA_API_KEY", None)
         env.update(DAYTONA_API_KEY="d")
         proc = subprocess.run(
-            [sys.executable, "-m", "build_run", "check-secrets",
+            [sys.executable, "-m", "build_run", "check-env",
              "--provider", "daytona", "--stage", "agent", "--subset", "smoke-cpu"],
             capture_output=True, text=True, env=env,
             cwd=Path(__file__).resolve().parent,

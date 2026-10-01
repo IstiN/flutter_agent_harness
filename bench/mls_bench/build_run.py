@@ -19,7 +19,7 @@ Subcommands:
                   agent). AC4: the builder NEVER emits a timeout knob -
                   dataset-declared [agent] timeout_sec = 18000 is the budget,
                   and changing it voids leaderboard comparability.
-    check-secrets exit 1 naming the exact missing secret(s) (AC2)
+    check-env exit 1 naming the exact missing secret(s) (AC2)
 
 stdlib-only (tomllib needs 3.11+); the upstream run configs' simple
 task_names blocks are parsed line-wise so no YAML dep is added.
@@ -36,12 +36,12 @@ from pathlib import Path
 HARBOR_VERSION = "0.23.0"  # the adapter's pin (see bench-4.0.yml)
 SANITY_TASK = "ml-clustering-algorithm"  # upstream documented harness-sanity CPU task
 AGENT_IMPORT = "bench.harbor_fa.fa_agent:FaAgent"
-MODEL_KEY = "FA_BENCH_ZAI_KEY"  # standing z.ai key, shared with bench.yml / bench-4.0.yml
+MODEL_ENV_VAR = "FA_BENCH_ZAI_KEY"  # standing z.ai key, shared with bench.yml / bench-4.0.yml
 
 # Constant NAME literals only. Values are never read anywhere in this
-# module (membership tests in missing_secrets) — the fail-fast print
+# module (membership tests in missing_env_names) — the fail-fast print
 # interpolates these constants and nothing else.
-REQUIRED_SECRETS = {
+REQUIRED_ENV_NAMES = {
     "daytona": ("DAYTONA_API_KEY",),
     "modal": ("MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET"),
 }
@@ -94,7 +94,7 @@ def confirm_full(kind: str, confirm: str) -> None:
         )
 
 
-def missing_secrets(provider: str, stage: str, env=None) -> list[str]:
+def missing_env_names(provider: str, stage: str, env=None) -> list[str]:
     """AC2: exact secret names the run needs. plan pre-flights everything so
     the ladder dies before any spend; stage checks re-run per job.
 
@@ -102,14 +102,14 @@ def missing_secrets(provider: str, stage: str, env=None) -> list[str]:
     strings that reach the fail-fast print are the constant name literals.
     """
     env = os.environ if env is None else env
-    need = list(REQUIRED_SECRETS[provider])
+    need = list(REQUIRED_ENV_NAMES[provider])
     if stage in ("agent", "plan"):
-        need.append(MODEL_KEY)
+        need.append(MODEL_ENV_VAR)
     return [name for name in need if name not in env]
 
 
-def check_secrets(provider: str, stage: str, env=None) -> None:
-    missing = missing_secrets(provider, stage, env)
+def check_required_env(provider: str, stage: str, env=None) -> None:
+    missing = missing_env_names(provider, stage, env)
     for name in missing:
         print(f"::error::{name} secret is not set", file=sys.stderr)  # codeql[py/clear-text-logging-sensitive-data] false positive: constant NAME literals only, values never read (AC2 fail-fast contract)
     if missing:
@@ -263,7 +263,7 @@ def _emit(mapping: dict, out: str | None) -> None:
 def cmd_plan(args: argparse.Namespace) -> int:
     kind, task = parse_subset(args.subset)
     confirm_full(kind, args.confirm_full)
-    check_secrets(args.provider, "plan")  # AC2: die before any stage spends
+    check_required_env(args.provider, "plan")  # AC2: die before any stage spends
     harbor_dir = Path(args.mls_root) / "harbor"
     tasks = resolve_tasks(kind, task, harbor_dir, args.provider)
     matrix = shard_matrix(tasks, args.shards)
@@ -276,7 +276,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
         "subset": args.subset,
         "tasks": tasks,
         "model": args.model,
-        "model_secret": MODEL_KEY,
+        "model_env_var": MODEL_ENV_VAR,
         "fa_commit": args.fa_commit,
         "adapter": f"{AGENT_IMPORT} (bench/harbor_fa/fa_agent.py)",
         "harbor_version": HARBOR_VERSION,
@@ -317,8 +317,8 @@ def cmd_command(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_check_secrets(args: argparse.Namespace) -> int:
-    check_secrets(args.provider, args.stage)
+def cmd_check_required_env(args: argparse.Namespace) -> int:
+    check_required_env(args.provider, args.stage)
     return 0
 
 
@@ -349,9 +349,9 @@ def main() -> int:
     p.add_argument("--job-name", required=True)
     p.set_defaults(func=cmd_command)
 
-    p = with_common(sub.add_parser("check-secrets"))
+    p = with_common(sub.add_parser("check-env"))
     p.add_argument("--stage", required=True, choices=("nop", "oracle", "agent", "plan"))
-    p.set_defaults(func=cmd_check_secrets)
+    p.set_defaults(func=cmd_check_required_env)
 
     args = parser.parse_args()
     return args.func(args)
