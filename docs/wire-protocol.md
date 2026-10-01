@@ -31,10 +31,12 @@ Every frame is `{"v": <version>, "kind": "<name>", ...payload}`. Version
   `{"v":1,"kind":"hello","versions":[1],"caps":[...]}`; the server answers
   `{"v":1,"kind":"welcome","version":<negotiated>,"caps":[...]}` with the
   highest mutually supported version. **No overlap is a loud handshake
-  error** — the connection must not limp on a guessed version. A
-  multi-version client talking to a v1 server is DOWNGRADED: every
-  subsequent frame is encoded at the negotiated version, and fields added
-  after that version are filtered out (E5).
+  error** — the connection must not limp on a guessed version. The
+  hello frame's own `v` caps only that frame's encoding: it is accepted
+  (unknown fields tolerated) and IGNORED for negotiation — the `versions`
+  array is what negotiates. A multi-version client talking to a v1 server
+  is DOWNGRADED: every subsequent frame is encoded at the negotiated
+  version, and fields added after that version are filtered out (E5).
 - Every schema change ships golden fixtures for **all live versions**, and
   the fixture `kind`/`protocolVersion`/`frame` keys are load-validated —
   a half-written fixture is a CI failure, not a silent pin.
@@ -84,10 +86,17 @@ they are frames the host answers with commands, echoing `id`):
 
 SECRET-class frame fields are registered in
 `AgentWireProtocol.isSecretField` — today: `secret_response.value`,
-`model_request.rawWireDump`. **Hosts MUST pass frames through
-`AgentWireProtocol.redactForLog` before logging or persisting them.**
-Secret values never enter the session JSONL, the trajectory, or logs; the
-redaction pipeline precedent applies.
+`model_request.rawWireDump`, and `rawBody` (anywhere in a frame — it only
+ever carries the raw provider 429 payload, `RateLimitInfo.rawBody`).
+**Hosts MUST pass frames through `AgentWireProtocol.redactForLog` before
+logging or persisting them.** Redacted fields carry the repo-standard
+`[REDACTED:<kind>]` marker (kind = frame kind), which the layered
+redaction pipeline recognizes and keys on. Additionally,
+`rateLimit.rawBody` never
+rides a wire frame at all: the engine strips it when embedding messages
+(the live in-process object keeps the diagnostics payload). Secret values
+never enter the session JSONL, the trajectory, or logs; the redaction
+pipeline precedent applies.
 
 ## 6. What a host renders (host obligations)
 
@@ -109,53 +118,3 @@ Native hosts embed the fa engine in-app (zero WebView, zero remote — owner
 ruling 2026-09-30). The DAP hub is out of scope and frozen; `fa wire-serve`
 is a separate card (#1103). Reference clients per platform land in `sdk/`
 (slices 2–3 of #1101).
-
-## 8. Serving the protocol: `fa wire-serve` (#1103)
-
-A fa process can SERVE the protocol to hosts that cannot embed the engine:
-
-```
-fa wire-serve [--port N] [--stdio] [--token T]
-```
-
-**stdio (primary for process-embedding).** `--stdio` speaks NDJSON on
-stdin/stdout: one frame per line (framing above), blank lines ignored, EOF
-is a graceful shutdown. A parent process embeds fa with zero ports, zero
-tokens. Diagnostics never touch stdout — they go to stderr; the ONLY
-stdout traffic is frames. A line longer than 1 MiB is refused with a loud
-`bad_frame` frame and skipped — a memory bound, not a protocol change.
-
-**WebSocket (for independently-running servers).** Without `--stdio` the
-server binds `127.0.0.1` only (loopback; NOT a security boundary) and
-prints exactly ONE startup line to stdout (after the boot below):
-
-```json
-{"wire_serve":{"port":4444,"token":"..."}}
-```
-
-The port is ephemeral unless `--port N` (an occupied port is a loud
-startup error naming it, never a silent fallback). Every WS request must
-carry the per-start bearer token — `Authorization: Bearer <token>` or
-`?token=` — or the upgrade is refused (401). The token is minted per
-start (`--token` overrides; set `FA_WIRE_SERVE_TOKEN` in the environment
-instead of `--token` when you need it out of the `ps` listing), never
-written to session records or logs, and exists to stop bystanders, not
-adversaries; treat loopback + token as authn-lite. Frames ride the
-socket one NDJSON line per message, both directions. A malformed line is
-answered with a loud `bad_frame` error frame (the same code the
-protocol answers schema-invalid frames with) and the connection STAYS
-ALIVE — one bad line never kills a connection (and in stdio mode never
-the server). The startup line is printed only after the boot (and its
-session-ownership lease) succeeded. In WS mode a supervisor closing the
-process's stdin pipe also ends the serve, same as stdin EOF in stdio
-mode.
-
-**Lifecycle.** Single-attach: the first client's `hello` wins; a second
-client is answered with a loud `already_attached` error frame and
-disconnected. After a disconnect a new client attaches cleanly and every
-still-pending `approval_request` / `ask_request` / `secret_request` is
-re-delivered with the SAME id, so responses stay idempotent. Graceful
-shutdown: stdin EOF (stdio) or SIGTERM (both modes) ends the transport,
-the session persists like any normal run, and `fa --session <name>`
-resumes it. No TUI/REPL output ever reaches the protocol stream: the
-serve boot uses a silent CliIO, diagnostics go to stderr.

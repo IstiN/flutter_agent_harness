@@ -64,7 +64,11 @@ void main() {
         final golden = event is MessageUpdateEvent
             ? fixtureForUpdate(event)
             : fixtureForKind(_kindOf(event));
-        expect(frames[i], golden.frame, reason: 'frame $i (${frames[i]['kind']})');
+        expect(
+          frames[i],
+          golden.frame,
+          reason: 'frame $i (${frames[i]['kind']})',
+        );
       }
     });
 
@@ -117,8 +121,11 @@ void main() {
       for (var i = 0; i < results.length; i++) {
         final result = results[i];
         expect(result, isA<KnownWireEvent>(), reason: 'line $i');
-        expect(_kindOf((result as KnownWireEvent).event), _kindOf(scriptedRun()[i]),
-            reason: 'line $i');
+        expect(
+          _kindOf((result as KnownWireEvent).event),
+          _kindOf(scriptedRun()[i]),
+          reason: 'line $i',
+        );
       }
     });
 
@@ -126,7 +133,11 @@ void main() {
       final protocol = AgentWireProtocol();
       final frames = <Map<String, dynamic>>[
         {'v': 1, 'kind': 'agent_start'},
-        {'v': 1, 'kind': 'brand_new_kind', 'payload': {'x': 1}},
+        {
+          'v': 1,
+          'kind': 'brand_new_kind',
+          'payload': {'x': 1},
+        },
         fixtureForKind('agent_settled').frame,
       ];
       final results = await fromWire(

@@ -2562,9 +2562,16 @@ class AgentService extends ChangeNotifier
   @override
   void abort() => _agent.abort();
 
-  /// Serializes `_persist` runs so concurrent triggers never double-append
-  /// the same message.
-  Future<void> _persistChain = Future<void>.value();
+  /// The in-flight `_persist` drain, or `null` when idle. While one pass
+  /// sweeps the transcript, late triggers mark `_persistDirty` and await
+  /// this drain instead of dropping their payload (issue #1102) — and a
+  /// stored future from another zone can't stall a stored-null guard, so
+  /// no cross-zone future capture is possible here.
+  Future<void>? _persistPass;
+
+  /// Set when a `_persist` trigger landed while a pass was in flight; the
+  /// running drain re-runs the full-state sweep once more before it ends.
+  bool _persistDirty = false;
 
   @override
   void dispose() {
@@ -2715,16 +2722,6 @@ class AgentService extends ChangeNotifier
     if (encoded.length <= 80) return encoded;
     return '${encoded.substring(0, 80)}...';
   }
-
-  /// Whether a [_persist] pass is currently draining the transcript.
-  /// Concurrent triggers (a `_persistSoon` pass racing the run
-  /// finalizer's direct call) must not both iterate
-  /// `_agent.state.messages`: both would read the same
-  /// `_persistedCount == 0` before either finishes and append every
-  /// message twice (duplicate JSONL rows, duplicated chat on reload).
-  /// The skip is safe — the live pass iterates the live list and
-  /// advances `_persistedCount` for everything it saw.
-  bool _persistRunning = false;
 
   /// Persists presented dynamic messages as `dynamic_widget` custom
   /// records (the replay source; see [DynamicMessagesService.adoptBranch]).
