@@ -50,6 +50,7 @@ final class GithubPull {
     required this.state,
     required this.merged,
     required this.title,
+    this.headSha,
   });
 
   factory GithubPull.fromJson(Map<String, dynamic> json) => GithubPull(
@@ -59,6 +60,10 @@ final class GithubPull {
     state: (json['state'] ?? 'open').toString(),
     merged: json['merged_at'] != null || json['merged'] == true,
     title: (json['title'] ?? '').toString(),
+    headSha: (json['head'] is Map
+        ? (json['head'] as Map)['sha']
+        : null)
+      ?.toString(),
   );
 
   final int number;
@@ -70,6 +75,63 @@ final class GithubPull {
   final String state;
   final bool merged;
   final String title;
+
+  /// Head commit sha of the PR branch — the ref CI check-runs attach to
+  /// (issue #1045 status mapping). Null on synthesized/partial responses.
+  final String? headSha;
+}
+
+/// One CI check run on a ref (subset the publish-status flow needs).
+final class GithubCheckRun {
+  const GithubCheckRun({
+    required this.name,
+    required this.status,
+    this.conclusion,
+    this.htmlUrl,
+    this.outputTitle,
+    this.outputSummary,
+    this.outputText,
+  });
+
+  factory GithubCheckRun.fromJson(Map<String, dynamic> json) {
+    final output = json['output'];
+    String? outputField(String key) =>
+        output is Map && output[key] != null && output[key].toString().isNotEmpty
+        ? output[key].toString()
+        : null;
+    return GithubCheckRun(
+      name: (json['name'] ?? '').toString(),
+      status: (json['status'] ?? '').toString(),
+      conclusion: json['conclusion']?.toString(),
+      htmlUrl: json['html_url']?.toString(),
+      outputTitle: outputField('title'),
+      outputSummary: outputField('summary'),
+      outputText: outputField('text'),
+    );
+  }
+
+  /// Check name (the catalog's validator check is `validate`).
+  final String name;
+
+  /// `queued` | `in_progress` | `completed`.
+  final String status;
+
+  /// When completed: `success` | `failure` | `neutral` | `skipped` | ….
+  final String? conclusion;
+
+  /// Browser URL — for the catalog's job checks this is the Actions job
+  /// URL (`…/actions/runs/<run>/job/<job>`).
+  final String? htmlUrl;
+
+  /// The check's rendered output, when the workflow writes one (plain
+  /// `dart run` steps carry none — the verbatim errors then come from the
+  /// job log; see [GithubApiClient.jobLog]).
+  final String? outputTitle;
+  final String? outputSummary;
+  final String? outputText;
+
+  bool get isCompleted => status == 'completed';
+  bool get isFailed => conclusion == 'failure';
 }
 
 /// One PR conversation entry (issue comment or review comment, unified).
@@ -528,6 +590,49 @@ class GithubApiClient {
         _comment(raw as Map<String, dynamic>, isReview: true),
     ]..sort((a, b) => a.createdAt.compareTo(b.createdAt));
     return all;
+  }
+
+  // --- check runs (issue #1045 publish status) ------------------------------
+
+  /// Check runs attached to [ref] (a commit sha) in `<owner>/<repo>` —
+  /// for a catalog PR the head-sha runs carry the `validate` verdict.
+  Future<List<GithubCheckRun>> listCheckRuns(
+    String owner,
+    String repo,
+    String ref,
+  ) async {
+    final json =
+        await _request('GET', '/repos/$owner/$repo/commits/$ref/check-runs?per_page=100')
+            as Map<String, dynamic>;
+    final runs = json['check_runs'];
+    if (runs is! List) return const [];
+    return [
+      for (final raw in runs)
+        GithubCheckRun.fromJson(Map<String, dynamic>.from(raw as Map)),
+    ];
+  }
+
+  /// The plain-text log of an Actions job — where the catalog validator's
+  /// `ERROR <id>: …` lines live verbatim (the check-run output itself is
+  /// empty for plain `dart run` steps). Null when the log is unreachable
+  /// (expired, rate-limited) — the caller keeps the last-known errors and
+  /// the run link instead.
+  Future<String?> jobLog(String owner, String repo, int jobId) async {
+    final uri = Uri.parse('$baseUrl/repos/$owner/$repo/actions/jobs/$jobId/logs');
+    final request = http.Request('GET', uri)..headers.addAll(_headers);
+    final streamed = await _http.send(request);
+    final response = await http.Response.fromStream(streamed);
+    if (response.statusCode >= 400) return null;
+    return response.body;
+  }
+
+  /// The Actions job id encoded in a check-run's job URL
+  /// (`…/actions/runs/<run>/job/<job>`), or null when [htmlUrl] is not a
+  /// job URL.
+  static int? jobIdFromUrl(String? htmlUrl) {
+    if (htmlUrl == null) return null;
+    final match = RegExp(r'/job/(\d+)').firstMatch(htmlUrl);
+    return match == null ? null : int.parse(match.group(1)!);
   }
 
   GithubComment _comment(Map<String, dynamic> json, {required bool isReview}) {

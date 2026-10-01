@@ -309,6 +309,53 @@ class _PublicationTileState extends State<_PublicationTile> {
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
+                // Issue #1045: the validator's error lines render verbatim,
+                // right where the status chip lives — no digging into CI.
+                if (publication.validatorErrors.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    l10n.widgetStatusErrors,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.error,
+                    ),
+                  ),
+                  SelectableText(
+                    publication.validatorErrors.join('\n'),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.error,
+                      fontFamily: 'JetBrainsMono',
+                    ),
+                  ),
+                ],
+                if (publication.state == WidgetPublicationState.failed &&
+                    publication.lastError != null) ...[
+                  const SizedBox(height: 4),
+                  SelectableText(
+                    publication.lastError!,
+                    maxLines: 6,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.error,
+                    ),
+                  ),
+                ],
+                if (publication.runHtmlUrl != null) ...[
+                  const SizedBox(height: 2),
+                  InkWell(
+                    onTap: () => unawaited(
+                      url_launcher.launchUrl(
+                        Uri.parse(publication.runHtmlUrl!),
+                        mode: url_launcher.LaunchMode.externalApplication,
+                      ),
+                    ),
+                    child: Text(
+                      l10n.widgetStatusOpenRun,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.primary,
+                        decoration: TextDecoration.underline,
+                      ),
+                    ),
+                  ),
+                ],
                 if (publication.comments.isNotEmpty) ...[
                   const SizedBox(height: 2),
                   // Reviewer feedback (AC7): plain text only — comment
@@ -394,6 +441,19 @@ class _StateChip extends StatelessWidget {
         l10n.publicationStateUnknown,
         Colors.grey,
       ),
+      // Issue #1045 publish-lifecycle states: optimistic in-flight
+      // attempt, CI validation, verbatim validator failure, and a
+      // background failure that outlived the publish sheet.
+      WidgetPublicationState.publishing => (
+        l10n.publishInProgress,
+        Colors.blue,
+      ),
+      WidgetPublicationState.validating => (
+        l10n.widgetStatusValidating,
+        Colors.orange,
+      ),
+      WidgetPublicationState.invalid => (l10n.widgetStatusInvalid, Colors.red),
+      WidgetPublicationState.failed => (l10n.widgetStatusFailed, Colors.red),
     };
     return Chip(
       label: Text(label),

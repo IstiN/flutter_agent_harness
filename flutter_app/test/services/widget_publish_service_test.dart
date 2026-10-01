@@ -3,6 +3,7 @@
 // in the LICENSE file.
 
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:fa/apps/apps_store.dart';
@@ -11,6 +12,7 @@ import 'package:fa/services/github_api_client.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/widget_publication_store.dart';
 import 'package:fa/services/widget_publish_service.dart';
+import 'package:fa_widgets_tool/src/validator.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -105,7 +107,7 @@ Future<JsAppInfo> _seedWidget(
       'version': version,
       'icon': '🍅',
       'tags': ['productivity'],
-      'minRuntime': '1.0',
+      'minRuntime': '1.0.0',
       ...manifestExtra,
     }),
   );
@@ -499,12 +501,13 @@ void main() {
             )
             .toList();
         expect(prBlobs.single.contains('[submodule'), isFalse);
-        final overlay =
-            jsonDecode(prBlobs.single) as Map<String, dynamic>;
+        final overlay = jsonDecode(prBlobs.single) as Map<String, dynamic>;
         expect(overlay['icon'], 'icon.svg');
         expect(overlay['author'], 'octocat');
         expect(overlay['tags'], ['productivity']);
-        expect(overlay['minRuntime'], '1.0');
+        // Issue #1045 AC2: the manifest's minRuntime rides through;
+        // the floor stamp only fills a MISSING/empty value.
+        expect(overlay['minRuntime'], '1.0.0');
         expect(overlay['source'], {
           'repo': 'octocat/fa-widget-pomodoro',
           'commit': 'commit1',
@@ -681,56 +684,54 @@ void main() {
       },
     );
 
-    test(
-      'AC2 (#232): two devices publish disjoint single-file PRs',
-      () async {
-        // Two independent devices (separate env + ledger), each past the
-        // repo step, publish different widgets against one catalog fork.
-        final gh = _ScriptedGithub();
-        for (final (id, prNumber) in [('pomodoro', 11), ('timer', 12)]) {
-          final env = MemoryExecutionEnv();
-          final app = await _seedWidget(env, id: id);
-          final ledger = await WidgetPublicationStore.load(env);
-          await ledger.record(
-            WidgetPublication(
-              widgetId: id,
-              version: '1.0.0',
-              repoFullName: 'octocat/fa-widget-$id',
-              repoCommit: 'sha-$id',
-              step: WidgetPublication.stepRepoPushed,
-              submittedAt: DateTime.utc(2026, 1, 31),
-            ),
-          );
-          _scriptForkAndPr(
-            gh,
-            widgetSha: 'sha-$id',
-            id: id,
-            forkExists: true,
-            prNumber: prNumber,
-          );
-          final service = _service(env, await _connectedAccount(), ledger, gh);
-          final result = await service.publish(app: app);
-          expect(result.publication.prNumber, prNumber);
-        }
-        // Each PR tree touches exactly ONE file — its own overlay — so
-        // parallel PRs can never conflict (no shared .gitmodules left).
-        final trees = gh
-            .where('POST', '/repos/octocat/fa_widgets/git/trees')
-            .map(
-              (r) => (gh.bodyOf(r)['tree'] as List<dynamic>)
-                  .map((e) => (e as Map)['path'] as String)
-                  .toSet(),
-            )
-            .toList();
-        expect(trees, [
-          {'widgets/pomodoro/overlay.json'},
-          {'widgets/timer/overlay.json'},
-        ]);
-        expect(trees[0].intersection(trees[1]), isEmpty);
-      },
-    );
+    test('AC2 (#232): two devices publish disjoint single-file PRs', () async {
+      // Two independent devices (separate env + ledger), each past the
+      // repo step, publish different widgets against one catalog fork.
+      final gh = _ScriptedGithub();
+      for (final (id, prNumber) in [('pomodoro', 11), ('timer', 12)]) {
+        final env = MemoryExecutionEnv();
+        final app = await _seedWidget(env, id: id);
+        final ledger = await WidgetPublicationStore.load(env);
+        await ledger.record(
+          WidgetPublication(
+            widgetId: id,
+            version: '1.0.0',
+            repoFullName: 'octocat/fa-widget-$id',
+            repoCommit: 'sha-$id',
+            step: WidgetPublication.stepRepoPushed,
+            submittedAt: DateTime.utc(2026, 1, 31),
+          ),
+        );
+        _scriptForkAndPr(
+          gh,
+          widgetSha: 'sha-$id',
+          id: id,
+          forkExists: true,
+          prNumber: prNumber,
+        );
+        final service = _service(env, await _connectedAccount(), ledger, gh);
+        final result = await service.publish(app: app);
+        expect(result.publication.prNumber, prNumber);
+      }
+      // Each PR tree touches exactly ONE file — its own overlay — so
+      // parallel PRs can never conflict (no shared .gitmodules left).
+      final trees = gh
+          .where('POST', '/repos/octocat/fa_widgets/git/trees')
+          .map(
+            (r) => (gh.bodyOf(r)['tree'] as List<dynamic>)
+                .map((e) => (e as Map)['path'] as String)
+                .toSet(),
+          )
+          .toList();
+      expect(trees, [
+        {'widgets/pomodoro/overlay.json'},
+        {'widgets/timer/overlay.json'},
+      ]);
+      expect(trees[0].intersection(trees[1]), isEmpty);
+    });
 
-    test('private existing repo is rejected', () async {      final env = MemoryExecutionEnv();
+    test('private existing repo is rejected', () async {
+      final env = MemoryExecutionEnv();
       final app = await _seedWidget(env);
       final gh = _ScriptedGithub()
         ..on(
@@ -839,21 +840,23 @@ void main() {
             .map((e) => (e as Map)['path'])
             .toList();
         expect(entryPaths, ['widgets/pomodoro/overlay.json']);
-        final overlay = jsonDecode(
-          utf8.decode(
-            base64Decode(
-              gh.bodyOf(
-                    gh
-                        .where(
-                          'POST',
-                          '/repos/octocat/fa_widgets/git/blobs',
-                        )
-                        .single,
-                  )['content']
-                  as String,
-            ),
-          ),
-        ) as Map<String, dynamic>;
+        final overlay =
+            jsonDecode(
+                  utf8.decode(
+                    base64Decode(
+                      gh.bodyOf(
+                            gh
+                                .where(
+                                  'POST',
+                                  '/repos/octocat/fa_widgets/git/blobs',
+                                )
+                                .single,
+                          )['content']
+                          as String,
+                    ),
+                  ),
+                )
+                as Map<String, dynamic>;
         expect(overlay['source'], {
           'repo': 'octocat/fa-widget-pomodoro',
           'commit': 'deadbeef',
@@ -1113,6 +1116,137 @@ void main() {
       await _service(env, account, ledger, gh2).refreshStatus(publication);
       expect(records, 1);
       expect(ledger.byWidgetId('pomodoro')!.comments, hasLength(2));
+    });
+  });
+
+  // Issue #1045 regression pins: the on-device preflight must surface the
+  // fa_widgets rule engine's VERBATIM errors (no swallowing), and the
+  // stamped manifest must never leave minRuntime empty (the PR #8 killer).
+  group('WidgetPublishService preflight engine parity (#1045)', () {
+    test(
+      'missing minRuntime never publishes empty - floor stamped (PR #8)',
+      () async {
+        final env = MemoryExecutionEnv();
+        final app = await _seedWidget(env);
+        // Strip minRuntime entirely — the PR #8 failure shape. Seed again
+        // without the key (the helper pins it) by overwriting the manifest.
+        await env.writeFile(
+          'apps/pomodoro/manifest.json',
+          jsonEncode({
+            'id': 'pomodoro',
+            'name': 'Pomodoro',
+            'description': 'Focus timer',
+            'version': '1.0.0',
+            'icon': '🍅',
+            'tags': ['productivity'],
+          }),
+        );
+
+        final service = _service(
+          env,
+          await _connectedAccount(),
+          await WidgetPublicationStore.load(env),
+          _ScriptedGithub(),
+        );
+        final issues = await service.preflight(app);
+        // The floor satisfies the engine (AC2): the widget publishes with
+        // minRuntime=0.4.79 instead of dying in CI with ERROR 2048.
+        expect(issues.where((i) => i.message.contains('minRuntime')), isEmpty);
+        expect(
+          WidgetPublishService.stampedManifest(const {
+            'minRuntime': null,
+          })['minRuntime'],
+          WidgetPublishService.catalogFloorRuntime,
+        );
+      },
+    );
+
+    test(
+      'preflight errors are byte-identical to the engine (REG1 parity)',
+      () async {
+        final env = MemoryExecutionEnv();
+        final app = await _seedWidget(env, version: 'not-semver');
+        final service = _service(
+          env,
+          await _connectedAccount(),
+          await WidgetPublicationStore.load(env),
+          _ScriptedGithub(),
+        );
+        final issues = await service.preflight(app);
+        final preflightMessages = issues.map((i) => i.message).toSet();
+
+        // The same broken manifest straight through the engine (with the
+        // service's minRuntime stamp, which the service also applies).
+        final parent = await Directory.systemTemp.createTemp('parity');
+        // The engine also enforces folder-name == id; mirror the app layout.
+        final dir = Directory('${parent.path}/pomodoro')..createSync();
+        final manifest = WidgetPublishService.stampedManifest(<String, Object?>{
+          'id': 'pomodoro',
+          'name': 'Pomodoro',
+          'description': 'Focus timer',
+          'version': 'not-semver',
+          'minRuntime': '1.0.0',
+          'icon': 'icon.svg',
+        });
+        await File(
+          '${dir.path}/manifest.json',
+        ).writeAsString(jsonEncode(manifest));
+        await File('${dir.path}/widget.js').writeAsString('x');
+        await File('${dir.path}/icon.svg').writeAsString('<svg/>');
+        final engine = validateWidgetDirectory(dir);
+        parent.deleteSync(recursive: true);
+
+        expect(engine.errors, isNotEmpty);
+        for (final error in engine.errors) {
+          expect(
+            preflightMessages,
+            contains(error.message),
+            reason: 'engine error must surface verbatim: ${error.message}',
+          );
+        }
+      },
+    );
+
+    test('empty minRuntime is stamped to the catalog floor (AC2)', () async {
+      final env = MemoryExecutionEnv();
+      final app = await _seedWidget(
+        env,
+        manifestExtra: const {'minRuntime': '  '},
+      );
+      final service = _service(
+        env,
+        await _connectedAccount(),
+        await WidgetPublicationStore.load(env),
+        _ScriptedGithub(),
+      );
+      final issues = await service.preflight(app);
+      // The floor satisfies the engine: preflight must NOT block on
+      // minRuntime, and publish-time overlay carries the stamped value.
+      expect(issues.where((i) => i.message.contains('minRuntime')), isEmpty);
+      expect(
+        WidgetPublishService.stampedManifest(const {})['minRuntime'],
+        WidgetPublishService.catalogFloorRuntime,
+      );
+    });
+
+    test('invalid minRuntime semver reported verbatim', () async {
+      final env = MemoryExecutionEnv();
+      final app = await _seedWidget(
+        env,
+        manifestExtra: const {'minRuntime': '1.0'},
+      );
+      final service = _service(
+        env,
+        await _connectedAccount(),
+        await WidgetPublicationStore.load(env),
+        _ScriptedGithub(),
+      );
+      final issues = await service.preflight(app);
+      expect(issues, isNotEmpty);
+      expect(
+        issues.any((i) => i.message.contains("minRuntime '1.0' must be")),
+        isTrue,
+      );
     });
   });
 }

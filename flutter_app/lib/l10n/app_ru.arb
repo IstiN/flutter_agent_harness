@@ -601,6 +601,14 @@
   "publicationStatePublished": "Опубликован",
   "publicationStateRejected": "Отклонён",
   "publicationStateUnknown": "Неизвестно",
+  "widgetStatusNotPublished": "Не опубликован",
+  "widgetStatusValidating": "Проверка…",
+  "widgetStatusInvalid": "Ошибка валидации",
+  "widgetStatusFailed": "Не удалось опубликовать",
+  "widgetStatusErrors": "Ошибки валидатора:",
+  "widgetStatusOpenRun": "Открыть CI-запуск",
+  "widgetDetailVersion": "Версия",
+  "widgetDetailAuthor": "Автор",
   "publicationSubmittedAt": "Отправлено {date}",
   "@publicationSubmittedAt": {
     "placeholders": {
