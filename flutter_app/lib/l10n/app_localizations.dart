@@ -3302,6 +3302,54 @@ abstract class AppLocalizations {
   /// **'Unknown'**
   String get publicationStateUnknown;
 
+  /// No description provided for @widgetStatusNotPublished.
+  ///
+  /// In en, this message translates to:
+  /// **'Not published'**
+  String get widgetStatusNotPublished;
+
+  /// No description provided for @widgetStatusValidating.
+  ///
+  /// In en, this message translates to:
+  /// **'Validating…'**
+  String get widgetStatusValidating;
+
+  /// No description provided for @widgetStatusInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'Invalid'**
+  String get widgetStatusInvalid;
+
+  /// No description provided for @widgetStatusFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Publish failed'**
+  String get widgetStatusFailed;
+
+  /// No description provided for @widgetStatusErrors.
+  ///
+  /// In en, this message translates to:
+  /// **'Validator errors:'**
+  String get widgetStatusErrors;
+
+  /// No description provided for @widgetStatusOpenRun.
+  ///
+  /// In en, this message translates to:
+  /// **'Open CI run'**
+  String get widgetStatusOpenRun;
+
+  /// No description provided for @widgetDetailVersion.
+  ///
+  /// In en, this message translates to:
+  /// **'Version'**
+  String get widgetDetailVersion;
+
+  /// No description provided for @widgetDetailAuthor.
+  ///
+  /// In en, this message translates to:
+  /// **'Author'**
+  String get widgetDetailAuthor;
+
   /// No description provided for @publicationSubmittedAt.
   ///
   /// In en, this message translates to:
