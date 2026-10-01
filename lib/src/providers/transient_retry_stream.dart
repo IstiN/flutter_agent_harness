@@ -13,8 +13,11 @@
 ///   means "the endpoint went silent", which a retry re-arms anyway).
 /// - omp's observable-output guard is kept, keyed on USER-VISIBLE content
 ///   (issue #964): a stream that already emitted text/tool-call content is
-///   never replayed — its failure stands (a retried generation would
-///   duplicate it). Thinking-only streams still replay: thinking deltas
+///   never REPLAYED from scratch — but a CONNECTION-class failure after
+///   COMPLETED blocks resumes from that prefix instead of standing
+///   (issue #1168: the same resume machinery as the abort class), and a
+///   non-connection post-commit failure (auth, validation, rate limit)
+///   still stands. Thinking-only streams still replay: thinking deltas
 ///   buffer until the first visible event commits the attempt, so a drop
 ///   mid-reasoning leaves no trace and the retry regenerates the reasoning
 ///   (re-billed reasoning accepted, same as any retry). The buffering is
@@ -50,7 +53,13 @@ final _transientNetworkPatterns = [
   RegExp(r'connection reset', caseSensitive: false),
   RegExp(r'socketexception', caseSensitive: false),
   RegExp(r'connection refused', caseSensitive: false),
-  RegExp(r'connection timed? ?out', caseSensitive: false),
+  // Connect-timeout wordings (issue #1168): the TCP connect leg's OS
+  // timeout — macOS reports "Operation timed out" (errno 60, matched by
+  // the socketexception rule), Windows "connection attempt timed out".
+  RegExp(r'connection( attempt)? timed? ?out', caseSensitive: false),
+  RegExp(r'connection closed', caseSensitive: false),
+  RegExp(r'connection terminated', caseSensitive: false),
+  RegExp(r'failed host lookup', caseSensitive: false),
   RegExp(r'network is unreachable', caseSensitive: false),
   RegExp(r'connection aborted', caseSensitive: false),
   RegExp(r'broken pipe', caseSensitive: false),
@@ -232,7 +241,11 @@ Future<void> _drive(
           _pushAborted(out, model, lastFailure, resume: resume);
           return;
         }
-      case _AbortedPartial(:final snapshot, :final keptBlocks):
+      case _AbortedPartial(
+        :final snapshot,
+        :final keptBlocks,
+        :final reason,
+      ):
         lastFailure = snapshot;
         attemptLog.add(_shortReason(snapshot.errorMessage));
         if (attempt >= maxAttempts) {
@@ -240,9 +253,11 @@ Future<void> _drive(
           // the full partial content preserved — never an infinite retry.
           // The rewrite prefixes the state from EARLIER attempts only: the
           // snapshot's own blocks already ride inside the error message.
+          // The failure's own reason rides too (issue #1168): a transport
+          // death surfaces as error, never as "aborted".
           out.push(
             _resumeEvent(
-              ErrorEvent(reason: StopReason.aborted, error: snapshot),
+              ErrorEvent(reason: reason, error: snapshot),
               resume,
             ),
           );
@@ -253,8 +268,9 @@ Future<void> _drive(
           attempt,
           maxAttempts,
           Duration.zero,
-          'mid-stream abort — resuming from '
-          '${resume.blocks.length} completed block(s)',
+          'mid-stream '
+          '${reason == StopReason.aborted ? 'abort' : 'connection failure'} '
+          '— resuming from ${resume.blocks.length} completed block(s)',
         );
         // The tail request continues from the anchor: the completed prefix
         // rides as the last assistant message (issue #1126 AC1).
@@ -374,9 +390,10 @@ final class _TransientFailure extends _AttemptOutcome {
 
 /// The attempt aborted mid-stream AFTER observable output (issue #1126):
 /// the accumulated snapshot returns to [_drive], which resumes from the
-/// completed prefix instead of forwarding the failure.
+/// completed prefix instead of forwarding the failure. Issue #1168: a
+/// connection-class failure after completed blocks rides the same class.
 final class _AbortedPartial extends _AttemptOutcome {
-  const _AbortedPartial(this.snapshot, this.keptBlocks);
+  const _AbortedPartial(this.snapshot, this.keptBlocks, this.reason);
 
   /// The aborted attempt's accumulated message (full content, dead usage).
   final AssistantMessage snapshot;
@@ -385,6 +402,12 @@ final class _AbortedPartial extends _AttemptOutcome {
   /// The remainder is the in-flight block at the abort and drops from the
   /// anchor (E1: a truncated tool call never executes).
   final int keptBlocks;
+
+  /// The failure's own terminal reason (issue #1168): an aborted attempt
+  /// dies as [StopReason.aborted], a connection-class failure as
+  /// [StopReason.error] — the budget-exhausted terminal and the retry
+  /// notice carry the real reason instead of flattening both classes.
+  final StopReason reason;
 }
 
 /// Issue #312: a wire finish_reason carries the structured verdict —
@@ -500,8 +523,11 @@ _AttemptOutcome? _committedOutcome(
       run.forward(event);
       return null;
     case ErrorEvent():
-      if (_resumableAbort(event, cancelToken) && run.lastEnded >= 0) {
-        return _AbortedPartial(event.error, run.lastEnded + 1);
+      final resumable =
+          _resumableAbort(event, cancelToken) ||
+          _resumableTransportFailure(event, cancelToken);
+      if (resumable && run.lastEnded >= 0) {
+        return _AbortedPartial(event.error, run.lastEnded + 1, event.reason);
       }
       // The #290 hygiene wrap applies on the resume path too (issue
       // #1132 review): non-retryable wordings pass through unchanged,
@@ -578,9 +604,10 @@ _AttemptOutcome? _bufferedOutcome(
       return null;
     default:
       // The first user-visible content event (text/tool-call family)
-      // commits the attempt (issue #964). From there the post-content
-      // semantics are unchanged: the transcript already holds visible
-      // deltas, so a replay would duplicate them — the failure stands.
+      // commits the attempt (issue #964). Post-content semantics: a
+      // replay from scratch would duplicate the visible deltas, so a
+      // failure can only RESUME from the completed prefix (issue #1168 —
+      // transport classes; non-connection failures stand).
       run.commitWith(event);
       return null;
   }
@@ -601,19 +628,32 @@ _AttemptOutcome? _bufferedOutcome(
 ///   (`CancelToken.reset`) so the loop's tool phases and later user
 ///   aborts keep working on the SAME token.
 ///
-/// Mid-stream transport wordings (connection reset family) deliberately
-/// keep the #290 AC4 stand-rule — this card reclassifies the abort
-/// signature only.
+/// Mid-stream transport wordings are the [#1168] transport class below —
+/// they resume too, via the same prefix machinery.
 bool _resumableAbort(ErrorEvent event, CancelToken? cancelToken) {
   if (event.reason != StopReason.aborted) return false;
   if (cancelToken == null || !cancelToken.isCancelled) return true;
   return cancelToken.cancelReason is RunIdleWatchdogFire;
 }
 
-/// A post-commit transport failure stands (issue #290 AC4 — the transcript
-/// already holds the deltas; a replay would duplicate text), but it must
-/// not surface as a naked provider dump either: the terminal error names
-/// the mid-answer failure and keeps the provider line as evidence.
+/// Issue #1168: the mid-stream TRANSPORT class — a connection-class
+/// failure ([StopReason.error] carrying a socket drop, connect timeout,
+/// DNS cut, or the vendor-transient family) resumes from the completed
+/// prefix via the same machinery as the abort class. The transcript keeps
+/// the streamed deltas through the anchor rewrite; a replay from scratch
+/// would still duplicate text, the resume does not. Non-connection
+/// classes (auth, rate limit, overflow, budget, validation) never
+/// resume: [_retryableWireFailure] stands them here.
+bool _resumableTransportFailure(ErrorEvent event, CancelToken? cancelToken) {
+  // A cancelled token is host intent: the failure never resumes.
+  if (cancelToken != null && cancelToken.isCancelled) return false;
+  return _retryableWireFailure(event);
+}
+
+/// A post-commit failure that cannot resume (issue #1168: a connection
+/// class with a cancelled token, or any non-connection class) must not
+/// surface as a naked provider dump either: retryable ones get the
+/// mid-answer story, non-retryable ones pass through verbatim.
 ErrorEvent _midAnswer(ErrorEvent event) {
   final error = event.error;
   // Issue #312: a classified non-terminal finish_reason mid-answer gets
