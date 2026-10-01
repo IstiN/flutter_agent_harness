@@ -208,7 +208,7 @@ dependency_overrides:
   # meta ^1.18.3 and dart_tui 2.x declares ^1.19.0, so meta 1.19.0
   # resolves for both without an override.)
   freezed_annotation: ^3.1.0
-  flutter_agent_memory: ^0.2.1
+  flutter_agent_memory: ^0.2.3
   fa_llm:
     path: ../packages/fa_llm
   # Same as the root pubspec_overrides.yaml: the vendored patched fork is
