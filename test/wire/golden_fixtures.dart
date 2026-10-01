@@ -32,6 +32,11 @@ const Set<String> requestEventKinds = {
   'secret_request',
 };
 
+/// Wire kinds a SERVER emits without a native [AgentEvent] counterpart
+/// (`fa wire-serve`, issue #1103): they decode as the documented unknown
+/// passthrough on the host side and have no native round-trip builder.
+const Set<String> serverEventKinds = {'error'};
+
 /// Directory holding the v1 command fixtures.
 const String commandFixturesDir = 'test/wire/fixtures/v1/commands';
 
@@ -71,8 +76,7 @@ List<GoldenFixture> loadGoldenFixtures(String dirPath) {
   final fixtures = <GoldenFixture>[];
   for (final file in files) {
     final doc = jsonDecode(file.readAsStringSync());
-    void invalid(String message) =>
-        throw StateError('${file.path}: $message');
+    void invalid(String message) => throw StateError('${file.path}: $message');
     if (doc is! Map<String, dynamic>) {
       invalid('top level must be a JSON object');
     }
@@ -133,11 +137,7 @@ AssistantMessage fixtureAssistantMessage({String? text}) => AssistantMessage(
 AssistantMessage fixtureThinkingToolPartial() => AssistantMessage(
   content: const [
     ThinkingContent(thinking: 'pondering'),
-    ToolCall(
-      id: 'call_1',
-      name: 'bash',
-      arguments: {'command': 'ls'},
-    ),
+    ToolCall(id: 'call_1', name: 'bash', arguments: {'command': 'ls'}),
   ],
   api: 'openai-completions',
   provider: 'openai',
@@ -160,8 +160,10 @@ AssistantMessage fixtureErrorPartial() => AssistantMessage(
 );
 
 /// The fixed user message ("hi") used by the message fixtures.
-UserMessage fixtureUserMessage() =>
-    UserMessage.text('hi', timestamp: DateTime.fromMillisecondsSinceEpoch(fixtureTimestampMs));
+UserMessage fixtureUserMessage() => UserMessage.text(
+  'hi',
+  timestamp: DateTime.fromMillisecondsSinceEpoch(fixtureTimestampMs),
+);
 
 /// The fixed tool result used by the tool fixtures.
 ToolResultMessage fixtureToolResult() => ToolResultMessage(
@@ -179,7 +181,10 @@ AgentEvent nativeEventFor(String kind) => switch (kind) {
   'agent_start' => const AgentStartEvent(),
   'agent_settled' => const AgentSettledEvent(),
   'turn_start' => const TurnStartEvent(),
-  'agent_end' => AgentEndEvent([fixtureUserMessage(), fixtureAssistantMessage(text: 'Hello')]),
+  'agent_end' => AgentEndEvent([
+    fixtureUserMessage(),
+    fixtureAssistantMessage(text: 'Hello'),
+  ]),
   'turn_end' => TurnEndEvent(
     message: fixtureAssistantMessage(text: 'Hello'),
     toolResults: [fixtureToolResult()],
@@ -218,7 +223,10 @@ AgentEvent nativeEventFor(String kind) => switch (kind) {
       systemPromptHash: 'sha:abc',
       toolManifestHash: 'sha:def',
     ),
-    promptBlob: const TrajectoryPromptBlob(hash: 'sha:abc', text: 'system prompt'),
+    promptBlob: const TrajectoryPromptBlob(
+      hash: 'sha:abc',
+      text: 'system prompt',
+    ),
     manifestBlob: TrajectoryToolManifestBlob(
       hash: 'sha:def',
       tools: [
@@ -248,7 +256,8 @@ AgentEvent nativeEventFor(String kind) => switch (kind) {
 /// name suffix (after `message_update_`) selects the nested provider event.
 AgentEvent nativeMessageUpdateFor(String fileName) {
   final message = switch (fileName) {
-    _ when fileName.startsWith('message_update_tool_call') => fixtureThinkingToolPartial(),
+    _ when fileName.startsWith('message_update_tool_call') =>
+      fixtureThinkingToolPartial(),
     _ when fileName == 'message_update_error' => fixtureErrorPartial(),
     _ => fixtureAssistantMessage(text: 'Hello'),
   };
@@ -294,7 +303,11 @@ AgentEvent nativeMessageUpdateFor(String fileName) {
     ),
     'message_update_tool_call_end' => ToolCallEndEvent(
       contentIndex: 1,
-      toolCall: const ToolCall(id: 'call_1', name: 'bash', arguments: {'command': 'ls'}),
+      toolCall: const ToolCall(
+        id: 'call_1',
+        name: 'bash',
+        arguments: {'command': 'ls'},
+      ),
       partial: partial,
     ),
     'message_update_done' => DoneEvent(
@@ -321,15 +334,25 @@ WireCommand nativeCommandFor(String kind) => switch (kind) {
     id: 'ap_1',
     decision: ApprovalDecision.approveOnce,
   ),
-  'ask_response' => const WireAskResponseCommand(id: 'ask_1', answers: [
-    AskAnswer(selected: ['Postgres']),
-    AskAnswer(freeText: 'none'),
-  ]),
+  'ask_response' => const WireAskResponseCommand(
+    id: 'ask_1',
+    answers: [
+      AskAnswer(selected: ['Postgres']),
+      AskAnswer(freeText: 'none'),
+    ],
+  ),
   'secret_response' => const WireSecretResponseCommand(
     id: 'sec_1',
-    result: RequestSecretResult(name: 'MY_API_TOKEN', value: '<secret>', persisted: true),
+    result: RequestSecretResult(
+      name: 'MY_API_TOKEN',
+      value: '<secret>',
+      persisted: true,
+    ),
   ),
-  'session_control' => const WireSessionControlCommand(op: 'ping', params: {'x': 1}),
+  'session_control' => const WireSessionControlCommand(
+    op: 'ping',
+    params: {'x': 1},
+  ),
   _ => throw StateError('No native command builder pinned for kind "$kind"'),
 };
 
