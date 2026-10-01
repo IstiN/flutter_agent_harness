@@ -1249,4 +1249,188 @@ void main() {
       );
     });
   });
+
+  // Issue #1045 review round-1: service-level pins for the CI-verdict
+  // mapping (AC3) and the fire-and-forget ledger lifecycle (AC6/I4).
+  group('WidgetPublishService CI verdict mapping (#1045)', () {
+    WidgetPublication prPublication() => WidgetPublication(
+      widgetId: 'pomodoro',
+      version: '1.0.0',
+      repoFullName: 'octocat/fa-widget-pomodoro',
+      repoCommit: 'abc',
+      step: WidgetPublication.stepPrOpened,
+      submittedAt: DateTime.utc(2026, 2, 1),
+      prNumber: 42,
+    );
+
+    Map<String, Object?> checkRun(
+      int id, {
+      String status = 'completed',
+      String? conclusion = 'failure',
+      String? htmlUrl,
+    }) => {
+      'id': id,
+      'status': status,
+      'conclusion': ?conclusion,
+      'html_url':
+          htmlUrl ?? 'https://github.com/IstiN/fa_widgets/actions/runs/9/job/$id',
+    };
+
+    Future<(MemoryExecutionEnv, WidgetPublicationStore, WidgetPublication)>
+    seeded() async {
+      final env = MemoryExecutionEnv();
+      final ledger = await WidgetPublicationStore.load(env);
+      final publication = await ledger.record(prPublication());
+      return (env, ledger, publication);
+    }
+
+    _ScriptedGithub checksOn(String sha, Map<String, Object?> runs) =>
+        _ScriptedGithub()
+          ..on('GET', '/repos/IstiN/fa_widgets/pulls/42', {
+            ..._pullJson(42),
+            'head': {'sha': sha},
+          })
+          ..on('GET', '/repos/IstiN/fa_widgets/commits/$sha/check-runs', runs);
+
+    test('failed validate check → invalid with verbatim job-log errors',
+        () async {
+      final (env, ledger, publication) = await seeded();
+      final gh = checksOn('deadbeef', {
+        'total_count': 2,
+        'check_runs': [
+          checkRun(1, conclusion: 'success'),
+          checkRun(
+            2,
+            conclusion: 'failure',
+            htmlUrl:
+                'https://github.com/IstiN/fa_widgets/actions/runs/99/job/2',
+          ),
+        ],
+      })
+        ..on('GET', '/repos/IstiN/fa_widgets/actions/jobs/2/logs',
+            'ERROR 2048: external manifest: minRuntime must be a '
+            'non-empty string.\n');
+
+      final account = await _connectedAccount();
+      final state = await _service(
+        env,
+        account,
+        ledger,
+        gh,
+      ).refreshStatus(publication);
+
+      expect(state, WidgetPublicationState.invalid);
+      final stored = ledger.byWidgetId('pomodoro')!;
+      expect(stored.validatorErrors, isNotEmpty);
+      expect(
+        stored.validatorErrors.join('\n'),
+        contains('ERROR 2048: external manifest: minRuntime'),
+      );
+      expect(stored.runHtmlUrl, contains('actions/runs/99'));
+    });
+
+    test('timed_out validate check counts as failed, not open', () async {
+      final (env, ledger, publication) = await seeded();
+      final gh = checksOn('deadbeef', {
+        'total_count': 1,
+        'check_runs': [checkRun(3, conclusion: 'timed_out')],
+      })
+        ..on('GET', '/repos/IstiN/fa_widgets/actions/jobs/3/logs', '');
+
+      final account = await _connectedAccount();
+      final state = await _service(
+        env,
+        account,
+        ledger,
+        gh,
+      ).refreshStatus(publication);
+      expect(state, WidgetPublicationState.invalid);
+    });
+
+    test('pending checks → validating; green checks → open', () async {
+      final (env, ledger, publication) = await seeded();
+      final account = await _connectedAccount();
+
+      final gh1 = checksOn('deadbeef', {
+        'total_count': 1,
+        'check_runs': [checkRun(4, status: 'in_progress', conclusion: null)],
+      });
+      expect(
+        await _service(env, account, ledger, gh1).refreshStatus(publication),
+        WidgetPublicationState.validating,
+      );
+
+      final gh2 = checksOn('deadbeef', {
+        'total_count': 1,
+        'check_runs': [checkRun(5, conclusion: 'success')],
+      });
+      expect(
+        await _service(env, account, ledger, gh2).refreshStatus(publication),
+        WidgetPublicationState.open,
+      );
+      expect(ledger.byWidgetId('pomodoro')!.lastKnownState, 'open');
+    });
+  });
+
+  group('WidgetPublishService fire-and-forget lifecycle (#1045)', () {
+    test('retry after a failed first publish recomputes the repo', () async {
+      final env = MemoryExecutionEnv();
+      final app = await _seedWidget(env);
+      final account = await _connectedAccount();
+      final ledger = await WidgetPublicationStore.load(env);
+
+      // First attempt dies at the network boundary (nothing scripted).
+      final ghFail = _ScriptedGithub();
+      await expectLater(
+        _service(env, account, ledger, ghFail).publish(app: app),
+        throwsA(isA<GithubApiException>()),
+      );
+      final failed = ledger.byWidgetId('pomodoro')!;
+      expect(failed.lastKnownState, WidgetPublication.stateFailed);
+      expect(failed.repoFullName, isEmpty);
+
+      // Retry must route the REAL repo path — the blocker was a retry
+      // hitting GET /repos// from the empty optimistic record.
+      final ghRetry = _ScriptedGithub()
+        ..on('GET', '/repos/octocat/fa-widget-pomodoro', {
+          'full_name': 'octocat/fa-widget-pomodoro',
+          'private': false,
+          'description': 'Fa widget: Pomodoro',
+        });
+      await expectLater(
+        _service(env, account, ledger, ghRetry).publish(app: app),
+        throwsA(isA<GithubApiException>()),
+      );
+      final paths = ghRetry.requests.map((r) => r.url.path).toList();
+      expect(paths, contains('/repos/octocat/fa-widget-pomodoro'));
+      expect(paths, everyElement(isNot(contains('//'))));
+    });
+
+    test('second startPublish while a flow is in flight fails fast',
+        () async {
+      final env = MemoryExecutionEnv();
+      final app = await _seedWidget(env);
+      final account = await _connectedAccount();
+      final ledger = await WidgetPublicationStore.load(env);
+      final service = _service(env, account, ledger, _ScriptedGithub());
+
+      // The guard is claimed synchronously (before the first await), so
+      // the second call trips it even before the first flow progresses.
+      final first = service.startPublish(app: app);
+      await expectLater(
+        service.startPublish(app: app),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('publish_in_progress'),
+          ),
+        ),
+      );
+      final pending = await first;
+      // The flow dies on the unscripted transport — swallow the expected
+      // error so it is not an unhandled async failure.
+      pending.flow.ignore();
+    });
+  });
 }

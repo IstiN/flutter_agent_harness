@@ -131,7 +131,15 @@ final class GithubCheckRun {
   final String? outputText;
 
   bool get isCompleted => status == 'completed';
-  bool get isFailed => conclusion == 'failure';
+
+  /// Conclusions the catalog treats as a validator verdict AGAINST the
+  /// widget (issue #1045 review): plain failure, a run that outlived its
+  /// budget, and an infrastructure startup failure. `cancelled` and
+  /// `action_required` have no verdict — they keep the PR 'open'.
+  bool get isFailed =>
+      conclusion == 'failure' ||
+      conclusion == 'timed_out' ||
+      conclusion == 'startup_failure';
 }
 
 /// One PR conversation entry (issue comment or review comment, unified).
@@ -601,14 +609,28 @@ class GithubApiClient {
     String repo,
     String ref,
   ) async {
-    final json =
-        await _request('GET', '/repos/$owner/$repo/commits/$ref/check-runs?per_page=100')
-            as Map<String, dynamic>;
-    final runs = json['check_runs'];
-    if (runs is! List) return const [];
+    // Paginate — a bare first page would treat a failing check beyond 100
+    // entries as "all green" (issue #1045 review). Bounded at 5 pages.
+    final raw = <Object?>[];
+    var page = 1;
+    var totalCount = 0;
+    while (true) {
+      final json = await _request(
+            'GET',
+            '/repos/$owner/$repo/commits/$ref/check-runs'
+            '?per_page=100&page=$page',
+          )
+          as Map<String, dynamic>;
+      totalCount = (json['total_count'] as num?)?.toInt() ?? 0;
+      final batch = json['check_runs'];
+      if (batch is! List || batch.isEmpty) break;
+      raw.addAll(batch);
+      if (raw.length >= totalCount || page >= 5) break;
+      page++;
+    }
     return [
-      for (final raw in runs)
-        GithubCheckRun.fromJson(Map<String, dynamic>.from(raw as Map)),
+      for (final run in raw)
+        GithubCheckRun.fromJson(Map<String, dynamic>.from(run as Map)),
     ];
   }
 

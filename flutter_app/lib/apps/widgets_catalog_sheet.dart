@@ -501,14 +501,13 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
       // the group differs only by its section header. Tapping a row
       // opens the status detail sheet (issue #1045 AC3).
       for (final app in mine)
-        GestureDetector(
+        InkWell(
           onTap: () => _showStatusDetail(
             id: app.id,
             title: app.displayName(locale),
             version: app.version,
             description: app.displayDescription(locale),
           ),
-          behavior: HitTestBehavior.opaque,
           child: Container(
             margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
             padding: const EdgeInsets.all(12),
@@ -638,9 +637,8 @@ class _CatalogTile extends StatelessWidget {
     final hasUpdate =
         installedVersion != null &&
         semverNewer(installedVersion!, entry.version);
-    return GestureDetector(
+    return InkWell(
       onTap: onTap,
-      behavior: HitTestBehavior.opaque,
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         padding: const EdgeInsets.all(12),

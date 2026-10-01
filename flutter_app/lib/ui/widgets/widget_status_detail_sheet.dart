@@ -10,8 +10,10 @@ import 'package:url_launcher/url_launcher.dart' as url_launcher;
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/widget_publication_store.dart';
+import 'package:fa/services/app_log.dart';
 import 'package:fa/services/widget_publish_service.dart';
 import 'package:fa/ui/widgets/github_account_section.dart';
+import 'package:fa/ui/widgets/publication_state_chip.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// Opens the per-widget detail sheet (issue #1045, owner ruling verbatim:
@@ -119,8 +121,10 @@ class _WidgetStatusDetailSheetState extends State<WidgetStatusDetailSheet> {
       });
       await _refresh();
       _startTimer();
-    } on Object {
-      // Read-only degrade: last-known states still render (I3).
+    } on Object catch (error) {
+      // Read-only degrade: last-known states still render (I3) — but the
+      // reason is logged, so a broken keys store is diagnosable.
+      AppLog.i('widget-status', 'read-only degrade: $error');
     }
   }
 
@@ -240,7 +244,7 @@ class _StatusSection extends StatelessWidget {
     final theme = Theme.of(context);
     final publication = this.publication;
     if (publication == null) {
-      return _StatusChip(state: WidgetPublicationState.unknown, missing: true);
+      return PublicationStateChip(state: WidgetPublicationState.unknown, missing: true);
     }
     final state = publication.state;
     return Column(
@@ -251,7 +255,7 @@ class _StatusSection extends StatelessWidget {
           runSpacing: 8,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            _StatusChip(state: state),
+            PublicationStateChip(state: state),
             if (publication.prNumber != null)
               InkWell(
                 onTap: () => unawaited(
@@ -326,49 +330,3 @@ class _StatusSection extends StatelessWidget {
 
 /// The status chip: one label per lifecycle state (issue #1045 states
 /// included), reusing the publications-sheet palette.
-class _StatusChip extends StatelessWidget {
-  const _StatusChip({required this.state, this.missing = false});
-
-  final WidgetPublicationState state;
-
-  /// True when the widget has no ledger record at all — rendered from
-  /// [WidgetPublicationState.unknown] but labelled "Not published".
-  final bool missing;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = context.l10n;
-    final (label, color) = switch (state) {
-      WidgetPublicationState.open => (l10n.publicationStateOpen, Colors.blue),
-      WidgetPublicationState.published => (
-        l10n.publicationStatePublished,
-        Colors.green,
-      ),
-      WidgetPublicationState.rejected => (
-        l10n.publicationStateRejected,
-        Colors.red,
-      ),
-      WidgetPublicationState.publishing => (
-        l10n.publishInProgress,
-        Colors.blue,
-      ),
-      WidgetPublicationState.validating => (
-        l10n.widgetStatusValidating,
-        Colors.orange,
-      ),
-      WidgetPublicationState.invalid => (l10n.widgetStatusInvalid, Colors.red),
-      WidgetPublicationState.failed => (l10n.widgetStatusFailed, Colors.red),
-      WidgetPublicationState.unknown => (
-        missing ? l10n.widgetStatusNotPublished : l10n.publicationStateUnknown,
-        Colors.grey,
-      ),
-    };
-    return Chip(
-      label: Text(label),
-      labelStyle: TextStyle(color: color),
-      side: BorderSide(color: color),
-      backgroundColor: color.withValues(alpha: 0.08),
-      visualDensity: VisualDensity.compact,
-    );
-  }
-}

@@ -112,6 +112,12 @@ class WidgetPublishService {
        _clock = clock ?? DateTime.now,
        _sleep = sleep ?? Future<void>.delayed;
 
+  /// Widgets with a live publish flow (issue #1045 review): fire-and-forget
+  /// removed the sheet-level serialization, so one widget has at most one
+  /// in-flight flow — a second [startPublish] for the same id fails fast
+  /// instead of double-writing the ledger.
+  final Set<String> _activePublishes = <String>{};
+
   /// Catalog pre-flight limits (edge case E4; the fa_widgets validator
   /// enforces the same numbers).
   static const maxFolderBytes = 5 * 1024 * 1024;
@@ -309,9 +315,10 @@ class WidgetPublishService {
     final icon = await _readEnvFile('${app.dir}/icon.svg');
     try {
       return _runCatalogEngine(app, stamped, entry, icon);
-    } on Object {
-      // No usable dart:io directory (web sandbox) — parse through the
-      // engine's manifest layer instead.
+    } on UnsupportedError {
+      // No usable dart:io directory (web sandbox — Directory/file APIs
+      // throw UnsupportedError there); parse through the engine's manifest
+      // layer instead. Genuine engine bugs on the VM still propagate.
       return _manifestLevelValidatorIssues(stamped);
     }
   }
@@ -411,9 +418,28 @@ class WidgetPublishService {
     required JsAppInfo app,
     String? repoName,
   }) async {
+    // One flow per widget (issue #1045 review): fire-and-forget removed the
+    // UI-level serialization, so the service owns the invariant. The check
+    // + add run before the first await — no interleaving window.
+    if (_activePublishes.contains(app.id)) {
+      throw StateError(
+        'publish_in_progress: widget "${app.id}" is already publishing',
+      );
+    }
+    _activePublishes.add(app.id);
     final token = _account.token;
-    if (token == null) throw const GithubNotConnectedException();
+    if (token == null) {
+      _activePublishes.remove(app.id);
+      throw const GithubNotConnectedException();
+    }
     final issues = await preflight(app);
+    if (issues.isNotEmpty) {
+      _activePublishes.remove(app.id);
+      throw StateError(
+        'Widget "${app.id}" failed pre-flight:\n'
+        '${issues.map((i) => ' - [${i.code}] ${i.message}').join('\n')}',
+      );
+    }
     if (issues.isNotEmpty) {
       throw StateError(
         'Widget "${app.id}" failed pre-flight:\n'
@@ -436,6 +462,8 @@ class WidgetPublishService {
     );
     return PendingPublish(
       publication: publication,
+      // The in-flight guard releases when the background flow settles —
+      // success, recorded failure, or anything thrown by _recordFailure.
       flow: _recordFailure(
         app: app,
         previous: previous,
@@ -447,7 +475,7 @@ class WidgetPublishService {
           // repo reuse / kill-resume (E7), not the optimistic entry.
           existing: previous,
         ),
-      ),
+      ).whenComplete(() => _activePublishes.remove(app.id)),
     );
   }
 
@@ -507,7 +535,9 @@ class WidgetPublishService {
     final String name;
     final String repoCommit;
 
-    if (existing != null && existing.step == WidgetPublication.stepRepoPushed) {
+    if (existing != null &&
+        existing.step == WidgetPublication.stepRepoPushed &&
+        existing.repoFullName.contains('/')) {
       // E7 kill-resume: sources were already pushed before the app died —
       // reuse the recorded repo + commit and continue at the PR step.
       final parts = existing.repoFullName.split('/');
@@ -515,8 +545,11 @@ class WidgetPublishService {
       name = parts.last;
       repoCommit = existing.repoCommit;
     } else {
-      // Repo step: reuse the ledger-recorded repo when re-publishing.
-      if (existing != null) {
+      // Repo step: reuse the ledger-recorded repo when re-publishing. An
+      // optimistic record with an EMPTY repoFullName (a failed first
+      // attempt that never reached the repo step) is not a recorded repo —
+      // recompute, so a retry after a failure is never `GET /repos//`.
+      if (existing != null && existing.repoFullName.contains('/')) {
         final parts = existing.repoFullName.split('/');
         owner = parts.first;
         name = parts.last;
@@ -703,6 +736,11 @@ class WidgetPublishService {
   Future<WidgetPublicationState> refreshStatus(
     WidgetPublication publication,
   ) async {
+    // Rebase onto the ledger's newest record: a stale snapshot (two
+    // refreshes in flight, or a caller holding a pre-refresh copy) would
+    // make the change-detector below compare against the wrong baseline
+    // and skip persisting a real state transition.
+    publication = _ledger.byWidgetId(publication.widgetId) ?? publication;
     final prNumber = publication.prNumber;
     final token = _account.token;
     if (prNumber == null || token == null) {
@@ -745,12 +783,15 @@ class WidgetPublishService {
           validatorErrors = await _verbatimValidatorErrors(client, failing);
           runUrl = failing.first.htmlUrl;
         } else {
+          // ignore: avoid_print
+          print('DBG green path hit');
           effective = WidgetPublication.stateOpen;
           validatorErrors = const [];
           runUrl = null;
         }
-      } on Object {
-        // Unreachable checks: keep whatever verdict is already stored.
+      } on Object catch (e) {
+        // ignore: avoid_print
+        print('DBG checks fetch failed: $e');
       }
     }
 

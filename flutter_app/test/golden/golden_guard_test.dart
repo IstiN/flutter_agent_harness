@@ -101,6 +101,8 @@ const _coverage = <String, String>{
       'test/golden/github_publish_golden_test.dart',
   'lib/ui/widgets/widget_status_detail_sheet.dart':
       'test/golden/github_publish_golden_test.dart',
+  'lib/ui/widgets/publication_state_chip.dart':
+      'test/golden/github_publish_golden_test.dart',
   'lib/ui/widgets/github_connect_sheet.dart':
       'test/golden/github_publish_golden_test.dart',
   'lib/ui/widgets/dap_hub_mark.dart': 'test/golden/widgets_golden_test.dart',

@@ -22,6 +22,7 @@ import 'package:fa/ui/widgets/github_account_section.dart';
 import 'package:fa/ui/widgets/github_connect_sheet.dart';
 import 'package:fa/ui/widgets/widget_publications_sheet.dart';
 import 'package:fa/ui/widgets/widget_publish_sheet.dart';
+import 'package:fa/ui/widgets/publication_state_chip.dart';
 import 'package:fa/ui/widgets/widget_status_detail_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -562,6 +563,9 @@ void main() {
         pollInterval: const Duration(hours: 1),
       ),
     );
+    // The state chip is the shared PublicationStateChip (deduped in the
+    // round-1 review): the INVALID verdict renders through it.
+    expect(find.byType(PublicationStateChip), findsOneWidget);
     await expectGolden(tester, 'widget_status_detail_sheet_invalid');
   });
 }
