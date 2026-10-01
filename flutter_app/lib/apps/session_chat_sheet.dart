@@ -777,6 +777,32 @@ class SessionChatSheetState extends State<SessionChatSheet>
     if (mounted) unawaited(_openPanel());
   }
 
+  /// Single-flight over [mintAndOpenNewSession]: a rapid second trigger
+  /// while the clone is in flight must never double-mint (issue #864 E3).
+  bool _mintingNew = false;
+
+  /// The Fa entry's long-press (issue #864): mint exactly ONE new session,
+  /// make it active, and open the panel on it. Haptic marks the mint (the
+  /// tap keeps its silent continue-the-active-session meaning).
+  ///
+  /// Deliberately NOT [_newSessionFromDrawer]: the entry gesture fires from
+  /// the collapsed sheet where the drawer is CLOSED — routing through the
+  /// drawer tile's helper would flash the drawer open (its first act is
+  /// [_toggleDrawer]) while the clone is in flight (review #1144).
+  Future<void> mintAndOpenNewSession() async {
+    if (_mintingNew) return;
+    _mintingNew = true;
+    try {
+      // Fire-and-forget: the ack is flow control for nobody, and awaiting
+      // a platform channel here deadlocks fake-async widget tests.
+      unawaited(HapticFeedback.mediumImpact());
+      await _newSession();
+      if (mounted) unawaited(_openPanel());
+    } finally {
+      _mintingNew = false;
+    }
+  }
+
   Future<void> _openFullChat() async {
     final service = widget.manager.active?.service;
     await Navigator.of(context).push(
