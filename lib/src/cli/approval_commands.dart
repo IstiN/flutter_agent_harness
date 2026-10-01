@@ -1241,33 +1241,30 @@ extension ApprovalCommands on AgentCli {
     final elapsed = started == null
         ? ''
         : '${DateTime.now().difference(started).inSeconds}s';
-    var detail = startDetail;
     final state = isError ? ToolRowState.failed : ToolRowState.done;
-    if (isError) {
-      // The failure text is the news: keep it bright, not muted.
-      final text = result.content
-          .whereType<TextContent>()
-          .map((block) => block.text)
-          .join();
-      detail = text.split('\n').first;
-    }
     // TUI chrome (issue #807): the settled card carries the phase tint
     // (success/error), the elapsed meta, and — on failure — the bright
-    // first line of the failure text as the news. Line mode and headless
-    // keep the legacy row byte-identically.
+    // first line of the failure text as the news. The SAME builder the
+    // replay paints ([settledToolCardRows], issue #916) — parity by
+    // construction. Line mode and headless keep the legacy row
+    // byte-identically.
     if (_useTui && tuiChromeEnabled) {
       io.writeln(
-        tuiToolCard(
-          ToolCardSegments(
-            title: toolName,
-            description: detail,
-            meta: elapsed.isEmpty ? const [] : [elapsed],
-          ),
-          isError ? TuiCardPhase.error : TuiCardPhase.success,
-          _rowWidth,
+        settledToolCardRows(
+          toolName: toolName,
+          successDetail: startDetail,
+          isError: isError,
+          width: _rowWidth,
+          resultContent: result.content,
+          meta: [elapsed],
         ).join('\n'),
       );
       return;
+    }
+    var detail = startDetail;
+    if (isError) {
+      // The failure text is the news: keep it bright, not muted.
+      detail = failureFirstLine(result.content);
     }
     io.writeln(
       tuiToolRow(
