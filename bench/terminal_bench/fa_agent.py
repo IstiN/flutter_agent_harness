@@ -50,6 +50,13 @@ from terminal_bench.agents.installed_agents.abstract_installed_agent import (
 )
 from terminal_bench.terminal.models import TerminalCommand
 
+# Shared extraction lives one level up (bench/fa_usage.py); PYTHONPATH only
+# carries this dir.
+_BENCH_DIR = str(Path(__file__).resolve().parent.parent)
+if _BENCH_DIR not in sys.path:
+    sys.path.insert(0, _BENCH_DIR)
+import fa_usage  # noqa: E402
+
 _VERSION = "0.1.0"
 
 # Host-side pane tap: tmux pipe-pane mirrors the pane stream (the agent's
@@ -58,6 +65,10 @@ _VERSION = "0.1.0"
 # there is no keep-alive noise (issue #1122 E1).
 _PROGRESS_LOG = "/tmp/fa-progress.log"
 _POLL_SEC = 5.0
+# fa writes its session JSONL here inside the container (--session-root in
+# _run_agent_commands); tb syncs /agent-logs to the host trial dir only
+# after perform_task returns, so the container is the only read point.
+_CONTAINER_SESSION_ROOT = "/agent-logs/fah-sessions"
 
 
 class FaAgent(AbstractInstalledAgent):
@@ -109,7 +120,13 @@ class FaAgent(AbstractInstalledAgent):
         )
         knobs = _timeout.TimeoutKnobs.from_env()
         if knobs is None:
-            return super().perform_task(instruction, session, logging_dir)
+            result = super().perform_task(instruction, session, logging_dir)
+            # Issue #1123: fold fa's real session usage into the result.
+            # An installation failure means fa never ran — nothing to
+            # measure — so only healthy results get the fold.
+            if result.failure_mode != FailureMode.NONE:
+                return result
+            return self._fold_session_usage(session, result)
         return self._perform_task_with_deadline(
             knobs, instruction, session, logging_dir
         )
@@ -122,7 +139,9 @@ class FaAgent(AbstractInstalledAgent):
         ladder says the run is stuck (or at the hard ceiling), interrupts the
         agent and returns an AGENT_TIMEOUT result — same failure mode the
         harness's own wait_for produces, but decided by the ladder. On
-        natural completion the stock result passes through untouched.
+        natural completion the stock result passes through untouched —
+        except for the issue #1123 session-usage fold below, which never
+        touches failure classification.
         """
         base_perform = super().perform_task
         box = {}
@@ -183,48 +202,67 @@ class FaAgent(AbstractInstalledAgent):
                     outcome,
                     box["error"],
                 )
-            return AgentResult(
-                total_input_tokens=0,
-                total_output_tokens=0,
-                failure_mode=FailureMode.AGENT_TIMEOUT,
-                timestamped_markers=[(0.0, f"agent_timeout({outcome})")],
+            # Timed-out trials still burned tokens: fold whatever the
+            # partial session recorded (issue #1123, fail-soft).
+            return self._fold_session_usage(
+                session,
+                AgentResult(
+                    total_input_tokens=0,
+                    total_output_tokens=0,
+                    failure_mode=FailureMode.AGENT_TIMEOUT,
+                    timestamped_markers=[(0.0, f"agent_timeout({outcome})")],
+                ),
             )
         if crashed:
             raise box["error"]
-        return box.get("result") or AgentResult(
-            total_input_tokens=0, total_output_tokens=0
+        return self._fold_session_usage(
+            session,
+            box.get("result")
+            or AgentResult(total_input_tokens=0, total_output_tokens=0),
         )
 
     @staticmethod
-    def _tap_pane(session, on: bool) -> None:
-        line = (
-            f"rm -f {_PROGRESS_LOG}; tmux pipe-pane 'cat >> {_PROGRESS_LOG}'"
-            if on
-            else "tmux pipe-pane"
-        )
-        session.send_keys([line, "Enter"], block=False, min_timeout_sec=1.0 if on else 0.0)
-
-    @staticmethod
-    def _progress_bytes(session):
+    def _fold_session_usage(session, result):
+        """Issue #1123: tb's AbstractInstalledAgent hardcodes
+        AgentResult(total_input_tokens=0, total_output_tokens=0) — the
+        source of the all-zero token columns. Fold fa's real session
+        usage in after the run; tokens are measurement, so extraction
+        fails soft (zeros + a warning, never a failed trial).
+        """
         try:
-            result = session.container.exec_run(
-                ["sh", "-c", f"wc -c < {_PROGRESS_LOG} 2>/dev/null"]
+            exit_code, output = session.container.exec_run(
+                [
+                    "sh",
+                    "-c",
+                    f"find {_CONTAINER_SESSION_ROOT} -name '*.jsonl' -type f"
+                    " -exec cat {} + 2>/dev/null",
+                ]
             )
-            if result.exit_code == 0:
-                return int(result.output.decode(errors="replace").strip() or 0)
-        except Exception:
-            # Best-effort sample: a broken/wedged container must never kill
-            # a healthy run — None keeps the ladder's previous state, and a
-            # genuinely dead container fails the stock body on its own.
-            pass
-        return None
-
-    @staticmethod
-    def _write_audit(logging_dir, knobs, ladder, outcome) -> None:
-        # AC4 (issue #1122): extension decisions land in the trial artifact.
-        path = Path(logging_dir) / "fa-agent-timeout.json"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(_timeout.audit_dict(knobs, ladder, outcome)))
+            if exit_code != 0:
+                print(
+                    f"[fa_agent] warning: reading fa sessions in the container "
+                    f"exited {exit_code}; token totals stay 0",
+                    file=sys.stderr,
+                )
+                return result
+            if isinstance(output, bytes):
+                output = output.decode("utf-8", errors="replace")
+            usage = fa_usage.extract_from_text(output)
+            for warning in usage.warnings:
+                print(f"[fa_agent] warning: {warning}", file=sys.stderr)
+            result.total_input_tokens = (
+                usage.input_tokens + usage.estimated_input_tokens
+            )
+            result.total_output_tokens = (
+                usage.output_tokens + usage.estimated_output_tokens
+            )
+        except Exception as exc:  # noqa: BLE001 — fail-soft by contract
+            print(
+                f"[fa_agent] warning: session usage extraction failed ({exc}); "
+                f"token totals stay 0",
+                file=sys.stderr,
+            )
+        return result
 
     def _run_agent_commands(self, instruction: str) -> list[TerminalCommand]:
         return [
