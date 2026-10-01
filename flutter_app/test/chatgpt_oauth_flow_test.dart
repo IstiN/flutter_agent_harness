@@ -876,6 +876,36 @@ void main() {
       },
     );
 
+    test('a failing token exchange surfaces the named error — no exchange '
+        'success, not sessionUnavailable', () async {
+      mockChannel();
+      Object? reported;
+      final done = systemAuthSessionChatGptSignIn(
+        exchangeFn:
+            ({
+              required String code,
+              required String redirectUri,
+              required String codeVerifier,
+            }) async => throw Exception('expired (400)'),
+        onExchangeError: (message) => reported = message,
+      );
+      await waitForAuthenticate();
+      final (url, redirect) = authorizeShape();
+      final statusLine = await hitCallback(
+        redirect.replace(
+          queryParameters: {
+            'code': 'code-9',
+            'state': url.queryParameters['state']!,
+          },
+        ),
+      );
+      expect(statusLine, contains(' 200 '));
+      final result = await done;
+      expect(result.credentials, isNull);
+      expect(result.sessionUnavailable, isFalse);
+      expect(reported, contains('token exchange'));
+    });
+
     test('E4: cancel exactly when the callback lands — the callback wins '
         'deterministically, no crash, no half credentials', () async {
       mockChannel();

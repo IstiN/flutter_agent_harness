@@ -152,20 +152,33 @@ Future<ChatGptOAuthCredentials?> _acquireCredentials(
     isIOS: isIos,
     isWeb: kIsWeb,
   );
-  if (surface.primary == ProviderAuthSurfaceKind.systemAuthSession) {
-    final session = await (systemSessionFn ?? systemAuthSessionChatGptSignIn)(
-      exchangeFn: exchangeFn,
-      onExchangeError: (message) => _refuse(context, message),
-    );
-    if (!session.sessionUnavailable) return session.credentials;
-    if (!context.mounted) return null;
-    // The session could not start — degrade to the in-app WebView (no
-    // passkeys; the page's notice says so before the page renders).
-    return _acquireIosCredentials(
-      context,
-      pushWebView: pushWebView ?? _pushChatGptOAuthWebView,
-      exchangeFn: exchangeFn,
-    );
+  switch (surface.primary) {
+    case ProviderAuthSurfaceKind.systemAuthSession:
+      final session = await (systemSessionFn ?? systemAuthSessionChatGptSignIn)(
+        exchangeFn: exchangeFn,
+        onExchangeError: (message) => _refuse(context, message),
+      );
+      if (!session.sessionUnavailable) return session.credentials;
+      if (!context.mounted) return null;
+      // The session could not start — degrade to the in-app WebView (no
+      // passkeys; the page's notice says so before the page renders).
+      return _acquireIosCredentials(
+        context,
+        pushWebView: pushWebView ?? _pushChatGptOAuthWebView,
+        exchangeFn: exchangeFn,
+      );
+    case ProviderAuthSurfaceKind.embeddedWebView:
+      // Unreachable today (the web build is refused before the matrix is
+      // consulted). Should a surface ever resolve here, run the same
+      // WebView hop — its notice keeps the degradation honest.
+      if (!context.mounted) return null;
+      return _acquireIosCredentials(
+        context,
+        pushWebView: pushWebView ?? _pushChatGptOAuthWebView,
+        exchangeFn: exchangeFn,
+      );
+    case ProviderAuthSurfaceKind.systemBrowserLoopback:
+      break;
   }
   showFahSnack(
     context,
@@ -222,7 +235,8 @@ systemAuthSessionChatGptSignIn({
   final String redirectUri;
   try {
     redirectUri = await server.start();
-  } on Object {
+  } on Object catch (error) {
+    debugPrint('[ChatGPT OAuth] loopback callback server failed: $error');
     return (credentials: null, sessionUnavailable: true);
   }
   final verifier = generateChatGptPkceVerifier();
@@ -237,7 +251,8 @@ systemAuthSessionChatGptSignIn({
     systemAuthSessionChannel
         .invokeMethod<String>('authenticate', {'url': authorizeUrl.toString()})
         .then((_) => server.close()) // user dismissed the sheet
-        .onError((_, _) {
+        .onError((Object error, _) {
+          debugPrint('[ChatGPT OAuth] auth session failed: $error');
           sessionFailed = true;
           return server.close();
         }),

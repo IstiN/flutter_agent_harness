@@ -14,6 +14,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show CodeMieSsoCredentials;
 
 import 'package:fa/ui/screens/codemie_sso_webview.dart';
+import 'package:fa/ui/screens/oauth_webview_scaffold.dart';
 
 import '../../fake_webview_platform.dart';
 
@@ -236,10 +237,7 @@ void main() {
       await pumpPage(tester);
       // No onPageFinished has fired: the page has not rendered, yet the
       // degradation is already stated (the iOS fallback included).
-      expect(
-        find.textContaining('Passkey sign-in (Face ID) is not available'),
-        findsOneWidget,
-      );
+      expect(find.text(oauthWebViewPasskeyNotice), findsOneWidget);
     });
   });
 }

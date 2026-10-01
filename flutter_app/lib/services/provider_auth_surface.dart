@@ -42,6 +42,12 @@ typedef ProviderAuthSurface = ({
 ///
 /// REG-1 guard: on a passkey-capable platform (macOS, iOS) an embedded
 /// WebView is never the primary surface.
+///
+/// [isWeb] is informational today: both flows refuse the web build BEFORE
+/// resolving the matrix (ChatGPT via `_unsupportedMessage` — an
+/// iframe-embedded OAuth page is blocked by the provider — CodeMie via its
+/// extension branch), so the web row below is the documented target
+/// surface if that ever changes, not a branch any current caller reaches.
 ProviderAuthSurface resolveProviderAuthSurface({
   required ProviderAuthId provider,
   required bool isMacOS,
