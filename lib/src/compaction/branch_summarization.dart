@@ -28,6 +28,7 @@ import '../session/session_record.dart';
 import '../session/session_tree.dart';
 import '../types.dart';
 import 'compaction.dart';
+import 'summary_sanitizer.dart';
 import 'token_estimation.dart';
 
 export '../prompts/prompts.g.dart' show branchSummaryPrompt;
@@ -142,7 +143,11 @@ List<Message> _entryToMessages(SessionRecord entry) {
           ? const []
           : [
               UserMessage.text(
-                '$branchSummaryPrefix$summary$branchSummarySuffix',
+                '$branchSummaryPrefix'
+                // Issue #1131: heal before summarizing — raw poison must
+                // not ride the summarizer input and be paraphrased forward.
+                '${sanitizeSummary(summary).text}'
+                '$branchSummarySuffix',
                 timestamp: timestamp,
               ),
             ],
@@ -150,7 +155,9 @@ List<Message> _entryToMessages(SessionRecord entry) {
     // summaries as context (omp parity).
     CompactionRecord(:final summary, :final timestamp) => [
       UserMessage.text(
-        '$compactionSummaryPrefix$summary$compactionSummarySuffix',
+        '$compactionSummaryPrefix'
+        '${sanitizeSummary(summary).text}'
+        '$compactionSummarySuffix',
         timestamp: timestamp,
       ),
     ],
@@ -280,8 +287,11 @@ Future<BranchSummaryResult> generateBranchSummary(
   }
 
   final fileLists = computeFileLists(preparation.fileOps);
+  // Issue #1131: the summary persists and re-renders every turn — strip
+  // ephemeral, time-scoped claims from the LLM prose before recording it.
+  final sanitized = sanitizeSummary(text);
   final summary =
-      '$branchSummaryPreamble\n$text'
+      '$branchSummaryPreamble\n${sanitized.text}'
       '${formatFileOperations(fileLists.readFiles, fileLists.modifiedFiles)}';
   return BranchSummaryResult(
     summary: summary.isEmpty ? 'No summary generated' : summary,
