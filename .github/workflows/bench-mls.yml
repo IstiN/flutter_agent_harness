@@ -147,6 +147,10 @@ jobs:
           SHARDS: ${{ inputs.shards }}
           CONFIRM_FULL: ${{ inputs.confirm-full }}
           MLS_SHA: ${{ inputs.mls-sha }}
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          FA_BENCH_ZAI_KEY: ${{ secrets.FA_BENCH_ZAI_KEY }}
         run: |
           python bench/mls_bench/build_run.py plan \
             --subset "$SUBSET" --provider "$PROVIDER" --model "$MODEL" \
