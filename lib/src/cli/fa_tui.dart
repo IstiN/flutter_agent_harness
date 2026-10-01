@@ -205,7 +205,7 @@ const _spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', 
 
 /// Memoized markdown+wrap pass over [FaTuiModel.outputLines]. Formatting is
 /// O(transcript) (regex-heavy markdown plus ANSI-safe wrapping) and used to
-/// run two to four times PER event (update handler, `_stickyActive`, view),
+/// run two to four times PER event (update handler, `_echoEndRow`, view),
 /// which made wheel scrolling and streaming visibly stutter. The result is
 /// shared across model copies and recomputed only when the source list
 /// (identity — every mutation path builds a new list) or the width changes,
@@ -572,26 +572,29 @@ final class FaTuiModel extends Model {
     return rows;
   }
 
-  /// Whether the sticky user echo is pinned right now: a run is streaming
-  /// and the echo has FULLY scrolled above the visible window. Rows are
-  /// counted wrapped (earlier lines may wrap), and the echo counts as out
-  /// only once its last row is gone — comparing the offset to the raw
-  /// [stickyIndex] line pinned a duplicate while the message was still
-  /// visible in the chat.
-  bool get _stickyActive {
-    if (!busy || stickyLines.isEmpty || stickyIndex < 0) return false;
-    // Served from the shared wrap cache (refreshed here when stale): the
-    // start row of the line just past the echo IS its end row.
+  /// Whether a turn echo is ARMED to pin: a run streams and an echo
+  /// exists; whether it pins is the frame plan's call — [_framePlanFor]
+  /// dedupes the pin against the painted window (#917). No scroll math.
+  bool get _stickyArmed => busy && stickyLines.isNotEmpty && stickyIndex >= 0;
+
+  /// The first wrapped row just past the pinned echo (rows are counted
+  /// wrapped — earlier lines may wrap — and the echo counts as out of a
+  /// window iff the window top is at or past this row). Served from the
+  /// shared wrap cache, refreshed here when stale. Comparing against the
+  /// RAW [stickyIndex] line instead once pinned a duplicate while the
+  /// message was still visible in the chat.
+  ///
+  /// Returns -1 when the cache holds no row starts (no geometry to dedupe
+  /// against) — callers keep the echo with the transcript then.
+  int _echoEndRow() {
     _wrappedLines();
     final starts = _wrapCache.lineStartRows;
+    if (starts.isEmpty) return -1;
     final echoEndLine = (stickyIndex + stickyEchoLineCount).clamp(
       0,
       starts.length - 1,
     );
-    // NOTE: deliberately the RAW scroll offset — the effective (tail-riding)
-    // offset lives in view(); routing _scrollBottom through here would
-    // recurse (the plan needs sticky, sticky would need the plan's viewport).
-    return scrollOffset >= starts[echoEndLine];
+    return starts[echoEndLine];
   }
 
   /// The visible window of menu items (start inclusive, end exclusive).
