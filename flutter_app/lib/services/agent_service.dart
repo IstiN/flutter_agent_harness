@@ -95,6 +95,7 @@ part 'agent_service_prompt.dart';
 part 'agent_service_assistant.dart';
 part 'agent_service_events.dart';
 part 'agent_service_sessions.dart';
+part 'agent_service_skills.dart';
 part 'agent_service_runs.dart';
 part 'agent_service_connection_guard.dart';
 part 'agent_service_persistence.dart';
@@ -1403,38 +1404,6 @@ class AgentService extends ChangeNotifier
     );
     // A newer choice made while discovery ran wins — don't clobber it.
     if (access != _skillsAccess) return;
-    _promptSuffix = suffix;
-    _agent.state.systemPrompt = _composeSystemPrompt(config);
-  }
-
-  /// Whether the skill [name] is enabled — the per-skill toggles
-  /// ([SkillsTogglesStore]) default every unmentioned skill ON.
-  bool isSkillEnabled(String name) => _skillToggles[name] ?? true;
-
-  /// Switches one skill's availability (the settings "Built-in skills"
-  /// rows, issue #1151): persists the choice when a store is wired
-  /// (fire-and-forget), then re-discovers skills under the new toggles and
-  /// recomposes the system prompt — same shape as [setSkillsAccess].
-  /// Services built from a pre-constructed [Agent] (tests) have no config:
-  /// they record the choice but skip the re-discovery.
-  Future<void> setSkillToggle(String name, bool enabled) async {
-    if (isSkillEnabled(name) == enabled) return;
-    _skillToggles = {..._skillToggles, name: enabled};
-    _skillTogglesGeneration++;
-    notifyListeners();
-    final store = _skillTogglesStore;
-    if (store != null) unawaited(store.save(_skillToggles));
-    final config = _config;
-    if (config == null) return;
-    final generation = _skillTogglesGeneration;
-    final suffix = await _discoverPromptSuffix(
-      env,
-      _skillsAccess,
-      homeDir: _skillsHomeDir ?? desktopHomeDir(),
-      skillToggles: _skillToggles,
-    );
-    // A newer toggle change made while discovery ran wins — don't clobber.
-    if (generation != _skillTogglesGeneration) return;
     _promptSuffix = suffix;
     _agent.state.systemPrompt = _composeSystemPrompt(config);
   }
