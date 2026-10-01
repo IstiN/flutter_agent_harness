@@ -2661,8 +2661,32 @@ jobs:
         working-directory: flutter_app
         run: flutter build web --release --base-href /app/
 
+      # Same AC3 cut as the Pages deploy (#1096): the vendored WASI
+      # interpreter assets are mobile-only (loaded exclusively through
+      # WasiSandboxShell under Android/iOS guards; the web sandbox boots
+      # env_factory_stub -> MemoryShell -> CDN pyodide/quickjs), so zipping
+      # them into fa-web-spa.zip would ship ~47 MB of dead weight.
+      - name: Prune mobile-only wasm interpreter assets (#1096 AC3)
+        run: rm -rf flutter_app/build/web/assets/assets/wasm
+
       - name: Package fa-web-spa.zip (relative base + AC3 guard)
         run: bash scripts/package_web_spa.sh flutter_app/build/web fa-web-spa.zip
+
+      # AC1 (#1096): size manifest + +5% budget gate on the shipped SPA
+      # zip. First run self-seeds web-spa.tsv (--init-if-missing) — the
+      # step below uploads it for fetch+commit; committed floor afterwards.
+      - name: Size manifest + budget gate (fa-web-spa.zip)
+        run: |
+          python3 scripts/size_manifest.py check fa-web-spa.zip \
+            --baseline scripts/size_budget/web-spa.tsv --init-if-missing
+
+      - name: Upload seeded size baselines (#1096 ratchet)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: size-baselines-web-spa
+          path: scripts/size_budget/*.tsv
+          if-no-files-found: ignore
 
       - name: Upload bundle to GitHub Release
         shell: bash
