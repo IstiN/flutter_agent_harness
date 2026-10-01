@@ -402,7 +402,7 @@ final class TaskExecutor {
       // Issue #862 review (round 2): the resume output carries the same
       // loud duplicate-registration warning as a fresh spawn — a resumed
       // child's second life must not re-wire the leak silently.
-      _surfaceResumeDuplicateNotes(resumeRegistry.duplicateNotes, id);
+      _surfaceDuplicateRegistrationNotes(resumeRegistry.duplicateNotes, id);
       await _flushChildTranscript(id, child);
       // Turn-boundary billing already added each finished turn (issue
       // #332); the completion update bills only what is left and settles
@@ -447,9 +447,16 @@ final class TaskExecutor {
   /// output artifact (issue #862 review, round 2). Read-modify-write:
   /// [AgentOutputStore.put] replaces, and the spawn-time output under the
   /// child's id must survive the resumed second life (round-3 review).
-  void _surfaceResumeDuplicateNotes(List<String> duplicateNotes, String id) {
+  /// Single source of the warning text for BOTH child-result paths — the
+  /// spawn path passes its capped output as [existingOutput], the resume
+  /// path reads what the spawn stored (round-4 review).
+  void _surfaceDuplicateRegistrationNotes(
+    List<String> duplicateNotes,
+    String id, {
+    String? existingOutput,
+  }) {
     if (duplicateNotes.isEmpty) return;
-    final existing = store.get(id);
+    final existing = existingOutput ?? store.get(id);
     store.put(
       id,
       '${existing == null || existing.isEmpty ? '' : '$existing\n\n'}'
@@ -748,14 +755,18 @@ final class TaskExecutor {
       final capped = _capOutput(storedContent);
       // Issue #862 review: a duplicate registration in the child surface
       // (the luna wiring bug) degraded into a note — surface it loudly on
-      // the spawn result instead of letting it sit in the registry.
-      final duplicateNotes = childRegistry.duplicateNotes;
-      final output = duplicateNotes.isEmpty
-          ? capped.$1
-          : '${capped.$1}\n\n[fah] warning: duplicate tool registration in '
-              'the child surface (child-specific tool won): '
-              '${duplicateNotes.join(' | ')}';
-      store.put(id, output);
+      // the spawn result instead of letting it sit in the registry. The
+      // warning text is single-sourced in the shared helper so both child
+      // -result paths can't drift.
+      store.put(id, capped.$1);
+      _surfaceDuplicateRegistrationNotes(
+        childRegistry.duplicateNotes,
+        id,
+        existingOutput: capped.$1,
+      );
+      // The stored artifact IS the source of truth for the result output:
+      // base content, or base + the single-sourced warning.
+      final output = store.get(id)!;
       final usage = _usageStats(child);
 
       final failed = structured?.status == StructuredValidationStatus.invalid;
