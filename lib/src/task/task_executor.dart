@@ -356,10 +356,14 @@ final class TaskExecutor {
       deliveryStage(id, 'wake', since: since);
       await semaphore.acquire();
       semaphoreAcquired = true;
+      final resumeRegistry = _childToolRegistry(
+        _resolveDefinition(handle.agentType),
+      );
       final (built, wakeSub, wiring) = _buildResumeChild(
         id: id,
         handle: handle,
         manager: manager,
+        toolRegistry: resumeRegistry,
       );
       child = built;
       inboxWakeSub = wakeSub;
@@ -395,6 +399,18 @@ final class TaskExecutor {
       // The agent loop surfaces provider failures as an error-tagged final
       // assistant message, not a throw — the same check `_run` relies on.
       _finalAssistantText(child);
+      // Issue #862 review (round 2): the resume output carries the same
+      // loud duplicate-registration warning as a fresh spawn — a resumed
+      // child's second life must not re-wire the leak silently.
+      final resumeDuplicateNotes = resumeRegistry.duplicateNotes;
+      if (resumeDuplicateNotes.isNotEmpty) {
+        store.put(
+          id,
+          '[fah] warning: duplicate tool registration in the child surface '
+              '(child-specific tool won): '
+              '${resumeDuplicateNotes.join(' | ')}',
+        );
+      }
       await _flushChildTranscript(id, child);
       // Turn-boundary billing already added each finished turn (issue
       // #332); the completion update bills only what is left and settles
@@ -617,6 +633,7 @@ final class TaskExecutor {
     required String id,
     required SubagentHandle handle,
     required SubagentManager manager,
+    required ToolRegistry toolRegistry,
   }) {
     final definition = _resolveDefinition(handle.agentType);
     final wiring = _resolveChildWiring(definition);
@@ -628,7 +645,7 @@ final class TaskExecutor {
       // shared background.
       systemPrompt: _buildSystemPrompt(definition, handle.context),
       streamFunction: wiring.stream,
-      toolRegistry: _childToolRegistry(definition),
+      toolRegistry: toolRegistry,
       externalSteeringSource: () => _inboxSteeringMessages(id),
       externalSteeringProbe: () => manager.hasPendingMessages(id),
       // Issue #862: children get the same misuse circuit breaker as the

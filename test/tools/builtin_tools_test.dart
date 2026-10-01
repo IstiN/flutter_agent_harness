@@ -726,6 +726,40 @@ void main() {
     });
 
     test(
+      'header-less patch with a path still applies through the patcher',
+      () async {
+        // Round-1 policy review (issue #862): a header-less but
+        // recognizable section list + path is PATCH mode, not exact-match
+        // fallback. Tool-level pin: the call reaches the patcher and fails
+        // with the apply-time diagnostic (missing snapshot tag) — NOT the
+        // gate-level "not a valid hashline patch" rejection.
+        await env.writeFile('f.txt', 'a\nb\nc\nd\n');
+        final read = toolNamed('read');
+        final edit = toolNamed('edit');
+        await read.execute({'path': 'f.txt', 'hashline': true}, null, null);
+
+        await expectLater(
+          edit.execute({'path': 'f.txt', 'patch': 'DEL 2'}, null, null),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              allOf(
+                contains('Missing hashline snapshot tag for f.txt'),
+                isNot(contains('not a valid hashline patch')),
+              ),
+            ),
+          ),
+        );
+        // Nothing was applied.
+        expect(
+          (await env.readTextFile('f.txt')).valueOrNull,
+          'a\nb\nc\nd\n',
+        );
+      },
+    );
+
+    test(
       'external drift between read and edit reports the stale lines',
       () async {
         await env.writeFile('doc.md', 'alpha\nbeta\ngamma\n');

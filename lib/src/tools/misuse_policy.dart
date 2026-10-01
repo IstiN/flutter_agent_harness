@@ -45,10 +45,10 @@ sealed class EditModePlan {
 /// Run hashline-patch mode. A usable patch wins whenever present (E1);
 /// [parsed] is the ONE shared parse — the executor consumes it directly so
 /// the gate and the apply can never drift apart again (issue #862 review).
+/// The raw input string stays reachable as [parsed]'s source via the
+/// original arguments; the plan carries only the parse.
 final class EditRunPatch extends EditModePlan {
-  const EditRunPatch({required this.patch, required this.parsed, this.notice});
-
-  final String patch;
+  const EditRunPatch({required this.parsed, this.notice});
 
   /// The patch parsed once by [parsePatch] (with the executor's
   /// `fallbackPath` contract honored).
@@ -171,7 +171,6 @@ EditModePlan resolveEditMode({
   if (parse.usable) {
     final mixed = oldText != null || newText != null;
     return EditRunPatch(
-      patch: patch!,
       parsed: parse.patch!,
       notice: mixed
           ? bothModesNotice(winner: 'the hashline patch')

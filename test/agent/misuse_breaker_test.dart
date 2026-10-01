@@ -2,6 +2,7 @@
 /// machine and IT-3: a scripted model repeating the same malformed call gets
 /// a corrective note in the next request payload at 3 identical failures and
 /// an execution-refusing honest error at 6, while the transcript stays clean.
+library;
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
@@ -248,7 +249,7 @@ void main() {
           messages.whereType<ToolResultMessage>().toList();
       expect(lastResults, hasLength(8));
       final refusalText =
-          '${(lastResults.last.content.single as TextContent).text}';
+          (lastResults.last.content.single as TextContent).text;
       expect(refusalText, contains('refused'));
       expect(refusalText, contains('6 consecutive times'));
       expect(refusalText, contains('Change the arguments'));
@@ -365,7 +366,7 @@ void main() {
       expect(results, hasLength(6));
       for (final result in results) {
         expect(
-          '${(result.content.single as TextContent).text}',
+          (result.content.single as TextContent).text,
           contains('Command exited with code 1'),
         );
       }

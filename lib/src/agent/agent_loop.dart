@@ -2334,11 +2334,19 @@ final class _ExecutedToolCallOutcome {
   final bool isError;
 
   /// True when the failure was a call-shape rejection thrown by the
-  /// registry BEFORE any tool body ran ([ToolValidationException] — schema
-  /// mismatch — or [ToolNotFoundException] — hallucinated tool name). Only
-  /// these count toward the misuse breaker: an operational failure (a
-  /// non-zero bash exit, a refused write) is the environment's answer, not
-  /// the model misusing the tool (issue #862 review).
+  /// registry BEFORE any tool body ran — in practice
+  /// [ToolValidationException] (schema mismatch). Only these count toward
+  /// the misuse breaker; an operational failure (a non-zero bash exit, a
+  /// refused write) is the environment's answer, not the model misusing
+  /// the tool (issue #862 review).
+  ///
+  /// Scope note: the loop's IMMEDIATE tool outcomes (unknown tool —
+  /// caught by the `_prepareToolCall` `_findTool` check, breaker refusals,
+  /// `beforeToolCall` denials such as approval rejections) bypass
+  /// [_finalizeExecutedToolCall] entirely and never reach the breaker. In
+  /// the wired CLI, `context.tools` mirrors the registry surface, so a
+  /// registry-thrown [ToolNotFoundException] is nearly unreachable; the
+  /// counted class is effectively validation rejections only.
   final bool validationRejection;
 }
 

@@ -1,6 +1,8 @@
 /// Issue #862 UT suite: the pure tool-misuse coercion policies
 /// (`lib/src/tools/misuse_policy.dart`), one positive AND negative test per
 /// policy per the GOAL card, plus the luna fixture shapes.
+library;
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
