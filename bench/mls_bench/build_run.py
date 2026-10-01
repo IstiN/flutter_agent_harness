@@ -191,7 +191,7 @@ def resolve_tasks(kind: str, task: str | None, harbor_dir: Path, provider: str) 
 
 
 def shard_matrix(tasks: list[str], shards: int) -> list[dict]:
-    """Contiguous chunks over the sorted task list; empty chunks dropped."""
+    """Contiguous chunks in the caller's task order; empty chunks dropped."""
     shards = max(1, min(shards, len(tasks) or 1))
     size = -(-len(tasks) // shards)
     return [
@@ -273,7 +273,8 @@ def build_command(
 def _emit(mapping: dict, out: str | None) -> None:
     text = "".join(f"{k}={v}\n" for k, v in mapping.items())
     if out:
-        Path(out).open("a").write(text)
+        with Path(out).open("a") as f:
+            f.write(text)
     else:
         print(text, end="")
 
@@ -310,11 +311,10 @@ def cmd_plan(args: argparse.Namespace) -> int:
         "clip_risk_modal": clip_risk(harbor_dir, args.provider),
     }
     Path(args.run_config_out).write_text(json.dumps(run_config, indent=2) + "\n")
+    # matrix only: expected_trials travels in the run-config bundle the
+    # summary job replays; an undeclared job output would be dead weight.
     _emit(
-        {
-            "matrix": json.dumps({"include": matrix}, separators=(",", ":")),
-            "expected_trials": str(len(tasks)),
-        },
+        {"matrix": json.dumps({"include": matrix}, separators=(",", ":"))},
         args.out,
     )
     return 0
