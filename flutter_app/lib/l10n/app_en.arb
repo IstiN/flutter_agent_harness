@@ -204,6 +204,7 @@
   "keysValueHint": "Paste the key value",
   "keysValueLabel": "Value",
   "launcherChatActionsTooltip": "Chat actions",
+  "faEntryHintTooltip": "Tap: continue the active chat · Hold: new chat",
   "launcherChatEmptyHint": "Nothing here yet — ask Fa anything.",
   "launcherDissolveFolder": "Remove folder",
   "launcherFolderDefaultName": "Folder",
