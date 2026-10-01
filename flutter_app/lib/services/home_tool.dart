@@ -49,7 +49,7 @@ AgentTool homeDevicesTool(HomeApi home) {
         'Use for questions like "which lights are on?" and before '
         'home_turn_on/home_turn_off/home_set. Returns rooms with their '
         'accessories and current state (on/off, brightness, target '
-        'temperature).',
+        'temperature).', // crap:ignore: tool-execute closure guard prologue twinned across the service tools (structural registration shape, not shared logic) — gh-1106.
     parameters: const {'type': 'object', 'properties': {}},
     execute: (arguments, cancelToken, onUpdate) async {
       final unavailable = await _unavailable(home);
