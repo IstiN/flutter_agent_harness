@@ -669,6 +669,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get launcherChatActionsTooltip => 'Chat actions';
 
   @override
+  String get faEntryHintTooltip =>
+      'Tap: continue the active chat · Hold: new chat';
+
+  @override
   String get launcherChatEmptyHint => 'Nothing here yet — ask Fa anything.';
 
   @override
