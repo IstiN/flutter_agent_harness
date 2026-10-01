@@ -43,6 +43,7 @@ import '../session/session_record.dart';
 import '../session/session_tree.dart';
 import '../session/uuid.dart';
 import '../types.dart';
+import 'summary_sanitizer.dart';
 import 'token_estimation.dart';
 
 export '../compaction/compaction_engine.dart'
@@ -880,6 +881,12 @@ Future<String> generateSummary(
   String? userRequestCandidates,
   int? maxPromptTokens,
 }) async {
+  // Issue #1131: the previous checkpoint re-enters this prompt verbatim —
+  // heal it first so a poisoned old summary cannot be paraphrased forward
+  // into a fresh one (idempotent; clean records are unaffected).
+  previousSummary = previousSummary == null
+      ? null
+      : sanitizeSummary(previousSummary).text;
   var basePrompt = previousSummary != null
       ? prompts.summaryUpdate
       : prompts.summary;
@@ -1130,7 +1137,11 @@ List<Message> _entryToSummarizableMessages(SessionRecord entry) {
           ? const []
           : [
               UserMessage.text(
-                '$branchSummaryPrefix$summary$branchSummarySuffix',
+                '$branchSummaryPrefix'
+                // Issue #1131: summarize the healed text, never the raw
+                // persisted record — poison must not be paraphrased forward.
+                '${sanitizeSummary(summary).text}'
+                '$branchSummarySuffix',
                 timestamp: timestamp,
               ),
             ],
@@ -1375,6 +1386,12 @@ final class CompactionManager {
       );
     }
 
+    // Issue #1131: a summary re-renders on every later turn, so ephemeral,
+    // time-scoped claims ("your last tool call's result was dropped") are
+    // stripped pre-persist; the fires are logged in the record details.
+    final sanitized = sanitizeSummary(summary);
+    summary = sanitized.text;
+
     summary += formatFileOperations(
       preparation.readFiles,
       preparation.modifiedFiles,
@@ -1387,6 +1404,8 @@ final class CompactionManager {
       details: {
         'readFiles': preparation.readFiles,
         'modifiedFiles': preparation.modifiedFiles,
+        if (sanitized.stripped.isNotEmpty)
+          'sanitizedEphemeral': sanitized.stripped,
       },
     );
   }
