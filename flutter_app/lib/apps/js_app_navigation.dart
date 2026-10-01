@@ -25,29 +25,54 @@ import 'package:fa_ui/fa_ui.dart' show FaChatHost;
 Future<AgentService?> resolveAppBoundSession(
   FlutterSessionManager manager,
   String appId,
+) async => (await _resolveAppBinding(manager, appId)).$1;
+
+/// How [_resolveAppBinding] ended (issue #864): the distinction decides
+/// whether the caller may MINT. `firstContact` covers "no binding yet" AND
+/// bindings that can be healed by rewriting them (corrupt file, stale id);
+/// `unopenable` covers a real binding whose session cannot be opened right
+/// now (torn session file, live lease elsewhere, too large) — minting a
+/// replacement there is the proliferation the owner flagged: every open
+/// would mint a fresh session and overwrite the binding. Fall back to the
+/// active session instead and keep the binding for a later repair.
+enum _AppBindingResolution { bound, firstContact, unopenable }
+
+Future<(AgentService?, _AppBindingResolution)> _resolveAppBinding(
+  FlutterSessionManager manager,
+  String appId,
 ) async {
   final active = manager.active?.service;
-  if (active == null) return null;
+  if (active == null) return (null, _AppBindingResolution.unopenable);
+  String? boundId;
   try {
     final raw = await active.env.readTextFile('apps/$appId/session.json');
     final text = raw.valueOrNull;
-    if (text == null) return null;
-    String? boundId;
+    if (text == null) return (null, _AppBindingResolution.firstContact);
     try {
       boundId = (jsonDecode(text) as Map<String, dynamic>)['sessionId']
           ?.toString();
     } on FormatException {
-      return null;
+      // A torn or agent-written file (seen on-device: a fitness-trainer
+      // tap silently dead). Rewriting the binding on the mint heals it.
+      return (null, _AppBindingResolution.firstContact);
     }
-    if (boundId == null || boundId.isEmpty) return null;
-    // Already open in this app run?
-    for (final session in manager.sessions) {
-      if (session.id == boundId) {
-        manager.switchTo(boundId);
-        return session.service;
-      }
+  } on Object catch (error) {
+    AppLog.i('apps', 'resolve bound session failed for $appId: $error');
+    return (null, _AppBindingResolution.firstContact);
+  }
+  if (boundId == null || boundId.isEmpty) {
+    return (null, _AppBindingResolution.firstContact);
+  }
+  // Already open in this app run?
+  for (final session in manager.sessions) {
+    if (session.id == boundId) {
+      manager.switchTo(boundId);
+      return (session.service, _AppBindingResolution.bound);
     }
-    // Open it from disk.
+  }
+  // Open it from disk. A failure here is NOT first contact — the binding
+  // is real — so it must never route into a re-mint (issue #864).
+  try {
     final all = await active.listSessions();
     for (final metadata in all) {
       if (metadata.id == boundId) {
@@ -63,18 +88,15 @@ Future<AgentService?> resolveAppBoundSession(
               ),
           serviceFactory: () => active.clone(),
         );
-        return managed.service;
+        return (managed.service, _AppBindingResolution.bound);
       }
     }
-    return null; // stale binding (session deleted)
   } on Object catch (error) {
-    // A broken binding (corrupt session.json, torn session file on disk)
-    // must never block the app from opening — fall back to the active
-    // session. Seen on-device: a stale agent-written session.json made a
-    // fitness-trainer tap silently dead.
-    AppLog.i('apps', 'resolve bound session failed for $appId: $error');
-    return null;
+    AppLog.i('apps', 'bound session unopenable for $appId: $error');
+    return (null, _AppBindingResolution.unopenable);
   }
+  // Stale binding (session deleted): rewriting it on the mint heals.
+  return (null, _AppBindingResolution.firstContact);
 }
 
 /// Creates a fresh session dedicated to [appId] and records the binding.
@@ -95,11 +117,38 @@ Future<AgentService> createAppBoundSession(
     config: config,
     serviceFactory: () async => active.clone(),
   );
-  await active.env.writeFile(
+  // Issue #864: the binding write must be checked — a silently failed
+  // write would leave the app on "first contact" forever, re-minting on
+  // every message. Surface the failure instead of faking progress.
+  final written = await active.env.writeFile(
     'apps/$appId/session.json',
     '{"sessionId":"${managed.id}"}',
   );
+  if (written.isErr) {
+    throw StateError(
+      'app binding write failed for $appId: ${written.errorOrNull!}',
+    );
+  }
   return managed.service;
+}
+
+/// One mint in flight per app (issue #864 E3): overlapping forwards to the
+/// same app share a single first-contact session instead of double-minting.
+final _appBindInFlight = <String, Future<AgentService>>{};
+
+Future<AgentService> _createAppBoundSessionOnce(
+  FlutterSessionManager manager,
+  String appId,
+) {
+  final inFlight = _appBindInFlight[appId];
+  if (inFlight != null) return inFlight;
+  // BLOCK body: an expression closure would return the removed value —
+  // the future itself — making the result future wait on itself.
+  final future = createAppBoundSession(manager, appId).whenComplete(() {
+    _appBindInFlight.remove(appId);
+  });
+  _appBindInFlight[appId] = future;
+  return future;
 }
 
 /// Forwards an in-app Fa message (text + app state + theme + screenshot) to
@@ -112,10 +161,24 @@ Future<AgentService?> forwardAppMessageToAgent(
   FaAppMessage message,
 ) async {
   final appId = message.appId;
-  final service = appId == null
-      ? manager.active?.service
-      : (await resolveAppBoundSession(manager, appId) ??
-            await createAppBoundSession(manager, appId));
+  AgentService? service;
+  if (appId == null) {
+    service = manager.active?.service;
+  } else {
+    final (resolved, outcome) = await _resolveAppBinding(manager, appId);
+    if (resolved != null) {
+      service = resolved;
+    } else if (outcome == _AppBindingResolution.firstContact) {
+      // Mint exactly once per app (issue #864): first contact only —
+      // never per open, never per message.
+      service = await _createAppBoundSessionOnce(manager, appId);
+    } else {
+      // A real binding that cannot be opened right now: continue on the
+      // active session, keep the binding untouched — never mint a
+      // replacement (issue #864).
+      service = manager.active?.service;
+    }
+  }
   if (service == null) return null;
   final buffer = StringBuffer(message.text);
   final stateJson = message.appStateJson;

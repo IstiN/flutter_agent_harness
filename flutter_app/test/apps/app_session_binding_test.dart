@@ -123,4 +123,82 @@ void main() {
       session.service.dispose();
     }
   });
+
+  testWidgets('a corrupt binding rebinds EXACTLY once — never per message '
+      '(issue #864)', (tester) async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
+    manager.addSession('original-session', _fakeService(env));
+
+    // Torn binding: the first message heals it with one rebind…
+    await env.writeFile('apps/notes/session.json', '[1,2]');
+    await forwardAppMessageToAgent(
+      manager,
+      const FaAppMessage(text: 'a', appId: 'notes'),
+    );
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    });
+    await tester.pump();
+    final boundAfterHeal = manager.activeId;
+    expect(boundAfterHeal, isNot('original-session'));
+
+    // …and the next message reuses the healed binding: the session count
+    // must never grow again (the old code could re-mint per message while
+    // the binding stayed broken).
+    final sessionsAfterHeal = manager.sessions.length;
+    await forwardAppMessageToAgent(
+      manager,
+      const FaAppMessage(text: 'b', appId: 'notes'),
+    );
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    });
+    await tester.pump();
+    expect(manager.sessions.length, sessionsAfterHeal);
+    expect(manager.activeId, boundAfterHeal);
+
+    for (final session in manager.sessions) {
+      session.service.dispose();
+    }
+  });
+
+  testWidgets('concurrent app messages mint ONE bound session '
+      '(issue #864 E3)', (tester) async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
+    manager.addSession('original-session', _fakeService(env));
+
+    await tester.pumpWidget(const MaterialApp(home: Scaffold()));
+    await tester.pumpAndSettle();
+
+    // Two messages racing on first contact: the per-app single-flight
+    // must collapse them into one mint.
+    final results = await tester.runAsync(
+      () => Future.wait([
+        forwardAppMessageToAgent(
+          manager,
+          const FaAppMessage(text: 'a', appId: 'notes'),
+        ),
+        forwardAppMessageToAgent(
+          manager,
+          const FaAppMessage(text: 'b', appId: 'notes'),
+        ),
+      ]),
+    );
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    });
+    await tester.pump();
+
+    expect(results, hasLength(2));
+    expect(results![0], same(results[1])); // same bound service, one mint
+    expect(manager.sessions.length, 2); // original + the one bound session
+    final binding = await env.readTextFile('apps/notes/session.json');
+    expect(binding.valueOrNull, contains(manager.activeId));
+
+    for (final session in manager.sessions) {
+      session.service.dispose();
+    }
+  });
 }
