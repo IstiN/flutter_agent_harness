@@ -198,6 +198,7 @@ scenarios:
   - match: "Existing tags:"
     responses:
       - text: ""
+      - text: ""
 ''');
     final server = await MockLlmServer.start(script: script);
     addTearDown(server.stop);
@@ -213,16 +214,18 @@ scenarios:
     );
     harness.sendEnter();
 
-    // The add row and the search row prove both tool turns executed; the
-    // scripted reply proves the result flowed back into a final turn — the
-    // full loop, not just boot (issue #551 AC).
-    await harness.waitForText(
-      '✔ memory_add',
-      timeout: const Duration(seconds: 30),
-    );
-    await harness.waitForText(
+    // gh-1049 flake family: the TUI diff-renders only changed cells, so the
+    // raw stream never holds a contiguous "✔ memory_add" — and the memory
+    // package's background tag generator unconditionally print()s into the
+    // PTY right after each tool row, scrolling the row out of the sampled
+    // viewport during the sub-second window it was catchable. Anchor on the
+    // persistent terminal marker instead (it paints last and survives the
+    // repaints), then assert the ✔ rows on the ANCHORED screen.
+    final screen = await harness.waitForScreen(
       'memory round-trip complete',
       timeout: const Duration(seconds: 30),
     );
+    expect(screen, contains('✔ memory_add'));
+    expect(screen, contains('✔ memory_search'));
   });
 }
