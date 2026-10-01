@@ -168,7 +168,7 @@ def render(splits: dict, expected=None, title=None, ledger=None):
     return lines, problems
 
 
-def main() -> int:
+def main(argv=None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("jobs_dir", type=Path)
     parser.add_argument("--expected-trials", type=int, default=None)
@@ -176,7 +176,7 @@ def main() -> int:
     parser.add_argument("--model", default=None)
     parser.add_argument("--fa-ref", dest="fa_ref", default=None)
     parser.add_argument("--run-url", dest="run_url", default=None)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     # Issue #1124: key the report to one dataset family — ignore job dirs
     # from other families so merged artifacts never cross-contaminate.
@@ -201,6 +201,18 @@ def main() -> int:
     title = ledger = None
     if args.family:
         import families
+
+        if args.family not in families.FAMILIES:
+            # Defense in depth: the workflow resolves the dataset via
+            # families.py before dispatch, but a direct summary call must
+            # not silently render a mis-keyed report.
+            print(
+                f"::error::unknown Terminal-Bench family '{args.family}' —"
+                f" resolve the dataset id first (families.py resolve);"
+                f" known: {', '.join(sorted(families.FAMILIES))}",
+                file=sys.stderr,
+            )
+            return 2
 
         title = f"### fa on Terminal-Bench {args.family} ({families.FAMILIES[args.family]})"
         ledger = {

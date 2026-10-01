@@ -80,9 +80,40 @@ class SummaryTest(unittest.TestCase):
         self.assertIn("| GPU shards | 1/1 | 100.0% |", out)
         # The foreign 4.0 trials are filtered out, not merged in (4/5).
         self.assertNotIn("4/5", out)
-        # Paste-ready ledger row, keyed per version.
+        # Paste-ready ledger row, keyed per version. Trials here carry no
+        # token usage → the #1123 accounting renders the cost n/a, never
+        # a made-up price.
         self.assertIn("| terminal-bench/terminal-bench-2-1@latest | glm-5.3-flash | abc1234 |", out)
         self.assertIn("| 2/3 trials (66.7%) |", out)
+        self.assertIn("| n/a | https://ci/run/1 |", out)
+
+    def test_ledger_row_carries_real_cost(self):
+        # Composition #1123 + #1124: priced trials flow their cost total
+        # into the ledger row's cost cell.
+        job = self.jobs / "fa-2.1-modal-cpu-0"
+        for i, (resolved, tin, tout, cost) in enumerate([
+            (True, 310, 80, 8.74e-05),
+            (False, 50, 10, None),
+        ]):
+            d = job / f"trial-{i}"
+            d.mkdir(parents=True)
+            data = {
+                "verifier_result": {"rewards": {"r": 1.0 if resolved else 0.0}},
+                "agent_result": {
+                    "n_input_tokens": tin,
+                    "n_output_tokens": tout,
+                    "cost_usd": cost,
+                    "metadata": {},
+                },
+            }
+            (d / "result.json").write_text(json.dumps(data))
+        rc, out = self._run(
+            str(self.jobs), "--family", "2.1", "--model", "glm-5.3-flash",
+            "--fa-ref", "abc1234", "--run-url", "https://ci/run/1",
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("**Spend: $0.0001 — tokens in/out: 360/90", out)
+        self.assertIn("| 1/2 trials (50.0%) | $0.0001 | https://ci/run/1 |", out)
 
     def test_errored_trials_excluded_from_ledger_counts(self):
         make_jobs(self.jobs, "fa-3.0-docker-cpu-0", [{"resolved": True}, {"exception": "TimeoutError"}])
@@ -103,8 +134,15 @@ class SummaryTest(unittest.TestCase):
         self.assertIn("No harbor jobs found", out)
 
     def test_unknown_family_rejected(self):
-        with self.assertRaises(SystemExit):
-            self._run(str(self.jobs), "--family", "9.9")
+        # Direct summary calls reject unknown families loudly (rc 2 +
+        # stderr annotation) instead of rendering a mis-keyed report.
+        import contextlib, io
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc, out = self._run(str(self.jobs), "--family", "9.9")
+        self.assertEqual(rc, 2)
+        self.assertEqual(out, "")
+        self.assertIn("unknown Terminal-Bench family '9.9'", err.getvalue())
 
     def test_legacy_invocation_unchanged(self):
         # No --family: pre-#1124 behaviour (all job dirs, 4.0 title).
