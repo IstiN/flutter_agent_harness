@@ -44,7 +44,7 @@ concurrency:
 
 jobs:
   kicker:
-    uses: IstiN/dmtools-agents/.github/workflows/factory-sm-kicker.yml@a5e377d9aa417d7537efd452a0dba06454132dec
+    uses: IstiN/dmtools-agents/.github/workflows/factory-sm-kicker.yml@210e8ac5efa06db24a249f174d12f98aadbcb9ab
     with:
       smWorkflow: machine-sm.yml
       ciWorkflow: ci.yml
