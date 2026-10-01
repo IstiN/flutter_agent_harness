@@ -385,4 +385,26 @@ void main() {
       expect(result.stripped, hasLength(2));
     });
   });
+
+  group('round-4 review pins (#1133)', () {
+    test('R4: common coding past-tense verbs strip', () {
+      final result = sanitizeSummary(
+        'You just fixed the login crash. You just added a regression test. '
+        'You just merged the PR.\n'
+        '- The PR is #1102 on origin.\n',
+      );
+      expect(result.text, '- The PR is #1102 on origin.\n');
+      expect(result.stripped, hasLength(3));
+    });
+
+    test('R4: reported speech and present-tense duties survive', () {
+      const durable =
+          'You just said the opposite of what the log shows.\n'
+          'You just head the review queue now, nothing else.\n'
+          '- The log shows exit code 1.\n';
+      final result = sanitizeSummary(durable);
+      expect(result.text, durable);
+      expect(result.stripped, isEmpty);
+    });
+  });
 }
