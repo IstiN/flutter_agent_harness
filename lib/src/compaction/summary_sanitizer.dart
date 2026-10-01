@@ -44,16 +44,21 @@ final RegExp _secondPerson = RegExp(
 ///   claim; "your last tool call's result was dropped" is the claim.
 /// - The `you`-arm covers contracted and interpolated forms ("you've
 ///   just", "you're about to", "you were (just) about to"). A bare "you
-///   just" additionally demands a following PAST-TENSE verb form
-///   (regular -ed or a common irregular, minus present-tense verbs that
-///   merely end in -ed): "you just merged the PR" is a recency claim,
-///   while "you just need to re-run make", "if you just look at the
-///   failing test", and reported speech ("you just said") survive.
+///   just" additionally demands a following PAST-TENSE verb form:
+///   regular verbs ending in -ed (minus present-tense verbs that merely
+///   end in -ed) or a common irregular. English irregular pasts are a
+///   finite closed set, so the irregular alternation is exhaustive for
+///   the verbs summaries use. "you just merged the PR" is a recency
+///   claim, while "you just need to re-run make", "if you just look at
+///   the failing test", and reported speech ("you just said" / "you
+///   just told me") are durable and survive.
 final RegExp _ephemeralClaim = RegExp(
   r"\byour\s+(?:last|previous|prior)\b"
   r"(?=[^.]*\b(?:dropped|trimmed|removed|lost)\b)"
   r"|\byou(?:'ve\s+just|'re\s+about to|\s+(?:were\s+)?(?:just\s+)?about to"
-  r"|\s+just(?=\s+(?:(?!(?:need|seed|embed|speed|proceed|exceed|succeed)\b)\w+ed|(?:ran|did|went|got|saw|wrote|made))\b))\b"
+  r"|\s+just(?=\s+(?:(?!(?:need|seed|embed|speed|proceed|exceed|succeed)\b)\w+ed"
+  r"|(?:ran|did|went|got|saw|wrote|made|found|broke|sent|took|left|came|gave"
+  r'|built|lost|kept|held|felt|spent|brought|heard|met|paid|won))\b))\b'
   r'|\b(?:was|were)\s+dropped\b',
   caseSensitive: false,
 );

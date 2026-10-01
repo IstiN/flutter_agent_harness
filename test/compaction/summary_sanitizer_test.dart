@@ -407,4 +407,26 @@ void main() {
       expect(result.stripped, isEmpty);
     });
   });
+
+  group('round-5 review pins (#1133)', () {
+    test('R5: common irregular past verbs strip', () {
+      final result = sanitizeSummary(
+        'You just found the bug. You just broke the build. '
+        'You just sent the review. You just took the lock. '
+        'You just left the meeting. You just lost the ticket.\n'
+        '- The ticket is OPS-4821 on the board.\n',
+      );
+      expect(result.text, '- The ticket is OPS-4821 on the board.\n');
+      expect(result.stripped, hasLength(6));
+    });
+
+    test('R5: reported-speech told survives like said', () {
+      const durable =
+          'You just told me to rebase first.\n'
+          '- The rebase is pending on origin/main.\n';
+      final result = sanitizeSummary(durable);
+      expect(result.text, durable);
+      expect(result.stripped, isEmpty);
+    });
+  });
 }
