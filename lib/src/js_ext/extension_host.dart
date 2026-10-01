@@ -21,6 +21,7 @@ import '../approval/approval.dart';
 import '../env/execution_env.dart';
 import '../plugins/plugin.dart';
 import '../types.dart';
+import '../utils/path_text.dart';
 import 'ext_bridge.dart';
 import 'ext_manifest.dart';
 import 'ext_protocol.dart';
@@ -982,8 +983,8 @@ final class JsExtensionHost {
   /// against the cwd, `.`/`..` normalize, and any escape (including `..`
   /// climbing above the root) is refused. Symlinks are not resolved.
   Future<String> _readConfined(String path) async {
-    final root = _normalizeLexical(env.cwd);
-    final candidate = _normalizeLexical(
+    final root = normalizeLexicalPath(env.cwd);
+    final candidate = normalizeLexicalPath(
       path.startsWith('/') ? path : '${env.cwd}/$path',
     );
     if (candidate != root && !candidate.startsWith('$root/')) {
@@ -1083,17 +1084,6 @@ final class JsExtensionHost {
   }
 }
 
-/// POSIX-lexical path normalization (`.`/`..`/duplicate slashes resolved
-/// against `/`); no symlink resolution.
-String _normalizeLexical(String path) {
-  final segments = <String>[];
-  for (final segment in path.split('/')) {
-    if (segment.isEmpty || segment == '.') continue;
-    if (segment == '..') {
-      if (segments.isNotEmpty) segments.removeLast();
-      continue;
-    }
-    segments.add(segment);
-  }
-  return segments.isEmpty ? '/' : '/${segments.join('/')}';
-}
+// POSIX-lexical path normalization lives in `utils/path_text.dart`
+// (`normalizeLexicalPath`), shared with the sandbox shells and the cube
+// fs policy.

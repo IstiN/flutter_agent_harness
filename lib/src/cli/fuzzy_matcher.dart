@@ -9,6 +9,8 @@
 // only if a real dataset shows pathological scoring.
 library;
 
+import '../utils/list_equals.dart';
+
 /// One scored candidate: [score], the matched [indices] into the haystack
 /// (ascending), and the haystack [text] itself.
 class FuzzyMatch implements Comparable<FuzzyMatch> {
@@ -32,21 +34,13 @@ class FuzzyMatch implements Comparable<FuzzyMatch> {
       other is FuzzyMatch &&
       other.score == score &&
       other.text == text &&
-      _listEquals(other.indices, indices);
+      listEquals(other.indices, indices);
 
   @override
   int get hashCode => Object.hash(score, text, Object.hashAll(indices));
 
   @override
   String toString() => 'FuzzyMatch($score, $text)';
-}
-
-bool _listEquals(List<int> a, List<int> b) {
-  if (a.length != b.length) return false;
-  for (var i = 0; i < a.length; i++) {
-    if (a[i] != b[i]) return false;
-  }
-  return true;
 }
 
 /// Word-boundary separators: after these the next alphanumerics start a
