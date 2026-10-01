@@ -656,7 +656,8 @@ class AgentService extends ChangeNotifier
     // The yaml sections the app honors (issue #1078): the CLI's own
     // parsers; warnings surface once here, boot never blocks (E2/AC7).
     final appConfig = loadAppFahConfig(
-      projectDir: env.sessionCwd, homeDir: configHomeDir,
+      projectDir: env.sessionCwd,
+      homeDir: configHomeDir,
     );
     for (final warning in appConfig?.warnings ?? const <String>[]) {
       AppLog.i('config', warning);
@@ -705,15 +706,18 @@ class AgentService extends ChangeNotifier
     if (taskModelsStore != null || yamlRoles != null) {
       _taskRolesResolver = ModelRolesResolver(
         config: ModelRolesConfig(
-          roles: _StoreBackedRolesMap(taskModelsStore, fallback: yamlRoles?.roles),
+          roles: _StoreBackedRolesMap(
+            taskModelsStore,
+            fallback: yamlRoles?.roles,
+          ),
           pathOverrides: yamlRoles?.pathOverrides ?? const [],
           retry: yamlRoles?.retry ?? const ModelRolesRetryPolicy(),
         ),
         secrets: _secretsEnv?.secretsSnapshot() ?? const {},
       );
       // 429 rotation notices surface in the log (CLI parity).
-      _taskRolesResolver!.onNotice =
-          (notice) => AppLog.i('roles', notice.describe());
+      _taskRolesResolver!.onNotice = (notice) =>
+          AppLog.i('roles', notice.describe());
       _taskRolesResolver!.sessionId = () => _session?.cachedId;
     }
     // Task tool config: childTools is set after the full registry is built
@@ -2069,24 +2073,38 @@ class AgentService extends ChangeNotifier
     }
   }
 
-  /// Pages one chunk of records back in BELOW the window
+  /// Pages the transcript back to the live tail
   /// ([FaChatService.loadNewerHistory]) — the page-down path after deep
-  /// paging slid the newest side out. Same guards as [loadOlderHistory].
+  /// paging slid the newest side out. NEVER gated on [isStreaming]: the
+  /// page-down is a VIEW operation, and mid-run is exactly when the banner
+  /// must work — the run keeps appending below a deep-paged window while
+  /// the tap was a no-op (issue #1159). One bounded tail read re-centers
+  /// the window (jump-to-tail, no chunk crawl); the only guards are a
+  /// concurrent page load and a stale load generation.
   @override
   Future<void> loadNewerHistory() async {
-    if (_loadingHistory || isStreaming) return;
+    if (_loadingHistory) return;
     final windowed = _windowed;
     if (windowed == null) return;
     final gen = _loadGeneration;
     _loadingHistory = true;
     notifyListeners();
     try {
-      final joined = await windowed.loadNewer();
+      await windowed.jumpToTail();
       if (gen != _loadGeneration) return;
-      if (joined.isNotEmpty) {
-        await _syncViewToWindow(windowed);
-        await _applyViewBranch();
-      }
+      await _syncViewToWindow(windowed);
+      if (gen != _loadGeneration) return;
+      // Mid-run the transcript carries live rows the projection cannot
+      // know yet — the streaming assistant/thinking bubbles are plain
+      // objects in [messages], not records. Rebuild the tail projection,
+      // then re-append those rows so incoming deltas keep mutating
+      // VISIBLE rows instead of orphaned ones.
+      final liveRows = [
+        _currentThinkingMessage,
+        _currentAssistantMessage,
+      ].nonNulls.toList();
+      await _applyViewBranch();
+      messages.addAll(liveRows);
       await _refreshHistoryAbove();
       if (gen != _loadGeneration) return;
       _historyLoadError = null;
