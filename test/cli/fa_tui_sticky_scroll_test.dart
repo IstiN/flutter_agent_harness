@@ -134,12 +134,14 @@ void main() {
     // offset still says the echo is above the window.
     const draftRows = 8;
     // chrome's bubble echo block is one line taller than the legacy rule
-    // echo — the same dup geometry lands one streamed line earlier.
+    // echo - the same dup geometry lands one streamed line earlier.
     final answers = chrome ? 11 : 12;
-    test('deleting a wrapped draft mid-run never duplicates the pinned '
-        'echo (chrome=$chrome, #917)', () {
-      addTearDown(() => tuiChromeEnabled = true);
-      tuiChromeEnabled = chrome;
+
+    // Shared #917 fixture (review round 2): builds the synced state both
+    // scenarios branch from - submitted echo, streamed answers, an
+    // 8-row wrapped draft typed mid-run, one streamed line landing with
+    // the draft present (the stored offset syncs past the echo end).
+    (FaTuiModel, String) syncedFixture() {
       var model = FaTuiModel(
         callbacks: callbacks(),
         isExited: () => false,
@@ -147,51 +149,50 @@ void main() {
         termHeight: 24,
         outputLines: const ['older line one', 'older line two', ''],
       );
-
-      // Real submit path (idle), then the run bracket lands.
       model = model.copyWith(inputText: 'the racy prompt row');
       model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.enter)));
       model = send(model, const BusyMsg(true, source: 'run'));
       expect(model.busy, isTrue, reason: 'submit must start a run');
-
-      // Stream the answer; the echo stays visible in the transcript.
       for (var i = 0; i < answers; i++) {
         model = send(model, OutputMsg('answer line $i', newline: true));
       }
-
-      // Mid-run the owner composes a long wrapped draft: the input zone
-      // grows, the history window shrinks — keystrokes never move the
-      // stored scroll offset.
       final draft = ('loremipsum ' * (7 * draftRows)).trim();
       for (final ch in draft.split('')) {
         model = send(model, KeyPressMsg(TeaKey(code: KeyCode.rune, text: ch)));
       }
-      // One more streamed line WITH the draft present: the stored offset
-      // syncs to the bottom of the draft-squeezed window — past the echo.
       model = send(model, OutputMsg('answer line $answers', newline: true));
+      return (model, draft);
+    }
 
-      List<String> rows() => model.view().content
-          .split('\n')
-          .map((l) => l.replaceAll(ansi, ''))
-          .toList();
-      int paints() =>
-          rows().where((l) => l.contains('the racy prompt row')).length;
+    List<String> rowsOf(FaTuiModel model) => model.view().content
+        .split('\n')
+        .map((l) => l.replaceAll(ansi, ''))
+        .toList();
+
+    int paintsOf(FaTuiModel model) =>
+        rowsOf(model).where((l) => l.contains('the racy prompt row')).length;
+
+    test('deleting a wrapped draft mid-run never duplicates the pinned '
+        'echo (chrome=$chrome, #917)', () {
+      addTearDown(() => tuiChromeEnabled = true);
+      tuiChromeEnabled = chrome;
+      var (model, draft) = syncedFixture();
 
       // Fixture guard: never a duplicate through every state so far (the
-      // pre-fix lost-echo transient — echo neither pinned nor painted —
+      // pre-fix lost-echo transient - echo neither pinned nor painted -
       // is the sibling raw-offset artifact; the dup is what #917 pins).
-      expect(paints(), lessThanOrEqualTo(1),
+      expect(paintsOf(model), lessThanOrEqualTo(1),
           reason: 'fixture: no duplicate while composing');
 
       // The draft goes away (a backspace burst lands after the last output
-      // event — the slow-PTY interleave): the input zone shrinks, the
+      // event - the slow-PTY interleave): the input zone shrinks, the
       // window top drops back onto the echo text, while the stored offset
-      // — and with it the pre-fix pin decision — still says the echo is
+      // - and with it the pre-fix pin decision - still says the echo is
       // above the window. One paint must win, deterministically.
       for (var i = 0; i < draft.length; i++) {
         model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.backspace)));
       }
-      expect(paints(), 1, reason: 'the turn row paints exactly once — '
+      expect(paintsOf(model), 1, reason: 'the turn row paints exactly once - '
           'pinned OR in the transcript window, never both');
     });
 
@@ -204,51 +205,26 @@ void main() {
         'a tall window (chrome=$chrome, #917)', () {
       addTearDown(() => tuiChromeEnabled = true);
       tuiChromeEnabled = chrome;
-      var model = FaTuiModel(
-        callbacks: callbacks(),
-        isExited: () => false,
-        termWidth: 80,
-        termHeight: 24,
-        outputLines: const ['older line one', 'older line two', ''],
-      );
-
-      model = model.copyWith(inputText: 'the racy prompt row');
-      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.enter)));
-      model = send(model, const BusyMsg(true, source: 'run'));
-      for (var i = 0; i < answers; i++) {
-        model = send(model, OutputMsg('answer line $i', newline: true));
-      }
-      final draft = ('loremipsum ' * (7 * draftRows)).trim();
-      for (final ch in draft.split('')) {
-        model = send(model, KeyPressMsg(TeaKey(code: KeyCode.rune, text: ch)));
-      }
-      model = send(model, OutputMsg('answer line $answers', newline: true));
-
-      List<String> rows() => model.view().content
-          .split('\n')
-          .map((l) => l.replaceAll(ansi, ''))
-          .toList();
-      int paints() =>
-          rows().where((l) => l.contains('the racy prompt row')).length;
+      var (model, draft) = syncedFixture();
 
       // PageUp mid-run: follow detaches, the stored offset (now the
       // painted anchor) sits above the echo end — the transcript owns
       // the echo, the pin stays off, exactly one paint.
       model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.pageUp)));
       expect(model.followTail, isFalse, reason: 'pageUp detaches follow');
-      expect(paints(), 1, reason: 'detached: transcript owns the echo');
+      expect(paintsOf(model), 1, reason: 'detached: transcript owns the echo');
 
       // The same slow-PTY backspace burst, detached.
       for (var i = 0; i < draft.length; i++) {
         model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.backspace)));
       }
-      expect(paints(), 1, reason: 'detached: still exactly one paint');
+      expect(paintsOf(model), 1, reason: 'detached: still exactly one paint');
 
       // Then the terminal grows mid-run: the transcript is now SHORTER
       // than the painted window — pre-fix the anchor went negative and
       // the detached clamp threw ArgumentError, killing the frame.
       model = send(model, WindowSizeMsg(80, 80));
-      expect(paints(), 1, reason: 'tall window: one paint, no crash');
+      expect(paintsOf(model), 1, reason: 'tall window: one paint, no crash');
     });
   }
 }
