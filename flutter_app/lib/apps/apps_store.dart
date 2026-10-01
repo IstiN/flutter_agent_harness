@@ -232,7 +232,7 @@ class JsTileWidgetInfo {
         AppLog.i(
           'apps',
           'widget size ${declaredW}x$declaredH clamped to '
-          '${widthCells}x$heightCells',
+              '${widthCells}x$heightCells',
         );
       }
     }
@@ -323,8 +323,10 @@ class JsAppInfo {
     // The legacy name/description keys stay scalar strings (JSR strict
     // casts) and carry the default-locale value.
     final nameText = LocalizedText.parse(json['name'], json['nameI18n']);
-    final descriptionText =
-        LocalizedText.parse(json['description'], json['descriptionI18n']);
+    final descriptionText = LocalizedText.parse(
+      json['description'],
+      json['descriptionI18n'],
+    );
     final name = nameText.resolve(null);
     return JsAppInfo(
       id: (json['id'] ?? fallbackId).toString(),
@@ -578,6 +580,10 @@ class AppsStore {
   final Map<String, String> _manifestHashes = {};
   final Map<String, JsAppInfo> _parsedApps = {};
 
+  /// Per-app digests of the i18n ref files embedded in the cached model
+  /// (`apps/<id>`-relative path → sha256) — see [_i18nRefsUnchanged].
+  final Map<String, Map<String, String>> _refHashes = {};
+
   /// Lists all apps found in `apps/`, sorted by name.
   ///
   /// Incremental (issue #866): every manifest.json is hashed against the
@@ -590,8 +596,20 @@ class AppsStore {
   Future<List<JsAppInfo>> listApps() async {
     final apps = <JsAppInfo>[];
     final seen = <String>{};
-    final entries =
-        (await _env.listDir('apps')).valueOrNull ?? const <FileInfo>[];
+    final listing = await _env.listDir('apps');
+    final entries = listing.valueOrNull;
+    if (entries == null) {
+      // A failed listing is NOT an empty workspace (issue #866 review):
+      // serving the last-known models keeps the panel truthful through a
+      // transient IO error, and the install-record prune below must never
+      // run on an empty `seen` — that would wipe `.installed.json`.
+      final cachedApps =
+          _parsedApps.values
+              .where((app) => app.supportsPlatform(platform))
+              .toList()
+            ..sort((a, b) => a.name.compareTo(b.name));
+      return cachedApps;
+    }
     for (final entry in entries) {
       if (entry.kind != FileKind.directory) continue;
       final id = entry.name;
@@ -603,10 +621,12 @@ class AppsStore {
       if (raw == null) continue; // half-created folder — healer's domain
       final hash = _digest(raw);
       final cached = _parsedApps[id];
-      if (cached != null && _manifestHashes[id] == hash) {
-        // Unchanged manifest — zero rescans (AC3): the cached model (i18n
-        // contents included) is still the parsed truth.
-        apps.add(cached);
+      if (cached != null &&
+          _manifestHashes[id] == hash &&
+          await _i18nRefsUnchanged(cached)) {
+        // Unchanged manifest (and i18n ref files) — zero rescans (AC3):
+        // the cached model (i18n contents included) is still the truth.
+        if (cached.supportsPlatform(platform)) apps.add(cached);
         continue;
       }
       JsAppInfo app;
@@ -621,6 +641,7 @@ class AppsStore {
       } on FormatException catch (e) {
         // The agent edited the manifest into garbage: flag the tile, keep
         // the app discoverable — never a silent stale/missing row.
+        _refHashes.remove(id);
         app = JsAppInfo(
           id: id,
           name: id,
@@ -628,6 +649,19 @@ class AppsStore {
           icon: '📦',
           declaredPermissions: const AppPermissions(),
           error: 'manifest.json does not parse: ${e.message}',
+        );
+      } on Object catch (e) {
+        // Type-garbage (e.g. "allowedCommands": 5) escapes the strict
+        // casts as a TypeError, not a FormatException — the same honesty
+        // contract applies: one flagged tile, the listing survives.
+        _refHashes.remove(id);
+        app = JsAppInfo(
+          id: id,
+          name: id,
+          description: '',
+          icon: '📦',
+          declaredPermissions: const AppPermissions(),
+          error: 'manifest.json is invalid: $e',
         );
       }
       _manifestHashes[id] = hash;
@@ -646,6 +680,7 @@ class AppsStore {
       for (final id in gone) {
         _manifestHashes.remove(id);
         _parsedApps.remove(id);
+        _refHashes.remove(id);
         if (installed.remove(id) != null) pruned = true;
       }
       if (pruned) await _writeInstalled(installed);
@@ -658,24 +693,49 @@ class AppsStore {
   /// name/description and returns the app with their contents attached, so
   /// display sites resolve localized strings synchronously. Missing or
   /// unreadable ref files are skipped (resolution falls through to the
-  /// next locale candidate).
+  /// next locale candidate). Records each ref file's content digest so the
+  /// [listApps] cache gate notices agent edits to the ref files too —
+  /// the manifest itself never changes in that workflow (issue #866).
   Future<JsAppInfo> _withI18nContents(JsAppInfo app) async {
     final paths = {
       ...?app.nameText?.refPaths,
       ...?app.descriptionText?.refPaths,
     };
-    if (paths.isEmpty) return app;
+    if (paths.isEmpty) {
+      _refHashes.remove(app.id);
+      return app;
+    }
     final contents = <String, String>{};
+    final digests = <String, String>{};
     for (final path in paths) {
-      final content = (await _env.readTextFile('${app.dir}/$path'))
-          .valueOrNull;
+      final content = (await _env.readTextFile('${app.dir}/$path')).valueOrNull;
       if (content != null) {
         contents[path] = content;
+        digests[path] = _digest(content);
       } else {
         AppLog.i('apps', 'i18n ref ${app.dir}/$path missing — skipped');
       }
     }
+    _refHashes[app.id] = digests;
     return app.withI18nContents(contents);
+  }
+
+  /// True when every i18n ref file [app] embeds still matches the digest
+  /// recorded at parse time. One small read per ref file per scan — apps
+  /// without refs cost nothing (issue #866 review: an agent editing
+  /// `apps/<id>/i18n/*.json` must invalidate the cache like any write).
+  Future<bool> _i18nRefsUnchanged(JsAppInfo app) async {
+    final recorded = _refHashes[app.id];
+    if (recorded == null) return true;
+    for (final entry in recorded.entries) {
+      final current = (await _env.readTextFile(
+        '${app.dir}/${entry.key}',
+      )).valueOrNull;
+      if (current == null || _digest(current) != entry.value) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /// Reads the JS source of [app].
@@ -938,14 +998,14 @@ class AppsStore {
     if (decoded is! Map<String, Object?>) return;
     final refs = {
       ...LocalizedText.parse(decoded['name'], decoded['nameI18n']).refs.values,
-      ...LocalizedText.parse(decoded['description'], decoded['descriptionI18n'])
-          .refs
-          .values,
+      ...LocalizedText.parse(
+        decoded['description'],
+        decoded['descriptionI18n'],
+      ).refs.values,
     };
     for (final ref in refs) {
       if (files.containsKey(ref)) continue;
-      final onDisk =
-          (await _env.exists('apps/$id/$ref')).valueOrNull ?? false;
+      final onDisk = (await _env.exists('apps/$id/$ref')).valueOrNull ?? false;
       if (!onDisk) {
         throw StateError(
           'install of $id rejected: manifest i18n ref "$ref" is missing '

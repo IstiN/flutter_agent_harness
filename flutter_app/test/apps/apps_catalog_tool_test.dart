@@ -200,4 +200,29 @@ void main() {
     expect(textOf(result), contains('2048'));
     expect(textOf(result), isNot(contains('Catalog unavailable')));
   });
+
+  test('R5 — an installed catalog widget is listed once, not twice', () async {
+    await call(tool, {'action': 'install', 'id': 'focus-timer'});
+    final result = await call(tool, {'action': 'list'});
+    final text = textOf(result);
+    // Same id locally and remotely is ONE widget: the local line wins.
+    expect('focus-timer v1.0.0'.allMatches(text), hasLength(1));
+    expect(text, contains('focus-timer v1.0.0 (installed in apps/)'));
+    // Remote-only widgets still appear.
+    expect(text, contains('weather v2.0.0'));
+  });
+
+  test('R5 — a newer remote version annotates the local line', () async {
+    await env.writeFile(
+      'apps/focus-timer/manifest.json',
+      '{"id": "focus-timer", "name": "Focus timer", "version": "0.9.0"}',
+    );
+    await env.writeFile('apps/focus-timer/widget.js', '(function(){});');
+    final result = await call(tool, {'action': 'list'});
+    final text = textOf(result);
+    expect(text, contains('focus-timer v0.9.0'));
+    expect(text, contains('(update available: v1.0.0)'));
+    // No bare remote duplicate of the installed widget.
+    expect(text, isNot(contains('focus-timer v1.0.0 — Pomodoro')));
+  });
 }

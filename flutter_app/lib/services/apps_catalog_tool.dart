@@ -6,6 +6,7 @@ import 'dart:convert';
 
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/catalog_service.dart';
+import 'package:fa/services/app_log.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// Name of the agent tool wrapping the widgets catalog.
@@ -122,12 +123,16 @@ Future<ToolExecutionResult> _list(
       name.toLowerCase().contains(query) ||
       description.toLowerCase().contains(query);
   final lines = <String>[];
+  final localApps = <JsAppInfo>[];
+  final localLineByAppId = <String, int>{};
   // The local workspace FIRST (issue #866): apps the agent just wrote
   // under apps/ exist before the remote catalog ever hears of them — a
   // fresh creation must be visible to the agent that wrote it.
   try {
     for (final app in await store.listApps()) {
       if (!matches(app.id, app.name, app.description)) continue;
+      localLineByAppId[app.id] = lines.length;
+      localApps.add(app);
       lines.add(
         app.error != null
             ? '${app.id} — BROKEN: ${app.error}'
@@ -136,8 +141,10 @@ Future<ToolExecutionResult> _list(
                   ' (installed in apps/)',
       );
     }
-  } on Object {
-    // A store scan failure must not hide the remote catalog.
+  } on Object catch (e) {
+    // A store scan failure must not hide the remote catalog — but stay
+    // diagnosable (issue #866 review).
+    AppLog.i('apps', 'apps_catalog local scan failed: $e');
   }
   try {
     final result = await service.fetchCatalog();
@@ -150,6 +157,18 @@ Future<ToolExecutionResult> _list(
       return true;
     }).toList();
     for (final e in entries) {
+      // Same id locally and remotely is ONE widget, not two (issue #866
+      // review): the local line wins; a newer remote version is surfaced
+      // as an update annotation on it.
+      final localLine = localLineByAppId[e.id];
+      if (localLine != null) {
+        final local = localApps.where((a) => a.id == e.id).firstOrNull;
+        if (local != null && semverNewer(local.version, e.version)) {
+          lines[localLine] =
+              '${lines[localLine]} (update available: v${e.version})';
+        }
+        continue;
+      }
       lines.add(
         '${e.id} v${e.version}'
         '${e.description.isEmpty ? '' : ' — ${e.description}'}',

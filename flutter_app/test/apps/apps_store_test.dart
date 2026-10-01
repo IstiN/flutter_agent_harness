@@ -754,5 +754,121 @@ iOS row <!-- fa-platforms: ios -->
         isNull,
       );
     });
+
+    test('R1 — cache hits re-apply the platform filter', () async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile(
+        'apps/android_only/manifest.json',
+        '{"id": "android_only", "name": "Android Only", '
+            '"platforms": ["android"]}',
+      );
+      final store = AppsStore(env, platform: 'macos', readAsset: _fakeAssets);
+      // Scan 1 (parse path) filters it out...
+      expect(await store.listApps(), isEmpty);
+      // ...scan 2 (cache-hit path) must not resurface it.
+      expect(await store.listApps(), isEmpty);
+    });
+
+    test(
+      'R2 — a failed apps/ listing keeps cache and install records',
+      () async {
+        final env = _FailingListDirEnv(MemoryExecutionEnv());
+        await env.writeFile(
+          'apps/2048/manifest.json',
+          '{"id": "2048", "name": "2048"}',
+        );
+        await env.writeFile(
+          AppsStore.installedMetaFile,
+          '{"2048": {"version": "1.2.3"}}',
+        );
+        final store = AppsStore(env, readAsset: _fakeAssets);
+        expect((await store.listApps()).single.id, '2048');
+        // Transient IO error on the NEXT scan: neither the cached models nor
+        // the install bookkeeping may be destroyed.
+        env.failListDir = true;
+        final degraded = await store.listApps();
+        expect(degraded.single.id, '2048');
+        expect(
+          (await env.readTextFile(AppsStore.installedMetaFile)).valueOrNull,
+          '{"2048": {"version": "1.2.3"}}',
+        );
+      },
+    );
+
+    test('R3 — a type-garbage manifest is flagged, not fatal', () async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile(
+        'apps/bad_types/manifest.json',
+        '{"id": "bad_types", "name": "Bad", "allowedCommands": 5}',
+      );
+      await env.writeFile(
+        'apps/ok/manifest.json',
+        '{"id": "ok", "name": "Ok"}',
+      );
+      final apps = await AppsStore(env, readAsset: _fakeAssets).listApps();
+      // One flagged tile — the listing (and the healthy neighbor) survives.
+      expect(apps, hasLength(2));
+      final bad = apps.where((a) => a.id == 'bad_types').single;
+      expect(bad.error, contains('manifest.json is invalid'));
+      expect(apps.where((a) => a.id == 'ok').single.error, isNull);
+    });
+
+    test('R4 — editing an i18n ref file invalidates the cache', () async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile(
+        'apps/2048/manifest.json',
+        '{"id": "2048", "name": "2048", '
+            '"nameI18n": {"pt-BR": {"file": "i18n/pt-BR.json"}}}',
+      );
+      await env.writeFile('apps/2048/i18n/pt-BR.json', 'Vinte e Quarenta');
+      final store = AppsStore(env, readAsset: _fakeAssets);
+      expect(
+        (await store.listApps()).single.displayName('pt-BR'),
+        'Vinte e Quarenta',
+      );
+      // The agent edits ONLY the ref file — the manifest hash never moves.
+      await env.writeFile('apps/2048/i18n/pt-BR.json', '2048 Brasileiro');
+      expect(
+        (await store.listApps()).single.displayName('pt-BR'),
+        '2048 Brasileiro',
+      );
+    });
   });
+}
+
+/// [ExecutionEnv] whose `apps/` listing can be made to fail — the issue
+/// #866 review regression for the transient-IO-error path. Delegates
+/// everything else to an in-memory env ([MemoryExecutionEnv] is final).
+class _FailingListDirEnv implements ExecutionEnv {
+  _FailingListDirEnv(this._inner);
+
+  final MemoryExecutionEnv _inner;
+  bool failListDir = false;
+
+  @override
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) async {
+    if (failListDir) {
+      return Err(
+        FileError(FileErrorCode.permissionDenied, 'injected IO failure'),
+      );
+    }
+    return _inner.listDir(path);
+  }
+
+  @override
+  Future<Result<bool, FileError>> exists(String path) => _inner.exists(path);
+
+  @override
+  Future<Result<String, FileError>> readTextFile(String path) =>
+      _inner.readTextFile(path);
+
+  @override
+  Future<Result<void, FileError>> writeFile(String path, String content) =>
+      _inner.writeFile(path, content);
+
+  // listApps touches only the members above; any other call is a loud
+  // test failure, not a silent no-op.
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnsupportedError('unexpected env call: $invocation');
 }

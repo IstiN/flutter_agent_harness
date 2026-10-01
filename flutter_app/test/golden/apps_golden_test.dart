@@ -694,7 +694,9 @@ void main() {
       wrap: (child) => child,
     );
     expect(find.text('2048'), findsWidgets);
-    expect(find.textContaining('does not parse'), findsWidgets);
+    // The card carries the localized short label; the raw parser output
+    // surfaces in the tap's copyable dialog (widget ITs pin that path).
+    expect(find.text('Manifest error'), findsWidgets);
     await expectGolden(tester, 'apps_grid_broken_manifest');
   });
 
